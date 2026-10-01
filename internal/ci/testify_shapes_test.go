@@ -3,10 +3,15 @@ package ci
 import (
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // TestTestifyLedgerMeasuresEachShape pins the detector of TestTestsUseTestify on a
@@ -116,7 +121,64 @@ func TestTestifyLedgerOnlyFalls(t *testing.T) {
 		})
 	}
 
-	out, changed := testifyRewrite("# head\na:assert 5 why\na:env 2 why\nb:env 1 why\n", map[string]int{"a:assert": 3, "a:env": 0, "b:env": 9})
-	assert.True(t, changed)
-	assert.Equal(t, "# head\na:assert 3 why\nb:env 1 why\n", out)
+	makeShards := func(t *testing.T) (string, string, string) {
+		t.Helper()
+		dir := t.TempDir()
+		cmd := filepath.Join(dir, "cmd", "nova-ci.txt")
+		internal := filepath.Join(dir, "internal", "foo.txt")
+		for _, file := range []string{cmd, internal} {
+			require.NoError(t, os.MkdirAll(filepath.Dir(file), 0700))
+		}
+		require.NoError(t, os.WriteFile(cmd, []byte("# cmd reason\n# ceiling: 2\ncmd/nova-ci:assert 3 bare checks\ncmd/nova-ci:env 1 inject config\n"), 0600))
+		require.NoError(t, os.WriteFile(internal, []byte("# internal reason\n# ceiling: 1\ninternal/foo:assert 2 bare checks\n"), 0600))
+		return dir, cmd, internal
+	}
+	load := func(t *testing.T, dir string) *allowlist.Packages {
+		t.Helper()
+		ledger, err := allowlist.LoadPackages(dir, allowlist.Options{Ceiling: true, Counted: true, PackageKeys: true})
+		require.NoError(t, err)
+		return ledger
+	}
+	t.Run("lower and drop preserve comments and reasons", func(t *testing.T) {
+		t.Parallel()
+		dir, cmd, internal := makeShards(t)
+		unchanged, err := os.ReadFile(internal)
+		require.NoError(t, err)
+		reporter := &generalityMessageReporter{}
+		result := allowlist.CheckPackagesCountedMode(reporter, load(t, dir), map[string]int{
+			"cmd/nova-ci:assert":  2,
+			"internal/foo:assert": 2,
+		}, true)
+		assert.True(t, result.Updated)
+		assert.Contains(t, strings.Join(reporter.messages, "\n"), allowlist.UpdatedRerun)
+		got, err := os.ReadFile(cmd)
+		require.NoError(t, err)
+		assert.Equal(t, "# cmd reason\n# ceiling: 1\ncmd/nova-ci:assert 2 bare checks\n", string(got))
+		got, err = os.ReadFile(internal)
+		require.NoError(t, err)
+		assert.Equal(t, string(unchanged), string(got))
+	})
+	t.Run("growth refuses every shard write", func(t *testing.T) {
+		t.Parallel()
+		dir, cmd, internal := makeShards(t)
+		beforeCmd, err := os.ReadFile(cmd)
+		require.NoError(t, err)
+		beforeInternal, err := os.ReadFile(internal)
+		require.NoError(t, err)
+		reporter := &generalityMessageReporter{}
+		result := allowlist.CheckPackagesCountedMode(reporter, load(t, dir), map[string]int{
+			"cmd/nova-ci:assert":  2,
+			"cmd/nova-ci:env":     1,
+			"internal/foo:assert": 3,
+		}, true)
+		assert.False(t, result.Updated)
+		assert.Len(t, result.Over, 1)
+		assert.Contains(t, strings.Join(reporter.messages, "\n"), "refuses to raise a count")
+		got, err := os.ReadFile(cmd)
+		require.NoError(t, err)
+		assert.Equal(t, string(beforeCmd), string(got))
+		got, err = os.ReadFile(internal)
+		require.NoError(t, err)
+		assert.Equal(t, string(beforeInternal), string(got))
+	})
 }
