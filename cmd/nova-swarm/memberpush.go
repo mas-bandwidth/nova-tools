@@ -30,6 +30,7 @@ import (
 // checkout runs no hook and honours no command of the checkout's
 // configuration), and pushes the commit from there. Never forced: a branch
 // that origin holds at another commit refuses the push, and the finish says so.
+// The rule is docs/SPEC-SWARM.md's `member`.
 type gitPusher struct {
 	root, slots, sprintBin string
 	// git runs one git; gitrun.Run, or a test's fake.

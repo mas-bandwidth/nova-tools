@@ -385,7 +385,8 @@ func (m *Member) moved(l launch, c queueCard) bool {
 // launch whose child ended and whose claim the queue still holds, pushWidth
 // at a time; each launch keeps its push, so the finish (and a finish the
 // store did not answer, reported again next tick) reads it and never pushes
-// twice.
+// twice. The rule is docs/SPEC-SWARM.md's `member` (the push at a work card's
+// finish) and docs/SPEC-SPRINT.md's finish row (the head the merge reads).
 func (m *Member) pushEnded(ids []string, byID map[string]queueCard) {
 	if m.cfg.Reader {
 		return
