@@ -499,7 +499,7 @@ the tick would make, no other open judgment on it).
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
 | cannot ask (two readers are up, and a primary has no two to be asked of) | reader add, rework, drop, wait | no |
 | fewer than two readers up | reader up, reader add, wait | no |
-| no fleet member is up | fleet beat (on a machine), fleet up (releases a hold), wait | no |
+| no fleet member is up (when every member that beats is held, it says so and offers only fleet up and wait) | fleet beat (on a machine), fleet up (releases a hold), wait | no |
 | a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take) | rework with a fix (a new attempt), drop, wait | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |

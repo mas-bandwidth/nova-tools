@@ -505,8 +505,14 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	ready = streamTurns(ready, streamRound(s, PropStreamIndex))
 	up := s.UpMembers()
 	if len(up) == 0 && len(ready) > 0 {
-		conds = append(conds, cond{typ: NNoMember, streamLevel: true,
-			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))})
+		c := cond{typ: NNoMember, streamLevel: true,
+			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))}
+		if beatingHeld(s, r) {
+			// the members beat: the hold keeps them down, so the remedy is to release it
+			c.what = fmt.Sprintf("%d primaries wait to be dealt and no member is up: every member that beats is held; release a hold with nova-sprint fleet up <member>", len(ready))
+			c.decisions = []string{"fleet up", "wait"}
+		}
+		conds = append(conds, c)
 	}
 	if len(up) > 0 {
 		room := widthRoom(s, up)
@@ -522,6 +528,23 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	}
 	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute}, r)
 	return p, due
+}
+
+// beatingHeld says some fleet member beats and every member that beats is
+// held (docs/SPEC-SPRINT.md, the judgment "no fleet member is up": the hold,
+// not a missing beat, keeps the fleet down).
+func beatingHeld(s *Snapshot, r TickReq) bool {
+	beats := false
+	for _, m := range s.Fleet.Rows() {
+		if !r.Beats[m].Fresh(s.Now) {
+			continue
+		}
+		if ctl := s.MemberCtl(m); ctl == nil || ctl.F("held") == "" {
+			return false
+		}
+		beats = true
+	}
+	return beats
 }
 
 // AtRedealBound is the primary's withdrawn work card when it is at its
