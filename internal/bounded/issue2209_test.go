@@ -28,6 +28,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // TestIssue2209 — see the package doc above.
@@ -69,9 +71,7 @@ func TestIssue2209(t *testing.T) {
 		"step=lint",
 		"excerpt=",
 	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("receipt missing %q:\n%s", want, text)
-		}
+		assert.Contains(t, text, want, "receipt missing %q:\n%s", want, text)
 	}
 
 	// 5, 6: a receipt is bounded to failing steps plus excerpts plus AT
@@ -100,18 +100,10 @@ func TestIssue2209(t *testing.T) {
 			more = l
 		}
 	}
-	if itemLines == 0 {
-		t.Errorf("no failing-step lines reached the receipt:\n%s", upper)
-	}
-	if moreLines > 1 {
-		t.Errorf("at most one MORE line permitted, got %d:\n%s", moreLines, upper)
-	}
-	if moreLines == 0 {
-		t.Errorf("25 failures did not elide with cap=%d; expected one MORE line:\n%s", Default, upper)
-	}
-	if !strings.Contains(more, log) {
-		t.Errorf("the single MORE line does not name the log path %q:\n%s", log, upper)
-	}
+	assert.NotEqual(t, 0, itemLines, "no failing-step lines reached the receipt:\n%s", upper)
+	assert.LessOrEqual(t, moreLines, 1, "at most one MORE line permitted, got %d:\n%s", moreLines, upper)
+	assert.NotEqual(t, 0, moreLines, "25 failures did not elide with cap=%d; expected one MORE line:\n%s", Default, upper)
+	assert.Contains(t, more, log, "the single MORE line does not name the log path %q:\n%s", log, upper)
 
 	// 7, 8, 9: a timeout, a missing job, and a superseded cancellation
 	//    each read as their own receipt (a distinct kind on the header
@@ -141,9 +133,7 @@ func TestIssue2209(t *testing.T) {
 		rr := NewReceipt(&buf, k, identity, equivalence, latency, log)
 		rr.Print()
 		headers[k] = strings.SplitN(buf.String(), "\n", 2)[0]
-		if !strings.Contains(headers[k], "kind="+k) {
-			t.Errorf("kind=%q missing from header: %q", k, headers[k])
-		}
+		assert.Contains(t, headers[k], "kind="+k, "kind=%q missing from header: %q", k, headers[k])
 	}
 	pairs := [][2]string{
 		{ReceiptKindFail, ReceiptKindTimeout},
@@ -154,9 +144,6 @@ func TestIssue2209(t *testing.T) {
 		{ReceiptKindMissing, ReceiptKindSuperseded},
 	}
 	for _, p := range pairs {
-		if headers[p[0]] == headers[p[1]] {
-			t.Errorf("outcome headers collide: kind=%q and kind=%q share header %q",
-				p[0], p[1], headers[p[0]])
-		}
+		assert.NotEqual(t, headers[p[1]], headers[p[0]], "outcome headers collide: kind=%q and kind=%q share header %q", p[0], p[1], headers[p[0]])
 	}
 }

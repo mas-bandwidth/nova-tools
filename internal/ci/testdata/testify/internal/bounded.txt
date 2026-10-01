@@ -1,3 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
 # ceiling: 1
-internal/bounded:assert 41 bare assertions to convert to testify
+internal/bounded:assert 13 bare assertions to convert to testify
