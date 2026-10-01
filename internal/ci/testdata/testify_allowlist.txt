@@ -93,10 +93,10 @@ internal/seatcred:assert 47 bare assertions to convert to testify
 internal/secrets:assert 378 bare assertions to convert to testify
 internal/secrets:env 2 t.Setenv and Chdir sites to inject through config
 internal/selftalk:assert 48 bare assertions to convert to testify
-internal/sprint:assert 2353 bare assertions to convert to testify
+internal/sprint:assert 416 bare assertions to convert to testify
 internal/sprint/driver:assert 89 bare assertions to convert to testify
 internal/sprint/refmodel:assert 115 bare assertions to convert to testify
-internal/sprint/store:assert 1236 bare assertions to convert to testify
+internal/sprint/store:assert 1235 bare assertions to convert to testify
 internal/subproc:assert 30 bare assertions to convert to testify
 internal/swarm:assert 1306 bare assertions to convert to testify
 internal/swarm:env 9 t.Setenv and Chdir sites to inject through config
