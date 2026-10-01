@@ -527,6 +527,11 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		maxTook = max(maxTook, tk.took)
 		if i > 0 {
 			whole += tk.cost.Reads
+			for _, pt := range tk.times {
+				if pt.Reads > 0 {
+					why = append(why, fmt.Sprintf("tick %d part %s/%s read %d whole (%d trips, %d stale)", tk.n, pt.Table, pt.Name, pt.Reads, pt.Trips, pt.Stale))
+				}
+			}
 		}
 		for _, n := range tk.said {
 			why = append(why, fmt.Sprintf("tick %d: %s", tk.n, n))
