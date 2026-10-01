@@ -529,3 +529,41 @@ func TestReadsTheReaderTierCannotServeAreJudgedAtOnce(t *testing.T) {
 	h.machine()
 	assert.Empty(t, h.a2Open(sprint.NNoRoute), "a route of the reader tier closes it")
 }
+
+// One path asks (commit 255180e2; fleet pass 7, 2026-10-01): the finish of reworked work
+// asks no reader; the machine's ask, in the tick the finish wakes, asks the pair kept on
+// the primary, each read with the route it draws. A read the finish asked itself carried
+// no route, and no reader could start it.
+func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"), route("flash-b", "flash"))
+	require.NoError(t, h.st.BeatReaders(h.ctx))
+	h.addReady("s1", 1, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	h.finishAttempt("s1-1", false, pushedA)
+	h.machine()
+	pair := h.snap().Work.Card("s1-1").F("asked")
+	first := h.snap().Readers.Of("s1-1")
+	require.Len(t, first, 2, "attempt 1 asked of two readers")
+	h.must(ReadStep(sprint.ReadReq{As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{As: first[1].Row, Verdict: "broken", Finding: "f", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
+	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
+	h.finishAttempt("s1-1", false, pushedB)
+	pr := h.snap().Work.Card("s1-1")
+	require.Equal(t, 2, pr.Int("attempt"))
+	assert.Empty(t, readsAt(h.snap(), pr), "the finish asks no reader")
+	h.machine()
+	reads := readsAt(h.snap(), h.snap().Work.Card("s1-1"))
+	require.Len(t, reads, 2, "attempt 2 asked of two readers by the machine's ask")
+	var who []string
+	for _, rc := range reads {
+		who = append(who, rc.F("reader"))
+		assert.NotEmpty(t, rc.F(sprint.FieldRoute), "%s has a route", rc.ID)
+		assert.NotEmpty(t, rc.F(sprint.FieldModel), "%s has a model", rc.ID)
+		assert.NotEmpty(t, rc.F(sprint.FieldDeadline), "%s has a deadline", rc.ID)
+	}
+	assert.ElementsMatch(t, strings.Split(pair, ","), who, "the pair kept on the primary is asked again")
+	assert.Equal(t, pair, h.snap().Work.Card("s1-1").F("asked"), "the pair kept is unchanged")
+	h.clean("reworked work asked with routes")
+}

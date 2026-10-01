@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // One test per decision D1..D8 on the spec (docs/SPEC-SPRINT.md). The fence
@@ -79,13 +82,12 @@ func TestD2ReworkDelegatesAtOnce(t *testing.T) {
 	// ask asks both readers again at the new head.
 	w.must(Take(w.s, TakeReq{As: card.Row, Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID)}))
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID), Head: "h2"}))
-	if early := readsAt(w.s, w.s.Work.Card("s1-1"), 2); len(early) != 0 {
-		t.Fatalf("the finish asked readers itself: %v", early)
-	}
+	require.Empty(t, readsAt(w.s, w.s.Work.Card("s1-1"), 2), "the finish asked readers itself")
 	w.must(Ask(w.s, AskReq{}))
 	again := readsAt(w.s, w.s.Work.Card("s1-1"), 2)
-	if len(again) != 2 || again[0].F("head") != "h2" || again[1].F("head") != "h2" {
-		t.Fatalf("not asked again at the new head: %v", again)
+	require.Len(t, again, 2, "not asked again")
+	for _, rc := range again {
+		assert.Equal(t, "h2", rc.F("head"), "not asked again at the new head: %s", rc.ID)
 	}
 	w.clean("asked again")
 

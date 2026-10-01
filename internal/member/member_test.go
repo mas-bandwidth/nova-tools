@@ -1094,6 +1094,44 @@ func TestAReadItReturnedIsNotBegunAgainBeforeTheRetry(t *testing.T) {
 	assert.Equal(t, []string{"read --as r --begin r1 --epoch 7"}, g.s.lines("begin"), "begun once the retry has passed")
 }
 
+// TestAReaderHandsBackAReadItCannotStart pins the reader's side of a launch refused (commit
+// 255180e2; fleet pass 7, 2026-10-01): a read whose start fails is returned at once with the
+// reason, `read --as <reader> --return <card> --reason launch refused: ... --epoch <n>`, and
+// this reader does not begin it again before ReadStageRetry, however the queue lists it. Before,
+// it printed the error and began the read again every pass, for the read's whole deadline.
+func TestAReaderHandsBackAReadItCannotStart(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 2, Reader: true})
+	p1 := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	p2 := Packet{Card: "r2", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	g.r.failFor["r1"] = true
+	g.s.set("queue", 0, queueJSON(t, 7, asked("r1", &p1), asked("r2", &p2)))
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"r2"}, g.r.started(), "the read that can start is started")
+	assert.Equal(t, []string{"read --as r --return r1 --reason launch refused: no slot for r1 --epoch 7"}, g.s.lines("return"),
+		"returned once, at once, with the reason")
+	assert.Equal(t, 1, g.m.Running(), "the read returned holds no lane")
+
+	// the sprint asked it of this reader again, in place, in the same second
+	g.s.set("queue", 0, queueJSON(t, 7, asked("r1", &p1), reading("r2", &p2)))
+	g.s.reset()
+	_, err = g.tickAt(t, 0)
+	require.NoError(t, err)
+	assert.Empty(t, g.s.lines("begin"), "not begun again inside ReadStageRetry")
+	assert.Empty(t, g.s.lines("return"), "not returned again inside ReadStageRetry")
+	assert.Equal(t, []string{"r2"}, g.r.started())
+
+	// once ReadStageRetry has passed it may be begun again
+	g.r.failFor["r1"] = false
+	g.s.reset()
+	_, err = g.tickAt(t, int64(ReadStageRetry/time.Second))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"read --as r --begin r1 --epoch 7"}, g.s.lines("begin"), "begun once the retry has passed")
+	assert.Empty(t, g.s.lines("return"))
+	assert.Equal(t, []string{"r2", "r1"}, g.r.started())
+}
+
 // TestAReadReportsOnlyItsVerdict pins that the verdict flag is the reader's
 // own word, never the harness's ok: `broken` files --broken even when the
 // child ran ok, and `ok` files --ok even when OK is false.

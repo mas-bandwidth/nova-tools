@@ -252,6 +252,7 @@ func TestReworkOrReturnTakesAnOrphanMergeCardOff(t *testing.T) {
 				c := p.snap().Fleet.Card("s1-1.w2")
 				p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 				p.do("finish", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
+				p.do("ask again", AskStep(sprint.AskReq{Sel: ids("s1-1")})) // the machine's ask: the finish asks no reader
 				for _, rc := range p.snap().Readers.Of("s1-1") {
 					if rc.Col == sprint.Asked {
 						p.read(rc.F("reader"), rc.ID, "ok")

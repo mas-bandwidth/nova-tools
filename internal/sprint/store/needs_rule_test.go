@@ -192,6 +192,7 @@ func TestStampsOnEveryPath(t *testing.T) {
 	}
 	h.nDo(TakeStep(sprint.TakeReq{As: w2.Row, Sel: sprint.Sel{IDs: []string{w2.ID}}, Gens: map[string]int{w2.ID: 1}}))
 	h.nDo(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{w2.ID}}, Gens: map[string]int{w2.ID: 1}}))
+	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}})) // the machine's ask: the finish asks no reader
 	s = h.snap()
 	again := 0
 	for _, rc := range s.Readers.Of("s1-1") {
@@ -254,6 +255,7 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	w := s.Fleet.Card("s1-2.w2")
 	h.nDo(TakeStep(sprint.TakeReq{As: w.Row, Sel: sprint.Sel{IDs: []string{w.ID}}, Gens: map[string]int{w.ID: 1}}))
 	h.nDo(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{w.ID}}, Gens: map[string]int{w.ID: 1}}))
+	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})) // the machine's ask: the finish asks no reader
 	h.nReadAll("s1-2", "ok")
 	var on2 int
 	for _, n := range h.nAllNotes(sprint.NReadyToAccept) {

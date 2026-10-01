@@ -596,8 +596,10 @@ id (`--op`) returns the original result, with no second counter or notification.
 - A broken read notifies the coordinator. rework sends the primary back with
   the finding as the fix and delegates the next attempt at once (section 3);
   the primary's read cards are retired in the same step and its readers are
-  kept on it. When the fixed work returns, both readers are asked again at the
-  new head, on new read cards of the new attempt. A report against a retired
+  kept on it. When the fixed work returns, its finish asks no reader: the
+  machine's ask, in the tick the finish wakes, asks the two kept on it first,
+  at the new head, on new read cards of the new attempt, each with the route
+  it draws (one path asks). A report against a retired
   read card is refused, naming the retirement.
 
 ## 7. Merging
