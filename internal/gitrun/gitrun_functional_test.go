@@ -3,13 +3,12 @@
 package gitrun_test
 
 import (
-	"errors"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/stretchr/testify/require"
 )
 
 // A git whose child holds the pipe after git is killed: the deadline (Options.Timeout,
@@ -32,12 +31,9 @@ func TestASlowGitIsKilledAtItsDeadlineAndItsPipeDoesNotHang(t *testing.T) {
 
 			err := run.fn(gitrun.Options{Bin: bin, Timeout: 150 * time.Millisecond, WaitDelay: 150 * time.Millisecond})
 			var te *subproc.TimeoutError
-			if !errors.As(err, &te) {
-				t.Fatalf("a killed git was reported as %v", err)
-			}
-			if te.Budget != 150*time.Millisecond || !strings.Contains(te.Error(), "git fetch did not finish within 150ms") {
-				t.Fatalf("the timeout said %q (budget %s)", te.Error(), te.Budget)
-			}
+			require.ErrorAs(t, err, &te, "a killed git was reported as")
+			require.Equal(t, time.Duration(150*time.Millisecond), te.Budget, "the timeout said %q (budget %s)", te.Error(), te.Budget)
+			require.Contains(t, te.Error(), "git fetch did not finish within 150ms", "the timeout said %q (budget %s)", te.Error(), te.Budget)
 		})
 	}
 }
