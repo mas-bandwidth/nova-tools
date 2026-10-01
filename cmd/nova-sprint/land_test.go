@@ -355,6 +355,9 @@ func TestLandNamesARepositoryOneWay(t *testing.T) {
 		{"https://forge.test/owner/name", "ssh://git@forge.test/owner/name.git/", true},
 		{"https://forge.test/owner/name.git", "https://forge.test/owner/other.git", false},
 		{"/srv/git/name.git", "/srv/git/name", true},
+		{"/srv/git/Repo.git", "/srv/git/repo.git", false},
+		{"https://Forge.TEST/owner/name.git", "https://forge.test/owner/name", true},
+		{"https://forge.test/Owner/name.git", "https://forge.test/owner/name.git", false},
 	} {
 		assert.Equal(t, tc.same, sameRepo(tc.a, tc.b), "%s %s", tc.a, tc.b)
 	}
@@ -385,7 +388,7 @@ func TestLandReviewClonesOfTwoRepositoriesNeverShareADirectory(t *testing.T) {
 	before, otherBefore := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
 	code, _, errs := r.do("land")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "the card names the repository "+r.remote+" and the clone "+kept+" is of "+other+"; nothing was fetched or pushed")
+	assert.Contains(t, errs, "the card names the repository "+r.remote+" and the clone "+kept+" fetches from "+other+"; nothing was fetched or pushed")
 	assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
 	assert.Equal(t, otherBefore, r.git(other, "rev-parse", "main"))
 	assert.Equal(t, map[string]string{"a": "merging/queued"}, r.places("a"))
@@ -429,4 +432,109 @@ func TestLandReviewAGitEnvironmentFailureBlamesNoCard(t *testing.T) {
 	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/queued"}, r.places("s1-1", "s1-2"))
 	assert.Equal(t, "merging", r.streamState("s1"))
 	r.clean()
+}
+
+// A card reworked between the build and the report keeps its id and its
+// epoch but not its head: the report, guarded on the head and attempt land
+// pinned, refuses it, and the new attempt stays queued while the base holds
+// the old one (tla/Land.tla, idguard).
+func TestLandReviewReportPinsTheHeadItPushed(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 1")
+	old := r.head("s1-1", "main", "a.txt", "attempt 1\n")
+	r.queued(map[string]string{"s1-1": old}, "s1-1")
+	var replacement string
+	r.a.beforePush = func(int) {
+		r.ok("return s1-1 --reason 'replaced under the push'")
+		r.ok("rework s1-1 --fix 'again'")
+		replacement = r.head("s1-1.2", "main", "b.txt", "attempt 2\n")
+		r.git(r.worker, "push", "-q", "origin", "refs/heads/sprint/*:refs/heads/sprint/*")
+		var q struct{ Cards []queueCard }
+		r.json("queue --as m1", &q)
+		if len(q.Cards) == 0 {
+			r.deal(1)
+			r.json("queue --as m1", &q)
+		}
+		require.Len(t, q.Cards, 1)
+		w := q.Cards[0].ID + "@" + strconv.Itoa(q.Cards[0].Gen)
+		if q.Cards[0].Col == "ready" {
+			r.ok("take --as m1 " + w)
+		}
+		r.ok("finish --as m1 " + w + " --head " + replacement)
+		r.ok("ask")
+		r.ok("read --as reader-a --ok --limit 100")
+		r.ok("read --as reader-b --ok --limit 100")
+		r.ok("accept --read-ok")
+	}
+	code, _, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "LAND FAILED stream=s1 cards=1")
+	assert.Contains(t, errs, "s1-1 is at attempt 2 head "+replacement+" now, not attempt 1 head "+old)
+	assert.Equal(t, "attempt 1\n", r.git(r.remote, "show", "main:a.txt")+"\n")
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"))
+	r.a.beforePush = nil
+	out := r.ok("land --repo-dir " + r.clone + " --base main")
+	assert.Contains(t, out, "LAND OK stream=s1 cards=1")
+	assert.Equal(t, "landed/merged", r.places("s1-1")["s1-1"])
+	assert.Equal(t, "attempt 2", r.git(r.remote, "show", "main:b.txt"), "the landed attempt is the one the base holds")
+	r.clean()
+}
+
+// An --op given again names another operation for another batch: its op id
+// is the op and the batch's pinned heads, so the receipt of the first batch
+// never stands for the second, which lands for real.
+func TestLandReviewReusedOperationCannotClaimAnotherBatchLanded(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 first")
+	r.queued(map[string]string{"first": r.head("first", "main", "a.txt", "a\n")}, "first")
+	assert.Contains(t, r.ok("land --repo-dir "+r.clone+" --base main --op repeated-land"), "LAND OK stream=s1 cards=1")
+	r.ok("add --stream s1 second")
+	r.queued(map[string]string{"second": r.head("second", "main", "b.txt", "b\n")}, "second")
+	out := r.ok("land --repo-dir " + r.clone + " --base main --op repeated-land")
+	assert.Contains(t, out, "LAND OK stream=s1 cards=1")
+	assert.Contains(t, out, "ids=second")
+	assert.Equal(t, map[string]string{"first": "landed/merged", "second": "landed/merged"}, r.places("first", "second"))
+	assert.Equal(t, []string{"land second (sprint stream s1)", "land first (sprint stream s1)", "base"}, r.mainLog())
+	r.clean()
+}
+
+// Every URL git push would write to is held to the repository: a clone whose
+// origin fetches from the card's repository and pushes to another is refused
+// before either repository changes; so is one with two push URLs.
+func TestLandRereadRefusesAnotherOriginPushURLBeforeChangingEitherRepository(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		urls func(r *landRig, other string) []string
+		want string
+	}{
+		{"another push URL", func(_ *landRig, other string) []string { return []string{other} }, " and pushes to "},
+		{"two push URLs", func(r *landRig, other string) []string { return []string{r.remote, other} }, "pushes origin to 2 URLs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newLandRig(t)
+			other := filepath.Join(r.dir, "other.git")
+			r.git("", "init", "-q", "--bare", "-b", "main", other)
+			r.git(r.worker, "push", "-q", other, "refs/remotes/origin/main:refs/heads/main")
+			for _, u := range tc.urls(r, other) {
+				r.git(r.clone, "remote", "set-url", "--add", "--push", "origin", u)
+			}
+			briefs := t.TempDir()
+			path := filepath.Join(briefs, "a.md")
+			require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
+			r.ok("add --stream s1 a --brief-file " + path)
+			r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
+			before, otherBefore := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
+			code, _, errs := r.do("land --repo-dir " + r.clone)
+			assert.Equal(t, 1, code)
+			assert.Contains(t, errs, tc.want)
+			assert.Contains(t, errs, "nothing was fetched or pushed")
+			assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
+			assert.Equal(t, otherBefore, r.git(other, "rev-parse", "main"))
+			assert.Equal(t, map[string]string{"a": "merging/queued"}, r.places("a"))
+		})
+	}
 }
