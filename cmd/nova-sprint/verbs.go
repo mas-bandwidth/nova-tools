@@ -58,6 +58,7 @@ func init() {
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
+		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'rebased s1-4'", (*app).cmdResume},
 		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
 		{"fleet up", "<member> [--width <n>]", "fleet up m1 --width 64", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
@@ -157,6 +158,7 @@ and prints each one's generation.
 ` + readerWords() + `
 ` + goalWords() + `
 ` + twinWords() + `
+` + landWords() + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config, or run: its binary was replaced (its supervisor starts the new one)
 
 the coordinator's day, in five lines (NOVA_SPRINT_REDIS and NOVA_SPRINT_ACTOR set; brief.txt is a card that passes the lint, from nova-swarm template --name card):
@@ -593,7 +595,9 @@ func (g groupReport) line() string {
 	return l
 }
 
-func (a *app) report(ctx context.Context, verbName string, c common, st *store.Store, res store.Result, err error, stdout, stderr io.Writer) int {
+// stepExit is a step's exit code: 0 when everything named moved, 1 when a card
+// was refused or the step was cut, 2 when the store did not confirm.
+func stepExit(res store.Result, err error) int {
 	code := 0
 	if len(res.Refused) > 0 {
 		code = 1
@@ -613,6 +617,12 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	default:
 		code = 2
 	}
+	return code
+}
+
+func (a *app) report(ctx context.Context, verbName string, c common, st *store.Store, res store.Result, err error, stdout, stderr io.Writer) int {
+	code := stepExit(res, err)
+	var synced *store.SyncError
 	line := sprintLine(ctx, st)
 	if c.json {
 		o := output{Result: res, Sprint: line, Unknown: errors.Is(err, store.ErrUnknown), Group: c.group.ID, ActedOn: c.group.ActedOn, Expected: c.group.Expected, Packets: c.handed}
@@ -658,7 +668,7 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	if res.Pending != "" {
 		fields += " pending=" + oneline.Escape(res.Pending)
 	}
-	if err != nil && synced == nil {
+	if err != nil && !errors.As(err, &synced) {
 		changed := "no"
 		if errors.Is(err, store.ErrUnknown) {
 			changed = "unknown"
@@ -737,7 +747,7 @@ func tookSince(ctx context.Context, st *store.Store) string {
 func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("init")
 	readers := fs.String("readers", "", "the readers' rows, comma separated")
-	members := fs.String("members", "", fmt.Sprintf("fleet members to bring up, comma separated, each <name> or <name>:<width>, its width the most work cards it holds at once, ready and working (default %d)", sprint.DefaultWidth))
+	members := fs.String("members", "", fmt.Sprintf("fleet members to bring up, comma separated, each <name> or <name>:<width>, its width the most work cards it runs at once; it holds %d times that, ready and working (default %d)", sprint.DealAhead, sprint.DefaultWidth))
 	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor)")
 	rules := fs.String("rules", "", "the child rules file every brief is held to: one required sentence per line, its path recorded for the sprint (default: the built-in general rules; add --rules <file> overrides it for one add)")
 	pos, err := parse(fs, args)
@@ -1588,7 +1598,7 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
 	var width *string
 	if op == "up" {
-		width = fs.String("width", "", fmt.Sprintf("the member's width: the most work cards it holds at once, ready and working, 1 to %d (default: as it is, %d for a new member)", sprint.MaxWidth, sprint.DefaultWidth))
+		width = fs.String("width", "", fmt.Sprintf("the member's width: the most work cards it runs at once; the deal holds it at %d times that, ready and working; 1 to %d (default: as it is, %d for a new member)", sprint.DealAhead, sprint.MaxWidth, sprint.DefaultWidth))
 	}
 	pos, err := parse(fs, args)
 	if err != nil {

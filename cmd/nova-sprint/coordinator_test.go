@@ -91,6 +91,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"drop":          "drop s1-1 --reason r",
 		"rank":          "rank s1-1 --first",
 		"resume":        "resume --stream s1",
+		"land":          "land --dry-run",
 		"fleet up":      "fleet up m3",
 		"fleet down":    "fleet down m1",
 		"fleet level":   "fleet level",

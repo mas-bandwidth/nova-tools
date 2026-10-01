@@ -909,12 +909,12 @@ PACKET s1-1.w1 attempt=1 gen=1 epoch=0
   base: the stream's base
   notes: none
   report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --report '<what you did>' [--failed]
-TAKE OK moved=1 refused=0 notes=0 op=take-t25-1
+TAKE OK moved=1 refused=0 notes=0 op=take-t23-1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done
 MOVED s1-1.w1 working -> done ok; s1-1 working -> review
-FINISH OK moved=1 refused=0 notes=1 op=finish-t26-1
+FINISH OK moved=1 refused=0 notes=1 op=finish-t24-1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint tick
@@ -926,26 +926,26 @@ TICK OK state=RUNNING idle=no moved=2 notes=0
 
 $ nova-sprint read --as reader-a --begin --epoch 0
 MOVED s1-1.r1.reader-a asked -> reading
-READ OK moved=1 refused=0 notes=0 op=read-t29-1
+READ OK moved=1 refused=0 notes=0 op=read-t27-1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint read --as reader-b --begin --epoch 0
 MOVED s1-1.r1.reader-b asked -> reading
-READ OK moved=1 refused=0 notes=0 op=read-t30-1
+READ OK moved=1 refused=0 notes=0 op=read-t28-1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint read --as reader-a --ok --epoch 0
 MOVED s1-1.r1.reader-a reading -> ok
-READ OK moved=1 refused=0 notes=0 op=read-t31-1
+READ OK moved=1 refused=0 notes=0 op=read-t29-1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint read --as reader-b --ok --epoch 0
 MOVED s1-1.r1.reader-b reading -> ok
-READ OK moved=1 refused=0 notes=0 op=read-t32-1
+READ OK moved=1 refused=0 notes=0 op=read-t30-1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint tick
-MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine)
+MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by boss); s1-1.r1.reader-b reading -> ok (read by boss)
 MOVED accept: s1-1 review -> merging queued (ok from reader-a, reader-b)
 TABLES rows changed: work=1 readers=0 merge=1 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=2
@@ -953,7 +953,7 @@ TICK OK state=RUNNING idle=no moved=2 notes=2
 
 $ nova-sprint merge --stream s1 --batch 1
 MOVED s1-1 merging -> landed
-MERGE OK moved=1 refused=0 notes=2 op=merge-t36-1
+MERGE OK moved=1 refused=0 notes=2 op=merge-t34-1
 0/1 0.0% -> ETA  machine: running
 ```
 

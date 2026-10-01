@@ -36,10 +36,9 @@ consumer with neither adding nothing. It is in US dollars to four places
 sum over the streams, in exact decimals end to end. A stream with some unpriced
 landed cards shows the sum of the priced ones; `nova-sprint card <id>` and its
 JSON carry the detail. The merge that lands a primary writes its total on it
-(`cost`), from every one of its consumers' records, read with the step (the
-fleet and readers tables and the kept records of the consumers of the stream's
-merging primaries), and sets the stream's sum over all its landed primaries on
-the stream's control card; `SyncMirrors` shows it in the cell. The sum is set
+(`cost`), the charged figure of the total the card carries (section 2, What a
+card cost), and sets the stream's sum over all its landed primaries on the
+stream's control card; `SyncMirrors` shows it in the cell. The sum is set
 from the cards, never added to: a replayed merge writes the same, and `clear`
 empties it with the tables.
 
@@ -217,15 +216,33 @@ card's `usage` holds the run that gave the verdict, and each run returned
 without one is kept as read_take_<n> (1 for the first), so a read asked again
 of a reader keeps every run it had (asked again in place at most
 `MaxReadReasks` times, a read card holds at most three such records, far
-under the 64 a reader looks for). `card <id>` prints a COST line for each
-consumer run that ended (kind, card, attempt, take, member or reader, route,
-model, end, the tokens, wait, run, predicted, actual and `actual_by`) and a
-COST TOTAL line, computed when it is printed from the consumers' records
-(`sprint.CardCost`): each class summed over the records that reported it, the
-times summed, and each cost summed over the records that hold it with how many
-did (`predicted_of=<n>/<consumers>`) and who reported the actual
-(`actual_by=harness`); `--json` carries the same value as `cost`. A figure not
-known prints `-`, never 0.
+under the 64 a reader looks for).
+
+The cost is tracked in the card (the owner, 2026-10-01: "The cost needs to be
+tracked IN THE CARD"). In the same step that ends a consumer (a take finished ok
+or failed, a take the provider failed, a launch refused at staging when it
+reported a cost, a read ok or broken, a read returned without a verdict), the
+primary gets one record of it, `cost_record:<card>#<run>` (`#g<gen>` a work
+card's take, `#v` a read's verdict run, `#r<n>` a read's returned run n): its
+kind, card, attempt, take, generation, member or reader, route, model, end and
+time, and its usage record with the prices used. The same step updates the
+primary's total, `cost_total`: each class summed over the records that reported
+it, the times summed, each cost summed over the records that hold it with how
+many did, who reported the actual, and `charged_usd`, each record's actual cost
+where reported, else its predicted one. A record is set once per key, so a step
+planned again or replayed adds nothing twice. The history is bounded at 64
+records (`MaxCostRecords`): a record past it is still added to the total, and
+`cost_cut` counts the records the list left out. A read's records reach the
+primary from the read step, a change of the work table: while the machine runs,
+it waits in the work table's queue for the next tick's pump with the read's
+words, as a finish's change of its primary does. `card <id>` prints, from the
+primary alone, a COST line for each record (kind, card, attempt, take, member
+or reader, route, model, end, the tokens, wait, run, predicted, actual and
+`actual_by`) and a COST TOTAL line (`predicted_of=<n>/<consumers>`,
+`actual_by=harness`, `charged_usd`, and `cut=<n>` when the list was cut);
+`--json` carries the same value as `cost`. No reader or member removed, no read
+card retired and no consumer record cleaned up can lose cost: the record is
+already in the card. A figure not known prints `-`, never 0.
 
 ## 3. The lifecycle of a primary
 
@@ -275,9 +292,16 @@ and it is the coordinator's decision, receipted.
 
 ## 5. The fleet
 
-- A member is a fleet machine with a width: the most work cards it holds at
-  once, ready and working together (its child cap; `init --members m1:64` or
-  `fleet up m1 --width 64`; default 64). The fleet table shows it in the width
+- A member is a fleet machine with a width: the most work cards it runs at
+  once (its child cap; `init --members m1:64` or `fleet up m1 --width 64`;
+  default 64). It holds up to DealAhead (two) times its width, ready and
+  working together: its width working and as many again ready behind them, so
+  a lane that frees takes its next card at once (the owner, 2026-10-01: "The
+  WHOLE POINT of nova-sprint is to feed the fleet at width and keep it working
+  at that width until done."; "deal at most 2X width ahead per-machine in
+  fleet"). The member runs its width; the rest wait in its ready column, and
+  its loop takes a freed lane's next card in the same pass that reports the
+  finish. The fleet table shows it in the width
   column beside working; the footer row sums the widths, the fleet's total
   width (eight machines of 64 total 512). The row is the truth: the member's
   loop (`nova-swarm member`) reads its width with its queue every tick
@@ -347,12 +371,14 @@ and it is the coordinator's decision, receipted.
 - The machine's tick deals every ready primary the fleet has room for in one
   step, in stream turns (each stream's oldest first by score), one card at a
   time to the next up member round the fleet (the rolling index `deal_index`)
-  that is below its width: 150 ready over eight machines of width 64 all go to
-  working in one tick, 18 or 19 a machine. A machine at its width takes no
-  more, whoever deals: the `deal` verb refuses a card no up member has room for,
-  and a rework with no member below its width sends its primary ready with the
-  fix, for the tick to deal (`tla/DirtyTick.tla`, `Room` and `WidthRespected`;
-  `TestAReworkIsNotDealtToAMemberAtItsWidth`).
+  that is below its room, DealAhead times its width: 150 ready over eight
+  machines of width 64 all go to working in one tick, 18 or 19 a machine. A
+  machine at its room takes no more, whoever deals: the `deal` verb refuses a
+  card no up member has room for, and a rework with no member below its room
+  sends its primary ready with the fix, for the tick to deal
+  (`tla/DirtyTick.tla`, `Room` and `WidthRespected`, which bound the room;
+  `TestAReworkIsNotDealtToAMemberAtDealAheadTimesItsWidth`). A member takes
+  its ready cards in stream turns, so it starts every stream alike.
 - Every rolling index (the fleet's `deal_index`, the readers' `ask_index`, the
   work table's `stream_index`, `stream_index_ask` and `stream_index_accept`) is
   a counter: a uint64 from 0 that goes up by one with every placement and by
@@ -367,7 +393,17 @@ and it is the coordinator's decision, receipted.
   generation; the attempt advances only on rework. A primary with a withdrawn
   card is ready, never working.
 - A member coming up: ready queues are levelled in one call; the newest cards move.
-- done and ok% are computed by the table from the member's `ok` and `failed`
+- The rebalance, once at the start of every tick, before any table's update
+  (the owner, 2026-10-01: "both for readers and fleet, there needs to be a
+  rebalance step done at the start of each tick. it's simple. just once before
+  tick, rebalance each table."): the fleet's level moves ready cards (dealt,
+  not taken) from a member holding cards it cannot start to one with free
+  lanes, evening the members' backlogs (held less width) to within one, never
+  past DealAhead times a width; a working card on an up member stays. It is a
+  safety too ("and it's a safety, if ever there are cards on a held or down
+  machine, rebalance moves them away."): no card stays on a held or down
+  member; its cards, ready or working, are dealt to the members up as a member
+  going down sends them, or withdrawn when none is up.- done and ok% are computed by the table from the member's `ok` and `failed`
   cells.
 - A fleet member says it is there by beating: `nova-sprint fleet beat
   <member>`, run on the machine every few seconds, writes its last beat time
@@ -449,6 +485,22 @@ id (`--op`) returns the original result, with no second counter or notification.
   column and `where` shows no reader's state; the state is never stored in the
   table. The state is read, never typed: the tick reads it once, with its first
   read, and every part plans on that reading.
+- The readers' rebalance runs once at the start of every tick, before any
+  table's update (the owner, 2026-10-01: "just once before tick, rebalance each
+  table."): first its safety ("if ever there are cards on a held or down
+  machine, rebalance moves them away"): every read asked or reading of a reader
+  that is not up is taken back (retired by `away`) while a reader up without a
+  card at its attempt could take it, and the tick's ask asks it again; with
+  none, it stays and is judged as below. Then the level: asked reads (not
+  begun) move from the reader with the largest load (asked and reading) to the
+  next reader up round the readers at or below the mean, until no two loads
+  differ by more than one, so no reader up is idle while another holds a
+  backlog. A moved read is retired (by `level`) and asked of the other reader
+  at the same attempt and head, its route kept, as a fresh ask (not returned,
+  reasked 0); a primary's two reads stay with two different readers, and no
+  reader is asked an attempt it already had. The sprint knows no reader's width
+  (a reader loop's `--width` is its own), so readers are levelled by count and
+  none is bounded at DealAhead times a width.
 - ask deals every primary in review that lacks reads to TWO DIFFERENT readers
   UP, each to the shortest asked queue, keeping order. One read card per reader.
   A reader away or down is never asked. A read asked, and not begun, of a
@@ -466,14 +518,18 @@ id (`--op`) returns the original result, with no second counter or notification.
   at the attempt (the returned card retired, by `returned`), or, when none is
   free, of the same reader again, in place, so a reader whose launches failed
   is not counted as having read the attempt (tla/DirtyTick.tla,
-  JudgedOnlyAfterTheBound). A read card is asked again in place at most
-  `MaxReadReasks` (2) times at its attempt (its `reasked` field); a return
-  after that is counted as a read: the card is retired (by `returned`), and a
-  primary no reader is left to read is the ask's `cannot ask` judgment, for the
-  coordinator (reader add, rework, drop; tla/DirtyTick.tla, ReasksBounded and
-  StrandingIsJudged). Its member does not begin a read it returned
-  again before `member.ReadStageRetry`. A return of a read the caller does not
-  hold is refused. With fewer than two readers up the tick
+  JudgedOnlyAfterTheBound). Each return counts itself on the read card (its
+  `reasked` field, moved by `read --return`, whatever the tick does and
+  however many readers are up), and a read card goes back to asked at most
+  `MaxReadReasks` (2) times at its attempt; the return after that is counted
+  as a read: the card is retired (by `returned`), and a primary no reader is
+  left to read is the ask's `cannot ask` judgment (or, with fewer than two
+  readers up, `fewer than two readers up`), for the coordinator (reader add,
+  rework, drop; tla/DirtyTick.tla, ReasksBounded and StrandingIsJudged). Its
+  member does not begin a read it returned again before
+  `member.ReadStageRetry`. A return of a read the caller does not hold is
+  refused, and so is a second return of a read returned and not begun since:
+  a return is counted once. With fewer than two readers up the tick
   asks none: it raises one judgment, `fewer than two readers up: <readers and
   their states>`, for the sprint (not one for each primary), closed when two
   are up or no primary waits; `reader up` and `reader add` answer it.
@@ -574,6 +630,11 @@ accepts.
 and is given its facts by the caller (what merged, what conflicted, ci result);
 it never decides. Causes of a stop: conflict on a card; stream branch red; a
 card needs a card of another stream first; the merge queue rejected.
+
+`land` is the coordinator's landing step as one command (section 11): it
+merges each batch's heads in work order onto a branch cut from the base, checks
+and pushes it, and reports it through this merge step, with the facts above
+when it cannot; it adds no state of its own.
 
 A cross-stream need is recorded as data on the stuck card (the needed card and
 its stream); it is resolved when that card has landed, and ranking the needed
@@ -908,7 +969,7 @@ result; recorded for another verb or other arguments it is a conflict and is
 refused), `--json` and `--max`. `--actor` has no default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
-resolve, start, stop, ask, accept, rework, return, drop, rank, resume, fleet
+resolve, start, stop, ask, accept, rework, return, drop, rank, resume, land, fleet
 up, fleet down, fleet level, reader add, reader away, reader up, reader remove, wait, ack, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
@@ -956,6 +1017,7 @@ command that loads it.
 | drop | off the table with the reason |
 | rank | changes a score and every copy |
 | merge | one mechanical merge step for a stream: `--batch n`, given facts; `--red [--suspect <id>...]` |
+| land | the coordinator's landing step as one command, an external delivery (a git push) and a store write (the merge step): for each stream named (`--stream`, again for more; default every stream with cards queued and not stopped), in stream order, the merge queue up to its first stuck card, in work order, cut into batches of consecutive cards whose briefs name one repository and one base (`REPO:` and `BASE:`, read as staging reads them; `--base` for a card naming none); each batch's heads merged `--no-ff` with the message `land <id> (sprint stream <s>)` onto a branch cut from the base's tip on origin, in a clone (`--repo-dir`, else a clone kept under the directory each line names, its name the readable repository and a hash of it; every clone reused has its origin's fetch URL and its one push URL held to the repository the cards name before any git, the host compared without case and the path with it); a caller's `--epoch` the sprint has left refused before any git; `--check <command>` run once per batch in the clone before the push; the queue head, its heads and attempts, and the epoch read again just before each push; the push plain, never forced, and on a rejection the base fetched and the batch rebuilt on its new tip once; then the batch reported by the merge step `merge --stream s --batch n` runs, fenced to the epoch land read and guarded in the same store step to plan only while the queue still starts with the batch's cards at the heads and attempts land read and pushed (a rework keeps a card's id and epoch, not its head); the pins are the step's arguments, so an `--op` replay returns only that batch's receipt. A head that is not a commit on origin or whose merge stops on unmerged paths ends its batch before it, the cards before it land, and it is reported with `--conflict` and git's words as the note; git failing for any other reason (an identity, a hook, the disk, the network) blames no card: nothing is pushed or reported and the batch is refused; a check that fails, with `--red`, nothing pushed; a second rejected push, with `--rejected`. A push that landed and a report that did not (a clear, a card accepted ahead of the batch, a return, between the two) is `LAND FAILED`, exit 2, and the one remedy named is to run land again, which rereads the queue and lets its own checks decide: a card as it was is recorded with no new push (its merges and push are no-ops), a card reworked since is merged at its new head or meets a real conflict, and after a clear there is nothing to report (tla/Land.tla). A bare `merge --batch n` is never offered: after a rework the queue starts with the same ids at a head the base does not hold, and the merge step alone would record it. One line per batch, `LAND OK|REFUSED|FAILED stream= cards= base= tip= ids=<first>..<last>`, then `LAND DONE batches= cards= refused=`; `--dry-run` reads the store only and changes nothing; `--json` |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` |
 | reader add | declares readers |
@@ -1127,14 +1189,16 @@ revision changed, after `start`, after a tick that did not finish (a part that
 lost to other writers, a stale epoch, a halt, a failure, or moves left past a
 bound), and once every minute (TickFullEvery); otherwise it does nothing
 else. Otherwise it runs its parts in order, each one operation of the
-engine on a fresh read, sharing the fence with every verb: resolve (T1:
+engine on a fresh read, sharing the fence with every verb: first the start,
+once (the rebalance of the fleet table and of the readers table, section 5 and
+section 6), then resolve (T1:
 every stream's waiting cards in score order; a card whose needs have all landed moves to ready; a sentinel is never
 moved, and is marked reached when all it needs has landed), resume (T7: a
 stream stopped only on a cross need whose card has landed), deal (T3), accept
 (R9: every acceptable primary in review the tick does not hold, section 6,
 moves to merging and into its stream's merge queue, and the coordinator is
 told once for each stream "ready to merge"; the merge is the coordinator's),
-level (T4), ask (T2: two different readers up for each primary in review with
+ask (T2: two different readers up for each primary in review with
 fewer than two read cards at its attempt and work not failed; a read asked of a
 reader that is not up is taken back first, section 6), check (T6: section 9, and the
 no-stall rule 12), deadlines, overdue, done (the sprint done: the machine

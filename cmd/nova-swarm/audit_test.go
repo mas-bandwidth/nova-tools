@@ -34,6 +34,9 @@ var swarmAudit = audit.Config{
 		"main.go|refused|f.verb":   "the verb's own name, the value newFlags stored from that literal",
 		"main.go|cmdTemplate|body": "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
 		"native.go|nativeRun|line": "the line NewWallReader announces a refusal on: swarm.WallRefusedLine builds the whole line and puts the kind, the path, the task and the step through oneline.Field inside itself, so what arrives at this closure is already one safe token, and escaping it a second time would fold it into one unreadable form. TestNativeIdleZeroWatchesNothing asserts the line this site prints byte for byte.",
+
+		// the stderr the member's loop and its beat share (memberLoop)
+		"member.go|Write|string(p)": "lockedWriter only orders whole writes from two goroutines (the member's loop and its beat, memberLoop): every byte it carries was already printed through fmt.Fprintf with escaped arguments by its caller, and it adds none of its own",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -142,6 +145,11 @@ var swarmAudit = audit.Config{
 		// this verb hands it, and every argument it prints is a card id, a count or a
 		// verb name from the sprint's own JSON.
 		`"bufio"`, `"github.com/mas-bandwidth/nova-tools/internal/member"`,
+		// member.go calls only log.Redact, a pure string transformer, on a failed
+		// nova-sprint child's captured streams before they reach the member's writer.
+		// It holds no writer here; the transformed value is escaped and bounded by
+		// sprintFailureOutput before internal/member can print it.
+		`"github.com/mas-bandwidth/nova-tools/internal/log"`,
 		// bounded prints the capped listings and the one MORE line that stands for what
 		// they did not print. Every line reaching it is rendered by a fmt.Sprintf in THIS
 		// package, which the classifier walks like any other print site, and bounded puts

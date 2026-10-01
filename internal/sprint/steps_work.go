@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -698,9 +699,9 @@ func Deal(s *Snapshot, r DealReq) Plan {
 	return p
 }
 
-// noRoomWhy is the refusal of a card every up member is at its width for: the tick deals it
-// when one has room.
-const noRoomWhy = "every up fleet member is at its width: the tick deals it when one has room"
+// noRoomWhy is the refusal of a card every up member is at its room for (DealAhead times its
+// width, width.go): the tick deals it when one has room.
+const noRoomWhy = "every up fleet member is at its room (DealAhead times its width): the tick deals it when one has room"
 
 func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMoves) {
 	var p Plan
@@ -927,7 +928,11 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		return p
 	}
 	byID := named(sel)
-	chosen := pick(&p, sel, s.Fleet.Cell(r.As, Ready), fieldStream, func(c *Card) string {
+	// the member's ready cards in stream turns (takeTurns), as the deal dealt
+	// them: a member holding DealAhead times its width takes its width of them
+	// from every stream alike, never one stream's lowest scores first (errata 3
+	// amendment 10)
+	chosen := pick(&p, sel, takeTurns(s.Fleet.Cell(r.As, Ready), slices.Index(s.Fleet.Rows(), r.As)), fieldStream, func(c *Card) string {
 		if byID {
 			if why := liveGen("take", c, r.Gens); why != "" {
 				return why
@@ -1053,15 +1058,18 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Base != "" {
 			cardSet["base"] = r.Base
 		}
+		// what the take cost, timed and priced (cost.go): kept on the work card when the
+		// member reported it, and recorded on the primary, the producer, in this step
+		dealt, taken := takeStamps(c)
+		rec := costRecord(s, r.Usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)
 		if r.Usage != "" {
-			// what the take cost, timed and priced (cost.go)
-			dealt, taken := takeStamps(c)
-			cardSet[FieldUsage] = costRecord(s, r.Usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)
+			cardSet[FieldUsage] = rec
 		}
 		set := map[string]string{"head": head, "result": result}
 		if r.Failed {
 			set["failed"] = itoa(pr.Int("failed") + 1)
 		}
+		addConsumer(pr, set, workConsumer(s, c, 0, result, rec))
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
@@ -1125,17 +1133,22 @@ func providerEnded(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 	// tokens and time. The take's record is its one place: the card's usage field is
 	// left alone, so it only ever holds the card's own ended take (finishPlan), and a
 	// redealt card never shows, or counts, this take's usage again
-	usage := r.Usage
-	if usage != "" {
-		dealt, taken := takeStamps(c)
-		usage = costRecord(s, usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)
+	dealt, taken := takeStamps(c)
+	rec := costRecord(s, r.Usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)
+	usage := ""
+	if r.Usage != "" {
+		usage = rec
 	}
 	// the failed take's own record, kept through the redeals: its route, member, usage and line
-	set[FieldProviderTake+itoa(c.Int("redeals")+1)] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
+	take := c.Int("redeals") + 1
+	set[FieldProviderTake+itoa(take)] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
 		Finished: stamp(s.Now), Usage: usage, Error: line}.String()
+	// and the producer's record of it (cost.go): it still cost tokens and time
+	prSet := map[string]string{}
+	addConsumer(pr, prSet, workConsumer(s, c, take, "provider failure", rec))
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
-		change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")),
+		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
 	}, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, the provider failed the take; %s working -> ready", c.ID, c.Int("gen")+1, pr.ID)}
 }
 
@@ -1166,9 +1179,15 @@ func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 		n.What = cardhdr.EndStaging + " on " + c.Row + ": " + line
 		notes = append(notes, n)
 	}
+	// no child ran: the producer records the launch only when it cost something
+	prSet := map[string]string{}
+	if r.Usage != "" {
+		dealt, taken := takeStamps(c)
+		addConsumer(pr, prSet, workConsumer(s, c, 0, "staging refused", costRecord(s, r.Usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)))
+	}
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
-		change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")),
+		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
 	}, Notes: notes, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused it at staging; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
 }
 
@@ -1321,7 +1340,7 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 			line += " width=" + itoa(r.Width)
 		}
 		if comeUp {
-			level(s, &p, orderLike(s.Fleet.Rows(), append(liveFor(s, r), r.Member), r.Member), rr, moves)
+			level(s, &p, orderLike(s.Fleet.Rows(), append(liveFor(s, r), r.Member), r.Member), rr, moves, nil)
 		}
 		headOf(&p, r.Member, head, n, line)
 	case "down", "hold":
@@ -1330,7 +1349,10 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		up := liveFor(s, r)
 		return downPlan(s, r, up, rr, moves, memberLoads(s, up), memberWidths(s, up))
 	case "level":
-		level(s, &p, s.UpMembers(), rr, moves)
+		up := s.UpMembers()
+		held := memberLoads(s, up)
+		sweep(s, &p, r, up, rr, moves, held)
+		level(s, &p, up, rr, moves, held)
 	case "sync":
 		return fleetSyncPlan(s, r, rr, moves)
 	default:
@@ -1430,34 +1452,72 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	return p
 }
 
-// level evens the up members' ready queues: while the longest and the
-// shortest of the members below their width differ by more than one, the
-// newest card (the last in work order) of the longest queue moves to the next
-// member round the fleet below its width and below the mean (round.levelTo,
-// errata 3 amendment 5: the levelling moves the deal's index too; width.go,
-// amendment 9: a member at its width takes no more).
-func level(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves) {
+// sweep is the rebalance's safety (the owner, 2026-10-01: "and it's a safety, if
+// ever there are cards on a held or down machine, rebalance moves them away."):
+// every work card, ready or working, on a member whose status is not up (down,
+// or held) goes as a member going down sends it (downPlan): to the next up
+// member round the fleet below DealAhead times its width, at a new generation,
+// a working card's redeal counted; withdrawn, its primary ready again, when none
+// has room or no member is up. held counts what each up member holds, the
+// cards placed here included, for the level after it.
+func sweep(s *Snapshot, p *Plan, r FleetReq, up []string, rr *round, moves roundMoves, held map[string]int) {
+	widths := memberWidths(s, up)
+	for _, m := range s.Fleet.Rows() {
+		ctl := s.MemberCtl(m)
+		if ctl == nil || ctl.F("status") == Up || s.Fleet.Count(m, Ready)+s.Fleet.Count(m, Working) == 0 {
+			continue
+		}
+		why := "down"
+		if ctl.F("held") != "" {
+			why = "held"
+		}
+		q := downPlan(s, FleetReq{Op: "down", Member: m, Who: r.Who, Why: "the rebalance: cards on a " + why + " member"}, up, rr, moves, held, widths)
+		p.Units = append(p.Units, q.Units...)
+		p.Refused = append(p.Refused, q.Refused...)
+	}
+}
+
+// level evens the up members' backlogs, once at the start of every tick (the
+// owner, 2026-10-01: "both for readers and fleet, there needs to be a
+// rebalance step done at the start of each tick. it's simple. just once before
+// tick, rebalance each table."). A member's backlog is the work cards it holds,
+// ready and working, less its width: below zero it has free lanes its ready
+// cards do not fill, above zero it holds ready cards it cannot start. While the
+// largest backlog of a member with a ready card and the smallest of the members
+// below DealAhead times their width differ by more than one, the newest card
+// (the last in work order) of the largest moves to the next member round the
+// fleet below DealAhead times its width and at or below the mean backlog
+// (round.levelTo, errata 3 amendment 5: the levelling moves the deal's index
+// too). So no up member has free lanes and an empty ready column while another
+// holds ready cards it cannot start, a member that comes up takes its share at
+// once, and none is levelled past DealAhead times its width (width.go).
+func level(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, held map[string]int) {
 	if len(up) < 2 {
 		return
 	}
 	queues := map[string][]*Card{}
-	held, widths := memberLoads(s, up), memberWidths(s, up)
+	if held == nil {
+		held = memberLoads(s, up)
+	}
+	widths := memberWidths(s, up)
 	for _, m := range up {
 		queues[m] = append([]*Card{}, s.Fleet.Cell(m, Ready)...)
 	}
 	for {
-		long, short := up[0], ""
+		long, short := "", ""
 		n := map[string]int{}
 		for _, m := range up {
-			n[m] = len(queues[m])
-			if len(queues[m]) > len(queues[long]) {
+			n[m] = held[m] - s.Width(m)
+		}
+		for _, m := range up {
+			if len(queues[m]) > 0 && (long == "" || n[m] > n[long]) {
 				long = m
 			}
-			if held[m] < widths[m] && (short == "" || len(queues[m]) < len(queues[short])) {
+			if held[m] < widths[m] && (short == "" || n[m] < n[short]) {
 				short = m
 			}
 		}
-		if short == "" || len(queues[long])-len(queues[short]) <= 1 {
+		if long == "" || short == "" || n[long]-n[short] <= 1 {
 			return
 		}
 		// the newest card of the longest queue that has a target, never a member that
@@ -1465,7 +1525,7 @@ func level(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves) {
 		q := queues[long]
 		i, to := len(q)-1, ""
 		for ; i >= 0 && to == ""; i-- {
-			to = rr.levelTo(up, n, held, widths, StagingRefusers(q[i]))
+			to = rr.levelTo(up, n, held, widths, append(StagingRefusers(q[i]), long))
 		}
 		if to == "" {
 			return
@@ -1539,4 +1599,37 @@ func takenStamps(c *Card, now time.Time) map[string]string {
 		set["first_taken"] = stamp(now)
 	}
 	return set
+}
+
+// takeTurns is a member's work cards in stream turns: one card of each stream
+// (its stream field) in turn, the streams in name order from the one at
+// offset (the member's place in the fleet, so the members together start at
+// every stream alike), within a stream by work order (SortCards), a stream
+// with none left skipped.
+func takeTurns(cards []*Card, offset int) []*Card {
+	by := map[string][]*Card{}
+	var streams []string
+	for _, c := range cards {
+		st := c.F("stream")
+		if _, ok := by[st]; !ok {
+			streams = append(streams, st)
+		}
+		by[st] = append(by[st], c)
+	}
+	sort.Strings(streams)
+	if n := len(streams); n > 0 && offset > 0 {
+		streams = append(append([]string(nil), streams[offset%n:]...), streams[:offset%n]...)
+	}
+	for _, st := range streams {
+		SortCards(by[st])
+	}
+	out := make([]*Card, 0, len(cards))
+	for turn := 0; len(out) < len(cards); turn++ {
+		for _, st := range streams {
+			if turn < len(by[st]) {
+				out = append(out, by[st][turn])
+			}
+		}
+	}
+	return out
 }

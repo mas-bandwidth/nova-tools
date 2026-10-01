@@ -2,12 +2,14 @@ package member
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -594,13 +596,13 @@ func TestAStoreThatDoesNotAnswerStopsTheTickActingOnNothing(t *testing.T) {
 		t.Parallel()
 		g := newRig(Config{As: "m", Width: 2})
 		g.s.set("beat", 2, "no route to the store")
-		acted, err := g.tick(t)
-		if err == nil || !strings.Contains(err.Error(), "beat") || acted != 0 {
-			t.Fatalf("acted=%d err=%v, want a beat error", acted, err)
-		}
-		if got := g.s.lines("queue"); len(got) != 0 {
-			t.Fatalf("queue was read after a beat that failed: %q", got)
-		}
+		err := g.m.Beat()
+		require.ErrorContains(t, err, "beat: exit 2: no route to the store")
+		assert.Empty(t, g.s.lines("queue"), "a beat reads no queue")
+		g.s.set("queue", 0, queueJSON(t, 7))
+		_, err = g.tick(t)
+		require.NoError(t, err, "the work pass sends no beat, so a beat that fails stops nothing")
+		assert.Len(t, g.s.lines("beat"), 2, "the beat was asked again once, and the pass sent none")
 	})
 	t.Run("finish keeps the child for the next pass", func(t *testing.T) {
 		t.Parallel()
@@ -678,9 +680,7 @@ func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 			}
 			require.Equal(t, tc.running, g.m.Running())
 			g.s.reset()
-			if _, err := g.tick(t); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, g.m.Beat())
 			require.Equal(t, []string{"fleet beat m"}, g.s.lines("beat"))
 		})
 	}
@@ -1468,8 +1468,7 @@ func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 	beat := func() string {
 		t.Helper()
 		g.s.reset()
-		_, err := g.tick(t)
-		require.NoError(t, err)
+		require.NoError(t, g.m.Beat())
 		return strings.Join(g.s.lines("beat"), "|")
 	}
 	require.Equal(t, "fleet beat m", beat(), "no sample yet: the beat measures")
@@ -1479,8 +1478,7 @@ func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 	feed(5, 5, 5)
 	g.s.set("beat", 2, "no store")
 	g.s.reset()
-	_, err := g.tick(t)
-	require.Error(t, err, "a store that does not answer stops the tick")
+	require.Error(t, g.m.Beat(), "a store that does not answer is a beat that failed")
 	g.s.set("beat", 0, "")
 	feed(5)
 	require.Equal(t, "fleet beat m --load 5.0", beat(), "the 70 went with the beat that wrote it; the lost beat's samples ride the next")
@@ -1488,7 +1486,8 @@ func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 	require.Equal(t, "fleet beat m --load 12.0", beat(), "at most the ten seconds the ring holds")
 }
 
-// TestAReaderBeatsNothing: a reader runs no beat, so it reads no sample.
+// TestAReaderBeatsNothing: a reader sends no fleet beat and reads no sample; its beat is its
+// queue (docs/SPEC-SPRINT.md, the readers).
 func TestAReaderBeatsNothing(t *testing.T) {
 	t.Parallel()
 	meter, _ := secondsOfLoad(40)
@@ -1497,6 +1496,9 @@ func TestAReaderBeatsNothing(t *testing.T) {
 	_, err := g.tick(t)
 	require.NoError(t, err)
 	require.Empty(t, g.s.lines("beat"))
+	require.NoError(t, g.m.Beat())
+	require.Empty(t, g.s.lines("beat"))
+	require.Equal(t, []string{"queue --as r --json", "queue --as r --json"}, g.s.lines("queue"), "the pass's queue, then the beat's")
 }
 
 // A store that times out once on the beat or the queue is asked again once
@@ -1512,8 +1514,12 @@ func TestAStoreThatTimesOutOnceIsAskedAgain(t *testing.T) {
 			g := newRig(Config{As: "m", Width: 2})
 			g.s.set("queue", 0, queueJSON(t, 7))
 			g.s.failOnce(verb, 2, "i/o timeout")
-			_, err := g.tick(t)
-			require.NoError(t, err)
+			if verb == "beat" {
+				require.NoError(t, g.m.Beat())
+			} else {
+				_, err := g.tick(t)
+				require.NoError(t, err)
+			}
 			require.Len(t, g.s.lines(verb), 2, "the verb is asked again once")
 		})
 	}
@@ -1638,4 +1644,149 @@ func TestAMemberSpacesItsHarnessStarts(t *testing.T) {
 		require.True(t, quick.start(Packet{Card: id, Kind: "work", Gen: 1, Attempt: 1, Epoch: 1}))
 	}
 	assert.Equal(t, 300*time.Millisecond, StartGap, "the owner's gap")
+}
+
+// blockingSprint is a script whose one verb holds until released: a pass held by a slow
+// store, the way sixteen finishes from a machine far from the store hold one.
+type blockingSprint struct {
+	*scriptSprint
+	verb     string
+	entered  chan struct{}
+	released chan struct{}
+}
+
+func (b *blockingSprint) Run(args ...string) (int, []byte) {
+	if verbOf(args) == b.verb {
+		b.entered <- struct{}{}
+		<-b.released
+	}
+	return b.scriptSprint.Run(args...)
+}
+
+// lockedBuffer is an output two goroutines write.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// heldPass is a member whose work pass is held in a finish: a card it recovered has ended,
+// its push is made (the pass advanced at the clock's start), and the finish does not answer.
+// It returns the member, the script, the clock's setter, the release and the pass's end.
+func heldPass(t *testing.T) (*Member, *blockingSprint, func(time.Duration), func(), <-chan struct{}) {
+	t.Helper()
+	start := time.Unix(1_000_000, 0)
+	var at atomic.Int64
+	at.Store(start.UnixNano())
+	bs := &blockingSprint{scriptSprint: newScript(), verb: "finish", entered: make(chan struct{}), released: make(chan struct{})}
+	r := newRunner()
+	m := New(Config{As: "m", Width: 2, Now: func() time.Time { return time.Unix(0, at.Load()) }}, bs, r, &fakePusher{def: Push{Sha: fullSha}}, &bytes.Buffer{})
+	p := pk("c1")
+	bs.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
+	_, err := m.Tick(start)
+	require.NoError(t, err)
+	r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "abc", Report: "done"})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = m.Tick(start) // ignored: the pass's own result is not what these tests pin
+	}()
+	<-bs.entered
+	after := func(d time.Duration) { at.Store(start.Add(d).UnixNano()) }
+	var once sync.Once
+	release := func() { once.Do(func() { close(bs.released) }) }
+	t.Cleanup(func() { release(); <-done })
+	return m, bs, after, release, done
+}
+
+// beats runs the member's beat loop on ticks the test sends; stop ends it and returns once
+// the loop has finished every tick it took, so what it sent can be counted.
+func beats(m *Member) (ticks chan time.Time, out *lockedBuffer, stop func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ticks, out = make(chan time.Time), &lockedBuffer{}
+	ended := make(chan struct{})
+	go func() { defer close(ended); m.BeatLoop(ctx, ticks, out) }()
+	return ticks, out, func() { cancel(); <-ended }
+}
+
+// A MEMBER BUSY IN ITS PASS KEEPS BEATING (the fleet pass of 2026-10-01: a machine pushing
+// and finishing was marked down for no beat in 45 s). The pass is held in a finish for
+// longer than MissedBeatsDown beat windows; the beat, on its own clock, goes on.
+func TestAMemberBusyInItsPassKeepsBeating(t *testing.T) {
+	t.Parallel()
+	m, bs, after, release, done := heldPass(t)
+	ticks, out, stop := beats(m)
+	for _, d := range []time.Duration{15 * time.Second, 30 * time.Second, 45 * time.Second, 90 * time.Second, 4 * time.Minute} {
+		after(d)
+		ticks <- time.Time{}
+	}
+	stop()
+	assert.Len(t, bs.lines("beat"), 5, "every tick beat while the pass was held, the longest four minutes in")
+	assert.Empty(t, bs.lines("finish"), "the finish is still held")
+	assert.NotContains(t, out.String(), "STOPPED")
+	release()
+	<-done
+	assert.Len(t, bs.lines("finish"), 1)
+}
+
+// A MEMBER WHOSE PASS IS HUNG STOPS BEATING. Past BeatStall with no advance the beat stops,
+// said once, so the sprint marks the member down and deals its cards elsewhere; when the
+// pass goes on again, the beat does, said once.
+func TestAMemberWhosePassIsHungStopsBeating(t *testing.T) {
+	t.Parallel()
+	m, bs, after, release, done := heldPass(t)
+	ticks, out, stop := beats(m)
+	after(BeatStall + time.Second)
+	ticks <- time.Time{}
+	after(BeatStall + time.Minute)
+	ticks <- time.Time{}
+	ticks <- time.Time{} // taken only once the tick before it is done
+	assert.Empty(t, bs.lines("beat"), "a hung pass sends no beat")
+	assert.Equal(t, 1, strings.Count(out.String(), "MEMBER BEAT STOPPED: the work pass has not advanced for 5m1s (the bound is 5m0s)"), "said once")
+	release()
+	<-done // the finish answered: the pass advanced
+	ticks <- time.Time{}
+	stop()
+	assert.NotEmpty(t, bs.lines("beat"), "the beat goes on once the pass does")
+	assert.Contains(t, out.String(), "NOTE beat resumed: the work pass advanced\n")
+}
+
+// TestALaneThatFinishesIsRefilledInTheSamePass pins the member's side of
+// DealAhead (internal/sprint/width.go): a member at its width with a card
+// ready behind it reports the child that ended and takes the ready card in
+// the one pass, so the lane is refilled at once and never waits for the
+// sprint's next tick: finish, then take --limit 1, then the start.
+func TestALaneThatFinishesIsRefilledInTheSamePass(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 1})
+	g.m.pusher = &fakePusher{def: Push{Sha: fullSha}}
+	p1 := pk("c1")
+	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
+	g.s.set("take", 0, takeJSON(t, p1))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 1, g.m.Running(), "the width is full")
+	g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "abc123", Report: "# Result\n\ndone"})
+	p2 := pk("c2")
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1), ready("c2")))
+	g.s.set("take", 0, takeJSON(t, p2))
+	g.s.reset()
+	acted, err := g.tick(t)
+	require.NoError(t, err)
+	assert.Len(t, g.s.lines("finish"), 1, "the ended child is reported")
+	assert.Equal(t, []string{"take --as m --limit 1 --json --epoch 7"}, g.s.lines("take"), "the freed lane is taken in the same pass")
+	assert.Equal(t, []string{"c1", "c2"}, g.r.started(), "the ready card is started in the same pass")
+	assert.Equal(t, 1, g.m.Running(), "the member runs at most its width")
+	assert.Equal(t, 2, acted, "one report and one start")
 }

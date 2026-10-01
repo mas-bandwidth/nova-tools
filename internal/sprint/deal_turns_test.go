@@ -11,12 +11,16 @@ import (
 // card from each stream in turn, never one stream's backlog before another's
 // first card.
 
-// streamsOf30 is the fleet harness with 8 up members of room 2 and three
+// streamsRoom is the room of streamsOf30's fleet: eight members of width 2,
+// each dealt DealAhead times it.
+const streamsRoom = 8 * DealAhead * 2
+
+// streamsOf30 is the fleet harness with 8 up members of width 2 and three
 // streams of 30 ready primaries, s1 added first (the lowest scores).
 func streamsOf30(t *testing.T) *world {
 	t.Helper()
 	members := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"}
-	w := fleetWorld(t, 30, 2, members...) // at width 2 the room is 16
+	w := fleetWorld(t, 30, 2, members...) // at width 2 the room is streamsRoom, 32
 	w.must(Add(w.s, AddReq{Stream: "s2", Count: 30}))
 	w.must(Add(w.s, AddReq{Stream: "s3", Count: 30}))
 	return w
@@ -71,8 +75,8 @@ func TestDealWorksEveryStreamInParallel(t *testing.T) {
 	w := streamsOf30(t)
 	w.part(TickDeal, TickReq{})
 	got := workingBy(w.s, "s1", "s2", "s3")
-	if got["s1"]+got["s2"]+got["s3"] != 16 {
-		t.Fatalf("working %v, want the room of 16 dealt", got)
+	if got["s1"]+got["s2"]+got["s3"] != streamsRoom {
+		t.Fatalf("working %v, want the room of %d dealt", got, streamsRoom)
 	}
 	spread(t, got)
 	for _, st := range []string{"s1", "s2", "s3"} {
@@ -88,8 +92,8 @@ func TestDealSkipsAStreamWithNoReadyCard(t *testing.T) {
 	}
 	w.part(TickDeal, TickReq{})
 	got := workingBy(w.s, "s1", "s2", "s3")
-	if got["s2"] != 0 || got["s1"] != 8 || got["s3"] != 8 {
-		t.Fatalf("working %v, want s2 skipped and the room of 16 split 8 and 8", got)
+	if got["s2"] != 0 || got["s1"] != streamsRoom/2 || got["s3"] != streamsRoom/2 {
+		t.Fatalf("working %v, want s2 skipped and the room of %d split evenly", got, streamsRoom)
 	}
 }
 
@@ -105,8 +109,8 @@ func TestTickDealWorksEveryStreamInParallel(t *testing.T) {
 	p, _ := TickDeal(w.s, TickReq{})
 	w.must(p)
 	got := workingBy(w.s, "s1", "s2", "s3")
-	if got["s1"]+got["s2"]+got["s3"] != 16 {
-		t.Fatalf("working %v, want the room of 16 dealt", got)
+	if got["s1"]+got["s2"]+got["s3"] != streamsRoom {
+		t.Fatalf("working %v, want the room of %d dealt", got, streamsRoom)
 	}
 	spread(t, got)
 	for _, st := range []string{"s1", "s2", "s3"} {
@@ -175,15 +179,16 @@ func TestPreview(t *testing.T) {
 
 // A card the deal leaves waiting says how many ready cards are ahead of it in
 // the deal's order (held.go's dealTurn, the stream turns from the deal's
-// index): after the tick's deal of three streams of 30 to 8 members of room 2
-// (sixteen cards, the last of s1, so the index is past s1), the second
-// stream's next card has none ahead, the third's one, the first's two.
+// index): after the tick's deal of three streams of 30 to 8 members of width 2
+// (DealAhead times two each: thirty-two cards, the last of s2, so the index is
+// past s2), the third stream's next card has none ahead, the first's one, the
+// second's two.
 func TestAHeldReadyCardCountsWhatIsAheadInTheDealsOrder(t *testing.T) {
 	t.Parallel()
 	w := streamsOf30(t)
 	w.part(TickDeal, TickReq{})
 	h := HeldState{Snap: w.s, Running: true}
-	for id, ahead := range map[string]int{"s2-6": 0, "s3-6": 1, "s1-7": 2, "s2-7": 3, "s3-7": 4, "s1-8": 5} {
+	for id, ahead := range map[string]int{"s3-11": 0, "s1-12": 1, "s2-12": 2, "s3-12": 3, "s1-13": 4, "s2-13": 5} {
 		hd := Holder(h, h.Snap.Now, id)
 		if want := fmt.Sprintf("0 free, %d ready ahead of it", ahead); !strings.Contains(hd.String(), want) {
 			t.Errorf("%s: %s, want %q", id, hd, want)

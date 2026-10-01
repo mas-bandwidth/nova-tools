@@ -753,7 +753,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 			texts = []storyText{}
 		}
 		b, _ := json.Marshal(cardView{Primary: v.Primary, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
-			Cost: sprint.CardCost(v.Work, v.Reads), Timeline: events, Texts: texts})
+			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -772,7 +772,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, sprint.NextLine(v.Work))
 		}
 		// what it cost: a line per consumer that ended, and the totals
-		for _, line := range sprint.CardCost(v.Work, v.Reads).CostLines() {
+		for _, line := range sprint.CardCostOf(v.Primary).CostLines() {
 			fmt.Fprintln(stdout, oneline.Escape(line))
 		}
 		epoch := uint64(0)

@@ -46,12 +46,12 @@ func TestDealFillsTheFleetToWidthInOnePlan(t *testing.T) {
 	}
 }
 
-// A machine at its width takes no more: m1 holding 64 (ready and working) is
-// skipped, and the others take the cards.
-func TestDealSkipsAMachineAtItsWidth(t *testing.T) {
+// A machine at DealAhead times its width takes no more: m1 holding 128 (64
+// working, 64 ready) at width 64 is skipped, and the others take the cards.
+func TestDealSkipsAMachineAtDealAheadTimesItsWidth(t *testing.T) {
 	t.Parallel()
 	w := fleetWorld(t, 10, 64, "m1", "m2")
-	for i := range 64 {
+	for i := range DealAhead * 64 {
 		col := Ready
 		if i%2 == 0 {
 			col = Working
@@ -64,53 +64,54 @@ func TestDealSkipsAMachineAtItsWidth(t *testing.T) {
 	}
 	for _, u := range p.Units {
 		if c := u.Changes[0].Entry.Create; c == nil || c.Row != "m2" {
-			t.Fatalf("a card went to a member at its width: %+v", u)
+			t.Fatalf("a card went to a member at DealAhead times its width: %+v", u)
 		}
 	}
-	if n := w.s.Fleet.Count("m1", Ready) + w.s.Fleet.Count("m1", Working); n != 64 {
-		t.Fatalf("m1 holds %d, its width is 64", n)
+	if n := w.s.Fleet.Count("m1", Ready) + w.s.Fleet.Count("m1", Working); n != DealAhead*64 {
+		t.Fatalf("m1 holds %d, DealAhead times its width 64 is %d", n, DealAhead*64)
 	}
 }
 
-// At width 2 the deal is today's: two cards a member, sixteen over eight.
-func TestDealAtWidthTwoIsTodays(t *testing.T) {
+// At width 2 the deal gives each member DealAhead times two: thirty-two over
+// eight.
+func TestDealAtWidthTwoDealsDealAheadTimesTwo(t *testing.T) {
 	t.Parallel()
 	w := widthFleet(t, 2)
 	p := w.part(TickDeal, TickReq{})
-	if len(p.Units) != 16 {
-		t.Fatalf("dealt %d, want 16", len(p.Units))
+	if len(p.Units) != 8*DealAhead*2 {
+		t.Fatalf("dealt %d, want %d", len(p.Units), 8*DealAhead*2)
 	}
 	for m, n := range perMember(w.s) {
-		if n != 2 {
-			t.Fatalf("%s holds %d, want 2", m, n)
+		if n != DealAhead*2 {
+			t.Fatalf("%s holds %d, want DealAhead times 2", m, n)
 		}
 	}
 }
 
-// T3, the present tick's deal, does the same in one part: 150 over eight of
-// width 64 in the one plan, past TickMaxMoves's 200-unit bound of the other
-// parts only by TickMaxDeal's.
-func TestTickDealFillsTheFleetToWidth(t *testing.T) {
+// T3, the present tick's deal, fills eight members of width 64 to DealAhead
+// times their width in the one plan, past TickMaxMoves's 200-unit bound of the
+// other parts only by TickMaxDeal's.
+func TestTickDealFillsTheFleetToDealAheadTimesWidth(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t, "reader-a")
 	for _, m := range widthMembers {
 		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m, Width: 64}))
 	}
 	for _, st := range []string{"s1", "s2", "s3"} {
-		w.must(Add(w.s, AddReq{Stream: st, Count: 200}))
+		w.must(Add(w.s, AddReq{Stream: st, Count: 400}))
 	}
 	p, due := TickDeal(w.s, TickReq{})
-	if len(p.Units) != 8*64 || due != 0 {
-		t.Fatalf("dealt %d (due %d), want the room of %d", len(p.Units), due, 8*64)
+	if len(p.Units) != 8*DealAhead*64 || due != 0 {
+		t.Fatalf("dealt %d (due %d), want the room of %d", len(p.Units), due, 8*DealAhead*64)
 	}
 	w.must(p)
 	for m, n := range perMember(w.s) {
-		if n != 64 {
-			t.Fatalf("%s holds %d, want its width 64", m, n)
+		if n != DealAhead*64 {
+			t.Fatalf("%s holds %d, want DealAhead times its width 64", m, n)
 		}
 	}
 	if p, _ := TickDeal(w.s, TickReq{}); len(p.Units) != 0 {
-		t.Fatalf("a fleet at its width is dealt %d more", len(p.Units))
+		t.Fatalf("a fleet at DealAhead times its width is dealt %d more", len(p.Units))
 	}
 }
 

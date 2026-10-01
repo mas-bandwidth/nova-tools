@@ -123,8 +123,8 @@ func TestTheWorkTableCostColumnIsEachStreamsLandedCostAndTheTotal(t *testing.T) 
 	}
 }
 
-// A landing's total leaves no consumer out: a read handed back and retired is a kept
-// record, not a placed card, and the merge reads it with the step (LandingExtras).
+// A landing's total leaves no consumer out: a read handed back and retired is in the
+// card's own records, written when it was returned (cost.go: the cost is in the card).
 func TestALandingCountsAReadReturnedAndRetired(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)

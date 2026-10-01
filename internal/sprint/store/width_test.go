@@ -97,49 +97,57 @@ func TestOneTickDealsFiveHundred(t *testing.T) {
 	h.clean("five hundred")
 }
 
-// A machine at its width takes no more: after the fleet is full the next tick
-// deals nothing, and a machine that finishes work takes exactly what it
-// finished.
-func TestAMachineAtItsWidthTakesNoMore(t *testing.T) {
+// A machine at DealAhead times its width takes no more: after the fleet is full
+// the next tick deals nothing, and when a machine finishes work the fleet is
+// dealt exactly what was finished, every machine back at DealAhead times its
+// width (the level at the tick's start gives the machine that finished a
+// share of the others' ready cards; the deal fills the rest).
+func TestAMachineAtDealAheadTimesItsWidthTakesNoMore(t *testing.T) {
 	t.Parallel()
-	h := widthSprint(t, 4, 50) // room 32 of 150
+	h := widthSprint(t, 4, 50) // room 8 x 8 = 64 of 150
+	full := sprint.DealAhead * 4
 	h.machine()
 	s := h.snap()
 	for _, m := range widthMembers {
-		if n := heldBy(s, m); n != 4 {
-			t.Fatalf("%s holds %d, want its width 4", m, n)
+		if n := heldBy(s, m); n != full {
+			t.Fatalf("%s holds %d, want DealAhead times its width, %d", m, n, full)
 		}
 	}
 	h.tick(time.Second)
 	if res := h.machine(); len(dealtBy(res)) != 0 {
 		t.Fatalf("a full fleet was dealt %v", dealtBy(res))
 	}
-	h.work("m3") // takes its four and finishes them
+	h.work("m3") // takes its eight and finishes them
 	h.tick(time.Second)
 	by := dealtBy(h.machine())
-	if len(by) != 1 || by["m3"] != 4 {
-		t.Fatalf("after m3 finished four: dealt %v, want m3:4", by)
+	total := 0
+	for _, n := range by {
+		total += n
+	}
+	if total != full {
+		t.Fatalf("after m3 finished %d: dealt %v, want %d in all", full, by, full)
 	}
 	for _, m := range widthMembers {
-		if n := heldBy(h.snap(), m); n > 4 {
-			t.Fatalf("%s holds %d past its width", m, n)
+		if n := heldBy(h.snap(), m); n != full {
+			t.Fatalf("%s holds %d, want DealAhead times its width, %d", m, n, full)
 		}
 	}
 }
 
-// At width 2 the store's tick is today's: two cards a machine, sixteen dealt.
-func TestWidthTwoIsTodaysDeal(t *testing.T) {
+// At width 2 the store's tick deals DealAhead times two cards a machine:
+// thirty-two dealt over eight.
+func TestWidthTwoDealsDealAheadTimesTwo(t *testing.T) {
 	t.Parallel()
 	h := widthSprint(t, 2, 50)
 	h.machine()
 	s := h.snap()
 	for _, m := range widthMembers {
-		if n := s.Fleet.Count(m, sprint.Ready); n != 2 {
-			t.Fatalf("%s ready %d, want 2", m, n)
+		if n := s.Fleet.Count(m, sprint.Ready); n != sprint.DealAhead*2 {
+			t.Fatalf("%s ready %d, want DealAhead times 2", m, n)
 		}
 	}
-	if w := len(s.Work.Column(sprint.Working)); w != 16 {
-		t.Fatalf("working %d, want 16", w)
+	if w := len(s.Work.Column(sprint.Working)); w != 8*sprint.DealAhead*2 {
+		t.Fatalf("working %d, want %d", w, 8*sprint.DealAhead*2)
 	}
 }
 

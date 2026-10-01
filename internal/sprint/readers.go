@@ -2,6 +2,8 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -104,9 +106,12 @@ func returnedRead(rc *Card) bool { return rc.Col == Asked && rc.F(FieldReturned)
 // the ask asks it again.
 const FieldReturned = "returned"
 
-// FieldReasked is how many times the ask asked a read card again in place, of
-// the reader that returned it; MaxReadReasks is the most: a return after them is
-// counted as a read (Read; tla/DirtyTick.tla, MaxReasks and ReasksBounded).
+// FieldReasked is how many times a read card's reader returned it and it went
+// back to asked on the reader's row, counted by Read itself at each return, so
+// the bound holds whatever the tick does and however many readers are up (the
+// ask need not run for the count to move); MaxReadReasks is the most: the
+// return after them retires the card, counted as a read (tla/DirtyTick.tla,
+// MaxReasks and ReasksBounded).
 const (
 	FieldReasked  = "reasked"
 	MaxReadReasks = 2
@@ -122,4 +127,156 @@ func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 		}
 	}
 	return out
+}
+
+// sweepReads is the readers' rebalance's safety (the owner, 2026-10-01: "and it's
+// a safety, if ever there are cards on a held or down machine, rebalance moves
+// them away."): every read asked or reading of a reader that is not up is taken
+// back, retired as the ask takes back a read asked of a reader away
+// (retired_by away: that reader keeps its card at the attempt, so it is not
+// asked that attempt again), and the tick's ask asks it of the readers up. A
+// read stays where it is when the ask could not place it (fewer than two
+// readers up, or none up without a card at its attempt): it is judged while its
+// reader is away and read when the reader is back (read_return_test.go). A
+// snapshot with no reader states holds every reader up: nothing moves.
+func sweepReads(s *Snapshot, p *Plan) {
+	up := s.UpReaders()
+	if s.ReaderStates == nil || len(up) < 2 {
+		return
+	}
+	taker := func(c *Card) bool {
+		for _, rd := range up {
+			if s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
+				return true
+			}
+		}
+		return false
+	}
+	for _, rd := range s.Readers.Rows() {
+		if s.ReaderIsUp(rd) {
+			continue
+		}
+		cards := append(append([]*Card{}, s.Readers.Cell(rd, Asked)...), s.Readers.Cell(rd, Reading)...)
+		SortCards(cards)
+		for _, c := range cards {
+			if !taker(c) {
+				continue
+			}
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
+				Changes: []Change{change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": "away"}))},
+				Moved:   fmt.Sprintf("%s %s:%s -> taken back (%s is %s); the ask asks it of a reader up", c.ID, rd, c.Col, rd, orDash(s.ReaderStates[rd]))})
+		}
+	}
+}
+
+// RetiredByLevel is a read card's retired_by when the tick's level moved its
+// read, asked and not begun, to another reader (levelReads).
+const RetiredByLevel = "level"
+
+// TickLevelReads is the readers' rebalance, once at the start of every tick,
+// before any other part (the owner, 2026-10-01: "both for readers and fleet,
+// there needs to be a rebalance step done at the start of each tick. it's
+// simple. just once before tick, rebalance each table."): levelReads, in one
+// plan.
+func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
+	var p Plan
+	levelReads(s, &p)
+	return bound(p)
+}
+
+// levelReads evens the up readers' loads, the fleet's level (level) in the
+// readers' shape: a reader's load is its reads asked and reading together.
+// While the largest load of a reader with an asked read and the smallest load
+// of a reader up differ by more than one, the newest asked read (the last in
+// work order) of the largest moves to the next reader up round the readers
+// from the ask's index (askRound, round.levelTo) whose load is at or below the
+// mean, the index moved past it as the ask moves it. So no reader up is idle
+// while another holds a backlog. A read moves only to a reader with no card
+// at its primary's attempt, placed or retired: a primary's two reads stay
+// with two different readers, and no reader is asked an attempt it already
+// read. The move retires the read card (retired_by level: the reader it left
+// is never asked that attempt again) and asks the read of the other reader
+// at the same attempt and head, its route kept, in the readers table only. A
+// read begun stays with its reader; a reader that is not up is neither a
+// source nor a target: sweepReads takes its reads back first.
+//
+// The sprint knows no reader's width: a reader loop's --width is the loop's
+// own, and the readers table has no width column, so every reader up counts
+// alike and nothing here bounds a reader at DealAhead times a width.
+func levelReads(s *Snapshot, p *Plan) {
+	sweepReads(s, p)
+	up := s.UpReaders()
+	if len(up) < 2 {
+		return
+	}
+	held, queues, room := map[string]int{}, map[string][]*Card{}, map[string]int{}
+	for _, rd := range up {
+		held[rd] = s.Readers.Count(rd, Asked) + s.Readers.Count(rd, Reading)
+		queues[rd] = append([]*Card{}, s.Readers.Cell(rd, Asked)...)
+		SortCards(queues[rd])
+		room[rd] = math.MaxInt // no reader width is known: none bounds the move
+	}
+	rr := askRound(s)
+	moves := roundMoves{}
+	for {
+		long, short := "", ""
+		for _, rd := range up {
+			if len(queues[rd]) > 0 && (long == "" || held[rd] > held[long]) {
+				long = rd
+			}
+			if short == "" || held[rd] < held[short] {
+				short = rd
+			}
+		}
+		if long == "" || held[long]-held[short] <= 1 {
+			break
+		}
+		q := queues[long]
+		i, to := len(q)-1, ""
+		for ; i >= 0 && to == ""; i-- {
+			avoid := []string{long}
+			for _, rd := range up {
+				if s.Readers.Card(ReadCardID(q[i].F("primary"), q[i].Int("attempt"), rd)) != nil {
+					avoid = append(avoid, rd)
+				}
+			}
+			to = rr.levelTo(up, maps.Clone(held), held, room, avoid)
+		}
+		if to == "" {
+			break
+		}
+		i++
+		c := q[i]
+		held[long]--
+		held[to]++
+		queues[long] = append(q[:i:i], q[i+1:]...)
+		moves[c.ID] = to
+		fields := movedReadFields(c, to, s.Now)
+		id := ReadCardID(c.F("primary"), c.Int("attempt"), to)
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{
+			change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByLevel})),
+			change(Readers, createEntry(id, to, Asked, c.Score, fields)),
+		}, Moved: fmt.Sprintf("%s %s:asked -> %s:asked (%s)", c.ID, long, to, id)})
+	}
+	roundWrites(p, rr, moves)
+}
+
+// movedReadFields is the fields of the card a read moved by the level is asked
+// on: the read's own (its primary, stream, attempt, head and route) for the
+// reader it goes to, asked now, and none of its run on the reader it left: not
+// returned, not reasked (the new reader's bound starts at zero), no
+// read_take_<n> and no usage. The card it leaves is retired with every field it
+// had, and a returned run's cost is the primary's (cost_record:<card>#r<n>,
+// cost.go): the move loses none of it.
+func movedReadFields(c *Card, to string, now time.Time) map[string]string {
+	fields := map[string]string{}
+	for k, v := range c.Fields {
+		switch {
+		case k == FieldReturned, k == FieldReasked, k == FieldUsage, strings.HasPrefix(k, FieldReadTake):
+			continue
+		}
+		fields[k] = v
+	}
+	fields["reader"], fields["asked"] = to, stamp(now)
+	return fields
 }

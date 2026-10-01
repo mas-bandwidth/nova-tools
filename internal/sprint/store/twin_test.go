@@ -67,6 +67,9 @@ func TestAWriteDuringTheTickIsReadAgain(t *testing.T) {
 	h.setup(4)
 	h.startMachine()
 	h.machine()
+	// m2 finishes its cards, so the tick below asks them: the ask is a part that
+	// runs after the world's write
+	h.work("m2")
 	h.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 100}, Who: "m1"}))
 	s := h.snap()
 	var ids, primaries []string
