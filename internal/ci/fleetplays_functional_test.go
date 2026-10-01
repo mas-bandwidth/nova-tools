@@ -67,7 +67,7 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		assert.Contains(t, play(p, "--syntax-check"), "playbook: ")
 	}
 	tools := play("tools.yml", check...)
-	assert.Contains(t, tools, "WOULD-BUILD version=v0.0.0-check platforms=")
+	assert.Contains(t, tools, "WOULD-BUILD version=v0.0.0-check out="+filepath.Join(dir, "release")+" built=none missing=")
 	assert.Contains(t, tools, "TOOLS host=localhost platform=")
 	assert.Contains(t, tools, "WOULD-INSTALL")
 	assert.Contains(t, tools, "+v0.0.0-check", "the build fact's diff")

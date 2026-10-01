@@ -38,7 +38,8 @@
     loop_names: "{{ nova_loops | map(attribute='name') | list }}"
     loop_scope: "{{ 'system' if loop_system else 'user' }}"
     loop_runtime: { XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}" }
-    # The mark every unit this play writes carries (its templates' first comment).
+    # The mark every unit this play writes carries (its templates' first
+    # comment); find's contains matches a line from its start, hence the .*.
     loop_mark: written by fleet/loops.yml from the loop record
   tasks:
     - name: the inventory carries this machine's loop records
@@ -133,7 +134,7 @@
       register: loop_present
 
     - name: the units this play wrote (they carry its mark)
-      ansible.builtin.find: { paths: "{{ item }}", patterns: "{{ loop_patterns }}", contains: "{{ loop_mark }}" }
+      ansible.builtin.find: { paths: "{{ item }}", patterns: "{{ loop_patterns }}", contains: "{{ '.*' ~ loop_mark }}" }
       loop: ["{{ loop_dir }}", "{{ loop_other_dir }}"]
       register: loop_marked
 
