@@ -217,10 +217,20 @@ const NReadyToMerge = "ready to merge"
 // the pump's one plan (Accept). The coordinator is told once for each stream
 // the tick queued cards in, "ready to merge" with the cards in order: the
 // merge is the coordinator's.
+//
+// A primary a change queued after the drain names (s.Held) is not eligible: it
+// waits for the next tick's pump, where the change finds it where it expects
+// it (docs/SPEC-SPRINT.md's accept row: review -> merging only on two ok reads
+// at the head, and the work table advances only at a tick's pump). It is
+// dropped here, before the plan, so the stream's state change and both notes
+// are planned for the cards accepted and for no others.
 func TickAccept(s *Snapshot, r TickReq) (Plan, int) {
 	eligible := func(c *Card) string {
 		if c.F("result") == "failed" || len(okReaders(s, c)) < 2 {
 			return "not two ok reads"
+		}
+		if s.Held[c.ID] {
+			return "a change is queued for it"
 		}
 		if m := s.Merge.Card(c.ID); m != nil && (!m.Placed() || m.Col != Returned) {
 			return "its merge record is " + placeWord(m)

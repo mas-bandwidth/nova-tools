@@ -363,7 +363,6 @@ func QueuedCards(q []QueuedChange) map[string]bool {
 // expects it. Each unit left is said, never silent.
 func LeaveQueued(p Plan, held map[string]bool) Plan {
 	var keep []Unit
-	var dropped []Unit
 	for _, u := range p.Units {
 		var named string
 		for _, c := range u.Changes {
@@ -376,113 +375,11 @@ func LeaveQueued(p Plan, held map[string]bool) Plan {
 			keep = append(keep, u)
 			continue
 		}
-		dropped = append(dropped, u)
 		p.refuse(u.Key, named+" has a change queued after this tick's drain: it waits for the next tick's pump")
 	}
 	if len(keep) < len(p.Units) {
 		p.Units = keep
-		preserveStreamEffects(&p, dropped)
 		rewriteRounds(&p) // a unit dropped placed nothing: no index moves for it
-		deriveReadyToMergeNotes(&p)
 	}
 	return p
-}
-
-// preserveStreamEffects moves stream control changes and stream-started-merging
-// notes from dropped units to the first kept unit of that stream, so a stream
-// with remaining accepted cards still transitions to merging.
-func preserveStreamEffects(p *Plan, dropped []Unit) {
-	for _, d := range dropped {
-		ctlID := CtlID(d.Stream)
-		var ctlChanges []Change
-		for _, c := range d.Changes {
-			if c.Table == Merge && c.Entry.ID == ctlID {
-				ctlChanges = append(ctlChanges, c)
-			}
-		}
-		var streamNotes []Note
-		for _, n := range d.Notes {
-			if n.Type == NStartedMerging && n.Stream == d.Stream {
-				streamNotes = append(streamNotes, n)
-			}
-		}
-		if len(ctlChanges) == 0 && len(streamNotes) == 0 {
-			continue
-		}
-		first := -1
-		for i := range p.Units {
-			if p.Units[i].Stream == d.Stream {
-				first = i
-				break
-			}
-		}
-		if first < 0 {
-			continue
-		}
-		target := &p.Units[first]
-		for _, c := range ctlChanges {
-			idx := -1
-			for j, tc := range target.Changes {
-				if tc.Table == c.Table && tc.Entry.ID == c.Entry.ID {
-					idx = j
-					break
-				}
-			}
-			if idx < 0 {
-				target.Changes = append(target.Changes, c)
-			} else {
-				merged := map[string]string{}
-				for k, v := range target.Changes[idx].Entry.Set {
-					merged[k] = v
-				}
-				for k, v := range c.Entry.Set {
-					merged[k] = v
-				}
-				target.Changes[idx].Entry.Set = merged
-			}
-		}
-		for _, n := range streamNotes {
-			has := false
-			for _, tn := range target.Notes {
-				if tn.Type == n.Type && tn.Stream == n.Stream {
-					has = true
-					break
-				}
-			}
-			if !has {
-				target.Notes = append(target.Notes, n)
-			}
-		}
-	}
-}
-
-// deriveReadyToMergeNotes rebuilds NReadyToMerge notes from the kept units of
-// each stream: if an accept unit was held back by LeaveQueued, the coordinator
-// is not told it was accepted, and a stream with no kept units emits no note.
-func deriveReadyToMergeNotes(p *Plan) {
-	kept := map[string]bool{}
-	for _, u := range p.Units {
-		kept[u.Key] = true
-	}
-	var notes []Note
-	for _, n := range p.Notes {
-		if n.Type != NReadyToMerge {
-			notes = append(notes, n)
-			continue
-		}
-		var ids []string
-		for _, id := range n.Primaries {
-			if kept[id] {
-				ids = append(ids, id)
-			}
-		}
-		if len(ids) == 0 {
-			continue
-		}
-		n.Primaries = ids
-		n.Count = len(ids)
-		n.What = fmt.Sprintf("%d accepted and queued to merge: %s; run: nova-sprint merge --stream %s", len(ids), Preview(ids, " "), n.Stream)
-		notes = append(notes, n)
-	}
-	p.Notes = notes
 }

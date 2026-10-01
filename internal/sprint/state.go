@@ -589,6 +589,12 @@ type Snapshot struct {
 	// that drains it.
 	QueueLen int
 	Queue    []QueuedChange
+	// Held is the work cards a change queued after the pump's drain names,
+	// read with a pump part's step: the part leaves them for the next tick's
+	// pump (LeaveQueued), and a part that plans a card's move reads it to
+	// plan none for them (TickAccept), so its notes and its stream's state
+	// are planned for the cards it moves only. nil is none.
+	Held map[string]bool
 	// Running says the machine was RUNNING as the step read the sprint: its
 	// pump accepts a primary with two ok reads, so no step opens a "ready to
 	// accept" judgment for it ("accept is mechanical").
