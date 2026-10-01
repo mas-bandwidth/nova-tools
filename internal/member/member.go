@@ -280,12 +280,10 @@ func (m *Member) Running() int {
 // that stopped a step; a refused verb is not an error here (it is printed and
 // the card is left for the next pass), a store that does not answer is.
 func (m *Member) Tick(now time.Time) (acted int, err error) {
-	load := 0
-	if m.width > 0 {
-		load = m.Running() * 100 / m.width
-	}
 	if !m.cfg.Reader {
-		if code, out := m.sprint.Run("fleet", "beat", m.cfg.As, "--load", strconv.Itoa(load)); code == 2 {
+		// the beat names no load: nova-sprint fleet beat measures the machine's CPU use and
+		// keeps the highest of the last sprint.LoadWindow (docs/SPEC-SPRINT.md, the fleet)
+		if code, out := m.sprint.Run("fleet", "beat", m.cfg.As); code == 2 {
 			return 0, fmt.Errorf("beat: the store did not answer: %s", strings.TrimSpace(string(out)))
 		}
 	}
