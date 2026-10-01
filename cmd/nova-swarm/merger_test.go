@@ -77,7 +77,12 @@ func (s *benchSprint) Run(args ...string) (int, []byte) {
 			s.state = "stopped"
 		default:
 			n, _ := strconv.Atoi(args[4])
+			var out strings.Builder
+			for _, c := range s.queue[:n] {
+				out.WriteString("MOVED " + c.ID + " merging -> landed\n")
+			}
 			s.queue = s.queue[n:]
+			return 0, []byte(out.String() + "MERGE OK\n")
 		}
 		return 0, []byte("MERGE OK\n")
 	}
@@ -275,6 +280,23 @@ func TestAfterARedBatchResumeIsEnoughForTheNextBatchToLand(t *testing.T) {
 	assert.Contains(t, b.sprint.facts[1], "merge --stream s1 --batch 1 --note landed main at "+next)
 }
 
+// No check run on the pushed batch within the grace (no CI ran, a workflow with no
+// trigger for sprint/**): red, with the remedy in the note, and main does not move.
+func TestNoCheckRunOnOriginIsRedAndNothingLands(t *testing.T) {
+	t.Parallel()
+	b := newMergeBench(t)
+	b.card("s1-1", "a", "one\n")
+	before := b.ref("main")
+	m, _ := b.merger(1, &benchChecks{state: member.CheckNone})
+	b.tick(m, mergeT0)
+	b.tick(m, mergeT0.Add(30*time.Second))
+	assert.Empty(t, b.sprint.facts, "within the grace it waits")
+	b.tick(m, mergeT0.Add(2*time.Minute))
+	branch := b.ref("sprint/s1.e0.b1")
+	assert.Equal(t, []string{"merge --stream s1 --batch 1 --red --note no CI ran on " + branch + " in " + b.origin + ": add a workflow trigger for sprint/** and resume --epoch 0"}, b.sprint.facts)
+	assert.Equal(t, before, b.ref("main"), "the gate does not fail open")
+}
+
 // A stopped stream is untouched: no working repository, no branch, no fact.
 func TestTheMergerLeavesAStoppedStreamAlone(t *testing.T) {
 	t.Parallel()
@@ -297,6 +319,7 @@ func TestMemberMergerFlags(t *testing.T) {
 		{"--merger --reader --as m --root R", "--merger and --reader are two roles"},
 		{"--merger --batch 0 --as m --root R", "--batch is the most cards of a stream's batch, at least 1"},
 		{"--merger --root R", "--as"},
+		{"--merger --checks-grace 0 --as m --root R", "--checks-grace is how long a pushed batch waits for its first check run"},
 	} {
 		var out, errb bytes.Buffer
 		args := strings.Fields(strings.ReplaceAll(tc.args, "R", t.TempDir()))
@@ -306,6 +329,6 @@ func TestMemberMergerFlags(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := cmdMember([]string{"--merger", "--as", "merger", "--root", t.TempDir(), "--once", "--sprint", "/usr/bin/false"}, &out, &errb)
 	assert.Equal(t, 0, code, errb.String())
-	assert.Contains(t, out.String(), "MEMBER merger as=merger batch=1 deadline=30m0s every=3s sprint=/usr/bin/false gh=gh")
+	assert.Contains(t, out.String(), "MEMBER merger as=merger batch=1 deadline=30m0s checks-grace=2m0s every=3s sprint=/usr/bin/false gh=gh")
 	assert.Contains(t, errb.String(), "nova-swarm member: tick 1: where: exit 1", "a store that does not answer is said, not silent")
 }

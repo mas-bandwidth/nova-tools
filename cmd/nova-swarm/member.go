@@ -60,13 +60,14 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	passFlag := fs.String("pass", "", "")
 	merger := fs.Bool("merger", false, "")
 	batch := fs.Int("batch", 1, "")
+	checksGrace := newSecondsFlag(fs, "checks-grace", mergerGrace)
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	if *merger {
 		given := false
 		fs.Visit(func(fl *flag.Flag) { given = given || fl.Name == "ticks" })
-		return cmdMerger(f, *as, *root, *sprintBin, *ghBin, *batch, deadline.d, every.d, loopTicks(*once, given, *ticks), *reader, stdout, stderr)
+		return cmdMerger(f, *as, *root, *sprintBin, *ghBin, *batch, deadline.d, checksGrace.d, every.d, loopTicks(*once, given, *ticks), *reader, stdout, stderr)
 	}
 	f.want(*as, "as", "the member's name in the fleet table (a reader's in the readers table with --reader)")
 	// a member runs the width its fleet row names (fleet up --width, fleet sync), read with
@@ -192,7 +193,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 // branch, pushes it, proves it by the repository's checks (gh, waited on up to
 // --deadline), lands it on the development branch by a fast-forward and feeds
 // the merge verb the fact.
-func cmdMerger(f *flags, as, root, sprintBin, gh string, batch int, deadline, every time.Duration, ticks int, reader bool, stdout, stderr io.Writer) int {
+func cmdMerger(f *flags, as, root, sprintBin, gh string, batch int, deadline, grace, every time.Duration, ticks int, reader bool, stdout, stderr io.Writer) int {
 	f.want(as, "as", "the merger's name: the actor its merge facts are fed as")
 	f.want(root, "root", "the directory its working repositories sit under (<root>/merge/)")
 	if reader {
@@ -207,6 +208,9 @@ func cmdMerger(f *flags, as, root, sprintBin, gh string, batch int, deadline, ev
 	if every <= 0 || every > 5*time.Second {
 		f.add("--every is between 1ms and 5s")
 	}
+	if grace <= 0 {
+		f.add("--checks-grace is how long a pushed batch waits for its first check run before it is red (no CI ran), above 0")
+	}
 	if as != "" && !safepath.NameOK(as) {
 		f.add(fmt.Sprintf("--as %q is not a name (letters, digits, - _ .)", as))
 	}
@@ -216,6 +220,9 @@ func cmdMerger(f *flags, as, root, sprintBin, gh string, batch int, deadline, ev
 	if deadline == 0 {
 		deadline = mergerDeadline
 	}
+	if grace > deadline {
+		grace = deadline
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return refuse(stderr, " member", err.Error())
 	}
@@ -223,9 +230,9 @@ func cmdMerger(f *flags, as, root, sprintBin, gh string, batch int, deadline, ev
 	if err != nil {
 		return refuse(stderr, " member", "own executable: "+err.Error())
 	}
-	m := member.NewMerger(member.MergerConfig{As: as, Batch: batch, Deadline: deadline, Grace: mergerGrace, RepoOf: briefRepo},
+	m := member.NewMerger(member.MergerConfig{As: as, Batch: batch, Deadline: deadline, Grace: grace, RepoOf: briefRepo},
 		&execSprint{bin: sprintBin, actor: as}, newGitMerger(root), &ghChecks{gh: gh}, stdout)
-	fmt.Fprintf(stdout, "MEMBER merger as=%s batch=%d deadline=%s every=%s sprint=%s gh=%s\n", oneline.Field(as), batch, oneline.Field(deadline.String()), oneline.Field(every.String()), oneline.Field(sprintBin), oneline.Field(gh))
+	fmt.Fprintf(stdout, "MEMBER merger as=%s batch=%d deadline=%s checks-grace=%s every=%s sprint=%s gh=%s\n", oneline.Field(as), batch, oneline.Field(deadline.String()), oneline.Field(grace.String()), oneline.Field(every.String()), oneline.Field(sprintBin), oneline.Field(gh))
 	n, replaced := memberLoop(m, every, ticks, func() string { return binstamp.Of(self) }, stdout, stderr)
 	if replaced {
 		return exitReplaced
@@ -235,8 +242,8 @@ func cmdMerger(f *flags, as, root, sprintBin, gh string, batch int, deadline, ev
 }
 
 // The merger's bounds: how long a pushed batch waits for its checks before it is
-// red (--deadline's default), and how long a head with no check run at all
-// waits before it is taken as proved by none (a repository with no CI).
+// red (--deadline's default), and how long it waits for its first check run
+// before it is red because no CI ran on it (--checks-grace's default).
 const (
 	mergerDeadline = 30 * time.Minute
 	mergerGrace    = 2 * time.Minute

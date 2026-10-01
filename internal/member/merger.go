@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -97,7 +98,7 @@ type MergerConfig struct {
 	As       string        // the actor its facts are fed as
 	Batch    int           // the most cards of a batch (default 1)
 	Deadline time.Duration // the longest a pushed batch waits for its checks: past it, red
-	Grace    time.Duration // how long a head with no check run waits before it is taken as proved by none
+	Grace    time.Duration // how long a pushed head waits for its first check run: none by then is red (no CI ran)
 	// RepoOf is the repository and development branch a card's brief names (its
 	// header's base-repo: or REPO:, and BASE:).
 	RepoOf func(brief string) (repo, base string)
@@ -346,18 +347,25 @@ func (m *Merger) start(stream string, epoch uint64, now time.Time) (int, error) 
 
 // prove reads the checks on the pushed batch: green lands it (a fast-forward of
 // the development branch, --batch fed; not a fast-forward, --rejected), red
-// feeds --red with the batch as suspects, and a batch past the deadline is red;
-// a head with no check run within the grace is proved by none, said in the note.
+// feeds --red with the batch as suspects, and a batch past the deadline is red.
+// The gate never fails open: a head with no check run within the grace is red,
+// the stream stopped for the coordinator (no CI ran on it), and checks that
+// cannot be read past the deadline are red with the error.
 func (m *Merger) prove(stream string, epoch uint64, p *pending, now time.Time) (int, error) {
+	waited := now.Sub(p.pushed)
 	state, note, err := m.checks.State(p.b.Repo, p.head)
 	if err != nil {
+		if waited > m.cfg.Deadline {
+			delete(m.pending, stream)
+			return m.feed(p.b, "", "--red", "--note", "the checks on "+p.head+" in "+p.b.Repo+" could not be read within "+m.cfg.Deadline.String()+": "+oneLine(err.Error()))
+		}
 		m.note(stream, "reading the checks on "+p.head+": "+err.Error())
 		return 0, nil
 	}
-	waited := now.Sub(p.pushed)
 	switch {
 	case state == CheckNone && waited >= m.cfg.Grace:
-		state, note = CheckGreen, "no check run on "+p.head+" within "+m.cfg.Grace.String()+": proved by none"
+		delete(m.pending, stream)
+		return m.feed(p.b, "", "--red", "--note", "no CI ran on "+p.head+" in "+p.b.Repo+": add a workflow trigger for sprint/** and resume")
 	case (state == CheckPending || state == CheckNone) && waited > m.cfg.Deadline:
 		state, note = CheckRed, "the checks did not conclude within "+m.cfg.Deadline.String()+": "+note
 	}
@@ -366,6 +374,12 @@ func (m *Merger) prove(stream string, epoch uint64, p *pending, now time.Time) (
 		delete(m.pending, stream)
 		return m.feed(p.b, "", "--red", "--suspect", strings.Join(p.b.IDs(), ","), "--note", "checks red on "+p.b.Branch+" at "+p.head+": "+note)
 	case CheckGreen:
+		// the merge step lands the head n of the queue: a batch that is no longer
+		// that head (a card ranked first since) is not landed; the next pass builds the head
+		if ok, err := m.stillHead(p.b); err != nil || !ok {
+			delete(m.pending, stream)
+			return 0, err
+		}
 		rejected, err := m.git.Land(p.b, p.head)
 		if err != nil {
 			m.note(stream, "landing "+p.head+" on "+p.b.Base+": "+err.Error())
@@ -391,13 +405,8 @@ func (m *Merger) feed(b Batch, landed string, fact ...string) (int, error) {
 		// --batch n lands the head n of the queue: only when they are still this
 		// batch (a card ranked first since is merged by a later pass, and this
 		// batch's fact fed when its turn comes: tla/Merger.tla, FactsMatchBranch)
-		ids, problem, err := m.queueHead(b.Stream, len(b.Cards))
-		if err != nil {
+		if ok, err := m.stillHead(b); err != nil || !ok {
 			return 0, err
-		}
-		if problem != "" || strings.Join(ids, ",") != strings.Join(b.IDs(), ",") {
-			m.note(b.Stream, "the batch "+strings.Join(b.IDs(), ",")+" is on "+b.Base+" and the queue's head is now "+strings.Join(ids, ",")+problem+"; its fact waits for its turn")
-			return 0, nil
 		}
 	}
 	args := []string{"merge", "--stream", b.Stream, "--batch", strconv.Itoa(len(b.Cards))}
@@ -421,5 +430,56 @@ func (m *Merger) feed(b Batch, landed string, fact ...string) (int, error) {
 		return 0, nil
 	}
 	delete(m.said, b.Stream)
+	if len(fact) == 0 {
+		// the step landed the queue's head at its own call: a card queued or ranked
+		// between the read above and the call lands without being on the
+		// development branch; the cards it says it landed are held to the batch,
+		// and a difference is the coordinator's to repair (tla/Merger.tla, FactsMatchBranch)
+		if got := landedOf(out); !sameSet(got, b.IDs()) {
+			m.note(b.Stream, "merge --batch "+strconv.Itoa(len(b.Cards))+" landed "+orNone(got)+" but "+b.Base+" holds the batch "+strings.Join(b.IDs(), ",")+": the cards it landed that are not on "+b.Base+" need the coordinator (return them, or merge them by hand)")
+		}
+	}
 	return 1, nil
+}
+
+// stillHead says the batch is still the head of its stream's queue, saying a
+// NOTE when it is not (the queue changed since the batch was built).
+func (m *Merger) stillHead(b Batch) (bool, error) {
+	ids, problem, err := m.queueHead(b.Stream, len(b.Cards))
+	if err != nil {
+		return false, err
+	}
+	if problem != "" || strings.Join(ids, ",") != strings.Join(b.IDs(), ",") {
+		m.note(b.Stream, "the batch "+strings.Join(b.IDs(), ",")+" is no longer the queue's head ("+orNone(ids)+problem+"); it is built again from the head next pass")
+		return false, nil
+	}
+	return true, nil
+}
+
+// landedRE is a line of the merge verb's output for a card it landed.
+var landedRE = regexp.MustCompile(`(?m)^MOVED (\S+) merging -> landed$`)
+
+// landedOf is the cards the merge verb's output says it landed, in order.
+func landedOf(out []byte) []string {
+	var ids []string
+	for _, m := range landedRE.FindAllSubmatch(out, -1) {
+		ids = append(ids, string(m[1]))
+	}
+	return ids
+}
+
+// sameSet says two lists hold the same names, in any order.
+func sameSet(a, b []string) bool {
+	x, y := append([]string(nil), a...), append([]string(nil), b...)
+	sort.Strings(x)
+	sort.Strings(y)
+	return strings.Join(x, ",") == strings.Join(y, ",")
+}
+
+// orNone is a list as one word: comma separated, "none" when empty.
+func orNone(ids []string) string {
+	if len(ids) == 0 {
+		return "none"
+	}
+	return strings.Join(ids, ",")
 }

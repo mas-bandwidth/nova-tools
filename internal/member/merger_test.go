@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,11 +26,15 @@ type mergeCardOf struct {
 }
 
 // mergeSprint is a sprint as the merger reads it: one stream's state and queue;
-// it records every verb, and a --batch fact takes the batch off the queue.
+// it records every verb, and a --batch n fact lands the head n queued cards by
+// score then id, as the merge step does, printing a MOVED line for each.
+// beforeMerge, when set, changes the queue just before a merge verb runs (the
+// race between the merger's read and the step's).
 type mergeSprint struct {
-	state string
-	queue []mergeCardOf
-	calls []string
+	state       string
+	queue       []mergeCardOf
+	calls       []string
+	beforeMerge func(s *mergeSprint)
 }
 
 func (s *mergeSprint) Run(args ...string) (int, []byte) {
@@ -60,21 +65,40 @@ func (s *mergeSprint) Run(args ...string) (int, []byte) {
 			}
 		}
 	case "merge":
+		if s.beforeMerge != nil {
+			s.beforeMerge(s)
+			s.beforeMerge = nil
+		}
 		fact := false
 		for _, a := range args {
 			fact = fact || a == "--conflict" || a == "--red" || a == "--rejected"
 		}
 		if fact {
 			s.state = "stopped"
-		} else {
-			n := 0
-			for i := range s.queue {
-				if s.queue[i].col == "queued" && n < 1 {
-					s.queue[i].col, n = "merged", n+1
+			return 0, []byte("MERGE OK\n")
+		}
+		n, _ := strconv.Atoi(args[4])
+		order := append([]mergeCardOf(nil), s.queue...)
+		sort.SliceStable(order, func(i, j int) bool {
+			if order[i].score != order[j].score {
+				return order[i].score < order[j].score
+			}
+			return order[i].id < order[j].id
+		})
+		var out strings.Builder
+		for _, c := range order {
+			if c.col == "queued" && n > 0 {
+				n--
+				for i := range s.queue {
+					if s.queue[i].id == c.id {
+						s.queue[i].col = "merged"
+					}
 				}
+				out.WriteString("MOVED " + c.id + " merging -> landed\n")
 			}
 		}
-		return 0, []byte("MERGE OK\n")
+		out.WriteString("MERGE OK\n")
+		return 0, []byte(out.String())
 	}
 	b, _ := json.Marshal(v)
 	return 0, b
@@ -117,7 +141,8 @@ func (g *fakeMergeGit) Land(b Batch, head string) (string, error) {
 	return g.rejected, nil
 }
 
-// fakeChecks answers the checks with the next state of its list (the last repeats).
+// fakeChecks answers the checks with the next state of its list (the last
+// repeats); "error" is checks that cannot be read.
 type fakeChecks struct{ states []string }
 
 func (c *fakeChecks) State(repo, head string) (string, string, error) {
@@ -257,13 +282,16 @@ func TestALandedBatchIsFedWithoutABuild(t *testing.T) {
 func TestTheChecksBounds(t *testing.T) {
 	t.Parallel()
 	s := &mergeSprint{state: "merging", queue: []mergeCardOf{{"s1-1", "queued", 1, sha40('a')}}}
-	m, _ := mergerOn(s, &fakeMergeGit{}, &fakeChecks{states: []string{CheckNone}})
+	g := &fakeMergeGit{}
+	m, _ := mergerOn(s, g, &fakeChecks{states: []string{CheckNone}})
 	m.Tick(mt0)
 	m.Tick(mt0.Add(30 * time.Second))
 	assert.Empty(t, s.merges(), "within the grace it waits")
 	m.Tick(mt0.Add(2 * time.Minute))
 	require.Len(t, s.merges(), 1)
-	assert.Contains(t, s.merges()[0], "--batch 1 --note landed main at "+sha40('b')+"; no check run on "+sha40('b')+" within 1m0s: proved by none")
+	assert.Equal(t, "merge --stream s1 --batch 1 --red --note no CI ran on "+sha40('b')+" in /origin.git: add a workflow trigger for sprint/** and resume --epoch 3", s.merges()[0],
+		"no check run within the grace is red, never green: the gate does not fail open")
+	assert.NotContains(t, g.calls, "land")
 
 	s = &mergeSprint{state: "merging", queue: []mergeCardOf{{"s1-1", "queued", 1, sha40('a')}}}
 	m, _ = mergerOn(s, &fakeMergeGit{}, &fakeChecks{states: []string{CheckPending}})
@@ -288,4 +316,69 @@ func TestTheMergersOwnProblemsAreSaidOnce(t *testing.T) {
 	m, out = mergerOn(s, &fakeMergeGit{}, &fakeChecks{states: []string{CheckGreen}})
 	m.Tick(mt0)
 	assert.Contains(t, out.String(), "NOTE merge s1: card s1-1 has no full head to merge")
+}
+
+// Checks that cannot be read (gh unreachable) are a NOTE each pass, and red with
+// the error once the deadline has passed: never a stall.
+func TestUnreadableChecksAreRedPastTheDeadline(t *testing.T) {
+	t.Parallel()
+	s := &mergeSprint{state: "merging", queue: []mergeCardOf{{"s1-1", "queued", 1, sha40('a')}}}
+	g := &fakeMergeGit{}
+	m, out := mergerOn(s, g, &fakeChecks{states: []string{"error"}})
+	m.Tick(mt0)
+	m.Tick(mt0.Add(time.Minute))
+	assert.Empty(t, s.merges())
+	assert.Contains(t, out.String(), "NOTE merge s1: reading the checks on "+sha40('b')+": gh: not reachable")
+	m.Tick(mt0.Add(2 * time.Hour))
+	require.Len(t, s.merges(), 1)
+	assert.Equal(t, "merge --stream s1 --batch 1 --red --note the checks on "+sha40('b')+" in /origin.git could not be read within 1h0m0s: gh: not reachable --epoch 3", s.merges()[0])
+	assert.NotContains(t, g.calls, "land")
+}
+
+// The batch is the head n queued cards by score, then id, whatever order the
+// queue lists them in.
+func TestTheBatchIsTheHeadByScoreThenID(t *testing.T) {
+	t.Parallel()
+	s := &mergeSprint{state: "merging", queue: []mergeCardOf{
+		{"s1-3", "queued", 2, sha40('a')}, {"s1-9", "queued", 3, sha40('a')}, {"s1-2", "queued", 1, sha40('c')}, {"s1-1", "queued", 1, sha40('d')}}}
+	g := &fakeMergeGit{}
+	var out bytes.Buffer
+	m := NewMerger(MergerConfig{As: "merger", Batch: 3, Deadline: time.Hour, Grace: time.Minute,
+		RepoOf: func(string) (string, string) { return "/origin.git", "main" }}, s, g, &fakeChecks{states: []string{CheckGreen}}, &out)
+	m.Tick(mt0)
+	assert.Equal(t, []string{"landed", "build s1-1,s1-2,s1-3"}, g.calls[:2])
+	m.Tick(mt0.Add(time.Second))
+	assert.Equal(t, []string{"merge --stream s1 --batch 3 --note landed main at " + sha40('b') + "; ci --epoch 3"}, s.merges())
+}
+
+// A card ranked in front of the batch after it was built: the batch is not
+// landed (the step would land another head), a NOTE says so, and the next pass
+// builds the new head.
+func TestABatchNoLongerTheHeadIsNotLanded(t *testing.T) {
+	t.Parallel()
+	s := &mergeSprint{state: "merging", queue: []mergeCardOf{{"s1-1", "queued", 2, sha40('a')}}}
+	g := &fakeMergeGit{}
+	m, out := mergerOn(s, g, &fakeChecks{states: []string{CheckGreen}})
+	m.Tick(mt0)
+	s.queue = append(s.queue, mergeCardOf{"s1-0", "queued", 1, sha40('c')}) // ranked first
+	m.Tick(mt0.Add(time.Second))
+	assert.NotContains(t, g.calls, "land")
+	assert.Empty(t, s.merges())
+	assert.Contains(t, out.String(), "NOTE merge s1: the batch s1-1 is no longer the queue's head (s1-0); it is built again from the head next pass")
+	m.Tick(mt0.Add(2 * time.Second))
+	assert.Equal(t, "build s1-0", g.calls[len(g.calls)-2])
+}
+
+// The landing race: a card queued in front between the merger's last read and
+// the step's call is landed by the step without being on the development
+// branch; the merger names both lists in a NOTE for the coordinator.
+func TestALandingRaceIsNamed(t *testing.T) {
+	t.Parallel()
+	s := &mergeSprint{state: "merging", queue: []mergeCardOf{{"s1-1", "queued", 2, sha40('a')}}}
+	m, out := mergerOn(s, &fakeMergeGit{}, &fakeChecks{states: []string{CheckGreen}})
+	m.Tick(mt0)
+	s.beforeMerge = func(s *mergeSprint) { s.queue = append(s.queue, mergeCardOf{"s1-0", "queued", 1, sha40('c')}) }
+	m.Tick(mt0.Add(time.Second))
+	require.Len(t, s.merges(), 1)
+	assert.Contains(t, out.String(), "NOTE merge s1: merge --batch 1 landed s1-0 but main holds the batch s1-1: the cards it landed that are not on main need the coordinator")
 }
