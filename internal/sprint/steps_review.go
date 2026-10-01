@@ -239,6 +239,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			if c.F("retired_by") == "away" {
 				return "retired at " + c.F("retired") + ": the reader was away; the read was asked of another reader"
 			}
+			if c.F("retired_by") == RetiredByLevel {
+				return "retired at " + c.F("retired") + ": the tick's level asked the read of another reader"
+			}
 			if c.F("retired_by") == "returned" {
 				return "retired at " + c.F("retired") + ": the read was returned; it was asked of another reader"
 			}

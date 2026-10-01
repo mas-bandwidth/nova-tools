@@ -890,6 +890,14 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	for _, u := range updates {
 		byTable[u.Table] = u
 	}
+	// 0. The start: the fleet's and the readers' rebalance, once, before any
+	// table's update (sprint.TickStart; the owner, 2026-10-01: "just once
+	// before tick, rebalance each table."). What it writes is in the tables
+	// the first pass updates next.
+	t.res.Order = append(t.res.Order, "start")
+	if out := t.parts("", sprint.TickStart); out != tickOn {
+		return t.end(out, last, unfinished, seen)
+	}
 	// 1-2. The first pass: every table's update once, in the owner's order
 	// ("1. work streams, 2. readers, 3. merge, 4. fleet"); the work table's is
 	// the pump, and it runs only here.
@@ -1060,7 +1068,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		// route.go readRouteOf), and the check asks what the next deal does
 		step.Routes, step.RouteCache = part.Name == "deal" || part.Name == "ask" || part.Name == "check", &t.routes
 		// the ask, and the parts that ask what the ask does, plan with the readers' states
-		step.Readers = part.Name == "ask" || part.Name == "check"
+		step.Readers = part.Name == "ask" || part.Name == "check" || part.Name == sprint.PartLevelReads
 		step.ReaderStates = t.readers
 		// the machine's state is read with the step's fence: STOPPED halts the
 		// tick before the part begins

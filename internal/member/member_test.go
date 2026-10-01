@@ -1577,3 +1577,32 @@ func TestNoRoomRefusesAtStagingWithTheReason(t *testing.T) {
 	assert.Empty(t, g.s.lines("finish"))
 	assert.Contains(t, g.out.String(), "NOTE take resumed: "+why+"\n")
 }
+
+// TestALaneThatFinishesIsRefilledInTheSamePass pins the member's side of
+// DealAhead (internal/sprint/width.go): a member at its width with a card
+// ready behind it reports the child that ended and takes the ready card in
+// the one pass, so the lane is refilled at once and never waits for the
+// sprint's next tick: finish, then take --limit 1, then the start.
+func TestALaneThatFinishesIsRefilledInTheSamePass(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 1})
+	g.m.pusher = &fakePusher{def: Push{Sha: fullSha}}
+	p1 := pk("c1")
+	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
+	g.s.set("take", 0, takeJSON(t, p1))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 1, g.m.Running(), "the width is full")
+	g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "abc123", Report: "# Result\n\ndone"})
+	p2 := pk("c2")
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1), ready("c2")))
+	g.s.set("take", 0, takeJSON(t, p2))
+	g.s.reset()
+	acted, err := g.tick(t)
+	require.NoError(t, err)
+	assert.Len(t, g.s.lines("finish"), 1, "the ended child is reported")
+	assert.Equal(t, []string{"take --as m --limit 1 --json --epoch 7"}, g.s.lines("take"), "the freed lane is taken in the same pass")
+	assert.Equal(t, []string{"c1", "c2"}, g.r.started(), "the ready card is started in the same pass")
+	assert.Equal(t, 1, g.m.Running(), "the member runs at most its width")
+	assert.Equal(t, 2, acted, "one report and one start")
+}

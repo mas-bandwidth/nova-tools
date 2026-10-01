@@ -216,6 +216,10 @@ func TestTheDealContinuesAcrossTheManifestsOfAPlan(t *testing.T) {
 	dealSequenceAcrossTicks(t, newHarness(t), 3, 150)
 }
 
+// streamsRoom is the fleet's room a tick in streamsRun: eight machines of
+// width 2, each dealt DealAhead times its width.
+const streamsRoom = 8 * sprint.DealAhead * 2
+
 // seqRun is what the streams run did, a tick at a time.
 type seqRun struct {
 	deal, ask, accept                []seqPart
@@ -223,15 +227,15 @@ type seqRun struct {
 	props                            []map[string]uint64 // every index after the tick and its accept
 }
 
-// streamsRun is eight machines of width 2 (room 16 a tick) and three streams
-// of 40 ready: each tick deals 16, asks two readers of every primary finished
+// streamsRun is eight machines of width 2 (room DealAhead x 2 x 8 = 32 a tick)
+// and three streams of 60 ready: each tick deals 32, asks two readers of every primary finished
 // the tick before, and after the tick the readers report ok, the coordinator
 // accepts every primary read, and every member works its cards. What each
 // step could take is read before it, for the expected sequences.
 func streamsRun(t *testing.T, h *harness, ticks int) seqRun {
 	seqFleet(h, 2)
 	for _, st := range seqStreams {
-		h.must(AddStep(sprint.AddReq{Stream: st, Count: 40}))
+		h.must(AddStep(sprint.AddReq{Stream: st, Count: 60}))
 	}
 	var r seqRun
 	for i := 1; i <= ticks; i++ {
@@ -281,14 +285,14 @@ func streamsRun(t *testing.T, h *harness, ticks int) seqRun {
 }
 
 // dealStreamsAcrossTicks: the deal's stream index (stream_index) goes on
-// from tick to tick: each tick's 16 cards in stream turns from the stream the
+// from tick to tick: each tick's 32 cards (streamsRoom) in stream turns from the stream the
 // counter names, the counter after each tick up by the cards dealt and the
 // streams passed over.
 func dealStreamsAcrossTicks(t *testing.T, h *harness) {
 	r := streamsRun(t, h, 4)
 	var counter uint64
 	for i := range r.deal {
-		want, next := seqTurns(seqStreams, r.dealCounts[i], counter, 16)
+		want, next := seqTurns(seqStreams, r.dealCounts[i], counter, streamsRoom)
 		if !slices.Equal(r.deal[i].streams, want) || r.deal[i].parts != 1 {
 			t.Fatalf("tick %d: the deal took the streams %v in %d parts, want %v in one: stream turns from the counter %d", i+1, r.deal[i].streams, r.deal[i].parts, want, counter)
 		}
@@ -297,8 +301,8 @@ func dealStreamsAcrossTicks(t *testing.T, h *harness) {
 		}
 		counter = next
 	}
-	if counter != 64 {
-		t.Fatalf("stream_index %d after 64 cards dealt from three streams that never ran out, want 64", counter)
+	if counter != 4*streamsRoom {
+		t.Fatalf("stream_index %d after %d cards dealt from three streams that never ran out, want %d", counter, 4*streamsRoom, 4*streamsRoom)
 	}
 }
 
@@ -334,8 +338,8 @@ func askAcrossTicks(t *testing.T, h *harness) {
 			t.Fatalf("tick %d: ask_index %d, want %d, two a primary asked", i+1, got, readers)
 		}
 	}
-	if asked != 48 {
-		t.Fatalf("%d primaries asked in four ticks, want 48: the three ticks after the first each ask the 16 finished", asked)
+	if asked != 3*streamsRoom {
+		t.Fatalf("%d primaries asked in four ticks, want %d: the three ticks after the first each ask the %d finished", asked, 3*streamsRoom, streamsRoom)
 	}
 }
 
@@ -361,8 +365,8 @@ func acceptAcrossTicks(t *testing.T, h *harness) {
 		}
 		accepted += len(r.accept[i].streams)
 	}
-	if accepted != 48 {
-		t.Fatalf("%d accepted, want 48", accepted)
+	if accepted != 3*streamsRoom {
+		t.Fatalf("%d accepted, want %d", accepted, 3*streamsRoom)
 	}
 }
 

@@ -207,8 +207,25 @@ var TickTables = []TableUpdate{
 	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {"deal", TickDeal}, {"accept", TickAccept}}},
 	{Readers, []TickPartDef{{"ask", TickAsk}}},
 	{Merge, []TickPartDef{{"resume", TickResume}}},
-	{Fleet, []TickPartDef{{"presence", TickPresence}, {"level", TickLevel}}},
+	{Fleet, []TickPartDef{{"presence", TickPresence}}},
 }
+
+// PartLevel and PartLevelReads are the tick start's parts: the fleet's and the
+// readers' rebalance.
+const (
+	PartLevel      = "level"
+	PartLevelReads = "level reads"
+)
+
+// TickStart is the tick's start, once, before any table's update (the owner,
+// 2026-10-01: "both for readers and fleet, there needs to be a rebalance step
+// done at the start of each tick. it's simple. just once before tick,
+// rebalance each table."): the fleet's level (ready cards from a member that
+// cannot start them to one with free lanes, never past DealAhead times a
+// width) and the readers' (asked reads from a reader with a backlog to one
+// idle), each one batch. It runs once a tick: a table written again later in
+// the tick is updated by its update, never levelled again.
+var TickStart = []TickPartDef{{PartLevel, TickLevel}, {PartLevelReads, TickLevelReads}}
 
 // TickEnd is the tick's end, once the tables are settled: what is always
 // true held, the deadlines and the overdue judgments, and the done part last.
@@ -221,9 +238,9 @@ var TickEnd = []TickPartDef{
 }
 
 // TickParts is every part with a planner in the order a tick first runs them:
-// the four tables' updates, then the end.
+// the start, the four tables' updates, then the end.
 var TickParts = func() []TickPartDef {
-	var out []TickPartDef
+	out := append([]TickPartDef(nil), TickStart...)
 	for _, u := range TickTables {
 		for _, p := range u.Parts {
 			if p.Fn != nil {
@@ -639,9 +656,11 @@ func redealBound(wc *Card) bool {
 	return wc.F(FieldTakeEnded) != "" && wc.Int("redeals") >= MaxRedeals
 }
 
-// T4. TickLevel evens the up members' ready queues when two differ by more
-// than one: the newest cards of the longest queue go round the fleet from the
-// deal's index (level, round.levelTo).
+// T4. TickLevel is the fleet's rebalance, once at the start of every tick
+// (TickStart): the up members' backlogs evened when two differ by more than
+// one, the newest ready cards of the largest going round the fleet from the
+// deal's index to a member below DealAhead times its width (level,
+// round.levelTo).
 func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 	return bound(FleetStep(s, FleetReq{Op: "level", Who: r.who()}))
 }
