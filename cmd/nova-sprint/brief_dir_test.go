@@ -103,6 +103,28 @@ func TestAddBriefDirNeedsUnknownIDRefuses(t *testing.T) {
 	require.Contains(t, errs, "ghost")
 }
 
+// A brief whose id is already on the table refuses the whole call, naming
+// that id, and leaves the table unchanged.
+func TestAddBriefDirExistingIDRefusesAll(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 b")
+	dir := t.TempDir()
+	writeNeedsBrief(t, dir, "a", "Fix a.", "")
+	writeNeedsBrief(t, dir, "b", "Fix b.", "")
+	writeNeedsBrief(t, dir, "c", "Fix c.", "")
+	before := ta.applies()
+	code, out, errs := ta.do("add --stream s1 --brief-dir " + dir)
+	require.Equal(t, 1, code)
+	require.NotContains(t, out, "MOVED")
+	require.Contains(t, errs, "b: exists already")
+	require.Equal(t, before, ta.applies(), "a refused add wrote")
+	var w whereView
+	ta.json("where", &w)
+	require.Equal(t, int64(1), w.All)
+}
+
 // A file whose base name is not a valid card id refuses, naming the file.
 func TestAddBriefDirInvalidIDRefuses(t *testing.T) {
 	t.Parallel()
