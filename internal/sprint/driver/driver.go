@@ -286,9 +286,7 @@ func (d *Driver) Loop() (string, error) {
 	if !d.read(&first, "where") {
 		return "", fmt.Errorf("the view could not be read: run: %s", commandLine(append([]string{"where"}, d.Base...)))
 	}
-	// running, running and catching up ("machine: running (catching up: n
-	// moves due)"), or running with its last tick failed
-	if first.Machine != "machine: running" && !strings.HasPrefix(first.Machine, "machine: running;") && !strings.HasPrefix(first.Machine, "machine: running (") {
+	if first.Machine != "machine: running" {
 		return "", fmt.Errorf("no machine is running (%s): the driver plays only the outside actors; run: nova-sprint start, and nova-sprint run", orDash(first.Machine))
 	}
 	d.held = first.Epoch

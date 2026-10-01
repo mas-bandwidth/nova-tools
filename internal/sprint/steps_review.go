@@ -592,13 +592,13 @@ var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
 // cut into the next member round the fleet (round.go, errata 3 amendment 5:
 // from the deal's rolling index, the first up with room other than the member
-// of the attempt's work card, that member only when no other has room, the
-// first up when none has; the index moved past it and written with the step)
-// and the primary moves
+// of the attempt's work card, that member only when no other has room; the
+// index moved past it and written with the step) and the primary moves
 // review -> working in the same step; its read cards are retired and the
 // readers' identities kept, so the fixed work is asked of them again when it
-// returns. With no member up, the primary moves review -> ready with the fix
-// and start cuts its card later.
+// returns. With no member up, or none below its width (tla/DirtyTick.tla,
+// WidthRespected), the primary moves review -> ready with the fix and the
+// tick's deal cuts its card when a member has room.
 func Rework(s *Snapshot, r ReworkReq) Plan {
 	var p Plan
 	// a primary in review, or one at its redeal bound (ready, its work card
@@ -671,9 +671,14 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			set["asked"] = askedField
 		}
 		var u Unit
+		// the next member round the fleet with room (width.go; tla/DirtyTick.tla, WidthRespected):
+		// none up, or none below its width, and the primary waits ready for the tick's deal
+		m := ""
 		if len(up) > 0 {
+			m = rr.next(up, q, room, reworkAvoid(s, c), false)
+		}
+		if m != "" {
 			var why string
-			m := rr.next(up, q, room, reworkAvoid(s, c), true)
 			u, why = deal(s, c, fix, m, q, set, given, "readers")
 			if why != "" {
 				p.refuse(c.ID, why)
@@ -685,8 +690,12 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			u.Changes = append(retire, u.Changes...)
 			u.Moved = strings.Replace(u.Moved, " review -> working", " review -> working (rework)", 1)
 		} else {
+			later := "no fleet member is up: start delegates it"
+			if len(up) > 0 {
+				later = "no fleet member has room: the tick deals it when one has"
+			}
 			u = Unit{Key: c.ID, Stream: c.Row, Changes: append(retire, change(Work, moveEntry(c, c.Row, Ready, set, "result", "readers"))),
-				Moved: c.ID + " review -> ready (rework; no fleet member is up: start delegates it)"}
+				Moved: c.ID + " review -> ready (rework; " + later + ")"}
 		}
 		u.Moved += fmt.Sprintf("; %d read cards retired", len(retire))
 		if m := orphanMerge(s, c); m != nil {

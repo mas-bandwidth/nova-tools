@@ -29,7 +29,7 @@ The view shows work, readers, merge, fleet in that order. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
 line (landed / all primaries, percent, ETA, with no machine text) when it is
 running; a RUNNING machine that has not ticked for 5 s shows
-`STOPPED (no tick for Ns)`. Every count cell is an ordered set.
+`STOPPED`, with no count of seconds. Every count cell is an ordered set.
 
 The stored view `sprint` (`nova-table watch --view sprint`) says the same:
 its summary line is `STOPPED`, and nothing more (no counts, no percent, no
@@ -42,8 +42,8 @@ machine in that state already writes the view's state again from the record.
 The view knows no heartbeat: a RUNNING machine that has stopped ticking keeps
 its progress line there, and `where` and `inbox` say it is not ticking.
 
-A frame of the view holds the time, the words `SPRINT TABLE`, that line and the
-tables, and nothing else: no pending operation, no stalled stream, no line about
+A frame of the view holds the words `SPRINT TABLE`, that line and the
+tables, and nothing else: no time, no pending operation, no stalled stream, no line about
 the people and no coordinator (`where --json` carries them; `check`, `inbox` and
 `goal show` say the same in their own words). The merge table has no `since`
 column. Every table is shown, with its header and footer, empty or not, and every
@@ -169,7 +169,7 @@ outcome and reason are kept.
 | working -> ready | its work card was withdrawn because no fleet member is up | mechanical, notifies |
 | review -> merging | accept: two different readers said ok at this head | mechanical (the tick), unless its CI is red at its head or it was returned to review at its attempt; the coordinator's verb takes those; refused without the two |
 | review -> working | rework with a fix: the next attempt is delegated at once | the coordinator's verb |
-| review -> ready | rework with a fix when no fleet member is up | the coordinator's verb |
+| review -> ready | rework with a fix when no fleet member is up or none is below its width; the tick deals it when one has room | the coordinator's verb |
 | merging -> review | the stream's CI went red and the coordinator sent it back, or return | the coordinator's verb |
 | merging -> landed | its batch, green on the stream branch, merged to the development branch | mechanical |
 | any open state -> off the table | drop, with the reason | the coordinator's verb |
@@ -269,7 +269,10 @@ and it is the coordinator's decision, receipted.
   time to the next up member round the fleet (the rolling index `deal_index`)
   that is below its width: 150 ready over eight machines of width 64 all go to
   working in one tick, 18 or 19 a machine. A machine at its width takes no
-  more.
+  more, whoever deals: the `deal` verb refuses a card no up member has room for,
+  and a rework with no member below its width sends its primary ready with the
+  fix, for the tick to deal (`tla/DirtyTick.tla`, `Room` and `WidthRespected`;
+  `TestAReworkIsNotDealtToAMemberAtItsWidth`).
 - Every rolling index (the fleet's `deal_index`, the readers' `ask_index`, the
   work table's `stream_index`, `stream_index_ask` and `stream_index_accept`) is
   a counter: a uint64 from 0 that goes up by one with every placement and by
@@ -293,12 +296,17 @@ and it is the coordinator's decision, receipted.
   CPU busy percent of all its cores, measured between beats; where that cannot
   be measured, the one-minute load average over the logical cores, capped at
   1000%. `--load <percent>` gives it instead.
-- A member's status is derived, never typed: up while its last beat is at
-  most 15 s old, down past that or when it has never beaten, and held while
-  the coordinator holds it, whatever it beats. `fleet down <member>` holds a
-  member and takes it down; `fleet up <member>` releases the hold, adding a
-  member the sprint does not know, and brings it up at once when its beat is
-  fresh.
+- A member's status is derived, never typed: up until it has missed three beat
+  windows of 15 s in a row (`MissedBeatsDown`, `BeatDeadline`; one missed beat,
+  such as a store round trip that timed out, marks nothing, and a beat resets
+  the count, which is never stored), down past that or when it has never
+  beaten, and held while the coordinator holds it, whatever it beats. A card
+  is taken back from a member only when the member is down by this rule
+  (tla/DirtyTick.tla, Lapse). The member asks its beat and its queue again
+  once when the store did not answer. `fleet down <member>` holds a
+  member and takes it down; `fleet up <member>` releases the hold, counts as a
+  beat of a member that has beaten, adds a member the sprint does not know,
+  and brings it up at once when it is alive.
 - The fleet comes from the inventory. `nova-sprint fleet sync` makes the fleet
   table match nova-config's machine rows, in one step, and types no machine name
   and no width. The inventory is read through the config package by the config
@@ -357,8 +365,8 @@ id (`--op`) returns the original result, with no second counter or notification.
   last beat is within the beat bound (`ReaderBeatBound`, the fleet's 15 s),
   away when it beat and has lapsed, down when it has never beaten; the
   coordinator's `reader away <reader>` holds it away whatever it beats, and
-  `reader up <reader>` releases the hold. `where` shows each reader's state in
-  the readers table's `status` cell; the cell is shown, never stored in the
+  `reader up <reader>` releases the hold. The readers table has no `status`
+  column and `where` shows no reader's state; the state is never stored in the
   table. The state is read, never typed: the tick reads it once, with its first
   read, and every part plans on that reading.
 - ask deals every primary in review that lacks reads to TWO DIFFERENT readers
@@ -512,7 +520,7 @@ the tick would make, no other open judgment on it).
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
 | cannot ask (two readers are up, and a primary has no two to be asked of) | reader add, rework, drop, wait | no |
 | fewer than two readers up | reader up, reader add, wait | no |
-| no fleet member is up | fleet beat (on a machine), fleet up (releases a hold), wait | no |
+| no fleet member is up (when every member that beats is held, it says so and offers only fleet up and wait) | fleet beat (on a machine), fleet up (releases a hold), wait | no |
 | a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take) | rework with a fix (a new attempt), drop, wait | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |
@@ -845,7 +853,7 @@ command that loads it.
 | ack | closes a judgment the coordinator looked at, with the reason |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints; `--wait --timeout <d>` blocks for the next tick end, and `--json` then also carries `woke` (false when the timeout ended the wait, with `inbox --wait: no tick end in <d>` on stderr and stdout still one JSON object; the plain rendering prints that line on stdout) |
 | card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells |
-| queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>`, and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
+| queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>.e<epoch>` (the epoch makes it one per epoch: a card id comes back after a clear), and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>.e<epoch>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch` (redrawn in place, section 1); `--json` also carries the pending operation, the stalled streams, the people and the coordinator |
@@ -972,17 +980,16 @@ began; a quiet log ticks it TickEvery (1 s) after the tick before began. It
 moves nothing while STOPPED; `tick` is one tick by hand. The state
 is read at the start of each tick and before each of its parts: after `stop`
 returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
-wait. `inbox` says `machine: running`,
-`machine: running (catching up: <n> moves due)`, `machine: STOPPED`, or
-`machine: STOPPED (no tick for Ns)` when the state is
-RUNNING and nothing has ticked for 15 s (MachineSilence). The sprint line of every
+wait. `inbox` says `machine: running`, `machine: STOPPED` or `machine: DONE`,
+and nothing after the word: `machine: STOPPED` is also what it says when the
+state is RUNNING and nothing has ticked for 15 s (MachineSilence). The sprint line of every
 verb says the same of a running machine after the progress
 (`3/10 30.0% -> ETA  machine: running`); a STOPPED machine has no ETA, so its
-line is `STOPPED` (or `STOPPED (no tick for Ns)`), followed with cards on the
+line is `STOPPED`, followed with cards on the
 table by the progress alone (`STOPPED  3/10 30.0%`); the STOPPED text is the
 one the header of `where` shows, which carries no progress; a failed tick keeps
 its error on the heartbeat, with the count of failed ticks in a row, and the
-line shows it. A tick that did nothing writes the heartbeat at most once every
+inbox judges it (the line carries no suffix). A tick that did nothing writes the heartbeat at most once every
 5 s (HeartbeatIdleEvery); a STOPPED machine's tick only records that it
 looked. `where` shows the same
 state as the one line under its title (section 1).
@@ -1063,7 +1070,10 @@ commands start the loop or stop the machine), the tick keeps failing (three
 failed ticks in a row, with the last error), and the machine is STOPPED and
 moves are due (primaries ready, work cards withdrawn, waiters whose needs have
 landed, primaries in review never asked at their attempt; the command is
-`start`). `init` writes the machine STOPPED from the
+`start`). A tick that fails writes one happened note to the coordinator for each
+error text it fails with (the error, the tick's number and the time) and one when
+it works again (the count of failed ticks); the tick end wakes `inbox --wait`
+on them. `init` writes the machine STOPPED from the
 start, so the time before the first `start` is a STOPPED span and counts
 toward no deadline. `clear` writes, at the new epoch, the happened line that
 the machine is STOPPED by the clear.
