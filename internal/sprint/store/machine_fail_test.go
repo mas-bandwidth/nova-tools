@@ -65,7 +65,9 @@ func TestCRTickFailsAtEveryCallAndRecovers(t *testing.T) {
 		notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
 		seen := map[string]int{}
 		for _, n := range notes {
-			if n.Who == sprint.MachineActor {
+			// a failed tick's note and the recovery's each wake the coordinator
+			// with a tick end of their own (TestRecoveryAddsOneNoteWithTheFailedCount)
+			if n.Who == sprint.MachineActor && n.Type != sprint.NTickEnd {
 				seen[n.Type+"|"+strings.Join(n.Subjects(), ",")]++
 			}
 		}
