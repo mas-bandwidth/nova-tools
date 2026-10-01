@@ -21,7 +21,7 @@ func prelude(name, family string, f Frame, s Staged) string {
 	fmt.Fprintf(&b, "#!/bin/sh\n# nova-swarm %s shim, profile %s (docs/SPEC-CARD-CONTRACT.md): the card's frame,\n", name, family)
 	b.WriteString("# met through the commands the child knows; nothing reaches a forge from inside the wall.\n")
 	for _, kv := range [][2]string{
-		{"NOVA_GIT", s.Git}, {"NOVA_GH", s.Gh}, {"NOVA_JOB", s.Job}, {"NOVA_STAGED", s.Repo}, {"NOVA_HEAD", s.Head},
+		{"NOVA_GIT", s.Git}, {"NOVA_JOB", s.Job}, {"NOVA_STAGED", s.Repo}, {"NOVA_HEAD", s.Head},
 		{"NOVA_REPO", f.Repo}, {"NOVA_BRANCH", f.Branch}, {"NOVA_BASE", base}, {"NOVA_KIND", f.Kind}, {"NOVA_CARD", f.Card},
 	} {
 		fmt.Fprintf(&b, "%s=%s\n", kv[0], shq(kv[1]))
@@ -48,8 +48,8 @@ case "$nova_sub" in
 `
 
 // gitPush is the contract's push: the head the refspec names (else HEAD) and the branch it
-// goes to, recorded in <job>/pushed.tsv, answered as a push to a new branch; the member
-// pushes it at the finish.
+// comes from, recorded in <job>/.sprint/pushed.tsv, answered as the push the member makes
+// at the finish: that branch to the card's branch on origin.
 const gitPush = `push)
 	shift "$nova_n"
 	nova_pos=""
@@ -67,8 +67,8 @@ const gitPush = `push)
 	[ -z "$nova_dst" ] || nova_branch="${nova_dst#refs/heads/}"
 	[ -n "$nova_branch" ] || nova_branch=HEAD
 	nova_top=$(nova_git rev-parse --show-toplevel 2>/dev/null)
-	printf '%s\t%s\t%s\n' "$nova_branch" "$nova_head" "$nova_top" >> "$NOVA_JOB/pushed.tsv" || exit 1
-	printf 'To %s\n * [new branch]      %s -> %s\n' "$NOVA_REPO" "$nova_branch" "$nova_branch" >&2
+	mkdir -p "$NOVA_JOB/.sprint" && printf '%s\t%s\t%s\n' "$nova_branch" "$nova_head" "$nova_top" >> "$NOVA_JOB/.sprint/pushed.tsv" || exit 1
+	printf 'To %s\n * [new branch]      %s -> %s (pushed by the sprint when this card finishes)\n' "$NOVA_REPO" "$nova_branch" "$NOVA_BRANCH" >&2
 	exit 0 ;;
 `
 
@@ -124,11 +124,13 @@ exit 2
 `}
 }
 
-// ghClaude is the claude profile's gh: pr create finishes a work card, pr review finishes a
-// read, pr diff/view/checks answer from the staged checkout, a few reads pass through, and
-// everything that writes is refused.
+// ghClaude is the claude profile's gh: pr create finishes a work card (a title starting
+// `nothing:` says there is nothing to do), pr review finishes a read, pr diff/view/checks
+// answer from the staged checkout, and everything else is refused: the wall holds no forge
+// credential and no network. The finish is recorded in <job>/.sprint/finish.md, which the
+// child is never told to write.
 const ghClaude = `nova_here() { if "$NOVA_GIT" rev-parse --git-dir >/dev/null 2>&1; then "$NOVA_GIT" "$@"; else "$NOVA_GIT" -C "$NOVA_STAGED" "$@"; fi; }
-nova_refuse() { echo "gh: REFUSED $1: nothing reaches GitHub from a card; the sprint opens the pull request when the card finishes" >&2; exit 2; }
+nova_refuse() { echo "gh: REFUSED $1: the wall holds no GitHub credential and no network; this card's change is in the staged checkout (gh pr diff, gh pr view) and the sprint opens its pull request when it finishes" >&2; exit 2; }
 nova_need() { [ "$1" -ge 2 ] || { echo "gh: flag needs an argument: $2" >&2; exit 1; }; }
 nova_base() { if "$NOVA_GIT" -C "$NOVA_STAGED" rev-parse -q --verify "origin/$NOVA_BASE^{commit}" >/dev/null 2>&1; then echo "origin/$NOVA_BASE"; else echo "$NOVA_BASE"; fi; }
 nova_result() {
@@ -140,11 +142,13 @@ nova_result() {
 		printf 'head: %s\nbranch: %s\nverdict: %s\ngate: -\noutput: -\nreport: %s\n' "${nova_h:--}" "$nova_br" "$1" "$nova_rep"
 		[ -z "$4" ] || printf 'title: %s\n' "$4"
 		printf '\n## Body\n\n%s\n' "$3"
-	} > "$NOVA_JOB/RESULT.md" || exit 1
+	} > "$NOVA_JOB/.sprint/finish.md" || exit 1
 }
-nova_title=""; nova_body=""; nova_fill=""; nova_v=""
+mkdir -p "$NOVA_JOB/.sprint" || exit 1
+nova_body=""
 case "$1 $2" in
 "pr create")
+	nova_title=""; nova_fill=""
 	shift 2
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -164,10 +168,13 @@ case "$1 $2" in
 		[ -n "$nova_body" ] || nova_body=$(nova_here log -1 --format=%b)
 	fi
 	if [ -z "$nova_title" ]; then echo "gh: REFUSED pr create with no --title (or --fill): the title is what the sprint opens the pull request with" >&2; exit 1; fi
-	nova_result ok "$nova_title" "$nova_body" "$nova_title"
-	echo "pull request recorded for $nova_br: the sprint pushes it and opens it when this card finishes"
+	nova_v=ok
+	case "$nova_title" in [Nn]othing:*) nova_v=nothing ;; esac
+	nova_result "$nova_v" "$nova_title" "$nova_body" "$nova_title"
+	echo "pull request recorded for $nova_br: the sprint pushes it to $NOVA_BRANCH and opens it when this card finishes"
 	exit 0 ;;
 "pr review")
+	nova_v=""
 	shift 2
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -195,10 +202,6 @@ case "$1 $2" in
 "pr checks")
 	echo "no checks reported: the sprint runs the gate; run the card's gate yourself"
 	exit 0 ;;
-"pr list"|"pr status"|"issue view"|"issue list"|"repo view")
-	if [ -n "$NOVA_GH" ]; then exec "$NOVA_GH" "$@"; fi
-	echo "gh: no gh on this machine for $1 $2" >&2
-	exit 1 ;;
 esac
 nova_refuse "$1 $2"
 `
@@ -229,8 +232,8 @@ func (claude) JobText(f Frame, s Staged) string {
 		fmt.Fprintf(&b, "# JOB: %s, attempt %d\n\n", f.Card, f.Attempt)
 		fmt.Fprintf(&b, "You are in a checkout of %s on branch %s at %s, from %s. The checkout is %s; work there. Commit as usual.\n\n", f.Repo, f.Branch, s.Head, orDash(f.BaseRef), s.Repo)
 		b.WriteString("`git push` and `gh pr create` work as you expect: the sprint does them for you when this card finishes, from outside this machine's wall, with its own credential. `git clone` of this repository gives you this same checkout; nothing else is cloned, and nothing reaches GitHub from here.\n\n")
-		b.WriteString("When the work is done: commit, `git push`, then `gh pr create --title \"<title>\" --body \"<body>\"`. That ends the card.\n")
-		b.WriteString("If the work cannot be done, write " + s.Job + "/RESULT.md with `verdict: not-done` in this shape:\n\n")
+		b.WriteString("When the work is done: commit, `git push`, then `gh pr create --title \"<title>\" --body \"<body>\"`. That ends the card; there is nothing else to write. The title is the card's report; put the gate command and its output in the body, which the readers see.\n")
+		b.WriteString("Every card ends with a commit. If there is nothing to do, end with `gh pr create --title \"nothing: <why>\"`. If the work cannot be done, write " + s.Job + "/RESULT.md with `verdict: not-done` in this shape:\n\n")
 		b.WriteString(ShapeText("work") + "\n")
 	}
 	writeCommon(&b, f, s)
@@ -257,7 +260,7 @@ func (plain) JobText(f Frame, s Staged) string {
 	} else {
 		fmt.Fprintf(&b, "# JOB: %s, attempt %d\n\n", f.Card, f.Attempt)
 		fmt.Fprintf(&b, "The checkout %s holds %s on branch %s at %s, from %s. Work there and commit on that branch. Do not clone: the repository is already here. `git push` is recorded and done for you when the card finishes; there is no GitHub CLI.\n\n", s.Repo, f.Repo, f.Branch, s.Head, orDash(f.BaseRef))
-		b.WriteString("End by writing " + s.Job + "/RESULT.md in this shape (verdict ok when the work is committed, not-done when it cannot be):\n\n")
+		b.WriteString("End by writing " + s.Job + "/RESULT.md in this shape (verdict ok when the work is committed, not-done when it cannot be, nothing with the reason as the report when there is nothing to do: every card ends with a commit):\n\n")
 		b.WriteString(ShapeText("work") + "\n")
 	}
 	writeCommon(&b, f, s)

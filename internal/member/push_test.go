@@ -266,6 +266,8 @@ func TestJudgeIsTheFinishRule(t *testing.T) {
 		{"not done", Result{Shaped: true, Verdict: "not-done", Report: "r"}, Push{Sha: fullSha}, FinishFailed, "verdict not-done"},
 		{"no commit", shaped, Push{None: "nothing new"}, FinishFailed, "no commit: nothing new"},
 		{"push refused", shaped, Push{Refused: "! [rejected]"}, FinishFailed, "push refused: ! [rejected]"},
+		{"nothing to do", Result{Shaped: true, Verdict: "nothing", Report: "nothing: the check holds"}, Push{None: "nothing new"}, FinishFailed, "nothing to do: the check holds"},
+		{"nothing to do, said plainly", Result{Shaped: true, Verdict: "nothing", Report: "the check holds"}, Push{None: "nothing new"}, FinishFailed, "nothing to do: the check holds"},
 	} {
 		fin, why := Judge(tc.r, tc.pu)
 		assert.Equal(t, tc.fin, fin, tc.name)

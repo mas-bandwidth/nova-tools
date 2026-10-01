@@ -2073,8 +2073,8 @@ func nativePrompt(cfg nativeRunConfig) string {
 	return cardcontract.Prompt(filepath.Join(cfg.slotDir, "jobs", cfg.label), swarm.CardPrompt(cfg.card))
 }
 
-// installFrame writes a framed launch's JOB.md and its family's shims into <slot>/shim,
-// the shims handing through to this machine's real git and gh.
+// installFrame records the staged commit in the slot and writes a framed launch's JOB.md
+// and its family's shims into <slot>/shim, the shims handing through to the real git.
 func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 	git, err := exec.LookPath("git")
 	if err != nil {
@@ -2083,13 +2083,12 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 	if git, err = filepath.Abs(git); err != nil {
 		return err
 	}
-	gh := "" // a machine with no gh: the shims say so for the reads they hand through
-	if p, err := exec.LookPath("gh"); err == nil {
-		if abs, aerr := filepath.Abs(p); aerr == nil {
-			gh = abs
-		}
+	// the commit staged, recorded in the slot (outside the job the child writes): the
+	// member counts the child's commits from it, never from the checkout's own refs
+	if err := atomicfile.Write(filepath.Join(cfg.slotDir, cardcontract.StagedName), []byte(head+"\n"), 0o644); err != nil {
+		return fmt.Errorf("recording the staged commit: %w", err)
 	}
-	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git, Gh: gh}
+	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
 	return cardcontract.Install(cardcontract.For(cardcontract.FamilyOf(cfg.model)), *cfg.frame, st, nativeShellShimDir(cfg.slotDir))
 }
 

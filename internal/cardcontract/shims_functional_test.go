@@ -13,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // rig is one staged job: an origin, a checkout of it on the card's branch at
@@ -106,6 +108,7 @@ func TestAGitPushIsRecordedAndNothingLeaves(t *testing.T) {
 			code, _, errb := r.sh(r.repo, tc.line)
 			require.Equal(t, 0, code, "%s %s: %s", family, tc.line, errb)
 			assert.Contains(t, errb, "To "+cardURL, tc.line)
+			assert.Contains(t, errb, tc.branch+" -> sprint/c1 (pushed by the sprint", tc.line)
 			branch, got := LastPushed(r.job)
 			assert.Equal(t, tc.branch, branch, "%s %s", family, tc.line)
 			assert.Equal(t, tc.head, got, "%s %s", family, tc.line)
@@ -200,18 +203,24 @@ func TestGhPrCreateWritesTheFinish(t *testing.T) {
 		{`gh pr create --title="Add f" --body-file ` + body, "", "Add f", "## Summary\n\nthe change"},
 		{`gh pr create --title "Add f" -F -`, "from stdin\n", "Add f", "from stdin"},
 		{`gh pr create --fill`, "", "done", ""},
+		{`gh pr create --title "nothing: the check already holds"`, "", "nothing: the check already holds", ""},
 	} {
-		_ = os.Remove(filepath.Join(r.job, "RESULT.md")) // ignored: the first form finds none to remove
+		_ = os.Remove(filepath.Join(r.job, FinishName)) // ignored: the first form finds none to remove
 		code, out, errb := r.sh(r.repo, tc.line, tc.stdin)
 		require.Equal(t, 0, code, "%s: %s", tc.line, errb)
-		assert.Contains(t, out, "the sprint pushes it and opens it")
-		b, err := os.ReadFile(filepath.Join(r.job, "RESULT.md"))
+		assert.Contains(t, out, "the sprint pushes it to sprint/c1 and opens it")
+		b, err := os.ReadFile(filepath.Join(r.job, FinishName))
 		require.NoError(t, err)
-		res := ParseResult(b)
+		res := typedrec.ParseCardResult(b)
 		assert.True(t, res.Shaped, "%s:\n%s", tc.line, b)
 		assert.Equal(t, head, res.Head)
 		assert.Equal(t, "sprint/c1", res.Branch)
-		assert.Equal(t, "ok", res.Verdict)
+		wantVerdict := "ok"
+		if strings.HasPrefix(tc.title, "nothing:") {
+			wantVerdict = "nothing"
+		}
+		assert.Equal(t, wantVerdict, res.Verdict, tc.line)
+		assert.Equal(t, tc.title, res.Report, "the report is the title")
 		assert.Equal(t, tc.title, res.Title)
 		assert.Equal(t, tc.body, res.Body)
 	}
@@ -243,9 +252,9 @@ func TestGhPrReviewIsTheRead(t *testing.T) {
 	} {
 		code, _, errb := r.sh(r.job, tc.line)
 		require.Equal(t, 0, code, "%s: %s", tc.line, errb)
-		b, err := os.ReadFile(filepath.Join(r.job, "RESULT.md"))
+		b, err := os.ReadFile(filepath.Join(r.job, FinishName))
 		require.NoError(t, err)
-		res := ParseResult(b)
+		res := typedrec.ParseCardResult(b)
 		assert.True(t, res.Shaped, string(b))
 		assert.Equal(t, tc.verdict, res.Verdict, tc.line)
 		assert.Equal(t, tc.report, res.Report, tc.line)
@@ -262,10 +271,11 @@ func TestGhRefusesEveryWrite(t *testing.T) {
 	t.Parallel()
 	for _, family := range []string{"claude", "plain"} {
 		r := newRig(t, family, "work")
-		for _, line := range []string{"gh pr merge 1", "gh pr close 1", "gh pr comment 1 -b x", "gh pr edit 1", "gh issue comment 1 -b x", "gh api repos", "gh auth login"} {
+		for _, line := range []string{"gh pr merge 1", "gh pr close 1", "gh pr comment 1 -b x", "gh pr edit 1", "gh issue comment 1 -b x", "gh api repos", "gh auth login", "gh pr list", "gh issue view 1", "gh repo view", "gh -R o/r pr merge 1"} {
 			code, _, errb := r.sh(r.job, line)
 			assert.Equal(t, 2, code, "%s %s", family, line)
 			assert.Contains(t, errb, "gh: REFUSED", line)
+			assert.Equal(t, 1, strings.Count(strings.TrimSpace(errb), "\n")+1, "one line: %s", line)
 		}
 	}
 }
@@ -285,7 +295,7 @@ func TestEveryProfileKeepsTheContract(t *testing.T) {
 		assert.Equal(t, head, got, family)
 		job, err := os.ReadFile(filepath.Join(r.job, JobName))
 		require.NoError(t, err)
-		for _, want := range []string{r.repo, "sprint/c1", r.base, "RESULT.md", "verdict: ok | not-done", "-count=1", "-timeout 600s", "GOCACHE=" + r.job + "/gocache"} {
+		for _, want := range []string{r.repo, "sprint/c1", r.base, "RESULT.md", "verdict: ok | not-done | nothing", "-count=1", "-timeout 600s", "GOCACHE=" + r.job + "/gocache"} {
 			assert.Contains(t, string(job), want, family)
 		}
 	}

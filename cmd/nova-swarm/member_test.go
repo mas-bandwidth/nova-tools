@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
@@ -143,14 +144,16 @@ func TestNativeChildReadsHowItEnded(t *testing.T) {
 		ok                bool
 		head, report      string
 		pushed            string // what the git shim recorded in the job
+		finish            string // what the gh shim recorded in the job
 	}{
-		{"ok with a result", native("OK", 0, "ok"), "rev: abc\n## One line\nall good\n", true, "abc", "all good", ""},
-		{"ok without a one-line report", native("OK", 0, "ok"), "", true, "", "finished; the child published no one-line report", ""},
-		{"incomplete", native("INCOMPLETE", 0, "silent"), "", false, "", "the child ended without a result (see LOG)", ""},
-		{"ok word with rc 1", native("OK", 1, "ok"), "## One line\nhalf\n", false, "", "half", ""},
-		{"no NATIVE line", "the child died\n", "", false, "", "the child ended without a result (see LOG)", ""},
-		{"the contract's shape", native("OK", 0, "ok"), "head: " + fullSha + "\nbranch: b\nverdict: ok\ngate: -\noutput: -\nreport: shaped\ntitle: T\n\n## Body\n\nB\n", true, fullSha, "shaped", ""},
-		{"a shape naming no head, a push recorded", native("OK", 0, "ok"), "head: -\nbranch: b\nverdict: not-done\ngate: -\noutput: -\nreport: stuck\n", true, pushedSha, "stuck", "sprint/c1\t" + pushedSha + "\t/j/repo\n"},
+		{"ok with a result", native("OK", 0, "ok"), "rev: abc\n## One line\nall good\n", true, "abc", "all good", "", ""},
+		{"ok without a one-line report", native("OK", 0, "ok"), "", true, "", "finished; the child published no one-line report", "", ""},
+		{"incomplete", native("INCOMPLETE", 0, "silent"), "", false, "", "the child ended without a result (see LOG)", "", ""},
+		{"ok word with rc 1", native("OK", 1, "ok"), "## One line\nhalf\n", false, "", "half", "", ""},
+		{"no NATIVE line", "the child died\n", "", false, "", "the child ended without a result (see LOG)", "", ""},
+		{"the contract's shape", native("OK", 0, "ok"), "head: " + fullSha + "\nbranch: b\nverdict: ok\ngate: -\noutput: -\nreport: shaped\ntitle: T\n\n## Body\n\nB\n", true, fullSha, "shaped", "", ""},
+		{"the shim's finish, the child's own RESULT.md riding in its body", native("OK", 0, "ok"), "RESULT: c1 sha=0123\n## One line\ngate green\n", true, fullSha, "The change", "", "head: " + fullSha + "\nbranch: sprint/c1\nverdict: ok\ngate: -\noutput: -\nreport: The change\ntitle: The change\n\n## Body\n\nthe body\n"},
+		{"a shape naming no head, a push recorded", native("OK", 0, "ok"), "head: -\nbranch: b\nverdict: not-done\ngate: -\noutput: -\nreport: stuck\n", true, pushedSha, "stuck", "sprint/c1\t" + pushedSha + "\t/j/repo\n", ""},
 	} {
 		dir := t.TempDir()
 		logPath := filepath.Join(dir, "c1.native.log")
@@ -161,12 +164,16 @@ func TestNativeChildReadsHowItEnded(t *testing.T) {
 		}
 		job := filepath.Join(dir, "job")
 		write(t, filepath.Join(job, cardcontract.PushedName), tc.pushed)
+		write(t, filepath.Join(job, cardcontract.FinishName), tc.finish)
 		c := &nativeChild{card: "c1", logPath: logPath, results: results, job: job, done: done}
 		if !c.Done() {
 			t.Fatalf("%s: a child whose done channel is closed is done", tc.name)
 		}
 		r := c.Result()
 		wantReport := strings.ReplaceAll(tc.report, "LOG", logPath)
+		if tc.finish != "" {
+			assert.Equal(t, "the body\n\n## RESULT.md\n\nRESULT: c1 sha=0123\n## One line\ngate green", r.Body, "the child's RESULT.md rides in the body")
+		}
 		if r.OK != tc.ok || r.Head != tc.head || r.Report != wantReport {
 			t.Errorf("%s: Result = %+v, want ok=%t head=%q report=%q", tc.name, r, tc.ok, tc.head, wantReport)
 		}
@@ -541,4 +548,14 @@ func TestMemberAcceptsPositiveTicks(t *testing.T) {
 	var out, errb bytes.Buffer
 	require.Equal(t, 0, run(args, strings.NewReader(""), &out, &errb, time.Now()), "stderr %q", errb.String())
 	require.Contains(t, out.String(), "MEMBER OK as=m1 ticks=2 running=0")
+}
+
+// A card's native child starts with no forge credential: the member keeps the
+// GitHub tokens and the ssh agent for its own push and pull request, and native
+// would pass any *TOKEN* name on to the harness (docs/SPEC-CARD-CONTRACT.md).
+func TestTheChildStartsWithNoForgeCredential(t *testing.T) {
+	t.Parallel()
+	got := childEnviron([]string{"GH_TOKEN=t", "GITHUB_TOKEN=t", "GH_ENTERPRISE_TOKEN=t", "SSH_AUTH_SOCK=/s", "GIT_ASKPASS=/a",
+		"ANTHROPIC_API_KEY=k", "PATH=/bin", "HOME=/h"})
+	require.Equal(t, []string{"ANTHROPIC_API_KEY=k", "PATH=/bin", "HOME=/h"}, got)
 }

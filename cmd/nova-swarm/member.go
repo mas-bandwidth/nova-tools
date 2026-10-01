@@ -23,6 +23,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // cmdMember is `nova-swarm member`: this machine as one member of a sprint's
@@ -191,6 +192,7 @@ type nativeRunner struct {
 	tokens, auth, config, worker                              string
 	noWall                                                    bool
 	stderr                                                    io.Writer
+	env                                                       []string // added to this process's environment: none in production, a test's
 }
 
 func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
@@ -248,6 +250,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
 	cmd := subproc.Long(ctx, r.self, args...)
+	cmd.Env = childEnviron(append(os.Environ(), r.env...))
 	logf, err := os.Create(logPath)
 	if err != nil {
 		release()
@@ -325,10 +328,11 @@ func (c *nativeChild) Done() bool {
 var nativeRC = regexp.MustCompile(`\bNATIVE (\S+) .*\brc=(-?\d+)\b.*\bharness=(\S+)`)
 
 // Result reads how the child ended: the NATIVE line's rc and harness word, and
-// the newest RESULT.md under the card's results in the contract's shape
-// (docs/SPEC-CARD-CONTRACT.md section 3). The head is the result's, else the
-// last push the git shim recorded in the job, else an older result's `rev:`
-// line; a read's verdict and report fall back to the older shape too.
+// the finish the gh shim recorded in the job, else the newest RESULT.md under
+// the card's results, in the contract's shape (docs/SPEC-CARD-CONTRACT.md
+// section 3). The head is the result's, else the last push the git shim
+// recorded in the job, else an older result's `rev:` line; a read's verdict and
+// report fall back to the older shape too.
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
@@ -342,7 +346,14 @@ func (c *nativeChild) Result() member.Result {
 		if path != "" {
 			raw, _ = os.ReadFile(path) // ignored: an unreadable result reads as no result, which the finish judges failed
 		}
-		cr := cardcontract.ParseResult(raw)
+		// the shim's record of gh pr create or gh pr review is the finish when there is
+		// one; a RESULT.md the child wrote as well rides in its body for the readers
+		cr, shimmed := cardcontract.ReadFinish(c.job)
+		if !shimmed {
+			cr = typedrec.ParseCardResult(raw)
+		} else if len(strings.TrimSpace(string(raw))) > 0 {
+			cr.Body = strings.TrimSpace(cr.Body + "\n\n## RESULT.md\n\n" + string(raw))
+		}
 		head, verdict, report := cr.Head, cr.Verdict, cr.Report
 		if head == "" {
 			_, head = cardcontract.LastPushed(c.job)
@@ -390,7 +401,7 @@ func frameOf(p member.Packet, model string) cardcontract.Frame {
 		if p.WorkBase != "" {
 			f.ReviewBase = p.WorkBase
 		}
-		if pushHeadRE.MatchString(p.Head) && len(p.Head) == 40 {
+		if typedrec.IsFullSha(p.Head) {
 			f.StageSha = p.Head
 		}
 		return f
@@ -456,4 +467,25 @@ func readResult(path string) (head, verdict, report string) {
 		head = ""
 	}
 	return head, verdict, report
+}
+
+// forgeCredential is an environment name that carries a forge credential: the
+// GitHub CLI's and git's tokens, and the ssh agent that would push as this
+// machine. The member keeps them for its own push and pull request.
+func forgeCredential(name string) bool {
+	up := strings.ToUpper(name)
+	return strings.HasPrefix(up, "GH_") || strings.HasPrefix(up, "GITHUB_") || up == "SSH_AUTH_SOCK" || up == "GIT_ASKPASS" || up == "SSH_ASKPASS"
+}
+
+// childEnviron is the environment a card's native child starts with: the
+// member's, less every forge credential (native passes any *TOKEN* name on to
+// the harness, docs/SPEC-CARD-CONTRACT.md: nothing reaches a forge from a card).
+func childEnviron(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if name, _, _ := strings.Cut(kv, "="); !forgeCredential(name) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }

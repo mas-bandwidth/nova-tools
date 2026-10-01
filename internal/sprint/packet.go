@@ -1,6 +1,10 @@
 package sprint
 
-import "strconv"
+import (
+	"strconv"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+)
 
 // Packet is what a worker or a reader is handed with a card, so that no
 // actor needs the coordinator's view to learn what it was asked: the card,
@@ -58,7 +62,7 @@ func PacketOf(prefix string, epoch uint64, c, primary, prevWork, work *Card) Pac
 			if p.Base == "" {
 				p.Base = BranchOf(prefix, prevWork.ID)
 			}
-			if prevWork.F("ok") == "yes" && isSha(prevWork.F("head")) {
+			if prevWork.F("ok") == "yes" && typedrec.IsFullSha(prevWork.F("head")) {
 				p.BaseHead = prevWork.F("head")
 			}
 		}
@@ -97,17 +101,4 @@ func PacketCards(c *Card) (primary, prevWork, work string) {
 		return primary, prevAttempt(primary, c.Int("attempt")), ""
 	}
 	return primary, "", WorkCardID(primary, c.Int("attempt"))
-}
-
-// isSha is a full commit id: forty lowercase hex digits.
-func isSha(s string) bool {
-	if len(s) != 40 {
-		return false
-	}
-	for _, c := range s {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
 }

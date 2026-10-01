@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -55,81 +57,101 @@ func TestTheScriptedChildEndToEnd(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the shims are POSIX sh; a windows bench writes none")
 	}
-	bin := builtSprint(t)
 	for _, family := range cardcontract.Families {
 		family := family
 		t.Run(family, func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-			defer cancel()
-			dir := t.TempDir()
-			origin := filepath.Join(dir, "origin.git")
-			seed := filepath.Join(dir, "seed")
-			runGit(t, "", "init", "-q", "-b", "main", "--", seed)
-			write(t, filepath.Join(seed, "f"), "base\n")
-			gitAs(t, seed, "add", "f")
-			gitAs(t, seed, "commit", "-q", "-m", "base")
-			runGit(t, "", "clone", "-q", "--bare", "--", seed, origin)
-
-			harness := filepath.Join(dir, "child.sh")
-			require.NoError(t, testbin.WriteExecutable(harness, []byte(scriptFor(t, family)), 0o755))
-			gh := filepath.Join(dir, "gh")
-			require.NoError(t, testbin.WriteExecutable(gh, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > '"+dir+"/gh.args'\ncat > '"+dir+"/gh.body'\necho https://example.com/o/n/pull/42\n"), 0o755))
-
-			first, rest, _ := strings.Cut(memberCard, "\n")
-			brief := first + "\nbase-repo: " + origin + "\nBASE: main\n" + rest
-			d := &memberDrive{t: t, addr: "mem:" + filepath.Join(dir, "sprint.twin"), bin: bin}
-			d.must("init", "--members", "m1:1")
-			d.must("add", "--stream", "a", "--count", "1", "--brief", brief)
-			d.must("start")
-
-			// The member loop runs in this process, its verbs and the test's ticks one
-			// at a time: a mem twin is one command at a time (cmd/nova-sprint twin.go).
-			// Each card is still one native child of the built binary.
-			root := filepath.Join(dir, "m1")
-			require.NoError(t, os.MkdirAll(filepath.Join(root, "slots"), 0o755))
-			write(t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
-			sp := &execSprint{bin: bin, actor: "m1", env: []string{"NOVA_SPRINT_REDIS=" + d.addr}}
-			rn := &nativeRunner{self: builtTool, sprintBin: bin, harness: harness, model: familyModel[family], root: root,
-				slots: filepath.Join(root, "slots"), resultsRoot: filepath.Join(root, "results"), deadline: time.Minute,
-				tokens: "unmetered", noWall: true, stderr: io.Discard}
-			pu := newGitPusher(root, rn.slots, bin)
-			pu.gh = gh
-			out := &lockedBuf{}
-			m := member.New(member.Config{As: "m1", Width: 1}, sp, rn, pu, out)
-			t.Cleanup(func() {
-				if t.Failed() {
-					t.Logf("member output:\n%s", out.String())
-				}
-			})
-
-			var story string
-			for !strings.Contains(story, "m1 finished attempt 1") {
-				require.NoError(t, ctx.Err(), "the card did not finish in time:\n%s", story)
-				d.must("tick")
-				_, err := m.Tick(time.Now())
-				require.NoError(t, err)
-				story = d.must("card", "a-1")
-				time.Sleep(100 * time.Millisecond)
-			}
-			assert.NotContains(t, story, "FAILED", story)
-			pushed := strings.TrimSpace(runGit(t, origin, "rev-parse", "--verify", "-q", "refs/heads/sprint/a-1.w1"))
-			require.Len(t, pushed, 40, "the card's branch is on origin:\n%s", story)
-			assert.Equal(t, "the change", strings.TrimSpace(runGit(t, origin, "log", "-1", "--format=%s", pushed)), "origin holds the child's commit")
-			assert.Contains(t, story, "pushed="+pushed+" to sprint/a-1.w1")
-
-			args, err := os.ReadFile(filepath.Join(dir, "gh.args"))
-			if family != "claude" {
-				assert.True(t, os.IsNotExist(err), "%s asked for no pull request", family)
-				return
-			}
-			require.NoError(t, err, "the member opened the pull request")
-			assert.Equal(t, []string{"pr", "create", "--repo", origin, "--head", "sprint/a-1.w1", "--title", "The change", "--body-file", "-", "--base", "main"},
-				strings.Split(strings.TrimSpace(string(args)), "\n"))
-			body, err := os.ReadFile(filepath.Join(dir, "gh.body"))
-			require.NoError(t, err)
-			assert.Equal(t, "the body, line one\nline two", strings.TrimSpace(string(body)))
-			assert.Contains(t, story, "pr=https://example.com/o/n/pull/42")
+			scriptedChild(t, family, false)
 		})
 	}
+}
+
+// TestTheScriptedChildEndToEndInsideTheWall is the claude child of the test
+// above with the wall on, as a fleet runs it: the shims run inside it, and the
+// member pushes and opens the pull request from outside it. A machine with no
+// wall binary on PATH skips it, saying so: the functional image is one (it
+// holds no nova-sandbox; the wall's own tests run on the benches).
+func TestTheScriptedChildEndToEndInsideTheWall(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath(swarm.SandboxBinary); err != nil {
+		t.Skipf("no %s on PATH: the walled run needs the wall binary, which this machine does not have", swarm.SandboxBinary)
+	}
+	scriptedChild(t, "claude", true)
+}
+
+// scriptedChild runs one family's scripted child through the member loop and
+// native, walled or not, and asserts the finish (TestTheScriptedChildEndToEnd).
+func scriptedChild(t *testing.T, family string, walled bool) {
+	t.Helper()
+	bin := builtSprint(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin.git")
+	seed := filepath.Join(dir, "seed")
+	runGit(t, "", "init", "-q", "-b", "main", "--", seed)
+	write(t, filepath.Join(seed, "f"), "base\n")
+	gitAs(t, seed, "add", "f")
+	gitAs(t, seed, "commit", "-q", "-m", "base")
+	runGit(t, "", "clone", "-q", "--bare", "--", seed, origin)
+
+	harness := filepath.Join(dir, "child.sh")
+	require.NoError(t, testbin.WriteExecutable(harness, []byte(scriptFor(t, family)), 0o755))
+	gh := filepath.Join(dir, "gh")
+	require.NoError(t, testbin.WriteExecutable(gh, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > '"+dir+"/gh.args'\ncat > '"+dir+"/gh.body'\necho https://example.com/o/n/pull/42\n"), 0o755))
+
+	first, rest, _ := strings.Cut(memberCard, "\n")
+	brief := first + "\nbase-repo: " + origin + "\nBASE: main\n" + rest
+	d := &memberDrive{t: t, addr: "mem:" + filepath.Join(dir, "sprint.twin"), bin: bin}
+	d.must("init", "--members", "m1:1")
+	d.must("add", "--stream", "a", "--count", "1", "--brief", brief)
+	d.must("start")
+
+	// The member loop runs in this process, its verbs and the test's ticks one
+	// at a time: a mem twin is one command at a time (cmd/nova-sprint twin.go).
+	// Each card is still one native child of the built binary.
+	root := filepath.Join(dir, "m1")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "slots"), 0o755))
+	write(t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
+	sp := &execSprint{bin: bin, actor: "m1", env: []string{"NOVA_SPRINT_REDIS=" + d.addr}}
+	rn := &nativeRunner{self: builtTool, sprintBin: bin, harness: harness, model: familyModel[family], root: root,
+		slots: filepath.Join(root, "slots"), resultsRoot: filepath.Join(root, "results"), deadline: time.Minute,
+		tokens: "unmetered", noWall: !walled, stderr: io.Discard}
+	pu := newGitPusher(root, rn.slots, bin)
+	pu.gh = gh
+	out := &lockedBuf{}
+	m := member.New(member.Config{As: "m1", Width: 1}, sp, rn, pu, out)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("member output:\n%s", out.String())
+		}
+	})
+
+	var story string
+	for !strings.Contains(story, "m1 finished attempt 1") {
+		require.NoError(t, ctx.Err(), "the card did not finish in time:\n%s", story)
+		d.must("tick")
+		_, err := m.Tick(time.Now())
+		require.NoError(t, err)
+		story = d.must("card", "a-1")
+		time.Sleep(100 * time.Millisecond)
+	}
+	assert.NotContains(t, story, "FAILED", story)
+	pushed := strings.TrimSpace(runGit(t, origin, "rev-parse", "--verify", "-q", "refs/heads/sprint/a-1.w1"))
+	require.Len(t, pushed, 40, "the card's branch is on origin:\n%s", story)
+	assert.Equal(t, "the change", strings.TrimSpace(runGit(t, origin, "log", "-1", "--format=%s", pushed)), "origin holds the child's commit")
+	assert.Contains(t, story, "pushed="+pushed+" to sprint/a-1.w1")
+
+	args, err := os.ReadFile(filepath.Join(dir, "gh.args"))
+	if family != "claude" {
+		assert.True(t, os.IsNotExist(err), "%s asked for no pull request", family)
+		return
+	}
+	require.NoError(t, err, "the member opened the pull request")
+	assert.Equal(t, []string{"pr", "create", "--repo", origin, "--head", "sprint/a-1.w1", "--title", "The change", "--body-file", "-", "--base", "main"},
+		strings.Split(strings.TrimSpace(string(args)), "\n"))
+	body, err := os.ReadFile(filepath.Join(dir, "gh.body"))
+	require.NoError(t, err)
+	assert.Equal(t, "the body, line one\nline two", strings.TrimSpace(string(body)))
+	assert.Contains(t, story, "pr=https://example.com/o/n/pull/42")
 }

@@ -99,13 +99,21 @@ const (
 // Judge is a work card's finish from its result and its push, in one place
 // (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, Judge): ok only
 // when the result has the shape, its verdict is ok, and the member pushed a
-// commit the child made; otherwise failed, with the reason.
+// commit the child made; otherwise failed, with the reason. Every work card
+// ends with a commit: a child with nothing to do says `verdict: nothing`, and
+// that is a failed finish, nothing to do, for the coordinator to judge.
 func Judge(r Result, pu Push) (Finish, string) {
 	switch {
 	case pu.Refused != "":
 		return FinishFailed, "push refused: " + pu.Refused
 	case !r.Shaped:
 		return FinishFailed, "no RESULT.md shape"
+	case r.Verdict == "nothing":
+		why := strings.TrimSpace(r.Report)
+		if len(why) >= len("nothing:") && strings.EqualFold(why[:len("nothing:")], "nothing:") {
+			why = strings.TrimSpace(why[len("nothing:"):])
+		}
+		return FinishFailed, "nothing to do: " + why
 	case r.Verdict != "ok":
 		return FinishFailed, "verdict " + r.Verdict
 	case pu.Sha == "":

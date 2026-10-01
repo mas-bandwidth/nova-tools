@@ -2,7 +2,6 @@ package cardcontract
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,6 +23,10 @@ func TestJobTextCarriesTheAttemptBefore(t *testing.T) {
 			assert.Contains(t, text, want, family)
 		}
 	}
+	f.Attempt = 1
+	assert.Contains(t, For("claude").JobText(f, s), `gh pr create --title "nothing: <why>"`)
+	assert.Contains(t, For("claude").JobText(f, s), "there is nothing else to write")
+	assert.Contains(t, For("plain").JobText(f, s), "verdict: ok | not-done | nothing")
 	f.Kind = "read"
 	assert.Contains(t, For("claude").JobText(f, s), "gh pr review --request-changes")
 	assert.Contains(t, For("plain").JobText(f, s), "verdict: ok | broken")
@@ -41,27 +44,6 @@ func TestFamilyOfAModelId(t *testing.T) {
 	for _, f := range Families {
 		assert.Equal(t, f, For(f).Family())
 	}
-}
-
-func TestParseResultHoldsTheShape(t *testing.T) {
-	t.Parallel()
-	whole := "head: 0123456789abcdef0123456789abcdef01234567\nbranch: b\nverdict: ok\ngate: go test ./x\noutput: -\nreport: done it\ntitle: T\n\n## Body\n\nline one\nhead: not a key here\n"
-	r := ParseResult([]byte(whole))
-	assert.True(t, r.Shaped)
-	assert.Equal(t, "line one\nhead: not a key here", r.Body)
-	assert.Equal(t, "T", r.Title)
-	for name, text := range map[string]string{
-		"no report":     strings.Replace(whole, "report: done it\n", "", 1),
-		"empty report":  strings.Replace(whole, "report: done it", "report:", 1),
-		"no gate":       strings.Replace(whole, "gate: go test ./x\n", "", 1),
-		"a bad head":    strings.Replace(whole, "0123456789abcdef0123456789abcdef01234567", "HEAD", 1),
-		"a bad verdict": strings.Replace(whole, "verdict: ok", "verdict: done", 1),
-		"the old shape": "rev: 0123456789abcdef0123456789abcdef01234567\nverdict: ok\n\n## One line\n\nx\n",
-		"nothing":       "",
-	} {
-		assert.False(t, ParseResult([]byte(text)).Shaped, name)
-	}
-	assert.True(t, ParseResult([]byte(strings.Replace(whole, "0123456789abcdef0123456789abcdef01234567", "-", 1))).Shaped, "a not-done result may name no head")
 }
 
 func TestAFrameRoundTripsAndIsRefusedWithoutAKind(t *testing.T) {

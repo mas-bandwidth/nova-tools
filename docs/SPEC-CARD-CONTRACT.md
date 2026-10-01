@@ -36,12 +36,13 @@ the add lint holds it.
 
 ## 3. The result shape
 
-The child's end is `<job>/RESULT.md` in one shape, one `key: value` per line, then free text:
+The child's end is one shape, one `key: value` per line, then free text. `typedrec.ParseCardResult`
+is its one reader (the one-typed-parser rule):
 
 ```
 head: <the commit, full sha>
 branch: <the branch it is on>
-verdict: ok | not-done          (a read: ok | broken)
+verdict: ok | not-done | nothing   (a read: ok | broken)
 gate: <the gate command, or ->
 output: <the path of the gate's output, or ->
 report: <one line>
@@ -52,26 +53,44 @@ title: <a pull request title>   (optional)
 <the pull request body, or a review's findings with file:line>
 ```
 
-`gh pr create` and `gh pr review` write it in the claude profile; a plain child writes it
-itself. A result without the six keys is no result.
+In the claude profile `gh pr create` and `gh pr review` record it in `<job>/.sprint/finish.md`,
+a file the child is never told to write, so a RESULT.md the child also writes (as an older card
+template asked) overwrites nothing: it rides at the end of the pull request body. A plain child
+writes `<job>/RESULT.md` itself. The finish record wins over RESULT.md. A result without the six
+keys is no result.
+
+The rulings of 2026-09-30 on the shape:
+
+- **Every work card ends with a commit.** A child with nothing to do says `verdict: nothing`
+  with the reason as its report (claude: `gh pr create --title "nothing: <why>"`); the finish
+  is failed with the reason `nothing to do: <why>`, which opens the failed-work judgment for
+  the coordinator.
+- **The report line is the pull request title**, and the body carries the whole RESULT.md,
+  with the gate's output, so the readers see it.
 
 ## 4. The finish
 
 A work card's finish is judged in one place, `member.Judge`, cited from the model's `Finish`:
 
-- **ok** only when the result has the shape, its verdict is `ok`, its head is a commit no
-  branch of origin held at staging (the child committed), and the member's push of it to the
-  card's branch succeeded;
-- **failed** otherwise, with the reason: `no RESULT.md shape`, `verdict <word>`, `no commit`,
-  `push refused: <git's line>`; a failed finish passes `--failed` and opens the failed-work
-  judgment, never review, and passes `--branch` only when a push landed;
+- **ok** only when the result has the shape, its verdict is `ok`, its head has a commit the
+  staged commit does not (the child committed), and the member's push of it to the card's
+  branch succeeded;
+- **failed** otherwise, with the reason: `no RESULT.md shape`, `nothing to do: <why>`,
+  `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`; a failed finish passes
+  `--failed` and opens the failed-work judgment, never review, and passes `--head` and
+  `--branch` only when a push landed;
 - **reaped** when the claim moved under the child (a clear, a redeal) or the card left the
   member's queue (a drop, a return): nothing is reported, because the result is nobody's.
 
-The head the member pushes is the result's `head`, else the last head the git shim recorded.
-The member pushes from its own bare repository, fetching every branch and the `HEAD` of the
-staged checkout, so a commit on any branch the child made, in the checkout or in a clone the
-shim redirected to it, is found. When the result carries a `title`, the member opens the pull
+The head the member pushes is the result's `head`, else the last head the git shim recorded in
+`<job>/.sprint/pushed.tsv`. The member pushes from its own bare repository, fetching every
+branch and the `HEAD` of the staged checkout, so a commit on any branch the child made, in the
+checkout or in a clone the shim linked to it, is found. Whether the child committed is counted
+there, `rev-list <head> ^<staged>`, from the commit native recorded in `<slot>/staged` when it
+staged the checkout: never from the checkout's own refs, which a stale bench mirror leaves
+behind and the child can edit (`git remote remove`). A card's native child starts with no forge
+credential: the member strips `GH_*`, `GITHUB_*`, `SSH_AUTH_SOCK` and the askpass helpers from
+its environment and keeps them for its own push and pull request. When the result carries a `title`, the member opens the pull
 request after the push, as itself, from the card's branch into the base ref, with the title and
 the body, and the finish's report carries its address.
 
@@ -85,7 +104,7 @@ A profile is keyed by model family, derived from the model id the member runs th
 | profile | git | gh | JOB.md asks for |
 |---|---|---|---|
 | `plain` | `push` recorded and answered as a push; everything else passes through | refused, one line | commit on the branch, write RESULT.md in the shape |
-| `claude` | `push` recorded and answered as a push; `clone` of the card's repository (https, ssh, scp form, `.git` or not) becomes a link to the staged checkout, any other clone is refused; `checkout -b`, `switch -c`, `branch`, `fetch` and `pull` pass through | `pr create` writes the result and finishes; `pr review --approve` / `--request-changes` writes a read's verdict; `pr diff`, `pr view` and `pr checks` answer from the staged checkout against the base; `pr list`, `issue view/list` and `repo view` pass through; everything that writes is refused, one line | work as on any pull request: branch, commit, push, `gh pr create`; a read reviews with `gh pr review` |
+| `claude` | `push` recorded and answered as a push; `clone` of the card's repository (https, ssh, scp form, `.git` or not) becomes a link to the staged checkout, any other clone is refused; `checkout -b`, `switch -c`, `branch`, `fetch` and `pull` pass through | `pr create` writes the result and finishes; `pr review --approve` / `--request-changes` writes a read's verdict; `pr diff`, `pr view` and `pr checks` answer from the staged checkout against the base; everything else is refused, one line, with the reason: the wall holds no forge credential and no network | work as on any pull request: branch, commit, push, `gh pr create`, and nothing else to write; a read reviews with `gh pr review` |
 
 ### Writing a profile
 
@@ -101,7 +120,7 @@ type Profile interface {
 
 It is registered in `profiles` by its family. Its shims are POSIX `sh` scripts written into
 `<slot>/shim`, which the wall lets the child run and not rewrite. Whatever its commands look
-like, a profile keeps the contract: a push leaves nothing but a line in `<job>/pushed.tsv`
+like, a profile keeps the contract: a push leaves nothing but a line in `<job>/.sprint/pushed.tsv`
 (`branch`, `head`, `top`, tab separated); the child's end is `<job>/RESULT.md` in the shape above;
 nothing reaches a forge from inside the wall. `cardcontract.ContractShim` is the push recorder
 every profile may reuse.
@@ -115,3 +134,11 @@ commit, push and finish), and the test asserts the member pushed the child's com
 card's branch on origin and, when the child ran `gh pr create`, opened the pull request with
 its title and body. Run it with `go test -tags functional -run TestTheScriptedChildEndToEnd
 ./cmd/nova-swarm/`; it needs no store and no network.
+
+The card template (`nova-swarm template --name card`) ends with STEP 6, "End as JOB.md says":
+under a profile whose JOB.md ends the card with its pull request, there is nothing else to write;
+under one that asks for RESULT.md, the shape above.
+
+The end-to-end test runs once more for the claude child with the wall on
+(`TestTheScriptedChildEndToEndInsideTheWall`) on a machine whose PATH holds the wall binary; the
+functional image holds none, so there it says so and skips.
