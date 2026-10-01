@@ -11,7 +11,7 @@ import (
 )
 
 // Today's bounds, stated as numbers: one part of the tick moves at most 2,000
-// units (one Layer 1 write's candidates, errata 3 amendment 10) and writes at
+// units (one table-layer write's candidates, errata 3 amendment 10) and writes at
 // most 50 judgments, and what is left is due, a count in
 // one move. The fixtures do not read the constants of the tick, so a change to
 // one of them is a change of what the reference says, and fails here.

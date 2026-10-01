@@ -483,8 +483,8 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		// deal's order: one with as many ahead of it as there are places waits
 		// for the members to finish work.
 		room := widthRoom(s, up)
-		// The deal's order is dealTurns (a stream at a time, in turn), so what
-		// is ahead is counted in that order.
+		// The deal's order is streamTurns from the deal's stream index (a
+		// stream at a time, in turn), so what is ahead is counted in that order.
 		ahead := c.dealTurn(pr.ID)
 		if ahead < room {
 			return "a member is below its width, and nothing deals it", "", false

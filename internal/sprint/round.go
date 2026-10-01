@@ -25,8 +25,8 @@ import (
 // moves it, first attempts and redeals and levelling alike (errata 3,
 // amendment 5): the deal (R6, T3) and the withdrawn card dealt again, the
 // rework of failed or broken work (R10, the coordinator's rework), the cards of
-// a member that goes down (R2, fleet down), the levelling (R7, T4, fleet up
-// and level) and the replacement of a late card (R11). A rework skips the
+// a member that goes down (R2, fleet down and the tick's presence) and the
+// levelling (R7, T4, fleet up and level). A rework skips the
 // member of the attempt it sends back while another up member has room. The
 // model is tla/SprintEvents.tla: RoundOne from dcur in PlanDeal, PlanDown,
 // PlanRework and PlanLate, and dcur moved by each of their effects; the
