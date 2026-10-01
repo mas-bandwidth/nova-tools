@@ -20,7 +20,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
 // Type is a field's type. It decides the SQL column, the flag's parsing and
@@ -56,6 +59,10 @@ const (
 	// order given, a name kept as often as it is given, stored as text ("" is
 	// the empty list): a tier's route array.
 	TypeSeq Type = "seq"
+	// TypeDecimal is a non-negative decimal number (digits, one point, no sign
+	// or exponent), stored as text in its one spelling (cardcost.Canonical), ""
+	// when not set: a price, never a float.
+	TypeDecimal Type = "decimal"
 )
 
 // Field is one column of a kind: the flag `--<Name>` on add and set, the
@@ -278,6 +285,22 @@ var Kinds = []*Kind{
 			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal; true (the default) keeps it in"},
+			// The price sheet: optional, so a card's predicted cost can be worked
+			// out from its tokens (the owner, 2026-10-01: "the pricing configuration
+			// saved per-tuple"; internal/cardcost). Prices are USD per million tokens.
+			{Name: cardcost.FieldInput, Type: TypeDecimal, Help: "USD per million uncached input tokens, a decimal like 0.30; empty (the default) when not known"},
+			{Name: cardcost.FieldCacheRead, Type: TypeDecimal, Help: "USD per million cached input tokens read"},
+			{Name: cardcost.FieldCacheWrite, Type: TypeDecimal, Help: "USD per million tokens written to the cache"},
+			{Name: cardcost.FieldOutput, Type: TypeDecimal, Help: "USD per million output tokens"},
+			{Name: cardcost.FieldReasoningAsOutput, Type: TypeBool, Default: "true", Help: "true (the default) bills reasoning tokens at the output price; false when the provider does not bill them apart"},
+			{Name: cardcost.FieldLongContext, Type: TypeInt, Help: "the prompt size in tokens above which a request is priced at the long prices; 0 (the default) is none"},
+			{Name: cardcost.FieldInputLong, Type: TypeDecimal, Help: "USD per million input tokens of a request above --" + cardcost.FieldLongContext},
+			{Name: cardcost.FieldOutputLong, Type: TypeDecimal, Help: "USD per million output tokens of a request above --" + cardcost.FieldLongContext},
+			{Name: cardcost.FieldRequest, Type: TypeDecimal, Help: "USD per request, on top of the tokens; empty when there is no fee"},
+			{Name: cardcost.FieldBilling, Type: TypeEnum, Enum: cardcost.Billings, Default: cardcost.BillingMetered, Help: "how it is paid: " + strings.Join(cardcost.Billings, " or ") + " (the default, metered: per token; plan: a subscription, so the predicted cost is the metered price of the same tokens)"},
+			{Name: cardcost.FieldGateway, Type: TypeDecimal, Help: "the percent a gateway adds on top of the prices, a decimal like 5.5; empty when none"},
+			{Name: cardcost.FieldSource, Type: TypeText, Help: "where the prices were read, free text (a URL)"},
+			{Name: cardcost.FieldAsOf, Type: TypeText, Help: "the date the prices were read, YYYY-MM-DD"},
 		},
 		Check: checkRoute,
 	},
@@ -320,6 +343,24 @@ func checkRoute(r Row) error {
 	}
 	if _, ok := r.Fields["deadline"]; ok && r.Int("deadline") <= 0 {
 		problems = append(problems, fmt.Sprintf("route %s has --deadline 0; want the seconds a card on it may run, above 0", r.Name))
+	}
+	// the long prices go with the threshold: one without the other prices nothing
+	if _, ok := r.Fields[cardcost.FieldLongContext]; ok {
+		long := r.Int(cardcost.FieldLongContext) > 0
+		for _, f := range []string{cardcost.FieldInputLong, cardcost.FieldOutputLong} {
+			v, given := r.Fields[f]
+			switch {
+			case given && long && v == "":
+				problems = append(problems, fmt.Sprintf("route %s has --%s %s and no --%s; want both long prices with the threshold, or --%s 0", r.Name, cardcost.FieldLongContext, r.Fields[cardcost.FieldLongContext], f, cardcost.FieldLongContext))
+			case given && !long && v != "":
+				problems = append(problems, fmt.Sprintf("route %s has --%s %s and no --%s; want the prompt size in tokens above which it applies", r.Name, f, v, cardcost.FieldLongContext))
+			}
+		}
+	}
+	if d := r.Fields[cardcost.FieldAsOf]; d != "" {
+		if _, err := time.Parse(time.DateOnly, d); err != nil {
+			problems = append(problems, fmt.Sprintf("route %s has --%s %q; want the date the prices were read, YYYY-MM-DD", r.Name, cardcost.FieldAsOf, d))
+		}
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("%s", strings.Join(problems, "; "))
@@ -528,6 +569,12 @@ func (f Field) Canonical(raw string) (string, error) {
 		return strings.Join(words, ","), nil
 	case TypeArgv:
 		return canonicalArgv(f.Name, raw)
+	case TypeDecimal:
+		c, err := cardcost.Canonical(raw)
+		if err != nil {
+			return "", fmt.Errorf("--%s %v", f.Name, err)
+		}
+		return c, nil
 	case TypeSeq:
 		var words []string
 		for _, w := range strings.Split(raw, ",") {

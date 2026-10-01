@@ -299,3 +299,26 @@ func TestLocalSamplerReadsThisMachine(t *testing.T) {
 	require.True(t, ok && pct >= 0 && pct <= 100, "local sample = %v %v, want 0..100", pct, ok)
 	t.Logf("LOCAL-SAMPLE %.1f%% on %d cores", pct, runtime.NumCPU())
 }
+
+// Both spaced and packed columns preserve the entire idle value. The spaced
+// three-digit value must not be truncated to its first two digits.
+func TestIostatColumnLayouts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, row string
+		busy      float64
+	}{
+		{"spaced idle hundred", "  0  0 100  8.18 8.05 7.81", 0},
+		{"spaced idle ninety eight", "  1  1  98  8.18 8.05 7.81", 2},
+		{"wide spaced idle hundred", "   0   0 100  8.18 8.05 7.81", 0},
+		{"packed idle hundred", "  0  0100  8.18 8.05 7.81", 0},
+		{"packed system hundred", "  0100  0  8.18 8.05 7.81", 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			busy, ok := ParseIostat("      cpu    load average\n us sy id   1m   5m   15m\n 12 20 68  8.18 8.05 7.81\n" + tc.row + "\n")
+			require.True(t, ok)
+			require.Equal(t, tc.busy, busy)
+		})
+	}
+}

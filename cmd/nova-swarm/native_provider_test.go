@@ -55,9 +55,7 @@ func TestAProviderErrorInTheHarnessLogIsAProviderFailure(t *testing.T) {
 	t.Parallel()
 	out, errb := providerRun(t, "pf1", "FAKE-STREAM-ERROR\nFAKE-NORESULT\n", olderRunsError)
 	assert.Contains(t, errb, "NATIVE PROVIDER-FAIL label=pf1 ")
-	assert.Contains(t, errb, ` reason=provider: message="stream error" providerID=fake modelID=fake-model`)
-	assert.Contains(t, errb, "server_error")
-	assert.Contains(t, errb, "h2 protocol error")
+	assert.Contains(t, errb, ` reason=provider: class=provider-5xx status=- msg=Streaming response failed: [internal_error] Stream error: h2 protocol error`)
 	assert.NotContains(t, errb, "an older run's", "the log is read from where this run began")
 	assert.NotContains(t, errb, "timestamp=", "the line is the message, not its timestamp")
 	assert.Contains(t, out, "NATIVE INCOMPLETE ")
@@ -71,7 +69,18 @@ func TestARunThatEndsOnAToolResultIsAProviderFailure(t *testing.T) {
 	needsSQLite(t)
 	_, errb := providerRun(t, "pf2", "FAKE-ENDS-ON-TOOL\nFAKE-NORESULT\n", nil)
 	assert.Contains(t, errb, "NATIVE PROVIDER-FAIL label=pf2 ")
-	assert.Contains(t, errb, " reason=provider: ended without a final message")
+	assert.Contains(t, errb, " reason=provider: class=other status=- msg=ended without a final message")
+}
+
+// The session's own record of the failed message is the cause when it has one: the
+// provider's status and words, the class they say, and no key-shaped value.
+func TestTheSessionsRecordOfTheFailedMessageIsTheCause(t *testing.T) {
+	t.Parallel()
+	needsSQLite(t)
+	_, errb := providerRun(t, "pf6", "FAKE-SESSION-ERROR\nFAKE-NORESULT\n", nil)
+	assert.Contains(t, errb, "NATIVE PROVIDER-FAIL label=pf6 ")
+	assert.Contains(t, errb, " reason=provider: class=out-of-credit status=402 msg=Insufficient credits. key [redacted]\n")
+	assert.NotContains(t, errb, "abcdefghij", "a key-shaped value never reaches the line")
 }
 
 // A run that ends with a final assistant message and no result is the card's, as today.
@@ -159,6 +168,9 @@ func TestTheMemberReadsAProviderFailureLineAndItsReason(t *testing.T) {
 	require.NotNil(t, m)
 	assert.Equal(t, `provider: message="stream error" error=x y`, string(m[1]))
 	assert.Nil(t, nativeProviderWhy.FindSubmatch([]byte("NATIVE PROVIDER-5XX label=c1 ref=- wall=3.00s route=x next=- avoid=x\n")))
+	m = nativeProviderWhy.FindSubmatch([]byte("NATIVE PROVIDER-5XX label=c1 ref=- wall=3.00s route=x next=- avoid=x reason=provider: class=auth status=401 msg=bad key reason=words\n"))
+	require.NotNil(t, m)
+	assert.Equal(t, "provider: class=auth status=401 msg=bad key reason=words", string(m[1]), "the first reason= opens the reason")
 }
 
 // The 5xx hand-back keeps its own line as the reason, so the finish and the bound's judgment
@@ -177,6 +189,13 @@ func TestTheHandbackLineIsItsOwnReason(t *testing.T) {
 	fin, why := member.Judge(c.Result(), member.Push{None: "no commit"})
 	assert.Equal(t, member.FinishFailed, fin)
 	assert.Equal(t, "provider failure: provider: PROVIDER-5XX label=c1 ref=err_fb35c63e wall=75.00s route=x/y next=- avoid=x/y", why)
+
+	// the hand-back line that names its cause: the cause is the reason
+	write(t, logPath, line+" reason=provider: class=unknown-model status=404 msg=No endpoints found for x/y.\n")
+	c = &nativeChild{card: "c1", logPath: logPath, results: filepath.Join(dir, "results"), job: filepath.Join(dir, "job"), done: done}
+	fin, why = member.Judge(c.Result(), member.Push{None: "no commit"})
+	assert.Equal(t, member.FinishFailed, fin)
+	assert.Equal(t, "provider failure: provider: class=unknown-model status=404 msg=No endpoints found for x/y.", why)
 }
 
 // From native's log to the member's finish: a child whose log carries the PROVIDER-FAIL

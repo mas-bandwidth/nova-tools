@@ -494,15 +494,16 @@ func nativeEnd(log []byte) string {
 }
 
 // nativeProviderWhy is the reason of a run the provider failed (nativeprovider.go's
-// PROVIDER-FAIL line): the rest of the line after reason=. The 5xx hand-back's own line
-// (swarm.Handback, PROVIDER-5XX) names none, and is its own reason.
+// PROVIDER-FAIL line, and the 5xx hand-back's, swarm.Handback, PROVIDER-5XX): the rest of
+// the line after its first reason=, the cause (`provider: class=<c> status=<n|-> msg=<m>`).
+// A hand-back line that names no reason (a native before the cause) is its own reason.
 var (
-	nativeProviderWhy = regexp.MustCompile(`(?m)\bNATIVE PROVIDER-FAIL \S.* reason=(.+)$`)
+	nativeProviderWhy = regexp.MustCompile(`(?m)\bNATIVE PROVIDER-(?:FAIL|5XX) \S.*? reason=(.+)$`)
 	nativeHandback    = regexp.MustCompile(`(?m)\bNATIVE (PROVIDER-5XX \S.*)$`)
 )
 
-// providerReason is why the provider failed the run, from native's log: the PROVIDER-FAIL
-// line's reason, else the 5xx hand-back's line (`provider: PROVIDER-5XX label=... ref=...`),
+// providerReason is why the provider failed the run, from native's log: the provider line's
+// reason, else a 5xx hand-back line with none (`provider: PROVIDER-5XX label=... ref=...`),
 // else "".
 func providerReason(log []byte) string {
 	if m := nativeProviderWhy.FindSubmatch(log); m != nil {

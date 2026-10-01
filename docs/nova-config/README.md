@@ -278,6 +278,37 @@ them); a tier with an empty array takes its enabled routes in name order;
 coordinator. apply writes the hashes `route:<name>` and `tier:<name>` and the
 sets `routes` and `tiers`, which the deal reads.
 
+A route also holds its price sheet, so what a card cost on it is known and
+looked up in one place. Every field is optional, and every price is a
+decimal, kept exactly as typed in its one spelling (`0.30` is `0.3`), never a
+float; a price not set is empty, and a card on a route with no price has no
+predicted cost, never a zero:
+
+```
+nova-config route set pro-deepseek-opencode --price_input 0.27 --price_cache_read 0.07 --price_cache_write 0 --price_output 1.10 --price_source https://example.com/pricing --price_as_of 2026-10-01
+nova-config route set pro-grok-openrouter --price_input 3 --price_output 15 --long_context 128000 --price_input_long 6 --price_output_long 30 --gateway_percent 5.5
+nova-config apply
+```
+
+| flag | what it is |
+| --- | --- |
+| `--price_input` | USD per million uncached input tokens |
+| `--price_cache_read` | USD per million cached input tokens read |
+| `--price_cache_write` | USD per million tokens written to the cache |
+| `--price_output` | USD per million output tokens |
+| `--reasoning_as_output` | `true` (the default) bills reasoning tokens at the output price; `false` when the provider does not bill them apart |
+| `--long_context` | the prompt size in tokens above which a request is priced at the long prices; `0` (the default) is none |
+| `--price_input_long`, `--price_output_long` | USD per million input and output tokens above `--long_context`; given with it, or not at all |
+| `--price_request` | USD per request, on top of the tokens |
+| `--billing` | `metered` (the default: paid per token) or `plan` (a subscription: the predicted cost is the metered price of the same tokens) |
+| `--gateway_percent` | the percent a gateway adds on top, a decimal like `5.5` |
+| `--price_source` | where the prices were read, free text (a URL) |
+| `--price_as_of` | the date they were read, `YYYY-MM-DD` |
+
+A change of prices is a row in the route's history like any other set
+(`nova-config route history <name>`), and apply writes the fields into
+`route:<name>` beside the rest.
+
 ### Refusals
 
 One stderr line each, naming the next step:

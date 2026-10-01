@@ -94,9 +94,9 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	require.Contains(t, errs, "run: nova-config migrate", "status before migrate: %q %q", out, errs)
 	out, _ = r.run(t, 0, "migrate")
 	require.True(t, strings.HasPrefix(out, "CONFIG MIGRATE pg=postgres@127.0.0.1:"), "migrate: %q", out)
-	require.True(t, strings.HasSuffix(out, " from=0 to=9 applied=9\n"), "migrate: %q", out)
+	require.True(t, strings.HasSuffix(out, " from=0 to=10 applied=10\n"), "migrate: %q", out)
 	out, _ = r.run(t, 0, "migrate")
-	require.True(t, strings.HasSuffix(out, " from=9 to=9 applied=0\n"), "migrate twice: %q", out)
+	require.True(t, strings.HasSuffix(out, " from=10 to=10 applied=0\n"), "migrate twice: %q", out)
 	out, _ = r.run(t, 0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
 	require.Equal(t, "CONFIG ADD kind=machine name=studio rev=1\n", out, "machine add: %q", out)
 	_, errs = r.run(t, 1, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
@@ -151,7 +151,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "machine", "remove", "studio")
 	require.Equal(t, "CONFIG REMOVE kind=machine name=studio rev=9\n", out, "machine remove: %q", out)
 	out, _ = r.run(t, 0, "status")
-	require.Contains(t, out, " schema=9 machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 loop=0 loop_rev=0 route=0 route_rev=0 tier=2 tier_rev=0 redis=-", "status: %q", out)
+	require.Contains(t, out, " schema=10 machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 loop=0 loop_rev=0 route=0 route_rev=0 tier=2 tier_rev=0 redis=-", "status: %q", out)
 }
 
 func TestApplyEndToEnd(t *testing.T) {

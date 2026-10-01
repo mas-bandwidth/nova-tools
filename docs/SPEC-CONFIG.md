@@ -50,7 +50,7 @@ Where each field of this cut sits:
 | friend (decided for her) | `slots`, `tiers`, `roles` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend) |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
-| route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled` |
+| route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of` |
 | tier (decided per tier) | `routes` |
 
 A kind is one registry: one table under schema `config`, one Go descriptor
@@ -243,10 +243,30 @@ row: the code names no provider or model.
 | `tokens` | int | (0) | the deal: the token budget per card; 0 is unmetered and the deadline is the only stop | `route:<r>` |
 | `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
 | `enabled` | bool | (true) | the deal: false takes it out of the deal | `route:<r>` |
+| `price_input` | decimal | (empty) | a card's cost: USD per million uncached input tokens | `route:<r>` |
+| `price_cache_read` | decimal | (empty) | a card's cost: USD per million cached input tokens read | `route:<r>` |
+| `price_cache_write` | decimal | (empty) | a card's cost: USD per million tokens written to the cache | `route:<r>` |
+| `price_output` | decimal | (empty) | a card's cost: USD per million output tokens | `route:<r>` |
+| `reasoning_as_output` | bool | (true) | a card's cost: reasoning tokens billed at the output price; false when not billed apart | `route:<r>` |
+| `long_context` | int | (0) | a card's cost: the prompt size in tokens above which a request is priced long; 0 is none | `route:<r>` |
+| `price_input_long` | decimal | (empty) | a card's cost: USD per million input tokens above `long_context` | `route:<r>` |
+| `price_output_long` | decimal | (empty) | a card's cost: USD per million output tokens above `long_context` | `route:<r>` |
+| `price_request` | decimal | (empty) | a card's cost: USD per request | `route:<r>` |
+| `billing` | enum `metered`, `plan` | (metered) | a card's cost: paid per token, or by a subscription (the predicted cost is then the metered price of the tokens) | `route:<r>` |
+| `gateway_percent` | decimal | (empty) | a card's cost: the percent a gateway adds on top | `route:<r>` |
+| `price_source` | text | (empty) | a reader: where the prices were read (a URL) | `route:<r>` |
+| `price_as_of` | text, `YYYY-MM-DD` | (empty) | a reader: the date the prices were read | `route:<r>` |
+
+The price sheet is optional: the owner, 2026-10-01, "the pricing
+configuration saved per-tuple, so it is known and easily look upable". A
+decimal is digits with an optional fraction after one point, no sign and
+no exponent, kept as text in its one spelling (`internal/cardcost`,
+`Canonical`: `0.30` is `0.3`), never a float; empty is not set, never 0.
 
 The kind's `Check`: `provider` is one word with no slash or blank, `model`
-is not empty and has no blank, and `deadline` is above 0. A route names no
-row of another kind.
+is not empty and has no blank, and `deadline` is above 0; `long_context`
+above 0 comes with both long prices, and a long price with a threshold;
+`price_as_of` is a date. A route names no row of another kind.
 
 **`tier`** (`config.tiers`): a model tier's route array (the owner,
 2026-10-01: "the per-tier provider/model array should be specified in
@@ -303,7 +323,11 @@ config.routes            (name PK, tier flash|pro, provider, model, tokens,
                           deadline, enabled boolean, created_at,
                           updated_at; CHECK provider one word with no slash,
                           model with no blank, deadline > 0, tokens >= 0:
-                          the kind's Check again; weight dropped by 0008)
+                          the kind's Check again; weight dropped by 0008;
+                          the price sheet added by 0009: the decimals as
+                          text with a CHECK on their shape,
+                          reasoning_as_output boolean, long_context,
+                          billing metered|plan, price_source, price_as_of)
 config.tiers             (name PK flash|pro, routes, created_at, updated_at;
                           CHECK routes a comma list of names; the two rows
                           inserted by the migration)
