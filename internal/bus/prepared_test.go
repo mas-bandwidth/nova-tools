@@ -3,6 +3,7 @@ package bus
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"io"
 	"os"
 	"os/exec"
@@ -20,14 +21,10 @@ func TestMakeAndValidatePreparedArtifact(t *testing.T) {
 
 	draft := "From: Ada\nTo: Bo\nSubject: Prepared test\n\nTesting prepared artifact round-trip.\n"
 	p, err := PrepareDraft(tab, draft, now, "prepared-test", "Ada")
-	if err != nil {
-		t.Fatalf("PrepareDraft: %v", err)
-	}
+	require.NoError(t, err, "PrepareDraft: %v", err)
 
 	art, err := MakePreparedArtifact(p)
-	if err != nil {
-		t.Fatalf("MakePreparedArtifact: %v", err)
-	}
+	require.NoError(t, err, "MakePreparedArtifact: %v", err)
 	if art.Schema != PreparedSchema {
 		t.Fatalf("art.Schema = %q, want %q", art.Schema, PreparedSchema)
 	}
@@ -39,16 +36,12 @@ func TestMakeAndValidatePreparedArtifact(t *testing.T) {
 	}
 
 	raw, err := json.Marshal(art)
-	if err != nil {
-		t.Fatalf("json.Marshal: %v", err)
-	}
+	require.NoError(t, err, "json.Marshal: %v", err)
 
 	// Successful validation
 	c := tab.Config
 	gotArt, gotP, err := ValidatePreparedArtifact(raw, root, c, "Ada")
-	if err != nil {
-		t.Fatalf("ValidatePreparedArtifact: %v", err)
-	}
+	require.NoError(t, err, "ValidatePreparedArtifact: %v", err)
 	if gotArt.ID != art.ID || gotP.Note.Header.ID != art.ID {
 		t.Fatalf("id mismatch: got %q, want %q", gotArt.ID, art.ID)
 	}
@@ -134,13 +127,9 @@ func TestPreparedRefusesLaneTraversalThatKeepsThePrefix(t *testing.T) {
 
 	draft := "From: Ada\nTo: Bo\nSubject: Lane traversal\n\nA note.\n"
 	p, err := PrepareDraft(tab, draft, now, "prepared-traversal", "Ada")
-	if err != nil {
-		t.Fatalf("PrepareDraft: %v", err)
-	}
+	require.NoError(t, err, "PrepareDraft: %v", err)
 	art, err := MakePreparedArtifact(p)
-	if err != nil {
-		t.Fatalf("MakePreparedArtifact: %v", err)
-	}
+	require.NoError(t, err, "MakePreparedArtifact: %v", err)
 
 	// Normal valid artifact succeeds
 	rawValid, _ := json.Marshal(art)
@@ -199,41 +188,29 @@ func TestSendPreparedArtifactAlreadyPublished(t *testing.T) {
 
 	draft := "From: Ada\nTo: Bo\nSubject: Fresh publish\n\nA note to test already-published.\n"
 	p, err := PrepareDraft(tab, draft, now, "fresh-publish", "Ada")
-	if err != nil {
-		t.Fatalf("PrepareDraft: %v", err)
-	}
+	require.NoError(t, err, "PrepareDraft: %v", err)
 	art, err := MakePreparedArtifact(p)
-	if err != nil {
-		t.Fatalf("MakePreparedArtifact: %v", err)
-	}
+	require.NoError(t, err, "MakePreparedArtifact: %v", err)
 
 	// First send: should publish
 	res1, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3)
-	if err != nil {
-		t.Fatalf("SendPreparedArtifact first send: %v", err)
-	}
+	require.NoError(t, err, "SendPreparedArtifact first send: %v", err)
 	if !res1.Pushed || res1.State != "published" {
 		t.Fatalf("res1 = %+v, want published", res1)
 	}
 
 	headBefore, err := git(bare, "rev-parse", "main")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// Second send: should detect already-published without second commit or push
 	res2, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3)
-	if err != nil {
-		t.Fatalf("SendPreparedArtifact retry: %v", err)
-	}
+	require.NoError(t, err, "SendPreparedArtifact retry: %v", err)
 	if !res2.Pushed || res2.Attempts != 0 || res2.State != "already-published" {
 		t.Fatalf("res2 = %+v, want already-published with attempts=0", res2)
 	}
 
 	headAfter, err := git(bare, "rev-parse", "main")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if headBefore != headAfter {
 		t.Fatalf("bare HEAD moved during already-published retry: before %s, after %s", headBefore, headAfter)
 	}
@@ -249,13 +226,9 @@ func TestSendPreparedArtifactRefusals(t *testing.T) {
 
 	draft := "From: Ada\nTo: Bo\nSubject: Refusal checks\n\nTesting refusals.\n"
 	p, err := PrepareDraft(tab, draft, now, "refusal-checks", "Ada")
-	if err != nil {
-		t.Fatalf("PrepareDraft: %v", err)
-	}
+	require.NoError(t, err, "PrepareDraft: %v", err)
 	art, err := MakePreparedArtifact(p)
-	if err != nil {
-		t.Fatalf("MakePreparedArtifact: %v", err)
-	}
+	require.NoError(t, err, "MakePreparedArtifact: %v", err)
 
 	// 1. Unrelated dirty file in checkout
 	write(t, clone, "unrelated.txt", "dirty content\n")
@@ -281,7 +254,7 @@ func TestSendPreparedArtifactRefusals(t *testing.T) {
 	// 3. Same ID with different bytes on remote
 	// Publish the note first
 	if _, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3); err != nil {
-		t.Fatalf("initial send: %v", err)
+		require.NoError(t, err, "initial send: %v", err)
 	}
 	// Forge an artifact with the same ID and path, but different note bytes
 	tamperedNote := strings.Replace(art.Note, "Testing refusals.", "Conflicting content.", 1)
@@ -303,23 +276,15 @@ func TestSendPreparedArtifactInterruptedRecoveries(t *testing.T) {
 
 	draft := "From: Ada\nTo: Bo\nSubject: Interrupted recovery\n\nTesting partial writes.\n"
 	p, err := PrepareDraft(tab, draft, now, "interrupted-recovery", "Ada")
-	if err != nil {
-		t.Fatalf("PrepareDraft: %v", err)
-	}
+	require.NoError(t, err, "PrepareDraft: %v", err)
 	art, err := MakePreparedArtifact(p)
-	if err != nil {
-		t.Fatalf("MakePreparedArtifact: %v", err)
-	}
+	require.NoError(t, err, "MakePreparedArtifact: %v", err)
 
 	// Scenario A: Interrupted after note save, before INDEX append
-	if err := p.Save(clone); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, p.Save(clone))
 	// SendPreparedArtifact should recover the partial write, append INDEX, commit and push
 	res, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3)
-	if err != nil {
-		t.Fatalf("recovery after note save: %v", err)
-	}
+	require.NoError(t, err, "recovery after note save: %v", err)
 	if !res.Pushed || res.State != "published" {
 		t.Fatalf("res = %+v, want published", res)
 	}
@@ -330,9 +295,7 @@ func TestSendPreparedArtifactInterruptedRecoveries(t *testing.T) {
 		t.Fatalf("note on remote: %v, content = %q", err, noteOnRemote)
 	}
 	indexOnRemote, err := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if strings.Count(indexOnRemote, art.ID) != 1 {
 		t.Fatalf("expected exactly 1 index entry for %s, got:\n%s", art.ID, indexOnRemote)
 	}
@@ -351,23 +314,15 @@ func TestSendPreparedArtifactConcurrentRemoteLanding(t *testing.T) {
 
 	// Bench 1 prepares note from Ada
 	p1, err := PrepareDraft(tab1, "From: Ada\nTo: Bo\nSubject: Ada's note\n\nNote from Ada.\n", now, "adas-note", "Ada")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	art1, err := MakePreparedArtifact(p1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// Bench 2 prepares and pushes note from Bo
 	p2, err := PrepareDraft(tab2, "From: Bo\nTo: Ada\nSubject: Bo's note\n\nNote from Bo.\n", now, "bos-note", "Bo")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	art2, err := MakePreparedArtifact(p2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	res2, err := SendPreparedArtifact(bench2, "origin", "main", p2, art2, 3)
 	if err != nil || !res2.Pushed {
 		t.Fatalf("bench2 send failed: %v", err)
@@ -375,19 +330,17 @@ func TestSendPreparedArtifactConcurrentRemoteLanding(t *testing.T) {
 
 	// Bench 1 sends its prepared note; it will encounter a non-fast-forward push, fetch, rebase, and succeed
 	res1, err := SendPreparedArtifact(bench1, "origin", "main", p1, art1, 5)
-	if err != nil {
-		t.Fatalf("bench1 send failed: %v", err)
-	}
+	require.NoError(t, err, "bench1 send failed: %v", err)
 	if !res1.Pushed || res1.State != "published" {
 		t.Fatalf("res1 = %+v, want published", res1)
 	}
 
 	// Both notes must be on the remote branch
 	if _, err := git(bare, "show", "main:"+art1.Path); err != nil {
-		t.Fatalf("Ada's note missing from bare remote: %v", err)
+		require.NoError(t, err, "Ada's note missing from bare remote: %v", err)
 	}
 	if _, err := git(bare, "show", "main:"+art2.Path); err != nil {
-		t.Fatalf("Bo's note missing from bare remote: %v", err)
+		require.NoError(t, err, "Bo's note missing from bare remote: %v", err)
 	}
 }
 
@@ -554,9 +507,7 @@ func testWaitBound() time.Duration {
 func helperStdin(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.Close(); _ = r.Close() })
 	cmd.Stdin = r
 }
@@ -808,9 +759,7 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 
 			// Verify bare remote contains EXACTLY ONE index line
 			remoteIndex, err := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
-			if err != nil {
-				t.Fatalf("bare remote missing index: %v", err)
-			}
+			require.NoError(t, err, "bare remote missing index: %v", err)
 			matchCount := 0
 			for _, l := range strings.Split(strings.TrimSpace(remoteIndex), "\n") {
 				if l == IndexLine(p.Index) {
@@ -844,15 +793,11 @@ func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *tes
 	send := func(subject, slug, stamp string) (Prepared, PreparedArtifact) {
 		t.Helper()
 		p, err := PrepareDraft(tab, "From: Ada\nTo: Bo\nSubject: "+subject+"\n\nSynthetic note.\n", at(stamp), slug, "Ada")
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		a, err := MakePreparedArtifact(p)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		if _, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 		return p, a
 	}
@@ -861,20 +806,16 @@ func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *tes
 	p2, _ := send("Earlier entry two", "earlier-two", "2026-09-12T17:01:00Z")
 
 	p3, err := PrepareDraft(tab, "From: Ada\nTo: Bo\nSubject: Recovered entry\n\nSynthetic note.\n", at("2026-09-12T17:02:00Z"), "recovered", "Ada")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if _, err := MakePreparedArtifact(p3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	scratch := t.TempDir()
 	barrierFile := filepath.Join(scratch, "barrier.ready")
 	artFile := filepath.Join(scratch, "prepared.json")
 	artJSON, _ := RenderPreparedArtifact(p3)
-	if err := os.WriteFile(artFile, []byte(artJSON), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(artFile, []byte(artJSON), 0644))
 
 	cmd := exec.Command(os.Args[0], "-test.run=TestPreparedIndexStagedPartialHelper")
 	cmd.Env = append(os.Environ(),
@@ -917,9 +858,7 @@ func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *tes
 	}
 
 	remoteIndex, err := git(bare, "show", "main:"+IndexPath(p3.Sender.Lane))
-	if err != nil {
-		t.Fatalf("bare remote missing index: %v", err)
-	}
+	require.NoError(t, err, "bare remote missing index: %v", err)
 	for _, earlier := range []Prepared{p1, p2} {
 		if !strings.Contains(remoteIndex, IndexLine(earlier.Index)) {
 			t.Fatalf("earlier INDEX entry was lost:\n%s", remoteIndex)
@@ -978,37 +917,23 @@ func TestRowanProbeAheadMergeCommitPublishesUnrelatedTree(t *testing.T) {
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
 	msg := WithTrailer(p.Message, TrailerSend+" "+a.ID)
-	if err := p.Save(clone); err != nil {
-		t.Fatal(err)
-	}
-	if err := p.AppendIndex(clone); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, p.Save(clone))
+	require.NoError(t, p.AppendIndex(clone))
 	noteSha, err := stageAndCommit(clone, id, []string{p.Path, IndexPath(p.Sender.Lane)}, msg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	base, err := git(clone, "rev-parse", "origin/main")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(clone, "SYNTHETIC_UNRELATED_LEAK.txt"), []byte("synthetic unrelated payload\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(clone, "SYNTHETIC_UNRELATED_LEAK.txt"), []byte("synthetic unrelated payload\n"), 0644))
 	if _, err := git(clone, "add", "SYNTHETIC_UNRELATED_LEAK.txt"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	tree, err := git(clone, "write-tree")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	merge, err := git(clone, append(identityArgs(id), "commit-tree", strings.TrimSpace(tree),
 		"-p", strings.TrimSpace(noteSha), "-p", strings.TrimSpace(base), "-m", msg)...)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if _, err := git(clone, "reset", "--hard", strings.TrimSpace(merge)); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	r, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
 	if e == nil && r.Pushed {
@@ -1023,14 +948,10 @@ func TestRowanProbeStaleIndexLock(t *testing.T) {
 
 	_, clone, p, a := stellaIndependentPrepared(t)
 	lockFile := filepath.Join(clone, ".git", "index.lock")
-	if err := os.WriteFile(lockFile, []byte("stale lock\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(lockFile, []byte("stale lock\n"), 0644))
 	defer os.Remove(lockFile)
 	_, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
-	if err == nil {
-		t.Fatal("expected error with index.lock present")
-	}
+	require.Error(t, err, "expected error with index.lock present")
 	if !strings.Contains(err.Error(), "index is locked") || !strings.Contains(err.Error(), a.ID) {
 		t.Fatalf("expected bounded index lock refusal with prepared ID %q, got: %v", a.ID, err)
 	}
@@ -1042,14 +963,10 @@ func TestPreparedDeliveryRecoversEmptyOrPartialGitattributes(t *testing.T) {
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	// Write empty .gitattributes (simulating crash right after open/create before EnsureMergeAttributes wrote content)
 	attrsPath := filepath.Join(clone, AttributesName)
-	if err := os.WriteFile(attrsPath, []byte(""), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(attrsPath, []byte(""), 0644))
 
 	res, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
-	if err != nil {
-		t.Fatalf("SendPreparedArtifact failed on empty .gitattributes: %v", err)
-	}
+	require.NoError(t, err, "SendPreparedArtifact failed on empty .gitattributes: %v", err)
 	if !res.Pushed {
 		t.Fatal("expected note to be pushed")
 	}
@@ -1070,19 +987,13 @@ func TestPreparedDeliveryRecoversPartialNoteOnDisk(t *testing.T) {
 
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	fullNote := filepath.Join(clone, filepath.FromSlash(p.Path))
-	if err := os.MkdirAll(filepath.Dir(fullNote), 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(fullNote), 0755))
 	// Write partial prefix of note (first 20 bytes)
 	prefix := a.Note[:20]
-	if err := os.WriteFile(fullNote, []byte(prefix), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(fullNote, []byte(prefix), 0644))
 
 	res, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
-	if err != nil {
-		t.Fatalf("SendPreparedArtifact failed on partial note write: %v", err)
-	}
+	require.NoError(t, err, "SendPreparedArtifact failed on partial note write: %v", err)
 	if !res.Pushed {
 		t.Fatal("expected note to be pushed")
 	}
@@ -1098,20 +1009,14 @@ func TestPreparedDeliveryRecoversPartialIndexOnDisk(t *testing.T) {
 
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	fullIndex := filepath.Join(clone, filepath.FromSlash(IndexPath(p.Sender.Lane)))
-	if err := os.MkdirAll(filepath.Dir(fullIndex), 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(fullIndex), 0755))
 	// Write partial prefix of index line
 	line := IndexLine(p.Index)
 	prefix := line[:15]
-	if err := os.WriteFile(fullIndex, []byte(prefix), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(fullIndex, []byte(prefix), 0644))
 
 	res, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
-	if err != nil {
-		t.Fatalf("SendPreparedArtifact failed on partial index write: %v", err)
-	}
+	require.NoError(t, err, "SendPreparedArtifact failed on partial index write: %v", err)
 	if !res.Pushed {
 		t.Fatal("expected note to be pushed")
 	}
@@ -1127,14 +1032,10 @@ func TestPreparedDeliveryRefusesUnrelatedForeignGitattributes(t *testing.T) {
 
 	_, clone, p, a := stellaIndependentPrepared(t)
 	attrsPath := filepath.Join(clone, AttributesName)
-	if err := os.WriteFile(attrsPath, []byte("*.iso filter=lfs\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(attrsPath, []byte("*.iso filter=lfs\n"), 0644))
 
 	_, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
-	if err == nil {
-		t.Fatal("expected error on foreign .gitattributes content")
-	}
+	require.Error(t, err, "expected error on foreign .gitattributes content")
 	if !strings.Contains(err.Error(), "unrelated dirty changes in .gitattributes") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
@@ -1145,17 +1046,11 @@ func TestPreparedDeliveryRefusesConflictingNoteOnDisk(t *testing.T) {
 
 	_, clone, p, a := stellaIndependentPrepared(t)
 	fullNote := filepath.Join(clone, filepath.FromSlash(p.Path))
-	if err := os.MkdirAll(filepath.Dir(fullNote), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(fullNote, []byte("completely conflicting note\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(fullNote), 0755))
+	require.NoError(t, os.WriteFile(fullNote, []byte("completely conflicting note\n"), 0644))
 
 	_, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
-	if err == nil {
-		t.Fatal("expected error on conflicting note content")
-	}
+	require.Error(t, err, "expected error on conflicting note content")
 	if !strings.Contains(err.Error(), "conflicting") && !strings.Contains(err.Error(), "unrelated dirty changes") {
 		t.Fatalf("unexpected error message: %v", err)
 	}

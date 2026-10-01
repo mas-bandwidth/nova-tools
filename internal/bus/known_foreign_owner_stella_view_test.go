@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The /proc half of Stella's probe (known_foreign_owner_stella_darwin_test.go holds the ps
@@ -24,12 +26,9 @@ func TestStellaKnownForeignGitKeepsItsLockLinuxView(t *testing.T) {
 				return classifyViews([]procView{{owner: uid, ownerKnown: true, account: uid, accountKnown: true, comm: "git", cmdline: []byte(strings.Join(args, "\x00")), cwdErr: os.ErrPermission}}, 501)
 			}
 			cleared, err := clearStaleIndexLock(dir, time.Now(), scan)
-			if cleared {
-				t.Fatalf("linux-view UID %d: removed lock despite a live Git snapshot naming this exact checkout (err=%v)", uid, err)
-			}
-			if _, err := os.Lstat(lock); err != nil {
-				t.Fatalf("lock lost: %v", err)
-			}
+			require.False(t, cleared, "linux-view UID %d: removed lock despite a live Git snapshot naming this exact checkout (err=%v)", uid, err)
+			_, err = os.Lstat(lock)
+			require.NoError(t, err, "lock lost: %v", err)
 		})
 	}
 }

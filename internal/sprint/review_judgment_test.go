@@ -209,3 +209,46 @@ func TestReworkOfNoNamedCardTakesReviewAndTheBoundedReadyCards(t *testing.T) {
 		})
 	}
 }
+
+func stoppedForConflict(t *testing.T) *world {
+	w := setup(t, 3)
+	accepted(w, "s1-1", "s1-2", "s1-3")
+	w.must(MergeStep(w.s, MergeReq{Stream: "s1", Batch: 2, Conflict: "s1-2"}))
+	return w
+}
+
+func returnCards(ids ...string) func(w *world) {
+	return func(w *world) {
+		w.t.Helper()
+		w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: ids}, Reason: "suspect"}))
+	}
+}
+
+func reworkCards(ids ...string) func(w *world) {
+	return func(w *world) {
+		w.t.Helper()
+		w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: ids}, Fix: "a fix"}))
+	}
+}
+
+// atRedealBound takes every member down, so that the card in working is
+// withdrawn and back in ready, and sets the redeals its work card has had,
+// with the mark of a take that ended.
+func atRedealBound(id string, redeals int) func(w *world) {
+	return func(w *world) {
+		w.t.Helper()
+		w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
+		w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m2"}))
+		wc := w.s.Fleet.Card(WorkCardID(id, w.s.Work.Card(id).Int("attempt")))
+		wc.Fields["redeals"] = itoa(redeals)
+		wc.Fields[FieldTakeEnded] = stamp(w.s.Now)
+	}
+}
+
+func inOrder(steps ...func(w *world)) func(w *world) {
+	return func(w *world) {
+		for _, step := range steps {
+			step(w)
+		}
+	}
+}

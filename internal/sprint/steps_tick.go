@@ -24,7 +24,7 @@ const MachineActor = "machine"
 const (
 	// TickMaxMoves bounds the units one part of a tick applies; the rest are
 	// due, and the next tick moves them. It is the deal's bound, TickMaxDeal
-	// (width.go): one Layer 1 write's member candidates, which the step
+	// (width.go): one table-layer write's member candidates, which the step
 	// builder cuts into parts under the table layer's entry bounds, so a
 	// part plans every row that needs it in the one tick and never lags its
 	// own work (the owner's rule, errata 3 amendment 10: every row of every
@@ -363,6 +363,49 @@ func TickResolve(s *Snapshot, r TickReq) (Plan, int) {
 		p = Resolve(s, ResolveReq{Sel: Sel{Only: ids}, Who: r.who()})
 	}
 	return bound(p)
+}
+
+// dealTurns is the order the tick resolves in (front(s) per stream): one
+// card from each stream in turn, in the order of streams, until every stream's
+// cards are taken; a stream with none left is skipped, and within a stream the
+// cards go in work order (SortCards). A card of a stream not in streams takes
+// its turn after them, its streams in name order. So every stream with a
+// ready card is worked in parallel: a deal of k cards over n streams gives
+// each stream k/n, give or take one, never one stream's backlog first. The
+// model is tla/SprintEvents.tla: TurnSorted is this order (one card from each
+// stream's front in turn, a stream with none skipped, within a stream by work
+// order), PlanDeal takes the room from it, and DealTakesTurns states it from
+// the counts of a plan; the witness W28 (MCSprintEventsW28.cfg) is the order of
+// the whole table. Errata 3, amendment 4.
+func dealTurns(cards []*Card, streams []string) []*Card {
+	by := map[string][]*Card{}
+	order := append([]string(nil), streams...)
+	known := map[string]bool{}
+	for _, st := range streams {
+		known[st] = true
+	}
+	var extra []string
+	for _, c := range cards {
+		if !known[c.Row] {
+			known[c.Row] = true
+			extra = append(extra, c.Row)
+		}
+		by[c.Row] = append(by[c.Row], c)
+	}
+	sort.Strings(extra)
+	order = append(order, extra...)
+	for _, st := range order {
+		SortCards(by[st])
+	}
+	out := make([]*Card, 0, len(cards))
+	for turn := 0; len(out) < len(cards); turn++ {
+		for _, st := range order {
+			if turn < len(by[st]) {
+				out = append(out, by[st][turn])
+			}
+		}
+	}
+	return out
 }
 
 // T7. TickResume resumes a stream stopped only because a card needed another

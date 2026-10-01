@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // make_functional_test.go runs the Makefile's real `test` recipe with this
@@ -55,14 +57,10 @@ func fakeGo(fixture string, args []string) int {
 func makeTest(t *testing.T, fixture string, vars ...string) (int, string) {
 	t.Helper()
 	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "events.jsonl")
-	if err := os.WriteFile(path, []byte(fixture), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(fixture), 0o644))
 	args := append([]string{"-s", "-C", repoRoot(t), "test", "PKGS=./cmd/nova-ci", "GO=" + self}, vars...)
 	cmd := exec.Command("make", args...)
 	cmd.Env = append(os.Environ(), fakeGoEnv+"="+path, "RUNNER_TEMP="+tmp)

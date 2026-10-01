@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // scriptSprint is a Sprint that records every argv and answers from a table,
@@ -317,6 +319,66 @@ func TestAWorkingCardWithNoChildOfOursIsRestartedFromItsPacket(t *testing.T) {
 	if acted, _ = g.tick(t); acted != 0 || len(g.r.started()) != 1 {
 		t.Fatalf("second pass acted=%d started=%v, want 0 and one start in all", acted, g.r.started())
 	}
+}
+
+// TestRecoveryWithExcessInFlightPacketsDoesNotExceedWidth pins that recovery
+// clamps in-flight working packets to member width so a restart never oversubscribes:
+// excess cards remain queued and are recovered on subsequent passes as capacity opens.
+func TestRecoveryWithExcessInFlightPacketsDoesNotExceedWidth(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 2})
+	p1, p2, p3 := pk("c1"), pk("c2"), pk("c3")
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1), working("c2", 1, &p2), working("c3", 1, &p3)))
+	acted, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 2, acted, "clamped to width 2")
+	require.Equal(t, 2, g.m.Running())
+	require.Equal(t, []string{"c1", "c2"}, g.r.started(), "c3 is left for a subsequent pass")
+	require.Empty(t, g.s.lines("take"))
+	require.Equal(t, 1, strings.Count(g.out.String(), "recover "), "one line for the one card left:\n%s", g.out)
+	require.Contains(t, g.out.String(), "recover c3 deferred: width 2 full\n")
+
+	// When c1 finishes and is reported, the freed slot allows c3 to be recovered.
+	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "head-1", Report: "done c1"})
+	g.s.reset()
+	// Next pass: queue still reports working cards until sprint processes finish.
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1), working("c2", 1, &p2), working("c3", 1, &p3)))
+	acted, err = g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 2, acted, "one finish and one start")
+	require.Equal(t, 2, g.m.Running())
+	finishes := g.s.lines("finish")
+	require.Len(t, finishes, 1)
+	require.Contains(t, finishes[0], "c1@1")
+	require.Equal(t, []string{"c1", "c2", "c3"}, g.r.started())
+}
+
+// TestReaderRecoveryWithExcessInFlightPacketsDoesNotExceedWidth pins the same
+// width clamping for a reader recovering reading packets.
+func TestReaderRecoveryWithExcessInFlightPacketsDoesNotExceedWidth(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	r1 := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	r2 := Packet{Card: "r2", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &r1), reading("r2", &r2)))
+	acted, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 1, acted, "clamped to width 1")
+	require.Equal(t, 1, g.m.Running())
+	require.Equal(t, []string{"r1"}, g.r.started())
+
+	// When r1 finishes with a verdict, reporting it frees the slot for r2.
+	g.r.child("r1").end(Result{Ran: true, OK: true, Verdict: "ok", Report: "clean"})
+	g.s.reset()
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &r1), reading("r2", &r2)))
+	acted, err = g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 2, acted, "one report and one start")
+	require.Equal(t, 1, g.m.Running())
+	reports := g.s.lines("report")
+	require.Len(t, reports, 1)
+	require.Contains(t, reports[0], "r1")
+	require.Equal(t, []string{"r1", "r2"}, g.r.started())
 }
 
 // TestNoTakeWhenWidthIsFullOrNothingIsReady pins both refusals to ask.

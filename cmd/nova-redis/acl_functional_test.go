@@ -76,7 +76,19 @@ func TestACLVerbsOnARedisServer(t *testing.T) {
 		return c
 	}
 	member, reader := as("bench"), as("ns-table")
-	cols, err := ntable.ParseColumns("a,b")
+
+	// Each role may run the commands its functions run: the coordinator's
+	// capacity write calls TIME (what the first live apply was refused), and
+	// the store says so for every command the render grants it.
+	coordinator := as("coordinator")
+	_, err := coordinator.FCall(ctx, "ns_capacity_machine", nil, "bench-a", "2", "", "", "operator", "op-1", "", "").Result()
+	require.NoError(t, err, "the coordinator's capacity write")
+	assert.Equal(t, "OK", admin.Do(ctx, "ACL", "DRYRUN", "coordinator", "TIME").Val())
+	for _, u := range []string{"bench", "ns-table", "ns-friend"} {
+		assert.Equal(t, "OK", admin.Do(ctx, "ACL", "DRYRUN", u, "XINFO", "STREAM", "table:work:changes").Val(), u)
+	}
+	cols, err2 := ntable.ParseColumns("a,b")
+	err = err2
 	require.NoError(t, err)
 	require.NoError(t, ntable.Create(ctx, member, ntable.Table{Name: "work", Columns: cols}, time.Now()))
 	_, err = ntable.RowAdd(ctx, member, "work", "r1", ntable.RowSpec{})

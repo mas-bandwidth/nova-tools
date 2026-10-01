@@ -5,6 +5,8 @@ package bus
 import (
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // openHeld opens a file for reading and reports whether a rename can REPLACE it while
@@ -14,8 +16,6 @@ import (
 func openHeld(t *testing.T, path string) (*os.File, bool) {
 	t.Helper()
 	f, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return f, true
 }
