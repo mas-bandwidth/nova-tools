@@ -517,10 +517,17 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 	var p Plan
 	p.on(s)
 	chosen := pick(&p, r.Sel, s.Work.Column(Waiting), rowOf, func(c *Card) string { return inState(c, Waiting) }, s.primaryCard)
+	// each card's open judgments, found by an index built once, not by a
+	// walk of every open judgment for each card (the owner's rule: never a
+	// row at a time); each list keeps the judgments' order
+	bySubject := map[string][]Open{}
+	for _, o := range s.Open {
+		bySubject[o.Subject()] = append(bySubject[o.Subject()], o)
+	}
 	for _, c := range chosen {
 		// A missing prerequisite that now exists is no longer a missing-need
 		// judgment; it still has to land before the primary can move.
-		for _, o := range s.Open {
+		for _, o := range bySubject[c.ID] {
 			if o.Note.Type == NMissingNeed && o.Subject() == c.ID && len(o.Note.Needs) > 0 && len(missingNeeds(s, o.Note.Needs)) == 0 {
 				p.Closes = append(p.Closes, o)
 			}
@@ -536,7 +543,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 		}
 		if len(missing) > 0 {
-			if left := unblocked(s.Open, c.ID, missing, NMissingNeed); len(left) > 0 {
+			if left := unblocked(bySubject[c.ID], c.ID, missing, NMissingNeed); len(left) > 0 {
 				n := judgment(NMissingNeed, c.Row, s.Now, 0, c.ID)
 				n.What, n.Who, n.Needs = c.ID+" needs "+Preview(left, ",")+", not on the table", r.Who, left
 				p.Notes = append(p.Notes, n)
@@ -546,7 +553,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 		}
 		if len(dropped) > 0 {
-			if left := unblocked(s.Open, c.ID, dropped, NBlocked); len(left) > 0 {
+			if left := unblocked(bySubject[c.ID], c.ID, dropped, NBlocked); len(left) > 0 {
 				p.Notes = append(p.Notes, blockedNote(s, c.Row, c.ID, r.Who, left))
 			}
 			if len(r.IDs) > 0 {
@@ -1162,17 +1169,20 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	SortCards(cards)
 	for _, c := range cards {
 		if len(up) > 0 && c.Int("redeals") < MaxRedeals {
-			// the next member round the fleet below its width, else the next
-			// up (round.go), the index moved past it
-			m := rr.next(up, q, widths, "", true)
-			rr.moved(m)
-			moves[c.ID] = m
-			q[m]++
-			set := nextGen(c, m, s.Now)
-			set["redeals"] = itoa(c.Int("redeals") + 1)
-			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, set, "taken"))},
-				Moved: fmt.Sprintf("%s %s:%s -> %s:ready gen=%d; %s down", c.ID, c.Row, c.Col, m, c.Int("gen")+1, r.Member)})
-			continue
+			// the next member round the fleet below its width (round.go), the
+			// index moved past it; with none below its width the card is
+			// withdrawn, and the next deal places it where there is room: a
+			// member at its width takes no more (errata 3 amendment 9)
+			if m := rr.next(up, q, widths, "", false); m != "" {
+				rr.moved(m)
+				moves[c.ID] = m
+				q[m]++
+				set := nextGen(c, m, s.Now)
+				set["redeals"] = itoa(c.Int("redeals") + 1)
+				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, set, "taken"))},
+					Moved: fmt.Sprintf("%s %s:%s -> %s:ready gen=%d; %s down", c.ID, c.Row, c.Col, m, c.Int("gen")+1, r.Member)})
+				continue
+			}
 		}
 		set := nextGen(c, "", s.Now)
 		set["withdrawn"] = stamp(s.Now)

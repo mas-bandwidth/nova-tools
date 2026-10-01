@@ -67,6 +67,16 @@ type app struct {
 	// began, and why (the loop's start, a line on the log, the clock of a
 	// quiet log, a retry).
 	ticked func(n int, began time.Time, why string)
+	// profiled, when set, is told of each tick run finished, by its count:
+	// run --cpuprofile ends its profile at the last tick it covers.
+	profiled func(n int)
+	// checkTwin, when set (a test), is every store's CheckTwin: each part a
+	// tick plans on its twin is checked against a fresh read (store/twin.go).
+	checkTwin func(held, fresh *sprint.Snapshot) error
+	// readTwins is the process's read twin of each store, by address: what
+	// its verbs last read, so a verb after the first reads only what changed
+	// (store/twin.go). It is not the mem twin above, which is a store.
+	readTwins map[string]*store.Twin
 }
 
 func newApp(getenv func(string) string) *app {
@@ -109,6 +119,7 @@ func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names)
 		a.conns[addr] = conn
 	}
 	b := &store.Redis{C: conn.Client(), Names: names, Now: a.now}
+	b.CountTrips() // a tick's cost says its round trips (store/stats.go)
 	a.cached[key] = b
 	return b, nil
 }
@@ -207,7 +218,17 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep}
+	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep, CheckTwin: a.checkTwin}
+	// every verb this process runs on the store reads through one twin: a
+	// verb after the first reads only what changed (store/twin.go)
+	if a.readTwins == nil {
+		a.readTwins = map[string]*store.Twin{}
+	}
+	if a.readTwins[c.redis] == nil {
+		a.readTwins[c.redis] = store.NewTwin()
+	}
+	st.ShareTwin(a.readTwins[c.redis])
+	st.LockAfterLoss = true // a part that lost a try locks (store/lock.go)
 	if t := a.twins[c.redis]; t != nil {
 		st.NewID = t.newID
 	}

@@ -511,7 +511,8 @@ func ReadStart(s State, r, c string) (State, error) {
 // broken judgment; the read that leaves the reads exhausted opens reads
 // exhausted (G3). A report on a card still asked is the begin and the report
 // in one step, and the read that completes two different readers' ok at the
-// head opens ready to accept: both the spec's (section 6), not the model's.
+// head opens ready to accept while the machine is STOPPED (a RUNNING
+// machine's pump accepts it): both the spec's (section 6), not the model's.
 func Read(s State, r, c string, ok bool) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -531,7 +532,8 @@ func Read(s State, r, c string, ok bool) (State, error) {
 	n.Reads[c] = rc
 	if !ok {
 		n.open(JBroken, p)
-	} else if before < 2 && len(n.OkReaders(p)) >= 2 && n.InWork(p, Review) {
+	} else if before < 2 && len(n.OkReaders(p)) >= 2 && n.InWork(p, Review) && n.Machine != Running {
+		// a RUNNING machine's pump accepts it: "accept is mechanical"
 		n.open(JAccept, p)
 	}
 	n.exhaust(p)

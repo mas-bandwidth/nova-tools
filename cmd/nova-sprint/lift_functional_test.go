@@ -40,7 +40,10 @@ func TestReadOkDoneAndTheWakeOnTheStore(t *testing.T) {
 		}
 		return out.String()
 	}
-	for _, l := range []string{"init --readers reader-a,reader-b --members m1", "add --stream s1 --count 2", "fleet beat m1", "start", "tick",
+	for _, l := range []string{"init --readers reader-a,reader-b --members m1", "add --stream s1 --count 2", "fleet beat m1", "start",
+		// the first tick's fleet update (last in the tick) brings m1 up; the
+		// second tick's pump deals to it
+		"tick", "tick",
 		"take --as m1 --limit 5 --epoch 0"} {
 		do(l)
 	}

@@ -6,17 +6,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/redis/go-redis/v9"
 )
 
 // lockedBuffer is a buffer the loop writes to while the test runs.
@@ -139,6 +142,12 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 
 	loop := newApp(func(k string) string { return env[k] })
 	defer loop.close()
+	loop.checkTwin = func(twin, fresh *sprint.Snapshot) error {
+		if d := store.TwinDiff(twin, fresh); d != "" {
+			return errors.New(d)
+		}
+		return nil
+	}
 	st, _, code := loop.machineVerb("run", nil, &bytes.Buffer{})
 	if st == nil {
 		t.Fatalf("run: %d", code)
@@ -170,6 +179,12 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		}
 	}
 
+	// the loop's twin never disagreed with the store's own counts
+	for _, l := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(l, "TIMES ") {
+			assert.Contains(t, l, " mismatch=0:", "the loop's twin did not add up to the store's counts: %s", l)
+		}
+	}
 	ticks := loopDeals(out.String())
 	if len(ticks) < 3 {
 		t.Fatalf("%d ticks dealt in %d rounds, want at least 3: %s", len(ticks), rounds, out.String())

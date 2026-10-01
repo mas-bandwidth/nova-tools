@@ -95,9 +95,8 @@ run receipts for adoption evidence rather than spending tokens just to measure t
 September backfill and live collection share identities, retain source evidence and
 never count the same historical event twice.
 
-The ledger stays private under the retained-record publication contract. Extract
-allowlisted usage metadata, not prompts, responses, credentials or private paths.
-Periodic collection should be mechanical, incremental where validated, and quiet
+Extract allowlisted usage metadata, not prompts, responses, credentials or private
+paths. Periodic collection should be mechanical, incremental where validated, and quiet
 when unchanged; it needs no AI polling turn. Scheduling remains an explicit deployment
 choice, not a hidden timer added by a source adapter.
 
@@ -122,6 +121,6 @@ choice, not a hidden timer added by a source adapter.
    Existing v1 files remain byte-identical and are never counted with their source
    events in the same scope.
 
-Implementation should extend the existing record/mapping machinery, then add bounded
-runner adapters. The source mappings and exact revisions need independent review;
-a green fixture for one provider does not establish coverage for another.
+Implementation adds bounded runner adapters. The source mappings and exact revisions
+need independent review; a green fixture for one provider does not establish coverage
+for another.
