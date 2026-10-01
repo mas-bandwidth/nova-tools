@@ -83,6 +83,9 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	}
 	ctx := context.Background()
 	ns := "refs/member/" + launchName(p)
+	// a ref this launch's namespace kept from an interrupted push is dropped before the
+	// fetch, so only this checkout's own branches can authorize the head
+	g.drop(ctx, repo, ns)
 	defer g.drop(ctx, repo, ns)
 	// every branch and the HEAD of the checkout: the child's commit is on whichever branch
 	// it made, in the checkout or in a clone the git shim linked to it (docs/SPEC-CARD-CONTRACT.md)

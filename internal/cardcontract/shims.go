@@ -49,7 +49,8 @@ nova_git() { eval "\"\$NOVA_GIT\" $nova_globals \"\$@\""; }
 case "$nova_sub" in
 `
 
-// gitPush is the contract's push: the head the refspec names (else HEAD) and the branch it
+// gitPush is the contract's push: a long flag that is a prefix of a refused long flag is refused as
+// typed, since git accepts any unambiguous prefix (docs/SPEC-CARD-CONTRACT.md, the push); the head the refspec names (else HEAD) and the branch it
 // comes from, recorded in <job>/.sprint/pushed.tsv, answered as the push the member makes
 // at the finish: that branch to the card's branch on origin.
 const gitPush = `push)
@@ -62,6 +63,13 @@ const gitPush = `push)
 			echo "error: REFUSED git push $nova_a: a card's push carries one commit to the card's branch, which the sprint pushes when the card finishes; it deletes, prunes, mirrors and passes options for nothing" >&2; exit 1 ;;
 		--repo|--receive-pack|--exec|--signed) nova_skip=1 ;;
 		--) ;;
+		--?*)
+			nova_opt="${nova_a#--}"; nova_opt="${nova_opt%%=*}"
+			for nova_r in delete mirror prune all branches tags push-option; do
+				case "$nova_r" in "$nova_opt"*)
+					echo "error: REFUSED git push $nova_a: a card's push carries one commit to the card's branch, which the sprint pushes when the card finishes; it deletes, prunes, mirrors and passes options for nothing" >&2; exit 1 ;;
+				esac
+			done ;;
 		-*) ;;
 		*) nova_pos="$nova_pos $(nova_q "$nova_a")" ;;
 		esac
