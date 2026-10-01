@@ -13,7 +13,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestFleetSyncFollowsTheInventoryOnTheStore: the inventory (machine rows,
@@ -21,7 +23,7 @@ import (
 // RedisApplier.FriendHosts) becomes the fleet table at each machine's width;
 // a change of the inventory is followed (a width, a machine with no room, a
 // machine gone); a sync after a sync writes nothing; and the tick's deal
-// never takes a machine past the width the sync set.
+// never takes a machine past DealAhead times the width the sync set.
 func TestFleetSyncFollowsTheInventoryOnTheStore(t *testing.T) {
 	t.Parallel()
 	addr := testutil.Start(t)
@@ -133,7 +135,7 @@ func TestFleetSyncFollowsTheInventoryOnTheStore(t *testing.T) {
 		t.Fatalf("the sync after it:\n%s", out)
 	}
 
-	// the deal fills the synced member to its width and no further
+	// the deal fills the synced member to its dealt-ahead room and no further
 	run(0, "add", "--stream", "s1", "--count", "20")
 	run(0, "fleet", "beat", "m1")
 	run(0, "start")
@@ -145,7 +147,5 @@ func TestFleetSyncFollowsTheInventoryOnTheStore(t *testing.T) {
 		n, _ := strconv.Atoi(got["m1"][col])
 		held += n
 	}
-	if held != 6 {
-		t.Fatalf("m1 holds %d cards after the deal, want its width 6: %v", held, got["m1"])
-	}
+	assert.Equal(t, sprint.DealAhead*6, held, "the synced width is 6: %v", got["m1"])
 }

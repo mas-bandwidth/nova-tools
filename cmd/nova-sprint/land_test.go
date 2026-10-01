@@ -218,8 +218,50 @@ func TestLandRebuildsOnceOnAMovedBase(t *testing.T) {
 	}
 }
 
+// A card accepted while a landing builds stands in the queue by its order of
+// work, often ahead of the batch: that is no change to the batch. The landing
+// reports the cards it pushed, by name, and the newcomer stays queued for the
+// next landing (the fleet pass of 2026-10-01 18:31 ET: with cards accepted
+// every second, landings were refused round after round, 49 queued, 2 landed).
+func TestLandReportsItsCardsWhenAnotherIsQueuedAheadUnderThePush(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 3")
+	heads := map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n"), "s1-2": r.head("s1-2", "main", "b.txt", "b\n"), "s1-3": r.head("s1-3", "main", "c.txt", "c\n")}
+	// all three are taken; s1-2 and s1-3 finish, are read and accepted: the queue. s1-1,
+	// first in the order of work, finishes and is accepted under the push
+	r.git(r.worker, "push", "-q", "origin", "refs/heads/sprint/*:refs/heads/sprint/*")
+	r.deal(3)
+	r.ok("take --as m1 --limit 100")
+	accept := func(ids ...string) {
+		for _, id := range ids {
+			r.ok("finish --as m1 " + id + ".w1@1 --head " + heads[id])
+		}
+		r.ok("ask")
+		r.ok("read --as reader-a --ok --limit 100")
+		r.ok("read --as reader-b --ok --limit 100")
+		r.ok("accept --read-ok")
+	}
+	accept("s1-2", "s1-3")
+	once := false
+	r.a.beforePush = func(int) {
+		if !once {
+			once = true
+			accept("s1-1")
+		}
+	}
+	code, out, errs := r.do("land --stream s1 --repo-dir " + r.clone + " --base main")
+	assert.Equal(t, 0, code, out+errs)
+	assert.Contains(t, out, "LAND OK stream=s1 cards=2")
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "landed/merged", "s1-3": "landed/merged"}, r.places("s1-1", "s1-2", "s1-3"), "the batch pushed is the batch recorded, and the card accepted since waits for the next landing")
+	code, out, errs = r.do("land --stream s1 --repo-dir " + r.clone + " --base main")
+	assert.Equal(t, 0, code, out+errs)
+	assert.Equal(t, "landed/merged", r.places("s1-1")["s1-1"])
+	r.clean()
+}
+
 // The landing and the report are one operation: a batch pushed whose report
-// the store cannot take (the queue changed under the push) is LAND FAILED,
+// the store cannot take (a card of it left the queue under the push) is LAND FAILED,
 // exit 2, with the exact merge command to run.
 func TestLandSaysLoudlyWhenAPushedBatchIsNotReported(t *testing.T) {
 	t.Parallel()
@@ -231,7 +273,7 @@ func TestLandSaysLoudlyWhenAPushedBatchIsNotReported(t *testing.T) {
 	assert.Equal(t, 2, code)
 	tip := r.git(r.remote, "rev-parse", "main")
 	assert.Contains(t, errs, "LAND FAILED stream=s1 cards=2 base=main tip="+tip+" ids=s1-1..s1-2")
-	assert.Contains(t, errs, "and NOT reported (s1: the merge queue of s1 holds 1 cards now, fewer than the batch of 2")
+	assert.Contains(t, errs, "and NOT reported (s1: the merge queue of s1 no longer holds s1-1 (landed, stuck or returned since it was read)")
 	assert.Contains(t, errs, "run land again, which rereads the queue and lets its checks decide")
 	assert.Contains(t, errs, ": nova-sprint land --stream s1\n")
 	assert.NotContains(t, errs, "merge --stream", "a bare merge step would pass the head guard")

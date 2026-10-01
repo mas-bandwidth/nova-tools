@@ -123,6 +123,7 @@ type Result struct {
 const (
 	EndProvider = cardhdr.EndProvider // the sprint's route stats count it apart
 	EndStaging  = cardhdr.EndStaging  // no child ran: the sprint deals the card to another member
+	EndNoResult = cardhdr.EndNoResult // the child left no result: the sprint deals the card again
 	EndBudget   = "budget"
 	EndDeadline = "deadline"
 )
@@ -168,6 +169,11 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// provider's reason, never the shape's; the sprint deals the card again. A refused
 		// push above, and a shaped result below (nothing, not done), are the card's own
 		return FinishFailed, EndProvider + ": " + r.Provider
+	case !r.Shaped && r.End == "":
+		// the child ended by itself and left no result: no work came back, and the sprint
+		// deals the card again on another route (cardhdr.EndNoResult). A run its budget or
+		// its deadline ended is the card's to be judged (below: the end is said first)
+		return FinishFailed, EndNoResult + ": no RESULT.md shape"
 	case !r.Shaped:
 		return FinishFailed, "no RESULT.md shape"
 	case r.Verdict == "nothing":

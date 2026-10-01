@@ -31,9 +31,9 @@ each landed card's total cost for that work stream, and then a total at the
 bottom."), is a stream's landed cards' cost: the sum, over its landed primaries,
 of each one's total, which is, over its consumers (section 2, What a card cost),
 each one's actual cost where one was reported, else its predicted one, a
-consumer with neither adding nothing. It is in US dollars to four places
-(`$1.2345`), `-` for a stream with no priced landed card, and the footer is the
-sum over the streams, in exact decimals end to end. A stream with some unpriced
+consumer with neither adding nothing. It is in US dollars and cents, rounded up to the next cent (the card keeps the exact figure)
+(`$1.24` for 1.2345), `-` for a stream with no priced landed card, and the footer is
+the sum over the streams' cells as shown, in dollars and cents. A stream with some unpriced
 landed cards shows the sum of the priced ones; `nova-sprint card <id>` and its
 JSON carry the detail. The merge that lands a primary writes its total on it
 (`cost`), the charged figure of the total the card carries (section 2, What a
@@ -146,7 +146,12 @@ take; the work card keeps provider_error, the last such line (cut to 200
 bytes, until the card is dealt again), and a record of each such take,
 provider_take_<n> (its route, model, member, end, usage and line), which stays
 through the redeals and which `card` prints as one ATTEMPT line for the take
-(`end=provider failure: <line>`, `take=<n>`) before the card's own; a card retired by provider failures has the
+(`end=provider failure: <line>`, `take=<n>`) before the card's own; a take whose child left no
+result at all is an ended take in the same way: the member's failed finish whose report
+begins `no result:` (docs/SPEC-CARD-CONTRACT.md, section 4) is withdrawn, redealt on a
+route the card has not been drawn when another remains, counted against the same bound and
+never judged as failed work, its record's line beginning `no result:` and its ATTEMPT line
+`end=no result: <line>`; a card retired by provider failures has the
 judgment "a card reached its bound" name the provider and that last error
 line; tla/CardContract.tla, ProviderFailure; a launch its member refused at
 staging, before any child ran, is the member's failure and never the card's:
@@ -459,7 +464,13 @@ and it is the coordinator's decision, receipted.
 - The status cell shows held, up or down. The load cell shows the highest load
   of the last 10 s with one decimal while the beat is fresh, and is empty
   otherwise, never a zero.
-- A beat from a machine the sprint does not know writes one happened
+- The fleet table's rows are ordered by status, up first, then held, then
+  down, and by machine name within each (the owner, 2026-10-01: "Please sort
+  the fleet table such that we sort first alphabetically by machine name (as
+  is current), then stable sort by status, such that "up" is first, then
+  "held" then "down""). The display step that writes the status cells puts the
+  rows in that order when they are not (the table layer's row order); the
+  footer row stays last.- A beat from a machine the sprint does not know writes one happened
   notification, "an unknown machine is beating: <name>; add it with nova-sprint
   fleet up <name>". Teardown removes every beat record.
 

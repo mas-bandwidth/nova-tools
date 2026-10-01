@@ -18,10 +18,12 @@ package main
 // programs in the caller's environment.
 //
 // The push and the report are two operations on two systems, so land fences
-// them as tla/Land.tla models: the caller's --epoch is checked before any git;
-// the queue head and the epoch are read again just before each push (Push's
-// Fresh); the report is one store step that lands the batch only while the
-// queue still starts with it at the epoch land read (Report's guard, landStep);
+// them: the caller's --epoch is checked before any git; the queue and the epoch
+// are read again just before each push; the report is one store step that lands
+// the batch, its cards by name, only while the queue still holds each of them at
+// the head and attempt land built, at the epoch land read (landStep; the cards
+// are looked for wherever they stand, so a card accepted or ranked ahead of them
+// since changes nothing);
 // a batch pushed and not reported is left in the base and recovered by running
 // land again (Recovers).
 
@@ -69,9 +71,10 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     reads the store only: no git, no push, no report. The window: land pins
     each card's head and attempt as it reads them; a caller's --epoch is held
     before any git, the queue, the heads and the epoch again just before the
-    push, and the report lands the batch only while the queue starts with those
-    heads at that epoch (one store step). A clear, an accept ahead, a return,
-    a rework or a crash after the check leaves the push unreported (LAND
+    push, and the report lands the batch, its cards by name, only while the queue
+    holds each of them at that head at that epoch (one store step); a card
+    accepted or ranked ahead since changes nothing. A clear, a return, a
+    rework or a crash after the check leaves the push unreported (LAND
     FAILED, exit 2; run land again, never a bare merge, and its own checks
     decide: an unchanged card is recorded with no new push, a reworked one
     merged at its new head or met in conflict); a clear there pushes for an epoch
@@ -395,6 +398,14 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		return refuse(why)
 	}
 	for attempt := 1; len(merged) > 0; attempt++ {
+		// the batch as built: this commit is what is pushed and reported, whatever the
+		// clone's checkout becomes after (another landing sharing the clone cuts its own
+		// branch there; pushing HEAD then pushed the other job's and reported this one
+		// landed with its work nowhere on the base)
+		tip, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return refuse("the batch branch has no tip: " + firstLine("", err))
+		}
 		if why := l.runCheck(ctx, dir); why != "" {
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
 			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, cards[:len(merged)], "red", why)
@@ -405,11 +416,7 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		if l.a.beforePush != nil {
 			l.a.beforePush(attempt)
 		}
-		tip, err := l.git(ctx, dir, "rev-parse", "HEAD")
-		if err != nil {
-			return refuse("the batch branch has no tip: " + firstLine("", err))
-		}
-		_, err = l.git(ctx, dir, "push", "--porcelain", "origin", "HEAD:refs/heads/"+b.Base)
+		_, err = l.git(ctx, dir, "push", "--porcelain", "origin", tip+":refs/heads/"+b.Base)
 		if err == nil {
 			b.Tip = tip
 			if !l.landed(b, stream, cards[:len(merged)]) {
@@ -443,9 +450,9 @@ type conflictCard struct {
 	why string
 }
 
-// conflict reports the card that ended its batch with the conflict fact: it
-// is the head of the queue now, so the step's batch is that one card, at the
-// head that did not merge (a replacement attempt is never blamed).
+// conflict reports the card that ended its batch with the conflict fact: the
+// step's batch is that one card, by name, at the head that did not merge (a
+// replacement attempt is never blamed).
 func (l *lander) conflict(stream string, f conflictCard) {
 	b := landBatch{Stream: stream, Status: "refused", Cards: 1, IDs: []string{f.id}}
 	l.fact(b, sprint.MergeReq{Stream: stream, Batch: 1, Conflict: f.id, Note: f.why}, []landCard{f.landCard}, "conflict", f.why)
@@ -494,29 +501,45 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	return true
 }
 
-// movedExactly says the step's moved lines are the landings of ids, each
-// once and no other (a replayed receipt of another batch is not this one).
+// movedExactly says the step's moved lines are the landings of ids, each once and no
+// other (a replayed receipt of another batch is not this one), in whatever order: the
+// step lands the named cards in the queue's order at the report, which a rank between
+// the push and the report can change, and the cards landed are the same cards.
 func movedExactly(moved, ids []string) bool {
 	if len(moved) != len(ids) {
 		return false
 	}
-	for i, id := range ids {
-		if !strings.HasPrefix(moved[i], id+" merging -> landed") {
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+	if len(want) != len(ids) {
+		return false // a card named twice is not a batch
+	}
+	for _, line := range moved {
+		id, rest, _ := strings.Cut(line, " ")
+		if !want[id] || rest != "merging -> landed" && !strings.HasPrefix(rest, "merging -> landed") {
 			return false
 		}
+		delete(want, id) // each once
 	}
-	return true
+	return len(want) == 0
 }
 
 // step runs one merge step, as `merge --stream` runs it, fenced to the epoch
 // land read and guarded in the same store step: it plans only while the
-// stream's queue starts with exactly the pinned cards, each at the head and
-// attempt land read and pushed (tla/Land.tla, Report and Fresh), so a queue
-// changed since the push, or a card reworked to another head, refuses the
-// report and nothing is recorded that was not pushed. The pins are part of
+// stream's queue holds every pinned card, each at the head and attempt land
+// read and pushed, and the batch it records is those cards by name (MergeReq.
+// Cards), so a card gone from the queue since the push, or reworked to another
+// head, refuses the report and nothing is recorded that was not pushed. The pins are part of
 // the step's arguments, and under the caller's --op its op id is the op and
 // those arguments, so a replay returns only the receipt of this very batch.
 func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) {
+	// the batch is the pinned cards by name, never the first n of the queue
+	r.Cards = make([]string, len(pins))
+	for i, c := range pins {
+		r.Cards[i] = c.id
+	}
 	step := store.MergeStep(r)
 	plan := step.Plan
 	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
@@ -557,8 +580,7 @@ func stepWhy(res store.Result, err error) string {
 }
 
 // queueHead is why the stream's merge queue, read again at the epoch land
-// read, no longer starts with the pinned cards at their heads; "" when it
-// does (tla/Land.tla, Check).
+// read, no longer holds the pinned cards at their heads; "" when it does.
 func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) string {
 	s, err := l.st.Load(ctx, []string{sprint.Merge, sprint.Work}, nil)
 	if err != nil {
@@ -567,17 +589,22 @@ func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) 
 	return headWhy(s, stream, pins)
 }
 
-// headWhy is why the stream's queue does not start with exactly the pinned
-// cards, each at the head and attempt pinned; "" when it does (tla/Land.tla,
-// Fresh: heads, not ids).
+// headWhy is why the stream's queue no longer holds every pinned card at the
+// head and attempt pinned; "" when it does. The cards are looked for by name,
+// wherever they stand: the tick's accepts put cards in the queue by their order
+// of work while a landing builds, often ahead of the batch, and that is no
+// change to the batch (the fleet pass of 2026-10-01 18:31 ET: with cards
+// accepted every second a landing was refused almost every round, 49 queued and
+// 2 landed, and one batch was pushed and could not be reported). A pinned card
+// gone from the queue, or reworked to another head, still refuses.
 func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
-	q := landQueue(s, stream)
-	if len(q) < len(pins) {
-		return fmt.Sprintf("the merge queue of %s holds %d cards now, fewer than the batch of %d; run land again", stream, len(q), len(pins))
+	queued := map[string]bool{}
+	for _, c := range landQueue(s, stream) {
+		queued[c.ID] = true
 	}
-	for i, c := range pins {
-		if q[i].ID != c.id {
-			return fmt.Sprintf("the merge queue of %s changed since it was read (%s is now where %s was); run land again", stream, q[i].ID, c.id)
+	for _, c := range pins {
+		if !queued[c.id] {
+			return fmt.Sprintf("the merge queue of %s no longer holds %s (landed, stuck or returned since it was read); run land again", stream, c.id)
 		}
 		pr := s.Work.Placed(c.id)
 		if pr == nil || pr.F("head") != c.head || pr.F("attempt") != c.attempt {

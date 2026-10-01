@@ -51,7 +51,10 @@ func TestAPinnedCardOnTheTwinIsReadBackByCardAndRoutes(t *testing.T) {
 	// the take's cost record is the take's own (below): the withdrawn card holds none
 	assert.Contains(t, story, "usage=- end=withdrawn")
 	assert.Contains(t, story, "ATTEMPT 1 card=s1-1.w1 take=1 route=pin model=x/y member=m1 finished=", "the failed take keeps its own record")
-	assert.Contains(t, story, "usage=wall=3.00s budget=10/5000 wait=0s run=0s unpriced=no-tokens cost=none end=provider failure: 529")
+	// the take's wait and run are read on the clock between two verbs of this test: either
+	// may be a second on a loaded machine, so the record is pinned around them
+	assert.Contains(t, story, "usage=wall=3.00s budget=10/5000 wait=")
+	assert.Contains(t, story, "unpriced=no-tokens cost=none end=provider failure: 529")
 	assert.Contains(t, story, "COST kind=work card=s1-1.w1 attempt=1 take=1 who=m1 route=pin model=x/y end=provider-failure input=-", "the failed take is a consumer of the card")
 	assert.NotContains(t, story, "came back failed", "a provider failure is never the card's")
 	_, plain, _ := run("nova-sprint card s4-1")

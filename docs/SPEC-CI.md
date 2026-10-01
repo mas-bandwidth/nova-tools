@@ -2772,6 +2772,15 @@ the original failed measurement.
 **Its remedy line.** `schema.go no longer matches internal/sprint/TABLES.lock; a PR that changes a table's shape changes the lock file in the same PR, where a read sees it`, then each differing line, the lock's and the schema's.
 **Its narrowings.** Column width (always 0 here) is not in the lock; a change to what a table holds that is not in its definition (a card's fields, a hidden column's contents) is not seen.
 
+### `onewriter` — a worker is a client and does not open the store
+
+**The rule.** One process writes a sprint's state: the run loop, beside the store, which is also the sprint's server (`nova-sprint run --listen`). A worker sends its verbs to it and reads its replies. The packages a worker's machine runs (`cmd/nova-swarm`, `internal/member`, `internal/sprintwire`) import, directly or through any package of this module, none of the packages that open the store (`internal/sprint/store`, `internal/redisconn`, `internal/ntable`, `internal/nsprint/store`, any `github.com/redis/` module).
+**The mistake it prevents.** A distributed system where a client and a server would do. nova-sprint's workers each read the tables across the network, planned and wrote back behind one fence; from 108 ms away a write lost it for about 50 s and gave up, and a finished card took a median 391 s to be reported (the fleet pass of 2026-10-01). A lock, a reservation and a queue with four recovery rules each added states before the simple shape was seen. The maintainer, 2026-10-01: "never write a complicated distributed system when a simple client/server will work just fine." / "simple client/server always wins."
+**The test.** `TestAWorkerDoesNotOpenTheStore` (`internal/ci/onewriter_class_test.go`), with `TestOneWriterFindsAChainToTheStore`: it walks the imports of the non-test files from each worker package through the module's own packages and is red on the first chain that reaches the store, printing the chain.
+**Its allowlist.** None.
+**Its remedy line.** `remedy="a worker is a client: ask the sprint's server (internal/sprintwire) and never open the store from a worker's machine (docs/SPEC-CI.md, onewriter)"`.
+**Its narrowings.** It reads imports, so a worker that reaches the store by running a binary that opens it (the member without `--server` runs `nova-sprint` itself, the path kept for comparison) is not seen; test files are not read.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays

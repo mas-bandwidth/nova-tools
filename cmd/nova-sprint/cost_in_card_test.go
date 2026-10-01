@@ -85,8 +85,8 @@ func TestTheCardCarriesEveryConsumerWhoeverIsRemoved(t *testing.T) {
 	ta.ok("merge --stream s1 --op land-s1")
 	ta.ok("merge --stream s1 --op land-s1")
 	cells := ta.costCells()
-	assert.Equal(t, "$0.0080", cells["s1"])
-	assert.Equal(t, "$0.0080", cells[""])
+	assert.Equal(t, "$0.01", cells["s1"])
+	assert.Equal(t, "$0.01", cells[""])
 	var landed cardView
 	ta.json("card s1-1", &landed)
 	assert.Equal(t, "0.008", landed.Primary.F(sprint.FieldCost))

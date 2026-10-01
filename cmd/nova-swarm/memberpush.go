@@ -47,7 +47,17 @@ type gitPusher struct {
 	// git runs one git; gitrun.Run, or a test's fake.
 	git func(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error)
 	mu  sync.Mutex // the push repository's creation and its alternates
+	// sleep waits between two tries of a push origin rejected on its own side
+	// (pushWaits); nil is time.Sleep, a test gives its own.
+	sleep func(time.Duration)
 }
+
+// pushWaits is the waits before a push that origin rejected on its own side, git's
+// `[remote rejected]`, is sent again: the remote's failure, never the commit's (three
+// pushes were rejected so within thirty seconds of a fleet pass, 2026-10-01, and each
+// failed its card). A push origin refuses for the commit (`[rejected]`: not a fast
+// forward) is refused at once, as before, and never forced.
+var pushWaits = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
 
 func newGitPusher(root, slots, sprintBin string) *gitPusher {
 	return &gitPusher{root: root, slots: slots, sprintBin: sprintBin, gh: "gh", git: gitrun.Run}
@@ -125,8 +135,20 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 		return member.Push{None: "the child committed nothing: head " + full + " is the staged commit or behind it"}
 	}
 	push := []string{"push", "-q", "--porcelain", "--no-verify", "--", url, full + ":refs/heads/" + p.Branch}
-	if res, err := g.run(ctx, repo, nil, push...); err != nil {
-		return member.Push{Refused: gitLine(res, err)}
+	for try := 0; ; try++ {
+		res, err := g.run(ctx, repo, nil, push...)
+		if err == nil {
+			break
+		}
+		line := gitLine(res, err)
+		if try == len(pushWaits) || !strings.Contains(line, "[remote rejected]") {
+			return member.Push{Refused: line}
+		}
+		wait := g.sleep
+		if wait == nil {
+			wait = time.Sleep
+		}
+		wait(pushWaits[try])
 	}
 	pu := member.Push{Sha: full}
 	if strings.TrimSpace(r.Title) != "" {

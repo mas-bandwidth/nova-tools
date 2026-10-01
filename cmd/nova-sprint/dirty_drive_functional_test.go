@@ -102,6 +102,8 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			"model", "m"+strconv.Itoa(i), "tokens", "100000", "deadline", "900", "enabled", "true").Err())
 	}
 	require.NoError(t, c.HSet(ctx, config.TierKey("flash"), "name", "flash", "routes", "flash-a,flash-b,flash-c,flash-c").Err())
+	// The readers use the same configured route pool as the work cards.
+	require.NoError(t, c.Set(ctx, config.SprintKey(config.FieldReaderTier), "flash", 0).Err())
 	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
 	getenv := func(k string) string { return env[k] }
 	world, coord, loop, machines := newApp(getenv), newApp(getenv), newApp(getenv), newApp(getenv)
