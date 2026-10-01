@@ -141,6 +141,13 @@ type Step struct {
 	// Acquire; through RouteCache when one is given (a tick's, read once).
 	Routes     bool
 	RouteCache *RouteCache
+	// Readers says the step asks, or reads what the ask would do: it plans
+	// with the readers' states (sprint.Snapshot.ReaderStates), read after its
+	// tables, or ReaderStates when given: a tick reads them once and every
+	// part plans on that reading (tla/DirtyTick.tla holds who is up constant
+	// within a tick).
+	Readers      bool
+	ReaderStates map[string]string
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
@@ -468,6 +475,13 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		if step.Routes {
 			snap.Routes = routes
+		}
+		if step.Readers && step.ReaderStates != nil {
+			snap.ReaderStates = step.ReaderStates
+		} else if step.Readers {
+			if err := st.readerStatesInto(ctx, snap); err != nil {
+				return res, err
+			}
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
 		plan := sprint.Applied(snap, step.Plan(snap))

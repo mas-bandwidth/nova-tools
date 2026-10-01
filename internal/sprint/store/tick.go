@@ -853,7 +853,11 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	// part's writes, and with any other writer in this process
 	first := *snap
 	first.Work, first.Readers, first.Merge, first.Fleet = snap.Work.Frozen(), snap.Readers.Frozen(), snap.Merge.Frozen(), snap.Fleet.Frozen()
-	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin}
+	// who is up is read once, with the tick's one read: every part plans on it
+	if err := pinned.readerStatesInto(ctx, &first); err != nil {
+		return last, err
+	}
+	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
 	defer func() { res.RouteTrips = t.routes.Trips }()
 	updates := st.Updates
 	if updates == nil {
@@ -961,6 +965,9 @@ type tickRun struct {
 	// passed over after a part ran: the tick's end brings them up to date.
 	unshown bool
 	routes  RouteCache // read once, by the tick's first part that deals or checks
+	// readers is each reader's state as the tick's first read found it (nil: a
+	// store that keeps no beats).
+	readers map[string]string
 }
 
 // update is one table's update: its queue drained (the entries other updates
@@ -985,6 +992,11 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		view := t.snap
 		if t.ran {
 			view = t.st.peek(t.twin, table == sprint.Work)
+		}
+		if view != nil && view.ReaderStates == nil && t.readers != nil {
+			v := *view
+			v.ReaderStates = t.readers
+			view = &v
 		}
 		if view != nil {
 			if drain && view.QueueLen == 0 {
@@ -1023,6 +1035,9 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		step.Pump, step.Drain, step.Twin = table == sprint.Work, drain, t.twin
 		// the deal draws from the routes, and the check asks what the next deal does
 		step.Routes, step.RouteCache = part.Name == "deal" || part.Name == "check", &t.routes
+		// the ask, and the parts that ask what the ask does, plan with the readers' states
+		step.Readers = part.Name == "ask" || part.Name == "check"
+		step.ReaderStates = t.readers
 		// the machine's state is read with the step's fence: STOPPED halts the
 		// tick before the part begins
 		step.Halts = true

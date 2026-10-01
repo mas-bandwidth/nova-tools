@@ -38,6 +38,9 @@ type Epochs struct {
 	// Beating is every machine that may have a beat record: the fleet's
 	// members of every epoch, and the unknown machines that beat.
 	Beating []string
+	// Readers is every reader of the readers table of every epoch: each may
+	// have a beat record and a hold (readers.go).
+	Readers []string
 }
 
 // TeardownKeys is every key a deployment leaves after its tables are dropped
@@ -93,6 +96,9 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 	for _, m := range epochs.Beating {
 		keys = append(keys, names.Key(beatKey(m)))
 	}
+	for _, r := range epochs.Readers {
+		keys = append(keys, names.Key(readerBeatKey(r)), names.Key(readerAwayKey(r)))
+	}
 	return append(keys, names.EpochKey())
 }
 
@@ -129,17 +135,24 @@ func (st *Store) Teardown(ctx context.Context) (int, error) {
 		epochs.Old[e] = shapes
 	}
 	beating := map[string]bool{}
-	current, err := st.B.AtEpoch(es.N, false).Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
+	reading := map[string]bool{}
+	current, err := st.B.AtEpoch(es.N, false).Shapes(ctx, []string{st.Names.Table(sprint.Fleet), st.Names.Table(sprint.Readers)})
 	if err != nil && refusalCode(err) != "NOTABLE" {
 		return 0, err
 	}
 	for _, shapes := range append([][]ntable.Table{current}, mapValues(epochs.Old)...) {
 		for _, sh := range shapes {
-			if sh.Name != st.Names.Table(sprint.Fleet) {
+			var into map[string]bool
+			switch sh.Name {
+			case st.Names.Table(sprint.Fleet):
+				into = beating
+			case st.Names.Table(sprint.Readers):
+				into = reading
+			default:
 				continue
 			}
 			for _, r := range sh.Rows {
-				beating[r.Key] = true
+				into[r.Key] = true
 			}
 		}
 	}
@@ -152,6 +165,10 @@ func (st *Store) Teardown(ctx context.Context) (int, error) {
 		epochs.Beating = append(epochs.Beating, m)
 	}
 	sort.Strings(epochs.Beating)
+	for r := range reading {
+		epochs.Readers = append(epochs.Readers, r)
+	}
+	sort.Strings(epochs.Readers)
 	_ = st.B.ViewDelete(ctx, st.Names.View())
 	for _, t := range All {
 		if err := st.B.AtEpoch(es.N, false).DropTable(ctx, st.Names.Table(t)); err != nil && refusalCode(err) != "NOTABLE" {

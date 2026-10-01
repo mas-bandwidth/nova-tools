@@ -589,6 +589,7 @@ func TestAudit2ClosedAskAnotherHitsARetiredCard(t *testing.T) {
 	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-d"}); err != nil {
 		t.Fatal(err)
 	}
+	h.beat()
 	if res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true})); len(res.Moved) != 1 {
 		t.Fatalf("ask --another with a new reader: %+v", res)
 	}

@@ -56,7 +56,7 @@ func TestReadOkDoneAndTheWakeOnTheStore(t *testing.T) {
 		words = append(words, c.ID+"@1")
 	}
 	do(strings.Join(words, " "))
-	for _, l := range []string{"ask", "read --as reader-a --ok --limit 10 --epoch 0", "read --as reader-b --ok --limit 10 --epoch 0"} {
+	for _, l := range []string{"queue --as reader-a", "queue --as reader-b", "ask", "read --as reader-a --ok --limit 10 --epoch 0", "read --as reader-b --ok --limit 10 --epoch 0"} {
 		do(l)
 	}
 	if out := do("accept --read-ok"); !strings.Contains(out, "ACCEPT OK moved=2") {

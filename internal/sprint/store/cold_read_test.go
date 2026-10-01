@@ -359,6 +359,7 @@ func TestAcceptAfterAskingAnotherTwice(t *testing.T) {
 	if err := p.m.RowsAdd(p.ctx, "t-readers", []string{"reader-d"}); err != nil {
 		t.Fatal(err)
 	}
+	p.beat()
 	p.setup(1)
 	p.toReview("h", "s1-1")
 	p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))

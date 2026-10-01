@@ -177,6 +177,7 @@ type Packet struct {
 	Branch     string   `json:"branch,omitempty"`
 	Base       string   `json:"base,omitempty"`
 	BaseHead   string   `json:"base_head,omitempty"`
+	BaseFrom   int      `json:"base_attempt,omitempty"` // the attempt BaseHead is the head of
 	Worker     string   `json:"worker,omitempty"`
 	Head       string   `json:"head,omitempty"`
 	WorkBranch string   `json:"work_branch,omitempty"`
@@ -247,6 +248,7 @@ type Member struct {
 	running map[string]launch // by card id (a work card's id, a read card's id)
 	epoch   uint64
 	width   int // the width this tick runs to: the override, else the fleet row's
+	drain   bool
 }
 
 // New is a member with nothing running. A reader pushes nothing, and its
@@ -254,6 +256,12 @@ type Member struct {
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 	return &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, width: cfg.Width}
 }
+
+// Drain stops the member taking new cards: from the next tick it beats, reads
+// its queue and reports every child as it ends, and starts nothing (not a taken
+// card, not a recovered one). A member whose binary was replaced drains, and
+// stops when Running is 0.
+func (m *Member) Drain() { m.drain = true }
 
 // Running is how many children are running (a spent launch holds no place).
 func (m *Member) Running() int {
@@ -313,23 +321,26 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	m.pushEnded(ids, byID)
 	for _, id := range ids {
 		c := byID[id]
-		inFlight := c.Col == "working" || c.Col == "reading"
-		if !inFlight {
-			continue
-		}
 		l, ours := m.running[id]
 		if !ours {
 			continue
 		}
 		if m.moved(l, c) {
 			// the claim moved under the child (a clear, a redeal): its result
-			// is nobody's; it is reaped when it ends and the new claim is run
+			// is nobody's; it is reaped when it ends and the new claim is run.
+			// Whatever the card's column: a redeal or a withdrawn card dealt
+			// again lists it in this member's ready (asked) column, and an
+			// ended launch kept there holds the width with nothing reported
+			// (tla/CardContract.tla, Reap and EveryLaunchEnds)
 			if !l.child.Done() {
 				continue
 			}
 			fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, id, l.epoch, l.gen, l.attempt, c.Packet.Epoch, c.Packet.Gen, c.Packet.Attempt)
 			delete(m.running, id)
 			claimMoved[id] = true
+			continue
+		}
+		if c.Col != "working" && c.Col != "reading" {
 			continue
 		}
 		if l.spent || !l.child.Done() || (!m.cfg.Reader && l.push == nil) {
@@ -413,6 +424,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			delete(m.running, id)
 			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
 		}
+	}
+	if m.drain {
+		return acted, nil
 	}
 	// 2. Recover in-flight (working/reading) cards that have no child of ours,
 	// clamped to width. A card in the queue as working (reading) with no child

@@ -74,7 +74,9 @@ usage:
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
 a missing flag, an unreadable worker description, a key file that is
-absent or empty, a bad invocation.
+absent or empty, a bad invocation; 3 member: its binary was replaced on disk
+(MEMBER STOP: its supervisor starts the new one; with children running it first
+takes no new card and stops when the last is reported).
 
 NO GUESSED ANYTHING. There is no default pool, no default worker description, no
 default number of workers, no default deadline, and no default token budget.
@@ -781,6 +783,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
 		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
 		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped))
+	if res.survivors != "" {
+		// what the harness left in its group, ended before this line (nativeEndLeftovers)
+		fmt.Fprintf(stdout, " survivors=%s", oneline.Field(res.survivors))
+	}
 	if why != "" {
 		fmt.Fprintf(stdout, " why=%s", oneline.Field(why))
 	}

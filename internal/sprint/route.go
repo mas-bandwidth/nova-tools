@@ -204,7 +204,7 @@ func TierRoutes(routes []Route) string {
 
 // AttemptLine is one attempt's record as `card <id>` prints it: the work card's
 // route and model, its member, when it was dealt, taken and finished, how it
-// ended and what it spent.
+// ended, the head it pushed (head=, "-" when none) and what it spent.
 func AttemptLine(wc *Card) string {
 	end := "in flight (" + wc.Col + ")"
 	switch {
@@ -220,9 +220,9 @@ func AttemptLine(wc *Card) string {
 	case !wc.Placed():
 		end = "retired"
 	}
-	return fmt.Sprintf("ATTEMPT %s card=%s gen=%s route=%s model=%s member=%s dealt=%s taken=%s finished=%s usage=%s end=%s",
+	return fmt.Sprintf("ATTEMPT %s card=%s gen=%s route=%s model=%s member=%s dealt=%s taken=%s finished=%s head=%s usage=%s end=%s",
 		orDash(wc.F("attempt")), wc.ID, orDash(wc.F("gen")), orDash(wc.F(FieldRoute)), orDash(wc.F(FieldModel)), orDash(wc.F("member")),
-		orDash(wc.F("dealt")), orDash(wc.F("taken")), orDash(wc.F("finished")), orDash(wc.F(FieldUsage)), end)
+		orDash(wc.F("dealt")), orDash(wc.F("taken")), orDash(wc.F("finished")), orDash(PushedHead(wc)), orDash(wc.F(FieldUsage)), end)
 }
 
 // ProviderTake is the record of one take of a work card the provider failed, kept on the

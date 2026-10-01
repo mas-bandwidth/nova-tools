@@ -108,15 +108,16 @@ const Sentinel = "sentinel"
 
 // TickDecisions are the decisions open to the tick's judgments.
 var TickDecisions = map[string][]string{
-	NBound:     {"rework with a fix", "drop", "wait"},
-	NCannotAsk: {"reader add", "rework", "drop", "wait"},
-	NNoMember:  {"fleet beat", "fleet up", "wait"},
-	NNoRoute:   {"route add", "look at the card", "drop", "wait"},
-	NInvariant: {"look at the card", "repair", "wait"},
-	NWorkLate:  {"fleet down <member>", "wait", "drop"},
-	NReadLate:  {"ask --another", "wait", "drop"},
-	NMergeLate: {"merge --stream <s>", "look", "wait"},
-	NStalled:   {"look at the card", "wait"},
+	NBound:      {"rework with a fix", "drop", "wait"},
+	NCannotAsk:  {"reader add", "rework", "drop", "wait"},
+	NFewReaders: {"reader up", "reader add", "wait"},
+	NNoMember:   {"fleet beat", "fleet up", "wait"},
+	NNoRoute:    {"route add", "look at the card", "drop", "wait"},
+	NInvariant:  {"look at the card", "repair", "wait"},
+	NWorkLate:   {"fleet down <member>", "wait", "drop"},
+	NReadLate:   {"ask --another", "wait", "drop"},
+	NMergeLate:  {"merge --stream <s>", "look", "wait"},
+	NStalled:    {"look at the card", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -568,9 +569,13 @@ func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 }
 
 // T2. TickAsk asks two different readers of every primary in review whose
-// work did not fail and that has no read card at its attempt (the readers
-// named on the primary first). One that cannot be asked, for want of two
-// different readers, is a judgment once (N1), closed when it is asked. The
+// work did not fail and that has fewer than two read cards at its attempt (the
+// readers named on the primary first), readers up only; a read asked of a
+// reader that is not up is taken back, and its primary is asked again, in the
+// same step. One that cannot be asked, for want of two different readers, is a
+// judgment once (N1), closed when it is asked; with fewer than two readers up
+// it asks none, and one judgment says so (NFewReaders, the sprint's, once per
+// tick-end). The
 // primaries go in stream turns from the ask's stream index on the work table
 // (streamTurns, as the deal's; Ask moves the index), so the readers
 // serve every stream alike and no stream's backlog waits behind another's
@@ -579,7 +584,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
 	due := 0
 	askable := func(c *Card) string {
-		if c.F("result") != "failed" && len(readsAt(s, c, c.Int("attempt"))) == 0 {
+		if c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < 2 {
 			return ""
 		}
 		return "asked, or its work failed"
@@ -592,17 +597,21 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	var p Plan
-	if len(ids) > 0 {
+	var conds []cond
+	switch {
+	case len(ids) > 0 && s.ReaderStates != nil && len(s.UpReaders()) < 2:
+		// an absent reader is never asked: the sprint's one judgment says so
+		conds = append(conds, cond{typ: NFewReaders, streamLevel: true, what: fewReaders(s)})
+	case len(ids) > 0:
 		p = Ask(s, AskReq{Sel: Sel{Only: ids}, Who: r.who()})
 	}
-	var conds []cond
 	for _, x := range p.Refused {
 		if pr := s.Work.Placed(x.Key); pr != nil {
 			conds = append(conds, cond{typ: NCannotAsk, stream: pr.Row, primaries: []string{pr.ID}, what: x.Why})
 		}
 	}
 	p.Refused = nil
-	due += notify(&p, s, conds, []string{NCannotAsk}, r)
+	due += notify(&p, s, conds, []string{NCannotAsk, NFewReaders}, r)
 	return p, due
 }
 
@@ -812,7 +821,7 @@ type cond struct {
 // stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, card, what string) string {
 	switch typ {
-	case NNoMember, NCannotAsk, NNoRoute:
+	case NNoMember, NCannotAsk, NNoRoute, NFewReaders:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
@@ -933,7 +942,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			k := condKey(c.typ, sub, c.card, c.what)
 			holds[k] = true
 			fresh = fresh || !open[k]
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate) {
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders) {
 				update(n, c.what) // the latest facts, in place
 			}
 		}
@@ -993,7 +1002,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 func MovesDue(s *Snapshot) int {
 	n := len(s.Fleet.Column(Withdrawn))
 	for _, c := range s.Work.Column(Review) {
-		if s.Readers != nil && c.F("result") != "failed" && len(readsAt(s, c, c.Int("attempt"))) == 0 {
+		if s.Readers != nil && c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < 2 && (s.ReaderStates == nil || len(s.UpReaders()) >= 2) {
 			n++
 		}
 	}
