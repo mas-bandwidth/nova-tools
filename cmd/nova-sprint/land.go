@@ -18,10 +18,12 @@ package main
 // programs in the caller's environment.
 //
 // The push and the report are two operations on two systems, so land fences
-// them as tla/Land.tla models: the caller's --epoch is checked before any git;
-// the queue head and the epoch are read again just before each push (Push's
-// Fresh); the report is one store step that lands the batch only while the
-// queue still starts with it at the epoch land read (Report's guard, landStep);
+// them: the caller's --epoch is checked before any git; the queue and the epoch
+// are read again just before each push; the report is one store step that lands
+// the batch, its cards by name, only while the queue still holds each of them at
+// the head and attempt land built, at the epoch land read (landStep; the cards
+// are looked for wherever they stand, so a card accepted or ranked ahead of them
+// since changes nothing);
 // a batch pushed and not reported is left in the base and recovered by running
 // land again (Recovers).
 
@@ -69,9 +71,10 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     reads the store only: no git, no push, no report. The window: land pins
     each card's head and attempt as it reads them; a caller's --epoch is held
     before any git, the queue, the heads and the epoch again just before the
-    push, and the report lands the batch only while the queue starts with those
-    heads at that epoch (one store step). A clear, an accept ahead, a return,
-    a rework or a crash after the check leaves the push unreported (LAND
+    push, and the report lands the batch, its cards by name, only while the queue
+    holds each of them at that head at that epoch (one store step); a card
+    accepted or ranked ahead since changes nothing. A clear, a return, a
+    rework or a crash after the check leaves the push unreported (LAND
     FAILED, exit 2; run land again, never a bare merge, and its own checks
     decide: an unchanged card is recorded with no new push, a reworked one
     merged at its new head or met in conflict); a clear there pushes for an epoch
@@ -447,9 +450,9 @@ type conflictCard struct {
 	why string
 }
 
-// conflict reports the card that ended its batch with the conflict fact: it
-// is the head of the queue now, so the step's batch is that one card, at the
-// head that did not merge (a replacement attempt is never blamed).
+// conflict reports the card that ended its batch with the conflict fact: the
+// step's batch is that one card, by name, at the head that did not merge (a
+// replacement attempt is never blamed).
 func (l *lander) conflict(stream string, f conflictCard) {
 	b := landBatch{Stream: stream, Status: "refused", Cards: 1, IDs: []string{f.id}}
 	l.fact(b, sprint.MergeReq{Stream: stream, Batch: 1, Conflict: f.id, Note: f.why}, []landCard{f.landCard}, "conflict", f.why)
@@ -498,18 +501,29 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	return true
 }
 
-// movedExactly says the step's moved lines are the landings of ids, each
-// once and no other (a replayed receipt of another batch is not this one).
+// movedExactly says the step's moved lines are the landings of ids, each once and no
+// other (a replayed receipt of another batch is not this one), in whatever order: the
+// step lands the named cards in the queue's order at the report, which a rank between
+// the push and the report can change, and the cards landed are the same cards.
 func movedExactly(moved, ids []string) bool {
 	if len(moved) != len(ids) {
 		return false
 	}
-	for i, id := range ids {
-		if !strings.HasPrefix(moved[i], id+" merging -> landed") {
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+	if len(want) != len(ids) {
+		return false // a card named twice is not a batch
+	}
+	for _, line := range moved {
+		id, rest, _ := strings.Cut(line, " ")
+		if !want[id] || rest != "merging -> landed" && !strings.HasPrefix(rest, "merging -> landed") {
 			return false
 		}
+		delete(want, id) // each once
 	}
-	return true
+	return len(want) == 0
 }
 
 // step runs one merge step, as `merge --stream` runs it, fenced to the epoch
@@ -566,8 +580,7 @@ func stepWhy(res store.Result, err error) string {
 }
 
 // queueHead is why the stream's merge queue, read again at the epoch land
-// read, no longer starts with the pinned cards at their heads; "" when it
-// does (tla/Land.tla, Check).
+// read, no longer holds the pinned cards at their heads; "" when it does.
 func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) string {
 	s, err := l.st.Load(ctx, []string{sprint.Merge, sprint.Work}, nil)
 	if err != nil {
