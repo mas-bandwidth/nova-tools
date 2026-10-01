@@ -155,6 +155,8 @@ type Packet struct {
 	Epoch      uint64   `json:"epoch"`
 	Brief      string   `json:"brief,omitempty"`
 	Fix        string   `json:"fix,omitempty"`
+	Finding    string   `json:"finding,omitempty"` // a rework's: the readers' words that found the attempt before broken
+	Why        string   `json:"why,omitempty"`     // a rework's: how the attempt before ended
 	Notes      []string `json:"notes"`
 	Branch     string   `json:"branch,omitempty"`
 	Base       string   `json:"base,omitempty"`

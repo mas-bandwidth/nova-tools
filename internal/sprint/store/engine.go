@@ -819,7 +819,7 @@ const manifestBudget = ntable.LimitManifestBytes - 64
 // MaxCardTextBytes bounds each text field a card carries (CardTextFields),
 // the brief excepted (MaxBriefBytes): a step that would write a longer one is
 // refused before anything is written.
-const MaxCardTextBytes = 8 << 10
+const MaxCardTextBytes = sprint.MaxCardTextBytes
 
 // MaxBriefBytes bounds the brief field: cardlimits.MaxBriefBytes, the number the card
 // lint names too and read from the one package that holds it (nothing behind it, so the lint
@@ -838,7 +838,7 @@ func TextBound(field string) int {
 }
 
 // CardTextFields are the text fields a card carries.
-var CardTextFields = []string{"brief", "fix", "finding", "report", "reason", "note", "return_reason", "ci_note", "did"}
+var CardTextFields = []string{"brief", "fix", "finding", "report", "reason", "note", "return_reason", "ci_note", "did", "why"}
 
 // unwritable is why a step's plan cannot be written, before anything is: a
 // card text field over MaxCardTextBytes, or a manifest the table layer's own

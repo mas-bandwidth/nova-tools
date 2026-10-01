@@ -16,7 +16,7 @@ and opens the pull request). The model is `tla/CardContract.tla`.
 
 | layer | what it guarantees | checked by |
 |---|---|---|
-| 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for attempt 2 and later the previous attempt's pushed head, `base_head` in the packet, or for a read the head under read), the branch, the attempt, the previous head and the readers' finding, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromThePreviousPushedHead` |
+| 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for attempt 2 and later the previous attempt's pushed head, `base_head` in the packet, or for a read the head under read), the branch, the attempt, the previous head, why the attempt exists (`why`), the readers' finding and the coordinator's fix, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromThePreviousPushedHead` |
 | 2. staging | `native --frame` stages that commit on that branch (never the brief's prose, never a branch name that never reached origin) and writes `JOB.md` into the job directory | `TestStageCardStagesTheFramesCommitOnItsBranch` (functional tier) |
 | 3. the profile | the child's model family picks a profile; the profile writes the shims first on the child's `PATH` and the text of `JOB.md` | `internal/cardcontract`: unit tests of the text and the shape, functional tests of every shim verb form |
 | 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule` and the push tests of `internal/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
@@ -29,7 +29,14 @@ first.` and then carries the card. It says, in the profile's words: the reposito
 and the commit the checkout is at, the base it came from, that the child works there and
 commits as usual, how its commit and its pull request leave (the sprint does both), the test
 environment (`GOCACHE=<job>/gocache`, niced, `-count=1 -timeout`), the attempt, and for attempt
-2 and later the previous head and the reader's finding. A read's `JOB.md` says to review the
+2 and later the previous head and, right after the attempt line, why the attempt exists. A rework
+says three lines, each left out when its value is empty: `This attempt exists because: <how the
+attempt before ended>`, `A reader found: <the finding of its broken read>`, `The coordinator
+asks: <the --fix text>` (left out too when it is the finding, or already in how the attempt
+ended); then `Do that first; a finish with no new commit is refused.` The three are the
+packet's `why`, `finding` and `fix`, which the rework wrote on the attempt's work card
+(`TestReworkCarriesTheFixTheFindingAndWhyInTheNextPacket`; the lines:
+`TestJobTextOfAReworkSaysWhyAndWhatToDoFirst`). A read's `JOB.md` says to review the
 change on the branch against its base as a pull request is reviewed. JOB.md repeats no rules:
 the card's own RULES paragraph is in the brief, where the add lint holds it, and the child
 reads it once.
