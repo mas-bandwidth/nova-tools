@@ -94,21 +94,30 @@ func memberLoads(s *Snapshot, up []string) map[string]int {
 	return q
 }
 
-// memberWidths is each up member's width.
+// DealAhead is how many widths of cards a member may hold, ready and working
+// together: its width working and as many again ready behind them, so a lane
+// that frees takes its next card at once and never waits for a tick (the owner,
+// 2026-10-01: "we must FEED the machine"; "deal at most 2X width ahead
+// per-machine in fleet"). The member itself runs at most its width (the fleet
+// row's, internal/member); the rest wait in its ready column.
+const DealAhead = 2
+
+// memberWidths is each up member's room for every placement (the deal, a
+// redeal, the level, a down member's cards): DealAhead times its width.
 func memberWidths(s *Snapshot, up []string) map[string]int {
 	w := map[string]int{}
 	for _, m := range up {
-		w[m] = s.Width(m)
+		w[m] = DealAhead * s.Width(m)
 	}
 	return w
 }
 
 // widthRoom is the sum over the up members of the cards each can still take
-// before it is at its width.
+// before it holds DealAhead times its width.
 func widthRoom(s *Snapshot, up []string) int {
 	room := 0
 	for _, m := range up {
-		room += max(0, s.Width(m)-s.Fleet.Count(m, Ready)-s.Fleet.Count(m, Working))
+		room += max(0, DealAhead*s.Width(m)-s.Fleet.Count(m, Ready)-s.Fleet.Count(m, Working))
 	}
 	return room
 }
