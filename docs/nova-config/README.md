@@ -166,16 +166,17 @@ m1
 
 ### fleet
 
-The one row of fleet-wide facts: which machine is the store (Redis and
-Postgres) and which the coordinator ("the studio is the coordinator.
-coordinator can be driven by rowan (you) or stella."). Both name machine
-rows; a machine the fleet names cannot be removed.
+The one row of fleet-wide facts: which machine is the store, Redis's port, the
+explicit password-free Postgres URI, and which machine is the coordinator.
+The machine fields name machine rows; a machine the fleet names cannot be
+removed. The Postgres URI may explicitly name localhost and is never derived
+from the Redis machine.
 
 ```
-nova-config fleet set --store hulk --coordinator studio --as rowan
-CONFIG SET kind=fleet name=fleet rev=3 changed=coordinator,store
+nova-config fleet set --store hulk --coordinator studio --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova --as rowan
+CONFIG SET kind=fleet name=fleet rev=3 changed=coordinator,pg_dsn,redis_port,store
 nova-config fleet show
-FLEET name=fleet store=hulk coordinator=studio created=2026-09-27T02:00:00Z updated=2026-09-27T02:10:00Z
+FLEET name=fleet store=hulk coordinator=studio redis_port=6380 pg_dsn=postgres://nova_config@localhost:5432/nova created=2026-09-27T02:00:00Z updated=2026-09-27T02:10:00Z
 ```
 
 ### friend
@@ -334,7 +335,7 @@ nova-config apply --check
 CHECK ADD kind=machine name=hulk
 CHECK ADD kind=machine name=studio
 CONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0
-CHECK SET kind=fleet name=fleet changed=store,coordinator
+CHECK SET kind=fleet name=fleet changed=store,coordinator,redis_port
 CONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=3 applied=0
 CHECK ADD kind=friend name=rowan
 CONFIG CHECK kind=friend add=1 set=0 remove=0 rev=5 applied=0
@@ -346,7 +347,7 @@ nova-config apply --as rowan
 APPLY ADD kind=machine name=hulk
 APPLY ADD kind=machine name=studio
 CONFIG APPLY kind=machine add=2 set=0 remove=0 rev=2 ms=4
-APPLY SET kind=fleet name=fleet changed=store,coordinator
+APPLY SET kind=fleet name=fleet changed=store,coordinator,redis_port
 CONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=3 ms=1
 APPLY ADD kind=friend name=rowan
 CONFIG APPLY kind=friend add=1 set=0 remove=0 rev=5 ms=6
@@ -360,7 +361,7 @@ CONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0
 fleet row, friends, the sprint row, loops, routes. For a machine it writes its machine ceiling
 (`ns_capacity_machine`, the ceiling from `--slots`; cores and memory are never
 declared, so none are passed) and its registry hash `machine:<m>`. For the
-fleet row, `fleet:store` and `fleet:coordinator`, plain keys. For a friend it
+fleet row, one plain `fleet:<field>` key per nonempty field. For a friend it
 writes her desired capacity and roles (`ns_capacity_desired`, `ns_friend_roles`),
 charging her slots to the machine her own beat reports, else to the fleet's
 coordinator machine; the friend the sprint row names gets the `coordinator`
@@ -419,7 +420,8 @@ at least one runner), and every host's variables under `_meta.hostvars`. The
 machine rows are the one machine list; there is no second one. Each host's
 variables are `ansible_host`, `ansible_user` (the row's user, the name ansible
 reads for the login), `nova_seat` (the row's seat), `slots`, `runners`,
-`kind=machine`, `nova_os` and `nova_arch` from its beat when it has one, and
+`kind=machine`, `nova_redis_port`, `nova_redis_addr`, the explicit
+`nova_pg_dsn`, `nova_os` and `nova_arch` from its beat when it has one, and
 `nova_loops`, its loop records, once the loop kind has been applied; each
 value has one name, and a user or seat that is empty is left out. A deployment
 that wants another name for `nova_seat` maps it in its `group_vars`.

@@ -687,7 +687,7 @@ Postgres and a throwaway Redis.
 ```text
 $ nova-config kinds
 CONFIG KIND name=machine table=config.machines fields=user,seat,slots,runners required=user,seat,slots rows=many
-CONFIG KIND name=fleet table=config.fleet fields=store,coordinator required=- rows=one
+CONFIG KIND name=fleet table=config.fleet fields=store,coordinator,redis_port,pg_dsn required=- rows=one
 CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many
 CONFIG KIND name=sprint table=config.sprint fields=coordinator,reader_tier required=- rows=one
 CONFIG KIND name=loop table=config.loops fields=machine,argv,seat,keys,every,keepalive,width,enabled required=machine,argv rows=many
@@ -706,7 +706,8 @@ MIGRATION version=7 file=0007_route.sql lines=24
 MIGRATION version=8 file=0008_tier.sql lines=18
 MIGRATION version=9 file=0009_route_prices.sql lines=23
 MIGRATION version=10 file=0010_sprint_reader_tier.sql lines=6
-CONFIG MIGRATE print=10 pg=-
+MIGRATION version=11 file=0011_fleet_endpoints.sql lines=8
+CONFIG MIGRATE print=11 pg=-
 
 $ nova-config machine add -h
 usage: nova-config machine add [flags]

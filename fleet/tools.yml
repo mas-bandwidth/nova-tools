@@ -147,6 +147,16 @@
       {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
           '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops] }}
   tasks:
+    - name: the fleet declares its Postgres DSN
+      ansible.builtin.assert:
+        that: nova_pg_dsn | default('') != ''
+        fail_msg: >-
+          the applied fleet row has no pg_dsn; bootstrap once with nova-config migrate
+          --pg postgres://user@localhost:5432/database, then nova-config fleet set
+          --pg_dsn postgres://user@localhost:5432/database --as <actor>,
+          then nova-config apply --kind fleet --as <actor>
+        quiet: true
+
     - name: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)
       ansible.builtin.stat: { path: "{{ item }}" }
       loop: "{{ nova_sops_candidates }}"

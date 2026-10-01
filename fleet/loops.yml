@@ -50,6 +50,14 @@
           list is not an empty one; run: nova-config apply --kind loop, then print the inventory again
         quiet: true
 
+    - name: the fleet declares the Redis endpoint
+      ansible.builtin.assert:
+        that: nova_redis_addr | default('') != ''
+        fail_msg: >-
+          {{ inventory_hostname }} has no applied Redis endpoint; run: nova-config fleet set --store <machine>
+          --redis_port <port> --as <actor>, then nova-config apply --kind fleet --as <actor>
+        quiet: true
+
     - name: does the login have a GUI launchd domain (darwin, nova_launchd_domain auto)
       ansible.builtin.command: "launchctl print gui/{{ ansible_user_uid }}"
       register: loop_gui

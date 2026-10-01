@@ -54,6 +54,8 @@ func TestSnapshotIsTheAppliedStateInTwoRoundTrips(t *testing.T) {
 	_, applied := snap.Revs[KindLoop]
 	assert.Equal(t, applied, snap.Loops != nil, "loops are read exactly when rev:loop is stamped")
 	assert.NotZero(t, snap.Revs[KindMachine])
+	assert.Equal(t, "6379", snap.Fleet["redis_port"])
+	assert.Equal(t, "", snap.Fleet["pg_dsn"])
 
 	require.NoError(t, c.SAdd(ctx, LoopsKey, "member-a").Err())
 	require.NoError(t, c.HSet(ctx, LoopKey("member-a"), map[string]any{

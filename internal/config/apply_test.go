@@ -233,9 +233,9 @@ func TestAHandoverIsTwoRoleSetsNewCoordinatorFirst(t *testing.T) {
 }
 
 // TestApplyOfASingletonIsASetNeverAnAdd: the fleet and sprint rows exist
-// on both sides, so an empty row applies nothing (the stamp still moves to
-// the revision) and a set is one SET naming the fields; a REMOVE is never
-// planned.
+// on both sides. A migrated fleet row applies its Redis port default even
+// before either endpoint is declared, and a set is one SET naming the fields;
+// a REMOVE is never planned.
 func TestApplyOfASingletonIsASetNeverAnAdd(t *testing.T) {
 	t.Parallel()
 
@@ -259,10 +259,12 @@ func TestApplyOfASingletonIsASetNeverAnAdd(t *testing.T) {
 	res, err = Apply(ctx, empty, ap, KindFleet, "rowan", false, report)
 	assertionMsg258 := []any{"empty fleet: %+v %v reported %v", res, err, reported}
 	require.NoError(t, err, assertionMsg258...)
-	require.Equal(t, 0, res.Add+res.Set+res.Remove, assertionMsg258...)
+	require.Equal(t, 1, res.Set, assertionMsg258...)
+	require.Equal(t, 0, res.Add+res.Remove, assertionMsg258...)
 	require.Equal(t, int64(0), res.Rev, assertionMsg258...)
-	require.Empty(t, reported, assertionMsg258...)
-	require.Equal(t, "set sprint sprint as=rowan idem=config:sprint:6 stamp sprint 6", strings.Join(ap.log, " "), "empty fleet wrote %v", ap.log)
+	require.Equal(t, "set:fleet:redis_port", strings.Join(reported, " "), assertionMsg258...)
+	require.Equal(t, "set sprint sprint as=rowan idem=config:sprint:6 stamp sprint 6 set fleet fleet as=rowan idem=config:fleet:0 stamp fleet 0", strings.Join(ap.log, " "), "empty fleet wrote %v", ap.log)
+	reported = nil
 	ap.log = nil
 	_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "hulk", "coordinator": "studio"}, "rowan")
 	require.NoError(t, err)
@@ -277,6 +279,7 @@ func TestApplyOfASingletonIsASetNeverAnAdd(t *testing.T) {
 	require.Equal(t, "set:fleet:store,coordinator", strings.Join(reported, " "), assertionMsg268...)
 	require.Equal(t, "set fleet fleet as=rowan idem=config:fleet:8 stamp fleet 8", strings.Join(ap.log, " "), assertionMsg268...)
 	require.Equal(t, "hulk", ap.views[KindFleet][KindFleet]["store"], "fleet view %v", ap.views[KindFleet])
+	require.Equal(t, "6379", ap.views[KindFleet][KindFleet]["redis_port"], "fleet view %v", ap.views[KindFleet])
 }
 
 func TestApplyCheckWritesNothing(t *testing.T) {

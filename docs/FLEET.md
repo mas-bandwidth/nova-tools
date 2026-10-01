@@ -26,7 +26,7 @@ handles".
 
 ```
 nova-config machine add bench-a --user nova --seat bench-a --slots 2 --as ada
-nova-config fleet set --store bench-a --coordinator bench-a --as ada
+nova-config fleet set --store bench-a --coordinator bench-a --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova --as ada
 nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --width 2 --as ada
 nova-config loop add reader-1 --machine bench-a --argv '["nova-swarm","member","--as","reader-1","--reader","--width","8","--harness","opencode","--root","nova-bench/reader-1","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --as ada
 nova-config route add flash-a --tier flash --provider deepseek --model deepseek-v4-flash --tokens 200000 --deadline 900 --as ada
@@ -84,20 +84,22 @@ file instead of the store: machines (with `os` and `arch` standing in for the
 beat), the fleet row and loops. A file with no `loops` key is a fleet whose
 loops were never applied. `fleet/testdata/inventory-fixture.yml` is two
 machines and their loops; `fleet/testdata/check-fixture.yml` is the machine
-running the play, named `localhost`, with no store, which is what
+running the play, named `localhost`, with no store deployer, which is what
 `TestFleetPlaysPassSyntaxAndCheckOnTheFixture` runs all three plays against
 with `--check`.
 
 ## Variables
 
 The inventory gives each host `ansible_user`, `nova_seat`, `slots`,
-`runners`, `nova_os` and `nova_arch` (from its beat, when it has one) and
-`nova_loops`, and `all.vars` `nova_store`. The rest are defaults in
+`runners`, `nova_redis_port`, `nova_redis_addr`, the explicit `nova_pg_dsn`,
+`nova_os` and `nova_arch` (from its beat, when it has one) and `nova_loops`,
+and `all.vars` `nova_store`. The rest are defaults in
 `fleet/group_vars/all.yml`. The inventory's host variables override them, and
 so do a `group_vars/benches.yml` and `host_vars/<machine>.yml` beside the
 inventory; a `group_vars/all.yml` beside the inventory does not (the play's own
-is read after it). A fleet whose Redis listens on another port than 6379 sets
-`nova_redis_port` in its `group_vars/benches.yml`.
+is read after it). The host variables ensure an applied nonstandard Redis port
+outranks every group default. The Postgres URI is preserved exactly, including
+an explicit localhost; it is never derived from the Redis store machine.
 
 | variable | default | what it is |
 |---|---|---|
@@ -108,13 +110,20 @@ is read after it). A fleet whose Redis listens on another port than 6379 sets
 | `nova_launchd_domain` | `auto` | darwin: `gui` (a LaunchAgent in the login's GUI domain), `system` (a LaunchDaemon dropped to the login; sudo), or `auto`, which asks launchd whether the login has a GUI domain and takes `system` when it has not |
 | `nova_systemd_scope` | `user` | linux: a user unit (with linger) or `system` |
 | `nova_retire_units` | `[]` | units of another tool's to retire by name (below) |
-| `nova_redis_port`, `nova_redis_addr` | `6379`, `<nova_store>:<port>` | the store |
+| `nova_redis_port`, `nova_redis_addr` | the applied fleet row (`6379` is the port default) | the store |
 | `nova_redis_deploy_user`, `nova_redis_deploy_password_key` | `coordinator`, `NOVA_REDIS_COORDINATOR_PASSWORD` | who loads the library, and the secret holding its password in the `store_deployer` seat |
 | `nova_redis_admin_user`, `nova_redis_admin_password_key` | `admin`, `NOVA_REDIS_ADMIN_PASSWORD` | who writes the ACL, and its secret |
 | `nova_redis_user_password_keys` | `coordinator`, `bench` | the secret holding the password of a user `acl apply` creates |
-| `nova_pg_dsn`, `nova_pg_password_key` | `postgres://nova_config@<nova_store>:5432/nova`, `NOVA_PG_CONFIG_PASSWORD` | the configuration store `tools.yml` migrates |
+| `nova_pg_dsn`, `nova_pg_password_key` | the applied fleet row (no inferred DSN), `NOVA_PG_CONFIG_PASSWORD` | the configuration store `tools.yml` migrates; an empty DSN is refused with the set and apply commands |
 | `nova_release_out`, `nova_release_gocache` | `~/nova-bench/release-build`, `~/nova-bench/release-gocache` on the machine running the play | where the build is written and its Go cache |
 | `nova_version`, `nova_source` | none: `-e` | the build to install and the checkout it is built from |
+
+An existing schema has no `pg_dsn` to apply before migration 0011 adds its
+column. Bootstrap it once with `nova-config migrate --pg
+postgres://user@localhost:5432/db`, then run `nova-config fleet set --pg_dsn
+postgres://user@localhost:5432/db --as <actor>` and `nova-config apply --kind
+fleet --as <actor>`. Later
+tools plays read the explicit applied URI and refuse an empty one.
 
 Every secret is named, never valued: a task that needs one runs its tool under
 `nova-secrets exec --only <NAME> --require=<NAME>` as the host's seat, so the
@@ -149,7 +158,15 @@ One unit per record of `nova_loops`, from the record's fields and the host's
 layout: the command is the record's `argv` (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
-record's log under `~/nova-bench/loops/`, which the play creates.
+record's log under `~/nova-bench/loops/`, which the play creates. Every unit
+gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
+a `nova-swarm member`, inventory removes an older endpoint assignment from the
+rendered `/usr/bin/env` prefix while preserving its Redis user, password
+variable name and every other word. This compatibility projection does not
+rewrite Postgres: remove that old assignment from the loop row with
+`nova-config loop set <loop> --argv '<argv>' --as <actor>`, then apply the loop
+kind. The endpoint remains effective from the unit environment during that
+cleanup.
 
 - darwin: `com.nova.loop.<name>.plist` (`templates/nova-loop.plist.j2`) in
   `~/Library/LaunchAgents` (GUI domain) or `/Library/LaunchDaemons` (system,

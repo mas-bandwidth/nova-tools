@@ -32,6 +32,8 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		require.Empty(t, machines, assertionMsg32...)
 		require.Equal(t, "", fleet.Fields["store"], assertionMsg32...)
 		require.Equal(t, "", fleet.Fields["coordinator"], assertionMsg32...)
+		require.Equal(t, "6379", fleet.Fields["redis_port"], assertionMsg32...)
+		require.Equal(t, "", fleet.Fields["pg_dsn"], assertionMsg32...)
 		for _, n := range []string{"bench-b", "bench-a"} {
 			_, setupErr1192 := st.Insert(ctx, KindMachine, mk(machine, n, map[string]string{"user": "user-x", "seat": "seat-x", "slots": "4"}), "operator")
 			require.NoError(t, setupErr1192)
@@ -48,6 +50,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		assertionMsg45 := []any{"fleet row: %+v", fleet}
 		require.Equal(t, "bench-b", fleet.Fields["store"], assertionMsg45...)
 		require.Equal(t, "bench-a", fleet.Fields["coordinator"], assertionMsg45...)
+		require.Equal(t, "6379", fleet.Fields["redis_port"], assertionMsg45...)
 		listed, _ := st.List(ctx, KindMachine)
 		require.Len(t, listed, len(machines), "List sees %d machines, MachinesAndFleet %d", len(listed), len(machines))
 	})
@@ -224,7 +227,8 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 	t.Run("the fleet row", func(t *testing.T) {
 		t.Parallel()
 		st := open(t)
-		// The row is there before anything is set, both fields empty, and
+		// The row is there before anything is set, with its compatible Redis
+		// port default and no inferred Postgres DSN, and
 		// has no history yet: migrate made it, nobody added it.
 		row, found, err := st.Get(ctx, KindFleet, KindFleet)
 		assertionMsg159 := []any{"fresh fleet row: %+v %v %v", row, found, err}
@@ -232,6 +236,8 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		require.True(t, found, assertionMsg159...)
 		require.Equal(t, "", row.Fields["store"], assertionMsg159...)
 		require.Equal(t, "", row.Fields["coordinator"], assertionMsg159...)
+		require.Equal(t, "6379", row.Fields["redis_port"], assertionMsg159...)
+		require.Equal(t, "", row.Fields["pg_dsn"], assertionMsg159...)
 		require.NotEqual(t, "", row.CreatedAt, assertionMsg159...)
 		{
 			hist, err := st.History(ctx, KindFleet, KindFleet)
@@ -260,6 +266,17 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		require.NoError(t, setupErr11974)
 		_, setupErr12147 := st.Insert(ctx, KindMachine, mk(machine, "studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64"}), "rowan")
 		require.NoError(t, setupErr12147)
+		for _, changes := range []map[string]string{
+			{"redis_port": "65536"},
+			{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova"},
+		} {
+			_, _, err = st.Update(ctx, KindFleet, KindFleet, changes, "rowan")
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "do-not-print")
+		}
+		rev, err := st.Rev(ctx, KindFleet)
+		require.NoError(t, err)
+		require.Zero(t, rev, "a refused endpoint update wrote history")
 		after, id, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "space", "coordinator": "studio"}, "rowan")
 		assertionMsg182 := []any{"set the fleet: %+v id %d err %v", after.Fields, id, err}
 		require.NoError(t, err, assertionMsg182...)

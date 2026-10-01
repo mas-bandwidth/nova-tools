@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -209,11 +210,14 @@ var Kinds = []*Kind{
 		Name:      KindFleet,
 		Table:     "fleet",
 		Singleton: true,
-		Doc:       "the one row of fleet-wide facts: which machine is the store and which the coordinator",
+		Doc:       "the one row of fleet-wide facts: the store and coordinator machines, Redis port and explicit password-free Postgres URI",
 		Fields: []Field{
-			{Name: "store", Type: TypeRef, Ref: KindMachine, Help: "the machine that runs Redis and Postgres (a machine row), or empty"},
+			{Name: "store", Type: TypeRef, Ref: KindMachine, Help: "the machine that runs Redis (a machine row), or empty"},
 			{Name: "coordinator", Type: TypeRef, Ref: KindMachine, Help: "the machine the coordinator's loops run on (a machine row), or empty"},
+			{Name: "redis_port", Type: TypeInt, Default: "6379", Help: "the TCP port Redis listens on, from 1 through 65535; 6379 (the default)"},
+			{Name: "pg_dsn", Type: TypeText, Help: "the explicit password-free postgres:// URI the configuration store uses; empty until set"},
 		},
+		Check: checkFleet,
 	},
 	{
 		// A friend's row is what someone decides for her: how wide, which
@@ -319,6 +323,36 @@ var Kinds = []*Kind{
 		Seed:  RouteTiers,
 		Check: checkTier,
 	},
+}
+
+// checkFleet keeps both store endpoints explicit and safe to print. The
+// Postgres URI is optional so an older fleet can migrate before an operator
+// declares it; fleet/tools.yml refuses to use an empty value with the command
+// that sets and applies it. Nothing derives it from the Redis machine.
+func checkFleet(r Row) error {
+	if raw, ok := r.Fields["redis_port"]; ok {
+		port, err := strconv.Atoi(raw)
+		if err != nil || port < 1 || port > 65535 {
+			return fmt.Errorf("--redis_port wants an integer from 1 through 65535")
+		}
+	}
+	dsn, ok := r.Fields["pg_dsn"]
+	if !ok || dsn == "" {
+		return nil
+	}
+	u, err := url.Parse(dsn)
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Hostname() == "" || u.User == nil || u.User.Username() == "" || strings.TrimPrefix(u.Path, "/") == "" {
+		return fmt.Errorf("--pg_dsn wants a password-free postgres://user@host/database URI (port optional)")
+	}
+	if _, has := u.User.Password(); has {
+		return fmt.Errorf("--pg_dsn carries a password; leave it out and deliver the password through NOVA_PG_PASSWORD_ENV")
+	}
+	for key := range u.Query() {
+		if strings.EqualFold(key, "password") {
+			return fmt.Errorf("--pg_dsn carries a password; leave it out and deliver the password through NOVA_PG_PASSWORD_ENV")
+		}
+	}
+	return nil
 }
 
 // checkTier is the tier kind's Check: the row is one of RouteTiers.
