@@ -152,6 +152,11 @@ func TestAFirstStoreRefusalSaysWhatIsMissingAndHowToMakeIt(t *testing.T) {
 	assert.Contains(t, got, "<recovery key> placeholder")
 	assert.Contains(t, got, "--dry-run lists the recipients")
 	assert.False(t, Leaks(got, NewSecret(value)))
+
+	_, err = sealCarry{run: failing, storeDir: store, gitPath: "git"}.preflight()
+	got = errText(err)
+	assert.Contains(t, got, "git rev-parse failed")
+	assert.Contains(t, got, "a store with no commit yet has no branch to return to; run: git -C "+store+" add .sops.yaml recovery.pub")
 }
 
 // TestAnAbsentSeatNamesTheSeatsAndTheVerbThatStartsOne: the refusal for a seat with no

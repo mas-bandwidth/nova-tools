@@ -352,7 +352,9 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 func (c sealCarry) preflight() (home string, err error) {
 	home, err = sealGitOutput(c.run, c.storeDir, c.gitPath, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
-		return "", err
+		// In a working copy (the store's shape is checked first) this is a HEAD with no
+		// commit under it: a store made with git init and nothing committed yet.
+		return "", fmt.Errorf("%w; a store with no commit yet has no branch to return to; run: git -C %s add .sops.yaml recovery.pub && git -C %s commit -m 'a new store'", err, c.storeDir, c.storeDir)
 	}
 	if home == "" || home == "HEAD" {
 		return "", fmt.Errorf("store %s is not on a branch; seal needs a named branch to return to", c.storeDir)
