@@ -145,8 +145,9 @@ func DeadlineMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, Du
 func OverdueMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyOverdue) }
 
 // DoneMoves is the note "the sprint is done", addressed to the coordinator, on
-// a sprint with nothing open and a card landed or dropped (R15 as errata 3
-// amendment 6 amends it). The machine's stop that goes with it is no move of
+// a sprint with nothing open and a card landed or dropped, the condition
+// the tick's judgment tickDone answers to. The machine's stop that goes
+// with it is no move of
 // the tables: the model's Tick has it (State.Machine), and the binding writes
 // it on the machine's record.
 func DoneMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyDone) }
