@@ -8,6 +8,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // collideUntilRead makes the first few reads of `path` fail and then ENDS the collision, so
@@ -44,9 +47,7 @@ func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
 	// A path that is already a record is REPLACED by the stand-in, so a collision can be
 	// armed over a file a reader has read once already -- which is what a rehash meets.
 	_ = os.Remove(path)
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(path, 0o755))
 	var hits atomic.Int64
 	var restored atomic.Bool
 	forceTransientIO = func(err error) bool {
@@ -102,9 +103,7 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 	// Somebody else's record, unreadable for a reason that is NOT ErrNotExist: a directory,
 	// the same portable stand-in the seam itself uses for a pending replace.
 	other := filepath.Join(dir, "somebody-elses-record")
-	if err := os.MkdirAll(other, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(other, 0o755))
 
 	hits := collideUntilRead(t, armed, body)
 
@@ -112,33 +111,23 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 	// the armed seam is still waited out, to its caller's own bound and not this package's,
 	// so the test costs a tenth of a second rather than SteadyWindow.
 	started := time.Now()
-	if _, err := readFileSteadyBy(other, time.Now().Add(20*steadyPoll)); err == nil {
-		t.Fatal("reading a directory answered no error at all; this fixture has nothing to arm on")
-	}
-	if waited := time.Since(started); waited < steadyPoll {
-		t.Errorf("an armed seam called a wrong-path failure final after %s: the transient answer must not be narrowed by path (bd6f3d7)", waited)
-	}
+	_, err := readFileSteadyBy(other, time.Now().Add(20*steadyPoll))
+	require.Error(t, err, "reading a directory answered no error at all; this fixture has nothing to arm on")
+	waited := time.Since(started)
+	assert.GreaterOrEqual(t, waited, steadyPoll, "an armed seam called a wrong-path failure final after %s: the transient answer must not be narrowed by path (bd6f3d7)", waited)
 
 	// Half two: the COUNT is narrowed. Nothing above was a read of the armed path.
-	if n := hits.Load(); n != 0 {
-		t.Errorf("hits counted %d read(s) of a path this seam never armed: the vacuity guard of every test here would be satisfied by somebody else's failure", n)
-	}
+	n := hits.Load()
+	assert.Zero(t, n, "hits counted %d read(s) of a path this seam never armed: the vacuity guard of every test here would be satisfied by somebody else's failure", n)
 	// And the collision is still standing: it is lifted by the read that PAID for it, never
 	// by somebody else's failures.
-	if _, err := os.ReadFile(armed); err == nil {
-		t.Error("the stand-in over the armed path was lifted by reads of another path")
-	}
+	_, err = os.ReadFile(armed)
+	assert.Error(t, err, "the stand-in over the armed path was lifted by reads of another path")
 
 	// And the seam still does its own job: a read of the armed path is counted, waited out,
 	// and answered with the record.
 	raw, err := readFileSteady(armed)
-	if err != nil {
-		t.Fatalf("the armed path never came back: %v", err)
-	}
-	if string(raw) != body {
-		t.Errorf("the record the retry found is not the one the seam restored:\n%s", raw)
-	}
-	if hits.Load() == 0 {
-		t.Error("no read of the armed path went through the collision wait")
-	}
+	require.NoError(t, err, "the armed path never came back: %v", err)
+	assert.Equal(t, body, string(raw), "the record the retry found is not the one the seam restored:\n%s", raw)
+	assert.NotZero(t, hits.Load(), "no read of the armed path went through the collision wait")
 }

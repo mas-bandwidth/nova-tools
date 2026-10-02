@@ -4,6 +4,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE CONTRACT LINE IS ONE LINE, AND THREE READERS HAVE TO AGREE ON IT (issue #1741).
@@ -28,9 +31,7 @@ const (
 func readOr(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("this class test reads %s: %v", path, err)
-	}
+	require.NoError(t, err, "this class test reads %s: %v", path, err)
 	return string(b)
 }
 
@@ -46,12 +47,8 @@ func TestTheDocumentsContractLineIsOneTheLintAccepts(t *testing.T) {
 			break
 		}
 	}
-	if want == "" {
-		t.Fatalf("%s no longer shows a RESULT line 1; this test reads that example", cardCutDocPath)
-	}
-	if !IsCardContractLine(want) {
-		t.Fatalf("the lint refuses the very line 1 the document says `cut` writes: %q\nthe lint accepts %v", want, CardContractPrefixes)
-	}
+	require.NotEmpty(t, want, "%s no longer shows a RESULT line 1; this test reads that example", cardCutDocPath)
+	require.True(t, IsCardContractLine(want), "the lint refuses the very line 1 the document says `cut` writes: %q\nthe lint accepts %v", want, CardContractPrefixes)
 }
 
 // BOTH FORMS ARE ACCEPTED, AND THAT IS A STOPGAP. `cut` writes one form and
@@ -65,9 +62,7 @@ func TestBothContractFormsAreAcceptedUntilTheIssueSettlesIt(t *testing.T) {
 		"RESULT card-1 sha=0123456789ab",
 		"RESULT: CARD-0000 do the thing",
 	} {
-		if !IsCardContractLine(line) {
-			t.Errorf("the lint refuses %q, which a tool on dev writes today", line)
-		}
+		assert.True(t, IsCardContractLine(line), "the lint refuses %q, which a tool on dev writes today", line)
 	}
 	for _, line := range []string{
 		"# fixed: row 5 writer_bound_count on go",
@@ -75,9 +70,7 @@ func TestBothContractFormsAreAcceptedUntilTheIssueSettlesIt(t *testing.T) {
 		"RESULT",
 		" RESULT card-1 sha=0123456789ab",
 	} {
-		if IsCardContractLine(line) {
-			t.Errorf("%q is not a contract line and the lint takes it for one", line)
-		}
+		assert.False(t, IsCardContractLine(line), "%q is not a contract line and the lint takes it for one", line)
 	}
 }
 
@@ -92,24 +85,14 @@ func TestBothContractFormsAreAcceptedUntilTheIssueSettlesIt(t *testing.T) {
 func TestTheContractRemedyNamesOneFormAndCallsTheOtherAStopgap(t *testing.T) {
 	t.Parallel()
 
-	if CardContractPrefixes[0] != "RESULT: " {
-		t.Fatalf("the colon form is the rule, so it is first: %v", CardContractPrefixes)
-	}
-	if !strings.Contains(CardContractWanted, "`RESULT: <label> sha=<sha12>`") {
-		t.Fatalf("the remedy names the colon form as the one to write: %q", CardContractWanted)
-	}
-	if !strings.Contains(CardContractWanted, "stopgap") {
-		t.Fatalf("the remedy calls the colon-less form a stopgap, not a second rule: %q", CardContractWanted)
-	}
+	require.Equal(t, "RESULT: ", CardContractPrefixes[0], "the colon form is the rule, so it is first: %v", CardContractPrefixes)
+	require.Contains(t, CardContractWanted, "`RESULT: <label> sha=<sha12>`", "the remedy names the colon form as the one to write: %q", CardContractWanted)
+	require.Contains(t, CardContractWanted, "stopgap", "the remedy calls the colon-less form a stopgap, not a second rule: %q", CardContractWanted)
 	// A remedy that offers two forms with an `or` between them is the wording the shift
 	// could not act on.
-	if strings.Contains(CardContractWanted, "sha=<sha12>` as `cut` writes it, or ") {
-		t.Fatalf("the remedy no longer offers a choice of two: %q", CardContractWanted)
-	}
+	require.NotContains(t, CardContractWanted, "sha=<sha12>` as `cut` writes it, or ", "the remedy no longer offers a choice of two: %q", CardContractWanted)
 	// Both forms are still READ, because the plain `cut` template still renders one.
 	for _, line := range []string{"RESULT: c-1 sha=0123456789ab", "RESULT c-1 sha=0123456789ab"} {
-		if !IsCardContractLine(line) {
-			t.Fatalf("until rule 7's renderer card lands both forms are read: %q", line)
-		}
+		require.True(t, IsCardContractLine(line), "until rule 7's renderer card lands both forms are read: %q", line)
 	}
 }
