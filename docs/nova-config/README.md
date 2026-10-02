@@ -338,7 +338,7 @@ CHECK SET kind=fleet name=fleet changed=store,coordinator
 CONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=3 applied=0
 CHECK ADD kind=friend name=rowan
 CONFIG CHECK kind=friend add=1 set=0 remove=0 rev=5 applied=0
-CHECK SET kind=sprint name=sprint changed=coordinator,reader_tier
+CHECK SET kind=sprint name=sprint changed=coordinator
 CONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0
 CONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0
 CONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0
@@ -350,7 +350,7 @@ APPLY SET kind=fleet name=fleet changed=store,coordinator
 CONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=3 ms=1
 APPLY ADD kind=friend name=rowan
 CONFIG APPLY kind=friend add=1 set=0 remove=0 rev=5 ms=6
-APPLY SET kind=sprint name=sprint changed=coordinator,reader_tier
+APPLY SET kind=sprint name=sprint changed=coordinator
 CONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms=1
 CONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0
 CONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0
@@ -367,7 +367,7 @@ coordinator machine; the friend the sprint row names gets the `coordinator`
 role in Redis on top of her row's roles, so a handover (`sprint set
 --coordinator stella`, then `apply`) is two `SET ... changed=roles`, hers
 first. It never touches her logins or wake path: they are her presence's.
-For the sprint row, `sprint:coordinator` and `sprint:reader_tier` (the tier read cards' routes are drawn from, pro unless set). For a loop, the hash `loop:<l>`
+For the sprint row, `sprint:coordinator`. For a loop, the hash `loop:<l>`
 with every field, its log path, `rev` and `at`, and its name in the set
 `loops`: what the plays read to render one unit per loop. For a route, the
 hash `route:<r>` with every field, `rev` and `at`, and its name in the set

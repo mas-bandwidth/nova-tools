@@ -170,11 +170,6 @@ var Tiers = []string{"flash", "frontier", "pro"}
 // are never drawn from routes and escalate to the coordinator.
 var RouteTiers = []string{"flash", "pro"}
 
-// FieldReaderTier is the sprint row's field naming the tier a read card's route
-// is drawn from (internal/sprint/route.go, readRouteOf); apply writes it to
-// SprintKey(FieldReaderTier), which the sprint's routes read takes.
-const FieldReaderTier = "reader_tier"
-
 // CoordinatorRole is the Redis role ns_friend_roles and the deal read
 // (friend:<f>:roles), derived at apply from the sprint row.
 const CoordinatorRole = "coordinator"
@@ -241,10 +236,9 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates, and the tier read cards are drawn from",
+		Doc:       "the one row of sprint-global facts: which friend coordinates",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
-			{Name: FieldReaderTier, Type: TypeEnum, Enum: RouteTiers, Default: "pro", Help: "the model tier a read card's route is drawn from, at the tier's rolling index as a work card's is: one of " + strings.Join(RouteTiers, ", ") + "; pro (the default)"},
 		},
 	},
 	{
