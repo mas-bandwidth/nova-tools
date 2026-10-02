@@ -66,7 +66,7 @@ func TestTheExampleLinesRun(t *testing.T) {
 	var banner bytes.Buffer
 	{
 		exit := run([]string{"help"}, &banner, io.Discard, firstRunStamp)
-		require.Zero(t, exit, "`nova-tokens help` exits %d, want 0", exit)
+		require.Equal(t, 0, exit, "`nova-tokens help` exits %d, want 0", exit)
 	}
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-tokens")
 	require.NoError(t, err)
