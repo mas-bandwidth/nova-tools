@@ -42,9 +42,8 @@ These hold for every worker, AI or person. A card is the whole brief one worker 
 
 The reader of every banner, refusal and result is an AI meeting the tool cold and deciding whether to depend on it. The question a tool answers is "is this a good tool for an AI to use?" Tools are rated by other AIs, never by their makers, and the ratings drive the fixes. A tool is rated by one note on the bus (nova-bus, messages over git) asking three raters of different sizes to use it cold on a real task and score it; the ratings are kept as tables in the bus repository's design directory, one row per rater and tool.
 
-A rating is read beside the rater's size: a tool a small model finds dense and a frontier model finds clear is a frontier tool and its help says so; a tool every size finds hard is the one to fix.
-
-New verbs, flags and success lines are welcome where they help an AI; only the sprint views a person reads (`nova-sprint where`, the stored `sprint` view) do not change.
+A rating is read beside the rater's size: a tool a small model finds dense and a frontier model finds clear is a frontier tool and its help says so; a tool every size finds hard is the one to fix. New verbs, flags and success lines are welcome
+ where they help an AI; only the sprint views a person reads (`nova-sprint where`, the stored `sprint` view) do not change.
 
 The properties that make the difference in those ratings, in order:
 
