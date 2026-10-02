@@ -156,13 +156,13 @@ func TestVersionRefusalsNameWhatWouldRun(t *testing.T) {
 }
 
 // snapshot --file names each adopted tool that did not answer, with its
-// reason, so a FAIL needs no second call to learn which.
+// reason, so a FAILED needs no second call to learn which.
 func TestSnapshotOfAManifestNamesTheToolsThatDidNotAnswer(t *testing.T) {
 	t.Parallel()
 	manifest := writeFile(t, "m.tsv", Header+"\nghost\ttool\tnova-no-such-tool-here\tgithub:example/ghost\tnone\tme\nknown\ttool\tv1.2.3\tgithub:example/known\tnone\tme\n")
 	code, _, errs := runTool(t, "nova-version", "snapshot", "--file", manifest)
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "SNAPSHOT FAIL checked=2 known=1 unknown=1")
+	assert.Contains(t, errs, "SNAPSHOT FAILED checked=2 known=1 unknown=1")
 	assert.Contains(t, errs, "SNAPSHOT UNKNOWN name=ghost")
 	assert.NotContains(t, errs, "name=known")
 }
@@ -216,7 +216,7 @@ func TestUpdateVerbsTakeJSONAndLeadWithTheirStatus(t *testing.T) {
 	}
 	t.Run("lines open with the verb and its status", func(t *testing.T) {
 		_, _, errs := runTool(t, "nova-update", "check", "--file", m)
-		assert.True(t, strings.HasPrefix(errs, "CHECK FAIL checked=1 "), errs)
+		assert.True(t, strings.HasPrefix(errs, "CHECK FAILED checked=1 "), errs)
 		assert.Contains(t, errs, " kinds=tool ")
 		_, out, _ := runTool(t, "nova-update", "apply", "--file", m, "foo", "--version", "1.2.0", "--dry-run")
 		assert.True(t, strings.HasPrefix(out, "APPLY OK name=foo dry_run=true from=1.0.0 to=1.2.0 "), out)

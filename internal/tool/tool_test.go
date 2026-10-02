@@ -47,8 +47,8 @@ func fromLines(t *testing.T, token, text string) parsed {
 			word, rest = w, ": "+rest
 		}
 		switch word {
-		case "OK", "FAIL", "REFUSED":
-			p.Status = map[string]string{"OK": "ok", "FAIL": "failed", "REFUSED": "refused"}[word]
+		case "OK", "FAILED", "REFUSED":
+			p.Status = map[string]string{"OK": "ok", "FAILED": "failed", "REFUSED": "refused"}[word]
 			if i := strings.LastIndex(rest, "; run: "); i >= 0 {
 				p.Remedy, rest = rest[i+len("; run: "):], rest[:i]
 			}
@@ -179,7 +179,7 @@ func TestRender(t *testing.T) {
 			"DEMO MORE kind=entry shown=2 total=3 " + MaxRemedy + "\nDEMO NOTE a note\\x0awith a newline\n"},
 		{"free text is quoted with its spaces, a typed value is one token", Done().Fact("reason", Text("the store is gone")).Fact("dir", "<dir>"),
 			"DEMO OK dir=<dir> reason=\"the store is gone\"\n"},
-		{"a tool's own word stands for FAIL, the status and exit kept", Fail("the library differs").As("STALE").Fact("lib", "nova"),
+		{"a tool's own word stands for FAILED, the status and exit kept", Fail("the library differs").As("STALE").Fact("lib", "nova"),
 			"DEMO STALE lib=nova: the library differs\n"},
 		{"refused names every problem with the remedy", func() *Out {
 			o := Refuse("--a is required", "--b is required")
@@ -187,7 +187,7 @@ func TestRender(t *testing.T) {
 			return o
 		}(), "DEMO REFUSED: --a is required; run: nova-demo help\nDEMO REFUSED: --b is required; run: nova-demo help\n"},
 		{"failed carries its facts and its reason", Fail("the words differ").Fact("entry", "e1"),
-			"DEMO FAIL entry=e1: the words differ\n"},
+			"DEMO FAILED entry=e1: the words differ\n"},
 		{"a payload is printed as it is", Payload("nova-demo v1 darwin/arm64 go1"),
 			"nova-demo v1 darwin/arm64 go1\n"},
 		{"a payload beside a fact prints both, the payload last", Payload("the document").Fact("path", "p"),
@@ -209,7 +209,7 @@ func TestRender(t *testing.T) {
 			lines := text.String()
 			if w := tc.out.Word; w != "" { // the text spells the status as the word; the JSON carries both
 				assert.Contains(t, js.String(), `"word":"`+w+`"`)
-				lines = strings.Replace(lines, "DEMO "+w+" ", "DEMO FAIL ", 1)
+				lines = strings.Replace(lines, "DEMO "+w+" ", "DEMO FAILED ", 1)
 			}
 			got, want := fromLines(t, "DEMO", lines), fromJSON(t, js.String())
 			got.Verb, got.Exit = want.Verb, tc.out.Exit
@@ -251,7 +251,7 @@ func TestTextIsTheProseTail(t *testing.T) {
 }
 
 // TestAResultThatIsNoJSONIsAFail pins the one value JSON cannot carry: a NaN
-// fact under --json is a FAIL line naming the verb on stderr at exit 1, never
+// fact under --json is a FAILED line naming the verb on stderr at exit 1, never
 // an empty line and a success; Render returns that exit to a tool that renders
 // for itself.
 func TestAResultThatIsNoJSONIsAFail(t *testing.T) {
@@ -263,13 +263,13 @@ func TestAResultThatIsNoJSONIsAFail(t *testing.T) {
 	code := nan.Run([]string{"load", "--json"}, strings.NewReader(""), &out, &errs)
 	assert.Equal(t, 1, code)
 	assert.Empty(t, out.String())
-	assert.True(t, strings.HasPrefix(errs.String(), "LOAD FAIL: the result is no JSON, so it is not printed: json: unsupported value: NaN\n"), errs.String())
+	assert.True(t, strings.HasPrefix(errs.String(), "LOAD FAILED: the result is no JSON, so it is not printed: json: unsupported value: NaN\n"), errs.String())
 
 	var w bytes.Buffer
 	o := Done().Fact("load", math.Inf(1))
 	o.Verb = "load"
 	assert.Equal(t, 1, o.Render(&w, true))
-	assert.Contains(t, w.String(), "LOAD FAIL: the result is no JSON")
+	assert.Contains(t, w.String(), "LOAD FAILED: the result is no JSON")
 }
 
 func demo() *Tool {
@@ -431,7 +431,7 @@ func TestRun(t *testing.T) {
 		{name: "a verb's own exit table stands in its -h for the tool's", args: []string{"fn", "load", "-h"}, code: 0, emptyStderr: true,
 			absent: []string{"1 said no"}, stdout: []string{"--dry-run", "exit codes: 0 loaded, 2 could not run.\neffect: local write"}},
 		{name: "a dry run the verb never read is a failure, never an OK", args: []string{"careless", "--dry-run"}, code: 1, emptyStdout: true,
-			stderr: []string{"CARELESS FAIL: --dry-run was given and the verb never read it"}},
+			stderr: []string{"CARELESS FAILED: --dry-run was given and the verb never read it"}},
 		{name: "a verb that does not write takes no --dry-run", args: []string{"fn", "ls", "--dry-run"}, code: 2, emptyStdout: true,
 			stderr: []string{"FN-LS REFUSED: unknown flag --dry-run;"}},
 		{name: "ok goes to stdout", args: []string{"put", "--store", "s", "--key", "k"}, code: 0, emptyStderr: true,
@@ -450,7 +450,7 @@ func TestRun(t *testing.T) {
 			code: 0, emptyStderr: true, stdout: []string{"WHO OK actor=a op=o1 redis=seat.example:6379 width=2\n"}},
 		{name: "a count under one and an empty address are both refused", args: []string{"who", "--redis", ""}, code: 2, emptyStdout: true, stderrLines: 2,
 			stderr: []string{"WHO REFUSED: --width is required and is at least 1, got 0", "WHO REFUSED: --redis is required; it wants host:port"}},
-		{name: "a no is exit 1 on stderr", args: []string{"deny"}, code: 1, emptyStdout: true, stderr: []string{"DENY FAIL: no\n"}},
+		{name: "a no is exit 1 on stderr", args: []string{"deny"}, code: 1, emptyStdout: true, stderr: []string{"DENY FAILED: no\n"}},
 		{name: "a problem the verb forgot to return is still the refusal", args: []string{"forget"}, code: 2, emptyStdout: true,
 			stderr: []string{"FORGET REFUSED: recorded, not returned"}},
 		{name: "a verb that prints its own keeps its exit and takes no --json", args: []string{"raw"}, code: 1, emptyStderr: true,
@@ -461,10 +461,10 @@ func TestRun(t *testing.T) {
 			stderr: []string{"LIB-CHECK STALE: the library differs; run: nova-demo lib load\n"}},
 		{name: "a declared word on an OK keeps exit 0", args: []string{"lib", "load"}, code: 0, emptyStderr: true,
 			stdout: []string{"LIB-LOAD UNCHANGED\n"}},
-		{name: "an undeclared word is a FAIL naming the bug", args: []string{"lib", "bogus"}, code: 1, emptyStdout: true,
-			stderr: []string{"LIB-BOGUS FAIL: the verb answered ok GONE, a status word nova-demo does not declare"}},
+		{name: "an undeclared word is a FAILED naming the bug", args: []string{"lib", "bogus"}, code: 1, emptyStdout: true,
+			stderr: []string{"LIB-BOGUS FAILED: the verb answered ok GONE, a status word nova-demo does not declare"}},
 		{name: "findings to stderr, the rest of a no to stdout", args: []string{"scan"}, code: 1,
-			stdout: []string{"SCAN FAIL files=1\nSCAN DATED n=1\nSCAN NOTE a green clears the known shapes\n"},
+			stdout: []string{"SCAN FAILED files=1\nSCAN DATED n=1\nSCAN NOTE a green clears the known shapes\n"},
 			stderr: []string{"SCAN FINDING at=f:4\n"}, stderrLines: 1},
 		{name: "a group of a verbflag-shaped -h", args: []string{"lib", "-h"}, code: 0, emptyStderr: true,
 			stdout: []string{"usage: nova-demo lib <check|load|bogus> [flags]\n"}},
@@ -648,6 +648,60 @@ func TestProblems(t *testing.T) {
 			}
 			n := len(d.Problems())
 			assert.Equal(t, len(tc.want), n, "%d problems, want %d:\n%s", n, len(tc.want), got)
+		})
+	}
+}
+
+// TestTheFailureWordIsFAILED pins the failure word across text and JSON:
+// Fail() renders as FAILED in text and failed in JSON with exit 1, and the three
+// status words and their exits do not drift (STANDARD §2).
+func TestTheFailureWordIsFAILED(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		out          func() *Out
+		wantTextWord string
+		wantJSONWord string
+		wantExit     int
+	}{
+		{"Done", func() *Out { return Done() }, "OK", "ok", 0},
+		{"Fail", func() *Out { return Fail() }, "FAILED", "failed", 1},
+		{"Fail with reason", func() *Out { return Fail("it failed") }, "FAILED", "failed", 1},
+		{"Refuse", func() *Out { return Refuse() }, "REFUSED", "refused", 2},
+		{"Refuse with reason", func() *Out { return Refuse("cannot run") }, "REFUSED", "refused", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o := tc.out()
+			o.Verb = "test"
+
+			var text bytes.Buffer
+			textExit := o.Render(&text, false)
+			assert.Equal(t, tc.wantExit, textExit, "text exit code")
+			assert.Equal(t, tc.wantExit, o.Exit, "Out.Exit")
+
+			fields := strings.Fields(text.String())
+			require.GreaterOrEqual(t, len(fields), 2, "text output has verb and status word: %q", text.String())
+			assert.Equal(t, "TEST", fields[0])
+			statusWord := strings.TrimSuffix(fields[1], ":")
+			assert.Equal(t, tc.wantTextWord, statusWord)
+
+			var js bytes.Buffer
+			jsonExit := o.Render(&js, true)
+			assert.Equal(t, tc.wantExit, jsonExit, "JSON exit code")
+
+			var j struct {
+				Result struct {
+					Verb   string `json:"verb"`
+					Status string `json:"status"`
+					Exit   int    `json:"exit"`
+				} `json:"result"`
+			}
+			err := json.Unmarshal(js.Bytes(), &j)
+			require.NoError(t, err, "JSON is valid: %s", js.String())
+			assert.Equal(t, "test", j.Result.Verb)
+			assert.Equal(t, tc.wantJSONWord, j.Result.Status)
+			assert.Equal(t, tc.wantExit, j.Result.Exit)
 		})
 	}
 }

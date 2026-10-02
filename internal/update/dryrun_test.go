@@ -133,7 +133,7 @@ func TestStatusPrintsEveryEntryAndExitsByWhetherAnyDiffer(t *testing.T) {
 	if c != 1 {
 		require.EqualValuesf(t, 1, c, "a differing entry exited %d, want 1\n%s\n%s", c, out, errs)
 	}
-	need(t, errs, "STATUS FAIL checked=2 current=1 stale=1", " at=", "STATUS EQUAL name=current kind=tool installed=1.0.0 latest=1.0.0", "STATUS STALE name=behind kind=tool installed=1.0.0 latest=2.0.0")
+	need(t, errs, "STATUS FAILED checked=2 current=1 stale=1", " at=", "STATUS EQUAL name=current kind=tool installed=1.0.0 latest=1.0.0", "STATUS STALE name=behind kind=tool installed=1.0.0 latest=2.0.0")
 	if strings.Contains(out, "CHECK ") || strings.Contains(errs, "CHECK ") {
 		assert.Failf(t, "", "status printed a check line; its own first token is STATUS:\nout: %s\nerr: %s", out, errs)
 	}

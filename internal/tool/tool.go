@@ -47,8 +47,8 @@ type Tool struct {
 	// "" makes every first word a verb and leaves every verb flags-only.
 	Default string
 	// Words are the tool's own status words (STALE, MISSING, UNCHANGED), the
-	// only ones Out.As may put in place of OK or FAIL: at most MaxWords,
-	// upper case, none of OK, FAIL, REFUSED, MORE or NOTE (Problems).
+	// only ones Out.As may put in place of OK or FAILED: at most MaxWords,
+	// upper case, none of OK, FAILED, REFUSED, MORE or NOTE (Problems).
 	Words []string
 }
 
@@ -56,7 +56,7 @@ type Tool struct {
 const MaxWords = 6
 
 // reserved are the words every tool's lines already give a meaning.
-var reserved = []string{"OK", "FAIL", "FAILED", "REFUSED", "MORE", "NOTE"}
+var reserved = []string{"OK", "FAILED", "REFUSED", "MORE", "NOTE"}
 
 // wordRe is one status word: upper case, digits and dashes after the first letter.
 var wordRe = regexp.MustCompile(`^[A-Z][A-Z0-9-]*$`)
@@ -272,7 +272,7 @@ func (t *Tool) Problems() []string {
 	}
 	for _, w := range t.Words {
 		if !wordRe.MatchString(w) || slices.Contains(reserved, w) {
-			p = append(p, fmt.Sprintf("%s: the status word %q is not an upper-case word of its own (OK, FAIL, REFUSED, MORE and NOTE are every tool's)", t.Name, w))
+			p = append(p, fmt.Sprintf("%s: the status word %q is not an upper-case word of its own (OK, FAILED, REFUSED, MORE and NOTE are every tool's)", t.Name, w))
 		}
 	}
 	for _, v := range t.verbs() {
