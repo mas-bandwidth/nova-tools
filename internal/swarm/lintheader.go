@@ -15,7 +15,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
-// THE TYPED CARD HEADER, CHECKED BEFORE ANY SPEND.
+// THE TYPED CARD HEADER, CHECKED BEFORE ANY SPEND, SO A CARD DIES AT THE LINT
+// RATHER THAN AT THE GATE.
 //
 // `cut` writes five lines under the contract line and inside its hash:
 //
@@ -33,7 +34,7 @@ import (
 // `accept`, and the lint checks them on the bench before a token is spent. A lint that
 // accepted a line the gate refuses would send a card out to die at `accept`; a lint
 // that refused a line the gate reads would stop a card that was fine. So the rules
-// below are the parser's rules, restated here:
+// below are the parser's rules:
 //
 //   - the block starts at line 2 and ends at the first non-empty line that is not
 //     `KEY: value`, blank lines skipped, unknown keys read past;
@@ -54,9 +55,9 @@ import (
 // KIND: IS THE NAME SET, NOT A SECOND TABLE. `hygiene.KindDeclared` reads
 // internal/hygiene/kinds.txt, which is the names `cut` and `nova-check hygiene`
 // already refuse. The gate's TABLE -- steps, control, reject tokens -- is a second
-// structure that `TEST: none` on a gated kind still needs, so that half of the check
-// waits for it. Writing a second name list here would be the same mistake
-// `validGlobs` just undid.
+// structure that `TEST: none` on a gated kind needs, so that half of the check waits
+// for it. Writing a second name list here would be the same mistake `validGlobs` just
+// undid.
 
 // CardHeaderFinding is one typed-header defect: the check's token, the 1-based line it
 // sits on and the line's own text. It is the shape `cmd/nova-swarm/lint.go` prints on a
@@ -69,7 +70,7 @@ type CardHeaderFinding struct {
 
 // CardHeaderRemedies is what each of the four tokens wants, in one line, in the same
 // table shape the twelve older tokens use: a check without a remedy costs a card writer
-// a guess per drift, and `nova-swarm lint --rules` prints these beside them.
+// a guess per drift, so `nova-swarm lint --rules` prints these beside them.
 var CardHeaderRemedies = map[string]string{
 	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one the pool's kinds list names; the cutter writes it from the pool row and a model never does",
 	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none`",
@@ -90,15 +91,13 @@ type TrustState map[string]string
 // letter, then letters, digits and hyphens, then a colon, at column 0, ANY CASE.
 //
 // THE BLOCK IS EVERY KEY LINE, NOT EVERY UPPER-CASE KEY LINE. The two lines every card
-// the darwin launchers stage MUST carry
-// are lower case: the launcher scripts
-// read `base-repo:` and `base-sha:` out of the card's first 40 lines with a
-// case-sensitive `sed`, and refuse to launch without both. A key pattern that reads
-// upper case only ends the header block at those two lower-case lines, and every
-// subsequent typed key sits outside the block the gate reads;
-// `PATHS:`, `FILES:`, `TEST:`, `RUN:`, `SYMBOL:`, `RED-WHEN:`, `DONE-WHEN:`,
-// `NO-SUBAGENTS:` and `SOURCE:` -- every key under them -- sit outside the header the
-// gate reads.
+// the darwin launchers stage MUST carry are lower case: the launcher scripts read
+// `base-repo:` and `base-sha:` out of the card's first 40 lines with a case-sensitive
+// `sed`, and refuse to launch without both. A key pattern that reads upper case only
+// ends the header block at those two lower-case lines, and every subsequent typed key
+// sits outside the block the gate reads; `PATHS:`, `FILES:`, `TEST:`, `RUN:`, `SYMBOL:`,
+// `RED-WHEN:`, `DONE-WHEN:`, `NO-SUBAGENTS:` and `SOURCE:` -- every key under them --
+// sit outside the header the gate reads.
 //
 // WIDENED, NOT ALLOWLISTED. An allowlist of those two names fixes those two cards
 // and breaks on the next launcher key; the rule the card writer can hold in one
@@ -110,10 +109,9 @@ type TrustState map[string]string
 // THE KEY NAMES STAY UPPER CASE. Widening what CONTINUES the block is not the same as
 // widening what a typed key IS: `cut` writes `KIND:`, `PATHS:`, `TEST:`, `LEGS:` and
 // `SOURCE:` in upper case and says nothing anywhere about case, so `paths:` is not
-// `PATHS:` here and
-// the card that writes it still draws `paths-declared`. cardTypedKeys is the exact
-// names; the day a spec line rules case-insensitive keys, this is the one place to say
-// so.
+// `PATHS:` here and the card that writes it still draws `paths-declared`. cardTypedKeys
+// is the exact names; the day a spec line rules case-insensitive keys, this is the one
+// place to say so.
 var (
 	headerKeyRE  = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$`)
 	goTestNameRE = regexp.MustCompile(`^Test[A-Za-z0-9_]*$`)
@@ -131,14 +129,14 @@ type headerField struct {
 // cardHeaderBlock reads the typed header the way the gate's parser reads it, stops where
 // it stops, and returns what it had to ignore.
 //
-// THE BLOCK'S END STAYS THE GATE'S; WHAT IT SWALLOWED DOES NOT. The block
-// ending at the first line that is not `KEY: value` is the parser's
-// own rule and moving it here would be worse than the defect: a lint that read a header
-// the gate will not read passes a card that dies at `accept`. What was wrong is that a
-// card with one sentence above its `KIND:` line got NO typed checks at all and was
-// called clean. So the keys BELOW the block are collected and handed back, to be named
-// as findings where they sit -- the gate will never read them, and now neither does the
-// card writer have to find that out at the gate.
+// THE BLOCK'S END STAYS THE GATE'S; WHAT IT SWALLOWED DOES NOT. The block ending at the
+// first line that is not `KEY: value` is the parser's own rule and moving it here would
+// be worse than the defect: a lint that read a header the gate will not read passes a
+// card that dies at `accept`. What was wrong is that a card with one sentence above its
+// `KIND:` line got NO typed checks at all and was called clean. So the keys BELOW the
+// block are collected and handed back, to be named as findings where they sit -- the gate
+// will never read them, and now neither does the card writer have to find that out at
+// the gate.
 //
 // A SECOND LINE WITH THE SAME KEY IS RECORDED, NOT DROPPED. Silently taking the first of
 // two `KIND:` lines is the one answer a writer cannot act on.
