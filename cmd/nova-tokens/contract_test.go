@@ -309,7 +309,7 @@ func TestMaxZeroPrintsAllAndMaxNegativeIsRefused(t *testing.T) {
 		r := invoke(t, verb...)
 		wantExit(t, r, 2)
 		wantContains(t, r.stderr, "--max")
-		wantContains(t, r.stderr, "0 for all")
+		wantContains(t, r.stderr, "0 lists all")
 	}
 }
 

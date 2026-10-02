@@ -30,9 +30,9 @@ var tokensAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; each is a claim a
 	// reader can check.
 	Exempt: map[string]string{
-		"ledger.go|cmdReportStore|line": "one REPORT line built in the loop above from literal key names, oneline.Field over each key value, a %d row count and strconv.FormatInt or the literal dash per type; nothing in it is unescaped text",
-		"out.go|fields|kv[i+1]":         "a value of a key=value pair, put through oneline.Field on the same line",
-		"main.go|cmdReport|body":        "the report's stdout IS the artifact: every line of it was rendered by tokens.BodyLine, which puts each of its stored fields through oneline.Field, and the lines are joined with \\n by this function. Escaping the join again would escape those newlines and destroy the note body this verb exists to print",
+		"ledger.go|reportStore|line": "one REPORT line built in the loop above from literal key names, oneline.Field over each key value, a %d row count and strconv.FormatInt or the literal dash per type; nothing in it is unescaped text",
+		"out.go|fields|kv[i+1]":      "a value of a key=value pair, put through oneline.Field on the same line",
+		"main.go|report|body":        "the report's stdout IS the artifact: every line of it was rendered by tokens.BodyLine, which puts each of its stored fields through oneline.Field, and the lines are joined with \\n by this function. Escaping the join again would escape those newlines and destroy the note body this verb exists to print",
 	},
 	Imports: []string{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,

@@ -62,7 +62,12 @@ func fixtureIn(t *testing.T) string {
 var firstRunStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)
 
 func TestTheExampleLinesRun(t *testing.T) {
-	fixtureIn(t)
+	dir := fixtureIn(t)
+	// The fixture is what the help's setup line makes, but for its last copy: session's
+	// transcript is the bench's own window.
+	raw, err := os.ReadFile(filepath.Join(dir, "transcripts", "window.jsonl"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "session.jsonl"), raw, 0o644))
 	var banner bytes.Buffer
 	{
 		exit := run([]string{"help"}, &banner, io.Discard, firstRunStamp)
@@ -112,7 +117,7 @@ func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.
 	assert.Equal(t, `TOKENS REFUSED: unknown verb "collate"; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version; run: nova-tokens help`+"\n", r.stderr)
 	r = invoke(t)
 	wantExit(t, r, 2)
-	assert.Equal(t, "TOKENS REFUSED: no verb given; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version, and sources is the one that only looks; run: nova-tokens help\n", r.stderr)
+	assert.Equal(t, "TOKENS REFUSED: no verb given; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version; run: nova-tokens help\n", r.stderr)
 	assert.False(t, r.stdout != "", "a bare invocation wrote to stdout: %q", r.stdout)
 	// And the door opens on stdout at exit 0.
 	r = invoke(t, "help")

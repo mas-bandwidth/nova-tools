@@ -26,7 +26,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -40,178 +39,32 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-const usage = `nova-tokens: token spend per day, model and repository, read from AI session logs
-
-how it works: fold reads the logs you name (Claude Code transcripts, OpenCode
+// tokensTool is the command, with the clock it stamps day files and summaries with.
+func tokensTool(now time.Time) *tool.Tool {
+	return &tool.Tool{
+		Name: "nova-tokens",
+		What: "token spend per day, model and repository, read from AI session logs",
+		How: `fold reads the logs you name (Claude Code transcripts, OpenCode
 databases, swarm pools, bus notes) and writes one day file per day into --out,
 one row per (day, model, repo). The repo comes from the --repos file: lines of
 <name><TAB><regexp>, and the first match on a session's path wins. check, sum
-and report read the day files back; a count a source never gave prints as -.
-first run: create a tiny transcript and rules file with the setup line above
-example:, then run the lines under example: in order.
-
-usage:
-  nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
-                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
-                      [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
-  nova-tokens report --who <name> --day <YYYY-MM-DD> --repos <file>
-                      mode: local note body, printed as the tokens note artifact
-                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
-                      [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
-  nova-tokens report --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
-                      mode: Redis month summary
-                      [--user <name>] [--password-env <NAME>]
-  nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
-                      [--user <name>] [--password-env <NAME>] [--dry-run]
-  nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
-  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
-  nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
-  nova-tokens profiles --swarm-root <dir>
-  nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]
-  nova-tokens version
-
-Every verb but version takes --json: the same result as one JSON object on stdout, a
-refusal included. A verb that writes takes --dry-run: it reads what the real run reads,
-prints what it would write with dry_run=true on its last line, and writes nothing (ledger
---dry-run dials no store). ` + "`<verb> -h`" + ` lists a verb's flags and states its effect.
-
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
+and report read the day files back; a count a source never gave prints as -.`,
+		ExitTable: `0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
 source, an unparsed bus line or note, a row of two day bases, a lane-day with competing
 reports, a day that would shrink, a fold whose every message had no id and so folded nothing,
 a check finding (an --out holding no day file is one), a report with nothing to show; 2 could
 not run: a missing flag, a bad flag value, a duplicate label, sqlite3 absent when
---opencode is given, a second fold holding the lock.
-
-EXIT 1 STILL WRITES. A fold with one unreadable file writes every day it could compute
-and exits 1: the exit code is about the claim -- a declared source is a claim that the
-report covers it -- and written=true on the TOKENS DAY line is about the files.
-
-Every path is a flag. There is no default output directory, no default transcript
-directory, no default database, no default bus and no default rules file. fold, report
-(its local mode), sum, check, sources, profiles and session read no environment variable
-for a path or a setting: $HOME, $TMPDIR and $XDG_DATA_HOME are ignored, and a test sets
-them and proves it. Three things do read the environment: --opencode runs sqlite3 found
-on $PATH; and the two Redis verbs, ledger and report --redis, take the store's ACL user
-from --user, else NOVA_SPRINT_REDIS_USER, and its password from the variable
---password-env names, else (with a user) the one NOVA_SPRINT_REDIS_PASSWORD_ENV names,
-else NOVA_REDIS_BENCH_PASSWORD. The password is never a flag. --timeout is the one flag
-with a default, 120 seconds, because it is how long this tool waits before saying so
-rather than a fact about your data.
-
-A source is declared by flag and every row names its sources, so every number in a day
-file is traceable to the flags of the run that wrote it. A label is [a-z0-9-]+, at most
-32 characters, and unique across the run. --scratch is required with --opencode and
-refused without it, because a scratch directory with nothing to put in it is a flag that
-does nothing.
-
-The five types -- input, output, cache_write, cache_read, reasoning -- are kept apart, and
-a type the source did not report is written a dash, NEVER 0. A provider that does not expose
-reasoning is not evidence that none occurred, and a zero meaning "not measured" would sum
-into a month claiming to be complete. sum counts the dashes beside the totals. The same
-holds for cost: usd= on a TOKENS AVG line is - when no source reported a cost for it.
-
-A day that would go backwards is refused: TOKENS SHRANK names the type, what the file
-said and what the sources say now, the file is left as it was, and --allow-shrink is the
-person's act. A source that became unreadable must never quietly lower a day's spend.
-
-A fold merges into the day file by SOURCE: it recomputes the rows its own declared sources
-wrote and keeps every other row exactly as it is, so a run that declares one source does
-not erase what the others reported. A row it can neither keep nor recompute -- one already
-summed over a declared and an undeclared source -- is TOKENS PARTIAL, nothing of that day
-is written, and --allow-shrink does not write it either.
-
-Two notes for one day in one lane are one report only when the later names the earlier in
-its subject: supersedes=<id>[,<id>...], sorted, no duplicates. Nothing else orders them --
-not the Date, not the filename, not the directory listing, not the git history. Two tips
-are TOKENS CONFLICT, nothing folds for that lane-day, and the remedy names every tip; one
-note whose predecessor set names them all clears it.
-
---note <path> is written whole through atomicfile: the file and its directory must not be
-symlinks.
-
-fold and session hold --out/fold.lock while they write, so two folds of one --out never
-write the same day at once; the second waits, then refuses naming the holder. The lock
-file is empty and stays in --out after the run (it is never data); check counts it as
-neither a day file nor a stray.
-
-This tool removes nothing. There is no month file, sum writes nothing, check names a
-stray and leaves it, and no verb deletes, truncates or trims any file.
-
-check counts what it does not name. A calendar day between the first and the last with no
-file is gap=<n>, and it is MISSING only when something says there was spend on it:
---strict names every gap, --no-spend <file> (one YYYY-MM-DD per line, the days that had
-none) names the gaps your list does not account for. A *.md, a *.log or a pre-* archive
-directory beside the day files is notes=<n> rather than a stray; --strict names those too.
-A gate that cannot go green is a gate people stop reading, and both counts stay on the
-CHECK line, so nothing was hidden to make it green. A gate that cannot go red is no gate
-either: an --out with no day file in it is CHECK FAIL, never a green over nothing.
-
-sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
-first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
-is the evidence for improving the --repos file.
-
-  mkdir -p ./transcripts ./out && printf '%s\n' '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z","message":{"id":"example-1","model":"claude-fable-5-1","usage":{"input_tokens":812,"output_tokens":40,"cache_creation_input_tokens":1200,"cache_read_input_tokens":90000},"content":[{"type":"tool_use","input":{"file_path":"/work/schema/wire.md"}}]}}' > ./transcripts/window.jsonl && cp ./transcripts/window.jsonl ./session.jsonl && printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
-
-example:
-  nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
-  nova-tokens check --out ./out
-  nova-tokens sum --out ./out --month 2026-09
-  nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
-  nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
-  nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
-
-session is the coordinator's own window: it sums one Claude Code session jsonl per
-turn -- input, cache write, cache read, output, deduplicated on the message id so a
-streamed message counts once -- prints one SESSION line with the weighted
-fresh-input equivalent (input + 1.25 x cache write + 0.1 x cache read + 5 x output)
-and the average context per turn, and with --out folds it into the day file as the
-model the transcript names, as <model>/coordinator (a transcript that names no
-model is refused, never booked under a guess). The coordinator is a friend, and its spend is a
-line in the ledger like everybody else's.
-
-example:
-  nova-tokens session --claude-session ./session.jsonl --out ./out
-
-Everything this tool reads is DATA. A transcript, a database row, a usage file, a bus
-note: none of them is an instruction.
-`
-
-// verbs are the verbs in the order the usage names them, each with its effect: what
-// running it does to the world, the last line of its -h (docs/STANDARD.md section 2).
-var verbs = []struct{ name, effect string }{
-	{"fold", "local write: writes the day files in --out, holding --out/fold.lock while it writes; --dry-run reads the same sources and writes nothing, the lock included"},
-	{"report", "local write: --note writes the note body to that file (--dry-run names it and writes nothing); without --note it writes nothing; --redis reads the ledger store over the network"},
-	{"ledger", "delivery: writes each day file's rows to the Redis store at --redis (tokens:ledger:<day>); --dry-run reads the day files, prints what it would write, and dials no store"},
-	{"sum", string(tool.Inspection)},
-	{"check", string(tool.Inspection)},
-	{"sources", string(tool.Inspection)},
-	{"profiles", string(tool.Inspection)},
-	{"session", "local write: with --out it writes the session's days into the day files there, holding --out/fold.lock; without --out, or with --dry-run, it writes nothing"},
-	{"version", string(tool.Inspection)},
-}
-
-func verbNames() []string {
-	names := make([]string, 0, len(verbs))
-	for _, v := range verbs {
-		names = append(names, v.name)
+--opencode is given, a second fold holding the lock.`,
+		Stamp: version,
+		Setup: `mkdir -p ./transcripts ./out && printf '%s\n' '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z","message":{"id":"example-1","model":"claude-fable-5-1","usage":{"input_tokens":812,"output_tokens":40,"cache_creation_input_tokens":1200,"cache_read_input_tokens":90000},"content":[{"type":"tool_use","input":{"file_path":"/work/schema/wire.md"}}]}}' > ./transcripts/window.jsonl && cp ./transcripts/window.jsonl ./session.jsonl && printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv`,
+		Verbs: []tool.Verb{cmdFold(now), cmdReport(now), cmdLedger(), cmdSum(now), cmdCheck(now), cmdSources(now), cmdProfiles(), cmdSession(now)},
 	}
-	return names
-}
-
-// effectOf is the effect line a verb's -h ends its lines above the flags with.
-func effectOf(verb string) string {
-	for _, v := range verbs {
-		if v.name == verb {
-			return "effect: " + v.effect + "\n"
-		}
-	}
-	return ""
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) }
@@ -219,47 +72,17 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) 
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
 // The clock is an argument and NOT a flag: the stamp on a day file is when the tool
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
-func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
-	// `<verb> -h` and `help <verb>` print that verb's help, its effect included, on stdout
-	// at exit 0, before anything is read or written (the CLI style's rule (b)).
-	defer verbflag.RecoverWith(stdout, "nova-tokens", usage, &code, effectOf)
-	asJSON := verbflag.BoolAsked(args, "json")
-	if len(args) == 0 {
-		return refuse(stdout, stderr, asJSON, "no verb given; the verbs are "+verbflag.List(verbNames())+", and sources is the one that only looks")
-	}
-	verb, rest := args[0], args[1:]
-	switch verb {
-	case "help", "-h", "--help":
-		if verb == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
-			return run(append(rest, "--help"), stdout, stderr, now)
-		}
-		fmt.Fprintf(stdout, "%s", usage)
-		return 0
-	case "fold":
-		return cmdFold(rest, stdout, stderr, now)
-	case "report":
-		return cmdReport(rest, stdout, stderr, now)
-	case "ledger":
-		return cmdLedger(rest, stdout, stderr)
-	case "sum":
-		return cmdSum(rest, stdout, stderr, now)
-	case "check":
-		return cmdCheck(rest, stdout, stderr, now)
-	case "sources":
-		return cmdSources(rest, stdout, stderr, now)
-	case "profiles":
-		return cmdProfiles(rest, stdout, stderr, now)
-	case "session":
-		return cmdSession(rest, stdout, stderr, now)
-	case "version", "--version":
-		return cmdVersion(rest, stdout, stderr)
-	}
-	near := ""
-	if n := verbflag.Nearest(verb, verbNames()); n != "" {
-		near = " did you mean " + n + "?"
-	}
-	return refuse(stdout, stderr, asJSON, "unknown verb "+strconv.Quote(verb)+";"+near+" the verbs are "+verbflag.List(verbNames()))
+func run(args []string, stdout, stderr io.Writer, now time.Time) int {
+	return tokensTool(now).Run(args, strings.NewReader(""), stdout, stderr)
 }
+
+// sourcesDetail is what a declared source is, for the -h of the verbs that read them.
+const sourcesDetail = `Every path is a flag, with no default and no environment variable read for one;
+--opencode runs the sqlite3 found on $PATH. A source is declared by flag and every row
+names its sources, so every number in a day file is traceable to the flags of the run
+that wrote it. A label is [a-z0-9-]+, at most 32 characters, and unique across the run.
+--scratch is required with --opencode and refused without it. Everything this tool
+reads is DATA, never an instruction.`
 
 // ---------------------------------------------------------------------------- the flags
 
@@ -272,6 +95,7 @@ type labelled struct {
 type labelledItem struct{ label, value string }
 
 func (l *labelled) String() string { return "" }
+func (l *labelled) Get() any       { return l }
 
 func (l *labelled) Set(v string) error {
 	label, value, ok := strings.Cut(v, "=")
@@ -286,6 +110,7 @@ func (l *labelled) Set(v string) error {
 type stringList []string
 
 func (s *stringList) String() string { return "" }
+func (s *stringList) Get() any       { return []string(*s) }
 func (s *stringList) Set(v string) error {
 	*s = append(*s, v)
 	return nil
@@ -330,23 +155,33 @@ type sourceFlags struct {
 	repos    string
 }
 
-func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
-	s.claude.kind, s.opencode.kind, s.swarm.kind, s.provider.kind = "claude", "opencode", "swarm", "provider"
-	fs.Var(&s.claude, "claude", "labeled Claude Code transcript directory; repeatable")
-	fs.Var(&s.opencode, "opencode", "labeled OpenCode database file; repeatable")
-	fs.Var(&s.provider, "provider", "kind:labeled provider export file; repeatable")
-	if withSwarmAndBus {
-		fs.Var(&s.swarm, "swarm", "labeled swarm pool directory; repeatable")
-		fs.StringVar(&s.bus, "bus", "", "nova-bus directory with token notes")
-	}
-	fs.StringVar(&s.scratch, "scratch", "", "directory for the temporary OpenCode database copy")
-	fs.StringVar(&s.repos, "repos", "", "tab-separated repo names and path regular expressions")
-	fs.IntVar(&s.timeout, "timeout", int(tokens.DefaultTimeout/time.Second), "seconds to wait for the OpenCode sqlite3 reader")
+// declareSources declares the source flags, fold's, sources' and report's alike.
+func declareSources(f *tool.Flags) {
+	f.Var(&labelled{kind: "claude"}, "claude", "labeled Claude Code transcript directory; repeatable")
+	f.Var(&labelled{kind: "opencode"}, "opencode", "labeled OpenCode database file; repeatable")
+	f.Var(&labelled{kind: "provider"}, "provider", "kind:labeled provider export file; repeatable")
+	f.Var(&labelled{kind: "swarm"}, "swarm", "labeled swarm pool directory; repeatable")
+	f.String("bus", "", "nova-bus directory with token notes")
+	f.String("scratch", "", "directory for the temporary OpenCode database copy")
+	f.String("repos", "", "tab-separated repo names and path regular expressions")
+	f.Int("timeout", int(tokens.DefaultTimeout/time.Second), "seconds to wait for the OpenCode sqlite3 reader")
+}
+
+// checkSources is the rule over the source flags, for the verbs that read sources.
+func checkSources(c *tool.Call) { sourcesOf(c).check(c) }
+
+// sourcesOf reads the source flags of one call.
+func sourcesOf(c *tool.Call) *sourceFlags {
+	l := func(name string) labelled { return *c.Get(name).(*labelled) }
+	return &sourceFlags{claude: l("claude"), opencode: l("opencode"), swarm: l("swarm"), provider: l("provider"),
+		bus: c.Str("bus"), scratch: c.Str("scratch"), timeout: c.Int("timeout"), repos: c.Str("repos")}
 }
 
 // check validates the declared sources without reading any of them.
-func (s *sourceFlags) check(r *refusals) {
-	r.required("repos", s.repos, wantsRepos)
+func (s *sourceFlags) check(c *tool.Call) {
+	if strings.TrimSpace(s.repos) == "" {
+		c.Problem("--repos is required; it wants " + wantsRepos + "; refusing to guess")
+	}
 	seen := map[string]bool{}
 	any := false
 	for _, l := range []*labelled{&s.claude, &s.opencode, &s.swarm, &s.provider} {
@@ -362,46 +197,46 @@ func (s *sourceFlags) check(r *refusals) {
 				}
 			}
 			if l.kind != "provider" && !validLabel(it.label) {
-				r.add("--" + l.kind + " " + it.label + "=: a label is [a-z0-9-]+, at most 32 characters")
+				c.Problem("--" + l.kind + " " + it.label + "=: a label is [a-z0-9-]+, at most 32 characters")
 				continue
 			}
 			if seen[name] {
-				r.add("the label " + name + " is used twice; two sources with one label would make the sources column a lie")
+				c.Problem("the label " + name + " is used twice; two sources with one label would make the sources column a lie")
 			}
 			seen[name] = true
 			if strings.TrimSpace(it.value) == "" {
-				r.add("--" + l.kind + " " + it.label + "= has no path; it wants <label>=<path>")
+				c.Problem("--" + l.kind + " " + it.label + "= has no path; it wants <label>=<path>")
 			}
 			if l.kind == "provider" {
 				kind, name, ok := strings.Cut(it.label, ":")
 				switch {
 				case !ok:
-					r.add("--provider " + it.label + "=: it wants <kind>:<label>=<path>, the kind one of " + strings.Join(tokens.Parsers, ", ") + " and the label the friend whose export it is, so that two friends' exports from one provider are two sources")
+					c.Problem("--provider " + it.label + "=: it wants <kind>:<label>=<path>, the kind one of " + strings.Join(tokens.Parsers, ", ") + " and the label the friend whose export it is, so that two friends' exports from one provider are two sources")
 				case !tokens.KnownParser(kind):
-					r.add("--provider " + it.label + ": the kind names the parser, and it wants one of " + strings.Join(tokens.Parsers, ", "))
+					c.Problem("--provider " + it.label + ": the kind names the parser, and it wants one of " + strings.Join(tokens.Parsers, ", "))
 				case !validLabel(name):
-					r.add("--provider " + it.label + "=: a label is [a-z0-9-]+, at most 32 characters")
+					c.Problem("--provider " + it.label + "=: a label is [a-z0-9-]+, at most 32 characters")
 				}
 			}
 			switch l.kind {
 			case "claude":
 				if fi, err := os.Stat(it.value); err != nil || !fi.IsDir() {
 					if err != nil && os.IsNotExist(err) {
-						r.add("--claude " + it.label + "=" + it.value + " does not exist; it wants the directory the transcripts live under")
+						c.Problem("--claude " + it.label + "=" + it.value + " does not exist; it wants the directory the transcripts live under")
 					} else if err != nil {
-						r.add("--claude " + it.label + "=" + it.value + ": " + err.Error() + "; it wants the directory the transcripts live under")
+						c.Problem("--claude " + it.label + "=" + it.value + ": " + err.Error() + "; it wants the directory the transcripts live under")
 					} else {
-						r.add("--claude " + it.label + "=" + it.value + " is not a directory; it wants the directory the transcripts live under")
+						c.Problem("--claude " + it.label + "=" + it.value + " is not a directory; it wants the directory the transcripts live under")
 					}
 				}
 			case "swarm":
 				if fi, err := os.Stat(it.value); err != nil || !fi.IsDir() {
 					if err != nil && os.IsNotExist(err) {
-						r.add("--swarm " + it.label + "=" + it.value + " does not exist; it wants the swarm pool directory")
+						c.Problem("--swarm " + it.label + "=" + it.value + " does not exist; it wants the swarm pool directory")
 					} else if err != nil {
-						r.add("--swarm " + it.label + "=" + it.value + ": " + err.Error() + "; it wants the swarm pool directory")
+						c.Problem("--swarm " + it.label + "=" + it.value + ": " + err.Error() + "; it wants the swarm pool directory")
 					} else {
-						r.add("--swarm " + it.label + "=" + it.value + " is not a directory; it wants the swarm pool directory")
+						c.Problem("--swarm " + it.label + "=" + it.value + " is not a directory; it wants the swarm pool directory")
 					}
 				}
 			}
@@ -409,39 +244,27 @@ func (s *sourceFlags) check(r *refusals) {
 	}
 	if s.bus != "" {
 		any = true
-		if fi, err := os.Stat(s.bus); err != nil || !fi.IsDir() {
-			if err != nil && os.IsNotExist(err) {
-				r.add("--bus does not exist: " + s.bus + "; it wants the bus directory")
-			} else if err != nil {
-				r.add("--bus " + s.bus + ": " + err.Error() + "; it wants the bus directory")
-			} else {
-				r.add("--bus is not a directory: " + s.bus + "; it wants the bus directory")
-			}
+		if why := notADir("bus", s.bus, "the bus directory"); why != "" {
+			c.Problem(why)
 		}
 	}
 	if !any {
-		r.add("at least one source flag is required; it wants " + wantsSources + "; refusing to guess")
+		c.Problem("at least one source flag is required; it wants " + wantsSources + "; refusing to guess")
 	}
 	if len(s.opencode.items) > 0 {
 		if strings.TrimSpace(s.scratch) == "" {
-			r.required("scratch", "", wantsScratch)
-		} else if fi, err := os.Stat(s.scratch); err != nil || !fi.IsDir() {
-			if err != nil && os.IsNotExist(err) {
-				r.add("--scratch does not exist: " + s.scratch + "; it wants " + wantsScratch)
-			} else if err != nil {
-				r.add("--scratch " + s.scratch + ": " + err.Error() + "; it wants " + wantsScratch)
-			} else {
-				r.add("--scratch is not a directory: " + s.scratch + "; it wants " + wantsScratch)
-			}
+			c.Problem("--scratch is required; it wants " + wantsScratch + "; refusing to guess")
+		} else if why := notADir("scratch", s.scratch, wantsScratch); why != "" {
+			c.Problem(why)
 		}
 		if err := tokens.HaveSQLite(); err != nil {
-			r.add(err.Error())
+			c.Problem(err.Error())
 		}
 	} else if strings.TrimSpace(s.scratch) != "" {
-		r.add("--scratch is refused without --opencode; a scratch directory with nothing to put in it is a flag that does nothing")
+		c.Problem("--scratch is refused without --opencode; a scratch directory with nothing to put in it is a flag that does nothing")
 	}
 	if s.timeout < 1 {
-		r.add("--timeout is a whole number of seconds and at least 1, got " + strconv.Itoa(s.timeout) + "; it is how long this tool waits for sqlite3 before saying so")
+		c.Problem("--timeout is a whole number of seconds and at least 1, got " + strconv.Itoa(s.timeout) + "; it is how long this tool waits for sqlite3 before saying so")
 	}
 }
 
@@ -472,24 +295,6 @@ func (s *sourceFlags) read(rules *tokens.Rules, now time.Time) []*tokens.Source 
 		src.Stat.Rows = len(keys)
 	}
 	return out
-}
-
-// newFlagSet builds a flag set with package flag's two mouths closed: its error text
-// quotes the argument it could not parse and its usage dump follows, so an argument
-// beginning with a dash could otherwise author a whole line of stderr.
-func newFlagSet(verb string) *flag.FlagSet {
-	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	return fs
-}
-
-// maxFlag reads the listing ceiling. 0 is all; a negative one is a typo with two readings
-// and is refused, because 0 already means all.
-func checkMax(r *refusals, max int) {
-	if max < 0 {
-		r.add("--max is a ceiling on each listing, 0 for all, and is never negative, got " + strconv.Itoa(max))
-	}
 }
 
 // stamp is the tool's own UTC stamp, the one on every day file and every summary line. No
@@ -542,57 +347,63 @@ var foldLists = []struct {
 	{"shrank", true}, {"partial", true}, {"quiet", true},
 }
 
-// cmdFold is the wall: it reads every declared source whole and writes the days it could
+// cmdFold is the fold verb: its flags, and fold below.
+func cmdFold(now time.Time) tool.Verb {
+	return tool.Verb{
+		Name:  "fold",
+		Token: "TOKENS",
+		Usage: "fold --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file> [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... " +
+			"[--bus <dir>] [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]",
+		Example: "fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts",
+		Effect:  "local write: writes the day files in --out, holding --out/fold.lock while it writes; --dry-run reads the same sources and writes nothing, the lock included",
+		Detail:  foldDetail + "\n" + sourcesDetail,
+		Flags: func(f *tool.Flags) {
+			f.Required("out", wantsOut)
+			declareDay(f, "fold")
+			f.Bool("allow-shrink", false, "write a day even when its totals shrink")
+			f.Max()
+			f.Bool("dry-run", false, "read the sources and print what would be written, and write nothing (no day file, no lock)")
+			declareSources(f)
+			f.Check(checkSources)
+		},
+		Run: func(c *tool.Call) *tool.Out { return fold(c, now) },
+	}
+}
+
+// foldDetail is what fold's -h says above its flags.
+const foldDetail = `EXIT 1 STILL WRITES. A fold with one unreadable file writes every day it could compute
+and exits 1: the exit code is about the claim, and written=true on the TOKENS DAY line is
+about the files. A day that would go backwards is refused (TOKENS SHRANK) and left as it
+was; --allow-shrink is the person's act. A fold merges into the day file by SOURCE: it
+recomputes the rows its own sources wrote and keeps every other row; a row it can neither
+keep nor recompute is TOKENS PARTIAL. Two notes for one lane-day are one report only when
+the later carries supersedes=<id>[,<id>...] in its subject; otherwise TOKENS CONFLICT. The
+five types are kept apart, and a type no source reported is a dash, never 0. fold holds
+--out/fold.lock while it writes. This tool removes nothing.`
+
+// fold is the wall: it reads every declared source whole and writes the days it could
 // compute. It says NO when a source could not be read, a bus line or note did not parse,
 // a row mixed two day bases, a lane-day had competing reports, or a day would have shrunk
 // -- and it still writes the rest, because the exit code is about the claim. Under
 // --dry-run it reads and decides exactly the same and writes nothing, the lock included.
-func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
-	fs := newFlagSet("fold")
-	out := fs.String("out", "", "directory for daily token files")
-	day := fs.String("day", "", "one UTC day to fold as YYYY-MM-DD")
-	all := fs.Bool("all", false, "fold every day named by the sources")
-	allowShrink := fs.Bool("allow-shrink", false, "write a day even when its totals shrink")
-	max := fs.Int("max", bounded.Default, "maximum findings or rows to print; 0 prints all")
-	dryRun := fs.Bool("dry-run", false, "read the sources and print what would be written, and write nothing (no day file, no lock)")
-	var sf sourceFlags
-	sf.declare(fs, true)
-	s, code, ok := start(fs, args, "TOKENS", stdout, stderr)
-	if !ok {
-		return code
-	}
-	r := &refusals{token: "TOKENS", s: s}
-	r.required("out", *out, wantsOut)
-	checkDay(r, *day, *all)
-	sf.check(r)
-	checkMax(r, *max)
-	if len(r.list) > 0 {
-		return r.print(stderr)
-	}
-	fi, statErr := os.Stat(*out)
-	if statErr != nil || !fi.IsDir() {
-		if statErr != nil && os.IsNotExist(statErr) {
-			r.add("--out does not exist: " + *out + "; it wants " + wantsOut)
-		} else if statErr != nil {
-			r.add("--out " + *out + ": " + statErr.Error() + "; it wants " + wantsOut)
-		} else {
-			r.add("--out is not a directory: " + *out + "; it wants " + wantsOut)
-		}
-		return r.print(stderr)
+func fold(c *tool.Call, now time.Time) *tool.Out {
+	dryRun := c.DryRun()
+	out, day, all, allowShrink, max, sf := c.Str("out"), c.Str("day"), c.Bool("all"), c.Bool("allow-shrink"), c.Int("max"), sourcesOf(c)
+	if why := notADir("out", out, wantsOut); why != "" {
+		return tool.Refuse(why)
 	}
 	rules, err := tokens.LoadRules(sf.repos)
 	if err != nil {
-		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
-		return r.print(stderr)
+		return tool.Refuse("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 	}
-	if !*dryRun {
-		release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
+	if !dryRun {
+		release, err := tokens.TakeFoldLock(out, tokens.LockWait)
 		if err != nil {
-			r.add(err.Error())
-			return r.print(stderr)
+			return tool.Refuse(err.Error())
 		}
 		defer release()
 	}
+	s := newSink(c, "fold")
 
 	sources := sf.read(rules, now)
 	folder := tokens.NewFolder()
@@ -602,12 +413,12 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 
-	fmt.Fprintln(s.out(), s.line("TOKENS", "FOLD", "", "at", stamp(now), "build", buildVersion(), "out", *out,
-		"sources", len(sources), "days", daysAsked(*day, *all), "repos", sf.repos))
+	fmt.Fprintln(s.out(), s.line("TOKENS", "FOLD", "", "at", stamp(now), "build", buildVersion(), "out", out,
+		"sources", len(sources), "days", daysAsked(day, all), "repos", sf.repos))
 
 	lists := map[string]*bounded.List{}
 	for _, l := range foldLists {
-		lists[l.kind] = s.list(l.toErr, *max, "TOKENS", l.kind, maxRemedy("fold"))
+		lists[l.kind] = s.list(l.toErr, max, "TOKENS", l.kind, maxRemedy("fold"))
 	}
 	conflictDays := map[string]bool{}
 	// The labels this run declared: exactly what lands in a row's sources column, and so
@@ -655,8 +466,8 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	lists["touched"].More()
 
 	days := folder.Days()
-	if !*all {
-		days = []string{*day}
+	if !all {
+		days = []string{day}
 	}
 	daysWritten, rowsWritten, quiet := 0, 0, 0
 	mixedLabels := "-"
@@ -670,7 +481,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 			lists["mixed"].Line(s.line("TOKENS", "MIXED", "two day bases on one row; declare one export for that day",
 				"date", m.Day, "model", m.Model, "repo", m.Repo, "bases", strings.Join(m.Bases, ",")))
 		}
-		outPath := tokens.Path(*out, d)
+		outPath := tokens.Path(out, d)
 		old, findings, readErr := tokens.ReadDayFile(outPath)
 		if len(rows) == 0 && !conflictDays[d] && readErr != nil && os.IsNotExist(readErr) {
 			continue
@@ -739,14 +550,14 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 			// word about a row this fold cannot compute, so it does not override a partial,
 			// and not a word about replacing a malformed file. Absent and empty are one
 			// state: a fold never writes a day file with no rows.
-			wouldWrite = !partial && (!shrank || *allowShrink) && len(file.Rows) > 0 &&
+			wouldWrite = !partial && (!shrank || allowShrink) && len(file.Rows) > 0 &&
 				(readErr == nil && len(findings) == 0 || readErr != nil && os.IsNotExist(readErr))
 			switch {
-			case wouldWrite && *dryRun:
+			case wouldWrite && dryRun:
 				daysWritten++
 				rowsWritten += len(rows)
 			case wouldWrite:
-				if err := file.Save(*out); err != nil {
+				if err := file.Save(out); err != nil {
 					lists["unreadable"].Line(unreadableLine(s, "TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: err.Error()}))
 				} else {
 					written = true
@@ -759,7 +570,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 					"date", sh.Day, "type", tokens.TypeNames[sh.Type], "file", sh.File, "now", sh.Now, "written", written))
 			}
 		}
-		lists["day"].Line(dayLine(s, d, file, written, *dryRun, wouldWrite))
+		lists["day"].Line(dayLine(s, d, file, written, dryRun, wouldWrite))
 	}
 	for _, kind := range []string{"unreadable", "mixed", "day", "shrank", "partial", "quiet"} {
 		lists[kind].More()
@@ -769,7 +580,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	counts := []any{"days", daysWritten, "rows", rowsWritten, "sources", len(sources), "unreadable", n("unreadable"),
 		"unparsed", n("unparsed"), "mixed", n("mixed"), "conflict", n("conflict"), "shrank", n("shrank"),
 		"partial", n("partial"), "quiet", quiet}
-	if *dryRun {
+	if dryRun {
 		counts = append(counts, "dry_run", true)
 	}
 	// A FOLD THAT DROPPED EVERY MESSAGE FOLDED NOTHING, AND A GATE READING THE EXIT CODE MUST
@@ -778,7 +589,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// exit 1 with the counts.
 	dropped, of, allDropped := allMessagesDropped(sources)
 	bad := n("unreadable") > 0 || n("unparsed") > 0 || n("mixed") > 0 || n("conflict") > 0 ||
-		(n("shrank") > 0 && !*allowShrink) || n("partial") > 0 || allDropped
+		(n("shrank") > 0 && !allowShrink) || n("partial") > 0 || allDropped
 	if allDropped {
 		fmt.Fprintf(s.err(), "FOLD FAIL dropped=%d of %d: %s\n", dropped, of, allDroppedWhy)
 		s.o.Why = append(s.o.Why, fmt.Sprintf("dropped=%d of %d: %s", dropped, of, allDroppedWhy))
@@ -789,25 +600,43 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(s.out(), "TOKENS OK%s\n", s.factFields(counts...))
 	}
 	note := remedy(sources, folder.Overlaps(), n("unreadable"), n("unparsed"), n("mixed"), n("conflict"), n("shrank"), n("partial"), quiet,
-		*allowShrink, *out, mixedLabels, firstPartial, firstQuiet)
+		allowShrink, out, mixedLabels, firstPartial, firstQuiet)
 	fmt.Fprintf(s.out(), "TOKENS NOTE %s\n", oneline.Escape(note))
 	s.note(note)
 	if bad {
-		return s.done(1, *max)
+		return s.done(1, max)
 	}
-	return s.done(0, *max)
+	return s.done(0, max)
 }
 
-// checkDay enforces the one-of rule on --day and --all.
-func checkDay(r *refusals, day string, all bool) {
+// declareDay declares --day and --all, and the one-of rule between them.
+func declareDay(f *tool.Flags, verb string) {
+	f.String("day", "", "one UTC day to "+verb+" as YYYY-MM-DD")
+	f.Bool("all", false, verb+" every day named by the sources")
+	f.Check(func(c *tool.Call) {
+		switch day, all := c.Str("day"), c.Bool("all"); {
+		case day == "" && !all:
+			c.Problem("one of --day <YYYY-MM-DD> or --all is required; it wants " + wantsDay + "; refusing to guess")
+		case day != "" && all:
+			c.Problem("--day and --all are two answers to one question; give one")
+		case day != "" && !tokens.ValidDay(day):
+			c.Problem("--day is not a day: " + day + "; it wants " + wantsDay)
+		}
+	})
+}
+
+// notADir is the refusal for a flag whose value must be a directory that is there, or "".
+func notADir(flag, path, wants string) string {
+	fi, err := os.Stat(path)
 	switch {
-	case day == "" && !all:
-		r.add("one of --day <YYYY-MM-DD> or --all is required; it wants " + wantsDay + "; refusing to guess")
-	case day != "" && all:
-		r.add("--day and --all are two answers to one question; give one")
-	case day != "" && !tokens.ValidDay(day):
-		r.add("--day is not a day: " + day + "; it wants " + wantsDay)
+	case err != nil && os.IsNotExist(err):
+		return "--" + flag + " does not exist: " + path + "; it wants " + wants
+	case err != nil:
+		return "--" + flag + " " + path + ": " + err.Error() + "; it wants " + wants
+	case !fi.IsDir():
+		return "--" + flag + " is not a directory: " + path + "; it wants " + wants
 	}
+	return ""
 }
 
 func daysAsked(day string, all bool) string {
@@ -989,44 +818,50 @@ func firstConflictLabel(sources []*tokens.Source) string {
 
 // ---------------------------------------------------------------------------- sources
 
-// cmdSources reads the declared sources exactly as fold does, through the same code -- a
+func cmdSources(now time.Time) tool.Verb {
+	return tool.Verb{
+		Name:  "sources",
+		Usage: "sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]",
+		Example: `sources --repos ./repos.tsv --all --claude bench=./transcripts
+			sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20`,
+		Effect: tool.Inspection,
+		Detail: `sources reads the declared sources exactly as fold does and writes nothing: what a
+fold would count, before it writes. --unattributed lists the path stems that were SEEN
+and matched no rule, heaviest first: what other=<pct>% on a day line is made of, and the
+evidence for improving the --repos file.
+` + sourcesDetail,
+		Flags: func(f *tool.Flags) {
+			declareDay(f, "inspect")
+			f.Max()
+			f.Bool("unattributed", false, "list seen paths that matched no repo rule")
+			declareSources(f)
+			f.Check(checkSources)
+		},
+		Run: func(c *tool.Call) *tool.Out { return inspectSources(c, now) },
+	}
+}
+
+// inspectSources reads the declared sources exactly as fold does, through the same code -- a
 // second reader would drift -- prints what each yielded, and writes nothing. It exists so
 // a person can see what a fold would count before it writes, and it exits 0 whenever it
 // ran, because asserting is not its job.
-func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
-	fs := newFlagSet("sources")
-	day := fs.String("day", "", "one UTC day to inspect as YYYY-MM-DD")
-	all := fs.Bool("all", false, "inspect every day named by the sources")
-	max := fs.Int("max", bounded.Default, "maximum rows to print; 0 prints all")
-	unattributed := fs.Bool("unattributed", false, "list seen paths that matched no repo rule")
-	var sf sourceFlags
-	sf.declare(fs, true)
-	s, code, ok := start(fs, args, "SOURCES", stdout, stderr)
-	if !ok {
-		return code
-	}
-	r := &refusals{token: "SOURCES", s: s}
-	checkDay(r, *day, *all)
-	sf.check(r)
-	checkMax(r, *max)
-	if len(r.list) > 0 {
-		return r.print(stderr)
-	}
+func inspectSources(c *tool.Call, now time.Time) *tool.Out {
+	day, all, max, unattributed, sf := c.Str("day"), c.Bool("all"), c.Int("max"), c.Bool("unattributed"), sourcesOf(c)
 	rules, err := tokens.LoadRules(sf.repos)
 	if err != nil {
-		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
-		return r.print(stderr)
+		return tool.Refuse("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 	}
+	s := newSink(c, "sources")
 	// The tally is switched on BEFORE any source is read, because it is taken inside the
 	// attribution ladder as the paths go past; there is no second walk of the transcripts.
-	if *unattributed {
+	if unattributed {
 		rules.WatchUnattributed()
-		if !*all {
-			rules.FilterDay(*day)
+		if !all {
+			rules.FilterDay(day)
 		}
 	}
 	sources := sf.read(rules, now)
-	if !*all {
+	if !all {
 		// When --day is specified (without --all), message counts, row keys, and unattributed
 		// path tallies are scoped to the selected day. Source-wide inventory and error metadata
 		// (files, unreadable sources, and unparsed lines) remain source-wide because unreadable
@@ -1035,7 +870,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 			var dayStream []tokens.Message
 			keys := map[tokens.Key]bool{}
 			for _, m := range src.Stream {
-				if m.Day == *day {
+				if m.Day == day {
 					dayStream = append(dayStream, m)
 					keys[tokens.Key{Day: m.Day, Model: m.Model, Repo: m.Repo}] = true
 				}
@@ -1048,10 +883,10 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 
-	srcList := s.list(false, *max, "SOURCES", "source", maxRemedy("sources"))
-	unreadable := s.list(true, *max, "SOURCES", "unreadable", maxRemedy("sources"))
-	unparsed := s.list(true, *max, "SOURCES", "unparsed", maxRemedy("sources"))
-	stems := s.list(false, *max, "SOURCES", "unattributed", maxRemedy("sources"))
+	srcList := s.list(false, max, "SOURCES", "source", maxRemedy("sources"))
+	unreadable := s.list(true, max, "SOURCES", "unreadable", maxRemedy("sources"))
+	unparsed := s.list(true, max, "SOURCES", "unparsed", maxRemedy("sources"))
+	stems := s.list(false, max, "SOURCES", "unattributed", maxRemedy("sources"))
 	files, messages, rows := 0, 0, 0
 	for _, src := range sources {
 		srcList.Line(sourceLine(s, "SOURCES", src))
@@ -1076,7 +911,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// `other=81%` on a day line and has nowhere to go but grep; with it the top stems ARE
 	// the rules the file is missing, written in the shape a rule matches.
 	unattributedField := tokens.Dash
-	if *unattributed {
+	if unattributed {
 		for _, u := range rules.Unattributed() {
 			stems.Line(s.line("SOURCES", "UNATTRIBUTED", "", "stem", u.Stem, "tokens", u.Count))
 		}
@@ -1086,12 +921,95 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	counts := []any{"sources", len(sources), "files", files, "messages", messages, "unreadable", unreadable.Total(),
 		"unparsed", unparsed.Total(), "rows", rows, "unattributed", unattributedField}
 	fmt.Fprintf(s.out(), "SOURCES OK%s\n", s.factFields(counts...))
-	return s.done(0, *max)
+	return s.done(0, max)
 }
 
 // ---------------------------------------------------------------------------- report
 
-// cmdReport is the verb for a friend on another machine, and the first user of this tool
+func cmdReport(now time.Time) tool.Verb {
+	return tool.Verb{
+		Name: "report",
+		Usage: `report --who <name> --day <YYYY-MM-DD> --repos <file> [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]... [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
+			report --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>] [--user <name>] [--password-env <NAME>]`,
+		Example: "report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts",
+		Effect:  "local write: --note writes the note body to that file (--dry-run names it and writes nothing); without --note it writes nothing; --redis reads the ledger store over the network",
+		Detail: `mode: local note body, printed as the tokens note artifact (--who and --day): it folds
+this machine's own sources for one day and prints EXACTLY the body lines of a tokens note
+on stdout, and its TOKENS AVG lines and REPORT OK line on stderr; --note <path> is written
+whole through atomicfile (the file and its directory must not be symlinks).
+mode: Redis month summary (--redis and --month), grouped by --by. The store's ACL user is --user, else
+NOVA_SPRINT_REDIS_USER; its password is in the variable --password-env names, else (with a
+user) the one NOVA_SPRINT_REDIS_PASSWORD_ENV names, else NOVA_REDIS_BENCH_PASSWORD. The
+password is never a flag.
+` + sourcesDetail,
+		Flags: func(f *tool.Flags) {
+			f.String("who", "", "name to write in each note body row")
+			f.String("day", "", "one UTC day to report as YYYY-MM-DD")
+			f.String("note", "", "atomically write the note body to this path")
+			f.Var(new(stringList), "supersedes", "note id this report replaces; repeatable")
+			f.Max()
+			f.String("month", "", "month to summarize as YYYY-MM")
+			f.String("by", "model", "Redis summary grouping: model, repo, day or tuple")
+			f.String("redis", "", "Redis address for the store summary mode")
+			f.String("user", "", "Redis username for the store summary mode")
+			f.String("password-env", "", "environment variable holding the Redis password")
+			f.Bool("dry-run", false, "print the body and name the --note file, and write nothing")
+			declareSources(f)
+			f.Check(checkReport)
+		},
+		Run: func(c *tool.Call) *tool.Out { return report(c, now) },
+	}
+}
+
+// checkReport is the rule over report's flags, in the mode they name.
+func checkReport(c *tool.Call) {
+	if c.Str("redis") != "" {
+		checkMonth(c)
+		if _, ok := record.LedgerGroupings[c.Str("by")]; !ok {
+			c.Problem("--by is model, repo, day or tuple, got " + c.Str("by"))
+		}
+		return
+	}
+	if c.Str("month") != "" {
+		c.Problem("--month is the store's month report; it wants --redis <host:port>")
+		return
+	}
+	if strings.TrimSpace(c.Str("who")) == "" {
+		c.Problem("--who is required; it wants " + wantsWho + "; refusing to guess")
+	}
+	switch day := c.Str("day"); {
+	case day == "":
+		c.Problem("--day is required; it wants " + wantsDay + "; refusing to guess")
+	case !tokens.ValidDay(day):
+		c.Problem("--day is not a day: " + day + "; it wants " + wantsDay)
+	}
+	checkSources(c)
+	seen := map[string]bool{}
+	for _, id := range strs(c, "supersedes") {
+		switch {
+		case !tokens.ValidNoteID(id):
+			c.Problem("--supersedes " + id + ": it wants a note id of the shape <sender>-<12 hex>")
+		case seen[id]:
+			c.Problem("--supersedes names " + id + " twice; the predecessor set is a set, with no duplicate")
+		}
+		seen[id] = true
+	}
+}
+
+// checkMonth is the rule over a required --month.
+func checkMonth(c *tool.Call) {
+	switch month := c.Str("month"); {
+	case month == "":
+		c.Problem("--month is required; it wants " + wantsMonth + "; refusing to guess")
+	case !tokens.ValidMonth(month):
+		c.Problem("--month is not a month: " + month + "; it wants " + wantsMonth)
+	}
+}
+
+// strs reads a repeatable flag.
+func strs(c *tool.Call, name string) []string { return c.Get(name).([]string) }
+
+// report is the verb for a friend on another machine, and the first user of this tool
 // is not this bench. It folds that machine's own sources for one day, the same sources and
 // the same attribution as fold, and prints EXACTLY the body lines of a tokens note and
 // nothing else: no heading, no stamp, no comment. The stamp and the build id go on the
@@ -1100,61 +1018,18 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 // THIS IS THE ONE PLACE IN THE FAMILY WHERE THE OK LINE LEAVES STDOUT, because here stdout
 // is the artifact. The spec says so in as many words, which is the exception SPEC.md's
 // Conventions allow when a spec states one.
-func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
-	fs := newFlagSet("report")
-	who := fs.String("who", "", "name to write in each note body row")
-	day := fs.String("day", "", "one UTC day to report as YYYY-MM-DD")
-	notePath := fs.String("note", "", "atomically write the note body to this path")
-	var supersedes stringList
-	fs.Var(&supersedes, "supersedes", "note id this report replaces; repeatable")
-	max := fs.Int("max", bounded.Default, "maximum summary rows to print; 0 prints all")
-	monthFlag := fs.String("month", "", "month to summarize as YYYY-MM")
-	byFlag := fs.String("by", "model", "Redis summary grouping: model, repo, day or tuple")
-	redisAddr := fs.String("redis", "", "Redis address for the store summary mode")
-	redisUser := fs.String("user", "", "Redis username for the store summary mode")
-	passwordEnv := fs.String("password-env", "", "environment variable holding the Redis password")
-	dryRun := fs.Bool("dry-run", false, "print the body and name the --note file, and write no file")
-	var sf sourceFlags
-	sf.declare(fs, true)
-	s, code, ok := start(fs, args, "REPORT", stdout, stderr)
-	if !ok {
-		return code
+func report(c *tool.Call, now time.Time) *tool.Out {
+	dryRun := c.DryRun()
+	s := newSink(c, "report")
+	if c.Str("redis") != "" {
+		return reportStore(c, s)
 	}
-	if *redisAddr != "" {
-		return cmdReportStore(s, *redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stderr)
-	}
-	if *monthFlag != "" {
-		return (&refusals{token: "REPORT", s: s, list: []string{"--month is the store's month report; it wants --redis <host:port>"}}).print(stderr)
-	}
-	r := &refusals{token: "REPORT", s: s}
-	r.required("who", *who, wantsWho)
-	switch {
-	case *day == "":
-		r.add("--day is required; it wants " + wantsDay + "; refusing to guess")
-	case !tokens.ValidDay(*day):
-		r.add("--day is not a day: " + *day + "; it wants " + wantsDay)
-	}
-	sf.check(r)
-	checkMax(r, *max)
-	seen := map[string]bool{}
-	for _, id := range supersedes {
-		switch {
-		case !tokens.ValidNoteID(id):
-			r.add("--supersedes " + id + ": it wants a note id of the shape <sender>-<12 hex>")
-		case seen[id]:
-			r.add("--supersedes names " + id + " twice; the predecessor set is a set, with no duplicate")
-		}
-		seen[id] = true
-	}
-	if len(r.list) > 0 {
-		return r.print(stderr)
-	}
+	who, day, notePath, max, sf := c.Str("who"), c.Str("day"), c.Str("note"), c.Int("max"), sourcesOf(c)
 	rules, err := tokens.LoadRules(sf.repos)
 	if err != nil {
-		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
-		return r.print(stderr)
+		return tool.Refuse("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 	}
-	sorted := slices.Sorted(slices.Values(supersedes))
+	sorted := slices.Sorted(slices.Values(strs(c, "supersedes")))
 
 	sources := sf.read(rules, now)
 	folder := tokens.NewFolder()
@@ -1187,7 +1062,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(s.err(), "TOKENS NOTE %s\n", oneline.Escape(dropped))
 		s.note(dropped)
 	}
-	rows, mixed := folder.DayRows(*day)
+	rows, mixed := folder.DayRows(day)
 	for _, m := range mixed {
 		fmt.Fprintln(s.err(), s.line("TOKENS", "MIXED", "two day bases on one row; declare one export for that day",
 			"date", m.Day, "model", m.Model, "repo", m.Repo, "bases", strings.Join(m.Bases, ",")))
@@ -1201,7 +1076,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			if !ok {
 				continue
 			}
-			rendered = append(rendered, tokens.BodyLine(*day, *who, row.Model, row.Repo, t, v, row.Basis()))
+			rendered = append(rendered, tokens.BodyLine(day, who, row.Model, row.Repo, t, v, row.Basis()))
 		}
 	}
 	lines := len(rendered)
@@ -1210,8 +1085,8 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		body = strings.Join(rendered, "\n") + "\n"
 	}
 	s.o.Payload = body
-	s.fact("who", *who)
-	s.fact("day", *day)
+	s.fact("who", who)
+	s.fact("day", day)
 	s.fact("rows", lines)
 	if lines == 0 || len(mixed) > 0 {
 		// A friend with nothing to show says so, and never sends zeros. A REPORT FAIL
@@ -1222,15 +1097,14 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			fmt.Fprint(s.out(), body)
 		}
 		fmt.Fprintf(s.err(), "REPORT FAIL who=%s day=%s rows=%d unreadable=%d\n",
-			oneline.Field(*who), oneline.Field(*day), lines, unreadable)
+			oneline.Field(who), oneline.Field(day), lines, unreadable)
 		s.fact("unreadable", unreadable)
-		return s.done(1, *max)
+		return s.done(1, max)
 	}
 	fmt.Fprint(s.out(), body)
-	if *notePath != "" && !*dryRun {
-		if err := atomicfile.Write(filepath.Clean(*notePath), []byte(body), 0o644); err != nil {
-			r.add("--note " + *notePath + ": " + err.Error())
-			return r.print(stderr)
+	if notePath != "" && !dryRun {
+		if err := atomicfile.Write(filepath.Clean(notePath), []byte(body), 0o644); err != nil {
+			return tool.Refuse("--note " + notePath + ": " + err.Error())
 		}
 	}
 	// One TOKENS AVG line per model, after the body lines: the daily blended cost per
@@ -1272,27 +1146,27 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		return sortedAvg[i].name < sortedAvg[j].name
 	})
-	avgList := s.list(true, *max, "TOKENS", "avg", maxRemedy("report"))
+	avgList := s.list(true, max, "TOKENS", "avg", maxRemedy("report"))
 	var allTokens, allUsd int64
 	allPriced := false
 	for _, a := range sortedAvg {
 		allTokens += a.tokens
 		allUsd += a.usd
 		allPriced = allPriced || a.priced
-		avgList.Line(s.line("TOKENS", "AVG", "", "day", *day, "model", a.name, "tokens", a.tokens,
+		avgList.Line(s.line("TOKENS", "AVG", "", "day", day, "model", a.name, "tokens", a.tokens,
 			"usd", usdCell(a.usd, a.priced), "usd_per_mtok", usdPerMtokCell(a.usd, a.tokens, a.priced)))
 	}
 	avgList.More()
-	fmt.Fprintln(s.err(), s.line("TOKENS", "AVG-ALL", "", "day", *day, "tokens", allTokens,
+	fmt.Fprintln(s.err(), s.line("TOKENS", "AVG-ALL", "", "day", day, "tokens", allTokens,
 		"usd", usdCell(allUsd, allPriced), "usd_per_mtok", usdPerMtokCell(allUsd, allTokens, allPriced)))
 	// The OK line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE section):
 	// what says the day is short is the TOKENS UNREADABLE / TOKENS UNPARSED lines above it,
 	// the TOKENS NOTE, and exit 1. Under --dry-run --note was not written, and the line
 	// says so.
-	subject := tokens.Subject(*day, stamp(now), buildVersion(), sorted)
+	subject := tokens.Subject(day, stamp(now), buildVersion(), sorted)
 	fmt.Fprintf(s.err(), "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
-		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
-		oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Escape(subject))
+		oneline.Field(who), oneline.Field(day), lines, oneline.Field(stamp(now)),
+		oneline.Field(buildVersion()), s.dryRunFields(dryRun, "note", notePath), oneline.Escape(subject))
 	s.fact("at", stamp(now))
 	s.fact("build", buildVersion())
 	s.fact("subject", tool.Text(subject))
@@ -1301,9 +1175,9 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// --note still landed -- exit 1 still writes -- but a friend about to paste this onto
 	// the bus is told it does not cover what it claims.
 	if unreadable > 0 || unparsed > 0 {
-		return s.done(1, *max)
+		return s.done(1, max)
 	}
-	return s.done(0, *max)
+	return s.done(0, max)
 }
 
 // usdCell is a cost as a field: the dollars, or - when no source reported one.
@@ -1325,34 +1199,33 @@ func usdPerMtokCell(micro, n int64, priced bool) string {
 
 // ------------------------------------------------------------------------------- sum
 
-// cmdSum ASSERTS NOTHING and is never a gate. It exits 0 whenever it ran, including over a
+func cmdSum(now time.Time) tool.Verb {
+	return tool.Verb{
+		Name:    "sum",
+		Usage:   "sum --out <dir> --month <YYYY-MM> [--max <n>]",
+		Example: "sum --out ./out --month 2026-09",
+		Effect:  tool.Inspection,
+		Detail: `A month is a sum of day files: sum asserts nothing, writes nothing and is never a gate.
+It counts the dashes (a type no source reported) beside the totals.`,
+		Flags: func(f *tool.Flags) {
+			f.Required("out", wantsOut)
+			f.String("month", "", "month to sum as YYYY-MM")
+			f.Max()
+			f.Check(checkMonth)
+		},
+		Run: func(c *tool.Call) *tool.Out { return sum(c, now) },
+	}
+}
+
+// sum ASSERTS NOTHING and is never a gate. It exits 0 whenever it ran, including over a
 // month with gaps, because answering is its job and missing=<n> is the answer.
-func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
-	fs := newFlagSet("sum")
-	out := fs.String("out", "", "directory holding daily token files")
-	month := fs.String("month", "", "month to sum as YYYY-MM")
-	max := fs.Int("max", bounded.Default, "maximum rows to print; 0 prints all")
-	s, code, ok := start(fs, args, "SUM", stdout, stderr)
-	if !ok {
-		return code
-	}
-	r := &refusals{token: "SUM", s: s}
-	r.required("out", *out, wantsOut)
-	switch {
-	case *month == "":
-		r.add("--month is required; it wants " + wantsMonth + "; refusing to guess")
-	case !validMonth(*month):
-		r.add("--month is not a month: " + *month + "; it wants " + wantsMonth)
-	}
-	checkMax(r, *max)
-	if len(r.list) > 0 {
-		return r.print(stderr)
-	}
-	sm, err := tokens.SumMonth(*out, *month)
+func sum(c *tool.Call, now time.Time) *tool.Out {
+	out, month, max := c.Str("out"), c.Str("month"), c.Int("max")
+	sm, err := tokens.SumMonth(out, month)
 	if err != nil {
-		r.add(err.Error())
-		return r.print(stderr)
+		return tool.Refuse(err.Error())
 	}
+	s := newSink(c, "sum")
 	turns := tokens.Dash
 	if sm.HaveTurn {
 		turns = strconv.Itoa(sm.Turns)
@@ -1361,24 +1234,24 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(sm.Days) > 0 {
 		first, last = sm.Days[0], sm.Days[len(sm.Days)-1]
 	}
-	fmt.Fprintln(s.out(), s.line("SUM", "MONTH", "", "month", *month, "at", stamp(now), "build", buildVersion(),
+	fmt.Fprintln(s.out(), s.line("SUM", "MONTH", "", "month", month, "at", stamp(now), "build", buildVersion(),
 		"days", len(sm.Days), "first", first, "last", last, "missing", len(sm.Missing), "rows", sm.Rows, "turns", turns))
 
-	widen := "nova-tokens sum --out " + *out + " --month " + *month + " --max 0"
-	pairs := s.list(false, *max, "SUM", "pair", widen)
+	widen := "nova-tokens sum --out " + out + " --month " + month + " --max 0"
+	pairs := s.list(false, max, "SUM", "pair", widen)
 	for _, p := range sm.Pairs {
 		pairs.Line(s.line("SUM", "PAIR", "", append(append([]any{"model", p.Model, "repo", p.Repo}, aggFields(p.Agg)...), "days", p.Agg.Days())...))
 	}
 	pairs.More()
-	models := s.list(false, *max, "SUM", "model", widen)
+	models := s.list(false, max, "SUM", "model", widen)
 	for _, m := range sm.Models {
 		models.Line(s.line("SUM", "MODEL", "", append(append([]any{"model", m.Model}, aggFields(m.Agg)...), "repos", m.Agg.Keys())...))
 	}
 	models.More()
 	fmt.Fprintln(s.out(), s.line("SUM", "TOTAL", "", append(aggFields(sm.Total), "turns", turns, "pairs", len(sm.Pairs), "models", len(sm.Models))...))
-	counts := []any{"month", *month, "days", len(sm.Days), "missing", len(sm.Missing), "pairs", len(sm.Pairs), "models", len(sm.Models), "nonutc", sm.Total.NonUTC}
+	counts := []any{"month", month, "days", len(sm.Days), "missing", len(sm.Missing), "pairs", len(sm.Pairs), "models", len(sm.Models), "nonutc", sm.Total.NonUTC}
 	fmt.Fprintf(s.out(), "SUM OK%s\n", s.factFields(counts...))
-	return s.done(0, *max)
+	return s.done(0, max)
 }
 
 // aggFields is the five totals, the rough count, the per-column dash counts and the
@@ -1390,13 +1263,54 @@ func aggFields(a *tokens.Agg) []any {
 			a.Dashes[tokens.CacheRead], a.Dashes[tokens.Reasoning]), "nonutc", a.NonUTC}
 }
 
-func validMonth(m string) bool {
-	return tokens.ValidMonth(m)
-}
-
 // ----------------------------------------------------------------------------- check
 
-// cmdCheck is the GATE. It says NO on any malformed file, any malformed row, any missing
+func cmdCheck(now time.Time) tool.Verb {
+	return tool.Verb{
+		Name:    "check",
+		Usage:   "check --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]",
+		Example: "check --out ./out",
+		Effect:  tool.Inspection,
+		Detail: `check is the gate: every file parses, every row has every column, a missing day is named.
+It counts what it does not name: a calendar day between the first and the last with no
+file is gap=<n>, MISSING only when something says there was spend on it: --strict names
+every gap, --no-spend <file> (one YYYY-MM-DD per line) names the gaps your list does not
+account for. A *.md, a *.log or a pre-* archive directory beside the day files is
+notes=<n> rather than a stray; --strict names those too. An --out with no day file in it
+is CHECK FAIL, never a green over nothing.`,
+		Flags: func(f *tool.Flags) {
+			f.Required("out", wantsOut)
+			f.Max()
+			f.Bool("strict", false, "treat every gap and note as a finding")
+			f.String("no-spend", "", "file listing UTC dates with no spend, one per line")
+			f.String("through", "", "require coverage through this UTC day, YYYY-MM-DD")
+			f.Check(func(c *tool.Call) { checkOptions(c) })
+		},
+		Run: func(c *tool.Call) *tool.Out { return check(c, now) },
+	}
+}
+
+// checkOptions reads check's options, recording every problem with them.
+func checkOptions(c *tool.Call) tokens.CheckOptions {
+	strict, noSpend, through := c.Bool("strict"), strings.TrimSpace(c.Str("no-spend")), strings.TrimSpace(c.Str("through"))
+	if strict && noSpend != "" {
+		c.Problem("--strict and --no-spend are two answers to one question: --strict names every calendar gap, --no-spend names the gaps your list does not account for; give one")
+	}
+	if through != "" && !tokens.ValidDay(through) {
+		c.Problem("--through is not a day: " + through + "; it wants YYYY-MM-DD (e.g. 2026-09-18)")
+	}
+	opt := tokens.CheckOptions{Strict: strict, Through: through}
+	if noSpend != "" {
+		days, err := tokens.ReadNoSpendFile(c.Str("no-spend"))
+		if err != nil {
+			c.Problem("--no-spend " + c.Str("no-spend") + ": " + err.Error())
+		}
+		opt.NoSpend = days
+	}
+	return opt
+}
+
+// check is the GATE. It says NO on any malformed file, any malformed row, any missing
 // day and any stray, and it prints the count line either way. A missing day is NAMED and
 // never filled: nobody folded it, and this tool does not invent what nobody measured.
 //
@@ -1405,50 +1319,18 @@ func validMonth(m string) bool {
 // named only under --strict or a --no-spend list. A gate that cannot go green is a gate
 // people learn to skip, and this one could not: 40 findings on reports/tokens, none of
 // them work anybody would do.
-func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
-	fs := newFlagSet("check")
-	out := fs.String("out", "", "directory containing daily token files")
-	max := fs.Int("max", bounded.Default, "maximum findings to print; 0 prints all")
-	strict := fs.Bool("strict", false, "treat every gap and note as a finding")
-	noSpend := fs.String("no-spend", "", "file listing UTC dates with no spend, one per line")
-	through := fs.String("through", "", "require coverage through this UTC day, YYYY-MM-DD")
-	s, code, ok := start(fs, args, "CHECK", stdout, stderr)
-	if !ok {
-		return code
-	}
-	r := &refusals{token: "CHECK", s: s}
-	r.required("out", *out, wantsOut)
-	checkMax(r, *max)
-	if *strict && strings.TrimSpace(*noSpend) != "" {
-		r.add("--strict and --no-spend are two answers to one question: --strict names every calendar gap, --no-spend names the gaps your list does not account for; give one")
-	}
-	if strings.TrimSpace(*through) != "" {
-		if !tokens.ValidDay(*through) {
-			r.add("--through is not a day: " + *through + "; it wants YYYY-MM-DD (e.g. 2026-09-18)")
-		}
-	}
-	opt := tokens.CheckOptions{Strict: *strict, Through: strings.TrimSpace(*through)}
-	if strings.TrimSpace(*noSpend) != "" {
-		days, err := tokens.ReadNoSpendFile(*noSpend)
-		if err != nil {
-			r.add("--no-spend " + *noSpend + ": " + err.Error())
-		} else {
-			opt.NoSpend = days
-		}
-	}
-	if len(r.list) > 0 {
-		return r.print(stderr)
-	}
-	res, err := tokens.Check(*out, opt)
+func check(c *tool.Call, now time.Time) *tool.Out {
+	out, max := c.Str("out"), c.Int("max")
+	res, err := tokens.Check(out, checkOptions(c)) // its problems were refused before the verb ran
 	if err != nil {
-		r.add(err.Error())
-		return r.print(stderr)
+		return tool.Refuse(err.Error())
 	}
-	remedyLine := "nova-tokens check --out " + *out + " --max 0"
-	files := s.list(true, *max, "CHECK", "file", remedyLine)
-	rowsList := s.list(true, *max, "CHECK", "row", remedyLine)
-	missing := s.list(true, *max, "CHECK", "missing", remedyLine)
-	strays := s.list(true, *max, "CHECK", "stray", remedyLine)
+	s := newSink(c, "check")
+	remedyLine := "nova-tokens check --out " + out + " --max 0"
+	files := s.list(true, max, "CHECK", "file", remedyLine)
+	rowsList := s.list(true, max, "CHECK", "row", remedyLine)
+	missing := s.list(true, max, "CHECK", "missing", remedyLine)
+	strays := s.list(true, max, "CHECK", "stray", remedyLine)
 	for _, f := range res.Findings {
 		reason := oneline.Cap(f.Reason, oneline.TailBytes)
 		line := fmt.Sprintf("CHECK FAIL %s: %s", oneline.Escape(f.Path), oneline.Escape(reason))
@@ -1480,15 +1362,15 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		first, last = res.First, res.Last
 	}
 	if res.Stale {
-		fmt.Fprintf(s.err(), "CHECK FAIL stale last=%s through=%s\n", oneline.Field(last), oneline.Field(*through))
-		s.item("stale", "last", last, "through", *through)
+		fmt.Fprintf(s.err(), "CHECK FAIL stale last=%s through=%s\n", oneline.Field(last), oneline.Field(c.Str("through")))
+		s.item("stale", "last", last, "through", c.Str("through"))
 	}
 	// A GATE THAT CANNOT GO RED IS NO GATE. An --out holding no day file has nothing in it
 	// to pass, and a green over nothing reads exactly like a green over a month: it is a
 	// finding, with the fold that makes the first file as its remedy.
 	empty := res.Files == 0
 	if empty {
-		why := "--out " + *out + " holds no day file, so there is nothing to check; fold one first: nova-tokens fold --out " + *out + " --day <YYYY-MM-DD> --repos <file> <source flags>"
+		why := "--out " + out + " holds no day file, so there is nothing to check; fold one first: nova-tokens fold --out " + out + " --day <YYYY-MM-DD> --repos <file> <source flags>"
 		fmt.Fprintf(s.err(), "CHECK FAIL %s\n", oneline.Escape(why))
 		s.o.Why = append(s.o.Why, why)
 	}
@@ -1497,11 +1379,11 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 || res.Stale || empty {
 		counts = append(counts, "bad", bad, "missing", len(res.Missing), "stray", len(res.Strays), "gap", len(res.Gaps), "notes", len(res.Notes))
 		fmt.Fprintf(s.err(), "CHECK FAIL%s\n", s.factFields(counts...))
-		return s.done(1, *max)
+		return s.done(1, max)
 	}
 	// gap= and notes= are on the OK line too, and that is the whole point: what the gate
 	// stopped naming it still counts, so nothing was hidden to make the line green.
 	counts = append([]any{"at", stamp(now), "build", buildVersion()}, append(counts, "missing", 0, "stray", 0, "gap", len(res.Gaps), "notes", len(res.Notes))...)
 	fmt.Fprintf(s.out(), "CHECK OK%s\n", s.factFields(counts...))
-	return s.done(0, *max)
+	return s.done(0, max)
 }

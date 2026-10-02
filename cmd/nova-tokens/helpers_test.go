@@ -17,6 +17,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
+// usage is the help banner: what `nova-tokens help` prints.
+var usage = tokensTool(foldStamp).Banner()
+
 // foldStamp is the clock every test hands run(), so that `at=` is a fixture and not a
 // reading of the machine the test happens to run on.
 var foldStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)

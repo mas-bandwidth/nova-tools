@@ -13,11 +13,12 @@ import (
 // `nova-check dogfood ledger` reads to learn which verbs exist. A flag a verb
 // takes that the reference does not name is a flag nobody can find: it lives
 // only in the source. The flag set is read from the source, because that is
-// where the truth is, and the document is judged against it. Six nova-memory
-// verbs get two of their flags from a shared helper, addRootFlags, so a scan
-// that reads only each verb's own body finds neither. And fs.Var names its flag
-// in its SECOND argument — the first is the value pointer — which is how
-// `--exclude` and `--exempt` stayed invisible to a reader of the reference.
+// where the truth is, and the document is judged against it. Most nova-memory
+// verbs get some of their flags from shared helpers (addRootFlags,
+// addRetrievalFlags, addFailMax), so a scan that reads only each verb's own body
+// finds none of those. And f.Var names its flag in its SECOND argument — the
+// first is the value — which is how `--exclude` and `--exempt` stayed invisible
+// to a reader of the reference. --json is every verb's, from internal/tool.
 
 // cliMainPath and cliDocPath are the two texts, relative to this package.
 const cliMainPath = "../../cmd/nova-memory/main.go"
@@ -25,15 +26,15 @@ const cliDocPath = "../../docs/CLI.md"
 
 // directFlagCalls are the flag registrations that name their flag in the
 // argument that follows the call, immediately.
-var directFlagCalls = []string{"fs.Bool(", "fs.String(", "fs.Int(", "fs.Float64(", "fs.Duration("}
+var directFlagCalls = []string{"f.Bool(", "f.String(", "f.Int(", "f.Float64(", "f.Duration(", "f.Required("}
 
 func TestTheCLIReferenceNamesEveryMemoryFlag(t *testing.T) {
 	t.Parallel()
 
 	lines := readTextLines(t, cliMainPath)
 
-	helper := helperFlagsRead(t, lines)
-	verbs := cmdVerbsRead(t, lines, helper)
+	helpers := helperFlagsRead(t, lines)
+	verbs := cmdVerbsRead(t, lines, helpers)
 
 	doc := readTextLines(t, cliDocPath)
 	refLine := make(map[string]int, len(verbs))
@@ -76,28 +77,33 @@ func readTextLines(t *testing.T, path string) []string {
 	return strings.Split(string(raw), "\n")
 }
 
-// helperFlagsRead cuts the body of func addRootFlags( and returns each flag it
-// registers mapped to its one-based source line. For fs.Var the flag name is
-// the string literal after the first comma; a walk that stops at the first
-// argument sees only the value pointer.
-func helperFlagsRead(t *testing.T, lines []string) map[string]int {
+// helperFlagsRead cuts the body of every `func add...(f *tool.Flags` helper and
+// returns, per helper name, each flag it registers mapped to its one-based source
+// line. For f.Var the flag name is the string literal after the first comma; a
+// walk that stops at the first argument sees only the value.
+func helperFlagsRead(t *testing.T, lines []string) map[string]map[string]int {
 	t.Helper()
+	helpers := map[string]map[string]int{}
 	for i, line := range lines {
-		if !strings.HasPrefix(line, "func addRootFlags(") {
+		name, ok := strings.CutPrefix(line, "func add")
+		if !ok || !strings.Contains(line, "(f *tool.Flags") {
 			continue
 		}
+		name = "add" + name[:strings.IndexByte(name, '(')]
 		flags := map[string]int{}
 		body, _ := cutBody(lines, i)
 		for j, bodyLine := range body {
-			if name, ok := varFlagName(bodyLine); ok {
-				flags[name] = i + j + 2
+			if flag, ok := varFlagName(bodyLine); ok {
+				flags[flag] = i + j + 2
+			}
+			if flag, ok := directFlagName(bodyLine); ok {
+				flags[flag] = i + j + 2
 			}
 		}
-		require.GreaterOrEqual(t, len(flags), 2, "addRootFlags registers %d flags, want at least two (root and exclude)", len(flags))
-		return flags
+		helpers[name] = flags
 	}
-	t.Fatalf("%s carries no func addRootFlags", cliMainPath)
-	return nil
+	require.GreaterOrEqual(t, len(helpers["addRootFlags"]), 2, "addRootFlags registers %d flags, want at least two (root and exclude)", len(helpers["addRootFlags"]))
+	return helpers
 }
 
 // cmdVerb is one `func cmdXxx` and the flags its body registers.
@@ -108,26 +114,24 @@ type cmdVerb struct {
 
 // cmdVerbsRead cuts every body whose line begins `func cmd`, records the verb
 // name (the part after cmd, lowercased), every flag registered directly in the
-// body, and — where the body calls addRootFlags(fs) — the helper's flags too.
-// cmdVersion is skipped: the reference carries no line for it.
-func cmdVerbsRead(t *testing.T, lines []string, helper map[string]int) []*cmdVerb {
+// body, and the flags of every helper the body names.
+func cmdVerbsRead(t *testing.T, lines []string, helpers map[string]map[string]int) []*cmdVerb {
 	t.Helper()
 	var verbs []*cmdVerb
 	for i, line := range lines {
 		if !strings.HasPrefix(line, "func cmd") {
 			continue
 		}
-		name := cmdVerbName(line)
-		if name == "version" {
-			continue
-		}
 		body, _ := cutBody(lines, i)
-		v := &cmdVerb{name: name, flags: map[string]int{}}
-		usesHelper := false
+		v := &cmdVerb{name: cmdVerbName(line), flags: map[string]int{}}
 		for j, bodyLine := range body {
 			at := i + j + 2
-			if strings.Contains(bodyLine, "addRootFlags(fs)") {
-				usesHelper = true
+			for helper, flags := range helpers {
+				if strings.Contains(bodyLine, helper+"(f") || strings.Contains(bodyLine, ": "+helper+",") {
+					for flag, at := range flags {
+						v.flags[flag] = at
+					}
+				}
 			}
 			if flag, ok := varFlagName(bodyLine); ok {
 				v.flags[flag] = at
@@ -136,13 +140,9 @@ func cmdVerbsRead(t *testing.T, lines []string, helper map[string]int) []*cmdVer
 				v.flags[flag] = at
 			}
 		}
-		if usesHelper {
-			for flag, at := range helper {
-				v.flags[flag] = at
-			}
-		}
 		verbs = append(verbs, v)
 	}
+	require.NotEmpty(t, verbs, "%s carries no func cmd<Verb>", cliMainPath)
 	return verbs
 }
 
@@ -166,13 +166,13 @@ func cmdVerbName(line string) string {
 	return strings.ToLower(s)
 }
 
-// varFlagName reads fs.Var(&value, "name", ...) and returns name.
+// varFlagName reads f.Var(value, "name", ...) and returns name.
 func varFlagName(line string) (string, bool) {
-	i := strings.Index(line, "fs.Var(")
+	i := strings.Index(line, "f.Var(")
 	if i < 0 {
 		return "", false
 	}
-	rest := line[i+len("fs.Var("):]
+	rest := line[i+len("f.Var("):]
 	comma := strings.IndexByte(rest, ',')
 	if comma < 0 {
 		return "", false
@@ -180,7 +180,7 @@ func varFlagName(line string) (string, bool) {
 	return quotedLiteral(rest[comma+1:])
 }
 
-// directFlagName reads fs.String("name", ...) and friends and returns name.
+// directFlagName reads f.String("name", ...) and friends and returns name.
 func directFlagName(line string) (string, bool) {
 	for _, call := range directFlagCalls {
 		if i := strings.Index(line, call); i >= 0 {

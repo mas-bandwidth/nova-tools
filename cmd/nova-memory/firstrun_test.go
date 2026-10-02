@@ -38,12 +38,12 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 		{
 			name: "search without k",
 			args: []string{"search", "--root", corpus, "--channels", "bm25", "x"},
-			want: "--k is the number of hits to return and is required (search: 3 to 5; check: 2 or 3 per paragraph)",
+			want: "--k is required; it wants the number of hits to return (search: 3 to 5; check: 2 or 3 per paragraph)",
 		},
 		{
 			name: "search without root",
 			args: []string{"search", "--channels", "bm25", "--k", "3", "x"},
-			want: "--root <dir> is your corpus directory, the tree to index; it is never guessed from the working directory or the environment, so write it out every run",
+			want: "--root is required; it wants your corpus directory, the tree to index; it is never guessed from the working directory or the environment, so write it out every run",
 		},
 		// The hint belongs to the flag, not to the verb that happened to want
 		// it: a first run of check must not be told less than a first run of
@@ -51,12 +51,12 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 		{
 			name: "check without k",
 			args: []string{"check", "--root", corpus, "--channels", "bm25", "-"},
-			want: "--k is the number of hits to return and is required",
+			want: "--k is required; it wants " + kWants,
 		},
 		{
 			name: "check without channels",
 			args: []string{"check", "--root", corpus, "--k", "3", "-"},
-			want: "--channels names a retrieval method, not a directory",
+			want: "--channels is required; it wants a retrieval method, not a directory",
 		},
 		{
 			name: "an empty channel list",
@@ -510,8 +510,8 @@ func TestARefusalReportsEveryReasonAtOnce(t *testing.T) {
 			name: "search missing both channels and k",
 			args: []string{"search", "--root", corpus, "x"},
 			want: []string{
-				"--channels is required", channelsHint,
-				"--k is required", kHint,
+				"--k is required", kWants,
+				"--channels is required",
 			},
 		},
 		{
@@ -520,17 +520,17 @@ func TestARefusalReportsEveryReasonAtOnce(t *testing.T) {
 			want: []string{
 				`unknown channel "journal"`,
 				"--k must be a positive receipt budget",
-				"no query words given",
+				"takes <words>..., at least 1 argument, got 0",
 			},
 		},
 		{
 			name: "check missing everything but the verb",
 			args: []string{"check"},
 			want: []string{
-				"--channels is required", channelsHint,
-				"--k is required", kHint,
-				"--root is required", rootHint,
-				"exactly one candidate file",
+				"--root is required", rootWants,
+				"--k is required", kWants,
+				"--channels is required",
+				"takes <file|->, exactly 1 argument, got 0",
 			},
 		},
 		{
@@ -630,24 +630,23 @@ func TestTheEchoedStepPastesBackIntoThatPlatformsShell(t *testing.T) {
 	}
 }
 
-// Every flag defined by any subcommand must have a flag entry in the usage banner (F5-7).
-func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
+// Every flag a verb defines has an entry in that verb's -h (F5-7): the flags live with
+// the verb that takes them, under `flags:`.
+func TestEveryDefinedFlagAppearsInAVerbsHelp(t *testing.T) {
 	t.Parallel()
 
-	exit, stdout, _ := runCLI(t, "", "help")
-	require.Equalf(t, 0, exit, "help failed: %d", exit)
-	// All flags supported by nova-memory subcommands.
-	flags := []string{
+	var help strings.Builder
+	for _, verb := range verbNames() {
+		exit, stdout, _ := runCLI(t, "", verb, "-h")
+		require.Equalf(t, 0, exit, "%s -h failed: %d", verb, exit)
+		help.WriteString(stdout)
+	}
+	for _, f := range []string{
 		"root", "channels", "k", "exclude", "floor", "links",
 		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft", "pin", "json",
+	} {
+		assert.Containsf(t, help.String(), "\n  --"+f+" ", "flag --%s has no entry in any verb's -h:\n%s", f, help.String())
 	}
-	for _, f := range flags {
-		target := "  --" + f + " "
-		assert.Containsf(t, stdout, target, "flag --%s has no entry in the usage banner flags list:\n%s", f, stdout)
-	}
-	// Assert --fail-max default is not welded onto words.
-	welded := "cannot bury the one frontmatter finding. the words the demonstration search runs."
-	assert.NotContainsf(t, stdout, welded, "the --fail-max and --words help text are still welded together:\n%s", stdout)
 }
 
 func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {
@@ -714,7 +713,7 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, firstRun, cliRun, "CLI.md's `### First run` for nova-memory is not the transcript this test executes")
 	// And the help's search and check examples are the sitting's two commands.
-	helpExamples, err := onboarding.ExampleLines(usage, "nova-memory")
+	helpExamples, err := onboarding.ExampleLines(memoryTool().Banner(), "nova-memory")
 	require.NoError(t, err)
 	var examples []string
 	for _, ex := range helpExamples {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -32,14 +31,15 @@ func calibrationHits(c *memindex.Corpus, chans []memindex.Channel) memindex.File
 	return memindex.FileHit{}
 }
 
-func (r retrievalResult) render(w io.Writer, asJSON bool) {
+// out is the result: under --json the value the skeleton renders, else its lines,
+// printed here, with the exit they end with.
+func (r retrievalResult) out(c *tool.Call) *tool.Out {
 	token := "SEARCH"
 	if r.Verb == "check" {
 		token = "MEMORY"
 	}
-	if asJSON {
+	if c.Bool("json") {
 		out := tool.Done()
-		out.Verb = r.Verb
 		out.Fact("k", r.K).Fact("channels", r.Channels).Fact("files", r.Files).Fact("chunks", r.Chunks)
 		if r.Verb == "search" {
 			out.Fact("query", r.Query).Fact("hits", len(r.Candidates[0].Hits))
@@ -64,9 +64,9 @@ func (r retrievalResult) render(w io.Writer, asJSON bool) {
 			}
 		}
 		out.Notes = r.Notes
-		out.Render(w, true)
-		return
+		return out
 	}
+	w := c.Stdout
 	if r.Verb == "search" {
 		fmt.Fprintf(w, "SEARCH OK hits=%d k=%d channels=%s files=%d chunks=%d: query=%s\n", len(r.Candidates[0].Hits), r.K, oneline.Field(r.Channels), r.Files, r.Chunks, oneline.Quote(r.Query))
 	} else {
@@ -89,4 +89,5 @@ func (r retrievalResult) render(w io.Writer, asJSON bool) {
 	for _, note := range r.Notes {
 		fmt.Fprintf(w, "%s NOTE %s\n", oneline.Field(token), oneline.Escape(note))
 	}
+	return tool.Exit(0)
 }

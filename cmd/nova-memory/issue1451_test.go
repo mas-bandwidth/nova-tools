@@ -40,9 +40,9 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 	require.NotEmpty(t, verbs, "no verbs enumerated from the help banner; the test would check nothing")
 
 	for _, verb := range verbs {
-		if verb == "version" {
-			// `nova-memory version` takes no flags and exits 0: a usage row, not
-			// a bare verb that refuses.
+		if verb == "version" || verb == "help" {
+			// `nova-memory version` and `nova-memory help` take no flags and exit 0:
+			// usage rows, not bare verbs that refuse.
 			continue
 		}
 		t.Run(verb, func(t *testing.T) {
@@ -55,7 +55,9 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 					continue // an indented hint is guidance on its own line, not the refusal
 				}
 				refusals++
-				assert.Truef(t, strings.HasSuffix(line, door), "`nova-memory %s` refusal does not end at the door: %q", verb, line)
+				// A verb short of its arguments names its own -h, where they are listed.
+				assert.Truef(t, strings.HasSuffix(line, door) || strings.HasSuffix(line, "; run: nova-memory "+verb+" -h"),
+					"`nova-memory %s` refusal does not end at the door: %q", verb, line)
 			}
 			assert.NotEqualf(t, 0, refusals, "`nova-memory %s` with no flags printed no refusal: %q", verb, stderr)
 		})
