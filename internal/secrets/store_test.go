@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStoreParsers(t *testing.T) {
@@ -18,46 +21,30 @@ func TestStoreParsers(t *testing.T) {
 
 	// 1. recovery.pub tests
 	recPath := filepath.Join(tmp, "recovery.pub")
-	if _, err := ReadRecoveryPub(tmp); err == nil {
-		t.Fatalf("expected error on absent recovery.pub")
-	}
+	_, err := ReadRecoveryPub(tmp)
+	require.Error(t, err, "expected error on absent recovery.pub")
 
 	// Empty
-	if err := os.WriteFile(recPath, []byte(""), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadRecoveryPub(tmp); err == nil {
-		t.Fatalf("expected error on empty recovery.pub")
-	}
+	require.NoError(t, os.WriteFile(recPath, []byte(""), 0600))
+	_, err = ReadRecoveryPub(tmp)
+	require.Error(t, err, "expected error on empty recovery.pub")
 
 	// Invalid key
-	if err := os.WriteFile(recPath, []byte("not-a-key\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadRecoveryPub(tmp); err == nil {
-		t.Fatalf("expected error on invalid key in recovery.pub")
-	}
+	require.NoError(t, os.WriteFile(recPath, []byte("not-a-key\n"), 0600))
+	_, err = ReadRecoveryPub(tmp)
+	require.Error(t, err, "expected error on invalid key in recovery.pub")
 
 	// Multiple lines
 	validKey := "age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata"
-	if err := os.WriteFile(recPath, []byte(validKey+"\n"+validKey+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadRecoveryPub(tmp); err == nil {
-		t.Fatalf("expected error on multi-line recovery.pub")
-	}
+	require.NoError(t, os.WriteFile(recPath, []byte(validKey+"\n"+validKey+"\n"), 0600))
+	_, err = ReadRecoveryPub(tmp)
+	require.Error(t, err, "expected error on multi-line recovery.pub")
 
 	// Valid single line
-	if err := os.WriteFile(recPath, []byte(validKey+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(recPath, []byte(validKey+"\n"), 0600))
 	k, err := ReadRecoveryPub(tmp)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if k != validKey {
-		t.Fatalf("got %q, want %q", k, validKey)
-	}
+	require.NoError(t, err, "unexpected error: %v", err)
+	require.Equal(t, validKey, k, "got %q, want %q", k, validKey)
 
 	// 2. .sops.yaml parser tests
 	sopsPath := filepath.Join(tmp, ".sops.yaml")
@@ -70,35 +57,19 @@ creation_rules:
   - path_regex: ^other\.yaml$
     age: age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata
 `
-	if err := os.WriteFile(sopsPath, []byte(sopsContent), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(sopsPath, []byte(sopsContent), 0600))
 	cfg, err := ParseSopsConfig(tmp)
-	if err != nil {
-		t.Fatalf("failed to parse sops config: %v", err)
-	}
-	if len(cfg.CreationRules) != 2 {
-		t.Fatalf("expected 2 rules, got %d", len(cfg.CreationRules))
-	}
+	require.NoError(t, err, "failed to parse sops config: %v", err)
+	require.Len(t, cfg.CreationRules, 2, "expected 2 rules, got %d", len(cfg.CreationRules))
 	rule1 := cfg.CreationRules[0]
-	if rule1.PathRegex != `^rowan\.yaml$` {
-		t.Errorf("rule 0 path regex: %s", rule1.PathRegex)
-	}
-	if rule1.UnencryptedRegex != `^(SPACE_USER|SPACE_HOST)$` {
-		t.Errorf("rule 0 unencrypted regex: %s", rule1.UnencryptedRegex)
-	}
-	if len(rule1.Recipients) != 2 {
-		t.Fatalf("expected 2 recipients in rule 0, got %d", len(rule1.Recipients))
-	}
+	assert.Equal(t, `^rowan\.yaml$`, rule1.PathRegex, "rule 0 path regex: %s", rule1.PathRegex)
+	assert.Equal(t, `^(SPACE_USER|SPACE_HOST)$`, rule1.UnencryptedRegex, "rule 0 unencrypted regex: %s", rule1.UnencryptedRegex)
+	require.Len(t, rule1.Recipients, 2, "expected 2 recipients in rule 0, got %d", len(rule1.Recipients))
 
 	// 3. Match rule
 	matched, err := FindMatchingRule(cfg, "rowan.yaml")
-	if err != nil {
-		t.Fatalf("failed to match rowan.yaml: %v", err)
-	}
-	if matched.PathRegex != `^rowan\.yaml$` {
-		t.Errorf("matched unexpected rule: %s", matched.PathRegex)
-	}
+	require.NoError(t, err, "failed to match rowan.yaml: %v", err)
+	assert.Equal(t, `^rowan\.yaml$`, matched.PathRegex, "matched unexpected rule: %s", matched.PathRegex)
 
 	// 4. Decrypted YAML secrets parsing
 	decrypted := []byte(`
@@ -107,22 +78,15 @@ SPACE_USER: rowan
 VALID_KEY: "quotes_stripped"
 `)
 	sec, keys, err := ParseDecryptedSecrets(decrypted)
-	if err != nil {
-		t.Fatalf("ParseDecryptedSecrets failed: %v", err)
-	}
-	if len(sec) != 3 || len(keys) != 3 {
-		t.Fatalf("expected 3 secrets, got %d", len(sec))
-	}
+	require.NoError(t, err, "ParseDecryptedSecrets failed: %v", err)
+	require.Len(t, sec, 3, "expected 3 secrets, got %d", len(sec))
+	require.Len(t, keys, 3, "expected 3 secrets, got %d", len(sec))
 	_ = sec["GH_TOKEN"].Use(func(v string) error {
-		if v != "ghp_testsecret123" {
-			t.Errorf("GH_TOKEN value got %s", v)
-		}
+		assert.Equal(t, "ghp_testsecret123", v, "GH_TOKEN value got %s", v)
 		return nil
 	})
 	_ = sec["VALID_KEY"].Use(func(v string) error {
-		if v != "quotes_stripped" {
-			t.Errorf("VALID_KEY value got %s", v)
-		}
+		assert.Equal(t, "quotes_stripped", v, "VALID_KEY value got %s", v)
 		return nil
 	})
 
@@ -133,9 +97,8 @@ MULTILINE: |
   line1
   line2
 `)
-	if _, _, err := ParseDecryptedSecrets(multiDecrypted); err == nil {
-		t.Fatalf("expected error on multi-line secret")
-	}
+	_, _, err = ParseDecryptedSecrets(multiDecrypted)
+	require.Error(t, err, "expected error on multi-line secret")
 }
 
 func TestGitIndexParser(t *testing.T) {
@@ -145,60 +108,43 @@ func TestGitIndexParser(t *testing.T) {
 	// Run git init, create a file, git add
 	run := func(args ...string) {
 		cmd := exec.Command("git", append([]string{"-C", tmp}, args...)...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v, out: %s", args, err, string(out))
-		}
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v failed: %v, out: %s", args, err, string(out))
 	}
 	run("init")
 	run("config", "user.name", "Test")
 	run("config", "user.email", "test@example.com")
 
 	f1 := filepath.Join(tmp, "tracked.txt")
-	if err := os.WriteFile(f1, []byte("hello"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(f1, []byte("hello"), 0644))
 	run("add", "tracked.txt")
 	run("commit", "-m", "initial")
 
 	tracked, err := ReadGitIndexTrackedFiles(tmp)
-	if err != nil {
-		t.Fatalf("ReadGitIndexTrackedFiles failed: %v", err)
-	}
-	if !tracked["tracked.txt"] {
-		t.Errorf("expected tracked.txt to be in index")
-	}
-	if tracked["untracked.txt"] {
-		t.Errorf("untracked.txt should not be in index")
-	}
+	require.NoError(t, err, "ReadGitIndexTrackedFiles failed: %v", err)
+	assert.True(t, tracked["tracked.txt"], "expected tracked.txt to be in index")
+	assert.False(t, tracked["untracked.txt"], "untracked.txt should not be in index")
 
 	// 2. Index Version 4 with prefix compression
 	f2 := filepath.Join(tmp, "tracked2.txt")
-	if err := os.WriteFile(f2, []byte("world"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(f2, []byte("world"), 0644))
 	run("add", "tracked2.txt")
 	run("update-index", "--index-version", "4")
 
 	idxData, err := ReadGitIndex(tmp)
-	if err != nil {
-		t.Fatalf("ReadGitIndex v4 failed: %v", err)
-	}
-	if len(idxData.Entries) != 2 {
-		t.Fatalf("expected 2 entries in v4 index, got %d", len(idxData.Entries))
-	}
-	if _, ok := idxData.Entries["tracked.txt"]; !ok {
-		t.Errorf("tracked.txt missing from v4 index")
-	}
-	if _, ok := idxData.Entries["tracked2.txt"]; !ok {
-		t.Errorf("tracked2.txt missing from v4 index")
+	require.NoError(t, err, "ReadGitIndex v4 failed: %v", err)
+	require.Len(t, idxData.Entries, 2, "expected 2 entries in v4 index, got %d", len(idxData.Entries))
+	_, ok := idxData.Entries["tracked.txt"]
+	assert.True(t, ok, "tracked.txt missing from v4 index")
+	{
+		_, ok := idxData.Entries["tracked2.txt"]
+		assert.True(t, ok, "tracked2.txt missing from v4 index")
 	}
 	// Verify blob SHA1 match
-	if err := VerifyFileMatchesIndex(tmp, f1, idxData); err != nil {
-		t.Errorf("VerifyFileMatchesIndex f1 failed: %v", err)
-	}
-	if err := VerifyFileMatchesIndex(tmp, f2, idxData); err != nil {
-		t.Errorf("VerifyFileMatchesIndex f2 failed: %v", err)
-	}
+	err = VerifyFileMatchesIndex(tmp, f1, idxData)
+	assert.NoError(t, err, "VerifyFileMatchesIndex f1 failed: %v", err)
+	err = VerifyFileMatchesIndex(tmp, f2, idxData)
+	assert.NoError(t, err, "VerifyFileMatchesIndex f2 failed: %v", err)
 }
 
 func TestUnquoteYAMLPreservesTrailingQuotes(t *testing.T) {
@@ -211,34 +157,22 @@ V_SINGLE: 'it''s'
 V_NORMAL: hello
 `)
 	secrets, keys, err := ParseDecryptedSecrets(data)
-	if err != nil {
-		t.Fatalf("ParseDecryptedSecrets failed: %v", err)
-	}
-	if len(keys) != 4 {
-		t.Fatalf("expected 4 keys, got %d", len(keys))
-	}
+	require.NoError(t, err, "ParseDecryptedSecrets failed: %v", err)
+	require.Len(t, keys, 4, "expected 4 keys, got %d", len(keys))
 	_ = secrets["V_TRAILQ"].Use(func(v string) error {
-		if v != `p@ss"` {
-			t.Errorf("V_TRAILQ got %q, want %q", v, `p@ss"`)
-		}
+		assert.Equal(t, `p@ss"`, v, "V_TRAILQ got %q, want %q", v, `p@ss"`)
 		return nil
 	})
 	_ = secrets["V_PAD"].Use(func(v string) error {
-		if v != "  padded  " {
-			t.Errorf("V_PAD got %q, want %q", v, "  padded  ")
-		}
+		assert.Equal(t, "  padded  ", v, "V_PAD got %q, want %q", v, "  padded  ")
 		return nil
 	})
 	_ = secrets["V_SINGLE"].Use(func(v string) error {
-		if v != "it's" {
-			t.Errorf("V_SINGLE got %q, want %q", v, "it's")
-		}
+		assert.Equal(t, "it's", v, "V_SINGLE got %q, want %q", v, "it's")
 		return nil
 	})
 	_ = secrets["V_NORMAL"].Use(func(v string) error {
-		if v != "hello" {
-			t.Errorf("V_NORMAL got %q, want %q", v, "hello")
-		}
+		assert.Equal(t, "hello", v, "V_NORMAL got %q, want %q", v, "hello")
 		return nil
 	})
 }
@@ -254,31 +188,19 @@ sops:
 LEAKED_TOKEN: cleartext_after_sops
 `
 	filePath := filepath.Join(tmp, "test.yaml")
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(content), 0644))
 	keys, recipients, hasSops, err := ParseStoreFileWithoutDecrypting(filePath)
-	if err != nil {
-		t.Fatalf("ParseStoreFileWithoutDecrypting failed: %v", err)
-	}
-	if !hasSops {
-		t.Errorf("expected hasSops=true")
-	}
-	if len(recipients) != 1 {
-		t.Errorf("expected 1 recipient, got %d", len(recipients))
-	}
+	require.NoError(t, err, "ParseStoreFileWithoutDecrypting failed: %v", err)
+	assert.True(t, hasSops, "expected hasSops=true")
+	assert.Len(t, recipients, 1, "expected 1 recipient, got %d", len(recipients))
 	found := false
 	for _, k := range keys {
 		if k.Name == "LEAKED_TOKEN" {
 			found = true
-			if !k.Clear {
-				t.Errorf("expected LEAKED_TOKEN to be marked clear")
-			}
+			assert.True(t, k.Clear, "expected LEAKED_TOKEN to be marked clear")
 		}
 	}
-	if !found {
-		t.Errorf("LEAKED_TOKEN after sops block was not detected")
-	}
+	assert.True(t, found, "LEAKED_TOKEN after sops block was not detected")
 }
 
 func TestIsValidAsName(t *testing.T) {
@@ -286,15 +208,11 @@ func TestIsValidAsName(t *testing.T) {
 
 	valid := []string{"rowan", "emma-1", "seat_2", "A", "0"}
 	for _, v := range valid {
-		if !IsValidAsName(v) {
-			t.Errorf("expected %q to be valid", v)
-		}
+		assert.True(t, IsValidAsName(v), "expected %q to be valid", v)
 	}
 	invalid := []string{"", "../outside", "a/b", "a\nb", "foo bar", "a*b"}
 	for _, inv := range invalid {
-		if IsValidAsName(inv) {
-			t.Errorf("expected %q to be invalid", inv)
-		}
+		assert.False(t, IsValidAsName(inv), "expected %q to be invalid", inv)
 	}
 }
 
@@ -331,14 +249,10 @@ func TestUnquoteYAMLDecodesAllValidYAMLEscapesAndRejectsUnknown(t *testing.T) {
 	for _, tc := range cases {
 		got, err := unquoteYAML(tc.input)
 		if tc.wantErr {
-			if err == nil {
-				t.Errorf("unquoteYAML(%q) expected error, got nil (val=%q)", tc.input, got)
-			}
+			assert.Error(t, err, "unquoteYAML(%q) expected error, got nil (val=%q)", tc.input, got)
 		} else {
-			if err != nil {
-				t.Errorf("unquoteYAML(%q) unexpected error: %v", tc.input, err)
-			} else if got != tc.want {
-				t.Errorf("unquoteYAML(%q) = %q, want %q", tc.input, got, tc.want)
+			if assert.NoError(t, err, "unquoteYAML(%q) unexpected error: %v", tc.input, err) {
+				assert.Equal(t, tc.want, got, "unquoteYAML(%q) = %q, want %q", tc.input, got, tc.want)
 			}
 		}
 	}
@@ -350,16 +264,11 @@ func TestParseDecryptedSecretsLargeLineBuffer(t *testing.T) {
 	largeVal := strings.Repeat("A", 128*1024)
 	input := fmt.Sprintf("LARGE_KEY: %s\n", largeVal)
 	sec, keys, err := ParseDecryptedSecrets([]byte(input))
-	if err != nil {
-		t.Fatalf("ParseDecryptedSecrets failed on 128KB line: %v", err)
-	}
-	if len(keys) != 1 || keys[0] != "LARGE_KEY" {
-		t.Fatalf("expected 1 key LARGE_KEY, got %v", keys)
-	}
+	require.NoError(t, err, "ParseDecryptedSecrets failed on 128KB line: %v", err)
+	require.Len(t, keys, 1, "expected 1 key LARGE_KEY, got %v", keys)
+	require.Equal(t, "LARGE_KEY", keys[0], "expected 1 key LARGE_KEY, got %v", keys)
 	_ = sec["LARGE_KEY"].Use(func(v string) error {
-		if len(v) != 128*1024 {
-			t.Errorf("expected len %d, got %d", 128*1024, len(v))
-		}
+		assert.Len(t, v, 128*1024, "expected len %d, got %d", 128*1024, len(v))
 		return nil
 	})
 }
@@ -396,22 +305,12 @@ func TestReadGitIndexExtendedFlags(t *testing.T) {
 	// Trailing 20 bytes checksum
 	buf.Write(make([]byte, 20))
 
-	if err := os.WriteFile(indexPath, buf.Bytes(), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(indexPath, buf.Bytes(), 0644))
 
 	idx, err := ReadGitIndex(td)
-	if err != nil {
-		t.Fatalf("ReadGitIndex with extended flags failed: %v", err)
-	}
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(idx.Entries))
-	}
+	require.NoError(t, err, "ReadGitIndex with extended flags failed: %v", err)
+	require.Len(t, idx.Entries, 1, "expected 1 entry, got %d", len(idx.Entries))
 	entry, ok := idx.Entries["test.txt"]
-	if !ok {
-		t.Fatalf("expected test.txt entry")
-	}
-	if string(entry.BlobSHA1[:]) != string(sha1Bytes) {
-		t.Errorf("blob SHA1 mismatch")
-	}
+	require.True(t, ok, "expected test.txt entry")
+	assert.Equal(t, string(sha1Bytes), string(entry.BlobSHA1[:]), "blob SHA1 mismatch")
 }
