@@ -267,8 +267,8 @@ func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
 }
 
 // open dials the store for a verb through redisconn. It performs the
-// handshake (HELLO 3, with the login) or refuses in one line.
-// login) are done, or refused in one line, before the verb's first command,
+// handshake (HELLO 3, with the login) or refuses in one line,
+// before the verb's first command,
 // which is still its first round trip. The client's first hook puts the
 // function library on a store that holds none (withLibrary, library.go).
 // A missing address is a usage refusal.
