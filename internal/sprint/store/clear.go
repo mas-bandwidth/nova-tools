@@ -129,8 +129,8 @@ func placed(t *sprint.Table, except string) int {
 // writes its shape at the pinned epoch: the rows of the four tables, then the
 // control cards (one step, holding the pinned epoch), then the display cells;
 // it removes a fence the old epoch holds (its writer is refused as
-// stale at its next write), and records the restore done.
-// epoch as read.
+// stale at its next write), and records the restore done. It returns
+// the old epoch as read.
 func (st *Store) restore(ctx context.Context, from uint64) (*sprint.Snapshot, error) {
 	old := st.At(from)
 	snap, err := old.Load(ctx, All, nil)
