@@ -238,7 +238,7 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 	if err := sealGit(c.run, c.storeDir, c.gitPath, "checkout", "-b", c.branch); err != nil {
 		return "", false, err
 	}
-	// #2016: restore the starting branch on every path; the commit stays on c.branch.
+	// Restore the starting branch on every path; the commit stays on c.branch.
 	restored := false
 	restore := func() error {
 		if restored {
@@ -476,7 +476,7 @@ func readSealValue(opts SealOptions) (string, error) {
 }
 
 // readSealFromTTY opens /dev/tty twice -- one handle to write the prompt, one to read the
-// value -- because a single read-write open did not work on the Stella bench.
+// value -- because a single read-write open of /dev/tty does not work on the bench.
 func readSealFromTTY() (string, error) {
 	w, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
 	if err != nil {
