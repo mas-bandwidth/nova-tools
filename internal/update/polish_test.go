@@ -58,3 +58,20 @@ func TestAHeaderRefusalSpellsTheTabAsTAB(t *testing.T) {
 		assert.Contains(t, errs, "name<TAB>stamp<TAB>revision<TAB>platform")
 	})
 }
+
+// A latest of "-" is the manifest's "not known yet" (banner rule 4): check says
+// so and names the column to fill, never "unsupported source" (ledger U11). The
+// exit stays 1, an UNKNOWN entry.
+func TestADashLatestIsNotDeclaredNotUnsupported(t *testing.T) {
+	t.Parallel()
+	dash := writeFile(t, "dash.tsv", Header+"\nfoo\ttool\t1.0.0\t-\tnone\tme\n")
+	for _, verb := range []string{"check", "status"} {
+		t.Run(verb, func(t *testing.T) {
+			code, out, errs := runTool(t, "nova-update", verb, "--file", dash)
+			assert.Equal(t, 1, code)
+			assert.Contains(t, out+errs, "latest not declared (-)")
+			assert.Contains(t, out+errs, "fill the latest column")
+			assert.NotContains(t, out+errs, "unsupported source")
+		})
+	}
+}
