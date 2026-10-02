@@ -461,7 +461,7 @@ and wake path stay, they are hers.
 
 **sprint:** a plain `SET sprint:<field>` for each field (`sprint:coordinator <friend>`), `DEL` when empty.
 Never removed. The handover is `nova-config sprint set --coordinator
-`<friend> --as <friend>` then `apply`: the sprint kind's own revision moves and
+<friend> --as <friend>` then `apply`: the sprint kind's own revision moves and
 the friend kind's plan is two `SET ... changed=roles`, the new coordinator's first.
 
 **loop:** the hash `loop:<l>` with every field of the row, `name`, `log`
