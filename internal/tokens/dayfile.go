@@ -30,7 +30,8 @@ import (
 // not this is refused by `sum` and named by `check`, and the repair is `fold --day <d>`.
 const Version = "nova-tokens v1"
 
-// TempSuffix is the fixed temporary-file suffix that check recognizes as a current input format.
+// TempSuffix is a fixed temporary-file suffix that check treats as an input
+// pattern for day-file temporaries.
 const TempSuffix = ".tsv.tmp"
 
 // FileSuffix is a day file's extension.
@@ -184,11 +185,12 @@ func Shrinks(old, now Counts, day string) []Shrink {
 	return out
 }
 
-// The merge keeps rows outside this fold's sources instead of recomputing the whole file.
+// The merge keeps rows outside a fold's declared sources instead of recomputing
+// the whole file.
 //
-// A fold declares SOURCES, and a day file's rows each name the sources that wrote them.
-// A run that declares one source and recomputes the file whole ERASES every row the other
-// sources wrote, and the shrink comparison cannot see it because it is over the day's per-type
+// A fold declares SOURCES, and each row in a day file names the sources that wrote it.
+// If a fold recomputed the entire file, it would erase every row from other
+// sources, and the shrink comparison cannot detect that loss because it is over the day's per-type
 // TOTALS. A run whose own numbers exceed what it deletes can therefore write a smaller file
 // with a bigger total and report written=true. A day holding a retained row with a small
 // count, folded by a run whose own row carries a larger count, returns holding the
@@ -337,8 +339,7 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 		}
 	}
 	// The version line carries `turns=` as an integer or `-`. An empty value is
-	// present but says nothing, and a NEGATIVE one is not a count of messages; both read
-	// clean when the check was only `!= "" && != Dash`.
+	// present but says nothing; it passes the check that only rejects `!= "" && != Dash`. A negative
 	if _, ok := fields["turns"]; ok && d.Turns != Dash {
 		n, err := strconv.Atoi(d.Turns)
 		switch {

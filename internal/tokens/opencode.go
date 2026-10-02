@@ -45,12 +45,11 @@ const waitDelay = 2 * time.Second
 // is the one table with the fields as columns of its own -- so every field SPEC-TOKENS
 // names (`providerID`, `modelID`, the five `tokens.*` counts, `path.cwd`, a tool part's
 // inputs) is a json_extract, and the answers come back as `sqlite3 -json` prints them:
-// a JSON array of row objects keyed by the SELECT's own aliases. Bare columns were
-// `no such column: providerID`, one TOKENS UNREADABLE, and every OpenCode row of the day
-// lost. Every extracted column must be given the SELECT's own alias so each row remains readable.
+// a JSON array of row objects keyed by the SELECT's own aliases. Bare columns would fail with a column-not-found error,
+// so every extracted field gets the SELECT's alias to keep each row readable.
 //
-// `time_created` is epoch milliseconds; strftime renders it as the RFC 3339 UTC stamp
-// the fold uses, so the day comes from the message rather than the process clock.
+// `time_created` is epoch milliseconds; strftime renders it as an RFC 3339 UTC stamp
+// the fold uses, so the day comes from the message itself rather than the process clock.
 // -json rather than -tabs because a tool part's `command` input holds tabs and newlines,
 // and a row that splits on the data inside it is a row read wrong.
 const (
@@ -226,8 +225,9 @@ func query(db, sql string, timeout time.Duration) ([]map[string]string, error) {
 	return rows, nil
 }
 
-// cellText renders one JSON cell as text. SQL NULL is the empty string, which is a column
-// the row does not carry: a dash in the day file and never a zero.
+// cellText renders one JSON cell as text. SQL NULL is the empty string, which marks a
+// column the row does not carry: a dash in the day file instead of zero represents
+// a source that reported nothing rather than an actual count of zero.
 func cellText(v any) string {
 	switch t := v.(type) {
 	case nil:

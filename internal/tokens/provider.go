@@ -16,8 +16,8 @@ import (
 
 // --provider <label>=<file>: a billing export.
 //
-// For a harness that records nothing a tool can read, the provider's billing export is the
-// only record. The account holder downloads the export; the label
+// When no tool can capture usage data directly, the provider's billing export serves as
+// the only source of truth. The account holder downloads it; the label
 // names the provider and therefore the parser. The repo is the fixed word `unattributed`:
 // the tool never splits a provider total across repos by any proportion, because a split
 // nobody measured is a number nobody can defend.
@@ -91,7 +91,7 @@ func ParserColumns(kind string) []string {
 }
 
 // ReadProvider reads one billing export with the parser its kind names. The label on
-// every row it feeds is `<kind>:<name>`, a label per account, as the spec's own day-file
+// every row it feeds is `<kind>:<name>`, a per-account label that the day-file
 // example writes it, so two exports from one provider are two sources.
 func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	s := &Source{Label: Label(kind, name), Kind: KindProvider, Path: path, Basis: UTC}
