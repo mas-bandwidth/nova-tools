@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -21,14 +24,10 @@ func scratch(t *testing.T) (write, read, home, secret string) {
 	home = filepath.Join(write, "home")
 	secretDir := filepath.Join(base, "secret")
 	for _, d := range []string{write, read, home, secretDir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(d, 0o755))
 	}
 	secret = filepath.Join(secretDir, "env")
-	if err := os.WriteFile(secret, []byte("not-a-real-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(secret, []byte("not-a-real-key\n"), 0o600))
 	// Resolve, because /var on a Mac is a symlink to /private/var and every path this
 	// package holds is resolved (rule 5).
 	for _, p := range []*string{&write, &read, &home, &secret} {
@@ -95,18 +94,14 @@ func TestRefusesToGuessAWriteSet(t *testing.T) {
 	t.Parallel()
 
 	_, bad := Build(Input{Argv: []string{anExecutable(t)}, Home: "/"})
-	if len(bad) == 0 {
-		t.Fatal("a run with no --write was built; rule 4 refuses to guess")
-	}
+	require.NotEmpty(t, bad, "a run with no --write was built; rule 4 refuses to guess")
 	var found bool
 	for _, r := range bad {
 		if r.Reason == "bad_write" && strings.Contains(r.Text, "--write") && r.Code() == ExitRefused {
 			found = true
 		}
 	}
-	if !found {
-		t.Fatalf("no bad_write refusal naming the flag at 125: %v", bad)
-	}
+	require.True(t, found, "no bad_write refusal naming the flag at 125: %v", bad)
 }
 
 // Rule 5: relative is refused WITH the absolute form; absent is refused and NOT created.
@@ -116,22 +111,16 @@ func TestPathsAreResolvedAbsoluteAndExisting(t *testing.T) {
 	write, read, home, _ := scratch(t)
 
 	_, bad := Build(in(t, "relative/dir", read, home, anExecutable(t)))
-	if len(bad) == 0 || !strings.Contains(bad[0].Text, "is relative") {
-		t.Fatalf("a relative --write was not refused: %v", bad)
-	}
+	require.NotEmpty(t, bad, "a relative --write was not refused: %v", bad)
+	require.Contains(t, bad[0].Text, "is relative", "a relative --write was not refused: %v", bad)
 	abs, _ := filepath.Abs("relative/dir")
-	if !strings.Contains(bad[0].Text, abs) {
-		t.Fatalf("the refusal did not print the absolute form it wanted: %q", bad[0].Text)
-	}
+	require.Contains(t, bad[0].Text, abs, "the refusal did not print the absolute form it wanted: %q", bad[0].Text)
 
 	missing := filepath.Join(write, "not-there")
 	_, bad = Build(in(t, missing, read, home, anExecutable(t)))
-	if len(bad) == 0 || !strings.Contains(bad[0].Text, "does not exist") {
-		t.Fatalf("an absent --write was not refused: %v", bad)
-	}
-	if _, err := os.Stat(missing); !os.IsNotExist(err) {
-		t.Fatal("the absent path was created; rule 5 refuses, it does not create")
-	}
+	require.NotEmpty(t, bad, "an absent --write was not refused: %v", bad)
+	require.Contains(t, bad[0].Text, "does not exist", "an absent --write was not refused: %v", bad)
+	require.NoFileExists(t, missing, "the absent path was created; rule 5 refuses, it does not create")
 }
 
 // Rule 4: a path in both lists is a refusal naming both flags, never a silent merge.
@@ -140,18 +129,13 @@ func TestSamePathInBothListsIsARefusal(t *testing.T) {
 
 	write, _, home, _ := scratch(t)
 	_, bad := Build(Input{Reads: []string{write}, Writes: []string{write}, Home: home, Argv: []string{anExecutable(t)}})
-	if len(bad) == 0 {
-		t.Fatal("a path in both lists was merged")
-	}
-	if !strings.Contains(bad[0].Text, "--read") || !strings.Contains(bad[0].Text, "--write") {
-		t.Fatalf("the refusal did not name both flags: %q", bad[0].Text)
-	}
+	require.NotEmpty(t, bad, "a path in both lists was merged")
+	require.Contains(t, bad[0].Text, "--read", "the refusal did not name both flags: %q", bad[0].Text)
+	require.Contains(t, bad[0].Text, "--write", "the refusal did not name both flags: %q", bad[0].Text)
 	// The reason token, which no test pinned and which the spec's exit table got wrong:
 	// it is bad_read, because the --read is the flag that adds nothing (a --write already
 	// carries read) and is therefore the one to delete.
-	if bad[0].Reason != "bad_read" {
-		t.Fatalf("reason %q, want bad_read; the exit table names it and nothing pinned it", bad[0].Reason)
-	}
+	require.Equal(t, "bad_read", bad[0].Reason, "reason %q, want bad_read; the exit table names it and nothing pinned it", bad[0].Reason)
 }
 
 // Rule 9: a HOME outside every --write is refused BEFORE the command runs.
@@ -166,12 +150,10 @@ func TestHomeOutsideTheWriteSetIsRefused(t *testing.T) {
 			found = true
 		}
 	}
-	if !found {
-		t.Fatalf("a HOME outside every --write was accepted: %v", bad)
-	}
-	if p, bad := Build(in(t, write, read, filepath.Join(write, "home"), anExecutable(t))); len(bad) > 0 || p.Home == "" {
-		t.Fatalf("a HOME inside the write set was refused: %v", bad)
-	}
+	require.True(t, found, "a HOME outside every --write was accepted: %v", bad)
+	p, bad := Build(in(t, write, read, filepath.Join(write, "home"), anExecutable(t)))
+	require.Empty(t, bad, "a HOME inside the write set was refused: %v", bad)
+	require.NotEmpty(t, p.Home, "a HOME inside the write set was refused: %v", bad)
 }
 
 // Rule 9 and the SBPL refusal: HOME is a path the generated profile names, so it pays
@@ -184,9 +166,7 @@ func TestHomeWithSbplMetacharacterIsRefused(t *testing.T) {
 	needSbpl(t)
 	write, read, _, _ := scratch(t)
 	oddHome := filepath.Join(write, "a (paren) home")
-	if err := os.MkdirAll(oddHome, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(oddHome, 0o755))
 	_, bad := Build(in(t, write, read, oddHome, anExecutable(t)))
 	var found bool
 	for _, r := range bad {
@@ -194,9 +174,7 @@ func TestHomeWithSbplMetacharacterIsRefused(t *testing.T) {
 			found = true
 		}
 	}
-	if !found {
-		t.Fatalf("a HOME holding a paren was accepted into the generated policy: %v", bad)
-	}
+	require.True(t, found, "a HOME holding a paren was accepted into the generated policy: %v", bad)
 }
 
 // Rules 13 and 8: the cwd and the temp directory default to the first --write, and an
@@ -206,23 +184,19 @@ func TestCwdAndTmpAreInsideTheWall(t *testing.T) {
 
 	write, read, home, _ := scratch(t)
 	p, bad := Build(in(t, write, read, home, anExecutable(t)))
-	if len(bad) > 0 {
-		t.Fatalf("refused: %v", bad)
-	}
-	if p.Cwd != write {
-		t.Fatalf("cwd = %q, want the first --write %q", p.Cwd, write)
-	}
-	if want := filepath.Join(write, tmpDirName); !Inside(p.Tmp, write) || filepath.Base(p.Tmp) != filepath.Base(want) {
-		t.Fatalf("tmp = %q, want %q", p.Tmp, want)
-	}
-	if fi, err := os.Stat(p.Tmp); err != nil || !fi.IsDir() {
-		t.Fatalf("the one directory the tool creates was not created: %v", err)
-	}
+	require.Empty(t, bad, "refused: %v", bad)
+	require.Equal(t, write, p.Cwd, "cwd = %q, want the first --write %q", p.Cwd, write)
+	want := filepath.Join(write, tmpDirName)
+	require.True(t, Inside(p.Tmp, write), "tmp = %q, want %q", p.Tmp, want)
+	require.Equal(t, filepath.Base(want), filepath.Base(p.Tmp), "tmp = %q, want %q", p.Tmp, want)
+	fi, err := os.Stat(p.Tmp)
+	require.NoError(t, err, "the one directory the tool creates was not created: %v", err)
+	require.True(t, fi.IsDir(), "the one directory the tool creates was not created: %v", err)
 	iv := in(t, write, read, home, anExecutable(t))
 	iv.Cwd = read
-	if _, bad = Build(iv); len(bad) == 0 || bad[0].Reason != "bad_cwd" {
-		t.Fatalf("a --cwd outside the write set was accepted: %v", bad)
-	}
+	_, bad = Build(iv)
+	require.NotEmpty(t, bad, "a --cwd outside the write set was accepted: %v", bad)
+	require.Equal(t, "bad_cwd", bad[0].Reason, "a --cwd outside the write set was accepted: %v", bad)
 }
 
 // The exit-codes section: the pre-flight stats the resolved command OUTSIDE the wall.
@@ -231,23 +205,24 @@ func TestCommandPreflight(t *testing.T) {
 
 	write, read, home, _ := scratch(t)
 	notExec := filepath.Join(write, "data.txt")
-	if err := os.WriteFile(notExec, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(notExec, []byte("x"), 0o600))
 	if runtime.GOOS == "windows" {
 		// Windows has no executable bit, and resolveCommand says so in one place: the
 		// preflight there is the stat and the directory check, not the mode. Asserting a
 		// refusal that cannot fire would be asserting the assertion.
 		t.Log("the executable-bit half of the preflight is skipped on windows: there is no such bit")
-	} else if _, bad := Build(in(t, write, read, home, notExec)); len(bad) == 0 || bad[0].Reason != "not_executable" || bad[0].Code() != ExitRefused {
-		t.Fatalf("a command with no executable bit was accepted: %v", bad)
+	} else {
+		_, bad := Build(in(t, write, read, home, notExec))
+		require.NotEmpty(t, bad, "a command with no executable bit was accepted: %v", bad)
+		require.Equal(t, "not_executable", bad[0].Reason, "a command with no executable bit was accepted: %v", bad)
+		require.Equal(t, ExitRefused, bad[0].Code(), "a command with no executable bit was accepted: %v", bad)
 	}
 	iv := in(t, write, read, home, "definitely-not-a-command-here")
 	iv.LookAt = write
 	_, bad := Build(iv)
-	if len(bad) == 0 || bad[0].Reason != "not_found" || bad[0].Code() != ExitNotFound {
-		t.Fatalf("a command on no PATH entry was not 127 not_found: %v", bad)
-	}
+	require.NotEmpty(t, bad, "a command on no PATH entry was not 127 not_found: %v", bad)
+	require.Equal(t, "not_found", bad[0].Reason, "a command on no PATH entry was not 127 not_found: %v", bad)
+	require.Equal(t, ExitNotFound, bad[0].Code(), "a command on no PATH entry was not 127 not_found: %v", bad)
 }
 
 // The build's own decision, from "to verify at build" item 2: a path carrying an SBPL
@@ -264,32 +239,23 @@ func TestPathWithSbplMetacharacterIsRefused(t *testing.T) {
 	// and it still went green. A test that cannot go red for its own subject is a green
 	// about something else.
 	oddHome := filepath.Join(odd, "home")
-	if err := os.MkdirAll(oddHome, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(oddHome, 0o755))
 	iv := in(t, odd, read, oddHome, anExecutable(t))
 	_, bad := Build(iv)
-	if len(bad) == 0 {
-		t.Fatal("a path holding a paren was accepted into the generated policy")
-	}
+	require.NotEmpty(t, bad, "a path holding a paren was accepted into the generated policy")
 	found := false
 	for _, r := range bad {
 		if r.Reason == "bad_write" && strings.Contains(r.Text, "the generated policy cannot carry") {
 			found = true
 		}
 	}
-	if !found {
-		t.Fatalf("the refusal is not the metacharacter one this test is about: %v", bad)
-	}
+	require.True(t, found, "the refusal is not the metacharacter one this test is about: %v", bad)
 	// A control: the same shape without the metacharacter is accepted, so the refusal is
 	// about the paren and not about the directory being new.
 	plain := filepath.Join(write, "a-paren")
-	if err := os.MkdirAll(filepath.Join(plain, "home"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, bad := Build(in(t, plain, read, filepath.Join(plain, "home"), anExecutable(t))); len(bad) > 0 {
-		t.Fatalf("control: the same shape without the paren was refused: %v", bad)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(plain, "home"), 0o755))
+	_, bad = Build(in(t, plain, read, filepath.Join(plain, "home"), anExecutable(t)))
+	require.Empty(t, bad, "control: the same shape without the paren was refused: %v", bad)
 }
 
 // Rule 9 and this build's agent fix: the environment passes through, the four temp
@@ -300,14 +266,10 @@ func TestChildEnv(t *testing.T) {
 	env := []string{"HOME=/w/home", "ANTHROPIC_API_KEY=sk-not-real", "TMPDIR=/outside", "TMPPREFIX=/outside/zsh", "SSH_AUTH_SOCK=/private/tmp/agent.sock", "SSH_AGENT_PID=9", "PATH=/bin"}
 	got := strings.Join(ChildEnv(env, "/w/.nova-sandbox-tmp"), "\n")
 	for _, want := range []string{"ANTHROPIC_API_KEY=sk-not-real", "PATH=/bin", "TMPDIR=/w/.nova-sandbox-tmp", "TMP=/w/.nova-sandbox-tmp", "TEMP=/w/.nova-sandbox-tmp", "TMPPREFIX=/w/.nova-sandbox-tmp/zsh"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("the child's environment is missing %q:\n%s", want, got)
-		}
+		require.Contains(t, got, want, "the child's environment is missing %q:\n%s", want, got)
 	}
 	for _, gone := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID", "TMPDIR=/outside", "TMPPREFIX=/outside/zsh"} {
-		if strings.Contains(got, gone) {
-			t.Fatalf("%q survived into the child's environment:\n%s", gone, got)
-		}
+		require.NotContains(t, got, gone, "%q survived into the child's environment:\n%s", gone, got)
 	}
 	// The guest's separator, on every host: the four temp variables name paths the
 	// CHILD opens inside the wall, so a backslash in any of them is the host's
@@ -316,14 +278,11 @@ func TestChildEnv(t *testing.T) {
 		name, value, _ := strings.Cut(kv, "=")
 		switch name {
 		case "TMPDIR", "TMP", "TEMP", "TMPPREFIX":
-			if strings.Contains(value, `\`) {
-				t.Fatalf("%s=%q is a guest path spelled with the host's separator", name, value)
-			}
+			require.NotContains(t, value, `\`, "%s=%q is a guest path spelled with the host's separator", name, value)
 		}
 	}
-	if d := DroppedEnv(env); len(d) != 2 {
-		t.Fatalf("DroppedEnv = %v, want the two agent variables", d)
-	}
+	d := DroppedEnv(env)
+	require.Len(t, d, 2, "DroppedEnv = %v, want the two agent variables", d)
 }
 
 // The ancestor literals of the darwin profile: every proper ancestor, "/" excluded.
@@ -334,15 +293,11 @@ func TestAncestors(t *testing.T) {
 	// themselves, and they are granted by their own subpath rule.
 	got := Ancestors(filepath.FromSlash("/a/b/c"), filepath.FromSlash("/a/b/d"))
 	want := []string{filepath.FromSlash("/a"), filepath.FromSlash("/a/b")}
-	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Fatalf("Ancestors = %v, want %v", got, want)
-	}
+	require.Equal(t, strings.Join(want, " "), strings.Join(got, " "), "Ancestors = %v, want %v", got, want)
 	// The top of the tree is excluded, and it is asked for rather than spelled: "/" on unix
 	// and `C:\` on windows are the same fact about the same loop.
 	for _, d := range got {
-		if filepath.Dir(d) == d {
-			t.Fatalf("%q is the top of the tree and is in the ancestor list; it is granted file-read* above", d)
-		}
+		require.NotEqual(t, d, filepath.Dir(d), "%q is the top of the tree and is in the ancestor list; it is granted file-read* above", d)
 	}
 }
 
@@ -368,9 +323,7 @@ func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
 	// A home of this test's own passed via CallerHomes.
 	callerHome := filepath.Join(base, "home")
 	deeper := filepath.Join(callerHome, "tools")
-	if err := os.MkdirAll(deeper, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(deeper, 0o755))
 
 	// The command is named in this platform's own spelling. Nothing here RUNS it — Build
 	// resolves it and stops — but a test that hard-codes a unix name on windows is the
@@ -382,18 +335,12 @@ func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
 			name, body = "x.cmd", "@exit /b 0\r\n"
 		}
 		script := filepath.Join(dir, name)
-		if err := testbin.WriteExecutable(script, []byte(body), 0o700); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, testbin.WriteExecutable(script, []byte(body), 0o700))
 		return script
 	}
 	// Beside a key, which is the shape that matters: ~/x.sh with ~/.ssh next to it.
-	if err := os.MkdirAll(filepath.Join(callerHome, ".ssh"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(callerHome, ".ssh", "id_test"), []byte("not-a-real-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(callerHome, ".ssh"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(callerHome, ".ssh", "id_test"), []byte("not-a-real-key\n"), 0o600))
 	for _, tc := range []struct{ name, command string }{
 		{"the home itself", plant(callerHome)},
 		{"an ancestor of the home", plant(base)},
@@ -402,18 +349,15 @@ func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
 			iv := in(t, write, read, home, tc.command)
 			iv.CallerHomes = []string{callerHome}
 			p, bad := Build(iv)
-			if p != nil || len(bad) == 0 {
-				t.Fatalf("a command at %s was built; its directory would be a read root", tc.command)
-			}
+			require.Nil(t, p, "a command at %s was built; its directory would be a read root", tc.command)
+			require.NotEmpty(t, bad, "a command at %s was built; its directory would be a read root", tc.command)
 			var found bool
 			for _, r := range bad {
 				if r.Reason == "bad_read" && strings.Contains(r.Text, "home directory") && r.Code() == ExitRefused {
 					found = true
 				}
 			}
-			if !found {
-				t.Fatalf("the refusal does not name the home directory: %v", bad)
-			}
+			require.True(t, found, "the refusal does not name the home directory: %v", bad)
 		})
 	}
 	// One directory deeper is a directory of its own, and it IS a root: the roots table
@@ -422,23 +366,18 @@ func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
 	iv := in(t, write, read, home, command)
 	iv.CallerHomes = []string{callerHome}
 	p, bad := Build(iv)
-	if len(bad) > 0 {
-		t.Fatalf("a command in a directory of its own was refused: %v", bad)
-	}
+	require.Empty(t, bad, "a command in a directory of its own was refused: %v", bad)
 	var isRoot bool
 	for _, r := range p.OptRoots {
 		if r == deeper {
 			isRoot = true
 		}
 	}
-	if !isRoot {
-		t.Fatalf("the directory of the resolved command is not a root: %v", p.OptRoots)
-	}
+	require.True(t, isRoot, "the directory of the resolved command is not a root: %v", p.OptRoots)
 	// Rule 3's one exemption: a caller that names the directory in its own argv has added
 	// it back itself, so nothing new is granted and there is nothing to refuse.
-	if _, bad := Build(Input{Reads: []string{callerHome}, Writes: []string{write}, Home: home, Argv: []string{plant(callerHome)}, CallerHomes: []string{callerHome}}); len(bad) > 0 {
-		t.Fatalf("a home the caller named in its own --read was refused: %v", bad)
-	}
+	_, bad = Build(Input{Reads: []string{callerHome}, Writes: []string{write}, Home: home, Argv: []string{plant(callerHome)}, CallerHomes: []string{callerHome}})
+	require.Empty(t, bad, "a home the caller named in its own --read was refused: %v", bad)
 }
 
 // TestBuildDefaultWiringPassesCallerHomes asserts that Build uses callerHomes() when
@@ -452,18 +391,14 @@ func TestBuildDefaultWiringPassesCallerHomes(t *testing.T) {
 		base = got
 	}
 	fakeHome := filepath.Join(base, "home")
-	if err := os.MkdirAll(fakeHome, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(fakeHome, 0o755))
 
 	name, body := "tool.sh", "#!/bin/sh\nexit 0\n"
 	if runtime.GOOS == "windows" {
 		name, body = "tool.cmd", "@exit /b 0\r\n"
 	}
 	script := filepath.Join(fakeHome, name)
-	if err := testbin.WriteExecutable(script, []byte(body), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(script, []byte(body), 0o700))
 
 	iv := in(t, write, read, home, script)
 	// CallerHomes is empty on iv.
@@ -476,16 +411,12 @@ func TestBuildDefaultWiringPassesCallerHomes(t *testing.T) {
 			break
 		}
 	}
-	if !refusedCustom {
-		t.Fatalf("build(iv, homesFn) did not refuse command in custom home: %v", badCustom)
-	}
+	require.True(t, refusedCustom, "build(iv, homesFn) did not refuse command in custom home: %v", badCustom)
 
 	// 2. build(iv, nilHomes) does NOT refuse when homesFn returns nil.
 	_, badNil := build(iv, func() []string { return nil })
 	for _, r := range badNil {
-		if strings.Contains(r.Text, "a home directory, and the home directory is never a root") {
-			t.Fatalf("build(iv, nil) unexpectedly refused: %v", r)
-		}
+		require.NotContains(t, r.Text, "a home directory, and the home directory is never a root", "build(iv, nil) unexpectedly refused: %v", r)
 	}
 
 	// 3. Build(iv) uses callerHomes() by default. If a command lives in the real caller's home,
@@ -514,9 +445,7 @@ func TestBuildDefaultWiringPassesCallerHomes(t *testing.T) {
 			break
 		}
 	}
-	if !refusedReal {
-		t.Errorf("Build(ivReal) did not refuse command in real home %s: %v", realHome, badReal)
-	}
+	assert.True(t, refusedReal, "Build(ivReal) did not refuse command in real home %s: %v", realHome, badReal)
 }
 
 // The edges of the ancestor walk, which TestAncestors above does not reach: a path with a
@@ -541,15 +470,13 @@ func TestAncestorsEdges(t *testing.T) {
 		{"dot", ".", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := strings.Join(Ancestors(tc.path), " "); got != tc.want {
-				t.Fatalf("Ancestors(%q) = %q, want %q", tc.path, got, tc.want)
-			}
+			got := strings.Join(Ancestors(tc.path), " ")
+			require.Equal(t, tc.want, got, "Ancestors(%q) = %q, want %q", tc.path, got, tc.want)
 		})
 	}
 	// And the same path spelt two ways is one answer, not two.
-	if got := strings.Join(Ancestors("/a/b", "/a/b/"), " "); got != "/a" {
-		t.Fatalf("Ancestors(/a/b, /a/b/) = %q, want %q", got, "/a")
-	}
+	got := strings.Join(Ancestors("/a/b", "/a/b/"), " ")
+	require.Equal(t, "/a", got, "Ancestors(/a/b, /a/b/) = %q, want %q", got, "/a")
 }
 
 // Rule 15 and this build's network fix: the generated profile fills every marker, names
@@ -561,22 +488,14 @@ func TestDarwinProfileIsGenerated(t *testing.T) {
 	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
 	p, bad := Build(in(t, write, read, home, anExecutable(t)))
-	if len(bad) > 0 {
-		t.Fatalf("refused: %v", bad)
-	}
+	require.Empty(t, bad, "refused: %v", bad)
 	text, params, err := DarwinProfile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// The template's own header documents each marker and names the form this build
 	// rejected, so both assertions are about the GRANTS — the lines that are not comments.
 	grants := grantLines(text)
-	if strings.Contains(grants, "@@") {
-		t.Fatalf("a marker survived into the filled profile:\n%s", text)
-	}
-	if strings.Contains(grants, "(allow network*)") {
-		t.Fatal("(allow network*) grants every unix-domain socket, including the SSH agent's")
-	}
+	require.NotContains(t, grants, "@@", "a marker survived into the filled profile:\n%s", text)
+	require.NotContains(t, grants, "(allow network*)", "(allow network*) grants every unix-domain socket, including the SSH agent's")
 	for _, want := range []string{
 		`(allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))`,
 		`(allow network-outbound (subpath (param "WRITE0")))`,
@@ -584,42 +503,29 @@ func TestDarwinProfileIsGenerated(t *testing.T) {
 		`(allow file-read* file-write* (subpath (param "WRITE0")))`,
 		`(allow file-read-metadata (literal "` + filepath.Dir(write) + `"))`,
 	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("the filled profile is missing %q:\n%s", want, text)
-		}
+		require.Contains(t, text, want, "the filled profile is missing %q:\n%s", want, text)
 	}
-	if strings.Contains(text, write+`"`) && !strings.Contains(text, `(literal "`+filepath.Dir(write)) {
-		t.Fatal("a caller path entered the profile text as data")
-	}
+	require.False(t, strings.Contains(text, write+`"`) && !strings.Contains(text, `(literal "`+filepath.Dir(write)), "a caller path entered the profile text as data")
 	// Every param the text names must be passed, or sandbox-exec is exit 65.
 	for _, name := range []string{"READ0", "WRITE0", "HOME"} {
-		if !strings.Contains(strings.Join(params, " "), name+"=") {
-			t.Fatalf("param %s is named by the profile and not passed: %v", name, params)
-		}
+		require.Contains(t, strings.Join(params, " "), name+"=", "param %s is named by the profile and not passed: %v", name, params)
 	}
 	// Byte-identical twice: the same lists produce the same policy.
 	again, _, err := DarwinProfile(p)
-	if err != nil || again != text {
-		t.Fatal("the generated policy is not deterministic")
-	}
+	require.NoError(t, err, "the generated policy is not deterministic")
+	require.Equal(t, text, again, "the generated policy is not deterministic")
 	// Rule 7: under --net-deny every network grant is withheld.
 	p.NetDeny = true
 	denied, _, err := DarwinProfile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// Under --net-deny the IP grants are withheld. The per-write
 	// (allow network-outbound (subpath (param "WRITEn"))) line stays, because the
 	// template emits it with the write grant: it reaches a unix socket that is the job's
 	// own file inside its own write set, which --net-deny is not about.
 	for _, gone := range []string{"(remote ip)", "network-inbound"} {
-		if strings.Contains(grantLines(denied), gone) {
-			t.Fatalf("--net-deny left %s in the profile:\n%s", gone, denied)
-		}
+		require.NotContains(t, grantLines(denied), gone, "--net-deny left %s in the profile:\n%s", gone, denied)
 	}
-	if p.Net() != "denied" {
-		t.Fatalf("net = %q, want denied", p.Net())
-	}
+	require.Equal(t, "denied", p.Net(), "net = %q, want denied", p.Net())
 }
 
 // #1557: /usr/bin/c++ is an Xcode shim that reads /var/db/xcode_select_link.
@@ -633,25 +539,18 @@ func TestDarwinProfileGrantsTheXcodeSelectLink(t *testing.T) {
 	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
 	p, bad := Build(in(t, write, read, home, anExecutable(t)))
-	if len(bad) > 0 {
-		t.Fatalf("refused: %v", bad)
-	}
+	require.Empty(t, bad, "refused: %v", bad)
 	text, _, err := DarwinProfile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	grants := grantLines(text)
 	for _, want := range []string{
 		`(literal "/var/db/xcode_select_link")`,
 		`(literal "/private/var/db/xcode_select_link")`,
 	} {
-		if !strings.Contains(grants, want) {
-			t.Errorf("the generated profile does not grant %s; /usr/bin/c++ reads that link and every C/C++ compile inside the wall dies", want)
-		}
+		assert.Contains(t, grants, want, "the generated profile does not grant %s; /usr/bin/c++ reads that link and every C/C++ compile inside the wall dies", want)
 	}
-	if strings.Contains(grants, `(subpath "/private/var/db")`) || strings.Contains(grants, `(subpath "/var/db")`) {
-		t.Error("the profile grants a subpath on /var/db; the grant is the xcode_select_link literal, not the directory")
-	}
+	assert.NotContains(t, grants, `(subpath "/private/var/db")`, "the profile grants a subpath on /var/db; the grant is the xcode_select_link literal, not the directory")
+	assert.NotContains(t, grants, `(subpath "/var/db")`, "the profile grants a subpath on /var/db; the grant is the xcode_select_link literal, not the directory")
 }
 
 // TestAncestorsGetMetadataOnly: the ancestor literals grant stat, never data. Every proper
@@ -666,26 +565,16 @@ func TestAncestorsGetMetadataOnly(t *testing.T) {
 	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
 	p, bad := Build(in(t, write, read, home, anExecutable(t)))
-	if len(bad) > 0 {
-		t.Fatalf("refused: %v", bad)
-	}
+	require.Empty(t, bad, "refused: %v", bad)
 	text, _, err := DarwinProfile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	grants := grantLines(text)
 	want := Ancestors(p.Reads[0], p.Writes[0], p.Cwd, p.Tmp)
-	if len(want) == 0 {
-		t.Fatal("no ancestors to assert; a scratch path always has parents up to /")
-	}
+	require.NotEmpty(t, want, "no ancestors to assert; a scratch path always has parents up to /")
 	for _, d := range want {
-		if !strings.Contains(grants, `(allow file-read-metadata (literal "`+d+`"))`) {
-			t.Errorf("no metadata literal for ancestor %s:\n%s", d, grants)
-		}
-		if strings.Contains(grants, `file-read-data (literal "`+d+`")`) ||
-			strings.Contains(grants, `file-read* (literal "`+d+`")`) {
-			t.Errorf("ancestor %s carries a data read grant; metadata only:\n%s", d, grants)
-		}
+		assert.Contains(t, grants, `(allow file-read-metadata (literal "`+d+`"))`, "no metadata literal for ancestor %s:\n%s", d, grants)
+		assert.NotContains(t, grants, `file-read-data (literal "`+d+`")`, "ancestor %s carries a data read grant; metadata only:\n%s", d, grants)
+		assert.NotContains(t, grants, `file-read* (literal "`+d+`")`, "ancestor %s carries a data read grant; metadata only:\n%s", d, grants)
 	}
 }
 
@@ -711,24 +600,14 @@ func TestInboundIsOnlyGrantedWhenAsked(t *testing.T) {
 	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
 	p, bad := Build(in(t, write, read, home, anExecutable(t)))
-	if len(bad) > 0 {
-		t.Fatalf("refused: %v", bad)
-	}
+	require.Empty(t, bad, "refused: %v", bad)
 	text, _, err := DarwinProfile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(grantLines(text), "network-inbound") {
-		t.Fatal("inbound was granted to a job that did not ask to listen")
-	}
+	require.NoError(t, err)
+	require.NotContains(t, grantLines(text), "network-inbound", "inbound was granted to a job that did not ask to listen")
 	p.NetListen = true
 	listening, _, err := DarwinProfile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(grantLines(listening), "(allow network-inbound (local ip))") {
-		t.Fatalf("--net-listen granted no inbound:\n%s", listening)
-	}
+	require.NoError(t, err)
+	require.Contains(t, grantLines(listening), "(allow network-inbound (local ip))", "--net-listen granted no inbound:\n%s", listening)
 }
 
 // Rule 7's bad_net, in its OWN test and on EVERY platform. It lived at the end of the test
@@ -743,15 +622,10 @@ func TestNetDenyWithNetListenIsRefusedOnEveryPlatform(t *testing.T) {
 	iv := in(t, write, read, home, anExecutable(t))
 	iv.NetDeny, iv.NetListen = true, true
 	_, bad := Build(iv)
-	if len(bad) == 0 {
-		t.Fatal("--net-deny with --net-listen was accepted; the tool picked which the caller meant")
-	}
-	if bad[0].Reason != "bad_net" {
-		t.Fatalf("reason %q, want bad_net: %v", bad[0].Reason, bad)
-	}
-	if !strings.Contains(bad[0].Text, "--net-deny") || !strings.Contains(bad[0].Text, "--net-listen") {
-		t.Fatalf("the refusal did not name both flags: %q", bad[0].Text)
-	}
+	require.NotEmpty(t, bad, "--net-deny with --net-listen was accepted; the tool picked which the caller meant")
+	require.Equal(t, "bad_net", bad[0].Reason, "reason %q, want bad_net: %v", bad[0].Reason, bad)
+	require.Contains(t, bad[0].Text, "--net-deny", "the refusal did not name both flags: %q", bad[0].Text)
+	require.Contains(t, bad[0].Text, "--net-listen", "the refusal did not name both flags: %q", bad[0].Text)
 }
 
 // Rule 9, revision 7: the scrub set is exactly what the spec names. AI_AGENT and
@@ -775,19 +649,14 @@ func TestScrubSetIsExactlyTheSpecs(t *testing.T) {
 		got[name] = true
 	}
 	for _, gone := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID", "GPG_AGENT_INFO", "PODMAN_AGENT_SOCK"} {
-		if got[gone] {
-			t.Errorf("%s survived the scrub", gone)
-		}
+		assert.False(t, got[gone], "%s survived the scrub", gone)
 	}
 	for _, kept := range []string{"AI_AGENT", "CLAUDE_AGENT_SDK_VERSION", "FOO_TOKEN"} {
-		if !got[kept] {
-			t.Errorf("%s was dropped; it names what runs the job, not an address", kept)
-		}
+		assert.True(t, got[kept], "%s was dropped; it names what runs the job, not an address", kept)
 	}
 	dropped := strings.Join(DroppedEnv(caller), " ")
-	if strings.Contains(dropped, "AI_AGENT") || strings.Contains(dropped, "CLAUDE_AGENT_SDK_VERSION") {
-		t.Errorf("the NOTE line claims to have dropped a variable it did not: %q", dropped)
-	}
+	assert.NotContains(t, dropped, "AI_AGENT", "the NOTE line claims to have dropped a variable it did not: %q", dropped)
+	assert.NotContains(t, dropped, "CLAUDE_AGENT_SDK_VERSION", "the NOTE line claims to have dropped a variable it did not: %q", dropped)
 }
 
 // Rule 7, revision 7: mach-lookup is narrowed and the unqualified form is gone.
@@ -797,25 +666,17 @@ func TestMachLookupIsNarrowed(t *testing.T) {
 	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
 	pol, bad := Build(in(t, write, read, home, anExecutable(t)))
-	if len(bad) > 0 {
-		t.Fatalf("refused: %v", bad)
-	}
+	require.Empty(t, bad, "refused: %v", bad)
 	text, _, err := DarwinProfile(pol)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, line := range strings.Split(text, "\n") {
-		if strings.TrimSpace(line) == "(allow mach-lookup)" {
-			t.Fatal("the template still carries the unqualified (allow mach-lookup): pbpaste reads the clipboard under it")
-		}
+		require.NotEqual(t, "(allow mach-lookup)", strings.TrimSpace(line), "the template still carries the unqualified (allow mach-lookup): pbpaste reads the clipboard under it")
 	}
 	for _, name := range []string{
 		"com.apple.system.opendirectoryd.libinfo",
 		"com.apple.SecurityServer",
 		"com.apple.system.logger",
 	} {
-		if !strings.Contains(text, name) {
-			t.Errorf("the measured mach-lookup set is missing %s", name)
-		}
+		assert.Contains(t, text, name, "the measured mach-lookup set is missing %s", name)
 	}
 }
