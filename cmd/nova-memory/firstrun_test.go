@@ -634,15 +634,15 @@ func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
 	// All flags supported by nova-memory subcommands.
 	flags := []string{
 		"root", "channels", "k", "exclude", "floor", "links",
-		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft", "pin", "json",
+		"coverage", "frontmatter", "exempt", "max", "words", "draft", "pin", "json",
 	}
 	for _, f := range flags {
 		target := "  --" + f + " "
 		assert.Containsf(t, stdout, target, "flag --%s has no entry in the usage banner flags list:\n%s", f, stdout)
 	}
-	// Assert --fail-max default is not welded onto words.
+	// Assert --max default is not welded onto words.
 	welded := "cannot bury the one frontmatter finding. the words the demonstration search runs."
-	assert.NotContainsf(t, stdout, welded, "the --fail-max and --words help text are still welded together:\n%s", stdout)
+	assert.NotContainsf(t, stdout, welded, "the --max and --words help text are still welded together:\n%s", stdout)
 }
 
 func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {

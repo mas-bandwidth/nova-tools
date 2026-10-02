@@ -51,9 +51,9 @@ func TestVerifyCountsFindingsBeforeCapping(t *testing.T) {
 		verifyFile(t, root, fmt.Sprintf("notes/n%d.md", i), "words\n")
 	}
 	verifyFile(t, root, "index.md", "no entries\n")
-	code, _, errOut := runCLI(t, "", "verify", "--root", root, "--links", "info", "--coverage", "notes/*.md:index.md", "--frontmatter", "notes/*.md", "--fail-max", "1")
+	code, _, errOut := runCLI(t, "", "verify", "--root", root, "--links", "info", "--coverage", "notes/*.md:index.md", "--frontmatter", "notes/*.md", "--max", "1")
 	require.Equalf(t, 1, code, "counts: exit %d err=%s", code, errOut)
-	require.Containsf(t, errOut, "VERIFY FAIL gating=4 shown=2 info=0 coverage=2 frontmatter=2 links=info", "counts: exit %d err=%s", code, errOut)
+	require.Containsf(t, errOut, "VERIFY FAILED gating=4 shown=2 info=0 coverage=2 frontmatter=2 links=info", "counts: exit %d err=%s", code, errOut)
 }
 
 func TestVerifyMissingLinksNamesItsChoices(t *testing.T) {
@@ -72,7 +72,7 @@ func TestVerifyLinksToExcludedTargetsRemainFindings(t *testing.T) {
 	verifyFile(t, root, "index.md", "[a](notes/a.md) [b](ignored/b.md) [[b]]\n")
 	code, _, errOut := runCLI(t, "", "verify", "--root", root, "--links", "gate", "--coverage", "notes/*.md:index.md", "--exclude", "ignored")
 	require.Equalf(t, 1, code, "retained references: exit %d err=%s", code, errOut)
-	require.Containsf(t, errOut, "VERIFY FAIL backlink", "retained references: exit %d err=%s", code, errOut)
-	require.Containsf(t, errOut, "VERIFY FAIL wikilink", "retained references: exit %d err=%s", code, errOut)
+	require.Containsf(t, errOut, "VERIFY FAILED backlink", "retained references: exit %d err=%s", code, errOut)
+	require.Containsf(t, errOut, "VERIFY FAILED wikilink", "retained references: exit %d err=%s", code, errOut)
 	require.Containsf(t, errOut, "gating=2 shown=2 info=0 coverage=1 frontmatter=0", "retained references: exit %d err=%s", code, errOut)
 }

@@ -485,7 +485,7 @@ func TestVerifyLinksRulingIsTheCallersBothWays(t *testing.T) {
 
 	exit, stdout, stderr := runCLI(t, "", append(append([]string{}, base...), "--links", "gate")...)
 	require.Equalf(t, 1, exit, "--links gate: exit = %d, want 1; stderr: %s", exit, stderr)
-	assert.Containsf(t, stderr, "VERIFY FAIL wikilink [[storm-glass]]", "stderr = %q, want the gating wikilink failure", stderr)
+	assert.Containsf(t, stderr, "VERIFY FAILED wikilink [[storm-glass]]", "stderr = %q, want the gating wikilink failure", stderr)
 	assert.NotContainsf(t, stdout, "VERIFY OK", "a failing verify must not print an OK line, got %q", stdout)
 }
 
@@ -505,13 +505,13 @@ func TestVerifySaysNoOnPlantedFaults(t *testing.T) {
 			name:  "an orphan note that no index names",
 			plant: map[string]string{"notes/orphan.md": "---\nname: orphan\n---\n\nan undistilled lesson that no index line names at all\n"},
 			args:  []string{"--coverage", "notes/*.md:notes/index-*.md"},
-			want:  "VERIFY FAIL coverage notes/orphan.md",
+			want:  "VERIFY FAILED coverage notes/orphan.md",
 		},
 		{
 			name:  "an index line pointing at nothing",
 			plant: map[string]string{"notes/index-a.md": "# Index\n\n- [gone](gone.md)\n"},
 			args:  []string{"--coverage", "notes/*.md:notes/index-*.md"},
-			want:  "VERIFY FAIL backlink",
+			want:  "VERIFY FAILED backlink",
 		},
 		{
 			// The fault the wall used to pass green. The target regex
@@ -523,13 +523,13 @@ func TestVerifySaysNoOnPlantedFaults(t *testing.T) {
 			name:  "an index line pointing at nothing through an anchor",
 			plant: map[string]string{"notes/index-a.md": "# Index\n\n- [gone anchored](gone.md#top)\n"},
 			args:  []string{"--coverage", "notes/*.md:notes/index-*.md"},
-			want:  "VERIFY FAIL backlink",
+			want:  "VERIFY FAILED backlink",
 		},
 		{
 			name:  "an index line pointing at nothing through a query string",
 			plant: map[string]string{"notes/index-a.md": "# Index\n\n- [gone queried](gone.md?raw=1)\n"},
 			args:  []string{"--coverage", "notes/*.md:notes/index-*.md"},
-			want:  "VERIFY FAIL backlink",
+			want:  "VERIFY FAILED backlink",
 		},
 		{
 			// Same hole in the other link grammar: the wikilink regex
@@ -538,19 +538,19 @@ func TestVerifySaysNoOnPlantedFaults(t *testing.T) {
 			name:  "a dangling aliased wikilink under the gate",
 			plant: map[string]string{"notes/aliased.md": "---\nname: aliased\n---\n\nsee [[nowhere-page|the missing page]] for the part nobody wrote down yet\n"},
 			links: "gate",
-			want:  "VERIFY FAIL wikilink [[nowhere-page]]",
+			want:  "VERIFY FAILED wikilink [[nowhere-page]]",
 		},
 		{
 			name:  "a dangling heading wikilink under the gate",
 			plant: map[string]string{"notes/heading.md": "---\nname: heading\n---\n\nsee [[nowhere-page#the-readings]] for the part nobody wrote down yet\n"},
 			links: "gate",
-			want:  "VERIFY FAIL wikilink [[nowhere-page]]",
+			want:  "VERIFY FAILED wikilink [[nowhere-page]]",
 		},
 		{
 			name:  "a note with no frontmatter name",
 			plant: map[string]string{"notes/bare.md": "just a paragraph of prose with no frontmatter above it\n"},
 			args:  []string{"--frontmatter", "notes/*.md", "--exempt", "index-"},
-			want:  "VERIFY FAIL frontmatter notes/bare.md",
+			want:  "VERIFY FAILED frontmatter notes/bare.md",
 		},
 	}
 	for _, tc := range cases {
@@ -584,16 +584,16 @@ func TestVerifyDoesNotFlagLinksThatResolve(t *testing.T) {
 	writeUnder(t, dir, "notes/aliased.md", "---\nname: aliased\n---\n"+
 		"\nsee [[tide-tables|the jetty timing]] and [[lantern-care#the-brass]] and\n"+
 		"[the tides](tides.md#the-sandbar) and [the lantern](lantern.md?raw=1) for the rest\n")
-	// --links gate, so a wikilink false positive would show up as a FAIL line.
+	// --links gate, so a wikilink false positive would show up as a FAILED line.
 	// The fixture's own deliberate [[storm-glass]] still gates, so the exit is
-	// 1 either way; what is under test is WHICH findings appear.
+	// 1 either way; what is under test is which findings appear.
 	exit, _, stderr := runCLI(t, "", "verify", "--root", dir, "--links", "gate",
 		"--coverage", "notes/*.md:notes/index-*.md")
 	require.Equalf(t, 1, exit, "exit = %d, want 1 (the fixture's deliberate [[storm-glass]] gates); stderr: %s", exit, stderr)
 	for _, resolves := range []string{"tide-tables", "lantern-care", "tides.md", "lantern.md"} {
 		assert.NotContainsf(t, stderr, resolves, "a link that resolves was reported: %q appears in %q", resolves, stderr)
 	}
-	assert.Containsf(t, stderr, "VERIFY FAIL wikilink [[storm-glass]]", "the fixture's known-dangling link stopped being found: %q", stderr)
+	assert.Containsf(t, stderr, "VERIFY FAILED wikilink [[storm-glass]]", "the fixture's known-dangling link stopped being found: %q", stderr)
 }
 
 // A glob that matches nothing is a broken check, not a pass — refused (2),
@@ -723,7 +723,7 @@ func TestEvalSaysNoBelowTheFloor(t *testing.T) {
 	require.NoError(t, os.WriteFile(gold, []byte(content), 0o644))
 	exit, stdout, stderr := runCLI(t, "", "eval", "--root", corpus, "--channels", "bm25", "--k", "1", "--floor", "0.8", gold)
 	require.Equalf(t, 1, exit, "exit = %d, want 1; stdout: %s stderr: %s", exit, stdout, stderr)
-	assert.Containsf(t, stderr, "EVAL FAIL recall@1=", "stderr = %q, want the below-floor failure naming the measurement", stderr)
+	assert.Containsf(t, stderr, "EVAL FAILED recall@1=", "stderr = %q, want the below-floor failure naming the measurement", stderr)
 	assert.Containsf(t, stderr, "below floor 0.800", "stderr = %q, want the below-floor failure naming the measurement", stderr)
 	assert.NotContainsf(t, stdout, "EVAL OK", "a failing eval must not print an OK line, got %q", stdout)
 	assert.Containsf(t, stdout, "EVAL MISS query=", "the failing rows must be named, got %q", stdout)
@@ -857,7 +857,7 @@ func TestNoCorpusOrCallerTextCanForgeALine(t *testing.T) {
 		exit, stdout, stderr := runCLI(t, "", "verify", "--root", root, "--links", "info", "--frontmatter", "notes/*.md")
 		require.Equalf(t, 1, exit, "exit = %d, want 1; stdout: %s stderr: %s", exit, stdout, stderr)
 		noForgedLine(t, forged, stdout, stderr)
-		assert.Containsf(t, stderr, `VERIFY FAIL frontmatter notes/zz\x0a`+forged+`.md: no name: in frontmatter`, "stderr = %q, want the finding on one line with the name escaped", stderr)
+		assert.Containsf(t, stderr, `VERIFY FAILED frontmatter notes/zz\x0a`+forged+`.md: no name: in frontmatter`, "stderr = %q, want the finding on one line with the name escaped", stderr)
 	})
 
 	t.Run("an eval refusal quotes a gold file whose name holds a newline", func(t *testing.T) {
@@ -874,7 +874,7 @@ func TestNoCorpusOrCallerTextCanForgeALine(t *testing.T) {
 		exit, stdout, stderr := runCLI(t, "", "stats", "--root", corpus, "--bogus\n"+forged)
 		require.Equalf(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
 		noForgedLine(t, forged, stdout, stderr)
-		assert.Containsf(t, stderr, `nova-memory stats: flag provided but not defined: -bogus\x0aSTATS OK schema`, "stderr = %q, want this tool's own refusal with the flag escaped", stderr)
+		assert.Containsf(t, stderr, `STATS REFUSED: flag provided but not defined: -bogus\x0aSTATS OK schema; run: nova-memory help`, "stderr = %q, want this tool's own refusal with the flag escaped", stderr)
 	})
 }
 
@@ -889,4 +889,73 @@ func TestEvalRejectsNaNFloorBeforeReads(t *testing.T) {
 	assert.Containsf(t, stderr, "--floor must be in (0,1] (got NaN)", "stderr does not name the rejected floor: %q", stderr)
 	assert.NotContainsf(t, stderr, "/nonexistent", "rejection happened after reading or attempting to read paths: %q", stderr)
 	assert.Equalf(t, "", stdout, "expected empty stdout on refusal, got %q", stdout)
+}
+
+// TestStatusGrammar drives each verb through OK, REFUSED and (where supported) FAILED
+// and asserts the first status word after the printed verb token together with the exit
+// code. It uses the package run entry so the grammar is pinned at source.
+func TestStatusGrammar(t *testing.T) {
+	t.Parallel()
+
+	type row struct {
+		name      string
+		args      []string
+		wantFirst string // first word after the verb token
+		wantExit  int
+	}
+	// verbs use their printed token: STATS, SEARCH, MEMORY (for check), VERIFY, EVAL,
+	// BOOT, QUICKSTART.
+	cases := []row{
+		{"stats ok", []string{"stats", "--root", corpus}, "OK", 0},
+		{"stats refused", []string{"stats"}, "REFUSED", 2},
+		{"search ok", []string{"search", "--root", corpus, "--channels", "bm25", "--k", "1", "glazing"}, "OK", 0},
+		{"search refused", []string{"search"}, "REFUSED", 2},
+		{"check ok", []string{"check", "--root", corpus, "--channels", "bm25", "--k", "1", "-"}, "OK", 0}, // note: stdin supplied in runner for -
+		{"check refused", []string{"check"}, "REFUSED", 2},
+		{"verify ok", []string{"verify", "--root", corpus, "--links", "info", "--coverage", "notes/*.md:notes/index-*.md"}, "OK", 0},
+		{"verify refused", []string{"verify"}, "REFUSED", 2},
+		{"verify failed", []string{"verify", "--root", corpus, "--links", "gate", "--coverage", "notes/*.md:notes/index-*.md"}, "FAILED", 1},
+		{"eval ok", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.1", exampleGold}, "OK", 0},
+		{"eval refused", []string{"eval"}, "REFUSED", 2},
+		{"eval failed", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.999", exampleGold}, "FAILED", 1},
+		{"boot refused", []string{"boot"}, "REFUSED", 2},
+		{"quickstart ok", []string{"quickstart", "--root", corpus}, "OK", 0},
+		{"quickstart refused", []string{"quickstart"}, "REFUSED", 2},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stdin := ""
+			args := tc.args
+			if tc.name == "check ok" {
+				stdin = "The lantern glazing is cleaned with two cloths.\n"
+			}
+			if tc.name == "eval failed" {
+				// use a gold with deliberately wrong expectations so recall low
+				gold := filepath.Join(t.TempDir(), "bad-gold.tsv")
+				content := "# wrong on purpose\nhow often should the lantern glazing be washed\tnotes/fog-signal.md\nwhen can the relief boat land at the jetty steps\tnotes/lantern.md\n"
+				require.NoError(t, os.WriteFile(gold, []byte(content), 0o644))
+				args = []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "1", "--floor", "0.8", gold}
+			}
+			exit, stdout, stderr := runCLI(t, stdin, args...)
+			require.Equalf(t, tc.wantExit, exit, "exit=%d want=%d args=%q", exit, tc.wantExit, args)
+			out := stdout + stderr
+			found := false
+			for _, line := range strings.Split(out, "\n") {
+				fs := strings.Fields(line)
+				if len(fs) < 2 {
+					continue
+				}
+				// verb tokens are upper: STATS, SEARCH, MEMORY (for check), CHECK(for refuse), VERIFY, EVAL, BOOT, QUICKSTART, NOVA-MEMORY
+				switch fs[0] {
+				case "STATS", "SEARCH", "MEMORY", "CHECK", "VERIFY", "EVAL", "BOOT", "QUICKSTART", "NOVA-MEMORY":
+					if strings.TrimRight(fs[1], ":") == tc.wantFirst {
+						found = true
+					}
+				}
+			}
+			assert.Truef(t, found, "no %s %s line for %q; out=%q", tc.args[0], tc.wantFirst, args, out)
+		})
+	}
 }

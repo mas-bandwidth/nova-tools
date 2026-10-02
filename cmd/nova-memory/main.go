@@ -61,9 +61,9 @@ usage:
   nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
   nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                      [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
-                     [--fail-max <n>]
+                     [--max <n>]
   nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]...
-                     [--fail-max <n>] <gold.tsv>
+                     [--max <n>] <gold.tsv>
   nova-memory boot   --root <dir> --pin <file>
 
 quickstart is the first run and nothing else: it runs stats, then one search,
@@ -103,13 +103,13 @@ flags:
   --exempt <prefix>     verify only, repeatable: basename prefixes that are
                         listings, not entries, and are exempt from
                         --frontmatter. Nothing is exempt by default.
-  --fail-max <n>        verify and eval only: how many finding lines to PRINT
+  --max <n>             verify and eval only: how many finding lines to PRINT
                         before one MORE line stands for the rest. Default 20,
                         and 0 means all. The count is never capped -- the
                         summary line carries the total whether the run passed
                         or failed -- because a reader who wanted the number
-                        should not have to pay for the list. verify caps each
-                        KIND separately, so ten thousand wikilink findings
+                        should not have to pay for the list. Verify caps each
+                        kind separately, so ten thousand wikilink findings
                         cannot bury the one frontmatter finding.
   --words <w>           quickstart only, repeatable: the words the
                         demonstration search runs. Default: the corpus's three
@@ -188,17 +188,21 @@ const noteLexical = "lexical only — a paraphrase sharing almost no vocabulary 
 // failMaxRemedy is the second half of every MORE line this binary prints. A cap with no
 // remedy is censorship; a cap with one is an index, so the line that says what was not
 // shown says in the same breath how to see it.
-const failMaxRemedy = "--fail-max <n> raises the ceiling, --fail-max 0 prints every finding"
+const failMaxRemedy = "--max <n> raises the ceiling, --max 0 prints every finding"
 
-// refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
-// door to the usage rather than the usage itself.
+// refuse is what an unusable invocation costs: one line in the status grammar with
+// REFUSED after the verb token, naming what was wrong and the door to the usage.
 //
 // One line instead of the whole usage is the right trade twice over: a reader who
 // mistyped a flag knows what the flags are and wanted the one sentence, and a reader who
 // does not know can type the four words at the end of the line. The usage is still there,
 // still complete, and now it is asked for.
 func refuse(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-memory%s: %s; run: nova-memory help\n", oneline.Escape(where), oneline.Escape(what))
+	verb := "NOVA-MEMORY"
+	if w := strings.TrimSpace(where); w != "" {
+		verb = strings.ToUpper(w)
+	}
+	fmt.Fprintf(stderr, "%s REFUSED: %s; run: nova-memory help\n", oneline.Field(verb), oneline.Escape(what))
 	return 2
 }
 
@@ -1017,7 +1021,8 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&coverage, "coverage", "A:B glob pair, repeatable")
 	fs.Var(&front, "frontmatter", "glob whose files must carry a frontmatter name:, repeatable")
 	fs.Var(&exempt, "exempt", "basename prefix exempt from --frontmatter, repeatable (nothing is exempt by default)")
-	failMax := fs.Int("fail-max", bounded.Default, "finding lines to print per kind before one MORE line stands for the rest; 0 prints all")
+	cap := fs.Int("max", bounded.Default, "finding lines to print per kind before one MORE line stands for the rest; 0 prints all")
+	failMaxAlias := fs.Int("fail-max", bounded.Default, "deprecated alias for --max")
 	given, ok := parse(fs, args, stderr, "root", "links")
 	if given == nil {
 		return 2
@@ -1039,15 +1044,26 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 			bad = true
 		}
 	}
-	if given["fail-max"] && *failMax < 0 {
+	if (given["max"] && *cap < 0) || (given["fail-max"] && *failMaxAlias < 0) {
 		// Zero already means "all". A negative ceiling is neither a number of lines nor
 		// a way of asking for every line, so it is a typo with two readings and gets
 		// neither.
-		refuse(stderr, " verify", fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", *failMax))
+		v := *cap
+		if given["fail-max"] {
+			v = *failMaxAlias
+		}
+		refuse(stderr, " verify", fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 means print them all", v))
 		bad = true
 	}
 	if bad {
 		return 2
+	}
+	if given["fail-max"] {
+		fmt.Fprint(stderr, "NOTE --fail-max is --max\n")
+	}
+	max := *cap
+	if given["fail-max"] {
+		max = *failMaxAlias
 	}
 	if len(rf.root) != 1 {
 		// --coverage and --frontmatter globs and [[wikilink]] resolution all
@@ -1107,15 +1123,15 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	// mean that on a corpus with ten thousand unresolved wikilinks the twenty lines a
 	// reader gets are twenty wikilinks, and the one frontmatter finding -- the finding
 	// they did not already know about -- is the line the cap ate.
-	infos := bounded.Grouped(stdout, *failMax, "VERIFY", failMaxRemedy)
+	infos := bounded.Grouped(stdout, max, "VERIFY", failMaxRemedy)
 	for _, f := range info {
 		infos.Line(f.Kind, fmt.Sprintf("VERIFY INFO %s: %s", f.Kind, oneline.Escape(oneline.Cap(f.Detail, oneline.TailBytes))))
 	}
 	infos.More()
 
-	fails := bounded.Grouped(stderr, *failMax, "VERIFY", failMaxRemedy)
+	fails := bounded.Grouped(stderr, max, "VERIFY", failMaxRemedy)
 	for _, f := range gating {
-		fails.Line(f.Kind, fmt.Sprintf("VERIFY FAIL %s %s", f.Kind, oneline.Escape(oneline.Cap(f.Detail, oneline.TailBytes))))
+		fails.Line(f.Kind, fmt.Sprintf("VERIFY FAILED %s %s", f.Kind, oneline.Escape(oneline.Cap(f.Detail, oneline.TailBytes))))
 	}
 	fails.More()
 
@@ -1123,7 +1139,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	// never N, so a reader who wanted to know how bad it was had to count the output --
 	// and the output was capped from here on, which would have made counting it a lie.
 	if fails.Total() > 0 {
-		fmt.Fprintf(stderr, "VERIFY FAIL gating=%d shown=%d info=%d coverage=%d frontmatter=%d links=%s\n",
+		fmt.Fprintf(stderr, "VERIFY FAILED gating=%d shown=%d info=%d coverage=%d frontmatter=%d links=%s\n",
 			fails.Total(), fails.Shown(), infos.Total(), coverageFindings, frontmatterFindings, *links)
 		return 1
 	}
@@ -1141,7 +1157,8 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per query, positive (required)")
 	floor := fs.Float64("floor", 0, "minimum recall@k in (0,1] (required)")
-	failMax := fs.Int("fail-max", bounded.Default, "MISS lines to print before one MORE line stands for the rest; 0 prints all")
+	cap := fs.Int("max", bounded.Default, "MISS lines to print before one MORE line stands for the rest; 0 prints all")
+	failMaxAlias := fs.Int("fail-max", bounded.Default, "deprecated alias for --max")
 	given, ok := parse(fs, args, stderr, "root", "channels", "k", "floor")
 	if given == nil {
 		return 2
@@ -1160,8 +1177,12 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 		refuse(stderr, " eval", fmt.Sprintf("--floor must be in (0,1] (got %g); a harness that cannot fail is not a measurement", *floor))
 		bad = true
 	}
-	if given["fail-max"] && *failMax < 0 {
-		refuse(stderr, " eval", fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", *failMax))
+	if (given["max"] && *cap < 0) || (given["fail-max"] && *failMaxAlias < 0) {
+		v := *cap
+		if given["fail-max"] {
+			v = *failMaxAlias
+		}
+		refuse(stderr, " eval", fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 means print them all", v))
 		bad = true
 	}
 	if fs.NArg() != 1 {
@@ -1170,6 +1191,13 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	}
 	if bad {
 		return 2
+	}
+	if given["fail-max"] {
+		fmt.Fprint(stderr, "NOTE --fail-max is --max\n")
+	}
+	max := *cap
+	if given["fail-max"] {
+		max = *failMaxAlias
 	}
 	rows, err := readGold(fs.Arg(0))
 	if err != nil {
@@ -1187,7 +1215,7 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	// run every one of them said "this worked". So the hits are a count, and only the
 	// misses -- the rows a reader can act on -- are listed, capped like every other
 	// listing here.
-	misses := bounded.Capped(stdout, *failMax, "EVAL", "miss", failMaxRemedy)
+	misses := bounded.Capped(stdout, max, "EVAL", "miss", failMaxRemedy)
 	hits := 0
 	var mrr float64
 	for _, row := range rows {
@@ -1216,7 +1244,7 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	recall := float64(hits) / float64(len(rows))
 	mrr /= float64(len(rows))
 	if recall < *floor {
-		fmt.Fprintf(stderr, "EVAL FAIL recall@%d=%.3f below floor %.3f (%d/%d, misses=%d shown=%d, mrr=%.3f, channels=%s)\n",
+		fmt.Fprintf(stderr, "EVAL FAILED recall@%d=%.3f below floor %.3f (%d/%d, misses=%d shown=%d, mrr=%.3f, channels=%s)\n",
 			*k, recall, *floor, hits, len(rows), misses.Total(), misses.Shown(), mrr, chanNames(chans))
 		return 1
 	}

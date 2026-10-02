@@ -49,10 +49,10 @@ func TestVerifyCapsFindingsAndAlwaysPrintsTheCount(t *testing.T) {
 			got, bounded.Default, firstLines(stderr, 3))
 	}
 	assert.Containsf(t, stderr, "VERIFY MORE kind=wikilink shown=20 total=500", "no MORE line naming the total:\n%s", stderr)
-	assert.Containsf(t, stderr, "--fail-max", "the MORE line names no remedy:\n%s", stderr)
+	assert.Containsf(t, stderr, "--max", "the MORE line names no remedy:\n%s", stderr)
 	// The count line on FAILURE is the half that was missing everywhere: N lines and
 	// never N.
-	assert.Containsf(t, stderr, "VERIFY FAIL gating=500 shown=20", "no count line on failure:\n%s", stderr)
+	assert.Containsf(t, stderr, "VERIFY FAILED gating=500 shown=20", "no count line on failure:\n%s", stderr)
 	assert.Equalf(t, "", stdout, "a failing verify wrote to stdout: %q", stdout)
 }
 
@@ -61,17 +61,17 @@ func TestVerifyFailMaxWidensAndZeroPrintsAll(t *testing.T) {
 	t.Parallel()
 
 	dir := largeCorpus(t, 500)
-	_, _, stderr := runCLI(t, "", "verify", "--root", dir, "--links", "gate", "--fail-max", "5")
+	_, _, stderr := runCLI(t, "", "verify", "--root", dir, "--links", "gate", "--max", "5")
 	{
 		got := countLines(stderr)
-		assert.Equalf(t, 7, got, "--fail-max 5 gave %d lines, want 5 + MORE + count", got)
+		assert.Equalf(t, 7, got, "--max 5 gave %d lines, want 5 + MORE + count", got)
 	}
-	_, _, stderr = runCLI(t, "", "verify", "--root", dir, "--links", "gate", "--fail-max", "0")
+	_, _, stderr = runCLI(t, "", "verify", "--root", dir, "--links", "gate", "--max", "0")
 	{
 		got := countLines(stderr)
-		assert.Equalf(t, 501, got, "--fail-max 0 gave %d lines, want all 500 + the count line", got)
+		assert.Equalf(t, 501, got, "--max 0 gave %d lines, want all 500 + the count line", got)
 	}
-	assert.NotContainsf(t, stderr, "VERIFY MORE", "--fail-max 0 elided nothing and must print no MORE line")
+	assert.NotContainsf(t, stderr, "VERIFY MORE", "--max 0 elided nothing and must print no MORE line")
 }
 
 // Zero already means all, so a negative ceiling is a typo with two readings and gets
@@ -80,9 +80,9 @@ func TestVerifyRefusesANegativeCeiling(t *testing.T) {
 	t.Parallel()
 
 	dir := largeCorpus(t, 3)
-	exit, _, stderr := runCLI(t, "", "verify", "--root", dir, "--links", "gate", "--fail-max", "-1")
+	exit, _, stderr := runCLI(t, "", "verify", "--root", dir, "--links", "gate", "--max", "-1")
 	assert.Equalf(t, 2, exit, "exit = %d, stderr = %q", exit, stderr)
-	assert.Containsf(t, stderr, "--fail-max must be a line ceiling", "exit = %d, stderr = %q", exit, stderr)
+	assert.Containsf(t, stderr, "--max must be a line ceiling", "exit = %d, stderr = %q", exit, stderr)
 }
 
 // The reason the cap is per KIND: twenty wikilink findings must not be able to eat the
@@ -153,5 +153,5 @@ func TestEvalListsMissesOnlyAndCapsThem(t *testing.T) {
 		assert.Equalf(t, bounded.Default+1, got, "stdout is %d lines, want %d misses + one MORE line:\n%s", got, bounded.Default, firstLines(stdout, 3))
 	}
 	assert.Containsf(t, stdout, "EVAL MORE kind=miss shown=20 total=500", "no MORE line naming the total:\n%s", firstLines(stdout, 25))
-	assert.Containsf(t, stderr, "misses=500 shown=20", "the FAIL line does not carry the miss count: %q", stderr)
+	assert.Containsf(t, stderr, "misses=500 shown=20", "the failure summary line does not carry the miss count: %q", stderr)
 }
