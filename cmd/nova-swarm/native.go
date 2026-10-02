@@ -421,23 +421,22 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, fmt.Sprintf("the job directory %s could not be made: %s", oneline.Field(jobDir), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
-	// THE LEASE. The bench's hygiene pass reaps job directories; it once decided a card was dead because its capture had been quiet for fifteen minutes --
-	// which is what one long model call looks like. The launcher knows better and says so:
-	// <job>/.lease carries this process's pid and a heartbeat for as long as the child runs,
-	// and the reaper never touches a leased job or the slot's data/ and tmp/ around it. It
-	// is released, and the file removed, when this run returns by any path.
+	// THE LEASE. The bench's hygiene pass reaps job directories, and it reads the capture
+	// alone: a capture quiet for fifteen minutes is what one long model call looks like,
+	// and a live card reaped on that quiet is what the lease prevents. <job>/.lease
+	// carries this process's pid and a heartbeat for as long as the child runs, and the
+	// reaper never touches a leased job or the slot's data/ and tmp/ around it. It is
+	// released, and the file removed, when this run returns by any path.
 	//
-	// AND IT IS THE JOB DIRECTORY'S OWNERSHIP. Two `native` runs were given
-	// one physical <slot>/jobs/<label>: the bench store gave each its own seat, but the job
-	// directory, the data home, the temp directory and the logs under it were ONE set of
-	// paths, and the first run to exit removed the other's lease. SPEC-SWARM settles
-	// whether that is lawful before any repair is designed: under **Slots** a worker has
-	// "its own data home" and "its own job directory" and "a slot is held by exactly one
-	// worker", and under **the races, taken out** two workers on one data home is the
-	// locked database failure SPEC-SWARM closed on purpose. So the second run is
-	// REFUSED rather than made safe, and it is refused HERE -- the take is the first thing
-	// this verb does to the job directory that was not already there, and nothing of the
-	// holder's is touched on the way out.
+	// AND IT IS THE JOB DIRECTORY'S OWNERSHIP. Two `native` runs on one physical
+	// <slot>/jobs/<label> hold one set of paths: the bench store gives each its own seat,
+	// but the job directory, the data home, the temp directory and the logs under it are
+	// ONE set, and the first run to exit removes the other's lease. docs/SPEC-SWARM.md
+	// gives a worker its own data home and its own job directory and a slot to exactly one
+	// worker, and its failure table closes two workers on one data home as the
+	// `database is locked` race. So the second run is REFUSED rather than made safe, and
+	// it is refused HERE -- the take is the first thing this verb does to the job directory
+	// that was not already there, and nothing of the holder's is touched on the way out.
 	releaseLease, err := swarm.StartJobLease(jobDir, cfg.label)
 	if err != nil {
 		if held, ok := swarm.HeldJobLease(err); ok {
@@ -446,9 +445,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 				oneline.Field(held.Label), oneline.Field(held.Started)))
 			return nativeRunResult{}, 2
 		}
-		// A take that establishes nothing used to hand
-		// back a do-nothing release and the launch went on -- with `.lease` an owned
-		// directory, BOTH of two runs were told they held the place. A run that cannot
+		// A take that establishes nothing would hand
+		// back a do-nothing release and the launch would go on -- with `.lease` an owned
+		// directory, BOTH of two runs would be told they hold the place. A run that cannot
 		// prove it owns its job directory does not start.
 		refuseNative(errOut, fmt.Sprintf("the job lease on %s could not be taken, so this run cannot prove it owns its job directory and will not start: %s; clear or repair %s and run it again",
 			oneline.Field(jobDir), oneline.Escape(err.Error()), oneline.Field(filepath.Join(jobDir, swarm.JobLeaseName))))
@@ -459,7 +458,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// second run in the same <slot>/jobs/<label>. It cannot refuse a second run in the same
 	// SLOT under a different label, and the data home below is per SLOT, not per job: two
 	// labels in one slot is one HOME, one cache and one opencode.db, which is the
-	// locked database failure SPEC-SWARM closed on purpose. The bench store
+	// `database is locked` race docs/SPEC-SWARM.md closes. The bench store
 	// cannot answer this -- its lease is a count and names no directory -- so the slot says
 	// it itself, with the same lease machinery and the same four rules, and it is taken
 	// HERE, after the job lease, so that same-slot-same-label keeps saying what slot ownership requires.
@@ -497,10 +496,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		return nativeRunResult{}, 2
 	}
 	// THE SHARED PER-BENCH CACHE. The Go toolchain and every module are the
-	// same for every card under one root, but each card downloaded them into its own data
-	// home -- up to 5 GB per slot, and 120 cards filled two benches to 100%. The cache
-	// lives once under <root>/cache (a permitted write root beside the job directory) and
-	// the child is pointed at it by GOMODCACHE, GOCACHE and NPM_CONFIG_CACHE.
+	// same for every card under one root, but each card left to itself downloads them
+	// into its own data home -- up to 5 GB per slot, and 120 cards fill two benches to
+	// 100%. The cache lives once under <root>/cache (a permitted write root beside the
+	// job directory) and the child is pointed at it by GOMODCACHE, GOCACHE and NPM_CONFIG_CACHE.
 	if !cfg.noSharedCaches && cfg.root != "" {
 		if err := swarm.EnsureCacheDirs(cfg.root); err != nil {
 			refuseNative(errOut, fmt.Sprintf("the shared cache directories under %s could not be made: %s", oneline.Field(swarm.CacheRoot(cfg.root)), oneline.Escape(err.Error())))
@@ -510,7 +509,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 
 	// (3b) THE BENCH-SHARED GO CACHES. Go derives GOMODCACHE and GOCACHE from
 	// HOME, and a native run makes HOME the slot's data home, so every card downloads
-	// its own copy of the module cache -- and a toolchain -- and grew a slot to five to seven
+	// its own copy of the module cache -- and a toolchain -- and grows a slot to five to seven
 	// gigabytes. Instead the two caches live once per bench under <root>/cache, made here at
 	// mode 0755 BEFORE the child can derive them and handed to the child as GOMODCACHE and
 	// GOCACHE. GOTOOLCHAIN=local keeps a card from fetching a toolchain behind the bench's
