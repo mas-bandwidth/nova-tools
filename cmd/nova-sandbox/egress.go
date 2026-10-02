@@ -4,8 +4,8 @@
 // themselves live in internal/sandbox (egress.go); this file is the verb, the flags and the
 // three seams that touch the machine.
 //
-// The wall is on the BENCH, not in the card: Johnny, 2026-09-18, "Not an env list the worker
-// applies (the worker is the adversary)". A card cannot see this ruleset, cannot name a host
+// The wall is on the BENCH, not in the card: the worker applies rules it cannot see,
+// so this ruleset exists outside the card's reach. A card cannot see this ruleset, cannot name a host
 // for it and cannot take it down; it can only find out that a destination is denied.
 //
 // apply and drop are LINUX's, because nftables is. On darwin the outbound wall is the
@@ -38,9 +38,9 @@ const egressRemedy = "run: nova-sandbox egress plan --run <id> --policy infra/im
 // investigation.
 const nftRemedy = "install it and let this user run it without a password: sudo apt-get install -y nftables, then one sudoers line: nova ALL=(root) NOPASSWD: /usr/sbin/nft"
 
-// egressDeniedLine is the whole of what a card is told when it reaches for a destination the
-// wall denies, and it is Johnny's line word for word: `EGRESS DENIED host=<name>` on the
-// card's stdout, and the run exits non-zero. Fail closed, no retry to a different host.
+// egressDeniedLine is the whole message when a card reaches for a destination the
+// wall denies: `EGRESS DENIED host=<name>` on the
+// card's stdout, with a non-zero exit. Fail closed, no retry to a different host.
 const egressDeniedLine = "EGRESS DENIED host="
 
 // sandboxResolver is the resolver seam, named here because the tests replace it.
@@ -168,7 +168,7 @@ func egressVerb(args []string, stderr io.Writer) int {
 		Text: oneline.Escape(args[0]) + " is not an egress verb; it is one of plan, apply, check or drop"}})
 }
 
-// egressRefuse prints one line per independent problem (rule 16) and then the one remedy
+// egressRefuse prints one rejection per independent problem (rule 16) and then the single remedy
 // line, and costs 2: the verb could not run.
 func egressRefuse(stderr io.Writer, bad []sandbox.Refusal) int {
 	for _, r := range bad {
@@ -394,8 +394,8 @@ func needNft(stderr io.Writer) int {
 	return 0
 }
 
-// noNftBody is rule 1's shape for these two verbs, with the platform NAMED so a test on a
-// Mac can ask what the tool says on linux. apply and drop are nftables', and nftables is
+// noNftBody is rule 1's shape for these two verbs, with the platform NAMED so a test on any
+// host can ask what the tool says on Linux. apply and drop are nftables', and nftables is
 // linux's; on darwin the card's outbound wall is the seatbelt profile this binary already
 // generates, and saying so is better than a wall nobody applied.
 func noNftBody(goos string) (line, remedy string, refused bool) {

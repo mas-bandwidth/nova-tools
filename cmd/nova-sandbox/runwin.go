@@ -19,7 +19,7 @@
 // `winPlacer` interface below, and the SEQUENCE over that interface is the contract: create
 // the job before the process, put the child in the job at creation, close the job before
 // the delete, delete on every path out. That sequence is what runwin_test.go asserts, with
-// a fake placer, ON ANY HOST -- there is no Windows bench in the estate (2026-09-18), and a
+// a fake placer on any host; the contract is verified by testing behavior, not platform presence. The Win32 calls
 // contract that could only be tested where it runs would be tested nowhere. The Win32 calls
 // themselves are in runwin_windows.go behind `//go:build windows`, and runwin_other.go is
 // the same interface refusing off windows so this file compiles everywhere.
@@ -143,8 +143,8 @@ type winPlacer interface {
 	// RemoveTree removes <scratch>/nova-<n>, retrying a transient hold for a bounded
 	// window before it is a leak (W7). The ROOT is the caller's --scratch and it is passed
 	// separately on purpose: deletion in this repository is a verb over a validated path
-	// BELOW A ROOT (Glenn, 2026-09-17, "it is just one mistake away from deleting the whole
-	// disk"), and the class test in internal/ci holds every os.RemoveAll of a computed path
+	// BELOW A ROOT — one error away from deleting everything on disk — and the class test
+	// in internal/ci holds every os.RemoveAll of a computed path
 	// to safepath.RemoveUnder. A removal that only knew the leaf could not be checked
 	// against anything but its own parent, which is no check at all.
 	RemoveTree(root, dir string, window time.Duration) error

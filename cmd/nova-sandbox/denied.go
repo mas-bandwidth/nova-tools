@@ -1,19 +1,15 @@
 // What the wall denied, said out loud.
 //
-// The failure this file is about was measured on 2026-09-18, dogfooding `nova-sandbox run`
-// on a real card step: a `go build` inside the wall died and the ONLY symptom was Go's own
-// sentence — `go: cannot find GOROOT directory: 'go' binary is trimmed and GOROOT is not
-// set`. Nothing in that sentence says "sandbox", and nothing the tool printed said which
-// path had been refused. A wall that denies silently costs the reader the whole
-// investigation.
+// This file provides diagnostic output that explains what the operating system refused
+// when a contained command exits non-zero, so a reader can see which paths were blocked
+// and what flag would have allowed them.
 //
 // The root cause of that particular one is fixed where it belonged, in the optional roots'
 // ancestors (internal/sandbox/policy.go). This file is the class: when a contained command
 // exits non-zero, ASK THE OPERATING SYSTEM what it refused and print one line per path,
 // with the flag that would have allowed it.
 //
-// THE HONEST LIMIT, measured on this Studio (macOS 26, arm64, 2026-09-18) and stated here
-// because a reader will otherwise think this is broken:
+// This limit appears in the code so a reader understands why the parser caps output:
 //
 //   - macOS does report seatbelt violations to the unified log, under the subsystem
 //     `com.apple.sandbox.reporting`, category `violation`, and the parser below reads that
