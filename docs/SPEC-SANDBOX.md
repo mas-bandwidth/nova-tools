@@ -1569,7 +1569,7 @@ takes it back out. A caller that runs `Run` twice in one process nests a second
 domain inside the first — which is what `probe` does, and because its walled
 steps all share one policy the nested domain is the same wall again. Anything a
 caller must do unwalled it must do **before** the first `Run`, which is exactly
-why rule 10 runs `write_outside_control` first.
+why the probe runs `write_outside_control` first.
 
 The ABI is discovered with `landlock_create_ruleset(NULL, 0,
 LANDLOCK_CREATE_RULESET_VERSION)`, and the handled set is masked down to what
@@ -1578,7 +1578,7 @@ is rejected. The discovered number is printed as `abi=<n>` on `SANDBOX OK`.
 
 **Network:** Landlock gained TCP `bind`/`connect` restriction at **ABI 4**
 (kernel 6.7). UDP is not restricted at any ABI. Below ABI 4, `--net-deny` is
-`SANDBOX REFUSED reason=net_unenforceable` (rule 7).
+`SANDBOX REFUSED reason=net_unenforceable`.
 
 **Abstract unix sockets and signals** are unrestricted below **ABI 6** (kernel
 6.12), which added `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET` and
@@ -1596,7 +1596,7 @@ item.
 Landlock is unavailable when the kernel predates 5.13, when it is not compiled
 in, or when it is not in the boot-time `lsm=` list. All three come back as a
 failed version query, and all three are `SANDBOX REFUSED reason=no_sandbox`
-(rule 1).
+— the command does not run.
 
 **What this backend cannot do that the darwin one can.** Four things, and they
 are here rather than in a footnote because a wall's gaps are the part a reader
@@ -1645,13 +1645,13 @@ filesystem containment.
 HOME=<jobdir>/home nova-sandbox probe --write <jobdir> --secret ~/.config/<provider>/env
 ```
 
-`HOME` is set here for the same reason it is set on the reader commands: rule 9's
+`HOME` is set here for the same reason it is set on the reader commands: the home-outside
 check runs before the policy is built, so a probe run with the dispatcher's own
 `HOME` — which is outside every `--write` by construction — is
 `PROBE REFUSED reason=check ... home_outside` and every swarm pass would refuse
 with it. A caller that runs the probe runs it with the job's data home. A caller
 whose key is delivered by `nova-secrets exec` names **no `--secret`** (issue
-#881): the key is never a file, so there is no secret file to prove unreadable,
+aside): the key is never a file, so there is no secret file to prove unreadable,
 and the probe runs the other four checks.
 
 Five checks, under the real policy for this platform, each one line — the five
@@ -1680,7 +1680,7 @@ this user anyway (`/opt` is `EACCES` on a Mac), `write_outside` comes back
 write outside the wall first; if the control says `deny`, the probe is exit 2
 `reason=probe_outside_unwritable` naming the path, because the machine cannot
 answer the question — not a failed check, a misconfigured one. `read_secret`
-needs no control (rule 6 refuses a `--secret` inside a list, and the caller
+needs no control (the tool refuses a `--secret` inside a list, and the caller
 just read the file to pass its value by environment), and the two `allow`
 checks are their own controls.
 
@@ -1690,7 +1690,7 @@ independent problem at once). The exit is 1 if any check disagreed with its
 expectation, and `PROBE REFUSED reason=check` names each one.
 
 `write_outside` names its path instead of calling `os.TempDir()`, because
-rule 8 points `TMPDIR` **inside** the wall: a probe that wrote to
+the tool points `TMPDIR` **inside** the wall: a probe that wrote to
 `os.TempDir()` would write inside the write set, watch it succeed, and report
 a false refusal — it would fail on a working wall. If the named path resolves
 inside any `--read` or `--write` (a first `--write` whose parent is itself in
@@ -1702,7 +1702,7 @@ The secret file's **contents are never read into memory**: the check is that
 `open(2)` (or `CreateFileW`) fails, and a probe that succeeded in opening it
 closes it without reading and reports `got=allow`.
 
-### Local GPU, and what the capability is and is not (#230)
+### Local GPU, and what the capability is and is not
 
 A bounded local model trial on Apple Silicon runs MLX GPU arithmetic normally
 outside the wall but fails at import inside it with `[metal::load_device] No
@@ -1792,31 +1792,31 @@ the file outside both path lists. Filesystem containment does not revoke an
 environment credential or prevent its use over an allowed network connection.
 
 Standard output and error go to a pipe the caller drains or a file inside the
-write set (rule 12). The caller owns process-group cleanup, publication and
+write set. The caller owns process-group cleanup, publication and
 backup; none is performed by the bare wrapper. A missing backend refuses the
 command rather than running it without containment.
 
 ## What it deliberately does not do
 
-- **It does not manage credentials.** The environment passes through (rule 9).
+- **It does not manage credentials.** The environment passes through.
 - **It does not restrict syscalls.** No seccomp filter, no entitlement list;
   the question this tool answers is what a command can reach on disk.
 - **It does not restrict CPU, memory or process count.** A runaway worker is
   the deadline's problem.
 - **It does not create the directories it is handed.** Every `--read`,
   `--write`, `--cwd` and `--tmp` path must already exist; a missing one is a
-  refusal and is not created (rule 5). The one directory it creates is its
-  own: `<first --write>/.nova-sandbox-tmp` under rule 8 — inside the write
+  refusal and is not created. The one directory it creates is its
+  own: `<first --write>/.nova-sandbox-tmp` — inside the write
   set, named by the tool, never by the caller. An explicit `--tmp` is a caller
-  path and follows rule 5: it must exist.
-- **It does not run a shell.** Everything after `--` is `exec`'d (rule 12).
+  path like any other: it must exist.
+- **It does not run a shell.** Everything after `--` is `exec`'d.
 - **It does not take a caller-supplied profile.** The policy is generated
-  (rule 15).
+  from the lists the caller passes.
 - **It does not clone anything.** The dispatcher owns the checkout; the tool
   only names directories.
 - **It does not have a config file.** There is no file from which either list
   can arrive; both are argv, where `ps` shows them. There is no switch that
-  turns the wall off, in a file or anywhere else (rule 11).
+  turns the wall off, in a file or anywhere else.
 
 ## Commands for a reader
 
@@ -1844,8 +1844,8 @@ header says what each marker is replaced by.
 #    with the cwd inside the write set (a cwd outside every named path denies
 #    getcwd(3), and every git command dies there before it reads anything) and
 #    stdout a PIPE the caller drains or a file inside it — a wrapped /bin/cat
-#    whose stdout is a file outside every named path is denied (rule 12).
-#    Expect: $PPID == the TOOL's pid — rule 12: sandbox-exec execs the command in
+#    whose stdout is a file outside every named path is denied.
+#    Expect: $PPID == the TOOL's pid — sandbox-exec execs the command in
 #    place and the tool waits, so the shell's parent is nova-sandbox itself —
 #    the first line of /etc/hosts, and no "Operation not permitted".
 #    HOME is set on BOTH lines: rule 9's check runs before the policy is built,
