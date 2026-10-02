@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -83,15 +85,41 @@ func TestACardsLaunchRunsBehindCI(t *testing.T) {
 	require.NotEmpty(t, got, "the harness published no RESULT.md; native's log:\n%s", log)
 	raw, err := os.ReadFile(got)
 	require.NoError(t, err)
-	read := map[string]int{}
+	read, class := map[string]int{}, map[string]string{}
 	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
 		k, v, _ := strings.Cut(line, "=")
+		if strings.HasSuffix(k, "_behind") {
+			class[strings.TrimSuffix(k, "_behind")] = v
+			continue
+		}
 		n, err := strconv.Atoi(strings.TrimSpace(v))
 		require.NoError(t, err, "RESULT.md line %q carries no nice value", line)
 		read[k] = n
 	}
 	assert.Equal(t, want, read["harness"], "the card's harness runs at nice %d, want %d (yield.Nice %d, this test at %d)", read["harness"], want, yield.Nice, own)
 	assert.Equal(t, want, read["grandchild"], "a process the harness started runs at nice %d, want %d", read["grandchild"], want)
+	// past nice (the member passes --behind-ci): the background state on darwin, the idle
+	// scope beside the runners on Linux, or, where neither can be had, one NOTE and nice alone
+	if note := nativeBehindNote.FindSubmatch(log); note != nil {
+		t.Logf("this machine has no idle class for the launch: %s", note[1])
+		assert.NotEqual(t, "darwin", runtime.GOOS, "darwin always has the background state")
+		return
+	}
+	for _, who := range []string{"harness", "grandchild"} {
+		if runtime.GOOS == "darwin" {
+			assert.Equal(t, "darwin_bg=1", class[who], "the card's %s is not in the background state", who)
+		} else {
+			assert.Contains(t, class[who], "/nova-card-nice1-", "the card's %s is not in its scope", who)
+			// the wall (Landlock) gives the card no read of /sys: there the idle mark is
+			// native's own reading of cpu.idle, which it made before the wall and which
+			// would have been a NATIVE NOTE (above) had it not read 1
+			if strings.HasSuffix(class[who], ";idle=unreadable") {
+				t.Logf("the card's %s cannot read its cpu.idle inside the wall; native read it as 1 (no NOTE): %s", who, class[who])
+				continue
+			}
+			assert.True(t, strings.HasSuffix(class[who], ";idle=1"), "the card's %s scope is not idle: %s", who, class[who])
+		}
+	}
 }
 
 // TestANativeRunThatCannotYieldIsTheMachinesRefusal: a launch whose step behind CI fails
@@ -150,4 +178,56 @@ func TestAMemberOnAnOSWithNoSetpriorityRefusesToStart(t *testing.T) {
 	why := yieldRefusal(false, "plan9")
 	assert.True(t, strings.HasPrefix(why, "no setpriority on plan9:"), "the refusal names the OS: %q", why)
 	assert.Contains(t, why, "refuse every card")
+}
+
+// nativeBehindNote is native's one line where --behind-ci could not be had.
+var nativeBehindNote = regexp.MustCompile(`(?m)^NATIVE NOTE behind-ci unavailable: (.+)$`)
+
+// TestBehindCIIsNeverARefusal: past nice, a step that works writes nothing; one that
+// cannot be had (no user manager, a refusal) writes one NATIVE NOTE with the reason and
+// the card runs on at nice 15; the launch log of such a run is never read as a
+// refusal by the member. A member says it once at its start where it is so.
+func TestBehindCIIsNeverARefusal(t *testing.T) {
+	t.Parallel()
+	var done bytes.Buffer
+	behindNative(func(string) string { return "" }, "c1", &done)
+	assert.Empty(t, done.String(), "a step that works says nothing")
+
+	var note bytes.Buffer
+	asked := ""
+	behindNative(func(label string) string {
+		asked = label
+		return "not under a systemd user manager (cgroup /system.slice/x.service)"
+	}, "c1", &note)
+	assert.Equal(t, "c1", asked, "the scope is named for the launch")
+	assert.Equal(t, 1, strings.Count(note.String(), "\n"), "one line: %q", note.String())
+	assert.Contains(t, note.String(), "NATIVE NOTE behind-ci unavailable: not under a systemd user manager")
+	assert.Contains(t, note.String(), "runs at nice 15 only")
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "c1.native.log")
+	require.NoError(t, os.WriteFile(logPath, note.Bytes(), 0o644))
+	res := (&nativeChild{card: "c1", logPath: logPath, results: filepath.Join(dir, "results"), job: filepath.Join(dir, "job"), done: make(chan struct{})}).Result()
+	assert.NotEqual(t, member.EndStaging, res.End, "a note is not the machine's refusal")
+	assert.NotContains(t, res.Report, "native refused", "a note is not a refusal")
+
+	assert.Empty(t, behindStartNote(""), "a member that can go past nice says nothing")
+	start := behindStartNote("no user bus at /run/user/1000/bus")
+	assert.True(t, strings.HasPrefix(start, "NOTE member: behind-ci unavailable here: no user bus"), "%q", start)
+}
+
+// TestAMemberAlwaysAsksForBehindCI: every launch a member starts carries --behind-ci,
+// so a card's tree goes past nice by mechanism; the self here is a script that writes
+// the argv it was started with.
+func TestAMemberAlwaysAsksForBehindCI(t *testing.T) {
+	t.Parallel()
+	r, _, marker := markerRunner(t)
+	argv := marker + ".argv"
+	require.NoError(t, os.WriteFile(r.self, []byte("#!/bin/sh\necho \"$@\" > '"+argv+"'\n"), 0o755))
+	ch, err := r.Start(member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"})
+	require.NoError(t, err)
+	<-ch.(*nativeChild).done
+	got, err := os.ReadFile(argv)
+	require.NoError(t, err)
+	assert.Contains(t, string(got), " --behind-ci", "the launch's argv: %s", got)
 }

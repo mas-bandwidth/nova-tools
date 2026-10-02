@@ -193,8 +193,10 @@ func TestMain(m *testing.M) {
 	// THIS BINARY IS A CI LEG, and it runs cmdNative in-process: the step behind CI
 	// (nativeToCI) would put it at yield.Nice beside the very children it must beat. It is
 	// a no-op here, set once before any test runs; the built binary the launch tests start
-	// keeps the real step (TestACardsLaunchRunsBehindCI reads it).
+	// keeps the real step (TestACardsLaunchRunsBehindCI reads it). The same for the step
+	// past nice (nativeBehind), which no in-process test asks for anyway.
 	nativeToCI = func() error { return nil }
+	nativeBehind = func(string) string { return "" }
 	code := m.Run()
 	if leftover := leftoverChildPIDs(); len(leftover) > 0 {
 		for _, pid := range leftover {
