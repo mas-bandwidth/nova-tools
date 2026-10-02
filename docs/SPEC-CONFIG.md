@@ -244,7 +244,7 @@ The log path is derived from the name, `~/nova-bench/loops/<name>.log`
 the machine's loops (`loops=<a,b>`, `-` for none).
 
 **`route`** (`config.routes`): one way to run a model tier, the provider
-and model a card of that tier runs on, its token budget and deadline. A
+and model a card of that tier runs on, its token and dollar budgets and deadline. A
 tier has several routes so the deal spreads its cards across providers and
 models, in the order of the tier's array (the `tier` kind below); a card's
 `model:` header pins it instead. Frontier cards are never dealt from
@@ -257,6 +257,7 @@ row: the code names no provider or model.
 | `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
 | `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
 | `tokens` | int | (0) | the deal: the token budget per card; 0 is unmetered and the deadline is the only stop | `route:<r>` |
+| `usd` | decimal | (empty) | the deal: the dollar budget per card, the harness's reported cost at which native stops the card (`stopped=usd`), beside the token budget; empty is none | `route:<r>` |
 | `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
 | `enabled` | bool | (true) | the deal: false takes it out of the deal | `route:<r>` |
 | `price_input` | decimal | (empty) | a card's cost: USD per million uncached input tokens | `route:<r>` |

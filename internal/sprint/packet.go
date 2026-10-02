@@ -45,6 +45,7 @@ type Packet struct {
 	Route    string `json:"route,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
+	USD      string `json:"usd,omitempty"` // the dollar budget, a decimal; "" for none (#5094)
 	Deadline int    `json:"deadline,omitempty"`
 	// A read's: the work it reads.
 	Worker     string `json:"worker,omitempty"`
@@ -119,7 +120,7 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 	}
 	// a work card's route, or a read card's: the ask draws a read's as the deal
 	// draws a work card's (route.go), so a reader needs no --model
-	p.Route, p.Model, p.Tokens, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.Int(FieldDeadline)
+	p.Route, p.Model, p.Tokens, p.USD, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.F(FieldUSD), c.Int(FieldDeadline)
 	if p.Kind == "work" {
 		p.Branch = BranchOf(prefix, epoch, c.ID, c.Int("gen"))
 		p.Finding, p.Why = c.F("finding"), c.F("why")

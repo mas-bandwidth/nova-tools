@@ -73,6 +73,29 @@ func TestTheDealDrawsARouteOfTheCardsTierAndThePacketCarriesIt(t *testing.T) {
 	assert.Equal(t, 600, ps[0].Deadline)
 }
 
+// A route's dollar budget rides the work card and its packet beside the token budget, so the
+// member launches native with --usd (nova-tools #5094); a route with none writes none, and
+// the field is written empty so a redeal onto such a route clears what an earlier draw set.
+func TestARoutesDollarBudgetRidesTheCardAndThePacket(t *testing.T) {
+	t.Parallel()
+	priced := route("pro-a", "pro")
+	priced.USD = "0.5"
+	h := routeHarness(t, priced, route("flash-a", "flash"))
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.addReady("s2", 1, briefOf("flash", ""))
+	h.must(DealStep(sprint.DealReq{}))
+	wc := h.workCards()
+	require.NotNil(t, wc["s1-1.w1"])
+	require.NotNil(t, wc["s2-1.w1"])
+	assert.Equal(t, "0.5", wc["s1-1.w1"].F(sprint.FieldUSD), "the route's dollar budget is on the work card")
+	assert.Empty(t, wc["s2-1.w1"].F(sprint.FieldUSD), "a route with no dollar budget writes none")
+	ps, err := h.st.Packets(h.ctx, []*sprint.Card{wc["s1-1.w1"], wc["s2-1.w1"]})
+	require.NoError(t, err)
+	assert.Equal(t, "0.5", ps[0].USD, "the packet hands the member the dollar budget")
+	assert.Empty(t, ps[1].USD)
+	assert.Equal(t, "0.5", RouteOf("r", map[string]string{"usd": "0.5", "tier": "pro"}).USD, "the route's hash carries it")
+}
+
 func TestAPinnedCardRunsOnItsPinAndBypassesTheDraw(t *testing.T) {
 	t.Parallel()
 	h := routeHarness(t, route("pro-a", "pro"))

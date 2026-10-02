@@ -371,3 +371,32 @@ func TestNativeCardBudgetStopsAndPrintsThePromptDefect(t *testing.T) {
 		})
 	}
 }
+
+// THE DOLLAR BUDGET, END TO END (nova-tools #5094): a card whose harness reports a cost past
+// --usd, under no token budget at all, is stopped `stopped=usd`, launched once, and its
+// NATIVE BUDGET line names the cost and the budget to the cent.
+func TestNativeDollarBudgetStopsTheCard(t *testing.T) {
+	t.Parallel()
+
+	windowsIsNotABench(t)
+	needsSQLite(t)
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	card := filepath.Join(root, "card.md")
+	body := "a card\nFAKE-USAGE-DB 1000 10 0 0 0 0.6\nFAKE-SLEEP 60\n"
+	require.NoError(t, os.WriteFile(card, []byte(body), 0o644))
+	args := append(budgetNativeArgs(t, bin, card, slot, root, "unmetered"), "--usd", "0.50", "--usage-interval", "1s")
+	for i := range args {
+		if args[i] == "--deadline" {
+			args[i+1] = "120s" // the dollar budget must be what ends this card
+		}
+	}
+	var stdout, stderr strings.Builder
+	rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	require.Equal(t, 1, rc, "a card the dollar budget stopped exits 1\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	line := nativeOKLine(t, stdout.String())
+	assert.Equal(t, "usd", fieldOf(line, "stopped"), "the line names the dollar budget:\n%s", line)
+	assert.Contains(t, stdout.String(), "NATIVE BUDGET label=lbl budget: $0.60 of $0.50, tokens 1,010\n", "the budget line:\n%s", stdout.String())
+	_, rows := usageRows(t, filepath.Join(slot, "jobs", "lbl"))
+	assert.Len(t, rows, 1, "a stopped card is launched once")
+}

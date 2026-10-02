@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math/big"
 	"strconv"
 	"sync"
 	"time"
@@ -43,6 +44,7 @@ const (
 	stoppedMaxTurns     = "max_turns"
 	stoppedMaxCacheRead = "max_cache_read"
 	stoppedUnverifiable = "unverifiable"
+	stoppedUSD          = "usd"
 )
 
 // unverifiableSamples is how many CONSECUTIVE failed reads end a card (rule 13, quoted by
@@ -59,6 +61,9 @@ type liveSampler struct {
 	// asked of -- `<job>/harness-output.log` on this route and never `harness.log`.
 	tokens    int
 	unmetered bool
+	// usd is the dollar budget (--usd): the harness's own cost, read with the tokens, at
+	// or past which the card is stopped `stopped=usd`; nil for none (nova-tools #5094).
+	usd       *big.Rat
 	worker    *swarm.Worker
 	logPath   string
 	cardLabel string
@@ -110,7 +115,7 @@ type liveSampler struct {
 func startLiveSampler(dataHome string, interval time.Duration, cfg nativeRunConfig, logPath string) *liveSampler {
 	s := &liveSampler{
 		dataHome: dataHome, interval: interval,
-		tokens: cfg.tokens, unmetered: cfg.unmetered, worker: cfg.worker, logPath: logPath,
+		tokens: cfg.tokens, unmetered: cfg.unmetered, usd: cfg.usd, worker: cfg.worker, logPath: logPath,
 		cardLabel: cfg.label,
 		stop:      make(chan struct{}), fired: make(chan string, 1),
 	}
@@ -141,13 +146,29 @@ func (s *liveSampler) fire(word string) {
 // spent is the job's sum of every launch's final read, and observed says whether any of
 // those reads answered; a word already reached by a sample is kept, so a card budget that
 // fired first still names itself.
-func (s *liveSampler) StopWordAtFinal(spent int, observed bool) string {
+//
+// cost is the job's cost over those final reads, the harness's own, "" when none reported
+// one; the dollar budget is asked of it the same way (nova-tools #5094).
+func (s *liveSampler) StopWordAtFinal(spent int, observed bool, cost string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.reached == "" && s.overUSD(cost) {
+		s.reached = stoppedUSD
+	}
 	if s.reached == "" && observed && !s.unmetered && s.tokens > 0 && spent >= s.tokens {
 		s.reached = stoppedTokens
 	}
 	return s.reached
+}
+
+// overUSD says whether cost, a harness's reported cost, is at or past the dollar budget. A
+// cost not reported never reaches it: the token budget and the deadline stay the stops.
+func (s *liveSampler) overUSD(cost string) bool {
+	if s.usd == nil || cost == "" {
+		return false
+	}
+	r, ok := new(big.Rat).SetString(cost)
+	return ok && r.Cmp(s.usd) >= 0
 }
 
 // loop is the sampling itself: one read per tick, and NEVER two at once. The ticker is not
@@ -187,6 +208,12 @@ func (s *liveSampler) readOnce() {
 	if err == nil && s.worker != nil && s.worker.HasCardBudget() {
 		turns = swarm.CountCardTurnsIn(s.logPath, usage)
 	}
+	s.fold(usage, err, turns)
+}
+
+// fold is one reading's answer, folded: the figures kept, and a budget reached fired. It
+// opens nothing, so a test hands it a reading directly.
+func (s *liveSampler) fold(usage swarm.ProviderUsage, err error, turns int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.samples++
@@ -234,6 +261,13 @@ func (s *liveSampler) readOnce() {
 			return
 		}
 	}
+	// THE DOLLAR BUDGET (nova-tools #5094), asked before the token budget: it is the
+	// budget the route bounds cost by, so a sample past both names it.
+	if s.overUSD(usage.Values["cost"]) {
+		s.reached = stoppedUSD
+		s.fire(stoppedUSD)
+		return
+	}
 	// THE TOKEN BUDGET: rule 13's `spent >= n`, so a sum exactly equal to the budget ends
 	// the card. A partial observation can reach it and stop the card, and can never show
 	// that the card stayed under it, which is what the plus on the line says.
@@ -247,7 +281,7 @@ func (s *liveSampler) readOnce() {
 // budget. A sampler with neither reads nothing that anybody is relying on, so a reader that
 // stops answering it ends no card.
 func (s *liveSampler) watching() bool {
-	return (!s.unmetered && s.tokens > 0) || (s.worker != nil && s.worker.HasCardBudget())
+	return (!s.unmetered && s.tokens > 0) || s.usd != nil || (s.worker != nil && s.worker.HasCardBudget())
 }
 
 // label is the id the PROMPT-DEFECT line names. Rule 13b spells the line
@@ -309,7 +343,7 @@ func (s *liveSampler) Counts() (answered, maxInFlight int) {
 // BUDGET line, which the member carries into the finish's reason after the end
 // (nova-tools #5094): "tokens 509,940 of 400,000, $0.03". tokens is the --tokens budget,
 // 0 when unmetered; cost is the job's spend= cost, "" when the harness reported none.
-func nativeBudgetWords(stopped string, tokens, spent int, partial bool, cost string) string {
+func nativeBudgetWords(stopped string, tokens, spent int, partial bool, cost, usd string) string {
 	count := groupThousands(spent)
 	if partial {
 		count += "+"
@@ -318,10 +352,16 @@ func nativeBudgetWords(stopped string, tokens, spent int, partial bool, cost str
 		count += " of " + groupThousands(tokens)
 	}
 	money := "cost unreported"
-	if r, err := cardcost.Decimal(cost); err == nil {
+	if r, ok := new(big.Rat).SetString(cost); ok && cost != "" {
 		money = cardcost.Cents(r)
 	}
 	switch stopped {
+	case stoppedUSD:
+		limit, _ := new(big.Rat).SetString(usd)
+		if limit == nil {
+			limit = new(big.Rat)
+		}
+		return money + " of " + cardcost.Cents(limit) + ", tokens " + count
 	case stoppedTokens:
 		return "tokens " + count + ", " + money
 	case stoppedUnverifiable:

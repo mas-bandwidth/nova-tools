@@ -425,6 +425,11 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	}
 	args := []string{"native", "--harness", r.harness, "--model", model, "--card", cardPath, "--frame", framePath, "--slot", slot,
 		"--root", r.root, "--deadline", deadline.String(), "--tokens", tokens, "--label", p.Card, "--results-root", results}
+	if p.USD != "" {
+		// the route's dollar budget, beside its token budget (#5094); a reader's override
+		// names tokens, not dollars, so an overridden read keeps the route's
+		args = append(args, "--usd", p.USD)
+	}
 	if r.auth != "" {
 		args = append(args, "--auth", r.auth)
 	}

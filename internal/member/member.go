@@ -237,6 +237,7 @@ type Packet struct {
 	Route    string `json:"route,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
+	USD      string `json:"usd,omitempty"` // the dollar budget per card, a decimal; "" for none (#5094)
 	Deadline int    `json:"deadline,omitempty"`
 }
 

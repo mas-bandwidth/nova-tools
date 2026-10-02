@@ -28,7 +28,7 @@ func TestTheBudgetLineNamesWhichBudgetAndTheCount(t *testing.T) {
 		"a card budget names its own field": {stoppedMaxTurns, 0, 50000, false, "0.5", "max_turns, tokens 50,000, $0.50"},
 		"a source that stopped answering":   {stoppedUnverifiable, 400000, 12, false, "", "unverifiable: the usage source stopped answering, tokens 12 of 400,000, cost unreported"},
 	} {
-		assert.Equal(t, c.want, nativeBudgetWords(c.stopped, c.tokens, c.spent, c.partial, c.cost), name)
+		assert.Equal(t, c.want, nativeBudgetWords(c.stopped, c.tokens, c.spent, c.partial, c.cost, ""), name)
 	}
 }
 
