@@ -34,6 +34,7 @@ type SpellingResult struct {
 type SpellingOptions struct {
 	Ignore   []string // words to ignore/allowlist, or @file paths
 	Write    bool     // rewrite files with corrections applied
+	Plan     bool     // with Write: make every check each rewrite makes, and write nothing
 	Markdown bool     // force markdown mode (blanking code blocks/spans)
 	Exclude  []string // path prefixes to exclude
 	Dir      string   // root directory for relative paths and exclusions
@@ -697,10 +698,12 @@ func CheckSpellingDir(dir string, opts SpellingOptions) (res SpellingResult, err
 				perm = fi.Mode().Perm()
 			}
 			cleanPath := filepath.Clean(path)
-			if writeErr := atomicfile.WriteFile(cleanPath, []byte(updated), perm); writeErr != nil {
+			if writeErr := rewrite(opts.Plan, cleanPath, []byte(updated), perm); writeErr != nil {
 				return fmt.Errorf("writing %q: %w", path, writeErr)
 			}
-			res.Corrected++
+			if !opts.Plan {
+				res.Corrected++
+			}
 		}
 		return nil
 	})
@@ -904,10 +907,12 @@ func CheckSpellingFiles(dir string, files []string, opts SpellingOptions) (res S
 			if escErr := spellingSymlinkEscape(rootFor, cleanTarget); escErr != nil {
 				return res, fmt.Errorf("writing %q: %w", f, escErr)
 			}
-			if writeErr := atomicfile.WriteFile(cleanTarget, []byte(updated), perm); writeErr != nil {
+			if writeErr := rewrite(opts.Plan, cleanTarget, []byte(updated), perm); writeErr != nil {
 				return res, fmt.Errorf("writing %q: %w", f, writeErr)
 			}
-			res.Corrected++
+			if !opts.Plan {
+				res.Corrected++
+			}
 		}
 	}
 	return res, nil
@@ -1017,4 +1022,13 @@ func CheckSpelling(targets []string, opts SpellingOptions) (res SpellingResult, 
 	}
 
 	return res, nil
+}
+
+// rewrite writes a corrected file, or for a plan makes every check the write
+// makes and writes nothing, so a dry run refuses where the write would.
+func rewrite(plan bool, path string, data []byte, perm os.FileMode) error {
+	if plan {
+		return atomicfile.Check(path, perm)
+	}
+	return atomicfile.WriteFile(path, data, perm)
 }

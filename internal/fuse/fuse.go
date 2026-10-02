@@ -235,6 +235,22 @@ func WriteBox(path string, b Box) error {
 	return writeBox(path, b)
 }
 
+// PlanCreateBox is CreateBox with nothing written: every check the creation
+// makes (the parent as MkdirAll would make it, no symlink parent, a directory
+// this process can create in, nothing at the path), and the same error.
+func PlanCreateBox(path string) error { return planBox(path, atomicfile.NoReplace()) }
+
+// PlanWriteBox is WriteBox with nothing written, refusing where WriteBox would.
+func PlanWriteBox(path string) error { return planBox(path) }
+
+func planBox(path string, opts ...atomicfile.Option) error {
+	target := path
+	if target != "" {
+		target = filepath.Clean(target)
+	}
+	return atomicfile.CheckAfterMkdirAll(target, 0o644, append(opts, atomicfile.ExactMode())...)
+}
+
 // writeBox shares validation, exact mode and sync ordering between creation and
 // replacement. NoReplace makes creation exclusive even if another caller wins
 // after validation.

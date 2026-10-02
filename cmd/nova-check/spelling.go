@@ -69,7 +69,8 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 
 	opts := check.SpellingOptions{
 		Ignore:  ignore,
-		Write:   *write && !*dryRun,
+		Write:   *write,
+		Plan:    *dryRun, // the plan of the write: every check it makes, nothing written
 		Exclude: exclude,
 		Dir:     root,
 	}

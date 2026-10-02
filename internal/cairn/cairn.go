@@ -306,7 +306,7 @@ func appendFlat(store, session, path, id, text string, now time.Time, publish st
 	}
 	stamp := now.UTC().Truncate(time.Second)
 	if !write {
-		return AppendResult{Stamp: stamp, Policy: publish}, nil
+		return AppendResult{Stamp: stamp, Policy: publish}, atomicfile.CheckAppend(path)
 	}
 	var b strings.Builder
 	if len(raw) > 0 && !strings.HasSuffix(string(raw), "\n") {
@@ -496,7 +496,12 @@ func open(store, session, source string, now time.Time, publish string, write bo
 	}
 	planned := OpenRecord{Source: source, Publish: publish, Found: true}
 	if !write {
-		return planned, nil
+		// The plan is this open's own: the record and the log line it would
+		// write, checked as the write checks them, nothing written.
+		if err := atomicfile.CheckAfterMkdirAll(sessionFile(store, session), 0o644); err != nil {
+			return OpenRecord{}, err
+		}
+		return planned, atomicfile.CheckAppend(filepath.Join(store, "log.jsonl"))
 	}
 	name := sessionFile(store, session)
 	stamp := now.UTC().Format(time.RFC3339Nano)
@@ -632,6 +637,17 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 		return AppendResult{Stamp: prevStamp, Persisted: true, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
 	}
 	if !write {
+		// The plan is this append's own: the entry file, the pointer line and
+		// the log line, checked as the writes check them, nothing written.
+		for _, err := range []error{
+			atomicfile.CheckAfterMkdirAll(final, 0o644),
+			atomicfile.CheckAppend(sessionFile(store, session)),
+			atomicfile.CheckAppend(filepath.Join(store, "log.jsonl")),
+		} {
+			if err != nil {
+				return res, err
+			}
+		}
 		return AppendResult{Stamp: stamp, Policy: publish, Source: source}, nil
 	}
 	rec, _ := json.Marshal(entryFile{
