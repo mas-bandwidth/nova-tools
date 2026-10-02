@@ -17,14 +17,14 @@ import (
 //   - `gather` compares line 1 to line 1 and imposes no prefix of its own, so it follows
 //     whichever the other two settle on.
 //
-// The cost of the disagreement: every card `cut` writes draws a `result-first` drift, and
+// A disagreement makes a card fail `result-first` drift checks, and
 // a hand-written card in the colon-less form draws one, for a missing colon.
 //
-// THE COLON FORM WINS. It is the system's own law and it is what the majority
+// THE COLON FORM IS REQUIRED. It is the system's canonical form and what the writers
 // of writers already write -- `cut --kind` and the manager module.
 // `RESULT: <label> sha=<sha12>` is the form to WRITE.
 //
-// The stopgap handles the one renderer still on it, and a follow-up card rewrites
+// The stopgap handles a renderer that still emits the other form, and the class test rewrites
 // that path and adds the class test
 // `every-writer-and-reader-agrees-on-the-result-line`. Until that card lands, refusing
 // the no-colon form would refuse cards a tool writes today, so both are read --
@@ -32,7 +32,7 @@ import (
 // internal/swarm/lintcontract_test.go goes red the day any of the three readers
 // changes form.
 //
-// The colon form is FIRST in this slice, and it is the only form any message names as
+// The colon form is first in this slice, and it is the only form any message names as
 // what to write.
 var CardContractPrefixes = []string{"RESULT: ", "RESULT "}
 
