@@ -222,8 +222,10 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	var profile, listen string
 	var profileTicks int
+	var land bool
 	st, c, code := a.machineVerb("run", args, stderr, func(fs flagSet) {
-		fs.StringVar(&listen, "listen", "", "also serve the workers' verbs on this address, host:port (this machine's address on the fleet's private network): a worker started with nova-swarm member --server sends its verbs here and never reads or writes the store itself")
+		fs.StringVar(&listen, "listen", "", "also serve the sprint's verbs: the workers' on this address, host:port (this machine's address on the fleet's private network; a worker started with nova-swarm member --server sends its verbs here and never reads or writes the store itself), and the coordinator's on 127.0.0.1 at the same port (set NOVA_SPRINT_SERVER to it and the coordinator's verbs that write the sprint run here too)")
+		fs.BoolVar(&land, "land", false, "also land what the readers passed: this loop runs land for every stream with cards queued to merge, one landing at a time, as the sprint's coordinator (the clone, the base and the check are land's defaults: each card's REPO: and BASE: lines); its git uses this process's environment")
 		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
 		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
 	})
@@ -267,6 +269,9 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		if err := a.listen(listen, c.redis, stdout); err != nil {
 			return refuse(stderr, "run", err.Error())
 		}
+	}
+	if land {
+		go a.landLoop(context.Background(), c.redis, stdout)
 	}
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
 	if a.runLoop(context.Background(), st, c.max, 0, stdout, stderr) {

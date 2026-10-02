@@ -191,7 +191,13 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if len(bad) > 0 {
 		return refuse(stderr, "land", strings.Join(bad, "; "))
 	}
+	// land's reads and its report are steps of the sprint: each takes the server's one
+	// line of control (a.serial) when this process is the server (run --land), so none
+	// runs during a tick or a worker's batch; its git runs outside it, for as long as
+	// git takes. A land by itself holds a lock nothing else wants.
+	a.serial.Lock()
 	st, err := a.store(*c)
+	a.serial.Unlock()
 	if err != nil {
 		return refuse(stderr, "land", err.Error())
 	}
@@ -208,7 +214,9 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	ctx := context.Background()
+	a.serial.Lock()
 	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
+	a.serial.Unlock()
 	if err != nil {
 		return a.readFailed("land", err, stderr)
 	}
@@ -561,6 +569,8 @@ func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) 
 	if l.c.op != "" {
 		step.CallerOp = l.c.op + "." + r.Stream + "." + step.Args
 	}
+	l.a.serial.Lock()
+	defer l.a.serial.Unlock()
 	return l.st.Run(context.Background(), step)
 }
 
@@ -582,7 +592,9 @@ func stepWhy(res store.Result, err error) string {
 // queueHead is why the stream's merge queue, read again at the epoch land
 // read, no longer holds the pinned cards at their heads; "" when it does.
 func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) string {
+	l.a.serial.Lock()
 	s, err := l.st.Load(ctx, []string{sprint.Merge, sprint.Work}, nil)
+	l.a.serial.Unlock()
 	if err != nil {
 		return "the merge queue could not be read again at epoch " + strconv.FormatUint(l.epoch, 10) + ": " + oneline.Err(err)
 	}

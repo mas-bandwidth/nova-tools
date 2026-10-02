@@ -425,6 +425,10 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	if *read && *atEpoch >= 0 {
 		return refuse(stderr, "inbox", "--read moves the cursor of the sprint's epoch, and --at-epoch reads an earlier one as it was: give one of them")
 	}
+	if *read && *wait && a.getenv(ServerEnv) != "" {
+		// the cursor is the server's to move, and a wait never runs on the server (waits)
+		return refuse(stderr, "inbox", "--read moves the cursor, which the sprint's server (NOVA_SPRINT_SERVER) moves, and --wait waits where it is typed, never on the server: run nova-sprint inbox --wait, then nova-sprint inbox --read; nothing was changed")
+	}
 	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {
 		return refuse(stderr, "inbox", err.Error())

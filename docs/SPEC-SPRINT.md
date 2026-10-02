@@ -1292,6 +1292,39 @@ nothing more. No later word of a verb, wherever it stands, is a flag named `as`,
 `take`, a `finish` and a `read` name the epoch their worker holds (`--epoch`). A verb the server
 does not run is answered exit 2, saying nothing was changed, and the batch goes on.
 
+The coordinator's verbs go to the server too. The server listens a second time on the
+loopback address at the same port, and there it runs any verb of the command but the ones it
+runs for nobody: itself (`run`, `tick`), `land` and `play`, which work outside the store for
+seconds or minutes, and `fleet sync`, which reads the config store with its caller's own
+credentials, nor a read that waits for the sprint to move (`where --watch`, `inbox --wait`): the
+server moves the sprint on the one line of control such a verb would hold. With
+`NOVA_SPRINT_SERVER=<host:port>` set (the loopback address `run --listen` prints), a verb that
+writes the sprint (a coordinator's, a report's, a worker's, and `inbox --read`, which moves the
+coordinator's cursor) is not run where it is typed: its arguments are sent to the server, with
+the caller's actor and each file it names as an absolute path, and what the server's run of it
+printed is printed there, with its exit code. The reads, the verbs not served, a waiting read, a
+verb given its own `--redis`, a verb's help and flags the verb refuses run where they are typed;
+`inbox --wait --read`, which would wait here and move the cursor the server moves, is refused
+with a server named (exit 2, nothing changed): run `inbox --wait`, then `inbox --read`.
+What the arguments say (a help flag, which word is a flag's value, a file flag, a `--`) is read
+by the verb's own flags, never by a scan of the words: `add --stream help` is a stream named
+help, and in `--brief --rules` the brief is the text `--rules`. Who acts is the caller's actor
+alone: the server puts `--actor` with no one before the caller's words, so a verb that names no
+actor acts as no one and is refused, never as whoever the server's own environment names. A
+worker's verb from this machine names the epoch its worker holds however its words are ordered.
+So one process writes the sprint: the server.
+
+With `run --land` the server lands what the readers passed, itself: every two seconds, when a
+stream has cards queued to merge, it runs `land` for them as the sprint's coordinator, one
+landing at a time, in its own process. Land's reads and its report take the server's line of
+control like any other step; its git (the fetch, the merges, the check, the push) runs outside
+it, so a tick or a worker's batch never waits on a push. A `land` run by itself beside a
+server is a second writer of the merge queue, and is what `--land` replaces. A round prints
+what landed and everything land said was wrong (a refused or failed batch, a refusal before any
+batch, its remedy); a round that could not read the merge queue prints `LAND FAILED` with why,
+since an unreadable queue is not an empty one, and the next round tries again. A failure is
+printed once, when it begins: the same failure again prints nothing until it changes or clears.
+
 The address is one address of the coordinator's machine on the fleet's private network; an
 address every network can reach is refused. The server checks no credential (the owner: "I am OK
 with relying on tailnet as secure"): what can reach the address can run a worker's verb as any
