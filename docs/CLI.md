@@ -725,7 +725,7 @@ usage:
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--identity <owner>,<name>,<email>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--identity <owner>,<name>,<email>]
                        (the width is the member's fleet row's, read every tick; each card runs on the route its packet names, the entry at its tier's
                         route index in the tier's array (nova-config tier) or its model: pin; --width, --model, --tokens, --deadline are a twin's override)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
@@ -747,10 +747,11 @@ native requires --card; lint takes --card, or
 --fleet or --rules instead; verify takes --card as an option and reads it only
 when given (because a card this tool chose would be a guess about somebody
 else's task); the remaining verbs take no card flag. --tokens is required on
-native and member because a budget this tool supplied would be a guess about
-somebody else's task, and --tokens unmetered is a caller's statement that this
+native because a budget this tool supplied would be a guess about somebody
+else's task, and --tokens unmetered is a caller's statement that this
 provider has no live accounting and the deadline is the only stop. Zero is
-refused for tokens.
+refused for tokens. member takes each card's budget from the route its packet
+names, and --tokens (with --model and --deadline) only for a card with none.
 
 THE KEY IS READ AS DATA AND NEVER SOURCED. It lives in one file the worker
 description names -- one line, the bare key or NAME=<key>, mode 0600 -- and it is
