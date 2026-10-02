@@ -4,8 +4,8 @@
 // when a contained command exits non-zero, so a reader can see which paths were blocked
 // and what flag would have allowed them.
 //
-// The root cause of that particular one is fixed where it belonged, in the optional roots'
-// ancestors (internal/sandbox/policy.go). This file is the class: when a contained command
+// The root cause of that particular failure lives in the optional roots' ancestors
+// (internal/sandbox/policy.go); this file is the class: when a contained command
 // exits non-zero, ASK THE OPERATING SYSTEM what it refused and print one line per path,
 // with the flag that would have allowed it.
 //
@@ -59,7 +59,7 @@ import (
 var denialStat = os.Stat
 
 // maxDenied is how many SANDBOX DENIED lines a run prints before one line stands for the
-// rest — rule 16's shape for a list. A command that died on its first syscall can trip
+// rest — rule 16's shape for a list. A command that exits on its first syscall can trip
 // hundreds, and a wall of them is not a remedy.
 const maxDenied = 10
 
