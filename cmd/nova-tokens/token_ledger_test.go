@@ -149,14 +149,14 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 	// The key layout: one hash per day under tokens:ledger:<day>, nothing else written.
 	{
 		keys := mr.Keys()
-		require.True(t, strings.Join(keys, " ") == "tokens:ledger:2026-09-11 tokens:ledger:2026-09-12 tokens:ledger:2026-09-13", "the ledger wrote keys %v; want one tokens:ledger:<day> per folded day", keys)
+		require.Equal(t, "tokens:ledger:2026-09-11 tokens:ledger:2026-09-12 tokens:ledger:2026-09-13", strings.Join(keys, " "), "the ledger wrote keys %v; want one tokens:ledger:<day> per folded day", keys)
 	}
 
 	rep := invoke(t, "report", "--redis", dsn, "--month", "2026-09", "--by", "tuple")
 	wantExit(t, rep, 0)
 	want := foldedTuples(t, out, "2026-09")
 	got := reportTuples(rep.stdout)
-	require.True(t, strings.Join(got, "\n") == strings.Join(want, "\n"), "the store report is not the folded TSV to the token\nstore:\n%s\nfolded:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	require.Equal(t, strings.Join(want, "\n"), strings.Join(got, "\n"), "the store report is not the folded TSV to the token\nstore:\n%s\nfolded:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	require.Equal(t, 5, len(want), "want 5 (day, model, repo) tuples from the fixture, the folded side has %d:\n%s", len(want), strings.Join(want, "\n"))
 	wantContains(t, rep.stdout, "REPORT day=2026-09-13 model=gpt repo=schema rows=1 input=10 output=20 cache_write=- cache_read=- reasoning=3")
 	wantContains(t, rep.stdout, "REPORT day=2026-09-13 model=gpt repo=serialize rows=1 input=1 output=2 cache_write=4 cache_read=- reasoning=-")
@@ -165,7 +165,7 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 	// Re-indexing a day replaces it: the table is the day files' index, not an append log.
 	wantExit(t, invoke(t, "ledger", "--out", out, "--day", "2026-09-13", "--redis", dsn), 0)
 	again := invoke(t, "report", "--redis", dsn, "--month", "2026-09", "--by", "tuple")
-	require.True(t, strings.Join(reportTuples(again.stdout), "\n") == strings.Join(want, "\n"), "re-indexing a day changed the report:\n%s", again.stdout)
+	require.Equal(t, strings.Join(want, "\n"), strings.Join(reportTuples(again.stdout), "\n"), "re-indexing a day changed the report:\n%s", again.stdout)
 
 	// The per-model group carries cache_write and reasoning too.
 	byModel := invoke(t, "report", "--redis", dsn, "--month", "2026-09")
@@ -176,7 +176,7 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 	after := snapshotDir(t, out)
 	require.Equal(t, len(before), len(after), "the day directory changed: %d files before, %d after", len(before), len(after))
 	for name, body := range before {
-		assert.True(t, after[name] == body, "day file %s changed under ledger/report", name)
+		assert.Equal(t, body, after[name], "day file %s changed under ledger/report", name)
 	}
 }
 
@@ -210,7 +210,7 @@ func TestLedgerRefusesWithoutRedisAndNamesAMissingDay(t *testing.T) {
 	wantContains(t, r.stdout, "LEDGER NO day=2026-09-11 days=0 rows=0 bad=1")
 	{
 		keys := mr.Keys()
-		require.True(t, len(keys) == 0, "a missing day wrote %v", keys)
+		require.Equal(t, 0, len(keys), "a missing day wrote %v", keys)
 	}
 }
 
@@ -349,7 +349,7 @@ func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 	// Verify all 3 days are stored.
 	{
 		keys := mr.Keys()
-		require.True(t, len(keys) == 3, "expected 3 keys in ledger, got %v", keys)
+		require.Equal(t, 3, len(keys), "expected 3 keys in ledger, got %v", keys)
 	}
 
 	mu.Lock()
