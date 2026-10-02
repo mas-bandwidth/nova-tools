@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -77,7 +78,64 @@ func TestADryRunRefusesWhereTheWriteWould(t *testing.T) {
 				{Name: "store not there", Setup: func(t *testing.T, root string) ([]string, []string) {
 					return v.args(filepath.Join(root, "store"))
 				}},
+				// The log is appended through os.OpenFile, which follows a link: a
+				// link into a directory that is not there is the ENOENT the open
+				// meets; one into a directory that is there is created through.
+				{Name: "log links into a missing directory", Setup: at(func(t *testing.T, store, _ string) {
+					relink(t, filepath.Join(store, "log.jsonl"), filepath.Join(store, "..", "missing", "log.jsonl"))
+				})},
+				{Name: "log is a dangling link", Setup: at(func(t *testing.T, store, _ string) {
+					require.NoError(t, os.MkdirAll(filepath.Join(store, "..", "elsewhere"), 0o755))
+					relink(t, filepath.Join(store, "log.jsonl"), filepath.Join(store, "..", "elsewhere", "log.jsonl"))
+				})},
 			})
 		})
 	}
+}
+
+// relink puts a symbolic link to target at name, in place of what name held.
+func relink(t *testing.T, name, target string) {
+	t.Helper()
+	if _, err := os.Lstat(name); err == nil {
+		require.NoError(t, os.Remove(name))
+	}
+	require.NoError(t, os.Symlink(target, name))
+}
+
+// A retry of an append whose entry is durable but whose pointer line never
+// landed repairs the pointer, so its dry run plans that append: it refuses on
+// a record it cannot write, as the retry does, and a duplicate whose pointer is
+// there needs no write and no permission, dry or not.
+func TestADuplicateDryRunPlansThePointerRepair(t *testing.T) {
+	t.Parallel()
+	interrupted := func(pointer, writable bool) func(*testing.T, string) ([]string, []string) {
+		return func(t *testing.T, root string) ([]string, []string) {
+			store := filepath.Join(root, "store")
+			cli.OK(t, "open", "--store", store, "--session", "s", "--publish", "manual")
+			cli.OK(t, "append", "--store", store, "--session", "s", "--entry", "e", "--text", "w")
+			record := filepath.Join(store, "sessions", "s.md")
+			if !pointer {
+				var kept []string
+				for _, line := range strings.Split(testkit.ReadFile(t, record), "\n") {
+					if !strings.HasPrefix(line, "ENTRY e ") {
+						kept = append(kept, line)
+					}
+				}
+				testkit.WriteFile(t, record, strings.Join(kept, "\n"))
+			}
+			if !writable {
+				require.NoError(t, os.Chmod(record, 0o444))
+				t.Cleanup(func() {
+					// ignored: restoring the mode only lets TempDir's cleanup remove it
+					_ = os.Chmod(record, 0o644)
+				})
+			}
+			return []string{"append"}, []string{"--store", store, "--session", "s", "--entry", "e", "--text", "w"}
+		}
+	}
+	testkit.DryRunAgrees(t, cli.Run, []testkit.DryCase{
+		{Name: "pointer missing, record writable", Setup: interrupted(false, true)},
+		{Name: "pointer missing, record read-only", Unwrites: true, Setup: interrupted(false, false)},
+		{Name: "pointer there, record read-only", Unwrites: true, Setup: interrupted(true, false)},
+	})
 }

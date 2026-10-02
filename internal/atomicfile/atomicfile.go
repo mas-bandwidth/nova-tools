@@ -301,9 +301,10 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts .
 	return publish(path, data, perm, h, opt, dir, base)
 }
 
-// validate is every check Write makes before it touches the disk, shared with
-// Check so a plan refuses exactly where the write would.
-func validate(path string, perm os.FileMode, h *hooks, opts []Option) (opt options, dir, base string, err error) {
+// validateName is the half of validate that reads nothing on disk: the path is
+// given and clean, the mode is one Write supports, and the base name leaves room
+// for the temporary file's name beside it.
+func validateName(path string, perm os.FileMode, opts []Option) (opt options, dir, base string, err error) {
 	for _, fn := range opts {
 		if fn != nil {
 			fn(&opt)
@@ -325,8 +326,18 @@ func validate(path string, perm os.FileMode, h *hooks, opts []Option) (opt optio
 	if len(base) > maxBaseNameLen {
 		return opt, dir, base, fmt.Errorf("atomicfile: base name of %q exceeds maximum length %d: name too long", path, maxBaseNameLen)
 	}
-
 	dir = filepath.Dir(path)
+	return opt, dir, base, nil
+}
+
+// validate is every check Write makes before it touches the disk, shared with
+// Check so a plan refuses exactly where the write would: the lexical checks
+// (validateName), then the parent and the target as they stand.
+func validate(path string, perm os.FileMode, h *hooks, opts []Option) (opt options, dir, base string, err error) {
+	if opt, dir, base, err = validateName(path, perm, opts); err != nil {
+		return opt, dir, base, err
+	}
+
 	// Lstat, not Stat. Stat follows a symlink parent, so the directory looks real
 	// and the temporary file is created in the link target. Do not compare
 	// EvalSymlinks to the lexical path: on macOS /tmp is /private/tmp.

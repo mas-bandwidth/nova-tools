@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,6 +42,14 @@ func TestACheckRefusesWhereTheWriteWould(t *testing.T) {
 			return filepath.Join(root, "p", "f")
 		}},
 		{"parent not there", false, func(t *testing.T, root string) string { return filepath.Join(root, "p", "q", "f") }},
+		{"name too long, parent not there", false, func(t *testing.T, root string) string {
+			return filepath.Join(root, "p", strings.Repeat("x", 242))
+		}},
+		{"target is a dangling link", false, func(t *testing.T, root string) string {
+			require.NoError(t, os.Mkdir(filepath.Join(root, "p"), 0o755))
+			require.NoError(t, os.Symlink(filepath.Join(root, "nowhere"), filepath.Join(root, "p", "f")))
+			return filepath.Join(root, "p", "f")
+		}},
 		{"a plain write", false, func(t *testing.T, root string) string { return filepath.Join(root, "f") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -79,4 +88,72 @@ func TestCheckAppend(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(root, "d"), 0o755))
 	assert.Error(t, CheckAppend(filepath.Join(root, "d")))
 	assert.Error(t, CheckAppend(filepath.Join(root, "old.log", "x")))
+}
+
+// CheckAfterMkdirAll makes the write's checks of the path and the mode even
+// when the parent is not there yet.
+func TestCheckAfterMkdirAllChecksTheNameWhenTheParentIsMissing(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	missing := filepath.Join(root, "missing")
+	assert.NoError(t, CheckAfterMkdirAll(filepath.Join(missing, "f"), 0o644))
+	assert.ErrorContains(t, CheckAfterMkdirAll(filepath.Join(missing, strings.Repeat("x", 242)), 0o644), "name too long")
+	assert.ErrorContains(t, CheckAfterMkdirAll(filepath.Join(missing, "f"), 0o1777), "unsupported file mode")
+	assert.ErrorContains(t, CheckAfterMkdirAll(missing+"/./f", 0o644), "not clean")
+	_, err := os.Stat(missing)
+	assert.True(t, os.IsNotExist(err), "a check made the parent")
+}
+
+// CheckAppend judges a link by what an append through it meets: os.OpenFile
+// with O_CREATE follows the link and creates its referent in a directory that
+// must be there. Each case compares the check with the append itself on an
+// identical tree.
+func TestCheckAppendFollowsALinkAsTheAppendDoes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, root string) string
+	}{
+		{"link into a missing directory", func(t *testing.T, root string) string {
+			p := filepath.Join(root, "log")
+			require.NoError(t, os.Symlink(filepath.Join(root, "missing", "log"), p))
+			return p
+		}},
+		{"dangling link in a directory that is there", func(t *testing.T, root string) string {
+			require.NoError(t, os.Mkdir(filepath.Join(root, "d"), 0o755))
+			p := filepath.Join(root, "log")
+			require.NoError(t, os.Symlink(filepath.Join(root, "d", "log"), p))
+			return p
+		}},
+		{"link to a regular file", func(t *testing.T, root string) string {
+			require.NoError(t, os.WriteFile(filepath.Join(root, "real"), nil, 0o644))
+			p := filepath.Join(root, "log")
+			require.NoError(t, os.Symlink(filepath.Join(root, "real"), p))
+			return p
+		}},
+		{"link to a directory", func(t *testing.T, root string) string {
+			require.NoError(t, os.Mkdir(filepath.Join(root, "d"), 0o755))
+			p := filepath.Join(root, "log")
+			require.NoError(t, os.Symlink(filepath.Join(root, "d"), p))
+			return p
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			real, plan := t.TempDir(), t.TempDir()
+			p := tc.setup(t, real)
+			f, werr := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+			if werr == nil {
+				_ = f.Close()
+			}
+			p = tc.setup(t, plan)
+			link, _ := os.Readlink(p)
+			cerr := CheckAppend(p)
+			assert.Equal(t, werr == nil, cerr == nil, "append: %v; check: %v", werr, cerr)
+			after, _ := os.Readlink(p)
+			assert.Equal(t, link, after, "the check changed the link")
+			_, err := os.Stat(filepath.Join(plan, "missing"))
+			assert.True(t, os.IsNotExist(err), "the check made a directory")
+		})
+	}
 }

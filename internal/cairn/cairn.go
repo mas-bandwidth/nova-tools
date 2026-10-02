@@ -532,8 +532,10 @@ func pointerLine(id string, stamp time.Time) string {
 
 // ensurePointer heals an interrupted append: the entry file is already
 // durable but its pointer line never landed, so land it now without
-// duplicating a line that is already there.
-func ensurePointer(store, session, id string, stamp time.Time) error {
+// duplicating a line that is already there. With write false it is the plan of
+// that repair: the same read, and when a line is owed, the checks its append
+// makes; a pointer already there needs no write and no permission.
+func ensurePointer(store, session, id string, stamp time.Time, write bool) error {
 	name := sessionFile(store, session)
 	raw, err := os.ReadFile(name)
 	if err != nil {
@@ -544,6 +546,9 @@ func ensurePointer(store, session, id string, stamp time.Time) error {
 		if strings.HasPrefix(line, "ENTRY "+id+" ") || line == want {
 			return nil
 		}
+	}
+	if !write {
+		return atomicfile.CheckAppend(name)
 	}
 	return appendLine(name, want)
 }
@@ -629,10 +634,8 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 		if err != nil {
 			return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
 		}
-		if write {
-			if err := ensurePointer(store, session, id, prevStamp); err != nil {
-				return res, err
-			}
+		if err := ensurePointer(store, session, id, prevStamp, write); err != nil {
+			return res, err
 		}
 		return AppendResult{Stamp: prevStamp, Persisted: true, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
 	}
@@ -664,7 +667,7 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 	if err := atomicfile.WriteFile(final, rec, 0o644); err != nil {
 		return res, err
 	}
-	if err := ensurePointer(store, session, id, stamp); err != nil {
+	if err := ensurePointer(store, session, id, stamp, true); err != nil {
 		return res, err
 	}
 	if err := appendLog(store, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {

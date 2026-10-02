@@ -75,6 +75,20 @@ func TestADryRunRefusesWhereTheWriteWould(t *testing.T) {
 				{Name: "parent missing", Setup: func(t *testing.T, root string) ([]string, []string) {
 					return layout(t, root, func(string) {})
 				}},
+				// The checks the write makes on the name alone hold when the parent is
+				// not there yet: a base name past 241 bytes is refused either way.
+				{Name: "name too long, parent missing", Setup: func(t *testing.T, root string) ([]string, []string) {
+					return w.verb, append([]string{"--box", filepath.Join(root, "missing", strings.Repeat("x", 242))}, w.pos...)
+				}},
+				{Name: "name too long", Setup: func(t *testing.T, root string) ([]string, []string) {
+					return w.verb, append([]string{"--box", filepath.Join(root, strings.Repeat("x", 242))}, w.pos...)
+				}},
+				{Name: "box is a dangling link", Setup: func(t *testing.T, root string) ([]string, []string) {
+					return layout(t, root, func(dir string) {
+						require.NoError(t, os.MkdirAll(dir, 0o755))
+						require.NoError(t, os.Symlink(filepath.Join(root, "nowhere", "box.json"), filepath.Join(dir, "box.json")))
+					})
+				}},
 			})
 		})
 	}
