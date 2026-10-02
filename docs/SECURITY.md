@@ -81,21 +81,16 @@ lists it says are not exhaustive, and each of those is the spec working rather
 than a hole. **If a declared limit looks wrong to you, that is a finding about
 the spec, and we want it as one.**
 
-The exception worth naming out loud, because the easy version of this page would
-turn away the report that matters most: **a systematic false positive in the
-advisory instrument is a finding.** The README carries the case that proves it.
-An early version scored rule documents worst of anything in the repository they
-were written for, because a rule document is a list of absolutes, and acting on
-that output weakened five rules before a cold reader caught them. One was
-floor-level. If you find the next one of those, we want it.
+The exception worth naming out loud: **a systematic false positive in the
+advisory instrument is a finding.**
 
 ## Reporting
 
-Email <glenn@mas-bandwidth.com>. That is the route that works today, and it is
+Email <glenn@mas-bandwidth.com>. That is the route, and it is
 the whole route.
 
 GitHub private vulnerability reporting is switched off on this repository and
-on nova as of 2026-08. Where a repository has that feature enabled, GitHub puts
+on nova. Where a repository has that feature enabled, GitHub puts
 a **Report a vulnerability** button on the Security tab; this one does not have
 it enabled, so there is no button and the advisory form is not a route you can
 use.
@@ -115,8 +110,7 @@ without trusting mail: **we will never propose a channel or publish a key by
 mail alone. Anything we offer will also appear in a commit to this file**, so
 read [this file's
 history](https://github.com/mas-bandwidth/nova-tools/commits/main/docs/SECURITY.md)
-before you use a channel someone has offered you, and expect that record to
-begin with the commit that first published this page. The anchor proves a
+before you use a channel someone has offered you. The anchor proves a
 commit is in this repository's history; it does not prove which of us put it there, and a
 stolen credential defeats it. **And silence is not only
 neglect.** The party best placed to read this mail is also best placed to drop
@@ -130,13 +124,9 @@ a new address either, so neither of us can tell the other from someone on the
 wire, and the credit offer below becomes one you cannot later claim.
 
 We aim to acknowledge within a few days. If about a week passes with no reply,
-that is a failure on our side and not a judgment on your report — send it again
-to <rowan@mas-bandwidth.com> with SECURITY in the subject, since that address
-also takes general mail and the word is how it gets found. That gets you a
-different pair of eyes rather than a faster answer, and it is no more private
-than the first: same unencrypted medium, same domain.
+that is a failure on our side and not a judgment on your report — send it again.
 
-If neither answers, you have done everything that could reasonably be asked of
+If it still does not answer, you have done everything that could reasonably be asked of
 you, and what you do next is your own call on your own timeline. We would still
 rather hear from you first, and we are not owed silence.
 
