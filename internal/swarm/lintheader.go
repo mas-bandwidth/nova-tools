@@ -202,10 +202,11 @@ var cardKeyCheck = map[string]string{
 }
 
 // validGlobs is the PATHS: rule, and it is `hygiene.ValidatePaths` ITSELF, not a
-// restatement of it.
+// restatement of it (#1853, Emma's item-4 dogfood).
 //
-// This function used to write the rule out a second time. The comment above said in so many
-// words that it should become a call when the validator landed. The validator landed, this did not, and
+// This function used to write the rule out a second time, because T02's validator was
+// not on `dev` when the checks were first written, and the comment above said in so many
+// words that it should become a call the day T02 landed. T02 landed, this did not, and
 // the copy drifted in BOTH directions within a day: it let a Windows drive letter
 // (`C:/Windows/system32/evil.go`) through as repo-relative, it had no cap at all where
 // the rule's cap is eight (SPEC-TOOLWORK.md:579-580), and it refused `*.go` and
@@ -233,7 +234,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 			typed = true
 		}
 	}
-	// A CARD WITH A TYPED LINE THE GATE CANNOT REACH IS A TYPED CARD. Without
+	// A CARD WITH A TYPED LINE THE GATE CANNOT REACH IS A TYPED CARD (#1854). Without
 	// this it was neither: no header line inside the block, so no typed checks ran, and
 	// the card was called clean all the way to `accept`.
 	if len(stranded) > 0 {
@@ -270,7 +271,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	case kind.value == "":
 		add("kind-declared", kind.line, "KIND: with no kind after it")
 	case !hygiene.KindDeclared(kind.value):
-		// AN UNKNOWN KIND IS NOT A KIND. The line used to need only a
+		// AN UNKNOWN KIND IS NOT A KIND (#1853). The line used to need only a
 		// value, so `KIND: completely-unknown-kind` linted clean and died at
 		// accept. The names are hygiene.Kinds(), the same set `nova-check hygiene
 		// --kind` prints when it refuses.
@@ -289,7 +290,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		// AN EMPTY ENTRY IS NOT A SKIPPABLE ONE. `PATHS: , , ` used to have each empty
 		// entry `continue`d past and the line called fine, which is the worst of the
 		// three answers a reader could get: the line declares no glob and it is not
-		// `none`.
+		// `none` (#1853, Emma's item-4 dogfood).
 		var globs []string
 		empty := false
 		for _, g := range strings.Split(paths.value, ",") {
@@ -361,7 +362,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 //	TRUST kind=<kind> area=<area> state=<trial|trusted|paused> cards=<n>/<N> ...
 //	TRUST OK kinds=<n> trial=<n> trusted=<n> paused=<n>
 //
-// THE VERB DOES NOT EXIST YET. `nova-pulse trust` is the other half of the feature and belongs
+// THE VERB DOES NOT EXIST YET. `nova-pulse trust` is the other half of T06a and belongs
 // to the lane that owns `internal/pulse`; until it lands, the bench hands `lint --card`
 // a fixture in exactly this shape with `--trust <file>`, and the day the verb ships its
 // own stdout is the fixture. Lines that are not TRUST rows, and the TRUST OK summary,
