@@ -2,10 +2,10 @@ package main
 
 // `nova-check hygiene` is the hand's door to the same function the gate runs.
 //
-// One implementation and three callers share the hygiene definition, so the
-// callers -- `nova-pulse accept` at harvest, `nova-merge batch` on every member, and
-// this, for a person who wants to know before they ask a friend for a read. One
-// implementation, so the lane and the harvest cannot disagree about what clean means.
+// One implementation serves three callers: `nova-pulse accept` at harvest,
+// `nova-merge batch` on every member, and this one, for a person who wants to
+// know before they ask a friend for a read. A single implementation keeps the
+// lane and the harvest from disagreeing about what clean means.
 // A second copy of these rules is a second definition of clean, and the day the two
 // drift is the day a branch passes one and fails the other with nobody able to say
 // which is right.
@@ -97,9 +97,9 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	// Here it was neither. `--kind` went straight through to hygiene.Check, where it
 	// unlocks an allowlisted stray exception and nothing else, so an undeclared kind
 	// unlocked nothing and the run printed HYGIENE OK -- a clean answer about a shape
-	// of work that does not exist. Eleven of the tools12 cards carried an
-	// undeclared kind, and every one came back clean, though a check pass
-	// cannot print of a kind this tool does not declare.
+	// of work that does not exist. A card carrying an undeclared kind comes
+	// back clean, because a check pass cannot print a finding about a kind the
+	// tool does not declare; refusing it here is what names the kind instead.
 	if *kind != "" && !hygiene.KindDeclared(*kind) {
 		return refuse(stderr, " hygiene", fmt.Sprintf("--kind %q is not a kind this tool declares; one of: %s",
 			*kind, strings.Join(hygiene.Kinds(), ", ")))
