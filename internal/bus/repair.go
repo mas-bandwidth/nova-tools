@@ -239,8 +239,8 @@ func clearStaleIndexLockReport(dir string, now time.Time, scan func() ([]gitProc
 	if found.Owner > 0 {
 		return rep, nil
 	}
-	// The scan takes time, and the path may now hold a different lock: the inspected lock may have finished
-	// and a new git took the path, or someone touched it. Only the lock that was inspected
+	// The scan takes time, and the path may now hold a different lock: the inspected lock released;
+	// a new git might take the path, or someone touched it. Only the lock that was inspected
 	// is removed: the same device and inode, the same owner, and no newer mtime.
 	if changed, err := indexLockChanged(lock, fi, owner, lockOwner); err != nil || changed {
 		if os.IsNotExist(err) {

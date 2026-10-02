@@ -13,8 +13,7 @@ import "strings"
 //	`nova-bus inbox` or `nova-bus wait` -- parse it line by line.
 //
 //	stderr carries refusals, failures and PROGRESS: what the program is doing
-//	while it is doing it. A consumer reads it so that an INBOX REFUSED is never
-//	lost, but nothing on it is protocol.
+//	while it is doing it. A consumer reads it so that an INBOX REFUSED is never lost, but nothing on it is protocol.
 //
 // The protocol rule has two halves: a program that takes longer than 0.1 s says what it is doing on stderr,
 // AND a progress line never enters a protocol stream a consumer parses.

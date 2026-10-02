@@ -212,8 +212,8 @@ func ValidSlug(slug string) error {
 	return nil
 }
 
-// HostMax is how long a Host value may be. A host is a machine's short name -- `air`,
-// among others -- and it is printed on an inbox line beside the sender, so it is
+// HostMax is how long a Host value may be. A host is a machine's short name -- one
+// segment without spaces -- and it is printed on an inbox line beside the sender, so it is
 // bounded rather than left to whatever a defaults file holds.
 const HostMax = 40
 
