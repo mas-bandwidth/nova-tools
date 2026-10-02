@@ -1,7 +1,5 @@
-// Package yield is the one place a process steps behind CI. CI over work is a
-// permanent setting because work creates more CI, so without this, it is
-// a GOOD idea. because work creates more CI, so without this, it is
-// unstable").
+// Package yield ensures CI processes maintain priority over worker
+// processes to keep builds responsive.
 //
 // Every copy the wrapper starts (nova-card, card run, card session), every
 // local test run a coordinator's child makes (nova-ci local), and every card a
