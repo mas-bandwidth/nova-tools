@@ -250,7 +250,12 @@ func ParseStoreFileWithoutDecrypting(filePath string) (keys []StoreFileKey, reci
 		return nil, nil, false, err
 	}
 	defer f.Close()
+	return parseStoreFile(f)
+}
 
+// parseStoreFile is ParseStoreFileWithoutDecrypting over any reader: a file in the store
+// or a blob git shows at a commit.
+func parseStoreFile(f io.Reader) (keys []StoreFileKey, recipients []string, hasSops bool, err error) {
 	scanner := bufio.NewScanner(f)
 	inSops := false
 	inAge := false

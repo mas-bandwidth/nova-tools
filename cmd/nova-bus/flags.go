@@ -118,7 +118,10 @@ func parseEvery(fs *flag.FlagSet, args []string) (bad []error, err error) {
 			fl.Value = v
 		}
 	}()
-	return bad, verbflag.Parse(fs, args)
+	// Parse first, then read bad: the collecting values append to it during the parse, and
+	// Go does not order a plain operand against a call in one return list.
+	err = verbflag.Parse(fs, args)
+	return bad, err
 }
 
 // collecting is a flag.Value that records a value its flag cannot take, in the flag

@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net/url"
 	"regexp"
 	"slices"
 	"sort"
@@ -84,8 +85,10 @@ type Field struct {
 	Help string
 	// Default is the canonical value add stores for a field it is not
 	// given. "" means the type's zero: 0 for an int, false for a bool, the
-	// empty value for the rest.
+	// empty value for the rest, or an unset value when Nullable is true.
 	Default string
+	// Nullable leaves an omitted field unset, represented as SQL NULL.
+	Nullable bool
 }
 
 // Kind is one kind of configuration. See the package comment.
@@ -207,11 +210,14 @@ var Kinds = []*Kind{
 		Name:      KindFleet,
 		Table:     "fleet",
 		Singleton: true,
-		Doc:       "the one row of fleet-wide facts: which machine is the store and which the coordinator",
+		Doc:       "the one row of fleet-wide facts: the store and coordinator machines, Redis port and explicit password-free Postgres URI",
 		Fields: []Field{
-			{Name: "store", Type: TypeRef, Ref: KindMachine, Help: "the machine that runs Redis and Postgres (a machine row), or empty"},
+			{Name: "store", Type: TypeRef, Ref: KindMachine, Help: "the machine that runs Redis (a machine row), or empty"},
 			{Name: "coordinator", Type: TypeRef, Ref: KindMachine, Help: "the machine the coordinator's loops run on (a machine row), or empty"},
+			{Name: "redis_port", Type: TypeInt, Nullable: true, Help: "the explicit TCP port Redis listens on, from 1 through 65535; unset until declared"},
+			{Name: "pg_dsn", Type: TypeText, Help: "the explicit password-free postgres:// URI the configuration store uses; empty until set"},
 		},
+		Check: checkFleet,
 	},
 	{
 		// A friend's row is what someone decides for her: how wide, which
@@ -316,6 +322,45 @@ var Kinds = []*Kind{
 		Seed:  RouteTiers,
 		Check: checkTier,
 	},
+}
+
+// checkFleet keeps both store endpoints explicit and safe to print. The
+// endpoints may be unset so an older fleet can migrate before an operator
+// declares them; apply and inventory refuse incomplete endpoints.
+func checkFleet(r Row) error {
+	if raw := r.Fields["redis_port"]; raw != "" {
+		port, err := strconv.Atoi(raw)
+		if err != nil || port < 1 || port > 65535 {
+			return fmt.Errorf("--redis_port wants an integer from 1 through 65535")
+		}
+	}
+	dsn, ok := r.Fields["pg_dsn"]
+	if !ok || dsn == "" {
+		return nil
+	}
+	u, err := url.Parse(dsn)
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Hostname() == "" || u.User == nil || u.User.Username() == "" || strings.TrimPrefix(u.Path, "/") == "" {
+		return fmt.Errorf("--pg_dsn wants a password-free postgres://user@host/database URI (port optional)")
+	}
+	if _, has := u.User.Password(); has {
+		return fmt.Errorf("--pg_dsn carries a password; leave it out and deliver the password through NOVA_PG_PASSWORD_ENV")
+	}
+	if port := u.Port(); port != "" || strings.HasSuffix(u.Host, ":") {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("--pg_dsn wants a TCP port from 1 through 65535 when a port is supplied")
+		}
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return fmt.Errorf("--pg_dsn wants a valid URI query with percent-encoded values and & between parameters; leave passwords out and deliver them through NOVA_PG_PASSWORD_ENV")
+	}
+	for key := range query {
+		if strings.EqualFold(key, "password") {
+			return fmt.Errorf("--pg_dsn carries a password; leave it out and deliver the password through NOVA_PG_PASSWORD_ENV")
+		}
+	}
+	return nil
 }
 
 // checkTier is the tier kind's Check: the row is one of RouteTiers.
@@ -777,6 +822,8 @@ func (f Field) zero() string {
 	switch {
 	case f.Default != "":
 		return f.Default
+	case f.Nullable:
+		return ""
 	case f.Type == TypeInt:
 		return "0"
 	case f.Type == TypeBool:

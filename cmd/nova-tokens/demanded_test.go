@@ -1280,9 +1280,37 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 			// asks sqlite3 for -json: under -tabs this row splits on the data inside it.
 			ocPart("msg1", "s1", "cat /x/schema/b.go\tand\nmore", "", "", "")))
 
+	repos := reposFile(t, dir)
+	// A dry run reads the database exactly as the real run does, and leaves --scratch,
+	// --out and the database's own directory as they were: a file already at the path the
+	// real run copies to is neither truncated nor replaced, and nothing is left behind.
+	write(t, filepath.Join(scratch, "opencode-bench", "opencode.db"), "an earlier copy\n")
+	for _, args := range [][]string{
+		{"fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--opencode", "bench=" + db, "--scratch", scratch, "--dry-run"},
+		{"report", "--who", "ada", "--day", "2026-09-11", "--repos", repos, "--opencode", "bench=" + db, "--scratch", scratch, "--dry-run"},
+		{"sources", "--day", "2026-09-11", "--repos", repos, "--opencode", "bench=" + db, "--scratch", scratch},
+	} {
+		tree := treeOf(t, dir)
+		r := invoke(t, args...)
+		wantExit(t, r, 0)
+		switch args[0] {
+		case "sources":
+			wantContains(t, r.stdout, "messages=1")
+		case "fold":
+			assert.Contains(t, r.all(), "dry_run=true")
+			wantContains(t, r.stdout, "kind=opencode")
+			wantContains(t, r.stdout, "messages=1")
+			wantContains(t, r.stdout, "would_write=true")
+		default:
+			assert.Contains(t, r.all(), "dry_run=true")
+			wantContains(t, r.stdout, "2026-09-11\tada\tmercury-2.5\tschema\tinput\t10")
+		}
+		assert.Equal(t, tree, treeOf(t, dir), "%s, which writes nothing, changed --scratch, --out or the database's directory", args[0])
+	}
+
 	before, err := os.Stat(db)
 	require.False(t, err != nil, err)
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir),
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos,
 		"--opencode", "bench="+db, "--scratch", scratch)
 	wantExit(t, r, 0)
 	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "mercury-2.5\tschema\t10\t20\t30\t40\t50\t")

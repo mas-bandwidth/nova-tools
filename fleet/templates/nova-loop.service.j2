@@ -24,6 +24,7 @@ User={{ ansible_user_id }}
 WorkingDirectory={{ nova_home }}
 Environment="HOME={{ nova_home }}"
 Environment="PATH={{ nova_loop_path }}"
+Environment="NOVA_SPRINT_REDIS={{ nova_redis_addr }}"
 ExecStart={% for w in loop_exec %}"{{ w | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') | replace('$', '$$') }}"{{ ' ' if not loop.last else '' }}{% endfor %}
 
 StandardOutput=append:{{ loop_log }}

@@ -14,6 +14,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/redis/go-redis/v9"
 )
 
 // The table verbs: create, drop, list, clear, show, render.
@@ -76,17 +77,18 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	if !ntable.ValidName(t.Name) {
 		return refuse(stderr, verb, "the table name wants letters, digits, _ . and -, got "+strconv.Quote(t.Name))
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	ctx := context.Background()
+	call := func(c redis.Cmdable) error { return ntable.Create(ctx, c, t, time.Now(), *write) }
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, call); done {
 		return code
 	}
-	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	if err := ntable.Create(ctx, c, t, time.Now(), *write); err != nil {
+	if err := call(c); err != nil {
 		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE CREATE table=%s columns=%d trips=%d\n", t.Name, len(t.Columns), trips.N())
@@ -123,16 +125,6 @@ func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
 		f := *footer
 		o.Footer = &f
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
-		return code
-	}
-	ctx := context.Background()
-	st, c, code := app.client(ctx, verb, *addr, stderr)
-	if code != 0 {
-		return code
-	}
-	defer st.Close()
-	trips := st.CountTrips()
 	if *hide != "" {
 		o.Hide = strings.Split(*hide, ",")
 	}
@@ -143,7 +135,18 @@ func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
 		v := *visibleTable && !*hiddenTable
 		o.Visible = &v
 	}
-	n, err := ntable.Set(ctx, c, pos[0], o, *write)
+	ctx := context.Background()
+	call := func(c redis.Cmdable) (int, error) { return ntable.Set(ctx, c, pos[0], o, *write) }
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
+		return code
+	}
+	st, c, code := app.client(ctx, verb, *addr, stderr)
+	if code != 0 {
+		return code
+	}
+	defer st.Close()
+	trips := st.CountTrips()
+	n, err := call(c)
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}
@@ -187,21 +190,22 @@ func (app *application) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	if len(pos) != 1 {
 		return refuse(stderr, verb, "wants one table name: drop <table>")
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
-		return code
+	drop := ntable.Drop
+	if *definition {
+		drop = ntable.DropDefinition
 	}
 	ctx := context.Background()
+	call := func(c redis.Cmdable) (int, error) { return drop(ctx, c, pos[0], *write) }
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
+		return code
+	}
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	drop := ntable.Drop
-	if *definition {
-		drop = ntable.DropDefinition
-	}
-	n, err := drop(ctx, c, pos[0], *write)
+	n, err := call(c)
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}
@@ -251,10 +255,11 @@ func (app *application) cmdClear(args []string, stdout, stderr io.Writer) int {
 	if len(pos) != 1 {
 		return refuse(stderr, verb, "wants one table name: clear <table>")
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	ctx := context.Background()
+	call := func(c redis.Cmdable) (int64, error) { return ntable.Clear(ctx, c, pos[0], *write) }
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
 		return code
 	}
-	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
@@ -262,7 +267,7 @@ func (app *application) cmdClear(args []string, stdout, stderr io.Writer) int {
 	defer st.Close()
 	trips := st.CountTrips()
 	start := time.Now()
-	n, err := ntable.Clear(ctx, c, pos[0], *write)
+	n, err := call(c)
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}
@@ -485,10 +490,24 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, verb, "wants --tables <a,b,...>")
 		}
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
-		return code
-	}
 	ctx := context.Background()
+	// the view writes, each one call: the real run's and its preflight's
+	state := ""
+	if sub == "state" && !clearState {
+		state = pos[1]
+	}
+	writes := map[string]func(redis.Cmdable) error{
+		"set": func(c redis.Cmdable) error {
+			return ntable.ViewSet(ctx, c, ntable.View{Name: pos[0], Tables: list, Title: title, Summary: summary})
+		},
+		"state": func(c redis.Cmdable) error { return ntable.ViewState(ctx, c, pos[0], state) },
+		"del":   sent(func(c redis.Cmdable) (int64, error) { return ntable.ViewDelete(ctx, c, pos[0]) }),
+	}
+	if call, ok := writes[sub]; ok {
+		if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, call); done {
+			return code
+		}
+	}
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
@@ -497,19 +516,15 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	trips := st.CountTrips()
 	switch sub {
 	case "set":
-		if err := ntable.ViewSet(ctx, c, ntable.View{Name: pos[0], Tables: list, Title: title, Summary: summary}); err != nil {
+		if err := writes["set"](c); err != nil {
 			return st.refusal(stderr, verb, err)
 		}
 		fmt.Fprintf(stdout, "VIEW SET view=%s tables=%s title=%q summary=%s trips=%d\n", pos[0], strings.Join(list, ","), title, field(summary), trips.N())
 	case "state":
-		text := ""
-		if !clearState {
-			text = pos[1]
-		}
-		if err := ntable.ViewState(ctx, c, pos[0], text); err != nil {
+		if err := writes["state"](c); err != nil {
 			return st.refusal(stderr, verb, err)
 		}
-		fmt.Fprintf(stdout, "VIEW STATE view=%s state=%q trips=%d\n", pos[0], text, trips.N())
+		fmt.Fprintf(stdout, "VIEW STATE view=%s state=%q trips=%d\n", pos[0], state, trips.N())
 	case "show":
 		v, err := ntable.ViewGet(ctx, c, pos[0])
 		if err != nil {

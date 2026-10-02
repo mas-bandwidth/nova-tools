@@ -60,7 +60,7 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 		findings, fail, classSum := checkCounts(t, r.stderr)
 		require.Falsef(t, findings < 30 || fail != findings || classSum != findings, "BUS CHECK findings=%d fail=%d classes sum to %d over 30 broken notes; want findings>=30 and all three equal:\n%s",
 			findings, fail, classSum, r.stderr)
-		r.mustContain(t, "stderr", fmt.Sprintf(`BUS MORE shown=20 total=%d remedy="--max 0"`, findings))
+		r.mustContain(t, "stderr", fmt.Sprintf(`BUS MORE kind=header shown=20 total=%d remedy="--max 0"`, findings))
 		// A failing run's stdout is still only its scope: no count a caller could read as a pass.
 		{
 			got := strings.TrimSpace(r.stdout)
@@ -78,7 +78,19 @@ func TestBusCheckFullIsCapped(t *testing.T) {
 			require.Equalf(t, 3, n, "--max 3 printed %d BUS FAIL lines:\n%s", n, r.stderr)
 		}
 		findings, _, _ := checkCounts(t, r.stderr)
-		r.mustContain(t, "stderr", fmt.Sprintf("BUS MORE shown=3 total=%d ", findings))
+		r.mustContain(t, "stderr", fmt.Sprintf("BUS MORE kind=header shown=3 total=%d ", findings))
+	})
+
+	t.Run("the cap is per class: a loud class does not hide a quiet one", func(t *testing.T) {
+		t.Parallel()
+		checkout, _ := busDir(t)
+		strangers(t, checkout, 10)
+		// one finding of another class, after every header finding in the walk's order
+		writeFile(t, checkout, "from-zed/2026-09-08T0000Z-x-cccccccccccc.md", "From: Ada\nTo: Bo\nSubject: s\n\nbody\n")
+		r := invoke(t, "", "check", "--bus", checkout, "--full", "--max", "3").mustCode(t, 1)
+		r.mustContain(t, "stderr", "BUS FAIL from-zed: no participant in participants.json owns this lane")
+		r.mustContain(t, "stderr", "BUS MORE kind=header shown=3 total=11 ")
+		require.Equal(t, 1, strings.Count(r.stderr, "BUS MORE "), "a class under the cap printed a MORE line:\n%s", r.stderr)
 	})
 
 	t.Run("--max 0 prints every finding and no MORE line", func(t *testing.T) {

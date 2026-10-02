@@ -185,6 +185,13 @@ func RunGate(in GateInput) (string, int) {
 		if !bytes.Contains(data, []byte("sops:")) {
 			return gateRefuse(ruleNum, f, "file is not encrypted (missing sops metadata)"), 2
 		}
+		_, recipients, _, err := parseStoreFile(bytes.NewReader(data))
+		if err != nil {
+			return gateRefuse(ruleNum, f, "unreadable sops metadata: "+oneline.Escape(err.Error())), 2
+		}
+		if problem := seatFileRecipientsProblem(recipients, cfg.CreationRules[ruleIdx].Recipients, recoveryKey); problem != "" {
+			return gateRefuse(ruleNum, f, problem), 2
+		}
 		if key, plain := firstPlainValue(data, cfg.CreationRules[ruleIdx].UnencryptedRegex); plain {
 			return gateRefuse(ruleNum, f, fmt.Sprintf("key %s is a plain value, not encrypted", oneline.Field(key))), 2
 		}

@@ -403,16 +403,19 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 		Issue:  *issue,
 		Closes: strings.TrimSpace(*closes),
 	}
+	// A dry run is this record's own plan: every check the write makes, the
+	// same refusal, the path it would take, and nothing written.
+	write := dogfood.Record
 	if *dryRun {
-		if errs := receipt.Validate(); len(errs) > 0 {
-			return refuse(stderr, " dogfood record", oneline.Err(errs[0]))
-		}
-		fmt.Fprintln(stdout, oneline.Escape(receipt.RecordLine("-")+" dry_run=true"))
-		return 0
+		write = dogfood.PlanRecord
 	}
-	path, err := dogfood.Record(*receipts, receipt)
+	path, err := write(*receipts, receipt)
 	if err != nil {
 		return refuse(stderr, " dogfood record", oneline.Err(err))
+	}
+	if *dryRun {
+		fmt.Fprintln(stdout, oneline.Escape(receipt.RecordLine(path)+" dry_run=true"))
+		return 0
 	}
 	fmt.Fprintln(stdout, oneline.Escape(receipt.RecordLine(path)))
 	return 0

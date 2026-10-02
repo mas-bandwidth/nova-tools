@@ -156,17 +156,25 @@ func cmdConvergence(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	report, next, streak := report.Apply(st, now)
+	save := next.Save
 	if *dryRun {
-		if *state != "" {
-			fmt.Fprintf(stderr, "CONVERGENCE NOTE dry_run=true: --state %s was not written\n", oneline.Field(*state))
-		}
-	} else if err := next.Save(*state); err != nil {
+		save = converge.PlanSave // the plan of the write: every check it makes, nothing written
+	}
+	if err := save(*state); err != nil {
 		fmt.Fprintf(stderr, "nova-check convergence REFUSED: --state %s could not be written: %s; run: nova-check help\n", oneline.Field(*state), oneline.Err(err))
 		return 2
 	}
+	if *dryRun && *state != "" {
+		fmt.Fprintf(stderr, "CONVERGENCE NOTE dry_run=true: --state %s was not written\n", oneline.Field(*state))
+	}
 
 	if *asJSON {
-		raw, err := json.Marshal(report.AsJSON(now, sinceAt))
+		// The dry-run fact the line form prints as its NOTE is a field here, so
+		// the two renderings carry the same facts.
+		raw, err := json.Marshal(struct {
+			converge.JSON
+			DryRun bool `json:"dry_run,omitempty"`
+		}{report.AsJSON(now, sinceAt), *dryRun && *state != ""})
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-check convergence REFUSED: %s; run: nova-check help\n", oneline.Err(err))
 			return 2

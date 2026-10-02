@@ -8,6 +8,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/redis/go-redis/v9"
 )
 
 // The cell verbs: cell add, cell remove, cell move, cell members. A cell
@@ -31,17 +32,20 @@ func (app *application) cmdCellAdd(args []string, stdout, stderr io.Writer) int 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	ctx := context.Background()
+	call := func(c redis.Cmdable) (int64, error) {
+		return ntable.CellsAdd(ctx, c, pos[0], pos[1], pos[2], sc, pos[3:], *write)
+	}
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
 		return code
 	}
-	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := ntable.CellsAdd(ctx, c, pos[0], pos[1], pos[2], sc, pos[3:], *write)
+	n, err := call(c)
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}
@@ -76,17 +80,20 @@ func (app *application) cmdCellRemove(args []string, stdout, stderr io.Writer) i
 	if len(pos) < 4 {
 		return refuse(stderr, verb, "wants a table, a row, a column and one or more members: cell remove <table> <row> <col> <member>...")
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	ctx := context.Background()
+	call := func(c redis.Cmdable) (int64, error) {
+		return ntable.CellsRemove(ctx, c, pos[0], pos[1], pos[2], pos[3:], *write)
+	}
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
 		return code
 	}
-	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := ntable.CellsRemove(ctx, c, pos[0], pos[1], pos[2], pos[3:], *write)
+	n, err := call(c)
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}
@@ -107,17 +114,20 @@ func (app *application) cmdCellMove(args []string, stdout, stderr io.Writer) int
 	if len(pos) < 5 {
 		return refuse(stderr, verb, "wants a table, a row, the column left, the column joined and one or more members: cell move <table> <row> <from-col> <to-col> <member>...")
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	ctx := context.Background()
+	call := func(c redis.Cmdable) (int64, error) {
+		return ntable.CellsMove(ctx, c, pos[0], pos[1], pos[2], pos[3], pos[4:], *write)
+	}
+	if code, done := app.preflight(stdout, stderr, fs, verb, *addr, pos, sent(call)); done {
 		return code
 	}
-	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := ntable.CellsMove(ctx, c, pos[0], pos[1], pos[2], pos[3], pos[4:], *write)
+	n, err := call(c)
 	if err != nil {
 		return st.refusal(stderr, verb, err)
 	}

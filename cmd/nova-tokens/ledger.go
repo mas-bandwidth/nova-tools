@@ -144,12 +144,15 @@ func ledger(c *tool.Call) *tool.Out {
 		}
 		sort.Strings(paths)
 	}
+	// The seat is resolved under --dry-run too, so a dry run refuses a login the real run
+	// would refuse; only the dial and the write are skipped.
+	seatUser, password, err := redisauth.Auth(c.Str("user"), c.Str("password-env"))
+	if err != nil {
+		return ledgerFailed(s, "store", "redis", err)
+	}
 	var ls record.LedgerStore
 	if !dryRun {
-		var err error
-		if ls, err = openLedger(c.Str("redis"), c.Str("user"), c.Str("password-env")); err != nil {
-			return ledgerFailed(s, "store", "redis", err)
-		}
+		ls = record.DialLedger(c.Str("redis"), seatUser, password)
 		defer ls.Close()
 	}
 	days, rows, bad := 0, 0, 0

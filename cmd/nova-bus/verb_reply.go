@@ -68,12 +68,14 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "REPLY REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus reply -h"))
 		return 2
 	}
-	release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
-	if lockErr != nil {
-		fmt.Fprintf(stderr, "REPLY REFUSED: %s\n", oneline.WithRemedy(oneline.Err(lockErr), "nova-bus reply -h"))
-		return 1
+	if !*dryRun { // the lock is a file in .git; a dry run writes nothing
+		release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
+		if lockErr != nil {
+			fmt.Fprintf(stderr, "REPLY REFUSED: %s\n", oneline.WithRemedy(oneline.Err(lockErr), "nova-bus reply -h"))
+			return 1
+		}
+		defer release()
 	}
-	defer release()
 	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "REPLY REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus reply -h"))
@@ -89,11 +91,13 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "REPLY REFUSED: --as %s has no lane on this bus, so has nowhere to send from; run: nova-bus reply -h\n", oneline.Field(me.Name))
 		return 2
 	}
+	if err := checkoutReady(*busDir, *branch, []string{bus.BeatPath(me.Lane)}); err != nil {
+		fmt.Fprintf(stderr, "REPLY FAIL: %s\n", oneline.Err(err))
+		return 1
+	}
+	// The refresh fetches and fast-forwards the checkout, which writes; a dry run resolves
+	// --re against the checkout as it stands, and says so in its -h.
 	if !*dryRun {
-		if err := checkoutReady(*busDir, *branch, []string{bus.BeatPath(me.Lane)}); err != nil {
-			fmt.Fprintf(stderr, "REPLY FAIL: %s\n", oneline.Err(err))
-			return 1
-		}
 		if _, err := refreshCheckout(*busDir, *remote, *branch); err != nil {
 			fmt.Fprintf(stderr, "REPLY FAIL: %s\n", oneline.Err(err))
 			printTranscript(stderr, err)

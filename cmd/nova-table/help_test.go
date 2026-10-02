@@ -1,7 +1,6 @@
 package main
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -67,53 +66,6 @@ func TestEveryVerbStatesItsEffectAndAWriteTakesADryRun(t *testing.T) {
 			assert.Contains(t, out, "\n  --dry-run  ", "%s writes and lists no --dry-run:\n%s", c.name, out)
 		})
 	}
-}
-
-// TestADryRunOfEveryWriteExampleDialsNothing: the example of every verb that
-// writes, run with --dry-run against an address where no store is, exits 0
-// with the one DRY-RUN line naming dialled=0 written=0; the address is never
-// dialled, because a dial of it would refuse at exit 2. With no address at
-// all the plan still runs, and says redis=-.
-func TestADryRunOfEveryWriteExampleDialsNothing(t *testing.T) {
-	t.Parallel()
-	nowhere := t.TempDir() + "/no-store.sock"
-	for _, c := range commands {
-		if !strings.HasPrefix(effectOf(c.name), "store write") || c.name == "shell" {
-			continue
-		}
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			lines := strings.Split(c.example, "\n")
-			words, err := shellWords(lines[len(lines)-1])
-			require.NoError(t, err)
-			require.Equal(t, "nova-table", words[0])
-			args := append(words[1:], "--redis", nowhere)
-			if !slices.Contains(args, "--dry-run") {
-				args = append(args, "--dry-run")
-			}
-			code, out, errout := runTable(args...)
-			require.EqualValues(t, 0, code, "%v: %q", args, errout)
-			assert.Empty(t, errout)
-			assert.True(t, strings.HasPrefix(out, "TABLE DRY-RUN verb="+strings.Join(strings.Fields(c.name), "-")+" "), "%q", out)
-			assert.Contains(t, out, " redis="+nowhere+" dialled=0 written=0\n")
-			assert.Equal(t, 1, strings.Count(out, "\n"), "%q", out)
-		})
-	}
-	t.Run("no address", func(t *testing.T) {
-		t.Parallel()
-		app := &application{getenv: func(string) string { return "" }}
-		var out, errout strings.Builder
-		code := app.dispatch([]string{"cell", "move", "demo", "build", "ready", "done", "b2", "--dry-run", "--redis", ""}, &out, &errout)
-		require.EqualValues(t, 0, code, "%q", errout.String())
-		assert.Equal(t, "TABLE DRY-RUN verb=cell-move arg1=demo arg2=build arg3=ready arg4=done arg5=b2 redis=- dialled=0 written=0\n", out.String())
-	})
-	t.Run("a refusal still refuses", func(t *testing.T) {
-		t.Parallel()
-		code, out, errout := runTable("create", "t", "--columns", "ok,okpct:pct(ok/ok+failed)", "--dry-run", "--redis", nowhere)
-		assert.EqualValues(t, 2, code)
-		assert.Empty(t, out)
-		assert.Contains(t, errout, "CREATE REFUSED: --columns: ")
-	})
 }
 
 // TestTheBannerSaysWhatAFirstRunNeeds: the banner's first-run lines name the

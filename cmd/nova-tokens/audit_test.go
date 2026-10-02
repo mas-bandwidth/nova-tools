@@ -48,6 +48,10 @@ var tokensAudit = audit.Config{
 		// maps and slices hold no writer: they return keys, sorted copies and membership,
 		// which this package renders through oneline at its own print sites.
 		`"maps"`, `"slices"`,
+		// syscall is read for one constant, ENOTDIR, the error os.MkdirAll gives a path
+		// that exists and is no directory (session's dry run names it as the write would);
+		// it writes nothing.
+		`"syscall"`,
 		`"runtime/debug"`,
 		// ledger.go's store seam: context carries no writer, and internal/record returns
 		// ledger rows from the fleet Redis that this package renders through oneline.Field

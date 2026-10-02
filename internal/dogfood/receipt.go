@@ -201,15 +201,19 @@ func hasControl(s string) bool {
 // the same directory and renamed into place, because two benches recording at
 // once must not interleave halves of two JSON lines into one file — the
 // directory is the append-only log, and each file is one atomic entry.
-func Record(dir string, r Receipt) (string, error) {
+func Record(dir string, r Receipt) (string, error) { return record(dir, r, true) }
+
+// PlanRecord is Record with nothing written: every check Record makes (the
+// receipt, the directory as MkdirAll would make it, the file as the atomic write
+// would check it), the same error, and the path the receipt would take.
+func PlanRecord(dir string, r Receipt) (string, error) { return record(dir, r, false) }
+
+func record(dir string, r Receipt, write bool) (string, error) {
 	if strings.TrimSpace(dir) == "" {
 		return "", errors.New("receipts: no directory given; refusing to guess")
 	}
 	if errs := r.Validate(); len(errs) > 0 {
 		return "", errs[0]
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("receipts: %w", err)
 	}
 	line, err := json.Marshal(r)
 	if err != nil {
@@ -227,7 +231,15 @@ func Record(dir string, r Receipt) (string, error) {
 		strings.ReplaceAll(r.Time().Format("20060102T150405Z"), ":", ""),
 		slug(r.Tool), slug(r.Verb), slug(r.By), sum)
 	final := filepath.Join(dir, name)
-
+	if !write {
+		if err := atomicfile.CheckAfterMkdirAll(filepath.Clean(final), 0o600, atomicfile.ExactMode()); err != nil {
+			return "", fmt.Errorf("receipts: %w", err)
+		}
+		return final, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("receipts: %w", err)
+	}
 	if err := atomicfile.Write(filepath.Clean(final), line, 0o600, atomicfile.ExactMode()); err != nil {
 		return "", fmt.Errorf("receipts: %w", err)
 	}

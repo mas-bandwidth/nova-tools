@@ -29,7 +29,14 @@ files (`sessions/<id>.md`, `entries/<id>/<entry>.json`, one append-only
 `log.jsonl`); there is no default store, no environment variable and no
 discovery. The session identifier is stable: retries and recoveries address
 the same record by this name, and concurrent records coexist untouched by
-each other. Re-opening an open session with the recorded policy (and the
+each other. A session or entry id becomes a path component, so it must name
+exactly one file or directory of that name inside the store on every
+platform: nonempty, at most 128 bytes, no whitespace or control characters,
+none of `/ \ : * ? " < > |`, not only dots, no `..`, no trailing dot, and no
+Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`,
+with or without an extension). Every verb refuses another id at exit 2 before
+anything is written: `.` as a session would put its entries in `entries/`
+itself, where no index looks. Re-opening an open session with the recorded policy (and the
 recorded source, when it names one) is a no-op; naming another policy or
 source is exit 1, a conflict, whose remedy is the `open` that matches the
 record. `--dry-run` makes every check and writes nothing. The session file's
@@ -162,3 +169,4 @@ New regression cases must demonstrate the defect before the repair.
 36. `TestAConflictOrAMissingEntryNamesTheCommandToRunNext` — a conflict names `receipt --text`; a missing entry or session names `index`.
 37. `TestDryRunWritesNothing` — `open --dry-run` and `append --dry-run` check everything and write nothing.
 38. `TestEveryProblemIsNamedAtOnce` — missing flags, bad ids, a bad policy and a bad `--now` are named together in one run.
+39. `TestABadIDIsRefusedByEveryVerbAndWritesNothing` — every bad id, as a session or an entry, is refused by open, append, index and receipt at exit 2 with the store byte-identical; `TestAnAppendedEntryIsTheOneIndexAndReceiptFind` pins the round trip; `TestValidIDAdmitsOnlyAnIDThatIsOnePathComponent` the rule.

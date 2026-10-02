@@ -253,3 +253,43 @@ func TestTokensToolMeetsTheStandard(t *testing.T) {
 	t.Parallel()
 	assert.Empty(t, tokensTool(foldStamp).Problems())
 }
+
+// `help <verb>` puts --help right after the verb, so a word or a -- after it never turns
+// the request for help into a run or a refusal of the verb.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{
+		{"help", "sum", "extra"},
+		{"help", "fold", "--", "x"},
+	} {
+		r := invoke(t, args...)
+		wantExit(t, r, 0)
+		assert.Contains(t, r.stdout, "usage: nova-tokens "+args[1]+" [flags]", "%v", args)
+		assert.Empty(t, r.stderr, "%v", args)
+	}
+}
+
+// A model fed by a priced source and an unpriced one: usd= is the cost the sources
+// reported, usd_per_mtok= divides it by the tokens that cost covers and no others, and
+// unpriced= counts the tokens no source priced, so the rate never stands for tokens whose
+// cost is unknown (review 5084: the rate divided the reported cost by every token).
+func TestAMixedPricedAndUnpricedModelRatesOnlyItsPricedTokens(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-14T03:00:00Z", "mercury-2.5", map[string]int{"input_tokens": 3000}, "/x/serialize/a.go")+"\n")
+	pool := mkdir(t, filepath.Join(dir, "pool"))
+	swarmUsage(t, pool, "j1", swarmRowCost("j1", "1", "-", "deepseek", "mercury-2.5", "serialize", "2026-09-14T01:00:00Z", "1000", "0", "0", "0", "-", "0.5"))
+	r := invoke(t, "report", "--who", "ada", "--day", "2026-09-14", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--swarm", "b="+pool)
+	wantExit(t, r, 0)
+	assert.Contains(t, r.stderr, "TOKENS AVG day=2026-09-14 model=deepseek/mercury-2.5 tokens=4000 usd=0.5 usd_per_mtok=500.0000 unpriced=3000\n")
+	assert.Contains(t, r.stderr, "TOKENS AVG-ALL day=2026-09-14 tokens=4000 usd=0.5 usd_per_mtok=500.0000 unpriced=3000\n")
+
+	// Wholly priced: unpriced=0. Wholly unpriced: every cost field a dash.
+	r = invoke(t, "report", "--who", "ada", "--day", "2026-09-14", "--repos", reposFile(t, dir), "--swarm", "b="+pool)
+	assert.Contains(t, r.stderr, "TOKENS AVG day=2026-09-14 model=deepseek/mercury-2.5 tokens=1000 usd=0.5 usd_per_mtok=500.0000 unpriced=0\n")
+	r = invoke(t, "report", "--who", "ada", "--day", "2026-09-14", "--repos", reposFile(t, dir), "--claude", "g="+tr)
+	assert.Contains(t, r.stderr, "TOKENS AVG day=2026-09-14 model=mercury-2.5 tokens=3000 usd=- usd_per_mtok=- unpriced=3000\n")
+}

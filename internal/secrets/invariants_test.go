@@ -122,6 +122,7 @@ func TestCheckInvariant2HoldsEachFilesRecipientsToItsRule(t *testing.T) {
 		{"in another order they pass", map[string]string{"rowan.yaml": sealedFor([]string{pubRecovery, pubRowan})}, "rowan.yaml", nil},
 		{"one recipient short is drift", map[string]string{"rowan.yaml": sealedFor([]string{pubRowan})}, "rowan.yaml", []string{drift}},
 		{"one recipient more is drift", map[string]string{"rowan.yaml": sealedFor([]string{pubRowan, pubRecovery, pubStranger})}, "rowan.yaml", []string{drift}},
+		{"the same keys with one twice is drift", map[string]string{"rowan.yaml": sealedFor([]string{pubRowan, pubRecovery, pubRecovery})}, "rowan.yaml", []string{drift}},
 		{"as many, one different, is drift", map[string]string{"rowan.yaml": sealedFor([]string{pubRowan, pubStranger})}, "rowan.yaml", []string{drift}},
 		{"a file no rule matches is drift", map[string]string{"air.yaml": sealedFor([]string{pubAir, pubRecovery})}, "air.yaml", []string{"recipients differ from .sops.yaml; run: sops updatekeys air.yaml"}},
 		{"a file that cannot be read is named", map[string]string{}, "rowan.yaml", []string{"unable to parse file"}},
