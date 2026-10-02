@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path"
@@ -242,94 +241,6 @@ func helperReadsTree(t *testing.T, root string, fset *token.FileSet, files []*tr
 	}
 	sort.Strings(raw)
 	return loaded, raw
-}
-
-// helperReads parses one package's Go files (path -> source) and returns the
-// list files a helper call loads and every raw read of one.
-func helperReads(t *testing.T, srcs map[string][]byte, lists map[string]bool) (map[string]bool, []string) {
-	t.Helper()
-	fset := token.NewFileSet()
-	var files []*ast.File
-	for _, name := range mapKeysSortedBytes(srcs) {
-		f, err := parser.ParseFile(fset, name, srcs[name], parser.SkipObjectResolution)
-		if err != nil {
-			t.Fatal(err)
-		}
-		files = append(files, f)
-	}
-	consts := map[string]string{}
-	funcs := map[string]*ast.FuncDecl{}
-	for _, f := range files {
-		for _, decl := range f.Decls {
-			switch d := decl.(type) {
-			case *ast.GenDecl:
-				if d.Tok != token.CONST {
-					continue
-				}
-				for _, spec := range d.Specs {
-					vs := spec.(*ast.ValueSpec)
-					for i, name := range vs.Names {
-						if i < len(vs.Values) {
-							if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-								if v, err := strconv.Unquote(lit.Value); err == nil {
-									consts[name.Name] = v
-								}
-							}
-						}
-					}
-				}
-			case *ast.FuncDecl:
-				if d.Recv == nil && d.Body != nil {
-					funcs[d.Name.Name] = d
-				}
-			}
-		}
-	}
-
-	r := listResolver{lists: lists, consts: consts, funcs: funcs}
-	loaded := map[string]bool{}
-	var raw []string
-	for _, fn := range funcs {
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			switch callName(call.Fun) {
-			case "loadAllowlist":
-				if len(call.Args) > 1 {
-					for _, name := range r.resolve(fn, call.Args[1], 0) {
-						loaded[name] = true
-					}
-				}
-			case "allowlist.Load", "allowlist.Parse":
-				if len(call.Args) > 0 {
-					for _, name := range r.resolve(fn, call.Args[0], 0) {
-						loaded[name] = true
-					}
-				}
-			case "os.ReadFile", "os.Open", "readFile":
-				arg := call.Args[len(call.Args)-1]
-				for _, name := range r.resolve(fn, arg, 0) {
-					raw = append(raw, fmt.Sprintf("%s: %s(%s)", fset.Position(call.Pos()), callName(call.Fun), name))
-				}
-			}
-			return true
-		})
-	}
-	sort.Strings(raw)
-	return loaded, raw
-}
-
-// mapKeysSortedBytes returns the keys of m in order, so a parse error names the
-// same file on every run.
-func mapKeysSortedBytes(m map[string][]byte) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // callName spells a call's function as `name` or `pkg.name`.

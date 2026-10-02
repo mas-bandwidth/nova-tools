@@ -74,7 +74,7 @@ type Options struct {
 	// tree with nothing parked in it is the goal.
 	MissingIsEmpty bool
 	// Counted marks a list whose rows carry a site count as the second field
-	// (`key N reason`, N a positive integer); use CheckCounted with it.
+	// (`key N reason`, N a positive integer); use CheckCountedMode with it.
 	Counted bool
 	// PackageKeys makes LoadPackages interpret a counted key as
 	// `<repo-relative-package>:<kind>` instead of a file-qualified key.
@@ -301,13 +301,6 @@ func CheckMode(r Reporter, l *List, measured map[string]bool, update bool) Resul
 	return res
 }
 
-// CheckCounted is Check for a counted list: measured is the number of sites found
-// per key. See CheckCountedMode.
-func CheckCounted(r Reporter, l *List, measured map[string]int) Result {
-	r.Helper()
-	return CheckCountedMode(r, l, measured, Updating())
-}
-
 // CheckCountedMode compares the measured site counts with a counted list. Stale rows
 // (a key measured at none) and Unlisted keys are as in CheckMode; Over holds the keys
 // measured above their row's count and Lowered those below it. Outside an update it
@@ -316,7 +309,7 @@ func CheckCounted(r Reporter, l *List, measured map[string]int) Result {
 func CheckCountedMode(r Reporter, l *List, measured map[string]int, update bool) Result {
 	r.Helper()
 	if !l.opt.Counted {
-		r.Errorf("%s: CheckCounted needs a list loaded with Options.Counted", l.Path)
+		r.Errorf("%s: CheckCountedMode needs a list loaded with Options.Counted", l.Path)
 		return Result{}
 	}
 	keys := make(map[string]bool, len(measured))

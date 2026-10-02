@@ -387,7 +387,6 @@ func TestDeprecatedImportsRatchetExaminesNestedDeprecatedDirectories(t *testing.
 	}
 
 	lt := &liveTree{
-		root: root,
 		drop: []string{"deprecated"},
 		keep: map[string]bool{},
 	}
