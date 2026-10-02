@@ -93,7 +93,7 @@ example:
 
 // storeUpstreamHelp is the store prerequisite check and exec enforce (SPEC-SECRETS
 // invariant 8), printed by both verbs' own help so a caller learns it before the
-// refusal does (nova-tools#3550).
+// refusal.
 const storeUpstreamHelp = `store prerequisite:
   --store must be a git working copy on a named branch (not a detached HEAD) with an
   upstream tracking ref: branch.<name>.remote and branch.<name>.merge in .git/config,
@@ -261,7 +261,7 @@ var redisWidthWriteVerbs = map[string]bool{
 
 // friendWidthName reports the friend a token names as its working column,
 // friend:<name>:width -- the sprint table's key -- or "" when it is not that
-// key (nova-tools#2676).
+// key.
 func friendWidthName(tok string) string {
 	if !strings.HasPrefix(tok, "friend:") || !strings.HasSuffix(tok, ":width") {
 		return ""
@@ -274,12 +274,12 @@ func friendWidthName(tok string) string {
 }
 
 // refusedWidthHandWrite is the one command exec refuses for a reason that is
-// another tool's law (nova-tools#2676): redis-cli writing
-// friend:<name>:width, the sprint table's working column. Since #3447 that
+// another tool's law: redis-cli writing
+// friend:<name>:width, the sprint table's working column. That
 // column is the friend row's working count, written by the friend row loop
 // from the friend's leased tasks; no beat writes the
-// row (the retired nova-wake beat refused it), so the remedy is taking work
-// through the queue, never a beat and never a hand-write (nova-tools#3807). The hand-write reached the
+// row, so the remedy is taking work
+// through the queue, never a beat and never a hand-write.
 // store only because the store held REDISCLI_AUTH. Reads of the key still run.
 func refusedWidthHandWrite(cmdArgs []string) error {
 	base := filepath.Base(cmdArgs[0])
@@ -304,7 +304,7 @@ func refusedWidthHandWrite(cmdArgs []string) error {
 
 func main() {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0, before
-	// any store, key or helper program is opened (the CLI style's rule (b), #4505). Every
+	// any store, key or helper program is opened. Every
 	// other path through secretsMain exits on its own; one that returns exits 0, as
 	// main did before.
 	code := 0
@@ -414,7 +414,7 @@ func runExecCLI(args []string) {
 		os.Exit(125)
 	}
 
-	// nova-tools#2676: the sprint table's working column is the friend's own
+	// the sprint table's working column is the friend's own
 	// tool's to write, never a redis-cli line through this exec; the
 	// hand-write of it went through because the store held REDISCLI_AUTH.
 	if len(cmdArgs) > 0 {
@@ -628,7 +628,7 @@ func runKeygenCLI(args []string) {
 
 	// The order is the package's, not this function's: the rule block, then the next
 	// step, then the OK line. A reader took a green keygen for a failure when the
-	// verdict was at the top and the homework at the bottom (nova-tools#1393).
+	// verdict was at the top and the homework at the bottom.
 	lines, err := secrets.RunKeygen(*asFlag, *keyFlag, *ageKeygenFlag, *storeFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets keygen -h"))
