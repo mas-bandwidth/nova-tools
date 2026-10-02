@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox/darwincheck"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/mas-bandwidth/nova-tools/profiles"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -79,6 +81,13 @@ func (j job) tool(t *testing.T, env []string, args ...string) (int, string, stri
 	var out, errb bytes.Buffer
 	code := run(args, nil, &out, &errb, env)
 	return code, out.String(), errb.String()
+}
+
+// main adapts the tool's environment-taking entry point to the shared testkit runner.
+func (j job) main() testkit.Main {
+	return testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+		return run(args, stdin, stdout, stderr, j.env())
+	})
 }
 
 // shell is the command the tests wrap, and its flag: /bin/sh -c on unix, cmd.exe /c on
@@ -1802,10 +1811,10 @@ func TestUnknownVerbRefused(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			code, out, errOut := j.tool(t, j.env(), tc.args...)
-			require.Equal(t, sandbox.ExitCannotRun, code, "exit %d, want %d (ExitCannotRun)", code, sandbox.ExitCannotRun)
-			require.Empty(t, out, "stdout %q, want empty", out)
-			require.Equal(t, tc.want, errOut, "stderr %q, want %q", errOut, tc.want)
+			r := j.main().Do(t, tc.args...)
+			require.Equal(t, sandbox.ExitCannotRun, r.Code, "exit %d, want %d (ExitCannotRun)", r.Code, sandbox.ExitCannotRun)
+			require.Empty(t, r.Stdout, "stdout %q, want empty", r.Stdout)
+			require.Equal(t, tc.want, r.Stderr, "stderr %q, want %q", r.Stderr, tc.want)
 		})
 	}
 }
