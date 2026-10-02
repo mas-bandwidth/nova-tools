@@ -152,7 +152,7 @@ func Loaded(ctx context.Context, client *redis.Client) (string, bool, error) {
 
 // ListQuery is the FUNCTION LIST that Loaded sends: the nova_sprint library
 // with its code. A reader that pipelines it with other reads passes the reply
-// to FromList and Judge.
+// to FromList.
 var ListQuery = redis.FunctionListQuery{LibraryNamePattern: Library, WithCode: true}
 
 // FromList is the nova_sprint library's code in a FUNCTION LIST reply, and
@@ -203,21 +203,6 @@ func Check(ctx context.Context, client *redis.Client) (State, error) {
 	reply, err := client.FCall(ctx, "ns_ping", nil).Result()
 	st.Ping = PingReply(reply, err)
 	return st, nil
-}
-
-// Judge is Check's verdict on the code a server holds (found false: none),
-// with no round trip: Want, Loaded and Missing, and ours true only when that
-// code is exactly the embedded source, the one case in which the caller may
-// call ns_ping and set Ping with PingReply. When ours is false Ping is
-// PingSkipped, as Check leaves it. `nova-sprint doctor` pipelines FUNCTION
-// LIST (ListQuery) with its other reads and judges the reply here.
-func Judge(code string, found bool) (State, bool, error) {
-	source, err := Source()
-	if err != nil {
-		return State{}, false, err
-	}
-	st, ours := judge(source, code, found)
-	return st, ours, nil
 }
 
 func judge(source, code string, found bool) (State, bool) {
