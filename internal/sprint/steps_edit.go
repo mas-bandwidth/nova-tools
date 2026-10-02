@@ -90,6 +90,28 @@ func briefStarted(c *Card) string {
 	return "run: " + drop
 }
 
+// reworkWhy is why a primary takes no rework (rework is the next attempt of one
+// in review), with the command that does what was wanted by its state: a card
+// still working is reworked once it finishes, or dropped now; one never dealt
+// has its brief replaced; one dealt and not finished is dropped and added again;
+// one landed is a new card. "" for a primary in review.
+func reworkWhy(c *Card) string {
+	why := inState(c, Review)
+	if why == "" || !c.Placed() {
+		return why
+	}
+	drop := "nova-sprint drop " + c.ID + " --reason '<why>'"
+	switch {
+	case c.Col == Working:
+		return why + "; its attempt is still running: once it finishes (review), run: nova-sprint rework " + c.ID + " --fix '<what changes>', or now: " + drop
+	case (c.Col == Waiting || c.Col == Ready) && c.Int("attempt") == 0:
+		return why + "; no attempt has run, so there is nothing to rework: change its task instead: nova-sprint brief " + c.ID + " --brief-file <path>"
+	case c.Col == Landed:
+		return why + "; it landed: the change is a new card: nova-sprint add --stream " + c.Row + " <new id> --brief-file <path>"
+	}
+	return why + "; run: nova-sprint card " + c.ID + " (what holds it), or " + drop
+}
+
 // MoveReq moves primaries that have not started to another stream, placed as
 // add places cards: Before, After or Score, else at the end of the line.
 type MoveReq struct {

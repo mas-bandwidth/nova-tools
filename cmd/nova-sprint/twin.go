@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,8 +36,38 @@ func isTwin(addr string) bool { return addr == "mem" || strings.HasPrefix(addr, 
 // test's backend answers is not).
 func (a *app) twinOpen(addr string) bool { return a.twins[addr] != nil }
 
-// twinSteps is the flow of a card through a twin that nova-sprint help shows,
-// one verb a line: the test that runs them holds the help to what a twin does.
+// realSteps is the card's flow nova-sprint help walks through, as it runs for
+// real: on a twin, through a bare repository standing for the forge, the worker
+// finishing at its pushed commit (--head) and the coordinator landing with land
+// (git merges, pushes and reports in one step). A line not of nova-sprint is the
+// shell's. walkthrough_real_test.go runs it as written.
+var realSteps = []string{
+	"git init -q --bare origin.git && git clone -q origin.git work",
+	"git -C work commit -q --allow-empty -m base && git -C work push -q origin HEAD:main",
+	"nova-sprint init --readers reader-a,reader-b --members m1",
+	"nova-sprint add --stream s1 --count 1",
+	"nova-sprint start",
+	"nova-sprint tick",
+	"nova-sprint tick",
+	"nova-sprint take --as m1 --epoch 0",
+	"git -C work commit -q --allow-empty -m s1-1 && git -C work push -q origin HEAD:sprint/s1-1.w1.g1.e0",
+	`nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --head "$(git -C work rev-parse HEAD)" --report done`,
+	"nova-sprint tick",
+	"nova-sprint read --as reader-a --begin --epoch 0",
+	"nova-sprint read --as reader-b --begin --epoch 0",
+	"nova-sprint read --as reader-a --ok --epoch 0",
+	"nova-sprint read --as reader-b --ok --epoch 0",
+	"nova-sprint tick",
+	"nova-sprint land --stream s1 --repo-dir work --base main",
+	"nova-sprint tick",
+	"nova-sprint where",
+}
+
+// twinSteps is the same flow with no git, as the first-run transcript
+// (docs/TESTS.md) records it: the finish names no head (it is then the card's
+// id, which land refuses) and merge records the landing land would report. The
+// help shows its two lines that differ; the test that runs them holds the help
+// to what a twin does.
 var twinSteps = []string{
 	"nova-sprint init --readers reader-a,reader-b --members m1",
 	"nova-sprint add --stream s1 --count 1",
@@ -67,12 +98,24 @@ to it after, the file made by the first verb that writes; run one command at a
 time. Every member and reader of the twin beats at every verb, so a member
 added is up from the next tick; no machine runs between commands, so the tick
 is yours: nova-sprint tick; run, inbox --wait and where --watch are refused. A
-card's whole flow:
+card's whole flow, landed for real (origin.git, a bare repository, stands for
+the forge; work is the worker's checkout and the clone land merges and pushes in):
 
   export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
 `)
-	for _, l := range twinSteps {
+	for _, l := range realSteps {
 		b.WriteString("  " + l + "\n")
+	}
+	b.WriteString(`
+With no git, these two lines stand in for the finish and the land: a finish
+with no --head records the card's id as its head (land refuses it; a worker
+names its commit), and merge records a landing with no push. play's
+simulation finishes that way on purpose.
+`)
+	for _, l := range twinSteps {
+		if !slices.Contains(realSteps, l) {
+			b.WriteString("  " + l + "\n")
+		}
 	}
 	return b.String()
 }
