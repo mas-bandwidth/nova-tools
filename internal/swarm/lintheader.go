@@ -119,7 +119,7 @@ type TrustState map[string]string
 //
 // THE KEY NAMES STAY UPPER CASE. Widening what CONTINUES the block is not the same as
 // widening what a typed key IS: docs/SPEC-TOOLWORK.md:700-713 (§5 rule 1) and
-// deprecated/docs/WORKER-CARDS.md:38-51 write `KIND:`, `PATHS:`, `TEST:`, `LEGS:` and `SOURCE:` in
+// WORKER-CARDS.md:38-51 (now in the nova-work-old repository) write `KIND:`, `PATHS:`, `TEST:`, `LEGS:` and `SOURCE:` in
 // upper case and say nothing anywhere about case, so `paths:` is not `PATHS:` here and
 // the card that writes it still draws `paths-declared`. cardTypedKeys is the exact
 // names; the day a spec line rules case-insensitive keys, this is the one place to say
