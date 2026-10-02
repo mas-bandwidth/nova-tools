@@ -298,7 +298,7 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return run(append(args[1:], "--help"), stdout, stderr)
+			return run(verbflag.HelpArgs(args[1:], usage, "nova-check"), stdout, stderr)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
