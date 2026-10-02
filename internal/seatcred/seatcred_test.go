@@ -198,26 +198,6 @@ func TestSelectClearsLookupFromArgs(t *testing.T) {
 	}
 }
 
-func TestChildEnvHandsThePasswordToTheChildOnly(t *testing.T) {
-	t.Parallel()
-
-	home := seattest.Home(t, "studio", map[string]string{"NOVA_REDIS_COORDINATOR_PASSWORD": "child-test-pw-5e"})
-	mockEnv := map[string]string{
-		"HOME":           home,
-		seatcred.SopsEnv: seattest.Sops(t),
-	}
-	getenv := func(k string) string { return mockEnv[k] }
-	c, err := seatcred.Resolve("studio", getenv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	env := seatcred.ChildEnv([]string{"PATH=/bin", "REDISCLI_AUTH=stale", "NOVA_REDIS_BENCH_PASSWORD=other", "HOME=/h"}, c)
-	want := []string{"PATH=/bin", "HOME=/h", "REDISCLI_AUTH=child-test-pw-5e"}
-	if !reflect.DeepEqual(env, want) {
-		t.Fatalf("ChildEnv = %d entries; want PATH, HOME and one REDISCLI_AUTH", len(env))
-	}
-}
-
 func same(c seatcred.Cred, want string) bool {
 	eq := false
 	_ = c.Password.Use(func(v string) error { eq = v == want; return nil })

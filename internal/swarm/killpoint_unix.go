@@ -4,7 +4,6 @@ package swarm
 
 import (
 	"os"
-	"syscall"
 	"time"
 )
 
@@ -30,46 +29,7 @@ import (
 //	                               it stops, so the kernel has nothing stopped to hang up
 //	NOVA_SWARM_PAUSE_MARK          the pause point creates this file immediately before it
 //	                               stops, so another process can wait for the stop
-//	NOVA_SWARM_KILL_AFTER          the kill point waits for that file, and a moment more
-//	                               for the stop itself, before it kills: the OTHER order,
-//	                               staged on purpose by the test that names the hangup
 const injectedWait = 10 * time.Second
-
-// injectedStopGrace is how long the kill point waits after the mark appears. The mark says
-// "about to stop" and the stop is the next instruction; the grace is four orders of
-// magnitude more than that takes on any machine this has been measured on.
-const injectedStopGrace = 100 * time.Millisecond
-
-// CheckKillPoint checks if NOVA_SWARM_KILLPOINT matches point, and if so,
-// terminates the process immediately using SIGKILL.
-func CheckKillPoint(point string) {
-	if kp := os.Getenv("NOVA_SWARM_KILLPOINT"); kp != "" && kp == point {
-		if mark := os.Getenv("NOVA_SWARM_KILL_AFTER"); mark != "" {
-			waitForInjectedFile(mark, injectedWait)
-			time.Sleep(injectedStopGrace)
-		}
-		if point == "between-exit-and-exit-json" || point == "supervisor-after-release" {
-			ppid := os.Getppid()
-			if ppid > 1 {
-				// ignored: a test-only kill point; the parent may already be gone
-				_ = syscall.Kill(ppid, syscall.SIGKILL)
-			}
-		}
-		// ignored: a test-only kill point; os.Exit below ends the process if the signal did not
-		_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
-		os.Exit(137)
-	}
-}
-
-// waitForInjectedFile waits for a marker another process writes, and gives up on its own.
-func waitForInjectedFile(path string, within time.Duration) {
-	for waited := time.Duration(0); waited < within; waited += 5 * time.Millisecond {
-		if _, err := os.Stat(path); err == nil {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
 
 // startParent is the pid of the process that FORKED this one, read at program start
 // because that is the only moment it is certainly still there. Read at the pause point

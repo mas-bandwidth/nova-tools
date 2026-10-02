@@ -42,7 +42,7 @@ func TestTwoPhaseReapLifecycle(t *testing.T) {
 		t.Fatalf("process %d was not alive after start", pid)
 	}
 
-	survived := TwoPhaseReap(pid, started)
+	survived := Reap(pid, started, TerminateGrace)
 
 	if survived {
 		t.Fatalf("process %d survived TwoPhaseReap", pid)
@@ -99,7 +99,7 @@ func TestTwoPhaseReapUnresponsiveChildKilledBySIGKILL(t *testing.T) {
 	pid := cmd.Process.Pid
 	started := StartStamp(pid)
 
-	survived := TwoPhaseReapWithGrace(pid, started, 150*time.Millisecond)
+	survived := Reap(pid, started, 150*time.Millisecond)
 
 	if survived {
 		t.Fatalf("uncooperative process %d survived two-phase reap", pid)

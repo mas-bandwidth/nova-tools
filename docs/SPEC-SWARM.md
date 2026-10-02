@@ -370,7 +370,7 @@ is read once and the per-job clone is small.
 
 The prompts and their conditions are `internal/swarm/templates.go` in the
 binary, printable, and versioned with the tool. So **the prompt text the workers run is the
-tool's**: `Prompt` and `WrapTemplate` assemble it from the named template; the
+tool's**: `WrapTemplate` assembles it from the named template; the
 shell scripts are prototypes. No tool's live state is a shell script's private variable.
 
 ### Red tests
@@ -428,8 +428,7 @@ Every rule here is normative. Only living verbs are retained.
 7. **Results are verified per card, and completion is evidence separate from the finding count.**
    `verify` checks each `RESULT.md` against its contract line and writes a `.receipt`.
    Evidence of completion is the report's `## Head` with `findings: <n>`; `findings: 0`
-   is `clean` (a complete review that found nothing); `plan-only` is a `RESULT.md` with no head;
-   `no-result` is no report at all.
+   is `clean` (a complete review that found nothing); `plan-only` is a `RESULT.md` with no head.
 8. **N workers are N processes.** Each worker has its own job directory and its
    own report file. No file is written by two workers.
 9. **A job is one blocking process group, reported once.** The worker runs in its

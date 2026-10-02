@@ -442,23 +442,6 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 	return failures
 }
 
-// CheckInvariant8 inspects .git directly for remote tracking ref sync.
-func CheckInvariant8(storeDir string) (status GitRefStatus, failure *CheckFailure, refusal error) {
-	st, err := CheckGitWorkingCopy(storeDir)
-	if err != nil {
-		msg := err.Error()
-		if strings.Contains(msg, "detached HEAD") || strings.Contains(msg, "no upstream") || strings.Contains(msg, "worktree or submodule") || strings.Contains(msg, "is not a git repository") {
-			return st, nil, err
-		}
-		return st, &CheckFailure{
-			Kind:   "stale-working-copy",
-			File:   "working copy",
-			Reason: msg,
-		}, nil
-	}
-	return st, nil, nil
-}
-
 // RunCheck executes the complete verification suite for 'check'.
 func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine string, failLines []string, moreLines []string, summaryLine string, exitCode int, err error) {
 	if maxShown < 0 {

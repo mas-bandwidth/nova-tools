@@ -7,14 +7,14 @@ import "strings"
 //
 // Line 1 of a card is its contract: the swarm hashes everything below it, records the
 // line at admission, and `gather` refuses a `RESULT.md` whose line 1 differs
-// (deprecated/docs/spec-pulse/10-the-card-as-cut-writes-it.md:12-14). Three readers touch it and
+// (the deleted spec-pulse page 10, the-card-as-cut-writes-it, lines 12-14). Three readers touch it and
 // two of them disagreed on one character:
 //
 //   - `cut` writes and accepts `RESULT <label> sha=<sha12>` -- no colon
 //     (internal/pulse/cut.go, and the example at
-//     deprecated/docs/spec-pulse/10-the-card-as-cut-writes-it.md:4);
+//     that page, line 4);
 //   - `lint --card`'s `result-first` wanted `RESULT: ` -- with one
-//     (deprecated/docs/WORKER-CARDS.md practice 1, and docs/SPEC-SWARM.md:969,976);
+//     (WORKER-CARDS.md practice 1, now in the nova-work-old repository, and docs/SPEC-SWARM.md:969,976);
 //   - `gather` compares line 1 to line 1 and imposes no prefix of its own, so it follows
 //     whichever the other two settle on (internal/pulse/harvest.go, classifyResult).
 //

@@ -37,13 +37,12 @@ import (
 // spelling a person reads as "everything under here", and a matcher that ever tightened `*`
 // to one segment would leave the rule meaning what it says.
 const (
-	// FenceAllow, FenceAsk and FenceDeny are the harness's own permission actions. `ask` in
+	// FenceAllow and FenceDeny are the harness's own permission actions. `ask` in
 	// a non-interactive `run` is auto-rejected and the model STOPS -- the whole run ends and
 	// the card's commits are stranded. `deny` is a TOOL ERROR returned to the model, which
 	// notes it, works inside the job instead, and continues (issue #918). So the fence's
 	// fallback is deny, and `ask` is never written: there is no terminal to answer it.
 	FenceAllow = "allow"
-	FenceAsk   = "ask"
 	FenceDeny  = "deny"
 
 	// FenceExternalDirectory is the permission key the harness asks under for a path

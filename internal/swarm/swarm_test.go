@@ -7,49 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
-
-// THE KEY IS READ AS DATA. One line, the two strips, whitespace out, and a second line that
-// nothing may read -- the file somebody appends to tomorrow.
-func TestTheKeyFileIsReadAsOneLine(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	for _, c := range []struct{ name, body, want string }{
-		{"a bare key", "sk-abc123\n", "sk-abc123"},
-		{"a NAME= line", "FAKE_KEY=sk-abc123\n", "sk-abc123"},
-		{"an exported line", "export FAKE_KEY=sk-abc123\n", "sk-abc123"},
-		{"a second line", "sk-abc123\nsk-THE-WRONG-ONE\n", "sk-abc123"},
-		{"trailing whitespace", "  sk-abc123  \n", "sk-abc123"},
-	} {
-		path := filepath.Join(dir, "key")
-		if err := os.WriteFile(path, []byte(c.body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		got, err := ReadKey(path, "FAKE_KEY")
-		if err != nil {
-			t.Errorf("%s: %v", c.name, err)
-			continue
-		}
-		if got != c.want {
-			t.Errorf("%s: read %q, want %q", c.name, got, c.want)
-		}
-	}
-	// An empty file is a refusal carrying the command that writes one, and the refusal
-	// never prints the path's contents.
-	path := filepath.Join(dir, "empty")
-	if err := os.WriteFile(path, []byte("\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := ReadKey(path, "FAKE_KEY")
-	if err == nil {
-		t.Fatal("an empty key file is a refusal")
-	}
-	if !strings.Contains(err.Error(), "chmod 600") {
-		t.Errorf("the refusal wants the command that writes the file: %v", err)
-	}
-}
 
 // Rule 8 and rule 15, at the parser: completion is EVIDENCE, separate from the count, and a
 // malformed report yields no findings, ever.
@@ -216,64 +174,6 @@ func TestAPathIsNormalizedBeforeTheCompare(t *testing.T) {
 	// A report with no rev merges with nothing.
 	if _, ok := a.Key("o/n", ""); ok {
 		t.Error("a head without rev: has no de-duplication key")
-	}
-}
-
-// The prompt is this tool's output, and every sentence in it is a failure from the record.
-func TestThePromptCarriesEverySentenceTheRecordBought(t *testing.T) {
-	t.Parallel()
-
-	prompt := string(Prompt(PromptInput{
-		ID: "job-1", JobDir: "/j", Deadline: 20 * time.Minute, Files: 7, Tokens: "100000",
-		Board: "mas-bandwidth/schema#876", Task: []byte("the task"),
-		NoteFile: "/j/note", Result: "/j/RESULT.md", ResultTmp: "/j/RESULT.md.tmp",
-	}))
-	for _, want := range []string{
-		"/j",                         // the job directory
-		"1200 SECONDS",               // the deadline, in seconds, held by machinery
-		"7 FILES",                    // the file budget
-		"REFUSED READ OR WRITE",      // the sandbox sentence, reads AND writes
-		"DOES NOT END THIS RUN",      // ... and what a refusal means
-		"THE MOMENT IT EXISTS",       // append as found
-		"RESULT.md.tmp",              // publication by rename, with the command
-		"mv RESULT.md.tmp RESULT.md", // ... spelled out
-		"findings: 0",                // 0 is a complete answer
-		"THERE IS NO BUS",            // no bus
-		"Do not loop, poll or wait",  // no polling
-		"ONE PROCESS",                // one job is one process
-		"NOTE FILE note",             // the note file, relative to the job cwd
-		"notes read:",                // and the count that is mandatory
-		"mas-bandwidth/schema#876",   // the board, and dup: before filing
-		"100000",                     // the token budget
-		"the task",                   // and the task itself
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("the prompt does not contain %q", want)
-		}
-	}
-}
-
-func TestThePromptUsesJobRelativeWorkerPaths(t *testing.T) {
-	t.Parallel()
-
-	jobDir := "/Users/glenn/Documents/ChatGPT/stella 2/jobs/job;$(touch SHOULD_NOT_RUN)"
-	prompt := string(Prompt(PromptInput{
-		ID: "job-paths", JobDir: jobDir, Deadline: time.Minute, Files: 1, Tokens: "10",
-		NoteFile: jobDir + "/note", Result: jobDir + "/RESULT.md", ResultTmp: jobDir + "/RESULT.md.tmp",
-	}))
-	for _, want := range []string{
-		"cat > RESULT.md.tmp <<'EOF'",
-		"mv RESULT.md.tmp RESULT.md",
-		"READ THE NOTE FILE note in your working directory",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("the prompt does not use the job-relative target %q", want)
-		}
-	}
-	for _, unsafe := range []string{jobDir + "/RESULT.md.tmp", jobDir + "/RESULT.md", jobDir + "/note"} {
-		if strings.Contains(prompt, unsafe) {
-			t.Errorf("the prompt copied an unsafe absolute worker path %q", unsafe)
-		}
 	}
 }
 

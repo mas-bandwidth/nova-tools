@@ -1,7 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 5
+# ceiling: 3
 internal/typedrec/contract.go:space 4
 internal/typedrec/disposition.go:johnny 2
 internal/typedrec/disposition.go:space 4
-internal/typedrec/result.go:space 6
-internal/typedrec/result.go:stella 1

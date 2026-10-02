@@ -66,28 +66,6 @@ func stepIndex(job ciJob, name string) int {
 	return -1
 }
 
-// runStep runs one step's script under bash with a scrubbed environment and
-// the extra variables given; ${{ }} expressions become x.
-func runStep(t *testing.T, script string, env ...string) string {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the step runs under bash on the self-hosted Linux and macOS runners")
-	}
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("no bash")
-	}
-	script = regexp.MustCompile(`\$\{\{[^}]*\}\}`).ReplaceAllString(script, "x")
-	cmd := exec.Command(bash, "-e", "-c", script)
-	cmd.Dir = t.TempDir()
-	cmd.Env = append([]string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + t.TempDir()}, env...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("the step failed: %v\n%s", err, out)
-	}
-	return string(out)
-}
-
 const unitShimStep = "the unit tier refuses redis-server"
 
 // unitGoStepMarker names ci.yml's Go toolchain step (the same text

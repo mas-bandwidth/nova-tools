@@ -438,28 +438,6 @@ func WriteCursor(root, lane, commit string, open int, legacy string, now time.Ti
 	return replaceLaneFile(root, CursorPath(lane), line+"\n")
 }
 
-// WriteBeat writes a lane's BEAT: one line, the RFC 3339 UTC stamp of `now`, the cursor
-// sha the line is standing at (or "-" when it has no cursor yet), and, when `until` is not
-// the zero time, a lease until=<stamp> naming when the beat stops counting as alive. The
-// stamp is full RFC 3339 with nanoseconds so two poll ticks a fraction of a second apart
-// carry different stamps, which is what lets a reader tell the line is alive rather than
-// merely that it polled once; the beat is rewritten, not appended, because only the newest
-// one matters.
-//
-// A beat's sha is the cursor commit and carries no ValidCommitHex guard of its own: the
-// value written here came from ReadCursor, which already checked it, or is "-". It is a
-// presence signal, not a git argument.
-func WriteBeat(root, lane, cursor string, now, until time.Time) error {
-	if cursor == "" {
-		cursor = "-"
-	}
-	line := now.UTC().Format(time.RFC3339Nano) + " " + cursor
-	if !until.IsZero() {
-		line += " until=" + until.UTC().Format(time.RFC3339Nano)
-	}
-	return replaceLaneFile(root, BeatPath(lane), line+"\n")
-}
-
 // ReadBeat reads a lane's BEAT and returns its stamp as a moment, or the zero value and
 // false when the lane has no beat (or a beat that does not parse). Nothing else in this
 // tool computes from a beat; it exists so `check` validates the one file the same way it
@@ -872,9 +850,8 @@ func ReadIndex(root string, c *Config) (*Index, error) {
 	return idx, nil
 }
 
-// ByID and ByPath are the two lookups a Re line or a receipt needs.
-func (i *Index) ByID(id string) (*IndexEntry, bool)     { e, ok := i.byID[id]; return e, ok }
-func (i *Index) ByPath(path string) (*IndexEntry, bool) { e, ok := i.byPath[path]; return e, ok }
+// ByID is the lookup a Re line or a receipt needs.
+func (i *Index) ByID(id string) (*IndexEntry, bool) { e, ok := i.byID[id]; return e, ok }
 
 // AppendIndexLine adds one record to a lane's INDEX. Append-only, like RECEIPTS: a sender
 // only ever adds to their own lane, so two DIFFERENT senders writing at once touch

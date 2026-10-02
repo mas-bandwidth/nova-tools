@@ -81,7 +81,7 @@ func tree(t *testing.T) string {
 	root := t.TempDir()
 	files := map[string]string{
 		"go.mod":                       "module " + mod + "\n\ngo 1.26\n",
-		"deprecated/PACKAGES":          "# the fixture's list\ncmd/gone\nkeep cmd/gone/kept\n",
+		DeprecatedFile:                 "# the fixture's list\ncmd/gone\nkeep cmd/gone/kept\n",
 		"cmd/foo/foo.go":               "package main\n",
 		"cmd/gone/gone.go":             "package main\n",
 		"internal/bar/bar.go":          "package bar\n",

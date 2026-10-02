@@ -86,9 +86,6 @@ func Refusing() bool { return defaultGuard.Refusing() }
 func (g *Guard) Refusing() bool { return g.refusing.Load() || g.forced.Load() > 0 }
 
 // Arm forces the guard to refuse host access until the returned function is called.
-func Arm() func() { return defaultGuard.Arm() }
-
-// Arm forces the guard to refuse host access until the returned function is called.
 func (g *Guard) Arm() func() {
 	g.forced.Add(1)
 	var once sync.Once

@@ -1096,7 +1096,6 @@ func TestRule13CheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
 
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
-	const ver = "nova-tokens v1 day=%s at=2026-09-11T23:55:02Z build=b turns=1 sources=x\n"
 	const hdr = "date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n"
 	row := func(day, model, repo, in string) string {
 		return day + "\t" + model + "\t" + repo + "\t" + in + "\t2\t3\t4\t5\t0\tutc\tx\n"
