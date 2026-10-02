@@ -79,27 +79,34 @@ func launchRedis(ctx context.Context, spec launchSpec, stdout, stderr io.Writer)
 
 func cmdServe(args []string, stdout, stderr io.Writer, d deps) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	bindText := fs.String("bind", "", "comma-separated loopback or tailnet addresses")
-	portText := fs.String("port", "", "port")
-	dirText := fs.String("dir", "", "absolute store directory, created 0700 when missing")
-	if !parse(fs, args, stderr, "bind", "port", "dir") {
-		return 2
+	bindText := fs.String("bind", "", "comma-separated IP addresses to listen on, loopback (127.0.0.1, ::1) or tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48) only")
+	portText := fs.String("port", "", "the TCP port to listen on, 1 to 65535 (6379 is Redis's own)")
+	dirText := fs.String("dir", "", "the absolute path of the store directory (AOF and RDB files), created 0700 when missing")
+	problems, ok := parse(fs, args, "bind", "port", "dir")
+	if !ok {
+		return refuse(stderr, "serve", problems...)
 	}
 	binds, err := validBinds(*bindText)
-	if err != nil {
-		return refuse(stderr, " serve", err.Error())
+	if err != nil && given(fs, "bind") {
+		problems = append(problems, err.Error())
 	}
 	port, err := strconv.Atoi(*portText)
-	if err != nil || port < 1 || port > 65535 {
-		return refuse(stderr, " serve", fmt.Sprintf("--port %q needs a port from 1 to 65535", *portText))
+	if (err != nil || port < 1 || port > 65535) && given(fs, "port") {
+		problems = append(problems, fmt.Sprintf("--port %q needs a port from 1 to 65535", *portText))
+	}
+	if given(fs, "dir") && !filepath.IsAbs(*dirText) {
+		problems = append(problems, fmt.Sprintf("--dir %q is not absolute; name the store directory in full", *dirText))
+	}
+	if len(problems) > 0 {
+		return refuse(stderr, "serve", problems...)
 	}
 	dir, err := storeDir(*dirText)
 	if err != nil {
-		return refuse(stderr, " serve", err.Error())
+		return refuse(stderr, "serve", err.Error())
 	}
 	password := d.getenv(PasswordEnv)
 	if password == "" {
-		return refuse(stderr, " serve", fmt.Sprintf("%s is empty; run under `nova-secrets exec --only %s -- nova-redis serve ...` so auth comes from nova-secrets at run time, never an argument", PasswordEnv, PasswordEnv))
+		return refuse(stderr, "serve", fmt.Sprintf("%s is empty; run under `nova-secrets exec --only %s -- nova-redis serve ...` so auth comes from nova-secrets at run time, never an argument", PasswordEnv, PasswordEnv))
 	}
 	program, err := d.lookPath(redisServerProgram)
 	if err != nil {

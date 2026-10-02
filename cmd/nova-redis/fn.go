@@ -38,6 +38,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
@@ -68,24 +69,28 @@ type opener func(ctx context.Context, store login) (redis.UniversalClient, func(
 // fnVerb is fn load and fn check over the store open opens.
 func fnVerb(args []string, stdout, stderr io.Writer, d deps, open opener) int {
 	if len(args) == 0 {
-		return refuse(stderr, " fn", "no subverb given; load puts this binary's function library on the store, check compares the store's with it")
+		return refuse(stderr, "fn", "no subverb given; load puts this binary's function library on the store, check compares the store's with it")
 	}
 	sub := args[0]
+	if verbflag.IsHelp(sub) {
+		// Help for the group is never a refusal: its subverbs and their effects.
+		panic(verbflag.Help{FS: flag.NewFlagSet("fn", flag.ContinueOnError)})
+	}
 	if sub != "load" && sub != "check" {
-		return refuse(stderr, " fn", fmt.Sprintf("unknown subverb %q; want load or check", sub))
+		return refuse(stderr, "fn", fmt.Sprintf("unknown subverb %q; want load or check", sub))
 	}
 	fs := flag.NewFlagSet("fn "+sub, flag.ContinueOnError)
 	store := loginFlags(fs)
-	if !parse(fs, args[1:], stderr, "addr") {
-		return 2
+	if problems, _ := parse(fs, args[1:], "addr"); len(problems) > 0 {
+		return refuse(stderr, "fn "+sub, problems...)
 	}
 	if err := store.check(d); err != nil {
-		return refuse(stderr, " fn "+sub, err.Error())
+		return refuse(stderr, "fn "+sub, err.Error())
 	}
 	lib := library()
 	want, err := lib.Digest()
 	if err != nil {
-		return refuse(stderr, " fn "+sub, fmt.Sprintf("this binary's library does not build, so nothing was sent to the store: %s; fix the Lua and rebuild", err))
+		return refuse(stderr, "fn "+sub, fmt.Sprintf("this binary's library does not build, so nothing was sent to the store: %s; fix the Lua and rebuild", err))
 	}
 	at := oneline.Field(*store.addr)
 	ctx := context.Background()

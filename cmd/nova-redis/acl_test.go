@@ -106,8 +106,7 @@ func TestACLRenderOpensNoStore(t *testing.T) {
 	n := len(redisacl.Families)
 	require.Len(t, lines, n+5)
 	for i, f := range redisacl.Families {
-		assert.True(t, strings.HasPrefix(lines[i], "ACL FAMILY name="+f.Name+" keys="), lines[i])
-		assert.Contains(t, lines[i], "from=")
+		assert.Equal(t, "ACL FAMILY name="+f.Name+" keys="+strings.Join(f.Patterns, ","), lines[i])
 	}
 	for i, user := range []string{"coordinator", "bench", "ns-table", "ns-friend"} {
 		assert.True(t, strings.HasPrefix(lines[n+i], "ACL SETUSER "+user+" on "), lines[n+i])
@@ -190,7 +189,7 @@ func TestACLRefusals(t *testing.T) {
 		{"unknown", []string{"drop"}, 2, `unknown subverb "drop"`},
 		{"no addr", []string{"check"}, 2, "--addr is required"},
 		{"empty password", []string{"check", "--addr", "127.0.0.1:6379", "--user", "admin", "--password-env", "NOT_SET"}, 2, "NOT_SET is empty"},
-		{"render takes no addr", []string{"render", "--addr", "x:1"}, 2, "flag provided but not defined"},
+		{"render takes no addr", []string{"render", "--addr", "x:1"}, 2, "unknown flag --addr; acl render takes no flags; run: nova-redis help acl render"},
 		{"bad password source", []string{"apply", "--addr", "127.0.0.1:6379", "--password-env-for", "bench"}, 2, "--password-env-for wants <user>=<VARIABLE>"},
 	}
 	for _, tc := range cases {

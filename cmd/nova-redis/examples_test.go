@@ -17,6 +17,7 @@ func TestHelpExamplesRunThroughTheComparator(t *testing.T) {
 
 	sitting := []onboarding.Step{
 		{Line: "$ nova-redis version", Want: []string{"nova-redis devel darwin/arm64 go1.27.1"}},
+		{Line: "$ nova-redis spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi", Want: []string{"SPILL OK dry-run=true key=ada:note ttl=10m0s expires=2026-09-23T12:10:00Z bytes=2 store=127.0.0.1:6379 written=0"}},
 		{Line: "$ nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi", Want: []string{"SPILL OK key=ada:note ttl=10m0s expires=2026-09-23T12:10:00Z bytes=2"}},
 		{Line: "$ nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note", Want: []string{"RECALL OK key=ada:note bytes=2 value=hi"}},
 	}
@@ -36,6 +37,11 @@ func TestHelpExamplesRunThroughTheComparator(t *testing.T) {
 	for _, s := range sitting {
 		args := strings.Fields(strings.ReplaceAll(strings.TrimPrefix(s.Line, "$ nova-redis "), "127.0.0.1:6379", h.mr.Addr()))
 		code, out, errs := h.runBare(args...)
+		// The fake stands at the address the line names; the line prints it.
+		out = strings.ReplaceAll(out, h.mr.Addr(), "127.0.0.1:6379")
+		if strings.Contains(s.Line, "--dry-run") && h.mr.TotalConnectionCount() != 0 {
+			t.Errorf("the example %s dialled the store; a dry run needs none", s.Line)
+		}
 		if code != 0 {
 			t.Errorf("the example %s exits %d; stderr: %s", s.Line, code, errs)
 		}

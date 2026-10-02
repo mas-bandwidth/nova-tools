@@ -30,6 +30,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
@@ -172,11 +173,15 @@ type aclOpener func(ctx context.Context, store login) (aclServer, func() error, 
 
 func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) int {
 	if len(args) == 0 {
-		return refuse(stderr, " acl", "no subverb given; render prints this build's users, check compares the store's with them, apply writes the ones that differ")
+		return refuse(stderr, "acl", "no subverb given; render prints this build's users, check compares the store's with them, apply writes the ones that differ")
 	}
 	sub := args[0]
+	if verbflag.IsHelp(sub) {
+		// Help for the group is never a refusal: its subverbs and their effects.
+		panic(verbflag.Help{FS: flag.NewFlagSet("acl", flag.ContinueOnError)})
+	}
 	if sub != "render" && sub != "check" && sub != "apply" {
-		return refuse(stderr, " acl", fmt.Sprintf("unknown subverb %q; want render, check or apply", sub))
+		return refuse(stderr, "acl", fmt.Sprintf("unknown subverb %q; want render, check or apply", sub))
 	}
 	fs := flag.NewFlagSet("acl "+sub, flag.ContinueOnError)
 	var store login
@@ -191,21 +196,22 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 		dryRun = fs.Bool("dry-run", false, "print the users apply would set (ACL WOULD-SET) and write nothing")
 		fs.Var(&sources, "password-env-for", "<user>=<VARIABLE>, repeatable: the variable holding the password a user apply creates gets; a user the store lacks is created only with one")
 	}
-	if !parse(fs, args[1:], stderr, required...) {
-		return 2
+	if problems, _ := parse(fs, args[1:], required...); len(problems) > 0 {
+		return refuse(stderr, "acl "+sub, problems...)
 	}
 	lib := library()
 	digest, err := lib.Digest()
 	if err != nil {
-		return refuse(stderr, " acl "+sub, fmt.Sprintf("this binary's library does not build: %s; fix the Lua and rebuild", err))
+		return refuse(stderr, "acl "+sub, fmt.Sprintf("this binary's library does not build: %s; fix the Lua and rebuild", err))
 	}
 	users, err := redisacl.Render(lib)
 	if err != nil {
-		return refuse(stderr, " acl "+sub, fmt.Sprintf("this build's roles do not render: %s; fix internal/redisacl and rebuild", err))
+		return refuse(stderr, "acl "+sub, fmt.Sprintf("this build's roles do not render: %s; fix internal/redisacl and rebuild", err))
 	}
 	if sub == "render" {
+		// A family is what an operator reads: its name and its key patterns.
 		for _, f := range redisacl.Families {
-			fmt.Fprintf(stdout, "ACL FAMILY name=%s keys=%s from=%q\n", f.Name, strings.Join(f.Patterns, ","), f.From)
+			fmt.Fprintf(stdout, "ACL FAMILY name=%s keys=%s\n", f.Name, strings.Join(f.Patterns, ","))
 		}
 		fns := 0
 		for _, u := range users {
@@ -216,7 +222,7 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 		return 0
 	}
 	if err := store.check(d); err != nil {
-		return refuse(stderr, " acl "+sub, err.Error())
+		return refuse(stderr, "acl "+sub, err.Error())
 	}
 	at := oneline.Field(*store.addr)
 	failed := func(err error) int {
