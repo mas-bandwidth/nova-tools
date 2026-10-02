@@ -1121,11 +1121,11 @@ Six lines: one directory, one keygen, one comment that is the step other people 
 then check, names and a run that prints a name from GitHub. The third is a comment on purpose —
 **a stranger cannot finish this alone, and the page must say so where the wait happens** rather
 than leave them to find it in a refusal. That pull request needs a GitHub identity the stranger
-does not have yet (its token is inside the store), so Glenn opens it, and the approver is the
+does not have yet (its token is inside the store), so a collaborator opens it, and the approver is the
 other collaborator, under **"Reviewed" is a control** above. `check` runs before `names`
 because the first command to touch the store should be the one that says whether the store is
 what this spec says. What it prints before the grant, exactly, in three states and not two:
-while `rowan.yaml` does not exist, **exit 2 listing the names that are in the store**; once it
+while the seat file does not exist, **exit 2 listing the names that are in the store**; once it
 exists sealed to somebody else's key, **green with `mine=0`**, invariant 4 passing over no file
 of yours; and for a seat whose file already exists, **between the two pull requests the comment
 above names** — your rule merged, the file not yet `updatekeys`-ed — **exit 1 on invariant 2**
@@ -1137,8 +1137,8 @@ is the wait, said as a red, and it clears when the second pull request lands.
 Ten rules from dogfooding, each with the mistake it prevents and what holds it: a test where
 code can hold it, and the practice it is where only a person can. They extend **The model** and **Rotation**; they do not replace them.
 
-1. **ingest is rotation** — a value enters by seal and the old value is revoked at the provider the
-   same hour, because sealing the new value while the old one still works banks a rotation nobody
+1. **ingest is rotation** — a value enters by seal and the value it replaces is revoked at the provider the
+   same hour, because sealing the new value while the replaced one still works banks a rotation nobody
    finished. A practice of the person sealing: the revocation happens at the provider, where no
 test of this tool can see it.
 2. **one seat per OS user, keys for swarms not people** — an AI is a unix user with one file and
