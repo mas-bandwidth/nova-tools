@@ -14,9 +14,8 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// The fourth release dogfood (rowan-child-release-4, 2026-09-18), one test per
-// numbered lesson in docs/SPEC-RELEASE.md. Every one of these failed before the
-// change that follows it, and none of them reaches the network or a machine.
+// The release gates of docs/SPEC-RELEASE.md §4 to §8, one test per rule. None of
+// them reaches the network or a machine.
 // ---------------------------------------------------------------------------
 
 // fakeGit is the local checkout `cut --local-diff` reads. It answers one range
@@ -38,8 +37,7 @@ func (g *fakeGit) DiffNames(_ context.Context, dir, base, head string) ([]string
 }
 
 // truncatedForge answers the compare with exactly CompareFileCap files, of
-// which some are sensitive: the shape of the fourth dogfood's range, where the
-// forge named 300 and the range really touched 58 sensitive paths.
+// which some are sensitive: a range the forge lists only up to its ceiling.
 func truncatedForge() *fakeForge {
 	f := cutForge()
 	many := []string{"internal/secrets/seal.go", "cmd/nova-sandbox/main.go"}
@@ -50,12 +48,10 @@ func truncatedForge() *fakeForge {
 	return f
 }
 
-// LESSON 4. THE TRUNCATION IS NAMED FIRST. The fourth dogfood's compare
-// answered with exactly 300 files -- the forge's ceiling -- and `cut` refused
-// naming 24 sensitive paths out of the 58 the range really touched. The
-// refusal was right by accident: the hits it found were in the prefix it could
-// see, and a range whose only sensitive file sat past file 300 would have been
-// cut clean. A list that may be short is not classified at all, and the
+// SPEC-RELEASE §4. THE TRUNCATION IS NAMED FIRST. A compare answered with
+// exactly 300 files -- the forge's ceiling -- may hold its sensitive hits only
+// in the prefix it could list, and a range whose only sensitive file sits past
+// file 300 would be cut clean. A list that may be short is not classified at all, and the
 // refusal says THAT before it says anything about what it found in it.
 func TestCutNamesTheTruncationBeforeTheHitsItFoundInIt(t *testing.T) {
 	t.Parallel()
@@ -109,7 +105,7 @@ func TestCutRefusesATruncatedRangeEvenWithASecurityRead(t *testing.T) {
 	}
 }
 
-// LESSON 5. THE LOCAL LIST IS PRODUCED BY THE VERB. --local-diff names a
+// SPEC-RELEASE §5. THE LOCAL LIST IS PRODUCED BY THE VERB. --local-diff names a
 // checkout and `cut` runs git in it, so the complete list is the tool's answer
 // rather than something a person assembled -- and a hand-written list is
 // exactly what a classification gate must never read.
@@ -261,11 +257,9 @@ func TestCutRefusesAPathsFileNobodyProduced(t *testing.T) {
 	}
 }
 
-// LESSON 6. AN UNSUPPORTED PAIR REFUSES BEFORE THE FIRST COMPILE, AND LEAVES
-// NOTHING BEHIND. The fourth dogfood handed `--platform darwin-arm64,darwin-amd64`
-// to a binary that took --platform as one string: it failed at tool 1 of 21
-// with the compiler's own `unsupported GOOS/GOARCH pair` and left an empty
-// directory of that name in the release tree for somebody to find later.
+// SPEC-RELEASE §6. AN UNSUPPORTED PAIR REFUSES BEFORE THE FIRST COMPILE, AND
+// LEAVES NOTHING BEHIND: no empty directory of that name in the release tree for
+// somebody to find later.
 func TestBuildRefusesAnUnsupportedPairBeforeBuildingAnything(t *testing.T) {
 	t.Parallel()
 
@@ -328,10 +322,9 @@ func TestBuildBuildsEveryPlatformAndNamesEachInTheReceipt(t *testing.T) {
 	}
 }
 
-// LESSON 7. NO TAG, STILL A DIGEST. A dev build has no annotated tag, so
-// `adopt --repo` has nothing to read and the fourth dogfood had to compute
-// --expect-sums ON THE MACHINE BEING ADOPTED FROM -- which is the one machine
-// whose word about its own bits proves nothing. `build` writes the digest of
+// SPEC-RELEASE §7. NO TAG, STILL A DIGEST. A dev build has no annotated tag, so
+// `adopt --repo` has nothing to read, and a digest computed ON THE MACHINE BEING
+// ADOPTED FROM is the one machine whose word about its own bits proves nothing. `build` writes the digest of
 // the SHA256SUMS it just verified, on the coordinator, beside the artifacts.
 func TestBuildWritesTheSumsDigestBesideTheArtifacts(t *testing.T) {
 	t.Parallel()
@@ -452,11 +445,10 @@ func TestAdoptRefusesADigestFileOnTheFarSide(t *testing.T) {
 	}
 }
 
-// LESSON 8. INSTALL ON THE COORDINATOR FIRST. `adopt` fans out the release it
+// SPEC-RELEASE §8. INSTALL ON THE COORDINATOR FIRST. `adopt` fans out the release it
 // is holding, and the nova-update that runs the fan-out is the one on THIS
-// machine: a Studio a release behind cannot adopt a release it does not
-// understand, and the fourth dogfood found that out with --from in hand and no
-// way to use it.
+// machine: a coordinator a release behind cannot adopt a release it does not
+// understand.
 func TestAdoptRefusesWhenTheLocalToolPredatesTheRelease(t *testing.T) {
 	t.Parallel()
 

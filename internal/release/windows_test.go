@@ -15,14 +15,14 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
-// THE WINDOWS BENCH IS A TARGET LIKE ANY OTHER, and the Threadripper arriving
-// means `release build --platform windows-amd64` and the fan-out that follows
-// it have to work from the Studio TODAY. Everything in this file is asserted
+// THE WINDOWS BENCH IS A TARGET LIKE ANY OTHER: `release build --platform
+// windows-amd64` and the fan-out that follows it work from a coordinator that
+// is not windows. Everything in this file is asserted
 // through the fakes, on every runner: no test here reaches a windows machine,
 // and none of them may be skipped on a non-windows host, because the whole
 // point is that a coordinator that is NOT windows composes all of this.
 //
-// The far side's shell is Emma's decision, not a guess: docs/BENCH-WINDOWS.md
+// The far side's shell is documented, not a guess: docs/BENCH-WINDOWS.md
 // names it as Git Bash (`C:\Program Files\Git\bin\bash.exe`), or native
 // OpenSSH with Bash in sshd_config, and internal/pulse/fleetstandard.go's
 // windows probes are POSIX shell that reach for `powershell.exe -NoProfile
@@ -163,7 +163,7 @@ func TestAdoptRefusesAWindowsPathForALinuxTarget(t *testing.T) {
 	}
 }
 
-// AND THE GATE IS STILL A GATE. Johnny's read (2026-09-18) is that a path is
+// AND THE GATE IS STILL A GATE. A path is
 // checked before any remote command is composed, and widening it to drive
 // paths must not widen it to shell syntax: the far side is a POSIX shell
 // whatever the operating system under it.
@@ -244,7 +244,7 @@ func TestTheMachineColumnsTakeAWindowsPath(t *testing.T) {
 	}
 }
 
-// A release built ON the windows bench and adopted FROM the Studio: the
+// A release built ON the windows bench and adopted FROM a darwin coordinator: the
 // `host:dir` --from names that machine's own path, which is a drive path, and
 // the fetch has to be composed for it. The host part is two characters or
 // more, so `C:\releases` is still read as a local path and not as a host.
@@ -370,7 +370,7 @@ func TestTheWindowsSumsFileNamesOnlyExeFiles(t *testing.T) {
 }
 
 // THE SELF-VERIFY THAT CANNOT BE RUN. A `release build --platform
-// windows-amd64` on the Studio or on hulk produces a nova-update.exe that this
+// windows-amd64` on darwin or linux produces a nova-update.exe that this
 // host cannot execute, so there is no way for the build to ask the artifact
 // whether it answers `version`. That is stated rather than faked: the build's
 // promise is the checksum round trip, and the version stamp is asserted where

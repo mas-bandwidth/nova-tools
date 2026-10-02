@@ -24,10 +24,10 @@ func TestHelpListsEveryVerbTheSwitchDispatches(t *testing.T) {
 	}
 }
 
-// #622: snapshot scopes its count to the ADOPTED manifest, not every nova-*
+// snapshot scopes its count to the ADOPTED manifest, not every nova-*
 // executable in a bin directory (or on PATH). With --file <manifest> it reads
-// each adopted entry the way report does and prints how many answer -- the
-// adopted sixteen -- so the count is the manifest's, never a directory scan's.
+// each adopted entry the way report does and prints how many answer, so the
+// count is the manifest's, never a directory scan's.
 func TestSnapshotFileCountsTheAdoptedManifest(t *testing.T) {
 	t.Parallel()
 

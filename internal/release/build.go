@@ -23,21 +23,19 @@ const SumsFile = "SHA256SUMS"
 
 // DigestFile holds the sha256 OF SumsFile, written beside it by `release build`.
 //
-// It exists because of the fourth release dogfood (2026-09-18). `adopt` fetching
-// a release from another machine must check it against a digest that did NOT
-// travel with the bits, and the two ways to have one -- the annotated tag and
-// the CHANGELOG entry -- both belong to a TAGGED release. A dev build has no
-// tag, so the digest had to be computed on the machine being adopted FROM,
-// which is that machine vouching for its own bytes and is not evidence at all.
-// This file is written where the build ran, on the coordinator, out of the
+// `adopt` fetching a release from another machine must check it against a
+// digest that did NOT travel with the bits, and the two ways to have one -- the
+// annotated tag and the CHANGELOG entry -- both belong to a TAGGED release. A dev
+// build has no tag, and a digest computed on the machine being adopted FROM is
+// that machine vouching for its own bytes. This file is written where the build ran, on the coordinator, out of the
 // SHA256SUMS the build had just verified; `adopt --expect-sums-from` reads it
 // from there. A digest computed on the machine being adopted from is not
 // evidence about a fetch.
 const DigestFile = "SUMS.digest"
 
 // Platform is the goos-goarch an artifact directory is named for. A release
-// built here for this host is the fleet's common case -- hulk builds for hulk,
-// the Studio builds for the Studio -- and --platform is the flag for the other
+// built here for this host is the common case -- each machine building for
+// itself -- and --platform is the flag for the other
 // one, cross-compiling to a bench from wherever the release was cut.
 func Platform(flagValue string) (string, string, error) {
 	if flagValue == "" {
@@ -54,17 +52,16 @@ func Platform(flagValue string) (string, string, error) {
 // ExeSuffix is what a tool's FILE is called on one platform: `nova-bus` on unix,
 // `nova-bus.exe` on windows. It takes the TARGET's goos, never the host's,
 // because every one of these names is decided for the machine the binary will
-// run on rather than for the machine deciding it -- a release cut on the Studio
+// run on rather than for the machine deciding it -- a release cut on darwin
 // for a windows bench names windows files, and a release built ON windows names
 // them the same way.
 //
 // Reading runtime.GOOS at each of these sites instead is the defect this exists
 // to make impossible, and it is a defect that hides: it is right on the host
 // that happens to match and silently wrong on every other, so the artifacts end
-// up called one thing while everything looking for them asks for another. The
-// Windows PR leg found the test half of it (integration-4, 2026-09-18); the
-// product half was `adopt` composing the remote command as a bare `nova-update`,
-// which named a path that does not exist on a windows bench.
+// up called one thing while everything looking for them asks for another: an
+// `adopt` composing the remote command as a bare `nova-update` names a path that
+// does not exist on a windows bench.
 func ExeSuffix(goos string) string {
 	if goos == "windows" {
 		return ".exe"
@@ -97,10 +94,9 @@ func Tools(source string) ([]string, error) {
 func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// THE DEFINITION OF DONE, FIRST -- before a single tool is compiled. A dev
 	// build has no tag and no changelog, which is exactly why it needs the
-	// gate rather than exactly why it escapes one: the fourth dogfood's
-	// releases reached four benches as dev builds, and `adopt` never asks what
-	// a release was gated on. Twenty-one binaries compiled and then refused is
-	// also twenty-one compiles nobody needed.
+	// gate rather than exactly why it escapes one: dev builds reach benches,
+	// and `adopt` never asks what a release was gated on. Every binary
+	// compiled and then refused is a compile nobody needed.
 	gate, err := dogfoodCheck("BUILD", o, deps, o.source, out, errs)
 	if err != nil {
 		if errors.Is(err, errDogfood) {
@@ -129,12 +125,10 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if tc == nil {
 		tc = GoBuild{}
 	}
-	// AND EVERY PAIR IS ONE THE COMPILER KNOWS, asked of the compiler. The
-	// fourth dogfood's `--platform darwin-arm64,darwin-amd64` reached a build
-	// that took --platform as one string, failed at tool 1 of 21 with the
-	// compiler's own `unsupported GOOS/GOARCH pair`, and left an empty
-	// directory of that name in the release tree. A pair nobody can build is a
-	// refusal here, before a directory exists to be left behind.
+	// AND EVERY PAIR IS ONE THE COMPILER KNOWS, asked of the compiler. A pair
+	// the compiler rejects at the first tool leaves an empty directory of that
+	// name in the release tree; a pair nobody can build is a refusal here,
+	// before a directory exists to be left behind.
 	supported, err := tc.Platforms(ctx)
 	if err != nil {
 		return refusal(errs, "BUILD", fmt.Errorf("cannot ask the Go toolchain which platforms it supports: %w (is `go` on PATH?)", err))
@@ -168,12 +162,12 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// THE STAMP IS COMPOSED ONCE, before the first target, the way
 	// tools/ghrelease's ldflags verb composes it once for the release
 	// workflow: `-X main.version=` with an empty value is a legal linker flag
-	// that stamps nothing, and nothing downstream notices (#118).
+	// that stamps nothing, and nothing downstream notices.
 	args := []string{"-trimpath", "-ldflags", Ldflags(o.version)}
 	// What the summary line names: every platform built, and every platform's
-	// digest, in the order they were asked for. A release half a platform
-	// short used to print one cheerful line and say nothing about the half
-	// that was never made.
+	// digest, in the order they were asked for, so a release half a platform
+	// short cannot print one cheerful line and say nothing about the half that
+	// was never made.
 	var names, digests []string
 	for _, tgt := range targets {
 		goos, goarch := tgt.goos, tgt.goarch
@@ -237,9 +231,9 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		self = deps.Self()
 	}
 	pruned, pruneFailed := pruneDefault(o.out, func(name string) bool { return name == o.version || name == self }, errs)
-	// ONE LINE THAT NAMES EVERY PLATFORM. The repeated --platform used to keep
-	// the LAST flag and print one green receipt, which is how a release ends
-	// up half a platform short with nobody the wiser. `platforms=` and `sums=`
+	// ONE LINE THAT NAMES EVERY PLATFORM. A receipt naming one platform of
+	// several is how a release ends up half a platform short with nobody the
+	// wiser. `platforms=` and `sums=`
 	// are the same list in the same order, one token each.
 	fmt.Fprintf(out, "RELEASE BUILD OK version=%s platforms=%s tools=%d sums=%s dogfood=%s out=%s pruned=%d prune-failed=%d\n",
 		field(o.version), field(strings.Join(names, ",")), len(tools), field(strings.Join(digests, ",")), gate, field(o.out), pruned, pruneFailed)

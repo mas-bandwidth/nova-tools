@@ -1304,16 +1304,15 @@ The report reads only installed identities. UNKNOWN means a partial inventory; i
 never means zero or current. Replace the example with your own six-column manifest
 for your bench; it and any snapshot path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
-then `--version`, then bare, all inside one `--timeout` — so our own tools, which
-answer a bare invocation with a usage refusal, are read rather than reported
-UNKNOWN (#1264). A row holding a whole argv (`go version`) is run as written.
+then `--version`, then bare, all inside one `--timeout`, so a tool that answers a
+bare invocation with a usage refusal is still read. A row holding a whole argv
+(`go version`) is run as written.
 
-Use `nova-update help` for filters, optional draft/delivery and limits. A plain report
-needs no bus. Updates require an explicit `nova-update apply --file ... name`;
-models are listed for the owner to evaluate and pull themselves. No timer is installed.
-For recovery across process death, name `--snapshot`; retries retain the prepared
-note. Version statuses should go to your chosen integrator, with optional Cc;
-participation and updates remain voluntary.
+`nova-update help` lists every verb; `nova-update help <verb>` gives a verb's flags,
+effect and notes. A plain report needs no bus. Updates require an explicit
+`nova-update apply --file ... name`; models are listed for their owner to pull. No
+timer is installed. For recovery across process death, name `--snapshot`; a retry
+sends the prepared note again rather than preparing a new one.
 
 `status` is `check` with every entry's line shown, the current ones too, exit 0 when
 every entry is equal and 1 when any differs; it writes nothing. `apply --dry-run`
@@ -1353,7 +1352,7 @@ that platform only. Every other platform the release built is adopted with `--ex
 <out>/<version>/<goos-goarch>/SUMS.digest` on the host that built it, or `--expect-sums <sha256>`
 from the `sums=` field of its `RELEASE BUILT` line. It also
 classifies the range since the previous tag against the sensitive path list and refuses until
-`--security-read <note id|url>` names Johnny's read. A compare the forge could only answer in part —
+`--security-read <note id|url>` names the security reader's read. A compare the forge could only answer in part —
 300 files, its ceiling — is a different refusal, `reason=compare-truncated`, and a read does not get
 past it: classify from a complete local list instead, with `--local-diff <checkout>` to produce one
 (`git diff --name-only <previous>...<head>`) and `--paths-from <file>` to write it or read it back.
@@ -1372,7 +1371,7 @@ outside=<n> cmd=<dir>`. `--no-dogfood-gate` needs `--reason <why>`, and the reas
 line as `dogfood=waived`, and written into the CHANGELOG section as `Dogfood gate waived: <why>`.
 Every release line carries `dogfood=ok|waived|skipped`. A tool is done when it is
 tested, dogfooded by a non-author on real work, and the feedback is applied — see
-[SPEC-RELEASE.md](SPEC-RELEASE.md) lesson 12.
+[SPEC-RELEASE.md](SPEC-RELEASE.md) §12.
 
 ```sh
 nova-update release build --version v0.17.0 --out ./release --source . --platform linux-amd64 --platform darwin-arm64,darwin-amd64
@@ -1458,17 +1457,17 @@ The report reads only installed identities. UNKNOWN means a partial inventory; i
 never means zero or current. Replace the example with your own six-column manifest
 for your bench; it and any snapshot path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
-then `--version`, then bare, all inside one `--timeout` — so our own tools, which
-answer a bare invocation with a usage refusal, are read rather than reported
-UNKNOWN (#1264). A row holding a whole argv (`go version`) is run as written.
+then `--version`, then bare, all inside one `--timeout`, so a tool that answers a
+bare invocation with a usage refusal is still read. A row holding a whole argv
+(`go version`) is run as written.
 
-Use `nova-version help` for filters, optional draft/delivery and limits. A plain report
-needs no bus. `nova-version snapshot --file <manifest>` counts the adopted tools the
-manifest names and prints one `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n>` line,
-then a `SNAPSHOT UNKNOWN name=<name>` line for each tool that did not answer —
-the adopted 16, never how many `nova-*` executables sit on PATH. Updates require an explicit
-`nova-update apply --file ... name`; models are listed for the owner to evaluate and
-pull themselves. No timer is installed.
+`nova-version help` lists every verb; `nova-version help <verb>` gives a verb's flags,
+effect and notes. A plain report needs no bus. `nova-version snapshot --file <manifest>`
+counts the tools the manifest names and prints one `SNAPSHOT <OK|FAIL> checked=<n>
+known=<n> unknown=<n>` line, then a `SNAPSHOT UNKNOWN name=<name>` line for each tool
+that did not answer: the manifest's tools, never how many `nova-*` executables sit on
+PATH. Updates are nova-update's (`nova-update apply --file ... name`). No timer is
+installed.
 
 ### Capture and compare installed binaries
 
@@ -1485,16 +1484,10 @@ with a thirty-second `--timeout` per binary and a sixty-second `--budget` for th
 run, both of which you can set. It skips symlinks, refuses an unreadable
 version or mixed stamps, and writes `name`, `stamp`, `revision`, `platform` columns.
 
-The per-binary deadline is thirty seconds rather than the five every other verb
-takes because of when this verb is run: right after `go install ./cmd/...`, on a
-directory of binaries this machine has never executed. The platform assesses the
-first run of a never-seen executable and charges it to that deadline — measured
-on a darwin/arm64 Studio at 164–571 ms cold against 5 ms warm when idle, and at
-a 7.03 s maximum while a tree compiled beside it, which is the state the
-`go install` one command earlier leaves the machine in. At five seconds that
-refused healthy binaries and named a build repair that would have found nothing
-([#890](https://github.com/mas-bandwidth/nova-tools/issues/890)). Lower it with
-`--timeout` on a bin whose binaries you have already been running.
+The per-binary deadline is thirty seconds, not five, because a first exec of a
+new binary is slow: this verb runs right after `go install ./cmd/...`, and a
+platform assesses each never-run executable on its first exec. Lower it with
+`--timeout` on a bin whose binaries you have already run.
 `diff` reads two such files and reports changed, added or removed entries without
 executing the binaries.
 
@@ -1506,18 +1499,17 @@ This four-column inventory is **not** the six-column manifest accepted by
 already adopted and counts how many of its tools answer, printing one
 `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line and one
 `SNAPSHOT UNKNOWN name=<name> reason=<why> remedy=<what to do>` line per tool that
-did not answer (`--max` caps them, with a `MORE` line) — the
-adopted 16, never the 32 `nova-*` executables a directory or `PATH` might hold.
+did not answer (`--max` caps them, with a `MORE` line): the manifest's tools,
+never the `nova-*` executables a directory or `PATH` might hold.
 It writes no file and mirrors `report`'s read, so a recorded version is known
-without running a process; it exits 1 when any adopted tool does not answer
-([#622](https://github.com/mas-bandwidth/nova-tools/issues/622)).
+without running a process; it exits 1 when any adopted tool does not answer.
 
 Snapshot reads the version line with `internal/buildinfo`, the package that
 writes it. Named `key=value` extras, such as `nova-sandbox`'s `backend=` and
 `platform=`, are accepted as metadata. A binary that prints no version line is
 refused by name; a partial inventory is not reported as complete. For recovery
-across process death, name `--snapshot`; retries retain the prepared note.
-Version reports can be sent to the recipient you select, with optional Cc.
+across process death, name `--snapshot`; a retry sends the prepared note again.
+`send` delivers the report as a note to the recipients `--to` names.
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.

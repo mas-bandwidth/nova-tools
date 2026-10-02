@@ -1,28 +1,24 @@
 package release
 
-// THE DEFINITION OF DONE, IN FRONT OF THE TAG.
+// THE DEFINITION OF DONE, IN FRONT OF THE TAG (SPEC-RELEASE §12).
 //
-// Glenn, 2026-09-18: a tool is finished when it has been tested, dogfooded by
-// somebody who did NOT write it on real work, the edges that found have been
-// filed, and the fixes have been applied. `nova-check dogfood gate` made that
-// mechanical -- receipts on disk, read against the command reference, an exit
-// code (internal/dogfood). Nothing asked it before a release. The claim that a
-// release was dogfooded was whatever the last person said it was, and a tag is
-// the one thing in this repository that cannot be quietly amended and pushed
-// again.
+// A tool is finished when it has been tested, dogfooded by somebody who did NOT
+// write it on real work, the edges that found have been filed, and the fixes
+// have been applied. `nova-check dogfood gate` makes that mechanical -- receipts
+// on disk, read against the command reference, an exit code (internal/dogfood)
+// -- and a tag is the one thing in this repository that cannot be quietly
+// amended and pushed again.
 //
 // So `cut` and `build` ask it FIRST -- before the forge is read, before a
 // single tool is compiled -- and refuse on an open edge. An open edge is
 // somebody having run a verb, it not having done what they needed, and nobody
-// having run it since and said it did: feedback FILED is not feedback APPLIED,
-// which is the third step of the definition and the one that used to go
-// missing.
+// having run it since and said it did: feedback FILED is not feedback APPLIED.
 //
 // The gate is the same read the CLI does, in process rather than through a
 // shell: `nova-check dogfood gate --cli <cli> --receipts <dir>` is
 // internal/dogfood.Gate over dogfood.ParseCLI and dogfood.ReadReceipts, and
 // calling it directly is one process, one set of refusals, and no shell to get
-// wrong (Glenn, 2026-09-17: no shell for coordination).
+// wrong.
 
 import (
 	"errors"
@@ -84,8 +80,8 @@ func addDogfoodFlags(f *flag.FlagSet, o *options, cliDefault string) {
 	f.StringVar(&o.reason, "reason", "", "why the gate was waived; it goes on the line and into the changelog")
 }
 
-// dogfoodFindingCap bounds the refusal. Tool output costs tokens (Glenn,
-// 2026-09-11): the COUNT is the answer, the first few edges are the orientation,
+// dogfoodFindingCap bounds the refusal. Tool output costs tokens: the COUNT is
+// the answer, the first few edges are the orientation,
 // and a person who wants all of them runs the ledger.
 const dogfoodFindingCap = 10
 
@@ -220,7 +216,7 @@ func dogfoodCheck(token string, o options, deps Deps, checkout string, out, errs
 		}
 		// ON STDOUT, above the receipt, for the same reason RELEASE CUT
 		// SENSITIVE is: a release that went round the gate is a fact somebody
-		// reads off the terminal today and out of a log in six months.
+		// reads off the terminal now and out of a log in six months.
 		fmt.Fprintf(out, "RELEASE %s DOGFOOD WAIVED reason=%s\n", token, field(o.reason))
 		return "waived", nil
 	}

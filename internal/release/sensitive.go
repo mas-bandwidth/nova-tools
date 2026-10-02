@@ -8,9 +8,9 @@ import (
 
 // SensitivePaths is THE LIST, and this file is the one place in code it exists.
 //
-// Johnny's decision 1 on SPEC-RELEASE (#1337): a release is the moment work
+// SPEC-RELEASE §1: a release is the moment work
 // stops being a diff somebody can revert and starts being binaries on every
-// bench in the fleet, so the ranges that touch the parts of this estate a
+// bench in the fleet, so the ranges that touch the parts of the tree a
 // mistake cannot be taken back from -- the secret store, the sandbox that holds
 // a worker, the image every bench boots, the scripts the coordinator runs
 // unattended -- are not cut on the judgement of whoever is at the keyboard.
@@ -48,9 +48,9 @@ var SensitiveShape = strings.Join(SensitivePaths, ", ")
 // matters here for one reason: A FILE LIST AT THE CEILING IS A LIST THAT MAY BE
 // SHORT. The classification below reads that list, so a range at this number
 // cannot be classified at all, and a gate that reads a truncated list is a gate
-// that passes the one file it did not see. `cut` refuses such a range with the
-// same remedy as a sensitive one -- Johnny's read -- rather than quietly
-// deciding on a prefix of the truth.
+// that passes the one file it did not see. `cut` refuses such a range with its
+// own refusal, which a security read does not get past, rather than quietly
+// deciding on a prefix of the truth: the remedy is a complete local list.
 const CompareFileCap = 300
 
 // Sensitive returns the paths of files that sit under one of SensitivePaths,

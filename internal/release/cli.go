@@ -25,7 +25,7 @@ nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from 
 nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]`
 
 // CutNote is the gate in front of a tag, said where a person will meet it
-// (Johnny's decision 1 on SPEC-RELEASE, #1337). It is a var rather than a const
+// (SPEC-RELEASE §1). It is a var rather than a const
 // because it names the list, and the list has ONE home: composing this from
 // SensitivePaths is why the help cannot fall behind the gate.
 var CutNote = "cut classifies the range since the previous tag against the sensitive path list in internal/release/sensitive.go and docs/SPEC-RELEASE.md " +
@@ -37,8 +37,8 @@ var CutNote = "cut classifies the range since the previous tag against the sensi
 	"`build` writes one SHA256SUMS per platform, under <out>/<version>/<goos-goarch>/, and --sums takes one of them: the tag and the CHANGELOG section carry THAT platform's digest, and `adopt --repo` verifies that platform only. " +
 	"Every other platform the release built is adopted with --expect-sums-from <out>/<version>/<goos-goarch>/" + DigestFile + " on the host that built it, or --expect-sums <sha256> from the sums= field of its `RELEASE BUILT` line."
 
-// AdoptNote is what a person needs before their first adopt, and every sentence
-// of it is something the first dogfood pass had to find out by failing.
+// AdoptNote is what a person needs before their first adopt: each sentence
+// answers a mistake a first adopt makes.
 const AdoptNote = "adopt runs FROM the host that has ssh to every machine and fans out from there; it never needs the machines to reach each other. " +
 	"When the release was built elsewhere, --from may name that machine as host:dir and --stage <dir> says where to fetch it first. " +
 	"Such a fetch is verified against a digest that did NOT travel with the bits: --repo <owner/name> reads it off the annotated tag the cut wrote, --expect-sums <sha256> names it outright, or --expect-sums-from <file> reads it out of the " + DigestFile + " this host's own `release build` wrote. " +
@@ -160,8 +160,8 @@ const ExitCodes = "exit codes: 0 the verb did what its line says (a --dry-run pr
 	"1 it ran and a step failed partway, the FAIL or REFUSED line naming what was done and what to do next; " +
 	"2 it refused before acting, naming the command to run."
 
-// progress is the stderr voice. Glenn, 2026-09-17: a program says what it is
-// doing for any step over about a tenth of a second, and every step in this
+// progress is the stderr voice. A program says what it is doing for any step
+// over about a tenth of a second, and every step in this
 // package -- a forge read, a compile, a copy over ssh -- is well over that.
 func progress(w io.Writer, format string, a ...any) {
 	fmt.Fprintf(w, "release: "+format+"\n", a...)
@@ -171,7 +171,7 @@ func progress(w io.Writer, format string, a ...any) {
 // the one thing a seam cannot default to -- what THIS binary is stamped with,
 // which lives in main and is handed down. `adopt` is the reader: a coordinator
 // older than the release it is fanning out cannot run that release's install,
-// and the fourth dogfood met that as a Studio that could not adopt at all.
+// so adopt refuses until this binary is the release's.
 func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 	return Run(name, args, out, errs, Deps{Self: func() string { return stamp }})
 }
@@ -275,8 +275,8 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		// `--help` on a verb is a REASONABLE QUESTION, not a parse failure.
 		// The flag package answers it with the sentinel flag.ErrHelp, and
 		// printing that gave a person who asked for help the words `flag: help
-		// requested` -- the package's own internals, leaked (darwin dogfood,
-		// 2026-09-18). It is answered here with that verb's usage, and exit 0,
+		// requested` -- the package's own internals, leaked. It is answered
+		// here with that verb's usage, and exit 0,
 		// because asking is not an error.
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(out, VerbUsage(verb))
@@ -330,8 +330,8 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 			return refusal(errs, token, err)
 		}
 	}
-	// CERTIFICATION AFTER AN ADOPT IS ON BY DEFAULT (Glenn, 2026-09-18: "we want this
-	// certification to be mechanized"). An adopt changes the build on every machine it
+	// CERTIFICATION AFTER AN ADOPT IS ON BY DEFAULT: certification is mechanized,
+	// never remembered. An adopt changes the build on every machine it
 	// touches and so invalidates every certificate those machines held; leaving the renewal
 	// to whoever remembers is how a fleet spends an afternoon uncertified.
 	//

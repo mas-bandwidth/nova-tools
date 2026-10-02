@@ -11,9 +11,8 @@ import (
 
 // KeepBesides is how many release versions a root keeps BESIDES the ones it
 // must: the version just built or installed, and the version the machine was
-// running before it. Every `build --out` and `install --from` root used to keep
-// every version forever, one directory per dev build, and a machine ran out of
-// disk on it (2026-10-01: 36 versions, 9 GB on one root; 34 GB on another).
+// running before it. Without it a `build --out` or `install --from` root keeps
+// every version forever, one directory per dev build, until the disk is full.
 //
 // Three is enough to put back any of the last few builds by re-installing it
 // without a rebuild, which is the only thing an old version directory is for,

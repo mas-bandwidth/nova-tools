@@ -2,17 +2,11 @@
 // set of binaries, and the same binaries answering for themselves on every bench
 // in the fleet.
 //
-// It exists because that mile was a shell script. `fleet-install-tools.sh` built
-// the tools once on hulk, cached them by sha, tarred them to each bench and
-// installed them by rename -- 30 lines of nested ssh quoting with a build, a
-// cache, a copy, an install and a verify all in one `for` loop, and no test of
-// any of it. It was written after the pit stop of 2026-09-17, where four Linux
-// benches ran six-hour-old tools while the coordinator believed they were
-// current, and the reason that could happen is that nothing in the loop could
-// SAY what it had done: the install printed one line per bench and the line was
-// composed from the same ssh it was reporting on.
-//
-// So the four steps are four verbs, each of which can refuse:
+// A build, a copy, an install and a verify run as one shell loop cannot SAY
+// what it has done: a bench can run hours-old tools while the coordinator
+// believes it current, because the line that reports an install is composed
+// from the same ssh it is reporting on. So the steps are verbs, each of which
+// can refuse and each of which prints its own receipt:
 //
 //	cut      main is green, here is the version, here is what changed
 //	build    every cmd/nova-* for one platform, stamped, with a checksum file
@@ -127,8 +121,8 @@ type Machine struct {
 
 // MachinesShape is the one sentence that says what the --machines file holds.
 // The help prints it and docs/SPEC-UPDATE.md carries it, because a file format
-// discoverable only from a refusal is a format nobody can write correctly the
-// first time: the dogfood pass of 2026-09-18 had to read the source for it.
+// discoverable only from a refusal or the source is a format nobody can write
+// correctly the first time.
 const MachinesShape = "one machine per line: <name>[TAB<bin>[TAB<dest>]]; blank lines and #-comments skipped; user@host allowed; the optional columns override --bin and --dest for that machine"
 
 // RemotePathsNote says the one thing about --bin and --dest that is easy to get
@@ -151,12 +145,9 @@ type Toolchain interface {
 	Build(ctx context.Context, source, pkg, out, goos, goarch string, args []string) (string, error)
 	// Platforms is every `goos/goarch` this toolchain can compile for, as
 	// `go tool dist list` prints it. It is ASKED rather than written out in
-	// this file because a list here is a list that is right on the day it is
-	// written -- and the fourth release dogfood found out what the other kind
-	// costs: `--platform darwin-arm64,darwin-amd64` reached the compiler
-	// whole, failed at tool 1 of 21 with the compiler's own `unsupported
-	// GOOS/GOARCH pair`, and left an empty directory of that name in the
-	// release tree for somebody to find later.
+	// this file because a list here is right only on the day it is written,
+	// and a pair the compiler rejects at the first tool leaves an empty
+	// directory of that name in the release tree for somebody to find later.
 	Platforms(ctx context.Context) ([]string, error)
 }
 

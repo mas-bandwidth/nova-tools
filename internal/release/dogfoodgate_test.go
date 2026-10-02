@@ -513,10 +513,9 @@ func TestCutJudgesOnlyTheToolsUnderCmd(t *testing.T) {
 	}
 }
 
-// Stella's witness on #4531: a shipped tool whose directory cannot be read was
-// left out of the set, its open edge set aside, and the gate passed with
-// {Shipped:1 Outside:2 Findings:[]}. An I/O error is not a parked tool: the
-// read refuses, and the cut with it.
+// A shipped tool whose directory cannot be read is not left out of the set with
+// its open edge set aside (a pass of {Shipped:1 Outside:2 Findings:[]}). An I/O
+// error is not a parked tool: the read refuses, and the cut with it.
 func TestTheGateRefusesAToolDirectoryItCannotRead(t *testing.T) {
 	t.Parallel()
 	if os.Geteuid() == 0 {

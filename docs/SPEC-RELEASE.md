@@ -11,7 +11,7 @@ so it can be referred to, states the mistake it prevents, and names the tests th
 ## 1. A range that touched the sensitive paths needs the security reader's read
 
 A release is the moment work stops being a diff somebody can revert and becomes binaries on every bench in
-the fleet. Most ranges are ordinary. Some touch the parts of this estate a mistake cannot be taken back
+the fleet. Most ranges are ordinary. Some touch the parts of the tree a mistake cannot be taken back
 from: the secret store, the sandbox that holds a worker, the image every bench boots, and the scripts the
 coordinator runs unattended. Those are not cut on the judgement of whoever is at the keyboard.
 
@@ -57,7 +57,7 @@ prefix of the truth and calls it clean.
 
 ### What `--security-read` may be
 
-A note id (`johnny-4b9200ddc994`) or the url of the comment carrying the read. It is held to the field law
+A note id (`reader-4b9200ddc994`) or the url of the comment carrying the read. It is held to the field law
 before anything is tagged — no whitespace, no `=`, one token — because it travels into the one-line receipt
 above, and a read nobody could print is a read nobody could look up in six months.
 
@@ -115,7 +115,7 @@ A tag with no annotation, or an annotation with no `sums=` line, is said plainly
 
 ## 3. A leaked release is pulled
 
-**Case H.** A release is found to have shipped something that should never have left this estate. The
+**Case H.** A release is found to have shipped something that should never have left the repository. The
 artifacts have to go — here and on every machine that holds them — and the record has to stay.
 
 ```
@@ -445,8 +445,8 @@ network or a real machine.
 The release tests run entirely against fakes and temp dirs — a `fakeForge`, a `fakeSSH`, a `fakeToolchain`, a `fakeGit` — and never reach a network or a real machine; the sensitive-list, command-reference and windows-spec parity checks live in `internal/ci` and read the spec file directly.
 One numbered line per test; where one test holds several behaviours, they share its line, and lines 37 and 38 also name, in parentheses, a second test holding the other side of the same behaviour. The dogfood gate's tests are named under rule 12. The behaviours this spec demands that no test proves yet follow, unnumbered.
 
-1. `TestCutRefusesASensitiveRangeWithoutJohnnysRead` — a cut whose range touched a sensitive prefix is refused (exit 2) and names the paths, until `--security-read` is supplied.
-2. `TestCutWithJohnnysReadSaysSoOnItsOwnLine` — with `--security-read` the cut prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt.
+1. `TestCutRefusesASensitiveRangeWithoutTheSecurityRead` — a cut whose range touched a sensitive prefix is refused (exit 2) and names the paths, until `--security-read` is supplied.
+2. `TestCutWithTheSecurityReadSaysSoOnItsOwnLine` — with `--security-read` the cut prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt.
 3. `TestCutOfAnOrdinaryRangeSaysNothingAboutSensitivePaths` — an ordinary range prints no `RELEASE CUT SENSITIVE` line.
 4. `TestSensitiveClassifiesByPrefixAndNothingElse` — classification is by directory prefix (trailing slash load-bearing) and nothing else, never by filename or substring.
 5. `TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec` — the list in `internal/release/sensitive.go` and the spec block stay the same list in the same order.

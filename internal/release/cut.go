@@ -151,9 +151,8 @@ func Section(version, sha, previous, sumsDigest, dogfoodWaiver string, when time
 	// a release from another machine cannot verify it with the checksum file
 	// that came with it -- anybody who could change one could change the other
 	// -- so it is given this digest instead, which reached the adopting host
-	// through the repository rather than through the machine being read
-	// (Johnny, 2026-09-18). It is written in the form the check wants, so
-	// nobody has to transcribe it.
+	// through the repository rather than through the machine being read. It
+	// is written in the form the check wants, so nobody has to transcribe it.
 	if sumsDigest != "" {
 		fmt.Fprintf(&b, "%s%s\n\nAdopt this release with `--expect-sums %s`.\n\n", SumsDigestPrefix, sumsDigest, sumsDigest)
 	}
@@ -207,7 +206,7 @@ var annotationSums = regexp.MustCompile(`(?m)^` + AnnotationSumsPrefix + `([0-9a
 
 // Annotation is the message the TAG OBJECT carries, composed in one place
 // because it is written by `cut` and read by `adopt` and the two have to agree
-// about where the digest is (Johnny's decision 2, #1337). A tag is the one
+// about where the digest is (SPEC-RELEASE §2). A tag is the one
 // thing in this repository that cannot be quietly amended, so what it says
 // about a release is the most durable record the release has.
 func Annotation(version, sha, sumsDigest string) string {
@@ -238,21 +237,18 @@ func SumsInAnnotation(message string) string {
 // reason a cut can refuse.
 var errTruncated = errors.New("compare-truncated")
 
-// classify is the gate Johnny's decision 1 puts in front of the tag: which of
+// classify is the gate SPEC-RELEASE §1 puts in front of the tag: which of
 // the paths this range touched are on SensitivePaths, and may this cut proceed.
 // It is its own function, and pure apart from the writers, because the decision
 // is the thing worth reading -- the cut around it is bookkeeping.
 //
-// THE ORDER IS THE WHOLE LESSON OF THE FOURTH DOGFOOD (2026-09-18). That cut's
-// compare answered with exactly 300 files -- the forge's ceiling -- and the
-// verb refused naming 24 sensitive paths out of the 58 the range really
-// touched. It looked like the gate working. It was the gate being lucky: the
-// hits it named were the ones that happened to fall inside the prefix it could
-// see, and a range whose only sensitive file sat past file 300 would have been
-// cut clean. So the truncation is decided FIRST and named FIRST, before
-// anything is said about what was found inside a list that may be short.
+// THE ORDER MATTERS. A compare the forge answers with exactly 300 files -- its
+// ceiling -- may hold sensitive hits only in the prefix it could list, and a
+// range whose only sensitive file sits past file 300 would be cut clean. So the
+// truncation is decided FIRST and named FIRST, before anything is said about
+// what was found inside a list that may be short.
 //
-// And --security-read does not get past it. Johnny's read is a read OF A LIST,
+// And --security-read does not get past it. The security read is a read OF A LIST,
 // and a read of a prefix of the truth vouches for a prefix of the truth. The
 // way past a truncated compare is a complete list, which is what --local-diff
 // and --paths-from are for.
@@ -275,12 +271,12 @@ func classify(files []string, complete bool, rangeName, securityRead string, out
 		return nil
 	}
 	if securityRead == "" {
-		return refuse("get Johnny's read of these paths and name it: --security-read <note id or the url of his comment>",
+		return refuse("get the security reader's read of these paths and name it: --security-read <note id or the url of the comment>",
 			"this range touches %s on the sensitive list: %s", plural(len(hits), "path"), namedPaths(hits, 10))
 	}
 	// ON STDOUT, above the cut line: it is a receipt, not progress. A release
 	// that crossed the sensitive list is a fact somebody reads off the
-	// terminal today and out of a log in six months, and `read=` is how they
+	// terminal now and out of a log in six months, and `read=` is how they
 	// find what was actually said.
 	fmt.Fprintf(out, "RELEASE CUT SENSITIVE paths=%d read=%s\n", len(hits), field(securityRead))
 	return nil
@@ -478,7 +474,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	}
 	prs := PullRequests(commits)
 	// WHICH PATHS THE RANGE TOUCHED, and whether that needs a read before a
-	// tag exists (Johnny's decision 1, #1337). Asked BEFORE --dry-run branches
+	// tag exists (SPEC-RELEASE §1). Asked BEFORE --dry-run branches
 	// and before anything is written: a dry run exists to find out what would
 	// happen, and what would happen is this refusal.
 	files, complete, err := paths(ctx, o, deps, previous, sha, out, errs)

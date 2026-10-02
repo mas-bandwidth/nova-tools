@@ -876,7 +876,7 @@ func TestAdoptSendsInstallsAndWritesOneReceiptPerMachine(t *testing.T) {
 				"mini":   "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n",
 			}}
 			// --no-certify: these cases are about the install, and an adopt certifies by
-			// default since 2026-09-18. The waiver is explicit here exactly as it must be
+			// default. The waiver is explicit here exactly as it must be
 			// on a real command line.
 			args := []string{"adopt", "--no-certify", "--version", "v0.16.0", "--machines", list,
 				"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/home/nova/.local/bin",
@@ -1083,8 +1083,8 @@ func TestReleaseRefusesAnUnknownSubverbAndNamesTheFive(t *testing.T) {
 }
 
 // Progress belongs on stderr and the result on stdout, so that a caller reading
-// the receipt off stdout reads receipts and nothing else (Glenn 2026-09-17:
-// programs say what they are doing).
+// the receipt off stdout reads receipts and nothing else (a program says what it
+// is doing, on stderr).
 func TestProgressGoesToStderrAndReceiptsToStdout(t *testing.T) {
 	t.Parallel()
 
@@ -1106,14 +1106,13 @@ func TestProgressGoesToStderrAndReceiptsToStdout(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// what the first fleet dogfood found (receipts, 2026-09-18, rowan-child)
+// adopt from the host that holds the ssh trust
 // ---------------------------------------------------------------------------
 
-// THE BLOCKER. adopt was written assuming it runs on the build host and fans
-// out; on this fleet it cannot, because no bench has ssh trust to any other
-// bench. 3 of 3 machines refused with `Permission denied (publickey)`. The fix
-// that needs no new trust is to run adopt where the trust already is and let it
-// READ the release from where it was built.
+// A build host with no ssh trust to the benches cannot fan out: every machine
+// refuses with `Permission denied (publickey)`. The way that needs no new trust
+// is to run adopt where the trust already is and let it READ the release from
+// where it was built.
 func TestAdoptFetchesTheReleaseFromAnotherMachine(t *testing.T) {
 	t.Parallel()
 
@@ -1414,7 +1413,7 @@ func TestReleaseHelpCarriesTheMachinesFormatAndTheAdoptRule(t *testing.T) {
 			assert.Contains(t, o.String(), s, "the help does not carry %q:\n%s", s, o.String())
 		}
 	}
-	// And the three gates (Johnny's decisions on SPEC-RELEASE, #1337), because
+	// And the three gates (SPEC-RELEASE §1 to §3), because
 	// a gate a person meets as a refusal and not as a sentence in the help is a
 	// gate they meet at the worst moment.
 	for _, s := range []string{"--security-read", "RELEASE CUT SENSITIVE", "sums=", "THE TAG STAYS"} {
@@ -1432,7 +1431,7 @@ func TestReleaseHelpCarriesTheMachinesFormatAndTheAdoptRule(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Johnny's security read of adopt (2026-09-18). One test per "never".
+// The security rules of adopt. One test per "never".
 // ---------------------------------------------------------------------------
 
 // NEVER interpolate an unvalidated host or path into a command the far side's
@@ -1807,8 +1806,8 @@ func TestAdoptRunsTheBinaryItSentByAbsolutePath(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// The darwin dogfood's edges (2026-09-18). Everything here was somebody
-// noticing that the verb made them type something it could have known.
+// What the verbs work out for themselves: nothing here makes a person type
+// something the verb could have known.
 // ---------------------------------------------------------------------------
 
 // A --from root usually holds exactly one release. Making somebody type its

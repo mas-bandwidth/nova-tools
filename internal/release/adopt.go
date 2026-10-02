@@ -85,7 +85,7 @@ func Machines(r io.Reader) ([]Machine, error) {
 }
 
 // remotePathShape is what may be interpolated into a command the far side's
-// shell will see. It is narrow on purpose (Johnny's security read, 2026-09-18):
+// shell will see. It is narrow on purpose:
 // `adopt` composes `mkdir -p <dest> && tar -C <dest> -xf -`, which the remote
 // shell parses, so a path carrying `;`, `&`, `|`, `$`, a backtick, a quote, a
 // redirect, a glob or a newline would not be a path, it would be a command. A
@@ -93,7 +93,7 @@ func Machines(r io.Reader) ([]Machine, error) {
 var remotePathShape = regexp.MustCompile(`^(/|~/)[A-Za-z0-9_.@/+-]*$`)
 
 // windowsDrivePathShape is the ONE form a windows bench adds: a DRIVE-ABSOLUTE
-// path, in either slash, because `C:\Users\nova\.local\bin` is how Emma's
+// path, in either slash, because `C:\Users\nova\.local\bin` is how
 // docs/BENCH-WINDOWS.md writes that bench's own bin directory and it is what a
 // person will type.
 //
@@ -178,17 +178,14 @@ func ValidRemotePathOn(goos, what, p string) error {
 
 // RemoteFrom splits a --from that names another machine, as `host:dir`.
 //
-// THIS IS THE ANSWER TO THE ONE THING THE DOGFOOD PASS COULD NOT DO. adopt was
-// written assuming it runs on the build host and fans out from there; on this
-// fleet it cannot, because no bench has ssh trust to any other bench -- only the
-// Studio does, and 3 of 3 machines refused with `Permission denied (publickey)`
-// (receipt 20260918T144929Z, rowan-child). The fix that needs NO NEW TRUST is
-// to run adopt from the host that already has it and let it read the artifacts
-// from the host that built them. A jump host (`ssh -J`) would not have helped:
-// -J forwards the connection but still authenticates to the target with the
-// CALLING host's key, so fanning out from hulk would still need hulk's key on
-// every bench -- new trust between benches, which is the thing we do not want,
-// and the Studio is Glenn's and not ours to hand out keys for.
+// A fleet commonly gives one host ssh trust to every bench and the benches none
+// to each other, so adopt run on a build host that holds no such trust is
+// refused by every machine (`Permission denied (publickey)`). The way that needs
+// NO NEW TRUST is to run adopt from the host that already has it and let it read
+// the artifacts from the host that built them. A jump host (`ssh -J`) does not
+// help: -J forwards the connection but still authenticates to the target with
+// the CALLING host's key, so fanning out from a build host would still need its
+// key on every bench -- new trust between benches.
 //
 // The host part must be a machine name of at least two characters, so a windows
 // path (`C:\releases`) reads as a local path rather than as a host called C.
@@ -263,7 +260,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// A DIGEST FILE ON THE FAR SIDE IS NOT A DIGEST. --expect-sums-from names
 	// the DigestFile that THIS host's `release build` wrote; a path with a
 	// machine in front of it would be the machine holding the bits vouching
-	// for them, which is the exact circle Johnny's decision 2 exists to break.
+	// for them, which is the exact circle SPEC-RELEASE §2 exists to break.
 	// Checked before anything is opened, fetched or composed.
 	if o.expectSumsFrom != "" {
 		if host, _, remote := RemoteFrom(o.expectSumsFrom); remote {
@@ -300,9 +297,8 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// it is this host's nova-update reading a release, verifying it, and
 	// running THIS RELEASE'S install on every machine. A coordinator behind
 	// the release it is fanning out is a coordinator whose own verb may not
-	// understand what it is holding -- and the fourth dogfood met exactly that
-	// as a Studio that could not adopt the fleet at all, because the `--from`
-	// it needed ships inside the release it had not installed.
+	// understand what it is holding: a `--from` shape it needs may ship inside
+	// the very release it has not installed.
 	if deps.Self != nil {
 		if self := deps.Self(); olderThan(self, o.version) {
 			return refusal(errs, "ADOPT", refuse(
@@ -311,7 +307,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 	}
 	// EVERY HOST AND PATH IS VALIDATED BEFORE ANY REMOTE COMMAND IS COMPOSED,
-	// not while it is being composed (Johnny, 2026-09-18). The names came from
+	// not while it is being composed. The names came from
 	// a file and the paths from flags; both are interpolated into a line the
 	// far side's shell parses, and a check that happens after the string is
 	// built is a check that has already lost.
@@ -368,10 +364,9 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		// could change the other. So a remote --from is checked against a
 		// digest this host got some OTHER way -- the tag object the cut
 		// annotated, or the CHANGELOG entry it wrote, both of which reached
-		// here through git rather than through the machine being read
-		// (Johnny, 2026-09-18).
+		// here through git rather than through the machine being read.
 		//
-		// --repo is the way that needs no transcription (decision 2, #1337): a
+		// --repo is the way that needs no transcription (SPEC-RELEASE §2): a
 		// tag object is a git object, and its `sums=` line is the digest the
 		// release was cut with. --expect-sums stays for a release cut before
 		// the tags were annotated, and WINS when both are given -- a digest a
@@ -414,7 +409,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 		// --from's directory is a path on the BUILD HOST, and that machine's
 		// operating system is its own business: a windows release may be
-		// built on the windows bench and adopted from the Studio, and a
+		// built on a windows bench and adopted from a darwin coordinator, and a
 		// linux one may be built on a windows workstation. So the drive form
 		// is allowed here whatever the TARGET is -- "windows" names the
 		// superset, not the target -- and the fold applies as everywhere.
@@ -470,10 +465,10 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	}
 	// THE RELEASE INSTALLS ITSELF. The nova-update that runs the remote
 	// install is the one this verb just copied there, so a machine with no
-	// nova-tools at all -- a bench provisioned this morning -- adopts with the
+	// nova-tools at all -- a newly provisioned bench -- adopts with the
 	// same command as one that is a version behind.
 	// The file is named for the TARGET platform, never this host: adopting a
-	// windows bench from the Studio must look for, send and run
+	// windows bench from a darwin coordinator must look for, send and run
 	// `nova-update.exe`. A bare `nova-update` there is a path that exists
 	// nowhere in the release, and the machine would refuse with `command not
 	// found` for a mistake made on this side.
@@ -505,7 +500,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			dest = entry.Dest
 		}
 		// Remote paths are slash paths whatever this host is: a release
-		// adopted from the Studio lands on Linux benches, and filepath.Join
+		// adopted from a darwin coordinator lands on Linux benches, and filepath.Join
 		// on darwin would be right by accident and on windows wrong on
 		// purpose. A leading ~ is left alone for the remote shell to expand,
 		// which is how one --bin names three different home directories.
@@ -543,7 +538,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		// SHA256SUMS -- not that the checksum file is present. A killed
 		// transfer leaves SHA256SUMS and a handful of binaries; trusting
 		// that directory is how the next adopt skips the stream and then
-		// cannot find nova-update (#1981).
+		// cannot find nova-update.
 		sent := "yes"
 		remote, catErr := ssh.Run(ctx, machine, []string{"cat", path.Join(remoteDir, SumsFile)})
 		heldSums := catErr == nil && sameSums(remote, localSums)

@@ -86,18 +86,16 @@ func VerifyArtifacts(dir string, arts []Artifact) (int, error) {
 // retire removes this release's tools from a SECOND directory that is no longer
 // the one anybody should be running from.
 //
-// It exists because the shell script this verb replaces kept ~/go/bin in step
-// with ~/.local/bin, and the verb did not: after the first real adoption every
-// bench held 18 stale ~/go/bin/nova-* from a `go install` months ago, which is
-// worse than the old state rather than better, because both directories are on
-// PATH and which one wins is a fact about the PATH order nobody has read.
+// It exists because a bench that also holds stale nova-* in a second directory
+// on PATH (~/go/bin, from an old `go install`) runs whichever one the PATH order
+// puts first, which is a fact nobody has read.
 //
 // WHAT IT WILL REMOVE IS NARROW, and every clause is load-bearing. Only a name
 // this very run installed into --bin; only a name beginning `nova-`; only a
 // regular file, so a directory or a symlink is left for a person; and only
 // through safepath.RemoveUnder, which refuses a path that is not strictly below
-// the root, refuses the root itself and refuses a link (Glenn 2026-09-17: "it
-// shouldn't be able to delete arbitrary directories"). --retire naming --bin is
+// the root, refuses the root itself and refuses a link: it cannot delete an
+// arbitrary directory. --retire naming --bin is
 // refused outright: that is the one argument that would delete the release this
 // verb has just installed.
 func retire(dir, bin, stamp string, arts []Artifact, errs io.Writer) (int, error) {
@@ -116,8 +114,7 @@ func retire(dir, bin, stamp string, arts []Artifact, errs io.Writer) (int, error
 	// AND NEVER THE STAMP. --from's artifact directory is the last-good copy
 	// of this release: it is what a re-install reads, what a rollback reads,
 	// and what `adopt` just verified. Retiring there would delete the evidence
-	// along with the tools and leave the machine with no way back (Johnny,
-	// 2026-09-18).
+	// along with the tools and leave the machine with no way back.
 	stampAbs, err := filepath.Abs(stamp)
 	if err != nil {
 		return 0, fmt.Errorf("cannot resolve --from %s: %w", stamp, err)
@@ -125,7 +122,7 @@ func retire(dir, bin, stamp string, arts []Artifact, errs io.Writer) (int, error
 	// SYMMETRIC: the stamp itself, anything inside it, and anything that
 	// CONTAINS it. The artifact root is the third case -- `--retire <the
 	// --from root>` is somebody pointing the cleaner at the shelf the release
-	// is sitting on, and whether today's layout happens to put a nova-* file
+	// is sitting on, and whether the current layout happens to put a nova-* file
 	// directly there is not a property worth depending on.
 	if within(retireAbs, stampAbs) || within(stampAbs, retireAbs) {
 		return 0, refuse("name a DIFFERENT directory; the stamp is the last-good copy of this release",
@@ -309,7 +306,7 @@ func pruneInstalled(root, bin string, keep func(string) bool, errs io.Writer) (i
 // hasToken is the same whole-token match tools/ghrelease's stamp verb
 // makes, and for the same reason: v0.1 must not pass for v0.11, and `=` is a
 // separator so that no tag is matched out of the value half of a version line's
-// `key=value` extra -- the stamp is field two, alone, in every binary (#1297).
+// `key=value` extra -- the stamp is field two, alone, in every binary.
 func hasToken(line, version string) bool {
 	return slices.Contains(strings.Fields(strings.ReplaceAll(line, "=", " ")), version)
 }
@@ -390,7 +387,7 @@ func installFile(src, dst string, rename func(oldpath, newpath string) error) er
 }
 
 // ExecVersion is the production answer to what the binary at path reports: its
-// own `version` verb, which every tool in this repository answers (#121), under
+// own `version` verb, which every tool in this repository answers, under
 // a short deadline because the binary being replaced may be the broken one.
 func ExecVersion(ctx context.Context, path string) (string, error) {
 	if _, err := os.Stat(path); err != nil {

@@ -15,9 +15,9 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Johnny's decisions on SPEC-RELEASE (#1337), one test per decision.
+// The security gates of SPEC-RELEASE, one test per gate.
 //
-// 1. A cut whose range touched the sensitive paths refuses without his read.
+// 1. A cut whose range touched the sensitive paths refuses without the security read.
 // 2. The tag is an ANNOTATED tag and the annotation carries the SUMS digest.
 // 3. A leaked release can be PULLED: the artifacts go, the tag stays, and the
 //    changelog says so.
@@ -42,9 +42,9 @@ func sensitiveForge() *fakeForge {
 
 // THE GATE. A range that touched the secrets, sandbox, image or coordination
 // paths is not cut on one person's judgement at the keyboard: it is cut after
-// Johnny has read it, and the read is NAMED on the command line so the receipt
+// the security reader has read it, and the read is NAMED on the command line so the receipt
 // carries who vouched for it.
-func TestCutRefusesASensitiveRangeWithoutJohnnysRead(t *testing.T) {
+func TestCutRefusesASensitiveRangeWithoutTheSecurityRead(t *testing.T) {
 	t.Parallel()
 
 	f := sensitiveForge()
@@ -77,7 +77,7 @@ func TestCutRefusesASensitiveRangeWithoutJohnnysRead(t *testing.T) {
 // With the read named, the cut goes through and SAYS SO on its own line: a
 // release that crossed the sensitive list is a fact somebody reads off the
 // terminal and out of a log months later.
-func TestCutWithJohnnysReadSaysSoOnItsOwnLine(t *testing.T) {
+func TestCutWithTheSecurityReadSaysSoOnItsOwnLine(t *testing.T) {
 	t.Parallel()
 
 	f := sensitiveForge()
@@ -158,12 +158,11 @@ func TestSensitiveClassifiesByPrefixAndNothingElse(t *testing.T) {
 // be classified at all -- and a gate that reads a truncated list is a gate that
 // passes the one file it did not see.
 //
-// THE REMEDY CHANGED after the fourth release dogfood (2026-09-18). It used to
-// be Johnny's read -- but his read is a read OF A LIST, and the list is the
-// thing that may be short, so a read got past the truncation while vouching for
-// a prefix of the truth. It is now a complete list from a checkout, which is
-// what --local-diff and --paths-from produce. See the lessons in
-// docs/SPEC-RELEASE.md and TestCutNamesTheTruncationBeforeTheHitsItFoundInIt.
+// THE REMEDY IS A COMPLETE LIST, NOT A READ. The security read is a read OF A
+// LIST, and the list is the thing that may be short, so a read would vouch for
+// a prefix of the truth. The remedy is a complete list from a checkout, which is
+// what --local-diff and --paths-from produce. See docs/SPEC-RELEASE.md §4 and
+// TestCutNamesTheTruncationBeforeTheHitsItFoundInIt.
 func TestCutRefusesARangeTooBigToClassify(t *testing.T) {
 	t.Parallel()
 
@@ -365,8 +364,7 @@ func TestAdoptRefusesWhenTheTagDigestAndTheBitsDisagree(t *testing.T) {
 	}
 }
 
-// A tag with no annotation -- a lightweight ref, which is every tag this tool
-// created before today -- is said plainly, with the flag that gets past it.
+// A tag with no annotation -- a lightweight ref -- is said plainly, with the flag that gets past it.
 func TestAdoptSaysSoWhenTheTagCarriesNoDigest(t *testing.T) {
 	t.Parallel()
 
