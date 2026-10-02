@@ -242,3 +242,19 @@ func TestTheBannerNamesTheEnvironmentTheRedisVerbsRead(t *testing.T) {
 		assert.Contains(t, usage, name)
 	}
 }
+
+// `help <verb>` puts --help right after the verb, so a word or a -- after it never turns
+// the request for help into a run or a refusal of the verb.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{
+		{"help", "sum", "extra"},
+		{"help", "fold", "--", "x"},
+	} {
+		r := invoke(t, args...)
+		wantExit(t, r, 0)
+		assert.Contains(t, r.stdout, "usage: nova-tokens "+args[1]+" [flags]", "%v", args)
+		assert.Empty(t, r.stderr, "%v", args)
+	}
+}
