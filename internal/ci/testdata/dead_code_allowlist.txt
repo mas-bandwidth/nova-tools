@@ -2,7 +2,7 @@
 # Held by TestDeadCode in internal/ci/dead_code_class_test.go (docs/SPEC-CI.md, "deadcode").
 # Run across GOOS linux, darwin, windows taking the union of dead functions.
 # Shrink-only: NOVA_CI_UPDATE=1 lowers counts and drops rows at zero; it never raises or adds rows.
-# ceiling: 40
+# ceiling: 39
 
 
 cmd/nova-cairn 1
@@ -12,7 +12,6 @@ cmd/nova-table 3
 internal/bounded 1
 internal/buildinfo 1
 internal/bus 23
-internal/cairn 1
 internal/cardhdr 10
 internal/check 2
 internal/ci/slowtests 2
