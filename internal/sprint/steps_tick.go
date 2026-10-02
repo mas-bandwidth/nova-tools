@@ -29,7 +29,7 @@ const (
 	// (width.go): one table-layer write's member candidates, which the step
 	// builder cuts into parts under the table layer's entry bounds, so a
 	// part plans every row that needs it in the one tick and never lags its
-	// own work (the owner's rule, errata 3 amendment 10: every row of every
+	// own work (every row of every
 	// table moves every tick, never a row at a time).
 	TickMaxMoves = TickMaxDeal
 )
@@ -193,10 +193,10 @@ type TableUpdate struct {
 // reads with the part's step: it has no planner here.
 const PartDrain = "drain"
 
-// TickTables is the tick's shape, in the owner's words (2026-09-30, errata 3
-// amendment 12): "Each table gets one update in turn per-tick. 1. work
-// streams, 2. readers, 3. merge, 4. fleet." The work table's update is the
-// pump, run once a tick: its queue drained, then its cards advanced (a
+// TickTables is the tick's shape: each table gets one update in turn per
+// tick, work streams then readers, merge and fleet. The work table's update
+// is the pump, run once a tick: its queue drained, then its cards advanced
+// (a
 // waiting card to ready, a ready card to working by the deal, a card in
 // review with two ok reads to merging); "no new work moves from waiting ->
 // ready -> working except on the FIRST PASS on the work stream table, once
@@ -219,10 +219,9 @@ const (
 	PartLevelReads = "level reads"
 )
 
-// TickStart is the tick's start, once, before any table's update (the owner,
-// 2026-10-01: "both for readers and fleet, there needs to be a rebalance step
-// done at the start of each tick. it's simple. just once before tick,
-// rebalance each table."): the fleet's level (ready cards from a member that
+// TickStart is the tick's start, once, before any table's update: the
+// readers and the fleet are each rebalanced once at the start of the tick,
+// before its update. The fleet's level (ready cards from a member that
 // cannot start them to one with free lanes, never past DealAhead times a
 // width) and the readers' (asked reads from a reader with a backlog to one
 // idle), each one batch. It runs once a tick: a table written again later in
@@ -269,8 +268,8 @@ func Tick(s *Snapshot, r TickReq) []TickPart {
 // coordinator's ("accept is mechanical, but the merge step is not").
 const NReadyToMerge = "ready to merge"
 
-// TickAccept is R9 as the machine's (the owner's ruling of 2026-09-30:
-// "accept is mechanical, but the merge step is not"): every primary in review
+// TickAccept is the machine's accept: accept is mechanical, but the merge
+// step is the coordinator's. Every primary in review
 // with ok reads from two different readers at its head moves to merging and
 // into its stream's merge queue, in stream turns from the accept's index, in
 // the pump's one plan (Accept). The coordinator is told once for each stream
@@ -397,7 +396,7 @@ func bound(p Plan) (Plan, int) {
 //
 // The waiting primaries go in stream turns (dealTurns: one from each stream
 // in turn, within a stream by work order), so a bound that cuts the plan
-// cuts every stream alike (errata 3 amendment 10).
+// cuts every stream alike.
 func TickResolve(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
 	for _, c := range dealTurns(s.Work.Column(Waiting), nil) {
@@ -421,7 +420,7 @@ func TickResolve(s *Snapshot, r TickReq) (Plan, int) {
 // stream's front in turn, a stream with none skipped, within a stream by work
 // order), PlanDeal takes the room from it, and DealTakesTurns states it from
 // the counts of a plan; the witness W28 (MCSprintEventsW28.cfg) is the order of
-// the whole table. Errata 3, amendment 4.
+// the whole table.
 func dealTurns(cards []*Card, streams []string) []*Card {
 	by := map[string][]*Card{}
 	order := append([]string(nil), streams...)
@@ -494,11 +493,11 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 // T3. TickDeal deals ready primaries in stream turns (streamTurns: one from
 // each stream in turn from the deal's stream index on the work table, a stream with no
 // ready card skipped, each stream's oldest first by score; Deal moves the
-// index past the stream of the last card dealt, errata 3 amendment 10), each
+// index past the stream of the last card dealt), each
 // to the next up
-// member round the fleet with room (Deal: the rolling index of round.go,
-// errata 3 amendment 5), every member filled up to its width, its ready and
-// working cards together (width.go, errata 3 amendment 9): every ready card
+// member round the fleet with room (Deal: the rolling index of round.go),
+// every member filled up to its width, its ready and
+// working cards together (width.go): every ready card
 // the fleet has room for goes in the one plan, one step, up to TickMaxDeal;
 // a withdrawn card is dealt again at a new generation. With no member up and primaries waiting to be dealt, the
 // coordinator is told once (N3), and the judgment closes when a member is up.
@@ -712,8 +711,7 @@ func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 // tick-end). The
 // primaries go in stream turns from the ask's stream index on the work table
 // (streamTurns, as the deal's; Ask moves the index), so the readers
-// serve every stream alike and no stream's backlog waits behind another's
-// (errata 3 amendment 10).
+// serve every stream alike and no stream's backlog waits behind another's.
 func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
 	due := 0
@@ -751,7 +749,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 
 // T6. TickCheck holds the state to what is always true (section 9): each
 // violation is one judgment (N8), with the rule and the cards, closed by the
-// tick when the rule holds again. Its duty is the no-stall rule too (rule 12):
+// tick when the rule holds again. Its duty is the no-stall rule too:
 // each stall nothing holds is one judgment "stalled", with the decisions open
 // to it, not written again while it stays and closed when it clears; a stall
 // that waits behind another is told by the other's.
@@ -1190,8 +1188,7 @@ func WorkDeadline(c *Card) (field string, limit time.Duration, word, own string)
 const PartDone = "done"
 
 // DoneCause is the cause the machine's record carries when the done part
-// stopped it, and DoneHint what the coordinator does to go on (errata 3
-// amendment 6).
+// stopped it, and DoneHint what the coordinator does to go on.
 const (
 	DoneCause = "done"
 	DoneHint  = "to continue: add work, then nova-sprint start"
@@ -1228,8 +1225,7 @@ func DoneWhat(landed, dropped int, now, started time.Time) string {
 // second.
 func TookText(d time.Duration) string { return d.Round(time.Second).String() }
 
-// TickDone is R15 of the design as errata 3 amendment 6 amends it
-// (design/EVENT-DRIVEN-TICK-v2.1-ERRATA-3.md, amendment 6): the sprint done
+// TickDone is the sprint's done part: the sprint done
 // (SprintDoneCounts) is no judgment that waits on the coordinator. The part
 // writes one happened note, "the sprint is done", addressed to the
 // coordinator, with the counts, the time from the first start and the hint;
