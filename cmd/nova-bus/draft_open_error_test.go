@@ -25,7 +25,7 @@ func TestDraftSubjectResolutionDistinguishesMissingValidAndCorruptOpen(t *testin
 		{
 			name:     "missing OPEN is an empty list",
 			wantCode: 2,
-			wantErr:  "is not an id on this bus, not a note that exists, and not the subject of a note on your open list",
+			wantErr:  "names no id and no path on this bus, and no note with that subject is on your open list",
 			avoidErr: "read once with --full --advance",
 		},
 		{

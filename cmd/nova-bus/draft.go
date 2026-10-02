@@ -187,7 +187,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			}
 			matches := bus.MatchOpenSubject(open, r)
 			if len(matches) == 0 {
-				problems = append(problems, fmt.Errorf("--re %q is not an id on this bus, not a note that exists, and not the subject of a note on your open list; threads are named by id, and a slug is not a thread", r))
+				problems = append(problems, bus.UnresolvedRe(t, "--re", r))
 				continue
 			}
 			re[i] = matches[0].Target()
