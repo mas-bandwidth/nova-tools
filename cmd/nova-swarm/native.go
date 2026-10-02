@@ -1163,18 +1163,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 			break
 		}
-		// AND A BUDGET STOP IS THE END (rule 13d): "Nothing is launched again, by `native`
-		// or by a batch, and running the card once more is a person's act with a number of
-		// their own." So it breaks out above the retry, terminally.
+		// AND A BUDGET STOP IS THE END: nothing is launched again, by `native` or by a
+		// batch, and running the card once more is a person's act. So it breaks out above
+		// the retry, terminally.
 		if res.stopped != "" {
 			break
 		}
-		// A START THAT FAILED IS LAUNCHED AGAIN IN PLACE (the owner, 2026-10-01: "Yes on
-		// retry ... simple stuff"): no tokens, no result, and the harness's own refusal or
-		// an exit inside harnessStartWindow (harnessStartFailed). Same job, same route,
-		// after harnessStartWaits in turn; the dead harness's group was ended above
-		// (nativeEndLeftovers), and this launch's usage row is written and folded once.
-		// Only when the waits are spent does the run go on to hand back, naming the starts.
+		// A START THAT FAILED IS LAUNCHED AGAIN IN PLACE, on a simple retry: no tokens, no
+		// result, and the harness's own refusal or an exit inside harnessStartWindow
+		// (harnessStartFailed). Same job, same route, after harnessStartWaits in turn; the
+		// dead harness's group was ended above (nativeEndLeftovers), and this launch's
+		// usage row is written and folded once. Only when the waits are spent does the run
+		// go on to hand back, naming the starts.
 		launchTokens := 0
 		if sum, seen, _ := launchUsage.Budget(); seen > 0 {
 			launchTokens = sum
@@ -1204,21 +1204,20 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// this path.
 		_, launchFailure := swarm.ProviderLaunchFailure(tail)
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
-			// ONCE MORE BEFORE ANY RELAUNCH (rule 13d): "The stop is rule 13's
-			// `spent >= n`, tested at every sample and once more before any relaunch."
-			// The first launch's spend is already in the job's data home, so a budget the
-			// earlier launches have ALREADY reached must not buy a third launch -- "a
-			// first launch that reached the budget alone is never launched again".
+			// ONCE MORE BEFORE ANY RELAUNCH: the stop is a spent budget, tested at every
+			// sample and once more before any relaunch. The first launch's spend is already
+			// in the job's data home, so a budget the earlier launches have ALREADY reached
+			// must not buy a third launch -- a first launch that reached the budget alone
+			// is never launched again.
 			//
-			// THIS LAUNCH'S ROW IS ALREADY WRITTEN AND KEEPS ITS OWN WORD. This launch
-			// did not end on the budget -- it died on a provider 5xx -- so its row says
-			// what happened to it, and the `stopped=` on the LINE says why there is no
-			// launch after it. The two are different facts about different things, which
-			// is the whole of rule 13d's "the row is the launch's and the line is the
-			// job's".
-			// AND THE FINAL READS COUNT (review finding 6 on #1635): the job's spend just
-			// folded from this launch's final read is tested too, so a launch that died
-			// before its first sample cannot buy a relaunch past the budget.
+			// THIS LAUNCH'S ROW IS ALREADY WRITTEN AND KEEPS ITS OWN WORD. This launch did
+			// not end on the budget -- it died on a provider 5xx -- so its row says what
+			// happened to it, and the `stopped=` on the LINE says why there is no launch
+			// after it. The two are different facts about different things: the row is the
+			// launch's and the line is the job's.
+			// AND THE FINAL READS COUNT: the job's spend just folded from this launch's
+			// final read is tested too, so a launch that died before its first sample
+			// cannot buy a relaunch past the budget.
 			if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
 				res.stopped = word
 				break
@@ -1229,7 +1228,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		break
 	}
 	// The card is over, so no further sample is wanted. Stop SIGNALS and never joins: a
-	// read in flight is abandoned where it stands (rule 13d).
+	// read in flight is abandoned where it stands.
 	sampler.Stop()
 	// WHAT THE LINE WILL PRINT. "Final" means the last thing the harness reported and
 	// nothing more: where every launch's final read answered, this is their sum; where one
@@ -1238,10 +1237,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	res.spent, res.observed, res.partial = jobSpent, jobObserved, jobPartial
 	res.spend = spendWord(launchSpends)
 	// AND WHERE NO FINAL READ ANSWERED AT ALL, the last sum a SAMPLE saw stands in, with
-	// the plus (rule 13d: "a final read that cannot be made leaves a dash in every column
-	// of the row it could not fill, the line then prints the last sum a sample saw with the
-	// plus, and nowhere does the tool say that all that was spent was seen"). A sample's
-	// figure is never allowed to pass for a final read, which is what the plus is for.
+	// the plus: a final read that cannot be made leaves a dash in every column of the row
+	// it could not fill, the line then prints the last sum a sample saw with the plus, and
+	// nowhere does the tool say that all that was spent was seen. A sample's figure is
+	// never allowed to pass for a final read, which is what the plus is for.
 	if !res.observed {
 		if spent, observed, _, _, _ := sampler.Observed(); observed {
 			res.spent, res.observed, res.partial = spent, true, true
@@ -1252,13 +1251,13 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	res.defect = sampler.Defect()
 	log.Close()
 	harnessOut.Close()
-	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
-	// logs are closed, so every byte the child wrote is on disk -- and carried on the OK line.
+	// Whether the harness left any record of itself is decided here -- AFTER both logs are
+	// closed, so every byte the child wrote is on disk -- and carried on the OK line.
 	res.harness = harnessState(jobDir)
-	// AND WHETHER THE FENCE STOPPED THE CARD (issue #644), asked of the same capture and for
-	// the same reason: the harness prints its own rejection and then the model stops, so a
-	// run that ends with no result and a rejection in its capture is not a model that chose
-	// to publish nothing. The path is carried onto the NATIVE OK line, where the batch reads
+	// AND WHETHER THE FENCE STOPPED THE CARD, asked of the same capture and for the same
+	// reason: the harness prints its own rejection and then the model stops, so a run that
+	// ends with no result and a rejection in its capture is not a model that chose to
+	// publish nothing. The path is carried onto the NATIVE OK line, where the batch reads
 	// it and scores the card `fence` instead of `no-result`.
 	res.fence = fenceRejected(jobDir)
 	// The timeline lands beside RESULT.md and usage.tsv once the child is gone, with one
@@ -1269,16 +1268,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			fmt.Fprintf(errOut, "NATIVE NOTE: the timeline.tsv could not be written: %s\n", oneline.Escape(err.Error()))
 		}
 	}
-	// A WALL DEATH (issue #918). When the fence stopped the card AND no result was
-	// published, the death is `end=wall` and its report names the rejected path and the
-	// commits ./repo kept, so the harvester can push the work rather than leave it
-	// stranded with the card. A rejection beside a published result is not a death:
-	// WallDeath asks the result first.
+	// A WALL DEATH. When the fence stopped the card AND no result was published, the death
+	// is `end=wall` and its report names the rejected path and the commits ./repo kept, so
+	// the harvester can push the work rather than leave it stranded with the card. A
+	// rejection beside a published result is not a death: WallDeath asks the result first.
 	if report, ok := swarm.WallDeath(jobDir, cfg.label); ok {
 		res.wallReport = report
 	}
 
-	// AND WHETHER THE WALL ITSELF STOPPED IT (issue #644's follow-up). The harness's own
+	// AND WHETHER THE WALL ITSELF STOPPED IT. The harness's own
 	// `permission ... auto-rejecting` line is above; the sandbox's `SANDBOX REFUSED` and
 	// `Operation not permitted` on a path are the OS wall's words in the same capture. A run
 	// with either and no result ends `wall`, and the usage row and the report line say so.
@@ -1298,12 +1296,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
-	// AND WHETHER THE CARD'S SHELL WAS DENIED SOMETHING NOBODY READ (issue #1465;
-	// review finding on #1478). The two blocks above ask for the result FIRST, because a card that
-	// published despite a refusal routed around it and finished. This one does not, and that
-	// is the whole point: the card of #1465 published an honest RESULT.md saying its
-	// `go test` could not be built or run, the child exited 0, and the run said
-	// `NATIVE OK rc=0 harness=ok`. The published report is what made the denial invisible.
+	// AND WHETHER THE CARD'S SHELL WAS DENIED SOMETHING NOBODY READ. The two blocks above
+	// ask for the result FIRST, because a card that published despite a refusal routed
+	// around it and finished. This one does not, and that is the whole point: a card that
+	// published an honest RESULT.md saying its `go test` could not be built or run, the
+	// child exited 0, and the run said `NATIVE OK rc=0 harness=ok`. The published report
+	// is what made the denial invisible.
 	//
 	// WHAT IS CARRIED IS THE DENIAL, NOT A CAUSE. The line names a path and a refusal and not
 	// an operation; the refusal this feeds says so (internal/swarm/wall.go, ShellDenied).
@@ -1342,11 +1340,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			res.blockedPath = path
 		}
 	}
-	// UNKNOWNERROR AT ANY WALL IS THE PROVIDER'S (issue #2916). Past the launch grace the
-	// provider's own `UnknownError` / `err_xxxxxxxx` was filed as the card's failure and
-	// re-dealt to the same route. The machinery's own ends come first; what is left, when
-	// the harness's last words are the provider's, is handed back to the next route in
-	// $NOVA_SWARM_ROUTES with the failed one named for the re-deal to avoid.
+	// UNKNOWNERROR AT ANY WALL IS THE PROVIDER'S. Past the launch grace the provider's own
+	// `UnknownError` / `err_xxxxxxxx` was filed as the card's failure and re-dealt to the
+	// same route. The machinery's own ends come first; what is left, when the harness's
+	// last words are the provider's, is handed back to the next route in $NOVA_SWARM_ROUTES
+	// with the failed one named for the re-deal to avoid.
 	handedBack := false
 	if !res.lost && !res.idled && !res.terminated && res.wallReport == "" && (res.wallRefusal == swarm.WallRefusal{}) {
 		if raw, err := os.ReadFile(outLog); err == nil {
@@ -1374,9 +1372,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
-	// A CARD THAT ENDED BY ASKING OWES THE SAME REPORT (issue #2548). `opencode run` is
-	// non-interactive: a final turn that is a question finishes the turn and exits 0 in
-	// seconds -- 5.22 s and 5.49 s on two benches, measured 2026-09-22 -- so the run
+	// A CARD THAT ENDED BY ASKING OWES THE SAME REPORT. `opencode run` is non-interactive:
+	// a final turn that is a question finishes the turn and exits 0 in seconds, so the run
 	// never holds its slot, and the end it gets today is a plain `no-result`, the token
 	// for a model that chose to publish nothing. The question is read out of the card's
 	// own capture and written into a report that SAYS it was a question, so a requeue can
@@ -1431,11 +1428,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if res.unrecorded {
 		return res, 2
 	}
-	// (6) THE SILENT HARNESS (issue #591). A harness that exits clean without writing its
-	// report -- the RESULT.md a card's answer lands in -- is not a pass. It is a harness that
-	// was blocked before it could answer: a keyless provider on a loopback the wall did not
-	// open exits 0 silently, leaving no report and no log. The run records that as a
-	// harness-silent note, never a NATIVE OK.
+	// THE SILENT HARNESS. A harness that exits clean without writing its report -- the
+	// RESULT.md a card's answer lands in -- is not a pass. It is a harness that was blocked
+	// before it could answer: a keyless provider on a loopback the wall did not open exits
+	// 0 silently, leaving no report and no log. The run records that as a harness-silent
+	// note, never a NATIVE OK.
 	if res.rc == 0 {
 		if _, published := swarm.FindCardResult(jobDir); !published {
 			res.reason = "harness-silent"
