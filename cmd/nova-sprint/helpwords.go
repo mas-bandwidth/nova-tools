@@ -17,10 +17,11 @@ machine, with NOVA_SPRINT_REDIS naming the store:
     checks no credential, so an every-network address such as 0.0.0.0 is
     refused); serves the coordinator's verbs on 127.0.0.1:<port>; with --land
     lands what the readers passed, so land is not run by hand beside it.
-The coordinator's shell then sets NOVA_SPRINT_SERVER=127.0.0.1:<port> beside
-NOVA_SPRINT_REDIS and NOVA_SPRINT_ACTOR: every verb that writes is sent to the
-server; the reads (where, inbox, card, log, queue, check, routes, stats), inbox
---wait, where --watch, land, play and fleet sync still run where typed. Each
+The coordinator's shell then sets NOVA_SPRINT_SERVER=127.0.0.1:<port> and
+NOVA_SPRINT_ACTOR, and needs no store address or credential: every verb is sent
+to the server, the reads included (where --watch and inbox --wait draw here and
+read through it). Run where typed, on a store named there: run, tick, land,
+play, fleet sync, and any verb given its own --redis. Each
 member is a fleet row first (init --members, fleet up <name> --width <n>, or
 fleet sync) and each reader a readers row (init --readers, reader add); then on
 each fleet machine, which opens no store:
