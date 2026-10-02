@@ -251,7 +251,7 @@ type queueCard struct {
 type queueOut struct {
 	As    string      `json:"as"`
 	Epoch uint64      `json:"epoch"`
-	Width int         `json:"width"` // the member's width, from its fleet row (0 for a reader)
+	Width int         `json:"width"` // the worker's width, from its fleet row: a member's own, a reader's its machine's (0: no row)
 	Cards []queueCard `json:"cards"`
 	// Reader is whether the name is a row of the readers table (nil: a server from before
 	// the field). A reader with no row beats nothing and is asked nothing until the
@@ -266,9 +266,11 @@ type takeOut struct {
 // Config is one member's or reader's standing.
 type Config struct {
 	As string // the member's (reader's) name in the fleet (readers) table
-	// Width is an override of the most cards it runs at once: a reader's
-	// width, or a twin's. A member with none runs the width its fleet row
-	// names, read with its queue every tick (the fleet row is the truth).
+	// Width is an override of the most cards it runs at once, a twin's. A
+	// worker with none runs the width its fleet row names, read with its
+	// queue every tick (the fleet row is the truth): a member's own row, a
+	// reader's the row of the machine it is named for (reader-<m> runs at
+	// m's width, sprint.ReaderMachine).
 	Width  int
 	Reader bool // run the readers-table loop instead of the fleet's
 	// Room is asked once a tick before any child is started (a recovered card or a taken
@@ -333,7 +335,8 @@ type Member struct {
 	// stage failure of the card is returned, whichever path launches it
 	stageRetried map[string]bool
 	epoch        uint64
-	width        int // the width this tick runs to: the override, else the fleet row's
+	width        int  // the width this tick runs to: the override, else the fleet row's
+	saidNoWidth  bool // the NOTE that no row names a width has been said
 	drain        bool
 	noRow        bool   // a reader whose queue said it is no row of the readers table, said once
 	beaten       uint64 // the Meter's samples the last written beat has carried
@@ -653,6 +656,12 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		// the fleet row changed (fleet up --width, fleet sync): said once, run from now
 		fmt.Fprintf(m.out, "width %d -> %d (the fleet row)\n", m.width, q.Width)
 		m.width = q.Width
+	}
+	if m.cfg.Width == 0 && m.width == 0 && !m.saidNoWidth {
+		// no row names a width: a member before its fleet row, a reader named for no
+		// machine; it takes nothing until one does, said once
+		m.saidNoWidth = true
+		fmt.Fprintf(m.out, "NOTE width 0: no fleet row names this worker's width, so it takes nothing; a member runs at its own fleet row's, a reader named reader-<m> runs at machine m's (nova-config machine set <m> --width <n>, then nova-sprint fleet sync)\n")
 	}
 	held := []string{"--epoch", strconv.FormatUint(q.Epoch, 10)}
 	// every card this tick would start is started, or, when Config.Room says no, finished as

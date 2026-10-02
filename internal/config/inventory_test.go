@@ -14,9 +14,9 @@ import (
 // the fields a case overrides.
 func loopView(name, machine string, over map[string]string) View {
 	v := View{
-		"name": name, "machine": machine, "argv": `["nova-swarm","member","--width","2"]`,
+		"name": name, "machine": machine, "argv": `["nova-swarm","member","--as","` + machine + `"]`,
 		"seat": "seat-a", "keys": "API_KEY,BENCH_PASSWORD", "every": "0", "keepalive": "true",
-		"width": "2", "enabled": "true", "log": "~/nova-bench/loops/" + name + ".log",
+		"enabled": "true", "log": "~/nova-bench/loops/" + name + ".log",
 	}
 	for k, x := range over {
 		v[k] = x
@@ -50,7 +50,7 @@ func TestBuildInventoryFromTheAppliedState(t *testing.T) {
 	t.Parallel()
 	inv, err := BuildInventory(snapshot(map[string]View{
 		"member-beta": loopView("member-beta", "bench-beta", nil),
-		"tick":        loopView("tick", "bench-alpha", map[string]string{"argv": `["nova-sprint","run"]`, "seat": "", "keys": "", "every": "5", "keepalive": "false", "width": "0", "enabled": "false"}),
+		"tick":        loopView("tick", "bench-alpha", map[string]string{"argv": `["nova-sprint","run"]`, "seat": "", "keys": "", "every": "5", "keepalive": "false", "enabled": "false"}),
 	}), "bench-alpha")
 	require.NoError(t, err)
 
@@ -76,8 +76,8 @@ func TestBuildInventoryFromTheAppliedState(t *testing.T) {
 	assert.NotContains(t, beta, "ansible_connection")
 	assert.NotContains(t, alpha, "nova_os", "a machine with no beat carries no platform: the plays gather it")
 	assert.Equal(t, []InventoryLoop{{
-		Name: "member-beta", Argv: []string{"nova-swarm", "member", "--width", "2"}, Seat: "seat-a",
-		Keys: []string{"API_KEY", "BENCH_PASSWORD"}, Keepalive: true, Width: 2, Enabled: true,
+		Name: "member-beta", Argv: []string{"nova-swarm", "member", "--as", "bench-beta"}, Seat: "seat-a",
+		Keys: []string{"API_KEY", "BENCH_PASSWORD"}, Keepalive: true, Enabled: true,
 		Log: "~/nova-bench/loops/member-beta.log",
 	}}, beta["nova_loops"])
 }
@@ -91,7 +91,7 @@ func TestMemberEndpointComesFromTheFleetAndNotItsPersistedArgv(t *testing.T) {
 	inv, err := BuildInventory(s, "")
 	require.NoError(t, err)
 	member := inv.Meta.Hostvars["bench-beta"]["nova_loops"].([]InventoryLoop)[0]
-	assert.Equal(t, []string{"/usr/bin/env", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", "~/.local/bin/nova-swarm", "member", "--reader", "--width", "2"}, member.Argv)
+	assert.Equal(t, []string{"/usr/bin/env", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", "~/.local/bin/nova-swarm", "member", "--reader"}, member.Argv)
 	other := inv.Meta.Hostvars["bench-alpha"]["nova_loops"].([]InventoryLoop)[0]
 	assert.Contains(t, other.Argv, "NOVA_SPRINT_REDIS=keep-me:6379", "a non-member command stays word-for-word")
 	for _, host := range inv.All.Hosts {
@@ -112,33 +112,6 @@ func TestInventoryRefusesMissingEndpointsBeforeRewritingALegacyMember(t *testing
 			assert.Contains(t, err.Error(), "nova-config fleet set --redis_port <port> --pg_dsn <dsn>")
 			assert.Nil(t, inv)
 			assert.Equal(t, argv, s.Loops["member-beta"]["argv"])
-		})
-	}
-}
-
-// nova_loops' argv is the command the unit runs: a width field above 0 is the
-// argv's --width (LoopCommand), so the plays render the field's value and a
-// reader's width is set as one value, never by editing the argv.
-func TestNovaLoopsArgvRunsWithTheWidthField(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name  string
-		argv  string
-		width string
-		want  []string
-	}{
-		{"the field replaces the argv's", `["nova-swarm","member","--reader","--width","8"]`, "16", []string{"nova-swarm", "member", "--reader", "--width", "16"}},
-		{"the field is appended", `["nova-swarm","member","--reader"]`, "4", []string{"nova-swarm", "member", "--reader", "--width", "4"}},
-		{"width 0 keeps the argv's", `["nova-swarm","member","--reader","--width","8"]`, "0", []string{"nova-swarm", "member", "--reader", "--width", "8"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			inv, err := BuildInventory(snapshot(map[string]View{"r": loopView("r", "bench-beta", map[string]string{"argv": tc.argv, "width": tc.width})}), "")
-			require.NoError(t, err)
-			loops := inv.Meta.Hostvars["bench-beta"]["nova_loops"].([]InventoryLoop)
-			require.Len(t, loops, 1)
-			assert.Equal(t, tc.want, loops[0].Argv)
 		})
 	}
 }
@@ -244,7 +217,7 @@ machines:
   bench-beta: {user: user-b, seat: seat-b, slots: 2}
 fleet: {store: bench-beta, coordinator: bench-alpha, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova}
 loops:
-  member-beta: {machine: bench-beta, argv: [nova-swarm, member], seat: seat-b, keys: [Z_KEY, A_KEY], keepalive: true, width: 2}
+  member-beta: {machine: bench-beta, argv: [nova-swarm, member], seat: seat-b, keys: [Z_KEY, A_KEY], keepalive: true}
   tick: {machine: bench-alpha, argv: ["~/bin/tick", "--once"], every: 30, enabled: false}
 `)
 	snap, err := LoadFixture(full)
@@ -255,7 +228,7 @@ loops:
 	assert.Equal(t, View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, snap.Fleet)
 	assert.Equal(t, View{
 		"name": "member-beta", "machine": "bench-beta", "argv": `["nova-swarm","member"]`, "seat": "seat-b",
-		"keys": "A_KEY,Z_KEY", "every": "0", "keepalive": "true", "width": "2", "enabled": "true",
+		"keys": "A_KEY,Z_KEY", "every": "0", "keepalive": "true", "enabled": "true",
 		"log": "~/nova-bench/loops/member-beta.log",
 	}, snap.Loops["member-beta"])
 	assert.Equal(t, "false", snap.Loops["tick"]["enabled"])

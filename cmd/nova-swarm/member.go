@@ -47,9 +47,9 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	fs := flag.NewFlagSet("member", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	f := &flags{verb: "member", fs: fs}
-	as := fs.String("as", "", "required: this machine's `name`, its row in the fleet table (with --reader, its row in the readers table)")
-	width := fs.Int("width", 0, "with --reader, required: the most reads it runs at once; a member runs its fleet row's width, and this overrides it")
-	reader := fs.Bool("reader", false, "run as a reader: take and run reads of finished work instead of work cards (needs --width)")
+	as := fs.String("as", "", "required: this machine's `name`, its row in the fleet table (with --reader, its row in the readers table, reader-<machine>)")
+	width := fs.Int("width", 0, "an override of the most cards it runs at once, a twin's; a worker runs its fleet row's width, read every tick: a member its own row's, a reader its machine's (reader-<m> runs at m's width)")
+	reader := fs.Bool("reader", false, "run as a reader: take and run reads of finished work instead of work cards, at its machine's width")
 	harness := fs.String("harness", "", "required: the harness binary `path` each card's child runs under (native --harness)")
 	model := fs.String("model", "", "the `provider/model` a card with no route runs on; a reader given it runs every read on it")
 	root := fs.String("root", "", "required: the `dir` the launches and results sit under")
@@ -75,11 +75,10 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		return 2
 	}
 	f.want(*as, "as", "the member's name in the fleet table (a reader's in the readers table with --reader)")
-	// a member runs the width its fleet row names (fleet up --width, fleet sync), read with
-	// its queue every tick; --width is a reader's, or a twin's override
-	if *reader {
-		f.wantCount(*width, "width", "the most reads this reader runs at once")
-	} else if *width < 0 {
+	// a worker runs the width its fleet row names (fleet up --width, fleet sync), read with
+	// its queue every tick: a member its own row's, a reader its machine's (reader-<m>,
+	// sprint.ReaderMachine); --width is a twin's override
+	if *width < 0 {
 		f.add("--width is an override of the fleet row's width and is at least 1; leave it out to run the row's")
 	}
 	f.want(*server, "server", "the sprint server's host:port, the run loop started with nova-sprint run --listen on the coordinator's machine: the member sends every sprint verb there and opens no store")

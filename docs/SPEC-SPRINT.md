@@ -621,9 +621,14 @@ id (`--op`) returns the original result, with no second counter or notification.
   that carries it, so a late read is not asked afresh
   on reader after reader (the owner, 2026-10-01: "This pesky one card that
   doesn't clear thing... this is a failure mode we must fix. We can't get
-  stuck on the last card."). The sprint knows no reader's width
-  (a reader loop's `--width` is its own), so readers are levelled by count and
-  none is bounded at DealAhead times a width.
+  stuck on the last card."). A reader is named for its machine, `reader-<m>`,
+  one reader per machine, and runs at the machine's width: `queue --as
+  reader-<m> --json` carries m's fleet row's `width` as a member's own queue
+  carries its row's, and the reader runs that many reads at once (the owner,
+  2026-10-02: "why not just have as many readers as workers per-machine"); a
+  reader named for no fleet row is handed no width and begins nothing. The
+  sprint holds no reader's width of its own, so readers are levelled by count
+  and none is bounded at DealAhead times a width.
 - ask deals every primary in review that lacks reads to TWO DIFFERENT readers
   UP, in work order, each the next reader round the readers from the readers'
   `ask_index` that has no read card at the attempt, placed or retired. One read
@@ -1180,7 +1185,7 @@ command that loads it.
 | take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused; a take by count that took fewer than asked says why on a NOTE line (the member at its width, its ready queue empty, or not up) |
 | finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost) |
 | ask | deals primaries in review to two different readers; `--another`; `ask <primary> --instead <reader>` takes that reader's read, asked or reading, of the primary at its attempt back (`retired_by: coordinator`, a later report of it refused naming that) and asks one other reader in the same step, chosen and routed as `--another` (the owner, 2026-10-01: "get the verbs in man."); refused, nothing changed, when the primary is not in review, the reader holds no live read of it, no other reader is free, or with `--another`, `--group` or more than one primary |
-| queue | a reader's read cards or a member's work cards, oldest first (`--as`; a member's `--json` carries its fleet row's `width`), or a stream's merge queue (`--stream`) |
+| queue | a reader's read cards or a member's work cards, oldest first (`--as`; `--json` carries the worker's `width`: a member's fleet row's, a reader's its machine's, `reader-<m>`), or a stream's merge queue (`--stream`) |
 | routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish; `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` |
 | stats | the epoch's pass in seconds, each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json` |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin`; `--usage <text>` (what the read spent) is kept on the read card, timed and priced (section 2, What a card cost) |

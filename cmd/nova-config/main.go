@@ -1036,15 +1036,6 @@ func showRow(ctx context.Context, k *config.Kind, name string, st pgStore, stdou
 		suffix = " loops=" + config.Value(strings.Join(loops, ","))
 		extra = append(extra, "loops", loops)
 	}
-	if k.Name == config.KindLoop {
-		// the words the unit runs: the argv with the width field as its --width
-		command, err := config.LoopCommandText(row)
-		if err != nil {
-			return refuse(stderr, verb, err.Error())
-		}
-		suffix = " command=" + config.Value(command)
-		extra = append(extra, "command", config.LoopCommand(config.Argv(row.Fields["argv"]), row.Int("width")))
-	}
 	var bs map[string]*config.Beat
 	if live(k) {
 		if bs, err = beats(ctx, liveRedisAddress(redisAddr, d.getenv), []string{name}, d); err != nil {

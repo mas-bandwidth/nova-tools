@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -84,7 +83,6 @@ type InventoryLoop struct {
 	Keys      []string `json:"keys"`
 	Every     int      `json:"every"`
 	Keepalive bool     `json:"keepalive"`
-	Width     int      `json:"width"`
 	Enabled   bool     `json:"enabled"`
 	Log       string   `json:"log"`
 }
@@ -234,7 +232,7 @@ func hostLoops(snap *Snapshot) (map[string][]InventoryLoop, error) {
 }
 
 // parseLoop reads one loop view: argv the JSON text of a list of strings,
-// keys a comma list, every and width decimal text, keepalive and enabled
+// keys a comma list, every decimal text, keepalive and enabled
 // "true" or "false", exactly one of every above 0 and keepalive.
 func parseLoop(name string, v View) (InventoryLoop, error) {
 	bad := func(field, why string) (InventoryLoop, error) {
@@ -264,11 +262,6 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 	if l.Every, err = strconv.Atoi(orZero(v["every"])); err != nil || l.Every < 0 {
 		return bad("every", "is not a count of seconds")
 	}
-	if l.Width, err = strconv.Atoi(orZero(v["width"])); err != nil || l.Width < 0 {
-		return bad("width", "is not a count")
-	}
-	// the unit runs the command with the row's width (LoopCommand)
-	l.Argv = LoopCommand(l.Argv, l.Width)
 	if l.Keepalive, err = strconv.ParseBool(orFalse(v["keepalive"])); err != nil {
 		return bad("keepalive", "is not true or false")
 	}
@@ -290,14 +283,8 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 // rendered unit environment, while every other assignment and argv word stays
 // byte-for-byte the row's. A non-member loop is untouched.
 func memberArgv(argv []string) []string {
-	if len(argv) < 3 || filepath.Base(argv[0]) != "env" {
-		return argv
-	}
-	program := 1
-	for program < len(argv) && strings.Contains(argv[program], "=") {
-		program++
-	}
-	if program+1 >= len(argv) || filepath.Base(argv[program]) != "nova-swarm" || argv[program+1] != "member" {
+	program, ok := memberAt(argv)
+	if !ok || program == 0 {
 		return argv
 	}
 	out := make([]string, 0, len(argv))
@@ -388,7 +375,6 @@ type fixture struct {
 		Keys      []string `yaml:"keys"`
 		Every     int      `yaml:"every"`
 		Keepalive bool     `yaml:"keepalive"`
-		Width     int      `yaml:"width"`
 		Enabled   *bool    `yaml:"enabled"`
 	} `yaml:"loops"`
 }
@@ -447,8 +433,8 @@ func LoadFixture(path string) (*Snapshot, error) {
 			snap.Loops[n] = View{
 				"name": n, "machine": l.Machine, "argv": string(argv), "seat": l.Seat,
 				"keys": strings.Join(keys, ","), "every": strconv.Itoa(l.Every),
-				"keepalive": strconv.FormatBool(l.Keepalive), "width": strconv.Itoa(l.Width),
-				"enabled": strconv.FormatBool(enabled), "log": LoopLog(n),
+				"keepalive": strconv.FormatBool(l.Keepalive),
+				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(n),
 			}
 		}
 	}
