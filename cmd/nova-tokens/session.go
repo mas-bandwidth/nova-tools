@@ -1,13 +1,9 @@
 package main
 
-// The session verb: the coordinator's own window, folded.
-//
-// It is a verb of its own and not a flag on fold, deliberately. fold's source flags are
-// declared once, in sourceFlags, and shared by fold, sources and report, so a flag added
-// for one of them is a flag the other two must also mean something by; and a session file
-// is not a source in that sense -- it is ONE file, read once, folded into one model row,
-// and nothing about a month or a set of reporters. A verb of its own keeps fold's surface
-// unchanged and keeps the session readable on its own line.
+// The session verb reads one explicitly named Claude Code session. Its rows use
+// each turn's model plus the /coordinator suffix and the fixed coordinator repo,
+// keeping the coordinating spend separate from workers using the same model.
+// The separate verb needs no --repos mapping or source-directory walk.
 
 import (
 	"fmt"
@@ -118,8 +114,9 @@ func session(c *tool.Call, now time.Time) *tool.Out {
 	}
 
 	// The fold. One day file per day the session's turns fell on, merged by source the way
-	// every other fold merges: this run recomputes the rows its own source wrote and keeps
-	// every other row exactly as it is. A dry run reads the day files and writes nothing.
+	// fold merges: this run replaces rows owned by its source, retains rows owned
+	// entirely by other sources, and refuses blends or collisions it cannot separate.
+	// A dry run reads the day files and writes nothing.
 	mkdir := func() error { return os.MkdirAll(out, 0o755) }
 	if dryRun {
 		mkdir = func() error { return mkdirAllRefuses(out) }

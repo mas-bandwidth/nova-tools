@@ -18,23 +18,16 @@ import (
 
 // --opencode <label>=<file>: OpenCode's SQLite database.
 //
-// THE ONE SUBPROCESS. Standard-library Go cannot read SQLite and a driver would be the
-// first module dependency in this repo, so this reader shells out to `sqlite3`, which
-// SPEC-TOKENS.md picks deliberately and says so. It is the only program this tool runs:
-// an earlier draft ran `git log` over the bus checkout to order competing notes, and that
-// order is now explicit in the notes themselves.
-//
-// The live database is never opened for writing and never opened at all: it and its -wal
-// and -shm siblings are COPIED into --scratch and queried there with -readonly, under
-// --timeout. A source is read-only, and a fold that touched the file it is measuring
-// would be measuring itself.
+// sqlite3 is the only subprocess this tool runs. It queries a private copy under
+// --scratch with -readonly, so its WAL index cannot modify the live database.
+// The original database and any -wal and -shm siblings are opened only for copying.
+// Each query has its own --timeout deadline.
 
-// SQLiteBinary is the one program this family requires on PATH.
+// SQLiteBinary is the executable the OpenCode adapter requires on PATH.
 const SQLiteBinary = "sqlite3"
 
-// DefaultTimeout is the per-subprocess budget. It is the one flag with a default, for the
-// reason SPEC.md gives nova-bus --git-timeout: it is how long the tool waits before saying
-// so, not a fact about anybody's data.
+// DefaultTimeout bounds each SQLite query. It is an operational wait limit,
+// not a default for a source path or a fact about its data.
 const DefaultTimeout = 120 * time.Second
 
 // waitDelay is how long Run waits for the streams after the context is done. Without it a

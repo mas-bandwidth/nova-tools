@@ -1238,7 +1238,7 @@ WORKTREE OK removed=0 kept=1
 
 ## nova-tokens
 
-`nova-tokens`: token spend per day, model and repository, read from AI session logs. It folds declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart, and sums those day files into a month. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
+`nova-tokens`: token spend per day, model and repository, folded from declared sources. It writes **one file per day**, keyed by `(day, model, repo)`, keeps the five token types separate, and sums day files into a month. It does not invent missing counts or delete source files; output replacement and tool-owned cleanup are explicit. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
 
 The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources`; `nova-tokens help` lists all nine verbs.
 
@@ -1246,7 +1246,7 @@ The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources`; `n
 - `report` folds one machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number.
 - `sum --out <dir> --month <YYYY-MM>` adds day files into a month and asserts nothing.
 - `check` is the gate.
-- `sources` shows what a fold would count before it writes. With `--unattributed [--max <n>]` it prints the path stems that were seen and matched no rule, heaviest first: what the `other=<pct>%` share on a `TOKENS DAY` line is made of, and the evidence for improving the `--repos` file. `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given.
+- `sources` shows what a fold would count before it writes. With `--unattributed [--max <n>]` it ranks unmatched path stems by mention count to help improve `--repos`. A mention counts once regardless of the message's token usage; these counts do not decompose the `other=<pct>%` spend share. `SOURCES OK` carries the total unmatched mentions as `unattributed=<n>`, and `-` when the flag was not given.
 - `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing.
 - `session --claude-session <jsonl>` sums one Claude Code session per turn and, with `--out`, folds it into the day file under the model the transcript names.
 - `ledger` and `report --redis` index day files into Redis and read a month back (below).
@@ -1260,18 +1260,29 @@ nova-tokens check --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM
 
 `--through <YYYY-MM-DD>` asserts that the ledger is current through that day. When the newest folded day under `--out` is older than the given day, or `--out` has no folded day, `check` prints `CHECK FAIL stale last=<last> through=<day>` on standard error and exits 1.
 
-A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` (an integer count of micro-dollar ticks) into the model's `usd=` on the day's `TOKENS AVG` lines. One `--provider xai:<label>=<file>` names one file. A missing path is `TOKENS UNREADABLE` and is not a search of a session store; a directory is not walked.
+Provider usage can be supplied with `--provider <kind>:<label>=<file>`, where kind is `google`, `openai` or `xai`. Each kind accepts the specific CSV columns listed in [the source formats](SPEC-TOKENS.md#the-sources); these names do not promise support for every provider billing export. Counts stay under repo `unattributed`, never divided among repos. The `xai` parser also reads a `grok usage` JSON object with a `turns` array, including `costUsdTicks` converted from micro-dollars into the dollar amount on `TOKENS AVG`. One flag names one file: a missing path is `TOKENS UNREADABLE`, and a directory is not searched for session files.
 
 ### First run
 
-The transcript lives in [TESTS.md](TESTS.md), where a test executes it against `cmd/nova-tokens/testdata/example-bench` on every run. For a first try from the binary alone, `nova-tokens help` includes one setup command that writes a small transcript and rules file into the current directory, followed by commands to fold, check and sum it.
+The transcript lives in [TESTS.md](TESTS.md), where a test executes it against `cmd/nova-tokens/testdata/example-bench` on every run. For a first try from the binary alone, `nova-tokens help` includes one setup command that writes a small transcript and rules file into the current directory, followed by commands to fold, check and sum it. Here is the same setup separated into steps. Run it in an empty directory: it creates `transcripts` and `out` and replaces the named example files. Keep the JSON record on one line.
+
+```sh
+mkdir -p ./transcripts ./out
+printf '%s\n' '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z","message":{"id":"example-1","model":"claude-fable-5-1","usage":{"input_tokens":812,"output_tokens":40,"cache_creation_input_tokens":1200,"cache_read_input_tokens":90000},"content":[{"type":"tool_use","input":{"file_path":"/work/schema/wire.md"}}]}}' > ./transcripts/window.jsonl
+cp ./transcripts/window.jsonl ./session.jsonl
+printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
+nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+nova-tokens check --out ./out
+nova-tokens sum --out ./out --month 2026-09
+```
 
 Every path is a flag: there is no default output directory, no default transcript directory, no default bus and no default rules file. No verb reads the environment for a path or a setting, with two exceptions the help names: `--opencode` runs `sqlite3` from `$PATH`, and the two Redis verbs (`ledger`, `report --redis`) read the store's ACL user and password variables. Every verb takes `--json`, and `fold`, `report --note`, `ledger` and `session --out` take `--dry-run`. `report -h` labels its local note-body mode and Redis month-summary mode separately.
 
 What a first run gets wrong, and what each one wants:
 
 - **No `--repos`.** There is no built-in list of repos, because no built-in list can know yours. It wants a file of `<name><TAB><regexp>` lines in priority order; the `unknown=` and `other=` shares on every `TOKENS DAY` line are how you see whether yours is good enough.
-- **Expecting exit 0 with an unreadable file.** A declared source is a claim that the report covers it, so an unreadable one is one `TOKENS UNREADABLE` line, one in `unreadable=`, and exit 1 — and the day files still land. `written=true` is about the files; the exit code is about the claim.
+- **Expecting exit 1 to mean no files changed.** `fold` can write computable days and still exit 1 because another source was unreadable or a day was refused. `written=true` describes the file, not successful coverage. A local `report` can likewise write a usable `--note` body, print `REPORT OK`, and exit 1 for unreadable or unparsed sources. Check the exit code and diagnostics before sending it.
+- **Expecting the shrink check to protect every source.** The check compares each token type's total for the day. Growth in one declared source can mask a lost row from another that still reports some rows. `TOKENS QUIET` only names a previously recorded source with no samples for that day. Rows from wholly undeclared sources are retained; blended rows and collisions the merge cannot separate refuse the day as `TOKENS PARTIAL`, even with `--allow-shrink`.
 - **Reading a `-` as a zero.** A dash is "this source did not report that type" and a zero is a measurement. `sum` counts the dashes per column beside the totals, and nothing here folds one type into another.
 - **Sending a second tokens note for a day.** Two notes in one lane for one day are `TOKENS CONFLICT` and fold nothing, because no winner can be read off a clock, a filename or a git history. A correction names what it corrects: `supersedes=<id>[,<id>…]` in the subject, which `report --supersedes` writes for you.
 - **Reusing one label across two kinds.** A label is unique across the whole run, not per flag: `--claude bench=… --opencode bench=…` is `TOKENS REFUSED … the label bench is used twice`, exit 2, before anything is read. Two sources with one label would make the `sources` column a lie. A `--provider` is the one flag whose label carries its parser too — `--provider google:ada=<export>` — so two people's exports from one provider are `google:ada` and `google:lin`.
@@ -1279,7 +1290,7 @@ What a first run gets wrong, and what each one wants:
 - **Pointing `--claude` at a directory with a scratch tree under it.** `--claude` walks every `*.jsonl` and `*.output` under the directory **recursively**, and prunes nothing: a session scratchpad, a git clone or a build tree under it is walked too, and a directory of scratchpads can turn a fold of seconds into one of minutes. Nothing is skipped silently, because a silent prune is a number nobody can account for, so name the transcript directory itself and expect the walk to cost what the tree costs.
 - **`--scratch` without `--opencode`, or the other way round.** The OpenCode database is copied into `--scratch` and read there with `sqlite3 -readonly`, which is this tool's one subprocess; a scratch directory with nothing to put in it is a flag that does nothing, and both mistakes are refused with the sentence saying so.
 
-There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` carries seven example lines a stranger can paste instead, under one setup line that makes their inputs, and `sources` is the one verb that only looks.
+There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` carries seven example lines; its setup line makes their inputs. `sources` inspects those inputs before any fold writes day files.
 
 **The token ledger on Redis.** `ledger` indexes folded day files into a Redis store, one hash per day, and `report --redis` is the month as one GROUP BY over those hashes: every one of the five types apart, a dash where no row reported a type, and equal to the folded day TSVs to the token. The day files stay the record.
 

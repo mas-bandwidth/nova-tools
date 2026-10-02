@@ -2,8 +2,8 @@ package tokens
 
 // The coordinator's own session, folded.
 //
-// Every worker's spend is on a swarm card line and in the ledger; the coordinator's own
-// window, often the most expensive line of all, is not, unless this reader folds it.
+// Swarm usage records worker spend. This reader adds a coordinator session supplied
+// explicitly with --claude-session, so its spend can appear beside the workers'.
 //
 // This reader folds one Claude Code session jsonl into the four counts and one weighted
 // equivalent, so the coordinator's window is a model line in the daily ledger like every
@@ -11,8 +11,9 @@ package tokens
 //
 // WEIGHTED is the comparable number. A cache read is not a fresh input token and an output
 // token is not one either, so a raw sum of the four flatters a window that reads a huge
-// cache and understates one that writes a lot. The weights are the provider's own price
-// ratios: cache write 1.25x an input token, cache read 0.1x, output 5x.
+// cache and understates one that writes a lot. The fixed ratios are cache write 1.25x
+// an input token, cache read 0.1x and output 5x. This comparison is not a dollar price
+// or a lookup of current model rates.
 
 import (
 	"bufio"
@@ -24,7 +25,7 @@ import (
 	"strings"
 )
 
-// The weights the WEIGHTED equivalent is built from, as the provider prices them.
+// Fixed weights used by the WEIGHTED equivalent, relative to one input token.
 const (
 	WeightCacheWrite = 1.25
 	WeightCacheRead  = 0.1
@@ -43,7 +44,7 @@ const CoordinatorSeat = "/coordinator"
 func CoordinatorModelOf(model string) string { return model + CoordinatorSeat }
 
 // CoordinatorRepo is the repo cell of that row. A coordinator's turns are not one repo's
-// work -- they span every repo -- and a row attributed to whichever repo a tool call
+// work: they can span repositories. A row attributed to whichever repo a tool call
 // happened to name would move the cost around from day to day.
 const CoordinatorRepo = "coordinator"
 

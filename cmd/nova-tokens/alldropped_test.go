@@ -11,12 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// A fold that drops EVERY message folded nothing, and exits 1 with the counts: a gate that
-// reads the exit code must not call it green (the third cold rating of the tools: a fold of
-// two messages with no id wrote nothing and exited 0 under a TOKENS NOTE). Some messages
-// dropped is the NOTE alone: the day is short and says so, and the fold did its job for the
-// rest, exit 0 (the row "messages with no id reach the remedy line" of
-// TestWhatOneRunPrintsAndWrites holds the same fold for its note).
+// Dropping every message leaves nothing to fold, so the run exits 1 with its
+// counts. Dropping only some messages is a note: the fold still accounts for
+// messages with ids. TestWhatOneRunPrintsAndWrites covers that partial case.
 func TestAFoldThatDropsMessagesWithNoID(t *testing.T) {
 	t.Parallel()
 
@@ -47,7 +44,7 @@ func TestAFoldThatDropsMessagesWithNoID(t *testing.T) {
 // A failed attempt followed by success retains both costs. SPEC-TOKENS rule 14 says a row for
 // a second attempt (attempt=2) is its own row; a reader that deduped by job alone would fold
 // a retried attempt as dup=<n>, and its tokens would never reach the day file.
-func TestIssue181SwarmRetryAttemptIsItsOwnRow(t *testing.T) {
+func TestSwarmRetryAttemptIsItsOwnRow(t *testing.T) {
 	t.Parallel()
 
 	b := newBench(t)

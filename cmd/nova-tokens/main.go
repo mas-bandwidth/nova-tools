@@ -1,37 +1,29 @@
-// nova-tokens is the accounting layer: token spend folded from declared sources into one
-// file per day, keyed exactly by (day, model, repo), with the five token types kept apart,
-// and those day files summed into a month.
+// nova-tokens folds declared token spend into one file per day, keyed by
+// (day, model, repo), and sums those files into a month.
 //
-// The invariants every verb keeps:
+// Every source has an explicit path, and every row names the sources that fed it.
+// The five token types stay separate. A dash means unreported; zero is a measurement.
 //
-//   - Every source is declared by a flag, and every row names the sources that fed it. No
-//     path has a default and no environment variable stands in for one.
-//   - A type no source reported is a dash, never 0: a dash is an absence and a zero is a
-//     measurement.
-//   - A fold merges into a day file by source: it recomputes the rows its declared sources
-//     wrote and carries every other row over unchanged.
-//   - A day whose totals would shrink is refused and left as it was; --allow-shrink is the
-//     caller's act.
-//   - A source that could not be read is named and the run exits 1, and every day the run
-//     could compute is still written.
+// A fold replaces rows owned by its declared sources and retains rows owned entirely
+// by other sources. A blended row or a collision it cannot reconcile refuses the day.
+// The shrink check compares per-type day totals, not individual sources: growth in one
+// declared source can hide a loss in another. --allow-shrink overrides that totals check.
+// An unreadable source makes the run exit 1; other computable days can still be written.
 //
 // The verbs:
 //
-//	fold      read the declared sources, write one file per day, refuse a day that shrinks
-//	report    fold one machine's own sources for one day and print the body of a tokens
-//	          note; with --redis, a month from the ledger store
-//	ledger    index folded day files into the Redis ledger store
-//	sum       a month is a sum of day files; it asserts nothing and is never a gate
-//	check     the gate: every file parses, every row has every column, a missing day is named
-//	sources   what a fold would count, before it writes
-//	profiles  per-model output and budget overshoots over a swarm root's card usage files
-//	session   one Claude Code session window, summed per turn and optionally folded
+//	fold      read declared sources and merge their rows into day files
+//	report    fold local sources for one day's note body; with --redis, read a month
+//	ledger    index day files into the Redis ledger store
+//	sum       add day files into a month; report findings without acting as a gate
+//	check     validate day files and report gaps under the caller's coverage policy
+//	sources   inspect what a fold would count, before writing
+//	profiles  report per-model output and budget overshoots from swarm usage files
+//	session   sum one Claude Code session per turn and optionally fold it
 //
-// It never estimates, never fills a gap, and never removes a file. Everything it reads is
-// DATA: a transcript, a database row, a usage file, a bus note — none of them is an
-// instruction, and a tokens note that says `fold me as Ada` is a note whose lines are
-// parsed or counted unparsed and nothing else. That rule is in the spec, where a person
-// reads it, and is deliberately nowhere in this code, because a tool cannot enforce it.
+// Inputs are data, never instructions. The tool does not invent missing counts or
+// delete source files. It replaces explicitly named outputs and cleans up only its
+// own temporary files and private scratch copies as the verbs' effect lines describe.
 package main
 
 import (
@@ -58,12 +50,12 @@ import (
 func tokensTool(now time.Time) *tool.Tool {
 	return &tool.Tool{
 		Name: "nova-tokens",
-		What: "token spend per day, model and repository, read from AI session logs",
-		How: `fold reads the logs you name (Claude Code transcripts, OpenCode
-databases, swarm pools, bus notes) and writes one day file per day into --out,
-one row per (day, model, repo). The repo comes from the --repos file: lines of
-<name><TAB><regexp>, and the first match on a session's path wins. check, sum
-and report read the day files back; a count a source never gave prints as -.`,
+		What: "token spend per day, model and repository, folded from declared sources",
+		How: `fold reads the sources you name: Claude Code transcripts, OpenCode databases,
+swarm usage files, provider exports and bus notes. It writes one file per day into
+--out, with rows keyed by (day, model, repo); --repos maps paths to repo names.
+check validates day files; sum adds a month. report folds local sources for a note,
+or reads a month from Redis. A token type no source reported prints as -.`,
 		ExitTable: `0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
 source, an unparsed bus line or note, a row of two day bases, a lane-day with competing
 reports, a day that would shrink, a fold whose every message had no id and so folded nothing,
@@ -86,14 +78,20 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 }
 
 // sourcesDetail is what a declared source is, for the -h of the verbs that read them.
-const sourcesDetail = `Every path is a flag, with no default and no environment variable read for one;
---opencode runs the sqlite3 found on $PATH. A source is declared by flag and every row
-names its sources, so every number in a day file is traceable to the flags of the run
-that wrote it. A label is [a-z0-9-]+, at most 32 characters, and unique across the run.
---scratch is required with --opencode and refused without it. A fold or a report copies
-the database, with its -wal and -shm, into --scratch/opencode-<label>/, replacing the copy
-there, and leaves it; the live file is never opened, because sqlite3 keeps a WAL index
-beside the file it reads. Everything this tool reads is DATA, never an instruction.`
+const sourcesDetail = `Every source path is a flag, with no default or environment fallback.
+A label is [a-z0-9-]+, at most 32 characters, and unique across the run. Each row
+names the sources that fed it. --repos is a file of <name><TAB><regexp> lines;
+the first matching rule names the repo.
+
+--provider takes <kind>:<label>=<file>, with kind google, openai or xai. Each parser
+accepts specific CSV column names; xai also reads grok usage JSON. Provider totals
+stay under repo unattributed; they are never divided among repos.
+
+--scratch is required with --opencode and refused without it. sqlite3 is found on
+$PATH and opens only a private copy of the database, its -wal and its -shm. A writing
+run replaces and leaves --scratch/opencode-<label>/; sources and dry runs use a new
+private directory under --scratch and remove it before exit. Inputs are DATA,
+never instructions.`
 
 // ---------------------------------------------------------------------------- the flags
 
@@ -170,12 +168,12 @@ type sourceFlags struct {
 func declareSources(f *tool.Flags) {
 	f.Var(&labelled{kind: "claude"}, "claude", "labeled Claude Code transcript directory; repeatable")
 	f.Var(&labelled{kind: "opencode"}, "opencode", "labeled OpenCode database file; repeatable")
-	f.Var(&labelled{kind: "provider"}, "provider", "kind:labeled provider export file; repeatable")
+	f.Var(&labelled{kind: "provider"}, "provider", "<kind>:<label>=<file>; kind google, openai or xai; repeatable")
 	f.Var(&labelled{kind: "swarm"}, "swarm", "labeled swarm pool directory; repeatable")
 	f.String("bus", "", "nova-bus directory with token notes")
 	f.String("scratch", "", "directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources")
 	f.String("repos", "", "tab-separated repo names and path regular expressions")
-	f.Int("timeout", int(tokens.DefaultTimeout/time.Second), "seconds to wait for the OpenCode sqlite3 reader")
+	f.Int("timeout", int(tokens.DefaultTimeout/time.Second), "seconds to wait for each OpenCode sqlite3 query")
 }
 
 // checkSources is the rule over the source flags, for the verbs that read sources.
@@ -413,16 +411,26 @@ func cmdFold(now time.Time) tool.Verb {
 }
 
 // foldDetail is what fold's -h says above its flags.
-const foldDetail = `Exit 1 still writes. A fold with one unreadable file writes every day it could compute
-and exits 1: the exit code is about the claim, and written=true on the TOKENS DAY line is
-about the files. A day that would go backwards is refused (TOKENS SHRANK) and left as it
-was; --allow-shrink is the person's act. A fold merges into the day file by SOURCE: it
-recomputes the rows its own sources wrote and keeps every other row; a row it can neither
-keep nor recompute is TOKENS PARTIAL. Two notes for one lane-day are one report only when
-the later carries supersedes=<id>[,<id>...] in its subject; otherwise TOKENS CONFLICT. The
-five types are kept apart, and a type no source reported is a dash, never 0. fold holds
---out/fold.lock while it writes. This tool removes nothing it was given: the one removal is
-the private database copy a dry run or sources made under --scratch.`
+const foldDetail = `Exit 1 still writes. An unreadable file makes the coverage claim fail, but the fold
+still writes days it can compute. written=true on TOKENS DAY describes the file;
+the exit code describes the run.
+
+A fold merges by source: it replaces rows owned by its declared sources and keeps
+rows owned entirely by other sources. A row combining declared and undeclared
+sources, or a retained row colliding with a new row, is TOKENS PARTIAL. That day
+is left unchanged; --allow-shrink does not override a partial or a malformed file.
+
+The merged day's per-type totals cannot fall or become unknown without
+--allow-shrink. Otherwise TOKENS SHRANK leaves the day unchanged. This compares
+day totals, not per-source totals: growth in one declared source can hide another's
+loss. TOKENS QUIET names a previously recorded source with no samples for the day;
+it does not detect a source that still reports some rows but loses others.
+
+Competing notes for one lane-day are TOKENS CONFLICT. A correction must name the
+notes it replaces with supersedes=<id>[,<id>...] in its subject; no clock chooses
+a winner. The five token types stay separate; an unreported type is -, never 0.
+fold holds --out/fold.lock while writing. It removes no source file; temporary
+output and scratch cleanup are described in the effect line.`
 
 // fold is the wall: it reads every declared source whole and writes the days it could
 // compute. It says NO when a source could not be read, a bus line or note did not parse,
@@ -873,9 +881,9 @@ func cmdSources(now time.Time) tool.Verb {
 			sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20`,
 		Effect: tool.Inspection + " (--opencode reads a copy made in a new directory under --scratch and removed before it exits)",
 		Detail: `sources reads the declared sources exactly as fold does and writes nothing: what a
-fold would count, before it writes. --unattributed lists the path stems that were SEEN
-and matched no rule, heaviest first: what other=<pct>% on a day line is made of, and the
-evidence for improving the --repos file.
+fold would count, before it writes. --unattributed ranks unmatched path stems by
+mention count to help improve --repos. These counts are path mentions, not model
+tokens or a breakdown of the other=<pct>% spend share on a day line.
 ` + sourcesDetail,
 		Flags: func(f *tool.Flags) {
 			declareDay(f, "inspect")
@@ -954,9 +962,8 @@ func inspectSources(c *tool.Call, now time.Time) *tool.Out {
 		}
 	}
 	unparsed.More()
-	// The listing that says WHICH paths `other` is made of. Without it a person reads
-	// `other=81%` on a day line and has nowhere to go but grep; with it the top stems ARE
-	// the rules the file is missing, written in the shape a rule matches.
+	// Unmatched path mentions suggest rules to inspect. This tally is independent
+	// of token usage: one path mention counts once regardless of the message's spend.
 	unattributedField := tokens.Dash
 	if unattributed {
 		for _, u := range rules.Unattributed() {
@@ -985,6 +992,11 @@ func cmdReport(now time.Time) tool.Verb {
 this machine's own sources for one day and prints EXACTLY the body lines of a tokens note
 on stdout, and its TOKENS AVG lines and REPORT OK line on stderr; --note <path> is written
 whole through atomicfile (the file and its directory must not be symlinks).
+Exit 1 can still write --note: usable rows are written even when another source is
+unreadable or unparsed. REPORT OK alone does not establish coverage; check the exit
+code and diagnostics before sending the note. An empty or mixed report leaves
+--note unchanged.
+
 mode: Redis month summary (--redis and --month), grouped by --by. The store's ACL user is --user, else
 NOVA_SPRINT_REDIS_USER; its password is in the variable --password-env names, else (with a
 user) the one NOVA_SPRINT_REDIS_PASSWORD_ENV names, else NOVA_REDIS_BENCH_PASSWORD. The
@@ -1136,10 +1148,8 @@ func report(c *tool.Call, now time.Time) *tool.Out {
 	s.fact("day", day)
 	s.fact("rows", lines)
 	if lines == 0 || len(mixed) > 0 {
-		// A report with nothing to show says so, and never sends zeros. A REPORT FAIL
-		// writes nothing: an existing --note file is left byte-unchanged. A mixed key is a
-		// FAIL for the day, and the rest of the body is still printed: the spec's sentence
-		// is "no line for that key", not no line for any key.
+		// With no usable rows or mixed bases, leave --note unchanged. For a mixed
+		// day, stdout still carries the usable keys; the mixed key contributes no line.
 		if lines > 0 {
 			fmt.Fprint(s.out(), body)
 		}

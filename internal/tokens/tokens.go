@@ -1,18 +1,12 @@
 /*
-Package tokens is the accounting layer: the one message shape every source produces, the
-one fold over a stream of them, the day file, and the readers for the five declared
-source kinds.
+Package tokens reads declared sources into a common message stream and folds it by
+(day, model, repo). Each of the five token types retains its own count or absence;
+a type no source reported stays a dash. Source readers share the attribution and
+aggregation rules so the same path and count have the same meaning across formats.
 
-The shape of the thing is one sentence. Each source hands the fold a stream of messages —
-{day, basis, model, repo, usage} — and the fold is ONE function over that stream, keyed
-exactly by (day, model, repo), with the five token types kept apart and a type no source
-reported left as a dash. What differs per source kind is only how the stream is produced,
-which is why the attribution rule, the dash rule and the sum rule are each written once
-here rather than once per reader: two copies of an attribution table drift apart, and
-then two readers attribute one path to two repos.
-
-Nothing in this package removes a file, and nothing in it runs a program except the one
-subprocess the OpenCode reader declares.
+The package also parses day files and merges rows by source ownership. It never
+deletes source files. The OpenCode reader runs sqlite3 against a private copy;
+only tool-owned scratch copies and temporary files are eligible for cleanup.
 */
 package tokens
 
@@ -86,9 +80,8 @@ func (c Counts) Cell(t Type) string {
 	return strconv.FormatInt(c.n[t], 10)
 }
 
-// Total is the five types summed, for the shares on a day line. A dash adds nothing.
-// Billed is the tokens a cost covers: input, output, cache write and cache read, the
-// four types a provider prices. Reasoning is its own column and in none of them.
+// Billed sums input, output, cache write and cache read for this tool's cost
+// denominator. Reasoning stays separate and is excluded from this sum.
 func (c Counts) Billed() int64 {
 	var n int64
 	for _, t := range []Type{Input, Output, CacheWrite, CacheRead} {
@@ -99,6 +92,7 @@ func (c Counts) Billed() int64 {
 	return n
 }
 
+// Total sums the five types for the shares on a day line. A dash adds nothing.
 func (c Counts) Total() int64 {
 	var n int64
 	for t := Type(0); t < NTypes; t++ {
@@ -502,10 +496,8 @@ var AllTypes = []Type{Input, Output, CacheWrite, CacheRead, Reasoning}
 // ClaudeTypes is what a Claude Code transcript carries: no reasoning count exists in it.
 var ClaudeTypes = []Type{Input, Output, CacheWrite, CacheRead}
 
-// ValidDay reports whether s is a YYYY-MM-DD day ON THE CALENDAR. The shape alone is not
-// the test: `--day 2026-13-40` would write 2026-13-40.tsv, pass `check`, and leave
-// MissingDays walking from a day that does not exist. time.Parse is the range check, and
-// the round trip refuses what it normalises (2026-02-30 -> 2026-03-02).
+// ValidDay requires both a real calendar date and the exact YYYY-MM-DD spelling.
+// time.Parse rejects impossible dates; the round trip checks the spelling.
 func ValidDay(s string) bool {
 	if len(s) != 10 || s[4] != '-' || s[7] != '-' {
 		return false

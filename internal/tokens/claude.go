@@ -40,11 +40,8 @@ type claudeLine struct {
 		ID    string                     `json:"id"`
 		Model string                     `json:"model"`
 		Usage map[string]json.RawMessage `json:"usage"`
-		// `message.content` is a STRING on a user turn and an ARRAY of blocks on an
-		// assistant turn, and both are valid transcript lines. Declared as the array
-		// alone, every user turn would be a type mismatch -- valid JSON that
-		// json.Unmarshal refuses -- and nearly every transcript file would be TOKENS
-		// UNREADABLE. Raw here, decoded below only when it is an array.
+		// Content may be a string or an array of blocks. Keep it raw so a valid
+		// string does not fail the whole line; only arrays can supply tool paths.
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 }

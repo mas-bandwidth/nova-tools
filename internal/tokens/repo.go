@@ -50,16 +50,10 @@ type Rules struct {
 	total      int
 }
 
-// stemLimit is the ceiling on distinct stems held while watching. A transcript tree can
-// name hundreds of thousands of paths, and a tally that grew with the tree would be the
-// same unbounded growth this repo's listings exist to end. Past the ceiling the counts
-// already held keep rising and no NEW stem is admitted, so the top of the list -- which is
-// what the flag is for -- is unaffected, and TotalUnattributed still counts every token.
-//
-// An ordinary machine's transcripts (a few thousand files) name several thousand distinct
-// stems, so a ceiling of a few thousand is reached on a first run. 50,000 stems is about
-// 3 MB of strings and is a guard against a pathological tree rather than a limit on an
-// ordinary one.
+// stemLimit bounds the memory used by the unmatched-path tally. After the limit,
+// held stems keep counting but new stems are omitted, even if they later become
+// frequent. The ranking is therefore only over retained stems; TotalUnattributed
+// still counts every path token.
 const stemLimit = 50000
 
 // stemDepth is how many leading path elements a stem keeps. Three is where a working tree
@@ -107,8 +101,8 @@ func (r *Rules) SetDay(day string) {
 	r.currentDay = day
 }
 
-// Unattributed is the tally, heaviest first and then by stem, so two runs over one tree
-// print the same list in the same order.
+// Unattributed sorts by descending path-mention count, then by stem. The tally
+// is independent of model-token usage and is deterministic for a given walk.
 func (r *Rules) Unattributed() []UnattributedStem {
 	out := make([]UnattributedStem, 0, len(r.stems))
 	for stem, n := range r.stems {
@@ -123,8 +117,8 @@ func (r *Rules) Unattributed() []UnattributedStem {
 	return out
 }
 
-// TotalUnattributed is every path token that fell to `other`, counted whether or not its
-// stem got a place in the tally.
+// TotalUnattributed counts unmatched path mentions, including those whose stems
+// were omitted by the distinct-stem limit. It does not count model tokens.
 func (r *Rules) TotalUnattributed() int { return r.total }
 
 // record tallies the tokens of one message that named no repo this file knows.

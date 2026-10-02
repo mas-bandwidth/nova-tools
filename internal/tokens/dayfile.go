@@ -165,11 +165,9 @@ type Shrink struct {
 	Now  string // the number now, or a dash where the source went quiet
 }
 
-// Shrinks compares what is on disk with what a fold has just computed. A type that is
-// lower, or that was a number and is a dash now, is a source that went quiet, and a source
-// that went quiet must never silently lower a day's spend.
-//
-// A dash in the file that is a number now is NOT a shrink: that is coverage arriving.
+// Shrinks compares per-type day totals. A lower count or a change from a count to
+// a dash is a shrink; a dash becoming a count is new coverage. This comparison
+// cannot detect a loss in one source masked by growth elsewhere in the day.
 func Shrinks(old, now Counts, day string) []Shrink {
 	var out []Shrink
 	for t := Type(0); t < NTypes; t++ {
@@ -185,21 +183,10 @@ func Shrinks(old, now Counts, day string) []Shrink {
 	return out
 }
 
-// The merge, and why the fold is not a whole recomputation of the file.
-//
-// A fold declares SOURCES, and a day file's rows each name the sources that wrote them.
-// A run that declares one source and recomputes the file whole ERASES every row the other
-// sources wrote, and the shrink refusal cannot see it: the comparison is over the day's
-// per-type TOTALS, so a run whose own numbers are bigger than what it deleted writes a
-// smaller file with a bigger total and says written=true: a day holding `claude-x 410`
-// folded with only `--swarm bo=<pool>` (mercury-2.5, 2000) would come back holding the
-// mercury row alone, exit 0, no TOKENS SHRANK.
-//
-// So the fold merges by source instead. This run's rows replace the rows its own sources
-// wrote; a row no declared source wrote is kept exactly as it is; and the two rows that
-// cannot be either -- a row already summed over a declared and an undeclared source, and a
-// retained row colliding with a recomputed one -- are refused before anything is written,
-// because both would need arithmetic nothing on disk can undo.
+// Day files retain rows from sources this run did not declare. Recomputing the
+// whole file would erase those rows, and larger new counts could mask that loss
+// in the day-total shrink check. Rows already blended across source sets cannot
+// be separated with the information on disk, so the merge refuses those days.
 
 // PartialBlended and PartialCollision are the two reasons a row of the file on disk can be
 // neither kept nor recomputed by this fold.
@@ -219,7 +206,7 @@ type Partial struct {
 
 // MergeDay merges this run's recomputed rows into the rows already in the day file.
 //
-// declared is the set of source labels this run read, the same labels that land in a row's
+// declared is the set of source labels this run declared, the same labels that land in a row's
 // sources column. For each row of old:
 //
 //   - every source outside declared: RETAINED, cell for cell, because no source this run
@@ -229,8 +216,8 @@ type Partial struct {
 //   - some inside and some outside: a Partial, PartialBlended. Its cells are already a sum
 //     over both and nothing on disk takes them apart.
 //
-// A retained row and a recomputed row with the same (model, repo, unit) is a Partial too,
-// PartialCollision: the day file's rows are unique by (model, repo, unit), and summing the two
+// A retained row and a recomputed row with the same (model, repo) is a Partial too,
+// PartialCollision: the day file's rows are unique by (model, repo), and summing the two
 // would blend two runs' arithmetic into one cell no later fold could undo.
 //
 // The returned rows are sorted by (model, repo), which is what ParseDayFile demands. When

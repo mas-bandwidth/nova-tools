@@ -553,7 +553,7 @@ func (p pooled) day() string {
 // that recomputed the file whole would exit 0, written=true, no SHRANK, with the claude-x
 // row simply gone -- because the totals ROSE, so rule 10's day-total comparison sees
 // nothing.
-func TestIssue268AFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
+func TestAFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
 	t.Parallel()
 	p := newPooled(t)
 	p.fold("--swarm", "glenn="+p.glenn).Exit(0)
@@ -570,7 +570,7 @@ func TestIssue268AFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
 
 // R2: full replacement -- every source in the file is declared -- is exactly what it was.
 // The one row is REPLACED by this run's arithmetic, never summed with the file's.
-func TestIssue268AFullReplacementIsUnchanged(t *testing.T) {
+func TestAFullReplacementIsUnchanged(t *testing.T) {
 	t.Parallel()
 	p := newPooled(t)
 	p.fold("--swarm", "glenn="+p.glenn).Exit(0)
@@ -584,7 +584,7 @@ func TestIssue268AFullReplacementIsUnchanged(t *testing.T) {
 // R3: a BLENDED row -- one row whose sources cell names a label this run declared and one
 // it did not. Its cells are already a sum over both and nothing on disk takes them apart,
 // so the fold refuses the day rather than guessing.
-func TestIssue268ABlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
+func TestABlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
 	t.Parallel()
 	p := newPooled(t)
 	// Both pools on the SAME model and repo, so one row carries both labels.
@@ -603,7 +603,7 @@ func TestIssue268ABlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
 
 // R4: rule 10 still fires on a real shrink, now compared against the MERGED file, and
 // --allow-shrink still writes it with the retained row still there.
-func TestIssue268Rule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testing.T) {
+func TestShrinkCheckUsesMergedTotalsAndKeepsRetainedRows(t *testing.T) {
 	t.Parallel()
 	p := newPooled(t)
 	p.fold("--swarm", "glenn="+p.glenn, "--swarm", "freddy="+p.freddy).Exit(0)
@@ -622,7 +622,7 @@ func TestIssue268Rule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testin
 // A malformed existing day row fails closed before replacement: fold refuses the day,
 // reports TOKENS UNREADABLE label=out with the finding reason, and leaves the raw
 // malformed file on disk byte-identical.
-func TestIssue268MalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testing.T) {
+func TestMalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testing.T) {
 	t.Parallel()
 	p := newPooled(t)
 	// The claude-x row with its sources cell blank.
@@ -637,7 +637,7 @@ func TestIssue268MalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testin
 
 // An explicitly selected day whose declared source becomes empty / goes quiet is detected
 // and refused under rule 10 rather than silently skipping with exit 0.
-func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
+func TestExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	t.Parallel()
 	p := newPooled(t)
 	p.fold("--swarm", "glenn="+p.glenn).Exit(0)
@@ -659,7 +659,7 @@ func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 
 // When one source of a multi-source day goes quiet, shrinking under --allow-shrink preserves
 // the other source's rows.
-func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
+func TestExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 	t.Parallel()
 	p := newPooled(t)
 	both := []string{"--swarm", "glenn=" + p.glenn, "--swarm", "freddy=" + p.freddy}

@@ -76,7 +76,7 @@ func TestEveryVerbFlagHasADescription(t *testing.T) {
 // names help) would pass a check for "help" anywhere, so the door is pinned as the literal
 // end of every refusal line, once. `version <stray>` is a row too: a bare version prints the
 // version, so its stray argument is the refusal, and it still says what was wrong.
-func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
+func TestEveryRefusalNamesTheDoor(t *testing.T) {
 	t.Parallel()
 
 	const door = "; run: nova-tokens help"
@@ -119,7 +119,7 @@ func TestTheSpecPromisesWhatTheToolPrints(t *testing.T) {
 
 	// The efficiency section: what the tool pays once and what it pays
 	// again. One walk of the sources per run behind `--all`, a bounded coordinator read whose
-	// day line carries the shares, and a `--timeout` that bounds one source and not the run.
+	// day line carries the shares, and a `--timeout` that bounds each SQLite query, not the run.
 	// The section is prose, so whitespace is collapsed: a phrase is checked for its words, not
 	// its column.
 	t.Run("the efficiency contract names its rules", func(t *testing.T) {
@@ -133,7 +133,7 @@ func TestTheSpecPromisesWhatTheToolPrints(t *testing.T) {
 			"internal/tokens/claude.go", "`folder.Days()`", "one walk of the sources per run", "`dup=`",
 			// the coordinator read: one source, one day, one OK, `check` one line per finding under `--max`.
 			"TOKENS SOURCE", "TOKENS DAY", "TOKENS OK", "`check` is one line per finding", "`--max`",
-			// what a run waits on: `--timeout` is one source, not the run.
+			// what a run waits on: `--timeout` bounds each SQLite query, not the run.
 			"120 s", "`--timeout`", "`sum --month 2026-09`", "fold --day <d>",
 			"Red tests",
 		} {

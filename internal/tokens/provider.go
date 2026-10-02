@@ -14,17 +14,13 @@ import (
 	"time"
 )
 
-// --provider <label>=<file>: a billing export.
-//
-// For a harness that records nothing a tool can read (Antigravity and Gemini, Grok,
-// Codex). The account holder downloads the export; the label
-// names the provider and therefore the parser. The repo is the fixed word `unattributed`:
-// the tool never splits a provider total across repos by any proportion, because a split
-// nobody measured is a number nobody can defend.
+// --provider <kind>:<label>=<file> reads a usage export in one of the supported
+// formats. The kind selects the CSV column names; the label identifies the source.
+// Provider totals stay under repo `unattributed`: no measured repo breakdown exists
+// here, so the tool never invents one by dividing the total.
 
-// Parsers are the export shapes this tool knows, one per provider. A label that is not
-// one of them is a bad invocation rather than an unreadable file: the caller named a
-// parser that does not exist.
+// Parsers lists the accepted --provider kinds. An unknown kind is an invocation
+// error, diagnosed before the source is read.
 var Parsers = []string{"google", "openai", "xai"}
 
 // KnownParser reports whether a --provider kind names a parser.
@@ -38,15 +34,9 @@ func KnownParser(name string) bool {
 // UTC days by any arithmetic and is refused rather than assumed.
 const zoneDeclaration = "# timezone:"
 
-// A shape is ONE provider's export, and the parser is chosen by the kind the caller
-// declared: `--provider google:ada=<file>` says this file is Google's export and Ada
-// downloaded it. One union of every provider's column names would accept a Google export
-// declared as xAI and write `provider:xai` beside numbers that parser never read -- the
-// column that makes a number traceable naming the wrong source.
-//
-// The names are the ones this family has seen; a real export that spells a column
-// differently is TOKENS UNREADABLE naming the parser and the column, which is a question
-// for the table and never a guess by this tool.
+// A shape gives one provider kind's accepted CSV column names. The caller chooses
+// the kind explicitly; a union of names would hide a mislabeled export. Unsupported
+// headers are refused with the parser's expected columns rather than guessed.
 type shape struct {
 	// columns are the type columns THIS export carries, and nothing else.
 	columns map[string]Type
@@ -118,11 +108,9 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 
 	zone := ""
 	var body []string
-	// fileLine maps a line of the COMMENT-STRIPPED text back to its line in the file.
-	// The `# timezone:` declaration and every other comment are dropped before the CSV
-	// reader sees them, so a record index was never a line in the file: an export whose
-	// declaration is line 1 reported its first data row (line 3) as line=2, and a quoted
-	// field carrying a newline made the count drift further with every one of them.
+	// fileLine maps comment-stripped CSV lines back to physical source lines.
+	// Comments and multiline quoted fields make record numbers unsuitable for
+	// diagnostics; FieldPos below supplies the line within the stripped input.
 	var fileLine []int
 	// A `#` is a comment only where a comment can be. Inside a quoted field a line is the
 	// field's own text, and deleting it parses the record from the wrong bytes: the

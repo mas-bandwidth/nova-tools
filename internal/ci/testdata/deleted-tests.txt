@@ -1332,13 +1332,13 @@ internal/swarm/signature_test.go the failure-signature table was read only by Ch
 internal/swarm/result_collision_test.go it held readFileSteadyBy's collision wait; the steady read had one caller left, nova-swarm verify, and went with it (renameSteady keeps the wait)
 cmd/nova-tokens/examplelines_test.go the compaction of 2026-10-02 merged it into fold_example_test.go (TestHelpFoldExampleIsComparedToOutput/every example line runs as printed), one build of the binary for both
 cmd/nova-tokens/avg_test.go the compaction of 2026-10-02 merged it into alldropped_test.go (TestAvgLinesPerModelAndAll), the fold's notes in one file
-cmd/nova-tokens/swarm_retry_test.go the compaction of 2026-10-02 merged it into alldropped_test.go (TestIssue181SwarmRetryAttemptIsItsOwnRow)
+cmd/nova-tokens/swarm_retry_test.go the compaction of 2026-10-02 merged it into alldropped_test.go (TestSwarmRetryAttemptIsItsOwnRow)
 cmd/nova-tokens/foldout_test.go the compaction of 2026-10-02 made it rows of audit_repairs_test.go's TestEveryPathAFlagCannotUseIsRefused
 cmd/nova-tokens/fold_lock_path_test.go the compaction of 2026-10-02 made it rows of audit_repairs_test.go's TestEveryPathAFlagCannotUseIsRefused
 cmd/nova-tokens/grok_fold_test.go the compaction of 2026-10-02 made it a row of xai_usage_test.go's TestGrokUsageFoldsToOneRowWithInOutUsd
 cmd/nova-tokens/grok_test.go the compaction of 2026-10-02 made it a row of xai_usage_test.go's TestGrokUsageFoldsToOneRowWithInOutUsd
-cmd/nova-tokens/issue1451_test.go the compaction of 2026-10-02 moved TestIssue1451EveryRefusalNamesTheDoor, whole, into help_test.go
-cmd/nova-tokens/issue1451version_test.go the compaction of 2026-10-02 made it the version_stray_argument row of help_test.go's TestIssue1451EveryRefusalNamesTheDoor
+cmd/nova-tokens/issue1451_test.go the compaction of 2026-10-02 moved TestEveryRefusalNamesTheDoor, whole, into help_test.go
+cmd/nova-tokens/issue1451version_test.go the compaction of 2026-10-02 made it the version_stray_argument row of help_test.go's TestEveryRefusalNamesTheDoor
 cmd/nova-tokens/polish_test.go the compaction of 2026-10-02 made it the report row of help_test.go's TestEveryVerbFlagHasADescription
 cmd/nova-tokens/verbhelp_test.go the compaction of 2026-10-02 moved TestEveryVerbAnswersHelpAndTouchesNothing, whole, into help_test.go
 cmd/nova-tokens/spec_drift_363_test.go the compaction of 2026-10-02 made it a row of help_test.go's TestTheSpecPromisesWhatTheToolPrints
