@@ -104,3 +104,35 @@ func TestAWrongTypeNamesItsPlace(t *testing.T) {
 		})
 	}
 }
+
+// A create over a dropped table whose saved definition differs is refused
+// with both ways out: the saved definition as the create that brings the
+// table back, and drop --definition, which forgets it, as the remedy (USE
+// defect 3: the remedy named set, which refuses a dropped table, and set's
+// remedy named create again). A present table keeps set as its remedy.
+func TestACreateOverADroppedDefinitionNamesBothWaysOut(t *testing.T) {
+	t.Parallel()
+	op := operation{table: "tmp1"}
+	for _, c := range []struct {
+		name  string
+		reply []any
+		want  []string
+	}{
+		{"a present table", []any{"REFUSED", "EXISTS"},
+			[]string{`table "tmp1": exists with another definition; run: nova-table set 'tmp1' --columns <columns>`}},
+		{"a dropped table", []any{"REFUSED", "EXISTS", "DROPPED", "0", "order", "a,b", "col:a", "count:sum:0:", "col:b", "text:none:7:Bee", "footer", ""},
+			[]string{`table "tmp1": exists with another definition: the table was dropped and keeps its saved definition until drop --definition;`,
+				`to bring it back as it was: nova-table create 'tmp1' --columns 'a:count:sum,b:text:none:Bee' --width 'b=7'`,
+				`; run: nova-table drop 'tmp1' --definition`}},
+		{"a dropped table at a later epoch", []any{"REFUSED", "EXISTS", "DROPPED", "3", "order", "a", "col:a", "count:sum:0:", "footer", "total"},
+			[]string{`nova-table create 'tmp1' --columns 'a:count:sum' --footer 'total'`, `; run: nova-table drop 'tmp1' --definition --epoch 3`}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			err := op.refused(c.reply)
+			assert.ErrorIs(t, err, ErrExists, "%s: %v", c.name, err)
+			for _, w := range c.want {
+				assert.Contains(t, fmt.Sprint(err), w, "%s", c.name)
+			}
+		})
+	}
+}

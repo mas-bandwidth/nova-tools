@@ -253,6 +253,42 @@ func dropDefinitionCommand(table string, epoch []any) string {
 	return cmd
 }
 
+// droppedDefinition is the create refused over a dropped table whose saved
+// definition differs (reply: the epoch, then the saved definition hash
+// flattened): drop keeps the definition until drop --definition, and set
+// refuses a dropped table, so the refusal names both ways out, the create that
+// brings the table back as it was and drop --definition, which forgets it.
+func droppedDefinition(table string, reply []any) (string, error) {
+	h := map[string]string{}
+	for i := 1; i+1 < len(reply); i += 2 {
+		h[fmt.Sprint(reply[i])] = fmt.Sprint(reply[i+1])
+	}
+	remedy := dropDefinitionCommand(table, reply[:1])
+	t, _, err := decodeDefinition(table, h)
+	if err != nil {
+		return remedy, say(ErrExists, "exists with another definition: the table was dropped and keeps its saved definition (%v) until drop --definition", err)
+	}
+	var cols, widths []string
+	for _, c := range t.Columns {
+		spec := c.Name + ":" + c.Projection + ":" + c.Fold
+		if c.Label != "" {
+			spec += ":" + c.Label
+		}
+		cols = append(cols, spec)
+		if c.Width != 0 {
+			widths = append(widths, c.Name+"="+strconv.Itoa(c.Width))
+		}
+	}
+	create := "nova-table create " + shellWord(table) + " --columns " + shellWord(strings.Join(cols, ","))
+	if t.FooterLabel != DefaultFooter {
+		create += " --footer " + shellWord(t.FooterLabel)
+	}
+	if len(widths) > 0 {
+		create += " --width " + shellWord(strings.Join(widths, ","))
+	}
+	return remedy, say(ErrExists, "exists with another definition: the table was dropped and keeps its saved definition until drop --definition; to bring it back as it was: %s", create)
+}
+
 // words joins the detail elements of a refusal reply.
 func words(detail []any) string {
 	parts := make([]string, len(detail))
@@ -348,6 +384,9 @@ func (o operation) refused(reply []any) error {
 	case typedrec.TableRefusalExists:
 		cause = ErrExists
 		remedy = "nova-table set " + shellWord(o.table) + " --columns <columns>"
+		if len(reply) > 3 && fmt.Sprint(reply[2]) == "DROPPED" {
+			remedy, cause = droppedDefinition(o.table, reply[3:])
+		}
 	case typedrec.TableRefusalNoRow:
 		cause = errors.New("no such row")
 	case typedrec.TableRefusalNoCol:

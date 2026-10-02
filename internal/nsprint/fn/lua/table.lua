@@ -484,6 +484,16 @@ do
   function T.active(cfg)
     return cfg.epoch_key == '' and '0' or (redis.call('HGET', cfg.epoch_key, cfg.epoch_field) or '0')
   end
+  -- T.exists(name, template): a create whose definition differs from the
+  -- saved one. A dropped table (absent at its active epoch) keeps its
+  -- definition until drop --definition, and set refuses it, so its refusal
+  -- carries the epoch and the saved definition: the client names the create
+  -- that brings it back and the drop --definition that forgets it.
+  function T.exists(name, template)
+    local active = T.active(T.config(template))
+    if redis.call('HGET', T.prefix(name, active) .. ':definition', '_present') ~= '0' then return T.refuse('EXISTS') end
+    return T.refuse('EXISTS', 'DROPPED', active, unpack(T.flat(template)))
+  end
   -- T.open(name, fields, historical, repair, orphan): the table's definition
   -- as the store holds it. A table that is gone while its identity hash is
   -- left (the orphan: an earlier build's drop --definition kept the identity)
@@ -508,10 +518,10 @@ do
       if next(template) then
         for k, v in pairs(fields) do
           if k ~= 'created_at' and k ~= 'epoch_key' and k ~= 'epoch_field' and k ~= 'member_prefix' and template[k] ~= v then
-            return nil, T.refuse('EXISTS')
+            return nil, T.exists(name, template)
           end
         end
-        if not T.sameconfig(template, fields) then return nil, T.refuse('EXISTS') end
+        if not T.sameconfig(template, fields) then return nil, T.exists(name, template) end
       end
     end
     local h = next(template) and template or fields

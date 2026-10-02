@@ -165,6 +165,15 @@ Table write verbs accept `--epoch <observed epoch>` (default 0), `--actor`,
 `table::member:`). Column visibility is managed via `set --hide/--show`; there
 are no separate `col hide/show` subverbs and `create` does not take `--hidden`.
 
+`drop <table>` keeps the saved definition (`table:<name>`) until
+`drop <table> --definition`. A `create` of the same definition brings a dropped
+table back; a `create` of another definition is refused `EXISTS`, and over a
+dropped table (absent at its active epoch, which `set` refuses) the refusal
+carries the epoch and the saved definition, so its words name the `create`
+that brings the table back as it was and its remedy is the
+`drop <table> --definition` that forgets it. Over a present table the remedy
+is `set --columns`.
+
 ---
 
 ## 4. Bounds and round-trip invariants
