@@ -49,6 +49,9 @@ var secretsAudit = audit.Config{
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strings"`,
 		// slices.Index finds exec's '--' delimiter; it writes nothing.
 		`"slices"`,
+		// names --json: tool.Out renders one JSON object through encoding/json, which
+		// escapes every control character, so nothing it writes can break the line.
+		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/secrets"`,

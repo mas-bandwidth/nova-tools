@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 const usage = `nova-secrets: encrypted secrets in a git repository, handed to one command at a time
@@ -28,7 +29,7 @@ made with git init and a .sops.yaml naming your key, and sops on PATH.
 usage:
   nova-secrets version  print this build identity (--version also accepted)
   nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
-  nova-secrets names  --store <dir> --as <name> [--max <n>]
+  nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
   nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
   nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
   nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
@@ -49,6 +50,7 @@ flags:
   --only <names|all>   comma-separated list of keys to deliver, or 'all' (exec only)
   --require <name>     assert key must be present in the file (repeatable)
   --max <n>            maximum items shown before MORE line (default 20, 0=unlimited)
+  --json               names only: the result as one JSON object on stdout, a refusal included
   --machine <name>     fleet machine to place a secret on (its target comes from --machines)
   --secret <name>      the key in <store>/<as>.yaml to copy to the machine
   --path <remote path> remote path to write; default <home>/.config/nova-secrets/<secret>.env
@@ -462,13 +464,18 @@ func runNamesCLI(args []string) {
 	storeFlag := fs.String("store", "", storeUse)
 	asFlag := fs.String("as", "", asUse)
 	maxFlag := fs.Int("max", 20, maxUse)
+	jsonFlag := fs.Bool("json", false, "print the result as one JSON object on stdout, a refusal included: result, facts, items, more")
 	parseFlags(fs, args)
 
-	okLine, names, more, err := secrets.RunNames(*storeFlag, *asFlag, *maxFlag)
+	r, err := secrets.RunNames(*storeFlag, *asFlag, *maxFlag)
+	if *jsonFlag {
+		os.Exit(namesJSON(os.Stdout, r, err))
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets names -h"))
 		os.Exit(2)
 	}
+	okLine, names, more := r.Lines()
 
 	for _, n := range names {
 		fmt.Println(n)
@@ -478,6 +485,29 @@ func runNamesCLI(args []string) {
 	}
 	fmt.Println(okLine)
 	os.Exit(0)
+}
+
+// namesJSON renders names' one value as JSON (STANDARD §2: one value, two renderings)
+// and returns the exit code: the key names and counts, never a value.
+func namesJSON(w io.Writer, r secrets.NamesReport, err error) int {
+	o := tool.Done()
+	if err != nil {
+		o = tool.Refuse(err.Error())
+		if !oneline.HasRemedy(err.Error()) {
+			o.Remedy = "nova-secrets names -h"
+		}
+	} else {
+		o.Fact("as", r.As).Fact("keys", r.Total).Fact("shown", len(r.Rows)).Fact("sealed", r.Sealed).Fact("clear", r.Clear)
+		for _, n := range r.Rows {
+			o.Item("key", "key", n.Name, "clear", n.Clear)
+		}
+		if len(r.Rows) < r.Total {
+			o.More = append(o.More, tool.More{Kind: "key", Shown: len(r.Rows), Total: r.Total, Remedy: tool.MaxRemedy})
+		}
+	}
+	o.Verb = "names"
+	o.Render(w, true)
+	return o.Exit
 }
 
 func runCheckCLI(args []string) {

@@ -9,23 +9,54 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
+// NameRow is one key name in a seat's file and whether the store keeps it in the clear.
+// It holds no value, sealed or clear.
+type NameRow struct {
+	Name  string
+	Clear bool
+}
+
+// NamesReport is what names found: the seat, the rows shown (at most --max), and the
+// counts over the whole file. Lines renders it as typed lines; the caller renders the
+// same value as JSON, so the two cannot drift.
+type NamesReport struct {
+	As, StoreDir         string
+	Rows                 []NameRow
+	Total, Sealed, Clear int
+}
+
+// Lines is the report as the typed lines names prints: one NAME line per row shown, a
+// MORE line when --max cut the list, and the OK line.
+func (r NamesReport) Lines() (okLine string, nameLines []string, moreLine string) {
+	for _, n := range r.Rows {
+		nameLines = append(nameLines, fmt.Sprintf("SECRETS NAME key=%s clear=%t", oneline.Field(n.Name), n.Clear))
+	}
+	if len(r.Rows) < r.Total {
+		moreLine = fmt.Sprintf("SECRETS NAMES MORE kind=key shown=%d total=%d run: nova-secrets names --store %s --as %s --max 0",
+			len(r.Rows), r.Total, oneline.Field(r.StoreDir), oneline.Field(r.As))
+	}
+	okLine = fmt.Sprintf("SECRETS NAMES OK as=%s keys=%d shown=%d sealed=%d clear=%d",
+		oneline.Field(r.As), r.Total, len(r.Rows), r.Sealed, r.Clear)
+	return okLine, nameLines, moreLine
+}
+
 // RunNames reads <store>/<as>.yaml without decrypting and reports top-level key names.
-func RunNames(storeDir, asName string, maxShown int) (okLine string, nameLines []string, moreLine string, err error) {
+func RunNames(storeDir, asName string, maxShown int) (NamesReport, error) {
 	if maxShown < 0 {
-		return "", nil, "", fmt.Errorf("--max %d is negative; expected non-negative integer", maxShown)
+		return NamesReport{}, fmt.Errorf("--max %d is negative; expected non-negative integer", maxShown)
 	}
 	if err := preflight(storeDir, need{storeDir, "--store <dir>", false}, need{asName, "--as <name>", true}); err != nil {
-		return "", nil, "", err
+		return NamesReport{}, err
 	}
 
 	targetFile := filepath.Join(storeDir, asName+".yaml")
 	if _, err := os.Stat(targetFile); err != nil {
-		return "", nil, "", seatAbsent(storeDir, asName)
+		return NamesReport{}, seatAbsent(storeDir, asName)
 	}
 
 	keys, _, _, err := ParseStoreFileWithoutDecrypting(targetFile)
 	if err != nil {
-		return "", nil, "", fmt.Errorf("unable to read %s: %w", targetFile, err)
+		return NamesReport{}, fmt.Errorf("unable to read %s: %w", targetFile, err)
 	}
 
 	// Sort keys alphabetically by name
@@ -33,33 +64,16 @@ func RunNames(storeDir, asName string, maxShown int) (okLine string, nameLines [
 		return keys[i].Name < keys[j].Name
 	})
 
-	totalKeys := len(keys)
-	sealedCount := 0
-	clearCount := 0
-	for _, k := range keys {
+	r := NamesReport{As: asName, StoreDir: storeDir, Total: len(keys)}
+	for i, k := range keys {
 		if k.Clear {
-			clearCount++
+			r.Clear++
 		} else {
-			sealedCount++
+			r.Sealed++
+		}
+		if maxShown == 0 || i < maxShown {
+			r.Rows = append(r.Rows, NameRow{Name: k.Name, Clear: k.Clear})
 		}
 	}
-
-	shown := totalKeys
-	if maxShown > 0 && totalKeys > maxShown {
-		shown = maxShown
-	}
-
-	for i := 0; i < shown; i++ {
-		nameLines = append(nameLines, fmt.Sprintf("SECRETS NAME key=%s clear=%t", oneline.Field(keys[i].Name), keys[i].Clear))
-	}
-
-	if maxShown > 0 && totalKeys > maxShown {
-		moreLine = fmt.Sprintf("SECRETS NAMES MORE kind=key shown=%d total=%d run: nova-secrets names --store %s --as %s --max 0",
-			shown, totalKeys, oneline.Field(storeDir), oneline.Field(asName))
-	}
-
-	okLine = fmt.Sprintf("SECRETS NAMES OK as=%s keys=%d shown=%d sealed=%d clear=%d",
-		oneline.Field(asName), totalKeys, shown, sealedCount, clearCount)
-
-	return okLine, nameLines, moreLine, nil
+	return r, nil
 }

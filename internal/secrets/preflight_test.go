@@ -27,7 +27,7 @@ func TestOneRefusalNamesEveryMissingFlag(t *testing.T) {
 		run   func() string
 		flags []string
 	}{
-		{"names", func() string { _, _, _, err := RunNames("", "", 20); return errText(err) }, []string{"--store", "--as"}},
+		{"names", func() string { _, err := RunNames("", "", 20); return errText(err) }, []string{"--store", "--as"}},
 		{"check", func() string { _, _, _, _, _, err := RunCheck("", "", "", "", 20); return errText(err) }, []string{"--store", "--as", "--key", "--sops"}},
 		{"seal", func() string { _, err := RunSeal(SealOptions{}); return errText(err) }, []string{"--store", "--as", "--key", "--sops", "--name"}},
 		{"place", func() string { _, err := RunPlace(PlaceInput{}); return errText(err) }, []string{"--machine", "--secret", "--store", "--as", "--key", "--sops"}},
@@ -58,7 +58,7 @@ func TestOneRefusalNamesEveryWayADirectoryIsNotAStore(t *testing.T) {
 		verb string
 		run  func(store, dir string) error
 	}{
-		{"names", func(s, _ string) error { _, _, _, err := RunNames(s, "a", 20); return err }},
+		{"names", func(s, _ string) error { _, err := RunNames(s, "a", 20); return err }},
 		{"check", func(s, d string) error {
 			_, _, _, _, _, err := RunCheck(s, "a", filepath.Join(d, "k"), filepath.Join(d, "sops"), 20)
 			return err
@@ -99,7 +99,7 @@ func TestOneRefusalNamesEveryWayADirectoryIsNotAStore(t *testing.T) {
 func TestABadSeatNameAndABadStoreAreOneRefusal(t *testing.T) {
 	t.Parallel()
 	store := filepath.Join(t.TempDir(), "absent")
-	_, _, _, err := RunNames(store, "../outside", 20)
+	_, err := RunNames(store, "../outside", 20)
 	got := errText(err)
 	assert.Contains(t, got, `invalid seat name "../outside" for --as`)
 	assert.Contains(t, got, "store "+store+" is not a directory")

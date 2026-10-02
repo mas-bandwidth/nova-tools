@@ -1,10 +1,15 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 )
 
 // TestEveryRefusalNamesItsWholeFix pins the refusals a cold reader meets first: each is
@@ -24,7 +29,7 @@ func TestEveryRefusalNamesItsWholeFix(t *testing.T) {
 			[]string{`unknown verb "bogus"`, "the verbs are exec, names, check, gate, keygen, place, placed, seal, seat add, seat inject, version", "run: nova-secrets help"}, nil},
 		{"a verb with a space is quoted plain", []string{"no such"}, 2, []string{`unknown verb "no such"`}, []string{`\x20`}},
 		{"unknown flag lists the verb's flags", []string{"names", "--stoer", "x"}, 2,
-			[]string{"unknown flag --stoer", "names takes --as, --max, --store", "run: nova-secrets names -h"}, []string{"flag provided but not defined"}},
+			[]string{"unknown flag --stoer", "names takes --as, --json, --max, --store", "run: nova-secrets names -h"}, []string{"flag provided but not defined"}},
 		{"a bad value says what the flag wants", []string{"names", "--max", "lots"}, 2,
 			[]string{"--max wants <n>", "the value given is not one"}, []string{"lots", "parse error"}},
 		{"a stray argument is named", []string{"check", "extra"}, 2, []string{`unexpected argument "extra"`, "check takes flags only", "run: nova-secrets check -h"}, nil},
@@ -51,6 +56,43 @@ func TestEveryRefusalNamesItsWholeFix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNamesJSONIsTheSameValueAndCarriesNoValue: names --json is the text form's value as
+// one JSON object (names, counts, the MORE cut), a refusal included, and neither form
+// carries a value, sealed or clear.
+func TestNamesJSONIsTheSameValueAndCarriesNoValue(t *testing.T) {
+	t.Parallel()
+	bin := buildNovaSecrets(t)
+	store := filepath.Join(t.TempDir(), "secrets")
+	require.NoError(t, os.MkdirAll(store, 0o755))
+	initGitStore(t, store)
+	const clearValue, sealedValue = "qzxjwkvbnmplqzxj", "pwqzkxjvmbnlrtzk"
+	for name, body := range map[string]string{
+		".sops.yaml": "creation_rules:\n  - path_regex: ^ada\\.yaml$\n    age: age1x\n",
+		"ada.yaml":   "A_TOKEN: ENC[AES256_GCM,data:" + sealedValue + ",type:str]\nB_USER: " + clearValue + "\nC_TOKEN: ENC[AES256_GCM,data:y,type:str]\nsops:\n    age: []\n",
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(store, name), []byte(body), 0o644))
+	}
+	stdout, stderr, code := runNovaSecrets(bin, "names", "--store", store, "--as", "ada", "--max", "2", "--json")
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.JSONEq(t, `{"result":{"verb":"names","status":"ok","exit":0},
+		"facts":{"as":"ada","keys":3,"shown":2,"sealed":2,"clear":1},
+		"items":[{"kind":"key","fields":{"key":"A_TOKEN","clear":false}},{"kind":"key","fields":{"key":"B_USER","clear":true}}],
+		"more":[{"kind":"key","shown":2,"total":3,"remedy":"--max <n> raises the ceiling, --max 0 lists all"}]}`, stdout)
+	text, _, code := runNovaSecrets(bin, "names", "--store", store, "--as", "ada", "--max", "2")
+	require.Equal(t, 0, code)
+	assert.Contains(t, text, "SECRETS NAMES OK as=ada keys=3 shown=2 sealed=2 clear=1")
+	for _, out := range []string{stdout, text} {
+		for _, v := range []string{clearValue, sealedValue} {
+			assert.False(t, secrets.Leaks(out, secrets.NewSecret(v)), "names printed a value: %s", out)
+		}
+	}
+
+	stdout, _, code = runNovaSecrets(bin, "names", "--store", store, "--as", "bo", "--json")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, stdout, `"status":"refused"`)
+	assert.Contains(t, stdout, "its seats are ada")
 }
 
 // TestEveryVerbHelpStatesItsEffectAndWhatEachFlagWants: every verb's -h says which kind
