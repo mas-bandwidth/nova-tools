@@ -238,6 +238,11 @@ func decodeBox(data []byte) (Box, error) {
 			return Box{}, err
 		}
 		k, _ := tok.(string)
+		// Note 2: struct decoding also accepts case-folded field names. Check
+		// the exact spelling here so an alias cannot overwrite a blown fuse.
+		if k != "lockdown" && k != "quarantine" {
+			return Box{}, fmt.Errorf("unknown key %q", k)
+		}
 		if seen[k] {
 			return Box{}, fmt.Errorf("key %q given twice", k)
 		}
