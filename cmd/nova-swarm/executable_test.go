@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -29,12 +31,8 @@ func TestIsExecutableAsksThePlatformsOwnRule(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		runnable += ".exe"
 	}
-	if err := testbin.WriteExecutable(runnable, []byte("binary\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if !isExecutable(runnable) {
-		t.Fatalf("a file this platform runs is executable: %s was refused", runnable)
-	}
+	require.NoError(t, testbin.WriteExecutable(runnable, []byte("binary\n"), 0o755))
+	require.True(t, isExecutable(runnable), "a file this platform runs is executable: %s was refused", runnable)
 
 	// (2) A FILE THE PLATFORM WILL NOT RUN. On unix, a regular file with no execute bit.
 	// On windows the bit does not exist, so the refusable file is one whose extension is
@@ -45,17 +43,11 @@ func TestIsExecutableAsksThePlatformsOwnRule(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		mode = 0o755
 	}
-	if err := os.WriteFile(notRunnable, []byte("data\n"), mode); err != nil {
-		t.Fatal(err)
-	}
-	if isExecutable(notRunnable) {
-		t.Fatalf("a file this platform will not run is not executable: %s was admitted", notRunnable)
-	}
+	require.NoError(t, os.WriteFile(notRunnable, []byte("data\n"), mode))
+	require.False(t, isExecutable(notRunnable), "a file this platform will not run is not executable: %s was admitted", notRunnable)
 
 	// (3) A DIRECTORY IS NEVER EXECUTABLE, whatever its mode -- 0755 on every platform.
-	if isExecutable(dir) {
-		t.Fatalf("a directory is never executable: %s was admitted", dir)
-	}
+	require.False(t, isExecutable(dir), "a directory is never executable: %s was admitted", dir)
 
 	// (4) A PATH THAT IS NOT THERE IS NOT EXECUTABLE. `native` names that case "missing"
 	// before it asks this question; the helper must not claim otherwise if anyone else does.
@@ -63,9 +55,7 @@ func TestIsExecutableAsksThePlatformsOwnRule(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		gone += ".exe"
 	}
-	if isExecutable(gone) {
-		t.Fatalf("a path with no file behind it is not executable: %s was admitted", gone)
-	}
+	require.False(t, isExecutable(gone), "a path with no file behind it is not executable: %s was admitted", gone)
 }
 
 // THE WINDOWS RULE, HELD TO ITS CONTRACT ON EVERY PLATFORM. executableByExtension is written
@@ -102,9 +92,8 @@ func TestExecutableByExtensionIsTheWindowsRule(t *testing.T) {
 		// A PATHEXT that does not name the suffix refuses it, however common the suffix is.
 		{`C:\tmp\fake-harness.exe`, ".BAT;.CMD", false},
 	} {
-		if got := executableByExtension(tc.path, tc.pathext); got != tc.want {
-			t.Fatalf("executableByExtension(%q, PATHEXT=%q) = %v, want %v", tc.path, tc.pathext, got, tc.want)
-		}
+		got := executableByExtension(tc.path, tc.pathext)
+		require.Equal(t, tc.want, got, "executableByExtension(%q, PATHEXT=%q) = %v, want %v", tc.path, tc.pathext, got, tc.want)
 	}
 }
 
@@ -132,17 +121,10 @@ func TestIsExecutableUnixBits(t *testing.T) {
 		{0o001, true}, // other execute alone
 	} {
 		path := filepath.Join(dir, "bin")
-		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(path, tc.mode); err != nil {
-			t.Fatal(err)
-		}
-		if got := isExecutable(path); got != tc.want {
-			t.Fatalf("mode %04o: isExecutable = %v, want %v", tc.mode, got, tc.want)
-		}
-		if err := os.Remove(path); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
+		require.NoError(t, os.Chmod(path, tc.mode))
+		got := isExecutable(path)
+		require.Equal(t, tc.want, got, "mode %04o: isExecutable = %v, want %v", tc.mode, got, tc.want)
+		require.NoError(t, os.Remove(path))
 	}
 }
