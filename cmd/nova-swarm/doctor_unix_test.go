@@ -27,15 +27,13 @@ import (
 func reapRecordedChildren(t *testing.T, pidFile string) {
 	t.Helper()
 	raw, err := os.ReadFile(pidFile)
-	if err != nil {
-		t.Errorf("the stub recorded no child pid: %v", err)
+	if !assert.NoError(t, err, "the stub recorded no child pid: %v", err) {
 		return
 	}
 	var pids []int
 	for _, field := range strings.Fields(string(raw)) {
 		pid, err := strconv.Atoi(field)
-		if err != nil || pid <= 1 {
-			t.Errorf("the pid file holds %q, want one pid per line", field)
+		if !assert.NoError(t, err, "the pid file holds %q, want one pid per line", field) || !assert.Greater(t, pid, 1, "the pid file holds %q, want one pid per line", field) {
 			continue
 		}
 		pids = append(pids, pid)
@@ -68,12 +66,12 @@ func TestPreflightReadsABinaryWhoseChildHoldsThePipe(t *testing.T) {
 	require.False(t, stop, "preflight(exit=%d, stop=%v), want (0, false)\n%s", code, stop, errOut.String())
 	require.Equal(t, 0, code, "preflight(exit=%d, stop=%v), want (0, false)\n%s", code, stop, errOut.String())
 	var out, derr bytes.Buffer
-	if code := env.cmdDoctor(nil, &out, &derr); code != 0 || out.String() != "DOCTOR OK stamp=nova-swarm good-stamp\n" {
-		t.Errorf("doctor: exit %d, stdout %q, stderr %q", code, out.String(), derr.String())
-	}
-	if raw, err := os.ReadFile(pidFile); err != nil || len(strings.Fields(string(raw))) != 2 {
-		t.Errorf("the stub ran twice and should have recorded two children, got %q (%v)", raw, err)
-	}
+	code = env.cmdDoctor(nil, &out, &derr)
+	assert.Equal(t, 0, code, "doctor: exit %d, stdout %q, stderr %q", code, out.String(), derr.String())
+	assert.Equal(t, "DOCTOR OK stamp=nova-swarm good-stamp\n", out.String(), "doctor: exit %d, stdout %q, stderr %q", code, out.String(), derr.String())
+	raw, err := os.ReadFile(pidFile)
+	assert.NoError(t, err, "the stub ran twice and should have recorded two children, got %q (%v)", raw, err)
+	assert.Len(t, strings.Fields(string(raw)), 2, "the stub ran twice and should have recorded two children, got %q (%v)", raw, err)
 }
 
 // A binary that prints its stamp and then hangs is read for the stamp and reported for the
@@ -142,7 +140,7 @@ func TestPreflightComparesTheStampOfABinaryThatPrintsThenHangs(t *testing.T) {
 	for _, want := range []string{"DOCTOR DRIFT path=", "stale-stamp", "shadows", "DOCTOR UNREADABLE", "timed out after 2s"} {
 		assert.Contains(t, got, want, "stderr lacks %q:\n%s", want, got)
 	}
-	if dcode != 2 || out.Len() != 0 || derr.String() != got {
-		t.Errorf("doctor exit %d, want 2 with the preflight's finding\nstdout: %q\nstderr: %q\nwant stderr: %q", dcode, out.String(), derr.String(), got)
-	}
+	assert.Equal(t, 2, dcode, "doctor exit %d, want 2 with the preflight's finding\nstdout: %q\nstderr: %q\nwant stderr: %q", dcode, out.String(), derr.String(), got)
+	assert.Equal(t, 0, out.Len(), "doctor exit %d, want 2 with the preflight's finding\nstdout: %q\nstderr: %q\nwant stderr: %q", dcode, out.String(), derr.String(), got)
+	assert.Equal(t, got, derr.String(), "doctor exit %d, want 2 with the preflight's finding\nstdout: %q\nstderr: %q\nwant stderr: %q", dcode, out.String(), derr.String(), got)
 }

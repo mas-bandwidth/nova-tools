@@ -44,8 +44,9 @@ func TestSlotsInitMakesAStoreTheLeaseCodeCanRead(t *testing.T) {
 	require.NoError(t, err)
 	got, want := string(raw), "capacity\t1\nreserve\t0\nswarm-space\t1\n"
 	assert.Equal(t, want, got, "shares.tsv is\n%q\nwant\n%q", got, want)
-	if fi, err := os.Stat(filepath.Join(store, "slots")); err != nil || !fi.IsDir() {
-		t.Errorf("init makes the slots/ directory a lease is written into: %v", err)
+	fi, err := os.Stat(filepath.Join(store, "slots"))
+	if assert.NoError(t, err, "init makes the slots/ directory a lease is written into: %v", err) {
+		assert.True(t, fi.IsDir(), "init makes the slots/ directory a lease is written into: %v", err)
 	}
 }
 

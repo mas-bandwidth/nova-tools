@@ -28,9 +28,8 @@ func TestProviderLaunchFailureReadsTheProviderTail(t *testing.T) {
 	}
 	for _, c := range cases {
 		ref, ok := ProviderLaunchFailure([]byte(c.tail))
-		if ok != c.wantOK || ref != c.wantRef {
-			t.Errorf("ProviderLaunchFailure(%q) = (%q,%t), want (%q,%t)", c.tail, ref, ok, c.wantRef, c.wantOK)
-		}
+		assert.Equal(t, c.wantOK, ok, "ProviderLaunchFailure(%q) = (%q,%t), want (%q,%t)", c.tail, ref, ok, c.wantRef, c.wantOK)
+		assert.Equal(t, c.wantRef, ref, "ProviderLaunchFailure(%q) = (%q,%t), want (%q,%t)", c.tail, ref, ok, c.wantRef, c.wantOK)
 	}
 }
 

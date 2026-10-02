@@ -2,6 +2,7 @@ package driver
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"strings"
 	"time"
@@ -51,9 +52,7 @@ var Aliases = map[string][]string{"flap": {"down", "up"}}
 // by flag name; a chance outside 0 to 1 is refused, naming its flag.
 func Set(simulation bool, given map[string]float64) (Chances, error) {
 	named := map[string]float64{}
-	for k, v := range given {
-		named[k] = v
-	}
+	maps.Copy(named, given)
 	for alias, flags := range Aliases {
 		v, ok := given[alias]
 		if !ok {

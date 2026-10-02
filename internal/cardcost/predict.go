@@ -1,6 +1,9 @@
 package cardcost
 
-import "math/big"
+import (
+	"math/big"
+	"slices"
+)
 
 // Unreported is a token count, request count or prompt size the harness did not
 // report: an absence, never a zero.
@@ -29,12 +32,7 @@ func None() Tokens {
 
 // Reported says the harness reported a token class of the run.
 func (t Tokens) Reported() bool {
-	for _, n := range []int64{t.Input, t.CacheRead, t.CacheWrite, t.Output, t.Reasoning} {
-		if n >= 0 {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc([]int64{t.Input, t.CacheRead, t.CacheWrite, t.Output, t.Reasoning}, func(n int64) bool { return n >= 0 })
 }
 
 // Total is the run's tokens over the classes reported.

@@ -1,6 +1,9 @@
 package swarm
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // THE CONTRACT LINE HAS ONE FORM, AND THIS IS THE ONE PLACE THAT SAYS SO (issue #1741,
 // SPEC-TOOLWORK.md §5 rule 7).
@@ -43,12 +46,7 @@ var CardContractPrefixes = []string{"RESULT: ", "RESULT "}
 // IsCardContractLine says whether line 1 of a card is a contract line in either form.
 // The prefix is anchored at column 0: an indented or quoted RESULT is prose.
 func IsCardContractLine(line string) bool {
-	for _, p := range CardContractPrefixes {
-		if strings.HasPrefix(line, p) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(CardContractPrefixes, func(p string) bool { return strings.HasPrefix(line, p) })
 }
 
 // CardContractWanted is what `result-first` wants, in ONE form, for the remedy line and

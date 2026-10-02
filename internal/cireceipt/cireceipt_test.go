@@ -2,7 +2,6 @@ package cireceipt
 
 import (
 	"context"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -26,40 +25,28 @@ func full() Receipt {
 func TestReceiptFieldsAreTheRowTheReaderReads(t *testing.T) {
 	t.Parallel()
 	r := full()
-	if err := r.Validate(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, r.Validate())
 	got, err := ghevent.Fields(r.Entry())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := map[string]interface{}{
 		"repo": "mas-bandwidth/nova-tools", "kind": "workflow_run", "number": "4493", "head": sha,
 		"action": "completed", "at": "2026-09-28T02:00:00Z", "sender": "runner", "comment_id": "",
 		"run_id": "123456789", "workflow": "CI-run", "status": "completed", "conclusion": "success",
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("XADD fields\n got %v\nwant %v", got, want)
-	}
-	if line := Line(r, "1-0"); line != "CI RECEIPT mas-bandwidth/nova-tools sha="+sha+" run=123456789 workflow=CI-run conclusion=success pr=4493 ev=1-0" {
-		t.Fatalf("line %q", line)
-	}
+	require.Equal(t, want, got, "XADD fields\n got %v\nwant %v", got, want)
+	line := Line(r, "1-0")
+	require.Equal(t, "CI RECEIPT mas-bandwidth/nova-tools sha="+sha+" run=123456789 workflow=CI-run conclusion=success pr=4493 ev=1-0", line, "line %q", line)
 }
 
 func TestReceiptWithoutAPullRequestHasAnEmptyNumber(t *testing.T) {
 	t.Parallel()
 	r := full()
 	r.PR, r.At = "", "2026-09-27T12:00:00Z"
-	if err := r.Validate(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, r.Validate())
 	got, _ := ghevent.Fields(r.Entry())
-	if got["number"] != "" || got["at"] != "2026-09-27T12:00:00Z" {
-		t.Fatalf("number %q at %q", got["number"], got["at"])
-	}
-	if !strings.Contains(Line(r, "1-0"), " pr=- ") {
-		t.Fatalf("line %q", Line(r, "1-0"))
-	}
+	require.Equal(t, "", got["number"], "number %q at %q", got["number"], got["at"])
+	require.Equal(t, "2026-09-27T12:00:00Z", got["at"], "number %q at %q", got["number"], got["at"])
+	require.Contains(t, Line(r, "1-0"), " pr=- ", "line %q", Line(r, "1-0"))
 }
 
 func TestReceiptRefusesEachFieldWithWhatItWants(t *testing.T) {
@@ -81,9 +68,8 @@ func TestReceiptRefusesEachFieldWithWhatItWants(t *testing.T) {
 	} {
 		r := full()
 		c.edit(&r)
-		if err := r.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("want %q, got %v", c.want, err)
-		}
+		err := r.Validate()
+		assert.ErrorContains(t, err, c.want, "want %q, got %v", c.want, err)
 	}
 }
 
@@ -102,7 +88,6 @@ func TestReceiptRefusesEveryFieldInOneError(t *testing.T) {
 
 func TestWriteWithNoClientWritesNothing(t *testing.T) {
 	t.Parallel()
-	if _, err := Write(context.Background(), nil, full()); err == nil {
-		t.Fatal("Write with no client did not refuse")
-	}
+	_, err := Write(context.Background(), nil, full())
+	require.Error(t, err, "Write with no client did not refuse")
 }

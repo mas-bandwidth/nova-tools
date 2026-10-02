@@ -112,8 +112,6 @@ func (s *started) Wait() (int, error) {
 func (s *started) Kill() error { return s.cmd.Process.Kill() }
 
 func firstWords(args []string, n int) string {
-	if len(args) < n {
-		n = len(args)
-	}
+	n = min(n, len(args))
 	return strings.Join(args[:n], " ")
 }

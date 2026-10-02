@@ -28,6 +28,7 @@ package swarm
 // card MOVED PAST is not what killed it, whatever order the lines are in.
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -189,12 +190,12 @@ func (r *WallReader) Write(p []byte) (int, error) {
 	r.buf = append(r.buf, p...)
 	var say string
 	for {
-		i := strings.IndexByte(string(r.buf), '\n')
-		if i < 0 {
+		raw, rest, found := bytes.Cut(r.buf, []byte{'\n'})
+		if !found {
 			break
 		}
-		line := strings.TrimSpace(stripPaint(string(r.buf[:i])))
-		r.buf = r.buf[i+1:]
+		line := strings.TrimSpace(stripPaint(string(raw)))
+		r.buf = rest
 		if line == "" {
 			continue
 		}

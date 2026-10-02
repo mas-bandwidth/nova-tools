@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -23,12 +24,7 @@ type Entry struct {
 }
 
 func kindValid(s string) bool {
-	for _, k := range Kinds {
-		if k == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(Kinds, s)
 }
 func argv(s string) ([]string, error) {
 	if s == "" || strings.TrimSpace(s) != s || strings.Contains(s, "  ") || strings.ContainsAny(s, "\r\n\t\"'") {

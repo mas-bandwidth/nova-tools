@@ -72,9 +72,8 @@ func TestTheNoneSourceReportsNothing(t *testing.T) {
 
 	usage, err := ReadProviderUsage(UsageNone, t.TempDir())
 	require.NoError(t, err, "`usage: none` is not an error: %v", err)
-	if usage.Observed || len(usage.Values) != 0 {
-		t.Errorf("`usage: none` observes nothing: %+v", usage)
-	}
+	assert.False(t, usage.Observed, "`usage: none` observes nothing: %+v", usage)
+	assert.Empty(t, usage.Values, "`usage: none` observes nothing: %+v", usage)
 }
 
 // TestFakeSQLite3FlushMarkerMatchesTheFake keeps the copied constant honest: the fake's own
@@ -135,8 +134,8 @@ func TestASlowFirstReadDoesNotSpendTheSettleWindow(t *testing.T) {
 	rows, err := w.read(db)
 	require.NoError(t, err, "a first read slower than the window still gets to wait out the flush: %v", err)
 	assert.Equal(t, 2, attempts, "the reader made %d attempts, want 2: the refusal that starts the waiting is not the end of it", attempts)
-	if len(rows) != 1 || rows[0][2] != "100" {
-		t.Errorf("the retry's rows are the reading: %v", rows)
+	if assert.Len(t, rows, 1, "the retry's rows are the reading: %v", rows) {
+		assert.Equal(t, "100", rows[0][2], "the retry's rows are the reading: %v", rows)
 	}
 }
 
@@ -166,9 +165,8 @@ func TestAWriteAheadLogThatOutlastsTheWindowIsStillARefusal(t *testing.T) {
 	// Five seconds of waiting in fifty-millisecond pauses: the first read plus at most one
 	// attempt per pause, and never an endless loop.
 	most := 1 + int(5*time.Second/(50*time.Millisecond))
-	if attempts < 2 || attempts > most {
-		t.Errorf("the reader made %d attempts, want at least 2 (it waited) and at most %d (it stopped)", attempts, most)
-	}
+	assert.GreaterOrEqual(t, attempts, 2, "the reader made %d attempts, want at least 2 (it waited) and at most %d (it stopped)", attempts, most)
+	assert.LessOrEqual(t, attempts, most, "the reader made %d attempts, want at least 2 (it waited) and at most %d (it stopped)", attempts, most)
 }
 
 // EVERY RETRY IS BOUNDED BY WHAT IS LEFT OF THE WINDOW (Stella's HOLD on #1551).

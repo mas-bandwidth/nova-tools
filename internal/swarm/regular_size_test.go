@@ -101,10 +101,11 @@ func TestReadRegularMaxRecordBoundary(t *testing.T) {
 	p := filepath.Join(dir, "max_plus_one.log")
 	f, err := os.Create(p)
 	require.NoError(t, err)
-	if err := f.Truncate(int64(MaxRegularRecord + 1)); err != nil {
+	err = f.Truncate(int64(MaxRegularRecord + 1))
+	if err != nil {
 		f.Close()
-		t.Fatal(err)
 	}
+	require.NoError(t, err)
 	f.Close()
 
 	got, err := readRegular(p)

@@ -3,7 +3,7 @@ package tablemodel
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"maps"
 )
 
 // The observed state of the store in the model's vocabulary, and its JSON
@@ -81,9 +81,7 @@ func (s State) Clone() State {
 	for _, p := range s.Place {
 		c.Place = append(c.Place, Placement{p.Member, append([]Location{}, p.Locations...)})
 	}
-	for k, v := range s.Seen {
-		c.Seen[k] = v
-	}
+	maps.Copy(c.Seen, s.Seen)
 	return c
 }
 
@@ -169,14 +167,4 @@ func (p *Placement) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	return decode(parts, &p.Member, &p.Locations)
-}
-
-// sortedKeys returns the keys of m in order.
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

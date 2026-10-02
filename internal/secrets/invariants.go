@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -102,14 +103,7 @@ func CheckInvariant1(storeDir string, sopsCfg *SopsConfig, recoveryKey string) [
 				Reason: fmt.Sprintf("rule for %s has %d recipients; expected exactly 2 (one seat key and declared recovery key)", label, len(rule.Recipients)),
 			})
 		} else if recoveryKey != "" {
-			hasRecovery := false
-			for _, rec := range rule.Recipients {
-				if rec == recoveryKey {
-					hasRecovery = true
-					break
-				}
-			}
-			if !hasRecovery {
+			if !slices.Contains(rule.Recipients, recoveryKey) {
 				failures = append(failures, CheckFailure{
 					Kind:   "rule-shape",
 					File:   ".sops.yaml",
@@ -229,15 +223,7 @@ func CheckInvariant4(storeDir, sopsPath, keyPath, seatPubKey string, files []str
 			continue
 		}
 
-		isMine := false
-		for _, r := range fileRecipients {
-			if r == seatPubKey {
-				isMine = true
-				break
-			}
-		}
-
-		if isMine {
+		if slices.Contains(fileRecipients, seatPubKey) {
 			mineCount++
 			_, decErr := DecryptFile(sopsPath, keyPath, filePath)
 			if decErr != nil {

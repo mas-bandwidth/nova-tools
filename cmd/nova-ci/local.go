@@ -41,6 +41,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
@@ -252,12 +253,9 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner, selec
 // localHasTarget reports whether a Makefile declares target as a rule at the
 // start of a line (`test:` or `test: PKGS := ...`).
 func localHasTarget(makefile []byte, target string) bool {
-	for _, line := range strings.Split(string(makefile), "\n") {
-		if strings.HasPrefix(line, target+":") && !strings.HasPrefix(line, target+":=") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(string(makefile), "\n"), func(line string) bool {
+		return strings.HasPrefix(line, target+":") && !strings.HasPrefix(line, target+":=")
+	})
 }
 
 // localWhy renders why a step failed: the start error, else its stderr, else

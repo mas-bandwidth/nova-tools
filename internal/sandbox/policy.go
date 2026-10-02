@@ -9,6 +9,7 @@ package sandbox
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -222,12 +224,9 @@ func OptionalRoots(command string) []string {
 
 // underAny reports whether path is one of the prefixes or lies beneath one.
 func underAny(path string, prefixes []string) bool {
-	for _, p := range prefixes {
-		if path == p || strings.HasPrefix(path, p+string(os.PathSeparator)) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(prefixes, func(p string) bool {
+		return path == p || strings.HasPrefix(path, p+string(os.PathSeparator))
+	})
 }
 
 // xcodeSelectDeveloperDirs is the directory /var/db/xcode_select_link points at,
@@ -393,12 +392,7 @@ func Inside(path, dir string) bool {
 
 // insideAny is Inside over a list, and it is what rules 9 and 13 ask of HOME and --cwd.
 func insideAny(path string, dirs []string) bool {
-	for _, d := range dirs {
-		if Inside(path, d) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(dirs, func(d string) bool { return Inside(path, d) })
 }
 
 // sbplMetacharacters are the characters a path may not carry ON DARWIN. The ancestor
@@ -971,10 +965,5 @@ func ancestors(dir func(string) string, paths ...string) []string {
 			seen[d] = true
 		}
 	}
-	out := make([]string, 0, len(seen))
-	for d := range seen {
-		out = append(out, d)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(seen))
 }

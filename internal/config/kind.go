@@ -16,7 +16,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -514,9 +516,7 @@ type Row struct {
 // Clone copies a row.
 func (r Row) Clone() Row {
 	out := Row{Name: r.Name, Fields: make(map[string]string, len(r.Fields)), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
-	for k, v := range r.Fields {
-		out.Fields[k] = v
-	}
+	maps.Copy(out.Fields, r.Fields)
 	return out
 }
 
@@ -723,12 +723,7 @@ func splitList(raw string) ([]string, error) {
 
 // hasWord reports whether the comma list holds the word.
 func hasWord(list, word string) bool {
-	for _, w := range strings.Split(list, ",") {
-		if w == word {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(list, ","), word)
 }
 
 // NewRow builds a canonical row of the kind from raw flag values: every

@@ -26,6 +26,7 @@ package main
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 
@@ -178,12 +179,7 @@ func (h libraryHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.P
 }
 
 func anyMissing(cmds []redis.Cmder) bool {
-	for _, cmd := range cmds {
-		if missing(cmd, cmd.Err()) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(cmds, func(cmd redis.Cmder) bool { return missing(cmd, cmd.Err()) })
 }
 
 func allMissing(cmds []redis.Cmder) bool {

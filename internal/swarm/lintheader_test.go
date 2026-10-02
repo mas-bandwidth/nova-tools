@@ -102,9 +102,8 @@ func TestCardHeaderNoTestLineDrawsTestNamed(t *testing.T) {
 	h := []string{fullHeader()[0], fullHeader()[1], fullHeader()[3], fullHeader()[4]}
 	fs := LintCardHeader(typedCard(h...), nil, false)
 	drew(t, fs, "test-named")
-	if checks(fs)["kind-declared"] || checks(fs)["paths-declared"] {
-		t.Errorf("only the TEST: line is missing, drew %v", checks(fs))
-	}
+	assert.False(t, checks(fs)["kind-declared"], "only the TEST: line is missing, drew %v", checks(fs))
+	assert.False(t, checks(fs)["paths-declared"], "only the TEST: line is missing, drew %v", checks(fs))
 }
 
 // The parser refuses a TEST: value that is not `<package> <TestName>` and not `none`

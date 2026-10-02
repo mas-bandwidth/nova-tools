@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -469,9 +470,7 @@ func (p *PG) Update(ctx context.Context, kind, name string, changes map[string]s
 		return Row{}, 0, &RefusedError{Err: ErrNotFound, Detail: fmt.Sprintf("%s %s not found", kind, name)}
 	}
 	next := cur.Clone()
-	for f, v := range changes {
-		next.Fields[f] = v
-	}
+	maps.Copy(next.Fields, changes)
 	if err := checkRefs(ctx, p, k, next); err != nil {
 		return Row{}, 0, err
 	}

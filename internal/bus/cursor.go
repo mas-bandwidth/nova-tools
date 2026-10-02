@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,12 +99,7 @@ func isLaneDoc(name string) bool { return name == LaneDocName }
 const TempSuffix = ".tmp"
 
 func isLaneStateFile(name string) bool {
-	for _, s := range laneStateFiles {
-		if name == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(laneStateFiles, name)
 }
 
 // isLaneStateTemp reports whether a name is a lane state file's stranded temporary. Only
