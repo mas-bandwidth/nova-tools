@@ -712,8 +712,9 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	deadline := fs.Duration("deadline", defaultDeadline, "a judgment open longer is overdue")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled")
 	atEpoch := fs.Int64("at-epoch", -1, "the inbox as it was at an earlier epoch (before a clear)")
-	wait := fs.Bool("wait", false, "block until the next tick-end note (the tick addressed the coordinator something), then show the inbox")
-	timeout := fs.Duration("timeout", 5*time.Minute, "with --wait, the longest wait; the inbox is shown when it passes")
+	wait := fs.Bool("wait", false, "block until a judgment, or a note to the coordinator, that was not in the inbox when the wait began (a held judgment never wakes it), or the machine stops; then show the inbox, saying what is new")
+	timeout := fs.Duration("timeout", 5*time.Minute, "with --wait, the longest wait; the inbox is shown when it passes (with --push, how often the loop looks at the machine)")
+	push := fs.String("push", "", "with --wait, keep running (until interrupted): each new judgment and note to the coordinator is written once as <dir>/<note id>.md, the group as inbox --open prints it and the clock; the files there are the cursor, so a restart pushes nothing twice; a local write")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "inbox", argErr("takes no words ", err, pos...))
@@ -721,12 +722,15 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	if *read && *atEpoch >= 0 {
 		return refuse(stderr, "inbox", "--read moves the cursor of the sprint's epoch, and --at-epoch reads an earlier one as it was: give one of them")
 	}
+	if *push != "" && (!*wait || *read || *open != "" || *atEpoch >= 0) {
+		return refuse(stderr, "inbox", "--push <dir> runs with --wait alone, a loop that writes each new judgment to the directory: it takes no --read, --open or --at-epoch")
+	}
 	if *read && *wait && a.server(fs) != "" {
 		// the cursor is the server's to move, and a wait never runs on the server (waits)
 		return refuse(stderr, "inbox", "--read moves the cursor, which the sprint's server (NOVA_SPRINT_SERVER) moves, and --wait waits where it is typed, never on the server: run nova-sprint inbox --wait, then nova-sprint inbox --read; nothing was changed")
 	}
 	if addr := a.server(fs); addr != "" && *wait {
-		return a.inboxWaitAt(addr, fs, args, *atEpoch, *timeout, c.json, stdout, stderr)
+		return a.inboxWaitAt(addr, fs, args, *atEpoch, *timeout, *push, c.json, stdout, stderr)
 	}
 	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {
@@ -755,30 +759,32 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "inbox", twinMachine)
 	}
 	woke := false
+	var fresh []sprint.Group
 	if *wait {
-		// the coordinator's one wake a tick (errata 3 amendment 8): the next
-		// tick-end note after the notes as they stand now
+		// the coordinator's one wake (errata 3 amendment 8): the tick-end
+		// notes are slept on, and the first that brings something new for
+		// the coordinator ends the wait (inboxwait.go)
 		if *atEpoch >= 0 || *timeout <= 0 {
 			return refuse(stderr, "inbox", "--wait waits on the sprint's epoch for at most a --timeout above zero")
 		}
-		_, from, err := st.B.Tails(ctx)
+		src, err := a.storeSource(ctx, st, *deadline, *stale)
 		if err != nil {
 			return a.readFailed("inbox", err, stderr)
 		}
-		woke, err = st.WaitTickEnd(ctx, from, *timeout)
+		if *push != "" {
+			return a.pushLoop(ctx, src, *push, *timeout, c.json, stdout, stderr)
+		}
+		groups, machine, err := src.inbox(ctx, "")
 		if err != nil {
 			return a.readFailed("inbox", err, stderr)
 		}
-		if !woke {
-			// the timeout is said to the person on the stream that is theirs:
-			// stdout in the plain rendering, stderr under --json (stdout stays
-			// one JSON object, which carries woke=false as well)
-			w := stdout
-			if c.json {
-				w = stderr
-			}
-			fmt.Fprintf(w, "inbox --wait: no tick end in %s\n", *timeout)
+		var after string
+		if fresh, after, err = a.waitNew(ctx, src, seenKeys(groups), machine == machineRunning, *timeout); err != nil {
+			return a.waitFailed(err, stderr)
 		}
+		stopped := machine == machineRunning && after != machineRunning
+		woke = len(fresh) > 0 || stopped
+		sayWoke(fresh, stopped, *timeout, c.json, stdout, stderr)
 	}
 	v, err := st.Inbox(ctx, *deadline, *stale, 10000)
 	if err != nil {
@@ -809,9 +815,9 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		out := map[string]any{"groups": groups, "judgments": judgments, "happened": happened, "done": mach.Done(),
 			"last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": machine}
 		if *wait {
-			// the timeout is in both renderings: the line above, and woke=false
-			// here (the one-value rule)
-			out["woke"] = woke
+			// how the wait ended is in both renderings: the line above, and
+			// woke with the new groups' ids here (the one-value rule)
+			out["woke"], out["new"] = woke, idsOf(fresh)
 		}
 		if opened != nil {
 			out["open"] = nonNil(opened.Members)
@@ -831,25 +837,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		} else {
 			other++
 		}
-		fmt.Fprintln(stdout, groupLine(g, now))
-		if g.Hint != "" {
-			fmt.Fprintf(stdout, "  %s\n", oneline.Escape(g.Hint))
-		}
-		for _, cmd := range g.Commands {
-			fmt.Fprintf(stdout, "  %s:\n", oneline.Escape(cmd.Decision))
-			for _, l := range cmd.Lines {
-				fmt.Fprintf(stdout, "    %s\n", oneline.Escape(l))
-			}
-		}
-		if opened != nil && g.ID == opened.ID {
-			for _, m := range g.Members {
-				fmt.Fprintf(stdout, "  %s\n", oneline.Escape(m))
-			}
-			for _, n := range g.Needs {
-				fmt.Fprintf(stdout, "  NEEDS %s\n", oneline.Escape(n))
-			}
-			fmt.Fprintf(stdout, "  notes: %s\n", oneline.Escape(strings.Join(g.Notes, " ")))
-		}
+		fmt.Fprint(stdout, groupText(g, now, opened != nil && g.ID == opened.ID))
 	}
 	fmt.Fprintf(stdout, "INBOX OK judgments=%d happened=%d cursor=%s\n", judg, other, dashed(v.Cursor))
 	if line := st.MachineLine(ctx); line != "" {
@@ -992,6 +980,33 @@ func groupLine(g sprint.Group, now time.Time) string {
 		l += "]"
 	}
 	return oneline.Escape(l)
+}
+
+// groupText is one inbox group as inbox prints it: its line, its hint, each
+// decision with the command lines that make it, and, opened (inbox --open),
+// every member, every need and its notes.
+func groupText(g sprint.Group, now time.Time, opened bool) string {
+	var b strings.Builder
+	fmt.Fprintln(&b, groupLine(g, now))
+	if g.Hint != "" {
+		fmt.Fprintf(&b, "  %s\n", oneline.Escape(g.Hint))
+	}
+	for _, cmd := range g.Commands {
+		fmt.Fprintf(&b, "  %s:\n", oneline.Escape(cmd.Decision))
+		for _, l := range cmd.Lines {
+			fmt.Fprintf(&b, "    %s\n", oneline.Escape(l))
+		}
+	}
+	if opened {
+		for _, m := range g.Members {
+			fmt.Fprintf(&b, "  %s\n", oneline.Escape(m))
+		}
+		for _, n := range g.Needs {
+			fmt.Fprintf(&b, "  NEEDS %s\n", oneline.Escape(n))
+		}
+		fmt.Fprintf(&b, "  notes: %s\n", oneline.Escape(strings.Join(g.Notes, " ")))
+	}
+	return b.String()
 }
 
 // cardView is everything about one primary.
