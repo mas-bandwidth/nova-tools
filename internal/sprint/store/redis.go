@@ -30,6 +30,10 @@ type Redis struct {
 	// trips counts the client's round trips, once CountTrips is called
 	// (stats.go); the backend's pinned copies share it.
 	trips *atomic.Int64
+	// beforeExec, set by a functional test only, runs inside a conditional
+	// delete's transaction after its read and before its EXEC: the seam a test
+	// writes another writer's change through (RowsDelIf).
+	beforeExec func()
 }
 
 func (r *Redis) key(name string) string { return r.Names.KeyAt(name, r.Pinned) }
@@ -248,14 +252,42 @@ func (r *Redis) RowsDel(ctx context.Context, table string, rows []string) error 
 	return nil
 }
 
-// RowsDelIf removes each guard's row through the table layer's row delete, one
-// optimistic transaction a row: the guard's record is WATCHed, read (on no
-// cell, at the guard's revision), and the delete is sent in MULTI/EXEC, so a
-// record placed again or changed after the read aborts it and the row stays.
-// Every write of a record (a batch, a cell add) changes its hash, which the
-// WATCH sees. The sprint's tables keep their records under the table layer's
-// default member prefix (ntable.MemberKey).
+// RowsDelIf removes the rows of the guards that hold, in one optimistic
+// transaction for every guard: WATCH on each guard's record (its Key, where the
+// table layer writes it) and on the table's rows, the records read (on no cell,
+// at the guard's revision), and every passing row's delete sent through the
+// table layer's row delete in one MULTI/EXEC. Every write of a record (a batch,
+// a cell add) and every row added changes a watched key, so a member placed
+// again after the read aborts the EXEC, and the read is made again (up to
+// condTries times; past that nothing is deleted and the caller's next run
+// tries again).
 func (r *Redis) RowsDelIf(ctx context.Context, table string, guards []RowGuard) ([]string, error) {
+	return r.delIf(ctx, table, guards, true, func(p redis.Pipeliner, g RowGuard, body string) {
+		p.FCall(ctx, ntable.FnRowDel, []string{ntable.DefKey(table)}, table, g.Row, body)
+	})
+}
+
+// KeysDelIf deletes the keys of the guards that hold, whose rows are not in the
+// table, in one optimistic transaction as RowsDelIf: a row added or a record
+// placed again after the read aborts it.
+func (r *Redis) KeysDelIf(ctx context.Context, table string, guards []RowGuard) ([]string, error) {
+	return r.delIf(ctx, table, guards, false, func(p redis.Pipeliner, g RowGuard, _ string) {
+		if len(g.Keys) > 0 {
+			p.Del(ctx, g.Keys...)
+		}
+	})
+}
+
+// condTries is how many times a conditional delete reads again after another
+// writer changed a watched key.
+const condTries = 3
+
+// delIf is the one transaction of RowsDelIf and KeysDelIf: rowPresent says the
+// guard's row must be in the table (a row delete) or must not be (a key delete).
+func (r *Redis) delIf(ctx context.Context, table string, guards []RowGuard, rowPresent bool, op func(redis.Pipeliner, RowGuard, string)) ([]string, error) {
+	if len(guards) == 0 {
+		return nil, nil
+	}
 	body, err := json.Marshal(struct {
 		Epoch string `json:"epoch"`
 		Actor string `json:"actor"`
@@ -265,43 +297,75 @@ func (r *Redis) RowsDelIf(ctx context.Context, table string, guards []RowGuard) 
 	if err != nil {
 		return nil, err
 	}
-	var out []string
-	for _, g := range guards {
-		var del *redis.Cmd
+	watch := []string{ntable.RowsKeyAt(table, r.Pinned)}
+	ids := make([]string, len(guards))
+	for i, g := range guards {
+		watch = append(watch, g.Key)
+		ids[i] = g.ID
+	}
+	for try := 0; try < condTries; try++ {
+		var pass []RowGuard
+		var cmds []redis.Cmder
 		err := r.C.Watch(ctx, func(tx *redis.Tx) error {
-			rs, err := ntable.ReadSetMembers(ctx, tx, table, []string{g.ID})
+			pass = nil
+			shape, err := ntable.Shape(ctx, tx, table)
 			if err != nil {
 				return err
 			}
-			if m, ok := rs.Member(g.ID); !ok || m.Placed || m.Revision != g.Rev {
-				return errRowKept
+			rows := map[string]bool{}
+			for _, row := range shape.Rows {
+				rows[row.Key] = true
 			}
-			_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
-				del = p.FCall(ctx, ntable.FnRowDel, []string{ntable.DefKey(table)}, table, g.Row, string(body))
+			recs := map[string]ntable.ReadSetMember{}
+			for start := 0; start < len(ids); start += ntable.LimitReadSetMembers {
+				rs, err := ntable.ReadSetMembers(ctx, tx, table, ids[start:min(start+ntable.LimitReadSetMembers, len(ids))])
+				if err != nil {
+					return err
+				}
+				for _, m := range rs.Members {
+					recs[m.ID] = m
+				}
+			}
+			for _, g := range guards {
+				if m, ok := recs[g.ID]; ok && !m.Placed && m.Revision == g.Rev && rows[g.Row] == rowPresent {
+					pass = append(pass, g)
+				}
+			}
+			if len(pass) == 0 {
+				return nil
+			}
+			if r.beforeExec != nil {
+				r.beforeExec()
+			}
+			cmds, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+				for _, g := range pass {
+					op(p, g, string(body))
+				}
 				return nil
 			})
 			return err
-		}, ntable.MemberKey(g.ID))
-		switch {
-		case errors.Is(err, errRowKept), errors.Is(err, redis.TxFailedErr):
-			continue // placed again, or changed, since the caller's read: the row stays
-		case err != nil:
-			return out, err
+		}, watch...)
+		if errors.Is(err, redis.TxFailedErr) {
+			continue // another writer changed a watched key: read again
 		}
-		reply, err := del.Slice()
 		if err != nil {
-			return out, err
+			return nil, err
 		}
-		if len(reply) > 0 && fmt.Sprint(reply[0]) == "REFUSED" {
-			return out, fmt.Errorf("row %s of %s: the row delete was refused: %v", g.Row, table, reply)
+		for _, c := range cmds {
+			if fc, ok := c.(*redis.Cmd); ok {
+				if reply, err := fc.Slice(); err == nil && len(reply) > 0 && fmt.Sprint(reply[0]) == "REFUSED" {
+					return nil, fmt.Errorf("the table layer refused a conditional delete on %s: %v", table, reply)
+				}
+			}
 		}
-		out = append(out, g.Row)
+		out := make([]string, len(pass))
+		for i, g := range pass {
+			out[i] = g.Row
+		}
+		return out, nil
 	}
-	return out, nil
+	return nil, nil
 }
-
-// errRowKept is a conditional row delete whose record no longer meets its guard.
-var errRowKept = errors.New("the row's record was placed again or changed")
 
 // Place puts a record that is on no cell back into the cell, through the table
 // layer's cell add, one write.

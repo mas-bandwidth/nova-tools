@@ -5,14 +5,17 @@ package store
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -180,7 +183,8 @@ func TestRedisRowsDelIfKeepsARowWhoseRecordChanged(t *testing.T) {
 		require.Nil(t, s.MemberCtl("m2"), "the sync took m2's control card off")
 		rec := s.Fleet.Card(sprint.CtlID("m2"))
 		require.NotNil(t, rec)
-		return RowGuard{Row: "m2", ID: pinned.sid(sprint.CtlID("m2")), Rev: rec.Rev}
+		id := pinned.sid(sprint.CtlID("m2"))
+		return RowGuard{Row: "m2", ID: id, Key: pinned.Names.RecordKey(sprint.Fleet, id), Rev: rec.Rev}
 	}
 	stale := removeM2()
 	got, err := st.RejoinMembers(h.ctx, []string{"m2"})
@@ -197,4 +201,41 @@ func TestRedisRowsDelIfKeepsARowWhoseRecordChanged(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"m2"}, deleted)
 	require.False(t, h.snap().Fleet.HasRow("m2"), "the row is deleted")
+}
+
+// A rejoin between the conditional delete's read and its EXEC keeps the row on
+// the real table layer (RowsDelIf, the fleet sync's cleanup): the transaction
+// watches the control card's record where the sprint's tables keep it
+// (Names.RecordKey), so the rejoin's cell add aborts it, the read again finds
+// the card placed, and the row, the card and the member's beat stay.
+func TestRedisARejoinBetweenTheReadAndTheExecKeepsTheRow(t *testing.T) {
+	t.Parallel()
+	st, _ := liveStore(t)
+	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now(), live: []string{"m1", "m2"}}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
+	h.must(FleetStep(sprint.FleetReq{Op: "sync", Who: "functional", Sync: []sprint.SyncMember{{Name: "m1", Width: 4}}, Machines: []string{"m1"}}))
+	require.Nil(t, h.snap().MemberCtl("m2"), "the sync took m2's control card off")
+	_, err := st.Beat(h.ctx, "m2", new(float64), hostload.Source{NCPU: 8})
+	require.NoError(t, err)
+	r := st.B.(*Redis)
+	var once sync.Once
+	r.beforeExec = func() {
+		once.Do(func() {
+			// another coordinator command, on its own connection: fleet up m2
+			other := &Store{B: &Redis{C: r.C, Names: r.Names, Now: time.Now}, Names: st.Names, Actor: "other"}
+			got, err := other.RejoinMembers(h.ctx, []string{"m2"})
+			require.NoError(t, err)
+			require.Equal(t, []string{"m2"}, got)
+		})
+	}
+	dropped, err := st.DropMembers(h.ctx, []string{"m1"})
+	require.NoError(t, err)
+	assert.Empty(t, dropped, "m2 was placed again before the EXEC: nothing is deleted")
+	s := h.snap()
+	assert.True(t, s.Fleet.HasRow("m2"), "the row stays")
+	assert.NotNil(t, s.MemberCtl("m2"), "the control card stays placed")
+	beats, err := st.Beats(h.ctx, []string{"m2"})
+	require.NoError(t, err)
+	assert.Contains(t, beats, "m2", "the rejoined member's beat stays")
 }

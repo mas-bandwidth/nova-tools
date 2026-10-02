@@ -129,7 +129,8 @@ func (st *Store) DropMembers(ctx context.Context, keep []string) ([]string, erro
 		if rec == nil {
 			continue // a row with no control card record at all is no member the sync removed
 		}
-		guards = append(guards, RowGuard{Row: m, ID: pinned.sid(sprint.CtlID(m)), Rev: rec.Rev})
+		id := pinned.sid(sprint.CtlID(m))
+		guards = append(guards, RowGuard{Row: m, ID: id, Key: pinned.Names.RecordKey(sprint.Fleet, id), Rev: rec.Rev})
 		names = append(names, m)
 	}
 	var deleted []string
@@ -149,10 +150,13 @@ func (st *Store) DropMembers(ctx context.Context, keep []string) ([]string, erro
 }
 
 // FinishDrops deletes the beat record of every member the cleanup owes one
-// (keyDropDebt) whose fleet row is gone, and empties the record; a member whose
-// row is still there (placed again, or its delete still to come, which the next
-// sync's drift finds) is dropped from it without a delete. Every fleet sync that
-// writes runs it, and one with nothing to write too.
+// (keyDropDebt) whose fleet row is gone and whose control card is still on no
+// cell, each checked and deleted as one atomic change (KeysDelIf): a member
+// whose row came back or whose card was placed again keeps its beat, so a
+// rejoin's fresh beat is never deleted. A member placed again leaves the record
+// with no delete; a member whose row is still there (its delete still to come,
+// which the next sync's drift finds) stays in it. Every fleet sync that writes
+// runs it, and one with nothing to write too.
 func (st *Store) FinishDrops(ctx context.Context) error {
 	pinned, err := st.pin(ctx)
 	if err != nil {
@@ -162,28 +166,35 @@ func (st *Store) FinishDrops(ctx context.Context) error {
 	if err != nil || len(debt) == 0 {
 		return err
 	}
-	shapes, err := pinned.B.Shapes(ctx, []string{pinned.Names.Table(sprint.Fleet)})
+	s, err := pinned.Load(ctx, []string{sprint.Fleet, sprint.Work}, sprint.NamedExtras(sprint.Fleet, ctlIDs(debt)))
 	if err != nil {
 		return err
 	}
-	rows := map[string]bool{}
-	for _, sh := range shapes {
-		for _, r := range sh.Rows {
-			rows[r.Key] = true
-		}
-	}
-	var keys []string
+	var guards []RowGuard
+	var owed []string
 	for _, m := range debt {
-		if !rows[m] {
-			keys = append(keys, pinned.Names.Key(beatKey(m)))
+		rec := s.Fleet.Card(sprint.CtlID(m))
+		switch {
+		case rec == nil || rec.Placed():
+			// no record, or placed again: nothing is owed
+		case s.Fleet.HasRow(m):
+			owed = append(owed, m) // its row delete is still to come
+		default:
+			id := pinned.sid(sprint.CtlID(m))
+			guards = append(guards, RowGuard{Row: m, ID: id, Key: pinned.Names.RecordKey(sprint.Fleet, id), Rev: rec.Rev,
+				Keys: []string{pinned.Names.Key(beatKey(m))}})
 		}
 	}
-	if len(keys) > 0 {
-		if _, err := pinned.B.DeleteKeys(ctx, keys); err != nil {
-			return err
+	done, err := pinned.B.KeysDelIf(ctx, pinned.Names.Table(sprint.Fleet), guards)
+	if err != nil {
+		return err
+	}
+	for _, g := range guards {
+		if !slices.Contains(done, g.Row) {
+			owed = append(owed, g.Row) // changed under it: read again at the next sync
 		}
 	}
-	return pinned.putDropDebt(ctx, nil)
+	return pinned.putDropDebt(ctx, owed)
 }
 
 // RejoinMembers places again, under the fence, the control card of each named

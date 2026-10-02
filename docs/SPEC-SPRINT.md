@@ -504,13 +504,16 @@ and it is the coordinator's decision, receipted.
   landed), removed in the same run: the step takes its control card off the
   table, held by the sync, and the verb deletes its row and then its beat
   record: the row only while its control card is still on no cell at the
-  revision the delete read, checked and deleted as one atomic change (a WATCH
-  on the card's record around the table layer's row delete), so a `fleet up`
-  that placed the card again in between, and anything dealt to the member
-  after it, keep the row; the members whose beat records are owed a delete are
-  written down before the rows go (the record `fleet-drop-debt`, which
-  teardown removes), so a cleanup cut short at any point is finished by the
-  next sync, one with nothing else to write included; its width leaves the
+  revision the delete read, and the beat only while the row is gone and the
+  card still on no cell, each checked and deleted as one atomic change for all
+  the members together (one transaction with a WATCH on the cards' records,
+  under the record key the table layer writes them at, and on the table's
+  rows, around the table layer's row delete), so a `fleet up` that placed the
+  card again in between, and anything dealt to the member after it, keep the
+  row, and a rejoined member's beat is never deleted; the members whose beat
+  records are owed a delete are written down before the rows go (the record
+  `fleet-drop-debt`, which teardown removes), so a cleanup cut short at any
+  point is finished by the next sync, one with nothing else to write included; its width leaves the
   fleet's total, one line saying so; while cards stay on
   it, it stays held and a NOTE line says so, and a later sync removes it. A
   machine row that comes back places the same control card again before the

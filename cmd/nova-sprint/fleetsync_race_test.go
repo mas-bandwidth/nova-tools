@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -76,4 +77,46 @@ func TestARemovedMemberRejoinedBeforeTheDeleteKeepsItsRowAndCards(t *testing.T) 
 	wc := snap.Fleet.Card("s1-1.w1")
 	require.NotNil(t, wc)
 	assert.Equal(t, "m2", wc.Row, "the card dealt to m2 is on the table")
+}
+
+// keysSeamed is the test's store with a seam before the cleanup's beat delete.
+type keysSeamed struct {
+	*store.Mem
+	once    sync.Once
+	between func()
+}
+
+func (s *keysSeamed) KeysDelIf(ctx context.Context, table string, guards []store.RowGuard) ([]string, error) {
+	s.once.Do(s.between)
+	return s.Mem.KeysDelIf(ctx, table, guards)
+}
+
+// TestARejoinBeforeTheBeatDeleteKeepsTheFreshBeat: the cleanup deletes m2's row,
+// then reads that it owes m2's beat; before its delete, fleet up places m2 again
+// and m2 beats. The beat delete is conditional at its commit (the row gone and
+// the control card still off the table), so the rejoined member's fresh beat
+// stays, and so does its row.
+func TestARejoinBeforeTheBeatDeleteKeepsTheFreshBeat(t *testing.T) {
+	t.Parallel()
+	ta, inv := syncApp(t)
+	ta.live = []string{"m1"}
+	inv.set("m1", 4)
+	inv.set("m2", 4)
+	ta.ok("fleet sync")
+	ctx := context.Background()
+	raw := &store.Store{B: ta.m, Names: sprint.Names{}, Now: ta.a.now, Actor: "tester"}
+	seam := &keysSeamed{Mem: ta.m, between: func() {
+		_, err := raw.RejoinMembers(ctx, []string{"m2"})
+		require.NoError(t, err)
+		zero := 0.0
+		_, err = raw.Beat(ctx, "m2", &zero, hostload.Source{NCPU: 8})
+		require.NoError(t, err)
+	}}
+	ta.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) { return seam, nil }
+	inv.remove("m2")
+	ta.ok("fleet sync")
+	beats, err := raw.Beats(ctx, []string{"m2"})
+	require.NoError(t, err)
+	assert.Contains(t, beats, "m2", "the rejoined member's fresh beat is never deleted")
+	assert.NotNil(t, ta.fleetRows()["m2"], "and its row is back")
 }

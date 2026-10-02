@@ -127,6 +127,11 @@ func (n Names) MemberPrefix(logical string) string {
 	return n.Prefix + "sprint:" + logical[:1] + ":"
 }
 
+// RecordKey is the store key of a card's record in a logical table: the
+// table's record namespace (MemberPrefix, which its definition names) and the
+// stored id, as the table layer composes it.
+func (n Names) RecordKey(logical, id string) string { return n.MemberPrefix(logical) + id }
+
 // Key is a sprint key outside the tables (the inbox, the operation records).
 func (n Names) Key(name string) string { return n.Prefix + "sprint:" + name }
 

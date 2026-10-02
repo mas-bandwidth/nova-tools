@@ -41,10 +41,17 @@ type Backend interface {
 	RowsDel(ctx context.Context, table string, rows []string) error
 	// RowsDelIf removes each guard's row, with the cards placed in it, only
 	// while the guard's record (the row's control card) is still on no cell
-	// at the revision the guard names, checked and deleted as one atomic
-	// change: a record placed again or changed since the caller read it keeps
-	// its row. It is the rows it removed (sprint.FleetDrift, the removal).
+	// at the revision the guard names, every guard checked and every passing
+	// row deleted as one atomic change: a record placed again or changed
+	// since the caller read it keeps its row. It is the rows it removed
+	// (sprint.FleetDrift, the removal).
 	RowsDelIf(ctx context.Context, table string, guards []RowGuard) ([]string, error)
+	// KeysDelIf deletes each guard's Keys only while its record is still on
+	// no cell at the guard's revision and its row is not in the table, every
+	// guard checked and every passing guard's keys deleted as one atomic
+	// change: a member whose row came back or whose card was placed again
+	// keeps them. It is the rows of the guards whose keys it deleted.
+	KeysDelIf(ctx context.Context, table string, guards []RowGuard) ([]string, error)
 	// Place puts a record that is on no cell back into a cell at the score, as
 	// the table layer's cell add does (a batch never places a removed member):
 	// a fleet member whose control card a sync took off rejoins (RejoinMembers).
@@ -122,12 +129,14 @@ type Backend interface {
 	DeleteKeys(ctx context.Context, keys []string) (int, error)
 }
 
-// RowGuard is one row a conditional delete removes (RowsDelIf) and the record
-// it is conditional on: its stored id and the revision it was read at, on no
-// cell.
+// RowGuard is one row a conditional delete names (RowsDelIf, KeysDelIf) and the
+// record it is conditional on: its stored id, its store key (Names.RecordKey,
+// the key the table layer writes it under) and the revision it was read at, on
+// no cell; Keys are the keys KeysDelIf deletes with it.
 type RowGuard struct {
-	Row, ID string
-	Rev     uint64
+	Row, ID, Key string
+	Rev          uint64
+	Keys         []string
 }
 
 // EpochState is the sprint's epoch as read.

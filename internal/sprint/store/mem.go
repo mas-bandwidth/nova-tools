@@ -680,6 +680,30 @@ func (m *Mem) RowsDelIf(_ context.Context, table string, guards []RowGuard) ([]s
 	return rows, nil
 }
 
+// KeysDelIf deletes each guard's keys only while its record is on no cell at the
+// guard's revision and its row is not in the table, under the one lock.
+func (m *Mem) KeysDelIf(_ context.Context, table string, guards []RowGuard) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["keysdelif"]++
+	t, err := m.table(table)
+	if err != nil {
+		return nil, err
+	}
+	rows := t.at(m.active(t)).rows
+	var out []string
+	for _, g := range guards {
+		if mm := t.members[g.ID]; mm == nil || mm.placed || mm.rev != g.Rev || slices.Contains(rows, g.Row) {
+			continue
+		}
+		for _, k := range g.Keys {
+			m.deleteKey(k)
+		}
+		out = append(out, g.Row)
+	}
+	return out, nil
+}
+
 // rowsDel is the row delete itself, under m.mu and the epoch check.
 func (m *Mem) rowsDel(t *memTable, rows []string) {
 	ep := t.at(m.active(t))

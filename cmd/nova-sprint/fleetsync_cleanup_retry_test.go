@@ -46,6 +46,18 @@ func (b *failRemovedBeatDeleteOnce) DeleteKeys(ctx context.Context, keys []strin
 	return b.Mem.DeleteKeys(ctx, keys)
 }
 
+// KeysDelIf is the cleanup's beat delete since it is conditional at its commit
+// (on the row gone and the control card still off the table): the same fault.
+func (b *failRemovedBeatDeleteOnce) KeysDelIf(ctx context.Context, table string, guards []store.RowGuard) ([]string, error) {
+	for _, g := range guards {
+		if b.rowDeleted && !b.failed && slices.Contains(g.Keys, (sprint.Names{}).Key("beat:m2")) {
+			b.failed = true
+			return nil, errors.New("injected removed-member beat deletion failure")
+		}
+	}
+	return b.Mem.KeysDelIf(ctx, table, guards)
+}
+
 // A row deletion that succeeds before beat cleanup fails must leave discoverable
 // cleanup debt: rerunning the production fleet sync clears the stale beat even
 // though the row is already gone. The removed member can still return normally.
