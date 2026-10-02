@@ -1,7 +1,7 @@
 package swarm
 
 // Staging: what the launcher puts in a job directory before the worker starts
-// (docs/SPEC-TOOLWORK.md §3 rules 1-2, issue #1665).
+// (docs/SPEC-TOOLWORK.md).
 //
 //  1. Staging sets the identity; the worker never does. The launcher reads the
 //     pool's identity.tsv (owner, name, email), writes the job clone's LOCAL
@@ -10,8 +10,8 @@ package swarm
 //     GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_NOSYSTEM=1 so a bench's own
 //     config cannot leak in. A pool with no identity row is refused at launch.
 //  2. Staging leaves no way out of the job root. No absolute symlink and no
-//     symlink resolving outside the job root exists in a staged tree (#1557's
-//     repo/dist pointer cost four legs their toolchains); the launcher checks
+//     symlink resolving outside the job root exists in a staged tree: a
+//     pointer escaping the root can cost a worker its toolchain; the launcher checks
 //     this before the first worker starts and refuses by path.
 
 import (
@@ -32,9 +32,9 @@ type StagingIdentity struct {
 	Email string
 }
 
-// PoolIdentityRemedy is the one remedy every pool identity refusal names
-// (nova-tools #3193). The pool identity is bench configuration: the fleet
-// converge in rowan-tools writes <pool>/identity.tsv (its pool_identity task),
+// PoolIdentityRemedy is the one remedy every pool identity refusal names.
+// The pool identity is bench configuration: the fleet converge writes
+// <pool>/identity.tsv,
 // so a bench refusing for it is an unconverged bench, never a hand-written
 // file. The card wrapper carries the refusal line, this remedy included, onto
 // the card record as its why.
@@ -100,7 +100,7 @@ func ParseIdentity(s string) (StagingIdentity, error) {
 // bench's own git config cannot leak into what the worker commits or what the
 // machinery reads, and the pool's identity row is exported as author and
 // committer so a worker cloning after launch commits under the pool's name
-// (SPEC-TOOLWORK §3 rule 1, #1665).
+// (docs/SPEC-TOOLWORK.md).
 func StagingGitEnv(id StagingIdentity) []string {
 	var env []string
 	if id.Name != "" {
