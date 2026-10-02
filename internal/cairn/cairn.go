@@ -65,21 +65,43 @@ var Policies = []string{PublishNever, PublishManual, PublishDeferred, PublishImm
 func ValidPublish(p string) bool { return slices.Contains(Policies, p) }
 
 // IDRule is what ValidID asks of a session or entry id, for a refusal to quote.
-const IDRule = "nonempty, at most 128 bytes, no slashes, no whitespace, no `..`"
+const IDRule = "an id names exactly one file or directory of that name inside the store, on every platform: " +
+	"nonempty, at most 128 bytes, no whitespace or control characters, none of / \\ : * ? \" < > |, " +
+	"not only dots, no `..`, no trailing dot, and not a Windows device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9, with or without an extension)"
 
-// ValidID keeps identifiers stable and file-safe: nonempty, bounded, and free
-// of separators, escapes and whitespace, so an id is one token on every output
-// line and one file under entries/.
+// idForbidden are the characters a path component cannot hold on some platform:
+// the two separators, and the rest of what Windows refuses in a name (a colon
+// there opens an alternate data stream of another file).
+const idForbidden = `/\:*?"<>|`
+
+// windowsDevices are the names Windows resolves to a device wherever they stand
+// as a path component, whatever extension follows: entries/nul/ is no directory
+// and con.md is no file.
+var windowsDevices = []string{"CON", "PRN", "AUX", "NUL",
+	"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+	"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"}
+
+// ValidID keeps an id one token on every output line and exactly one file or
+// directory of that name inside the store: an id becomes a path component
+// (sessions/<id>.md, <store>/<id>.md, entries/<id>/, entries/<s>/<id>.json),
+// so every id that a path would read as something else is refused. "." would
+// make entries/./ the entries directory itself, so an append lands where no
+// index looks; ".." and any id holding it climb out; an id of only dots is one
+// of those; a trailing dot or blank is stripped by Windows, folding "s." into
+// "s"; a separator splits the id into two components; a device name or a
+// Windows-forbidden character names no file at all there.
 func ValidID(s string) bool {
-	if s == "" || len(s) > 128 || strings.Contains(s, "..") {
+	if s == "" || len(s) > 128 || strings.Contains(s, "..") || strings.Trim(s, ".") == "" ||
+		strings.HasSuffix(s, ".") || strings.ContainsAny(s, idForbidden) {
 		return false
 	}
 	for _, r := range s {
-		if unicode.IsSpace(r) || unicode.IsControl(r) || r == '/' || r == '\\' {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
 			return false
 		}
 	}
-	return true
+	base, _, _ := strings.Cut(s, ".")
+	return !slices.ContainsFunc(windowsDevices, func(d string) bool { return strings.EqualFold(d, base) })
 }
 
 // ConflictError is a write that must not silently win: the same entry id
