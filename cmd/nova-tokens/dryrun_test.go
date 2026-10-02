@@ -1,12 +1,9 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
@@ -14,103 +11,108 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// treeOf is every entry under root: its relative path, its kind and mode, and a file's
-// content hash. Two snapshots are equal only when nothing under root was made, removed,
-// truncated or rewritten.
-func treeOf(t *testing.T, root string) map[string]string {
+// dryTree is one root a dry-against-real case runs in: the example bench copied in, a day
+// already folded into out (so a dry run has a file it could replace), a session
+// transcript, an earlier note, and a plain file where a directory is wanted.
+type dryTree struct{ root, out, repos, tr, session, note, aFile string }
+
+func newDryTree(t *testing.T, root string) dryTree {
 	t.Helper()
-	tree := map[string]string{}
-	require.NoError(t, filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		entry := info.Mode().String()
-		if info.Mode().IsRegular() {
-			raw, err := os.ReadFile(p)
-			if err != nil {
-				return err
-			}
-			sum := sha256.Sum256(raw)
-			entry += " " + hex.EncodeToString(sum[:])
-		}
-		tree[filepath.ToSlash(rel)] = entry
-		return nil
-	}))
-	return tree
+	require.NoError(t, os.CopyFS(root, os.DirFS(filepath.Join("testdata", "example-bench"))))
+	d := dryTree{root: root, out: testkit.Mkdir(t, filepath.Join(root, "out")),
+		repos: filepath.Join(root, "repos.tsv"), tr: filepath.Join(root, "transcripts")}
+	novaTokens.Do(t, "fold", "--out", d.out, "--day", "2026-09-11", "--repos", d.repos, "--claude", "bench="+d.tr).Exit(0)
+	d.session = testkit.WriteFile(t, filepath.Join(root, "session.jsonl"), msg("s1", "2026-09-11T10:00:00Z", "claude-opus-5", map[string]int{"input_tokens": 3})+"\n")
+	d.note = testkit.WriteFile(t, filepath.Join(root, "notes", "note.txt"), "an earlier note\n")
+	d.aFile = testkit.WriteFile(t, filepath.Join(root, "a-file"), "not a directory\n")
+	return d
 }
 
-// Every writing verb's --dry-run over a fixture tree leaves the whole tree as it was:
-// the sources, the output directory, the note's directory and a session's --out parent.
-func TestEveryDryRunLeavesTheWholeTreeAsItWas(t *testing.T) {
-	t.Parallel()
-	root := exampleBench(t)
-	out, repos, tr := filepath.Join(root, "out"), filepath.Join(root, "repos.tsv"), filepath.Join(root, "transcripts")
-	// A folded day already there, so a dry run has a file it could have replaced.
-	novaTokens.Do(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench="+tr).Exit(0)
-	session := testkit.WriteFile(t, filepath.Join(root, "session.jsonl"), msg("s1", "2026-09-11T10:00:00Z", "claude-opus-5", map[string]int{"input_tokens": 3})+"\n")
-	note := testkit.WriteFile(t, filepath.Join(root, "notes", "note.txt"), "an earlier note\n")
+func (d dryTree) report(args ...string) []string {
+	return append([]string{"report", "--who", "ada", "--day", "2026-09-11", "--repos", d.repos, "--claude", "bench=" + d.tr}, args...)
+}
 
-	for name, args := range map[string][]string{
-		"fold":                    {"fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench=" + tr, "--allow-shrink"},
-		"fold --all":              {"fold", "--out", out, "--all", "--repos", repos, "--claude", "bench=" + tr},
-		"report --note":           {"report", "--who", "ada", "--day", "2026-09-11", "--repos", repos, "--claude", "bench=" + tr, "--note", note},
-		"session --out, existing": {"session", "--claude-session", session, "--out", out},
-		"session --out, new":      {"session", "--claude-session", session, "--out", filepath.Join(root, "new", "out")},
-		"ledger":                  {"ledger", "--out", out, "--day", "2026-09-11", "--redis", "127.0.0.1:0"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			before := treeOf(t, root)
-			r := novaTokens.Do(t, append(args, "--dry-run")...).Exit(0)
-			holds(t, r.Stdout+r.Stderr, "dry_run=true")
-			assert.Equal(t, before, treeOf(t, root), "--dry-run changed the tree")
+// dryCases is every writing verb's dry run held to its real run: the runs that write and
+// the runs the real run refuses or fails (exit is the real run's).
+var dryCases = []struct {
+	name string
+	exit int
+	args func(d dryTree) []string
+}{
+	{"fold", 0, func(d dryTree) []string {
+		return []string{"fold", "--out", d.out, "--day", "2026-09-11", "--repos", d.repos, "--claude", "bench=" + d.tr, "--allow-shrink"}
+	}},
+	{"fold --all", 0, func(d dryTree) []string {
+		return []string{"fold", "--out", d.out, "--all", "--repos", d.repos, "--claude", "bench=" + d.tr}
+	}},
+	{"report --note", 0, func(d dryTree) []string { return d.report("--note", d.note) }},
+	{"session --out, existing", 0, func(d dryTree) []string { return []string{"session", "--claude-session", d.session, "--out", d.out} }},
+	{"session --out, new", 0, func(d dryTree) []string {
+		return []string{"session", "--claude-session", d.session, "--out", filepath.Join(d.root, "new", "out")}
+	}},
+	{"fold with no flags", 2, func(dryTree) []string { return []string{"fold"} }},
+	{"fold into a file", 2, func(d dryTree) []string {
+		return []string{"fold", "--out", d.aFile, "--day", "2026-09-11", "--repos", d.repos, "--claude", "bench=" + d.tr}
+	}},
+	{"fold with no rules file", 2, func(d dryTree) []string {
+		return []string{"fold", "--out", d.out, "--day", "2026-09-11", "--repos", filepath.Join(d.root, "none.tsv"), "--claude", "bench=" + d.tr}
+	}},
+	{"fold with --scratch and no --opencode", 2, func(d dryTree) []string {
+		return []string{"fold", "--out", d.out, "--day", "2026-09-11", "--repos", d.repos, "--claude", "bench=" + d.tr, "--scratch", d.root}
+	}},
+	{"report with no --who", 2, func(d dryTree) []string {
+		return []string{"report", "--day", "2026-09-11", "--repos", d.repos, "--claude", "bench=" + d.tr}
+	}},
+	{"report --note into a missing directory", 2, func(d dryTree) []string { return d.report("--note", filepath.Join(d.root, "missing", "note.txt")) }},
+	{"report --note onto a directory", 2, func(d dryTree) []string { return d.report("--note", d.out) }},
+	{"ledger with no --redis", 2, func(d dryTree) []string { return []string{"ledger", "--out", d.out, "--day", "2026-09-11"} }},
+	{"ledger whose user has no password", 1, func(d dryTree) []string {
+		return []string{"ledger", "--out", d.out, "--day", "2026-09-11", "--redis", "127.0.0.1:0",
+			"--user", "bench", "--password-env", "NOVA_TOKENS_TEST_UNSET_PASSWORD_VARIABLE"}
+	}},
+	{"session with no transcript", 2, func(d dryTree) []string { return []string{"session", "--out", d.out} }},
+	{"session --out a file", 2, func(d dryTree) []string { return []string{"session", "--claude-session", d.session, "--out", d.aFile} }},
+	{"session --out below a file", 2, func(d dryTree) []string {
+		return []string{"session", "--claude-session", d.session, "--out", filepath.Join(d.aFile, "out")}
+	}},
+}
+
+// A dry run is the real run's own plan with only the writes skipped (testkit.DryRunAgrees):
+// on identical fresh trees it exits as the real run does, with the same status words, and
+// leaves its tree byte for byte as it was -- the sources, the output directory, the note's
+// directory and a session's --out parent. Where the real run refuses, the dry run refuses
+// in its words, line for line, not only its status word.
+func TestADryRunIsTheRealRunWithoutItsWrites(t *testing.T) {
+	t.Parallel()
+	var cases []testkit.DryCase
+	for _, c := range dryCases {
+		cases = append(cases, testkit.DryCase{Name: c.name, Setup: func(t *testing.T, root string) ([]string, []string) {
+			args := c.args(newDryTree(t, root))
+			return args[:1], args[1:]
+		}})
+	}
+	testkit.DryRunAgrees(t, novaTokens.Run, cases)
+
+	for _, c := range dryCases {
+		if c.exit == 0 {
+			continue
+		}
+		t.Run(c.name+"/the same refusal", func(t *testing.T) {
+			realRoot, dryRoot := t.TempDir(), t.TempDir()
+			real := novaTokens.Do(t, c.args(newDryTree(t, realRoot))...).Exit(c.exit)
+			dry := novaTokens.Do(t, append(c.args(newDryTree(t, dryRoot)), "--dry-run")...)
+			assert.Equal(t, strings.ReplaceAll(real.Stderr, realRoot, "<root>"), strings.ReplaceAll(dry.Stderr, dryRoot, "<root>"))
 		})
 	}
 }
 
-// A dry run is the real run's own plan: the same validation and the same refusals, with
-// only the final write skipped. Each row is an invocation the real run refuses or fails;
-// with --dry-run it must answer the same, line for line.
-func TestADryRunRefusesExactlyWhatTheRealRunRefuses(t *testing.T) {
+// ledger's real run dials the store, which the unit tier has none of; its dry run reads the
+// day files, dials nothing, and leaves the tree as it was.
+func TestLedgersDryRunDialsNothingAndWritesNothing(t *testing.T) {
 	t.Parallel()
-	root := exampleBench(t)
-	out, repos, tr := filepath.Join(root, "out"), filepath.Join(root, "repos.tsv"), filepath.Join(root, "transcripts")
-	aFile := testkit.WriteFile(t, filepath.Join(root, "a-file"), "not a directory\n")
-	session := testkit.WriteFile(t, filepath.Join(root, "session.jsonl"), msg("s1", "2026-09-11T10:00:00Z", "claude-opus-5", map[string]int{"input_tokens": 3})+"\n")
-	novaTokens.Do(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench="+tr).Exit(0)
-	report := []string{"report", "--who", "ada", "--day", "2026-09-11", "--repos", repos, "--claude", "bench=" + tr}
-
-	for _, tc := range []struct {
-		name string
-		args []string
-		exit int
-	}{
-		{"fold with no flags", []string{"fold"}, 2},
-		{"fold into a file", []string{"fold", "--out", aFile, "--day", "2026-09-11", "--repos", repos, "--claude", "bench=" + tr}, 2},
-		{"fold with no rules file", []string{"fold", "--out", out, "--day", "2026-09-11", "--repos", filepath.Join(root, "none.tsv"), "--claude", "bench=" + tr}, 2},
-		{"fold with --scratch and no --opencode", []string{"fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench=" + tr, "--scratch", root}, 2},
-		{"report with no --who", []string{"report", "--day", "2026-09-11", "--repos", repos, "--claude", "bench=" + tr}, 2},
-		{"report --note into a missing directory", append(slices.Clone(report), "--note", filepath.Join(root, "missing", "note.txt")), 2},
-		{"report --note onto a directory", append(slices.Clone(report), "--note", out), 2},
-		{"ledger with no --redis", []string{"ledger", "--out", out, "--day", "2026-09-11"}, 2},
-		{"ledger whose user has no password", []string{"ledger", "--out", out, "--day", "2026-09-11", "--redis", "127.0.0.1:0",
-			"--user", "bench", "--password-env", "NOVA_TOKENS_TEST_UNSET_PASSWORD_VARIABLE"}, 1},
-		{"session with no transcript", []string{"session", "--out", out}, 2},
-		{"session --out a file", []string{"session", "--claude-session", session, "--out", aFile}, 2},
-		{"session --out below a file", []string{"session", "--claude-session", session, "--out", filepath.Join(aFile, "out")}, 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			real := novaTokens.Do(t, tc.args...).Exit(tc.exit)
-			dry := novaTokens.Do(t, append(slices.Clone(tc.args), "--dry-run")...)
-			assert.Equal(t, real.Code, dry.Code, "--dry-run answered %s", dry)
-			assert.Equal(t, real.Stderr, dry.Stderr)
-		})
-	}
+	d := newDryTree(t, t.TempDir())
+	before := testkit.Snapshot(t, d.root)
+	r := novaTokens.Do(t, "ledger", "--out", d.out, "--day", "2026-09-11", "--redis", "127.0.0.1:0", "--dry-run").Exit(0)
+	holds(t, r.Stdout+r.Stderr, "dry_run=true")
+	assert.Equal(t, before, testkit.Snapshot(t, d.root), "--dry-run changed the tree")
 }

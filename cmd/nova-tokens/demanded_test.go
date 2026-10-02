@@ -851,7 +851,7 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 		{"report", "--who", "ada", "--day", "2026-09-11", "--repos", b.repos, "--opencode", "bench=" + db, "--scratch", scratch, "--dry-run"},
 		{"sources", "--day", "2026-09-11", "--repos", b.repos, "--opencode", "bench=" + db, "--scratch", scratch},
 	} {
-		tree := treeOf(t, b.dir)
+		tree := testkit.Snapshot(t, b.dir)
 		r := novaTokens.Do(t, args...).Exit(0)
 		switch args[0] {
 		case "sources":
@@ -863,7 +863,7 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 			holds(t, r.Stdout+r.Stderr, "dry_run=true")
 			holds(t, r.Stdout, "2026-09-11\tada\tmercury-2.5\tschema\tinput\t10")
 		}
-		assert.Equal(t, tree, treeOf(t, b.dir), "%s, which writes nothing, changed --scratch, --out or the database's directory", args[0])
+		assert.Equal(t, tree, testkit.Snapshot(t, b.dir), "%s, which writes nothing, changed --scratch, --out or the database's directory", args[0])
 	}
 
 	before, err := os.Stat(db)
