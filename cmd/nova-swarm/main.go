@@ -987,7 +987,7 @@ func dash(s string) string {
 // auto-rejected otherwise. It is the FIELD a reader of the NATIVE line scores the card `fence` by instead
 // of `no-result` -- the machinery fenced the card off a path its own card named, which is
 // nothing like a model that chose to publish nothing, and a coordinator reading `no-result`
-// went looking at the model for eight cards that never got to run (2026-09-16).
+// blames the model for eight cards that never got to run.
 func fenceSuffix(path string) string {
 	if strings.TrimSpace(path) == "" {
 		return ""
@@ -999,11 +999,11 @@ func fenceSuffix(path string) string {
 // coordinator reading the NATIVE OK line knows the run was stopped from outside and never
 // reads a silent exit as a spent failure. The token is a literal put through
 // oneline.Field like every other tail, so it cannot carry anything past the escape.
-// stoppedSuffix renders rule 13d's one new key: ` stopped=<tokens|max_turns|max_cache_read|
+// stoppedSuffix renders the budget rule's key: ` stopped=<tokens|max_turns|max_cache_read|
 // unverifiable>` for a card the machinery stopped under that rule, and the empty string for
 // every other card.
 //
-// IT IS A KEY OF ITS OWN and NOT a second `reason=` (decision 17): one key with one
+// IT IS A KEY OF ITS OWN and NOT a second `reason=`: one key with one
 // meaning, which also says WHICH budget fired. `reason=terminated` stays what a TERM from
 // outside prints and the `reason=` inside the `usage=none` group stays the usage read's --
 // that those two can still meet on one line is deliberate, not this rule's to
