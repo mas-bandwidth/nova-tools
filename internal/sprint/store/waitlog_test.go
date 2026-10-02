@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // The Mem's wait on its log (waitlog.go): a line after the cursor returns at
@@ -34,9 +35,8 @@ func TestTheMemsWaitOnTheLogWakesOnALine(t *testing.T) {
 	}
 	note()
 	cur, err := st.LogTail(ctx)
-	if err != nil || cur == "" {
-		t.Fatalf("the tail after a line: %q %v", cur, err)
-	}
+	require.NoError(t, err, "the tail after a line: %q %v", cur, err)
+	require.NotEmpty(t, cur, "the tail after a line: %q %v", cur, err)
 	tail, woke, err = st.WaitLog(ctx, 0, "", wait)
 	if err != nil || !woke || tail != cur || len(waited) != 1 {
 		t.Fatalf("a line after the cursor: tail %q woke %v err %v waited %v", tail, woke, err, waited)
@@ -51,9 +51,7 @@ func TestTheMemsWaitOnTheLogWakesOnALine(t *testing.T) {
 	if err != nil || !woke || memSeq(tail) <= memSeq(cur) {
 		t.Fatalf("a line during the wait: tail %q woke %v err %v", tail, woke, err)
 	}
-	if m.Calls["waitlog"] != 4 {
-		t.Fatalf("waits: %d exchanges, want one a wait (4)", m.Calls["waitlog"])
-	}
+	require.Equal(t, 4, m.Calls["waitlog"], "waits: %d exchanges, want one a wait (4)", m.Calls["waitlog"])
 }
 
 // With no LogWait the Mem waits for a commit: a wait with an hour to go
@@ -86,11 +84,10 @@ func TestTheMemsWaitReturnsOnACommit(t *testing.T) {
 		}
 		runtime.Gosched()
 	}
-	if _, err := st.Run(context.Background(), Step{Verb: "note", Plan: func(s *sprint.Snapshot) sprint.Plan {
+	_, err := st.Run(context.Background(), Step{Verb: "note", Plan: func(s *sprint.Snapshot) sprint.Plan {
 		return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: sprint.NMachineStarted, Who: "tester", At: s.Now, What: "a line"}}}
-	}}); err != nil {
-		t.Fatal(err)
-	}
+	}})
+	require.NoError(t, err)
 	if o := <-got; !o.woke || o.err != nil {
 		t.Fatalf("the wait returned woke %v, err %v: a commit during it wakes it at once", o.woke, o.err)
 	}

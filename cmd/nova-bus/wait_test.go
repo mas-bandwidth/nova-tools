@@ -1,8 +1,9 @@
 package main
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The wait help must document #328, not #674. The flag is accepted and changes
@@ -11,10 +12,6 @@ import (
 func TestWaitHelpQuietBeatsDocumentsNoWake(t *testing.T) {
 	t.Parallel()
 	banner := invoke(t, "", "help").mustCode(t, 0).stdout
-	if strings.Contains(banner, "makes a wait return on a change that is ONLY beats") {
-		t.Fatalf("wait help still promises --quiet-beats wakes a wait:\n%s", banner)
-	}
-	if !strings.Contains(banner, "accepted and changes nothing") {
-		t.Fatalf("wait help does not say --quiet-beats is accepted and changes nothing:\n%s", banner)
-	}
+	require.NotContainsf(t, banner, "makes a wait return on a change that is ONLY beats", "wait help still promises --quiet-beats wakes a wait:\n%s", banner)
+	require.Containsf(t, banner, "accepted and changes nothing", "wait help does not say --quiet-beats is accepted and changes nothing:\n%s", banner)
 }

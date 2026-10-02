@@ -28,22 +28,21 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 
 	clk := newLockStepClock()
 	if _, err := lockCheckoutAt(clone, 200*time.Millisecond, clk); err == nil {
-		t.Fatal("two runs took one checkout's lock at once; they would write one OPEN list between them")
+		require.FailNow(t, "two runs took one checkout's lock at once; they would write one OPEN list between them")
 	} else {
 		for _, want := range []string{"another nova-bus is already running on this checkout", LockName, "run this again when that one has finished"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("the refusal does not say %q: %v", want, err)
-			}
+			require.Contains(t, err.Error(), want, "the refusal does not say %q: %v", want, err)
 		}
 		if strings.Contains(err.Error(), "\n") {
-			t.Fatalf("the refusal is more than one line: %q", err.Error())
+			require.NotContains(t, err.Error(), "\n", "the refusal is more than one line: %q", err.Error())
 		}
 	}
 	// It WAITED before refusing, rather than refusing the instant it found the lock held:
 	// the run it is waiting for is usually a fetch away from finishing. The clock is the
 	// test's, so the 200ms budget is measured in virtual time and costs no wall time.
-	if waited := clk.waited(); waited < 150*time.Millisecond {
-		t.Fatalf("the second run gave up after %s of virtual time of a 200ms budget", waited)
+	{
+		waited := clk.waited()
+		require.False(t, waited < 150*time.Millisecond, "the second run gave up after %s of virtual time of a 200ms budget", waited)
 	}
 
 	// The other way: once the first lets go, the second takes it.
@@ -68,8 +67,11 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 	// reader would have to know is not a note.
 	gd, err := GitDir(clone)
 	require.NoError(t, err)
-	if _, statErr := os.Stat(filepath.Join(gd, LockName)); statErr != nil {
-		t.Fatalf("the lock is not at %s: %v", filepath.Join(gd, LockName), statErr)
+	{
+		_, statErr := os.Stat(filepath.Join(gd, LockName))
+		if statErr != nil {
+			require.Equal(t, nil, statErr, "the lock is not at %s: %v", filepath.Join(gd, LockName), statErr)
+		}
 	}
 }
 
@@ -114,13 +116,9 @@ func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 	}
 	wg.Wait()
 	for i, err := range errs {
-		if err != nil {
-			t.Fatalf("run %d: %v", i, err)
-		}
+		require.NoError(t, err, "run %d: %v", i, err)
 	}
-	if most != 1 {
-		t.Fatalf("%d runs were inside the lock at once, want 1", most)
-	}
+	require.Equal(t, 1, most, "%d runs were inside the lock at once, want 1", most)
 }
 
 // LockFile can be called directly on any file path.
@@ -137,30 +135,23 @@ func TestLockFileNonBlockingAndHolderStamping(t *testing.T) {
 	// Verify holder was stamped with our PID
 	holder := ReadLockHolder(lockPath)
 	wantPID := strconv.Itoa(os.Getpid())
-	if holder != wantPID {
-		t.Fatalf("holder = %q, want %q", holder, wantPID)
-	}
+	require.Equal(t, wantPID, holder, "holder = %q, want %q", holder, wantPID)
 
 	// Second LockFile with wait=0 must fail immediately with ErrLockHeld, and must not
 	// consult the clock at all: the fake records whether it slept.
 	clk := newLockStepClock()
 	_, err2 := lockFile(lockPath, 0, tryLockFile, clk)
-	if err2 == nil {
-		t.Fatal("second LockFile with wait=0 succeeded, want ErrLockHeld")
-	}
-	if !errors.Is(err2, ErrLockHeld) {
-		t.Fatalf("err = %v, want errors.Is(err, ErrLockHeld)", err2)
-	}
-	if waited := clk.waited(); waited != 0 {
-		t.Fatalf("LockFile with wait=0 waited %v, want near-immediate return", waited)
+	require.False(t, err2 == nil, "second LockFile with wait=0 succeeded, want ErrLockHeld")
+	require.False(t, !errors.Is(err2, ErrLockHeld), "err = %v, want errors.Is(err, ErrLockHeld)", err2)
+	{
+		waited := clk.waited()
+		require.Equal(t, time.Duration(0), waited, "LockFile with wait=0 waited %v, want near-immediate return", waited)
 	}
 
 	// Release first lock, second should succeed
 	release()
 	release2, err3 := LockFile(lockPath, 100*time.Millisecond)
-	if err3 != nil {
-		t.Fatalf("LockFile after release failed: %v", err3)
-	}
+	require.Equal(t, nil, err3, "LockFile after release failed: %v", err3)
 	defer release2()
 }
 
@@ -170,28 +161,32 @@ func TestReadLockHolderFormats(t *testing.T) {
 	dir := t.TempDir()
 
 	// Missing file returns "-"
-	if h := ReadLockHolder(filepath.Join(dir, "missing.lock")); h != "-" {
-		t.Fatalf("missing file holder = %q, want \"-\"", h)
+	{
+		h := ReadLockHolder(filepath.Join(dir, "missing.lock"))
+		require.Equal(t, "-", h, "missing file holder = %q, want \"-\"", h)
 	}
 
 	// Empty file returns "-"
 	emptyPath := filepath.Join(dir, "empty.lock")
 	require.NoError(t, os.WriteFile(emptyPath, []byte("  \n"), 0644))
-	if h := ReadLockHolder(emptyPath); h != "-" {
-		t.Fatalf("empty file holder = %q, want \"-\"", h)
+	{
+		h := ReadLockHolder(emptyPath)
+		require.Equal(t, "-", h, "empty file holder = %q, want \"-\"", h)
 	}
 
 	// Bare PID returns the PID
 	barePath := filepath.Join(dir, "bare.lock")
 	require.NoError(t, os.WriteFile(barePath, []byte("12345\n"), 0644))
-	if h := ReadLockHolder(barePath); h != "12345" {
-		t.Fatalf("bare PID holder = %q, want \"12345\"", h)
+	{
+		h := ReadLockHolder(barePath)
+		require.Equal(t, "12345", h, "bare PID holder = %q, want \"12345\"", h)
 	}
 
 	// "pid=<n> at=<stamp>" format returns the PID
 	mergePath := filepath.Join(dir, "merge.lock")
 	require.NoError(t, os.WriteFile(mergePath, []byte("pid=67890 at=2026-09-11T12:00:00Z\n"), 0644))
-	if h := ReadLockHolder(mergePath); h != "67890" {
-		t.Fatalf("merge format holder = %q, want \"67890\"", h)
+	{
+		h := ReadLockHolder(mergePath)
+		require.Equal(t, "67890", h, "merge format holder = %q, want \"67890\"", h)
 	}
 }

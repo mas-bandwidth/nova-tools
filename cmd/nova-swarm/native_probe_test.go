@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -26,15 +29,11 @@ func TestNativeProbeCardRunsNovaCheckByName(t *testing.T) {
 		t.Skip("nova-check is not installed on PATH")
 	}
 
-	if err := buildShared(); err != nil {
-		t.Fatalf("building shared test binaries: %v", err)
-	}
+	require.NoError(t, buildShared(), "building shared test binaries")
 
 	root, slot := aSlot(t)
 	jobDir := filepath.Join(slot, "jobs", "probe-check")
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(jobDir, 0o755))
 
 	// Create a harness in slotDir that executes `nova-check` by name in bash
 	harnessScript := filepath.Join(slot, "test-harness.sh")
@@ -71,9 +70,7 @@ if [ $cat_rc -eq 0 ]; then
 fi
 exit 0
 `
-	if err := testbin.WriteExecutable(harnessScript, []byte(harnessContent), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(harnessScript, []byte(harnessContent), 0o755))
 
 	// The probe card names no REPO: (nova-tools#3711 stages a named repo from the bench
 	// mirror before the child starts); this test is about the wall, not staging.
@@ -88,9 +85,7 @@ DEPENDS-ON: none
 WHO: any
 DONE-WHEN: RESULT.md exists
 `
-	if err := os.WriteFile(cardPath, []byte(cardText), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte(cardText), 0o644))
 
 	// Run cmdNative with the real sandbox binary compiled from cmd/nova-sandbox
 	args := []string{
@@ -121,20 +116,10 @@ DONE-WHEN: RESULT.md exists
 	}
 
 	probeRcBytes, err := os.ReadFile(filepath.Join(jobDir, "probe.rc"))
-	if err != nil {
-		t.Fatalf("could not read probe.rc: %v", err)
-	}
+	require.NoError(t, err, "could not read probe.rc")
 	fields := strings.Fields(string(probeRcBytes))
-	if len(fields) != 3 {
-		t.Fatalf("probe.rc malformed: %q", string(probeRcBytes))
-	}
-	if fields[0] != "0" {
-		t.Errorf("nova-check links by name exited %s, want 0", fields[0])
-	}
-	if fields[1] != "0" {
-		t.Errorf("nova-check version by name exited %s, want 0", fields[1])
-	}
-	if fields[2] == "0" {
-		t.Errorf("cat %s inside sandbox exited 0, want non-zero (files cannot be inspected)", checkBin)
-	}
+	require.Len(t, fields, 3, "probe.rc malformed: %q", string(probeRcBytes))
+	assert.Equal(t, "0", fields[0], "nova-check links by name exited %s, want 0", fields[0])
+	assert.Equal(t, "0", fields[1], "nova-check version by name exited %s, want 0", fields[1])
+	assert.NotEqual(t, "0", fields[2], "cat %s inside sandbox exited 0, want non-zero (files cannot be inspected)", checkBin)
 }

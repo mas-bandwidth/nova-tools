@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // nativeAsked runs one card through `native` with the fake harness and returns the job
@@ -31,9 +33,7 @@ func nativeAsked(t *testing.T, label, card string) (job, stdout, stderr string) 
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, label+".md")
-	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte(card), 0o644))
 	var out, errBuf strings.Builder
 	run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1",
 		"--harness", bin, "--model", "fake/fake-model", "--label", label,
@@ -53,30 +53,16 @@ func TestNativeWritesAnAskedResultForACardThatEndedWithAQuestion(t *testing.T) {
 	job, stdout, stderr := nativeAsked(t, "asked", "FAKE-SAY "+question+"\nFAKE-NORESULT\n")
 
 	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
-	if err != nil {
-		t.Fatalf("a card that ended by asking left no report: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
-	}
+	require.NoError(t, err, "a card that ended by asking left no report\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
 	line1 := strings.SplitN(string(raw), "\n", 2)[0]
-	if !strings.HasPrefix(line1, "RESULT: ASKED ") {
-		t.Fatalf("line 1 must carry the verdict word, got %q", line1)
-	}
-	if !strings.Contains(line1, question) {
-		t.Fatalf("line 1 must carry the question itself, got %q", line1)
-	}
-	if !strings.Contains(string(raw), "written-by: nova-swarm native") {
-		t.Fatalf("the report does not say the machinery wrote it:\n%s", raw)
-	}
-	if !strings.Contains(stderr, "NATIVE NOTE: the card ended its last turn with a question") {
-		t.Fatalf("the run did not say it had written the report:\n%s", stderr)
-	}
+	require.True(t, strings.HasPrefix(line1, "RESULT: ASKED "), "line 1 must carry the verdict word, got %q", line1)
+	require.Contains(t, line1, question, "line 1 must carry the question itself, got %q", line1)
+	require.Contains(t, string(raw), "written-by: nova-swarm native", "the report does not say the machinery wrote it:\n%s", raw)
+	require.Contains(t, stderr, "NATIVE NOTE: the card ended its last turn with a question", "the run did not say it had written the report:\n%s", stderr)
 	// AND THE VERDICT DOES NOT MOVE. A report the machinery wrote is not the card's own,
 	// and counting it would print `NATIVE OK` for a card that did nothing but ask.
-	if strings.Contains(stdout, "NATIVE OK") {
-		t.Fatalf("a card that only asked a question was called OK:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "why=no-result") {
-		t.Fatalf("the verdict line must still name the card as incomplete:\n%s", stdout)
-	}
+	require.NotContains(t, stdout, "NATIVE OK", "a card that only asked a question was called OK:\n%s", stdout)
+	require.Contains(t, stdout, "why=no-result", "the verdict line must still name the card as incomplete:\n%s", stdout)
 }
 
 // A CARD THAT PUBLISHED IS DONE, whatever its prose said. The fake harness publishes by
@@ -88,15 +74,9 @@ func TestNativeLeavesAFinishedCardsReportAlone(t *testing.T) {
 	job, stdout, stderr := nativeAsked(t, "done", "FAKE-SAY Want me to open the PR as well?\nFAKE-FINDINGS 0\n")
 
 	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
-	if err != nil {
-		t.Fatalf("the card's own report is missing: %v\nstderr:\n%s", err, stderr)
-	}
-	if strings.Contains(string(raw), "RESULT: ASKED") {
-		t.Fatalf("a finished card's report was overwritten with an asked verdict:\n%s", raw)
-	}
-	if !strings.Contains(stdout, "NATIVE OK") {
-		t.Fatalf("a card that published its own report is OK:\n%s", stdout)
-	}
+	require.NoError(t, err, "the card's own report is missing\nstderr:\n%s", stderr)
+	require.NotContains(t, string(raw), "RESULT: ASKED", "a finished card's report was overwritten with an asked verdict:\n%s", raw)
+	require.Contains(t, stdout, "NATIVE OK", "a card that published its own report is OK:\n%s", stdout)
 }
 
 // A CRASH IS A CRASH. The harness asks, then exits non-zero: that is `rc=<n>`, an end this
@@ -109,13 +89,8 @@ func TestNativeDoesNotCallACrashAnAskedCard(t *testing.T) {
 
 	job, stdout, _ := nativeAsked(t, "crash", "FAKE-SAY Should I retry the build?\nFAKE-429\n")
 
-	if raw, err := os.ReadFile(filepath.Join(job, "RESULT.md")); err == nil {
-		t.Fatalf("a crashed card was given an asked report:\n%s", raw)
-	}
-	if !strings.Contains(stdout, "NATIVE INCOMPLETE") {
-		t.Fatalf("a crash is still incomplete:\n%s", stdout)
-	}
-	if strings.Contains(stdout, "RESULT: ASKED") {
-		t.Fatalf("a crash was reported as a question:\n%s", stdout)
-	}
+	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+	require.Error(t, err, "a crashed card was given an asked report:\n%s", raw)
+	require.Contains(t, stdout, "NATIVE INCOMPLETE", "a crash is still incomplete:\n%s", stdout)
+	require.NotContains(t, stdout, "RESULT: ASKED", "a crash was reported as a question:\n%s", stdout)
 }

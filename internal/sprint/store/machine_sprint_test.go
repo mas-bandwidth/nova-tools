@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
 )
 
 type crWorld struct {
@@ -390,15 +391,13 @@ func TestCRFortyPrimariesLandByTheTick(t *testing.T) {
 			t.Errorf("seed %d: holders: %d failures, first: %v", seed, len(w.holderFail), w.holderFail[:min(5, len(w.holderFail))])
 		}
 		for _, st := range []string{"s1", "s2", "s3"} {
-			if got := w.h.snap().StreamCtl(st).F("state"); got != sprint.StreamLanded {
-				t.Errorf("seed %d: stream %s is %s", seed, st, got)
-			}
+			got := w.h.snap().StreamCtl(st).F("state")
+			assert.Equal(t, string(sprint.StreamLanded), got, "seed %d: stream %s is %s", seed, st, got)
 		}
 		// no deadline judgment was written in a run where everyone answers each second
 		for _, typ := range []string{sprint.NWorkLate, sprint.NReadLate, sprint.NMergeLate, sprint.NInvariant} {
-			if n := w.h.written(typ); n > 0 {
-				t.Errorf("seed %d: %s written %d times", seed, typ, n)
-			}
+			n := w.h.written(typ)
+			assert.LessOrEqual(t, n, 0, "seed %d: %s written %d times", seed, typ, n)
 		}
 	}
 }
@@ -421,13 +420,10 @@ func TestCRStopAtEveryPoint(t *testing.T) {
 				got[c.ID] = true
 			}
 		}
-		if len(got) != w.landed() {
-			t.Errorf("stop at %d: merged %d, landed %d", at, len(got), w.landed())
-		}
+		assert.Len(t, got, w.landed(), "stop at %d: merged %d, landed %d", at, len(got), w.landed())
 		for _, typ := range []string{sprint.NWorkLate, sprint.NReadLate, sprint.NMergeLate} {
-			if n := w.h.written(typ); n > 0 {
-				t.Errorf("stop at %d: %s written %d times (stopped time counted?)", at, typ, n)
-			}
+			n := w.h.written(typ)
+			assert.LessOrEqual(t, n, 0, "stop at %d: %s written %d times (stopped time counted?)", at, typ, n)
 		}
 		if len(w.holderFail) > 0 {
 			t.Errorf("stop at %d: holders: %v", at, w.holderFail[:min(3, len(w.holderFail))])

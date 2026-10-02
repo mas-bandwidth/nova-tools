@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ISSUE #74 (Glenn, 2026-09-12): tonight's read-pr reports through nova-swarm were
@@ -29,27 +32,19 @@ func TestReadPRTemplateAsksForBoundedFindingsOnly(t *testing.T) {
 		"verdict line last",
 	}
 	body, err := Template("read-pr")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, rule := range rules {
-		if !strings.Contains(strings.ToLower(body), rule) {
-			t.Errorf("the read-pr template does not ask for %q", rule)
-		}
+		assert.Contains(t, strings.ToLower(body), rule, "the read-pr template does not ask for %q", rule)
 	}
 
 	// AND THE SPEC SAYS THE SAME. The read-pr section is the read-pr template's own
 	// contract, and a condition that lives in the binary but not in the spec is a
 	// condition the next reader cannot review.
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
-	if err != nil {
-		t.Fatalf("the template's contract is the spec's: %s", err)
-	}
+	require.NoError(t, err, "the template's contract is the spec's: %s", err)
 	section := readPRSpecSection(t, string(raw))
 	for _, rule := range rules {
-		if !strings.Contains(strings.ToLower(section), rule) {
-			t.Errorf("SPEC-SWARM.md's read-pr section does not ask for %q", rule)
-		}
+		assert.Contains(t, strings.ToLower(section), rule, "SPEC-SWARM.md's read-pr section does not ask for %q", rule)
 	}
 }
 

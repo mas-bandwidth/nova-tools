@@ -9,6 +9,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // takeAndFinish takes every live work card of the primaries by id at its
@@ -53,14 +55,10 @@ func TestEverySubjectOfALargeJudgmentStaysOpen(t *testing.T) {
 			ids = append(ids, c.ID)
 		}
 	}
-	if len(ids) != 60 {
-		t.Fatalf("started %d primaries", len(ids))
-	}
+	require.Len(t, ids, 60, "started %d primaries", len(ids))
 	h.takeAndFinish(true, ids...)
 	open, err := h.m.OpenNotes(h.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	notes := map[string]bool{}
 	subjects := map[string]bool{}
 	for _, o := range open {
@@ -69,22 +67,18 @@ func TestEverySubjectOfALargeJudgmentStaysOpen(t *testing.T) {
 			subjects[o.Subject()] = true
 		}
 	}
-	if len(subjects) != 60 {
-		t.Fatalf("60 failures leave %d open obligations", len(subjects))
-	}
+	require.Len(t, subjects, 60, "60 failures leave %d open obligations", len(subjects))
 	all, _, _ := h.m.NotesSince(h.ctx, "", 1000)
 	lines := 0
 	for _, n := range all {
 		if n.Type == sprint.NWorkFailed {
 			lines++
-			if len(n.Primaries) > sprint.MaxListed || n.Count == 0 {
-				t.Fatalf("the notification lists %d primaries, count %d", len(n.Primaries), n.Count)
-			}
+			require.LessOrEqual(t, len(n.Primaries), int(sprint.MaxListed), "the notification lists %d primaries, count %d", len(n.Primaries), n.Count)
+			require.NotEqual(t, 0, n.Count, "the notification lists %d primaries, count %d", len(n.Primaries), n.Count)
 		}
 	}
-	if lines != 1 || len(notes) != 1 {
-		t.Fatalf("%d failed-work lines for %d judgments; want one of each", lines, len(notes))
-	}
+	require.Equal(t, 1, lines, "%d failed-work lines for %d judgments; want one of each", lines, len(notes))
+	require.Len(t, notes, 1, "%d failed-work lines for %d judgments; want one of each", lines, len(notes))
 }
 
 // outsideWrite is a racer that changes a primary's brief on the work table,
@@ -96,9 +90,7 @@ func (h *harness) outsideWrite(id string) *racer {
 		p := s.Work.Card(id)
 		_, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-work", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Work.Revision),
 			OperationID: "outside", Members: []ntable.BatchMemberEntry{{ID: p.ID, Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: p.Row, Col: p.Col}}, Set: map[string]string{"brief": "outside"}}}})
-		if err != nil {
-			h.t.Error(err)
-		}
+		assert.NoError(h.t, err)
 	}}
 }
 
@@ -112,9 +104,8 @@ func (h *harness) cutStart(callerOp string) Step {
 	step.CallerOp = callerOp
 	_, err := st.Run(h.ctx, step)
 	var cut *CutError
-	if !errors.As(err, &cut) || h.m.Pending() == nil {
-		h.t.Fatalf("the step was not cut: %v", err)
-	}
+	require.ErrorAs(h.t, err, &cut, "the step was not cut: %v", err)
+	require.NotNil(h.t, h.m.Pending(), "the step was not cut: %v", err)
 	return step
 }
 
@@ -144,20 +135,15 @@ func TestRepairSkipsWhatNoLongerHoldsAndReleases(t *testing.T) {
 	if err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped {
 		t.Fatalf("repair: %+v %v", rr, err)
 	}
-	if h.m.Pending() != nil {
-		t.Fatalf("the fence is still held")
-	}
+	require.Nil(t, h.m.Pending(), "the fence is still held")
 	s := h.snap()
 	if c := s.Work.Card("s1-1"); c.Col != sprint.Ready || c.F("brief") != "outside" {
 		t.Fatalf("s1-1 overwritten: %s brief=%s", c.Col, c.F("brief"))
 	}
-	if c := s.Work.Card("s1-2"); c.Col != sprint.Working {
-		t.Fatalf("s1-2, whose expectation held, is %s", c.Col)
-	}
+	c := s.Work.Card("s1-2")
+	require.Equal(t, sprint.Working, c.Col, "s1-2, whose expectation held, is %s", c.Col)
 	ns := h.skipNotes()
-	if len(ns) != 1 {
-		t.Fatalf("%d skip judgments", len(ns))
-	}
+	require.Len(t, ns, 1, "%d skip judgments", len(ns))
 	n := ns[0]
 	if n.Kind != sprint.Judgment || len(n.Primaries) != 1 || n.Primaries[0] != "s1-1" || len(n.Decisions) != len(RepairSkippedDecisions) {
 		t.Fatalf("skip judgment: %+v", n)
@@ -172,20 +158,15 @@ func TestRepairSkipsWhatNoLongerHoldsAndReleases(t *testing.T) {
 	for _, o := range open {
 		found = found || (o.Note.ID == n.ID && o.Subject() == "s1-1")
 	}
-	if !found {
-		t.Fatalf("the skip judgment is not open on s1-1: %v", open)
-	}
+	require.True(t, found, "the skip judgment is not open on s1-1: %v", open)
 	rep, _, err := h.st.Check(h.ctx, 3)
-	if err != nil || rep.Pending != "" {
-		t.Fatalf("check after the repair: pending %q %v", rep.Pending, err)
-	}
+	require.NoError(t, err, "check after the repair: pending %q %v", rep.Pending, err)
+	require.Empty(t, rep.Pending, "check after the repair: pending %q %v", rep.Pending, err)
 	named := false
 	for _, v := range rep.Violations {
 		named = named || strings.Contains(v.Detail, "s1-1")
 	}
-	if !named {
-		t.Fatalf("check does not report the skipped move as it is: %v", rep.Violations)
-	}
+	require.True(t, named, "check does not report the skipped move as it is: %v", rep.Violations)
 }
 
 // F5. After a cut that repair skips, the next mutating verb finishes it on
@@ -203,12 +184,8 @@ func TestEveryVerbRunsAfterASkippingRepair(t *testing.T) {
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 1}))
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s2-1"}}}))
-	if h.state("s2-1") != sprint.Working {
-		t.Fatalf("start after the repair: s2-1 is %s", h.state("s2-1"))
-	}
-	if len(h.skipNotes()) != 1 {
-		t.Fatalf("%d skip judgments", len(h.skipNotes()))
-	}
+	require.Equal(t, sprint.Working, h.state("s2-1"), "start after the repair: s2-1 is %s", h.state("s2-1"))
+	require.Len(t, h.skipNotes(), 1, "%d skip judgments", len(h.skipNotes()))
 }
 
 // F5. A repair whose release is lost is run again: the entries the first
@@ -230,9 +207,7 @@ func TestTheSkipJudgmentIsWrittenOnceOverTwoRepairs(t *testing.T) {
 		t.Fatalf("a repair whose release is lost: %+v %v", rr, err)
 	}
 	h.m.Fail = nil
-	if len(h.skipNotes()) != 0 {
-		t.Fatalf("a judgment was written before the release")
-	}
+	require.Empty(t, h.skipNotes(), "a judgment was written before the release")
 	rr, err = h.st.Repair(h.ctx)
 	if err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped || len(rr[0].Skipped) != 1 {
 		t.Fatalf("the second repair: %+v %v", rr, err)
@@ -240,12 +215,10 @@ func TestTheSkipJudgmentIsWrittenOnceOverTwoRepairs(t *testing.T) {
 	if rr, err := h.st.Repair(h.ctx); err != nil || len(rr) != 0 {
 		t.Fatalf("a third repair: %+v %v", rr, err)
 	}
-	if n := len(h.skipNotes()); n != 1 {
-		t.Fatalf("%d skip judgments over two repairs", n)
-	}
-	if h.state("s1-2") != sprint.Working || h.state("s1-1") != sprint.Ready {
-		t.Fatalf("states %s %s", h.state("s1-1"), h.state("s1-2"))
-	}
+	n := len(h.skipNotes())
+	require.Equal(t, 1, n, "%d skip judgments over two repairs", n)
+	require.Equal(t, sprint.Working, h.state("s1-2"), "states %s %s", h.state("s1-1"), h.state("s1-2"))
+	require.Equal(t, sprint.Ready, h.state("s1-1"), "states %s %s", h.state("s1-1"), h.state("s1-2"))
 }
 
 // F5. A replay of the cut step's caller operation id returns the result the
@@ -262,7 +235,5 @@ func TestAReplayOfASkippedOperationReturnsTheSkips(t *testing.T) {
 	if err != nil || !res.Replay || len(res.Skipped) != 1 || !strings.Contains(res.Skipped[0], "s1-1") {
 		t.Fatalf("replay: %+v %v", res, err)
 	}
-	if len(h.skipNotes()) != 1 {
-		t.Fatalf("%d skip judgments", len(h.skipNotes()))
-	}
+	require.Len(t, h.skipNotes(), 1, "%d skip judgments", len(h.skipNotes()))
 }

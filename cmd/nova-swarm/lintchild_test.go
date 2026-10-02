@@ -32,9 +32,8 @@ func filledLibraries(body string) string {
 func TestCardTemplateLintsCleanWithTheChildRules(t *testing.T) {
 	t.Parallel()
 	exit, printed, stderr := runSwarm(t, "template", "--name", "card")
-	if exit != 0 || stderr != "" {
-		t.Fatalf("template --name card: exit %d, stderr %q", exit, stderr)
-	}
+	require.Equal(t, 0, exit, "template --name card: exit %d, stderr %q", exit, stderr)
+	require.Empty(t, stderr, "template --name card: exit %d, stderr %q", exit, stderr)
 	libs := filepath.Join(t.TempDir(), "libs.txt")
 	require.NoError(t, os.WriteFile(libs, []byte("[libraries-considered] A card that builds code carries a filled Libraries considered line.\n"), 0o600))
 	exit, stdout, _ := runSwarm(t, "lint", "--card", writeLintCard(t, "printed.md", printed), "--child-rules-file", libs, "--max", "0")
@@ -45,14 +44,11 @@ func TestCardTemplateLintsCleanWithTheChildRules(t *testing.T) {
 	card := writeLintCard(t, "card.md", body)
 	for _, args := range [][]string{{"--card", card}, {"--card", card, "--child-rules"}} {
 		exit, stdout, _ := runSwarm(t, append([]string{"lint"}, args...)...)
-		if exit != 0 || !strings.HasPrefix(stdout, "LINT OK card=card.md checks=") {
-			t.Fatalf("lint %v: exit %d\n%s", args, exit, stdout)
-		}
+		require.Equal(t, 0, exit, "lint %v: exit %d\n%s", args, exit, stdout)
+		require.True(t, strings.HasPrefix(stdout, "LINT OK card=card.md checks="), "lint %v: exit %d\n%s", args, exit, stdout)
 	}
 	for _, r := range swarm.DefaultChildRules {
-		if !strings.Contains(body, r.Sentence) {
-			t.Errorf("the printed card does not quote %s", r.Name)
-		}
+		assert.Contains(t, body, r.Sentence, "the printed card does not quote %s", r.Name)
 	}
 }
 
@@ -61,33 +57,23 @@ func TestCardTemplateLintsCleanWithTheChildRules(t *testing.T) {
 func TestChildRulesAreAskedForByTheFlag(t *testing.T) {
 	t.Parallel()
 	card := writeLintCard(t, "good.card", lintGoodCard())
-	if exit, stdout, _ := runSwarm(t, "lint", "--card", card); exit != 0 {
-		t.Fatalf("a worker card lints clean without the flag: exit %d\n%s", exit, stdout)
-	}
-	exit, stdout, _ := runSwarm(t, "lint", "--card", card, "--child-rules", "--max", "0")
-	if exit != 1 {
-		t.Fatalf("the same card under --child-rules drifts at exit 1, got %d\n%s", exit, stdout)
-	}
+	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
+	require.Equal(t, 0, exit, "a worker card lints clean without the flag: exit %d\n%s", exit, stdout)
+	exit, stdout, _ = runSwarm(t, "lint", "--card", card, "--child-rules", "--max", "0")
+	require.Equal(t, 1, exit, "the same card under --child-rules drifts at exit 1, got %d\n%s", exit, stdout)
 	drifts := 0
 	for _, line := range strings.Split(stdout, "\n") {
 		if strings.HasPrefix(line, "LINT DRIFT card=good.card rule-") || strings.HasPrefix(line, "LINT DRIFT card=good.card step-") {
 			drifts++
-			if !strings.Contains(line, " remedy=") {
-				t.Errorf("a child-rule drift names no remedy: %s", line)
-			}
+			assert.Contains(t, line, " remedy=", "a child-rule drift names no remedy: %s", line)
 		}
 	}
 	// every general rule is missing; the card's `go test` without -timeout is no scan hit,
 	// for the general set carries no Go rule and no libraries check
-	if want := len(swarm.DefaultChildRules); drifts != want {
-		t.Errorf("%d child-rule drifts, want %d (every general rule)\n%s", drifts, want, stdout)
-	}
-	if !strings.Contains(stdout, "rule-no-server: 1: missing: Never start a server on this machine.") {
-		t.Errorf("the missing rule is named with its sentence:\n%s", stdout)
-	}
-	if strings.Contains(stdout, "step-go-test-timeout") {
-		t.Errorf("the general rules scan a go test they have no rule for:\n%s", stdout)
-	}
+	want := len(swarm.DefaultChildRules)
+	assert.Equal(t, want, drifts, "%d child-rule drifts, want %d (every general rule)\n%s", drifts, want, stdout)
+	assert.Contains(t, stdout, "rule-no-server: 1: missing: Never start a server on this machine.", "the missing rule is named with its sentence:\n%s", stdout)
+	assert.NotContains(t, stdout, "step-go-test-timeout", "the general rules scan a go test they have no rule for:\n%s", stdout)
 }
 
 // `--child-rules-file` holds the card to the coordinator's own sentences: this
@@ -103,9 +89,7 @@ func TestChildRulesFileIsTheCoordinatorsRuleSet(t *testing.T) {
 		t.Errorf("this repository's file: exit %d\n%s", exit, stdout)
 	}
 	mine := filepath.Join(t.TempDir(), "rules.txt")
-	if err := os.WriteFile(mine, []byte("# mine\n[ticket] Quote the ticket number.\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(mine, []byte("# mine\n[ticket] Quote the ticket number.\n"), 0o600))
 	exit, stdout, _ = runSwarm(t, "lint", "--card", card, "--child-rules-file", mine)
 	if exit == 0 || !strings.Contains(stdout, "rule-ticket: 1: missing: Quote the ticket number.") || strings.Count(stdout, "LINT DRIFT card=good.card rule-") != 1 {
 		t.Errorf("a one-rule file: exit %d\n%s", exit, stdout)
@@ -127,9 +111,9 @@ func TestChildScanThroughTheCommand(t *testing.T) {
 	_, body, _ := runSwarm(t, "template", "--name", "card")
 	card := writeLintCard(t, "bad.card", filledLibraries(body)+"STEP 7. git push --force origin HEAD && git stash\n")
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card, "--child-rules", "--max", "0")
-	if exit != 1 || !strings.Contains(stdout, "LINT DRIFT card=bad.card step-force-push: ") || !strings.Contains(stdout, "LINT DRIFT card=bad.card step-stash: ") {
-		t.Fatalf("exit %d\n%s", exit, stdout)
-	}
+	require.Equal(t, 1, exit, "exit %d\n%s", exit, stdout)
+	require.Contains(t, stdout, "LINT DRIFT card=bad.card step-force-push: ", "exit %d\n%s", exit, stdout)
+	require.Contains(t, stdout, "LINT DRIFT card=bad.card step-stash: ", "exit %d\n%s", exit, stdout)
 }
 
 // `--rules` prints every child rule and scan with its remedy, so a bench with a stale
@@ -137,18 +121,12 @@ func TestChildScanThroughTheCommand(t *testing.T) {
 func TestLintRulesListsTheChildRules(t *testing.T) {
 	t.Parallel()
 	exit, stdout, _ := runSwarm(t, "lint", "--rules")
-	if exit != 0 {
-		t.Fatalf("exit %d", exit)
-	}
+	require.Equal(t, 0, exit, "exit %d", exit)
 	for _, r := range swarm.DefaultChildRules {
-		if !strings.Contains(stdout, "LINT RULE rule-"+r.Name+" remedy=") {
-			t.Errorf("--rules does not list rule-%s", r.Name)
-		}
+		assert.Contains(t, stdout, "LINT RULE rule-"+r.Name+" remedy=", "--rules does not list rule-%s", r.Name)
 	}
 	for _, name := range []string{"step-redis-server", "step-go-clean", "step-kill", "step-rm-rf", "step-force-push", "step-rebase", "step-stash", "step-merge", "step-go-test-timeout"} {
-		if !strings.Contains(stdout, "LINT RULE "+name+" remedy=") {
-			t.Errorf("--rules does not list %s", name)
-		}
+		assert.Contains(t, stdout, "LINT RULE "+name+" remedy=", "--rules does not list %s", name)
 	}
 }
 
@@ -158,7 +136,6 @@ func TestLintRulesListsTheChildRules(t *testing.T) {
 func TestFixtureCardsKeepTheirVerdictsWithoutTheFlag(t *testing.T) {
 	t.Parallel()
 	stdout, code := lintCardFile(t, "queue-1282-bench-hygiene-home-guard.md")
-	if code != 0 || !strings.Contains(stdout, "LINT OK") {
-		t.Fatalf("the control card stays clean without --child-rules: exit %d\n%s", code, stdout)
-	}
+	require.Equal(t, 0, code, "the control card stays clean without --child-rules: exit %d\n%s", code, stdout)
+	require.Contains(t, stdout, "LINT OK", "the control card stays clean without --child-rules: exit %d\n%s", code, stdout)
 }

@@ -6,12 +6,13 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 // TestTableVerbsOneExchange records the real Redis command stream. Every
@@ -23,23 +24,20 @@ func TestTableVerbsOneExchange(t *testing.T) {
 	ctx := context.Background()
 	admin := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = admin.Close() })
-	if err := admin.Ping(ctx).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, admin.Ping(ctx).Err())
 	conn, err := net.DialTimeout("tcp", addr, 30*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fmt.Fprint(conn, "*1\r\n$7\r\nMONITOR\r\n"); err != nil {
-		t.Fatal(err)
+	require.NoError(t, conn.SetDeadline(time.Now().Add(30*time.Second)))
+	{
+		_, err := fmt.Fprint(conn, "*1\r\n$7\r\nMONITOR\r\n")
+		require.NoError(t, err, "%v", err)
 	}
 	reader := bufio.NewReader(conn)
-	if line, err := reader.ReadString('\n'); err != nil || line != "+OK\r\n" {
-		t.Fatalf("MONITOR ready: %q %v", line, err)
+	{
+		line, err := reader.ReadString('\n')
+		require.NoError(t, err, "MONITOR ready: %q %v", line, err)
+		require.Equal(t, "+OK\r\n", line, "MONITOR ready: %q %v", line, err)
 	}
 	steps := [][]string{
 		{"create", "triptable", "--columns", "ready,working"},
@@ -55,19 +53,13 @@ func TestTableVerbsOneExchange(t *testing.T) {
 	}
 	for i, args := range steps {
 		code, out, errout := runTable(at(addr, args...)...)
-		if code != 0 {
-			t.Fatalf("%v: exit %d: %s %s", args, code, out, errout)
-		}
+		require.EqualValues(t, 0, code, "%v: exit %d: %s %s", args, code, out, errout)
 		marker := fmt.Sprintf("table-probe-%d", i)
-		if err := admin.Echo(ctx, marker).Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, admin.Echo(ctx, marker).Err())
 		var commands []string
 		for {
 			line, err := reader.ReadString('\n')
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err, "%v", err)
 			if strings.Contains(line, `"echo" "`+marker+`"`) {
 				break
 			}
@@ -75,9 +67,7 @@ func TestTableVerbsOneExchange(t *testing.T) {
 				continue
 			}
 			parts := strings.SplitN(line, "] ", 2)
-			if len(parts) != 2 {
-				t.Fatalf("MONITOR line %q", line)
-			}
+			require.Len(t, parts, 2, "MONITOR line %q", line)
 			command := strings.TrimSpace(parts[1])
 			lower := strings.ToLower(command)
 			if strings.HasPrefix(lower, `"hello"`) || strings.HasPrefix(lower, `"client"`) || strings.HasPrefix(lower, `"auth"`) {
@@ -86,8 +76,6 @@ func TestTableVerbsOneExchange(t *testing.T) {
 			commands = append(commands, command)
 		}
 		t.Logf("verb=%q commands=%d wire=%v", strings.Join(args, " "), len(commands), commands)
-		if len(commands) != 1 {
-			t.Errorf("%v sent %d application commands; want one atomic call", args, len(commands))
-		}
+		assert.Len(t, commands, 1, "%v sent %d application commands; want one atomic call", args, len(commands))
 	}
 }

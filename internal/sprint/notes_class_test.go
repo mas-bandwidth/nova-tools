@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A class test: no code that builds a printed command, or anything else,
@@ -17,24 +20,16 @@ func TestNothingPicksACardByItsPlaceInANotesPrimaries(t *testing.T) {
 	pick := regexp.MustCompile(`Primaries\[[^:\]]`)
 	for _, dir := range []string{".", "store", "driver", filepath.Join("..", "..", "cmd", "nova-sprint")} {
 		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(files) == 0 {
-			t.Fatalf("no Go files in %s", dir)
-		}
+		require.NoError(t, err)
+		require.NotEmpty(t, files, "no Go files in %s", dir)
 		for _, f := range files {
 			if strings.HasSuffix(f, "_test.go") {
 				continue
 			}
 			b, err := os.ReadFile(f)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			for i, line := range strings.Split(string(b), "\n") {
-				if pick.MatchString(line) {
-					t.Errorf("%s:%d picks a card by its place in a note's primaries; name it in a field of the note: %s", f, i+1, strings.TrimSpace(line))
-				}
+				assert.False(t, pick.MatchString(line), "%s:%d picks a card by its place in a note's primaries; name it in a field of the note: %s", f, i+1, strings.TrimSpace(line))
 			}
 		}
 	}

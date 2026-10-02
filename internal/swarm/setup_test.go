@@ -3,6 +3,9 @@ package swarm
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE SETUP TEMPLATE IS #184'S NEAR-TERM ENDPOINT: review and agreement only. The issue
@@ -21,9 +24,7 @@ func TestTheSetupTemplateIsTheAgreementFormNotThePrivateConfig(t *testing.T) {
 	t.Parallel()
 
 	body, err := Template("setup")
-	if err != nil {
-		t.Fatalf("template setup: %v", err)
-	}
+	require.NoError(t, err, "template setup: %v", err)
 	for _, want := range []string{
 		"setup — one friend's safety setup, proposed, reviewed, agreed (#184)",
 		"proposal by: <",
@@ -41,25 +42,19 @@ func TestTheSetupTemplateIsTheAgreementFormNotThePrivateConfig(t *testing.T) {
 		"synthetic secrets and disposable repositories",
 		"a denied destructive operation and successful permitted work",
 	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the setup template does not carry %q", want)
-		}
+		assert.Contains(t, body, want, "the setup template does not carry %q", want)
 	}
 	lower := strings.ToLower(body)
 	for _, private := range []string{"rowan", "freddy", "stella", "emma", "johnny", "glenn", "deepseek", "age1", "sk-", "ghp_", "mas-bandwidth", "/users/", "/opt/homebrew"} {
-		if strings.Contains(lower, private) {
-			t.Errorf("the setup template publishes a private or live detail: %q", private)
-		}
+		assert.NotContains(t, lower, private, "the setup template publishes a private or live detail: %q", private)
 	}
 	// The banner and the refusal name the same set, and that set is TemplateNames: a name
 	// Template answers to that the list omits is the drift that lost `worker` once.
-	if names := strings.Join(TemplateNames(), ","); !strings.Contains(names, "setup") {
-		t.Errorf("TemplateNames must carry setup so the banner and the refusal name the same set: %s", names)
-	}
+	names := strings.Join(TemplateNames(), ",")
+	assert.Contains(t, names, "setup", "TemplateNames must carry setup so the banner and the refusal name the same set: %s", names)
 	// It is a form, not a task's conditions: `add --template setup` is refused the way
 	// `result` is, because wrapping a task inside an agreement form produces a prompt that
 	// is neither.
-	if _, err := WrapTemplate("setup", 3, []byte("a task")); err == nil {
-		t.Error("`setup` is the agreement form and not a task template; add --template setup must be refused the way `result` is")
-	}
+	_, err = WrapTemplate("setup", 3, []byte("a task"))
+	assert.Error(t, err, "`setup` is the agreement form and not a task template; add --template setup must be refused the way `result` is")
 }

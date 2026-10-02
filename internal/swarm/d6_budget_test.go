@@ -1,6 +1,11 @@
 package swarm
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 // DOGFOOD D6 (2026-09-11, HIGH): a real job hit 4.18M of a 4,000,000-token budget in under
 // three minutes and was ended with ZERO findings. It had not spent four million tokens: the
@@ -21,16 +26,13 @@ func TestTheBudgetCountsSpendNotCacheReads(t *testing.T) {
 		"cache_read": "4160000", "reasoning": "120",
 	}}
 	spent, seen, partial := u.Budget()
-	if spent != 11139+944+120 {
-		t.Errorf("the budget counts input, output and reasoning: spent=%d, want %d", spent, 11139+944+120)
-	}
+	assert.Equal(t, 11139+944+120, spent, "the budget counts input, output and reasoning: spent=%d, want %d", spent, 11139+944+120)
 	if seen != 3 || partial {
 		t.Errorf("three columns observed and none missing: seen=%d partial=%t", seen, partial)
 	}
 	// The row keeps every column, and the whole-row sum is unchanged.
-	if sum, _, _ := u.Sum(); sum != 11139+944+3000+4160000+120 {
-		t.Errorf("the usage row still carries all five columns, got sum=%d", sum)
-	}
+	sum, _, _ := u.Sum()
+	assert.Equal(t, 11139+944+3000+4160000+120, sum, "the usage row still carries all five columns, got sum=%d", sum)
 	// A partial observation still prints the plus: a budget missing a column it wants is
 	// not a whole one.
 	partialUsage := ProviderUsage{Observed: true, Values: map[string]string{
@@ -48,12 +50,8 @@ func TestBudgetColumnsAreSpendOnly(t *testing.T) {
 	t.Parallel()
 
 	want := []string{"tokens_in", "tokens_out", "reasoning"}
-	if len(BudgetColumns) != len(want) {
-		t.Fatalf("the budget counts %v, got %v", want, BudgetColumns)
-	}
+	require.Len(t, BudgetColumns, len(want), "the budget counts %v, got %v", want, BudgetColumns)
 	for i, c := range want {
-		if BudgetColumns[i] != c {
-			t.Errorf("budget column %d is %q, want %q", i, BudgetColumns[i], c)
-		}
+		assert.Equal(t, c, BudgetColumns[i], "budget column %d is %q, want %q", i, BudgetColumns[i], c)
 	}
 }

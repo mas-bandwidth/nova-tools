@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // hooked is Mem with a hook before each apply, each read set, and around each
@@ -124,24 +125,17 @@ func TestRepairNeverAbandonsAnOperationThatApplied(t *testing.T) {
 	<-done
 	t.Logf("worker's finish: moved %v err %v; tick: repaired %+v err %v", wres.Moved, werr, tres.Repaired, terr)
 	h.clean("after")
-	if h.state("s1-1") != sprint.Review {
-		t.Fatalf("s1-1 is %s", h.state("s1-1"))
-	}
+	require.Equal(t, sprint.Review, h.state("s1-1"), "s1-1 is %s", h.state("s1-1"))
 	if n := h.written(sprint.NWorkFailed); n != 1 || len(h.openOf(sprint.NWorkFailed)) != 1 {
 		t.Fatalf("the finish applied (s1-1 in review, failed): work came back failed written %d, open %d", n, len(h.openOf(sprint.NWorkFailed)))
 	}
-	if n := h.written(sprint.NAbandoned); n != 0 {
-		t.Fatalf("an operation that applied was released as abandoned (%d)", n)
-	}
-	if werr != nil {
-		t.Fatalf("the worker was told: %v", werr)
-	}
+	n := h.written(sprint.NAbandoned)
+	require.Equal(t, 0, n, "an operation that applied was released as abandoned (%d)", n)
+	require.NoError(t, werr, "the worker was told: %v", werr)
 	h.machine()
 	h.tick(time.Hour)
 	h.machine()
-	if len(h.openOf(sprint.NWorkFailed)) != 1 {
-		t.Fatalf("after an hour of ticks: %v", h.openOf(sprint.NWorkFailed))
-	}
+	require.Len(t, h.openOf(sprint.NWorkFailed), 1, "after an hour of ticks: %v", h.openOf(sprint.NWorkFailed))
 }
 
 // An operation whose first manifest never applied, and whose members moved,
@@ -229,9 +223,8 @@ func TestRepairAppliesWhatHoldsOfAFirstManifestPastTheGrace(t *testing.T) {
 	}
 	// The entry that held applied: the other card is in failed and its
 	// primary in review.
-	if h.snap().Fleet.Card(other.ID).Col != sprint.DoneFailed || h.state(other.F("primary")) != sprint.Review {
-		t.Fatalf("the entry that held: %s %s", h.snap().Fleet.Card(other.ID).Col, h.state(other.F("primary")))
-	}
+	require.Equal(t, string(sprint.DoneFailed), h.snap().Fleet.Card(other.ID).Col, "the entry that held: %s %s", h.snap().Fleet.Card(other.ID).Col, h.state(other.F("primary")))
+	require.Equal(t, sprint.Review, h.state(other.F("primary")), "the entry that held: %s %s", h.snap().Fleet.Card(other.ID).Col, h.state(other.F("primary")))
 	skips := h.skipNotes()
 	if h.written(sprint.NAbandoned) != 0 || len(skips) != 1 || !strings.Contains(skips[0].What, c.ID) {
 		t.Fatalf("skip judgments %+v, abandoned %d", skips, h.written(sprint.NAbandoned))
@@ -288,15 +281,11 @@ func TestAWriterIsNotToldCutWhenItsOperationWasFinished(t *testing.T) {
 	<-done
 	t.Logf("tick err %v; worker %+v err %v; s1-1 %s; pending %v", terr, wres, werr, h.state("s1-1"), h.m.Pending())
 	h.clean("after")
-	if h.state("s1-1") != sprint.Review || h.m.Pending() != nil {
-		t.Fatalf("s1-1 %s, pending %v", h.state("s1-1"), h.m.Pending())
-	}
-	if werr != nil {
-		t.Fatalf("the worker's finish applied and was committed, but the worker was told: %v", werr)
-	}
-	if len(wres.Moved) != 1 || !strings.Contains(wres.Moved[0], "s1-1") {
-		t.Fatalf("the worker's result: %+v", wres)
-	}
+	require.Equal(t, sprint.Review, h.state("s1-1"), "s1-1 %s, pending %v", h.state("s1-1"), h.m.Pending())
+	require.Nil(t, h.m.Pending(), "s1-1 %s, pending %v", h.state("s1-1"), h.m.Pending())
+	require.NoError(t, werr, "the worker's finish applied and was committed, but the worker was told: %v", werr)
+	require.Len(t, wres.Moved, 1, "the worker's result: %+v", wres)
+	require.Contains(t, wres.Moved[0], "s1-1", "the worker's result: %+v", wres)
 }
 
 // tagged is Mem shared by several writers in one test, each with its own
@@ -373,9 +362,7 @@ func TestTwoTickLoopsNeverTellAWriterItWasCut(t *testing.T) {
 		}
 		close(stop)
 		wg.Wait()
-		if bad != nil {
-			t.Fatalf("trial %d: a writer was told: %v", trial, bad)
-		}
+		require.NoError(t, bad, "trial %d: a writer was told: %v", trial, bad)
 		h.clean(fmt.Sprintf("trial %d", trial))
 	}
 }

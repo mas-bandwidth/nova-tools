@@ -4,6 +4,8 @@ package main
 
 import (
 	"os"
+
+	"github.com/stretchr/testify/require"
 	"os/exec"
 	"syscall"
 	"testing"
@@ -45,7 +47,7 @@ func makeUnreadable(t *testing.T, path string) (release func()) {
 		f.Close()
 		undo()
 	}
-	t.Fatalf("no mechanism on this Windows made %s refuse a read: an exclusive handle, a deny ACE and a symlink were each tried and the file stayed readable", path)
+	require.FailNowf(t, "Windows unreadable fixture remained readable", "no mechanism on this Windows made %s refuse a read: an exclusive handle, a deny ACE and a symlink were each tried and the file stayed readable", path)
 	return func() {}
 }
 

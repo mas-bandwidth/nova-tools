@@ -41,7 +41,7 @@ func unchangedHolding(t *testing.T, v, content string) {
 	raw, err := os.ReadFile(v)
 	require.NoError(t, err)
 	if string(raw) != content {
-		t.Fatalf("the file outside the bus was written through the link: %q", string(raw))
+		require.False(t, string(raw) != content, "the file outside the bus was written through the link: %q", string(raw))
 	}
 }
 
@@ -51,9 +51,7 @@ func stillLink(t *testing.T, link string) {
 	if err != nil {
 		return // removed is fine; followed is not
 	}
-	if fi.Mode().IsRegular() {
-		t.Fatalf("%s is a regular file now; the write replaced the link rather than refusing it", link)
-	}
+	require.False(t, fi.Mode().IsRegular(), "%s is a regular file now; the write replaced the link rather than refusing it", link)
 }
 
 func TestAppendIndexLineRefusesASymlinkedIndex(t *testing.T) {
@@ -77,8 +75,9 @@ func TestReceiptAppendRefusesASymlinkedReceipts(t *testing.T) {
 	v := victim(t, dir)
 	plant(t, v, filepath.Join(root, "from-x", ReceiptsName))
 	plan := ReceiptPlan{Lane: "from-x", Path: "from-x/" + ReceiptsName, Record: []string{"aa11bb22"}, Stamp: time.Now().UTC().Format(ReceiptStampLayout)}
-	if err := plan.Append(root); err == nil {
-		t.Fatal("ReceiptPlan.Append wrote through a symlinked RECEIPTS and raised nothing")
+	{
+		err := plan.Append(root)
+		require.Error(t, err, "ReceiptPlan.Append wrote through a symlinked RECEIPTS and raised nothing")
 	}
 	unchanged(t, v)
 	stillLink(t, filepath.Join(root, "from-x", ReceiptsName))
@@ -96,9 +95,7 @@ func TestReadLaneIndexRefusesASymlinkedIndex(t *testing.T) {
 	plant(t, v, filepath.Join(root, "from-x", IndexName))
 	_, err := ReadLaneIndex(root, "from-x")
 	require.Error(t, err, "ReadLaneIndex read through a symlinked INDEX and raised nothing")
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("the read refusal does not name the kind symlink: %v", err)
-	}
+	require.Contains(t, err.Error(), "symlink", "the read refusal does not name the kind symlink: %v", err)
 	unchangedHolding(t, v, "deadbeef\tfrom-x/2026-note.md\t2026-09-13T00:00:00Z\t-\t-\n")
 }
 
@@ -109,8 +106,9 @@ func TestEnsureMergeAttributesRefusesASymlinkedAttributes(t *testing.T) {
 	root := filepath.Join(dir, "bus")
 	v := victim(t, dir)
 	plant(t, v, filepath.Join(root, AttributesName))
-	if _, err := EnsureMergeAttributes(root); err == nil {
-		t.Fatal("EnsureMergeAttributes wrote through a symlinked .gitattributes and raised nothing")
+	{
+		_, err := EnsureMergeAttributes(root)
+		require.Error(t, err, "EnsureMergeAttributes wrote through a symlinked .gitattributes and raised nothing")
 	}
 	unchanged(t, v)
 	stillLink(t, filepath.Join(root, AttributesName))
@@ -124,8 +122,9 @@ func TestEnsureMergeAttributesFromRefusesASymlinkedAttributes(t *testing.T) {
 	prefix := attributeLines[0] + "\n"
 	v := victimHolding(t, dir, prefix)
 	plant(t, v, filepath.Join(root, AttributesName))
-	if _, err := EnsureMergeAttributesFrom(root, ""); err == nil {
-		t.Fatal("EnsureMergeAttributesFrom wrote through a symlinked .gitattributes and raised nothing")
+	{
+		_, err := EnsureMergeAttributesFrom(root, "")
+		require.Error(t, err, "EnsureMergeAttributesFrom wrote through a symlinked .gitattributes and raised nothing")
 	}
 	unchangedHolding(t, v, prefix)
 	stillLink(t, filepath.Join(root, AttributesName))
@@ -153,8 +152,9 @@ func TestAppendIndexSuffixRefusesASymlinkedIndex(t *testing.T) {
 	v := victim(t, dir)
 	link := filepath.Join(root, "from-x", IndexName)
 	plant(t, v, link)
-	if err := appendIndexSuffix(root, link, "original victim content\n", "original victim content\nappended\n"); err == nil {
-		t.Fatal("appendIndexSuffix appended through a symlinked INDEX and raised nothing")
+	{
+		err := appendIndexSuffix(root, link, "original victim content\n", "original victim content\nappended\n")
+		require.Error(t, err, "appendIndexSuffix appended through a symlinked INDEX and raised nothing")
 	}
 	unchanged(t, v)
 	stillLink(t, link)
@@ -168,13 +168,14 @@ func TestReplaceLaneFileDoesNotWriteThroughAPlantedTemp(t *testing.T) {
 	v := victim(t, dir)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "from-x"), 0o755))
 	plant(t, v, filepath.Join(root, "from-x", IndexName+TempSuffix))
-	if err := replaceLaneFile(root, "from-x/"+IndexName, "a line\n"); err != nil {
-		t.Fatalf("replaceLaneFile refused a correct write: %v", err)
+	{
+		err := replaceLaneFile(root, "from-x/"+IndexName, "a line\n")
+		require.NoError(t, err, "replaceLaneFile refused a correct write: %v", err)
 	}
 	unchanged(t, v)
 	raw, err := os.ReadFile(filepath.Join(root, "from-x", IndexName))
 	if err != nil || string(raw) != "a line\n" {
-		t.Fatalf("the lane file did not get its content: %q %v", string(raw), err)
+		require.False(t, err != nil || string(raw) != "a line\n", "the lane file did not get its content: %q %v", string(raw), err)
 	}
 }
 
@@ -183,24 +184,12 @@ func TestReplaceLaneFileDoesNotWriteThroughAPlantedTemp(t *testing.T) {
 func TestAStrandedUniqueTempIsStillALaneStateTemp(t *testing.T) {
 	t.Parallel()
 
-	if !isLaneStateTemp(IndexName + TempSuffix) {
-		t.Fatal("the fixed temp name stopped being recognised")
-	}
-	if !isLaneStateTemp(IndexName + ".ab12cd34ef56" + TempSuffix) {
-		t.Fatal("a unique temp name for a lane state file is not recognised as one")
-	}
-	if !isLaneStateTemp("." + IndexName + ".tmp-0a1b2c3d") {
-		t.Fatal("atomicfile's temporary for a lane state file is not recognised as one")
-	}
-	if isLaneStateTemp(".notes.tmp-0a1b2c3d") || isLaneStateTemp("."+IndexName+".tmp-xyz") || isLaneStateTemp("."+IndexName+".tmp-0a1b") {
-		t.Fatal("a stray dot-temporary became a lane state temp")
-	}
-	if isLaneStateTemp("notes"+TempSuffix) || isLaneStateTemp("notes.ab12"+TempSuffix) {
-		t.Fatal("a stray temporary became a lane state temp")
-	}
-	if !strings.HasSuffix(IndexName+".ab12"+TempSuffix, TempSuffix) {
-		t.Fatal("a unique temp no longer ends in the reserved suffix")
-	}
+	require.False(t, !isLaneStateTemp(IndexName+TempSuffix), "the fixed temp name stopped being recognised")
+	require.False(t, !isLaneStateTemp(IndexName+".ab12cd34ef56"+TempSuffix), "a unique temp name for a lane state file is not recognised as one")
+	require.False(t, !isLaneStateTemp("."+IndexName+".tmp-0a1b2c3d"), "atomicfile's temporary for a lane state file is not recognised as one")
+	require.False(t, isLaneStateTemp(".notes.tmp-0a1b2c3d") || isLaneStateTemp("."+IndexName+".tmp-xyz") || isLaneStateTemp("."+IndexName+".tmp-0a1b"), "a stray dot-temporary became a lane state temp")
+	require.False(t, isLaneStateTemp("notes"+TempSuffix) || isLaneStateTemp("notes.ab12"+TempSuffix), "a stray temporary became a lane state temp")
+	require.False(t, !strings.HasSuffix(IndexName+".ab12"+TempSuffix, TempSuffix), "a unique temp no longer ends in the reserved suffix")
 }
 
 // A LANE IS A DIRECTORY IN THE BUS, NOT A DOOR OUT OF IT (Fable's cold read of #226, F1).
@@ -222,7 +211,7 @@ func TestAppendIndexLineRefusesASymlinkedLaneDirectory(t *testing.T) {
 	require.Error(t, err, "AppendIndexLine wrote through a symlinked LANE DIRECTORY and raised nothing")
 	if _, statErr := os.Lstat(filepath.Join(outside, IndexName)); statErr == nil {
 		raw, _ := os.ReadFile(filepath.Join(outside, IndexName))
-		t.Fatalf("the line landed outside the bus: %q", string(raw))
+		require.FailNowf(t, "assertion failed", "the line landed outside the bus: %q", string(raw))
 	}
 }
 
@@ -235,10 +224,12 @@ func TestWriteLaneFileRefusesASymlinkedLaneDirectory(t *testing.T) {
 	require.NoError(t, os.MkdirAll(outside, 0o755))
 	require.NoError(t, os.MkdirAll(root, 0o755))
 	plant(t, outside, filepath.Join(root, "from-x"))
-	if err := replaceLaneFile(root, "from-x/"+CursorName, "a cursor\n"); err == nil {
-		t.Fatal("replaceLaneFile rewrote a lane file through a symlinked lane directory")
+	{
+		err := replaceLaneFile(root, "from-x/"+CursorName, "a cursor\n")
+		require.Error(t, err, "replaceLaneFile rewrote a lane file through a symlinked lane directory")
 	}
-	if _, statErr := os.Lstat(filepath.Join(outside, CursorName)); statErr == nil {
-		t.Fatal("the rewrite landed outside the bus")
+	{
+		_, statErr := os.Lstat(filepath.Join(outside, CursorName))
+		require.False(t, statErr == nil, "the rewrite landed outside the bus")
 	}
 }

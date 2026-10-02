@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The dogfood finding of 2026-09-30, "ticking halves" (the owner's words:
@@ -53,12 +55,11 @@ func TestADealBetweenTheQueueReadsStillTakesTheWholeFleet(t *testing.T) {
 	var out bytes.Buffer
 	d := &Driver{Run: run, Facts: NewSeeded(1), Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)},
 		Out: &out, Config: Config{Every: time.Second, Ticks: 1}}
-	if _, err := d.Loop(); err != nil {
-		t.Fatalf("loop: %v\n%s", err, out.String())
-	}
-	if want := strings.Join(members, ","); len(takes) != 1 || takes[0] != want {
-		t.Fatalf("the takes named %q, want one take of the whole fleet %q:\n%s", takes, want, out.String())
-	}
+	_, err := d.Loop()
+	require.NoError(t, err, "loop: %v\n%s", err, out.String())
+	want := strings.Join(members, ",")
+	require.Len(t, takes, 1, "the takes named %q, want one take of the whole fleet %q:\n%s", takes, want, out.String())
+	require.Equal(t, want, takes[0], "the takes named %q, want one take of the whole fleet %q:\n%s", takes, want, out.String())
 }
 
 // A tick with no member's queue showing a ready card runs no take.
@@ -80,12 +81,9 @@ func TestNoReadyCardNoTake(t *testing.T) {
 	}
 	d := &Driver{Run: run, Facts: NewSeeded(1), Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)},
 		Out: &bytes.Buffer{}, Config: Config{Every: time.Second, Ticks: 1}}
-	if _, err := d.Loop(); err != nil {
-		t.Fatal(err)
-	}
+	_, err := d.Loop()
+	require.NoError(t, err)
 	for _, v := range ran {
-		if v == "take" {
-			t.Fatalf("a take with nothing ready: %v", ran)
-		}
+		require.NotEqual(t, "take", v, "a take with nothing ready: %v", ran)
 	}
 }

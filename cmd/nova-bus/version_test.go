@@ -6,6 +6,9 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The SHAPE, asserted field by field. `nova-bus <version> <goos>/<goarch> <go version>` is
@@ -16,32 +19,22 @@ import (
 func TestVersionLineShape(t *testing.T) {
 	t.Parallel()
 	var out, errOut bytes.Buffer
-	if code := cmdVersion(nil, &out, &errOut); code != 0 {
-		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut.String())
+	{
+		code := cmdVersion(nil, &out, &errOut)
+		require.Equalf(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
-	if errOut.Len() != 0 {
-		t.Errorf("wrote to stderr: %q", errOut.String())
-	}
+	assert.Falsef(t, errOut.Len() != 0, "wrote to stderr: %q", errOut.String())
 	line := out.String()
-	if !strings.HasSuffix(line, "\n") || strings.Count(line, "\n") != 1 {
-		t.Fatalf("want exactly one terminated line, got %q", line)
-	}
+	require.Falsef(t, !strings.HasSuffix(line, "\n") || strings.Count(line, "\n") != 1, "want exactly one terminated line, got %q", line)
 	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
-	if len(fields) != 4 {
-		t.Fatalf("want 4 fields, got %d: %q", len(fields), line)
+	require.Equalf(t, 4, len(fields), "want 4 fields, got %d: %q", len(fields), line)
+	assert.Equalf(t, "nova-bus", fields[0], "field 1 is the binary's name: got %q", fields[0])
+	assert.NotEmptyf(t, fields[1], "field 2 is the version and is never empty: %q", line)
+	{
+		want := runtime.GOOS + "/" + runtime.GOARCH
+		assert.Equalf(t, want, fields[2], "field 3: got %q, want %q", fields[2], want)
 	}
-	if fields[0] != "nova-bus" {
-		t.Errorf("field 1 is the binary's name: got %q", fields[0])
-	}
-	if fields[1] == "" {
-		t.Errorf("field 2 is the version and is never empty: %q", line)
-	}
-	if want := runtime.GOOS + "/" + runtime.GOARCH; fields[2] != want {
-		t.Errorf("field 3: got %q, want %q", fields[2], want)
-	}
-	if fields[3] != runtime.Version() {
-		t.Errorf("field 4: got %q, want %q", fields[3], runtime.Version())
-	}
+	assert.Equalf(t, runtime.Version(), fields[3], "field 4: got %q, want %q", fields[3], runtime.Version())
 }
 
 // The stamp is the ONE field that comes from outside the toolchain, and a release
@@ -53,34 +46,29 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 	const ver = "v1.2.3\nnova-bus v9.9.9 linux/amd64 go1.0 extra"
 
 	var out, errOut bytes.Buffer
-	if code := cmdVersionWith(nil, &out, &errOut, ver); code != 0 {
-		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut.String())
+	{
+		code := cmdVersionWith(nil, &out, &errOut, ver)
+		require.Equalf(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	line := out.String()
-	if strings.Count(line, "\n") != 1 {
-		t.Fatalf("a stamped newline broke the line in two: %q", line)
+	require.Falsef(t, strings.Count(line, "\n") != 1, "a stamped newline broke the line in two: %q", line)
+	{
+		fields := strings.Fields(strings.TrimSuffix(line, "\n"))
+		require.Equalf(t, 4, len(fields), "want 4 fields whatever the stamp holds, got %d: %q", len(fields), line)
 	}
-	if fields := strings.Fields(strings.TrimSuffix(line, "\n")); len(fields) != 4 {
-		t.Fatalf("want 4 fields whatever the stamp holds, got %d: %q", len(fields), line)
-	}
-	if !strings.Contains(line, `v1.2.3\x0a`) {
-		t.Errorf("the stamp is escaped rather than dropped or printed raw: %q", line)
-	}
+	assert.Containsf(t, line, `v1.2.3\x0a`, "the stamp is escaped rather than dropped or printed raw: %q", line)
 }
 
 func TestVersionRefusesFlagsAndArguments(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{{"--short"}, {"extra"}, {"--bus", "."}} {
 		var out, errOut bytes.Buffer
-		if code := cmdVersion(args, &out, &errOut); code != 2 {
-			t.Errorf("%v: exit %d, want 2", args, code)
+		{
+			code := cmdVersion(args, &out, &errOut)
+			assert.Equalf(t, 2, code, "%v: exit %d, want 2", args, code)
 		}
-		if out.Len() != 0 {
-			t.Errorf("%v: a refusal printed a version line anyway: %q", args, out.String())
-		}
-		if !strings.Contains(errOut.String(), "takes no flags and no arguments") {
-			t.Errorf("%v: refusal does not say why: %q", args, errOut.String())
-		}
+		assert.Falsef(t, out.Len() != 0, "%v: a refusal printed a version line anyway: %q", args, out.String())
+		assert.Containsf(t, errOut.String(), "takes no flags and no arguments", "%v: refusal does not say why: %q", args, errOut.String())
 	}
 }
 
@@ -117,8 +105,9 @@ func TestVersionResolvesInOrder(t *testing.T) {
 		{"(devel) alone is the floor, not a version", "", built(), true, "devel"},
 	}
 	for _, c := range cases {
-		if got := resolveVersion(c.stamped, c.info, c.ok); got != c.want {
-			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		{
+			got := resolveVersion(c.stamped, c.info, c.ok)
+			assert.Equalf(t, c.want, got, "%s: got %q, want %q", c.name, got, c.want)
 		}
 	}
 }
@@ -130,11 +119,9 @@ func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
 	for _, verb := range []string{"version", "--version"} {
 		r := invoke(t, "", verb)
 		if r.code != 0 {
-			t.Errorf("%s: exit %d, want 0\nstderr: %s", verb, r.code, r.stderr)
+			assert.Failf(t, "assertion failed", "%s: exit %d, want 0\nstderr: %s", verb, r.code, r.stderr)
 			continue
 		}
-		if !strings.HasPrefix(r.stdout, "nova-bus ") || strings.Count(r.stdout, "\n") != 1 {
-			t.Errorf("%s: not the version line: %q", verb, r.stdout)
-		}
+		assert.Falsef(t, !strings.HasPrefix(r.stdout, "nova-bus ") || strings.Count(r.stdout, "\n") != 1, "%s: not the version line: %q", verb, r.stdout)
 	}
 }

@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -48,9 +50,7 @@ func runProviderCard(t *testing.T, upstream string, silence, headerWait time.Dur
 	root, slot := aSlot(t)
 	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
 	raw := fmt.Sprintf("{\"provider\":{\"fake\":{\"options\":{\"baseURL\":%q}}}}\n", upstream)
-	if err := os.WriteFile(cfgPath, []byte(raw), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cfgPath, []byte(raw), 0o644))
 	var proxy *swarm.ProviderProxy
 	var errOut bytes.Buffer
 	res, code := nativeRun(nativeRunConfig{
@@ -94,9 +94,7 @@ func (c *recordClock) first() time.Duration {
 func jobLaunches(t *testing.T, job string) int {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(job, "launches"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	n := 0
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.TrimSpace(line) != "" {
@@ -109,17 +107,13 @@ func jobLaunches(t *testing.T, job string) int {
 func assertDialedProxy(t *testing.T, job string, proxy *swarm.ProviderProxy) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(job, "provider-url"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	if len(lines) == 0 || lines[0] == "" {
 		t.Fatal("the harness recorded no provider url")
 	}
 	for _, line := range lines {
-		if line != proxy.HarnessURL() {
-			t.Fatalf("harness dialed %q, want the proxy %s", line, proxy.HarnessURL())
-		}
+		require.Equal(t, proxy.HarnessURL(), line, "harness dialed %q, want the proxy %s", line, proxy.HarnessURL())
 	}
 }
 
@@ -144,12 +138,8 @@ func TestProviderBodySilenceArmsFortyFiveSecondsAndDoesNotRelaunch(t *testing.T)
 
 	clock := &recordClock{}
 	got := runBodyCard(t, up.URL, 0, clock.After)
-	if got.proxy == nil {
-		t.Fatalf("no proxy\n%s", got.err)
-	}
-	if clock.first() != swarm.ProviderBodySilence {
-		t.Fatalf("the card armed %s, want %s", clock.first(), swarm.ProviderBodySilence)
-	}
+	require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
+	require.Equal(t, swarm.ProviderBodySilence, clock.first(), "the card armed %s, want %s", clock.first(), swarm.ProviderBodySilence)
 	if got.code != 0 || !got.res.lost || got.res.end != swarm.EndUnknown {
 		t.Fatalf("code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
 	}
@@ -157,23 +147,17 @@ func TestProviderBodySilenceArmsFortyFiveSecondsAndDoesNotRelaunch(t *testing.T)
 	if verdict != "INCOMPLETE" || why != "unknown-acceptance" {
 		t.Fatalf("verdict %s why %s", verdict, why)
 	}
-	if n := jobLaunches(t, got.res.job); n != 1 {
-		t.Fatalf("card launches=%d, want 1", n)
-	}
+	n := jobLaunches(t, got.res.job)
+	require.Equal(t, 1, n, "card launches=%d, want 1", n)
 	if got.proxy.Requests() != 1 || upstream.Load() != 1 {
 		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
 	}
 	assertDialedProxy(t, got.res.job, got.proxy)
 	mark, err := os.ReadFile(filepath.Join(got.res.job, "provider-acceptance"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(mark) != oneline.Escape("unknown\n") {
-		t.Fatalf("provider-acceptance = %q", mark)
-	}
-	if _, err := os.Stat(filepath.Join(got.res.job, "RESULT.md")); err == nil {
-		t.Fatal("a lost response published a result")
-	}
+	require.NoError(t, err)
+	require.Equal(t, oneline.Escape("unknown\n"), string(mark), "provider-acceptance = %q", mark)
+	_, err = os.Stat(filepath.Join(got.res.job, "RESULT.md"))
+	require.Error(t, err, "a lost response published a result")
 	t.Logf("CANARY requests=%d silence_ms=%d armed=%s verdict=%s why=%s",
 		got.proxy.Requests(), got.proxy.SilenceWall().Milliseconds(), clock.first(), verdict, why)
 }
@@ -199,12 +183,8 @@ func TestProviderBodySilenceAbortsTheCardOnce(t *testing.T) {
 	started := time.Now()
 	got := runBodyCard(t, up.URL, 2*time.Second, nil)
 	runFor := time.Since(started)
-	if got.proxy == nil {
-		t.Fatalf("no proxy\n%s", got.err)
-	}
-	if got.proxy.Silence() != 2*time.Second {
-		t.Fatalf("silence %s, want 2s", got.proxy.Silence())
-	}
+	require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
+	require.Equal(t, 2*time.Second, got.proxy.Silence(), "silence %s, want 2s", got.proxy.Silence())
 	if got.code != 0 || !got.res.lost || got.res.end != swarm.EndUnknown {
 		t.Fatalf("code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
 	}
@@ -212,26 +192,18 @@ func TestProviderBodySilenceAbortsTheCardOnce(t *testing.T) {
 	if verdict != "INCOMPLETE" || why != "unknown-acceptance" {
 		t.Fatalf("verdict %s why %s", verdict, why)
 	}
-	if n := jobLaunches(t, got.res.job); n != 1 {
-		t.Fatalf("card launches=%d, want 1", n)
-	}
+	n := jobLaunches(t, got.res.job)
+	require.Equal(t, 1, n, "card launches=%d, want 1", n)
 	if got.proxy.Requests() != 1 || upstream.Load() != 1 {
 		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
 	}
 	assertDialedProxy(t, got.res.job, got.proxy)
 	mark, err := os.ReadFile(filepath.Join(got.res.job, "provider-acceptance"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(mark) != oneline.Escape("unknown\n") {
-		t.Fatalf("provider-acceptance = %q", mark)
-	}
-	if _, err := os.Stat(filepath.Join(got.res.job, "RESULT.md")); err == nil {
-		t.Fatal("a lost response published a result")
-	}
-	if got.proxy.SilenceWall() <= 0 {
-		t.Fatal("the real timer did not measure a body gap")
-	}
+	require.NoError(t, err)
+	require.Equal(t, oneline.Escape("unknown\n"), string(mark), "provider-acceptance = %q", mark)
+	_, err = os.Stat(filepath.Join(got.res.job, "RESULT.md"))
+	require.Error(t, err, "a lost response published a result")
+	require.Positive(t, got.proxy.SilenceWall(), "the real timer did not measure a body gap")
 	t.Logf("CANARY requests=%d silence_ms=%d run_ms=%d verdict=%s why=%s",
 		got.proxy.Requests(), got.proxy.SilenceWall().Milliseconds(), runFor.Milliseconds(), verdict, why)
 }
@@ -256,9 +228,7 @@ func TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
 	defer up.Close()
 
 	got := runBodyCard(t, up.URL, 2*time.Second, nil)
-	if got.proxy == nil {
-		t.Fatalf("no proxy\n%s", got.err)
-	}
+	require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
 	if got.code != 0 || got.res.lost || got.res.rc != 0 {
 		t.Fatalf("code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
 	}
@@ -266,21 +236,16 @@ func TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
 	if verdict != "OK" || why != "" {
 		t.Fatalf("verdict %s why %s, want OK", verdict, why)
 	}
-	if n := jobLaunches(t, got.res.job); n != 1 {
-		t.Fatalf("card launches=%d, want 1", n)
-	}
+	n := jobLaunches(t, got.res.job)
+	require.Equal(t, 1, n, "card launches=%d, want 1", n)
 	if got.proxy.Requests() != 1 || upstream.Load() != 1 {
 		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
 	}
-	if got.proxy.Lost() {
-		t.Fatal("a body inside the deadline was marked unknown")
-	}
-	if _, err := os.Stat(filepath.Join(got.res.job, "provider-acceptance")); !os.IsNotExist(err) {
-		t.Fatalf("provider-acceptance exists: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(got.res.job, "RESULT.md")); err != nil {
-		t.Fatalf("the body inside the deadline did not publish: %v", err)
-	}
+	require.False(t, got.proxy.Lost(), "a body inside the deadline was marked unknown")
+	_, err := os.Stat(filepath.Join(got.res.job, "provider-acceptance"))
+	require.True(t, os.IsNotExist(err), "provider-acceptance exists: %v", err)
+	_, err = os.Stat(filepath.Join(got.res.job, "RESULT.md"))
+	require.NoError(t, err, "the body inside the deadline did not publish")
 	assertDialedProxy(t, got.res.job, got.proxy)
 }
 
@@ -303,12 +268,8 @@ func TestProviderNoHeadersEndsAtTheHeaderWaitAsUnknown(t *testing.T) {
 	started := time.Now()
 	got := runProviderCard(t, up.URL, 25*time.Second, time.Second, nil)
 	runFor := time.Since(started)
-	if got.proxy == nil {
-		t.Fatalf("no proxy\n%s", got.err)
-	}
-	if got.proxy.HeaderWait() != time.Second {
-		t.Fatalf("header wait %s, want 1s", got.proxy.HeaderWait())
-	}
+	require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
+	require.Equal(t, time.Second, got.proxy.HeaderWait(), "header wait %s, want 1s", got.proxy.HeaderWait())
 	if got.code != 0 || !got.res.lost || got.res.end != swarm.EndUnknown {
 		t.Fatalf("code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
 	}
@@ -316,29 +277,19 @@ func TestProviderNoHeadersEndsAtTheHeaderWaitAsUnknown(t *testing.T) {
 	if verdict != "INCOMPLETE" || why != "unknown-acceptance" {
 		t.Fatalf("verdict %s why %s", verdict, why)
 	}
-	if n := jobLaunches(t, got.res.job); n != 1 {
-		t.Fatalf("card launches=%d, want 1", n)
-	}
+	n := jobLaunches(t, got.res.job)
+	require.Equal(t, 1, n, "card launches=%d, want 1", n)
 	if got.proxy.Requests() != 1 || upstream.Load() != 1 {
 		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
 	}
 	assertDialedProxy(t, got.res.job, got.proxy)
 	mark, err := os.ReadFile(filepath.Join(got.res.job, "provider-acceptance"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(mark) != oneline.Escape("unknown\n") {
-		t.Fatalf("provider-acceptance = %q", mark)
-	}
-	if _, err := os.Stat(filepath.Join(got.res.job, "RESULT.md")); err == nil {
-		t.Fatal("a response with no headers published a result")
-	}
-	if got.proxy.HeaderWall() < time.Second {
-		t.Fatalf("header wall %s, want at least the 1s wait", got.proxy.HeaderWall())
-	}
-	if got.proxy.SilenceWall() != 0 {
-		t.Fatalf("the body gap fired (%s) with no headers", got.proxy.SilenceWall())
-	}
+	require.NoError(t, err)
+	require.Equal(t, oneline.Escape("unknown\n"), string(mark), "provider-acceptance = %q", mark)
+	_, err = os.Stat(filepath.Join(got.res.job, "RESULT.md"))
+	require.Error(t, err, "a response with no headers published a result")
+	require.GreaterOrEqual(t, got.proxy.HeaderWall(), time.Second, "header wall %s, want at least the 1s wait", got.proxy.HeaderWall())
+	require.Zero(t, got.proxy.SilenceWall(), "the body gap fired (%s) with no headers", got.proxy.SilenceWall())
 	t.Logf("CANARY requests=%d header_ms=%d run_ms=%d verdict=%s why=%s",
 		got.proxy.Requests(), got.proxy.HeaderWall().Milliseconds(), runFor.Milliseconds(), verdict, why)
 }
@@ -368,9 +319,7 @@ func TestProviderDelayedHeadersInsideTheWaitAreNotUnknown(t *testing.T) {
 	defer up.Close()
 
 	got := runProviderCard(t, up.URL, 2*time.Second, 2*time.Second, nil)
-	if got.proxy == nil {
-		t.Fatalf("no proxy\n%s", got.err)
-	}
+	require.NotNil(t, got.proxy, "no proxy\n%s", got.err)
 	if got.code != 0 || got.res.lost || got.res.rc != 0 {
 		t.Fatalf("code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
 	}
@@ -378,20 +327,17 @@ func TestProviderDelayedHeadersInsideTheWaitAreNotUnknown(t *testing.T) {
 	if verdict != "OK" || why != "" {
 		t.Fatalf("verdict %s why %s, want OK", verdict, why)
 	}
-	if n := jobLaunches(t, got.res.job); n != 1 {
-		t.Fatalf("card launches=%d, want 1", n)
-	}
+	n := jobLaunches(t, got.res.job)
+	require.Equal(t, 1, n, "card launches=%d, want 1", n)
 	if got.proxy.Requests() != 1 || upstream.Load() != 1 {
 		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
 	}
 	if got.proxy.Lost() || got.proxy.HeaderWall() != 0 {
 		t.Fatalf("delayed headers inside the wait were marked unknown (header wall %s)", got.proxy.HeaderWall())
 	}
-	if _, err := os.Stat(filepath.Join(got.res.job, "provider-acceptance")); !os.IsNotExist(err) {
-		t.Fatalf("provider-acceptance exists: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(got.res.job, "RESULT.md")); err != nil {
-		t.Fatalf("the delayed-header card did not publish: %v", err)
-	}
+	_, err := os.Stat(filepath.Join(got.res.job, "provider-acceptance"))
+	require.True(t, os.IsNotExist(err), "provider-acceptance exists: %v", err)
+	_, err = os.Stat(filepath.Join(got.res.job, "RESULT.md"))
+	require.NoError(t, err, "the delayed-header card did not publish")
 	assertDialedProxy(t, got.res.job, got.proxy)
 }

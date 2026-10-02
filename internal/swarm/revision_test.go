@@ -1,10 +1,12 @@
 package swarm
 
 import (
-	"bytes"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Demanded test 16's last line: THE SOURCE TRIPWIRE. No modification time decides anything
@@ -14,9 +16,7 @@ func TestNoModTimeDecidesAnythingInThisPackage(t *testing.T) {
 	t.Parallel()
 
 	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -38,11 +38,7 @@ func TestNoModTimeDecidesAnythingInThisPackage(t *testing.T) {
 			continue
 		}
 		raw, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if bytes.Contains(raw, []byte("ModTime")) {
-			t.Errorf("%s reads a modification time; a revision is its bytes and never its mtime", name)
-		}
+		require.NoError(t, err)
+		assert.NotContains(t, string(raw), "ModTime", "%s reads a modification time; a revision is its bytes and never its mtime", name)
 	}
 }
