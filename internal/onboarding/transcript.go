@@ -62,13 +62,13 @@ type Step struct {
 	// shown -- is right for a tool that NARRATES on standard error and wrong for
 	// one whose findings live there. nova-self-talk prints every finding it has
 	// to standard error; under the asymmetry alone, dropping all three from its
-	// transcript is green, which is exactly the abridgement. A
+	// transcript is green, which is exactly the abridgement this flag exists to catch. A
 	// section says which kind it is, per step, rather than the harness guessing.
 	StderrWhole bool
 }
 
 // StderrMarker opens a documented line the tool writes to standard error. It is
-// the marker, honoured here so that a swept section executes the moment
+// the convention honoured here so that a swept section executes the moment
 // it is swept: standard output is compared WHOLE -- every unmarked line, in
 // order, and nothing else -- and standard error only for the lines shown, in
 // order, because how loudly a tool narrates its own work is not a promise to a
