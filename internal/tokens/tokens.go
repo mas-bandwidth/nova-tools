@@ -19,7 +19,9 @@ package tokens
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -523,12 +525,11 @@ func ValidZone(s string) bool {
 	return strings.IndexFunc(s, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }) < 0
 }
 
+// sortedKeys is m's keys, sorted, and never nil: an empty map gives an empty slice, so a
+// row with no source and a day file with no rows encode and compare as before.
 func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
+	out := slices.AppendSeq(make([]string, 0, len(m)), maps.Keys(m))
+	slices.Sort(out)
 	return out
 }
 
