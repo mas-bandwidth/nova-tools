@@ -54,9 +54,18 @@ type inboxSource interface {
 	// tickEnd blocks until a tick-end note comes after the last one it saw,
 	// or for at most d.
 	tickEnd(ctx context.Context, d time.Duration) error
-	// inbox is the inbox's groups and the machine's line; the group open
-	// names is read whole (its members and needs), as inbox --open reads it.
-	inbox(ctx context.Context, open string) ([]sprint.Group, string, error)
+	// inbox is the inbox's groups, the machine's line and the seat's holder;
+	// the group open names is read whole (its members and needs), as inbox
+	// --open reads it.
+	inbox(ctx context.Context, open string) (inboxLook, error)
+}
+
+// inboxLook is one look at the inbox: its groups, the machine's line and who
+// holds the seat (whose inbox --push seat writes to).
+type inboxLook struct {
+	groups  []sprint.Group
+	machine string
+	holder  string
 }
 
 // storeSource is inbox --wait on the store.
@@ -80,12 +89,14 @@ func (s *storeSource) tickEnd(ctx context.Context, d time.Duration) error {
 	return err
 }
 
-func (s *storeSource) inbox(ctx context.Context, _ string) ([]sprint.Group, string, error) {
+func (s *storeSource) inbox(ctx context.Context, _ string) (inboxLook, error) {
 	v, err := s.st.Inbox(ctx, s.deadline, s.stale, 10000)
 	if err != nil {
-		return nil, "", err
+		return inboxLook{}, err
 	}
-	return v.Groups, s.st.MachineLine(ctx), nil // every group carries its members and needs
+	holder, err := s.st.B.Coordinator(ctx)
+	// every group carries its members and needs
+	return inboxLook{groups: v.Groups, machine: s.st.MachineLine(ctx), holder: holder}, err
 }
 
 // exitErr is a source's failure already said on stderr, with its exit code.
@@ -154,37 +165,38 @@ func (s *serverSource) tickEnd(ctx context.Context, d time.Duration) error {
 	return nil
 }
 
-func (s *serverSource) inbox(ctx context.Context, open string) ([]sprint.Group, string, error) {
+func (s *serverSource) inbox(ctx context.Context, open string) (inboxLook, error) {
 	words := append(append([]string{}, s.plain...), "--json")
 	if open != "" {
 		words = append(words, "--open", open)
 	}
 	res, err := s.a.ask(ctx, s.addr, []string{"inbox"}, words)
 	if err != nil {
-		return nil, "", &exitErr{s.a.unanswered("inbox", s.addr, err, s.stderr)}
+		return inboxLook{}, &exitErr{s.a.unanswered("inbox", s.addr, err, s.stderr)}
 	}
 	if res.Code == 1 && open != "" {
-		return nil, "", nil // the group closed since the look that found it: nothing to read
+		return inboxLook{}, nil // the group closed since the look that found it: nothing to read
 	}
 	if res.Code != 0 {
 		s.a.answer(res, s.stdout, s.stderr)
-		return nil, "", &exitErr{res.Code}
+		return inboxLook{}, &exitErr{res.Code}
 	}
 	var out struct {
-		Groups  []sprint.Group `json:"groups"`
-		Open    []string       `json:"open"`
-		Needs   []string       `json:"needs"`
-		Machine string         `json:"machine"`
+		Groups      []sprint.Group `json:"groups"`
+		Open        []string       `json:"open"`
+		Needs       []string       `json:"needs"`
+		Machine     string         `json:"machine"`
+		Coordinator string         `json:"coordinator"`
 	}
 	if err := json.Unmarshal([]byte(res.Stdout), &out); err != nil {
-		return nil, "", fmt.Errorf("the server's inbox is not JSON: %w", err)
+		return inboxLook{}, fmt.Errorf("the server's inbox is not JSON: %w", err)
 	}
 	for i := range out.Groups {
 		if out.Groups[i].ID == open {
 			out.Groups[i].Members, out.Groups[i].Needs = out.Open, out.Needs
 		}
 	}
-	return out.Groups, out.Machine, nil
+	return inboxLook{groups: out.Groups, machine: out.Machine, holder: out.Coordinator}, nil
 }
 
 // forCoordinator says the group wakes the coordinator: a judgment, or a note
@@ -250,35 +262,42 @@ func idsOf(groups []sprint.Group) []string {
 	return ids
 }
 
-// waitNew blocks until the inbox holds something for the coordinator whose
-// key is not in seen, or the machine stops (running says it ran at the last
-// look), or timeout passes; an interrupt ends it as a timeout does. It returns
-// the groups with something new and the machine's line at its last look.
-func (a *app) waitNew(ctx context.Context, src inboxSource, seen map[string]bool, running bool, timeout time.Duration) ([]sprint.Group, string, error) {
-	machine := ""
+// waitNew blocks until a look at the inbox finds something new (fresh: what
+// the look holds that the caller has not seen), or the machine stops (running
+// says it ran at the last look), or timeout passes; an interrupt ends it as a
+// timeout does. It returns the groups with something new and its last look
+// (its machine line running when it looked at nothing).
+func (a *app) waitNew(ctx context.Context, src inboxSource, fresh func(inboxLook) ([]sprint.Group, error), running bool, timeout time.Duration) ([]sprint.Group, inboxLook, error) {
+	var look inboxLook
 	if running {
-		machine = machineRunning
+		look.machine = machineRunning
 	}
 	for end := a.now().Add(timeout); ; {
 		left := end.Sub(a.now())
 		if left <= 0 || ctx.Err() != nil {
-			return nil, machine, nil
+			return nil, look, nil
 		}
 		if err := src.tickEnd(ctx, min(left, waitLook)); err != nil && ctx.Err() == nil {
-			return nil, machine, err
+			return nil, look, err
 		}
 		if ctx.Err() != nil {
-			return nil, machine, nil
+			return nil, look, nil
 		}
-		groups, line, err := src.inbox(ctx, "")
+		l, err := src.inbox(ctx, "")
 		if err != nil {
-			return nil, machine, err
+			return nil, look, err
 		}
-		machine = line
-		if fresh := unseen(seen, groups); len(fresh) > 0 || (running && machine != machineRunning) {
-			return fresh, machine, nil
+		look = l
+		groups, err := fresh(look)
+		if err != nil || len(groups) > 0 || (running && look.machine != machineRunning) {
+			return groups, look, err
 		}
 	}
+}
+
+// seenFresh is the fresh of a wait that wakes for what seen does not hold.
+func seenFresh(seen map[string]bool) func(inboxLook) ([]sprint.Group, error) {
+	return func(l inboxLook) ([]sprint.Group, error) { return unseen(seen, l.groups), nil }
 }
 
 // waitFailed says why the wait failed and is its exit code.
@@ -330,15 +349,15 @@ func (a *app) inboxWaitAt(addr string, fs *flag.FlagSet, args []string, atEpoch 
 	if push != "" {
 		return a.pushLoop(ctx, src, push, timeout, asJSON, stdout, stderr)
 	}
-	groups, machine, err := src.inbox(ctx, "")
+	first, err := src.inbox(ctx, "")
 	if err != nil {
 		return a.waitFailed(err, stderr)
 	}
-	fresh, after, err := a.waitNew(ctx, src, seenKeys(groups), machine == machineRunning, timeout)
+	fresh, after, err := a.waitNew(ctx, src, seenFresh(seenKeys(first.groups)), first.machine == machineRunning, timeout)
 	if err != nil {
 		return a.waitFailed(err, stderr)
 	}
-	stopped := machine == machineRunning && after != machineRunning
+	stopped := first.machine == machineRunning && after.machine != machineRunning
 	sayWoke(fresh, stopped, timeout, asJSON, stdout, stderr)
 	// The wait ended: read the inbox itself.
 	res, err := a.ask(ctx, addr, []string{"inbox"}, without(fs, args, "wait", "timeout", "push"))
@@ -360,60 +379,80 @@ func (a *app) inboxWaitAt(addr string, fs *flag.FlagSet, args []string, atEpoch 
 
 // pushLoop is inbox --wait --push <dir>: every judgment and every note to
 // the coordinator the directory does not hold is written to it, then it waits
-// for the next, until it is interrupted (exit 0). A failure of the store, the
+// for the next, until it is interrupted (exit 0). With --push seat the
+// directory is the holder's inbox, read again at every look, so a seat change
+// moves the push to the new holder's (pushTarget). A failure of the store, the
 // server or the directory ends it with its line.
 func (a *app) pushLoop(ctx context.Context, src inboxSource, dir string, timeout time.Duration, asJSON bool, stdout, stderr io.Writer) int {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return refuse(stderr, "inbox", "--push: "+err.Error())
-	}
-	seen, err := pushedKeys(dir)
-	if err != nil {
-		return refuse(stderr, "inbox", "--push: "+err.Error())
+	p := &pushTarget{a: a, seen: map[string]map[string]bool{}}
+	if dir != pushSeat {
+		p.fixed = dir
+		if _, err := p.keys(dir); err != nil {
+			return refuse(stderr, "inbox", "--push: "+err.Error())
+		}
 	}
 	ctx, stop := a.notify(ctx)
 	defer stop()
-	groups, machine, err := src.inbox(ctx, "")
+	look, err := src.inbox(ctx, "")
 	if err != nil {
 		return a.waitFailed(err, stderr)
 	}
-	fresh := unseen(seen, groups)
+	if code := p.follow(look.holder, true, stdout, stderr); code != 0 {
+		return code
+	}
+	fresh, err := p.unseen(look)
+	if err != nil {
+		return refuse(stderr, "inbox", "--push: "+err.Error())
+	}
 	for {
 		for _, g := range fresh {
-			if code := a.push(ctx, src, dir, g, seen, asJSON, stdout, stderr); code != 0 {
+			if code := a.push(ctx, src, p, look.holder, g, asJSON, stdout, stderr); code != 0 {
 				return code
 			}
 		}
 		if ctx.Err() != nil {
 			return 0
 		}
-		running := machine == machineRunning
-		fresh, machine, err = a.waitNew(ctx, src, seen, running, timeout)
+		running := look.machine == machineRunning
+		fresh, look, err = a.waitNew(ctx, src, func(l inboxLook) ([]sprint.Group, error) {
+			p.follow(l.holder, false, stdout, stderr)
+			return p.unseen(l)
+		}, running, timeout)
 		if err != nil {
 			return a.waitFailed(err, stderr)
 		}
-		if running && machine != machineRunning && ctx.Err() == nil {
+		if running && look.machine != machineRunning && ctx.Err() == nil {
 			if asJSON {
-				b, _ := json.Marshal(map[string]any{"machine": machine, "at": a.now()}) // ignored: strings and a time always encode
+				b, _ := json.Marshal(map[string]any{"machine": look.machine, "at": a.now()}) // ignored: strings and a time always encode
 				fmt.Fprintln(stdout, string(b))
 			} else {
-				fmt.Fprintln(stdout, machine)
+				fmt.Fprintln(stdout, look.machine)
 			}
 		}
 	}
 }
 
-// push writes the group's notes the directory does not hold, each as
+// push writes the group's notes its directory does not hold, each as
 // <dir>/<note id>.md, the group read whole first (as inbox --open reads it)
 // so that the file carries its members and needs. A group that closed since
 // the look that found it is nothing to write.
-func (a *app) push(ctx context.Context, src inboxSource, dir string, g sprint.Group, seen map[string]bool, asJSON bool, stdout, stderr io.Writer) int {
-	groups, _, err := src.inbox(ctx, g.ID)
+func (a *app) push(ctx context.Context, src inboxSource, p *pushTarget, holder string, g sprint.Group, asJSON bool, stdout, stderr io.Writer) int {
+	look, err := src.inbox(ctx, g.ID)
 	if err != nil {
 		return a.waitFailed(err, stderr)
 	}
-	whole, ok := sprint.FindGroup(groups, g.ID)
+	whole, ok := sprint.FindGroup(look.groups, g.ID)
 	if !ok {
 		return 0
+	}
+	dir := p.dirOf(holder, whole)
+	if dir == "" {
+		return 0 // the inbox it goes to went away since the look: the next look finds it
+	}
+	seen, err := p.keys(dir)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s inbox --push: %s\n", prog, oneline.Escape(err.Error()))
+		return 1
 	}
 	now := a.now()
 	text := groupText(whole, now, true) + "clock: " + now.UTC().Format(time.RFC3339) + "\n"

@@ -118,6 +118,9 @@ type app struct {
 	// rounds: land itself then leaves the queue as it is.
 	prune    pruneQueue
 	landLazy bool
+	// home is the directory a seat's inbox is under (inbox --wait --push seat:
+	// ~/<holder>-working/inbox): os.UserHomeDir unless a test sets it.
+	home func() (string, error)
 }
 
 func newApp(getenv func(string) string) *app {
@@ -126,6 +129,7 @@ func newApp(getenv func(string) string) *app {
 	a.inventory = a.readInventory
 	a.friends = a.readFriends
 	a.landRoot = defaultLandRoot
+	a.home = os.UserHomeDir
 	return a
 }
 

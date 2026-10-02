@@ -36,7 +36,7 @@ var verbs []verb
 
 func init() {
 	verbs = []verb{
-		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
+		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--owner <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
 		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"release", "<sentinel>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
@@ -80,17 +80,20 @@ func init() {
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
 		{"ack", "<note>[,<note>]... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
-		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir>]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
+		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
 		{"card", "<id>", "card s1-4", (*app).cmdCard},
 		{"log", "[--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]", "log --card s1-4", (*app).cmdLog},
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
 		{"where", "[--watch] [--every <duration>]", "where", (*app).cmdWhere},
+		{"handover", "", "handover", (*app).cmdHandover},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"stats", "", "stats", (*app).cmdStats},
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
 		{"teardown", "--confirm sprint", "teardown --confirm sprint", (*app).cmdTeardown},
+		// last: its example moves the seat, and every coordinator verb's example before it is the holder's
+		{"coordinator", "<name> --reason <text> | <name> --take --approved-by <owner> --reason <text>", "coordinator friend-b --reason 'friend-a is out of credits; friend-b holds the seat'", (*app).cmdCoordinator},
 	}
 }
 
@@ -153,7 +156,10 @@ coordinator's verbs are the coordinator's alone (the first init names it:
 --coordinator, else the actor); take, finish, read, fleet beat and friend
 beat are the workers', whose actor is the member, reader or friend named; merge and ci are
 reports; tick and run are the machine's; the reads need no actor (inbox
---read, which moves the coordinator's cursor, is the coordinator's). A set is
+--read, which moves the coordinator's cursor, is the coordinator's). The seat
+moves by coordinator <name> --reason <text>: given by its holder or the owner
+(init --owner), or taken by <name> itself with --take --approved-by <owner>,
+each in the log; handover prints what the next seat needs. A set is
 ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
@@ -822,7 +828,8 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("init")
 	readers := fs.String("readers", "", "the readers' rows, comma separated")
 	members := fs.String("members", "", fmt.Sprintf("fleet members to bring up, comma separated, each <name> or <name>:<width>, its width the most work cards it runs at once; it holds %d times that, ready and working (default %d)", sprint.DealAhead, sprint.DefaultWidth))
-	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor)")
+	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor); the seat then moves by coordinator <name>")
+	owner := fs.String("owner", "", "the sprint's owner, who may give the seat and whose name a take of it carries (coordinator --take --approved-by); set once, never changed (else "+OwnerEnv+")")
 	rules := fs.String("rules", "", "the child rules file every brief is held to: one required sentence per line, its path recorded for the sprint (default: the built-in general rules; add --rules <file> overrides it for one add)")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -853,9 +860,27 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "init", err.Error())
 	}
 	ctx := context.Background()
+	if *owner != "" {
+		if !sprint.ValidID(*owner) {
+			return refuse(stderr, "init", "--owner wants letters, digits, _ and -: "+*owner)
+		}
+		was, err := st.Owner(ctx)
+		if err != nil {
+			return a.readFailed("init", err, stderr)
+		}
+		if was != "" && was != *owner {
+			return refuse(stderr, "init", "the sprint's owner is "+was+", and init does not change the owner; nothing was changed")
+		}
+	}
 	if err := st.Init(ctx); err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
+	}
+	if *owner != "" {
+		if err := st.SetOwner(ctx, *owner); err != nil {
+			fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
+			return 1
+		}
 	}
 	if *coordinator == "" {
 		*coordinator = c.actor
