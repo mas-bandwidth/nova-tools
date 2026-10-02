@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/internal/workfile"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -265,4 +266,21 @@ func TestVersionAndItsAliasPrintTheBuildIdentity(t *testing.T) {
 			assert.Empty(t, res.Stderr, diag)
 		})
 	}
+}
+
+// TestVerifyHelpShowsATreeTheReaderAccepts (tool ledger K1): verify -h prints
+// the tree's grammar with a minimal tree, and that tree reads back; a file
+// that is no tree is refused pointing at verify -h.
+func TestVerifyHelpShowsATreeTheReaderAccepts(t *testing.T) {
+	t.Parallel()
+	res := workMain(unreachable(t)).Run("verify", "-h")
+	require.Equal(t, 0, res.Code, res.Stderr)
+	require.Contains(t, res.Stdout, minimalTree, "verify -h does not print the minimal tree")
+	for _, key := range []string{"node-id", "state-reason", "author-association", "lock-reason", "linked-prs"} {
+		assert.Contains(t, res.Stdout, key, "verify -h does not name the issue key %s", key)
+	}
+	tree, err := workfile.Decode("help", []byte(minimalTree), workfile.Limits(len(minimalTree)+1))
+	require.NoError(t, err, "the tree verify -h shows does not read")
+	assert.Equal(t, "acme", tree.Org)
+	require.Len(t, tree.Repos, 1)
 }

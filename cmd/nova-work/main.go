@@ -129,6 +129,22 @@ is shown as its length and the head of its SHA-256. With no --repo, the scope
 is the tree's organization: every repository GitHub lists for it and every
 repository the tree holds. An issue edited on GitHub after the import is DRIFT
 on its updated time and the fields that changed: that is the check working.
+
+the tree file (docs/SPEC-WORK-V1.md section 1.2) is one (work-tree "v1" ...)
+record. The smallest a reader accepts, one repository and no issue:
+
+` + minimalTree + `
+An issue in :issues is (issue <number> :url "..." ...) with every one of these
+keys, in any order: url node-id title state state-reason origin author
+author-association created updated closed locked lock-reason labels assignees
+milestone body comments references linked-prs. import writes them all.
+`
+
+// minimalTree is the smallest tree the reader accepts, as verify -h prints
+// it; a test decodes it, so the help cannot show a tree the tool refuses.
+const minimalTree = `  (work-tree "v1" :source "github" :org "acme" :fetched "2026-10-02T12:00:00Z"
+   :repos ((repo "acme/widgets" :url "https://github.com/acme/widgets"
+            :archived false :issues ())))
 `
 
 // sourceFlags are the flags of a read of GitHub, the same on both verbs.
