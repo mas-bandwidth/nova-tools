@@ -235,9 +235,9 @@ func TestPasswordHiddenInEncodedAndTruncatedDiagnostics(t *testing.T) {
 		require.NotContains(t, text, `synth\"pass`, "error text exposed escaped password: %q", text)
 	}
 	cause := errors.Unwrap(err)
-	require.NotNil(t, cause, "cause not withheld or has unwrap chain: %#v", cause)
-	require.True(t, cause.Error() == withheld || cause.Error() == "***", "cause not withheld or has unwrap chain: %#v", cause)
-	require.Nil(t, errors.Unwrap(cause), "cause not withheld or has unwrap chain: %#v", cause)
+	if cause == nil || (cause.Error() != withheld && cause.Error() != "***") || errors.Unwrap(cause) != nil {
+		require.FailNowf(t, "", "cause not withheld or has unwrap chain: %#v", cause)
+	}
 	got := Classify(err)
 	assert.Equal(t, Other, got, "class = %v; want Other", got)
 
@@ -252,9 +252,9 @@ func TestPasswordHiddenInEncodedAndTruncatedDiagnostics(t *testing.T) {
 		require.NotContains(t, text, strings.Repeat("x", 20), "error text exposed truncated password: %q", text)
 	}
 	cause = errors.Unwrap(err)
-	require.NotNil(t, cause, "cause not withheld or has unwrap chain: %#v", cause)
-	require.True(t, cause.Error() == withheld || cause.Error() == "***", "cause not withheld or has unwrap chain: %#v", cause)
-	require.Nil(t, errors.Unwrap(cause), "cause not withheld or has unwrap chain: %#v", cause)
+	if cause == nil || (cause.Error() != withheld && cause.Error() != "***") || errors.Unwrap(cause) != nil {
+		require.FailNowf(t, "", "cause not withheld or has unwrap chain: %#v", cause)
+	}
 	got = Classify(err)
 	assert.Equal(t, Other, got, "class = %v; want Other", got)
 }
@@ -279,9 +279,9 @@ func TestUnicodePreambleDoesNotExposePasswordPrefix(t *testing.T) {
 		assert.NotContains(t, text, secret[:30], "diagnostic exposes 30 bytes of synthetic password: %s", text)
 	}
 	cause := errors.Unwrap(err)
-	require.NotNil(t, cause, "cause not withheld or has unwrap chain: %#v", cause)
-	require.True(t, cause.Error() == withheld || cause.Error() == "***", "cause not withheld or has unwrap chain: %#v", cause)
-	require.Nil(t, errors.Unwrap(cause), "cause not withheld or has unwrap chain: %#v", cause)
+	if cause == nil || (cause.Error() != withheld && cause.Error() != "***") || errors.Unwrap(cause) != nil {
+		require.FailNowf(t, "", "cause not withheld or has unwrap chain: %#v", cause)
+	}
 	got := Classify(err)
 	assert.Equal(t, Other, got, "class = %v; want Other", got)
 }
