@@ -1848,7 +1848,7 @@ header says what each marker is replaced by.
 #    Expect: $PPID == the TOOL's pid — rule 12: sandbox-exec execs the command in
 #    place and the tool waits, so the shell's parent is nova-sandbox itself —
 #    the first line of /etc/hosts, and no "Operation not permitted".
-#    HOME is set on BOTH lines: rule 9's check runs before the policy is built,
+#    HOME is set on BOTH lines: the HOME check runs before the policy is built,
 #    so `policy` refuses an outside HOME even though it runs nothing.
 mkdir -p w/home && cd w
 HOME="$PWD/home" nova-sandbox policy --read /opt/homebrew --write "$PWD"
@@ -1878,12 +1878,12 @@ Each item is a claim in this document that was written from documentation and
 must be **executed on the machine** before the spec's word is trusted. A build
 that cannot confirm one changes this document rather than asserting it.
 
-1. That rule 7's measured three-service `mach-lookup` set
+1. That the measured three-service `mach-lookup` set
    (`com.apple.system.opendirectoryd.libinfo`, `com.apple.SecurityServer`,
    `com.apple.system.logger`), with `/` and `/dev` in the roots, is enough for
    a Node-based harness and a Go toolchain under the profile, and if not, which
    further service each needs, added by measurement — the unqualified
-   `(allow mach-lookup)` is forbidden by rule 7 and is not the fallback, while
+    `(allow mach-lookup)` is forbidden and is not the fallback, while
    a deny-default profile that blocks `mach-lookup` outright breaks `dyld` and
    process spawn in ways that look like unrelated crashes.
 2. `-D` parameter escaping, which is a live risk and not a formality: one
@@ -1940,7 +1940,7 @@ One per rule:
    `cat /etc/hosts` succeeds and `/bin/sh -c true` exits 0 inside the wall
    (both fail without the `/etc`, `/tmp`, `/var` literals and
    `/private/var/select`). On darwin a wrapped `/usr/bin/c++` compiles and
-   runs a C++ probe inside the write set (#1557; it fails without the
+    runs a C++ probe inside the write set; it fails without the
    `xcode_select_link` literals). On linux a wrapped command's **child** reads
    `/proc/self/status` successfully, which `/proc/self` as a root would
    deny.
@@ -1991,10 +1991,9 @@ One per rule:
    reason=landlock_abi_unknown` naming both numbers, at exit 125, with the
    tripwire on the exec path seeing no call — the mirror of the forced-down
    `net_unenforceable` case above, and the only thing that makes
-   `landlock_abi_unknown` more than a word in the exit table. Rule 1's own
-   `no_sandbox` refusal gets the linux test the ABI refusal used to stand in
-   for, through the same seam and with the same tripwire. End to end on a real
-   kernel, a walled run on a machine whose ABI is above the table **runs and
+    `landlock_abi_unknown` is a real exit code, and the no_sandbox refusal
+    provides a parallel test through the same seam and with the same tripwire.
+    End to end on a real kernel, a walled run on a machine whose ABI is above the table **runs and
    exits 0** and its line carries `used=`; on a machine at or below the table
    the line carries **no** `used=` field at all.
 8. A wrapped command that writes to `$TMPDIR` succeeds and the file lands under
@@ -2014,7 +2013,7 @@ One per rule:
    variable the child still has is a false statement about the wall.
 10. `TestProbeProvesTheWall`: the `write_outside` path is the named one and is
     asserted to be outside every list **with `TMPDIR` pointed inside the wall
-    by rule 8** — a probe built on `os.TempDir()` turns this red; a first
+    by a write rule** — a probe built on `os.TempDir()` turns this red; a first
     `--write` whose parent is inside a list is exit 2
     `reason=probe_outside_inside`; all five checks run even when the first
     fails; a named outside path that this user cannot write to anyway is exit 2
@@ -2024,7 +2023,7 @@ One per rule:
     `PROBE REFUSED`, not `PROBE OK`; a policy with no wall at all fails
     `write_outside` and `read_secret`; a correct policy is
     `PROBE OK steps=5 passed=5`; the secret file's contents are never read.
-    A probe **without `--secret`** (issue #881) prints `PROBE OK steps=4
+    A probe **without `--secret`** prints `PROBE OK steps=4
     passed=4` with no `read_secret` step — the key delivered by `nova-secrets
     exec` is never a file.
     And the shape rule 10 fixes, which is what makes `read_root` mean anything:
@@ -2034,9 +2033,8 @@ One per rule:
     of the run-time root it exists for; and a step built as a shell **string**
     lets a `--secret` holding a quote and a `;` run a command inside the wall
     and flip the check's verdict, which is the test's second half, with the
-    injected file asserted absent afterwards. `--secret` is resolved by rule 5
-    like every other caller path, so one that names no file is a refusal rather
-    than a probe that "could not read" a file that was never there.
+    injected file asserted absent afterwards. `--secret` is resolved like every other caller path, so one that names no file is a refusal rather
+     than a probe that "could not read" a file that was never there.
 11. `--no-sandbox` is **not a flag this tool has**: the test runs
     `nova-sandbox --no-sandbox -- <command>` and asserts the existing refusal,
     `SANDBOX REFUSED reason=bad_flag: unknown flag --no-sandbox; the flags are
@@ -2099,7 +2097,7 @@ And one for each thing the rules above assert but no test yet reached:
     unavailable it prints `backend=none` and still **exits 0**, because it is a
     question, not an attempt.
 19. Exit `125`: a command that exists but is not executable — the pre-flight
-    stats the path rule 5 resolved, **outside the wall and before any profile
+    stats the resolved path, **outside the wall and before any profile
     exists**, and refuses `SANDBOX REFUSED reason=not_executable`. Exit `127`:
     a command on no `PATH` entry, with one `SANDBOX REFUSED reason=not_found`.
     A command that itself exits 125, 126 or 127 gives the same number with
@@ -2147,7 +2145,7 @@ And one for each thing the rules above assert but no test yet reached:
     push fails **before any connection**, with the planted `<home>/.ssh/id_test`
     of test 3 unreadable inside the wall and readable outside it in the same
     test; (c) the child's environment, read back from inside the wall, holds
-    none of rule 9's exact set — planted `SSH_AUTH_SOCK`, `SSH_AGENT_PID`,
+    none of the exact set — planted `SSH_AUTH_SOCK`, `SSH_AGENT_PID`,
     `GPG_AGENT_INFO` and `PODMAN_AGENT_SOCK` are all gone — while a planted
     `AI_AGENT` and `CLAUDE_AGENT_SDK_VERSION` and a caller variable set
     beside them arrive unchanged — and a connect to a unix-domain socket the
@@ -2171,7 +2169,7 @@ And one for each thing the rules above assert but no test yet reached:
     about. One directory deeper (`<home>/tools/x.sh`) is a directory of its own
     and **is** a root, so the entry is guarded rather than removed. Both
     exemptions run: a command in a home the caller named in its own `--read`
-    is accepted, and so is one under the job's data home of rule 9, which lies
+    is accepted, and so is one under the job's data home, which lies
     inside a `--write` by construction — the guard refused the tool's own
     `probe` before that second exemption existed.
 
