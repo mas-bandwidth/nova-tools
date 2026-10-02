@@ -20,7 +20,7 @@ func writeSession(t *testing.T) string {
 `
 	{
 		err := os.WriteFile(path, []byte(body), 0o644)
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 	return path
 }
@@ -35,7 +35,7 @@ func TestSessionPrintsOneLineAndFoldsNothingWithoutOut(t *testing.T) {
 	// By hand: 16 + 1.25 x 2500 + 0.1 x 20000 + 5 x 420 = 16 + 3125 + 2000 + 2100 = 7241,
 	// and the context a turn carried is (16 + 2500 + 20000) / 2 = 11258.
 	want := "SESSION turns=2 input=16 cache_write=2500 cache_read=20000 output=420 weighted=7241 avg_context=11258\n"
-	assert.False(t, r.stdout != want, "stdout is\n  %q\nwant\n  %q", r.stdout, want)
+	assert.Equal(t, want, r.stdout, "stdout is\n  %q\nwant\n  %q", r.stdout, want)
 }
 
 // TestSessionFoldsIntoTheDayFileAndKeepsTheOtherRows: the coordinator arrives as its own
@@ -50,7 +50,7 @@ func TestSessionFoldsIntoTheDayFileAndKeepsTheOtherRows(t *testing.T) {
 		"2026-09-11\tdeepseek-v4-flash\tnova-tools\t100\t10\t-\t-\t-\t0\tutc\temma\n"
 	{
 		err := os.WriteFile(filepath.Join(out, "2026-09-11.tsv"), []byte(existing), 0o644)
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 
 	r := invoke(t, "session", "--claude-session", writeSession(t), "--out", out)
@@ -59,19 +59,19 @@ func TestSessionFoldsIntoTheDayFileAndKeepsTheOtherRows(t *testing.T) {
 	wantContains(t, r.stdout, "model=claude-opus-5/coordinator")
 
 	raw, err := os.ReadFile(filepath.Join(out, "2026-09-11.tsv"))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	body := string(raw)
 	wantContains(t, body, "2026-09-11\tclaude-opus-5/coordinator\tcoordinator\t16\t420\t2500\t20000\t-\t0\tutc\tclaude-session")
 	wantContains(t, body, "2026-09-11\tdeepseek-v4-flash\tnova-tools\t100\t10\t-\t-\t-\t0\tutc\temma")
 	wantContains(t, body, "turns=2")
-	assert.False(t, !strings.Contains(body, "sources=claude-session,emma"), "the version line does not name both sources:\n%s", strings.SplitN(body, "\n", 2)[0])
+	assert.True(t, strings.Contains(body, "sources=claude-session,emma"), "the version line does not name both sources:\n%s", strings.SplitN(body, "\n", 2)[0])
 
 	// Folding the same session again is the same file: a fold replaces its own rows and
 	// never adds to them.
 	again := invoke(t, "session", "--claude-session", writeSession(t), "--out", out)
 	wantExit(t, again, 0)
 	raw2, _ := os.ReadFile(filepath.Join(out, "2026-09-11.tsv"))
-	assert.False(t, strings.Count(string(raw2), "claude-opus-5/coordinator") != 1, "a second fold wrote a second coordinator row:\n%s", raw2)
+	assert.Equal(t, 1, strings.Count(string(raw2), "claude-opus-5/coordinator"), "a second fold wrote a second coordinator row:\n%s", raw2)
 }
 
 // TestSessionRefusesWithoutTheSessionAndOnABadDay: no path is guessed, and a day this tool
@@ -114,14 +114,14 @@ func TestSessionBooksTheModelTheTranscriptNames(t *testing.T) {
 `
 	{
 		err := os.WriteFile(path, []byte(body), 0o644)
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 	out := t.TempDir()
 	r := invoke(t, "session", "--claude-session", path, "--out", out)
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "model=some-other-model-7/coordinator")
 	raw, err := os.ReadFile(filepath.Join(out, "2026-09-11.tsv"))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	wantContains(t, string(raw), "2026-09-11\tsome-other-model-7/coordinator\tcoordinator\t5\t6\t0\t0")
 	assert.False(t, strings.Contains(string(raw), "fable"), "a fixed coordinator label was booked:\n%s", raw)
 }
@@ -136,7 +136,7 @@ func TestSessionRefusesATranscriptThatNamesNoModel(t *testing.T) {
 `
 	{
 		err := os.WriteFile(path, []byte(body), 0o644)
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 	out := filepath.Join(t.TempDir(), "out")
 	r := invoke(t, "session", "--claude-session", path, "--out", out)
