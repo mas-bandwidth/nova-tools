@@ -65,8 +65,8 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 					f.Duration("timeout", snapshotChildTimeout, "one binary's read deadline")
 					f.Duration("budget", snapshotBudget, "whole run deadline")
 					f.Bool("dry-run", false, "read every binary and list the rows; write no --out")
-					// Neither path is guessed: both are the caller's to name,
-					// unless --file asks the manifest shape.
+					// Neither path is guessed: both are the caller's to name
+					// (SPEC-UPDATE rule 1), unless --file asks the manifest shape.
 					// The refusal names both shapes, so either is the next call.
 					f.Check(func(c *tool.Call) {
 						var missing []string

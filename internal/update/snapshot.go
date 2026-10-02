@@ -439,8 +439,8 @@ func validatePrepared(raw []byte) (string, error) {
 	if err := noDuplicateKeys(raw); err != nil {
 		return "", fmt.Errorf("bus prepare returned an invalid artifact: %s", err)
 	}
-	// The artifact is a fixed five-field object and the prepared artifact is
-	// required EXACTLY, so its keys are required by their exact spelling rather
+	// The artifact is a fixed five-field object and rule 25 calls for the EXACT
+	// prepared artifact, so its keys are required by their exact spelling rather
 	// than by whatever the decoder would match. That is what makes a lone "ID"
 	// a refusal and not a second spelling of the identity.
 	if err := exactKeys(raw, "schema", "id", "path", "note", "sha256"); err != nil {
