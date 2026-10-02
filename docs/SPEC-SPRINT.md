@@ -1342,21 +1342,29 @@ runs for nobody: itself (`run`, `tick`), `land` and `play`, which work outside t
 seconds or minutes, and `fleet sync`, which reads the config store with its caller's own
 credentials, nor a read that waits for the sprint to move (`where --watch`, `inbox --wait`): the
 server moves the sprint on the one line of control such a verb would hold. With
-`NOVA_SPRINT_SERVER=<host:port>` set (the loopback address `run --listen` prints), a verb that
-writes the sprint (a coordinator's, a report's, a worker's, and `inbox --read`, which moves the
-coordinator's cursor) is not run where it is typed: its arguments are sent to the server, with
-the caller's actor and each file it names as an absolute path, and what the server's run of it
-printed is printed there, with its exit code. The reads, the verbs not served, a waiting read, a
-verb given its own `--redis`, a verb's help and flags the verb refuses run where they are typed;
-`inbox --wait --read`, which would wait here and move the cursor the server moves, is refused
-with a server named (exit 2, nothing changed): run `inbox --wait`, then `inbox --read`.
+`NOVA_SPRINT_SERVER=<host:port>` set (the loopback address `run --listen` prints), every verb the
+server runs, the reads included, is not run where it is typed: its arguments are sent to the
+server, with the caller's actor and each file it names as an absolute path, and what the
+server's run of it printed (its stdout, its stderr, its exit code) is printed there byte for
+byte as the verb run on the store prints it. So the coordinator's side names no store and holds
+no store credentials. The verbs not served, a verb given its own `--redis` (it names its own
+store), a verb's help and flags the verb refuses run where they are typed. A waiting read waits
+where it is typed and holds the server between none of its reads: `where --watch` sends one plain
+`where` a frame and draws it as its own watch does; `inbox --wait` reads the log's tick-end notes
+(`log --json` as far back as its timeout and a second) once a second until one comes that its
+first read did not show, or its `--timeout` passes, then sends the plain `inbox` and prints it
+as `inbox --wait` does (the timeout line, and `woke` under `--json`). `inbox --wait --read`,
+which would wait here and move the cursor the server moves, is refused with a server named
+(exit 2, nothing changed): run `inbox --wait`, then `inbox --read`. A server that does not
+answer is said in one line with what to do (start `nova-sprint run --listen`), exit 2, and the
+verb is not run on a store here instead.
 What the arguments say (a help flag, which word is a flag's value, a file flag, a `--`) is read
 by the verb's own flags, never by a scan of the words: `add --stream help` is a stream named
 help, and in `--brief --rules` the brief is the text `--rules`. Who acts is the caller's actor
 alone: the server puts `--actor` with no one before the caller's words, so a verb that names no
 actor acts as no one and is refused, never as whoever the server's own environment names. A
 worker's verb from this machine names the epoch its worker holds however its words are ordered.
-So one process writes the sprint: the server.
+So one process reads and writes the sprint: the server.
 
 With `run --land` the server lands what the readers passed, itself: every two seconds, when a
 stream has cards queued to merge, it runs `land` for them as the sprint's coordinator, one

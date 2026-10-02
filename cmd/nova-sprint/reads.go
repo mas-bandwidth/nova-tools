@@ -416,13 +416,62 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 		ctx, stop = a.notify(ctx)
 		defer stop()
 	}
-	return a.whereLoop(ctx, whereRun{c: *c, watch: *watch, every: *every, stale: *stale, atEpoch: *atEpoch}, stdout, stderr)
+	r := whereRun{c: *c, watch: *watch, every: *every, stale: *stale, atEpoch: *atEpoch}
+	if addr := a.server(fs); addr != "" {
+		// the sprint's server draws each frame: one plain where a frame, so the watch
+		// never holds the server between frames
+		plain := without(fs, args, "watch", "every")
+		return a.drawLoop(ctx, r, stdout, stderr, func(ctx context.Context) (string, int, bool) {
+			res, err := a.ask(ctx, addr, []string{"where"}, plain)
+			switch {
+			case err != nil && ctx.Err() != nil:
+				return "", 0, false // an interrupt cut the read short: the watch is over, not failed
+			case err != nil:
+				return "", a.unanswered("where", addr, err, stderr), false
+			case res.Code != 0:
+				a.answer(res, stdout, stderr)
+				return "", res.Code, false
+			}
+			_, _ = io.WriteString(stderr, res.Stderr) // ignored: the caller's own stream
+			return res.Stdout, 0, true
+		})
+	}
+	return a.whereLoop(ctx, r, stdout, stderr)
 }
 
 // whereLoop shows the view: once, or with --watch every --every until ctx is
 // done. A watch of the text redraws in place (watchWriter); --json prints
 // one object a frame.
 func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Writer) int {
+	return a.drawLoop(ctx, r, stdout, stderr, func(ctx context.Context) (string, int, bool) {
+		// every frame reads the sprint's epoch again: a clear while it
+		// watches shows the new epoch
+		st, err := a.storeAtCtx(ctx, r.c, r.atEpoch)
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", 0, false // an interrupt cut the read short: the watch is over, not failed
+			}
+			return "", refuse(stderr, "where", err.Error()), false
+		}
+		v, frame, err := a.where(ctx, st, r.stale)
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", 0, false // an interrupt cut the read short: the watch is over, not failed
+			}
+			return "", a.readFailed("where", err, stderr), false
+		}
+		if r.c.json {
+			b, _ := json.Marshal(v)
+			return string(b) + "\n", 0, true
+		}
+		return frame, 0, true
+	})
+}
+
+// drawLoop prints the frames frame gives: once, or with --watch every --every until
+// ctx is done, a text frame redrawn in place (watchWriter). frame is the text of one
+// frame, or the exit code the view ends with (ok false).
+func (a *app) drawLoop(ctx context.Context, r whereRun, stdout, stderr io.Writer, frame func(context.Context) (text string, code int, ok bool)) int {
 	var w *watchWriter
 	if r.watch && !r.c.json {
 		w = newWatchWriter(stdout, func() (int, int) { return a.screen(stdout) })
@@ -430,33 +479,17 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 		defer w.showCursor()
 	}
 	for {
-		// every frame reads the sprint's epoch again: a clear while it
-		// watches shows the new epoch
-		st, err := a.storeAtCtx(ctx, r.c, r.atEpoch)
-		if err != nil {
-			if ctx.Err() != nil {
-				return 0 // an interrupt cut the read short: the watch is over, not failed
-			}
-			return refuse(stderr, "where", err.Error())
+		text, code, ok := frame(ctx)
+		if !ok {
+			return code
 		}
-		v, frame, err := a.where(ctx, st, r.stale)
-		if err != nil {
-			if ctx.Err() != nil {
-				return 0 // an interrupt cut the read short: the watch is over, not failed
-			}
-			return a.readFailed("where", err, stderr)
-		}
-		switch {
-		case r.c.json:
-			b, _ := json.Marshal(v)
-			fmt.Fprintln(stdout, string(b))
-		case w != nil:
-			if err := w.frame(frame); err != nil {
+		if w != nil {
+			if err := w.frame(text); err != nil {
 				fmt.Fprintf(stderr, "%s where: stdout: %s\n", prog, oneline.Escape(err.Error()))
 				return 1
 			}
-		default:
-			fmt.Fprint(stdout, frame)
+		} else {
+			fmt.Fprint(stdout, text)
 		}
 		if !r.watch || !a.pause(ctx, r.every) {
 			return 0
@@ -653,9 +686,12 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	if *read && *atEpoch >= 0 {
 		return refuse(stderr, "inbox", "--read moves the cursor of the sprint's epoch, and --at-epoch reads an earlier one as it was: give one of them")
 	}
-	if *read && *wait && a.getenv(ServerEnv) != "" {
+	if *read && *wait && a.server(fs) != "" {
 		// the cursor is the server's to move, and a wait never runs on the server (waits)
 		return refuse(stderr, "inbox", "--read moves the cursor, which the sprint's server (NOVA_SPRINT_SERVER) moves, and --wait waits where it is typed, never on the server: run nova-sprint inbox --wait, then nova-sprint inbox --read; nothing was changed")
+	}
+	if addr := a.server(fs); addr != "" && *wait {
+		return a.inboxWaitAt(addr, fs, args, *atEpoch, *timeout, c.json, stdout, stderr)
 	}
 	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {
