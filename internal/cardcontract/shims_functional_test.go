@@ -268,6 +268,25 @@ func TestGhPrReviewIsTheRead(t *testing.T) {
 	}
 }
 
+// A read that hands its own RESULT.md to gh pr review as the body (it begins head: <sha>)
+// is recorded with the body's report: line, never the head line: the inbox's judgment line
+// carries the reader's finding, not a commit id.
+func TestGhPrReviewBodyThatIsAResultReportsItsReportLine(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "claude", "read")
+	head := r.commit(r.repo, "under review")
+	body := "head: " + head + "\nbranch: sprint/c1\nverdict: broken\ngate: -\noutput: -\nreport: PR title lacks quack.\n\n## Body\n\nf:1 the title lacks quack\n"
+	bodyPath := filepath.Join(r.job, "RESULT.md")
+	require.NoError(t, os.WriteFile(bodyPath, []byte(body), 0o644))
+	code, _, errb := r.sh(r.repo, `gh pr review --request-changes --body-file "`+bodyPath+`"`)
+	require.Equal(t, 0, code, errb)
+	finish, ok := ReadFinish(r.job)
+	require.True(t, ok)
+	assert.Equal(t, "broken", finish.Verdict)
+	assert.Equal(t, "PR title lacks quack.", finish.Report)
+	assert.NotContains(t, finish.Report, head)
+}
+
 // Everything gh does that writes is refused with one line, in every profile.
 func TestGhRefusesEveryWrite(t *testing.T) {
 	t.Parallel()
