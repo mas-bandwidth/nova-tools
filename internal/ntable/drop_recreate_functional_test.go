@@ -30,8 +30,10 @@ func TestACreateOverADroppedTableNamesTheWaysOutAndEachRuns(t *testing.T) {
 	other.Columns = other.Columns[:1]
 	err = ntable.Create(ctx, c, other, now)
 	require.ErrorIs(t, err, ntable.ErrExists, "create over the dropped definition")
-	assert.Contains(t, err.Error(), "nova-table create 'demo' --columns 'ready:count:sum,working:count:sum,done:count:sum,who:members:union' --footer 'total'", "the create that brings it back")
+	assert.Contains(t, err.Error(), "nova-table create demo --columns ready:count:sum,working:count:sum,done:count:sum,who:members:union --footer total --epoch 0; run:", "the create that brings it back")
 	assert.Contains(t, err.Error(), "; run: nova-table drop 'demo' --definition", "the drop that forgets it")
+	// the saved definition brings it back (the printed command itself is run
+	// through a shell by cmd/nova-table's TestThePrintedRecreateBringsTheTableBack)
 	require.NoError(t, ntable.Create(ctx, c, saved, now), "the saved definition brings it back")
 	_, err = ntable.Drop(ctx, c, saved.Name)
 	require.NoError(t, err, "drop again")

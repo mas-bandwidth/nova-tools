@@ -122,10 +122,17 @@ func TestACreateOverADroppedDefinitionNamesBothWaysOut(t *testing.T) {
 			[]string{`table "tmp1": exists with another definition; run: nova-table set 'tmp1' --columns <columns>`}},
 		{"a dropped table", []any{"REFUSED", "EXISTS", "DROPPED", "0", "order", "a,b", "col:a", "count:sum:0:", "col:b", "text:none:7:Bee", "footer", ""},
 			[]string{`table "tmp1": exists with another definition: the table was dropped and keeps its saved definition until drop --definition;`,
-				`to bring it back as it was: nova-table create 'tmp1' --columns 'a:count:sum,b:text:none:Bee' --width 'b=7'`,
+				`to bring it back as it was: nova-table create tmp1 --columns a:count:sum,b:text:none:Bee --width b=7 --epoch 0; run:`,
 				`; run: nova-table drop 'tmp1' --definition`}},
 		{"a dropped table at a later epoch", []any{"REFUSED", "EXISTS", "DROPPED", "3", "order", "a", "col:a", "count:sum:0:", "footer", "total"},
-			[]string{`nova-table create 'tmp1' --columns 'a:count:sum' --footer 'total'`, `; run: nova-table drop 'tmp1' --definition --epoch 3`}},
+			[]string{`nova-table create tmp1 --columns a:count:sum --footer total --epoch 3; run:`, `; run: nova-table drop 'tmp1' --definition --epoch 3`}},
+		// the saved routing comes back with it, each word shell-quoted, and the
+		// epoch is the store's exact uint64, past what a float64 holds
+		{"a dropped table with its own routing", []any{"REFUSED", "EXISTS", "DROPPED", "18446744073709551615", "order", "a", "col:a", "text:none:0:it's done", "footer", "all rows",
+			"epoch_key", "work epoch", "epoch_field", "n", "member_prefix", "it's members:"},
+			[]string{`nova-table create tmp1 --columns 'a:text:none:it'"'"'s done' --footer 'all rows' --epoch-key 'work epoch' --epoch-field n --member-prefix 'it'"'"'s members:' --epoch 18446744073709551615; run:`}},
+		{"an epoch that is not a number", []any{"REFUSED", "EXISTS", "DROPPED", "x1", "order", "a", "col:a", "count:sum:0:"},
+			[]string{`the store's epoch "x1" is not an unsigned integer`}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			err := op.refused(c.reply)

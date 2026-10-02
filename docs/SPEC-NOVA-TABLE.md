@@ -170,7 +170,9 @@ are no separate `col hide/show` subverbs and `create` does not take `--hidden`.
 table back; a `create` of another definition is refused `EXISTS`, and over a
 dropped table (absent at its active epoch, which `set` refuses) the refusal
 carries the epoch and the saved definition, so its words name the `create`
-that brings the table back as it was and its remedy is the
+that brings the table back as it was (its columns, footer and widths, its
+`--epoch-key`, `--epoch-field` and `--member-prefix`, and `--epoch` at the
+store's epoch, each word shell-quoted) and its remedy is the
 `drop <table> --definition` that forgets it. Over a present table the remedy
 is `set --columns`. A view names tables that exist (`view set` refuses one
 that does not), and a view naming a dropped table refuses to render, so a

@@ -1,6 +1,7 @@
 package ntable
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
@@ -257,7 +259,10 @@ func dropDefinitionCommand(table string, epoch []any) string {
 // definition differs (reply: the epoch, then the saved definition hash
 // flattened): drop keeps the definition until drop --definition, and set
 // refuses a dropped table, so the refusal names both ways out, the create that
-// brings the table back as it was and drop --definition, which forgets it.
+// brings the table back as it was and drop --definition, which forgets it. The
+// create carries the whole saved definition, its routing (epoch key and field,
+// member prefix) included, else it is refused CONFIG, and the store's epoch,
+// else STALE; each word is one shell word (oneline.ShellWord).
 func droppedDefinition(table string, reply []any) (string, error) {
 	h := map[string]string{}
 	for i := 1; i+1 < len(reply); i += 2 {
@@ -267,6 +272,10 @@ func droppedDefinition(table string, reply []any) (string, error) {
 	t, _, err := decodeDefinition(table, h)
 	if err != nil {
 		return remedy, say(ErrExists, "exists with another definition: the table was dropped and keeps its saved definition (%v) until drop --definition", err)
+	}
+	epoch, err := strconv.ParseUint(fmt.Sprint(reply[0]), 10, 64)
+	if err != nil {
+		return remedy, say(ErrExists, "exists with another definition: the table was dropped and keeps its saved definition until drop --definition; the store's epoch %q is not an unsigned integer", fmt.Sprint(reply[0]))
 	}
 	var cols, widths []string
 	for _, c := range t.Columns {
@@ -279,14 +288,24 @@ func droppedDefinition(table string, reply []any) (string, error) {
 			widths = append(widths, c.Name+"="+strconv.Itoa(c.Width))
 		}
 	}
-	create := "nova-table create " + shellWord(table) + " --columns " + shellWord(strings.Join(cols, ","))
+	argv := []string{"nova-table", "create", table, "--columns", strings.Join(cols, ",")}
 	if t.FooterLabel != DefaultFooter {
-		create += " --footer " + shellWord(t.FooterLabel)
+		argv = append(argv, "--footer", t.FooterLabel)
 	}
 	if len(widths) > 0 {
-		create += " --width " + shellWord(strings.Join(widths, ","))
+		argv = append(argv, "--width", strings.Join(widths, ","))
 	}
-	return remedy, say(ErrExists, "exists with another definition: the table was dropped and keeps its saved definition until drop --definition; to bring it back as it was: %s", create)
+	if t.EpochKey != "" {
+		argv = append(argv, "--epoch-key", t.EpochKey, "--epoch-field", cmp.Or(t.EpochField, "n"))
+	}
+	if t.MemberPrefix != "" {
+		argv = append(argv, "--member-prefix", t.MemberPrefix)
+	}
+	argv = append(argv, "--epoch", strconv.FormatUint(epoch, 10))
+	for i, w := range argv {
+		argv[i] = oneline.ShellWord(w)
+	}
+	return remedy, say(ErrExists, "exists with another definition: the table was dropped and keeps its saved definition until drop --definition; to bring it back as it was: %s", strings.Join(argv, " "))
 }
 
 // words joins the detail elements of a refusal reply.
