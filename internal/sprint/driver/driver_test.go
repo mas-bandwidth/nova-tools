@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeClock struct{ now time.Time }
@@ -59,37 +62,28 @@ func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 	d := &Driver{Run: w.run, Base: []string{"--redis", "127.0.0.1:1"}, Facts: facts, Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)},
 		Out: &out, Config: Config{Every: time.Second, Batch: 5}}
 	why, err := d.Loop()
-	if err != nil || why != "landed" {
-		t.Fatalf("loop: %s %v\n%s", why, err, out.String())
-	}
+	require.NoError(t, err, "loop: %s %v\n%s", why, err, out.String())
+	require.Equal(t, "landed", why, "loop: %s %v\n%s", why, err, out.String())
 	var lines []string
 	for _, a := range w.ran {
-		if coordinatorVerbs[a[0]] {
-			t.Fatalf("the driver ran the coordinator's verb: %v", a)
-		}
+		require.False(t, coordinatorVerbs[a[0]], "the driver ran the coordinator's verb: %v", a)
 		lines = append(lines, strings.Join(a, " "))
 	}
 	all := strings.Join(lines, "\n")
 	for _, want := range []string{"finish --as m1 --epoch 0 s1-1.w2@3 --redis 127.0.0.1:1", "take --as m1 --limit 64 --epoch 0 --redis 127.0.0.1:1",
 		"read --as reader-a --ok --epoch 0 s1-5.r1.reader-a --redis", "read --as reader-a --begin --epoch 0 s1-2.r1.reader-a --redis",
 		"merge --stream s1 --batch 5"} {
-		if !strings.Contains(all, want) {
-			t.Errorf("no %q in\n%s", want, all)
-		}
+		assert.Contains(t, all, want, "no %q in\n%s", want, all)
 	}
 	for _, not := range []string{"start", "resolve", "ask ", "tick", "fleet level"} {
 		for _, l := range lines {
-			if strings.HasPrefix(l, not) {
-				t.Errorf("the driver ran the machine's move %q", l)
-			}
+			assert.False(t, strings.HasPrefix(l, not), "the driver ran the machine's move %q", l)
 		}
 	}
 	text := out.String()
 	for _, want := range []string{"tick 1 03:04:05", "nova-sprint take --as m1 --limit 64 --epoch 0 --redis 127.0.0.1:1", "TAKE OK moved=1 refused=0",
 		"waits for the coordinator: work came back failed s1 x2 4m5s", "every stream has landed: 2/2 100.0% -> ETA"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the output lacks %q:\n%s", want, text)
-		}
+		assert.Contains(t, text, want, "the output lacks %q:\n%s", want, text)
 	}
 }
 
@@ -108,9 +102,10 @@ func TestTheSeedPlaysTheSameFacts(t *testing.T) {
 		bm := b.Merge("s1", []string{"x", "y", "z"}, others)
 		au := a.Up(i, []string{"m1", "m2"}, map[string]bool{"m1": true})
 		bu := b.Up(i, []string{"m1", "m2"}, map[string]bool{"m1": true})
-		if ao != bo || ar != br || fmt.Sprint(am) != fmt.Sprint(bm) || fmt.Sprint(au) != fmt.Sprint(bu) {
-			t.Fatalf("draw %d differs", i)
-		}
+		require.Equal(t, bo, ao, "draw %d differs", i)
+		require.Equal(t, br, ar, "draw %d differs", i)
+		require.Equal(t, bm, am, "draw %d differs", i)
+		require.Equal(t, bu, au, "draw %d differs", i)
 	}
 }
 
@@ -119,15 +114,10 @@ func TestTheDriverRefusesToPlayWithNoMachineRunning(t *testing.T) {
 	w := &world{where: []string{strings.Replace(busy, "machine: running", "machine: STOPPED", 1)}}
 	var out bytes.Buffer
 	d := &Driver{Run: w.run, Facts: NewSeeded(1), Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}, Out: &out, Header: "chances: a header"}
-	if _, err := d.Loop(); err == nil || !strings.Contains(err.Error(), "no machine is running (machine: STOPPED)") {
-		t.Fatalf("a driver with the machine stopped: %v", err)
-	}
-	if len(w.ran) != 1 {
-		t.Fatalf("it ran more than the read: %v", w.ran)
-	}
-	if out.Len() != 0 {
-		t.Fatalf("a driver that refuses to play printed %q", out.String())
-	}
+	_, err := d.Loop()
+	require.ErrorContains(t, err, "no machine is running (machine: STOPPED)", "a driver with the machine stopped: %v", err)
+	require.Len(t, w.ran, 1, "it ran more than the read: %v", w.ran)
+	require.Empty(t, out.String(), "a driver that refuses to play printed %q", out.String())
 }
 
 // The header is printed once, when the loop may play, before its first tick.
@@ -141,32 +131,27 @@ func TestTheLoopPrintsItsHeaderOnceBeforeTheFirstTick(t *testing.T) {
 	var out bytes.Buffer
 	d := &Driver{Run: w.run, Facts: NewSeeded(1), Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}, Out: &out,
 		Header: "chances: a header", Config: Config{Every: time.Second, Ticks: 3}}
-	if why, err := d.Loop(); err != nil || why != "ticks" {
-		t.Fatalf("%s %v", why, err)
-	}
-	if text := out.String(); !strings.HasPrefix(text, "chances: a header\ntick 1 ") || strings.Count(text, "chances: a header") != 1 {
-		t.Fatalf("the header, once, before tick 1:\n%s", text)
-	}
+	why, err := d.Loop()
+	require.NoError(t, err, "%s %v", why, err)
+	require.Equal(t, "ticks", why, "%s %v", why, err)
+	text := out.String()
+	require.True(t, strings.HasPrefix(text, "chances: a header\ntick 1 "), "the header, once, before tick 1:\n%s", text)
+	require.Equal(t, 1, strings.Count(text, "chances: a header"), "the header, once, before tick 1:\n%s", text)
 }
 
 func TestTheDriverRefusesToRunACoordinatorVerb(t *testing.T) {
 	t.Parallel()
 	d := &Driver{Run: (&world{}).run, Out: io.Discard}
-	defer func() {
-		if recover() == nil {
-			t.Fatalf("the driver ran accept")
-		}
-	}()
-	d.run(false, "accept", "--read-ok")
+	require.Panics(t, func() {
+		d.run(false, "accept", "--read-ok")
+	}, "the driver ran accept")
 }
 
 func TestCommandLinesPasteAsTyped(t *testing.T) {
 	t.Parallel()
 	got := commandLine([]string{"finish", "--as", "m1", "--report", "the tests went red", "a'b"})
 	want := `nova-sprint finish --as m1 --report 'the tests went red' 'a'\''b'`
-	if got != want {
-		t.Fatalf("%s\nwant %s", got, want)
-	}
+	require.Equal(t, want, got, "%s\nwant %s", got, want)
 }
 
 // scripted is facts by script: every work and read ok, a cross fact for the
@@ -219,21 +204,18 @@ func TestTheOtherQueuesAreReadWhenAFactNeedsThem(t *testing.T) {
 	}, inbox: `{"groups":[]}`}
 	f := &scripted{cross: map[string]bool{"s2": true}}
 	d := &Driver{Run: w.run, Facts: f, Clock: &fakeClock{}, Out: io.Discard, Config: Config{Every: time.Second, Batch: 5, Ticks: 1}}
-	if _, err := d.Loop(); err != nil {
-		t.Fatal(err)
-	}
+	_, err := d.Loop()
+	require.NoError(t, err)
 	m1 := index(w.ran, 0, "merge --stream s1")
 	m2 := index(w.ran, 0, "merge --stream s2 --batch 5 --cross s2-1=s1-1")
 	read := index(w.ran, m1, "queue --stream s1")
-	if m1 < 0 || m2 < 0 || read < 0 || read > m2 {
-		t.Fatalf("s1's queue is not read between s1's step and s2's: merge s1 at %d, read at %d, merge s2 at %d\n%v", m1, read, m2, w.ran)
-	}
-	if index(w.ran, 0, "queue --stream s2") > m2 || strings.Join(f.asked, ",") != "s2" {
-		t.Fatalf("a queue read with no fact needing it: %v %v", f.asked, w.ran)
-	}
-	if first := index(w.ran, 0, "queue --stream s2"); first < m1 {
-		t.Fatalf("s2's queue read before s1's step: %v", w.ran)
-	}
+	require.GreaterOrEqual(t, m1, 0, "s1's queue is not read between s1's step and s2's: merge s1 at %d, read at %d, merge s2 at %d\n%v", m1, read, m2, w.ran)
+	require.GreaterOrEqual(t, m2, 0, "s1's queue is not read between s1's step and s2's: merge s1 at %d, read at %d, merge s2 at %d\n%v", m1, read, m2, w.ran)
+	require.GreaterOrEqual(t, read, 0, "s1's queue is not read between s1's step and s2's: merge s1 at %d, read at %d, merge s2 at %d\n%v", m1, read, m2, w.ran)
+	require.LessOrEqual(t, read, m2, "s1's queue is not read between s1's step and s2's: merge s1 at %d, read at %d, merge s2 at %d\n%v", m1, read, m2, w.ran)
+	require.LessOrEqual(t, index(w.ran, 0, "queue --stream s2"), m2, "a queue read with no fact needing it: %v %v", f.asked, w.ran)
+	require.Equal(t, "s2", strings.Join(f.asked, ","), "a queue read with no fact needing it: %v %v", f.asked, w.ran)
+	require.GreaterOrEqual(t, index(w.ran, 0, "queue --stream s2"), m1, "s2's queue read before s1's step: %v", w.ran)
 }
 
 // I6: a member the driver took down is brought up before it stops.
@@ -241,14 +223,14 @@ func TestAMemberTakenDownIsBroughtUpBeforeTheDriverStops(t *testing.T) {
 	t.Parallel()
 	w := &world{where: []string{busy}, queue: map[string]string{"m1": `{"cards":[]}`, "reader-a": `{"cards":[]}`, "s1": `{"cards":[]}`}, inbox: `{"groups":[]}`}
 	d := &Driver{Run: w.run, Facts: &scripted{down: map[string]bool{"m1": true}}, Clock: &fakeClock{}, Out: io.Discard, Config: Config{Every: time.Second, Ticks: 2, Hold: true}}
-	if why, err := d.Loop(); err != nil || why != "ticks" {
-		t.Fatalf("%s %v", why, err)
-	}
+	why, err := d.Loop()
+	require.NoError(t, err, "%s %v", why, err)
+	require.Equal(t, "ticks", why, "%s %v", why, err)
 	down := index(w.ran, 0, "fleet down m1")
 	up := index(w.ran, down, "fleet up m1")
-	if down < 0 || up < 0 || up != len(w.ran)-1 {
-		t.Fatalf("m1 left down: %v", w.ran)
-	}
+	require.GreaterOrEqual(t, down, 0, "m1 left down: %v", w.ran)
+	require.GreaterOrEqual(t, up, 0, "m1 left down: %v", w.ran)
+	require.Equal(t, len(w.ran)-1, up, "m1 left down: %v", w.ran)
 }
 
 // I6: flap brings a down member up with the chance it takes an up one down.
@@ -256,9 +238,7 @@ func TestFlapIsTheSameChanceBothWays(t *testing.T) {
 	t.Parallel()
 	s := NewSeeded(9)
 	c, err := Set(false, map[string]float64{"flap": 0.2})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	s.Use(c, time.Second)
 	downs, ups := 0, 0
 	for i := 0; i < 20000; i++ {
@@ -270,9 +250,11 @@ func TestFlapIsTheSameChanceBothWays(t *testing.T) {
 			ups++
 		}
 	}
-	if d, u := float64(downs)/20000, float64(ups)/20000; d < 0.18 || d > 0.22 || u < 0.18 || u > 0.22 {
-		t.Fatalf("down %.3f up %.3f", d, u)
-	}
+	d, u := float64(downs)/20000, float64(ups)/20000
+	require.GreaterOrEqual(t, d, 0.18, "down %.3f up %.3f", d, u)
+	require.LessOrEqual(t, d, 0.22, "down %.3f up %.3f", d, u)
+	require.GreaterOrEqual(t, u, 0.18, "down %.3f up %.3f", d, u)
+	require.LessOrEqual(t, u, 0.22, "down %.3f up %.3f", d, u)
 }
 
 // On red the seeded facts name one suspect of the batch, and the driver passes
@@ -282,9 +264,9 @@ func TestRedNamesASuspectOfTheBatch(t *testing.T) {
 	s := NewSeeded(3)
 	s.Red = 1
 	out := s.Merge("s1", []string{"a", "b", "c"}, func() []string { return nil })
-	if !out.Red || len(out.Suspects) != 1 || !strings.Contains("abc", out.Suspects[0]) {
-		t.Fatalf("red: %+v", out)
-	}
+	require.True(t, out.Red, "red: %+v", out)
+	require.Len(t, out.Suspects, 1, "red: %+v", out)
+	require.Contains(t, "abc", out.Suspects[0], "red: %+v", out)
 }
 
 // Every primary on the table landed is landed, whatever streams have no
@@ -292,15 +274,10 @@ func TestRedNamesASuspectOfTheBatch(t *testing.T) {
 func TestLandedIgnoresAStreamWithNoPrimaries(t *testing.T) {
 	t.Parallel()
 	var w where
-	if err := json.Unmarshal([]byte(`{"landed":4,"all":4,"streams":[{"Stream":"s1","State":"landed"},{"Stream":"s3","State":"waiting"}]}`), &w); err != nil {
-		t.Fatal(err)
-	}
-	if !landed(w) {
-		t.Fatal("a sprint whose every primary landed is not landed")
-	}
-	if landed(where{Landed: 3, All: 4}) || landed(where{}) {
-		t.Fatal("landed with a primary to go, or with none")
-	}
+	require.NoError(t, json.Unmarshal([]byte(`{"landed":4,"all":4,"streams":[{"Stream":"s1","State":"landed"},{"Stream":"s3","State":"waiting"}]}`), &w))
+	require.True(t, landed(w), "a sprint whose every primary landed is not landed")
+	require.False(t, landed(where{Landed: 3, All: 4}), "landed with a primary to go, or with none")
+	require.False(t, landed(where{}), "landed with a primary to go, or with none")
 }
 
 // writes is every verb the driver ran that writes, as typed.
@@ -327,24 +304,17 @@ func TestTheDriverStopsAtAClearWithoutWriting(t *testing.T) {
 	var out bytes.Buffer
 	d := &Driver{Run: w.run, Facts: &scripted{down: map[string]bool{"m1": true}}, Clock: &fakeClock{}, Out: &out, Config: Config{Every: time.Second}}
 	why, err := d.Loop()
-	if err != nil || why != "cleared" || !strings.Contains(out.String(), "holds epoch 0, which the sprint has left") {
-		t.Fatalf("%s %v\n%s", why, err, out.String())
-	}
+	require.NoError(t, err, "%s %v\n%s", why, err, out.String())
+	require.Equal(t, "cleared", why, "%s %v\n%s", why, err, out.String())
+	require.Contains(t, out.String(), "holds epoch 0, which the sprint has left", "%s %v\n%s", why, err, out.String())
 	ws := writes(w.ran)
-	if len(ws) == 0 {
-		t.Fatalf("the first tick wrote nothing: %v", w.ran)
-	}
+	require.NotEmpty(t, ws, "the first tick wrote nothing: %v", w.ran)
 	for _, l := range ws {
-		if !strings.Contains(l, "--epoch 0") {
-			t.Errorf("a write without the driver's epoch: %s", l)
-		}
-		if strings.HasPrefix(l, "fleet up") {
-			t.Errorf("the driver brought up a member after the clear: %s", l)
-		}
+		assert.Contains(t, l, "--epoch 0", "a write without the driver's epoch: %s", l)
+		assert.False(t, strings.HasPrefix(l, "fleet up"), "the driver brought up a member after the clear: %s", l)
 	}
-	if w.wheres != 4 || strings.Join(w.ran[len(w.ran)-1], " ") != "where --json" {
-		t.Fatalf("the driver ran on after it saw the clear: %v", w.ran)
-	}
+	require.Equal(t, 4, w.wheres, "the driver ran on after it saw the clear: %v", w.ran)
+	require.Equal(t, "where --json", strings.Join(w.ran[len(w.ran)-1], " "), "the driver ran on after it saw the clear: %v", w.ran)
 }
 
 // C4: a verb refused because the sprint was cleared stops the driver's pass
@@ -364,12 +334,10 @@ func TestAVerbRefusedAsClearedStopsThePass(t *testing.T) {
 	}
 	d := &Driver{Run: run, Facts: &scripted{down: map[string]bool{"m1": false}}, Clock: &fakeClock{}, Out: io.Discard, Config: Config{Every: time.Second}}
 	why, err := d.Loop()
-	if err != nil || why != "cleared" {
-		t.Fatalf("%s %v", why, err)
-	}
-	if last := strings.Join(w.ran[len(w.ran)-1], " "); !strings.HasPrefix(last, "take --as m1 --limit 64 --epoch 0") {
-		t.Fatalf("the driver ran on after the refusal: %v", w.ran)
-	}
+	require.NoError(t, err, "%s %v", why, err)
+	require.Equal(t, "cleared", why, "%s %v", why, err)
+	last := strings.Join(w.ran[len(w.ran)-1], " ")
+	require.True(t, strings.HasPrefix(last, "take --as m1 --limit 64 --epoch 0"), "the driver ran on after the refusal: %v", w.ran)
 }
 
 // Without Hold, a member the facts take down falls silent: its machine stops
@@ -378,12 +346,12 @@ func TestAMemberTakenDownFallsSilent(t *testing.T) {
 	t.Parallel()
 	w := &world{where: []string{busy}, queue: map[string]string{"m1": `{"cards":[]}`, "reader-a": `{"cards":[]}`, "s1": `{"cards":[]}`}, inbox: `{"groups":[]}`}
 	d := &Driver{Run: w.run, Facts: &scripted{down: map[string]bool{"m1": true}}, Clock: &fakeClock{}, Out: io.Discard, Config: Config{Every: time.Second, Ticks: 2}}
-	if why, err := d.Loop(); err != nil || why != "ticks" {
-		t.Fatalf("%s %v", why, err)
-	}
-	if index(w.ran, 0, "fleet down") >= 0 || index(w.ran, 0, "fleet up") >= 0 || index(w.ran, 0, "fleet beat m1") >= 0 {
-		t.Fatalf("a silent member: %v", w.ran)
-	}
+	why, err := d.Loop()
+	require.NoError(t, err, "%s %v", why, err)
+	require.Equal(t, "ticks", why, "%s %v", why, err)
+	require.Equal(t, -1, index(w.ran, 0, "fleet down"), "a silent member: %v", w.ran)
+	require.Equal(t, -1, index(w.ran, 0, "fleet up"), "a silent member: %v", w.ran)
+	require.Equal(t, -1, index(w.ran, 0, "fleet beat m1"), "a silent member: %v", w.ran)
 }
 
 // --silent: a member stops beating for a while, then beats again.
@@ -392,18 +360,16 @@ func TestASilenceStopsTheBeatsForAWhile(t *testing.T) {
 	w := &world{where: []string{busy}, queue: map[string]string{"m1": `{"cards":[]}`, "reader-a": `{"cards":[]}`, "s1": `{"cards":[]}`}, inbox: `{"groups":[]}`}
 	d := &Driver{Run: w.run, Facts: &scripted{}, Clock: &fakeClock{}, Out: io.Discard,
 		Config: Config{Every: time.Second, Ticks: 5, Silent: []Silence{{Member: "m1", From: time.Second, For: 2 * time.Second}}}}
-	if why, err := d.Loop(); err != nil || why != "ticks" {
-		t.Fatalf("%s %v", why, err)
-	}
+	why, err := d.Loop()
+	require.NoError(t, err, "%s %v", why, err)
+	require.Equal(t, "ticks", why, "%s %v", why, err)
 	beats := 0
 	for _, a := range w.ran {
 		if strings.Join(a, " ") == "fleet beat m1 --load 0" {
 			beats++
 		}
 	}
-	if beats != 3 {
-		t.Fatalf("m1 beat %d times in five ticks, two of them silent: %v", beats, w.ran)
-	}
+	require.Equal(t, 3, beats, "m1 beat %d times in five ticks, two of them silent: %v", beats, w.ran)
 }
 
 // A --silent window ends: the member beats again, with the seeded facts too
@@ -413,9 +379,9 @@ func TestASilenceEndsWithTheSeededFacts(t *testing.T) {
 	w := &world{where: []string{busy}, queue: map[string]string{"m1": `{"cards":[]}`, "reader-a": `{"cards":[]}`, "s1": `{"cards":[]}`}, inbox: `{"groups":[]}`}
 	d := &Driver{Run: w.run, Facts: NewSeeded(1), Clock: &fakeClock{}, Out: io.Discard,
 		Config: Config{Every: time.Second, Ticks: 6, Silent: []Silence{{Member: "m1", From: time.Second, For: 2 * time.Second}}}}
-	if why, err := d.Loop(); err != nil || why != "ticks" {
-		t.Fatalf("%s %v", why, err)
-	}
+	why, err := d.Loop()
+	require.NoError(t, err, "%s %v", why, err)
+	require.Equal(t, "ticks", why, "%s %v", why, err)
 	var beats []int
 	tick := 0
 	for _, a := range w.ran {
@@ -426,9 +392,7 @@ func TestASilenceEndsWithTheSeededFacts(t *testing.T) {
 			beats = append(beats, tick)
 		}
 	}
-	if len(beats) != 4 {
-		t.Fatalf("m1 beat at ticks %v in six ticks, two of them silent: %v", beats, w.ran)
-	}
+	require.Len(t, beats, 4, "m1 beat at ticks %v in six ticks, two of them silent: %v", beats, w.ran)
 }
 
 // A tick is one call a verb for each machine and reader (the owner's ruling
@@ -454,9 +418,9 @@ func TestEveryMachineMovesItsCardsInOneBatchATick(t *testing.T) {
 	f.Fail, f.Broken = 0.5, 0.5
 	var out bytes.Buffer
 	d := &Driver{Run: w.run, Facts: f, Clock: &fakeClock{}, Out: &out, Config: Config{Every: time.Second, Ticks: 1}}
-	if why, err := d.Loop(); err != nil || why != "ticks" {
-		t.Fatalf("%s %v", why, err)
-	}
+	why, err := d.Loop()
+	require.NoError(t, err, "%s %v", why, err)
+	require.Equal(t, "ticks", why, "%s %v", why, err)
 	calls := map[string]int{}
 	finished := 0
 	for _, a := range w.ran {
@@ -485,20 +449,12 @@ func TestEveryMachineMovesItsCardsInOneBatchATick(t *testing.T) {
 	// take for each width, one of each read: every member's row in one step
 	for _, verb := range []string{"take --as m1 --limit 128", "take --as m2 --limit 64", "finish --as m1,m2", "finish --as m1,m2 --failed",
 		"read --as reader-a --begin --epoch", "read --as reader-a --ok --epoch", "read --as reader-a --broken --finding"} {
-		if calls[verb] != 1 {
-			t.Errorf("%q ran %d times in a tick, want once", verb, calls[verb])
-		}
+		assert.Equal(t, 1, calls[verb], "%q ran %d times in a tick, want once", verb, calls[verb])
 	}
-	if len(calls) != 7 {
-		t.Errorf("the calls of a tick: %v", calls)
-	}
-	if finished != 80 {
-		t.Errorf("m1 and m2 finished %d of their 80 working cards in the two calls", finished)
-	}
+	assert.Len(t, calls, 7, "the calls of a tick: %v", calls)
+	assert.Equal(t, 80, finished, "m1 and m2 finished %d of their 80 working cards in the two calls", finished)
 	text := out.String()
-	if !strings.Contains(text, "read --as reader-a --begin --epoch 0 [40 cards: s1-1.r1.reader-a s1-2.r1.reader-a s1-3.r1.reader-a ...]") {
-		t.Errorf("a batch prints its count and first three:\n%s", text)
-	}
+	assert.Contains(t, text, "read --as reader-a --begin --epoch 0 [40 cards: s1-1.r1.reader-a s1-2.r1.reader-a s1-3.r1.reader-a ...]", "a batch prints its count and first three:\n%s", text)
 	for _, l := range strings.Split(text, "\n") {
 		n := 0
 		for _, x := range strings.Fields(l) {
@@ -506,8 +462,6 @@ func TestEveryMachineMovesItsCardsInOneBatchATick(t *testing.T) {
 				n++
 			}
 		}
-		if n > 3 {
-			t.Errorf("a line names %d cards, more than three:\n%s", n, l)
-		}
+		assert.LessOrEqual(t, n, 3, "a line names %d cards, more than three:\n%s", n, l)
 	}
 }
