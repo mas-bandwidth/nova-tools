@@ -8,7 +8,7 @@ internal/swarm/lintbase.go:space 1
 internal/swarm/lintcontract.go:rowan 1
 internal/swarm/lintdepends.go:mas-bandwidth 2
 internal/swarm/lintdepends.go:space 2
-internal/swarm/lintheader.go:emma 4
+internal/swarm/lintheader.go:emma 2
 internal/swarm/lintheader.go:rowan 2
 internal/swarm/lock.go:studio 1
 internal/swarm/nativeasked.go:emma 1
