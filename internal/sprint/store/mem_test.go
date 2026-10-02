@@ -8,6 +8,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The Mem is the store the unit tier runs on, so what it reports to a test
@@ -30,9 +32,8 @@ func TestTheMemsTailsAreTheLastIDsOfTheLogAndTheInbox(t *testing.T) {
 	if err != nil || lerr != nil || nerr != nil || len(ids) == 0 || len(nids) == 0 {
 		t.Fatalf("a store with a step: %v %v %v, %d lines, %d notes", err, lerr, nerr, len(lines), len(nids))
 	}
-	if lg != ids[len(ids)-1] || in != nids[len(nids)-1] {
-		t.Fatalf("tails log %q inbox %q, want %q and %q", lg, in, ids[len(ids)-1], nids[len(nids)-1])
-	}
+	require.Equal(t, ids[len(ids)-1], lg, "tails log %q inbox %q, want %q and %q", lg, in, ids[len(ids)-1], nids[len(nids)-1])
+	require.Equal(t, nids[len(nids)-1], in, "tails log %q inbox %q, want %q and %q", lg, in, ids[len(ids)-1], nids[len(nids)-1])
 }
 
 // Touched counts the store calls that name an epoch, each epoch on its own:
@@ -48,20 +49,17 @@ func TestTheMemCountsTheCallsThatNameAnEpoch(t *testing.T) {
 	man := ntable.BatchManifest{Schema: 1, Table: "t-work", Epoch: "7", ExpectedTableRevision: "0", OperationID: "e7-1", Actor: "tester",
 		Members: []ntable.BatchMemberEntry{{ID: c.ID, Set: map[string]string{"probe": "1"},
 			Expect: &ntable.MemberExpect{Revision: fmt.Sprint(c.Rev), Place: &ntable.PlaceExpect{Row: c.Row, Col: c.Col}}}}}
-	if _, err := h.m.Apply(ctx, man); refusalCode(err) != "EPOCHAHEAD" {
-		t.Fatalf("a write at an epoch ahead of the active one: %v", err)
-	}
-	if n := h.m.Touched(7); n != 1 {
-		t.Errorf("a refused write at epoch 7 touched it %d times, want 1", n)
-	}
+	_, err := h.m.Apply(ctx, man)
+	require.Equal(t, "EPOCHAHEAD", refusalCode(err), "a write at an epoch ahead of the active one: %v", err)
+	n := h.m.Touched(7)
+	assert.Equal(t, 1, n, "a refused write at epoch 7 touched it %d times, want 1", n)
 	if _, ok, err := h.m.DoneBefore(ctx, "no-such-op", 3); ok || err != nil {
 		t.Fatalf("an operation nobody ran: %v %v", ok, err)
 	}
 	for e, want := range map[uint64]int{3: 0, 2: 1, 1: 1} {
 		t.Run(fmt.Sprint("epoch ", e), func(t *testing.T) {
-			if n := h.m.Touched(e); n != want {
-				t.Errorf("a search before epoch 3 touched epoch %d %d times, want %d", e, n, want)
-			}
+			n := h.m.Touched(e)
+			assert.Equal(t, want, n, "a search before epoch 3 touched epoch %d %d times, want %d", e, n, want)
 		})
 	}
 }
@@ -74,18 +72,14 @@ func TestTheMemKeepsTheResidueOfADroppedTable(t *testing.T) {
 	h := newHarness(t)
 	h.setup(2)
 	held, err := h.m.RecordIDs(ctx, "t-work")
-	if err != nil || len(held) == 0 {
-		t.Fatalf("the table holds no record: %v %v", held, err)
-	}
-	if err := h.m.DropTable(ctx, "t-work"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "the table holds no record: %v %v", held, err)
+	require.NotEmpty(t, held, "the table holds no record: %v %v", held, err)
+	require.NoError(t, h.m.DropTable(ctx, "t-work"))
 	if left, err := h.m.RecordIDs(ctx, "t-work"); err != nil || !slices.Equal(left, held) {
 		t.Errorf("after the drop the records are %v (%v), want the %v it held", left, err, held)
 	}
-	if keys := h.m.Keys(h.st.Names); !slices.Contains(keys, "table:t-work:definition") {
-		t.Errorf("after the drop the keys are %v, want its definition kept", keys)
-	}
+	keys := h.m.Keys(h.st.Names)
+	assert.True(t, slices.Contains(keys, "table:t-work:definition"), "after the drop the keys are %v, want its definition kept", keys)
 }
 
 // addRows names every changed row once, in order, whatever order the parts

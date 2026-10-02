@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // liveStore is a Store over a Redis of the test's own with the table layer's
@@ -23,17 +24,11 @@ func liveStore(t *testing.T) (*Store, *redis.Client) {
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
-	if err := fn.Load(ctx, c); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, fn.Load(ctx, c))
 	names := sprint.Names{Prefix: "f-"}
 	st := &Store{B: &Redis{C: c, Names: names, Now: time.Now}, Names: names, Actor: "functional"}
-	if err := st.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.B.RowsAdd(ctx, names.Table(sprint.Readers), []string{"reader-a", "reader-b", "reader-c"}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, st.Init(ctx))
+	require.NoError(t, st.B.RowsAdd(ctx, names.Table(sprint.Readers), []string{"reader-a", "reader-b", "reader-c"}))
 	return st, c
 }
 
@@ -52,13 +47,10 @@ func TestRedisTheLifeOfAStream(t *testing.T) {
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 10}))
 	h.clean("landed")
 	s := h.snap()
-	if s.StreamCtl("s1").F("state") != sprint.StreamLanded {
-		t.Fatalf("stream %s", s.StreamCtl("s1").F("state"))
-	}
+	require.Equal(t, string(sprint.StreamLanded), s.StreamCtl("s1").F("state"), "stream %s", s.StreamCtl("s1").F("state"))
 	v, err := st.Inbox(h.ctx, time.Hour, time.Hour, 1000)
-	if err != nil || len(v.Groups) == 0 {
-		t.Fatalf("inbox: %+v %v", v, err)
-	}
+	require.NoError(t, err, "inbox: %+v %v", v, err)
+	require.NotEmpty(t, v.Groups, "inbox: %+v %v", v, err)
 }
 
 // A verb over 300 cards is one invocation on the real store, in manifests
@@ -69,9 +61,7 @@ func TestRedisALargeSet(t *testing.T) {
 	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now(), live: []string{"m1", "m2"}}
 	h.setup(300)
 	res := h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 300}}))
-	if len(res.Moved) != 300 {
-		t.Fatalf("moved %d", len(res.Moved))
-	}
+	require.Len(t, res.Moved, 300, "moved %d", len(res.Moved))
 	h.clean("300 started")
 }
 
@@ -85,16 +75,12 @@ func TestRedisAPendingOperationIsFinishedByTheNextVerb(t *testing.T) {
 	lost := &lostOnce{Backend: st.B, table: st.Names.Table(sprint.Work)}
 	cut := *st
 	cut.B = lost
-	if _, err := cut.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}})); !errors.Is(err, ErrUnknown) {
-		t.Fatalf("start with a lost reply: %v", err)
-	}
-	if f, _ := st.B.ReadFence(h.ctx); f.Pending == nil {
-		t.Fatalf("no pending operation")
-	}
+	_, err := cut.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}))
+	require.ErrorIs(t, err, ErrUnknown, "start with a lost reply")
+	f, _ := st.B.ReadFence(h.ctx)
+	require.NotNil(t, f.Pending, "no pending operation")
 	res := h.must(TakeStep(sprint.TakeReq{As: "m1"}))
-	if len(res.Repaired) != 1 {
-		t.Fatalf("not finished first: %+v", res)
-	}
+	require.Len(t, res.Repaired, 1, "not finished first: %+v", res)
 	h.clean("finished")
 	_ = c
 }
@@ -122,9 +108,7 @@ func TestRedisTwoWritersReleaseOneOperation(t *testing.T) {
 	st, _ := liveStore(t)
 	ctx := context.Background()
 	f, err := st.B.ReadFence(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	op := OpRecord{ID: "op-1", Verb: "test", At: time.Now(), Notes: []sprint.Note{{ID: "op-1.1", Kind: sprint.Judgment, Type: sprint.NWorkFailed,
 		Stream: "s1", Primaries: []string{"p1"}, Count: 1, At: time.Now()}}}
 	if ok, err := st.B.Acquire(ctx, f.Gen, op); !ok || err != nil {
@@ -135,14 +119,11 @@ func TestRedisTwoWritersReleaseOneOperation(t *testing.T) {
 		go func() { errs <- st.B.Release(ctx, op, true) }()
 	}
 	for i := 0; i < 2; i++ {
-		if err := <-errs; err != nil {
-			t.Fatalf("release: %v", err)
-		}
+		require.NoError(t, <-errs, "release")
 	}
 	notes, _, err := st.B.NotesSince(ctx, "", 100)
-	if err != nil || len(notes) != 1 {
-		t.Fatalf("notifications: %d %v", len(notes), err)
-	}
+	require.NoError(t, err, "notifications: %d %v", len(notes), err)
+	require.Len(t, notes, 1, "notifications: %d %v", len(notes), err)
 }
 
 // clear on the real table layer: the epoch advances, the rows are restored at
@@ -156,14 +137,12 @@ func TestRedisClear(t *testing.T) {
 	h.through("s1-1", "s1-2")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
 	res, err := st.Clear(h.ctx)
-	if err != nil || res.To != 1 {
-		t.Fatalf("clear: %+v %v", res, err)
-	}
+	require.NoError(t, err, "clear: %+v %v", res, err)
+	require.Equal(t, uint64(1), res.To, "clear: %+v %v", res, err)
 	h.clean("cleared")
 	old, err := st.At(0).Load(h.ctx, All, nil)
-	if err != nil || old.StateOf("s1-1") != sprint.Landed {
-		t.Fatalf("the old epoch: %v", err)
-	}
+	require.NoError(t, err, "the old epoch: %v", err)
+	require.Equal(t, sprint.Landed, old.StateOf("s1-1"), "the old epoch: %v", err)
 	held := uint64(0)
 	step := MergeStep(sprint.MergeReq{Stream: "s1"})
 	step.Epoch = &held
@@ -174,11 +153,9 @@ func TestRedisClear(t *testing.T) {
 	h.through("s1-1", "s1-2")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
 	h.clean("landed again")
-	if _, err := st.Teardown(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err = st.Teardown(h.ctx)
+	require.NoError(t, err)
 	keys, err := c.Keys(h.ctx, "*f-*").Result()
-	if err != nil || len(keys) != 0 {
-		t.Fatalf("keys left: %v %v", keys, err)
-	}
+	require.NoError(t, err, "keys left: %v %v", keys, err)
+	require.Empty(t, keys, "keys left: %v %v", keys, err)
 }

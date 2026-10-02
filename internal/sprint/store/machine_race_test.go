@@ -11,6 +11,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // injector runs fn once, before the k-th Acquire/Apply/Release/ReadFence the
@@ -73,9 +75,7 @@ func raceScene(t *testing.T) *harness {
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
 	h.must(MergeStep(sprint.MergeReq{Stream: "s2", Batch: 1}))
-	if h.state("b") != sprint.Landed {
-		t.Fatalf("b %s", h.state("b"))
-	}
+	require.Equal(t, sprint.Landed, h.state("b"), "b %s", h.state("b"))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 4}))
 	h.clean("scene")
 	return h
@@ -117,19 +117,13 @@ func TestCRTickRacesEveryVerbAtEveryCall(t *testing.T) {
 				break
 			}
 			where := fmt.Sprintf("%s at call %d", name, k)
-			if terr != nil {
-				t.Errorf("%s: the tick failed: %v", where, terr)
-			}
-			if verr != nil {
-				t.Errorf("%s: the verb failed: %v", where, verr)
-			}
+			assert.NoError(t, terr, "%s: the tick failed: %v", where, terr)
+			assert.NoError(t, verr, "%s: the verb failed: %v", where, verr)
 			if len(vres.Moved) == 0 && len(vres.Refused) == 0 {
 				t.Errorf("%s: the verb neither moved nor was refused: %+v", where, vres)
 			}
 			for _, r := range vres.Refused {
-				if r.Why == "" {
-					t.Errorf("%s: refused without a reason: %+v", where, r)
-				}
+				assert.NotEmpty(t, r.Why, "%s: refused without a reason: %+v", where, r)
 			}
 			_ = tres
 			h.clean(where + " after the race")
@@ -168,14 +162,11 @@ func TestCRTickRacesEveryVerbAtEveryCall(t *testing.T) {
 							n++
 						}
 					}
-					if n > 2 {
-						t.Errorf("%s: %s asked of %d readers", where, id, n)
-					}
+					assert.LessOrEqual(t, n, 2, "%s: %s asked of %d readers", where, id, n)
 				}
 			}
-			if n := h.written(sprint.NResumed); n > 1 {
-				t.Errorf("%s: resumed written %d times", where, n)
-			}
+			n := h.written(sprint.NResumed)
+			assert.LessOrEqual(t, n, 1, "%s: resumed written %d times", where, n)
 			notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
 			seen := map[string]int{}
 			for _, nn := range notes {

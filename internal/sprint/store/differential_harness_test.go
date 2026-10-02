@@ -20,6 +20,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
+	"github.com/stretchr/testify/require"
 )
 
 // dAction is one step of a sequence: a verb, a tick or an outside fact, with
@@ -257,15 +258,9 @@ func newDHarness(t testing.TB) *dHarness {
 		Now:   func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
 		NewID: func() string { h.mu.Lock(); defer h.mu.Unlock(); n++; return fmt.Sprint(n) },
 		Sleep: func(time.Duration) {}, Rand: func(int64) int64 { return 0 }, Grace: 200 * time.Millisecond}
-	if err := h.st.Init(h.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.m.RowsAdd(h.ctx, "d-readers", dReaders); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.m.SetCoordinator(h.ctx, dCoordinator); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.Init(h.ctx))
+	require.NoError(t, h.m.RowsAdd(h.ctx, "d-readers", dReaders))
+	require.NoError(t, h.m.SetCoordinator(h.ctx, dCoordinator))
 	h.model = refmodel.New(dReaders, nil, dCoordinator)
 	h.Acted, h.Tried = map[string]int{}, map[string]int{}
 	h.seen = map[string]map[string]bool{}
@@ -313,16 +308,12 @@ func (h *dHarness) observe() refmodel.State {
 		}
 		return out
 	})
-	if err != nil {
-		h.t.Fatalf("load: %v", err)
-	}
+	require.NoError(h.t, err, "load")
 	// The sprint as the next pump leaves its work table: every step but the
 	// pump queues its work-table changes while the machine runs, and the
 	// model's state is the work table with them applied (refmodel.Tick).
 	q, err := h.m.AtEpoch(s.Epoch, false).QueueRead(h.ctx)
-	if err != nil {
-		h.t.Fatalf("queue: %v", err)
-	}
+	require.NoError(h.t, err, "queue")
 	s = sprint.WithQueue(s, q)
 	for _, name := range All {
 		for _, c := range s.T(name).Cards() {
@@ -335,9 +326,7 @@ func (h *dHarness) observe() refmodel.State {
 		o.Pending = p.Verb
 	}
 	mach, _, err := h.st.Machine(h.ctx)
-	if err != nil {
-		h.t.Fatalf("machine: %v", err)
-	}
+	require.NoError(h.t, err, "machine")
 	if mach.Running() {
 		o.Machine = refmodel.Running
 	}
@@ -349,18 +338,14 @@ func (h *dHarness) observe() refmodel.State {
 // pending is the operation the fence of the sprint's epoch holds.
 func (h *dHarness) pending() *OpRecord {
 	f, err := h.m.AtEpoch(h.epoch, false).ReadFence(h.ctx)
-	if err != nil {
-		h.t.Fatalf("fence: %v", err)
-	}
+	require.NoError(h.t, err, "fence")
 	return f.Pending
 }
 
 // openNotes is the open judgments of the sprint's epoch.
 func (h *dHarness) openNotes() []sprint.Open {
 	open, err := h.m.AtEpoch(h.epoch, false).OpenNotes(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	return open
 }
 
@@ -390,14 +375,11 @@ func (h *dHarness) do(a dAction) []dFinding {
 	// fleet down is the coordinator's hold (fleet up releases it).
 	zero := 0.0
 	for _, m := range dMembers {
-		if _, err := h.st.Beat(h.ctx, m, &zero, hostload.Source{}); err != nil {
-			h.t.Fatal(err)
-		}
+		_, err := h.st.Beat(h.ctx, m, &zero, hostload.Source{})
+		require.NoError(h.t, err)
 	}
 	// and every reader: the model holds every reader up
-	if err := h.st.BeatReaders(h.ctx); err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, h.st.BeatReaders(h.ctx))
 	pre := h.observe()
 	h.cutTable, h.mid = "", nil
 	refusedWhy, cutOK := h.engine(a, pre)

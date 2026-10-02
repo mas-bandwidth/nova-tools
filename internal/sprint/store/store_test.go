@@ -13,6 +13,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var t0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -40,16 +42,10 @@ func newHarness(t *testing.T) *harness {
 		Sleep: func(time.Duration) {}}
 	// every part a tick plans on its twin is checked against a fresh read
 	h.st.CheckTwin = checkTwin
-	if err := h.st.Init(h.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.Init(h.ctx))
+	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}))
 	// the harness acts as the sprint's coordinator: judgments are theirs
-	if err := h.m.SetCoordinator(h.ctx, h.st.Actor); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.m.SetCoordinator(h.ctx, h.st.Actor))
 	h.beat()
 	return h
 }
@@ -60,47 +56,36 @@ func (h *harness) tick(d time.Duration) { h.mu.Lock(); h.now = h.now.Add(d); h.m
 // readers of a harness are always there; reader away holds one away).
 func (h *harness) beat() {
 	h.t.Helper()
-	if err := h.st.BeatReaders(h.ctx); err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, h.st.BeatReaders(h.ctx))
 	h.mu.Lock()
 	live := append([]string(nil), h.live...)
 	h.mu.Unlock()
 	zero := 0.0
 	for _, m := range live {
-		if _, err := h.st.Beat(h.ctx, m, &zero, hostload.Source{}); err != nil {
-			h.t.Fatal(err)
-		}
+		_, err := h.st.Beat(h.ctx, m, &zero, hostload.Source{})
+		require.NoError(h.t, err)
 	}
 }
 
 func (h *harness) run(step Step) Result {
 	h.t.Helper()
 	res, err := h.st.Run(h.ctx, step)
-	if err != nil {
-		h.t.Fatalf("%s: %v", step.Verb, err)
-	}
+	require.NoError(h.t, err, "%s: %v", step.Verb, err)
 	return res
 }
 
 func (h *harness) must(step Step) Result {
 	h.t.Helper()
 	res := h.run(step)
-	if len(res.Refused) > 0 {
-		h.t.Fatalf("%s refused: %v", step.Verb, res.Refused)
-	}
+	require.Empty(h.t, res.Refused, "%s refused: %v", step.Verb, res.Refused)
 	return res
 }
 
 func (h *harness) clean(when string) {
 	h.t.Helper()
 	rep, _, err := h.st.Check(h.ctx, 3)
-	if err != nil {
-		h.t.Fatalf("%s: check: %v", when, err)
-	}
-	if len(rep.Violations) > 0 {
-		h.t.Fatalf("%s: %v", when, rep.Violations)
-	}
+	require.NoError(h.t, err, "%s: check: %v", when, err)
+	require.Empty(h.t, rep.Violations, "%s: %v", when, rep.Violations)
 }
 
 // snap is the sprint as the next pump leaves its work table: the tables with
@@ -110,22 +95,16 @@ func (h *harness) snap() *sprint.Snapshot {
 	h.t.Helper()
 	s := h.table()
 	pinned, err := h.st.pin(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	q, err := pinned.B.QueueRead(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	return sprint.WithQueue(s, q)
 }
 
 func (h *harness) table() *sprint.Snapshot {
 	h.t.Helper()
 	s, err := h.st.Load(h.ctx, All, nil)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	return s
 }
 
@@ -181,14 +160,11 @@ func TestTheLifeOfAStreamThroughTheStore(t *testing.T) {
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 2}))
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 2}))
 	s := h.snap()
-	if s.StreamCtl("s1").F("state") != sprint.StreamLanded || s.Work.Count("s1", sprint.Landed) != 3 {
-		t.Fatalf("stream: %s, landed %d", s.StreamCtl("s1").F("state"), s.Work.Count("s1", sprint.Landed))
-	}
+	require.Equal(t, string(sprint.StreamLanded), s.StreamCtl("s1").F("state"), "stream: %s, landed %d", s.StreamCtl("s1").F("state"), s.Work.Count("s1", sprint.Landed))
+	require.Equal(t, 3, s.Work.Count("s1", sprint.Landed), "stream: %s, landed %d", s.StreamCtl("s1").F("state"), s.Work.Count("s1", sprint.Landed))
 	h.clean("landed")
 	v, err := h.st.Inbox(h.ctx, time.Hour, time.Hour, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var types []string
 	for _, g := range v.Groups {
 		types = append(types, g.Type)
@@ -198,9 +174,7 @@ func TestTheLifeOfAStreamThroughTheStore(t *testing.T) {
 		for _, got := range types {
 			found = found || got == want
 		}
-		if !found {
-			t.Errorf("no %q in the inbox: %v", want, types)
-		}
+		assert.True(t, found, "no %q in the inbox: %v", want, types)
 	}
 	// the display cells
 	shapes, _ := h.m.Shapes(h.ctx, []string{"t-merge", "t-fleet"})
@@ -208,12 +182,10 @@ func TestTheLifeOfAStreamThroughTheStore(t *testing.T) {
 		t.Errorf("merge display cells: %v", shapes[0].Rows[0].Texts)
 	}
 	fleet := shapes[1]
-	if got := ntable.CellText(fleet.Columns, fleet.Rows[0], fleet.Column(sprint.OkPct)); got != "100.0%" {
-		t.Errorf("fleet ok%%: %q", got)
-	}
-	if _, written := fleet.Rows[0].Texts[sprint.OkPct]; written {
-		t.Errorf("ok%% is written as text: %v", fleet.Rows[0].Texts)
-	}
+	got := ntable.CellText(fleet.Columns, fleet.Rows[0], fleet.Column(sprint.OkPct))
+	assert.Equal(t, "100.0%", got, "fleet ok%%: %q", got)
+	_, written := fleet.Rows[0].Texts[sprint.OkPct]
+	assert.False(t, written, "ok%% is written as text: %v", fleet.Rows[0].Texts)
 }
 
 // A verb over more cards than a manifest takes is one invocation: one
@@ -228,15 +200,12 @@ func TestALargeSetIsOneOperationInChunks(t *testing.T) {
 		t.Fatalf("moved %d in %d manifests", len(res.Moved), h.m.Calls["apply"]-before)
 	}
 	s := h.snap()
-	if s.Work.Count("s1", sprint.Working) != 300 || s.Fleet.Count("m1", sprint.Ready) != 150 {
-		t.Fatalf("working %d, m1 ready %d", s.Work.Count("s1", sprint.Working), s.Fleet.Count("m1", sprint.Ready))
-	}
+	require.Equal(t, 300, s.Work.Count("s1", sprint.Working), "working %d, m1 ready %d", s.Work.Count("s1", sprint.Working), s.Fleet.Count("m1", sprint.Ready))
+	require.Equal(t, 150, s.Fleet.Count("m1", sprint.Ready), "working %d, m1 ready %d", s.Work.Count("s1", sprint.Working), s.Fleet.Count("m1", sprint.Ready))
 	h.clean("300 started")
 	// add of 1000 in one invocation
 	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 1000}))
-	if h.snap().Work.Count("s2", sprint.Ready) != 1000 {
-		t.Fatalf("add 1000")
-	}
+	require.Equal(t, 1000, h.snap().Work.Count("s2", sprint.Ready), "add 1000")
 }
 
 // D1: a pending operation (cut after its first table) is finished by the next
@@ -252,9 +221,8 @@ func TestD1APendingOperationIsFinishedFirst(t *testing.T) {
 		return nil
 	}
 	_, err := h.st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	if !errors.Is(err, ErrUnknown) || h.m.Pending() == nil {
-		t.Fatalf("a lost reply on the work table: %v, pending %v", err, h.m.Pending())
-	}
+	require.ErrorIs(t, err, ErrUnknown, "a lost reply on the work table: %v, pending %v", err, h.m.Pending())
+	require.NotNil(t, h.m.Pending(), "a lost reply on the work table: %v, pending %v", err, h.m.Pending())
 	h.m.Fail = nil
 	rep, _, err := h.st.Check(h.ctx, 1)
 	if err != nil || rep.Pending == "" || !rep.InFlight || len(rep.Violations) != 0 {
@@ -270,9 +238,7 @@ func TestD1APendingOperationIsFinishedFirst(t *testing.T) {
 	if len(res.Repaired) != 1 || !strings.Contains(res.Repaired[0], "finished") || h.m.Pending() != nil {
 		t.Fatalf("the take did not finish the pending start: %+v", res)
 	}
-	if h.state("s1-1") != sprint.Working {
-		t.Fatalf("s1-1 is %s", h.state("s1-1"))
-	}
+	require.Equal(t, sprint.Working, h.state("s1-1"), "s1-1 is %s", h.state("s1-1"))
 	h.clean("finished")
 }
 
@@ -290,26 +256,20 @@ func TestD1NotificationsAtTheCommitOnly(t *testing.T) {
 		return nil
 	}
 	_, err := h.st.Run(h.ctx, FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}, Failed: true}))
-	if !errors.Is(err, ErrUnknown) {
-		t.Fatalf("a lost commit: %v", err)
-	}
-	if open, _ := h.m.OpenNotes(h.ctx); len(open) != 0 {
-		t.Fatalf("a judgment is visible before the commit: %v", open)
-	}
+	require.ErrorIs(t, err, ErrUnknown, "a lost commit")
+	open, _ := h.m.OpenNotes(h.ctx)
+	require.Empty(t, open, "a judgment is visible before the commit: %v", open)
 	h.m.Fail = nil
 	rr, err := h.st.Repair(h.ctx)
 	if err != nil || len(rr) != 1 || rr[0].Done != "finished" {
 		t.Fatalf("repair: %+v %v", rr, err)
 	}
-	if open, _ := h.m.OpenNotes(h.ctx); len(open) != 1 {
-		t.Fatalf("after repair: %v", open)
-	}
-	if rr, _ := h.st.Repair(h.ctx); len(rr) != 0 {
-		t.Fatalf("repaired twice: %v", rr)
-	}
-	if open, _ := h.m.OpenNotes(h.ctx); len(open) != 1 {
-		t.Fatalf("the judgment was written twice: %v", open)
-	}
+	open, _ = h.m.OpenNotes(h.ctx)
+	require.Len(t, open, 1, "after repair: %v", open)
+	rr, _ = h.st.Repair(h.ctx)
+	require.Empty(t, rr, "repaired twice: %v", rr)
+	open, _ = h.m.OpenNotes(h.ctx)
+	require.Len(t, open, 1, "the judgment was written twice: %v", open)
 	h.clean("repaired")
 }
 
@@ -350,9 +310,7 @@ func TestAnotherWriterBetweenReadAndWriteMeansAFreshPlan(t *testing.T) {
 	st := *h.st
 	st.B = r
 	res, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if res.Attempts != 2 || len(res.Moved) != 1 || len(res.Refused) != 1 || res.Refused[0].Key != "s1-1" {
 		t.Fatalf("after the race: %+v", res)
 	}
@@ -366,21 +324,14 @@ func TestALaterTableMovedByADisplayWriteIsSentAgain(t *testing.T) {
 	h := newHarness(t)
 	h.setup(1)
 	r := &racer{Backend: h.m, at: "apply t-work", do: func() {
-		if err := h.m.RowSet(h.ctx, "t-merge", "s1", map[string]string{"ci": "x"}); err != nil {
-			t.Error(err)
-		}
-		if err := h.m.RowsAdd(h.ctx, "t-work", []string{"s9"}); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, h.m.RowSet(h.ctx, "t-merge", "s1", map[string]string{"ci": "x"}))
+		assert.NoError(t, h.m.RowsAdd(h.ctx, "t-work", []string{"s9"}))
 	}}
 	st := *h.st
 	st.B = r
-	if _, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}})); err != nil {
-		t.Fatal(err)
-	}
-	if h.state("s1-1") != sprint.Working {
-		t.Fatalf("s1-1 is %s", h.state("s1-1"))
-	}
+	_, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}))
+	require.NoError(t, err)
+	require.Equal(t, sprint.Working, h.state("s1-1"), "s1-1 is %s", h.state("s1-1"))
 	h.clean("resent")
 }
 
@@ -397,17 +348,14 @@ func TestALaterMemberChangedIsSkippedByRepair(t *testing.T) {
 		p := s.Work.Card("s1-1")
 		_, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-work", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Work.Revision),
 			OperationID: "intruder", Members: []ntable.BatchMemberEntry{{ID: p.ID, Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: p.Row, Col: p.Col}}, Set: map[string]string{"brief": "changed"}}}})
-		if err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, err)
 	}}
 	st := *h.st
 	st.B = r
 	_, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}))
 	var cut *CutError
-	if !errors.As(err, &cut) || h.m.Pending() == nil {
-		t.Fatalf("a member changed under a later table: %v", err)
-	}
+	require.ErrorAs(t, err, &cut, "a member changed under a later table: %v", err)
+	require.NotNil(t, h.m.Pending(), "a member changed under a later table: %v", err)
 	rr, err := h.st.Repair(h.ctx)
 	// the card skipped, and the work table's stream index its deal would have
 	// moved (a manifest none of whose member changes applied leaves its
@@ -416,16 +364,13 @@ func TestALaterMemberChangedIsSkippedByRepair(t *testing.T) {
 		!strings.Contains(rr[0].Skipped[1], "table property "+sprint.PropStreamIndex) {
 		t.Fatalf("repair of a cut operation: %+v %v", rr, err)
 	}
-	if h.m.Pending() != nil {
-		t.Fatalf("repair left the fence held")
-	}
+	require.Nil(t, h.m.Pending(), "repair left the fence held")
 	if c := h.snap().Work.Card("s1-1"); c.F("brief") != "changed" || c.Col != sprint.Ready {
 		t.Fatalf("repair overwrote the newer state: %s %s", c.Col, c.F("brief"))
 	}
 	h.tick(2 * time.Minute)
-	if _, err := h.st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m3"})); err != nil {
-		t.Fatalf("a verb after the repair: %v", err)
-	}
+	_, err = h.st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
+	require.NoError(t, err, "a verb after the repair")
 }
 
 // A pending operation whose first manifest never applied is left to its writer
@@ -440,22 +385,19 @@ func TestAnUnappliedPendingOperationIsAbandonedAfterTheGrace(t *testing.T) {
 		}
 		return nil
 	}
-	if _, err := h.st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}})); !errors.Is(err, ErrUnknown) {
-		t.Fatalf("start: %v", err)
-	}
+	_, err := h.st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}))
+	require.ErrorIs(t, err, ErrUnknown, "start")
 	h.m.Fail = nil
 	// another writer's card now holds the id the start was to create: its
 	// first manifest can never apply
 	s := h.snap()
-	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
-		OperationID: "intruder", Members: manyCreates(0)}); err == nil {
-		t.Fatalf("an empty manifest applied")
-	}
-	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
+	_, err = h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
+		OperationID: "intruder", Members: manyCreates(0)})
+	require.Error(t, err, "an empty manifest applied")
+	_, err = h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
 		OperationID: "intruder", Members: []ntable.BatchMemberEntry{{ID: "s1-1.w1", Expect: &ntable.MemberExpect{Absent: true},
-			Create: &ntable.MemberCreateOp{Row: "m1", Col: sprint.DoneOK, Score: 1}}}}); err != nil {
-		t.Fatal(err)
-	}
+			Create: &ntable.MemberCreateOp{Row: "m1", Col: sprint.DoneOK, Score: 1}}}})
+	require.NoError(t, err)
 	if _, err := h.st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m3"})); err == nil || h.m.Pending() == nil {
 		t.Fatalf("within the grace the operation is its writer's: %v", err)
 	}
@@ -464,17 +406,13 @@ func TestAnUnappliedPendingOperationIsAbandonedAfterTheGrace(t *testing.T) {
 	if h.m.Pending() != nil || len(res.Repaired) != 1 || !strings.Contains(res.Repaired[0], "abandoned") {
 		t.Fatalf("past the grace: %+v", res)
 	}
-	if h.state("s1-1") != sprint.Ready {
-		t.Fatalf("an abandoned deal moved its primary")
-	}
+	require.Equal(t, sprint.Ready, h.state("s1-1"), "an abandoned deal moved its primary")
 	notes, _, _ := h.m.NotesSince(h.ctx, "", 1000)
 	found := false
 	for _, n := range notes {
 		found = found || n.Type == sprint.NAbandoned && strings.Contains(n.What, "(deal) by tester, 2m0s old")
 	}
-	if !found {
-		t.Fatalf("abandoned silently: %+v", notes)
-	}
+	require.True(t, found, "abandoned silently: %+v", notes)
 }
 
 // D3: a retried finish with the same operation id returns the original
@@ -493,12 +431,10 @@ func TestD3ARetriedFinishReturnsTheOriginal(t *testing.T) {
 	if !again.Replay || len(again.Moved) != len(first.Moved) || again.Op != first.Op {
 		t.Fatalf("retry: %+v, first %+v", again, first)
 	}
-	if n := h.snap().Fleet.Count(m, sprint.DoneFailed); n != 1 {
-		t.Fatalf("failed counted %d times", n)
-	}
-	if open, _ := h.m.OpenNotes(h.ctx); len(open) != 1 {
-		t.Fatalf("notified %d times", len(open))
-	}
+	n := h.snap().Fleet.Count(m, sprint.DoneFailed)
+	require.Equal(t, 1, n, "failed counted %d times", n)
+	open, _ := h.m.OpenNotes(h.ctx)
+	require.Len(t, open, 1, "notified %d times", len(open))
 }
 
 // Every refusal of the in-memory batch, and nothing changes with any of them.
@@ -529,30 +465,22 @@ func TestMemRefusesAsTheBatchDoes(t *testing.T) {
 	for _, c := range cases {
 		before := h.m.Revision("t-work")
 		_, err := h.m.Apply(h.ctx, c.m)
-		if refusalCode(err) != c.code {
-			t.Errorf("%s: %v, want %s", c.name, err, c.code)
-		}
-		if h.m.Revision("t-work") != before {
-			t.Errorf("%s: a refusal changed the table", c.name)
-		}
+		assert.Equal(t, c.code, refusalCode(err), "%s: %v, want %s", c.name, err, c.code)
+		assert.Equal(t, before, h.m.Revision("t-work"), "%s: a refusal changed the table", c.name)
 	}
 	// replay: the same bytes return the original receipt; other bytes conflict
 	ok := man("h", ntable.BatchMemberEntry{ID: p.ID, Expect: &ntable.MemberExpect{Place: place}, Set: map[string]string{"x": "1"}})
 	r1, err := h.m.Apply(h.ctx, ok)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	r2, err := h.m.Apply(h.ctx, ok)
 	if err != nil || !r2.Replay || r2.After != r1.After {
 		t.Fatalf("replay: %+v %v", r2, err)
 	}
 	ok.Members[0].Set["x"] = "2"
-	if _, err := h.m.Apply(h.ctx, ok); refusalCode(err) != "OPCONFLICT" {
-		t.Fatalf("other bytes under the id: %v", err)
-	}
-	if _, err := h.m.ReadSet(h.ctx, "t-work", make([]string, ntable.LimitReadSetMembers+1)); refusalCode(err) != "LIMIT" {
-		t.Fatalf("a read set over the bound: %v", err)
-	}
+	_, err = h.m.Apply(h.ctx, ok)
+	require.Equal(t, "OPCONFLICT", refusalCode(err), "other bytes under the id: %v", err)
+	_, err = h.m.ReadSet(h.ctx, "t-work", make([]string, ntable.LimitReadSetMembers+1))
+	require.Equal(t, "LIMIT", refusalCode(err), "a read set over the bound: %v", err)
 }
 
 func strp(s string) *string { return &s }
@@ -581,25 +509,17 @@ func TestD7InboxThroughTheStore(t *testing.T) {
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-2.w1"}}, Gens: map[string]int{"s1-2.w1": 1}}))
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})) // asked: no move is due while STOPPED
 	v, err := h.st.Inbox(h.ctx, time.Hour, 0, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := h.m.SetCursor(h.ctx, v.Last); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, h.m.SetCursor(h.ctx, v.Last))
 	v, _ = h.st.Inbox(h.ctx, time.Hour, 0, 1000)
-	if len(v.Groups) != 1 || v.Groups[0].Kind != sprint.Judgment {
-		t.Fatalf("after the cursor: %+v", v.Groups)
-	}
+	require.Len(t, v.Groups, 1, "after the cursor: %+v", v.Groups)
+	require.Equal(t, string(sprint.Judgment), v.Groups[0].Kind, "after the cursor: %+v", v.Groups)
 	nid := v.Groups[0].Notes[0]
-	if err := h.m.SetReview(h.ctx, nid, t0.Add(3*time.Hour), h.now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.m.SetReview(h.ctx, nid, t0.Add(3*time.Hour), h.now))
 	h.tick(2 * time.Hour)
 	v, _ = h.st.Inbox(h.ctx, time.Hour, 0, 1000)
-	if len(v.Groups) != 1 || v.Groups[0].Overdue {
-		t.Fatalf("a waited judgment: %+v", v.Groups)
-	}
+	require.Len(t, v.Groups, 1, "a waited judgment: %+v", v.Groups)
+	require.False(t, v.Groups[0].Overdue, "a waited judgment: %+v", v.Groups)
 }
 
 // unreadable answers every batch with a receipt this build cannot read, after
@@ -622,9 +542,7 @@ func TestAReceiptThisBuildCannotReadIsUnknown(t *testing.T) {
 	if !errors.Is(err, ErrUnknown) || !strings.Contains(err.Error(), "do not match this build") || !strings.Contains(err.Error(), "nova-redis fn load") {
 		t.Fatalf("an unreadable receipt: %v", err)
 	}
-	if h.m.Pending() == nil {
-		t.Fatalf("an unreadable receipt was counted as applied: the operation left the fence")
-	}
+	require.NotNil(t, h.m.Pending(), "an unreadable receipt was counted as applied: the operation left the fence")
 }
 
 // ack answers a judgment with one decided note: the coordinator's reason.
@@ -664,9 +582,8 @@ func TestADecidedNoteNamesItsPrimariesInOrder(t *testing.T) {
 	h.setup(3)
 	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-3", "s1-1", "s1-2"}}, Red: true, Run: "r1"}))
 	open, _ := h.m.OpenNotes(h.ctx)
-	if len(open) != 3 || open[0].Note.ID != open[2].Note.ID {
-		t.Fatalf("the red run opened %+v, want one judgment on three primaries", open)
-	}
+	require.Len(t, open, 3, "the red run opened %+v, want one judgment on three primaries", open)
+	require.Equal(t, open[2].Note.ID, open[0].Note.ID, "the red run opened %+v, want one judgment on three primaries", open)
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-3", "s1-1", "s1-2"}}}))
 	notes, _, _ := h.m.NotesSince(h.ctx, "", 1000)
 	for _, n := range notes {
@@ -724,12 +641,9 @@ func TestCheckReadsTheLogOnlyWhenItHoldsTheLogsRules(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			l.n = 0
-			if _, _, err := st.check(h.ctx, 1, c.streams); err != nil {
-				t.Fatal(err)
-			}
-			if (l.n > 0) != c.reads {
-				t.Errorf("%s: the log was read %d times, want reads %v", c.name, l.n, c.reads)
-			}
+			_, _, err := st.check(h.ctx, 1, c.streams)
+			require.NoError(t, err)
+			assert.Equal(t, c.reads, l.n > 0, "%s: the log was read %d times, want reads %v", c.name, l.n, c.reads)
 		})
 	}
 }

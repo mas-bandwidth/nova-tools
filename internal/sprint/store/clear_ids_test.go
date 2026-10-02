@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // C2: an operation recorded under a caller's id before a clear (its reply
@@ -17,9 +18,8 @@ func TestCallerOpOfAnEarlierEpochIsRefused(t *testing.T) {
 	step := AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"late"}})
 	step.CallerOp = "caller-1"
 	h.must(step)
-	if _, err := h.st.Clear(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err := h.st.Clear(h.ctx)
+	require.NoError(t, err)
 	img := h.image()
 	for _, held := range []*uint64{nil, new(uint64)} {
 		step.Epoch = held
@@ -33,15 +33,13 @@ func TestCallerOpOfAnEarlierEpochIsRefused(t *testing.T) {
 		if c := h.snap().Work.Card("late"); c != nil && c.Placed() {
 			t.Fatalf("the operation of epoch 0 ran again at epoch 1")
 		}
-		if got := h.image(); got != img {
-			t.Fatalf("the refused operation changed the store:\n%s\nwas\n%s", got, img)
-		}
+		got := h.image()
+		require.Equal(t, img, got, "the refused operation changed the store:\n%s\nwas\n%s", got, img)
 	}
 	// A caller's id holding the epoch's mark is refused before anything.
 	step.Epoch, step.CallerOp = nil, "x~1"
-	if _, err := h.st.Run(h.ctx, step); err == nil || !strings.Contains(err.Error(), "holds '~'") {
-		t.Fatalf("an id with the epoch's mark: %v", err)
-	}
+	_, err = h.st.Run(h.ctx, step)
+	require.ErrorContains(t, err, "holds '~'", "an id with the epoch's mark")
 }
 
 // C2: notification and judgment ids carry the epoch: the same operation
@@ -59,9 +57,8 @@ func TestNoteIDsCarryTheEpoch(t *testing.T) {
 		h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
 		h.must(FinishStep(sprint.FinishReq{Failed: true, Report: "red", Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
 		v, err := h.st.Inbox(h.ctx, 0, 0, 100)
-		if err != nil || len(v.Open) == 0 {
-			t.Fatalf("no judgment: %v", err)
-		}
+		require.NoError(t, err, "no judgment: %v", err)
+		require.NotEmpty(t, v.Open, "no judgment: %v", err)
 		return v.Open[0].Note.ID
 	}
 	oldID := failIt()
@@ -78,12 +75,8 @@ func TestNoteIDsCarryTheEpoch(t *testing.T) {
 	if err != nil || len(res.Moved) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "belongs to epoch 0") {
 		t.Fatalf("ack of the old judgment: %+v %v", res, err)
 	}
-	if err := h.st.SetReview(h.ctx, oldID, t0); err == nil || !strings.Contains(err.Error(), "belongs to epoch 0") {
-		t.Fatalf("wait on the old judgment: %v", err)
-	}
-	if h.image() != img {
-		t.Fatalf("the ack and the wait of the old judgment changed the store")
-	}
+	require.ErrorContains(t, h.st.SetReview(h.ctx, oldID, t0), "belongs to epoch 0", "wait on the old judgment")
+	require.Equal(t, img, h.image(), "the ack and the wait of the old judgment changed the store")
 	if v, _ := h.st.Inbox(h.ctx, 0, 0, 100); len(v.Open) == 0 || v.Open[0].Note.ID != newID {
 		t.Fatalf("the new judgment is not open: %+v", v.Open)
 	}
@@ -94,7 +87,5 @@ func TestNoteIDsCarryTheEpoch(t *testing.T) {
 	if err != nil || len(res.Moved) != 0 || len(res.Refused) != 1 || res.Refused[0].Key != oldID || !strings.Contains(res.Refused[0].Why, "judgment of epoch 0; the sprint was cleared at") {
 		t.Fatalf("an answer naming the old judgment: %+v %v", res, err)
 	}
-	if h.image() != img {
-		t.Fatalf("the refused rework changed the store")
-	}
+	require.Equal(t, img, h.image(), "the refused rework changed the store")
 }
