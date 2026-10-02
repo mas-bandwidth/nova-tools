@@ -289,8 +289,8 @@ func (GoBuild) Build(ctx context.Context, source, pkg, out, goos, goarch string,
 	cmd.Stdout = capture
 	cmd.Stderr = capture
 	// The caller's GOFLAGS does not reach the release build. CI's
-	// `make test` exports GOFLAGS=-json, and the same inheritance made
-	// `nova-review mutate` read a green unit as red. A release is the one
+	// `make test` exports GOFLAGS=-json, and an inherited flag changes what a
+	// build means -- a green unit reads red. A release is the one
 	// artifact where flags nobody chose are least acceptable: the binaries
 	// carry a version somebody will trust for months. The three variables this
 	// build DOES choose are appended after Clean, where the last value wins.

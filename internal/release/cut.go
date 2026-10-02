@@ -242,14 +242,13 @@ var errTruncated = errors.New("compare-truncated")
 // It is its own function, and pure apart from the writers, because the decision
 // is the thing worth reading -- the cut around it is bookkeeping.
 //
-// THE ORDER IS THE WHOLE LESSON. That cut's compare
-// answered with exactly 300 files -- the forge's ceiling -- and the
-// verb refused naming 24 sensitive paths out of the 58 the range really
-// touched. It looked like the gate working. It was the gate being lucky: the
-// hits it named were the ones that happened to fall inside the prefix it could
-// see, and a range whose only sensitive file sat past file 300 would have been
-// cut clean. So the truncation is decided FIRST and named FIRST, before
-// anything is said about what was found inside a list that may be short.
+// THE ORDER IS THE WHOLE LESSON. A compare can answer with exactly 300
+// files -- the forge's ceiling -- and stop short of the range's tail, and the
+// refusal then names the sensitive paths inside the prefix it can see -- 24
+// of the 58 the range really touches. The gate looks right and is only lucky:
+// a range whose only sensitive file sits past file 300 is cut clean. So the
+// truncation is decided FIRST and named FIRST, before anything is said about
+// what was found inside a list that may be short.
 //
 // And --security-read does not get past it. A security read is a read OF A LIST,
 // and a read of a prefix of the truth vouches for a prefix of the truth. The
