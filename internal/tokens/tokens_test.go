@@ -343,6 +343,40 @@ func TestTheUnattributedTallyCountsOnlyWhatFellToOther(t *testing.T) {
 	}
 }
 
+// TestTheUnattributedTallyScopesToFilteredDay: when FilterDay is set, only messages
+// attributed under that day are tallied.
+func TestTheUnattributedTallyScopesToFilteredDay(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "repos.tsv")
+	if err := os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := LoadRules(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules.WatchUnattributed()
+	rules.FilterDay("2026-09-11")
+
+	// Message on 2026-09-11: should be tallied
+	rules.SetDay("2026-09-11")
+	rules.AttributeInputs([]string{"/home/nova/day1/a.go"}, "")
+
+	// Message on 2026-09-12: should be ignored
+	rules.SetDay("2026-09-12")
+	rules.AttributeInputs([]string{"/home/nova/day2/b.go"}, "")
+
+	if n := rules.TotalUnattributed(); n != 1 {
+		t.Errorf("unattributed total = %d, want 1", n)
+	}
+	got := rules.Unattributed()
+	if len(got) != 1 || got[0].Stem != "/home/nova/day1" || got[0].Count != 1 {
+		t.Errorf("got %v, want 1 stem for day 1", got)
+	}
+}
+
 // The tally is bounded, and past the ceiling it still counts every token: a listing whose
 // memory grows with the tree is the unbounded read this repo's caps exist to end, and a
 // total that stopped at the ceiling would be a number nobody could use.

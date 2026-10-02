@@ -159,7 +159,8 @@ func TestSessionRefusesATranscriptThatNamesNoModel(t *testing.T) {
 
 // TestSessionRefusesUnreadableDayFile: an unreadable existing day file in a writable output
 // directory must not be merged against empty state or overwritten; session must refuse and
-// write nothing.
+// write nothing. Absence (ENOENT) is intentionally allowed as a fresh day; an unreadable
+// existing file must be refused.
 func TestSessionRefusesUnreadableDayFile(t *testing.T) {
 	t.Parallel()
 

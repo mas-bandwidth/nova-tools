@@ -1027,9 +1027,16 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// attribution ladder as the paths go past; there is no second walk of the transcripts.
 	if *unattributed {
 		rules.WatchUnattributed()
+		if !*all {
+			rules.FilterDay(*day)
+		}
 	}
 	sources := sf.read(rules, now)
 	if !*all {
+		// When --day is specified (without --all), message counts, row keys, and unattributed
+		// path tallies are scoped to the selected day. Source-wide inventory and error metadata
+		// (files, unreadable sources, and unparsed lines) remain source-wide because unreadable
+		// or unparsed files may lack valid dates and describe properties of the declared source.
 		for _, s := range sources {
 			var dayStream []tokens.Message
 			keys := map[tokens.Key]bool{}
