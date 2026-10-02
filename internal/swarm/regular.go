@@ -38,7 +38,7 @@ var errNotRegular = fs.ErrInvalid
 // by the supervisor. Normal records (RESULT.md, harness.log, sidecars, task files, retry state)
 // range from tens of bytes to a few MiB for verbose test runs; 16 MiB provides generous
 // margin while bounding supervisor memory consumption against unbounded reads or rogue
-// worker files (security#30, finding 4 residue, issue #234).
+// worker files.
 const MaxRegularRecord = 16 * 1024 * 1024
 
 var errRecordTooLarge = fs.ErrInvalid
@@ -108,7 +108,7 @@ func readBounded(r io.Reader, maxBytes int64) ([]byte, error) {
 }
 
 // isRegularFile is whether path is a regular file, by Lstat: a symlink is not
-// followed and a FIFO is not a record (issue #233).
+// followed and a FIFO is not a record.
 func isRegularFile(path string) bool {
 	return statRegular(path) == nil
 }

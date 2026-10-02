@@ -32,7 +32,7 @@ import (
 // the parent at `cmd.Start()`. It is a PARAMETER and never a table: the first shape of this
 // fix kept one process-global pid->stamp map, and a finished job's stamp could overwrite a
 // LIVE job's entry under a re-issued pid, making the dispatcher read a running supervisor
-// as dead and finalize it (DeepSeek's read 5, finding 1). An identity that is not owned by
+// as dead and finalize it. An identity that is not owned by
 // the job it belongs to is not an identity.
 
 func ownGroup(cmd *exec.Cmd) {}

@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// SHARED PER-BENCH CACHES (issue #1048). A native job downloads the Go toolchain and every
+// SHARED PER-BENCH CACHES. A native job downloads the Go toolchain and every
 // module into its own sandboxed data home -- up to 5 GB per slot -- and 120 cards filled
-// hulk and vision to 100%. The toolchain and the module cache are the same for every job
+// every bench's disk. The toolchain and the module cache are the same for every job
 // under one swarm root, so they live once under <root>/cache and every job's child is
 // pointed at them (GOMODCACHE, GOCACHE, NPM_CONFIG_CACHE). The root is a permitted write
 // root beside the job directory (docs/SPEC-SANDBOX.md), never the job's own data home.

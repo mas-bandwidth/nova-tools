@@ -10,12 +10,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// UNKNOWNERROR AT ANY WALL IS THE PROVIDER'S, AND THE CARD GOES TO THE NEXT ROUTE (issue
-// #2916).
+// UNKNOWNERROR AT ANY WALL IS THE PROVIDER'S, AND THE CARD GOES TO THE NEXT ROUTE.
 //
-// The launch grace (#900, launchfail.go) retries a provider server error that kills the
+// The launch grace (launchfail.go) retries a provider server error that kills the
 // harness inside its first 15 s. Past the grace the same words were read as the card's own
-// failure: 264 cards of the 2026-09-22 sprint ended on
+// failure: a card ends on
 //
 //	Error: {"name":"UnknownError","data":{"message":"Unexpected server error. ...","ref":"err_fb35c63e"}}
 //

@@ -31,7 +31,7 @@ import (
 // gap is success and is not unknown. Whole-card silence is not this signal;
 // that stays the 300s idle watch.
 //
-// THE HEADER WAIT IS OWNED TOO (stella 5782441006). The body timer starts only
+// THE HEADER WAIT IS OWNED TOO. The body timer starts only
 // when headers arrive, so an upstream that accepts the POST and never answers
 // with headers had no deadline of ours. The proxy's own transport waits
 // ProviderHeaderTimeout for response headers after the request is fully
