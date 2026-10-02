@@ -40,7 +40,7 @@ func TestASecondFoldWaitsAndThenRefusesNamingTheHolder(t *testing.T) {
 	wantContains(t, r.stderr, "pid ")
 	{
 		waited := time.Since(start)
-		assert.True(t, waited >= 500*time.Millisecond, "the second fold refused after %s; it is supposed to wait for the first", waited)
+		assert.False(t, waited < 500*time.Millisecond, "the second fold refused after %s; it is supposed to wait for the first", waited)
 	}
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
