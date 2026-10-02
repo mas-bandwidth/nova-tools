@@ -149,7 +149,7 @@ DRAFT OK path=./drafts/2026-09-12T2015Z-re-bo-ce10834fbfea.md re=bo-ce10834fbfea
 
 **`heard` and `closed` are different answers.** Bo's `receipt` says she read Ada's note without answering it: one line in her lane's `RECEIPTS`, pushed, and the note leaves her carried list. A note is *closed* instead by a `Re:` line naming it, which is what `draft --re` and `send` write for you.
 
-**The cursor is why a read costs the change and not the bus.** `--advance` records the commit read to, in the reader's own lane, and pushes it like a receipt; on a bus holding older notes, the first advance is refused until the reader says what to do with the history, and the legacy marker is that sentence — everything already there is history, everything after it is news. The `INBOX LEGACY` line counts what the marker hid.
+**The cursor is why a read costs the change and not the bus.** `--advance` records the commit read to, in the reader's own lane, and pushes it like a receipt; the first advance on a bus holding notes that predate it is refused until the reader says what to do with the history, and `--legacy-now` is that sentence — everything already there is history, everything after it is news. The `INBOX LEGACY` line counts what the line hid.
 
 Ada's first line above is the refusal worth meeting here rather than on a live bus: **the example bus ships a `CURSOR` naming a commit from the history it was written in**, and copying it out gives it a new one, so that commit is not an ancestor of `HEAD`. The tool says so instead of diffing from it, and names the way out. Her `--full --advance` replaces it, and the read after that is `mode=since` over `changed=2` — two changed lane paths. That is the property the whole design is for, and it is visible in one pair of lines.
 
@@ -238,7 +238,7 @@ fake-gh
 
 `nova-secrets seat inject` is measured against the real sops and age
 (`cmd/nova-secrets/seat_inject_functional_test.go`, functional tier): a store with
-two seats, one holding the new value and the other holding the old
+two seats, one holding the new value and the other holding the to-be-replaced
 one; the verb run with the coordinator's key and `--no-pr`; then the seal branch's
 file opens with the bench's key alone and holds the new value beside the names it
 had, the store is back on `main`, and `nova-secrets gate` approves the branch. The
