@@ -5,9 +5,11 @@ package ci
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestIssue2218ChangeBaseReadsTheBasesList is the git half of
@@ -23,9 +25,7 @@ func TestIssue2218ChangeBaseReadsTheBasesList(t *testing.T) {
 	git := func(args ...string) string {
 		t.Helper()
 		out, err := gitOut(root, append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		return strings.TrimSpace(out)
 	}
 	git("init", "-q", "-b", "dev")
@@ -40,29 +40,24 @@ func TestIssue2218ChangeBaseReadsTheBasesList(t *testing.T) {
 	git("commit", "-q", "-am", "adds an unexecuted example")
 
 	event := filepath.Join(t.TempDir(), "event.json")
-	if err := os.WriteFile(event, []byte(`{"pull_request":{"base":{"sha":"`+base+`"}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(event, []byte(`{"pull_request":{"base":{"sha":"`+base+`"}}}`), 0o600))
 	for name, env := range map[string]map[string]string{
 		"pull_request event": {"GITHUB_EVENT_PATH": event},
 		"local merge base":   {"GITHUB_BASE_REF": "dev"},
 		"the default base":   {},
 	} {
 		got, err := ChangeBase(root, func(k string) string { return env[k] })
-		if err != nil || got != base {
-			t.Errorf("%s: ChangeBase = %q, %v; want %s", name, got, err, base)
+		if !assert.NoError(t, err, "%s: ChangeBase", name) || !assert.Equal(t, base, got, "%s: ChangeBase = %q, %v; want %s", name, got, err, base) {
 			continue
 		}
 		baseList, present, err := ListAtCommit(root, got, UnexecutedListPath)
-		if err != nil || !present {
-			t.Fatalf("%s: ListAtCommit = present %v, %v; want the base's list", name, present, err)
-		}
+		require.NoError(t, err, "%s: ListAtCommit = present %v, %v; want the base's list", name, present, err)
+		require.True(t, present, "%s: ListAtCommit = present %v, %v; want the base's list", name, present, err)
 		head := loadAllowlist(t, filepath.Join(root, UnexecutedListPath), unexecutedListOptions)
-		if added := AddedListRows(baseList, head.Text()); !slices.Equal(added, []string{"$ nova-foo newverb --x 1"}) {
-			t.Errorf("%s: added rows = %q; want the appended row, which fails the class test", name, added)
-		}
+		added := AddedListRows(baseList, head.Text())
+		assert.Equal(t, []string{"$ nova-foo newverb --x 1"}, added, "%s: added rows = %q; want the appended row, which fails the class test", name, added)
 	}
-	if _, present, err := ListAtCommit(root, base, "internal/ci/testdata/absent.txt"); err != nil || present {
-		t.Errorf("ListAtCommit of a file the base lacks = present %v, %v; want introduced (false, nil)", present, err)
-	}
+	_, present, err := ListAtCommit(root, base, "internal/ci/testdata/absent.txt")
+	assert.NoError(t, err, "ListAtCommit of a file the base lacks = present %v, %v; want introduced (false, nil)", present, err)
+	assert.False(t, present, "ListAtCommit of a file the base lacks = present %v, %v; want introduced (false, nil)", present, err)
 }

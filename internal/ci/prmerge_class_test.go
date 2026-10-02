@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE CLASS RULE BEHIND THE ONE DOOR (Glenn, 2026-09-18).
@@ -56,9 +58,7 @@ func TestNoGhPrMergeSpellingInTheToolsGo(t *testing.T) {
 		for _, f := range tree.GoFilesUnder(false, dir) {
 			rel := f.Rel
 			files++
-			if f.ParseErr != nil {
-				t.Fatal(f.ParseErr)
-			}
+			require.NoError(t, f.ParseErr)
 			words := stringLiterals(f.AST, tree.FSet)
 			for i, w := range words {
 				key := rel + ":" + w.fn
@@ -81,9 +81,7 @@ func TestNoGhPrMergeSpellingInTheToolsGo(t *testing.T) {
 			}
 		}
 	}
-	if files == 0 {
-		t.Fatal("no source files found; this walk was looking in the wrong place and would have passed by checking nothing")
-	}
+	require.Positive(t, files, "no source files found; this walk was looking in the wrong place and would have passed by checking nothing")
 	// The list only shrinks: an entry whose call has left is red, so nobody can widen the
 	// exception set and leave it there.
 	for _, row := range allowlist.Check(t, allow, seen).Stale {
@@ -94,7 +92,7 @@ func TestNoGhPrMergeSpellingInTheToolsGo(t *testing.T) {
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 
@@ -132,12 +130,10 @@ func TestNoGhPrMergeSpellingUnderDotGithub(t *testing.T) {
 			}
 		}
 	}
-	if files == 0 {
-		t.Fatal("no files found under .github; this walk was looking in the wrong place")
-	}
+	require.Positive(t, files, "no files found under .github; this walk was looking in the wrong place")
 	sort.Strings(violations)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 

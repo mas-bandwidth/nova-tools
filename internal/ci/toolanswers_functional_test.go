@@ -6,11 +6,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // measureToolAnswers runs one built tool through the mistakes an AI makes
@@ -71,7 +74,7 @@ func runIn(t *testing.T, bin string, args ...string) (code int, stdout, stderr s
 	case errors.As(err, &exitErr):
 		code = exitErr.ExitCode()
 	default:
-		t.Fatalf("running %s %s: %v", bin, strings.Join(args, " "), err)
+		require.Fail(t, fmt.Sprintf("running %s %s: %v", bin, strings.Join(args, " "), err))
 	}
 	return code, out.String(), errb.String()
 }

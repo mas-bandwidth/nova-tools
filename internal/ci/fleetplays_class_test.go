@@ -299,7 +299,7 @@ func TestFleetPlaysReadOnlyTheInventory(t *testing.T) {
 	invs := fleetInventories(t, root)
 	src, groups := readFleetSource(t, root, invs)
 	for _, p := range fleetPlayProblems(src, groups) {
-		t.Error(p)
+		assert.Fail(t, p)
 	}
 
 	full := invs["inventory-fixture.yml"]
