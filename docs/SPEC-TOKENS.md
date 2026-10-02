@@ -341,7 +341,9 @@ near the end, and the sections below say how each is met.
     source); the tool checks each id's shape and nothing else, because the
     lane is not on this machine.
     A `report` for a day whose sources were all unreadable prints
-    `TOKENS UNREADABLE` per source and no lines, `REPORT FAIL`, exit 1: a
+    `TOKENS UNREADABLE` per source and no lines, `REPORT FAIL`, exit 1; a
+    day with any source not read whole is `REPORT FAIL`, exit 1, too, its
+    body still printed and no `--note` written: a
     friend with nothing to show says so, never sends zeros. A `report` line
     is what `fold --bus` parses, so the two are one grammar by construction
     (lesson 113), and a `report` never carries `~`: a rough number is a
@@ -536,7 +538,7 @@ FOLD FAIL dropped=<n> of <n>: no message had an id, so none was folded; run: nov
 TOKENS NOTE <the one remedy line>
 TOKENS REFUSED: <reason>
 REPORT OK who=<name> day=<d> rows=<n> at=<stamp> build=<id> subject=<subject>
-REPORT FAIL who=<name> day=<d> rows=<n> unreadable=<n>
+REPORT FAIL who=<name> day=<d> rows=<n> unreadable=<n> unparsed=<n>
 REPORT REFUSED: <reason>
 TOKENS AVG day=<d> model=<provider/model> tokens=<n> usd=<n|-> usd_per_mtok=<n|-> unpriced=<n>
 TOKENS AVG-ALL day=<d> tokens=<n> usd=<n|-> usd_per_mtok=<n|-> unpriced=<n>
