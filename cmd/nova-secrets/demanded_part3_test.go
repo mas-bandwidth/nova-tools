@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Test 11: TestAKeyNameThatIsNotAnEnvVarIsRefused
@@ -38,12 +41,8 @@ func TestAKeyNameThatIsNotAnEnvVarIsRefused(t *testing.T) {
 
 	_, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "all", "--", "true")
-	if code != 125 {
-		t.Fatalf("expected code 125, got %d", code)
-	}
-	if !strings.Contains(errOut, "2FA, A B, gh-token") {
-		t.Errorf("expected sorted bad keys reported, got: %s", errOut)
-	}
+	require.Equal(t, 125, code, "expected code 125, got %d", code)
+	assert.Contains(t, errOut, "2FA, A B, gh-token", "expected sorted bad keys reported, got: %s", errOut)
 
 	// Now valid payload
 	validPayload := "GH_TOKEN: ghp_ok\nA1_B: ok2\n"
@@ -52,9 +51,8 @@ func TestAKeyNameThatIsNotAnEnvVarIsRefused(t *testing.T) {
 
 	out, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "all", "--", "echo", "PASSED")
-	if code != 0 || !strings.Contains(out, "PASSED") {
-		t.Errorf("expected valid keys to pass, got %d: out=%s, err=%s", code, out, errOut)
-	}
+	assert.Equal(t, 0, code, "expected valid keys to pass, got %d: out=%s, err=%s", code, out, errOut)
+	assert.Contains(t, out, "PASSED", "expected valid keys to pass, got %d: out=%s, err=%s", code, out, errOut)
 }
 
 // Test 13: TestCheckFailsClosedOnEverythingItCannotRead
@@ -69,9 +67,8 @@ func TestCheckFailsClosedOnEverythingItCannotRead(t *testing.T) {
 	fileAsStore := filepath.Join(td, "file-store")
 	_ = os.WriteFile(fileAsStore, []byte("im a file"), 0644)
 	_, errOut, code := runNovaSecrets(bin, "check", "--store", fileAsStore, "--as", "rowan", "--key", filepath.Join(td, "k"), "--sops", sopsPath)
-	if code != 2 || !strings.Contains(errOut, "not a directory") {
-		t.Errorf("file-as-store expected 2: code=%d, err=%s", code, errOut)
-	}
+	assert.Equal(t, 2, code, "file-as-store expected 2: code=%d, err=%s", code, errOut)
+	assert.Contains(t, errOut, "not a directory", "file-as-store expected 2: code=%d, err=%s", code, errOut)
 
 	// 2. Store with no .sops.yaml -> exit 2
 	noSopsStore := filepath.Join(td, "no-sops-store")
@@ -84,24 +81,20 @@ func TestCheckFailsClosedOnEverythingItCannotRead(t *testing.T) {
 	commitAndPush(t, noSopsStore)
 
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", noSopsStore, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 2 || !strings.Contains(errOut, "no .sops.yaml") {
-		t.Errorf("no .sops.yaml expected 2: code=%d, err=%s", code, errOut)
-	}
+	assert.Equal(t, 2, code, "no .sops.yaml expected 2: code=%d, err=%s", code, errOut)
+	assert.Contains(t, errOut, "no .sops.yaml", "no .sops.yaml expected 2: code=%d, err=%s", code, errOut)
 
 	// 3. .sops.yaml that will not parse -> exit 1 on invariant 1
 	_ = os.WriteFile(filepath.Join(noSopsStore, ".sops.yaml"), []byte("not_yaml: {{bad syntax"), 0644)
 	commitAndPush(t, noSopsStore)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", noSopsStore, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, ".sops.yaml") {
-		t.Errorf("unparseable .sops.yaml expected 1 on invariant 1: code=%d, err=%s", code, errOut)
-	}
+	assert.Equal(t, 1, code, "unparseable .sops.yaml expected 1 on invariant 1: code=%d, err=%s", code, errOut)
+	assert.Contains(t, errOut, ".sops.yaml", "unparseable .sops.yaml expected 1 on invariant 1: code=%d, err=%s", code, errOut)
 
 	// 4. Unreadable .sops.yaml -> exit 1 on invariant 1
 	_ = os.Chmod(filepath.Join(noSopsStore, ".sops.yaml"), 0000)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", noSopsStore, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 1 {
-		t.Errorf("unreadable .sops.yaml expected 1: code=%d, err=%s", code, errOut)
-	}
+	assert.Equal(t, 1, code, "unreadable .sops.yaml expected 1: code=%d, err=%s", code, errOut)
 	_ = os.Chmod(filepath.Join(noSopsStore, ".sops.yaml"), 0644)
 }
 
@@ -145,60 +138,44 @@ func TestKeygenNeverOverwritesAndNeverTouchesTheStore(t *testing.T) {
 	existingKey := filepath.Join(validKeyDir, "existing.key")
 	_ = os.WriteFile(existingKey, []byte("ORIGINAL_BYTES"), 0600)
 	_, errOut, code := runNovaSecrets(bin, "keygen", "--as", "rowan", "--key", existingKey, "--age-keygen", ageKeygen)
-	if code != 2 || !strings.Contains(errOut, "already exists; refusing to overwrite") {
-		t.Errorf("expected overwrite refusal, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 2, code, "expected overwrite refusal, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "already exists; refusing to overwrite", "expected overwrite refusal, got %d: %s", code, errOut)
 	data, _ := os.ReadFile(existingKey)
-	if string(data) != "ORIGINAL_BYTES" {
-		t.Errorf("existing key file modified!")
-	}
+	assert.Equal(t, "ORIGINAL_BYTES", string(data), "existing key file modified!")
 
 	// 2. 0755 parent refused naming mkdir -m 700
 	badParentDir := filepath.Join(td, "badparent")
 	_ = os.MkdirAll(badParentDir, 0755)
 	targetInBadParent := filepath.Join(badParentDir, "test.key")
 	_, errOut, code = runNovaSecrets(bin, "keygen", "--as", "rowan", "--key", targetInBadParent, "--age-keygen", ageKeygen)
-	if code != 2 || (!strings.Contains(errOut, "mkdir -m 700") && !strings.Contains(errOut, "chmod 700")) {
-		t.Errorf("expected 0700 dir refusal, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 2, code, "expected 0700 dir refusal, got %d: %s", code, errOut)
+	assert.True(t, strings.Contains(errOut, "mkdir -m 700") || strings.Contains(errOut, "chmod 700"), "expected 0700 dir refusal, got %d: %s", code, errOut)
 
 	// 3. Success creates key, private key on no stream, store untouched
 	newKeyPath := filepath.Join(validKeyDir, "new.key")
 
 	out, errOut, code := runNovaSecrets(bin, "keygen", "--as", "rowan", "--key", newKeyPath, "--age-keygen", ageKeygen, "--store", storeDir)
-	if code != 0 {
-		t.Fatalf("keygen failed: code %d, err: %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "keygen failed: code %d, err: %s", code, errOut)
 
 	// Store tree hash unchanged
 	treeHashAfter := hashTree(storeDir)
-	if treeHashBefore != treeHashAfter {
-		t.Errorf("keygen modified the store tree!")
-	}
+	assert.Equal(t, treeHashAfter, treeHashBefore, "keygen modified the store tree!")
 
 	// Private key appears on no stream
 	privBytes, _ := os.ReadFile(newKeyPath)
-	if strings.Contains(out, string(privBytes)) || strings.Contains(errOut, string(privBytes)) {
-		t.Errorf("private key appeared in output!")
-	}
+	assert.NotContains(t, out, string(privBytes), "private key appeared in output!")
+	assert.NotContains(t, errOut, string(privBytes), "private key appeared in output!")
 
 	// Printed rule satisfies invariant 1 when pasted
-	if !strings.Contains(out, recKey.pubKey) {
-		t.Errorf("expected recovery key in rule output: %s", out)
-	}
-	if strings.Contains(out, "placeholder:") {
-		t.Errorf("with --store, rule should not contain placeholder note: %s", out)
-	}
+	assert.Contains(t, out, recKey.pubKey, "expected recovery key in rule output: %s", out)
+	assert.NotContains(t, out, "placeholder:", "with --store, rule should not contain placeholder note: %s", out)
 
 	// 4. Run without --store: literal placeholder and NOTE line
 	noStoreKey := filepath.Join(validKeyDir, "nostore.key")
 	out, _, code = runNovaSecrets(bin, "keygen", "--as", "rowan", "--key", noStoreKey, "--age-keygen", ageKeygen)
-	if code != 0 {
-		t.Fatalf("keygen without store failed: %d", code)
-	}
-	if !strings.Contains(out, "<recovery key>") || !strings.Contains(out, "SECRETS RULE NOTE  placeholder: no --store, so <recovery key> is filled by `nova-secrets seat add`") {
-		t.Errorf("expected placeholder and note line without store: %s", out)
-	}
+	require.Equal(t, 0, code, "keygen without store failed: %d", code)
+	assert.Contains(t, out, "<recovery key>", "expected placeholder and note line without store: %s", out)
+	assert.Contains(t, out, "SECRETS RULE NOTE  placeholder: no --store, so <recovery key> is filled by `nova-secrets seat add`", "expected placeholder and note line without store: %s", out)
 
 	// 5. --store with empty recovery.pub is exit 2 naming file
 	emptyRecStore := filepath.Join(td, "emptyrec")
@@ -210,9 +187,8 @@ func TestKeygenNeverOverwritesAndNeverTouchesTheStore(t *testing.T) {
 
 	errKeyPath := filepath.Join(validKeyDir, "err.key")
 	_, errOut, code = runNovaSecrets(bin, "keygen", "--as", "rowan", "--key", errKeyPath, "--age-keygen", ageKeygen, "--store", emptyRecStore)
-	if code != 2 || !strings.Contains(errOut, "recovery.pub is empty") {
-		t.Errorf("expected exit 2 naming recovery.pub empty, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 2, code, "expected exit 2 naming recovery.pub empty, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "recovery.pub is empty", "expected exit 2 naming recovery.pub empty, got %d: %s", code, errOut)
 	_ = sopsPath
 }
 
@@ -260,22 +236,17 @@ func TestTheLauncherOrderWorksWithTheStoreFullyDenied(t *testing.T) {
 		"--only", "GH_TOKEN", "--require", "GH_TOKEN", "--"}, wall...)
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home}
 	out, errOut, code, _ := runWithEnv(bin, env, launcher...)
-	if code != 0 || !strings.Contains(out, "SEEN=ghp_launcher_value\n") {
-		t.Fatalf("launcher order: the probe must see its key, exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
-	}
-	if strings.Contains(out, "STORE-READ") || strings.Contains(out, "KEY-READ") {
-		t.Errorf("launcher order: the probe read the store or the key through the wall: %s", out)
-	}
+	require.Equal(t, 0, code, "launcher order: the probe must see its key, exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	require.Contains(t, out, "SEEN=ghp_launcher_value\n", "launcher order: the probe must see its key, exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	assert.NotContains(t, out, "STORE-READ", "launcher order: the probe read the store or the key through the wall: %s", out)
+	assert.NotContains(t, out, "KEY-READ", "launcher order: the probe read the store or the key through the wall: %s", out)
 
 	// The reverse nesting: the wall outside, nova-secrets inside. With the store and the
 	// key in no read set it must FAIL, and the probe must never run.
 	out, errOut, code = inWall(sb, home, []string{filepath.Dir(bin), filepath.Dir(sopsPath)}, true,
 		bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "GH_TOKEN", "--", "/bin/sh", "-c", probe, storeFile, keyA.privPath)
-	if code == 0 || strings.Contains(out, "SEEN=") {
-		t.Errorf("reverse nesting must fail before the command runs, got exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
-	}
-	if strings.Contains(out+errOut, "ghp_launcher_value") {
-		t.Errorf("reverse nesting leaked the value: %s%s", out, errOut)
-	}
+	assert.NotEqual(t, 0, code, "reverse nesting must fail before the command runs, got exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	assert.NotContains(t, out, "SEEN=", "reverse nesting must fail before the command runs, got exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	assert.NotContains(t, out+errOut, "ghp_launcher_value", "reverse nesting leaked the value: %s%s", out, errOut)
 }

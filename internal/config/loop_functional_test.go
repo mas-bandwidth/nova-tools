@@ -123,6 +123,8 @@ func TestApplyWritesTheLoopViewThePlaysRead(t *testing.T) {
 		_, err := st.Insert(ctx, KindLoop, row, "t")
 		require.NoError(t, err)
 	}
+	_, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, "t")
+	require.NoError(t, err)
 	res := applyKinds(t, st, ap, "t")
 	assert.Equal(t, 2, res[KindLoop].Add)
 	rev, _ := st.Rev(ctx, KindLoop)

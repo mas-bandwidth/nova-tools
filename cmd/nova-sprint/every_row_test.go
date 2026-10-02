@@ -129,9 +129,7 @@ func everyRowMoves(t *testing.T, width int) {
 				seen[tb]++
 			}
 			for _, r := range rows {
-				if tb != "work" && !slices.Contains(moved[tb], r) {
-					t.Errorf("tick %d: %s row %s had work (%v) and did not move: moved %v\n%s", tick, tb, r, before.Tables[tb][r], moved[tb], play)
-				}
+				assert.False(t, tb != "work" && !slices.Contains(moved[tb], r), "tick %d: %s row %s had work (%v) and did not move: moved %v\n%s", tick, tb, r, before.Tables[tb][r], moved[tb], play)
 			}
 		}
 		if len(moved["work"]) > 0 {

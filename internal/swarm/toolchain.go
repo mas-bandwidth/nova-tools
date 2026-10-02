@@ -1,10 +1,12 @@
 package swarm
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -190,12 +192,7 @@ func ToolchainRootNames(goos string) []string {
 // ToolchainRootOSes is every operating system the one list speaks for, sorted, so the class
 // test walks the declaration itself rather than a list of its own that could fall behind it.
 func ToolchainRootOSes() []string {
-	out := make([]string, 0, len(toolchainRoots))
-	for goos := range toolchainRoots {
-		out = append(out, goos)
-	}
-	sortNames(out)
-	return out
+	return slices.Sorted(maps.Keys(toolchainRoots))
 }
 
 // ToolchainRoots is the wall's side: this machine's list, absolute, carrying each root's
@@ -283,16 +280,58 @@ func toolchainVersionDir(prefix, tool string) (string, bool) {
 	return filepath.Join(filepath.FromSlash(base), version), true
 }
 
+// THE BENCH'S GO ON THE CHILD'S PATH (the mechanical sprint, 2026-10-02). Granting the sdk
+// tree made the bench's Go EXECUTABLE inside the wall; nothing made it FINDABLE. A loop unit
+// starts the member with the PATH fleet/loops.yml writes (~/.local/bin, /opt/homebrew/bin,
+// /usr/local/bin, /usr/bin, /bin), the child inherits it, and the provisioning standard's own
+// PATH entries live in ~/sdk/env.sh, which only an interactive shell of the bench user reads.
+// So a card's bare `go` and `gofmt` were "command not found" on every bench whose Go is not
+// on the unit's PATH: a worker on one bench reported it, and one on another downloaded a Go
+// tarball into its job to get past it.
+//
+// benchGoEntries are env.sh's own PATH entries, home-relative and in its order: `sdk/bin`
+// (a Mac bench's links to every sdk tool) before `go/bin` (GOPATH/bin, whose `go` the
+// standard makes a link into the sdk tree). BenchGoBin searches them and then the
+// caller's PATH, and names the directory the found `go` REALLY lives in -- GOROOT/bin,
+// holding `go` and `gofmt` and nothing else -- rather than the directory it was found in,
+// because GOPATH/bin holds every `go install` on the bench and is no directory to put on a
+// card's PATH (the go/bin note above). A `go` that resolves outside every root the wall
+// executes is the standard's drift to report (tools/benchstandard, the wall check), not a
+// root to widen here.
+var benchGoEntries = []string{"sdk/bin", "go/bin"}
+
+// BenchGoBin is the directory of the Go the bench's card environment runs: the first `go`
+// in benchGoEntries under home and then in pathEnv, resolved through its symlinks, or ""
+// when the bench has none. It reads the filesystem only and runs nothing.
+func BenchGoBin(home, pathEnv string) string {
+	var dirs []string
+	if home != "" {
+		for _, e := range benchGoEntries {
+			dirs = append(dirs, filepath.Join(home, filepath.FromSlash(e)))
+		}
+	}
+	dirs = append(dirs, filepath.SplitList(pathEnv)...)
+	name := "go"
+	if runtime.GOOS == "windows" {
+		name = "go.exe"
+	}
+	for _, d := range dirs {
+		if !filepath.IsAbs(d) {
+			continue
+		}
+		real, err := filepath.EvalSymlinks(filepath.Join(d, name))
+		if err != nil {
+			continue
+		}
+		fi, err := os.Stat(real)
+		if err != nil || !fi.Mode().IsRegular() || (runtime.GOOS != "windows" && fi.Mode().Perm()&0o111 == 0) {
+			continue
+		}
+		return filepath.Dir(real)
+	}
+	return ""
+}
+
 // ThisOS is the operating system whose list the wall is built from: this process's own,
 // because the wall contains a card on THIS bench.
 func ThisOS() string { return runtime.GOOS }
-
-// sortNames is sort.Strings over a handful of names, kept here so the one list's file has
-// no import it needs for nothing else.
-func sortNames(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
-}

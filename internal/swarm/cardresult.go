@@ -7,6 +7,7 @@ package swarm
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
@@ -58,11 +59,8 @@ func findResultBelow(dir string, depth int) (string, bool) {
 		}
 	}
 	// repo/ first, then the rest in the order the directory was read (ReadDir sorts by name).
-	for i, name := range dirs {
-		if name == "repo" {
-			dirs = append([]string{name}, append(dirs[:i:i], dirs[i+1:]...)...)
-			break
-		}
+	if i := slices.Index(dirs, "repo"); i >= 0 {
+		dirs = append([]string{"repo"}, append(dirs[:i:i], dirs[i+1:]...)...)
 	}
 	for _, name := range dirs {
 		if p := filepath.Join(dir, name, "RESULT.md"); isRegularFile(p) {

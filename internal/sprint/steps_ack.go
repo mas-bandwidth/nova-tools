@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 )
@@ -179,9 +180,7 @@ func waive(s *Snapshot, id, who string, judgments []Note) (Change, []Note) {
 	}
 	set := map[string]string{"waived": strings.Join(append(Split(c.F("waived")), gone...), ","), "waived_by": who, "waived_at": stamp(s.Now)}
 	fields := map[string]string{}
-	for k, v := range c.Fields {
-		fields[k] = v
-	}
+	maps.Copy(fields, c.Fields)
 	fields["waived"] = set["waived"]
 	after := &Card{ID: c.ID, Row: c.Row, Col: c.Col, Score: c.Score, Fields: fields}
 	switch {
@@ -343,6 +342,9 @@ func Wait(s *Snapshot, r WaitReq) Plan {
 		p.refuse(r.Note, why)
 		return p
 	}
+	if stream, ok := StaleStream(r.Note); ok {
+		return waitStale(s, r, stream)
+	}
 	var entries []Open
 	for _, o := range s.Open {
 		if o.Note.ID == r.Note {
@@ -363,5 +365,25 @@ func Wait(s *Snapshot, r WaitReq) Plan {
 	u := Unit{Key: r.Note, Stream: n.Stream, Closes: entries, Notes: []Note{decided(entries[0], "wait until "+r.Until.UTC().Format(time.RFC3339), r.Who, s.Now), hold},
 		Moved: fmt.Sprintf("%s (%s) held until %s of running time", r.Note, n.Type, r.Until.UTC().Format(time.RFC3339))}
 	p.Units = append(p.Units, u)
+	return p
+}
+
+// waitStale quiets a stream's stale judgment until a time: the stream's control card
+// carries the time (FieldStaleReview), and the inbox does not show the stream stale before
+// it (docs/SPEC-SPRINT.md section 8). The id names the epoch, as every judgment's does.
+func waitStale(s *Snapshot, r WaitReq, stream string) Plan {
+	var p Plan
+	if e := IDEpoch(r.Note); e != s.Epoch {
+		p.refuse(r.Note, OtherEpoch(r.Note, e, s.Epoch))
+		return p
+	}
+	ctl := s.StreamCtl(stream)
+	if ctl == nil {
+		p.refuse(r.Note, "no stream "+stream+"; run: nova-sprint inbox")
+		return p
+	}
+	until := r.Until.UTC().Format(time.RFC3339)
+	p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: stream, Changes: []Change{change(Merge, setEntry(ctl, map[string]string{FieldStaleReview: until}))},
+		Moved: "stream " + stream + " not shown stale until " + until})
 	return p
 }

@@ -3,7 +3,10 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,7 +17,8 @@ import (
 
 // The inventory is the applied state, read from Redis: the machine rows
 // apply wrote (machines, machine:<m>, machine:<m>:ceiling), the fleet row
-// (fleet:store, fleet:coordinator), the loop rows (LoopsKey, LoopKey), each
+// (one fleet:<field> key per descriptor field), the loop rows (LoopsKey,
+// LoopKey), each
 // machine's measured facts (BeatKey) and config:decl's revisions. It reads
 // no Postgres: what the plays converge a fleet to is what apply put where the
 // running tools read it (docs/SPEC-CONFIG.md, "Declared and measured";
@@ -28,7 +32,7 @@ const loopField = "nova_loops"
 type Snapshot struct {
 	// Machines are the machine views by name: user, seat, slots, runners.
 	Machines map[string]View
-	// Fleet is the fleet row's view: store, coordinator.
+	// Fleet is the fleet row's view: store, coordinator, redis_port, pg_dsn.
 	Fleet View
 	// Loops are the loop views by name, nil when the loop kind was never
 	// applied (no rev:loop in config:decl).
@@ -88,11 +92,11 @@ type InventoryLoop struct {
 // machine with no row, is an error naming it: the plays never guess at a
 // unit.
 func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error) {
-	names := make([]string, 0, len(snap.Machines))
-	for m := range snap.Machines {
-		names = append(names, m)
+	redisPort, err := fleetRedisPort(snap.Fleet)
+	if err != nil {
+		return nil, err
 	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(snap.Machines))
 
 	loops, err := hostLoops(snap)
 	if err != nil {
@@ -129,6 +133,11 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		if loops != nil {
 			hv[loopField] = loops[m]
 		}
+		if store := snap.Fleet["store"]; store != "" {
+			hv["nova_redis_addr"] = store + ":" + strconv.Itoa(redisPort)
+		}
+		hv["nova_redis_port"] = redisPort
+		hv["nova_pg_dsn"] = snap.Fleet["pg_dsn"]
 		if localHost != "" && m == localHost {
 			hv["ansible_connection"] = "local"
 		}
@@ -149,9 +158,7 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		vars["nova_store"] = s
 	}
 	revs := map[string]int64{}
-	for k, r := range snap.Revs {
-		revs[k] = r
-	}
+	maps.Copy(revs, snap.Revs)
 	vars["nova_config_rev"] = revs
 	if runnerHosts == nil {
 		runnerHosts = []string{}
@@ -167,6 +174,32 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 	}, nil
 }
 
+func fleetRedisPort(fleet View) (int, error) {
+	if err := ValidateFleetEndpoints(fleet); err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(fleet["redis_port"])
+}
+
+// ValidateFleetEndpoints refuses incomplete fleet endpoints before apply
+// writes or inventory rewrites loop argv (docs/SPEC-CONFIG.md, "Apply").
+func ValidateFleetEndpoints(fleet View) error {
+	var missing []string
+	for _, field := range []string{"redis_port", "pg_dsn"} {
+		if fleet[field] == "" {
+			missing = append(missing, field)
+		}
+	}
+	const remedy = "nova-config fleet set --redis_port <port> --pg_dsn <dsn> --as <actor>, then nova-config apply --kind fleet --as <actor>"
+	if len(missing) > 0 {
+		return fmt.Errorf("fleet: endpoints are unset: %s; run: %s", strings.Join(missing, ", "), remedy)
+	}
+	if err := checkFleet(Row{Fields: fleet}); err != nil {
+		return fmt.Errorf("fleet: %w; run: %s", err, remedy)
+	}
+	return nil
+}
+
 // hostLoops is every machine's loops, sorted by name, every machine present
 // with an empty list when it runs none; nil when the loop kind was never
 // applied.
@@ -178,12 +211,7 @@ func hostLoops(snap *Snapshot) (map[string][]InventoryLoop, error) {
 	for m := range snap.Machines {
 		out[m] = []InventoryLoop{}
 	}
-	names := make([]string, 0, len(snap.Loops))
-	for n := range snap.Loops {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
+	for _, n := range slices.Sorted(maps.Keys(snap.Loops)) {
 		v := snap.Loops[n]
 		m := v["machine"]
 		if _, ok := out[m]; !ok {
@@ -199,7 +227,7 @@ func hostLoops(snap *Snapshot) (map[string][]InventoryLoop, error) {
 }
 
 // parseLoop reads one loop view: argv the JSON text of a list of strings,
-// keys a comma list, every and width decimal text, keepalive and enabled
+// keys a comma list, every decimal text, keepalive and enabled
 // "true" or "false", exactly one of every above 0 and keepalive.
 func parseLoop(name string, v View) (InventoryLoop, error) {
 	bad := func(field, why string) (InventoryLoop, error) {
@@ -216,6 +244,7 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 	if err := json.Unmarshal([]byte(v["argv"]), &l.Argv); err != nil || len(l.Argv) == 0 {
 		return bad("argv", "is not a JSON list of at least one string")
 	}
+	l.Argv = memberArgv(l.Argv)
 	for _, k := range strings.Split(v["keys"], ",") {
 		if k = strings.TrimSpace(k); k != "" {
 			l.Keys = append(l.Keys, k)
@@ -242,6 +271,31 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 		return bad("every", "and keepalive disagree: a loop runs every n seconds or is kept alive, exactly one")
 	}
 	return l, nil
+}
+
+// memberArgv removes a persisted endpoint assignment from the /usr/bin/env
+// prefix of a nova-swarm member. The fleet row supplies that value to the
+// rendered unit environment, while every other assignment and argv word stays
+// byte-for-byte the row's. A non-member loop is untouched.
+func memberArgv(argv []string) []string {
+	if len(argv) < 3 || filepath.Base(argv[0]) != "env" {
+		return argv
+	}
+	program := 1
+	for program < len(argv) && strings.Contains(argv[program], "=") {
+		program++
+	}
+	if program+1 >= len(argv) || filepath.Base(argv[program]) != "nova-swarm" || argv[program+1] != "member" {
+		return argv
+	}
+	out := make([]string, 0, len(argv))
+	out = append(out, argv[0])
+	for _, word := range argv[1:program] {
+		if !strings.HasPrefix(word, "NOVA_SPRINT_REDIS=") {
+			out = append(out, word)
+		}
+	}
+	return append(out, argv[program:]...)
 }
 
 func orZero(s string) string {
@@ -309,6 +363,8 @@ type fixture struct {
 	Fleet struct {
 		Store       string `yaml:"store"`
 		Coordinator string `yaml:"coordinator"`
+		RedisPort   *int   `yaml:"redis_port"`
+		PGDSN       string `yaml:"pg_dsn"`
 	} `yaml:"fleet"`
 	// Loops is a pointer so a fixture without the key is a fleet whose
 	// loops were never applied, and `loops: {}` one that runs none.
@@ -357,7 +413,11 @@ func LoadFixture(path string) (*Snapshot, error) {
 			snap.Beats[m] = &Beat{OS: r.OS, Arch: r.Arch}
 		}
 	}
-	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator}
+	redisPort := ""
+	if f.Fleet.RedisPort != nil {
+		redisPort = strconv.Itoa(*f.Fleet.RedisPort)
+	}
+	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN}
 	snap.Revs[KindMachine], snap.Revs[KindFleet] = 1, 1
 	if f.Loops != nil {
 		snap.Loops = map[string]View{}

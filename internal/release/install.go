@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -221,6 +222,14 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 			skipped++
 			continue
 		}
+		// AND WHEN ITS BYTES ARE ALREADY THESE. An --incremental build ships
+		// an unchanged tool as the earlier build's binary, which answers the
+		// earlier version; renaming identical bytes over it would only make
+		// the loop running it drain and restart on a binary nothing changed.
+		if sum, err := fileSum(target); err == nil && sum == a.Sum {
+			skipped++
+			continue
+		}
 		progress(errs, "installing %s", a.Name)
 		if err := atomicInstall(filepath.Join(dir, a.Name), target); err != nil {
 			fmt.Fprintf(errs, "INSTALL FAIL tool=%s bin=%s: %s (fix the permission or the disk and install again; %d of %d were in place)\n",
@@ -310,12 +319,7 @@ func pruneInstalled(root, bin string, keep func(string) bool, errs io.Writer) (i
 // separator so that no tag is matched out of the value half of a version line's
 // `key=value` extra -- the stamp is field two, alone, in every binary (#1297).
 func hasToken(line, version string) bool {
-	for _, f := range strings.Fields(strings.ReplaceAll(line, "=", " ")) {
-		if f == version {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Fields(strings.ReplaceAll(line, "=", " ")), version)
 }
 
 // atomicInstall writes beside the target and renames over it. The rename is what

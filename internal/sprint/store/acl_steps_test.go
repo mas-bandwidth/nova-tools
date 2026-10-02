@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"strings"
 	"testing"
@@ -98,7 +99,7 @@ func rolePatterns(t *testing.T, role string) []string {
 		}
 		return out
 	}
-	t.Fatalf("no role %s in redisacl.Roles", role)
+	require.FailNow(t, fmt.Sprintf("no role %s in redisacl.Roles", role))
 	return nil
 }
 
@@ -136,7 +137,7 @@ func TestEveryStepReadsOnlyKeysItsRoleMayRead(t *testing.T) {
 		{name: "finish failed with usage", role: redisacl.Member, step: FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, As: "m1", Gens: gens, Failed: true, Report: "provider failure: 529", Usage: usage})},
 		{name: "read begin", role: redisacl.Member, step: ReadStep(sprint.ReadReq{Sel: sprint.Sel{Limit: 1}, As: "reader-a", Begin: true})},
 		{name: "read ok with usage", role: redisacl.Member, step: ReadStep(sprint.ReadReq{Sel: sprint.Sel{Limit: 1}, As: "reader-a", Verdict: "ok", Usage: usage})},
-		{name: "read broken with usage", role: redisacl.Member, step: ReadStep(sprint.ReadReq{Sel: sprint.Sel{Limit: 1}, As: "reader-a", Verdict: "broken", Usage: usage})},
+		{name: "read broken with usage", role: redisacl.Member, step: ReadStep(sprint.ReadReq{Sel: sprint.Sel{Limit: 1}, As: "reader-a", Verdict: "broken", Finding: "f:1", Usage: usage})},
 		{name: "read return with usage", role: redisacl.Member, step: ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{"s1-1.r1.reader-a"}}, As: "reader-a", Return: true, Reason: "no verdict", Usage: usage})},
 		// the coordinator's steps read the whole route set
 		{name: "deal", role: redisacl.Coordinator, step: DealStep(sprint.DealReq{})},

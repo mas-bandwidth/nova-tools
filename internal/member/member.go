@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -33,6 +34,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // Sprint runs one sprint verb and returns its exit code and stdout.
@@ -189,11 +192,11 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		if len(why) >= len("nothing:") && strings.EqualFold(why[:len("nothing:")], "nothing:") {
 			why = strings.TrimSpace(why[len("nothing:"):])
 		}
-		return FinishFailed, "nothing to do: " + why
+		return FinishFailed, cardhdr.EndNothing + ": " + why
 	case r.Verdict != "ok":
 		return FinishFailed, "verdict " + r.Verdict
 	case pu.Sha == "":
-		return FinishFailed, "no commit: " + pu.None
+		return FinishFailed, cardhdr.EndNoCommit + ": " + pu.None
 	}
 	return FinishOK, ""
 }
@@ -718,7 +721,15 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				}
 				continue
 			}
-			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") {
+			finding := oneLine(r.Report)
+			if r.Verdict == "broken" {
+				finding = findingOf(r)
+			}
+			// a broken verdict whose finding names no file, line or rule is no verdict
+			// (docs/SPEC-CARD-CONTRACT.md section 3): handed back as "no finding", so the
+			// sprint asks another reader and the coordinator never judges on nothing
+			noFinding := r.Ran && r.Verdict == "broken" && !typedrec.NamesADefect(finding)
+			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") || noFinding {
 				// no verdict is no finding, and not a read: the read is
 				// returned, and the sprint's next tick asks it of another
 				// reader free at the attempt, or of this reader again, which
@@ -727,10 +738,16 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				// JudgedOnlyAfterTheBound). A return refused leaves the
 				// launch spent: the read stays for the lateness rule.
 				why := oneLine(r.Report)
-				if r.End == EndStaging {
+				switch {
+				case r.End == EndStaging:
 					why = EndStaging + ": " + oneLine(r.Staging) // the stage's reason, to the inbox
+				case r.End == EndProvider && r.Provider != "":
+					why = EndProvider + ": " + oneLine(r.Provider) // the provider's cause, as Judge names it
 				}
 				reason := cut(fmt.Sprintf("no verdict (ran=%t verdict=%q): %s", r.Ran, r.Verdict, why))
+				if noFinding {
+					reason = cut(NoFinding + ": the broken read names no file, line or rule: " + finding)
+				}
 				args := append(append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, usageArgs(r)...), launched...)
 				code, out := m.run(args...)
 				fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, code, reason)
@@ -752,7 +769,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			if r.Verdict == "broken" {
 				word = "--broken"
 			}
-			args = append(append([]string{"read", "--as", m.cfg.As, word, id, "--finding", oneLine(r.Report)}, usageArgs(r)...), launched...)
+			args = append(append([]string{"read", "--as", m.cfg.As, word, id, "--finding", finding}, usageArgs(r)...), launched...)
 		} else {
 			pu := *l.push
 			fin, why := Judge(r, pu)
@@ -1003,11 +1020,7 @@ func (m *Member) start(p Packet) bool {
 // the pass asks for it when it is not (a test's member: a pass is one step).
 func (m *Member) long(work func()) {
 	if m.cfg.Background {
-		m.longs.Add(1)
-		go func() {
-			defer m.longs.Done()
-			work()
-		}()
+		m.longs.Go(work)
 		return
 	}
 	work()
@@ -1047,12 +1060,7 @@ func (m *Member) collect() (acted int) {
 	posted := m.posted
 	m.posted = map[string]post{}
 	m.postMu.Unlock()
-	cards := make([]string, 0, len(posted))
-	for card := range posted {
-		cards = append(cards, card)
-	}
-	sort.Strings(cards)
-	for _, card := range cards {
+	for _, card := range slices.Sorted(maps.Keys(posted)) {
 		po := posted[card]
 		l, ours := m.running[card]
 		if !ours || !l.busy {
@@ -1326,6 +1334,39 @@ func cut(s string) string {
 	return s
 }
 
+// NoFinding begins the reason of a read the member hands back because its broken verdict
+// names no defect (docs/SPEC-CARD-CONTRACT.md section 3).
+const NoFinding = "no finding"
+
+// MaxFindingBytes bounds a broken read's finding as the member reports it: under the
+// sprint's bound on a card's text field (sprint.MaxCardTextBytes), so a long review is cut,
+// never refused.
+const MaxFindingBytes = 6 << 10
+
+// findingOf is a broken read's finding as the member reports it: every line of its report
+// and its body in order, the body's repeat of the report and markdown headings left out,
+// joined with " / " and cut to MaxFindingBytes, never its first line alone
+// (docs/SPEC-SPRINT.md section 6: the coordinator's judgment shows the finding in full).
+func findingOf(r Result) string {
+	report := oneLine(r.Report)
+	lines := []string{}
+	if report != "" {
+		lines = append(lines, report)
+	}
+	repeat := report != ""
+	for _, l := range strings.Split(r.Body, "\n") {
+		l = strings.TrimSpace(l)
+		switch {
+		case l == "" || strings.HasPrefix(l, "#"):
+		case repeat && l == report:
+			repeat = false
+		default:
+			lines = append(lines, l)
+		}
+	}
+	return oneline.Cap(strings.Join(lines, " / "), MaxFindingBytes)
+}
+
 // oneLine is a report as one line for a verb's flag: the first non-empty
 // line, cut at 500 bytes; "" when there is none.
 func oneLine(s string) string {
@@ -1381,14 +1422,14 @@ func CardText(p Packet) string {
 		}
 	}
 	if p.Kind == "read" {
-		b.WriteString("Your verdict is RESULT.md's `verdict: ok` or `verdict: broken` (broken means the work is wrong for the card, with the finding as your report; a problem of your own run is not a verdict, leave the line out). ")
+		b.WriteString("Your verdict is RESULT.md's `verdict: ok` or `verdict: broken` (broken means the work is wrong for the card; a problem of your own run is not a verdict, leave the line out). ")
+		b.WriteString("A broken verdict tells them what to do: at least one finding line names the file (file:line), the line, or the card's STEP or RULE the work breaks, and says what to change. A broken verdict that names none is no verdict: the sprint asks another reader. ")
+		b.WriteString("Your RESULT.md's `report:` line and its body are what the sprint records as your finding, in full; the member reports it for you as:\n\n")
+		fmt.Fprintf(&b, "    nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<your findings>'\n", p.As, p.Card, p.Epoch)
+		return b.String()
 	}
 	b.WriteString("Your RESULT.md's `report:` line is what the sprint records as your report; the member reports it for you as:\n\n")
-	if p.Kind == "read" {
-		fmt.Fprintf(&b, "    nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<one line>'\n", p.As, p.Card, p.Epoch)
-	} else {
-		fmt.Fprintf(&b, "    nova-sprint finish --as %s %s@%d --epoch %d --branch %s --head <sha> --report '<one line>' [--failed]\n", p.As, p.Card, p.Gen, p.Epoch, p.Branch)
-	}
+	fmt.Fprintf(&b, "    nova-sprint finish --as %s %s@%d --epoch %d --branch %s --head <sha> --report '<one line>' [--failed]\n", p.As, p.Card, p.Gen, p.Epoch, p.Branch)
 	return b.String()
 }
 

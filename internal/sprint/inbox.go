@@ -1,6 +1,10 @@
 package sprint
 
 import (
+	"cmp"
+	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +20,12 @@ type StreamClock struct {
 	Progress time.Time
 	// Empty says nothing of the stream is on the table: never stale.
 	Empty bool `json:",omitempty"`
+	// Held says every card of the stream on the table and not landed waits (on a
+	// sentinel, or a need): it is held by what it waits on, never stale.
+	Held bool `json:",omitempty"`
+	// Quiet is the time wait set on the stream's stale judgment (FieldStaleReview):
+	// not shown stale before it.
+	Quiet time.Time `json:",omitzero"`
 }
 
 // Stalled says a stream that has not landed has made no progress for longer
@@ -36,6 +46,7 @@ type InboxReq struct {
 	Deadline time.Duration // a judgment open longer, in running time, is overdue
 	Stale    time.Duration // a moving stream unchanged longer, in running time, needs a look
 	Prefix   string        // the deployment's prefix (empty for none), for the commands that name it
+	Epoch    uint64        // the sprint's epoch: the stale groups' ids carry it
 	// Stopped is the time the machine was STOPPED between two clock
 	// readings: the deadlines count running time only, as the tick's do. nil
 	// is none.
@@ -84,16 +95,19 @@ func (r InboxReq) due(n Note) (time.Time, bool) {
 // stalled stream, stale:<stream>), never its position in the list, so a verb
 // given --group <id> acts on this group or is refused, never on another.
 type Group struct {
-	ID        string        `json:"id"`
-	Kind      string        `json:"kind"`
-	Type      string        `json:"type"`
-	Stream    string        `json:"stream,omitempty"`
-	Count     int           `json:"count"`
-	Size      int           `json:"size"` // the members a verb given --group acts on
-	Primaries []string      `json:"primaries,omitempty"`
-	Notes     []string      `json:"notes,omitempty"`
-	Marked    bool          `json:"marked,omitempty"`
-	Overdue   bool          `json:"overdue,omitempty"`
+	ID        string   `json:"id"`
+	Kind      string   `json:"kind"`
+	Type      string   `json:"type"`
+	Stream    string   `json:"stream,omitempty"`
+	Count     int      `json:"count"`
+	Size      int      `json:"size"` // the members a verb given --group acts on
+	Primaries []string `json:"primaries,omitempty"`
+	Notes     []string `json:"notes,omitempty"`
+	Marked    bool     `json:"marked,omitempty"`
+	Overdue   bool     `json:"overdue,omitempty"`
+	// Quiet is a judgment group every note of which the coordinator set a review time on
+	// (wait) that has not come: listed after every judgment that is not quiet.
+	Quiet     bool          `json:"quiet,omitempty"`
 	Oldest    time.Time     `json:"oldest"`
 	Due       time.Time     `json:"due"`
 	Waited    time.Duration `json:"waited_ns"`
@@ -118,8 +132,24 @@ type Group struct {
 	Hint string `json:"hint,omitempty"`
 }
 
-// StaleGroupID is the id of a stalled stream's group.
-func StaleGroupID(stream string) string { return "stale:" + stream }
+// StaleGroupID is the id of a stalled stream's group: the stream and the sprint's epoch,
+// as every judgment id carries it, so wait takes it at the epoch it is shown at.
+func StaleGroupID(stream string, epoch uint64) string {
+	return fmt.Sprintf("stale:%s~%d", stream, epoch)
+}
+
+// StaleStream is the stream a stalled stream's group id names, and whether id is one.
+func StaleStream(id string) (string, bool) {
+	rest, ok := strings.CutPrefix(id, "stale:")
+	if !ok || rest == "" {
+		return "", false
+	}
+	return CardID(rest), true
+}
+
+// FieldStaleReview is the stream control card's field wait sets on the stream's stale
+// judgment: the inbox does not show the stream stale before it.
+const FieldStaleReview = "stale_review"
 
 // Inbox groups: what happened since the cursor addressed to someone first
 // (the coordinator's "the sprint is done", errata 3 amendment 6: no judgment
@@ -142,6 +172,7 @@ func Inbox(r InboxReq) []Group {
 		}
 		members[i][s] = true
 	}
+	loud := map[int]bool{} // a group with a note no wait has quieted
 	for _, o := range r.Open {
 		n := o.Note
 		due, overdue := r.due(n)
@@ -163,12 +194,12 @@ func Inbox(r InboxReq) []Group {
 		}
 		g.Marked = g.Marked || n.Marked || overdue
 		g.Overdue = g.Overdue || overdue
+		// quiet: a review time the coordinator set (wait) that has not come
+		loud[i] = loud[i] || n.Review.IsZero() || overdue
 		if n.At.Before(g.Oldest) {
 			g.Oldest = n.At
 		}
-		if n.Before > g.Before {
-			g.Before = n.Before
-		}
+		g.Before = max(g.Before, n.Before)
 		if g.What == "" {
 			g.What = n.What
 		}
@@ -206,11 +237,12 @@ func Inbox(r InboxReq) []Group {
 	for i := range judg {
 		judg[i].ID = first[i].ID
 		judg[i].Waited = r.running(judg[i].Oldest)
-		judg[i].Members = sortedSet(members[i])
+		judg[i].Members = slices.Sorted(maps.Keys(members[i]))
 		judg[i].Size = len(judg[i].Members)
 		sort.Strings(judg[i].Primaries)
 		sort.Strings(judg[i].Notes)
 		judg[i].Commands = commands(judg[i], first[i], r.Prefix)
+		judg[i].Quiet = !loud[i]
 	}
 	sort.SliceStable(judg, func(i, j int) bool {
 		if judg[i].Marked != judg[j].Marked {
@@ -220,15 +252,18 @@ func Inbox(r InboxReq) []Group {
 	})
 	out := judg
 	for _, st := range r.Streams {
-		if st.State == StreamLanded || st.Empty || r.Stale <= 0 || st.Progress.IsZero() || r.running(st.Progress) <= r.Stale {
+		if st.State == StreamLanded || st.Empty || st.Held || r.Now.Before(st.Quiet) || r.Stale <= 0 || st.Progress.IsZero() || r.running(st.Progress) <= r.Stale {
 			continue
 		}
-		g := Group{ID: StaleGroupID(st.Stream), Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,
+		g := Group{ID: StaleGroupID(st.Stream, r.Epoch), Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,
 			Oldest: st.Progress, Due: st.Progress.Add(r.Stale + r.Now.Sub(st.Progress) - r.running(st.Progress)), Waited: r.running(st.Progress), Decisions: Decisions[NStreamStale],
 			What: "state " + st.State + " since " + st.Since.UTC().Format(time.RFC3339)}
 		g.Commands = commands(g, Note{}, r.Prefix)
 		out = append(out, g)
 	}
+	// a judgment quieted by wait is listed after every one that is not, for its
+	// whole period, so it does not sit at the top of every read (section 8)
+	sort.SliceStable(out, func(i, j int) bool { return !out[i].Quiet && out[j].Quiet })
 	var rest []Group
 	at = map[string]int{}
 	restMembers := map[int]map[string]bool{}
@@ -265,7 +300,7 @@ func Inbox(r InboxReq) []Group {
 	}
 	var done, top, other []Group
 	for i := range rest {
-		rest[i].Members = sortedSet(restMembers[i])
+		rest[i].Members = slices.Sorted(maps.Keys(restMembers[i]))
 		rest[i].Size = len(rest[i].Members)
 		switch {
 		case rest[i].Type == NSprintDone:
@@ -289,15 +324,6 @@ func FindGroup(groups []Group, id string) (Group, bool) {
 		}
 	}
 	return Group{}, false
-}
-
-func sortedSet(m map[string]bool) []string {
-	var out []string
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // Command is one decision open to the coordinator as the commands that make
@@ -447,7 +473,7 @@ func commands(g Group, first Note, prefix string) []Command {
 		case d == "check":
 			add(d, cmd+"check")
 		case d == "wait":
-			add(d, cmd+"wait "+first.ID+" --for 30m")
+			add(d, cmd+"wait "+cmp.Or(first.ID, g.ID)+" --for 30m") // a stale stream's group has no note: its id
 		case d == "look at the card":
 			add(d, look()...)
 		case d == "repair":

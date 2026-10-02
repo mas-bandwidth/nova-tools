@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -53,9 +55,7 @@ func runChildIn(t *testing.T, mode, dir, gotmp string) (string, error) {
 		childMode+"="+mode,
 	)
 	bin, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	cmd := exec.CommandContext(t.Context(), bin, "-test.run=^TestGuardChildProcess$", "-test.count=1", "-test.v")
 	cmd.Env = env
 	cmd.Dir = dir
@@ -73,19 +73,13 @@ func runChildIn(t *testing.T, mode, dir, gotmp string) (string, error) {
 func TestFakeUnderGOTMPDIRIsAFake(t *testing.T) {
 	t.Parallel()
 	gotmp, out, err := runChild(t, "gotmpdir")
-	if err != nil {
-		t.Fatalf("a fake in t.TempDir() under GOTMPDIR was refused as a host: %v\n%s", err, out)
-	}
+	require.NoError(t, err, "a fake in t.TempDir() under GOTMPDIR was refused as a host: %v\n%s", err, out)
 	_, rest, ok := strings.Cut(out, "FAKE-OK ")
-	if !ok {
-		t.Fatalf("the child never reached the seam:\n%s", out)
-	}
+	require.True(t, ok, "the child never reached the seam:\n%s", out)
 	fake, _, _ := strings.Cut(rest, "\n")
 	// A string prefix, not under(): the child has removed its t.TempDir() by
 	// now, so the fake no longer resolves, and MkdirTemp joins GOTMPDIR as given.
-	if !strings.HasPrefix(fake, gotmp+string(filepath.Separator)) {
-		t.Fatalf("the child's t.TempDir() is not under GOTMPDIR %s: %s; the toolchain no longer follows GOTMPDIR and this test reads nothing", gotmp, fake)
-	}
+	require.True(t, strings.HasPrefix(fake, gotmp+string(filepath.Separator)), "the child's t.TempDir() is not under GOTMPDIR %s: %s; the toolchain no longer follows GOTMPDIR and this test reads nothing", gotmp, fake)
 }
 
 // TestRelativeGOTMPDIRIsAFake pins tempRoots' relative-root handling: GOTMPDIR
@@ -97,21 +91,13 @@ func TestRelativeGOTMPDIRIsAFake(t *testing.T) {
 	t.Parallel()
 	const rel = "rgotmp"
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, rel), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(filepath.Join(dir, rel), 0o755))
 	out, err := runChildIn(t, "gotmpdir", dir, rel)
-	if err != nil {
-		t.Fatalf("a fake in t.TempDir() under a relative GOTMPDIR %q was refused as a host: %v\n%s", rel, err, out)
-	}
+	require.NoError(t, err, "a fake in t.TempDir() under a relative GOTMPDIR %q was refused as a host: %v\n%s", rel, err, out)
 	_, rest, ok := strings.Cut(out, "FAKE-OK ")
-	if !ok {
-		t.Fatalf("the child never reached the seam:\n%s", out)
-	}
+	require.True(t, ok, "the child never reached the seam:\n%s", out)
 	fake, _, _ := strings.Cut(rest, "\n")
-	if !strings.HasPrefix(fake, rel+string(filepath.Separator)) {
-		t.Fatalf("the child's fake %s is not under the relative GOTMPDIR %s; the toolchain no longer joins GOTMPDIR as given and this test reads nothing", fake, rel)
-	}
+	require.True(t, strings.HasPrefix(fake, rel+string(filepath.Separator)), "the child's fake %s is not under the relative GOTMPDIR %s; the toolchain no longer joins GOTMPDIR as given and this test reads nothing", fake, rel)
 }
 
 // TestRealSSHIsNotAFake is the other half: adding GOTMPDIR to the roots must
@@ -124,12 +110,9 @@ func TestRealSSHIsNotAFake(t *testing.T) {
 		t.Skipf("%s is not on this machine (%v); there is no real ssh to refuse", ssh, err)
 	}
 	_, out, err := runChild(t, "realssh")
-	if err != nil {
-		t.Fatalf("the child failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "REFUSED ") || !strings.Contains(out, `"`+ssh+`"`) {
-		t.Fatalf("the armed guard must refuse %s; the child said:\n%s", ssh, out)
-	}
+	require.NoError(t, err, "the child failed: %v\n%s", err, out)
+	require.Contains(t, out, "REFUSED ", "the armed guard must refuse %s; the child said:\n%s", ssh, out)
+	require.Contains(t, out, `"`+ssh+`"`, "the armed guard must refuse %s; the child said:\n%s", ssh, out)
 }
 
 // TestGuardChildProcess is the child half of the three tests above. Run on its
@@ -140,27 +123,19 @@ func TestGuardChildProcess(t *testing.T) {
 	case "":
 		t.Skip("child half of TestFakeUnderGOTMPDIRIsAFake, TestRelativeGOTMPDIRIsAFake and TestRealSSHIsNotAFake; runs only when started by them")
 	case "gotmpdir":
-		if !Refusing() {
-			t.Fatalf("the child must run under %s=1", EnvNoHost)
-		}
+		require.True(t, Refusing(), "the child must run under %s=1", EnvNoHost)
 		fake := filepath.Join(t.TempDir(), "ssh")
 		if runtime.GOOS == "windows" {
 			fake += ".bat"
 		}
-		if err := testbin.WriteExecutable(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, testbin.WriteExecutable(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 		RefuseHosts(fake, "hulk", "uptime") // a panic here fails the parent with the refusal
 		fmt.Printf("FAKE-OK %s\n", fake)
 	case "realssh":
-		if !Refusing() {
-			t.Fatalf("the child must run under %s=1", EnvNoHost)
-		}
+		require.True(t, Refusing(), "the child must run under %s=1", EnvNoHost)
 		defer func() {
 			r := recover()
-			if r == nil {
-				t.Fatal("the armed guard let the system ssh through")
-			}
+			require.True(t, r != nil, "the armed guard let the system ssh through")
 			fmt.Printf("REFUSED %v\n", r)
 		}()
 		RefuseHosts("/usr/bin/ssh", "hulk", "uptime")

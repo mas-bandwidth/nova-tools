@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // nova-tools #1737: on WSL2 the distro's /etc/resolv.conf is a symlink to
@@ -20,27 +22,17 @@ func TestWSL2ResolverConfigSymlinkDirectoryIsGranted(t *testing.T) {
 
 	base := t.TempDir()
 	targetDir := filepath.Join(base, "mnt", "wsl")
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(targetDir, 0o755))
 	target := filepath.Join(targetDir, "resolv.conf")
-	if err := os.WriteFile(target, []byte("nameserver 10.255.255.254\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(target, []byte("nameserver 10.255.255.254\n"), 0o644))
 	link := filepath.Join(base, "resolv.conf")
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("skipped: cannot create a symlink here (%v); the WSL2 fixture is a symlink", err)
 	}
 
 	want, err := filepath.EvalSymlinks(targetDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	dir := resolverConfigDirectory(link)
-	if dir != want {
-		t.Fatalf("the resolver config %s resolves to %s, whose directory is %s, but resolverConfigDirectory returned %q; a name lookup inside the wall fails with \"Could not resolve host\" while TCP by IP still works", link, target, want, dir)
-	}
-	if dir == filepath.Dir(link) {
-		t.Fatalf("granted the symlink's own directory %s, which is the /etc case the static table already has; the WSL2 target sits outside it", dir)
-	}
+	require.Equal(t, want, dir, "the resolver config %s resolves to %s, whose directory is %s, but resolverConfigDirectory returned %q; a name lookup inside the wall fails with \"Could not resolve host\" while TCP by IP still works", link, target, want, dir)
+	require.NotEqual(t, filepath.Dir(link), dir, "granted the symlink's own directory %s, which is the /etc case the static table already has; the WSL2 target sits outside it", dir)
 }

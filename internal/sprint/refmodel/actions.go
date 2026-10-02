@@ -1,6 +1,7 @@
 package refmodel
 
 import (
+	"slices"
 	"sort"
 )
 
@@ -110,7 +111,7 @@ func Add(s State, a AddArgs, scores map[string]float64) (State, error) {
 		// Section 16: a sentinel whose needs have all landed or been
 		// waived is marked reached by the step in which that becomes
 		// true: for one admitted with nothing to wait for, the add.
-		if n.Primaries[id].Kind == KindSentinel && n.NeedsMet(id) {
+		if n.Primaries[id].Kind == KindSentinel && n.NeedsMet(id) && n.Reachable(id) {
 			n.setPrimary(id, func(p *Primary) { p.Reached = true })
 			n.open(JReached, id)
 		}
@@ -466,7 +467,7 @@ func AskAnother(s State, p, r string) (State, error) {
 		return s, refuse("every reader has read %s at attempt %d", p, pr.Attempt)
 	}
 	id := RC(p, pr.Attempt, r)
-	if !has(s.Readers, r) {
+	if !slices.Contains(s.Readers, r) {
 		return s, badChoice("%s is not a reader", r)
 	}
 	if _, made := s.Reads[id]; made {
@@ -680,7 +681,7 @@ func Drop(s State, p string) (State, error) {
 	n.Streams[st] = x
 	for _, q := range Keys(n.Primaries) {
 		qp := n.Primaries[q]
-		if qp.State == Waiting && has(qp.Needs, p) && !has(qp.Waived, p) {
+		if qp.State == Waiting && slices.Contains(qp.Needs, p) && !slices.Contains(qp.Waived, p) {
 			n.open(JBlocked, q)
 		}
 	}
@@ -699,16 +700,16 @@ func (s State) streamAfter(stream, was string, landing, leaving []string) string
 		return SStopped
 	}
 	for id, m := range s.Merge {
-		if m.Place == Queued && s.Primaries[id].Stream == stream && !has(landing, id) && !has(leaving, id) {
+		if m.Place == Queued && s.Primaries[id].Stream == stream && !slices.Contains(landing, id) && !slices.Contains(leaving, id) {
 			return SMerging
 		}
 	}
 	landed := false
 	for id, p := range s.Primaries {
-		if p.Stream != stream || p.State == Off || has(leaving, id) {
+		if p.Stream != stream || p.State == Off || slices.Contains(leaving, id) {
 			continue
 		}
-		if p.State == Landed || has(landing, id) {
+		if p.State == Landed || slices.Contains(landing, id) {
 			landed = true
 			continue
 		}
@@ -798,9 +799,7 @@ func MergeGreen(s State, stream string, batch int) (State, error) {
 	if len(q) == 0 || batch < 1 {
 		return s, refuse("stream %s has nothing queued", stream)
 	}
-	if batch > len(q) {
-		batch = len(q)
-	}
+	batch = min(batch, len(q))
 	b := q[:batch]
 	for _, x := range s.MergeCell(stream, Stuck) {
 		if s.Primaries[x].Score < s.Primaries[b[len(b)-1]].Score {
@@ -831,7 +830,7 @@ func (n *State) resolveAll() {
 			continue
 		}
 		if pr.Kind == KindSentinel {
-			if !pr.Reached {
+			if !pr.Reached && n.Reachable(p) {
 				pr.Reached = true
 				n.Primaries[p] = pr
 				n.open(JReached, p)
@@ -856,10 +855,8 @@ func MergeStop(s State, stream string, batch int, p, cause, q string) (State, er
 		return s, refuse("stream %s is not merging", stream)
 	}
 	queued := s.MergeCell(stream, Queued)
-	if batch > len(queued) {
-		batch = len(queued)
-	}
-	if !has(queued[:batch], p) {
+	batch = min(batch, len(queued))
+	if !slices.Contains(queued[:batch], p) {
 		return s, refuse("%s is not in the batch %v", p, queued[:batch])
 	}
 	note := JConflict
@@ -1238,7 +1235,7 @@ func (s State) nextReader(set []string) string {
 	order := sorted(s.Readers)
 	at := roundFrom(order, s.AskLast)
 	for i := range order {
-		if r := order[(at+i)%len(order)]; has(set, r) {
+		if r := order[(at+i)%len(order)]; slices.Contains(set, r) {
 			return r
 		}
 	}
@@ -1315,14 +1312,14 @@ func Ack(s State, typ string, subjects []string, waive []string) (State, error) 
 	if len(subjects) == 0 {
 		return s, refuse("ack names no judgment")
 	}
-	if !has(ackable, typ) {
+	if !slices.Contains(ackable, typ) {
 		return s, refuse("ack does not answer %s: its decisions do not list ack", typ)
 	}
 	for _, sub := range subjects {
 		if !s.Open[Judgment{typ, sub}] {
 			return s, refuse("no open judgment %s on %s", typ, sub)
 		}
-		if has(stopTypes, typ) {
+		if slices.Contains(stopTypes, typ) {
 			if st := s.Streams[sub[len("stream:"):]]; st.State == SStopped {
 				return s, refuse("the judgment of stopped stream %s stays open", sub)
 			}
@@ -1335,7 +1332,7 @@ func Ack(s State, typ string, subjects []string, waive []string) (State, error) 
 		case JBlocked:
 			var named []string
 			for _, q := range waive {
-				if has(n.DroppedNeeds(sub), q) {
+				if slices.Contains(n.DroppedNeeds(sub), q) {
 					named = append(named, q)
 				}
 			}

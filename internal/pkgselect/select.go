@@ -2,11 +2,12 @@ package pkgselect
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -45,7 +46,8 @@ func (e *ListError) Error() string { return strings.TrimRight(e.Text, "\n") }
 // Select prints the ./cmd, ./internal and ./tools Go packages a change touches,
 // plus every in-repo package that imports one of them, or with All the whole
 // tree. The diff is read against Options.Base. A go.mod or go.sum change puts
-// every package in scope. Deprecated packages are never selected (Live).
+// every package in scope. A changed file that is not Go selects the packages
+// whose tests or testdata name it (keyedPackages). Deprecated packages are never selected (Live).
 //
 // NEVER SILENTLY NOTHING. On PR #4370's final head the shards reported
 // `test (nothing)` because `go list` failed on a runner (a shared GOCACHE race:
@@ -172,22 +174,13 @@ func (s *selector) treeFromFiles() ([]string, error) {
 		}
 		dirs["./"+path.Dir(f)] = true
 	}
-	out := make([]string, 0, len(dirs))
-	for d := range dirs {
-		out = append(out, d)
-	}
-	sort.Strings(out)
+	out := slices.Sorted(maps.Keys(dirs))
 	return s.dep.Live(out), nil
 }
 
 // hasBuildLine reports whether any line of the file starts with //go:build.
 func hasBuildLine(b []byte) bool {
-	for _, l := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(l, "//go:build") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(string(b), "\n"), func(l string) bool { return strings.HasPrefix(l, "//go:build") })
 }
 
 var goModFileRe = regexp.MustCompile(`^(go\.mod|go\.sum)$`)
@@ -307,6 +300,16 @@ func (s *selector) selectChange() (Outcome, error) {
 	// every run for the same reason.
 	want["./internal/docs"] = true
 
+	// A changed file that is not Go reaches the packages whose tests read it
+	// (nova-tools#5111), which no import edge says.
+	keyed, err := s.keyedPackages(changed)
+	if err != nil {
+		return Outcome{}, err
+	}
+	for p := range keyed {
+		want[p] = true
+	}
+
 	var selected []string
 	for _, p := range all {
 		if want[p] {
@@ -324,14 +327,16 @@ func (s *selector) selectChange() (Outcome, error) {
 	return Outcome{Packages: selected}, nil
 }
 
+// EveryRun are the class-test packages selectChange adds to every selection, whatever the
+// change (the two `want` lines above, and why): the pull request's CI runs them whole on every
+// change, so a read runs of them only the tests its diff reaches (internal/cardcontract, the
+// read's gate). TestSelectChangeIsTheTouchedPackagesTheirDependentsAndTheClassTestPackages
+// holds the two equal.
+var EveryRun = []string{"./internal/ci", "./internal/docs"}
+
 // hasRootDir reports whether the file is under cmd/, internal/ or tools/.
 func hasRootDir(f string) bool {
-	for _, r := range []string{"cmd/", "internal/", "tools/"} {
-		if strings.HasPrefix(f, r) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc([]string{"cmd/", "internal/", "tools/"}, func(r string) bool { return strings.HasPrefix(f, r) })
 }
 
 // modulePrefix is the module path of root with its trailing slash, or "" when

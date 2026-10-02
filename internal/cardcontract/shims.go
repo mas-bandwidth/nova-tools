@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // shq is a value quoted for sh: inside single quotes, each single quote closed, escaped
@@ -213,6 +215,7 @@ case "$1 $2" in
 	done
 	if [ "$nova_v" != ok ] && [ "$nova_v" != broken ]; then echo "gh: REFUSED pr review without --approve or --request-changes: the review is this read's verdict" >&2; exit 1; fi
 	if [ "$nova_v" = broken ] && [ -z "$nova_body" ]; then echo "gh: REFUSED pr review --request-changes with no --body: the findings are what the work is fixed by" >&2; exit 1; fi
+	if [ "$nova_v" = broken ] && ! printf '%s\n' "$nova_body" | grep -Eq '` + typedrec.FindingPattern + `'; then echo "gh: REFUSED pr review --request-changes: the body names no file, no line and no rule the work breaks; tell them what to do: a finding line naming the file (file:line), the line, or the card's STEP or RULE it breaks, and what to change" >&2; exit 1; fi
 	nova_result "$nova_v" "$nova_body" "$nova_body" ""
 	echo "- Reviewed pull request: the sprint records the verdict when this read finishes"
 	exit 0 ;;
@@ -224,7 +227,7 @@ case "$1 $2" in
 	printf 'title:\t%s\nstate:\tOPEN (the sprint opens it when this card finishes)\nbase:\t%s\nhead:\t%s\n--\n' "$NOVA_CARD" "$NOVA_BASE" "$NOVA_BRANCH"
 	exec "$NOVA_GIT" -C "$NOVA_STAGED" log --oneline "$(nova_base)..HEAD" ;;
 "pr checks")
-	echo "no checks reported: the sprint runs the gate; run the card's gate yourself"
+	echo "no checks reported: the sprint runs the gate; run the gate JOB.md names (a read's own), else the card's"
 	exit 0 ;;
 esac
 nova_refuse "$1 $2"
@@ -248,11 +251,12 @@ func (claude) JobText(f Frame, s Staged) string {
 	if f.Kind == "read" {
 		fmt.Fprintf(&b, "%s %s, attempt %d\n\n", ReadTitle, f.Card, f.Attempt)
 		fmt.Fprintf(&b, "You are in a checkout of %s on branch %s at %s: the change under review, against %s. The checkout is %s.\n\n", f.Repo, f.Branch, s.Head, orDash(f.ReviewBase), s.Repo)
-		fmt.Fprintf(&b, "Review the change on this branch against %s as you would a pull request: `gh pr diff`, `gh pr view` and `gh pr checks` show it. Run the card's gate. Change nothing and commit nothing.\n\n", orDash(f.ReviewBase))
+		fmt.Fprintf(&b, "Review the change on this branch against %s as you would a pull request: `gh pr diff`, `gh pr view` and `gh pr checks` show it. Run %s. Change nothing and commit nothing.\n\n", orDash(f.ReviewBase), gateWords(s))
 		writeReadDiff(&b, f, s)
 		b.WriteString("Approve or request changes with gh pr review; that ends the read:\n\n")
 		b.WriteString("    gh pr review --approve --body \"<what you checked>\"\n")
 		b.WriteString("    gh pr review --request-changes --body \"<findings, each with file:line>\"\n\n")
+		b.WriteString(BrokenFindingText + "\n\n")
 	} else {
 		fmt.Fprintf(&b, "# JOB: %s, attempt %d\n\n", f.Card, f.Attempt)
 		fmt.Fprintf(&b, "You are in a checkout of %s on branch %s at %s, from %s. The checkout is %s; work there. Commit as usual.\n\n", f.Repo, f.Branch, s.Head, orDash(f.BaseRef), s.Repo)
@@ -283,9 +287,10 @@ func (plain) JobText(f Frame, s Staged) string {
 		if s.Start != "" {
 			review = "the commands below"
 		}
-		fmt.Fprintf(&b, "The checkout %s holds %s on branch %s at %s: the change under review, against %s. Review it (%s), run the card's gate, change nothing and commit nothing.\n\n", s.Repo, f.Repo, f.Branch, s.Head, orDash(f.ReviewBase), review)
+		fmt.Fprintf(&b, "The checkout %s holds %s on branch %s at %s: the change under review, against %s. Review it (%s), run %s, change nothing and commit nothing.\n\n", s.Repo, f.Repo, f.Branch, s.Head, orDash(f.ReviewBase), review, gateWords(s))
 		writeReadDiff(&b, f, s)
 		b.WriteString("End by writing " + s.Job + "/RESULT.md in this shape (verdict ok, or broken with your findings):\n\n")
+		b.WriteString(BrokenFindingText + "\n\n")
 		b.WriteString(ShapeText("read") + "\n")
 	} else {
 		fmt.Fprintf(&b, "# JOB: %s, attempt %d\n\n", f.Card, f.Attempt)
@@ -312,6 +317,7 @@ func writeReadDiff(b *strings.Builder, f Frame, s Staged) {
 	fmt.Fprintf(b, "The work's change is exactly %s..HEAD: %s is the commit the work started from (the merge base of this head and %s when this checkout was staged). See it with:\n\n", s.Start, s.Start, base)
 	fmt.Fprintf(b, "    git diff %s..HEAD\n    git diff --stat %s..HEAD\n\n", s.Start, s.Start)
 	fmt.Fprintf(b, "%s may have moved since the work began (other cards land on it); it is not what to compare against: a diff against the tip of %s or origin/%s shows every change landed since as a deletion. Those deletions are never the work's and never a finding: judge the work by the diff above alone.\n\n", base, base, base)
+	writeReadGate(b, s)
 }
 
 // writeCommon is what every JOB.md ends with: the files staged for the child, the test
@@ -321,7 +327,13 @@ func writeCommon(b *strings.Builder, f Frame, s Staged) {
 	if len(f.Stage) > 0 {
 		fmt.Fprintf(b, "Staged for you in %s: %s.\n", filepath.Join(s.Job, RecipesName), strings.Join(f.Stage, ", "))
 	}
-	fmt.Fprintf(b, "Tests: export GOCACHE=%s/gocache; run every go command as `nice -n 19`, every go test with -count=1 and -timeout 600s.\n", s.Job)
+	b.WriteString("Tests: ")
+	if s.GoCache != "" {
+		// one warm cache per machine, never a cold one per job: sixteen reads each compiling
+		// the repository from nothing kept a 36-thread bench 85% in the kernel (2026-10-02)
+		fmt.Fprintf(b, "GOCACHE is %s, this machine's build cache, shared by every card and kept warm; it is already set: keep it, and where the card says to export a GOCACHE, this is the one (`go help cache`: \"The cache is safe for concurrent invocations of the go command.\"). ", s.GoCache)
+	}
+	b.WriteString("Run every go command as `nice -n 19`, every go test with -count=1 and -timeout 600s.\n")
 	if f.Tier != "" {
 		fmt.Fprintf(b, "Tier: %s.\n", f.Tier)
 	}

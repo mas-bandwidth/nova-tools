@@ -522,7 +522,7 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 		if !a.OK {
 			v = "broken"
 		}
-		return run(ReadStep(sprint.ReadReq{As: a.Reader, Sel: sprint.Sel{IDs: []string{a.Card}}, Verdict: v, Finding: "finding"})), cutOK
+		return run(ReadStep(sprint.ReadReq{As: a.Reader, Sel: sprint.Sel{IDs: []string{a.Card}}, Verdict: v, Finding: "finding:1"})), cutOK
 	case "accept":
 		return run(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: a.IDs}})), cutOK
 	case "rework":
@@ -578,7 +578,7 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 		_, err := h.st.Clear(h.ctx)
 		return engineErr(err, nil), cutOK
 	}
-	h.t.Fatalf("unknown action %q", a.Kind)
+	require.FailNow(h.t, fmt.Sprintf("unknown action %q", a.Kind))
 	return "", cutOK
 }
 

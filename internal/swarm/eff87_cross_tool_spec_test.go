@@ -12,8 +12,8 @@ import (
 
 // CARD #87, cross-tool: efficiency card, 2026-09-12. The card is a measurement
 // of the same work paid for once per tool, and its contract lives in the spec:
-// one reference checkout per bench behind a per-job `--reference`/`--dissociate`
-// clone, and the prompt text the workers run owned by the tool's templates
+// one reference checkout per bench behind a per-job `--shared` clone that
+// borrows its objects, and the prompt text the workers run owned by the tool's templates
 // rather than a shell script. This doc test reads the section out of the spec
 // the way TestBenchSlotLeasesSectionNamesItsRules reads the Bench slot leases
 // section: the spec is the one place the contract is written.
@@ -33,10 +33,10 @@ func TestCrossToolEfficiencyCardNamesItsRules(t *testing.T) {
 		"3.6M cache-read tokens",
 		"21 jobs",
 		// the clone rule: one reference checkout per bench, a per-job clone that
-		// points at it and then dissociates.
+		// borrows its objects, and a mirror that keeps them.
 		"one reference checkout",
-		"`--reference`",
-		"`--dissociate`",
+		"`--shared`",
+		"`gc.auto=0`",
 		"bin/child-clone.sh:111",
 		// the prompt rule: the text the workers run is the tool's.
 		"internal/swarm/templates.go",
@@ -47,7 +47,7 @@ func TestCrossToolEfficiencyCardNamesItsRules(t *testing.T) {
 		"No tool's live state is a shell script's private variable",
 		// the Red tests list.
 		"Red tests",
-		"a per-job clone built with `--reference` and `--dissociate` shares the reference checkout's object graph",
+		"a per-job clone built with `--shared` borrows the bench mirror's object graph",
 		"the worker prompt carries the named template's conditions from the tool, with no shell script in the path",
 	} {
 		assert.Contains(t, section, want, "SPEC-SWARM.md cross-tool efficiency card names %q; the section holds:\n%s", want, section)
@@ -61,10 +61,7 @@ func crossToolEfficiencySection(t *testing.T, spec string) string {
 	t.Helper()
 	const header = "## The efficiency card (#87), cross-tool"
 	start := strings.Index(spec, header)
-	if start < 0 {
-		t.Fatalf("the spec has no %q section", header)
-		return ""
-	}
+	require.GreaterOrEqual(t, start, 0, "the spec has no %q section", header)
 	rest := spec[start+len(header):]
 	end := strings.Index(rest, "\n## ")
 	if end < 0 {

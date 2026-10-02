@@ -28,8 +28,7 @@ func TestEfficiencyCardSectionNamesItsTwoMeasuredOperations(t *testing.T) {
 		"REPEATS: one full clone of the repository per job",
 		"WAITS ON: a deadline, a sampler, and a person",
 		// REPEATS: the shape the card points at.
-		"--reference-if-able",
-		"--dissociate",
+		"--shared",
 		"86,794 cache-read tokens per tool call",
 		// WAITS ON: the deadline and the sampler.
 		"--deadline",
@@ -46,10 +45,7 @@ func efficiencySection(t *testing.T, spec string) string {
 	t.Helper()
 	const header = "## Efficiency: lessons absorbed"
 	start := strings.Index(spec, header)
-	if start < 0 {
-		t.Fatalf("the spec has no %q section", header)
-		return ""
-	}
+	require.GreaterOrEqual(t, start, 0, "the spec has no %q section", header)
 	rest := spec[start+len(header):]
 	end := strings.Index(rest, "\n## ")
 	if end < 0 {

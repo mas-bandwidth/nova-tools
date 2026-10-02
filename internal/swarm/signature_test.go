@@ -35,9 +35,8 @@ func TestEachSignatureIsDetected(t *testing.T) {
 		t.Run(s.signature, func(t *testing.T) {
 			sig, class, ok := findFailureSignature([]byte("a run's tail\n" + s.signature + "\nmore\n"))
 			require.True(t, ok, "the signature %q was not detected", s.signature)
-			if sig != s.signature || class != s.class {
-				t.Errorf("detected sig=%q class=%q; want sig=%q class=%q", sig, class, s.signature, s.class)
-			}
+			assert.Equal(t, s.signature, sig, "detected sig=%q class=%q; want sig=%q class=%q", sig, class, s.signature, s.class)
+			assert.Equal(t, s.class, class, "detected sig=%q class=%q; want sig=%q class=%q", sig, class, s.signature, s.class)
 		})
 	}
 }

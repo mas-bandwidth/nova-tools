@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -258,12 +259,9 @@ func seatAddRuleIsFree(config []byte, seatFile string) error {
 }
 
 func seatAddHasCreationRules(config []byte) bool {
-	for _, line := range strings.Split(string(config), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "creation_rules:") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(string(config), "\n"), func(line string) bool {
+		return strings.HasPrefix(strings.TrimSpace(line), "creation_rules:")
+	})
 }
 
 // seatAddAppendRule adds one rule, in the shape invariant 1 demands and keygen prints:

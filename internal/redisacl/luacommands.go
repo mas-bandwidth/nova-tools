@@ -3,8 +3,9 @@ package redisacl
 import (
 	"fmt"
 	"io/fs"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
@@ -67,12 +68,7 @@ func commandsOf(src string) []string {
 			set[strings.ToLower(cmd)] = true
 		}
 	}
-	out := make([]string, 0, len(set))
-	for c := range set {
-		out = append(out, c)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(set))
 }
 
 // LuaCommands is the commands each file of the library names, by the file's

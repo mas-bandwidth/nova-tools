@@ -28,6 +28,8 @@ package refmodel
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -280,25 +282,15 @@ func (s State) Clone() State {
 		c.Primaries[k] = v
 	}
 	c.Work = make(map[string]WorkCard, len(s.Work))
-	for k, v := range s.Work {
-		c.Work[k] = v
-	}
+	maps.Copy(c.Work, s.Work)
 	c.Reads = make(map[string]ReadCard, len(s.Reads))
-	for k, v := range s.Reads {
-		c.Reads[k] = v
-	}
+	maps.Copy(c.Reads, s.Reads)
 	c.Merge = make(map[string]MergeCard, len(s.Merge))
-	for k, v := range s.Merge {
-		c.Merge[k] = v
-	}
+	maps.Copy(c.Merge, s.Merge)
 	c.Streams = make(map[string]Stream, len(s.Streams))
-	for k, v := range s.Streams {
-		c.Streams[k] = v
-	}
+	maps.Copy(c.Streams, s.Streams)
 	c.Members = make(map[string]string, len(s.Members))
-	for k, v := range s.Members {
-		c.Members[k] = v
-	}
+	maps.Copy(c.Members, s.Members)
 	c.Order = append([]string(nil), s.Order...)
 	c.Readers = append([]string(nil), s.Readers...)
 	c.Open = make(map[Judgment]bool, len(s.Open))
@@ -357,11 +349,42 @@ func (s State) Placedp(p string) bool {
 func (s State) NeedsMet(p string) bool {
 	pr := s.Primaries[p]
 	for _, q := range pr.Needs {
-		if !s.InWork(q, Landed) && !has(pr.Waived, q) {
+		if !s.InWork(q, Landed) && !slices.Contains(pr.Waived, q) {
 			return false
 		}
 	}
 	return len(s.PositionWaits(p)) == 0
+}
+
+// HasBefore says sentinel p has something to be reached after (spec section 16): a need it
+// names, or a primary of its stream on the table, landed or not, that sorts before it. One
+// with nothing before it is reached only when no other work is in flight (Reachable).
+func (s State) HasBefore(p string) bool {
+	pr := s.Primaries[p]
+	if len(pr.Needs) > 0 {
+		return true
+	}
+	for _, q := range s.StreamOrder(pr.Stream) {
+		if q != p && s.Primaries[q].Score < pr.Score {
+			return true
+		}
+	}
+	return false
+}
+
+// Reachable says sentinel p, its needs met, is reached now (spec section 16): something
+// came before it, or no other work of the sprint is in flight.
+func (s State) Reachable(p string) bool {
+	if s.HasBefore(p) {
+		return true
+	}
+	for _, q := range s.Primaries {
+		switch q.State {
+		case Ready, Working, Review, Merging:
+			return false
+		}
+	}
+	return true
 }
 
 // PositionWaits is what p waits for by its place in its stream's order
@@ -400,7 +423,7 @@ func (s State) DroppedNeeds(p string) []string {
 	pr := s.Primaries[p]
 	var out []string
 	for _, q := range pr.Needs {
-		if s.InWork(q, Off) && !has(pr.Waived, q) {
+		if s.InWork(q, Off) && !slices.Contains(pr.Waived, q) {
 			out = append(out, q)
 		}
 	}
@@ -484,7 +507,7 @@ func roundPast(order []string, value, name string) string {
 func (s State) streamOrder(extra ...string) []string {
 	names := s.StreamNames()
 	for _, st := range extra {
-		if _, ok := s.Streams[st]; !ok && !has(names, st) {
+		if _, ok := s.Streams[st]; !ok && !slices.Contains(names, st) {
 			names = append(names, st)
 		}
 	}
@@ -499,7 +522,7 @@ func (s State) NextMember(set []string) string {
 	order := sorted(s.Order)
 	at := roundFrom(order, s.DealLast)
 	for i := range order {
-		if m := order[(at+i)%len(order)]; has(set, m) {
+		if m := order[(at+i)%len(order)]; slices.Contains(set, m) {
 			return m
 		}
 	}
@@ -524,7 +547,7 @@ func (s State) PlaceOn(set []string, avoid string) string {
 		if m := s.NextMember(without(from, avoid)); m != "" {
 			return m
 		}
-		if has(from, avoid) {
+		if slices.Contains(from, avoid) {
 			return avoid
 		}
 	}
@@ -563,7 +586,7 @@ func (s State) NextReaders(p string, k int) []string {
 		pick := -1
 		for i := range order {
 			j := (at + i) % len(order)
-			if _, made := s.Reads[RC(p, attempt, order[j])]; !made && !has(out, order[j]) {
+			if _, made := s.Reads[RC(p, attempt, order[j])]; !made && !slices.Contains(out, order[j]) {
 				pick = j
 				break
 			}
@@ -729,29 +752,15 @@ func (s State) MergeCell(stream, place string) []string {
 
 // Streams is the streams in name order.
 func (s State) StreamNames() []string {
-	var out []string
-	for k := range s.Streams {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(s.Streams))
 }
 
 // ------------------------------------------------------------------ helpers
 
-func has(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
-}
-
 func addSorted(xs []string, add ...string) []string {
 	out := append([]string(nil), xs...)
 	for _, a := range add {
-		if !has(out, a) {
+		if !slices.Contains(out, a) {
 			out = append(out, a)
 		}
 	}
@@ -771,7 +780,7 @@ func (s *State) open(t, subject string) { s.Open[Judgment{t, subject}] = true }
 // (every type when types is empty).
 func (s *State) closeOn(subject string, types ...string) {
 	for j := range s.Open {
-		if j.Subject == subject && (len(types) == 0 || has(types, j.Type)) {
+		if j.Subject == subject && (len(types) == 0 || slices.Contains(types, j.Type)) {
 			delete(s.Open, j)
 		}
 	}

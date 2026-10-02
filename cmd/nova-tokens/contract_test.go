@@ -79,8 +79,14 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		// The platform with no flock: the lock is an exclusive create and its release
 		// removes the sentinel this run made.
 		"internal/tokens/lock_other.go": {"os.Remove"},
-		// The fold's own lock file, whose whole body this run wrote.
-		"internal/tokens/lock.go": {".Truncate("},
+		// The fold's own lock file, whose whole body this run wrote: the pid the
+		// platform with no flock writes, and on unix internal/filelock's holder
+		// stamp, which the take truncates to write and the release truncates to
+		// clear. The file itself is never removed.
+		"internal/tokens/lock_poll_other.go":    {".Truncate("},
+		"internal/filelock/filelock.go":         {".Truncate("},
+		"internal/filelock/filelock_unix.go":    {".Truncate("},
+		"internal/filelock/filelock_windows.go": {".Truncate("},
 		// The copy under --scratch, made from the live database this run and read there;
 		// the live file is never opened for writing.
 		"internal/tokens/opencode.go": {"os.Create("},

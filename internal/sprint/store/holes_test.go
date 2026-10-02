@@ -288,7 +288,7 @@ func holesRun(x *holeTick, n int, lapse bool, after func(round int, res TickResu
 			return
 		}
 	}
-	t.Fatalf("not landed after 120 rounds")
+	require.FailNow(t, "not landed after 120 rounds")
 }
 
 // ---- G1 ----------------------------------------------------------------------

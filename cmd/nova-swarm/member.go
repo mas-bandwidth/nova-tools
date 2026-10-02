@@ -65,6 +65,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	noWall := fs.Bool("no-wall", false, "run each child with no nova-sandbox wall (native --no-wall): the caller owns every read and write it makes")
 	ghBin := fs.String("gh", "gh", "the gh `path` the member opens a work card's pull request with, outside the wall (default gh)")
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
+	stageWall := newSecondsFlag(fs, "stage-wall", swarm.DefaultStageTimeout, "the bound on staging each card's checkout, a `duration` or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)")
 	diskFloor := fs.Int("disk-floor", 10, "the free `GiB` the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
@@ -116,6 +117,9 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	if ticksGiven && *ticks <= 0 {
 		f.add("give --ticks 1 or more, or leave it out to run until stopped")
+	}
+	if stageWall.d <= 0 {
+		f.add("--stage-wall is the bound on staging a card's checkout, above 0 (default 120s)")
 	}
 	if *diskFloor < 0 {
 		f.add("--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more (0 checks nothing; default 10)")
@@ -173,7 +177,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
-		resultsRoot: *resultsRoot, deadline: deadline.d, tokens: *tokensWord, auth: *auth, config: *config,
+		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
 		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass, identity: *identity,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
@@ -213,7 +217,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *model != "" {
 		modelWord = "card,override:" + *model
 	}
-	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s server=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*server), oneline.Field(*harness), oneline.Field(modelWord))
+	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s server=%s harness=%s model=%s stage-wall=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*server), oneline.Field(*harness), oneline.Field(modelWord), oneline.Field(stageWall.d.String()))
 	// the machine's one model catalog, refreshed once here and never per launch (catalog.go)
 	fmt.Fprintf(stdout, "CATALOG %s\n", oneline.Escape(refreshCatalog(*harness, *root)))
 	if note := passNote(*model, pass, *auth); note != "" {
@@ -332,7 +336,7 @@ func sprintFailureOutput(stdout, stderr []byte) []byte {
 // slot directory, its results under <results-root>/<card>/.
 type nativeRunner struct {
 	self, harness, model, root, slots, resultsRoot string
-	deadline                                       time.Duration
+	deadline, stageWall                            time.Duration
 	tokens, auth, config, worker, identity         string
 	noWall                                         bool
 	stderr                                         io.Writer
@@ -354,6 +358,15 @@ type nativeRunner struct {
 	epoch     atomic.Uint64
 	oldFailed map[string]bool
 	cache     cacheTrim
+}
+
+// stageTimeout is native's --stage-timeout for each launch: the member's --stage-wall, else
+// native's own default, said.
+func (r *nativeRunner) stageTimeout() time.Duration {
+	if r.stageWall > 0 {
+		return r.stageWall
+	}
+	return swarm.DefaultStageTimeout
 }
 
 // started marks a launch running, so no prune of the pool touches its directory until the
@@ -423,7 +436,8 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		return nil, err
 	}
 	args := []string{"native", "--harness", r.harness, "--model", model, "--card", cardPath, "--frame", framePath, "--slot", slot,
-		"--root", r.root, "--deadline", deadline.String(), "--tokens", tokens, "--label", p.Card, "--results-root", results}
+		"--root", r.root, "--deadline", deadline.String(), "--tokens", tokens, "--label", p.Card, "--results-root", results,
+		"--stage-timeout", r.stageTimeout().String()}
 	if r.auth != "" {
 		args = append(args, "--auth", r.auth)
 	}

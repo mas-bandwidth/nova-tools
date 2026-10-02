@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
@@ -46,23 +48,15 @@ func genKey(t *testing.T, dir, name string) keyPair {
 	t.Helper()
 	ageKeygen := findAgeKeygen(t)
 	keyDir := filepath.Join(dir, "keys")
-	if err := os.MkdirAll(keyDir, 0700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(keyDir, 0700))
 	privPath := filepath.Join(keyDir, name+".key")
 	cmd := exec.Command(ageKeygen, "-o", privPath)
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("age-keygen failed: %v, out: %s", err, out)
-	}
-	if err := os.Chmod(privPath, 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "age-keygen failed: %v, out: %s", err, out)
+	require.NoError(t, os.Chmod(privPath, 0600))
 	data, err := os.ReadFile(privPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "# public key: ") {
 			return keyPair{
@@ -103,27 +97,19 @@ func runCmd(t *testing.T, dir string, name string, args ...string) string {
 		cmd.Dir = dir
 	}
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("command %s %v failed in %s: %v, out: %s", name, args, dir, err, out)
-	}
+	require.NoError(t, err, "command %s %v failed in %s: %v, out: %s", name, args, dir, err, out)
 	return string(out)
 }
 
 func sealFileWithSops(t *testing.T, sopsPath string, filePath string, ageKeys []string, content string) {
 	t.Helper()
-	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(content), 0600))
 	args := []string{"-e", "--age", strings.Join(ageKeys, ","), filePath}
 	cmd := exec.Command(sopsPath, args...)
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("sops encrypt failed: %v", err)
-	}
-	if err := os.WriteFile(filePath, out, 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "sops encrypt failed: %v", err)
+	require.NoError(t, os.WriteFile(filePath, out, 0600))
 }
 
 // The tool is built once per test run, not once per test. Thirty-two tests each ran
@@ -168,9 +154,7 @@ func buildNovaSecrets(t *testing.T) string {
 		build.Env = goenv.Clean(os.Environ())
 		buildOut, buildErr = build.CombinedOutput()
 	})
-	if buildErr != nil {
-		t.Fatalf("failed to build nova-secrets: %v, out: %s", buildErr, string(buildOut))
-	}
+	require.NoError(t, buildErr, "failed to build nova-secrets: %v, out: %s", buildErr, string(buildOut))
 	return builtBin
 }
 

@@ -30,14 +30,7 @@ import "time"
 // never killed for one quiet quarter -- the kill still needs the whole --idle -- so the
 // coarse poll costs nothing but the sample's own age.
 func activityInterval(idle time.Duration) time.Duration {
-	d := idle / 4
-	if d < 500*time.Millisecond {
-		d = 500 * time.Millisecond
-	}
-	if d > 5*time.Second {
-		d = 5 * time.Second
-	}
-	return d
+	return min(max(idle/4, 500*time.Millisecond), 5*time.Second)
 }
 
 // activitySnapshot is one reading of a process tree's CPU activity: TreeCPU answers

@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -66,6 +67,9 @@ type Plan struct {
 	// Requeue is the queued changes a drain leaves for the next one (Drain):
 	// its commit puts them back at the queue's tail.
 	Requeue []QueuedChange
+	// Seat is the seat's change (MoveSeat): the step's commit writes the
+	// coordinator and the seat's record with its note.
+	Seat *SeatChange
 	// pre is the pre-state the plan was built on, set only by the steps of
 	// this package that may admit or move a primary into ready (on): the
 	// lifecycle judges a primary's needs against it, and a plan without one
@@ -299,12 +303,8 @@ func setStream(p *Plan, s *Snapshot, stream string, set map[string]string, notes
 		for j, c := range p.Units[i].Changes {
 			if c.Table == Merge && c.Entry.ID == ctl.ID {
 				merged := map[string]string{}
-				for k, v := range c.Entry.Set {
-					merged[k] = v
-				}
-				for k, v := range set {
-					merged[k] = v
-				}
+				maps.Copy(merged, c.Entry.Set)
+				maps.Copy(merged, set)
 				p.Units[i].Changes[j].Entry.Set = merged
 				p.Units[first].Notes = append(p.Units[first].Notes, notes...)
 				return

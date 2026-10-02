@@ -28,7 +28,7 @@ func TestWhereReadersTableIsOneRowTheSumOfAllReaders(t *testing.T) {
 	ta.ok("ask")
 	ta.ok("read --as reader-a --ok --limit 2")
 	ta.ok("read --as reader-b --begin --limit 1")
-	ta.ok("read --as reader-c --broken --finding 'the empty case is not handled' --limit 1")
+	ta.ok("read --as reader-c --broken --finding 'line 3: the empty case is not handled' --limit 1")
 
 	var v struct {
 		Tables map[string]map[string]map[string]string
@@ -102,7 +102,7 @@ func TestReadersAllSumsEveryRowHiddenToo(t *testing.T) {
 	got := ntable.Render(readersAll(tb), ntable.RenderOpts{Title: sprint.Readers})
 	assert.Equal(t, "readers | asked | reading |  ok | broken\n"+
 		"--------+-------+---------+-----+-------\n"+
-		"all     |   111 |     222 | 333 |      ?\n", got)
+		"        |   111 |     222 | 333 |      ?\n", got)
 	require.Len(t, tb.Rows, 3, "the table read is not changed")
 	assert.NotEqual(t, ntable.None, tb.Columns[0].Fold, "the columns read are not changed")
 }
@@ -214,5 +214,5 @@ func TestMergeAllNamesHowManyStreamsAreStopped(t *testing.T) {
 	got := ntable.Render(mergeAll(tb), ntable.RenderOpts{Title: sprint.Merge})
 	assert.Equal(t, "merge | queued | merged | stuck | ci  | state\n"+
 		"------+--------+--------+-------+-----+----------\n"+
-		"all   |    111 |    222 |   333 | red | stopped 2\n", got)
+		"      |    111 |    222 |   333 | red | stopped 2\n", got)
 }

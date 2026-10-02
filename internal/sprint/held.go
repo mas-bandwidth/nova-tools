@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -245,12 +246,7 @@ func newHeld(h HeldState, now time.Time) *held {
 // openOn says a judgment is open on the subject, the stall judgments aside:
 // an acknowledgement is not one.
 func (c *held) openOn(subject string) bool {
-	for _, j := range c.judged[subject] {
-		if !strings.HasSuffix(j, " (acknowledged)") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(c.judged[subject], func(j string) bool { return !strings.HasSuffix(j, " (acknowledged)") })
 }
 
 // notes records what the tick's notes name.
@@ -376,10 +372,7 @@ func (c *held) actor(pr *Card) string {
 				return "" // behind a stuck card: the merge step never passes it
 			}
 		}
-		last := ctl.F("since")
-		if ctl.F("moved") > last {
-			last = ctl.F("moved")
-		}
+		last := max(ctl.F("since"), ctl.F("moved"))
 		if d, ok := c.running(last); ok && d <= DeadlineMergeIdle {
 			return fmt.Sprintf("queued in stream %s (%s) for its merge step, %s of %s running", pr.Row, state, d.Round(time.Second), DeadlineMergeIdle)
 		}
@@ -463,6 +456,15 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		if len(w) == 0 {
 			if IsSentinel(pr) && pr.F("reached") != "" {
 				return "reached, and no judgment is open on it", "", false
+			}
+			if IsSentinel(pr) && !HasBefore(s, pr) {
+				// a stop with nothing placed before it is next, for the coordinator's
+				// release (docs/SPEC-SPRINT.md section 16): held while other work of the
+				// sprint moves; when none does, the step that ends it, or the tick, marks
+				// it reached (Reachable)
+				if id := workInFlight(s, nil); id != "" {
+					return "a stop with nothing placed before it, next for the coordinator's release while " + id + " moves", "", true
+				}
 			}
 			return "every need has landed or was waived, and nothing moves it", "", false
 		}
@@ -583,7 +585,7 @@ func (c *held) overdueUnmarked() []Finding {
 func (c *held) decisions(pr *Card) []string {
 	var out []string
 	switch {
-	case IsSentinel(pr) && pr.F("reached") != "":
+	case IsSentinel(pr) && (pr.F("reached") != "" || !HasBefore(c.s, pr)):
 		out = []string{"release", "drop"}
 	case pr.Col == Ready:
 		out = []string{"fleet up", "drop"}

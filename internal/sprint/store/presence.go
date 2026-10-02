@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"time"
@@ -415,12 +416,7 @@ func (st *Store) setRows(ctx context.Context, table string, rows map[string]map[
 	if rs, ok := st.B.(RowsSetter); ok {
 		return rs.RowsSet(ctx, table, rows)
 	}
-	keys := make([]string, 0, len(rows))
-	for k := range rows {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(rows)) {
 		if err := st.B.RowSet(ctx, table, k, rows[k]); err != nil {
 			return err
 		}
@@ -451,7 +447,8 @@ func statusRank(status string) int {
 }
 
 // FleetOrder is the fleet's rows by name, then stably by status: up, held,
-// down, anything else last. status is each row's status cell.
+// down, anything else last. status is each row's status cell. The friends
+// table is ordered by it too (FriendRows): one order for both.
 func FleetOrder(rows []string, status map[string]string) []string {
 	out := slices.Clone(rows)
 	slices.Sort(out)

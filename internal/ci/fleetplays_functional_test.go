@@ -62,6 +62,13 @@ func (r *fleetPlayRig) build(t *testing.T, out, version string, pkgs ...string) 
 
 func (r *fleetPlayRig) play(t *testing.T, name string, extra ...string) string {
 	t.Helper()
+	out, err := r.playResult(t, name, extra...)
+	require.NoError(t, err, "%s %v:\n%s", name, extra, out)
+	return out
+}
+
+func (r *fleetPlayRig) playResult(t *testing.T, name string, extra ...string) (string, error) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	args := append([]string{"-i", r.inventory, filepath.Join(r.root, "fleet", name)}, extra...)
@@ -74,8 +81,7 @@ func (r *fleetPlayRig) play(t *testing.T, name string, extra ...string) string {
 		"NOVA_MACHINE=localhost", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true", "ANSIBLE_NOCOLOR=1",
 		"ANSIBLE_HOME="+filepath.Join(r.dir, "ansible"), "ANSIBLE_LOCAL_TEMP="+filepath.Join(r.dir, "ansible", "tmp"))
 	b, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s %v:\n%s", name, extra, b)
-	return string(b)
+	return string(b), err
 }
 
 // TestFleetPlaysPassSyntaxAndCheckOnTheFixture runs the three plays with
@@ -91,7 +97,7 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	r := newFleetPlayRig(t, "check-fixture.yml")
 	root, dir, home := r.root, r.dir, r.home
 	play := func(name string, extra ...string) string { t.Helper(); return r.play(t, name, extra...) }
-	check := []string{"--check", "--diff", "-e", "nova_home=" + home, "-e", "nova_version=v0.0.0-check", "-e", "nova_source=" + root, "-e", "nova_release_out=" + filepath.Join(dir, "release"), "-e", "nova_sops=/usr/bin/sops-of-the-fixture"}
+	check := []string{"--check", "--diff", "-e", "nova_home=" + home, "-e", "nova_version=v0.0.0-check", "-e", "nova_source=" + root, "-e", "nova_dogfood_receipts=" + filepath.Join(dir, "dogfood"), "-e", "nova_release_out=" + filepath.Join(dir, "release"), "-e", "nova_sops=/usr/bin/sops-of-the-fixture"}
 
 	for _, p := range fleetPlays {
 		assert.Contains(t, play(p, "--syntax-check"), "playbook: ")
@@ -124,7 +130,8 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	loops := play("loops.yml", append(check, "-e", "ansible_system=Linux")...)
 	for _, w := range []string{
 		`ExecStart="` + home + `/.local/bin/nova-secrets" "exec" "--store" "` + home + `/nova-bench/secrets" "--as" "seat-local"`,
-		`"--only" "API_KEY" "--require=API_KEY" "--" "` + home + `/.local/bin/nova-swarm" "member"`,
+		`Environment="NOVA_SPRINT_REDIS=localhost:6380"`,
+		`"--only" "API_KEY,NOVA_REDIS_BENCH_PASSWORD" "--require=API_KEY" "--require=NOVA_REDIS_BENCH_PASSWORD" "--" "/usr/bin/env" "NOVA_SPRINT_REDIS_USER=bench" "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD" "nova-swarm" "member"`,
 		`ExecStart="` + home + `/bin/tick" "--once" "50%%"`,
 		"Type=oneshot",
 		"OnUnitActiveSec=30",
@@ -145,11 +152,14 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		"<key>StartInterval</key>",
 		"<integer>30</integer>",
 		"<key>KeepAlive</key>",
+		"<key>NOVA_SPRINT_REDIS</key>",
+		"<string>localhost:6380</string>",
 		"<string>50%</string>",
 		"<key>Disabled</key>",
 	} {
 		assert.Contains(t, plist, w)
 	}
+	assert.NotContains(t, loops+plist, "NOVA_SPRINT_REDIS=old-store:6379")
 	_, err := os.Stat(filepath.Join(home, ".config", "nova"))
 	assert.True(t, os.IsNotExist(err), "--check wrote the build fact")
 	_, err = os.Stat(filepath.Join(units, "nova-loop-old.service"))
@@ -182,7 +192,7 @@ func TestToolsPlayAppliesAndReappliesOnTheFixture(t *testing.T) {
 	_, err = os.Stat(filepath.Join(r.home, ".config"))
 	require.True(t, os.IsNotExist(err), "the fixture's home starts with no .config")
 
-	vars := []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root, "-e", "nova_release_out=" + out}
+	vars := []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root, "-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
 	first := r.play(t, "tools.yml", vars...)
 	assert.Contains(t, first, "built="+platform+" missing=none")
 	assert.Contains(t, first, "was=none removed=1 INSTALLED RELEASE INSTALLED version="+version+" tools=1 ")
@@ -216,14 +226,183 @@ func TestDeployerPlaysCheckOnTheFixture(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(fake, "nova-secrets"), []byte("#!/bin/sh\necho \"FAKE-SECRETS $*\"\n"), 0o755))
 	home := os.Getenv("HOME")
 	vars := []string{"--check", "-e", "nova_bin_dir=" + fake, "-e", "nova_sops=/usr/bin/sops-of-the-fixture",
-		"-e", "nova_version=v0.0.0-check", "-e", "nova_source=" + r.root, "-e", "nova_release_out=" + filepath.Join(r.dir, "release")}
+		"-e", "nova_version=v0.0.0-check", "-e", "nova_source=" + r.root, "-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + filepath.Join(r.dir, "release")}
 	seat := "FAKE-SECRETS exec --store " + filepath.Join(home, "nova-bench", "secrets") + " --as seat-local --key " + filepath.Join(home, ".config", "nova-secrets", "seat-local.key") + " --sops /usr/bin/sops-of-the-fixture"
 
 	redis := r.play(t, "redis.yml", vars...)
-	assert.Contains(t, redis, seat+" --only NOVA_REDIS_ADMIN_PASSWORD,NOVA_REDIS_COORDINATOR_PASSWORD,NOVA_REDIS_BENCH_PASSWORD --require=NOVA_REDIS_ADMIN_PASSWORD -- "+fake+"/nova-redis acl check --addr localhost:6379 --user admin --password-env NOVA_REDIS_ADMIN_PASSWORD")
+	assert.Contains(t, redis, seat+" --only NOVA_REDIS_ADMIN_PASSWORD,NOVA_REDIS_COORDINATOR_PASSWORD,NOVA_REDIS_BENCH_PASSWORD --require=NOVA_REDIS_ADMIN_PASSWORD -- "+fake+"/nova-redis acl check --addr localhost:6380 --user admin --password-env NOVA_REDIS_ADMIN_PASSWORD")
 	assert.NotContains(t, redis, "/nova-redis acl apply", "--check applied")
 
 	tools := r.play(t, "tools.yml", vars...)
 	assert.Contains(t, tools, "WOULD-MIGRATE postgres://nova_config@localhost:5432/nova")
-	assert.Contains(t, tools, seat+" --only NOVA_REDIS_COORDINATOR_PASSWORD --require=NOVA_REDIS_COORDINATOR_PASSWORD -- "+fake+"/nova-redis fn check --addr localhost:6379 --user coordinator --password-env NOVA_REDIS_COORDINATOR_PASSWORD")
+	assert.Contains(t, tools, seat+" --only NOVA_REDIS_COORDINATOR_PASSWORD --require=NOVA_REDIS_COORDINATOR_PASSWORD -- "+fake+"/nova-redis fn check --addr localhost:6380 --user coordinator --password-env NOVA_REDIS_COORDINATOR_PASSWORD")
+}
+
+func TestToolsPlayRefusesAnEmptyFleetDSN(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "deployer-fixture.yml")
+	out, err := r.playResult(t, "tools.yml", "--check", "--limit", "store_deployer", "-e", "nova_pg_dsn=",
+		"-e", "nova_home="+r.home, "-e", "nova_version=v0.0.0-check",
+		"-e", "nova_source="+r.root, "-e", "nova_dogfood_receipts="+filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out="+filepath.Join(r.dir, "release"))
+	require.Error(t, err)
+	assert.Contains(t, out, "the applied fleet row needs redis_port and pg_dsn")
+	assert.Contains(t, out, "nova-config migrate")
+	assert.Contains(t, out, "nova-config fleet set --redis_port <port> --pg_dsn")
+	assert.Contains(t, out, "nova-config apply --kind fleet")
+}
+
+// TestToolsPlayNamesTheDogfoodReceipts: the build's gate reads the receipts
+// the operator names, never a directory the build guesses, so a run that
+// names none is refused before anything is built, and a waiver that replaces
+// the gate's flags whole needs none.
+func TestToolsPlayNamesTheDogfoodReceipts(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "check-fixture.yml")
+	vars := []string{"--check", "--limit", "localhost", "-e", "nova_home=" + r.home, "-e", "nova_version=v0.0.0-check",
+		"-e", "nova_source=" + r.root, "-e", "nova_release_out=" + filepath.Join(r.dir, "release"), "-e", "nova_sops=/usr/bin/sops-of-the-fixture"}
+	out, err := r.playResult(t, "tools.yml", vars...)
+	require.Error(t, err)
+	assert.Contains(t, out, "-e nova_dogfood_receipts=<the dogfood receipts directory>")
+	assert.NotContains(t, out, "WOULD-BUILD")
+	out = r.play(t, "tools.yml", append(vars, "-e", `{"nova_release_gate_args": ["--no-dogfood-gate", "--reason", "the test"]}`)...)
+	assert.Contains(t, out, "WOULD-BUILD version=v0.0.0-check")
+}
+
+// TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks runs tools.yml for
+// real twice, the second time at a version an --incremental build would
+// leave: nova-update the first version's bytes (reused), nova-extra rebuilt.
+// The new version's directory is seeded on the machine from the installed
+// build's, only nova-extra and the checksum files are sent, and the install
+// leaves the identical nova-update in place (the same file), so the loop
+// running it is not restarted.
+func TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "check-fixture.yml")
+	platform := runtime.GOOS + "-" + runtime.GOARCH
+	out := filepath.Join(r.dir, "release")
+	stage := func(version, extra string, update []byte) {
+		dir := filepath.Join(out, version, platform)
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "nova-update"), update, 0o755))
+		script := []byte("#!/bin/sh\necho nova-extra " + extra + "\n")
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "nova-extra"), script, 0o755))
+		var sums strings.Builder
+		for _, f := range []struct {
+			name string
+			body []byte
+		}{{"nova-extra", script}, {"nova-update", update}} {
+			s := sha256.Sum256(f.body)
+			sums.WriteString(hex.EncodeToString(s[:]) + "  " + f.name + "\n")
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums.String()), 0o644))
+		d := sha256.Sum256([]byte(sums.String()))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "SUMS.digest"), []byte(hex.EncodeToString(d[:])+"\n"), 0o644))
+	}
+	built := filepath.Join(r.dir, "built")
+	r.build(t, filepath.Join(built, "nova-update"), "v0.0.0-one", "./cmd/nova-update")
+	update, err := os.ReadFile(filepath.Join(built, "nova-update"))
+	require.NoError(t, err)
+	stage("v0.0.0-one", "v0.0.0-one", update)
+	stage("v0.0.0-two", "v0.0.0-two", update)
+	vars := func(version string) []string {
+		return []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root,
+			"-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
+	}
+
+	first := r.play(t, "tools.yml", vars("v0.0.0-one")...)
+	assert.Contains(t, first, "RELEASE INSTALLED version=v0.0.0-one tools=2 skipped=0 ")
+	installed := filepath.Join(r.home, ".local", "bin", "nova-update")
+	before, err := os.Stat(installed)
+	require.NoError(t, err)
+
+	second := r.play(t, "tools.yml", vars("v0.0.0-two")...)
+	assert.Regexp(t, `TASK \[the stage seeded from the installed build's directory, on the machine\][^\n]*\n(?:[^\n]*\n)?changed: \[localhost\]`, second)
+	assert.Contains(t, second, "(item=nova-extra)")
+	assert.Contains(t, second, "(item=SHA256SUMS)")
+	assert.NotContains(t, second, "(item=nova-update)", "a file the machine already held was sent")
+	assert.Contains(t, second, "was=v0.0.0-one removed=0 INSTALLED RELEASE INSTALLED version=v0.0.0-two tools=1 skipped=1 ")
+	after, err := os.Stat(installed)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(before, after), "the identical nova-update was replaced")
+	extra, err := exec.Command(filepath.Join(r.home, ".local", "bin", "nova-extra")).Output()
+	require.NoError(t, err)
+	assert.Equal(t, "nova-extra v0.0.0-two\n", string(extra))
+
+	check := r.play(t, "tools.yml", append(vars("v0.0.0-two"), "--check")...)
+	assert.Contains(t, check, "was=v0.0.0-two removed=0 UP-TO-DATE", "a reused nova-update answers the earlier version; the build fact says the install is done")
+}
+
+// TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer is BenchStage.tla's
+// ReusedByteIdentical on the real play: the seed copies the installed build's
+// directory on the machine unverified, so the files sent are those whose
+// bytes in the stage differ from the release's SHA256SUMS, measured after the
+// seed (one listing with sha256), never those whose SHA256SUMS line differs.
+// A seeded file corrupted on the machine whose line matches the release's,
+// the binary the play runs or any other, is sent again in the same run, the
+// install takes the rebuilt tool and skips the rest, and an intact reused
+// file is not sent.
+func TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer(t *testing.T) {
+	t.Parallel()
+	built := ""
+	var update []byte
+	for _, corrupt := range []string{"nova-update", "nova-same"} {
+		t.Run(corrupt, func(t *testing.T) {
+			r := newFleetPlayRig(t, "check-fixture.yml")
+			platform := runtime.GOOS + "-" + runtime.GOARCH
+			out := filepath.Join(r.dir, "release")
+			if built == "" {
+				built = filepath.Join(r.dir, "built")
+				r.build(t, filepath.Join(built, "nova-update"), "v0.0.0-one", "./cmd/nova-update")
+				var err error
+				update, err = os.ReadFile(filepath.Join(built, "nova-update"))
+				require.NoError(t, err)
+			}
+			for _, version := range []string{"v0.0.0-one", "v0.0.0-two"} {
+				dir := filepath.Join(out, version, platform)
+				require.NoError(t, os.MkdirAll(dir, 0o755))
+				var sums strings.Builder
+				for _, f := range []struct {
+					name string
+					body []byte
+				}{
+					{"nova-extra", []byte("#!/bin/sh\necho nova-extra " + version + "\n")},
+					{"nova-same", []byte("#!/bin/sh\necho nova-same\n")},
+					{"nova-update", update},
+				} {
+					require.NoError(t, os.WriteFile(filepath.Join(dir, f.name), f.body, 0o755))
+					s := sha256.Sum256(f.body)
+					sums.WriteString(hex.EncodeToString(s[:]) + "  " + f.name + "\n")
+				}
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums.String()), 0o644))
+			}
+			vars := func(version string) []string {
+				return []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root,
+					"-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
+			}
+			r.play(t, "tools.yml", vars("v0.0.0-one")...)
+			seed := filepath.Join(r.home, "nova-bench", "release", "v0.0.0-one", platform, corrupt)
+			require.NoError(t, os.WriteFile(seed, []byte("corrupt on the machine\n"), 0o755))
+			extraNow := func() string {
+				b, err := exec.Command(filepath.Join(r.home, ".local", "bin", "nova-extra")).Output()
+				require.NoError(t, err)
+				return string(b)
+			}
+
+			second := r.play(t, "tools.yml", vars("v0.0.0-two")...)
+			assert.Contains(t, second, "changed: [localhost] => (item="+corrupt+")", "the corrupt seeded file was not sent again")
+			assert.Contains(t, second, "changed: [localhost] => (item=nova-extra)")
+			for _, intact := range []string{"nova-update", "nova-same"} {
+				if intact != corrupt {
+					assert.NotContains(t, second, "(item="+intact+")", "an intact reused file was sent")
+				}
+			}
+			assert.Contains(t, second, "INSTALLED RELEASE INSTALLED version=v0.0.0-two tools=1 skipped=2 ")
+			assert.Equal(t, "nova-extra v0.0.0-two\n", extraNow())
+			staged, err := os.ReadFile(filepath.Join(r.home, "nova-bench", "release", "v0.0.0-two", platform, corrupt))
+			require.NoError(t, err)
+			want, err := os.ReadFile(filepath.Join(out, "v0.0.0-two", platform, corrupt))
+			require.NoError(t, err)
+			assert.Equal(t, want, staged, "the stage holds bytes the release does not")
+		})
+	}
 }

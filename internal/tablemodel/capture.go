@@ -3,6 +3,7 @@ package tablemodel
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"sort"
 	"strconv"
@@ -154,9 +155,7 @@ func scoresOf(v any) []pair { return pairs(v) }
 func snapshot(r *Store, seen map[string]int) State {
 	s := State{Live: []Phys{}, Rows: []RowAt{}, Binds: []Bind{}, Data: []Datum{},
 		Active: integer(r.Cmd("HGET", "replay:epoch", "n")), Seen: map[string]int{}}
-	for k, v := range seen {
-		s.Seen[k] = v
-	}
+	maps.Copy(s.Seen, seen)
 	for _, t := range tables {
 		for _, e := range epochs {
 			p := prefix(t, e)
@@ -219,9 +218,7 @@ type Event map[string]string
 
 func (e Event) clone() Event {
 	c := Event{}
-	for k, v := range e {
-		c[k] = v
-	}
+	maps.Copy(c, e)
 	return c
 }
 

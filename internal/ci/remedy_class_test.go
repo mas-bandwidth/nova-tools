@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // remedyAllowlistPath is the shrink-only ledger of the refusal sites in cmd/
@@ -58,9 +60,7 @@ func TestEveryRefusalCarriesARemedy(t *testing.T) {
 	for _, files := range goFilesByDir(livingCmdFiles(tree)) {
 		var asts []*ast.File
 		for _, f := range files {
-			if f.ParseErr != nil {
-				t.Fatal(f.ParseErr)
-			}
+			require.NoError(t, f.ParseErr)
 			asts = append(asts, f.AST)
 		}
 		pkg := newCmdPackage(asts)
@@ -74,7 +74,7 @@ func TestEveryRefusalCarriesARemedy(t *testing.T) {
 		}
 	}
 	for _, v := range ledger.violations(t, "a refusal prints no remedy; end the line with `; run: <command>` (or `remedy:`, `wants <x>`, `see nova-<tool> help <verb>`) so the reader knows the next step (a row's count only falls)") {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 
@@ -601,9 +601,7 @@ func a(w io.Writer) int {
 `
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", src, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	p := newCmdPackage([]*ast.File{f})
 	got := map[string]int{}
 	for _, s := range p.refusalSites(fset, f) {
@@ -613,8 +611,6 @@ func a(w io.Writer) int {
 	}
 	want := map[string]int{siteRefuseCall: 1, siteRefusePrint: 1, siteExit2: 2}
 	for kind, n := range want {
-		if got[kind] != n {
-			t.Errorf("%s: %d unremedied sites, want %d (got %v)", kind, got[kind], n, got)
-		}
+		assert.Equal(t, n, got[kind], "%s: %d unremedied sites, want %d (got %v)", kind, got[kind], n, got)
 	}
 }

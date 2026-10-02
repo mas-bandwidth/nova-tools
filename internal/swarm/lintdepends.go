@@ -50,9 +50,7 @@ const CardDependsRemedy = "DEPENDS-ON: <card-id>[, ...] or DEPENDS-ON: -"
 func LintCardDepends(raw []byte, lineup Lineup) []CardHeaderFinding {
 	var out []CardHeaderFinding
 	add := func(line int, excerpt string) {
-		if line < 1 {
-			line = 1
-		}
+		line = max(line, 1)
 		out = append(out, CardHeaderFinding{Check: "depends-on", Line: line, Excerpt: excerpt})
 	}
 

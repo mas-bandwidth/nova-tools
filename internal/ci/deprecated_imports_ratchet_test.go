@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/require"
 )
 
 // deprecatedImportsAllowlistPath is the shrink-only exception list for dependencies
@@ -159,9 +160,7 @@ func TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase(t *testing.T) {
 
 	root := repoRoot(t)
 	added, parent, seed, err := deprecatedImportsAllowlistGrowth(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if seed {
 		t.Logf("%s is not in the merge base %s: this change is the allowlist seed", deprecatedImportsAllowlistPath, parent[:9])
 		return
@@ -184,27 +183,19 @@ func TestDeprecatedImportsAllowlistGrowthIsReadOutOfGit(t *testing.T) {
 		out, err := gitOut(root, append([]string{
 			"-c", "user.name=ci", "-c", "user.email=ci@example.invalid",
 			"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"}, args...)...)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		return strings.TrimSpace(out)
 	}
 	write := func(rel, text string) {
 		t.Helper()
 		p := filepath.Join(root, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(text), 0o644))
 	}
 	growth := func() ([]string, bool) {
 		t.Helper()
 		added, _, seed, err := deprecatedImportsAllowlistGrowth(root)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		return added, seed
 	}
 
@@ -223,9 +214,9 @@ func TestDeprecatedImportsAllowlistGrowthIsReadOutOfGit(t *testing.T) {
 	git("commit", "-q", "-m", "seed")
 
 	// PROBE 0: a parent with no allowlist is the seed.
-	if added, seed := growth(); !seed || len(added) != 0 {
-		t.Fatalf("parent with no allowlist: added %v seed %v; want the seed", added, seed)
-	}
+	added, seed := growth()
+	require.True(t, seed, "parent with no allowlist: added %v seed %v; want the seed", added, seed)
+	require.Empty(t, added, "parent with no allowlist: added %v seed %v; want the seed", added, seed)
 
 	// Advance origin/dev to the seed commit
 	seedCommit := git("rev-parse", "HEAD")
@@ -237,21 +228,20 @@ func TestDeprecatedImportsAllowlistGrowthIsReadOutOfGit(t *testing.T) {
 	git("commit", "-q", "-m", "touch")
 
 	// PROBE 1: matching allowlist is clean.
-	if added, seed := growth(); seed || len(added) != 0 {
-		t.Fatalf("matching row: added %v seed %v; want nothing added", added, seed)
-	}
+	added, seed = growth()
+	require.False(t, seed, "matching row: added %v seed %v; want nothing added", added, seed)
+	require.Empty(t, added, "matching row: added %v seed %v; want nothing added", added, seed)
 
 	// PROBE 2: adding a row is detected as growth.
 	write(relPath, "cmd/a -> internal/nsprint/ws  # seed\ncmd/b -> internal/nsprint/card  # new\n")
-	if added, _ := growth(); len(added) != 1 || added[0] != "cmd/b -> internal/nsprint/card" {
-		t.Fatalf("added row: added %q; want [cmd/b -> internal/nsprint/card]", added)
-	}
+	added, _ = growth()
+	require.Len(t, added, 1, "added row: added %q; want [cmd/b -> internal/nsprint/card]", added)
+	require.Equal(t, "cmd/b -> internal/nsprint/card", added[0], "added row: added %q; want [cmd/b -> internal/nsprint/card]", added)
 
 	// PROBE 3: deleting a row is shrinking, so added is empty.
 	write(relPath, "# all rows deleted\n")
-	if added, _ := growth(); len(added) != 0 {
-		t.Fatalf("deleted row: added %q; want none", added)
-	}
+	added, _ = growth()
+	require.Empty(t, added, "deleted row: added %q; want none", added)
 }
 
 // TestDeprecatedImportsAllowlistGrowthRefusesStaleOrMissingBase verifies that
@@ -266,20 +256,14 @@ func TestDeprecatedImportsAllowlistGrowthRefusesStaleOrMissingBase(t *testing.T)
 		out, err := gitOut(root, append([]string{
 			"-c", "user.name=ci", "-c", "user.email=ci@example.invalid",
 			"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"}, args...)...)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		return strings.TrimSpace(out)
 	}
 	write := func(rel, text string) {
 		t.Helper()
 		p := filepath.Join(root, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(text), 0o644))
 	}
 
 	const relPath = "internal/ci/" + deprecatedImportsAllowlistPath
@@ -293,9 +277,8 @@ func TestDeprecatedImportsAllowlistGrowthRefusesStaleOrMissingBase(t *testing.T)
 
 	// CASE 1: missing origin/dev on linear commit refuses loudly.
 	_, _, _, err := deprecatedImportsAllowlistGrowth(root)
-	if err == nil || !strings.Contains(err.Error(), "refs/remotes/origin/dev is missing") {
-		t.Fatalf("missing origin/dev on linear commit: got %v, want 'refs/remotes/origin/dev is missing'", err)
-	}
+	require.Error(t, err, "missing origin/dev on linear commit: got %v, want 'refs/remotes/origin/dev is missing'", err)
+	require.ErrorContains(t, err, "refs/remotes/origin/dev is missing", "missing origin/dev on linear commit: got %v, want 'refs/remotes/origin/dev is missing'", err)
 
 	// CASE 2: missing origin/dev on merge commit refuses loudly (fail closed).
 	currentBranch := git("branch", "--show-current")
@@ -306,17 +289,17 @@ func TestDeprecatedImportsAllowlistGrowthRefusesStaleOrMissingBase(t *testing.T)
 	git("checkout", "-q", currentBranch)
 	git("merge", "-q", "--no-ff", "-m", "merge side", "side")
 	_, _, _, err = deprecatedImportsAllowlistGrowth(root)
-	if err == nil || !strings.Contains(err.Error(), "refs/remotes/origin/dev is missing") {
-		t.Fatalf("missing origin/dev on merge commit: got %v, want 'refs/remotes/origin/dev is missing'", err)
-	}
+	require.Error(t, err, "missing origin/dev on merge commit: got %v, want 'refs/remotes/origin/dev is missing'", err)
+	require.ErrorContains(t, err, "refs/remotes/origin/dev is missing", "missing origin/dev on merge commit: got %v, want 'refs/remotes/origin/dev is missing'", err)
 
 	// CASE 3: when origin/dev is restored on merge commit, growth check works against merge base.
 	git("update-ref", "refs/remotes/origin/dev", baseCommit)
 	write(relPath, "cmd/a -> internal/nsprint/ws  # base\ncmd/b -> internal/nsprint/card  # new\n")
 	added, _, seed, err := deprecatedImportsAllowlistGrowth(root)
-	if err != nil || seed || len(added) != 1 || added[0] != "cmd/b -> internal/nsprint/card" {
-		t.Fatalf("restored origin/dev: added %v seed %v err %v; want [cmd/b -> internal/nsprint/card]", added, seed, err)
-	}
+	require.NoError(t, err, "restored origin/dev: added %v seed %v err %v; want [cmd/b -> internal/nsprint/card]", added, seed, err)
+	require.False(t, seed, "restored origin/dev: added %v seed %v err %v; want [cmd/b -> internal/nsprint/card]", added, seed, err)
+	require.Len(t, added, 1, "restored origin/dev: added %v seed %v err %v; want [cmd/b -> internal/nsprint/card]", added, seed, err)
+	require.Equal(t, "cmd/b -> internal/nsprint/card", added[0], "restored origin/dev: added %v seed %v err %v; want [cmd/b -> internal/nsprint/card]", added, seed, err)
 }
 
 // measureLivingDeprecatedImports scans files in living packages (excluding .git, vendor and
@@ -346,9 +329,7 @@ func measureLivingDeprecatedImports(t *testing.T, files []*treeFile, lt *liveTre
 				continue
 			}
 			importedPkg, err := strconv.Unquote(spec.Path.Value)
-			if err != nil {
-				t.Fatalf("unquote import path %s in %s: %v", spec.Path.Value, relSlash, err)
-			}
+			require.NoError(t, err, "unquote import path %s in %s: %v", spec.Path.Value, relSlash, err)
 			if isDroppedDeprecated(lt, importedPkg) {
 				edge := pkgPath + " -> " + cleanPkgPath(importedPkg)
 				measured[edge] = true

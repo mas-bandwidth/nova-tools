@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,27 +33,21 @@ func (r *recorder) count(sub string) int {
 func writeList(t *testing.T, text string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "x_allowlist.txt")
-	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(text), 0o644))
 	return path
 }
 
 func load(t *testing.T, path string, opt Options) *List {
 	t.Helper()
 	l, err := Load(path, opt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return l
 }
 
 func readBack(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(raw)
 }
 
@@ -82,15 +77,13 @@ func TestCheckReportsWithoutWriting(t *testing.T) {
 	l := load(t, path, Options{Ceiling: true})
 	var r recorder
 	res := CheckMode(&r, l, set("a.go:f", "c.go:h", "d.go:new"), false)
-	if len(res.Stale) != 1 || res.Stale[0].Key != "b.go:g" || res.Stale[0].Line != 5 {
-		t.Fatalf("stale = %+v, want b.go:g at line 5", res.Stale)
-	}
-	if strings.Join(res.Unlisted, ",") != "d.go:new" {
-		t.Fatalf("unlisted = %v, want [d.go:new]", res.Unlisted)
-	}
-	if res.Updated || len(r.lines) != 0 || readBack(t, path) != three {
-		t.Fatalf("a check outside an update wrote or printed: updated=%v lines=%q", res.Updated, r.lines)
-	}
+	require.Len(t, res.Stale, 1, "stale = %+v, want b.go:g at line 5", res.Stale)
+	require.Equal(t, "b.go:g", res.Stale[0].Key, "stale = %+v, want b.go:g at line 5", res.Stale)
+	require.Equal(t, 5, res.Stale[0].Line, "stale = %+v, want b.go:g at line 5", res.Stale)
+	require.Equal(t, "d.go:new", strings.Join(res.Unlisted, ","), "unlisted = %v, want [d.go:new]", res.Unlisted)
+	require.False(t, res.Updated, "a check outside an update wrote or printed: updated=%v lines=%q", res.Updated, r.lines)
+	require.Empty(t, r.lines, "a check outside an update wrote or printed: updated=%v lines=%q", res.Updated, r.lines)
+	require.Equal(t, three, readBack(t, path), "a check outside an update wrote or printed: updated=%v lines=%q", res.Updated, r.lines)
 }
 
 // Under an update the stale rows go, every comment and kept row stays byte for
@@ -102,18 +95,19 @@ func TestUpdateDropsStaleRowsAndFailsOnce(t *testing.T) {
 	var r recorder
 	res := CheckMode(&r, load(t, path, Options{Ceiling: true}), set("a.go:f", "c.go:h"), true)
 	want := strings.Replace(three, "b.go:g  # reason b\n", "", 1)
-	if got := readBack(t, path); got != want {
-		t.Fatalf("rewritten list:\n%s\nwant:\n%s", got, want)
-	}
-	if !res.Updated || len(res.Stale) != 0 || len(r.lines) != 1 || r.count(UpdatedRerun) != 1 {
-		t.Fatalf("an update must fail once with %q and return no stale rows: updated=%v stale=%v lines=%q", UpdatedRerun, res.Updated, res.Stale, r.lines)
-	}
+	got := readBack(t, path)
+	require.Equal(t, want, got, "rewritten list:\n%s\nwant:\n%s", got, want)
+	require.True(t, res.Updated, "an update must fail once with %q and return no stale rows: updated=%v stale=%v lines=%q", UpdatedRerun, res.Updated, res.Stale, r.lines)
+	require.Empty(t, res.Stale, "an update must fail once with %q and return no stale rows: updated=%v stale=%v lines=%q", UpdatedRerun, res.Updated, res.Stale, r.lines)
+	require.Len(t, r.lines, 1, "an update must fail once with %q and return no stale rows: updated=%v stale=%v lines=%q", UpdatedRerun, res.Updated, res.Stale, r.lines)
+	require.Equal(t, 1, r.count(UpdatedRerun), "an update must fail once with %q and return no stale rows: updated=%v stale=%v lines=%q", UpdatedRerun, res.Updated, res.Stale, r.lines)
 
 	var again recorder
 	res = CheckMode(&again, load(t, path, Options{Ceiling: true}), set("a.go:f", "c.go:h"), true)
-	if res.Updated || len(again.lines) != 0 || len(res.Stale)+len(res.Unlisted) != 0 {
-		t.Fatalf("the rerun must be clean: updated=%v lines=%q res=%+v", res.Updated, again.lines, res)
-	}
+	require.False(t, res.Updated, "the rerun must be clean: updated=%v lines=%q res=%+v", res.Updated, again.lines, res)
+	require.Empty(t, again.lines, "the rerun must be clean: updated=%v lines=%q res=%+v", res.Updated, again.lines, res)
+	require.Empty(t, res.Stale, "the rerun must be clean: updated=%v lines=%q res=%+v", res.Updated, again.lines, res)
+	require.Empty(t, res.Unlisted, "the rerun must be clean: updated=%v lines=%q res=%+v", res.Updated, again.lines, res)
 }
 
 // A ceiling list refuses to grow under an update and says so for each key, one
@@ -124,15 +118,13 @@ func TestCeilingListRefusesToGrowAndSaysSo(t *testing.T) {
 	path := writeList(t, three)
 	var r recorder
 	res := CheckMode(&r, load(t, path, Options{Ceiling: true}), set("a.go:f", "b.go:g", "c.go:h", "d.go:new", "e.go:new"), true)
-	if got := readBack(t, path); got != three {
-		t.Fatalf("a ceiling list grew under an update:\n%s", got)
-	}
-	if r.count("refuses to grow") != 2 || r.count("d.go:new") != 1 || r.count("e.go:new") != 1 {
-		t.Fatalf("each refused key needs its own line: %q", r.lines)
-	}
-	if res.Updated || strings.Join(res.Unlisted, ",") != "d.go:new,e.go:new" {
-		t.Fatalf("updated=%v unlisted=%v; want no write and both keys kept", res.Updated, res.Unlisted)
-	}
+	got := readBack(t, path)
+	require.Equal(t, three, got, "a ceiling list grew under an update:\n%s", got)
+	require.Equal(t, 2, r.count("refuses to grow"), "each refused key needs its own line: %q", r.lines)
+	require.Equal(t, 1, r.count("d.go:new"), "each refused key needs its own line: %q", r.lines)
+	require.Equal(t, 1, r.count("e.go:new"), "each refused key needs its own line: %q", r.lines)
+	require.False(t, res.Updated, "updated=%v unlisted=%v; want no write and both keys kept", res.Updated, res.Unlisted)
+	require.Equal(t, "d.go:new,e.go:new", strings.Join(res.Unlisted, ","), "updated=%v unlisted=%v; want no write and both keys kept", res.Updated, res.Unlisted)
 }
 
 // A list that may grow takes the unlisted keys as new rows under an update.
@@ -143,12 +135,11 @@ func TestGrowableListTakesTheMeasuredSet(t *testing.T) {
 	opt := Options{NewRow: func(k string) string { return k + " # measured" }}
 	var r recorder
 	res := CheckMode(&r, load(t, path, opt), set("kept", "new"), true)
-	if got, want := readBack(t, path), "# h\nkept # stays\nnew # measured\n"; got != want {
-		t.Fatalf("rewritten list %q, want %q", got, want)
-	}
-	if !res.Updated || len(res.Unlisted) != 0 || r.count(UpdatedRerun) != 1 {
-		t.Fatalf("updated=%v unlisted=%v lines=%q", res.Updated, res.Unlisted, r.lines)
-	}
+	got := readBack(t, path)
+	require.Equal(t, "# h\nkept # stays\nnew # measured\n", got, "rewritten list %q, want %q", got, "# h\nkept # stays\nnew # measured\n")
+	require.True(t, res.Updated, "updated=%v unlisted=%v lines=%q", res.Updated, res.Unlisted, r.lines)
+	require.Empty(t, res.Unlisted, "updated=%v unlisted=%v lines=%q", res.Updated, res.Unlisted, r.lines)
+	require.Equal(t, 1, r.count(UpdatedRerun), "updated=%v unlisted=%v lines=%q", res.Updated, res.Unlisted, r.lines)
 }
 
 // A `# ceiling: N` line caps the rows outside an update, and an update lowers it
@@ -159,31 +150,26 @@ func TestCeilingLineIsLoweredNeverRaised(t *testing.T) {
 	path := writeList(t, "# h\n# ceiling: 3\na\nb\nc\n")
 	var r recorder
 	CheckMode(&r, load(t, path, Options{Ceiling: true}), set("a", "c"), true)
-	if got, want := readBack(t, path), "# h\n# ceiling: 2\na\nc\n"; got != want {
-		t.Fatalf("rewritten list %q, want %q", got, want)
-	}
-	if n, ok := load(t, path, Options{}).Ceiling(); !ok || n != 2 {
-		t.Fatalf("ceiling = %d, %v; want 2", n, ok)
-	}
+	got := readBack(t, path)
+	require.Equal(t, "# h\n# ceiling: 2\na\nc\n", got, "rewritten list %q, want %q", got, "# h\n# ceiling: 2\na\nc\n")
+	n, ok := load(t, path, Options{}).Ceiling()
+	require.True(t, ok, "ceiling = %d, %v; want 2", n, ok)
+	require.Equal(t, 2, n, "ceiling = %d, %v; want 2", n, ok)
 
 	over := writeList(t, "# ceiling: 1\na\nb\n")
 	var o recorder
 	CheckMode(&o, load(t, over, Options{Ceiling: true}), set("a", "b"), false)
-	if o.count("over its ceiling of 1") != 1 {
-		t.Fatalf("a list over its ceiling must be refused: %q", o.lines)
-	}
+	require.Equal(t, 1, o.count("over its ceiling of 1"), "a list over its ceiling must be refused: %q", o.lines)
 	var u recorder
 	CheckMode(&u, load(t, over, Options{Ceiling: true}), set("a", "b"), true)
 	if u.count("never raises a ceiling") != 1 || readBack(t, over) != "# ceiling: 1\na\nb\n" {
-		t.Fatalf("an update must not raise a ceiling: %q %q", u.lines, readBack(t, over))
+		require.FailNowf(t, fmt.Sprintf("an update must not raise a ceiling: %q %q", u.lines, readBack(t, over)), "")
 	}
 
-	if _, err := Parse("p", "# ceiling: many\n", Options{}); err == nil {
-		t.Fatal("a ceiling that is not a number must be refused")
-	}
-	if _, err := Parse("p", "# ceiling: 1\n# ceiling: 2\n", Options{}); err == nil {
-		t.Fatal("a second ceiling line must be refused")
-	}
+	_, err := Parse("p", "# ceiling: many\n", Options{})
+	require.Error(t, err, "a ceiling that is not a number must be refused")
+	_, err = Parse("p", "# ceiling: 1\n# ceiling: 2\n", Options{})
+	require.Error(t, err, "a second ceiling line must be refused")
 }
 
 // Keys: the first field by default, the first n fields, or the whole row; a
@@ -192,31 +178,25 @@ func TestKeysAndMissingFiles(t *testing.T) {
 	t.Parallel()
 
 	l, err := Parse("p", "a.go:12 sleep 2026-09-17 why\ncmd x\tshape\t#1\n", Options{Key: Fields(2)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !l.Has("a.go:12 sleep") || !l.Has("cmd x") || l.Len() != 2 {
-		t.Fatalf("Fields(2) keys = %+v", l.Rows())
-	}
-	if FirstField("  x y ") != "x" || WholeRow("$ a b") != "$ a b" {
-		t.Fatal("FirstField or WholeRow")
-	}
+	require.NoError(t, err)
+	require.True(t, l.Has("a.go:12 sleep"), "Fields(2) keys = %+v", l.Rows())
+	require.True(t, l.Has("cmd x"), "Fields(2) keys = %+v", l.Rows())
+	require.Equal(t, 2, l.Len(), "Fields(2) keys = %+v", l.Rows())
+	require.Equal(t, "x", FirstField("  x y "), "FirstField or WholeRow")
+	require.Equal(t, "$ a b", WholeRow("$ a b"), "FirstField or WholeRow")
 
 	missing := filepath.Join(t.TempDir(), "none.txt")
-	if _, err := Load(missing, Options{}); err == nil {
-		t.Fatal("a missing list must be an error by default")
-	}
+	_, err = Load(missing, Options{})
+	require.Error(t, err, "a missing list must be an error by default")
 	e, err := Load(missing, Options{MissingIsEmpty: true})
-	if err != nil || e.Len() != 0 {
-		t.Fatalf("MissingIsEmpty: %v %d", err, e.Len())
-	}
+	require.NoError(t, err, "MissingIsEmpty: %v %d", err, e.Len())
+	require.Equal(t, 0, e.Len(), "MissingIsEmpty: %v %d", err, e.Len())
 	var r recorder
-	if res := CheckMode(&r, e, set(), true); res.Updated || len(r.lines) != 0 {
-		t.Fatalf("an empty measured set over a missing list writes nothing: %+v %q", res, r.lines)
-	}
-	if _, err := os.Stat(missing); !os.IsNotExist(err) {
-		t.Fatalf("the update created %s", missing)
-	}
+	res := CheckMode(&r, e, set(), true)
+	require.False(t, res.Updated, "an empty measured set over a missing list writes nothing: %+v %q", res, r.lines)
+	require.Empty(t, r.lines, "an empty measured set over a missing list writes nothing: %+v %q", res, r.lines)
+	_, err = os.Stat(missing)
+	require.True(t, os.IsNotExist(err), "the update created %s", missing)
 }
 
 // Only NOVA_CI_UPDATE=1 turns Check into a rewrite.
@@ -230,9 +210,7 @@ func TestUpdateNeedsTheValueOne(t *testing.T) {
 			}
 			return ""
 		})
-		if got != want {
-			t.Errorf("%s=%q updates = %v, want %v", UpdateEnv, v, got, want)
-		}
+		assert.Equal(t, want, got, "%s=%q updates = %v, want %v", UpdateEnv, v, got, want)
 	}
 }
 
@@ -245,28 +223,29 @@ func TestCountedListHoldsSitesNotJustKeys(t *testing.T) {
 	const text = "# ceiling: 3\na:f 2 two sites, a reason\nb:g 1 one site\nc:h 3 three\n"
 	path := writeList(t, text)
 	l := load(t, path, Options{Ceiling: true, Counted: true})
-	if l.Count("a:f") != 2 || l.Count("zz") != 0 {
-		t.Fatalf("counts = %d, %d", l.Count("a:f"), l.Count("zz"))
-	}
+	require.Equal(t, 2, l.Count("a:f"), "counts = %d, %d", l.Count("a:f"), l.Count("zz"))
+	require.Equal(t, 0, l.Count("zz"), "counts = %d, %d", l.Count("a:f"), l.Count("zz"))
 	rec := &recorder{}
 	res := CheckCountedMode(rec, l, map[string]int{"a:f": 3, "b:g": 1, "c:h": 1, "d:i": 1}, false)
-	if len(res.Over) != 1 || res.Over[0] != (CountRow{"a:f", 2, 3}) {
-		t.Errorf("Over = %+v, want a:f 2 -> 3", res.Over)
+	if assert.Len(t, res.Over, 1, "Over = %+v, want a:f 2 -> 3", res.Over) {
+		assert.Equal(t, CountRow{"a:f", 2, 3}, res.Over[0], "Over = %+v, want a:f 2 -> 3", res.Over)
 	}
-	if len(res.Lowered) != 1 || res.Lowered[0] != (CountRow{"c:h", 3, 1}) {
-		t.Errorf("Lowered = %+v, want c:h 3 -> 1", res.Lowered)
+	if assert.Len(t, res.Lowered, 1, "Lowered = %+v, want c:h 3 -> 1", res.Lowered) {
+		assert.Equal(t, CountRow{"c:h", 3, 1}, res.Lowered[0], "Lowered = %+v, want c:h 3 -> 1", res.Lowered)
 	}
-	if len(res.Unlisted) != 1 || res.Unlisted[0] != "d:i" {
-		t.Errorf("Unlisted = %v", res.Unlisted)
+	if assert.Len(t, res.Unlisted, 1, "Unlisted = %v", res.Unlisted) {
+		assert.Equal(t, "d:i", res.Unlisted[0], "Unlisted = %v", res.Unlisted)
 	}
 	res = CheckCountedMode(rec, l, map[string]int{"a:f": 2, "b:g": 1}, false)
-	if len(res.Stale) != 1 || res.Stale[0].Key != "c:h" || len(res.Over)+len(res.Lowered)+len(res.Unlisted) != 0 {
-		t.Errorf("a key with no site left is stale: %+v", res)
+	if assert.Len(t, res.Stale, 1, "a key with no site left is stale: %+v", res) {
+		assert.Equal(t, "c:h", res.Stale[0].Key, "a key with no site left is stale: %+v", res)
 	}
+	assert.Empty(t, res.Over, "a key with no site left is stale: %+v", res)
+	assert.Empty(t, res.Lowered, "a key with no site left is stale: %+v", res)
+	assert.Empty(t, res.Unlisted, "a key with no site left is stale: %+v", res)
 	for _, bad := range []string{"a:f reason without a count\n", "a:f 0 zero\n", "a:f\n"} {
-		if _, err := Parse("x", bad, Options{Counted: true}); err == nil {
-			t.Errorf("Parse(%q) accepted a row with no positive count", bad)
-		}
+		_, err := Parse("x", bad, Options{Counted: true})
+		assert.Error(t, err, "Parse(%q) accepted a row with no positive count", bad)
 	}
 }
 
@@ -279,23 +258,20 @@ func TestCountedUpdateLowersCountsAndNeverRaisesThem(t *testing.T) {
 	l := load(t, path, Options{Ceiling: true, Counted: true})
 	rec := &recorder{}
 	res := CheckCountedMode(rec, l, map[string]int{"a:f": 2, "b:g": 2}, true)
-	if !res.Updated || rec.count(UpdatedRerun) != 1 {
-		t.Fatalf("update did not report: %+v %v", res, rec.lines)
-	}
-	if got, want := readBack(t, path), "# ceiling: 2\na:f 2 why a\nb:g 2 why b\n"; got != want {
-		t.Errorf("after the update:\n%s\nwant:\n%s", got, want)
-	}
+	require.True(t, res.Updated, "update did not report: %+v %v", res, rec.lines)
+	require.Equal(t, 1, rec.count(UpdatedRerun), "update did not report: %+v %v", res, rec.lines)
+	got := readBack(t, path)
+	const want = "# ceiling: 2\na:f 2 why a\nb:g 2 why b\n"
+	assert.Equal(t, want, got, "after the update:\n%s\nwant:\n%s", got, want)
 
 	path = writeList(t, "# ceiling: 1\na:f 1 why a\n")
 	l = load(t, path, Options{Ceiling: true, Counted: true})
 	rec = &recorder{}
 	CheckCountedMode(rec, l, map[string]int{"a:f": 2, "z:z": 1}, true)
-	if rec.count("refuses to raise a count") != 1 || rec.count("refuses to grow") != 1 {
-		t.Errorf("the update did not refuse both raises: %v", rec.lines)
-	}
-	if got := readBack(t, path); got != "# ceiling: 1\na:f 1 why a\n" {
-		t.Errorf("a refused update changed the file: %q", got)
-	}
+	assert.Equal(t, 1, rec.count("refuses to raise a count"), "the update did not refuse both raises: %v", rec.lines)
+	assert.Equal(t, 1, rec.count("refuses to grow"), "the update did not refuse both raises: %v", rec.lines)
+	gotRefused := readBack(t, path)
+	assert.Equal(t, "# ceiling: 1\na:f 1 why a\n", gotRefused, "a refused update changed the file: %q", gotRefused)
 }
 
 // TestParseRejectsDuplicateKeys verifies that Parse rejects repeated keys by default,

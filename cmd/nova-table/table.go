@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -308,12 +309,7 @@ func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 	}
 	// the table's properties, one line each, in name order (L1 contract
 	// amendment, table properties, section 4)
-	names := make([]string, 0, len(t.Props))
-	for name := range t.Props {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(t.Props)) {
 		fmt.Fprintf(stdout, "TABLE PROP table=%s %s=%s\n", t.Name, name, field(t.Props[name]))
 	}
 	// A cell that did not come back prints as ? above, never as a false 0; show is

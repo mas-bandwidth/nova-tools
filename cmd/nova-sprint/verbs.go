@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
@@ -35,7 +36,7 @@ var verbs []verb
 
 func init() {
 	verbs = []verb{
-		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
+		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--owner <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
 		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"release", "<sentinel>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
@@ -67,6 +68,10 @@ func init() {
 		{"fleet down", "<member>", "fleet down m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("down", args, o, e) }},
 		{"fleet sync", "[--check] [--pg <dsn>]", "fleet sync --check", (*app).cmdFleetSync},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
+		{"friend sync", "[--pg <dsn>] [--root <dir>]", "friend sync", (*app).cmdFriendSync},
+		{"friend beat", "<friend>", "friend beat friend-a", (*app).cmdFriendBeat},
+		{"friend down", "<friend>", "friend down friend-a", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(true, args, o, e) }},
+		{"friend up", "<friend>", "friend up friend-a", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(false, args, o, e) }},
 		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
 		{"reader away", "<reader>...", "reader away reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(true, args, o, e) }},
 		{"reader up", "<reader>...", "reader up reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(false, args, o, e) }},
@@ -74,18 +79,21 @@ func init() {
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
-		{"ack", "<note>... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
-		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
+		{"ack", "<note>[,<note>]... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
+		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
 		{"card", "<id>", "card s1-4", (*app).cmdCard},
 		{"log", "[--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]", "log --card s1-4", (*app).cmdLog},
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
 		{"where", "[--watch] [--every <duration>]", "where", (*app).cmdWhere},
+		{"handover", "", "handover", (*app).cmdHandover},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"stats", "", "stats", (*app).cmdStats},
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
 		{"teardown", "--confirm sprint", "teardown --confirm sprint", (*app).cmdTeardown},
+		// last: its example moves the seat, and every coordinator verb's example before it is the holder's
+		{"coordinator", "<name> --reason <text> | <name> --take --approved-by <owner> --reason <text>", "coordinator friend-b --reason 'friend-a is out of credits; friend-b holds the seat'", (*app).cmdCoordinator},
 	}
 }
 
@@ -102,7 +110,7 @@ func verbNames() []string {
 	return append(out, "help", "version")
 }
 
-// groupVerbs is the verbs of the group word names (fleet, reader, goal, stream):
+// groupVerbs is the verbs of the group word names (fleet, friend, reader, goal, stream):
 // every verb whose name is that word and more; nil for a word that is no group.
 func groupVerbs(word string) []string {
 	var out []string
@@ -131,7 +139,7 @@ example: block is the coordinator's day on a real store, and "A real fleet"
 below connects the machines (run --listen, NOVA_SPRINT_SERVER, nova-swarm member).
 the rest: this help is long; nova-sprint help <verb> (or <verb> -h) prints one
 verb's usage, examples, flags and exit codes, and nova-sprint help <group>
-(fleet, reader, goal, stream) one group's.`
+(fleet, friend, reader, goal, stream) one group's.`
 
 func banner() string {
 	var b strings.Builder
@@ -145,10 +153,13 @@ NOVA_REDIS_ADDR), --actor <name> (else NOVA_SPRINT_ACTOR; no
 default: a verb that writes wants one), --op <id> (the same id again returns
 the recorded result), --json and --max <n> (listed items; 0 is all). The
 coordinator's verbs are the coordinator's alone (the first init names it:
---coordinator, else the actor); take, finish, read and fleet beat are the
-workers', whose actor is the member or reader named; merge and ci are
+--coordinator, else the actor); take, finish, read, fleet beat and friend
+beat are the workers', whose actor is the member, reader or friend named; merge and ci are
 reports; tick and run are the machine's; the reads need no actor (inbox
---read, which moves the coordinator's cursor, is the coordinator's). A set is
+--read, which moves the coordinator's cursor, is the coordinator's). The seat
+moves by coordinator <name> --reason <text>: given by its holder or the owner
+(init --owner), or taken by <name> itself with --take --approved-by <owner>,
+each in the log; handover prints what the next seat needs. A set is
 ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
@@ -179,6 +190,7 @@ and prints each one's generation.
 ` + machineWords() + `
 ` + serverWords() + `
 ` + fleetWords() + `
+` + friendWords() + `
 ` + readerWords() + `
 ` + streamWords() + `
 ` + goalWords() + `
@@ -314,6 +326,9 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 		}
 		if name == "fleet" {
 			fmt.Fprint(stdout, "\n"+fleetWords())
+		}
+		if name == "friend" {
+			fmt.Fprint(stdout, "\n"+friendWords())
 		}
 		if name == "reader" {
 			fmt.Fprint(stdout, "\n"+readerWords())
@@ -525,7 +540,7 @@ func groupChange(v store.InboxView, g sprint.Group, answers []string) (added, go
 	for _, m := range g.Members {
 		old := false
 		for _, o := range v.Open {
-			if named[o.Note.ID] && in[o.Note.ID] && (o.Subject() == m || o.Note.StreamLevel && contains(o.Note.Primaries, m)) {
+			if named[o.Note.ID] && in[o.Note.ID] && (o.Subject() == m || o.Note.StreamLevel && slices.Contains(o.Note.Primaries, m)) {
 				old = true
 			}
 		}
@@ -546,15 +561,6 @@ func groupChange(v store.InboxView, g sprint.Group, answers []string) (added, go
 		}
 	}
 	return added, gone
-}
-
-func contains(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
 }
 
 const (
@@ -690,6 +696,7 @@ func stepExit(res store.Result, err error) int {
 }
 
 func (a *app) report(ctx context.Context, verbName string, c common, st *store.Store, res store.Result, err error, stdout, stderr io.Writer) int {
+	err = noSprintYet(err)
 	code := stepExit(res, err)
 	var synced *store.SyncError
 	line := sprintLine(ctx, st)
@@ -821,7 +828,8 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("init")
 	readers := fs.String("readers", "", "the readers' rows, comma separated")
 	members := fs.String("members", "", fmt.Sprintf("fleet members to bring up, comma separated, each <name> or <name>:<width>, its width the most work cards it runs at once; it holds %d times that, ready and working (default %d)", sprint.DealAhead, sprint.DefaultWidth))
-	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor)")
+	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor); the seat then moves by coordinator <name>")
+	owner := fs.String("owner", "", "the sprint's owner, who may give the seat and whose name a take of it carries (coordinator --take --approved-by); set once, never changed (else "+OwnerEnv+")")
 	rules := fs.String("rules", "", "the child rules file every brief is held to: one required sentence per line, its path recorded for the sprint (default: the built-in general rules; add --rules <file> overrides it for one add)")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -852,9 +860,27 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "init", err.Error())
 	}
 	ctx := context.Background()
+	if *owner != "" {
+		if !sprint.ValidID(*owner) {
+			return refuse(stderr, "init", "--owner wants letters, digits, _ and -: "+*owner)
+		}
+		was, err := st.Owner(ctx)
+		if err != nil {
+			return a.readFailed("init", err, stderr)
+		}
+		if was != "" && was != *owner {
+			return refuse(stderr, "init", "the sprint's owner is "+was+", and init does not change the owner; nothing was changed")
+		}
+	}
 	if err := st.Init(ctx); err != nil {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
+	}
+	if *owner != "" {
+		if err := st.SetOwner(ctx, *owner); err != nil {
+			fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
+			return 1
+		}
 	}
 	if *coordinator == "" {
 		*coordinator = c.actor
@@ -1324,7 +1350,7 @@ func lintBrief(verbName, brief string, rules []swarm.ChildRule, max int, stderr 
 func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("release")
 	reason := fs.String("reason", "", "what you looked at and found: recorded on the sentinel and in its notification")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "release", err.Error())
@@ -1592,7 +1618,7 @@ func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
 	var ans, instead *string
 	return a.setVerb("ask", args, stdout, stderr, false, func(fs flagSet) {
 		another = fs.Bool("another", false, "one more reader for a primary already asked")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 		instead = fs.String("instead", "", "take back this reader's read (asked or reading) of the one primary named and ask one other reader, as --another chooses")
 	}, func(ids []string, s *sel) string {
 		if *instead != "" && s.group != "" {
@@ -1606,11 +1632,11 @@ func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("read")
-	as := fs.String("as", "", "the reader; several, comma separated, each reporting its own named cards in one step")
+	as := fs.String("as", "", "the reader; use read-card IDs from queue --as <reader>; several readers, comma separated, each reporting its own named read cards in one step")
 	begin := fs.Bool("begin", false, "asked -> reading")
 	ok := fs.Bool("ok", false, "the read found it good")
 	broken := fs.Bool("broken", false, "the read found it broken")
-	finding := fs.String("finding", "", "what the read found")
+	finding := fs.String("finding", "", "what the read found; with --broken it names the file (file:line), the line, or the card's STEP or RULE the work breaks, and what to change, or the read is refused")
 	limit := fs.Int("limit", 0, "the first n of the reader's queue (default 1)")
 	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: not a read; the next tick asks it of another reader free at the attempt, or of this reader again; no finding against the work")
 	reason := fs.String("reason", "", "with --return: why the read has no verdict (it reaches the inbox)")
@@ -1686,8 +1712,8 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 	var readOK *bool
 	var ans *string
 	return a.setVerb("accept", args, stdout, stderr, false, func(fs flagSet) {
-		readOK = fs.Bool("read-ok", false, "every primary in review with ok reads from two different readers")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		readOK = fs.Bool("read-ok", false, "every primary in review with ok reads from two different readers; moves eligible primaries into the merge queue")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" && !*readOK && s.limit == 0 {
 			return "wants ids, --stream <s>, --read-ok or --group <id>"
@@ -1706,7 +1732,7 @@ func (a *app) cmdRework(args []string, stdout, stderr io.Writer) int {
 	var fix, ans *string
 	return a.setVerb("rework", args, stdout, stderr, false, func(fs flagSet) {
 		fix = fs.String("fix", "", "the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" {
 			return "wants ids (or --group, --stream); --fix <text> for all, else each primary's own finding or report"
@@ -1721,7 +1747,7 @@ func (a *app) cmdReturn(args []string, stdout, stderr io.Writer) int {
 	var reason, ans *string
 	return a.setVerb("return", args, stdout, stderr, false, func(fs flagSet) {
 		reason = fs.String("reason", "", "why it goes back to review")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" {
 			return "wants ids, --stream <s> or --group <id>"
@@ -1736,7 +1762,7 @@ func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	var reason, ans *string
 	return a.setVerb("drop", args, stdout, stderr, true, func(fs flagSet) {
 		reason = fs.String("reason", "", "why it leaves the table; kept with its record")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if *reason == "" || len(ids) == 0 && s.stream == "" && s.col == "" {
 			return "wants ids (or --stream/--col, --group) and --reason <text>"
@@ -1818,7 +1844,7 @@ func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("rank")
 	score := fs.String("score", "", "the new score of the first id; the rest follow it")
 	first := fs.Bool("first", false, "ahead of every primary")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "rank", err.Error())
@@ -1843,7 +1869,7 @@ func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("merge")
-	stream := fs.String("stream", "", "the stream")
+	stream := fs.String("stream", "", "the stream whose queued batches are selected to merge and land")
 	batch := fs.Int("batch", 10, "the batch: the head n of the stream's queue")
 	conflict := fs.String("conflict", "", "fact: this card of the batch did not merge")
 	cross := fs.String("cross", "", "fact: <card>=<other>: the card needs <other> first; <other> is on the table, in another stream, not landed")
@@ -1883,7 +1909,7 @@ func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("resume")
 	stream := fs.String("stream", "", "the stopped stream")
 	did := fs.String("did", "", "what the coordinator did about the cause; required after a red branch")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "resume", err.Error())
@@ -2184,12 +2210,30 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s wait: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
+	if _, stale := sprint.StaleStream(pos[0]); stale {
+		fmt.Fprintf(stdout, "WAIT OK note=%s quiet until=%s: the inbox shows the stream stale again then if it still has not moved\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
+		return 0
+	}
 	if held {
 		fmt.Fprintf(stdout, "WAIT OK note=%s held until=%s of running time: the tick raises it again then if it still holds\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
 		return 0
 	}
 	fmt.Fprintf(stdout, "WAIT OK note=%s review=%s\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
 	return 0
+}
+
+// splitCommas is the words with each comma list among them split into its
+// items: ack takes the ack line inbox prints, whose notes are joined by commas.
+func splitCommas(words []string) []string {
+	var out []string
+	for _, w := range words {
+		for _, item := range strings.Split(w, ",") {
+			if item != "" {
+				out = append(out, item)
+			}
+		}
+	}
+	return out
 }
 
 func (a *app) cmdAck(args []string, stdout, stderr io.Writer) int {
@@ -2199,6 +2243,7 @@ func (a *app) cmdAck(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "ack", err.Error())
 	}
+	notes = splitCommas(notes) // the ack line inbox prints joins a group's notes with commas
 	if len(notes) == 0 || *reason == "" {
 		return refuse(stderr, "ack", "wants notification ids and --reason <text>")
 	}

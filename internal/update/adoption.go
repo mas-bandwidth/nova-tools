@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -18,12 +19,7 @@ const adoptionHeader = "tool\tfriend\tstate\tversion\tdetail"
 var adoptionStates = []string{"evaluated", "useful-now", "tried", "adopted", "declined", "deferred", "unknown", "equivalent"}
 
 func adoptionValid(s string) bool {
-	for _, v := range adoptionStates {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(adoptionStates, s)
 }
 
 type adoption struct {

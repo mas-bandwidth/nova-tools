@@ -57,7 +57,7 @@ func captureStageLine(t *testing.T, fn func()) string {
 
 // TestStageUsesTheBenchMirrorAndTimesOut tests the stage requirements of mas-bandwidth/nova-tools#2882:
 // 1. A card pointing to a remote repo without a bench mirror fails staging without going to GitHub.
-// 2. Staging clones from the bench's local mirror (--reference or clone --shared) and dissociates.
+// 2. Staging clones from the bench's local mirror with --shared, borrowing its objects.
 // 3. Staging past the timeout ends the card RESULT: BLOCKED stage-timeout <bench> <secs> and writes usage.tsv.
 func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 	t.Parallel()
@@ -124,7 +124,7 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 		require.NoError(t, err, "expected repo dir %s to exist", repoDir)
 		alternates := filepath.Join(repoDir, ".git", "objects", "info", "alternates")
 		_, err = os.Stat(alternates)
-		require.True(t, os.IsNotExist(err), "staging did not dissociate from mirror: alternates file exists at %s", alternates)
+		require.NoError(t, err, "staging borrows the bench mirror's objects: no alternates file at %s", alternates)
 	})
 
 	t.Run("times out and writes blocked result and usage", func(t *testing.T) {
@@ -236,9 +236,8 @@ func TestStageFailLinePrintsOnStagingFailure(t *testing.T) {
 	})
 	require.Equal(t, 2, code, "expected refusal exit code 2 when no bench mirror exists, got %d:\n%s", code, errOut.String())
 	require.True(t, strings.HasPrefix(line, "STAGE FAIL "), "expected a STAGE FAIL line, got %q", line)
-	if !strings.Contains(line, "bench=bench-1") || !strings.Contains(line, "repo=https://example.com/mas-bandwidth/missing-mirror.git") {
-		t.Fatalf("STAGE FAIL line missing bench/repo fields:\n%s", line)
-	}
+	require.Contains(t, line, "bench=bench-1", "STAGE FAIL line missing bench/repo fields:\n%s", line)
+	require.Contains(t, line, "repo=https://example.com/mas-bandwidth/missing-mirror.git", "STAGE FAIL line missing bench/repo fields:\n%s", line)
 }
 
 // TestStagePushedHeaderStagesRepoBeforeTheModel is nova-tools#3711's DONE-WHEN: a card whose
@@ -298,9 +297,8 @@ func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
 	head := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 	require.Equal(t, base, head, "<job>/repo HEAD = %s, want base-sha %s", head, base)
 	wantBranch := swarm.CardStageBranch(cardText)
-	if wantBranch == "" || wantBranch == swarm.CardStageBranch(nil) {
-		t.Fatalf("the card's branch is %q, want one derived from its label", wantBranch)
-	}
+	require.NotEqual(t, "", wantBranch, "the card's branch is %q, want one derived from its label", wantBranch)
+	require.NotEqual(t, wantBranch, swarm.CardStageBranch(nil), "the card's branch is %q, want one derived from its label", wantBranch)
 	branch := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD"))
 	require.Equal(t, wantBranch, branch, "<job>/repo is on %q, want the card's branch %q", branch, wantBranch)
 }
@@ -333,9 +331,10 @@ func TestStageNamedRepoNotStagedIsRefused(t *testing.T) {
 		}, &errOut)
 	})
 	require.Equal(t, 2, code, "expected refusal exit 2, got %d:\n%s", code, errOut.String())
-	if !strings.HasPrefix(line, "STAGE FAIL ") || !strings.Contains(line, "reason=no-repo-staged") || !strings.Contains(line, "bench=bench-1") || !strings.Contains(line, "repo=nova-tools") {
-		t.Fatalf("expected STAGE FAIL bench=bench-1 repo=nova-tools ... reason=no-repo-staged, got %q", line)
-	}
+	require.True(t, strings.HasPrefix(line, "STAGE FAIL "), "expected STAGE FAIL bench=bench-1 repo=nova-tools ... reason=no-repo-staged, got %q", line)
+	require.Contains(t, line, "reason=no-repo-staged", "expected STAGE FAIL bench=bench-1 repo=nova-tools ... reason=no-repo-staged, got %q", line)
+	require.Contains(t, line, "bench=bench-1", "expected STAGE FAIL bench=bench-1 repo=nova-tools ... reason=no-repo-staged, got %q", line)
+	require.Contains(t, line, "repo=nova-tools", "expected STAGE FAIL bench=bench-1 repo=nova-tools ... reason=no-repo-staged, got %q", line)
 	require.Contains(t, errOut.String(), "nothing was staged", "refusal does not name the cause:\n%s", errOut.String())
 
 	// No repo line at all: nothing to stage, the card runs as before.
@@ -356,7 +355,6 @@ func TestStageNamedRepoNotStagedIsRefused(t *testing.T) {
 			noWall:       true,
 		}, &errOut)
 	})
-	if code != 0 || !strings.HasPrefix(line, "STAGE OK ") {
-		t.Fatalf("card with no repo line: code=%d line=%q, want 0 and STAGE OK\n%s", code, line, errOut.String())
-	}
+	require.Equal(t, 0, code, "card with no repo line: code=%d line=%q, want 0 and STAGE OK\n%s", code, line, errOut.String())
+	require.True(t, strings.HasPrefix(line, "STAGE OK "), "card with no repo line: code=%d line=%q, want 0 and STAGE OK\n%s", code, line, errOut.String())
 }

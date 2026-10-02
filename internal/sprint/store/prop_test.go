@@ -26,6 +26,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
 )
 
 // propConfig is one random sprint's shape.
@@ -392,7 +393,7 @@ func (r *propRun) act(a pAct) {
 			if a.F {
 				v = "broken"
 			}
-			r.run(fmt.Sprintf("nova-sprint read %s --as %s --verdict %s --finding f", c.ID, reader, v), ReadStep(sprint.ReadReq{As: reader, Verdict: v, Finding: "f", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: reader}))
+			r.run(fmt.Sprintf("nova-sprint read %s --as %s --verdict %s --finding f:1", c.ID, reader, v), ReadStep(sprint.ReadReq{As: reader, Verdict: v, Finding: "f:1", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: reader}))
 		}
 	case "merge":
 		r.merge(stream, a.B, a.C, a.F)
@@ -1233,7 +1234,7 @@ func propSeeds(t *testing.T, from, to uint64, shrinkBudget int) {
 		t.Logf("  %s: %d", name, stats[name])
 	}
 	for _, s := range sigs {
-		t.Errorf("%d seeds fail with %s; the first:\n%s", classes[s], s, first[s])
+		assert.Fail(t, fmt.Sprintf("%d seeds fail with %s; the first:\n%s", classes[s], s, first[s]))
 	}
 }
 

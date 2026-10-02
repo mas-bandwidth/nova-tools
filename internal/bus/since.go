@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -511,7 +512,7 @@ func OpenFromFull(items []InboxItem, unreadable []*Note) []OpenEntry {
 func openEntryFor(c *Config, n *Note, me Participant, heard bool, maxWords int) OpenEntry {
 	to, _ := n.Header.Recipients(c)
 	addr := "cc"
-	if contains(to, me.Name) {
+	if slices.Contains(to, me.Name) {
 		addr = "to"
 	}
 	from := n.Header.From
@@ -545,7 +546,7 @@ func openEntryFor(c *Config, n *Note, me Participant, heard bool, maxWords int) 
 
 func addressedTo(c *Config, n *Note, me Participant) bool {
 	to, cc := n.Header.Recipients(c)
-	return contains(to, me.Name) || contains(cc, me.Name)
+	return slices.Contains(to, me.Name) || slices.Contains(cc, me.Name)
 }
 
 // SortForListing puts an open list in the order it is PRINTED in -- newest first, path

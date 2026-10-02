@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
 
@@ -57,9 +59,8 @@ func TestFleetDownAndLevelGoRoundTheFleet(t *testing.T) {
 		"p01.w1": "m2",
 		"p09.w1": "m3",
 	}
-	if _, err := refmodel.FleetDown(s, "m1", shortestDest); err == nil {
-		t.Fatalf("FleetDown with shortest-queue-by-name dest succeeded, want refusal (not round the fleet)")
-	}
+	_, err := refmodel.FleetDown(s, "m1", shortestDest)
+	require.Error(t, err, "FleetDown with shortest-queue-by-name dest succeeded, want refusal (not round the fleet)")
 
 	// Under rolling index from DealLast "4" (past m4), cards must go to m5 and m6:
 	roundDest := map[string]string{
@@ -67,18 +68,14 @@ func TestFleetDownAndLevelGoRoundTheFleet(t *testing.T) {
 		"p09.w1": "m6",
 	}
 	sDown, err := refmodel.FleetDown(s, "m1", roundDest)
-	if err != nil {
-		t.Fatalf("FleetDown with rolling index dest failed: %v", err)
-	}
-	if sDown.DealLast != "6" {
-		t.Fatalf("DealLast after FleetDown: %q, want 6", sDown.DealLast)
-	}
-	if w := sDown.Work["p01.w1"]; w.Member != "m5" || w.Place != refmodel.FReady {
-		t.Fatalf("p01.w1 after FleetDown: %+v, want on m5 ready", w)
-	}
-	if w := sDown.Work["p09.w1"]; w.Member != "m6" || w.Place != refmodel.FReady {
-		t.Fatalf("p09.w1 after FleetDown: %+v, want on m6 ready", w)
-	}
+	require.NoError(t, err, "FleetDown with rolling index dest failed: %v", err)
+	require.Equal(t, "6", sDown.DealLast, "DealLast after FleetDown: %q, want 6", sDown.DealLast)
+	w := sDown.Work["p01.w1"]
+	require.Equal(t, "m5", w.Member, "p01.w1 after FleetDown: %+v, want on m5 ready", w)
+	require.Equal(t, refmodel.FReady, w.Place, "p01.w1 after FleetDown: %+v, want on m5 ready", w)
+	w = sDown.Work["p09.w1"]
+	require.Equal(t, "m6", w.Member, "p09.w1 after FleetDown: %+v, want on m6 ready", w)
+	require.Equal(t, refmodel.FReady, w.Place, "p09.w1 after FleetDown: %+v, want on m6 ready", w)
 
 	// Now test Levelling on the twin with 8 members:
 	// Bring m1 back up.
@@ -114,20 +111,15 @@ func TestFleetDownAndLevelGoRoundTheFleet(t *testing.T) {
 	// The newest card from the first longest queue (d07b.w1 on m7) moves to m1.
 	// DealLast moves to 9 (past m1).
 	sAfterLevel, err := refmodel.Level(sLevel, nil)
-	if err != nil {
-		t.Fatalf("Level on uneven 8-member fleet failed: %v", err)
-	}
-	if sAfterLevel.DealLast != "9" {
-		t.Fatalf("DealLast after Level: %q, want 9", sAfterLevel.DealLast)
-	}
-	if w := sAfterLevel.Work["d07b.w1"]; w.Member != "m1" || w.Place != refmodel.FReady {
-		t.Fatalf("d07b.w1 after Level: %+v, want on m1 ready", w)
-	}
+	require.NoError(t, err, "Level on uneven 8-member fleet failed: %v", err)
+	require.Equal(t, "9", sAfterLevel.DealLast, "DealLast after Level: %q, want 9", sAfterLevel.DealLast)
+	w = sAfterLevel.Work["d07b.w1"]
+	require.Equal(t, "m1", w.Member, "d07b.w1 after Level: %+v, want on m1 ready", w)
+	require.Equal(t, refmodel.FReady, w.Place, "d07b.w1 after Level: %+v, want on m1 ready", w)
 
 	// Verify that if invalid moves are passed (e.g. moving card to m2 instead of m1),
 	// Level rejects it with badChoice.
 	badMoves := map[string]string{"d07b.w1": "m2"}
-	if _, err := refmodel.Level(sLevel, badMoves); err == nil {
-		t.Fatalf("Level with bad moves succeeded, want rejection")
-	}
+	_, err = refmodel.Level(sLevel, badMoves)
+	require.Error(t, err, "Level with bad moves succeeded, want rejection")
 }

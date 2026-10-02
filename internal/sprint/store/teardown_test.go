@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -35,16 +36,21 @@ func TestTeardownLeavesTheKeysAsBeforeInit(t *testing.T) {
 		step.CallerOp = "caller-1"
 		h.must(step)
 		require.NoError(t, m.SetCursor(h.ctx, "1-0"))
+		_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "friend-a", Width: 1, Jobs: []FriendJob{{ID: "j1", State: JobReady}}}, {Name: "friend-b", Width: 1}})
+		require.NoError(t, err)
+		_, err = h.st.FriendBeat(h.ctx, "friend-a")
+		require.NoError(t, err)
+		require.NoError(t, h.st.SetFriendHeld(h.ctx, "friend-b", true, "c"))
 	}
 	work()
 	during := m.Keys(h.st.Names)
-	for _, want := range []string{"table:t-work:changes", "table:t-work:identity", "t-sprint:w:s1-2", "t-sprint:done", "t-sprint:fencegen", "t-sprint:cursor", "t-sprint:inbox", "view:t-sprint"} {
+	for _, want := range []string{"table:t-work:changes", "table:t-work:identity", "t-sprint:w:s1-2", "t-sprint:done", "t-sprint:fencegen", "t-sprint:cursor", "t-sprint:inbox", "view:t-sprint", "t-sprint:friends", "t-sprint:friend-beat:friend-a", "t-sprint:friend-jobs:friend-a"} {
 		require.True(t, slices.Contains(during, want), "the work made no key %s: %v", want, during)
 	}
 	_, err = h.st.Teardown(h.ctx)
 	require.NoError(t, err)
 	if after := m.Keys(h.st.Names); !slices.Equal(after, before) {
-		t.Fatalf("after teardown:\n%s\nbefore init:\n%s", strings.Join(after, "\n"), strings.Join(before, "\n"))
+		require.Fail(t, fmt.Sprintf("after teardown:\n%s\nbefore init:\n%s", strings.Join(after, "\n"), strings.Join(before, "\n")))
 	}
 	work()
 	_, err = h.st.Teardown(h.ctx)

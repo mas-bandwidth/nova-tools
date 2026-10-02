@@ -8,6 +8,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // okOnFailureAllowlistPath is the shrink-only ledger of the print-then-exit
@@ -47,9 +50,7 @@ func TestNoOKOnFailure(t *testing.T) {
 	for _, files := range goFilesByDir(livingCmdFiles(tree)) {
 		var asts []*ast.File
 		for _, f := range files {
-			if f.ParseErr != nil {
-				t.Fatal(f.ParseErr)
-			}
+			require.NoError(t, f.ParseErr)
 			asts = append(asts, f.AST)
 		}
 		pkg := newCmdPackage(asts)
@@ -60,7 +61,7 @@ func TestNoOKOnFailure(t *testing.T) {
 		}
 	}
 	for _, v := range ledger.violations(t, "the word and the exit must agree: OK only at 0, FAIL or REFUSED only above it (a row's count only falls)") {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 
@@ -260,9 +261,7 @@ func b(w io.Writer, bad bool) int {
 `
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", src, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	p := newCmdPackage([]*ast.File{f})
 	got := map[string]int{}
 	for _, s := range p.okOnFailureSites(fset, f) {
@@ -270,7 +269,5 @@ func b(w io.Writer, bad bool) int {
 	}
 	// a: one of each. b: an OK printed after a REFUSED then exit 2 (the last status
 	// line wins, not "any line says FAIL"), and a FAIL after an OK then exit 0.
-	if got[kindOKNonZero] != 2 || got[kindFailZero] != 2 || len(got) != 2 {
-		t.Errorf("got %v, want two %s and two %s", got, kindOKNonZero, kindFailZero)
-	}
+	assert.Equal(t, map[string]int{kindOKNonZero: 2, kindFailZero: 2}, got, "got %v, want two %s and two %s", got, kindOKNonZero, kindFailZero)
 }

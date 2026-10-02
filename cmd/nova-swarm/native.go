@@ -136,6 +136,9 @@ type nativeRunConfig struct {
 	benchName string
 	// stageTimeout is the hard timeout for staging (default 120s).
 	stageTimeout time.Duration
+	// borrowed is the object directory the staged checkout borrows (the bench mirror's,
+	// swarm.MirrorCloneArgs), a read of the wall; "" when its objects are its own.
+	borrowed string
 	// frame, when set, is the member's frame of this launch (docs/SPEC-CARD-CONTRACT.md):
 	// staging stages its commit on its branch, and its profile writes JOB.md and the shims.
 	frame *cardcontract.Frame
@@ -738,6 +741,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
 	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
 	writeStageOK(os.Stdout, bench, stageRes)
+	if stageRes.Shared {
+		cfg.borrowed = filepath.Join(stageRes.Mirror, "objects")
+	}
 
 	// (4f) THE FRAME (docs/SPEC-CARD-CONTRACT.md layers 2 and 3). A framed launch whose
 	// checkout is staged gets JOB.md in the job directory and its family's shims first on
@@ -805,7 +811,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
+	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell,
+		swarm.BenchGoBin(benchHome(cfg), os.Getenv("PATH")))
 	if cfg.root != "" {
 		var id swarm.StagingIdentity
 		if cfg.identity != nil {
@@ -1729,6 +1736,12 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	for _, r := range nativeReadRoots(cfg) {
 		argv = append(argv, "--read", r)
 	}
+	// The checkout borrows the bench mirror's objects (swarm.MirrorCloneArgs): git inside the
+	// wall reads them through the checkout's alternates, and writes only its own. A read,
+	// never a write, never an exec.
+	if cfg.borrowed != "" {
+		argv = append(argv, "--read-noexec", cfg.borrowed)
+	}
 	for _, r := range cfg.repos {
 		argv = append(argv, "--repo", r)
 	}
@@ -1789,7 +1802,12 @@ func benchOS(cfg nativeRunConfig) string {
 // -- and every shell under it is handed an environment with the secret names unset. Both
 // are empty on windows and in the unit tests of the argv builder, and the environment is
 // then exactly what it was.
-func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string) []string {
+//
+// goBin is the bench's Go (swarm.BenchGoBin: GOROOT/bin, where `go` and `gofmt` live),
+// put on the child's PATH right after the wrappers, so a card's bare `go` and `gofmt`
+// resolve to the toolchain the wall grants whatever PATH the loop unit started the member
+// with. Empty names no Go and leaves PATH as it was.
+func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin string) []string {
 	var kept []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -1833,7 +1851,7 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	}
 	// The wrappers go on before the secret is re-added, so the ONE process that keeps the
 	// key is the harness itself and every shell it spawns by name is scrubbed (#1814).
-	out = pathWithShimFirst(out, shimDir)
+	out = pathWithDirFirst(pathWithDirFirst(out, goBin), shimDir)
 	if shimShell != "" {
 		out = append(out, "SHELL="+shimShell)
 	}
@@ -2321,10 +2339,18 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 		return err
 	}
 	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
+	if d := nativeCacheDir(cfg); d != "" {
+		st.GoCache = filepath.Join(d, "go-build") // the GOCACHE nativeChildEnv hands the child
+	}
 	if cfg.frame.Kind == "read" {
 		// first, so a read whose start cannot be known leaves nothing of its frame behind
 		if st.Start, err = workStart(git, st.Repo, cfg.frame.ReviewBase); err != nil {
 			return err
+		}
+		if st.Start != "" {
+			if st.Gate, err = readGate(git, st.Repo, st.Start); err != nil {
+				return err
+			}
 		}
 	}
 	// the commit staged, recorded in the slot (outside the job the child writes): the
@@ -2393,6 +2419,23 @@ func workStart(git, checkout, base string) (string, error) {
 		return "", fmt.Errorf("%w: the merge base against %s returned no full commit sha: %q", errReadStart, base, sha)
 	}
 	return sha, nil
+}
+
+// readGate is a read's gate (cardcontract.ReadGate): the tests of what the work changed,
+// start..HEAD in the checkout.
+func readGate(git, checkout, start string) (*cardcontract.Gate, error) {
+	out, err := gitrun.Output(context.Background(), gitrun.Options{Bin: git, C: checkout, OwnRepo: true},
+		"diff", "--name-only", "--no-renames", "-z", "--end-of-options", start, "HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("the read's gate: the files the work changed could not be read: %w", err)
+	}
+	var changed []string
+	for _, f := range strings.Split(out, "\x00") {
+		if f != "" {
+			changed = append(changed, f)
+		}
+	}
+	return cardcontract.ReadGate(checkout, changed)
 }
 
 // providerOf splits a native model id on its single slash and reports whether it

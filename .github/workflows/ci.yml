@@ -651,6 +651,19 @@ jobs:
         shell: bash
         run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
 
+      - name: fetch origin/dev for the deprecated-imports ratchet
+        # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
+        # allowlist against the merge base with refs/remotes/origin/dev and refuses when that
+        # ref is missing. actions/checkout here fetches only the commit under test, so the ref
+        # was whatever a runner's persistent workspace happened to keep: a workspace emptied and
+        # re-seeded from the bench mirror has none (2026-10-02 04:34Z, a run cancelled mid-checkout
+        # left .git/index.lock on two Linux runners; internal/ci was red on both from then on).
+        # Fetched every time, as certification.yml does, and before the ancestry fetches below
+        # so their --unshallow completes it.
+        if: contains(format(' {0} ', matrix.entry.packages), ' ./internal/ci ')
+        shell: bash
+        run: git fetch --no-tags --depth=1 origin +dev:refs/remotes/origin/dev
+
       - name: fetch dev's ancestry for a main run
         # On main (the default branch) at a merge commit, the landed promotion,
         # the classtests rule excuses a deletion only when the second parent's
@@ -667,6 +680,9 @@ jobs:
         # must be sprint/foundation's and its history excuses what it deleted. A shallow
         # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
         # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        # Nor is anything when origin has no sprint/foundation: dev is the integration branch and
+        # that branch lives only while a promotion is in flight; the step says so and the dev run
+        # excuses nothing (the merge is compared as everywhere), as a one-parent commit's is.
         if: (matrix.entry.packages != '') && (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
         shell: bash
         run: |
@@ -1035,6 +1051,9 @@ jobs:
         # must be sprint/foundation's and its history excuses what it deleted. A shallow
         # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
         # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        # Nor is anything when origin has no sprint/foundation: dev is the integration branch and
+        # that branch lives only while a promotion is in flight; the step says so and the dev run
+        # excuses nothing (the merge is compared as everywhere), as a one-parent commit's is.
         if: (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
         shell: bash
         run: |

@@ -103,9 +103,8 @@ func TestWhichVerbsNeedAnEpoch(t *testing.T) {
 		seen[v.name] = true
 		assert.Equal(t, always[v.name] || v.name == "merge", needsEpoch(v.name, false), "%s (not the coordinator's): needs --epoch", v.name)
 		assert.Equal(t, always[v.name], needsEpoch(v.name, true), "%s (the coordinator's): needs --epoch", v.name)
-		if class := verbClasses[v.name]; class == classCoordinator && needsEpoch(v.name, false) {
-			t.Errorf("%s is the coordinator's and needs --epoch", v.name)
-		}
+		class := verbClasses[v.name]
+		assert.False(t, class == classCoordinator && needsEpoch(v.name, false), "%s is the coordinator's and needs --epoch", v.name)
 	}
 	for name := range epochVerbs {
 		assert.True(t, seen[name], "%s needs --epoch and is no verb", name)
@@ -326,10 +325,10 @@ func TestInboxWaitWithJSONOnTimeoutEmitsOnlyValidJSON(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(out), &in), "%s: stdout is not valid JSON:\n%s", cmd, out)
 		require.Contains(t, in, "woke", "%s: the timeout is in the JSON too", cmd)
 		require.Equal(t, false, in["woke"], "%s: no tick end arrived", cmd)
-		require.Contains(t, errs, "inbox --wait: no tick end in", "%s: the human timeout line is on stderr", cmd)
+		require.Contains(t, errs, "inbox --wait: nothing new in", "%s: the human timeout line is on stderr", cmd)
 	}
 	code, out, errs := ta.do("inbox --wait --timeout 50ms")
 	require.Zero(t, code, errs)
-	require.Contains(t, out, "inbox --wait: no tick end in 50ms")
+	require.Contains(t, out, "inbox --wait: nothing new in 50ms")
 	require.Empty(t, errs)
 }

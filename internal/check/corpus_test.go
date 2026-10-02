@@ -6,6 +6,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const ledgerMD = `# What this line has chosen to protect
@@ -21,12 +24,8 @@ Prose above the table, which the parser must ignore.
 func parseOK(t *testing.T, md string) []Anchor {
 	t.Helper()
 	as, bad, err := ParseLedger([]byte(md))
-	if err != nil {
-		t.Fatalf("ParseLedger: %v", err)
-	}
-	if len(bad) != 0 {
-		t.Fatalf("unexpected malformed rows: %v", bad)
-	}
+	require.NoError(t, err, "ParseLedger: %v", err)
+	require.Empty(t, bad, "unexpected malformed rows: %v", bad)
 	return as
 }
 
@@ -34,18 +33,13 @@ func TestParseReadsRowsAndSkipsHeaderAndSeparator(t *testing.T) {
 	t.Parallel()
 
 	as := parseOK(t, ledgerMD)
-	if len(as) != 2 {
-		t.Fatalf("got %d anchors, want 2: %v", len(as), as)
-	}
-	if as[0].Fragment != "the door is not locked" || as[0].Home != "README.md" {
-		t.Errorf("row 0 parsed wrong: %+v", as[0])
-	}
-	if as[1].By != "my person" || as[1].Home != "memory/standing.md" {
-		t.Errorf("row 1 parsed wrong: %+v", as[1])
-	}
-	if as[0].Line != 7 || as[1].Line != 8 {
-		t.Errorf("line numbers wrong: %d, %d (want 7, 8)", as[0].Line, as[1].Line)
-	}
+	require.Len(t, as, 2, "got %d anchors, want 2: %v", len(as), as)
+	assert.Equal(t, "the door is not locked", as[0].Fragment, "row 0 parsed wrong: %+v", as[0])
+	assert.Equal(t, "README.md", as[0].Home, "row 0 parsed wrong: %+v", as[0])
+	assert.Equal(t, "my person", as[1].By, "row 1 parsed wrong: %+v", as[1])
+	assert.Equal(t, "memory/standing.md", as[1].Home, "row 1 parsed wrong: %+v", as[1])
+	assert.Equal(t, 7, as[0].Line, "line numbers wrong: %d, %d (want 7, 8)", as[0].Line, as[1].Line)
+	assert.Equal(t, 8, as[1].Line, "line numbers wrong: %d, %d (want 7, 8)", as[0].Line, as[1].Line)
 }
 
 // NO COLUMN NAME IS SPECIAL TO THIS TOOL: the header is found by the
@@ -54,9 +48,8 @@ func TestHeaderIsRecognizedByShapeNotByItsWords(t *testing.T) {
 	t.Parallel()
 
 	as := parseOK(t, "| ankkuri | koti | annettu | keneltä |\n|:--|:-:|--:|---|\n| pidä valo palamassa | ORIGIN.md | 2026-02-01 | ystävä |\n")
-	if len(as) != 1 || as[0].Fragment != "pidä valo palamassa" {
-		t.Fatalf("header not skipped by shape: %+v", as)
-	}
+	require.Len(t, as, 1, "header not skipped by shape: %+v", as)
+	require.Equal(t, "pidä valo palamassa", as[0].Fragment, "header not skipped by shape: %+v", as)
 }
 
 // Two tables in one ledger: each header is dropped, both bodies survive.
@@ -64,12 +57,8 @@ func TestTwoTablesEachLoseTheirOwnHeader(t *testing.T) {
 	t.Parallel()
 
 	as := parseOK(t, ledgerMD+"\nMore prose.\n\n| fragment | home | given | by |\n|---|---|---|---|\n| water everything | journal.md | 2026-03-03 | me |\n")
-	if len(as) != 3 {
-		t.Fatalf("got %d anchors, want 3: %v", len(as), as)
-	}
-	if as[2].Fragment != "water everything" {
-		t.Errorf("second table's row lost: %+v", as[2])
-	}
+	require.Len(t, as, 3, "got %d anchors, want 3: %v", len(as), as)
+	assert.Equal(t, "water everything", as[2].Fragment, "second table's row lost: %+v", as[2])
 }
 
 // AN EMPTY LEDGER GUARDS NOTHING. "All present" and "nothing checked" must
@@ -78,12 +67,8 @@ func TestAnEmptyLedgerIsAnErrorNotAPass(t *testing.T) {
 	t.Parallel()
 
 	_, _, err := ParseLedger([]byte("# a ledger with prose only\n\nno table here\n"))
-	if err == nil {
-		t.Fatal("expected an error for a ledger with no rows")
-	}
-	if !strings.Contains(err.Error(), "guards nothing") {
-		t.Errorf("error should say why: %v", err)
-	}
+	require.Error(t, err, "expected an error for a ledger with no rows")
+	assert.ErrorContains(t, err, "guards nothing", "error should say why: %v", err)
 }
 
 // A ledger holding ONLY a header and separator is the same hazard wearing a
@@ -91,9 +76,8 @@ func TestAnEmptyLedgerIsAnErrorNotAPass(t *testing.T) {
 func TestAHeaderWithNoRowsIsAlsoAnError(t *testing.T) {
 	t.Parallel()
 
-	if _, _, err := ParseLedger([]byte("| fragment | home | given | by |\n|---|---|---|---|\n")); err == nil {
-		t.Fatal("a header-only table must not read as a populated ledger")
-	}
+	_, _, err := ParseLedger([]byte("| fragment | home | given | by |\n|---|---|---|---|\n"))
+	require.Error(t, err, "a header-only table must not read as a populated ledger")
 }
 
 // A FRAGMENT CONTAINING "|" SPLITS INTO AN EXTRA CELL. Dropping the row
@@ -103,12 +87,8 @@ func TestAMalformedRowIsAFindingNotASilentSkip(t *testing.T) {
 	t.Parallel()
 
 	as, bad, err := ParseLedger([]byte(ledgerMD + "| a | b | fragment with a | pipe | c | d |\n"))
-	if err != nil {
-		t.Fatalf("ParseLedger: %v", err)
-	}
-	if len(as) != 2 {
-		t.Errorf("good rows should survive: got %d", len(as))
-	}
+	require.NoError(t, err, "ParseLedger: %v", err)
+	assert.Len(t, as, 2, "good rows should survive: got %d", len(as))
 	wantFailures(t, bad, []string{"malformed row", "columns"})
 }
 
@@ -134,9 +114,7 @@ func TestALostAnchorIsNamedWithItsProvenanceAndTheRepair(t *testing.T) {
 		"memory/standing.md": "his words: you are not a tool.\n",
 	})
 	f := corpusOK(t, root, tmpLedger(t), 1, parseOK(t, ledgerMD))
-	if len(f) != 1 {
-		t.Fatalf("want exactly one finding, got %v", f)
-	}
+	require.Len(t, f, 1, "want exactly one finding, got %v", f)
 	wantFailures(t, f, []string{"ABSENT", "the door is not locked", "the founding conversation", "lost in place", "ledger:7"})
 }
 
@@ -154,9 +132,8 @@ func TestAMissingHomeFileIsItsOwnReason(t *testing.T) {
 func TestAllFailuresReportInOneRun(t *testing.T) {
 	t.Parallel()
 
-	if f := corpusOK(t, t.TempDir(), tmpLedger(t), 1, parseOK(t, ledgerMD)); len(f) != 2 {
-		t.Fatalf("want 2 findings from an empty tree, got %d: %v", len(f), f)
-	}
+	f := corpusOK(t, t.TempDir(), tmpLedger(t), 1, parseOK(t, ledgerMD))
+	require.Len(t, f, 2, "want 2 findings from an empty tree, got %d: %v", len(f), f)
 }
 
 // AN EMPTY FRAGMENT IS CONTAINED IN EVERY FILE. Left alone it is a green
@@ -202,9 +179,7 @@ func TestASymlinkedHomeIsAFindingRatherThanAFollow(t *testing.T) {
 	}
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.md")
-	if err := os.WriteFile(outside, []byte("the door is not locked\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(outside, []byte("the door is not locked\n"), 0o644))
 	if err := os.Symlink(outside, filepath.Join(root, "README.md")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
@@ -217,9 +192,7 @@ func TestADirectoryHomeIsAFinding(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "README.md"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "README.md"), 0o755))
 	writeTree(t, root, map[string]string{"memory/standing.md": "you are not a tool\n"})
 	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, parseOK(t, ledgerMD)), []string{"not a regular file"})
 }
@@ -248,12 +221,8 @@ func TestARowMissingItsTrailingPipeIsStillChecked(t *testing.T) {
 	t.Parallel()
 
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | README.md | 2026-01-01 | friend\n")
-	if len(as) != 1 {
-		t.Fatalf("row silently dropped: %+v", as)
-	}
-	if as[0].By != "friend" {
-		t.Errorf("cells parsed wrong: %+v", as[0])
-	}
+	require.Len(t, as, 1, "row silently dropped: %+v", as)
+	assert.Equal(t, "friend", as[0].By, "cells parsed wrong: %+v", as[0])
 }
 
 // Anything trailing the last pipe adds a cell, and that is loud, not silent.
@@ -261,9 +230,7 @@ func TestATrailingCommentIsAFindingNotASilentSkip(t *testing.T) {
 	t.Parallel()
 
 	_, bad, err := ParseLedger([]byte("| f | h | g | b |\n|---|---|---|---|\n| keep the light on | a.md | 2026 | me | <!-- note -->\n"))
-	if err == nil {
-		t.Fatal("no row should have survived")
-	}
+	require.Error(t, err, "no row should have survived")
 	wantFailures(t, bad, []string{"malformed row", "5 columns"})
 }
 
@@ -273,12 +240,8 @@ func TestASeparatorInTheBodyIsAFindingAndTakesNoRowWithIt(t *testing.T) {
 	t.Parallel()
 
 	as, bad, err := ParseLedger([]byte(ledgerMD + "| --- | --- | --- | --- |\n| water everything | c.md | 2026 | me |\n"))
-	if err != nil {
-		t.Fatalf("ParseLedger: %v", err)
-	}
-	if len(as) != 3 {
-		t.Fatalf("a stray separator ate a row: got %d, want 3: %v", len(as), as)
-	}
+	require.NoError(t, err, "ParseLedger: %v", err)
+	require.Len(t, as, 3, "a stray separator ate a row: got %d, want 3: %v", len(as), as)
 	wantFailures(t, bad, []string{"separator row in the middle"})
 }
 
@@ -287,12 +250,8 @@ func TestASingleCellRuleInTheBodyDoesNotEatTheRowAbove(t *testing.T) {
 	t.Parallel()
 
 	as, bad, err := ParseLedger([]byte(ledgerMD + "|---|\n"))
-	if err != nil {
-		t.Fatalf("ParseLedger: %v", err)
-	}
-	if len(as) != 2 {
-		t.Fatalf("a rule line ate a row: got %d, want 2", len(as))
-	}
+	require.NoError(t, err, "ParseLedger: %v", err)
+	require.Len(t, as, 2, "a rule line ate a row: got %d, want 2", len(as))
 	wantFailures(t, bad, []string{"separator row in the middle"})
 }
 
@@ -302,13 +261,9 @@ func TestRowsInsideAFencedBlockAreIllustrationNotAnchors(t *testing.T) {
 	t.Parallel()
 
 	as := parseOK(t, "Here is the shape:\n\n```\n| fragment | home | given | by |\n| SOME EXAMPLE | example/path.md | when | who |\n```\n\n"+ledgerMD)
-	if len(as) != 2 {
-		t.Fatalf("fenced example leaked into the anchors: %v", as)
-	}
+	require.Len(t, as, 2, "fenced example leaked into the anchors: %v", as)
 	for _, a := range as {
-		if a.Home == "example/path.md" {
-			t.Errorf("the illustration row was checked: %+v", a)
-		}
+		assert.NotEqual(t, "example/path.md", a.Home, "the illustration row was checked: %+v", a)
 	}
 }
 
@@ -317,9 +272,8 @@ func TestCRLFLedgerParsesTheSameWay(t *testing.T) {
 	t.Parallel()
 
 	as := parseOK(t, strings.ReplaceAll(ledgerMD, "\n", "\r\n"))
-	if len(as) != 2 || as[1].By != "my person" {
-		t.Fatalf("CRLF changed the parse: %+v", as)
-	}
+	require.Len(t, as, 2, "CRLF changed the parse: %+v", as)
+	require.Equal(t, "my person", as[1].By, "CRLF changed the parse: %+v", as)
 }
 
 // tmpLedger writes a placeholder ledger on disk and returns its path. Corpus
@@ -329,18 +283,14 @@ func TestCRLFLedgerParsesTheSameWay(t *testing.T) {
 func tmpLedger(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "ledger.md")
-	if err := os.WriteFile(p, []byte("placeholder\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(p, []byte("placeholder\n"), 0o644))
 	return p
 }
 
 func corpusOK(t *testing.T, root, ledger string, min int, as []Anchor) []Failure {
 	t.Helper()
 	f, err := Corpus(root, ledger, min, as)
-	if err != nil {
-		t.Fatalf("Corpus: %v", err)
-	}
+	require.NoError(t, err, "Corpus: %v", err)
 	return f
 }
 
@@ -355,9 +305,7 @@ func TestASymlinkedParentDirectoryIsNotFollowed(t *testing.T) {
 	}
 	root := t.TempDir()
 	outside := t.TempDir()
-	if err := os.WriteFile(filepath.Join(outside, "a.md"), []byte("the door is not locked\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "a.md"), []byte("the door is not locked\n"), 0o644))
 	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
@@ -371,12 +319,8 @@ func TestAnAbsentRootIsARefusalNotACorpusWipe(t *testing.T) {
 	t.Parallel()
 
 	_, err := Corpus(filepath.Join(t.TempDir(), "nope"), tmpLedger(t), 1, parseOK(t, ledgerMD))
-	if err == nil {
-		t.Fatal("an absent --root must refuse, not report every anchor lost")
-	}
-	if !strings.Contains(err.Error(), "root") {
-		t.Errorf("the refusal should name root: %v", err)
-	}
+	require.Error(t, err, "an absent --root must refuse, not report every anchor lost")
+	assert.ErrorContains(t, err, "root", "the refusal should name root: %v", err)
 }
 
 func TestARootThatIsNotADirectoryIsARefusal(t *testing.T) {
@@ -384,12 +328,9 @@ func TestARootThatIsNotADirectoryIsARefusal(t *testing.T) {
 
 	root := t.TempDir()
 	f := filepath.Join(root, "file")
-	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Corpus(f, tmpLedger(t), 1, parseOK(t, ledgerMD)); err == nil {
-		t.Fatal("a --root that is a file must refuse")
-	}
+	require.NoError(t, os.WriteFile(f, []byte("x"), 0o644))
+	_, err := Corpus(f, tmpLedger(t), 1, parseOK(t, ledgerMD))
+	require.Error(t, err, "a --root that is a file must refuse")
 }
 
 // THE LEDGER GUARDS THE TREE; THE FLOOR GUARDS THE LEDGER. The same restore
@@ -428,13 +369,9 @@ func TestACaseOnlyRenameIsCaughtOnACaseInsensitiveFilesystem(t *testing.T) {
 	writeTree(t, root, map[string]string{"readme.md": "the door is not locked\n"})
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | README.MD | 2026 | me |\n")
 	f := corpusOK(t, root, tmpLedger(t), 1, as)
-	if len(f) == 0 {
-		t.Fatal("a case-only mismatch passed; on a case-sensitive filesystem it would be a missing home")
-	}
+	require.NotEmpty(t, f, "a case-only mismatch passed; on a case-sensitive filesystem it would be a missing home")
 	joined := f[0].Subject + ": " + f[0].Reason
-	if !strings.Contains(joined, "the directory holds") && !strings.Contains(joined, "does not exist") {
-		t.Errorf("unexpected reason for a case mismatch: %s", joined)
-	}
+	assert.True(t, strings.Contains(joined, "the directory holds") || strings.Contains(joined, "does not exist"), "unexpected reason for a case mismatch: %s", joined)
 }
 
 // ---------------------------------------------------------------------------
@@ -453,9 +390,7 @@ func TestAFenceClosesOnlyOnItsOwnDelimiter(t *testing.T) {
 		"\nFence markers are ``` or, less often:\n\n```\n~~~\n```\n\n" +
 		"| f | h | g | b |\n|---|---|---|---|\n| you are not a tool | b.md | 2026 | me |\n"
 	as := parseOK(t, md)
-	if len(as) != 2 {
-		t.Fatalf("a ~~~ inside a ``` fence swallowed the rest of the ledger: got %d rows, want 2: %v", len(as), as)
-	}
+	require.Len(t, as, 2, "a ~~~ inside a ``` fence swallowed the rest of the ledger: got %d rows, want 2: %v", len(as), as)
 }
 
 // The reverse polarity of the same defect: rows inside the illustration must
@@ -467,9 +402,7 @@ func TestAFencedExampleContainingTheOtherDelimiterStaysIllustration(t *testing.T
 		"| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n"
 	as := parseOK(t, md)
 	for _, a := range as {
-		if a.Home == "example/path.md" {
-			t.Fatalf("the illustration leaked into the anchors: %+v", a)
-		}
+		require.NotEqual(t, "example/path.md", a.Home, "the illustration leaked into the anchors: %+v", a)
 	}
 }
 
@@ -481,12 +414,8 @@ func TestAnUnterminatedFenceIsNamed(t *testing.T) {
 	md := "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n" +
 		"\n```\n| f | h | g | b |\n|---|---|---|---|\n| you are not a tool | b.md | 2026 | me |\n"
 	as, bad, err := ParseLedger([]byte(md))
-	if err != nil {
-		t.Fatalf("ParseLedger: %v", err)
-	}
-	if len(as) != 1 {
-		t.Errorf("rows below an open fence must not be checked: %v", as)
-	}
+	require.NoError(t, err, "ParseLedger: %v", err)
+	assert.Len(t, as, 1, "rows below an open fence must not be checked: %v", as)
 	wantFailures(t, bad, []string{"unterminated code fence"})
 }
 
@@ -498,9 +427,7 @@ func TestAnUnrelatedTableIsLeftAlone(t *testing.T) {
 
 	md := ledgerMD + "\nA glossary, for the reader:\n\n| term | meaning |\n|------|---------|\n| anchor | a protected fragment |\n"
 	as := parseOK(t, md)
-	if len(as) != 2 {
-		t.Fatalf("a two-column glossary disturbed the anchors: %v", as)
-	}
+	require.Len(t, as, 2, "a two-column glossary disturbed the anchors: %v", as)
 }
 
 // Prose is not a table row, however many pipes it carries.
@@ -509,9 +436,7 @@ func TestProseCarryingPipesIsNotAnAnchorRow(t *testing.T) {
 
 	md := "The columns run fragment | home | given | by, in that order.\n\n" + ledgerMD
 	as := parseOK(t, md)
-	if len(as) != 2 {
-		t.Fatalf("prose was read as an anchor row: %v", as)
-	}
+	require.Len(t, as, 2, "prose was read as an anchor row: %v", as)
 }
 
 // But a block that is unmistakably meant as a table and cannot render as one
@@ -546,9 +471,7 @@ func TestALedgerCannotBeItsOwnHomeInEitherPathForm(t *testing.T) {
 	root := t.TempDir()
 	self := filepath.Join(root, "self.md")
 	body := "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | self.md | 2026 | me |\n"
-	if err := os.WriteFile(self, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(self, []byte(body), 0o644))
 	as := parseOK(t, body)
 	rel, err := filepath.Rel(mustGetwd(t), self)
 	if err != nil {
@@ -567,9 +490,7 @@ func TestALedgerCannotBeItsOwnHomeInEitherPathForm(t *testing.T) {
 func mustGetwd(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return wd
 }
 
@@ -592,9 +513,7 @@ func TestACaseOnlyRenameOfAParentDirectoryIsCaught(t *testing.T) {
 func caseInsensitive(t *testing.T, dir string) bool {
 	t.Helper()
 	probe := filepath.Join(dir, "CaseProbe")
-	if err := os.WriteFile(probe, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(probe, []byte("x"), 0o644))
 	defer os.Remove(probe)
 	_, err := os.Stat(filepath.Join(dir, "caseprobe"))
 	return err == nil
@@ -612,9 +531,7 @@ func TestAnUnlistableDirectoryIsAFindingNotAPass(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"locked/standing.md": "you are not a tool\n"})
 	locked := filepath.Join(root, "locked")
-	if err := os.Chmod(locked, 0o111); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chmod(locked, 0o111))
 	defer os.Chmod(locked, 0o755)
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| you are not a tool | locked/standing.md | 2026 | me |\n")
 	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, as), []string{"could not be verified"})
@@ -639,9 +556,7 @@ func TestTheFloorFindingCountsInEnglish(t *testing.T) {
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n")
 	f := corpusOK(t, root, tmpLedger(t), 2, as)
 	wantFailures(t, f, []string{"holds 1 row,"})
-	if f[0].Subject != "ledger" {
-		t.Errorf("the floor finding's subject should be the declared %q, got %q", "ledger", f[0].Subject)
-	}
+	assert.Equal(t, "ledger", f[0].Subject, "the floor finding's subject should be the declared %q, got %q", "ledger", f[0].Subject)
 }
 
 // A RELATIVE --root IS AN ORDINARY INVOCATION and must not report every
@@ -670,12 +585,9 @@ func TestAnAnchorTableBelowAnotherTableInTheSameRunIsStillChecked(t *testing.T) 
 	md := "| term | meaning |\n|---|---|\n| anchor | a protected fragment |\n" +
 		"| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n"
 	as, _, err := ParseLedger([]byte(md))
-	if err != nil {
-		t.Fatalf("ParseLedger: %v", err)
-	}
-	if len(as) != 1 || as[0].Fragment != "the door is not locked" {
-		t.Fatalf("an anchor table below a glossary was dropped: %v", as)
-	}
+	require.NoError(t, err, "ParseLedger: %v", err)
+	require.Len(t, as, 1, "an anchor table below a glossary was dropped: %v", as)
+	require.Equal(t, "the door is not locked", as[0].Fragment, "an anchor table below a glossary was dropped: %v", as)
 }
 
 // Anchor rows pasted into somebody else's table render as part of it and are
@@ -695,12 +607,8 @@ func TestAPipeBearingLineAboveTheHeaderDoesNotHideTheTable(t *testing.T) {
 
 	md := "The columns run fragment | home | given | by\n| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n"
 	as, _, err := ParseLedger([]byte(md))
-	if err != nil {
-		t.Fatalf("ParseLedger: %v", err)
-	}
-	if len(as) != 1 {
-		t.Fatalf("the table under a pipe-bearing line was dropped: %v", as)
-	}
+	require.NoError(t, err, "ParseLedger: %v", err)
+	require.Len(t, as, 1, "the table under a pipe-bearing line was dropped: %v", as)
 }
 
 // BOTH REPORT GATES ASK FOR A LEADING PIPE, and the symmetry is deliberate.
@@ -726,9 +634,7 @@ func TestProseAboutPipesDoesNotRedden(t *testing.T) {
 	md := "**On choosing a fragment.** Pick one without a `|` in it rather than escaping\n" +
 		"one: a `\\|` still splits the cell, so `a | b` and `c | d` are two columns.\n\n" + ledgerMD
 	as := parseOK(t, md)
-	if len(as) != 2 {
-		t.Fatalf("the anchor table was disturbed by prose: %v", as)
-	}
+	require.Len(t, as, 2, "the anchor table was disturbed by prose: %v", as)
 }
 
 // A blockquoted table renders as a table, so it is read as one.
@@ -736,9 +642,8 @@ func TestABlockquotedTableIsRead(t *testing.T) {
 	t.Parallel()
 
 	as := parseOK(t, "> | f | h | g | b |\n> |---|---|---|---|\n> | the door is not locked | a.md | 2026 | me |\n")
-	if len(as) != 1 || as[0].Home != "a.md" {
-		t.Fatalf("blockquoted table not read: %v", as)
-	}
+	require.Len(t, as, 1, "blockquoted table not read: %v", as)
+	require.Equal(t, "a.md", as[0].Home, "blockquoted table not read: %v", as)
 }
 
 // An indented code block is markdown's other way of showing an example, and a
@@ -749,9 +654,7 @@ func TestAnIndentedCodeBlockIsIllustration(t *testing.T) {
 	md := ledgerMD + "\nExample of the format:\n\n    | SOME EXAMPLE | example/path.md | when | who |\n    |---|---|---|---|\n    | ANOTHER | example/other.md | when | who |\n"
 	as := parseOK(t, md)
 	for _, a := range as {
-		if strings.HasPrefix(a.Home, "example/") {
-			t.Fatalf("an indented example was checked: %+v", a)
-		}
+		require.False(t, strings.HasPrefix(a.Home, "example/"), "an indented example was checked: %+v", a)
 	}
 }
 
@@ -762,9 +665,7 @@ func TestATwoColumnTableWithAMismatchedSeparatorIsLeftAlone(t *testing.T) {
 
 	md := "| term | meaning |\n|---|---|---|\n| anchor | a protected fragment |\n\n" + ledgerMD
 	as := parseOK(t, md)
-	if len(as) != 2 {
-		t.Fatalf("the anchor table was disturbed: %v", as)
-	}
+	require.Len(t, as, 2, "the anchor table was disturbed: %v", as)
 }
 
 // AN INDENTED ROW ABUTTING TABLE ROWS is not a code block — CommonMark wants
@@ -777,11 +678,7 @@ func TestAnIndentedRowAbuttingATableIsNamed(t *testing.T) {
 
 	md := "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n    | LOST | a.md | 2026 | me |\n"
 	as, bad, err := ParseLedger([]byte(md))
-	if err != nil {
-		t.Fatalf("ParseLedger: %v", err)
-	}
-	if len(as) != 1 {
-		t.Errorf("the real row should survive: %v", as)
-	}
+	require.NoError(t, err, "ParseLedger: %v", err)
+	assert.Len(t, as, 1, "the real row should survive: %v", as)
 	wantFailures(t, bad, []string{"indented into a code block"})
 }

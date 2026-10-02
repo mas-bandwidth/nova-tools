@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -190,10 +191,7 @@ func (p *PG) Migrate(ctx context.Context) (from, to int, applied []int, err erro
 		return 0, 0, nil, err
 	}
 	to = from
-	for _, m := range all {
-		if m.Version <= from {
-			continue
-		}
+	for _, m := range Pending(all, from) {
 		if err := p.applyOne(ctx, m); err != nil {
 			return from, to, applied, err
 		}
@@ -223,6 +221,38 @@ func (p *PG) applyOne(ctx context.Context, m Migration) error {
 		return fmt.Errorf("migration %d: commit: %w", m.Version, err)
 	}
 	return nil
+}
+
+// Ownership reads schema config's owner, whether the connected role may
+// create in it, and each table's owner, in one catalog query; the schema's
+// absence is an empty SchemaOwner and no tables.
+func (p *PG) Ownership(ctx context.Context) (Ownership, error) {
+	rows, err := p.db.QueryContext(ctx, `SELECT current_user::text,
+       coalesce(pg_get_userbyid(n.nspowner)::text, ''),
+       coalesce(has_schema_privilege(n.oid, 'CREATE'), false),
+       coalesce(c.relname::text, ''),
+       coalesce(pg_get_userbyid(c.relowner)::text, '')
+  FROM (SELECT 1) AS one
+  LEFT JOIN pg_namespace n ON n.nspname = 'config'
+  LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relkind IN ('r', 'p')`)
+	if err != nil {
+		return Ownership{}, fmt.Errorf("postgres: read the owners of schema config: %w", err)
+	}
+	defer rows.Close()
+	o := Ownership{Tables: map[string]string{}}
+	for rows.Next() {
+		var table, owner string
+		if err := rows.Scan(&o.Role, &o.SchemaOwner, &o.Create, &table, &owner); err != nil {
+			return Ownership{}, fmt.Errorf("postgres: read the owners of schema config: %w", err)
+		}
+		if table != "" {
+			o.Tables[table] = owner
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Ownership{}, fmt.Errorf("postgres: read the owners of schema config: %w", err)
+	}
+	return o, nil
 }
 
 // grantRead lets the read role read the schema when the role exists.
@@ -256,7 +286,7 @@ func scanRow(k *Kind, scan func(dest ...any) error) (Row, error) {
 	row := Row{Fields: map[string]string{}}
 	dest := []any{&row.Name}
 	texts := make([]sql.NullString, len(k.Fields))
-	ints := make([]int64, len(k.Fields))
+	ints := make([]sql.NullInt64, len(k.Fields))
 	bools := make([]bool, len(k.Fields))
 	for i, f := range k.Fields {
 		switch f.Type {
@@ -276,7 +306,11 @@ func scanRow(k *Kind, scan func(dest ...any) error) (Row, error) {
 	for i, f := range k.Fields {
 		switch f.Type {
 		case TypeInt:
-			row.Fields[f.Name] = strconv.FormatInt(ints[i], 10)
+			if ints[i].Valid {
+				row.Fields[f.Name] = strconv.FormatInt(ints[i].Int64, 10)
+			} else {
+				row.Fields[f.Name] = ""
+			}
 		case TypeBool:
 			row.Fields[f.Name] = strconv.FormatBool(bools[i])
 		default:
@@ -303,6 +337,8 @@ func values(k *Kind, row Row) []any {
 // key allows no ”), any other value as text.
 func fieldArg(f Field, v string) any {
 	switch {
+	case f.Nullable && v == "":
+		return nil
 	case f.Type == TypeInt:
 		n, _ := strconv.ParseInt(v, 10, 64)
 		return n
@@ -469,9 +505,7 @@ func (p *PG) Update(ctx context.Context, kind, name string, changes map[string]s
 		return Row{}, 0, &RefusedError{Err: ErrNotFound, Detail: fmt.Sprintf("%s %s not found", kind, name)}
 	}
 	next := cur.Clone()
-	for f, v := range changes {
-		next.Fields[f] = v
-	}
+	maps.Copy(next.Fields, changes)
 	if err := checkRefs(ctx, p, k, next); err != nil {
 		return Row{}, 0, err
 	}

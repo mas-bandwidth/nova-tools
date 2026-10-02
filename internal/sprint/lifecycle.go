@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -58,18 +59,13 @@ var Moves = []Move{
 	{Review, Ready, "rework", Coordinator, "rework with a fix when no fleet member is up: start delegates it later"},
 	{Merging, Review, "return", Coordinator, "the stream's CI went red and the coordinator sent it back, or return"},
 	{Merging, Landed, "merge", Mechanical, "its batch, green on the stream branch, merged to the development branch"},
-	{Waiting, Landed, "release", Coordinator, "a sentinel reached, released by the coordinator (kind sentinel only)"},
+	{Waiting, Landed, "release", Coordinator, "a sentinel reached, or with nothing before it, released by the coordinator (kind sentinel only)"},
 	{Ready, Waiting, "add", Mechanical, "a sentinel inserted in front of it (only as the effect of inserting a sentinel)"},
 }
 
 // Legal says from -> to is a move of the lifecycle.
 func Legal(from, to State) bool {
-	for _, m := range Moves {
-		if m.From == from && m.To == to {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(Moves, func(m Move) bool { return m.From == from && m.To == to })
 }
 
 // IsOpen says a primary in s has not landed: drop may take it off the table.
@@ -83,12 +79,7 @@ func IsOpen(s State) bool {
 
 // IsState says s is one of the six states.
 func IsState(s string) bool {
-	for _, x := range States {
-		if x == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(States, s)
 }
 
 // Lawful holds a plan to the lifecycle: a primary is admitted waiting or

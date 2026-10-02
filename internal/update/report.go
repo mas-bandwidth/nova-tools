@@ -7,7 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -66,12 +67,7 @@ func report(ctx context.Context, verb string, all, entries []Entry, o options, k
 		for k := range seen {
 			keys[k] = true
 		}
-		order := []string{}
-		for k := range keys {
-			order = append(order, k)
-		}
-		sort.Strings(order)
-		for _, k := range order {
+		for _, k := range slices.Sorted(maps.Keys(keys)) {
 			a, b := state.Observed[k], seen[k]
 			if a.Raw != b.Raw || a.Status != b.Status {
 				res.Item("changed", "name", k, "was", a.Raw, "now", b.Raw)
@@ -167,27 +163,12 @@ func busSaid(r ProcessResult) string {
 // capped at a minute and never more than remains, and the attempt count is how
 // many such operations fit, never more than the bus's own 25.
 func busBounds(remaining time.Duration) (attempts, gitSeconds int) {
-	git := remaining / 3
-	if git > time.Minute {
-		git = time.Minute
-	}
-	if git > remaining {
-		git = remaining
-	}
-	gitSeconds = int(git / time.Second)
-	if gitSeconds < 1 {
-		// The bus counts this flag in whole seconds, so below a second there is
-		// no number to name but one. The caller's own deadline is then the
-		// tighter of the two bounds, which is the safe way round.
-		gitSeconds = 1
-	}
-	attempts = int(remaining / (time.Duration(gitSeconds) * time.Second))
-	if attempts < 1 {
-		attempts = 1
-	}
-	if attempts > 25 {
-		attempts = 25
-	}
+	git := min(remaining/3, time.Minute, remaining)
+	// The bus counts this flag in whole seconds, so below a second there is no number to
+	// name but one. The caller's own deadline is then the tighter of the two bounds, which
+	// is the safe way round.
+	gitSeconds = max(int(git/time.Second), 1)
+	attempts = min(max(int(remaining/(time.Duration(gitSeconds)*time.Second)), 1), 25)
 	return attempts, gitSeconds
 }
 

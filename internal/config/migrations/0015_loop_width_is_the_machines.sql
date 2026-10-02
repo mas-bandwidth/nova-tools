@@ -1,4 +1,4 @@
--- 0014: a loop carries no width of its own (internal/config/kind.go: Kinds,
+-- 0015: a loop carries no width of its own (internal/config/kind.go: Kinds,
 -- "loop", and memberArgvSpellsWidth). A nova-swarm member's width, and a
 -- reader's too, is its machine row's (machine set <m> --width <n>), moved to
 -- the fleet row by nova-sprint fleet sync and read by the worker with its

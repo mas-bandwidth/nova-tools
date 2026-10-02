@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"sort"
@@ -1137,9 +1138,7 @@ func mergeEntries(a, b ntable.BatchMemberEntry) (ntable.BatchMemberEntry, string
 	out.Remove = a.Remove || b.Remove
 	if len(b.Set) > 0 {
 		out.Set = map[string]string{}
-		for k, v := range a.Set {
-			out.Set[k] = v
-		}
+		maps.Copy(out.Set, a.Set)
 		for k, v := range b.Set {
 			if w, ok := out.Set[k]; ok && w != v {
 				return a, "they set " + k + " to " + w + " and to " + v
@@ -1172,7 +1171,7 @@ func hasChanges(e ntable.BatchMemberEntry) bool {
 // entries, each expecting the revision the one before it leaves; then the
 // notifications and the answers.
 func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprint.Snapshot) (OpRecord, error) {
-	op := OpRecord{ID: id, Verb: verb, At: snap.Now}
+	op := OpRecord{ID: id, Verb: verb, At: snap.Now, Seat: plan.Seat}
 	entries := map[string][]ntable.BatchMemberEntry{}
 	seen := map[entryKey]int{} // index+1 in entries[table]
 	cause := map[entryKey]string{}
@@ -1381,10 +1380,7 @@ func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprin
 		d.ID = fmt.Sprintf("%s.d%d", id, i+1)
 		op.Decided = append(op.Decided, d)
 	}
-	for s := range streams {
-		op.Streams = append(op.Streams, s)
-	}
-	sort.Strings(op.Streams)
+	op.Streams = slices.Sorted(maps.Keys(streams))
 	return op, nil
 }
 
@@ -1837,7 +1833,7 @@ func (st *Store) applyProps(ctx context.Context, man ntable.BatchManifest, chang
 	}
 	skipAll := func(why string) []Skip {
 		var out []Skip
-		for _, name := range sortedKeys(man.Props) {
+		for _, name := range slices.Sorted(maps.Keys(man.Props)) {
 			out = append(out, Skip{Table: man.Table, Prop: name, Refused: why})
 		}
 		return out
@@ -1866,16 +1862,6 @@ func (st *Store) applyProps(ctx context.Context, man ntable.BatchManifest, chang
 		}
 	}
 	return nil, fmt.Errorf("the properties of %s: the table kept moving through %d sends", man.OperationID, st.attempts())
-}
-
-// sortedKeys is a map's keys in order.
-func sortedKeys(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // rejudge holds the entries of the operation's manifests from the from-th on
@@ -2008,12 +1994,7 @@ func skipOf(table string, e ntable.BatchMemberEntry, rs ntable.ReadSetResult) Sk
 		if x.Place != nil {
 			want = append(want, "at "+x.Place.Row+":"+x.Place.Col)
 		}
-		names := make([]string, 0, len(x.Fields))
-		for f := range x.Fields {
-			names = append(names, f)
-		}
-		sort.Strings(names)
-		for _, f := range names {
+		for _, f := range slices.Sorted(maps.Keys(x.Fields)) {
 			g := x.Fields[f]
 			switch {
 			case g.Equals != nil:
@@ -2036,12 +2017,7 @@ func skipOf(table string, e ntable.BatchMemberEntry, rs ntable.ReadSetResult) Sk
 			have = append(have, "not placed")
 		}
 		if x := e.Expect; x != nil {
-			names := make([]string, 0, len(x.Fields))
-			for f := range x.Fields {
-				names = append(names, f)
-			}
-			sort.Strings(names)
-			for _, f := range names {
+			for _, f := range slices.Sorted(maps.Keys(x.Fields)) {
 				if v, ok := m.Fields[f]; ok {
 					have = append(have, f+"="+v)
 				} else {

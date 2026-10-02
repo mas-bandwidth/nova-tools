@@ -61,6 +61,12 @@ const (
 	NAbandoned      = "an operation was abandoned"
 	NSentinelLanded = "sentinel landed" // released by the coordinator
 
+	// The coordinator's seat moved (docs/SPEC-SPRINT.md, "Handing over the
+	// seat"): given by its holder or the owner, or taken with the owner's name,
+	// which is addressed to the holder it was taken from.
+	NSeat      = "seat"
+	NSeatTaken = "seat TAKEN"
+
 	NReadyToAccept   = "ready to accept"    // two different readers said ok at its head
 	NReturned        = "returned to review" // sent back from merging: the coordinator decides again
 	NWorkFailed      = "work came back failed"
@@ -102,7 +108,7 @@ var Decisions = map[string][]string{
 	NRepairSkipped:   {"look at the card", "return", "drop", "rework", "ack"},
 	NOpStuck:         {"check", "ack"},
 	NOverdue:         {"act"},
-	NStreamStale:     {"look"},
+	NStreamStale:     {"look", "wait"},
 	NSprintDone:      {"clear", "add"},
 	NSentinelReached: {"release", "do more before going on", "drop"},
 	NStalled:         {"look at the card", "wait"}, // each stall names its own
@@ -278,9 +284,7 @@ func MergeNotes(notes []Note) []Note {
 				out[i].Count++
 			}
 		}
-		if n.Before > out[i].Before {
-			out[i].Before = n.Before
-		}
+		out[i].Before = max(out[i].Before, n.Before)
 		for _, x := range n.Needs {
 			if !contains(out[i].Needs, x) {
 				out[i].Needs = append(out[i].Needs, x)

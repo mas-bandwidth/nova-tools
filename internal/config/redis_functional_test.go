@@ -344,7 +344,7 @@ func TestApplyRefusesAFriendNobodyCanCharge(t *testing.T) {
 }
 
 // TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat: the fleet row is
-// two plain keys of nova-config's own, set or deleted as the row says; a
+// plain keys of nova-config's own, set or deleted as the row says; a
 // machine's measured facts are read from its beat and never written.
 func TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat(t *testing.T) {
 	t.Parallel()
@@ -364,6 +364,8 @@ func TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat(t *testing.T) {
 	assert.Equal(t, "hulk", scopedGot382, "fleet:store %q", scopedGot382)
 	scopedGot386 := c.Get(ctx, FleetKey("coordinator")).Val()
 	assert.Equal(t, "studio", scopedGot386, "fleet:coordinator %q", scopedGot386)
+	assert.Equal(t, "6380", c.Get(ctx, FleetKey("redis_port")).Val())
+	assert.Equal(t, "postgres://nova_config@localhost:5432/nova", c.Get(ctx, FleetKey("pg_dsn")).Val())
 	scopedGot390 := c.HGet(ctx, DeclKey, "rev:fleet").Val()
 	assert.Equal(t, "7", scopedGot390, "rev:fleet %s", scopedGot390)
 	// Clearing a field deletes its key.

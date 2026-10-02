@@ -81,6 +81,14 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 	}
 	counts, err := st.Counts(ctx)
 	require.NoError(t, err)
+	fleet, found, err := st.Get(ctx, KindFleet, KindFleet)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Empty(t, fleet.Fields["redis_port"], "migration leaves the Redis port unset")
+	assert.Empty(t, fleet.Fields["pg_dsn"])
+	var noPortDefault bool
+	require.NoError(t, st.db.QueryRowContext(ctx, `SELECT column_default IS NULL FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'fleet' AND column_name = 'redis_port'`).Scan(&noPortDefault))
+	assert.True(t, noPortDefault, "migration must not guess a Redis port")
 	for _, k := range Kinds {
 		if k.Singleton {
 			{
@@ -264,12 +272,12 @@ func TestAppliedIsTheLedger(t *testing.T) {
 	assert.Equal(t, len(all), got[len(got)-1])
 }
 
-// 0014 makes a loop's width the machine's: the second reader rows of
+// 0015 makes a loop's width the machine's: the second reader rows of
 // 2026-10-02 (reader-<m>-2) are removed, every nova-swarm member argv that
 // spells a width loses it (before any --; another program's is its own; the
 // rest of the argv kept word for word, canonical), and the loops' width column
 // goes. A row's argv after it is one the loop kind's Check accepts.
-func TestMigrationFourteenMovesTheLoopWidthToTheMachine(t *testing.T) {
+func TestMigrationFifteenMovesTheLoopWidthToTheMachine(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st, err := OpenPG(ctx, server.Database(t))
@@ -277,15 +285,15 @@ func TestMigrationFourteenMovesTheLoopWidthToTheMachine(t *testing.T) {
 	defer st.Close()
 	all, err := Migrations()
 	require.NoError(t, err)
-	var fourteen Migration
+	var fifteen Migration
 	for _, m := range all {
-		if m.Version == 14 {
-			fourteen = m
+		if m.Version == 15 {
+			fifteen = m
 			break
 		}
 		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
 	}
-	require.Equal(t, "0014_loop_width_is_the_machines.sql", fourteen.Name)
+	require.Equal(t, "0015_loop_width_is_the_machines.sql", fifteen.Name)
 	_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('m1', 'u', 's', 4, 0)`)
 	require.NoError(t, err)
 	_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('bench-2', 'u', 's', 4, 0)`)
@@ -311,7 +319,7 @@ func TestMigrationFourteenMovesTheLoopWidthToTheMachine(t *testing.T) {
 		_, err = st.db.ExecContext(ctx, `INSERT INTO config.loops (name, machine, argv, keepalive, width) VALUES ($1, $2, $3, true, $4)`, l.name, l.machine, l.argv, l.width)
 		require.NoError(t, err, l.name)
 	}
-	require.NoError(t, st.applyOne(ctx, fourteen))
+	require.NoError(t, st.applyOne(ctx, fifteen))
 	rows, err := st.List(ctx, KindLoop)
 	require.NoError(t, err)
 	got := map[string]Row{}
@@ -326,12 +334,12 @@ func TestMigrationFourteenMovesTheLoopWidthToTheMachine(t *testing.T) {
 			continue
 		}
 		require.True(t, there, "%s: the row is kept", l.name)
-		assert.Equal(t, l.want, r.Fields["argv"], "%s: the argv after 0014", l.name)
+		assert.Equal(t, l.want, r.Fields["argv"], "%s: the argv after 0015", l.name)
 		assert.NotContains(t, r.Fields, "width", "%s: no width field", l.name)
 		canonical, err := marshalArgv(Argv(r.Fields["argv"]))
 		require.NoError(t, err)
 		assert.Equal(t, string(canonical), r.Fields["argv"], "%s: the argv is canonical", l.name)
-		assert.NoError(t, loop.Check(r), "%s: the row after 0014 passes the loop kind's Check", l.name)
+		assert.NoError(t, loop.Check(r), "%s: the row after 0015 passes the loop kind's Check", l.name)
 	}
 	var column bool
 	require.NoError(t, st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'loops' AND column_name = 'width')`).Scan(&column))

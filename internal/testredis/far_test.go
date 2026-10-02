@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/delayproxy"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The unit tier of Far. Nothing here waits on a clock: the proxy is given a
@@ -58,7 +60,7 @@ func farEcho(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var serving sync.WaitGroup
 	var mu sync.Mutex
@@ -131,10 +133,10 @@ func farDial(t *testing.T, addr string) net.Conn {
 	t.Helper()
 	c, err := net.Dial("tcp", addr)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if err := c.SetDeadline(time.Now().Add(farCeiling)); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
 	return c
@@ -148,10 +150,10 @@ func farDialOutliving(sub, owner *testing.T, addr string) net.Conn {
 	sub.Helper()
 	c, err := net.Dial("tcp", addr)
 	if err != nil {
-		sub.Fatal(err)
+		require.NoError(sub, err, err)
 	}
 	if err := c.SetDeadline(time.Now().Add(farCeiling)); err != nil {
-		sub.Fatal(err)
+		require.NoError(sub, err, err)
 	}
 	owner.Cleanup(func() { _ = c.Close() })
 	return c
@@ -161,11 +163,11 @@ func farDialOutliving(sub, owner *testing.T, addr string) net.Conn {
 func farRoundTrip(t *testing.T, c net.Conn, send string) string {
 	t.Helper()
 	if _, err := io.WriteString(c, send); err != nil {
-		t.Fatalf("write: %v", err)
+		require.NoError(t, err, "write: %v", err)
 	}
 	got := make([]byte, len(send))
 	if _, err := io.ReadFull(c, got); err != nil {
-		t.Fatalf("read %d bytes back: %v", len(send), err)
+		require.NoError(t, err, "read %d bytes back: %v", len(send), err)
 	}
 	return string(got)
 }
@@ -180,14 +182,14 @@ func TestFarListensOnTheLoopbackAndForwardsToItsTarget(t *testing.T) {
 	p := real.far(t, target, farDelay, fake.options(), net.Listen)
 	host, port, err := net.SplitHostPort(p.Addr())
 	if err != nil || host != "127.0.0.1" || port == "0" || port == "" {
-		t.Fatalf("Far listens on %q, %v; want 127.0.0.1 and a port the kernel chose", p.Addr(), err)
+		require.Failf(t, "", "Far listens on %q, %v; want 127.0.0.1 and a port the kernel chose", p.Addr(), err)
 	}
 	if p.Addr() == target {
-		t.Fatalf("Far listens on the target's own address %s", target)
+		require.Failf(t, "", "Far listens on the target's own address %s", target)
 	}
 	c := farDial(t, p.Addr())
 	if got := farRoundTrip(t, c, "across the distance"); got != "across the distance" {
-		t.Fatalf("what came back is %q", got)
+		require.Equal(t, "across the distance", got, "what came back is %q", got)
 	}
 }
 
@@ -203,27 +205,27 @@ func TestFarAppliesTheDelayOncePerWrite(t *testing.T) {
 	c := farDial(t, p.Addr())
 
 	if got := farRoundTrip(t, c, farPing); got != farPing {
-		t.Fatalf("one PING came back as %q", got)
+		require.Equal(t, farPing, got, "one PING came back as %q", got)
 	}
 	if got := fake.asked(); !farOnly(got, 1) {
-		t.Fatalf("one PING was held %v; want the delay once", got)
+		require.Failf(t, "", "one PING was held %v; want the delay once", got)
 	}
 	pipeline := strings.Repeat(farPing, farPipelined)
 	if got := farRoundTrip(t, c, pipeline); got != pipeline {
-		t.Fatalf("the pipeline of %d did not come back whole", farPipelined)
+		require.Equal(t, pipeline, got, "the pipeline of %d did not come back whole", farPipelined)
 	}
 	if got := fake.asked(); !farOnly(got, 2) {
-		t.Fatalf("%d PINGs in one write brought the waits to %v; want the delay once more, not %d times", farPipelined, got, farPipelined)
+		require.Failf(t, "", "%d PINGs in one write brought the waits to %v; want the delay once more, not %d times", farPipelined, got, farPipelined)
 	}
 	for i := 0; i < farSeparate; i++ {
 		farRoundTrip(t, c, farPing)
 	}
 	total := 2 + farSeparate
 	if got := fake.asked(); !farOnly(got, total) {
-		t.Fatalf("%d more commands, each waiting for its reply, brought the waits to %v; want %d, the delay once each", farSeparate, got, total)
+		require.Failf(t, "", "%d more commands, each waiting for its reply, brought the waits to %v; want %d, the delay once each", farSeparate, got, total)
 	}
 	if p.Writes() != total {
-		t.Fatalf("the ledger counts %d writes; want %d", p.Writes(), total)
+		require.Failf(t, "", "the ledger counts %d writes; want %d", p.Writes(), total)
 	}
 }
 
@@ -251,33 +253,33 @@ func TestFarStopsInCleanupAndLeavesNothingRunning(t *testing.T) {
 		// its own closed socket and never the proxy's hang-up.
 		left = farDialOutliving(sub, t, p.Addr())
 		if _, err := io.WriteString(left, farPing); err != nil {
-			sub.Fatal(err)
+			require.NoError(sub, err, err)
 		}
 		<-fake.blocked // held
 		if got, want := p.Live(), 1+delayproxy.GoroutinesPerConn; got != want {
-			sub.Fatalf("Live = %d with one client; want %d: one to accept and %d for the client", got, want, delayproxy.GoroutinesPerConn)
+			require.Equal(sub, want, got, "Live = %d with one client; want %d: one to accept and %d for the client", got, want, delayproxy.GoroutinesPerConn)
 		}
 	})
 	if got := p.Live(); got != 0 {
-		t.Fatalf("Live = %d after the test's cleanup; want 0", got)
+		require.Zero(t, got, "Live = %d after the test's cleanup; want 0", got)
 	}
 	got, err := io.ReadAll(left)
 	switch {
 	case errors.Is(err, net.ErrClosed):
-		t.Fatalf("the client read its own closed socket (%v); it must outlive the test the proxy ran in, or it cannot tell whether the proxy hung up on it", err)
+		require.Failf(t, "", "the client read its own closed socket (%v); it must outlive the test the proxy ran in, or it cannot tell whether the proxy hung up on it", err)
 	case errors.Is(err, os.ErrDeadlineExceeded):
-		t.Fatalf("the client was not hung up on before the ceiling (%v); want the proxy to close it when the test ends", err)
+		require.Failf(t, "", "the client was not hung up on before the ceiling (%v); want the proxy to close it when the test ends", err)
 	case len(got) != 0:
-		t.Fatalf("the client read %q, %v after the cleanup; want it hung up on with nothing", got, err)
+		require.Failf(t, "", "the client read %q, %v after the cleanup; want it hung up on with nothing", got, err)
 	}
 	if p.Writes() != 0 {
-		t.Fatalf("the ledger counts %d writes of a write that was held at the end; want 0", p.Writes())
+		require.Failf(t, "", "the ledger counts %d writes of a write that was held at the end; want 0", p.Writes())
 	}
 	if conn, err := ln.Accept(); !errors.Is(err, net.ErrClosed) {
 		if conn != nil {
 			_ = conn.Close()
 		}
-		t.Fatalf("after the cleanup Far's listener accepts: %v; want it closed", err)
+		require.Failf(t, "", "after the cleanup Far's listener accepts: %v; want it closed", err)
 	}
 	p.Stop() // a second call only waits
 }
@@ -302,7 +304,7 @@ func TestFarFailsTheTestThatAsksForWhatItCannotServe(t *testing.T) {
 	} {
 		r := provoke(t, func(tb testing.TB) { real.far(tb, c.target, c.delay, delayproxy.Options{}, c.listen) })
 		if !strings.Contains(r.fatal, c.want) {
-			t.Errorf("%s: failed with %q; want it to say %q", name, r.fatal, c.want)
+			assert.Contains(t, r.fatal, c.want, "%s: failed with %q; want it to say %q", name, r.fatal, c.want)
 		}
 	}
 	var listened atomic.Int64
@@ -312,7 +314,7 @@ func TestFarFailsTheTestThatAsksForWhatItCannotServe(t *testing.T) {
 	}
 	provoke(t, func(tb testing.TB) { real.far(tb, "example.com:80", farDelay, delayproxy.Options{}, counting) })
 	if listened.Load() != 0 {
-		t.Error("a target off the machine was refused after a listener was opened; want it refused first")
+		assert.Fail(t, "a target off the machine was refused after a listener was opened; want it refused first")
 	}
 }
 
@@ -324,6 +326,6 @@ func TestFarRefusesToRunOutsideATestBinary(t *testing.T) {
 	l.inTest = func() bool { return false }
 	said := panics(func() { l.far(t, "127.0.0.1:7000", farDelay, delayproxy.Options{}, net.Listen) })
 	if s, _ := said.(string); !strings.Contains(s, "outside a test binary") {
-		t.Fatalf("Far outside a test binary panicked with %v; want the refusal", said)
+		require.Contains(t, s, "outside a test binary", "Far outside a test binary panicked with %v; want the refusal", said)
 	}
 }

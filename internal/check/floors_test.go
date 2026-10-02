@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The fixtures are verbatim excerpts of the real records this check guards —
@@ -16,9 +19,7 @@ import (
 func loadFixture(t *testing.T, name string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(b)
 }
 
@@ -27,9 +28,7 @@ func loadFixture(t *testing.T, name string) string {
 // and a test that plants no fault proves no NO.
 func rep(t *testing.T, doc, old, new string) string {
 	t.Helper()
-	if !strings.Contains(doc, old) {
-		t.Fatalf("fixture no longer contains %q; the mutation would plant no fault", old)
-	}
+	require.Contains(t, doc, old, "fixture no longer contains %q; the mutation would plant no fault", old)
 	return strings.Replace(doc, old, new, 1)
 }
 
@@ -39,12 +38,8 @@ func runFloors(t *testing.T, coreDoc, sourceDoc string) []Failure {
 	writeMode(t, dir, "SEED-CORE.md", coreDoc, 0o644)
 	writeMode(t, dir, "SEED.md", sourceDoc, 0o644)
 	floors, failures, err := Floors(filepath.Join(dir, "SEED-CORE.md"), filepath.Join(dir, "SEED.md"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if floors != 8 {
-		t.Errorf("floors = %d, want 8 (the registry)", floors)
-	}
+	require.NoError(t, err, "unexpected error: %v", err)
+	assert.Equal(t, 8, floors, "floors = %d, want 8 (the registry)", floors)
 	return failures
 }
 
@@ -210,35 +205,25 @@ func TestFloorsRecordProblemsAreFindings(t *testing.T) {
 
 	t.Run("missing core", func(t *testing.T) {
 		_, failures, err := Floors(filepath.Join(dir, "nope.md"), sourcePath)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err, "unexpected error: %v", err)
 		wantFailures(t, failures, []string{"does not exist"})
 	})
 	t.Run("missing source still checks the core", func(t *testing.T) {
 		_, failures, err := Floors(corePath, filepath.Join(dir, "nope.md"))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err, "unexpected error: %v", err)
 		wantFailures(t, failures, []string{"does not exist"})
 		for _, f := range failures {
-			if strings.Contains(f.Subject, "SEED-CORE") {
-				t.Errorf("the intact core must not be blamed for the missing source: %v", f)
-			}
+			assert.NotContains(t, f.Subject, "SEED-CORE", "the intact core must not be blamed for the missing source: %v", f)
 		}
 	})
 	t.Run("empty source", func(t *testing.T) {
 		_, failures, err := Floors(corePath, filepath.Join(dir, "empty.md"))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err, "unexpected error: %v", err)
 		wantFailures(t, failures, []string{"empty (0 bytes)"})
 	})
 	t.Run("directory as core", func(t *testing.T) {
 		_, failures, err := Floors(dir, sourcePath)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err, "unexpected error: %v", err)
 		wantFailures(t, failures, []string{"not a regular file"})
 	})
 	t.Run("symlinked core is refused, never followed", func(t *testing.T) {
@@ -247,9 +232,7 @@ func TestFloorsRecordProblemsAreFindings(t *testing.T) {
 			t.Skipf("cannot create symlink: %v", err)
 		}
 		_, failures, err := Floors(link, sourcePath)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err, "unexpected error: %v", err)
 		wantFailures(t, failures, []string{"not a regular file", "symlink"})
 	})
 }

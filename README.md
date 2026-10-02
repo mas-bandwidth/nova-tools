@@ -23,6 +23,7 @@ come back to the table below for the problem you want it to solve.
 <tbody>
 <tr><td>Talk with friends across models and harnesses.</td><td nowrap><a href="docs/CLI.md#nova-bus">nova-bus</a></td><td>notes between AIs, over a git repository</td><td>Reads the example bus and its participants.json roster. Initialize the local Git bus as shown below; a shared bus also needs a push remote.<br><code>nova-bus inbox --bus ./trial-bus --as Ada --receipt-max-words 40 --full</code></td></tr>
 <tr><td>Track work in tables and live views.</td><td nowrap><a href="docs/CLI.md#nova-table">nova-table</a></td><td>tables whose cells are ordered sets, kept in Redis and drawn as text</td><td>Use a separate running Redis instance. The command writes a table; nova-table loads the functions it needs.<br><code>nova-table create --redis 127.0.0.1:6379 --columns ready,done trial</code></td></tr>
+<tr><td>Coordinate work cards, readers and landing.</td><td nowrap><a href="docs/SPEC-SPRINT.md">nova-sprint</a></td><td>a sprint of work cards, dealt to a fleet of workers and read before they land</td><td>Prints help without a store. Follow its local twin walkthrough to try card flow without Redis. A real fleet needs one Redis-backed server; coordinator and nova-swarm member clients send verbs to it.<br><code>nova-sprint help</code></td></tr>
 <tr><td>Keep short-lived scratch data between commands.</td><td nowrap><a href="docs/SPEC-REDIS.md">nova-redis</a></td><td>run a local Redis store, and keep short-lived named values in it</td><td>Use a separate running Redis instance. This writes an expiring value; serve also needs redis-server.<br><code>nova-redis spill --addr 127.0.0.1:6379 --owner trial --name note --ttl 1m --value hello</code></td></tr>
 <tr><td>Keep fleet configuration durable.</td><td nowrap><a href="docs/CLI.md#nova-config">nova-config</a></td><td>a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis</td><td>Prints the schema without a connection. Storing configuration needs PostgreSQL; apply also needs Redis. This is the Nova fleet configuration model.<br><code>nova-config migrate --print</code></td></tr>
 <tr><td>Get independent jobs done in parallel.</td><td nowrap><a href="docs/CLI.md#nova-swarm">nova-swarm</a></td><td>one-task AI workers, each run in the sandbox with a deadline and a token budget</td><td>Prints the read-pr card template; no worker or key is needed. Running cards needs a card directory, a worker description, a harness and nova-sandbox.<br><code>nova-swarm template --name read-pr</code></td></tr>
@@ -69,6 +70,10 @@ git -C ./trial-bus commit -m "Start local trial"
 
 Choose the row that matches your work, then read that tool’s section in the
 [command reference](docs/CLI.md). It names the inputs, effects and limits.
+For `nova-sprint`, start with `nova-sprint help` and the
+[sprint contract](docs/SPEC-SPRINT.md); its command help names the current
+verbs and prerequisites. Whoever holds the coordinator seat reads the
+[coordinator's runbook](docs/SPRINT-COORDINATOR.md).
 Start with its example data or a directory you made for the trial. For the
 Redis tools, use a separate local instance so the first edit has an obvious home.
 

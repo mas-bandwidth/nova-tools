@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // novaPulseRun is a Go line that runs the nova-pulse binary: an exec of it, or a
@@ -21,9 +24,8 @@ func TestTheNovaPulseCommandIsDeleted(t *testing.T) {
 
 	root := repoRoot(t)
 	for _, gone := range []string{"cmd/nova-pulse", "tools/nova-pulse-run.sh"} {
-		if _, err := os.Stat(filepath.Join(root, gone)); err == nil {
-			t.Errorf("%s still exists; nova-pulse is deleted (#3801)", gone)
-		}
+		_, err := os.Stat(filepath.Join(root, gone))
+		assert.Error(t, err, "%s still exists; nova-pulse is deleted (#3801)", gone)
 	}
 	err := walkSourceDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -48,46 +50,31 @@ func TestTheNovaPulseCommandIsDeleted(t *testing.T) {
 			return nil // every novaPulseRun match names the binary in quotes
 		}
 		for n, line := range strings.Split(string(b), "\n") {
-			if novaPulseRun.MatchString(line) {
-				t.Errorf("%s:%d runs the deleted nova-pulse binary: %s", rel, n+1, strings.TrimSpace(line))
-			}
+			assert.False(t, novaPulseRun.MatchString(line), "%s:%d runs the deleted nova-pulse binary: %s", rel, n+1, strings.TrimSpace(line))
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// The bench standard's witness does not install or check nova-pulse either:
 	// every line of its Go, tests included, that is not a comment.
 	witness, err := filepath.Glob(filepath.Join(root, "tools", "benchstandard", "*.go"))
-	if err != nil || len(witness) == 0 {
-		t.Fatalf("no Go files in tools/benchstandard: %v", err)
-	}
+	require.NoError(t, err, "no Go files in tools/benchstandard: %v", err)
+	require.NotEmpty(t, witness, "no Go files in tools/benchstandard: %v", err)
 	for _, path := range witness {
 		script, err := filepath.Rel(root, path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		b, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for n, line := range strings.Split(string(b), "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), "//") {
 				continue
 			}
-			if strings.Contains(line, "nova-pulse") {
-				t.Errorf("%s:%d still installs or checks nova-pulse: %s", script, n+1, strings.TrimSpace(line))
-			}
+			assert.NotContains(t, line, "nova-pulse", "%s:%d still installs or checks nova-pulse: %s", script, n+1, strings.TrimSpace(line))
 		}
 	}
 	for _, name := range []string{"CLI.md", "TESTS.md"} {
 		doc, err := os.ReadFile(filepath.Join(root, "docs", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(doc), "nova-pulse") {
-			t.Errorf("docs/%s names nova-pulse; living references must omit deleted tools", name)
-		}
+		require.NoError(t, err)
+		assert.NotContains(t, string(doc), "nova-pulse", "docs/%s names nova-pulse; living references must omit deleted tools", name)
 	}
 }
