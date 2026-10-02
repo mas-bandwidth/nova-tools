@@ -970,44 +970,43 @@ MERGE OK moved=1 refused=0 notes=2 op=merge-t34-1
 
 Run by `cmd/nova-work/firstrun_test.go` against a recorded conversation with
 GitHub (`internal/workgh/testdata/reliable`: one public repository of twenty
-issues, read at fifteen a page), so no network is used. `$ORG` and `$REPO` are
-yours: the test stands them for the recording's organization and repository,
-and the counts below are that repository's. The first line of every run names
-the gh it found; yours is the gh on your PATH, and here it is `./gh`, a stand-in
-that answers each call from the recording. The `sha256` is the tree file's, and
-the tree records the instant it was fetched, so it differs on every real run;
-the test fixes its clock so the value below reproduces. `./tree.lisp` is a file
-in a directory of the test's own. The usage banner's `example:` block is this
-same sitting, line for line.
+issues, read at fifteen a page), so no network is used and no process is
+started. `$ORG` and `$REPO` are yours: the test stands them for the recording's
+organization and repository, and the counts below are that repository's. `gh=`
+names the gh a run used; yours is the gh on your PATH, and here it is `./gh`,
+where the test says it found one, while every call is answered from the
+recording. The `sha256` is the tree file's, and the tree records the instant it
+was fetched, so it differs on every real run; the test passes a fixed time in
+so the value below reproduces. `./tree.lisp` is a file in a directory of the
+test's own. The usage banner's `example:` block is this same sitting, line for
+line.
 
 Requires: a gh login that can read the repository (`gh auth status`); import
-and verify read GitHub through gh and write nothing there.
+(the dry run too) and verify read GitHub through gh and write nothing there.
 
 ### First run
 
 ```text
 $ nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
-GH OK path=./gh
-PLAN OK org=$ORG repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
-REPO OK repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
-IMPORT OK org=$ORG out=- repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 calls=3 points=3 rest=0 seconds=0.0 dry_run=true
+IMPORT OK org=$ORG out=- repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 calls=3 points=3 rest=0 seconds=0.0 gh=./gh dry_run=true
+IMPORT PLAN repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
+IMPORT REPO repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
 IMPORT NOTE the dry run read GitHub as the import does (calls=3, read-only) and wrote nothing
 
 $ nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp
-GH OK path=./gh
-PLAN OK org=$ORG repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
-REPO OK repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
-IMPORT OK org=$ORG out=./tree.lisp repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 calls=3 points=3 rest=0 seconds=0.0 dry_run=false
+IMPORT OK org=$ORG out=./tree.lisp repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 calls=3 points=3 rest=0 seconds=0.0 gh=./gh
+IMPORT PLAN repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
+IMPORT REPO repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
 
 $ nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15
-GH OK path=./gh
-VERIFY OK tree=./tree.lisp sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 repos=1 issues=20 comments=74 calls=3 points=3 rest=0 seconds=0.0 differences=0
+VERIFY OK tree=./tree.lisp sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 repos=1 issues=20 comments=74 calls=3 points=3 rest=0 seconds=0.0 differences=0 missing=0 extra=0 drift=0 gh=./gh
 ```
 
 The dry run is not offline: it reads GitHub exactly as the import does (every
 issue, read-only, the same calls) and writes nothing, and its last line says so.
 `est_calls` is the calls the import will spend, checked against `max_calls`
-before any issue is read, and `out=-` says no file was written. The import prints the same plan, one `REPO OK` per
-repository, and the `sha256` of the file it wrote; verify names the same
-`sha256` and prints one `MISSING`, `EXTRA` or `DRIFT` line per difference above
-its summary. `differences=0` is the proof the tree holds what GitHub holds.
+before any issue is read, and `out=-` says no file was written. The import
+prints the same plan, one `IMPORT REPO` per repository, and the `sha256` of the
+file it wrote; verify names the same `sha256`, and when the two differ it says
+`VERIFY FAIL` with one `VERIFY MISSING`, `EXTRA` or `DRIFT` line per difference.
+`differences=0` is the proof the tree holds what GitHub holds.
