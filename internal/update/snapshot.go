@@ -4,17 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 )
 
 type observed struct {
@@ -439,26 +435,25 @@ func snapshotScope(o options) string {
 }
 func lockSnapshot(ctx context.Context, path string) (func(), error) {
 	// A stable sibling inode is required because the JSON itself is replaced by
-	// rename. The lock is internal/filelock's (tla/FileLock.tla): only the kernel
-	// lock means ownership, the sibling file survives, and while held it names
-	// its holder. The wait is this caller's, bounded by ctx: take again until
-	// the budget ends, which the model calls waiting and gives no state.
+	// rename. The empty lock file survives; only its kernel lock means ownership.
+	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open snapshot lock (create the parent directory and check permissions)")
+	}
 	for {
-		l, err := filelock.TryLock(path+".lock", "nova-update report --snapshot")
-		if err == nil {
-			// ignored: release has no caller to report to; the kernel lock goes with the descriptor either way
-			return func() { _ = l.Unlock() }, nil
+		ok, err := trySnapshotLock(f)
+		if err != nil {
+			f.Close()
+			return nil, fmt.Errorf("cannot lock snapshot (use a filesystem supporting file locks)")
 		}
-		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
-			return nil, fmt.Errorf("cannot open snapshot lock (create the parent directory and check permissions)")
-		}
-		if !errors.Is(err, filelock.ErrHeld) && !errors.Is(err, filelock.ErrBusy) {
-			return nil, fmt.Errorf("cannot lock snapshot (the lock must be a regular file on a filesystem supporting file locks)")
+		if ok {
+			return func() { unlockSnapshot(f); f.Close() }, nil
 		}
 		t := time.NewTimer(10 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			t.Stop()
+			f.Close()
 			return nil, fmt.Errorf("snapshot is busy (wait for the current report or increase --budget)")
 		case <-t.C:
 		}
