@@ -14,8 +14,7 @@ import (
 
 // KeygenNextLine is the one line that tells the reader what is left to do in the rule
 // block. It is a NEXT STEP and says so: the same text as a state of the world ("the
-// placeholder stands unfilled") read as a failure at the end of a green run
-// (nova-tools#1393, Glenn on the Air, 2026-09-18).
+// placeholder stands unfilled") read as a failure at the end of a green run.
 const KeygenNextLine = "SECRETS RULE NEXT: add these two lines to .sops.yaml (or run `nova-secrets seat add`)"
 
 // keygenLines assembles the receipt in the order it is printed. The rule block comes
