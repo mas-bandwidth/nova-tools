@@ -12,6 +12,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/stretchr/testify/assert"
 )
 
 // fakeEngine records every argv and answers from a table keyed by the argv's
@@ -603,7 +606,7 @@ func TestRunTierPassesTheContainersExitThroughAndChecksForLeftovers(t *testing.T
 		var stdout, stderr bytes.Buffer
 		// The prefill must finish 0 for the test container to run; the fake
 		// gives both the same code, so a red run is judged at the module step.
-		got := runTier(context.Background(), eng, c, &fakeClock{now: time.Unix(1_800_000_000, 0)}, &stdout, &stderr)
+		got := runTier(context.Background(), eng, c, testkit.NewClock(time.Unix(1_800_000_000, 0)), &stdout, &stderr)
 		calls := eng.argvs()
 		if code != 0 {
 			if got != exitCannotRun || !strings.Contains(stderr.String(), "module cache step ended finished with exit 2") {
@@ -643,7 +646,7 @@ func TestRunTierRefusesAnotherUsersCache(t *testing.T) {
 	t.Parallel()
 	eng, c := tierFixture(t, "502", 0)
 	var stdout, stderr bytes.Buffer
-	if got := runTier(context.Background(), eng, c, &fakeClock{now: time.Unix(1_800_000_000, 0)}, &stdout, &stderr); got != exitCannotRun {
+	if got := runTier(context.Background(), eng, c, testkit.NewClock(time.Unix(1_800_000_000, 0)), &stdout, &stderr); got != exitCannotRun {
 		t.Errorf("exit %d, want %d", got, exitCannotRun)
 	}
 	for _, call := range eng.argvs() {
@@ -663,33 +666,6 @@ func TestSetupExit(t *testing.T) {
 	if got := setupExit(ctx); got != exitInterrupted {
 		t.Errorf("setupExit after an interrupt = %d", got)
 	}
-}
-
-// fakeClock holds time still: After records the bound asked for and never
-// fires; Sleep advances the clock.
-type fakeClock struct {
-	mu     sync.Mutex
-	now    time.Time
-	afters []time.Duration
-}
-
-func (f *fakeClock) Now() time.Time {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.now
-}
-
-func (f *fakeClock) After(d time.Duration) <-chan time.Time {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.afters = append(f.afters, d)
-	return nil
-}
-
-func (f *fakeClock) Sleep(d time.Duration) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.now = f.now.Add(d)
 }
 
 func TestClassify(t *testing.T) {
@@ -730,15 +706,13 @@ func TestClassify(t *testing.T) {
 func TestRunTierClientDeadlines(t *testing.T) {
 	t.Parallel()
 	eng, c := tierFixture(t, "501", 0)
-	clk := &fakeClock{now: time.Unix(1_800_000_000, 0)}
+	clk := testkit.NewClock(time.Unix(1_800_000_000, 0))
 	var stdout, stderr bytes.Buffer
 	if got := runTier(context.Background(), eng, c, clk, &stdout, &stderr); got != 0 {
 		t.Fatalf("exit %d\n%s", got, stderr.String())
 	}
 	want := []time.Duration{prefillDeadline + clientGrace, c.deadline + clientGrace}
-	if fmt.Sprint(clk.afters) != fmt.Sprint(want) {
-		t.Errorf("client deadlines %v, want the module step's then the run's, each the bound plus the grace: %v", clk.afters, want)
-	}
+	assert.Equal(t, want, clk.Afters(), "client deadlines: want the module step's then the run's, each the bound plus the grace")
 }
 
 func TestRunTierExitCodes(t *testing.T) {
@@ -756,7 +730,7 @@ func TestRunTierExitCodes(t *testing.T) {
 		eng, c := tierFixture(t, "501", 0)
 		eng.startCodes = []int{0, tc.testCode}
 		var stdout, stderr bytes.Buffer
-		got := runTier(context.Background(), eng, c, &fakeClock{now: time.Unix(1_800_000_000, 0)}, &stdout, &stderr)
+		got := runTier(context.Background(), eng, c, testkit.NewClock(time.Unix(1_800_000_000, 0)), &stdout, &stderr)
 		if got != tc.wantExit || !strings.Contains(stderr.String(), "ended="+tc.wantEnded+" exit="+strconv.Itoa(tc.wantExit)+" ") {
 			t.Errorf("test container exit %d: tool exit %d, want %d ended=%s\n%s", tc.testCode, got, tc.wantExit, tc.wantEnded, stderr.String())
 		}
@@ -780,7 +754,7 @@ func TestRunTierFailsWhenAContainerIsLeft(t *testing.T) {
 			return fakeAnswer{}, false
 		}
 		var stdout, stderr bytes.Buffer
-		got := runTier(context.Background(), eng, c, &fakeClock{now: time.Unix(1_800_000_000, 0)}, &stdout, &stderr)
+		got := runTier(context.Background(), eng, c, testkit.NewClock(time.Unix(1_800_000_000, 0)), &stdout, &stderr)
 		if got != exitCannotRun || !strings.Contains(stderr.String(), tc.want) {
 			t.Errorf("a green run with a leftover (%v): exit %d, want %d and %s\n%s", tc.answer, got, exitCannotRun, tc.want, stderr.String())
 		}
@@ -836,7 +810,7 @@ func TestFreshGocacheIsAnAnonymousVolume(t *testing.T) {
 	eng, tc := tierFixture(t, "501", 0)
 	tc.freshGocache = true
 	var stdout, stderr bytes.Buffer
-	if got := runTier(context.Background(), eng, tc, &fakeClock{now: time.Unix(1_800_000_000, 0)}, &stdout, &stderr); got != 0 {
+	if got := runTier(context.Background(), eng, tc, testkit.NewClock(time.Unix(1_800_000_000, 0)), &stdout, &stderr); got != 0 {
 		t.Fatalf("exit %d\n%s", got, stderr.String())
 	}
 	for _, call := range eng.argvs() {
