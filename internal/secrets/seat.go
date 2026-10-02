@@ -14,7 +14,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// THE CIRCLE THIS VERB BREAKS.
+// `seal` cannot initialize a new seat: folding a value into a seat file means
+// decrypting that file with the target seat's own key first, so `seat add` is the
+// source-to-new-seat path that gives a brand-new seat its first value.
 //
 // `seal` folds one value into a seat file, and to do that it must first DECRYPT that
 // file: sops rewrites the whole document, so the values already in it have to be read
@@ -23,9 +25,9 @@ import (
 // value by `seal` -- there is no file to open, and the moment there is one, only the
 // new bench can open it, and the new bench is the one with nothing to seal from.
 //
-// The store's pull request #15 broke the circle by hand: a sops pipe out of a seat this
-// machine COULD open, straight into the new seat's file. `seat add` is that pipe as a
-// verb, with the refusals the hand pipe had to remember.
+// `seat add` runs the pipe a hand would run: sops reads a source seat this machine CAN
+// open and seals straight into the new seat's file, with the refusals a hand pipe
+// would have to remember.
 //
 // WHAT IT DELIBERATELY DOES NOT DO: commit, push, or open a pull request. The recipient
 // list is the grant, and a grant is reviewed. The verb leaves two changed files in the
