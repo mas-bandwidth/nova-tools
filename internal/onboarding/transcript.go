@@ -58,17 +58,17 @@ type Step struct {
 	// error, from a trailing `# Stderr: whole`, and that they are to be compared
 	// the way standard output is: same number, same lines, same order.
 	//
-	// It exists because #1570's asymmetry -- stderr compared only for the lines
+	// It exists because the asymmetry -- stderr compared only for the lines
 	// shown -- is right for a tool that NARRATES on standard error and wrong for
 	// one whose findings live there. nova-self-talk prints every finding it has
 	// to standard error; under the asymmetry alone, dropping all three from its
-	// transcript is green, which is exactly the abridgement of issue #1639. A
+	// transcript is green, which is exactly the abridgement. A
 	// section says which kind it is, per step, rather than the harness guessing.
 	StderrWhole bool
 }
 
 // StderrMarker opens a documented line the tool writes to standard error. It is
-// #1570's convention, honoured here so that a swept section executes the moment
+// the marker, honoured here so that a swept section executes the moment
 // it is swept: standard output is compared WHOLE -- every unmarked line, in
 // order, and nothing else -- and standard error only for the lines shown, in
 // order, because how loudly a tool narrates its own work is not a promise to a
@@ -82,9 +82,9 @@ const StderrMarker = "! "
 // exactly like a step everybody ran.
 //
 // This is a SPELLING check and not the whole rule. The rule that matters is
-// #1734's TestPlatformLineMustNameACILeg: a platform no leg of
+// TestPlatformLineMustNameACILeg: a platform no leg of
 // .github/workflows/ci.yml runs is a transcript nobody executes -- `windows`
-// is the live case, its legs having been dropped on 2026-09-18. That check
+// is the live case: no leg of ci.yml runs it. That check
 // reads ci.yml, which this package must not do (it reads no file and runs no
 // process), and it lives in internal/ci on the T23 branch. When T23 lands, its
 // rule wants extending from the section line to the per-step declaration this
@@ -100,7 +100,7 @@ var KnownGOOS = []string{
 //
 // A step skipped for a reason the document does not state is NOT this function's
 // business: it returns "" and the step runs and fails, which is the right
-// outcome. #1570's last sentence is the rule -- a step skipped for a reason the
+// outcome. A step skipped for a reason the
 // file does not state is a defect in the file, not a pass.
 func (s Step) SkipReason(goos string, have func(string) bool) string {
 	if len(s.Platforms) > 0 && !slices.Contains(s.Platforms, goos) {
@@ -194,8 +194,8 @@ func cutRedirect(cmd string) (string, string, error) {
 // from a documented command line, so a precondition is stated PER STEP rather
 // than per section.
 //
-// The 2026-09-19 dogfood run is the case for it. `## nova-sandbox`'s section
-// header names its platform for the whole section -- #1539's `Platform:` line --
+// `## nova-sandbox`'s section
+// header names its platform for the whole section -- a `Platform:` line --
 // and a worker on Linux duly reported three steps as defects anyway, because a
 // section header cannot say that step 1 is platform-bound and step 4 is not. The
 // same run recorded a JEV key, a forge credential and a posting credential as
@@ -208,7 +208,7 @@ func cutRedirect(cmd string) (string, string, error) {
 //
 //	$ nova-sandbox check   # Platform: darwin
 //	$ nova-decide --questions ./questions.json   # Requires: JEV_API_KEY
-//	$ nova-secrets keygen --as rowan   # Platform: darwin; Requires: age-keygen
+//	$ nova-secrets keygen --as example   # Platform: darwin; Requires: age-keygen
 //
 // Only a comment whose first word is `Platform:` or `Requires:` is taken as one:
 // a `#` anywhere else in the line is an argument, and is left alone.
@@ -309,7 +309,7 @@ func splitList(value string) []string {
 //   - a double-quoted run is ONE argument, and inside it a backslash escapes
 //     only `"`, `\`, `$` and a backquote -- before any other character the
 //     backslash is a character of the argument, which is again the shell's
-//     rule and was the difference Stella's witness found;
+//     rule;
 //   - a backslash OUTSIDE quotes, a backquote anywhere, and an unterminated
 //     quote of either kind are refused.
 //
@@ -415,7 +415,7 @@ type Norm struct {
 	// valid, when set, is asked whether the matched text is really a value of
 	// the kind the constructor named -- not merely its shape. A value it
 	// refuses is LEFT ON THE LINE, so the comparison shows it: a tool printing
-	// `created=2026-99-99T99:99:99Z` is a finding, not a run-owned value.
+	// an impossible instant is a finding, not a run-owned value.
 	valid func(value string) bool
 	// run says the pattern covers a whole RUN of whitespace-delimited tokens
 	// rather than a `field=value` token, and must begin and end on a token
@@ -556,7 +556,7 @@ func Instant(field string) Norm {
 }
 
 // isInstant answers whether v is an instant and not only the shape of one.
-// `2026-99-99T99:99:99Z` has the shape; no month is 99.
+// An impossible date has the shape; no month is 99.
 func isInstant(v string) bool {
 	_, err := time.Parse(time.RFC3339, v)
 	return err == nil
@@ -685,7 +685,7 @@ func marked(want []string) bool {
 	return slices.ContainsFunc(want, func(line string) bool { return strings.HasPrefix(line, StderrMarker) })
 }
 
-// compareByStream is the comparison for a block written to #1570's convention.
+// compareByStream is the comparison for a block whose stderr lines are marked.
 // Standard output is compared WHOLE, as always. Standard error is compared only
 // for the lines the document shows, IN ORDER: a tool may narrate more than the
 // page has room for, and a transcript that had to list every progress line would
@@ -836,7 +836,7 @@ func (s Skip) String() string {
 // silently abandoned, and a consequent failure names the command it is under --
 // which a reader can follow back to the skip printed above it. A section whose
 // later steps depend on a skipped one wants its `Requires:` on those steps too,
-// and that is a defect in the document, which is exactly where #1570 puts it.
+// and one that does not is a defect in the document, not a pass.
 func ExecuteWith(steps []Step, run Runner, cond Conditions, norms ...Norm) ([]Problem, []Skip) {
 	var problems []Problem
 	var skips []Skip
