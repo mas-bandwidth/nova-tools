@@ -6,9 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +27,7 @@ import (
 // Environment supplies deterministic clock/network seams. Nil values use the
 // machine clock and a credential-free, redirect-bounded HTTP client.
 type Environment struct {
+	Process     processFunc
 	Now         func() time.Time
 	Client      *http.Client
 	Context     context.Context
@@ -467,16 +470,12 @@ func checked(name, verb string, o options, positional []string, env Environment)
 	selected := []Entry{}
 	present := map[string]bool{}
 	for _, e := range entries {
-		if len(o.kinds) == 0 || contains(o.kinds, e.Kind) {
+		if len(o.kinds) == 0 || slices.Contains(o.kinds, e.Kind) {
 			selected = append(selected, e)
 			present[e.Kind] = true
 		}
 	}
-	var kinds []string
-	for k := range present {
-		kinds = append(kinds, k)
-	}
-	sort.Strings(kinds)
+	kinds := slices.Sorted(maps.Keys(present))
 	started := env.Now()
 	baseCtx := env.Context
 	if baseCtx == nil {
@@ -528,14 +527,6 @@ func checked(name, verb string, o options, positional []string, env Environment)
 		Fact("kinds", strings.Join(kinds, ",")).Fact("at", started.UTC().Format(time.RFC3339)).
 		Fact("timeout", o.timeout.String()).Fact("budget", o.budget.String()).Fact("max", o.max)
 }
-func contains(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
-}
 
 type entryRead struct {
 	Entry             Entry
@@ -558,7 +549,7 @@ func readEntries(ctx context.Context, entries []Entry, o options, env Environmen
 			started.Done()
 			for i := range jobs {
 				e := entries[i]
-				r := entryRead{Entry: e, Installed: Installed(ctx, e, o.timeout, report), Latest: Read{Source: e.Latest}}
+				r := entryRead{Entry: e, Installed: installed(ctx, e, o.timeout, report, env.runProcess), Latest: Read{Source: e.Latest}}
 				if !report {
 					r.Latest = Latest(ctx, e, o.timeout, env.Client)
 				} else if strings.HasPrefix(e.Latest, "local:") {
@@ -736,7 +727,7 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	defer cancelRun()
 	runChild := func(argv []string) ProcessResult {
 		ctx, cancel := context.WithTimeout(run, timeout)
-		p := process(ctx, argv, nil, ChildCap)
+		p := env.runProcess(ctx, argv, nil, ChildCap)
 		cancel()
 		return p
 	}
@@ -969,16 +960,8 @@ func diffMoved(before, after movedInv, stated map[string]string) (entries []stri
 		entries = append(entries, "renamed="+r[0]+"->"+r[1])
 		counts.renamed++
 	}
-	afterTools := make([]string, 0, len(after))
-	for tool := range after {
-		afterTools = append(afterTools, tool)
-	}
-	sort.Strings(afterTools)
-	beforeTools := make([]string, 0, len(before))
-	for tool := range before {
-		beforeTools = append(beforeTools, tool)
-	}
-	sort.Strings(beforeTools)
+	afterTools := slices.Sorted(maps.Keys(after))
+	beforeTools := slices.Sorted(maps.Keys(before))
 	for _, tool := range afterTools {
 		counts.verbs += len(after[tool])
 		if _, ok := before[tool]; ok || consumed[tool] {
@@ -1018,12 +1001,7 @@ func diffMoved(before, after movedInv, stated map[string]string) (entries []stri
 		for v := range afterVerbs {
 			names[v] = true
 		}
-		sorted := make([]string, 0, len(names))
-		for v := range names {
-			sorted = append(sorted, v)
-		}
-		sort.Strings(sorted)
-		for _, v := range sorted {
+		for _, v := range slices.Sorted(maps.Keys(names)) {
 			_, hadBefore := beforeVerbs[v]
 			_, hasAfter := afterVerbs[v]
 			switch {
@@ -1042,12 +1020,7 @@ func diffMoved(before, after movedInv, stated map[string]string) (entries []stri
 			for f := range afterVerbs[v] {
 				flags[f] = true
 			}
-			flagNames := make([]string, 0, len(flags))
-			for f := range flags {
-				flagNames = append(flagNames, f)
-			}
-			sort.Strings(flagNames)
-			for _, f := range flagNames {
+			for _, f := range slices.Sorted(maps.Keys(flags)) {
 				_, hadFlagBefore := beforeVerbs[v][f]
 				_, hasFlagAfter := afterVerbs[v][f]
 				switch {

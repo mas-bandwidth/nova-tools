@@ -19,12 +19,10 @@ func heldIDs(t *testing.T, store string) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
 	entries, err := os.ReadDir(filepath.Join(store, "slots"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return out
-		}
-		t.Fatal(err)
+	if os.IsNotExist(err) {
+		return out
 	}
+	require.NoError(t, err)
 	for _, e := range entries {
 		if e.IsDir() {
 			out[e.Name()] = true
@@ -107,7 +105,6 @@ func TestReleaseByOwnerAndLabelStillTakesThemAll(t *testing.T) {
 	}
 	released, held, err := ReleaseSlotLeases(store, "bench", "card-7", false)
 	require.NoError(t, err)
-	if released != 2 || held != 0 {
-		t.Errorf("released=%d held=%d, want 2 and 0: the by-hand verb frees every lease this owner holds for that label, which is what a person asking for it means", released, held)
-	}
+	assert.Equal(t, 2, released, "released=%d held=%d, want 2 and 0: the by-hand verb frees every lease this owner holds for that label, which is what a person asking for it means", released, held)
+	assert.Equal(t, 0, held, "released=%d held=%d, want 2 and 0: the by-hand verb frees every lease this owner holds for that label, which is what a person asking for it means", released, held)
 }

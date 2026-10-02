@@ -2315,9 +2315,7 @@ type walkProgress struct {
 func newWalkProgress(stderr io.Writer, total int) *walkProgress {
 	p := &walkProgress{stderr: stderr, start: time.Now(), total: total, stop: make(chan struct{})}
 	p.last = p.start
-	p.stopped.Add(1)
-	go func() {
-		defer p.stopped.Done()
+	p.stopped.Go(func() {
 		t := time.NewTicker(time.Second)
 		defer t.Stop()
 		for {
@@ -2328,7 +2326,7 @@ func newWalkProgress(stderr io.Writer, total int) *walkProgress {
 				p.emit(false)
 			}
 		}
-	}()
+	})
 	return p
 }
 
@@ -2793,9 +2791,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 				oneline.Field(*until), oneline.Field(now.UTC().Format(time.RFC3339)))
 			return 2
 		}
-		if left < waitFor {
-			waitFor = left
-		}
+		waitFor = min(waitFor, left)
 	}
 	// --idle-exit IS FOR A HARNESS THAT CANNOT LOOP (OpenCode's, and every harness like it): it
 	// runs one tool call per turn and branches on the exit code, and it has no way to tell

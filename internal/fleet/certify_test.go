@@ -24,6 +24,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -139,9 +142,7 @@ func TestTheStandardWorkloadsAreTheShippedClasses(t *testing.T) {
 	t.Parallel()
 
 	loads, err := StandardWorkloads()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := map[string]string{
 		// the card's original set
 		"go-test":        RoleBench,
@@ -165,65 +166,42 @@ func TestTheStandardWorkloadsAreTheShippedClasses(t *testing.T) {
 		"registry-truth": RoleBench,  // 16 online runners on a machine with no runner role
 		"diag-size":      RoleRunner, // 15.7 GB of _diag, and a WARN not a FAIL
 	}
-	if len(loads) != len(want) {
-		t.Fatalf("the standard set ships %d workloads, want %d", len(loads), len(want))
-	}
+	require.Len(t, loads, len(want), "the standard set ships %d workloads, want %d", len(loads), len(want))
 	byClass := map[string]Workload{}
 	for _, w := range loads {
 		byClass[w.Class] = w
 	}
 	for class, role := range want {
 		w, ok := byClass[class]
-		if !ok {
-			t.Errorf("the standard set ships no %s workload", class)
+		if !assert.True(t, ok, "the standard set ships no %s workload", class) {
 			continue
 		}
-		if !w.AppliesTo(role) {
-			t.Errorf("%s does not apply to %s (roles=%s)", class, role, strings.Join(w.Roles, ","))
-		}
-		if w.Expect == nil {
-			t.Errorf("%s carries no expect", class)
-		}
+		assert.True(t, w.AppliesTo(role), "%s does not apply to %s (roles=%s)", class, role, strings.Join(w.Roles, ","))
+		assert.NotNil(t, w.Expect, "%s carries no expect", class)
 	}
 	// The wall is the whole point of go-test: the card that died on hulk died inside it.
-	if !byClass["go-test"].Wall {
-		t.Error("go-test does not run inside the wall; a plain ssh is exactly the check that passed while the card died")
-	}
-	if len(byClass["go-test"].Reads) == 0 {
-		t.Error("go-test names no read root for the wall; the toolchain outside the wall is the failure being certified against")
-	}
-	if !byClass["git-push"].Wall || !byClass["sbcl"].Wall || !byClass["wall-toolchain"].Wall {
-		t.Error("git-push, sbcl and wall-toolchain must run inside the wall: a card pushes and builds from inside it")
-	}
+	assert.True(t, byClass["go-test"].Wall, "go-test does not run inside the wall; a plain ssh is exactly the check that passed while the card died")
+	assert.NotEmpty(t, byClass["go-test"].Reads, "go-test names no read root for the wall; the toolchain outside the wall is the failure being certified against")
+	assert.True(t, byClass["git-push"].Wall, "git-push, sbcl and wall-toolchain must run inside the wall: a card pushes and builds from inside it")
+	assert.True(t, byClass["sbcl"].Wall, "git-push, sbcl and wall-toolchain must run inside the wall: a card pushes and builds from inside it")
+	assert.True(t, byClass["wall-toolchain"].Wall, "git-push, sbcl and wall-toolchain must run inside the wall: a card pushes and builds from inside it")
 	// These three are plain ssh ON PURPOSE. What they certify is the machine as a CI runner
 	// or as a neighbour on the network, and wrapping them would certify the wall instead.
 	for _, class := range []string{"services-reach", "path-resolves", "go-on-path", "runner-path"} {
-		if byClass[class].Wall {
-			t.Errorf("%s is a plain ssh by the card, not a wall workload", class)
-		}
+		assert.False(t, byClass[class].Wall, "%s is a plain ssh by the card, not a wall workload", class)
 	}
-	if byClass["runner-online"].Forge != ForgeRunners {
-		t.Error("runner-online must ask the forge, not a machine")
-	}
-	if byClass["registry-truth"].Forge != ForgeRegistry {
-		t.Error("registry-truth must hold the registry against the forge, not ask a machine")
-	}
+	assert.Equal(t, ForgeRunners, byClass["runner-online"].Forge, "runner-online must ask the forge, not a machine")
+	assert.Equal(t, ForgeRegistry, byClass["registry-truth"].Forge, "registry-truth must hold the registry against the forge, not ask a machine")
 	// The one report-only class, and the only one: a WARN that spreads is a WARN nobody reads.
 	for _, w := range loads {
-		if w.Report && w.Class != "diag-size" {
-			t.Errorf("%s is report-only; only diag-size is", w.Class)
-		}
+		assert.False(t, w.Report && w.Class != "diag-size", "%s is report-only; only diag-size is", w.Class)
 	}
-	if !byClass["diag-size"].Report {
-		t.Error("diag-size must be report-only: 15.7 GB of _diag broke nothing and a FAIL for it is a check people learn to pass over")
-	}
+	assert.True(t, byClass["diag-size"].Report, "diag-size must be report-only: 15.7 GB of _diag broke nothing and a FAIL for it is a check people learn to pass over")
 	// path-resolves and registry-truth apply to EVERY role: a stale shadow tool and a
 	// registry that disagrees with the forge are faults of any machine, not of a bench.
 	for _, class := range []string{"path-resolves", "registry-truth"} {
 		for _, role := range []string{RoleBench, RoleRunner, RoleServices, RoleCoordination} {
-			if !byClass[class].AppliesTo(role) {
-				t.Errorf("%s does not apply to %s", class, role)
-			}
+			assert.True(t, byClass[class].AppliesTo(role), "%s does not apply to %s", class, role)
 		}
 	}
 }
@@ -242,31 +220,17 @@ func TestAWorkloadIsAFileWithFrontMatter(t *testing.T) {
 		"echo TINY OK",
 	}, "\n")+"\n")
 	loads, err := ReadWorkloads(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(loads) != 1 {
-		t.Fatalf("read %d workloads, want 1", len(loads))
-	}
+	require.NoError(t, err)
+	require.Len(t, loads, 1, "read %d workloads, want 1", len(loads))
 	w := loads[0]
-	if w.Class != "tiny" {
-		t.Errorf("class = %q, want tiny (the class is the file name)", w.Class)
-	}
-	if !w.AppliesTo(RoleBench) || !w.AppliesTo(RoleServices) || w.AppliesTo(RoleRunner) {
-		t.Errorf("roles = %v", w.Roles)
-	}
-	if !w.Wall {
-		t.Error("wall: yes was not read")
-	}
-	if len(w.Reads) != 2 || w.Reads[0] != "$HOME/sdk" || w.Reads[1] != "/usr/lib" {
-		t.Errorf("reads = %v", w.Reads)
-	}
-	if strings.TrimSpace(w.Body) != "echo TINY OK" {
-		t.Errorf("body = %q", w.Body)
-	}
-	if !w.Expect.MatchString("TINY OK go=go1.26.5") {
-		t.Error("the expect regexp does not match its own body's line")
-	}
+	assert.Equal(t, "tiny", w.Class, "class = %q, want tiny (the class is the file name)", w.Class)
+	assert.True(t, w.AppliesTo(RoleBench), "roles = %v", w.Roles)
+	assert.True(t, w.AppliesTo(RoleServices), "roles = %v", w.Roles)
+	assert.False(t, w.AppliesTo(RoleRunner), "roles = %v", w.Roles)
+	assert.True(t, w.Wall, "wall: yes was not read")
+	assert.Equal(t, []string{"$HOME/sdk", "/usr/lib"}, w.Reads, "reads = %v", w.Reads)
+	assert.Equal(t, "echo TINY OK", strings.TrimSpace(w.Body), "body = %q", w.Body)
+	assert.True(t, w.Expect.MatchString("TINY OK go=go1.26.5"), "the expect regexp does not match its own body's line")
 }
 
 // TestAWorkloadWithoutARoleOrAnExpectIsRefused: a workload that applies to nothing, or that
@@ -285,12 +249,8 @@ func TestAWorkloadWithoutARoleOrAnExpectIsRefused(t *testing.T) {
 			dir := t.TempDir()
 			mustWrite(t, filepath.Join(dir, "broken.card"), tc.body)
 			_, err := ReadWorkloads(dir)
-			if err == nil {
-				t.Fatal("a broken workload was read without a refusal")
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("refusal %q does not name %q", err, tc.want)
-			}
+			require.Error(t, err, "a broken workload was read without a refusal")
+			assert.Contains(t, err.Error(), tc.want, "refusal %q does not name %q", err, tc.want)
 		})
 	}
 }
@@ -307,30 +267,20 @@ func TestTheStandardHashMovesWithTheStandardAndWithTheWorkloads(t *testing.T) {
 
 	standard := writeFile(t, "standard.go", "echo standard v1\n")
 	loads, err := StandardWorkloads()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	first, err := StandardHash(standard, loads)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	again, err := StandardHash(standard, loads)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first != again {
-		t.Fatalf("the hash is not stable: %s then %s", first, again)
-	}
+	require.NoError(t, err)
+	require.Equal(t, again, first, "the hash is not stable: %s then %s", first, again)
 	moved := writeFile(t, "standard.go", "echo standard v2\n")
-	if h, _ := StandardHash(moved, loads); h == first {
-		t.Error("the standard file changed and the hash did not")
-	}
+	h, _ := StandardHash(moved, loads)
+	assert.NotEqual(t, first, h, "the standard file changed and the hash did not")
 	extra := append(append([]Workload{}, loads...), Workload{
 		Class: "zzz", Roles: []string{RoleBench}, Expect: regexp.MustCompile("^OK"), Body: "echo OK",
 	})
-	if h, _ := StandardHash(standard, extra); h == first {
-		t.Error("a workload was added and the hash did not move")
-	}
+	h, _ = StandardHash(standard, extra)
+	assert.NotEqual(t, first, h, "a workload was added and the hash did not move")
 }
 
 // ---------------------------------------------------------------------------
@@ -348,14 +298,10 @@ func TestCertifiedIsTrueOnlyForTheCurrentBuildAndHash(t *testing.T) {
 		{Machine: "space", Build: "v0.17.0", Hash: "abc", Class: "sbcl", Verdict: VerdictFail, Evidence: "sbcl: not found", At: at},
 		{Machine: "hulk", Build: "v0.16.0", Hash: "abc", Class: "go-test", Verdict: VerdictOK, Evidence: "go version go1.26.5", At: at},
 	} {
-		if err := AppendCertificate(path, c); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, AppendCertificate(path, c))
 	}
 	certs, err := ReadCertificates(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, tc := range []struct {
 		name                        string
 		machine, class, build, hash string
@@ -369,9 +315,8 @@ func TestCertifiedIsTrueOnlyForTheCurrentBuildAndHash(t *testing.T) {
 		{"another machine's row", "vision", "go-test", "v0.17.0", "abc", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := Certified(certs, tc.machine, tc.class, tc.build, tc.hash); got != tc.want {
-				t.Errorf("Certified = %v, want %v", got, tc.want)
-			}
+			got := Certified(certs, tc.machine, tc.class, tc.build, tc.hash)
+			assert.Equal(t, tc.want, got, "Certified = %v, want %v", got, tc.want)
 		})
 	}
 }
@@ -386,12 +331,8 @@ func TestTheLastRowWins(t *testing.T) {
 	must(t, AppendCertificate(path, Certificate{Machine: "hulk", Build: "v1", Hash: "h", Class: "go-test", Verdict: VerdictFail, Evidence: "go1.22 refused by go.mod", At: at}))
 	must(t, AppendCertificate(path, Certificate{Machine: "hulk", Build: "v1", Hash: "h", Class: "go-test", Verdict: VerdictOK, Evidence: "go version go1.26.5", At: at.Add(time.Hour)}))
 	certs, err := ReadCertificates(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !Certified(certs, "hulk", "go-test", "v1", "h") {
-		t.Error("the repaired bench is not certified; the newest row must win")
-	}
+	require.NoError(t, err)
+	assert.True(t, Certified(certs, "hulk", "go-test", "v1", "h"), "the repaired bench is not certified; the newest row must win")
 }
 
 // TestEvidenceIsOneLineOnTheRowAndOnTheLine: a workload that fails with a screenful must not
@@ -405,12 +346,8 @@ func TestEvidenceIsOneLineOnTheRowAndOnTheLine(t *testing.T) {
 		Evidence: "first line\nsecond line\tand a tab", At: fixedNow(),
 	}))
 	raw := readFile(t, path)
-	if strings.Count(strings.TrimRight(raw, "\n"), "\n") != 0 {
-		t.Errorf("the certificates file holds %d rows for one certificate:\n%s", strings.Count(raw, "\n"), raw)
-	}
-	if strings.Count(raw, "\t") != 6 {
-		t.Errorf("a row has 7 fields and so 6 tabs, got %d: %q", strings.Count(raw, "\t"), raw)
-	}
+	assert.Equal(t, 0, strings.Count(strings.TrimRight(raw, "\n"), "\n"), "the certificates file holds %d rows for one certificate:\n%s", strings.Count(raw, "\n"), raw)
+	assert.Equal(t, 6, strings.Count(raw, "\t"), "a row has 7 fields and so 6 tabs, got %d: %q", strings.Count(raw, "\t"), raw)
 }
 
 // ---------------------------------------------------------------------------
@@ -451,37 +388,24 @@ func TestCertifyRunsEveryWorkloadOfTheMachinesRolesAndWritesARowEach(t *testing.
 		Machines: testRegistry(t), Only: "space", Certs: certs,
 		Remote: remote, Hash: "h", Now: fixedNow,
 	})
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0\nstdout:%s\nstderr:%s", code, out, errs)
-	}
+	require.Equal(t, 0, code, "exit = %d, want 0\nstdout:%s\nstderr:%s", code, out, errs)
 	for _, class := range spaceBenchClasses {
-		if !strings.Contains(out, "CERTIFY space "+class+" OK evidence=") {
-			t.Errorf("no OK line for %s:\n%s", class, out)
-		}
+		assert.Contains(t, out, "CERTIFY space "+class+" OK evidence=", "no OK line for %s:\n%s", class, out)
 	}
-	if !strings.Contains(out, fmt.Sprintf("CERTIFY OK machines=1 ok=%d fail=0 warn=0", len(spaceBenchClasses))) {
-		t.Errorf("no closing line:\n%s", out)
-	}
+	assert.Contains(t, out, fmt.Sprintf("CERTIFY OK machines=1 ok=%d fail=0 warn=0", len(spaceBenchClasses)), "no closing line:\n%s", out)
 	rows, err := ReadCertificates(certs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != len(spaceBenchClasses) {
-		t.Fatalf("wrote %d certificate rows, want %d", len(rows), len(spaceBenchClasses))
-	}
+	require.NoError(t, err)
+	require.Len(t, rows, len(spaceBenchClasses), "wrote %d certificate rows, want %d", len(rows), len(spaceBenchClasses))
 	for _, r := range rows {
-		if r.Build != "v0.17.0" {
-			t.Errorf("%s carries build %q; the build defaults to the machine's own nova-merge version line", r.Class, r.Build)
-		}
-		if r.Hash != "h" {
-			t.Errorf("%s carries hash %q", r.Class, r.Hash)
-		}
+		assert.Equal(t, "v0.17.0", r.Build, "%s carries build %q; the build defaults to the machine's own nova-merge version line", r.Class, r.Build)
+		assert.Equal(t, "h", r.Hash, "%s carries hash %q", r.Class, r.Hash)
 	}
 	// No runner, services or coordination workload may have been run on a bench.
 	for _, s := range remote.scripts() {
-		if k := scriptKey(s); k == "loki-ready" || k == "bus-push" || k == "runner-path" {
-			t.Errorf("a %s workload ran on a bench; workloads follow the machine's roles", k)
-		}
+		k := scriptKey(s)
+		assert.NotEqual(t, "loki-ready", k, "a %s workload ran on a bench; workloads follow the machine's roles", k)
+		assert.NotEqual(t, "bus-push", k, "a %s workload ran on a bench; workloads follow the machine's roles", k)
+		assert.NotEqual(t, "runner-path", k, "a %s workload ran on a bench; workloads follow the machine's roles", k)
 	}
 }
 
@@ -501,25 +425,13 @@ func TestAFailingWorkloadIsOneFAILRowAndExitOne(t *testing.T) {
 		Machines: testRegistry(t), Only: "space", Certs: certs,
 		Remote: &fakeRemote{answers: answers}, Hash: "h", Now: fixedNow,
 	})
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1", code)
-	}
+	require.Equal(t, 1, code, "exit = %d, want 1", code)
 	all := out + errs
-	if !strings.Contains(all, "CERTIFY space go-test FAIL evidence=") {
-		t.Errorf("no FAIL line:\n%s", all)
-	}
-	if !strings.Contains(all, "go.mod requires go >= 1.26.5") {
-		t.Errorf("the FAIL line does not carry what the machine said:\n%s", all)
-	}
-	if !strings.Contains(all, "fail=1") {
-		t.Errorf("the closing line does not count the failure:\n%s", all)
-	}
-	if !Certified(mustRead(t, certs), "space", "c-build", "v0.17.0", "h") {
-		t.Error("one failing workload took the passing ones with it; each class is its own certificate")
-	}
-	if Certified(mustRead(t, certs), "space", "go-test", "v0.17.0", "h") {
-		t.Error("a FAIL was written as a certificate")
-	}
+	assert.Contains(t, all, "CERTIFY space go-test FAIL evidence=", "no FAIL line:\n%s", all)
+	assert.Contains(t, all, "go.mod requires go >= 1.26.5", "the FAIL line does not carry what the machine said:\n%s", all)
+	assert.Contains(t, all, "fail=1", "the closing line does not count the failure:\n%s", all)
+	assert.True(t, Certified(mustRead(t, certs), "space", "c-build", "v0.17.0", "h"), "one failing workload took the passing ones with it; each class is its own certificate")
+	assert.False(t, Certified(mustRead(t, certs), "space", "go-test", "v0.17.0", "h"), "a FAIL was written as a certificate")
 }
 
 // TestGoTestRunsInsideTheWallWithTheToolchainAsAReadRoot is the hurt, as a test: the script
@@ -533,32 +445,22 @@ func TestGoTestRunsInsideTheWallWithTheToolchainAsAReadRoot(t *testing.T) {
 		Machines: testRegistry(t), Only: "space", Certs: writeFile(t, "certs.tsv", ""),
 		Remote: remote, Hash: "h", Now: fixedNow,
 	})
-	if code != 0 {
-		t.Fatalf("exit = %d", code)
-	}
+	require.Equal(t, 0, code, "exit = %d", code)
 	var script string
 	for _, s := range remote.scripts() {
 		if scriptKey(s) == "go-test" {
 			script = s
 		}
 	}
-	if script == "" {
-		t.Fatal("no go-test script was sent")
-	}
+	require.NotEqual(t, "", script, "no go-test script was sent")
 	for _, want := range []string{"nova-sandbox", "--write", "--read", "HOME="} {
-		if !strings.Contains(script, want) {
-			t.Errorf("the go-test script carries no %s; it is not the wall:\n%s", want, script)
-		}
+		assert.Contains(t, script, want, "the go-test script carries no %s; it is not the wall:\n%s", want, script)
 	}
-	if !strings.Contains(script, "sdk") {
-		t.Errorf("the go-test script does not name the toolchain as a read root -- this is the whole failure it certifies against:\n%s", script)
-	}
+	assert.Contains(t, script, "sdk", "the go-test script does not name the toolchain as a read root -- this is the whole failure it certifies against:\n%s", script)
 	// And a plain-ssh workload must NOT be wrapped: a redis PING from the bench is not a
 	// card, and wrapping it would certify the wall instead of the reachability.
 	for _, s := range remote.scripts() {
-		if scriptKey(s) == "services-reach" && strings.Contains(s, "nova-sandbox") {
-			t.Error("the services-reach workload was wrapped in the wall; the card says plain ssh")
-		}
+		assert.False(t, scriptKey(s) == "services-reach" && strings.Contains(s, "nova-sandbox"), "the services-reach workload was wrapped in the wall; the card says plain ssh")
 	}
 }
 
@@ -568,26 +470,18 @@ func TestGitPushMakesItsOwnScratchRemoteAndTakesItAway(t *testing.T) {
 	t.Parallel()
 
 	loads, err := StandardWorkloads()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var body string
 	for _, w := range loads {
 		if w.Class == "git-push" {
 			body = w.Body
 		}
 	}
-	if body == "" {
-		t.Fatal("no git-push workload")
-	}
+	require.NotEqual(t, "", body, "no git-push workload")
 	for _, want := range []string{"git init --bare", "git push", "rm -rf"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("git-push does not %s:\n%s", want, body)
-		}
+		assert.Contains(t, body, want, "git-push does not %s:\n%s", want, body)
 	}
-	if strings.Contains(body, "github.com") {
-		t.Error("git-push names a real remote; the remote is a bare repository made on the machine for the run")
-	}
+	assert.NotContains(t, body, "github.com", "git-push names a real remote; the remote is a bare repository made on the machine for the run")
 }
 
 // TestRunnerPathProbesBothSystemdScopesAndBothUnitNamings is a correction, and it is the
@@ -604,15 +498,11 @@ func TestRunnerPathProbesBothSystemdScopesAndBothUnitNamings(t *testing.T) {
 		"--system", "--user", "nova-runner-*", "actions.runner.*", "launchctl",
 		"Runner.Listener", "double registration",
 	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("runner-path does not probe %q:\n%s", want, body)
-		}
+		assert.Contains(t, body, want, "runner-path does not probe %q:\n%s", want, body)
 	}
 	// The listener count must be COMPARED, not merely read: a count nobody compares is a
 	// number in a log.
-	if !strings.Contains(body, `[ "$LISTENERS" -gt "$UNITS" ]`) {
-		t.Errorf("runner-path reads the listeners and never holds them against the units:\n%s", body)
-	}
+	assert.Contains(t, body, `[ "$LISTENERS" -gt "$UNITS" ]`, "runner-path reads the listeners and never holds them against the units:\n%s", body)
 }
 
 // TestDiagSizeReportsTheRateAndNotOnlyTheSize: hulk held 3576 MB with nothing older than two
@@ -623,9 +513,7 @@ func TestDiagSizeReportsTheRateAndNotOnlyTheSize(t *testing.T) {
 
 	body := workloadBody(t, "diag-size")
 	for _, want := range []string{"MB/day", "oldest", "RATE=$((TOTAL / DAYS))"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("diag-size does not report the growth rate (%q missing):\n%s", want, body)
-		}
+		assert.Contains(t, body, want, "diag-size does not report the growth rate (%q missing):\n%s", want, body)
 	}
 }
 
@@ -638,30 +526,24 @@ func TestServicesReachDistinguishesRefusedFromDeniedFromPONG(t *testing.T) {
 
 	body := workloadBody(t, "services-reach")
 	for _, want := range []string{"PONG", "protected mode", "refused", "requirepass", "nova-secrets"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("services-reach does not name %q:\n%s", want, body)
-		}
+		assert.Contains(t, body, want, "services-reach does not name %q:\n%s", want, body)
 	}
 	// Only PONG is OK: the two other cases must exit non-zero before the OK line.
 	denied := strings.Index(body, "denied (protected mode)")
 	ok := strings.LastIndex(body, "SERVICES OK $TRIED")
-	if denied < 0 || ok < 0 || denied > ok {
-		t.Errorf("the denied case does not come before the OK line:\n%s", body)
-	}
+	assert.GreaterOrEqual(t, denied, 0, "the denied case does not come before the OK line:\n%s", body)
+	assert.GreaterOrEqual(t, ok, 0, "the denied case does not come before the OK line:\n%s", body)
+	assert.LessOrEqual(t, denied, ok, "the denied case does not come before the OK line:\n%s", body)
 	// And no tailnet address is REQUIRED: the Studio has none and a LAN address is as good
 	// an answer, so the check is that the name resolves at all.
-	if strings.Contains(body, "100.") {
-		t.Errorf("services-reach hard-codes a tailnet address; the check is that the NAME resolves:\n%s", body)
-	}
+	assert.NotContains(t, body, "100.", "services-reach hard-codes a tailnet address; the check is that the NAME resolves:\n%s", body)
 }
 
 // workloadBody is one shipped workload's body, by class.
 func workloadBody(t *testing.T, class string) string {
 	t.Helper()
 	loads, err := StandardWorkloads()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, w := range loads {
 		if w.Class == class {
 			return w.Body
@@ -694,18 +576,11 @@ func TestRunnerOnlineAsksTheForgeAndNamesTheRunnerThatIsNot(t *testing.T) {
 		}}, Forge: forge, Hash: "h", Now: fixedNow,
 	})
 	all := out + errs
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1 (batman-nova-2 is offline)\n%s", code, all)
-	}
-	if !strings.Contains(all, "CERTIFY batman runner-online FAIL") || !strings.Contains(all, "batman-nova-2") {
-		t.Errorf("the refusal does not name the runner that is offline:\n%s", all)
-	}
-	if !strings.Contains(all, "CERTIFY batman runner-path ") {
-		t.Errorf("the runner's .path was not certified:\n%s", all)
-	}
-	if strings.Contains(all, "vision-nova-1") {
-		t.Error("another machine's runners were counted; the rule is <machine>-nova-*")
-	}
+	require.Equal(t, 1, code, "exit = %d, want 1 (batman-nova-2 is offline)\n%s", code, all)
+	assert.Contains(t, all, "CERTIFY batman runner-online FAIL", "the refusal does not name the runner that is offline:\n%s", all)
+	assert.Contains(t, all, "batman-nova-2", "the refusal does not name the runner that is offline:\n%s", all)
+	assert.Contains(t, all, "CERTIFY batman runner-path ", "the runner's .path was not certified:\n%s", all)
+	assert.NotContains(t, all, "vision-nova-1", "another machine's runners were counted; the rule is <machine>-nova-*")
 }
 
 // TestAnUnknownMachineIsRefusedByNameBeforeAnySSH.
@@ -717,15 +592,10 @@ func TestAnUnknownMachineIsRefusedByNameBeforeAnySSH(t *testing.T) {
 		Machines: testRegistry(t), Only: "batmobile", Certs: writeFile(t, "certs.tsv", ""),
 		Remote: remote, Hash: "h", Now: fixedNow,
 	})
-	if code != 2 {
-		t.Fatalf("exit = %d, want 2", code)
-	}
-	if !strings.Contains(errs, "unknown-machine") || !strings.Contains(errs, "batmobile") {
-		t.Errorf("the refusal does not name the machine or the reason:\n%s", errs)
-	}
-	if len(remote.calls) != 0 {
-		t.Errorf("an unknown machine was reached %d times before the refusal", len(remote.calls))
-	}
+	require.Equal(t, 2, code, "exit = %d, want 2", code)
+	assert.Contains(t, errs, "unknown-machine", "the refusal does not name the machine or the reason:\n%s", errs)
+	assert.Contains(t, errs, "batmobile", "the refusal does not name the machine or the reason:\n%s", errs)
+	assert.Empty(t, remote.calls, "an unknown machine was reached %d times before the refusal", len(remote.calls))
 }
 
 // TestDryRunSaysWhatItWouldRunAndWritesNothing.
@@ -738,18 +608,11 @@ func TestDryRunSaysWhatItWouldRunAndWritesNothing(t *testing.T) {
 		Machines: testRegistry(t), Only: "space", Certs: certs, DryRun: true,
 		Remote: remote, Hash: "h", Now: fixedNow,
 	})
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0\n%s%s", code, out, errs)
-	}
-	if len(remote.calls) != 0 {
-		t.Errorf("--dry-run reached the machine %d times", len(remote.calls))
-	}
-	if body := readFile(t, certs); strings.TrimSpace(body) != "" {
-		t.Errorf("--dry-run wrote certificates:\n%s", body)
-	}
-	if !strings.Contains(out, "CERTIFY space go-test WOULD") {
-		t.Errorf("--dry-run does not say what it would run:\n%s", out)
-	}
+	require.Equal(t, 0, code, "exit = %d, want 0\n%s%s", code, out, errs)
+	assert.Empty(t, remote.calls, "--dry-run reached the machine %d times", len(remote.calls))
+	body := readFile(t, certs)
+	assert.Equal(t, "", strings.TrimSpace(body), "--dry-run wrote certificates:\n%s", body)
+	assert.Contains(t, out, "CERTIFY space go-test WOULD", "--dry-run does not say what it would run:\n%s", out)
 }
 
 // TestAllRunsEveryMachineInTheRegistryUnderItsOwnRoles.
@@ -766,12 +629,9 @@ func TestAllRunsEveryMachineInTheRegistryUnderItsOwnRoles(t *testing.T) {
 		Hash: "h", Now: fixedNow,
 	})
 	all := out + errs
-	if !strings.Contains(all, "machines=5") {
-		t.Errorf("--all did not run the whole registry:\n%s", all)
-	}
-	if !strings.Contains(all, "CERTIFY loki loki-ready") || !strings.Contains(all, "CERTIFY studio bus-push") {
-		t.Errorf("--all did not run the services and coordination workloads:\n%s", all)
-	}
+	assert.Contains(t, all, "machines=5", "--all did not run the whole registry:\n%s", all)
+	assert.Contains(t, all, "CERTIFY loki loki-ready", "--all did not run the services and coordination workloads:\n%s", all)
+	assert.Contains(t, all, "CERTIFY studio bus-push", "--all did not run the services and coordination workloads:\n%s", all)
 	_ = code
 }
 
@@ -783,12 +643,9 @@ func TestNeitherMachineNorAllIsARefusal(t *testing.T) {
 		Machines: testRegistry(t), Certs: writeFile(t, "certs.tsv", ""),
 		Remote: &fakeRemote{}, Hash: "h", Now: fixedNow,
 	})
-	if code != 2 {
-		t.Fatalf("exit = %d, want 2", code)
-	}
-	if !strings.Contains(errs, "--machine") || !strings.Contains(errs, "--all") {
-		t.Errorf("the refusal does not name both ways to say which machines:\n%s", errs)
-	}
+	require.Equal(t, 2, code, "exit = %d, want 2", code)
+	assert.Contains(t, errs, "--machine", "the refusal does not name both ways to say which machines:\n%s", errs)
+	assert.Contains(t, errs, "--all", "the refusal does not name both ways to say which machines:\n%s", errs)
 }
 
 // runCertify fills in the parts every case shares and captures both streams.
@@ -801,9 +658,7 @@ func runCertify(t *testing.T, in CertifyInput) (string, string, int) {
 	}
 	if in.Workloads == nil {
 		loads, err := StandardWorkloads()
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		in.Workloads = loads
 	}
 	// Every machine has a registry-truth workload, so every case needs a forge. The default
@@ -821,32 +676,24 @@ func runCertify(t *testing.T, in CertifyInput) (string, string, int) {
 func mustRead(t *testing.T, path string) []Certificate {
 	t.Helper()
 	certs, err := ReadCertificates(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return certs
 }
 
 func must(t *testing.T, err error) {
 	t.Helper()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 }
 
 func mustWrite(t *testing.T, path, body string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 }
 
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(raw)
 }
 
@@ -960,9 +807,7 @@ func TestBuildVersionRejectsErrorAndBannerText(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := BuildVersion(tc.out)
-			if got != tc.want {
-				t.Errorf("BuildVersion(%q) = %q, want %q", tc.out, got, tc.want)
-			}
+			assert.Equal(t, tc.want, got, "BuildVersion(%q) = %q, want %q", tc.out, got, tc.want)
 		})
 	}
 }
@@ -981,19 +826,11 @@ func TestMachineBuildProbeFailsOnRunScriptError(t *testing.T) {
 		Machines: testRegistry(t), Only: "space", Certs: certs,
 		Remote: remote, Hash: "h", Now: fixedNow,
 	})
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
-	}
-	if !strings.Contains(errs, "CERTIFY space build FAIL evidence=") {
-		t.Errorf("stderr missing build FAIL line:\n%s", errs)
-	}
-	if !strings.Contains(errs, "ssh: connection timed out") {
-		t.Errorf("stderr does not name the connection error:\n%s", errs)
-	}
+	require.Equal(t, 1, code, "exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
+	assert.Contains(t, errs, "CERTIFY space build FAIL evidence=", "stderr missing build FAIL line:\n%s", errs)
+	assert.Contains(t, errs, "ssh: connection timed out", "stderr does not name the connection error:\n%s", errs)
 	rows := mustRead(t, certs)
-	if len(rows) != 0 {
-		t.Fatalf("wrote %d certificate rows on build probe failure, want 0", len(rows))
-	}
+	require.Empty(t, rows, "wrote %d certificate rows on build probe failure, want 0", len(rows))
 }
 
 // TestMachineBuildProbeFailsOnBannerOrErrorOutput tests that when the build probe script exits 0
@@ -1010,19 +847,11 @@ func TestMachineBuildProbeFailsOnBannerOrErrorOutput(t *testing.T) {
 		Machines: testRegistry(t), Only: "space", Certs: certs,
 		Remote: remote, Hash: "h", Now: fixedNow,
 	})
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
-	}
-	if !strings.Contains(errs, "CERTIFY space build FAIL evidence=") {
-		t.Errorf("stderr missing build FAIL line:\n%s", errs)
-	}
-	if !strings.Contains(errs, "no valid build version in output") {
-		t.Errorf("stderr does not explain missing version:\n%s", errs)
-	}
+	require.Equal(t, 1, code, "exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
+	assert.Contains(t, errs, "CERTIFY space build FAIL evidence=", "stderr missing build FAIL line:\n%s", errs)
+	assert.Contains(t, errs, "no valid build version in output", "stderr does not explain missing version:\n%s", errs)
 	rows := mustRead(t, certs)
-	if len(rows) != 0 {
-		t.Fatalf("wrote %d certificate rows on invalid build output, want 0", len(rows))
-	}
+	require.Empty(t, rows, "wrote %d certificate rows on invalid build output, want 0", len(rows))
 }
 
 // TestCertifyRefusesInvalidBuildOverride tests that passing an invalid build version string
@@ -1038,14 +867,8 @@ func TestCertifyRefusesInvalidBuildOverride(t *testing.T) {
 		Remote: remote, Hash: "h", Now: fixedNow,
 		Build: "ssh: Connection refused",
 	})
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
-	}
-	if !strings.Contains(errs, "CERTIFY space build FAIL evidence=\"invalid build version") {
-		t.Errorf("stderr missing invalid build version refusal:\n%s", errs)
-	}
+	require.Equal(t, 1, code, "exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
+	assert.Contains(t, errs, "CERTIFY space build FAIL evidence=\"invalid build version", "stderr missing invalid build version refusal:\n%s", errs)
 	rows := mustRead(t, certs)
-	if len(rows) != 0 {
-		t.Fatalf("wrote %d certificate rows on invalid build override, want 0", len(rows))
-	}
+	require.Empty(t, rows, "wrote %d certificate rows on invalid build override, want 0", len(rows))
 }

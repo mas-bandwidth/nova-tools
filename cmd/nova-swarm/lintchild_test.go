@@ -84,24 +84,23 @@ func TestChildRulesFileIsTheCoordinatorsRuleSet(t *testing.T) {
 	card := writeLintCard(t, "good.card", lintGoodCard())
 	ours := "../../fleet/child-rules.txt"
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card, "--child-rules-file", ours, "--max", "0")
-	if !strings.Contains(stdout, "rule-no-redis-server: 1: missing: NEVER start a redis-server on this machine.") ||
-		!strings.Contains(stdout, "step-go-test-timeout: 5:") || !strings.Contains(stdout, "remedy=the card quotes this rule verbatim") || exit == 0 {
-		t.Errorf("this repository's file: exit %d\n%s", exit, stdout)
-	}
+	assert.Contains(t, stdout, "rule-no-redis-server: 1: missing: NEVER start a redis-server on this machine.", "this repository's file: exit %d\n%s", exit, stdout)
+	assert.Contains(t, stdout, "step-go-test-timeout: 5:", "this repository's file: exit %d\n%s", exit, stdout)
+	assert.Contains(t, stdout, "remedy=the card quotes this rule verbatim", "this repository's file: exit %d\n%s", exit, stdout)
+	assert.NotEqual(t, 0, exit, "this repository's file: exit %d\n%s", exit, stdout)
 	mine := filepath.Join(t.TempDir(), "rules.txt")
 	require.NoError(t, os.WriteFile(mine, []byte("# mine\n[ticket] Quote the ticket number.\n"), 0o600))
 	exit, stdout, _ = runSwarm(t, "lint", "--card", card, "--child-rules-file", mine)
-	if exit == 0 || !strings.Contains(stdout, "rule-ticket: 1: missing: Quote the ticket number.") || strings.Count(stdout, "LINT DRIFT card=good.card rule-") != 1 {
-		t.Errorf("a one-rule file: exit %d\n%s", exit, stdout)
-	}
+	assert.NotEqual(t, 0, exit, "a one-rule file: exit %d\n%s", exit, stdout)
+	assert.Contains(t, stdout, "rule-ticket: 1: missing: Quote the ticket number.", "a one-rule file: exit %d\n%s", exit, stdout)
+	assert.Equal(t, 1, strings.Count(stdout, "LINT DRIFT card=good.card rule-"), "a one-rule file: exit %d\n%s", exit, stdout)
 	withRule := writeLintCard(t, "ticket.card", lintGoodCard()+"\nRULES.\nQuote the ticket number.\n")
-	if exit, stdout, _ = runSwarm(t, "lint", "--card", withRule, "--child-rules-file", mine); exit != 0 || !strings.Contains(stdout, "LINT OK") {
-		t.Errorf("a card carrying the file's sentence: exit %d\n%s", exit, stdout)
-	}
+	exit, stdout, _ = runSwarm(t, "lint", "--card", withRule, "--child-rules-file", mine)
+	assert.Equal(t, 0, exit, "a card carrying the file's sentence: exit %d\n%s", exit, stdout)
+	assert.Contains(t, stdout, "LINT OK", "a card carrying the file's sentence: exit %d\n%s", exit, stdout)
 	exit, _, stderr := runSwarm(t, "lint", "--card", card, "--child-rules-file", filepath.Join(t.TempDir(), "absent.txt"))
-	if exit != 2 || !strings.Contains(stderr, "--child-rules-file wants a readable file of one required sentence per line") {
-		t.Errorf("an unreadable file: exit %d, %q", exit, stderr)
-	}
+	assert.Equal(t, 2, exit, "an unreadable file: exit %d, %q", exit, stderr)
+	assert.Contains(t, stderr, "--child-rules-file wants a readable file of one required sentence per line", "an unreadable file: exit %d, %q", exit, stderr)
 }
 
 // A scan check on the command line: a card that runs a forbidden command draws the step

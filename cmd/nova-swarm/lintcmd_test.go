@@ -234,7 +234,7 @@ func TestLintWithNoInputNamesFleetAndRules(t *testing.T) {
 	}
 	var help bytes.Buffer
 	run([]string{"help"}, strings.NewReader(""), &help, &errb, time.Now().UTC())
-	if !strings.Contains(help.String(), "nova-swarm lint      --card <file>") || !strings.Contains(help.String(), "| --fleet <file>") || !strings.Contains(help.String(), "| --rules") {
-		t.Errorf("the help does not name --card, --fleet and --rules:\n%s", help.String())
-	}
+	assert.Contains(t, help.String(), "nova-swarm lint      --card <file>", "the help does not name --card, --fleet and --rules:\n%s", help.String())
+	assert.Contains(t, help.String(), "| --fleet <file>", "the help does not name --card, --fleet and --rules:\n%s", help.String())
+	assert.Contains(t, help.String(), "| --rules", "the help does not name --card, --fleet and --rules:\n%s", help.String())
 }

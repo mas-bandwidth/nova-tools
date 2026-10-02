@@ -51,9 +51,7 @@ func TestReadyToAcceptIsAJudgmentAcceptedByGroup(t *testing.T) {
 	require.Contains(t, out, "s1-1 review -> merging", "accept by group")
 	require.Contains(t, out, "s1-2 review -> merging", "accept by group")
 	for _, x := range ta.inboxGroups() {
-		if x.Type == sprint.NReadyToAccept && x.Kind == sprint.Judgment {
-			t.Fatalf("accept left the judgment open: %+v", x)
-		}
+		require.False(t, x.Type == sprint.NReadyToAccept && x.Kind == sprint.Judgment, "accept left the judgment open: %+v", x)
 	}
 	ta.clean()
 }

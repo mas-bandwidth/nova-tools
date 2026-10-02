@@ -11,7 +11,7 @@ import (
 // `nova-sprint help` prints it whole, and a verb's -h prints that verb's own
 // line in its place (verbExits; docs/STANDARD.md section 2, "Every verb's -h
 // quotes the table, or the verb's own"; tool ledger P5, X9).
-const exitLine = "exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config, or run: its binary was replaced (its supervisor starts the new one)"
+const exitLine = "exit codes: 0 done, 1 failed or incomplete (including refused), 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config, or run: its binary was replaced (its supervisor starts the new one)"
 
 // verbExit is a verb's own exit codes where they are not the common three.
 var verbExit = map[string]string{
@@ -22,7 +22,7 @@ var verbExit = map[string]string{
 }
 
 // commonExit is the codes of every other verb.
-const commonExit = "exit codes: 0 done, 1 refused (a card or the store said no; the line names it), 2 usage or a store that did not answer"
+const commonExit = "exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer"
 
 // verbExits is the exit-code line a verb's -h prints.
 func verbExits(name string) string {

@@ -33,23 +33,23 @@ func TestAPipeInsideAQuoteIsNotACellBoundary(t *testing.T) {
 		"| `day_basis=` enumerates `<utc|zone>`, code prints `mixed` | red | SPEC-TOKENS.md:436 |\n"))
 	require.Equal(t, ClassOK, got.Class, "a row quoting a grammar alternation is a row (rule 2): class=%s line=%d", got.Class, got.MalformedLine)
 	require.Len(t, got.Items, 1, "the row wants one item, got %d", len(got.Items))
-	if it := got.Items[0]; it.State != "red" || it.Evidence != "SPEC-TOKENS.md:436" {
-		t.Errorf("the state and the evidence are the cells beside the quote, got state=%q evidence=%q", it.State, it.Evidence)
-	}
+	it := got.Items[0]
+	assert.Equal(t, "red", it.State, "the state and the evidence are the cells beside the quote, got state=%q evidence=%q", it.State, it.Evidence)
+	assert.Equal(t, "SPEC-TOKENS.md:436", it.Evidence, "the state and the evidence are the cells beside the quote, got state=%q evidence=%q", it.State, it.Evidence)
 
 	// The same in a Gates row, and the same in the evidence cell.
 	gates := ParseReport([]byte("# t\n\n## Head\nfindings: 0\n\n## Gates\n| name | result | seconds |\n| --- | --- | --- |\n" +
 		"| `go test ./... | tee log` | pass | 12 |\n"))
-	if gates.Class != ClassClean || len(gates.Gates) != 1 || gates.Gates[0].Result != "pass" {
-		t.Errorf("a gate whose command quotes a pipe is a gate: class=%s gates=%+v", gates.Class, gates.Gates)
+	assert.Equal(t, ClassClean, gates.Class, "a gate whose command quotes a pipe is a gate: class=%s gates=%+v", gates.Class, gates.Gates)
+	if assert.Len(t, gates.Gates, 1, "a gate whose command quotes a pipe is a gate: class=%s gates=%+v", gates.Class, gates.Gates) {
+		assert.Equal(t, "pass", gates.Gates[0].Result, "a gate whose command quotes a pipe is a gate: class=%s gates=%+v", gates.Class, gates.Gates)
 	}
 
 	// AND THE QUARANTINE STILL HOLDS. An unquoted fourth state word is malformed on its
 	// own line, and an unterminated backtick does not swallow the row's boundaries.
 	bad := ParseReport([]byte(head + "| an item | maybe | evidence |\n"))
-	if bad.Class != ClassMalformed || bad.MalformedLine != 12 {
-		t.Errorf("a fourth state word is malformed at its line: class=%s line=%d", bad.Class, bad.MalformedLine)
-	}
+	assert.Equal(t, ClassMalformed, bad.Class, "a fourth state word is malformed at its line: class=%s line=%d", bad.Class, bad.MalformedLine)
+	assert.Equal(t, 12, bad.MalformedLine, "a fourth state word is malformed at its line: class=%s line=%d", bad.Class, bad.MalformedLine)
 	open := ParseReport([]byte(head + "| an item with one ` backtick | maybe | evidence |\n"))
 	assert.Equal(t, ClassMalformed, open.Class, "an unterminated quote does not turn a bad row good: class=%s", open.Class)
 }

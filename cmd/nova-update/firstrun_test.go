@@ -2,45 +2,42 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/update"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The first run needs the binary alone, so it runs in an empty directory: the
 // example lines write their own manifest there, never into the checkout.
 func TestExecutableFirstRun(t *testing.T) {
 	doc, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	t.Chdir(t.TempDir())
 	var banner bytes.Buffer
 	update.Main("nova-update", []string{"help"}, "", &banner, &banner)
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-update")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	for _, line := range examples {
 		var out, errs bytes.Buffer
 		code := update.Main("nova-update", strings.Fields(line)[1:], "", &out, &errs)
-		if code == 2 {
-			t.Fatalf("%s refused: %s", line, errs.String())
-		}
+		require.NotEqual(t, 2, code, "%s refused: %s", line, errs.String())
 	}
 	transcript, err := onboarding.FirstRun(string(doc), "nova-update")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	var wanted, actual []string
 	var out, errs bytes.Buffer
 	for _, line := range transcript {
 		if strings.HasPrefix(line, "$ ") {
-			if c := update.Main("nova-update", strings.Fields(line)[2:], "", &out, &errs); c != 0 {
-				t.Fatalf("first run: %d %s", c, errs.String())
+			{
+				c := update.Main("nova-update", strings.Fields(line)[2:], "", &out, &errs)
+				require.Equal(t, 0, c, "first run: %d %s", c, errs.String())
 			}
 		} else if s := firstRunShape(line); s != "" {
 			wanted = append(wanted, s)
@@ -51,26 +48,18 @@ func TestExecutableFirstRun(t *testing.T) {
 			actual = append(actual, s)
 		}
 	}
-	if strings.Join(wanted, "\n") != strings.Join(actual, "\n") {
-		t.Fatalf("document shape %v differs from run %v", wanted, actual)
-	}
+	require.Equal(t, strings.Join(wanted, "\n"), strings.Join(actual, "\n"), "document shape %v differs from run %v", wanted, actual)
 }
 func TestMissingIndependentFlagsAreNamedTogether(t *testing.T) {
 	t.Parallel()
 
 	var out, errs bytes.Buffer
 	c := update.Main("nova-update", []string{"report", "--send"}, "", &out, &errs)
-	if c != 2 {
-		t.Fatal(c)
-	}
+	require.Equal(t, 2, c, fmt.Sprint(c))
 	for _, flag := range []string{"--file", "--as", "--to", "--bus", "--remote", "--branch"} {
-		if !strings.Contains(errs.String(), flag) {
-			t.Fatal("missing " + flag + ": " + errs.String())
-		}
+		require.Contains(t, errs.String(), flag, "missing "+flag+": "+errs.String())
 	}
-	if strings.Count(errs.String(), "\n") > 2 {
-		t.Fatal("refusal printed a banner")
-	}
+	require.LessOrEqual(t, strings.Count(errs.String(), "\n"), 2, "refusal printed a banner")
 }
 
 // The `### First run` block under docs/TESTS.md's `## nova-update` section is
@@ -81,23 +70,15 @@ func TestMissingIndependentFlagsAreNamedTogether(t *testing.T) {
 // promise.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	t.Chdir(t.TempDir())
 	lines, err := onboarding.FirstRun(string(raw), "nova-update")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	steps, err := onboarding.Steps("nova-update", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) == 0 {
-		t.Fatal("the `### First run` block holds no nova-update command; this test would pass by running nothing")
-	}
+	require.NoError(t, err, err)
+	require.NotEmpty(t, steps, "the `### First run` block holds no nova-update command; this test would pass by running nothing")
 	for _, p := range onboarding.Execute(steps, runDocumented(t), firstRunNorms(t)...) {
-		t.Error(p)
+		assert.Fail(t, fmt.Sprint(p))
 	}
 }
 
@@ -128,33 +109,25 @@ func firstRunNorms(t *testing.T) []onboarding.Norm {
 		`took=[0-9][^\s]*`,
 		"took=<the wall time this run's reads took>",
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	version, err := onboarding.Elide(
 		"version= (the release this bench's version command answers)",
 		`version=[^\s]+`,
 		"version=<the release this bench's version command answers>",
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	rawVersion, err := onboarding.Elide(
 		"raw= (this bench's version command printed)",
 		`raw=[^\s]+`,
 		"raw=<this bench's version command printed>",
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	path, err := onboarding.Elide(
 		"path= (the executable this bench found on PATH)",
 		`path=[^\s]+`,
 		"path=<the executable this bench found on PATH>",
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	return []onboarding.Norm{onboarding.Instant("at"), duration, version, rawVersion, path}
 }
 
@@ -175,11 +148,10 @@ func runDocumented(t *testing.T) onboarding.Runner {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "docs", "TESTS.md")); err != nil {
-		t.Fatalf("docs/TESTS.md is not under %s: %v", root, err)
+	require.NoError(t, err, err)
+	{
+		_, err := os.Stat(filepath.Join(root, "docs", "TESTS.md"))
+		require.NoError(t, err, "docs/TESTS.md is not under %s: %v", root, err)
 	}
 	return root
 }

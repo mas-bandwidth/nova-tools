@@ -85,7 +85,7 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 					f.Check(positiveBounds)
 					f.Max()
 				},
-				Run: snapshotVerb,
+				Run: func(c *tool.Call) *tool.Out { return snapshotVerb(c, env) },
 			},
 			{
 				Name:   "diff",

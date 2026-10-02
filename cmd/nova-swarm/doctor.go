@@ -276,18 +276,10 @@ func (e doctorEnv) compareBinaries(pathBinary, localBinary string) doctorReport 
 	var pathRead, localRead doctorRead
 	var wg sync.WaitGroup
 	if readPath {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			pathRead = e.readOne(pathBinary)
-		}()
+		wg.Go(func() { pathRead = e.readOne(pathBinary) })
 	}
 	if readLocal {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			localRead = e.readOne(localBinary)
-		}()
+		wg.Go(func() { localRead = e.readOne(localBinary) })
 	}
 	wg.Wait()
 	if readPath {

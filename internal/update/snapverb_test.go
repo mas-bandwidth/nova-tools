@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The verbs block is the one place help and the dispatcher meet; every verb the
@@ -17,7 +19,7 @@ func TestHelpListsEveryVerbTheSwitchDispatches(t *testing.T) {
 	o.WriteString(VersionTool("", Environment{}).Banner())
 	for _, verb := range []string{"snapshot", "diff", "report", "send"} {
 		if !strings.Contains(o.String(), "nova-version "+verb+" ") {
-			t.Fatalf("help does not list %s:\n%s", verb, o.String())
+			require.Failf(t, "", "help does not list %s:\n%s", verb, o.String())
 		}
 	}
 }
@@ -37,7 +39,7 @@ func TestSnapshotFileCountsTheAdoptedManifest(t *testing.T) {
 	var o, e bytes.Buffer
 	code := Run("nova-version", []string{"snapshot", "--file", file}, "", &o, &e, Environment{})
 	if code != 0 {
-		t.Fatalf("snapshot --file did not count the adopted manifest: exit %d\nstdout: %s\nstderr: %s", code, o.String(), e.String())
+		require.EqualValuesf(t, 0, code, "snapshot --file did not count the adopted manifest: exit %d\nstdout: %s\nstderr: %s", code, o.String(), e.String())
 	}
 	need(t, o.String(), "SNAPSHOT OK checked=16 known=16 unknown=0 file="+field(file))
 }

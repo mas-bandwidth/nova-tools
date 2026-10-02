@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestExecRefusalNamesEveryMissingRequiredFlagTogether runs exec with no flags and
@@ -14,22 +17,15 @@ func TestExecRefusalNamesEveryMissingRequiredFlagTogether(t *testing.T) {
 	bin := buildNovaSecrets(t)
 
 	out, errOut, code := runNovaSecrets(bin, "exec", "--", "true")
-	if code != 125 {
-		t.Fatalf("expected exit 125, got %d (stdout=%q)", code, out)
-	}
+	require.Equal(t, 125, code, "expected exit 125, got %d (stdout=%q)", code, out)
 
 	lines := strings.Split(strings.TrimSpace(errOut), "\n")
-	if len(lines) != 1 {
-		t.Errorf("expected a single refusal line, got %d: %s", len(lines), errOut)
-	}
+	assert.Len(t, lines, 1, "expected a single refusal line, got %d: %s", len(lines), errOut)
 
 	for _, flag := range []string{"--store", "--as", "--key", "--sops"} {
-		if !strings.Contains(errOut, flag) {
-			t.Errorf("refusal must name %s together, got: %s", flag, errOut)
-		}
+		assert.Contains(t, errOut, flag, "refusal must name %s together, got: %s", flag, errOut)
 	}
 
-	if !strings.Contains(errOut, "example:") || !strings.Contains(errOut, "nova-secrets exec") {
-		t.Errorf("refusal must carry a pasteable example invocation, got: %s", errOut)
-	}
+	assert.Contains(t, errOut, "example:", "refusal must carry a pasteable example invocation, got: %s", errOut)
+	assert.Contains(t, errOut, "nova-secrets exec", "refusal must carry a pasteable example invocation, got: %s", errOut)
 }

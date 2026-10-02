@@ -106,9 +106,7 @@ func TestAnUnknownKindDrawsKindDeclared(t *testing.T) {
 	fs := findingsOn(headerCard(t, "KIND: completely-unknown-kind", "PATHS: internal/x/a.go", "TEST: ./internal/x TestA"))
 	require.True(t, hasCheck(fs, "kind-declared"), "an unknown kind is not a kind this toolchain declares\n%s", dumpFindings(fs))
 	for _, f := range fs {
-		if f.Check == "kind-declared" && !strings.Contains(f.Excerpt, "completely-unknown-kind") {
-			t.Fatalf("the finding names the kind\n%s", dumpFindings(fs))
-		}
+		require.False(t, f.Check == "kind-declared" && !strings.Contains(f.Excerpt, "completely-unknown-kind"), "the finding names the kind\n%s", dumpFindings(fs))
 	}
 	fs = findingsOn(headerCard(t, "KIND: fix-red", "PATHS: internal/x/a.go", "TEST: ./internal/x TestA"))
 	require.Empty(t, fs, "a declared kind is clean\n%s", dumpFindings(fs))
@@ -131,9 +129,7 @@ func TestATypedHeaderBelowTheBlockIsNamedNotSkipped(t *testing.T) {
 	require.NotEmpty(t, fs, "a KIND: the gate will never read is a finding, not a pass\n%s", dumpFindings(fs))
 	require.True(t, hasCheck(fs, "kind-declared"), "the stranded line is named by its own token\n%s", dumpFindings(fs))
 	for _, f := range fs {
-		if f.Check == "kind-declared" && f.Line != 3 {
-			t.Fatalf("the finding names the line the stranded KIND: sits on, got %d\n%s", f.Line, dumpFindings(fs))
-		}
+		require.False(t, f.Check == "kind-declared" && f.Line != 3, "the finding names the line the stranded KIND: sits on, got %d\n%s", f.Line, dumpFindings(fs))
 	}
 }
 

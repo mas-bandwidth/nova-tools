@@ -5,11 +5,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -75,9 +76,7 @@ var CardBaseRemedies = map[string]string{
 func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 	var out []CardHeaderFinding
 	add := func(check string, line int, excerpt string) {
-		if line < 1 {
-			line = 1
-		}
+		line = max(line, 1)
 		out = append(out, CardHeaderFinding{Check: check, Line: line, Excerpt: excerpt})
 	}
 	h, _ := cardHeaderBlock(raw)
@@ -161,7 +160,7 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 			}
 		}
 		if len(unknown) > 0 {
-			add("leg-in-fleet", legLine, fmt.Sprintf("LEG %s is not in the fleet leg table (%s); no bench carries it", quoteDepends(unknown), strings.Join(sortedLegs(bc.Legs), ", ")))
+			add("leg-in-fleet", legLine, fmt.Sprintf("LEG %s is not in the fleet leg table (%s); no bench carries it", quoteDepends(unknown), strings.Join(slices.Sorted(maps.Keys(bc.Legs)), ", ")))
 		}
 	}
 
@@ -563,15 +562,6 @@ func splitLegs(v string) []string {
 			out = append(out, p)
 		}
 	}
-	return out
-}
-
-func sortedLegs(l FleetLegs) []string {
-	out := make([]string, 0, len(l))
-	for k := range l {
-		out = append(out, k)
-	}
-	sort.Strings(out)
 	return out
 }
 

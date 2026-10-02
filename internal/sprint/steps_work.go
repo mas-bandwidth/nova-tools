@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -810,9 +811,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 			fields[k] = v
 		}
 	}
-	for k, v := range primary {
-		set[k] = v
-	}
+	maps.Copy(set, primary)
 	set["attempt"], set["work"] = itoa(attempt), card
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, createEntry(card, m, Ready, c.Score, fields)),

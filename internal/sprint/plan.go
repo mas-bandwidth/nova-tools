@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -299,12 +300,8 @@ func setStream(p *Plan, s *Snapshot, stream string, set map[string]string, notes
 		for j, c := range p.Units[i].Changes {
 			if c.Table == Merge && c.Entry.ID == ctl.ID {
 				merged := map[string]string{}
-				for k, v := range c.Entry.Set {
-					merged[k] = v
-				}
-				for k, v := range set {
-					merged[k] = v
-				}
+				maps.Copy(merged, c.Entry.Set)
+				maps.Copy(merged, set)
 				p.Units[i].Changes[j].Entry.Set = merged
 				p.Units[first].Notes = append(p.Units[first].Notes, notes...)
 				return

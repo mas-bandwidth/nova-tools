@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // docs/TESTS.md promises that every block is real output pasted whole -- type these
@@ -20,9 +23,7 @@ func TestTheKeygenTranscriptIsEveryLineTheReceiptPrints(t *testing.T) {
 	t.Parallel()
 
 	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines := strings.Split(string(data), "\n")
 
 	start := -1
@@ -32,9 +33,7 @@ func TestTheKeygenTranscriptIsEveryLineTheReceiptPrints(t *testing.T) {
 			break
 		}
 	}
-	if start < 0 {
-		t.Fatal("docs/TESTS.md has no `## nova-secrets` section")
-	}
+	require.GreaterOrEqual(t, start, 0, "docs/TESTS.md has no `## nova-secrets` section")
 	end := len(lines)
 	for i := start + 1; i < len(lines); i++ {
 		if strings.HasPrefix(lines[i], "## ") {
@@ -51,9 +50,7 @@ func TestTheKeygenTranscriptIsEveryLineTheReceiptPrints(t *testing.T) {
 			break
 		}
 	}
-	if cmd < 0 {
-		t.Fatal("docs/TESTS.md has no `$ nova-secrets keygen ` command in the `## nova-secrets` section")
-	}
+	require.GreaterOrEqual(t, cmd, 0, "docs/TESTS.md has no `$ nova-secrets keygen ` command in the `## nova-secrets` section")
 	var documented []string
 	for _, l := range section[cmd+1:] {
 		if strings.HasPrefix(l, "$ ") || strings.HasPrefix(l, "```") || strings.TrimSpace(l) == "" {
@@ -61,9 +58,7 @@ func TestTheKeygenTranscriptIsEveryLineTheReceiptPrints(t *testing.T) {
 		}
 		documented = append(documented, l)
 	}
-	if len(documented) == 0 {
-		t.Fatal("docs/TESTS.md documents no output lines for `nova-secrets keygen`")
-	}
+	require.NotEmpty(t, documented, "docs/TESTS.md documents no output lines for `nova-secrets keygen`")
 
 	printed := keygenLines(
 		"example",
@@ -73,13 +68,8 @@ func TestTheKeygenTranscriptIsEveryLineTheReceiptPrints(t *testing.T) {
 		false,
 	)
 
-	if len(documented) != len(printed) {
-		t.Errorf("docs/TESTS.md documents %d line(s) where nova-secrets keygen prints %d; the document is missing:\n%s",
-			len(documented), len(printed), strings.Join(printed[len(documented):], "\n"))
-	}
+	assert.Len(t, documented, len(printed), "docs/TESTS.md documents %d line(s) where nova-secrets keygen prints %d; the document is missing:\n%s", len(documented), len(printed), strings.Join(printed[len(documented):], "\n"))
 	for i := 0; i < len(documented) && i < len(printed); i++ {
-		if documented[i] != printed[i] {
-			t.Errorf("line %d differs:\n  documented: %q\n  printed:    %q", i+1, documented[i], printed[i])
-		}
+		assert.Equal(t, printed[i], documented[i], "line %d differs:\n  documented: %q\n  printed:    %q", i+1, documented[i], printed[i])
 	}
 }

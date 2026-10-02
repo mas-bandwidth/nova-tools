@@ -2,7 +2,8 @@ package config
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -60,30 +61,21 @@ func changeFields(c Change) string {
 	var b strings.Builder
 	switch c.Op {
 	case OpAdd:
-		for _, f := range sortedKeys(c.After) {
+		for _, f := range slices.Sorted(maps.Keys(c.After)) {
 			b.WriteString(" " + f + "=" + Value(c.After[f]))
 		}
 	case OpRemove:
-		for _, f := range sortedKeys(c.Before) {
+		for _, f := range slices.Sorted(maps.Keys(c.Before)) {
 			b.WriteString(" " + f + "=" + Value(c.Before[f]))
 		}
 	default:
-		for _, f := range sortedKeys(c.After) {
+		for _, f := range slices.Sorted(maps.Keys(c.After)) {
 			if c.Before[f] != c.After[f] {
 				b.WriteString(" " + f + "=" + Value(c.Before[f]) + ">" + Value(c.After[f]))
 			}
 		}
 	}
 	return b.String()
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // OpLine is one line of an apply or a check: `APPLY ADD kind=<k> name=<n>`,

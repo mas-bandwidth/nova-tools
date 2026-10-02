@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -224,6 +225,32 @@ func TestWatchOutputFailureStopsWithSinkRemedy(t *testing.T) {
 			_, err := os.Stat(out)
 			require.ErrorIs(t, err, os.ErrNotExist, "failed publication left target: %v", err)
 		}
+	})
+}
+
+// publish is the one-shot watch output path. A failed sink must report a
+// publication failure, not a usage refusal after a successful read.
+func TestWatchOnceOutputFailureUsesWatchSinkResult(t *testing.T) {
+	t.Parallel()
+	t.Run("stdout", func(t *testing.T) {
+		var stderr bytes.Buffer
+		code := publish("", "frame\n", brokenWatchOutput{}, &stderr, "watch")
+		require.Equal(t, 1, code, "output failure exit")
+		for _, want := range []string{"stdout: broken pipe", "--out <file>"} {
+			assert.Contains(t, stderr.String(), want)
+		}
+	})
+	t.Run("out file", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "missing-directory", "table.txt")
+		var stdout, stderr bytes.Buffer
+		code := publish(out, "frame\n", &stdout, &stderr, "watch")
+		require.Equal(t, 1, code, "output failure exit")
+		assert.Empty(t, stdout.String(), "--out wrote to stdout")
+		for _, want := range []string{"--out:", out, "next: make --out"} {
+			assert.Contains(t, stderr.String(), want)
+		}
+		_, err := os.Stat(out)
+		assert.ErrorIs(t, err, os.ErrNotExist, "failed publication left target")
 	})
 }
 

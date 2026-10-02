@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -36,9 +39,7 @@ cat > "$out" <<'EOF'
 AGE-SECRET-KEY-1FAKE
 EOF
 `
-	if err := testbin.WriteExecutable(path, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(path, []byte(script), 0755))
 	return path
 }
 
@@ -63,35 +64,23 @@ func TestKeygenSuccessReadsAsSuccess(t *testing.T) {
 	ageKeygen := writeFakeAgeKeygen(t)
 
 	keyDir := filepath.Join(t.TempDir(), "keys")
-	if err := os.MkdirAll(keyDir, 0700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(keyDir, 0700))
 	keyPath := filepath.Join(keyDir, "air.key")
 
 	out, errOut, code := runNovaSecrets(bin, "keygen", "--as", "air", "--key", keyPath, "--age-keygen", ageKeygen)
-	if code != 0 {
-		t.Fatalf("keygen failed: code %d, err: %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "keygen failed: code %d, err: %s", code, errOut)
 
 	lines := nonEmptyLines(out)
-	if len(lines) < 2 {
-		t.Fatalf("keygen printed fewer than two lines:\n%s", out)
-	}
+	require.GreaterOrEqual(t, len(lines), 2, "keygen printed fewer than two lines:\n%s", out)
 
 	last := lines[len(lines)-1]
 	wantLast := "Next: send this public key to whoever seals your seat: " + fakeAgePub
-	if last != wantLast {
-		t.Errorf("last line is not the plain closing line\n got: %q\nwant: %q\nfull:\n%s", last, wantLast, out)
-	}
+	assert.Equal(t, wantLast, last, "last line is not the plain closing line\n got: %q\nwant: %q\nfull:\n%s", last, wantLast, out)
 
 	wantDone := "Done. Your new key is at " + keyPath + ". Nothing failed."
-	if lines[len(lines)-2] != wantDone {
-		t.Errorf("second-to-last line does not say it worked and where the key is\n got: %q\nwant: %q\nfull:\n%s", lines[len(lines)-2], wantDone, out)
-	}
+	assert.Equal(t, wantDone, lines[len(lines)-2], "second-to-last line does not say it worked and where the key is\n got: %q\nwant: %q\nfull:\n%s", lines[len(lines)-2], wantDone, out)
 
 	for _, l := range lines {
-		if strings.Contains(l, "unfilled") {
-			t.Errorf("the NOTE still reads as a failure: %q", l)
-		}
+		assert.NotContains(t, l, "unfilled", "the NOTE still reads as a failure: %q", l)
 	}
 }
