@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// issue1458_test.go holds the two behaviours #1458's title names that
+// wsl2_bootstrap_approval_and_ssh_test.go holds the two behaviours #1458's title names that
 // TestWSL2BootstrapScriptCarriesTheOneStepSetup (wsl2bench_test.go) does not
 // discriminate. That test asserts each step's text is present and the auth key
 // is never printed; it still passes if the script asks a second question, if
