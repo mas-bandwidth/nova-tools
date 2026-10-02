@@ -30,3 +30,10 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 func ciRun(args []string, stdout, stderr io.Writer) int {
 	return run(args, strings.NewReader(""), stdout, stderr)
 }
+
+// `help <verb>` is that verb's help whatever follows the verb, for every verb the
+// tool's help names, `github receipt` included.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+	testverbhelp.HelpWhateverFollows(t, ciRun, usage, "nova-ci")
+}

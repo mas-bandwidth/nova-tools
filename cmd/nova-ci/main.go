@@ -241,7 +241,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		return cmdGitHub(args[1:], stdout, stderr, os.Getenv)
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return run(append(args[1:], "--help"), stdin, stdout, stderr)
+			return run(verbflag.HelpArgs(args[1:], usage, "nova-ci"), stdin, stdout, stderr)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
