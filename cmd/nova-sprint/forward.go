@@ -258,30 +258,43 @@ func (a *app) inboxWaitAt(addr string, fs *flag.FlagSet, args []string, atEpoch 
 		return refuse(stderr, "inbox", "--wait waits on the sprint's epoch for at most a --timeout above zero")
 	}
 	ctx := context.Background()
-	lastTickEnd := func() (last string, ok bool) {
+	lastTickEnd := func() (last string, code int) {
 		res, err := a.ask(ctx, addr, []string{"log"}, []string{"--json", "--since", (timeout + tickEndPoll).String()})
+		if err != nil {
+			return "", a.unanswered("inbox --wait", addr, err, stderr)
+		}
+		if res.Code != 0 {
+			a.answer(res, stdout, stderr)
+			return "", res.Code
+		}
 		var log struct {
 			Lines []sprint.Line `json:"lines"`
 		}
-		if err != nil || res.Code != 0 || json.Unmarshal([]byte(res.Stdout), &log) != nil {
-			return "", false
+		if err := json.Unmarshal([]byte(res.Stdout), &log); err != nil {
+			return "", a.readFailed("inbox --wait", fmt.Errorf("the server's log is not JSON: %w", err), stderr)
 		}
 		for _, l := range log.Lines {
 			if l.Note != nil && l.Note.Type == sprint.NTickEnd {
 				last = l.Note.ID
 			}
 		}
-		return last, true
+		return last, 0
 	}
-	from, ok := lastTickEnd()
+	from, code := lastTickEnd()
+	if code != 0 {
+		return code
+	}
 	woke := false
-	for end := a.now().Add(timeout); ok && !woke && a.now().Before(end); {
+	for end := a.now().Add(timeout); !woke && a.now().Before(end); {
 		a.sleep(min(end.Sub(a.now()), tickEndPoll))
 		var last string
-		last, ok = lastTickEnd()
+		last, code = lastTickEnd()
+		if code != 0 {
+			return code
+		}
 		woke = last != "" && last != from
 	}
-	if ok && !woke {
+	if !woke {
 		// the timeout is said where inbox --wait says it: stdout, or stderr under --json
 		w := stdout
 		if asJSON {
@@ -289,13 +302,13 @@ func (a *app) inboxWaitAt(addr string, fs *flag.FlagSet, args []string, atEpoch 
 		}
 		fmt.Fprintf(w, "inbox --wait: no tick end in %s\n", timeout)
 	}
-	// the inbox itself; when the log could not be read, its read says why, as inbox says it
+	// The wait woke or timed out: read the inbox itself.
 	res, err := a.ask(ctx, addr, []string{"inbox"}, without(fs, args, "wait", "timeout"))
 	if err != nil {
 		return a.unanswered("inbox", addr, err, stderr)
 	}
 	var out map[string]json.RawMessage
-	if !ok || !asJSON || res.Code != 0 || json.Unmarshal([]byte(res.Stdout), &out) != nil {
+	if !asJSON || res.Code != 0 || json.Unmarshal([]byte(res.Stdout), &out) != nil {
 		a.answer(res, stdout, stderr)
 		return res.Code
 	}
