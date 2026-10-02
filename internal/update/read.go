@@ -234,12 +234,17 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 // budget leaves, floored, so a held pipe is closed promptly rather than kept
 // open by a fixed grace begun at cancellation.
 func drainAllowance(ctx context.Context) time.Duration {
+	return drainAllowanceAt(ctx, time.Now())
+}
+
+// drainAllowanceAt computes the remaining drain budget from the caller's time.
+func drainAllowanceAt(ctx context.Context, now time.Time) time.Duration {
 	if ctx.Err() != nil {
 		return drainFloor
 	}
 	drain := killGrace
 	if deadline, ok := ctx.Deadline(); ok {
-		drain = min(drain, time.Until(deadline))
+		drain = min(drain, deadline.Sub(now))
 	}
 	return max(drain, drainFloor)
 }
@@ -308,7 +313,14 @@ func ladder(e Entry) [][]string {
 	return [][]string{{exe, "version"}, {exe, "--version"}, {exe}}
 }
 
+type processFunc func(context.Context, []string, io.Reader, int) ProcessResult
+
 func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool) Read {
+	return installed(ctx, e, timeout, report, process)
+}
+
+// installed keeps the version decisions independent of the child transport.
+func installed(ctx context.Context, e Entry, timeout time.Duration, report bool, run processFunc) Read {
 	if ctx.Err() != nil {
 		return Read{Reason: "budget", Remedy: "increase --budget"}
 	}
@@ -324,7 +336,7 @@ func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool)
 	defer cancel()
 	var last Read
 	for _, argv := range ladder(e) {
-		p := process(child, argv, nil, ChildCap)
+		p := run(child, argv, nil, ChildCap)
 		last = reading(e, p, report)
 		if last.Known() {
 			break
@@ -430,4 +442,12 @@ func decPatch(v string) string {
 	p.Sub(p, big.NewInt(1))
 	parts[len(parts)-1] = p.String()
 	return strings.Join(parts, ".")
+}
+
+// runProcess uses the supplied transport or the real child adapter.
+func (env Environment) runProcess(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
+	if env.Process != nil {
+		return env.Process(ctx, args, input, cap)
+	}
+	return process(ctx, args, input, cap)
 }
