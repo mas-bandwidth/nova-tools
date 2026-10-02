@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The four checks, each seen red on the defect it exists for and green on a range that
@@ -22,21 +25,17 @@ func git(t *testing.T, dir string, args ...string) string {
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 	)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
+	require.NoError(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
 	return strings.TrimSpace(string(out))
 }
 
 func write(t *testing.T, dir, rel, body string) {
 	t.Helper()
 	p := filepath.Join(dir, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	err := os.MkdirAll(filepath.Dir(p), 0o755)
+	require.NoError(t, err)
+	err = os.WriteFile(p, []byte(body), 0o644)
+	require.NoError(t, err)
 }
 
 // lab is a repo with one base commit. The card's identity is Rowan, and its declared
@@ -74,9 +73,7 @@ func check(t *testing.T, dir string, o Options) []Finding {
 		o.Paths = []string{"sign/**"}
 	}
 	fs, err := Check(context.Background(), o)
-	if err != nil {
-		t.Fatalf("Check: %v", err)
-	}
+	require.NoError(t, err, "Check: %v", err)
 	return fs
 }
 
@@ -108,9 +105,8 @@ func TestHygienePassesACleanRange(t *testing.T) {
 	write(t, dir, "sign/sign_test.go", "package sign\n\nimport \"testing\"\n\nfunc TestSign(t *testing.T) {}\n\nfunc TestSignZero(t *testing.T) {\n\tif Sign(0) != 0 {\n\t\tt.Fatal(\"zero\")\n\t}\n}\n")
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "fix")
-	if fs := check(t, dir, Options{}); len(fs) != 0 {
-		t.Fatalf("a clean range drew findings: %v", fs)
-	}
+	fs := check(t, dir, Options{})
+	require.Empty(t, fs, "a clean range drew findings: %v", fs)
 }
 
 // hygiene-rejects-a-foreign-committer: nothing anywhere says whose name a card's commit
@@ -129,16 +125,11 @@ func TestHygieneRejectsAForeignCommitter(t *testing.T) {
 		"GIT_COMMITTER_NAME=Bench", "GIT_COMMITTER_EMAIL=bench@elsewhere.example",
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("commit: %v\n%s", err, out)
-	}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "commit: %v\n%s", err, out)
 	f := has(check(t, dir, Options{}), "identity")
-	if f == nil {
-		t.Fatalf("a foreign COMMITTER drew no identity finding: %v", tokens(check(t, dir, Options{})))
-	}
-	if len(f.At) != 12 {
-		t.Fatalf("at=%q, want a sha12", f.At)
-	}
+	require.NotNil(t, f, "a foreign COMMITTER drew no identity finding: %v", tokens(check(t, dir, Options{})))
+	require.Len(t, f.At, 12, "at=%q, want a sha12", f.At)
 }
 
 func TestHygieneRejectsAForeignAuthor(t *testing.T) {
@@ -155,12 +146,9 @@ func TestHygieneRejectsAForeignAuthor(t *testing.T) {
 		"GIT_COMMITTER_NAME=Rowan", "GIT_COMMITTER_EMAIL=rowan@example.com",
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("commit: %v\n%s", err, out)
-	}
-	if has(check(t, dir, Options{}), "identity") == nil {
-		t.Fatal("a foreign AUTHOR drew no identity finding")
-	}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "commit: %v\n%s", err, out)
+	require.NotNil(t, has(check(t, dir, Options{}), "identity"), "a foreign AUTHOR drew no identity finding")
 }
 
 // hygiene-rejects-a-merge-commit.
@@ -180,12 +168,8 @@ func TestHygieneRejectsAMergeCommit(t *testing.T) {
 	git(t, dir, "checkout", "-q", "-b", "card")
 	git(t, dir, "merge", "-q", "--no-ff", "-m", "merge side", "side")
 	f := has(check(t, dir, Options{Base: base}), "identity")
-	if f == nil {
-		t.Fatal("a merge commit drew no identity finding")
-	}
-	if !strings.Contains(f.Why, "merge") {
-		t.Fatalf("why=%q, want it to name the merge", f.Why)
-	}
+	require.NotNil(t, f, "a merge commit drew no identity finding")
+	require.Contains(t, f.Why, "merge", "why=%q, want it to name the merge", f.Why)
 }
 
 // hygiene-counts-a-rename-on-both-sides: a rename that moves a file OUT of the declared
@@ -198,12 +182,8 @@ func TestHygieneCountsARenameOnBothSides(t *testing.T) {
 	git(t, dir, "mv", "sign/sign.go", "other/sign.go")
 	git(t, dir, "commit", "-q", "-m", "move it out")
 	f := has(check(t, dir, Options{}), "out-of-path")
-	if f == nil {
-		t.Fatal("a rename out of the declared paths drew no out-of-path finding")
-	}
-	if f.At != "other/sign.go" {
-		t.Fatalf("at=%q, want the arriving side named", f.At)
-	}
+	require.NotNil(t, f, "a rename out of the declared paths drew no out-of-path finding")
+	require.Equal(t, "other/sign.go", f.At, "at=%q, want the arriving side named", f.At)
 	// And the reverse: a rename INTO the declared paths from outside is out-of-path
 	// on the leaving side, which a --find-renames diff would hide entirely.
 	dir2 := lab(t)
@@ -211,12 +191,8 @@ func TestHygieneCountsARenameOnBothSides(t *testing.T) {
 	git(t, dir2, "mv", "other/other.go", "sign/other.go")
 	git(t, dir2, "commit", "-q", "-m", "move it in")
 	f2 := has(check(t, dir2, Options{}), "out-of-path")
-	if f2 == nil {
-		t.Fatal("a rename in from outside the declared paths drew no out-of-path finding")
-	}
-	if f2.At != "other/other.go" {
-		t.Fatalf("at=%q, want the leaving side named", f2.At)
-	}
+	require.NotNil(t, f2, "a rename in from outside the declared paths drew no out-of-path finding")
+	require.Equal(t, "other/other.go", f2.At, "at=%q, want the leaving side named", f2.At)
 }
 
 func TestHygieneAcceptsAChangeInsideTheDeclaredPaths(t *testing.T) {
@@ -227,9 +203,8 @@ func TestHygieneAcceptsAChangeInsideTheDeclaredPaths(t *testing.T) {
 	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n")
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "inside")
-	if f := has(check(t, dir, Options{}), "out-of-path"); f != nil {
-		t.Fatalf("a change inside the declared paths drew %v", *f)
-	}
+	f := has(check(t, dir, Options{}), "out-of-path")
+	require.Nil(t, f, "a change inside the declared paths drew %v", f)
 }
 
 // A batch member that is a friend's own branch has no card and no PATHS:, so the bound
@@ -243,9 +218,8 @@ func TestHygieneSkipsOutOfPathWhenNoPathsAreDeclared(t *testing.T) {
 	write(t, dir, "other/other.go", "package other\n\nfunc F() {}\n")
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "a friend's own branch")
-	if f := has(check(t, dir, Options{Paths: []string{}}), "out-of-path"); f != nil {
-		t.Fatalf("an unbounded member drew %v", *f)
-	}
+	f := has(check(t, dir, Options{Paths: []string{}}), "out-of-path")
+	require.Nil(t, f, "an unbounded member drew %v", f)
 }
 
 // hygiene-rejects-result-md-in-the-diff: the worker's own report is not part of its
@@ -259,12 +233,8 @@ func TestHygieneRejectsResultMDInTheDiff(t *testing.T) {
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "ship the report")
 	f := has(check(t, dir, Options{}), "stray-file")
-	if f == nil {
-		t.Fatalf("RESULT.md drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
-	}
-	if f.At != "sign/RESULT.md" {
-		t.Fatalf("at=%q, want the path", f.At)
-	}
+	require.NotNil(t, f, "RESULT.md drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
+	require.Equal(t, "sign/RESULT.md", f.At, "at=%q, want the path", f.At)
 }
 
 func TestHygieneRejectsTheRestOfTheStrayList(t *testing.T) {
@@ -278,9 +248,7 @@ func TestHygieneRejectsTheRestOfTheStrayList(t *testing.T) {
 			git(t, dir, "add", "-A")
 			git(t, dir, "commit", "-q", "-m", "stray")
 			paths := []string{"sign/**", "scratch/**"}
-			if has(check(t, dir, Options{Paths: paths}), "stray-file") == nil {
-				t.Fatalf("%s drew no stray-file finding", rel)
-			}
+			require.NotNil(t, has(check(t, dir, Options{Paths: paths}), "stray-file"), "%s drew no stray-file finding", rel)
 		})
 	}
 }
@@ -295,12 +263,8 @@ func TestHygieneRejectsAFileOverOneMebibyte(t *testing.T) {
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "big")
 	f := has(check(t, dir, Options{}), "stray-file")
-	if f == nil {
-		t.Fatal("a file over one mebibyte drew no stray-file finding")
-	}
-	if !strings.Contains(f.Why, "1 MiB") && !strings.Contains(f.Why, "mebibyte") {
-		t.Fatalf("why=%q, want it to name the size rule", f.Why)
-	}
+	require.NotNil(t, f, "a file over one mebibyte drew no stray-file finding")
+	require.True(t, strings.Contains(f.Why, "1 MiB") || strings.Contains(f.Why, "mebibyte"), "why=%q, want it to name the size rule", f.Why)
 }
 
 // hygiene-rejects-a-symlink-and-a-submodule.
@@ -315,12 +279,8 @@ func TestHygieneRejectsASymlink(t *testing.T) {
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "a way out")
 	f := has(check(t, dir, Options{}), "stray-file")
-	if f == nil {
-		t.Fatal("a symlink drew no stray-file finding")
-	}
-	if !strings.Contains(f.Why, "symlink") {
-		t.Fatalf("why=%q, want it to name the symlink", f.Why)
-	}
+	require.NotNil(t, f, "a symlink drew no stray-file finding")
+	require.Contains(t, f.Why, "symlink", "why=%q, want it to name the symlink", f.Why)
 }
 
 func TestHygieneRejectsASubmodule(t *testing.T) {
@@ -334,12 +294,8 @@ func TestHygieneRejectsASubmodule(t *testing.T) {
 	git(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+sha+",sign/vendor")
 	git(t, dir, "commit", "-q", "-m", "a submodule")
 	f := has(check(t, dir, Options{}), "stray-file")
-	if f == nil {
-		t.Fatal("a submodule drew no stray-file finding")
-	}
-	if !strings.Contains(f.Why, "submodule") {
-		t.Fatalf("why=%q, want it to name the submodule", f.Why)
-	}
+	require.NotNil(t, f, "a submodule drew no stray-file finding")
+	require.Contains(t, f.Why, "submodule", "why=%q, want it to name the submodule", f.Why)
 }
 
 // hygiene-rejects-a-conflict-marker: card-16 left `<<<<<<< HEAD` in a fenced block.
@@ -352,12 +308,8 @@ func TestHygieneRejectsAConflictMarker(t *testing.T) {
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "left a marker")
 	f := has(check(t, dir, Options{}), "stray-file")
-	if f == nil {
-		t.Fatalf("a conflict marker drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
-	}
-	if !strings.Contains(f.Why, "conflict marker") {
-		t.Fatalf("why=%q, want it to name the conflict marker", f.Why)
-	}
+	require.NotNil(t, f, "a conflict marker drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
+	require.Contains(t, f.Why, "conflict marker", "why=%q, want it to name the conflict marker", f.Why)
 }
 
 // An allowlisted exception names the card kind it is for, and holds for that kind only.
@@ -369,15 +321,9 @@ func TestHygieneStrayExceptionHoldsForItsKindOnly(t *testing.T) {
 	write(t, dir, "sign/golden.out", "expected\n")
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "a golden file")
-	if has(check(t, dir, Options{}), "stray-file") == nil {
-		t.Fatal("*.out drew no stray-file finding with no kind")
-	}
-	if has(check(t, dir, Options{Kind: "transcript-test"}), "stray-file") != nil {
-		t.Fatal("the transcript-test exception for *.out did not hold")
-	}
-	if has(check(t, dir, Options{Kind: "fix-red"}), "stray-file") == nil {
-		t.Fatal("the transcript-test exception leaked to fix-red")
-	}
+	require.NotNil(t, has(check(t, dir, Options{}), "stray-file"), "*.out drew no stray-file finding with no kind")
+	require.Nil(t, has(check(t, dir, Options{Kind: "transcript-test"}), "stray-file"), "the transcript-test exception for *.out did not hold")
+	require.NotNil(t, has(check(t, dir, Options{Kind: "fix-red"}), "stray-file"), "the transcript-test exception leaked to fix-red")
 }
 
 // fixtureKey builds a key-SHAPED string at test time, by parts, so that no valid key
@@ -399,21 +345,13 @@ func TestHygieneRejectsAKeyShapeAndNeverPrintsIt(t *testing.T) {
 	git(t, dir, "commit", "-q", "-m", "oops")
 	fs := check(t, dir, Options{})
 	f := has(fs, "secret")
-	if f == nil {
-		t.Fatalf("a key shape drew no secret finding: %v", tokens(fs))
-	}
-	if f.At != "sign/sign.go:3" {
-		t.Fatalf("at=%q, want sign/sign.go:3", f.At)
-	}
+	require.NotNil(t, f, "a key shape drew no secret finding: %v", tokens(fs))
+	require.Equal(t, "sign/sign.go:3", f.At, "at=%q, want sign/sign.go:3", f.At)
 	// The whole finding, every field of it, must be printable in a log.
 	all := f.Token + " " + f.At + " " + f.Why + " " + f.String()
-	if strings.Contains(all, key) {
-		t.Fatalf("the matched text reached the finding: %q", all)
-	}
+	require.NotContains(t, all, key, "the matched text reached the finding: %q", all)
 	// The shape's NAME is what a person needs; it is not the key.
-	if !strings.Contains(f.Why, "forge") && !strings.Contains(f.Why, "token") {
-		t.Fatalf("why=%q, want it to name the shape", f.Why)
-	}
+	require.True(t, strings.Contains(f.Why, "forge") || strings.Contains(f.Why, "token"), "why=%q, want it to name the shape", f.Why)
 }
 
 func TestHygieneRejectsAPEMPrivateKeyHeader(t *testing.T) {
@@ -424,9 +362,7 @@ func TestHygieneRejectsAPEMPrivateKeyHeader(t *testing.T) {
 	write(t, dir, "sign/key.pem", "-----BEGIN"+" OPENSSH PRIVATE KEY-----\nnot-a-key\n")
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "oops")
-	if has(check(t, dir, Options{}), "secret") == nil {
-		t.Fatal("a PEM private-key header drew no secret finding")
-	}
+	require.NotNil(t, has(check(t, dir, Options{}), "secret"), "a PEM private-key header drew no secret finding")
 }
 
 // hygiene-recognises-the-xai-provider-key: the harvest backstop (internal/keyshape)
@@ -445,16 +381,10 @@ func TestHygieneRejectsAnXAIProviderKey(t *testing.T) {
 	git(t, dir, "commit", "-q", "-m", "oops")
 	fs := check(t, dir, Options{})
 	f := has(fs, "secret")
-	if f == nil {
-		t.Fatalf("an xai- provider key drew no secret finding: %v", tokens(fs))
-	}
-	if f.At != "sign/sign.go:3" {
-		t.Fatalf("at=%q, want sign/sign.go:3", f.At)
-	}
+	require.NotNil(t, f, "an xai- provider key drew no secret finding: %v", tokens(fs))
+	require.Equal(t, "sign/sign.go:3", f.At, "at=%q, want sign/sign.go:3", f.At)
 	all := f.Token + " " + f.At + " " + f.Why + " " + f.String()
-	if strings.Contains(all, xai) {
-		t.Fatalf("the matched text reached the finding: %q", all)
-	}
+	require.NotContains(t, all, xai, "the matched text reached the finding: %q", all)
 	// A truncated sk- copy (below the old {32,} bound, at the seat key's measured
 	// length in #1814) is still a finding.
 	dir2 := lab(t)
@@ -464,9 +394,7 @@ func TestHygieneRejectsAnXAIProviderKey(t *testing.T) {
 	git(t, dir2, "add", "-A")
 	git(t, dir2, "commit", "-q", "-m", "oops")
 	fs2 := check(t, dir2, Options{})
-	if has(fs2, "secret") == nil {
-		t.Fatalf("a truncated sk- provider key drew no secret finding: %v", tokens(fs2))
-	}
+	require.NotNil(t, has(fs2, "secret"), "a truncated sk- provider key drew no secret finding: %v", tokens(fs2))
 }
 
 // The two embedded lists are one list: a class test fails when they differ, so the
@@ -476,17 +404,11 @@ func TestHygieneKeyShapesMatchTheHarvestBackstop(t *testing.T) {
 
 	hygiene := shapeDataRows(t, keyShapeData)
 	raw, err := os.ReadFile(filepath.Join("..", "keyshape", "keyshapes.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	harvest := shapeDataRows(t, string(raw))
-	if len(hygiene) != len(harvest) {
-		t.Fatalf("hygiene has %d shape rows, keyshape has %d\nhygiene=%v\nkeyshape=%v", len(hygiene), len(harvest), hygiene, harvest)
-	}
+	require.Equal(t, len(harvest), len(hygiene), "hygiene has %d shape rows, keyshape has %d\nhygiene=%v\nkeyshape=%v", len(hygiene), len(harvest), hygiene, harvest)
 	for i := range hygiene {
-		if hygiene[i] != harvest[i] {
-			t.Fatalf("shape row %d drifted: hygiene=%q keyshape=%q", i, hygiene[i], harvest[i])
-		}
+		require.Equal(t, harvest[i], hygiene[i], "shape row %d drifted: hygiene=%q keyshape=%q", i, hygiene[i], harvest[i])
 	}
 }
 
@@ -500,9 +422,7 @@ func shapeDataRows(t *testing.T, data string) []string {
 		}
 		out = append(out, line)
 	}
-	if len(out) == 0 {
-		t.Fatal("no shape rows")
-	}
+	require.NotEmpty(t, out, "no shape rows")
 	return out
 }
 
@@ -521,9 +441,8 @@ func TestHygieneReadsAddedLinesOnly(t *testing.T) {
 	write(t, dir, "sign/other.go", "package sign\n\nfunc F() {}\n")
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "an innocent change")
-	if f := has(check(t, dir, Options{}), "secret"); f != nil {
-		t.Fatalf("a key shape already in the base was charged to this range: %v", *f)
-	}
+	f := has(check(t, dir, Options{}), "secret")
+	require.Nil(t, f, "a key shape already in the base was charged to this range: %v", f)
 }
 
 // paths-line-refuses-dotdot-and-bare-doublestar.
@@ -539,18 +458,16 @@ func TestValidatePathsRefusesDotDotAndBareDoubleStar(t *testing.T) {
 		{"a/**", "b/**", "c/**", "d/**", "e/**", "f/**", "g/**", "h/**", "i/**"},
 		{""},
 	} {
-		if err := ValidatePaths(bad); err == nil {
-			t.Fatalf("ValidatePaths(%v) = nil, want a refusal", bad)
-		}
+		err := ValidatePaths(bad)
+		require.Error(t, err, "ValidatePaths(%v) = nil, want a refusal", bad)
 	}
 	for _, ok := range [][]string{
 		{"sign/**"},
 		{"cmd/nova-ci/firstrun_test.go", "cmd/nova-ci/testdata/firstrun/**"},
 		{"internal/pulse/*.go"},
 	} {
-		if err := ValidatePaths(ok); err != nil {
-			t.Fatalf("ValidatePaths(%v) = %v, want nil", ok, err)
-		}
+		err := ValidatePaths(ok)
+		require.NoError(t, err, "ValidatePaths(%v) = %v, want nil", ok, err)
 	}
 }
 
@@ -561,13 +478,11 @@ func TestValidatePathsRefusesAWindowsDriveLetter(t *testing.T) {
 	t.Parallel()
 
 	for _, bad := range []string{`C:/foo/bar`, `C:\Windows\system32\evil.go`, `d:/x/y.go`} {
-		if err := ValidatePaths([]string{bad}); err == nil {
-			t.Errorf("ValidatePaths([%q]) = nil, want a refusal: a drive letter is absolute", bad)
-		}
+		err := ValidatePaths([]string{bad})
+		assert.Error(t, err, "ValidatePaths([%q]) = nil, want a refusal: a drive letter is absolute", bad)
 	}
-	if err := ValidatePaths([]string{"internal/hygiene/glob.go"}); err != nil {
-		t.Fatalf("a repo-relative path is clean: %v", err)
-	}
+	err := ValidatePaths([]string{"internal/hygiene/glob.go"})
+	require.NoError(t, err, "a repo-relative path is clean: %v", err)
 }
 
 // #1853.4 THE NAME SET IS kinds.txt. A kind the file does not hold is not declared;
@@ -575,12 +490,8 @@ func TestValidatePathsRefusesAWindowsDriveLetter(t *testing.T) {
 func TestKindDeclaredRefusesAnUnknownKind(t *testing.T) {
 	t.Parallel()
 
-	if KindDeclared("completely-unknown-kind") {
-		t.Fatal("completely-unknown-kind is not in kinds.txt")
-	}
-	if !KindDeclared("fix-red") {
-		t.Fatal("fix-red is a kind this toolchain declares")
-	}
+	require.False(t, KindDeclared("completely-unknown-kind"), "completely-unknown-kind is not in kinds.txt")
+	require.True(t, KindDeclared("fix-red"), "fix-red is a kind this toolchain declares")
 }
 
 // A check that could not run has found nothing, and must never report clean.
@@ -588,16 +499,13 @@ func TestCheckRefusesRatherThanReportingClean(t *testing.T) {
 	t.Parallel()
 
 	dir := lab(t)
-	if _, err := Check(context.Background(), Options{Repo: dir, Base: "no-such-ref", Head: "HEAD", Identities: rowan()}); err == nil {
-		t.Fatal("a bad base returned no error")
-	}
-	if _, err := Check(context.Background(), Options{Repo: t.TempDir(), Base: "main", Head: "HEAD", Identities: rowan()}); err == nil {
-		t.Fatal("a directory that is not a working copy returned no error")
-	}
+	_, err := Check(context.Background(), Options{Repo: dir, Base: "no-such-ref", Head: "HEAD", Identities: rowan()})
+	require.Error(t, err, "a bad base returned no error")
+	_, err = Check(context.Background(), Options{Repo: t.TempDir(), Base: "main", Head: "HEAD", Identities: rowan()})
+	require.Error(t, err, "a directory that is not a working copy returned no error")
 	// An empty identity set would admit anybody.
-	if _, err := Check(context.Background(), Options{Repo: dir, Base: "main", Head: "HEAD"}); err == nil {
-		t.Fatal("an empty identity set returned no error")
-	}
+	_, err = Check(context.Background(), Options{Repo: dir, Base: "main", Head: "HEAD"})
+	require.Error(t, err, "an empty identity set returned no error")
 }
 
 // hygiene-rejects-mode-100600, proved where it CAN be proved.
@@ -616,21 +524,15 @@ func TestModeFindingRejectsAModeGitWillNotWrite(t *testing.T) {
 	t.Parallel()
 
 	f, bad := modeFinding(entry{newMode: "100600", path: "sign/private.go", status: "A"})
-	if !bad {
-		t.Fatal("mode 100600 was accepted")
-	}
-	if f.Token != "stray-file" || f.At != "sign/private.go" || !strings.Contains(f.Why, "100600") {
-		t.Fatalf("finding = %+v, want a stray-file naming the mode", f)
-	}
+	require.True(t, bad, "mode 100600 was accepted")
+	require.True(t, f.Token == "stray-file" && f.At == "sign/private.go" && strings.Contains(f.Why, "100600"), "finding = %+v, want a stray-file naming the mode", f)
 	for _, mode := range []string{"100644", "100755"} {
-		if _, bad := modeFinding(entry{newMode: mode, path: "sign/sign.go", status: "A"}); bad {
-			t.Fatalf("mode %s was rejected", mode)
-		}
+		_, bad := modeFinding(entry{newMode: mode, path: "sign/sign.go", status: "A"})
+		require.False(t, bad, "mode %s was rejected", mode)
 	}
 	for _, mode := range []string{"120000", "160000", "100664", "040000"} {
-		if _, bad := modeFinding(entry{newMode: mode, path: "sign/x", status: "A"}); !bad {
-			t.Fatalf("mode %s was accepted", mode)
-		}
+		_, bad := modeFinding(entry{newMode: mode, path: "sign/x", status: "A"})
+		require.True(t, bad, "mode %s was accepted", mode)
 	}
 }
 
@@ -659,12 +561,8 @@ func TestHygieneIgnoresTheSubjectReposDiffConfig(t *testing.T) {
 	git(t, dir, "commit", "-q", "-m", "oops")
 	fs := check(t, dir, Options{})
 	f := has(fs, "secret")
-	if f == nil {
-		t.Fatalf("the subject repo's diff.noprefix hid the key: %v", tokens(fs))
-	}
-	if f.At != "sign/sign.go:3" {
-		t.Fatalf("at=%q, want sign/sign.go:3", f.At)
-	}
+	require.NotNil(t, f, "the subject repo's diff.noprefix hid the key: %v", tokens(fs))
+	require.Equal(t, "sign/sign.go:3", f.At, "at=%q, want sign/sign.go:3", f.At)
 }
 
 // hygiene-ignores-the-subject-repos-replace-refs: a worker who can write the job
@@ -686,9 +584,7 @@ func TestHygieneIgnoresTheSubjectReposReplaceRefs(t *testing.T) {
 	head := git(t, dir, "rev-parse", "HEAD")
 	git(t, dir, "replace", head, base)
 	fs := check(t, dir, Options{})
-	if has(fs, "secret") == nil {
-		t.Fatalf("a replace ref in the job clone's .git hid the key: %v", tokens(fs))
-	}
+	require.NotNil(t, has(fs, "secret"), "a replace ref in the job clone's .git hid the key: %v", tokens(fs))
 }
 
 // hygiene-reads-a-diff-the-subject-repo-marked-binary: a committed `.gitattributes`
@@ -705,9 +601,7 @@ func TestHygieneReadsADiffTheSubjectRepoMarkedBinary(t *testing.T) {
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "nothing to see here")
 	fs := check(t, dir, Options{})
-	if has(fs, "secret") == nil {
-		t.Fatalf("a `-diff` attribute in the range hid the key: %v", tokens(fs))
-	}
+	require.NotNil(t, has(fs, "secret"), "a `-diff` attribute in the range hid the key: %v", tokens(fs))
 }
 
 // hygiene-reads-a-path-git-would-quote: one non-ASCII byte in a name and git quotes the
@@ -723,12 +617,8 @@ func TestHygieneReadsAPathGitWouldQuote(t *testing.T) {
 	git(t, dir, "commit", "-q", "-m", "oops")
 	fs := check(t, dir, Options{})
 	f := has(fs, "secret")
-	if f == nil {
-		t.Fatalf("a quoted path hid the key: %v", tokens(fs))
-	}
-	if f.At != "sign/kéy.go:3" {
-		t.Fatalf("at=%q, want sign/kéy.go:3", f.At)
-	}
+	require.NotNil(t, f, "a quoted path hid the key: %v", tokens(fs))
+	require.Equal(t, "sign/kéy.go:3", f.At, "at=%q, want sign/kéy.go:3", f.At)
 }
 
 // hygiene-refuses-when-the-added-lines-cannot-be-read. The first repair caught this on
@@ -744,14 +634,12 @@ func TestHygieneRefusesWhenTheAddedLinesCannotBeRead(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := checkAddedLines(ctx, dir, head, head, nil); err == nil {
-		t.Fatal("a cancelled context reported a range with nothing added to it")
-	}
+	_, err := checkAddedLines(ctx, dir, head, head, nil)
+	require.Error(t, err, "a cancelled context reported a range with nothing added to it")
 
 	absent := strings.Repeat("0", len(head))
-	if _, err := checkAddedLines(context.Background(), dir, absent, head, nil); err == nil {
-		t.Fatal("a ref git could not resolve reported a range with nothing added to it")
-	}
+	_, err = checkAddedLines(context.Background(), dir, absent, head, nil)
+	require.Error(t, err, "a ref git could not resolve reported a range with nothing added to it")
 }
 
 // paths-line-refuses-a-glob-that-bounds-nothing: `**` was refused by spelling, so
@@ -762,14 +650,12 @@ func TestValidatePathsRefusesAGlobThatBoundsNothing(t *testing.T) {
 	t.Parallel()
 
 	for _, bad := range []string{"**", "**/", "**/*", "*/**", "*", "*/*", "**/**", "?", "*/*/**"} {
-		if err := ValidatePaths([]string{bad}); err == nil {
-			t.Errorf("ValidatePaths([%q]) = nil, want a refusal: it matches every file there is", bad)
-		}
+		err := ValidatePaths([]string{bad})
+		assert.Error(t, err, "ValidatePaths([%q]) = nil, want a refusal: it matches every file there is", bad)
 	}
 	for _, ok := range []string{"sign/**", "*.go", "**/*.go", "sign/*", "internal/*/doc.go", "a/**/b"} {
-		if err := ValidatePaths([]string{ok}); err != nil {
-			t.Errorf("ValidatePaths([%q]) = %v, want nil", ok, err)
-		}
+		err := ValidatePaths([]string{ok})
+		assert.NoError(t, err, "ValidatePaths([%q]) = %v, want nil", ok, err)
 	}
 }
 
@@ -789,13 +675,10 @@ func TestValidatePathsRefusesAWindowsDriveLetterAndALeadingBackslash(t *testing.
 		`\Windows\system32\evil.go`,
 	} {
 		err := ValidatePaths([]string{bad})
-		if err == nil {
-			t.Errorf("ValidatePaths([%q]) = nil, want a refusal: it is absolute", bad)
+		if !assert.Error(t, err, "ValidatePaths([%q]) = nil, want a refusal: it is absolute", bad) {
 			continue
 		}
-		if !strings.Contains(err.Error(), "absolute") {
-			t.Errorf("ValidatePaths([%q]) = %v, want it to name absolute", bad, err)
-		}
+		assert.Contains(t, err.Error(), "absolute", "ValidatePaths([%q]) = %v, want it to name absolute", bad, err)
 	}
 }
 
@@ -807,9 +690,7 @@ func TestKindDeclaredHoldsTheEmbeddedNameSet(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile("kinds.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var want []string
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimRight(line, "\r")
@@ -821,25 +702,15 @@ func TestKindDeclaredHoldsTheEmbeddedNameSet(t *testing.T) {
 			want = append(want, name)
 		}
 	}
-	if len(want) == 0 {
-		t.Fatal("kinds.txt names no kinds")
-	}
+	require.NotEmpty(t, want, "kinds.txt names no kinds")
 	got := Kinds()
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("Kinds() = %q, want the kinds.txt name set in order %q", got, want)
-	}
+	require.Equal(t, strings.Join(want, ","), strings.Join(got, ","), "Kinds() = %q, want the kinds.txt name set in order %q", got, want)
 	for _, name := range want {
-		if !KindDeclared(name) {
-			t.Errorf("KindDeclared(%q) = false, want true", name)
-		}
+		assert.True(t, KindDeclared(name), "KindDeclared(%q) = false, want true", name)
 	}
-	if KindDeclared("not-a-declared-kind") {
-		t.Fatal("an undeclared kind was accepted")
-	}
+	require.False(t, KindDeclared("not-a-declared-kind"), "an undeclared kind was accepted")
 	for _, kind := range StrayKinds() {
-		if !KindDeclared(kind) {
-			t.Errorf("the stray list excuses kind %q, which is not declared", kind)
-		}
+		assert.True(t, KindDeclared(kind), "the stray list excuses kind %q, which is not declared", kind)
 	}
 }
 
@@ -857,16 +728,10 @@ func TestHygieneReadsFullBlobIds(t *testing.T) {
 	base := git(t, dir, "rev-parse", "main")
 	head := git(t, dir, "rev-parse", "HEAD")
 	entries, err := rawDiff(context.Background(), dir, base, head)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) == 0 {
-		t.Fatal("the raw diff read no entry")
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, entries, "the raw diff read no entry")
 	for _, e := range entries {
-		if len(e.newBlob) < len(head) {
-			t.Fatalf("%s: blob id %q is abbreviated; an abbreviation is ambiguous sooner or later", e.path, e.newBlob)
-		}
+		require.GreaterOrEqual(t, len(e.newBlob), len(head), "%s: blob id %q is abbreviated; an abbreviation is ambiguous sooner or later", e.path, e.newBlob)
 	}
 }
 
@@ -887,9 +752,8 @@ func TestHygieneSizesAddedFilesOnly(t *testing.T) {
 	write(t, dir, "sign/big.txt", strings.Repeat("a", 1024*1024+1)+"\nb\n")
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "one line into a file that was already big")
-	if f := has(check(t, dir, Options{}), "stray-file"); f != nil {
-		t.Fatalf("a file the card did not add was charged to it: %v", *f)
-	}
+	f := has(check(t, dir, Options{}), "stray-file")
+	require.Nil(t, f, "a file the card did not add was charged to it: %v", f)
 }
 
 // hygiene-refuses-a-log-row-it-cannot-read: a row that does not carry all six fields
@@ -900,13 +764,11 @@ func TestHygieneRefusesALogRowItCannotRead(t *testing.T) {
 
 	const sep = "\x1f"
 	good := strings.Join([]string{"abc123", "Rowan", "rowan@example.com", "Rowan", "rowan@example.com", ""}, sep)
-	if _, err := identityFindings(good, rowan()); err != nil {
-		t.Fatalf("a whole row was refused: %v", err)
-	}
+	_, err := identityFindings(good, rowan())
+	require.NoError(t, err, "a whole row was refused: %v", err)
 	short := strings.Join([]string{"abc123", "Rowan", "rowan@example.com"}, sep)
-	if _, err := identityFindings(short, rowan()); err == nil {
-		t.Fatal("a row with three fields was read as a commit that passed")
-	}
+	_, err = identityFindings(short, rowan())
+	require.Error(t, err, "a row with three fields was read as a commit that passed")
 }
 
 // hygiene-reads-a-file-git-calls-binary: one NUL byte anywhere in a file and git
@@ -923,12 +785,8 @@ func TestHygieneReadsAFileGitCallsBinary(t *testing.T) {
 	git(t, dir, "commit", "-q", "-m", "oops")
 	fs := check(t, dir, Options{})
 	f := has(fs, "secret")
-	if f == nil {
-		t.Fatalf("a NUL byte in the file hid the key: %v", tokens(fs))
-	}
-	if f.At != "sign/blob.go:3" {
-		t.Fatalf("at=%q, want sign/blob.go:3", f.At)
-	}
+	require.NotNil(t, f, "a NUL byte in the file hid the key: %v", tokens(fs))
+	require.Equal(t, "sign/blob.go:3", f.At, "at=%q, want sign/blob.go:3", f.At)
 }
 
 // hygiene-reads-a-path-git-must-quote: `core.quotePath` governs NON-ASCII names only.
@@ -947,12 +805,8 @@ func TestHygieneReadsAPathGitMustQuote(t *testing.T) {
 	git(t, dir, "commit", "-q", "-m", "oops")
 	fs := check(t, dir, Options{})
 	f := has(fs, "secret")
-	if f == nil {
-		t.Fatalf("a name git had to quote hid the key: %v", tokens(fs))
-	}
-	if f.At != name+":3" {
-		t.Fatalf("at=%q, want %q", f.At, name+":3")
-	}
+	require.NotNil(t, f, "a name git had to quote hid the key: %v", tokens(fs))
+	require.Equal(t, name+":3", f.At, "at=%q, want %q", f.At, name+":3")
 }
 
 // ---------------------------------------------------------------------------
@@ -983,9 +837,8 @@ func TestHygieneChecksMarkersWhateverTheAttributesSay(t *testing.T) {
 		}},
 		{"core.attributesFile", func(t *testing.T, dir string) {
 			p := filepath.Join(t.TempDir(), "attributes")
-			if err := os.WriteFile(p, []byte("*.go -diff\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			err := os.WriteFile(p, []byte("*.go -diff\n"), 0o644)
+			require.NoError(t, err)
 			git(t, dir, "config", "core.attributesFile", p)
 		}},
 		{"committed .gitattributes", func(t *testing.T, dir string) {
@@ -1010,9 +863,8 @@ func TestHygieneChecksMarkersWhateverTheAttributesSay(t *testing.T) {
 				}
 			}
 			want := "sign/sign.go:3 sign/sign.go:5 sign/sign.go:7"
-			if got := strings.Join(at, " "); got != want {
-				t.Fatalf("markers at %q, want %q", got, want)
-			}
+			got := strings.Join(at, " ")
+			require.Equal(t, want, got, "markers at %q, want %q", got, want)
 		})
 	}
 }
@@ -1029,8 +881,6 @@ func TestHygieneReadsAMarkerAsGitSpellsIt(t *testing.T) {
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "lines that only look like markers")
 	for _, f := range check(t, dir, Options{}) {
-		if strings.Contains(f.Why, "conflict marker") {
-			t.Fatalf("a line that is not a marker drew one: %v", f)
-		}
+		require.NotContains(t, f.Why, "conflict marker", "a line that is not a marker drew one: %v", f)
 	}
 }
