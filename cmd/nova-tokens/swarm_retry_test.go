@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-func TestIssue181SwarmRetryAttemptIsItsOwnRow(t *testing.T) {
+func TestSwarmRetryAttemptIsItsOwnRow(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()

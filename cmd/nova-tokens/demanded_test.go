@@ -786,7 +786,7 @@ func foldPools(t *testing.T, aIn, aOut, bIn, bOut string) (out, repos, poolA, po
 // that row. Measured at tip before the fix: exit 0, written=true, no SHRANK, and the
 // claude-x row simply gone -- because the totals ROSE, so rule 10's day-total comparison
 // saw nothing.
-func TestIssue268AFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
+func TestFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -809,7 +809,7 @@ func TestIssue268AFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
 
 // R2: full replacement -- every source in the file is declared -- is exactly what it was.
 // The one row is REPLACED by this run's arithmetic, never summed with the file's.
-func TestIssue268AFullReplacementIsUnchanged(t *testing.T) {
+func TestFullReplacementIsUnchanged(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, _ := foldPools(t, "410", "100", "2000", "420")
@@ -831,7 +831,7 @@ func TestIssue268AFullReplacementIsUnchanged(t *testing.T) {
 // R3: a BLENDED row -- one row whose sources cell names a label this run declared and one
 // it did not. Its cells are already a sum over both and nothing on disk takes them apart,
 // so the fold refuses the day rather than guessing.
-func TestIssue268ABlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
+func TestBlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -857,7 +857,7 @@ func TestIssue268ABlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
 
 // R4: rule 10 still fires on a real shrink, now compared against the MERGED file, and
 // --allow-shrink still writes it with the retained row still there.
-func TestIssue268Rule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testing.T) {
+func TestRule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -888,7 +888,7 @@ func TestIssue268Rule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testin
 // A malformed existing day row fails closed before replacement: fold refuses the day,
 // reports TOKENS UNREADABLE label=out with the finding reason, and leaves the raw
 // malformed file on disk byte-identical.
-func TestIssue268MalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testing.T) {
+func TestMalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testing.T) {
 	t.Parallel()
 
 	out, repos, _, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -912,7 +912,7 @@ func TestIssue268MalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testin
 // TOKENS DAY summarizes the merged day file, so rows=, models=, repos=, dashes=, nonutc=,
 // sources= and turns= are coherent with the file on disk, while TOKENS OK rows= reflects
 // this run's folded rows.
-func TestIssue268CoherentDaySummaryScopeReflectsMergedFile(t *testing.T) {
+func TestCoherentDaySummaryScopeReflectsMergedFile(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -937,7 +937,7 @@ func TestIssue268CoherentDaySummaryScopeReflectsMergedFile(t *testing.T) {
 // An explicitly selected day whose declared source becomes empty / goes quiet is detected
 // and refused under rule 10 rather than silently skipping with exit 0. Unrelated sources
 // are preserved.
-func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
+func TestExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -978,7 +978,7 @@ func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 
 // When one source of a multi-source day goes quiet, shrinking under --allow-shrink preserves
 // the other source's rows.
-func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
+func TestExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -1017,7 +1017,7 @@ func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 // A bounded line names each quiet source on an explicitly selected existing day. The
 // fold already refuses the day under rule 10 (TOKENS SHRANK); #273's repair is that the
 // source itself is named rather than only the day totals.
-func TestIssue273QuietSourceNamedOnSelectedDay(t *testing.T) {
+func TestQuietSourceNamedOnSelectedDay(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
