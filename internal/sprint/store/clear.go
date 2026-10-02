@@ -13,11 +13,11 @@ import (
 type ClearResult struct {
 	From, To uint64
 	At       time.Time
-	// Held is what the old epoch held: primaries, work cards, read cards and
+	// Held counts the items in the old epoch: primaries, work cards, read cards and
 	// merge cards on the tables, and open judgments.
 	Held      map[string]int
-	Finished  string // a pending operation of the old epoch clear finished first
-	Abandoned string // one it could not finish, abandoned with the old epoch
+	Finished  string // A pending operation from the old epoch is finished.
+	Abandoned string // An operation that could not finish is abandoned.
 	Restored  bool   // a clear cut before it restored its shape, finished first
 	Machine   string // the machine's state before clear set it STOPPED
 }
@@ -25,14 +25,14 @@ type ClearResult struct {
 // Clear stops the sprint and clears all work in it: it sets the machine
 // STOPPED, as its first act, and leaves it STOPPED; then advances the
 // sprint's epoch, once, atomically, recording only that the new epoch owes the
-// restore of the old one's shape. Nothing is deleted: the old epoch stays
+// restore of the epoch shape. Nothing is deleted, as the old epoch stays
 // where it is and readable (At), and every writer still holding it is refused
-// by the table layer as stale, so from the advance on the old epoch is frozen.
+// by the table layer as stale, so the old epoch is frozen.
 // The shape (streams, readers, members and their status) is read after the
 // advance, from the frozen old epoch, and restored at the new one: its rows
 // and control cards; the notifications, judgments, cursor and fence of the
-// new epoch are its own, empty. A pending operation of the old epoch is
-// finished first, or abandoned with the old epoch. A restore still owed (a
+// new epoch are its own, empty. A pending operation from the old epoch
+// is finished or abandoned. A restore still owed (a
 // clear cut between its advance and its restore) is performed first, by the
 // next verb, tick or clear.
 func (st *Store) Clear(ctx context.Context) (ClearResult, error) {
@@ -128,8 +128,8 @@ func placed(t *sprint.Table, except string) int {
 // frozen since the advance (every write to it is refused as stale), and
 // writes its shape at the pinned epoch: the rows of the four tables, then the
 // control cards (one step, holding the pinned epoch), then the display cells;
-// it removes a fence the old epoch still holds (its writer is refused as
-// stale at its next write), and records the restore done. It is the old
+// it removes a fence the old epoch holds (its writer is refused as
+// stale at its next write), and records the restore done.
 // epoch as read.
 func (st *Store) restore(ctx context.Context, from uint64) (*sprint.Snapshot, error) {
 	old := st.At(from)

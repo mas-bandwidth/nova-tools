@@ -11,11 +11,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// What a tick costs, part by part (the owner's requirement of 2026-09-30:
-// "the whole intent is sub-second ticks"): the wall time of each part, the
-// round trips it made to the store, the whole-table reads it took and the
-// records those reads and its other reads brought back. Each part's numbers
-// are the counters' difference across it (PartTime).
+// Tracks the cost of a tick, part by part, to ensure ticks complete under one
+// second: the wall time of each part, the round trips made to the store,
+// the whole-table reads taken, and the records read. Each part's numbers
+// are the counters' difference across the part (PartTime).
 
 // Tripper is a backend that counts its round trips to the store: every
 // command or pipeline sent and answered is one.

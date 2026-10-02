@@ -431,9 +431,8 @@ type RowsOrderer interface {
 }
 
 // statusRank is a fleet row's place by its status cell: up first, then held,
-// then down (the owner, 2026-10-01: "Please sort the fleet table such that we
-// sort first alphabetically by machine name (as is current), then stable sort
-// by status, such that "up" is first, then "held" then "down"").
+// then down. The sort is stable: machines are sorted alphabetically by name,
+// then by status (up, held, down) so that active machines appear first.
 func statusRank(status string) int {
 	switch status {
 	case sprint.Up:

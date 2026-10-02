@@ -528,8 +528,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			actor = step.Actor
 		}
 		// Only the pump writes the work table while the machine runs: every
-		// other step queues its changes of it for the next tick's pump (the
-		// owner's tick, errata 3 amendment 12; sprint.QueueOf).
+		// other step queues its changes of it for the next tick's pump (sprint.QueueOf).
 		var queued []sprint.QueuedChange
 		if !step.Pump && (fence.Running || fence.Queued > 0) {
 			plan, queued = sprint.QueueOf(plan, step.Verb, actor)
@@ -829,7 +828,7 @@ func (st *Store) committed(ctx context.Context, step Step, op OpRecord) (Result,
 func (st *Store) after(ctx context.Context, step Step, res Result) (Result, error) {
 	if step.Verb == "add" && len(res.Moved) > 0 {
 		// work added to a done sprint: the machine stays STOPPED, no longer
-		// done (errata 3 amendment 6)
+		// done
 		if err := st.undone(ctx); err != nil {
 			return res, err
 		}

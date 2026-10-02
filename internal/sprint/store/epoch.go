@@ -14,7 +14,7 @@ import (
 // tables at that epoch, writes every manifest at it, names the sprint's keys
 // of that epoch, and holds the cards by their stored ids of that epoch
 // (sprint.StoredID). clear advances the epoch: every writer still holding the
-// old one is refused by the table layer as stale, and the old epoch stays
+// old epoch is refused by the table layer as stale, and the old epoch stays
 // readable (At).
 
 // errCleared is a read that found the tables at another epoch than the step
