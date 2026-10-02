@@ -156,11 +156,6 @@ func defaultResolver(seat string) (Cred, error) { return Resolve(seat, os.Getenv
 // resolution. Nothing is decrypted until Active is first asked.
 func Select(seat string) { process.Select(seat) }
 
-// SelectWith is Select with the seat's Redis address; see Selection.SelectWith.
-func SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
-	process.SelectWith(seat, redisAddr, resolve)
-}
-
 // Addr is this process's seat's Redis address; see Selection.Addr.
 func Addr() string { return process.Addr() }
 
