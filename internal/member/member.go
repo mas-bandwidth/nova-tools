@@ -253,6 +253,10 @@ type queueOut struct {
 	Epoch uint64      `json:"epoch"`
 	Width int         `json:"width"` // the member's width, from its fleet row (0 for a reader)
 	Cards []queueCard `json:"cards"`
+	// Reader is whether the name is a row of the readers table (nil: a server from before
+	// the field). A reader with no row beats nothing and is asked nothing until the
+	// coordinator declares it (reader add).
+	Reader *bool `json:"reader,omitempty"`
 }
 
 type takeOut struct {
@@ -331,6 +335,7 @@ type Member struct {
 	epoch        uint64
 	width        int // the width this tick runs to: the override, else the fleet row's
 	drain        bool
+	noRow        bool   // a reader whose queue said it is no row of the readers table, said once
 	beaten       uint64 // the Meter's samples the last written beat has carried
 	noRoom       bool   // Room said no on the last tick it was asked
 	// spent is where the last pass's time went, by part (PassTimes)
@@ -391,6 +396,32 @@ func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 // card, not a recovered one). A member whose binary was replaced drains, and
 // stops when Running is 0.
 func (m *Member) Drain() { m.drain = true }
+
+// DrainMost is the longest a draining member waits for its children: the stop timeout of
+// the loop units (fleet/templates: TimeoutStopSec, ExitTimeOut) is DrainMost and a minute,
+// so a member always stops by itself before its supervisor kills what is left.
+const DrainMost = 2 * time.Hour
+
+// DrainBound is how long a member stopped by its supervisor (SIGTERM) waits for the children
+// it runs: the longest deadline they run to, and LongStall for the push and the report after
+// it, at most DrainMost (nova-tools#5096 item 26).
+func DrainBound(longest time.Duration) time.Duration {
+	return min(longest+LongStall, DrainMost)
+}
+
+// LongestDeadline is the longest deadline of the cards the member runs: each packet's
+// route deadline, or override (the member's own --deadline) for one that names none, and
+// override whenever it is longer (a reader given --deadline runs every read to it).
+func (m *Member) LongestDeadline(override time.Duration) time.Duration {
+	longest := time.Duration(0)
+	for _, l := range m.running {
+		if l.spent {
+			continue
+		}
+		longest = max(longest, time.Duration(l.packet.Deadline)*time.Second, override)
+	}
+	return longest
+}
 
 // Running is how many lanes the member holds: one for every launch from its start until
 // its card is reported (a spent launch holds none). A child that has exited holds its lane
@@ -607,6 +638,16 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	m.epoch = q.Epoch
 	if e, ok := m.runner.(Epocher); ok {
 		e.Epoch(q.Epoch)
+	}
+	if m.cfg.Reader && q.Reader != nil && *q.Reader == m.noRow {
+		// the readers table is the coordinator's (init --readers, reader add): a reader
+		// with no row is never asked, so the loop says so once, and once when it came
+		m.noRow = !*q.Reader
+		if m.noRow {
+			fmt.Fprintf(m.out, "MEMBER NOT A READER %s: no row of the readers table, so its queue is no beat and it is asked nothing; the coordinator declares it: nova-sprint reader add %s\n", oneLine(m.cfg.As), oneLine(m.cfg.As))
+		} else {
+			fmt.Fprintf(m.out, "NOTE reader %s: the readers table has its row; it beats and is asked reads\n", oneLine(m.cfg.As))
+		}
 	}
 	if m.cfg.Width == 0 && q.Width != m.width {
 		// the fleet row changed (fleet up --width, fleet sync): said once, run from now

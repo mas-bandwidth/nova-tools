@@ -171,16 +171,21 @@ func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 			}
 			widths := func() map[string]string {
 				t.Helper()
-				rows, err := st.List(ctx, KindMachine)
+				// by SQL: the store at version 12 has no note column, which List reads
+				rows, err := st.db.QueryContext(ctx, `SELECT name, width::text FROM config.machines`)
 				require.NoError(t, err)
+				defer rows.Close()
 				out := map[string]string{}
-				for _, r := range rows {
-					out[r.Name] = r.Fields["width"]
+				for rows.Next() {
+					var name, width string
+					require.NoError(t, rows.Scan(&name, &width))
+					out[name] = width
 				}
+				require.NoError(t, rows.Err())
 				return out
 			}
 			assert.Equal(t, tc.want, widths(), "the fill")
-			_, _, err = st.Update(ctx, KindMachine, "m2", map[string]string{"width": "3"}, "t")
+			_, err = st.db.ExecContext(ctx, `UPDATE config.machines SET width = 3 WHERE name = 'm2'`) // by SQL: no note column yet
 			require.NoError(t, err)
 			_, err = st.db.ExecContext(ctx, twelve.SQL)
 			require.NoError(t, err, "the file run again")
@@ -235,13 +240,9 @@ func TestMigrationTwelveChecksAWidthColumnAlreadyThere(t *testing.T) {
 			if tc.want == nil {
 				require.NoError(t, err)
 				assert.Equal(t, 12, v)
-				for _, m := range all[12:] { // the row is read with the kind as it is now
-					require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
-				}
-				row, found, err := st.Get(ctx, KindMachine, "m1")
-				require.NoError(t, err)
-				require.True(t, found)
-				assert.Equal(t, "7", row.Fields["width"], "a width column already there is kept, not refilled")
+				var width string
+				require.NoError(t, st.db.QueryRowContext(ctx, `SELECT width::text FROM config.machines WHERE name = 'm1'`).Scan(&width), "by SQL: the store at version 12 has no note column, which Get reads")
+				assert.Equal(t, "7", width, "a width column already there is kept, not refilled")
 				return
 			}
 			require.Error(t, err)

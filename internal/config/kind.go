@@ -89,6 +89,10 @@ type Field struct {
 	Default string
 	// Nullable leaves an omitted field unset, represented as SQL NULL.
 	Nullable bool
+	// Cut is a free-text field the list verbs print cut to ListNoteRunes
+	// characters (ListLine), so one row stays one short line; show, --json and
+	// the history keep it whole.
+	Cut bool
 }
 
 // Kind is one kind of configuration. See the package comment.
@@ -130,6 +134,11 @@ type Kind struct {
 	// and a rule that needs it is skipped (the field's own refusal says
 	// what is wrong).
 	Check func(r Row) error
+	// CheckChanges, when set, is the rule on what a set names, which the row it
+	// leaves cannot tell (a route set --enabled false names its reason in the
+	// same set). Changes runs it on the canonical values before any store is
+	// opened. nil checks nothing.
+	CheckChanges func(changes map[string]string) error
 }
 
 // NamePattern is the shape of a row key: lower-case, digits and dashes, the
@@ -205,6 +214,7 @@ var Kinds = []*Kind{
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 			{Name: "width", Type: TypeInt, Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; 0 (the default) is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
+			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},
 	},
 	{
@@ -288,7 +298,7 @@ var Kinds = []*Kind{
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
 			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
-			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal; true (the default) keeps it in"},
+			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal and needs --note, the measured reason (a disabled route carries its reason); true (the default) keeps it in and needs none"},
 			// The price sheet: optional, so a card's predicted cost can be worked
 			// out from its tokens (the owner, 2026-10-01: "the pricing configuration
 			// saved per-tuple"; internal/cardcost). Prices are USD per million tokens.
@@ -305,8 +315,10 @@ var Kinds = []*Kind{
 			{Name: cardcost.FieldGateway, Type: TypeDecimal, Help: "the percent a gateway adds on top of the prices, a decimal like 5.5; empty when none"},
 			{Name: cardcost.FieldSource, Type: TypeText, Help: "where the prices were read, free text (a URL)"},
 			{Name: cardcost.FieldAsOf, Type: TypeText, Help: "the date the prices were read, YYYY-MM-DD"},
+			noteField("why the route is as it is: the measured reason it is disabled, for one (ok out of total, the deadline it ran to)"),
 		},
-		Check: checkRoute,
+		Check:        checkRoute,
+		CheckChanges: checkRouteChanges,
 	},
 	{
 		// A tier's route array: the deal takes routes[index mod len] for each
@@ -323,6 +335,18 @@ var Kinds = []*Kind{
 		Seed:  RouteTiers,
 		Check: checkTier,
 	},
+}
+
+// SayWhy is the remedy of a disabled route with no reason: a disabled route
+// carries its reason (the owner, 2026-10-02: the choices on route and width
+// "should be saved somewhere permanent with notes").
+const SayWhy = "say why: --note '<the measured reason>'"
+
+// noteField is the note column of a kind an operator decides about: free
+// text, one line, empty by default, cleared by giving an empty --note, and cut
+// by the list.
+func noteField(what string) Field {
+	return Field{Name: "note", Type: TypeText, Cut: true, Help: what + "; one line, empty (the default) when none; --note '' clears it"}
 }
 
 // checkFleet keeps both store endpoints explicit and safe to print. The
@@ -387,6 +411,12 @@ func checkRoute(r Row) error {
 	if _, ok := r.Fields["deadline"]; ok && r.Int("deadline") <= 0 {
 		problems = append(problems, fmt.Sprintf("route %s has --deadline 0; want the seconds a card on it may run, above 0", r.Name))
 	}
+	// a disabled route carries its reason (a field absent from the row is skipped as above)
+	if e, ok := r.Fields["enabled"]; ok && e == "false" {
+		if n, ok := r.Fields["note"]; ok && n == "" {
+			problems = append(problems, fmt.Sprintf("route %s is disabled with no --note; a disabled route carries its reason; %s", r.Name, SayWhy))
+		}
+	}
 	// the long prices go with the threshold: one without the other prices nothing
 	if _, ok := r.Fields[cardcost.FieldLongContext]; ok {
 		long := r.Int(cardcost.FieldLongContext) > 0
@@ -407,6 +437,16 @@ func checkRoute(r Row) error {
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("%s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// checkRouteChanges is the route kind's CheckChanges: a set that names
+// --enabled false names its reason in the same set, whatever note the row
+// already has, so the reason is the one written for taking it out now.
+func checkRouteChanges(changes map[string]string) error {
+	if changes["enabled"] == "false" && changes["note"] == "" {
+		return fmt.Errorf("--enabled false takes a route out of the deal and a disabled route carries its reason; %s", SayWhy)
 	}
 	return nil
 }
@@ -853,6 +893,11 @@ func (k *Kind) Changes(raw map[string]string) (map[string]string, error) {
 	}
 	if len(out) == 0 && len(problems) == 0 {
 		problems = append(problems, "set names no field; the fields are "+strings.Join(k.FieldNames(), ", "))
+	}
+	if len(problems) == 0 && k.CheckChanges != nil {
+		if err := k.CheckChanges(out); err != nil {
+			problems = append(problems, err.Error())
+		}
 	}
 	if len(problems) > 0 {
 		sort.Strings(problems)
