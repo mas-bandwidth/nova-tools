@@ -49,8 +49,8 @@ var launchDirRE = regexp.MustCompile(`^[A-Za-z0-9._-]+\.[ga][0-9]+\.e[0-9]+$`)
 // removed by clean: an ok one's at once, a failed one's kept, the pool pruned to the newest
 // keepFailed. Removing a job directory is long (a staged clone and its caches, made
 // writable and then removed), so a runner with a cleaner (cleaner) only tags here, and the
-// member's pass never waits on a removal (the owner, 2026-10-01: "You can tag for cleanup,
-// but don't do that cleanup inline."); a runner with none (a test's) cleans here.
+// member's pass never waits on a removal: cleanup is tagged and done outside the pass;
+// a runner with none (a test's) cleans here.
 func (r *nativeRunner) Ended(p member.Packet, failed bool) {
 	name := launchName(p)
 	r.mu.Lock()

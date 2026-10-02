@@ -21,8 +21,8 @@ import (
 // spawns its bash tool with its own environment, so a card whose STEP ran a shell could
 // print the key into its tool output, its RESULT.md, the job's harness-output.log and --
 // through harvest's openPR, which copies RESULT.md into a PR body -- onto the forge.
-// Measured inside the real wall on a bench, 2026-09-19: a card printing
-// only `${#DEEPSEEK_API_KEY}` and a name count got back `envlen=35 envnames=1`.
+// A probe inside the real wall, measured on 2026-09-19, records a card printing
+// only `${#DEEPSEEK_API_KEY}` and a name count getting back `envlen=35 envnames=1`.
 //
 // THE SEAM, MEASURED. The same probe reported `shpath=/usr/bin/sh`,
 // `bashpath=/usr/bin/bash`, `path1=<the first PATH entry the child was handed>` and
@@ -104,7 +104,7 @@ func shellShimScript(real string) string {
 // writeNativeShellShims writes one wrapper per shell name the bench actually has into
 // <slot>/shim and returns the directory and the wrapper SHELL should name. An error is a
 // refusal for the caller: a native run whose shell still carries the key is the defect
-// this closes, not a degraded mode (SPEC-SANDBOX rule 1's shape -- never silently
+// this closes, not a degraded mode (SPEC-SANDBOX rule 1 -- never silently
 // degraded).
 //
 // It returns "", "", nil -- no shim, no refusal -- on windows, and when the child's PATH
@@ -150,7 +150,7 @@ func writeNativeShellShims(slotDir string) (dir, shell string, err error) {
 		}
 		written[name] = path
 	}
-	// The refusing gh sits beside the shells (nova-tools #3600): a card's shell that
+	// The refusing `gh` sits beside the shells: a card's shell that
 	// reaches for the GitHub CLI by name gets exit 2 and #3594, never a GitHub call.
 	if _, ghErr := nogh.Install(dir); ghErr != nil {
 		return "", "", ghErr
