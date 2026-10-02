@@ -102,7 +102,7 @@ func (r *Rules) FilterDay(day string) {
 
 // SetDay sets the day of the message currently being attributed.
 func (r *Rules) SetDay(day string) {
-	if r == nil {
+	if r == nil || !r.watch {
 		return
 	}
 	r.currentDay = day

@@ -292,18 +292,18 @@ func TestSourcesDayScopeAppliesToStatisticsAndTallies(t *testing.T) {
 	wantContains(t, lineWith(r3.stdout, "SOURCES OK"), "rows=0")
 	wantContains(t, lineWith(r3.stdout, "SOURCES OK"), "unattributed=0")
 
-	// 4. Inspecting --all with --unattributed: all 4 messages, 3 rows (schema, serialize, other),
+	// 4. Inspecting --all with --unattributed: all 4 messages, 4 rows (day/model/repo identities),
 	// and both unattributed stems reported across the sources.
 	rAll := invoke(t, "sources", "--repos", repos, "--all", "--claude", "bench="+tr, "--unattributed")
 	wantExit(t, rAll, 0)
 	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE bench"), "files=1")
 	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE bench"), "messages=4")
-	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE bench"), "rows=3")
+	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE bench"), "rows=4")
 	wantContains(t, rAll.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched1 tokens=1")
 	wantContains(t, rAll.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched2 tokens=1")
 	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "files=1")
 	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "messages=4")
-	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "rows=3")
+	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "rows=4")
 	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "unattributed=2")
 
 	// 5. Without --unattributed: day scope applies to messages and rows, unattributed is a dash
