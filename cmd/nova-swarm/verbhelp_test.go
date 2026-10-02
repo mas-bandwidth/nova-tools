@@ -47,7 +47,7 @@ func TestAVerbHelpStatesItsEffect(t *testing.T) {
 		require.Equal(t, 0, exit, verb)
 		assert.True(t, strings.HasSuffix(stdout, "effect: "+want+"\n"), "%s -h does not end with its effect:\n%s", verb, stdout)
 	}
-	for _, verb := range []string{"version", "doctor", "lint", "template", "worker check"} {
+	for _, verb := range []string{"version", "doctor", "lint", "template", "worker", "worker check"} {
 		assert.True(t, strings.HasPrefix(verbEffect[verb], "inspection: "), "%s is not stated as an inspection: %q", verb, verbEffect[verb])
 	}
 	for _, verb := range []string{"native", "member"} {
