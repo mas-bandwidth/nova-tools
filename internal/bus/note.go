@@ -499,16 +499,26 @@ func (h Header) Validate(c *Config) error {
 // the order Validate would have returned them. It is what SEND refuses on: a draft with an
 // unknown recipient AND no subject is two mistakes, and a person who has to run the tool
 // again to be told the second has been made to do the tool's counting.
-func (h Header) Problems(c *Config) []error {
+func (h Header) Problems(c *Config) []error { return h.problems(c, true) }
+
+// problems is Problems, and with missing false only what the lines that are THERE say: a
+// From, To or Cc naming nobody, a bad Host, Kind or Id. A line that is absent is not
+// reported, for a header whose parse found a key it does not know: that key may be the
+// absent line, misspelled, and its own refusal already names it.
+func (h Header) problems(c *Config, missing bool) []error {
 	var problems []error
 	if h.From == "" {
-		problems = append(problems, ErrNoFrom)
+		if missing {
+			problems = append(problems, ErrNoFrom)
+		}
 	} else if _, ok := c.ResolveOne(h.From); !ok {
 		problems = append(problems, fmt.Errorf("%s: %q names no one on this bus (known: %s)", KeyFrom, h.From, strings.Join(c.KnownNames(), "; ")))
 	}
 	switch to, unknown := c.ResolveList(h.To); {
 	case strings.TrimSpace(h.To) == "":
-		problems = append(problems, fmt.Errorf("no %s line", KeyTo))
+		if missing {
+			problems = append(problems, fmt.Errorf("no %s line", KeyTo))
+		}
 	case len(unknown) > 0:
 		problems = append(problems, fmt.Errorf("%s: %s names no one on this bus (known: %s)", KeyTo, quoteAll(UnknownNames(unknown)), strings.Join(c.KnownNames(), "; ")))
 	case len(to) == 0:
@@ -519,7 +529,7 @@ func (h Header) Problems(c *Config) []error {
 			problems = append(problems, fmt.Errorf("%s: %s names no one on this bus (known: %s)", KeyCc, quoteAll(UnknownNames(unknownCc)), strings.Join(c.KnownNames(), "; ")))
 		}
 	}
-	if strings.TrimSpace(h.Subject) == "" {
+	if strings.TrimSpace(h.Subject) == "" && missing {
 		problems = append(problems, fmt.Errorf("no %s line, or an empty one", KeySubject))
 	}
 	if h.Host != "" {

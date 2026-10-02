@@ -1,5 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 15
+# ceiling: 14
 internal/bus/address.go:space 2
 internal/bus/bus.go:space 1
 internal/bus/cursor.go:freddy 1
@@ -12,6 +12,5 @@ internal/bus/ops.go:hulk 1
 internal/bus/ops.go:rowan 1
 internal/bus/ops.go:space 2
 internal/bus/ops.go:studio 2
-internal/bus/protocol.go:glenn 1
 internal/bus/protocol.go:space 1
 internal/bus/reply.go:space 2

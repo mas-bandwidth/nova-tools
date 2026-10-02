@@ -9,7 +9,7 @@ cmd/nova-sandbox 5
 cmd/nova-swarm 3
 internal/bounded 1
 internal/buildinfo 1
-internal/bus 23
+internal/bus 17
 internal/cardhdr 10
 internal/check 2
 internal/ci/slowtests 2

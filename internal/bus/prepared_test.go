@@ -3,14 +3,13 @@ package bus
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/stretchr/testify/require"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestMakeAndValidatePreparedArtifact(t *testing.T) {
@@ -484,37 +483,73 @@ func TestStellaPreparedPreservesUnrelatedAheadAttributeEdit(t *testing.T) {
 	}
 }
 
-// testWaitBound is how long an event poll waits for an observable before it reports rather
-// than waits forever. It is read from NOVA_TEST_WAIT (default 30s), the allowed shape the
-// waits class test names: every use returns the MOMENT the observable appears, so a slower
-// runner pays only when the event never comes.
-func testWaitBound() time.Duration {
-	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
+// stagePreparedDeath leaves busDir as a send of p that stopped at mode: the steps before
+// that point are done and nothing after it ran. A send killed there leaves exactly this on
+// disk (the note, the INDEX line, the commit), so the recovery under test meets the same
+// state a fresh process meets after a kill, staged in this process with no child to wait for.
+func stagePreparedDeath(busDir string, p Prepared, art PreparedArtifact, mode string) error {
+	id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
+	save := func() error { return p.Save(busDir) }
+	index := func() error { return p.AppendIndex(busDir) }
+	var steps []func() error
+	switch mode {
+	case "before-note-write":
+	case "after-note-write":
+		steps = []func() error{save}
+	case "after-index-write":
+		steps = []func() error{save, index}
+	case "after-note-commit":
+		steps = []func() error{save, index, func() error {
+			_, err := stageAndCommit(busDir, id, []string{p.Path}, WithTrailer(p.Message, TrailerSend+" "+art.ID))
+			return err
+		}}
+	case "after-commit":
+		steps = []func() error{save, index, func() error {
+			EnsureMergeAttributes(busDir)
+			_, err := stageAndCommit(busDir, id, p.Paths(), WithTrailer(p.Message, TrailerSend+" "+art.ID))
+			return err
+		}}
+	default:
+		return fmt.Errorf("no death point %q", mode)
+	}
+	for _, step := range steps {
+		if err := step(); err != nil {
+			return err
 		}
 	}
-	return 30 * time.Second
+	return nil
 }
 
-// helperStdin keeps a helper process parked until its parent kills it, with no timer in the
-// helper: the parent holds the write end of a pipe open for the life of the test, and the
-// helper blocks in blockUntilKilled on the read end. When the parent SIGKILLs the helper the
-// pipe closes with it; when the test ends, cleanup closes the write end.
-func helperStdin(t *testing.T, cmd *exec.Cmd) {
+// stagePartialIndex leaves busDir as a send of p that saved the note and stopped part way
+// through its INDEX append: the INDEX holds a strict prefix of the bytes the append writes.
+func stagePartialIndex(busDir string, p Prepared) error {
+	if err := p.Save(busDir); err != nil {
+		return err
+	}
+	idxPath := filepath.Join(busDir, filepath.FromSlash(IndexPath(p.Sender.Lane)))
+	existing, err := os.ReadFile(idxPath)
+	if err != nil {
+		return err
+	}
+	want := string(existing) + IndexLine(p.Index) + "\n"
+	return os.WriteFile(idxPath, []byte(want[:len(existing)+12]), 0o644)
+}
+
+// recoverPrepared is a fresh run's recovery of a saved artifact: it reads the bus and the
+// artifact from disk, as a new process does, validates the artifact, and sends it.
+func recoverPrepared(t *testing.T, busDir string, artJSON []byte, as string) {
 	t.Helper()
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = w.Close(); _ = r.Close() })
-	cmd.Stdin = r
+	tab := loadBus(t, busDir)
+	art, p, err := ValidatePreparedArtifact(artJSON, busDir, tab.Config, as)
+	require.NoError(t, err, "validate the saved artifact")
+	res, err := SendPreparedArtifact(busDir, "origin", "main", p, art, 1)
+	require.NoError(t, err, "recover the saved artifact")
+	require.True(t, res.Pushed, "the recovery did not push: %+v", res)
+	require.Contains(t, []string{"published", "already-published"}, res.State, "the recovery's state: %+v", res)
 }
 
-// blockUntilKilled is the helper's half of helperStdin: a read that returns only on EOF,
-// which never arrives before the parent kills the process.
-func blockUntilKilled() {
-	_, _ = io.Copy(io.Discard, os.Stdin)
-}
-
+// TestSendPreparedChildExecutionAndRecovery's sending child: a fresh process that sends
+// the saved artifact once.
 func TestSendPreparedProcessDeathHelper(t *testing.T) {
 	t.Parallel()
 
@@ -522,131 +557,24 @@ func TestSendPreparedProcessDeathHelper(t *testing.T) {
 		return
 	}
 	busDir := os.Getenv("PREPARED_HELPER_BUS")
-	barrierFile := os.Getenv("PREPARED_HELPER_BARRIER")
-	mode := os.Getenv("PREPARED_HELPER_MODE")
-	artFile := os.Getenv("PREPARED_HELPER_ART")
-
-	raw, err := os.ReadFile(artFile)
+	raw, err := os.ReadFile(os.Getenv("PREPARED_HELPER_ART"))
 	if err != nil {
-		os.Exit(2)
-	}
-	var art PreparedArtifact
-	if err := json.Unmarshal(raw, &art); err != nil {
-		os.Exit(2)
-	}
-
-	tab := loadBus(t, busDir)
-	_, p, err := ValidatePreparedArtifact(raw, busDir, tab.Config, "Ada")
-	if err != nil {
-		os.Exit(2)
-	}
-
-	switch mode {
-	case "before-note-write":
-		// Pre-note case: helper started, no bus mutations made yet
-	case "after-note-write":
-		if err := p.Save(busDir); err != nil {
-			os.Exit(3)
-		}
-	case "after-index-write":
-		if err := p.Save(busDir); err != nil {
-			os.Exit(3)
-		}
-		if err := p.AppendIndex(busDir); err != nil {
-			os.Exit(3)
-		}
-	case "after-note-commit":
-		if err := p.Save(busDir); err != nil {
-			os.Exit(3)
-		}
-		id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
-		if _, err := stageAndCommit(busDir, id, []string{p.Path}, WithTrailer(p.Message, TrailerSend+" "+art.ID)); err != nil {
-			os.Exit(3)
-		}
-	case "after-commit":
-		if err := p.Save(busDir); err != nil {
-			os.Exit(3)
-		}
-		if err := p.AppendIndex(busDir); err != nil {
-			os.Exit(3)
-		}
-		EnsureMergeAttributes(busDir)
-		id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
-		if _, err := stageAndCommit(busDir, id, p.Paths(), WithTrailer(p.Message, TrailerSend+" "+art.ID)); err != nil {
-			os.Exit(3)
-		}
-	case "send-call":
-		res, err := SendPreparedArtifact(busDir, "origin", "main", p, art, 1)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "send-call failed: %v\n", err)
-			os.Exit(6)
-		}
-		if !res.Pushed || res.State != "published" {
-			os.Exit(7)
-		}
-		os.Exit(0)
-	default:
-		os.Exit(4)
-	}
-
-	// Signal observable barrier to parent
-	if err := os.WriteFile(barrierFile, []byte("ready\n"), 0644); err != nil {
-		os.Exit(5)
-	}
-
-	// Block until killed by parent via SIGKILL, with no timer.
-	blockUntilKilled()
-}
-
-func TestPreparedIndexStagedPartialHelper(t *testing.T) {
-	t.Parallel()
-
-	if os.Getenv("GO_WANT_PREPARED_INDEX_DEATH_HELPER") != "1" {
-		return
-	}
-	busDir := os.Getenv("PREPARED_HELPER_BUS")
-	barrierFile := os.Getenv("PREPARED_HELPER_BARRIER")
-	artFile := os.Getenv("PREPARED_HELPER_ART")
-	as := os.Getenv("PREPARED_HELPER_AS")
-
-	raw, err := os.ReadFile(artFile)
-	if err != nil {
-		os.Exit(2)
-	}
-	var art PreparedArtifact
-	if err := json.Unmarshal(raw, &art); err != nil {
 		os.Exit(2)
 	}
 	tab := loadBus(t, busDir)
-	_, p, err := ValidatePreparedArtifact(raw, busDir, tab.Config, as)
+	art, p, err := ValidatePreparedArtifact(raw, busDir, tab.Config, "Ada")
 	if err != nil {
 		os.Exit(2)
 	}
-
-	// Stage a partial INDEX from a killed child: save the note, then manually truncate the
-	// on-disk INDEX to a strict prefix of the bytes that would result from appending this
-	// entry, and signal readiness. The parent SIGKILLs this child before it does anything
-	// further. This does not interrupt production recovery mid-write: an actual
-	// production-interruption gate (a kill inside SendPreparedArtifact's own INDEX append)
-	// remains owed and is named in the PR.
-	if err := p.Save(busDir); err != nil {
-		os.Exit(3)
-	}
-	idxPath := filepath.Join(busDir, filepath.FromSlash(IndexPath(p.Sender.Lane)))
-	existing, err := os.ReadFile(idxPath)
+	res, err := SendPreparedArtifact(busDir, "origin", "main", p, art, 1)
 	if err != nil {
-		os.Exit(3)
+		fmt.Fprintf(os.Stderr, "send-call failed: %v\n", err)
+		os.Exit(6)
 	}
-	want := string(existing) + IndexLine(p.Index) + "\n"
-	partial := want[:len(existing)+12]
-	if err := os.WriteFile(idxPath, []byte(partial), 0o644); err != nil {
-		os.Exit(3)
+	if !res.Pushed || res.State != "published" {
+		os.Exit(7)
 	}
-
-	if err := os.WriteFile(barrierFile, []byte("ready\n"), 0644); err != nil {
-		os.Exit(5)
-	}
-	blockUntilKilled()
+	os.Exit(0)
 }
 
 func TestSendPreparedRecoveryHelper(t *testing.T) {
@@ -682,81 +610,33 @@ func TestSendPreparedRecoveryHelper(t *testing.T) {
 	os.Exit(0)
 }
 
+// A send that dies at any point before it publishes is finished by the next run from the
+// saved artifact: the note lands once, with exactly one INDEX line. Each death point is
+// staged on disk (stagePreparedDeath) and recovered as a fresh run recovers it.
 func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep; measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	modes := []string{"before-note-write", "after-note-write", "after-index-write", "after-note-commit", "after-commit"}
 
 	for _, mode := range modes {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			bare, clone, p, a := stellaPrepared(t)
-			scratch := t.TempDir()
-			barrierFile := filepath.Join(scratch, "barrier.ready")
-			artFile := filepath.Join(scratch, "prepared.json")
-			artJSON, _ := RenderPreparedArtifact(p)
-			os.WriteFile(artFile, []byte(artJSON), 0644)
+			artJSON, err := RenderPreparedArtifact(p)
+			require.NoError(t, err)
+			tab := loadBus(t, clone)
+			art, staged, err := ValidatePreparedArtifact([]byte(artJSON), clone, tab.Config, "Ada")
+			require.NoError(t, err)
+			require.NoError(t, stagePreparedDeath(clone, staged, art, mode), "stage the death at %s", mode)
 
-			cmd := exec.Command(os.Args[0], "-test.run=TestSendPreparedProcessDeathHelper")
-			cmd.Env = append(os.Environ(),
-				"GO_WANT_PREPARED_DEATH_HELPER=1",
-				"PREPARED_HELPER_BUS="+clone,
-				"PREPARED_HELPER_BARRIER="+barrierFile,
-				"PREPARED_HELPER_MODE="+mode,
-				"PREPARED_HELPER_ART="+artFile,
-			)
-			helperStdin(t, cmd)
+			recoverPrepared(t, clone, []byte(artJSON), p.Sender.Name)
 
-			{
-				err := cmd.Start()
-				require.NoError(t, err, "failed to start helper process: %v", err)
-			}
-
-			// Wait for the observable barrier, up to a generous bound the environment
-			// can move.
-			deadline := time.Now().Add(testWaitBound())
-			for {
-				if _, err := os.Stat(barrierFile); err == nil {
-					break
-				}
-				if time.Now().After(deadline) {
-					_ = cmd.Process.Kill()
-					require.FailNow(t, "timed out waiting for helper process barrier")
-				}
-				time.Sleep(10 * time.Millisecond)
-			}
-
-			// Terminate child violently with SIGKILL
-			{
-				err := cmd.Process.Kill()
-				require.NoError(t, err, "failed to kill helper process: %v", err)
-			}
-			// Wait for process death
-			_ = cmd.Wait()
-
-			// Fresh recovery child process reconstructs and validates saved artifact from disk, then delivers
-			recCmd := exec.Command(os.Args[0], "-test.run=TestSendPreparedRecoveryHelper")
-			recCmd.Env = append(os.Environ(),
-				"GO_WANT_PREPARED_RECOVERY_HELPER=1",
-				"PREPARED_RECOVERY_BUS="+clone,
-				"PREPARED_RECOVERY_ART="+artFile,
-				"PREPARED_RECOVERY_AS="+p.Sender.Name,
-			)
-			out, err := recCmd.CombinedOutput()
-			if err != nil {
-				require.NoError(t, err, "fresh recovery child failed: %v\noutput:\n%s", err, string(out))
-			}
-
-			// Verify exact note on bare remote
 			remoteNote, err := git(bare, "show", "main:"+p.Path)
-			require.False(t, err != nil || remoteNote != a.Note, "bare remote missing note or note mismatch: %v", err)
+			require.NoError(t, err, "bare remote missing note")
+			require.Equal(t, a.Note, remoteNote, "bare remote note mismatch")
 
-			// Verify bare remote contains EXACTLY ONE index line
 			remoteIndex, err := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
-			require.NoError(t, err, "bare remote missing index: %v", err)
+			require.NoError(t, err, "bare remote missing index")
 			matchCount := 0
 			for _, l := range strings.Split(strings.TrimSpace(remoteIndex), "\n") {
 				if l == IndexLine(p.Index) {
@@ -769,16 +649,11 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 }
 
 // TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries stages a partial INDEX
-// from a killed child and verifies recovery from that state: earlier entries are retained and
-// the recovered entry is appended. It does not interrupt production recovery mid-write; an
-// actual production-interruption gate (a kill inside SendPreparedArtifact's own INDEX append)
-// remains owed and is named in the PR.
+// (a send stopped part way through its append) and verifies recovery from that state: earlier
+// entries are retained and the recovered entry is appended. It does not interrupt production
+// recovery mid-write; a kill inside SendPreparedArtifact's own INDEX append is not staged here.
 func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	hermetic(t)
 	bare := bareBus(t)
@@ -791,9 +666,8 @@ func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *tes
 		require.NoError(t, err)
 		a, err := MakePreparedArtifact(p)
 		require.NoError(t, err)
-		if _, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1); err != nil {
-			require.NoError(t, err)
-		}
+		_, err = SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+		require.NoError(t, err)
 		return p, a
 	}
 
@@ -802,57 +676,15 @@ func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *tes
 
 	p3, err := PrepareDraft(tab, "From: Ada\nTo: Bo\nSubject: Recovered entry\n\nSynthetic note.\n", at("2026-09-12T17:02:00Z"), "recovered", "Ada")
 	require.NoError(t, err)
-	if _, err := MakePreparedArtifact(p3); err != nil {
-		require.NoError(t, err)
-	}
+	_, err = MakePreparedArtifact(p3)
+	require.NoError(t, err)
+	artJSON, err := RenderPreparedArtifact(p3)
+	require.NoError(t, err)
+	_, staged, err := ValidatePreparedArtifact([]byte(artJSON), clone, loadBus(t, clone).Config, p3.Sender.Name)
+	require.NoError(t, err)
+	require.NoError(t, stagePartialIndex(clone, staged))
 
-	scratch := t.TempDir()
-	barrierFile := filepath.Join(scratch, "barrier.ready")
-	artFile := filepath.Join(scratch, "prepared.json")
-	artJSON, _ := RenderPreparedArtifact(p3)
-	require.NoError(t, os.WriteFile(artFile, []byte(artJSON), 0644))
-
-	cmd := exec.Command(os.Args[0], "-test.run=TestPreparedIndexStagedPartialHelper")
-	cmd.Env = append(os.Environ(),
-		"GO_WANT_PREPARED_INDEX_DEATH_HELPER=1",
-		"PREPARED_HELPER_BUS="+clone,
-		"PREPARED_HELPER_AS="+p3.Sender.Name,
-		"PREPARED_HELPER_BARRIER="+barrierFile,
-		"PREPARED_HELPER_ART="+artFile,
-	)
-	helperStdin(t, cmd)
-	{
-		err := cmd.Start()
-		require.NoError(t, err, "failed to start helper process: %v", err)
-	}
-	deadline := time.Now().Add(testWaitBound())
-	for {
-		if _, err := os.Stat(barrierFile); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			_ = cmd.Process.Kill()
-			require.FailNow(t, "timed out waiting for helper process barrier")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	{
-		err := cmd.Process.Kill()
-		require.NoError(t, err, "failed to kill helper process: %v", err)
-	}
-	_ = cmd.Wait()
-
-	recCmd := exec.Command(os.Args[0], "-test.run=TestSendPreparedRecoveryHelper")
-	recCmd.Env = append(os.Environ(),
-		"GO_WANT_PREPARED_RECOVERY_HELPER=1",
-		"PREPARED_RECOVERY_BUS="+clone,
-		"PREPARED_RECOVERY_ART="+artFile,
-		"PREPARED_RECOVERY_AS="+p3.Sender.Name,
-	)
-	out, err := recCmd.CombinedOutput()
-	if err != nil {
-		require.NoError(t, err, "fresh recovery child failed: %v\noutput:\n%s", err, string(out))
-	}
+	recoverPrepared(t, clone, []byte(artJSON), p3.Sender.Name)
 
 	remoteIndex, err := git(bare, "show", "main:"+IndexPath(p3.Sender.Lane))
 	require.NoError(t, err, "bare remote missing index: %v", err)
