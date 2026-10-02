@@ -1390,6 +1390,14 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		}
 		if comeUp {
 			level(s, &p, orderLike(s.Fleet.Rows(), append(liveFor(s, r), r.Member), r.Member), rr, moves, nil)
+			if len(moves) > 0 {
+				to, from := map[string]int{}, map[string]int{}
+				for id, m := range moves {
+					to[m]++
+					from[s.Fleet.Card(id).Row]++
+				}
+				line += fmt.Sprintf("; moved=%d to %s from %s", len(moves), countsByMember(to), countsByMember(from))
+			}
 		}
 		headOf(&p, r.Member, head, n, line)
 	case "down", "hold":
@@ -1497,8 +1505,34 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 		}
 		p.Units = append(p.Units, u)
 	}
+	// where the member's cards went, and which stayed (nova-tools#5096 item 21)
+	to, stayed := map[string]int{}, []string{}
+	for _, c := range cards {
+		if m, ok := moves[c.ID]; ok {
+			to[m]++
+		} else {
+			stayed = append(stayed, c.F("primary"))
+		}
+	}
+	line += fmt.Sprintf("; moved=%d", len(cards)-len(stayed))
+	if len(to) > 0 {
+		line += " to " + countsByMember(to)
+	}
+	line += fmt.Sprintf("; stayed=%d", len(stayed))
+	if len(stayed) > 0 {
+		line += " withdrawn: " + Preview(stayed, ",")
+	}
 	headOf(&p, r.Member, head, n, line)
 	return p
+}
+
+// countsByMember is a count per member, in name order: "m2(3),m3(1)".
+func countsByMember(n map[string]int) string {
+	var out []string
+	for _, m := range slices.Sorted(maps.Keys(n)) {
+		out = append(out, fmt.Sprintf("%s(%d)", m, n[m]))
+	}
+	return strings.Join(out, ",")
 }
 
 // sweep is the rebalance's safety (the owner, 2026-10-01: "and it's a safety, if
