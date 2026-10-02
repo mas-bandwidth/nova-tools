@@ -16,8 +16,8 @@ import (
 // reads every _test.go under internal/ and cmd/ -- the two trees the waits
 // checker already walks -- and refuses a string literal that names a real
 // network host: an http(s) URL whose host is not a local endpoint, or a bare
-// host:port whose host is not one. Glenn's hard rule (2026-09-17) is that a
-// unit test tests LOGIC, not the network: every endpoint is mocked locally with
+// host:port whose host is not one. A unit test tests LOGIC, not the network:
+// every endpoint is mocked locally with
 // httptest or a local fake, and only the nightly, soak and fuzz suites may
 // reach the real network, which is why a file carrying a `//go:build nightly`
 // or `//go:build soak` constraint is skipped whole. It writes nothing. Its only
@@ -152,8 +152,7 @@ func checkNetWith(root, allowlistPath string, seams SourceSeams) (NetResult, err
 // A row allows ONE offender of its kind in its file. The line in the row is
 // where the offender stood when the row was written, for a reader; it is not
 // matched on. Matching on the line turned dev red the moment any merge shifted
-// lines in a listed file (2026-09-17: #1073 moved cmd/nova-swarm/native_test.go
-// and every group after it failed). The count per file and kind is what the
+// lines in a listed file. The count per file and kind is what the
 // list holds still: a new real host in a listed file exceeds its rows and is
 // refused, a fixed one leaves a row unused and the stale rule makes the list
 // shrink. An exact line match is preferred so the stale row reported is the one
@@ -213,10 +212,10 @@ func scanNetFileWith(rel string, src []byte, seams SourceSeams) ([]NetFinding, b
 
 // netBuildTagExempt reports whether the file's header build constraint carries
 // a nightly or soak tag. A file that only builds in one of those suites is
-// skipped whole: soak, fuzz and nightly are where Glenn's rule allows the real
+// skipped whole: soak, fuzz and nightly are the suites allowed to reach the real
 // network. The constraint is read with go/build/constraint rather than a
-// hand-rolled parser, so `//go:build nightly` and the legacy `// +build` form
-// are both understood.
+// hand-rolled parser, so `//go:build nightly` and the legacy `// +build` form,
+// a format still written and read today, are both understood.
 func netBuildTagExempt(file *ast.File) bool {
 	for _, cg := range file.Comments {
 		if cg.Pos() > file.Package {
