@@ -28,7 +28,7 @@ func fixtureIn(t *testing.T) string {
 	dst := t.TempDir()
 	src := filepath.Join("testdata", "example-bench")
 	root, err := filepath.Abs(src)
-	require.NoError(t, err)
+	require.NoError(t, err, err)
 	{
 		err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -48,11 +48,11 @@ func fixtureIn(t *testing.T) string {
 			}
 			return os.WriteFile(target, raw, 0o644)
 		})
-		require.NoError(t, err)
+		require.NoError(t, err, err)
 	}
 	{
 		err := os.MkdirAll(filepath.Join(dst, "out"), 0o755)
-		require.NoError(t, err)
+		require.NoError(t, err, err)
 	}
 	t.Chdir(dst)
 	return dst
@@ -69,7 +69,7 @@ func TestTheExampleLinesRun(t *testing.T) {
 		require.Equal(t, 0, exit, "`nova-tokens help` exits %d, want 0", exit)
 	}
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-tokens")
-	require.NoError(t, err)
+	require.NoError(t, err, err)
 	require.False(t, len(examples) == 0, "the example: block holds no line")
 	for _, line := range examples {
 		args := strings.Fields(line)[1:]
@@ -137,7 +137,7 @@ func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
 func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 	doc := readRepoFile(t, filepath.Join("docs", "TESTS.md"))
 	lines, err := onboarding.FirstRun(doc, "nova-tokens")
-	require.NoError(t, err)
+	require.NoError(t, err, err)
 	fixtureIn(t)
 	var want []string
 	var got []string
@@ -193,11 +193,11 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 // longer the line the document promised.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
-	require.NoError(t, err)
+	require.NoError(t, err, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-tokens")
-	require.NoError(t, err)
+	require.NoError(t, err, err)
 	steps, err := onboarding.Steps("nova-tokens", lines)
-	require.NoError(t, err)
+	require.NoError(t, err, err)
 	require.False(t, len(steps) == 0, "the `### First run` block holds no nova-tokens command; this test would pass by running nothing")
 	// A first run is three commands: fold writes the day, check reads it back,
 	// sum reads it a month at a time. A transcript that lost one still matches
@@ -230,8 +230,8 @@ func runDocumented(t *testing.T) onboarding.Runner {
 func readRepoFile(t *testing.T, name string) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err)
+	require.NoError(t, err, err)
 	raw, err := os.ReadFile(filepath.Join(root, name))
-	require.NoError(t, err)
+	require.NoError(t, err, err)
 	return string(raw)
 }
