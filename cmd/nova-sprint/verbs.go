@@ -1173,7 +1173,7 @@ func briefNeeds(brief string) []string {
 }
 
 // sharedPaths is the refusal of a many-brief add whose cards name one file in
-// their PATHS: header lines (swarm.CardHeaderValue; comma or space separated)
+// their PATHS: header lines (swarm.CardHeaderValue; commas or blanks between them)
 // when neither needs the other through the needs of the add: they would edit
 // it at once (nova-tools#5096 item 17). "" when none does.
 func sharedPaths(cards []sprint.CardAdd) string {
