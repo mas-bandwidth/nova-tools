@@ -102,7 +102,7 @@ func Load(ctx context.Context, client *redis.Client) error {
 // Load, an older binary REPLACEd the deployed library with its own and every
 // function added since vanished from the store ("ERR Function not found" from
 // the reconciler's ns_fleet_step, #3620). Upgrading the library is the
-// deploy's job (`nova-sprint fn load`, which uses Ensure). A caller whose ACL
+// deploy's job (`nova-sprint fn load`, which uses redisfn.Ensure). A caller whose ACL
 // refuses FUNCTION LIST is not the deployer: it loads nothing and its FCALL
 // answers for the store.
 func LoadMissing(ctx context.Context, client *redis.Client) error {
@@ -164,28 +164,6 @@ func FromList(libs []redis.Library) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// Ensure loads the embedded library only when the server does not already
-// hold that exact source, so a converge that runs it every pass is a no-op
-// once the version matches. It returns the embedded Sum and whether it loaded.
-func Ensure(ctx context.Context, client *redis.Client) (string, bool, error) {
-	source, err := Source()
-	if err != nil {
-		return "", false, err
-	}
-	sum := Sum(source)
-	code, found, err := Loaded(ctx, client)
-	if err != nil {
-		return sum, false, err
-	}
-	if found && code == source {
-		return sum, false, nil
-	}
-	if err := client.FunctionLoadReplace(ctx, source).Err(); err != nil {
-		return sum, false, fmt.Errorf("load %s function library: %w", Library, err)
-	}
-	return sum, true, nil
 }
 
 // State is what fn check found on a server.
