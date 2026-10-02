@@ -88,7 +88,7 @@ type Input struct {
 }
 
 // Policy is one run's wall: resolved, absolute, existing paths and nothing guessed. The
-// Cwd and Tmp derive from the caller's own first --write, so neither value is guessed; both are recorded here as
+// two named exceptions to "never guessed" are the Cwd and the Tmp, and both are recorded here as
 // the caller's own first --write.
 type Policy struct {
 	Reads       []string // resolved, read-only, recursive; carries EXECUTE
@@ -141,7 +141,7 @@ func (p *Policy) CmdName() string { return filepath.Base(p.Command) }
 // file-read-metadata on: every --read and --write, the --cwd, the temp directory — and
 // every OPTIONAL ROOT.
 //
-// Optional roots include the ancestors needed to resolve toolchain paths through symlinks.
+// A missing optional root was measured dogfooding
 // `nova-sandbox run` on a real card step: a `go build` inside the wall died with Go's own
 // message and nothing else — `go: cannot find GOROOT directory: 'go' binary is trimmed and
 // GOROOT is not set`. The profile granted `(allow file-read* (subpath "/opt/homebrew"))`,
@@ -178,7 +178,7 @@ func (p *Policy) AncestorCount() int {
 // /bin, /sbin, /Library, /private/etc, /private/var/select, /dev, and write on
 // /dev/null and /dev/tty — are in profiles/darwin.sb.tmpl verbatim, because two
 // copies of a profile is one copy too many. What varies per machine is here. A
-// root is SKIPPED if it is absent; only a caller's path is refused for absence
+// root is SKIPPED if it is absent; only a caller's path is refused for absence.
 // The directory /var/db/xcode_select_link points at is discovered
 // below, not listed here: CommandLineTools is already under /Library, and
 // Xcode.app/Contents is not (Contents, not Developer: the shims read
