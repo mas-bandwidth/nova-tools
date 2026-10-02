@@ -5,16 +5,13 @@ import (
 	"strings"
 )
 
-// THE RULE IS WHAT THE CARD WALKS, NOT WHAT THE CARD SAYS (issues #1494, #1527).
+// The rule defines what the card walks, not what the card says.
 //
-// Practice 25 exists because the wall refuses a path above the job: a card that tells its
-// worker to put the worktree, the scratch or the notes outside the working directory buys
-// a job that dies on its first write. `no-parent-path` is that rule made mechanical.
+// The wall refuses a path above the job: a card that instructs the worker to put the worktree,
+// the scratch or the notes outside the working directory causes the job to fail on its first
+// write. `no-parent-path` enforces this rule.
 //
-// It was written as `strings.Contains(line, "../")` over every line of the card, and that
-// is a check on TEXT where the rule is about a PATH. Measured on the 2026-09-19 shift,
-// across tools10, tools11, tools12, tools13 and work-swarm, every `no-parent-path` finding
-// on every card was false, and all of them were one of four shapes:
+// This check operates on text, but the rule applies to paths.
 //
 //  1. A relative path a card QUOTES from the repository's own source, so the worker copies
 //     the convention: `in the form `"../../AGENTS.md"` (that file, line 34)`. The path is

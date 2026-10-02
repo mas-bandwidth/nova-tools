@@ -8,34 +8,26 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// A CARD THAT ENDED BY ASKING (nova-tools #2548).
+// A card that ends by asking.
 //
-// THE RECEIPT. Canary run 3, 2026-09-22 02:05Z, route openrouter/openai/gpt-5-nano: the
-// worker wrote its test file into a phantom nested path, committed nothing, and ended its
-// last turn with `Would you like me to proceed with moving RESULT.md into the nested repo
-// and finalize the commit?`. Nobody answers a headless card.
+// The receipt. The worker wrote its test file into a phantom nested path, committed nothing,
+// and ended its last turn by asking whether to proceed with moving RESULT.md into the nested repo.
 //
-// THE MECHANISM THE ISSUE TITLE NAMED IS NOT REAL, and this is not a fix for it. The
-// runtime dogfood of 2026-09-22 (rowan-new reports/dogfood-runtime-2026-09-22.md, (b))
-// ran that shape on both benches -- a card whose STEP 2 forbids writing `RESULT.md` until
-// an operator approves and tells the model to ask and wait -- and measured 5.22 s on hulk
-// and 5.49 s on the Studio: `opencode run` is non-interactive, it finishes the turn and
-// exits 0, and the slot is freed at once. The 1200 s wait the issue measured belongs to
-// the canary's own poll for a terminal RESULT line, not to `native`. So there is no slot
-// to free here and nothing to interrupt.
+// The mechanism described in the issue is not real, and this is not a fix for it.
+// An operator approves and tells the model to ask and wait. `opencode run` is non-interactive,
+// it finishes the turn and exits 0, and the slot is freed at once. There is no slot to free here
+// and nothing to interrupt.
 //
 // WHAT IS REAL IS THE VERDICT. Both dogfood runs ended `NATIVE INCOMPLETE ... why=no-result`
 // -- the token reserved for a MODEL THAT CHOSE TO PUBLISH NOTHING -- with nothing anywhere
 // recording that the card ended by asking a question. A card that asked and a card that
 // crashed into silence are then the same row to every reader: the requeue cannot retry the
 // asker once on another route, and the ledger cannot count which models ask. The two are
-// different faults with different remedies, exactly as `harness-silent` and `no-result` are
-// (issue #591), and the report the card never wrote is where the difference goes.
+// The report the card fails to write indicates the difference.
 //
-// THIS FILE IS THE DETECTION AND THE VERDICT, AND NOTHING ELSE. Glenn's steer channel --
-// post the question to the bus, wait a bounded time for a typed answer, feed it back as one
-// more user turn -- is a later card (tools-06b) and is deliberately not built here. Neither
-// is the never-ask sentence in the card preamble, which is Emma's #2588/METHODS.
+// This file is the detection and the verdict. Feed the question to the bus and wait for
+// an answer to feed it back as one more user turn, which is a later task.
+// The never-ask sentence in the card preamble is also handled elsewhere.
 
 // AskedResultName is the report a run writes FOR a card that ended by asking. It is
 // `RESULT.md` for the same reason the blocked report is: that is the one file every gather

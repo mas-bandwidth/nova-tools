@@ -12,12 +12,6 @@ internal/swarm/lintdepends.go:mas-bandwidth 2
 internal/swarm/lintdepends.go:space 2
 internal/swarm/lintheader.go:emma 4
 internal/swarm/lintheader.go:rowan 2
-internal/swarm/lock.go:studio 1
-internal/swarm/nativeasked.go:emma 1
-internal/swarm/nativeasked.go:glenn 1
-internal/swarm/nativeasked.go:hulk 1
-internal/swarm/nativeasked.go:rowan 1
-internal/swarm/nativeasked.go:studio 1
 internal/swarm/nativeidle.go:hulk 1
 internal/swarm/nativeidle.go:johnny 1
 internal/swarm/pathcase.go:stella 1

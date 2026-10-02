@@ -25,7 +25,7 @@ func tryLockFile(f *os.File) (bool, error) {
 	// THE SENTINEL IS THE LOCK, so a close that failed never took one: returning
 	// `(true, err)` had `TakeLock` report the lock untaken while the file stayed behind,
 	// and the next run refused until a person cleared a lock nobody held (read 5,
-	// finding 7). What was created here is removed here.
+	// What was created here is removed here.
 	if err := held.Close(); err != nil {
 		// ignored: a cleanup on the failure path; the close error is the one returned
 		_ = os.Remove(sentinel(f))
