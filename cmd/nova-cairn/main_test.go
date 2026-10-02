@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -86,8 +87,28 @@ func TestOpenAppendIndexReceiptRoundTrip(t *testing.T) {
 	require.Equal(t, 1, code, "conflicting append exited %d, want 1", code)
 	out = c.ok("receipt", "--session", "s1", "--entry", "e1")
 	printed(t, out, "RECEIPT OK", "persisted=true published=false")
+	require.NotContains(t, out, " text=", "the default receipt remains unchanged")
 	printed(t, c.ok("index"), "INDEX ENTRY session=s1 entry=e1", "INDEX OK sessions=1 entries=1")
 	require.Equal(t, prose, testkit.ReadJSON[entry](t, c.path("entries", "s1", "e1.json")).Text, "the stored entry is not the exact prose")
+}
+
+func TestReceiptTextReturnsStoredWordsInBothRenderings(t *testing.T) {
+	t.Parallel()
+	c := newRig(t)
+	c.ok("open", "--session", "s", "--publish", "manual")
+	prose := "line one\nline \"two\""
+	c.ok("append", "--session", "s", "--entry", "e", "--text", prose, "--publish", "manual")
+
+	plain := c.ok("receipt", "--session", "s", "--entry", "e", "--text")
+	require.Contains(t, plain, `text=line\x20one\x0aline\x20"two"`, "text is one safely quoted fact: %s", plain)
+
+	result := c.run("receipt", "--session", "s", "--entry", "e", "--text", "--json")
+	require.Zero(t, result.Code, result.Stderr)
+	var out struct {
+		Facts map[string]any `json:"facts"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(result.Stdout), &out), result.Stdout)
+	require.Equal(t, prose, out.Facts["text"], "JSON carries the exact stored words, not a second quoted spelling")
 }
 
 func TestOfflineAppendSucceedsWithPublicationPending(t *testing.T) {

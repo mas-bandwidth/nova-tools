@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // A manifest with several problems is refused with ALL of them, in line order, each worded
@@ -105,9 +107,11 @@ func TestReportRefusesAManifestNamingEveryProblem(t *testing.T) {
 	}
 }
 
-// The two names say, each in its own banner, that they are one binary and what each is for,
-// and `report -h` carries the manifest format in six lines under its example line.
-func TestBannersSayOneBinaryAndReportHelpCarriesTheManifest(t *testing.T) {
+// The two tools say, each in its own banner, that they are two binaries sharing the
+// manifest and report, and what each is for (ledger U8, V1: they are two builds, never
+// "one binary under two names"); `report -h` carries the manifest format in six lines
+// under its example line.
+func TestBannersSayTwoBinariesAndReportHelpCarriesTheManifest(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"nova-update", "nova-version"} {
 		var out, errs bytes.Buffer
@@ -115,10 +119,12 @@ func TestBannersSayOneBinaryAndReportHelpCarriesTheManifest(t *testing.T) {
 			t.Fatalf("%s help: exit %d", name, rc)
 		}
 		help := out.String()
-		for _, want := range []string{"ONE binary under two names", "THE MANIFEST is the file --file names"} {
-			if !strings.Contains(help, want) {
-				t.Errorf("%s help does not say %q", name, want)
-			}
+		for _, want := range []string{"two binaries", "THE MANIFEST is the file --file names"} {
+			assert.Contains(t, help, want, name)
+		}
+		// nova-update has no snapshot verb, so its help names no snapshot default.
+		for _, untrue := range []string{"ONE binary", "same build", "snapshot's --timeout"} {
+			assert.NotContains(t, help, untrue, name)
 		}
 		other := "nova-version"
 		if name == "nova-version" {

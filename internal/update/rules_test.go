@@ -62,7 +62,7 @@ func TestRule9CheckWritesNothingAndNeverRunsAnApply(t *testing.T) {
 	if c != 1 {
 		t.Fatalf("%d %s %s", c, out, errs)
 	}
-	need(t, out, "UPDATE STALE name=x")
+	need(t, errs, "CHECK STALE name=x")
 	if _, err := os.Stat(witness); err == nil {
 		t.Fatal("check ran the apply command")
 	}
@@ -101,19 +101,19 @@ func TestRule16OutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	if c != 1 {
 		t.Fatalf("%d %s %s", c, out, errs)
 	}
-	lines := strings.Count(strings.TrimSpace(out), "\n") + 1
+	lines := strings.Count(strings.TrimSpace(out+errs), "\n") + 1
 	if lines > 12 {
-		t.Fatalf("a 500-entry run printed %d lines to stdout", lines)
+		t.Fatalf("a 500-entry run printed %d lines", lines)
 	}
-	need(t, out, "entries=500", "UPDATE MORE kind=unknown shown=3 total=500")
-	c, all, errs := run(t, Environment{}, "check", "--file", p, "--max", "0")
+	need(t, errs, "entries=500", "CHECK MORE kind=unknown shown=3 total=500")
+	c, out, all := run(t, Environment{}, "check", "--file", p, "--max", "0")
 	if c != 1 {
-		t.Fatalf("%d %s %s", c, all, errs)
+		t.Fatalf("%d %s %s", c, out, all)
 	}
-	if shown := strings.Count(all, "UPDATE UNKNOWN "); shown != many {
+	if shown := strings.Count(all, "CHECK UNKNOWN "); shown != many {
 		t.Fatalf("--max 0 showed %d of %d", shown, many)
 	}
-	if strings.Contains(all, "UPDATE MORE") {
+	if strings.Contains(all, "CHECK MORE") {
 		t.Fatal("--max 0 still elided something")
 	}
 	if c, _, errs = run(t, Environment{}, "check", "--file", p, "--max", "-1"); c != 2 {
@@ -122,7 +122,7 @@ func TestRule16OutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 }
 
 // Rule 18: a refusal a person cannot act on is not a refusal. Every one of them
-// names a remedy, and the shape is the grammar's: REFUSED: <reason> (<remedy>).
+// names a remedy, and the shape is the grammar's: REFUSED: <reason>; run: <command>.
 func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
 	good := row("x", "tool", printer(t, "1.0.0"), "npm:unused", "none")
 	p := manifest(t, good)
@@ -153,9 +153,8 @@ func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
 		if !strings.Contains(first, "REFUSED") {
 			t.Errorf("%s: not a REFUSED line: %q", name, first)
 		}
-		open := strings.Index(first, "(")
-		if open < 0 || !strings.HasSuffix(first, ")") || open+2 >= len(first) {
-			t.Errorf("%s: no remedy in parentheses: %q", name, first)
+		if _, run, ok := strings.Cut(first, "; run: nova-update "); !ok || run == "" {
+			t.Errorf("%s: no command to run: %q", name, first)
 		}
 	}
 }
@@ -173,7 +172,7 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	if c != 0 {
 		t.Fatalf("%d %s %s", c, out, errs)
 	}
-	if !strings.Contains(out, "REPORT at="+fixed.Format(time.RFC3339)) {
+	if !strings.Contains(firstLine(out), " at="+fixed.Format(time.RFC3339)) || !strings.Contains(firstLine(out), " took=0s") {
 		t.Fatalf("the printed stamp is not the injected clock's: %s", firstLine(out))
 	}
 	if strings.Contains(out, "REPORT SENT") {

@@ -79,6 +79,8 @@ func TestAReadIsToldTheWorksChangeWhenTheBaseMoved(t *testing.T) {
 			assert.Equal(t, start, m[1], "the start is the commit the work began from")
 			assert.Contains(t, string(jobText), "    git diff "+start+"..HEAD\n")
 			assert.Contains(t, string(jobText), "main may have moved since the work began")
+			assert.Contains(t, string(jobText), "a diff against the tip of main or origin/main shows every change landed since as a deletion")
+			assert.Contains(t, string(jobText), "Those deletions are never the work's and never a finding: judge the work by the diff above alone.")
 			assert.Equal(t, []string{"quacks/w.txt"}, strings.Fields(runGit(t, checkout, "diff", "--name-only", m[1]+"..HEAD")),
 				"the command JOB.md names shows exactly the work's change")
 		})

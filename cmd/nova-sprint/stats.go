@@ -18,7 +18,7 @@ import (
 func (a *app) cmdStats(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stats")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
-		return refuse(stderr, "stats", argErr("takes no words ", err))
+		return refuse(stderr, "stats", argErr("takes no words ", err, pos...))
 	}
 	st, err := a.store(*c)
 	if err != nil {

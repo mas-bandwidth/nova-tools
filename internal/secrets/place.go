@@ -109,29 +109,13 @@ func ReadFleetMachines(path string) (map[string]FleetMachine, error) {
 // RunPlace copies one secret to one machine and records a receipt. It returns the one OK
 // line, or an error whose text is safe to print (it never contains the value).
 func RunPlace(in PlaceInput) (string, error) {
-	if in.Machine == "" {
-		return "", fmt.Errorf("missing --machine <name>")
-	}
-	if in.Secret == "" {
-		return "", fmt.Errorf("missing --secret <name>")
+	if err := preflight(in.StoreDir, need{in.Machine, "--machine <name>", false}, need{in.Secret, "--secret <name>", false},
+		need{in.StoreDir, "--store <dir> (the local store to copy from)", false}, need{in.AsName, "--as <name>", true},
+		need{in.KeyPath, "--key <path>", false}, need{in.SopsPath, "--sops <path>", false}); err != nil {
+		return "", err
 	}
 	if !IsValidEnvVar(in.Secret) {
 		return "", fmt.Errorf("invalid secret name %q: must match [A-Za-z_][A-Za-z0-9_]*", in.Secret)
-	}
-	if in.StoreDir == "" {
-		return "", fmt.Errorf("missing --store <dir>; the local secrets store to copy from")
-	}
-	if in.AsName == "" {
-		return "", fmt.Errorf("missing --as <name>")
-	}
-	if !IsValidAsName(in.AsName) {
-		return "", fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", in.AsName)
-	}
-	if in.KeyPath == "" {
-		return "", fmt.Errorf("missing --key <path>")
-	}
-	if in.SopsPath == "" {
-		return "", fmt.Errorf("missing --sops <path>")
 	}
 	if in.Machines == "" {
 		in.Machines = defaultFleetFile()
@@ -146,20 +130,10 @@ func RunPlace(in PlaceInput) (string, error) {
 		in.SSH = "ssh"
 	}
 
-	// The local store, lightly: a directory that is a git working copy with a rule file.
-	sFi, err := os.Stat(in.StoreDir)
-	if err != nil || !sFi.IsDir() {
-		return "", fmt.Errorf("store %s is not a directory; run: nova-secrets place --store <dir>", in.StoreDir)
-	}
-	if gFi, err := os.Stat(filepath.Join(in.StoreDir, ".git")); err != nil || !gFi.IsDir() {
-		return "", fmt.Errorf("store %s has no .git directory", in.StoreDir)
-	}
-	if _, err := os.Stat(filepath.Join(in.StoreDir, ".sops.yaml")); err != nil {
-		return "", fmt.Errorf("store %s carries no .sops.yaml", in.StoreDir)
-	}
+	// The local store's shape was checked with the flags; its seat's file is checked here.
 	targetFile := filepath.Join(in.StoreDir, in.AsName+".yaml")
 	if _, err := os.Stat(targetFile); err != nil {
-		return "", fmt.Errorf("store file %s is absent", targetFile)
+		return "", seatAbsent(in.StoreDir, in.AsName)
 	}
 
 	if err := CheckInvariant6(in.KeyPath); err != nil {
@@ -173,7 +147,7 @@ func RunPlace(in PlaceInput) (string, error) {
 	// exactly the case the remedy names.
 	machines, err := ReadFleetMachines(in.Machines)
 	if err != nil {
-		return "", fmt.Errorf("fleet registry %s: %w", in.Machines, err)
+		return "", fmt.Errorf("fleet registry %s: %w; pass --machines <file>, one machine per line: name, ssh target, home, tab separated", in.Machines, err)
 	}
 	machine, ok := machines[in.Machine]
 	if !ok {

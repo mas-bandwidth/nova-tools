@@ -60,7 +60,7 @@ func TestGateHelpSurvivesTheOnceOnlyFlags(t *testing.T) {
 		if code != 0 || !strings.HasPrefix(stdout, "usage: nova-secrets gate") {
 			t.Errorf("gate %s: exit=%d stdout=%q stderr=%q; want help at exit 0", h, code, stdout, stderr)
 		}
-		if !strings.Contains(stdout, "--head <string>") || strings.Contains(stdout, "<value>") {
+		if !strings.Contains(stdout, "--head <ref>") || strings.Contains(stdout, "<value>") {
 			t.Errorf("gate %s: the help does not read the flags' own types:\n%s", h, stdout)
 		}
 	}

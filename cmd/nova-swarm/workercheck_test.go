@@ -73,7 +73,7 @@ func TestWorkerCheckAGoodDescriptionPasses(t *testing.T) {
 	}
 }
 
-// A harness that is not there is one drift naming the harness field, exit 2.
+// A harness that is not there is one drift naming the harness field, exit 1.
 func TestWorkerCheckAMissingHarnessNamesTheField(t *testing.T) {
 	t.Parallel()
 
@@ -81,8 +81,8 @@ func TestWorkerCheckAMissingHarnessNamesTheField(t *testing.T) {
 		d["harness"] = filepath.Join(t.TempDir(), "no-such-harness")
 	})
 	code, out, errb := runWorkerCheck(path)
-	if code != 2 {
-		t.Fatalf("exit %d, want 2\nstdout: %s\nstderr: %s", code, out, errb)
+	if code != 1 {
+		t.Fatalf("exit %d, want 1\nstdout: %s\nstderr: %s", code, out, errb)
 	}
 	if !strings.Contains(out+errb, "WORKER DRIFT harness") {
 		t.Errorf("the drift does not name the harness field:\nstdout: %s\nstderr: %s", out, errb)
@@ -126,8 +126,8 @@ func TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue(t *testing.
 	})
 	code, out, errb := runWorkerCheck(path, "--env")
 	combined := out + errb
-	if code != 2 {
-		t.Fatalf("exit %d, want 2\nstdout: %s\nstderr: %s", code, out, errb)
+	if code != 1 {
+		t.Fatalf("exit %d, want 1\nstdout: %s\nstderr: %s", code, out, errb)
 	}
 	if !strings.Contains(combined, "WORKER DRIFT secret") {
 		t.Errorf("the drift does not name the secret field:\n%s", combined)
@@ -201,8 +201,8 @@ func TestWorkerCheckFlagTypes(t *testing.T) {
 	}
 	for _, c := range cases {
 		code, out, errb := runWorkerCheck(c.args...)
-		if code != 2 {
-			t.Errorf("%s: exit %d, want 2\nstdout: %s\nstderr: %s", c.name, code, out, errb)
+		if code != 1 {
+			t.Errorf("%s: exit %d, want 1\nstdout: %s\nstderr: %s", c.name, code, out, errb)
 			continue
 		}
 		n, all := drifts(out)

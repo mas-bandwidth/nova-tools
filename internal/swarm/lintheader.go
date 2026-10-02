@@ -76,10 +76,10 @@ type CardHeaderFinding struct {
 // table shape the twelve older tokens use: a check without a remedy costs a card writer
 // a guess per drift (#1464), and `nova-swarm lint --rules` prints these beside them.
 var CardHeaderRemedies = map[string]string{
-	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one `nova-pulse accept --kinds` names; `cut` writes it from the pool row and a model never does (SPEC-TOOLWORK.md §5 rules 1, 3)",
-	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none` (SPEC-TOOLWORK.md §5 rules 1, 2)",
-	"test-named":     "the card carries `TEST: [-tags <tags>] <package> <TestName>` -- the package repository-relative and the name a Go test name -- or `TEST: none <why>` where the kind declares no gate (SPEC-TOOLWORK.md §5 rule 1; the grammar is cardhdr.ParseTest's)",
-	"paused":         "the coordinator paused this kind, so `cut` cuts no card of it and a card launched before the pause is `ACCEPT ABSTAIN reason=paused` at harvest; the remedy is not a rerun but `nova-pulse trust --set trial --queue <dir> --kind <kind> --who <name> --reason <text>` (SPEC-TOOLWORK.md §5 rule 1, eligibility rule 3, §1's abstain list)",
+	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one the pool's kinds list names; the cutter writes it from the pool row and a model never does",
+	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none`",
+	"test-named":     "the card carries `TEST: [-tags <tags>] <package> <TestName>` -- the package repository-relative and the name a Go test name -- or `TEST: none <why>` where the kind declares no gate",
+	"paused":         "the coordinator paused this kind, so `cut` cuts no card of it and a card launched before the pause is `ACCEPT ABSTAIN reason=paused` at harvest; the remedy is not a rerun but `nova-pulse trust --set trial --queue <dir> --kind <kind> --who <name> --reason <text>`",
 }
 
 // CardHeaderChecks is every token this file draws, in one byte-stable order.

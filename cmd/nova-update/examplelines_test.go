@@ -50,9 +50,8 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 		t.Fatal("the `example:` block holds no nova-update command; this test would pass by running nothing")
 	}
 
-	// work is the root of a checkout as a stranger meets it: a copy of this tree, so the fixture the
-	// block names (`cmd/nova-update/testdata/example.tsv`) resolves at the path it is written with,
-	// and nothing the block runs can write into the checkout under test.
+	// work is the root of a checkout as a stranger meets it: a copy of this tree, so nothing the block
+	// runs (its first line writes ./versions.tsv) can write into the checkout under test.
 	work := checkoutCopy(t)
 
 	ran := 0

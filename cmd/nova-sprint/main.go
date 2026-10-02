@@ -253,7 +253,8 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 		return nil, errors.New("NOVA_SPRINT_PREFIX is set: " + noPrefix + "; unset it")
 	}
 	if strings.TrimSpace(c.redis) == "" {
-		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
+		// the twin is named here too, so a first run with no Redis is one turn away (tool ledger P9)
+		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR); with no Redis, --redis mem:<file> runs it on the in-memory twin kept in that file (nova-sprint help, trying it without a Redis)")
 	}
 	if why := needsActor(c); why != "" {
 		return nil, errors.New(why)
@@ -298,7 +299,7 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 // run is the one entry point: the command line, and the driver, which runs
 // every verb it plays through it with an argument list.
 func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
-	defer verbflag.RecoverWith(stdout, prog, banner(), &code, verbExample)
+	defer recoverHelp(stdout, &code)
 	defer func() {
 		// a twin is saved after every verb (twin.go); a verb that could not
 		// save it has not finished, whatever it printed
@@ -326,13 +327,23 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 			return v.run(a, args[len(words):], stdout, stderr)
 		}
 	}
-	if args[0] == "fleet" || args[0] == "reader" || args[0] == "goal" {
+	if members := groupVerbs(args[0]); len(members) > 0 {
+		// a verb group: its -h is its help at exit 0 (help is never a refusal); a bare
+		// group, or a word that is none of its verbs, is refused naming its verbs
+		// (tool ledger P7, X11)
+		if len(args) > 1 && verbflag.IsHelp(args[1]) {
+			return helpCommand(args[:1], stdout, stderr)
+		}
 		for _, w := range args[1:] {
 			if w == "--prefix" || w == "-prefix" || strings.HasPrefix(w, "--prefix=") || strings.HasPrefix(w, "-prefix=") {
 				return refuse(stderr, args[0], noPrefix)
 			}
 		}
-		return refuse(stderr, args[0], "unknown or missing subverb; run: nova-sprint help "+args[0])
+		why := args[0] + " wants one of its verbs"
+		if len(args) > 1 {
+			why = "unknown verb " + oneline.Escape(args[0]+" "+args[1])
+		}
+		return refuse(stderr, args[0], why+"; its verbs are "+strings.Join(members, ", ")+"; run: nova-sprint help "+args[0])
 	}
 	return refuse(stderr, "", "unknown verb "+oneline.Escape(args[0])+"; available: "+strings.Join(verbNames(), ", ")+"; run: nova-sprint help")
 }
@@ -349,14 +360,24 @@ var errNoPrefix = errors.New(noPrefix)
 // argErr is what a verb refuses its arguments with: the words, then the error;
 // a --prefix flag is the one line errNoPrefix, alone, and a flag refusal (flagError)
 // is its own line.
-func argErr(words string, err error) string {
+func argErr(words string, err error, found ...string) string {
 	var fe *flagError
-	if errors.Is(err, errNoPrefix) || errors.As(err, &fe) {
+	switch {
+	case err == nil && len(found) == 0:
+		// a verb that refuses its words with no parse error refuses them by
+		// what it found, never `<nil>` (tool ledger P4)
+		return strings.TrimSpace(words) + ", found none"
+	case err == nil:
+		return strings.TrimSpace(words) + ", found " + strings.Join(found, " ")
+	case errors.Is(err, errNoPrefix), errors.As(err, &fe):
 		return err.Error()
 	}
 	return fmt.Sprint(words, err)
 }
 
+// refuse prints the one refusal line, `nova-sprint[ <verb>] REFUSED: <what>;
+// run: <remedy>` (docs/STANDARD.md section 3, point 1), and is a usage refusal:
+// exit 2.
 func refuse(stderr io.Writer, verb, what string) int {
 	where := prog
 	if verb != "" {
@@ -365,7 +386,7 @@ func refuse(stderr io.Writer, verb, what string) int {
 	if !strings.Contains(what, "; run: ") {
 		what += "; run: nova-sprint " + strings.TrimSpace(verb+" -h")
 	}
-	fmt.Fprintf(stderr, "%s: %s\n", where, oneline.Escape(what))
+	fmt.Fprintf(stderr, "%s REFUSED: %s\n", where, oneline.Escape(what))
 	return 2
 }
 

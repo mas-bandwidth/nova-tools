@@ -25,7 +25,6 @@ var swarmAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|parse|f.verb":     "the verb's own name, a literal at every newFlags call site in this file",
 		"member.go|cmdMember|note": "passNote's one line, a literal with no argument interpolated",
 		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
 		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
@@ -34,6 +33,9 @@ var swarmAudit = audit.Config{
 		"main.go|refused|f.verb":   "the verb's own name, the value newFlags stored from that literal",
 		"main.go|cmdTemplate|body": "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
 		"native.go|nativeRun|line": "the line NewWallReader announces a refusal on: swarm.WallRefusedLine builds the whole line and puts the kind, the path, the task and the step through oneline.Field inside itself, so what arrives at this closure is already one safe token, and escaping it a second time would fold it into one unreadable form. TestNativeIdleZeroWatchesNothing asserts the line this site prints byte for byte.",
+
+		// a verb's -h with its own exit codes (verbhelp.go)
+		"verbhelp.go|recoverHelp|help": "a verb's help, what verbflag.RecoverWith prints: lines of this package's usage const, flag names and their usage literals, the verb's example and exit lines, all constants; never an argument the caller typed",
 
 		// the stderr the member's loop and its beat share (memberLoop)
 		"member.go|Write|string(p)": "lockedWriter only orders whole writes from two goroutines (the member's loop and its beat, memberLoop): every byte it carries was already printed through fmt.Fprintf with escaped arguments by its caller, and it adds none of its own",
@@ -107,6 +109,10 @@ var swarmAudit = audit.Config{
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
 		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		// main.go's flag refusal: tool.FlagRefusal returns a STRING (the unknown flag, the
+		// nearest and the verb's flag names) and writes nothing; refuse prints it through
+		// oneline.Escape, so a flag a caller typed with a newline in it stays one line.
+		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by

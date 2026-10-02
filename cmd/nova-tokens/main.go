@@ -50,17 +50,19 @@ databases, swarm pools, bus notes) and writes one day file per day into --out,
 one row per (day, model, repo). The repo comes from the --repos file: lines of
 <name><TAB><regexp>, and the first match on a session's path wins. check, sum
 and report read the day files back; a count a source never gave prints as -.
-first run: copy the example bench (the cp line above example:), then run the
-lines under example: in order.
+first run: create a tiny transcript and rules file with the setup line above
+example:, then run the lines under example: in order.
 
 usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
                       [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
-  nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
+  nova-tokens report --who <name> --day <YYYY-MM-DD> --repos <file>
+                      mode: local note body, printed as the tokens note artifact
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
-  nova-tokens report  --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+  nova-tokens report --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+                      mode: Redis month summary
                       [--user <name>] [--password-env <NAME>]
   nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
                       [--user <name>] [--password-env <NAME>]
@@ -134,10 +136,10 @@ sources --unattributed prints the path stems that were SEEN and matched no rule,
 first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
 is the evidence for improving the --repos file.
 
-  cp -R cmd/nova-tokens/testdata/example-bench/. . && cp ./transcripts/window.jsonl ./session.jsonl && mkdir -p ./out
+  mkdir -p ./transcripts ./out && printf '%s\n' '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z","message":{"id":"example-1","model":"claude-fable-5-1","usage":{"input_tokens":812,"output_tokens":40,"cache_creation_input_tokens":1200,"cache_read_input_tokens":90000},"content":[{"type":"tool_use","input":{"file_path":"/work/schema/wire.md"}}]}}' > ./transcripts/window.jsonl && cp ./transcripts/window.jsonl ./session.jsonl && printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
 
 example:
-  nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
+  nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
   nova-tokens check --out ./out
   nova-tokens sum --out ./out --month 2026-09
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
@@ -186,7 +188,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 		if verb == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
 			return run(append(rest, "--help"), stdout, stderr, now)
 		}
-		fmt.Fprint(stdout, usage)
+		fmt.Fprintf(stdout, "%s", usage)
 		return 0
 	case "fold":
 		return cmdFold(rest, stdout, stderr, now)
@@ -305,16 +307,16 @@ type sourceFlags struct {
 
 func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
 	s.claude.kind, s.opencode.kind, s.swarm.kind, s.provider.kind = "claude", "opencode", "swarm", "provider"
-	fs.Var(&s.claude, "claude", "")
-	fs.Var(&s.opencode, "opencode", "")
-	fs.Var(&s.provider, "provider", "")
+	fs.Var(&s.claude, "claude", "labeled Claude Code transcript directory; repeatable")
+	fs.Var(&s.opencode, "opencode", "labeled OpenCode database file; repeatable")
+	fs.Var(&s.provider, "provider", "kind:labeled provider export file; repeatable")
 	if withSwarmAndBus {
-		fs.Var(&s.swarm, "swarm", "")
-		fs.StringVar(&s.bus, "bus", "", "")
+		fs.Var(&s.swarm, "swarm", "labeled swarm pool directory; repeatable")
+		fs.StringVar(&s.bus, "bus", "", "nova-bus directory with token notes")
 	}
-	fs.StringVar(&s.scratch, "scratch", "", "")
-	fs.StringVar(&s.repos, "repos", "", "")
-	fs.IntVar(&s.timeout, "timeout", int(tokens.DefaultTimeout/time.Second), "")
+	fs.StringVar(&s.scratch, "scratch", "", "directory for the temporary OpenCode database copy")
+	fs.StringVar(&s.repos, "repos", "", "tab-separated repo names and path regular expressions")
+	fs.IntVar(&s.timeout, "timeout", int(tokens.DefaultTimeout/time.Second), "seconds to wait for the OpenCode sqlite3 reader")
 }
 
 // check validates the declared sources without reading any of them.
@@ -551,11 +553,11 @@ func unparsedLine(token string, u tokens.Unparsed) string {
 // -- and it still writes the rest, because the exit code is about the claim.
 func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("fold")
-	out := fs.String("out", "", "")
-	day := fs.String("day", "", "")
-	all := fs.Bool("all", false, "")
-	allowShrink := fs.Bool("allow-shrink", false, "")
-	max := fs.Int("max", bounded.Default, "")
+	out := fs.String("out", "", "directory for daily token files")
+	day := fs.String("day", "", "one UTC day to fold as YYYY-MM-DD")
+	all := fs.Bool("all", false, "fold every day named by the sources")
+	allowShrink := fs.Bool("allow-shrink", false, "write a day even when its totals shrink")
+	max := fs.Int("max", bounded.Default, "maximum findings or rows to print; 0 prints all")
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := verbflag.Parse(fs, args); err != nil {
@@ -915,7 +917,7 @@ func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unp
 	case shrank > 0:
 		return "a day was written smaller at your word (--allow-shrink); nova-tokens check --out " + out + " is the gate"
 	case noidAndDup(sources) != "":
-		return noidAndDup(sources) + "; those messages are NOT in any row, and nothing else says so"
+		return noidAndDup(sources) + "; those messages are NOT in any row"
 	case len(overlaps) > 0:
 		o := overlaps[0]
 		return "two declared sources fed the same " + strconv.Itoa(o.IDs) + " message ids (" + o.A + " and " + o.B + "): those messages are counted TWICE, because this fold does not de-duplicate across sources; one harness is one source flag, and a scratch tree under a declared directory holds the same transcripts again"
@@ -997,10 +999,10 @@ func firstConflictLabel(sources []*tokens.Source) string {
 // ran, because asserting is not its job.
 func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("sources")
-	day := fs.String("day", "", "")
-	all := fs.Bool("all", false, "")
-	max := fs.Int("max", bounded.Default, "")
-	unattributed := fs.Bool("unattributed", false, "")
+	day := fs.String("day", "", "one UTC day to inspect as YYYY-MM-DD")
+	all := fs.Bool("all", false, "inspect every day named by the sources")
+	max := fs.Int("max", bounded.Default, "maximum rows to print; 0 prints all")
+	unattributed := fs.Bool("unattributed", false, "list seen paths that matched no repo rule")
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := verbflag.Parse(fs, args); err != nil {
@@ -1082,17 +1084,17 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 // Conventions allow when a spec states one.
 func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("report")
-	who := fs.String("who", "", "")
-	day := fs.String("day", "", "")
-	notePath := fs.String("note", "", "")
+	who := fs.String("who", "", "name to write in each note body row")
+	day := fs.String("day", "", "one UTC day to report as YYYY-MM-DD")
+	notePath := fs.String("note", "", "atomically write the note body to this path")
 	var supersedes stringList
-	fs.Var(&supersedes, "supersedes", "")
-	max := fs.Int("max", bounded.Default, "")
-	monthFlag := fs.String("month", "", "")
-	byFlag := fs.String("by", "model", "")
-	redisAddr := fs.String("redis", "", "")
-	redisUser := fs.String("user", "", "")
-	passwordEnv := fs.String("password-env", "", "")
+	fs.Var(&supersedes, "supersedes", "note id this report replaces; repeatable")
+	max := fs.Int("max", bounded.Default, "maximum summary rows to print; 0 prints all")
+	monthFlag := fs.String("month", "", "month to summarize as YYYY-MM")
+	byFlag := fs.String("by", "model", "Redis summary grouping: model, repo, day or tuple")
+	redisAddr := fs.String("redis", "", "Redis address for the store summary mode")
+	redisUser := fs.String("user", "", "Redis username for the store summary mode")
+	passwordEnv := fs.String("password-env", "", "environment variable holding the Redis password")
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := verbflag.Parse(fs, args); err != nil {
@@ -1291,9 +1293,9 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 // month with gaps, because answering is its job and missing=<n> is the answer.
 func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("sum")
-	out := fs.String("out", "", "")
-	month := fs.String("month", "", "")
-	max := fs.Int("max", bounded.Default, "")
+	out := fs.String("out", "", "directory holding daily token files")
+	month := fs.String("month", "", "month to sum as YYYY-MM")
+	max := fs.Int("max", bounded.Default, "maximum rows to print; 0 prints all")
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " sum", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -1387,11 +1389,11 @@ func validMonth(m string) bool {
 // them work anybody would do.
 func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("check")
-	out := fs.String("out", "", "")
-	max := fs.Int("max", bounded.Default, "")
-	strict := fs.Bool("strict", false, "")
-	noSpend := fs.String("no-spend", "", "")
-	through := fs.String("through", "", "")
+	out := fs.String("out", "", "directory containing daily token files")
+	max := fs.Int("max", bounded.Default, "maximum findings to print; 0 prints all")
+	strict := fs.Bool("strict", false, "treat every gap and note as a finding")
+	noSpend := fs.String("no-spend", "", "file listing UTC dates with no spend, one per line")
+	through := fs.String("through", "", "require coverage through this UTC day, YYYY-MM-DD")
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " check", oneline.Cap(err.Error(), oneline.TailBytes))
 	}

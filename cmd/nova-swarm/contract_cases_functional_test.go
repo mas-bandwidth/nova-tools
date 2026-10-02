@@ -110,8 +110,14 @@ func (e *caseEnv) member(t *testing.T) {
 // at a time, and returns the card's story and the member's output.
 func (e *caseEnv) sprintRun(t *testing.T, harness, model string) (story, out string) {
 	t.Helper()
+	return e.sprintRunUntil(t, harness, model, 3*time.Minute, "m1 finished attempt 1")
+}
+
+// sprintRunUntil drives the same real loop to the lifecycle outcome the case expects.
+func (e *caseEnv) sprintRunUntil(t *testing.T, harness, model string, bound time.Duration, terminal string) (story, out string) {
+	t.Helper()
 	bin := builtSprint(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
 	d := &memberDrive{t: t, addr: "mem:" + filepath.Join(e.dir, "sprint.twin"), bin: bin}
 	d.must("init", "--members", "m1:1")
@@ -126,7 +132,7 @@ func (e *caseEnv) sprintRun(t *testing.T, harness, model string) (story, out str
 			t.Logf("story:\n%s\nmember:\n%s\nchild:\n%s", story, ob.String(), e.log())
 		}
 	})
-	for !strings.Contains(story, "m1 finished attempt 1") {
+	for !strings.Contains(story, terminal) {
 		require.NoError(t, ctx.Err(), "the card did not finish in time")
 		d.must("tick")
 		_, err := m.Tick(time.Now())
@@ -439,10 +445,9 @@ gh pr create --title T --body B >&2`)
 func TestAStagedRecipeIsInTheJob(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name   string
-		have   bool
-		failed bool
-	}{{"present", true, false}, {"missing", false, true}} {
+		name string
+		have bool
+	}{{"present", true}, {"missing", false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e := newCaseEnv(t, false)
@@ -451,14 +456,24 @@ func TestAStagedRecipeIsInTheJob(t *testing.T) {
 			}
 			first, rest, _ := strings.Cut(e.brief(), "\n")
 			e.briefOverride = first + "\nStage: pr/4926.md\n" + rest
-			story, _ := e.sprintRun(t, e.script(t, `set -e
+			harness := e.script(t, `set -e
 cp recipes/pr/4926.md repo/recipe.md
 cd repo
 git add recipe.md
 git commit -q -m "from the recipe"
 git push
-gh pr create --title T --body B >&2`), "fake/claude-x")
-			assert.Equal(t, tc.failed, strings.Contains(story, "FAILED"), story)
+gh pr create --title T --body B >&2`)
+			if tc.have {
+				story, _ := e.sprintRun(t, harness, "fake/claude-x")
+				assert.NotContains(t, story, "FAILED", story)
+				return
+			}
+			story, _ := e.sprintRunUntil(t, harness, "fake/claude-x", 30*time.Second, "a card reached its bound")
+			assert.Contains(t, story, "waits on your judgment: a card reached its bound")
+			assert.Contains(t, story, "the card's frame could not be installed: Stage: the recipes directory")
+			assert.Contains(t, story, "no result: no RESULT.md shape")
+			assert.NoFileExists(t, filepath.Join(e.logs, "child.log"), "a missing recipe refuses the frame before launching the child")
+			assert.NoFileExists(t, filepath.Join(e.dir, "gh.args"), "no pull request for a child that never ran")
 		})
 	}
 }
