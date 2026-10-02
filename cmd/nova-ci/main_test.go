@@ -504,3 +504,23 @@ func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
 		}
 	}
 }
+
+// Every verb's -h ends with its effect (docs/STANDARD.md section 2, the tool-answers
+// dry-run rule): an inspection, or a write a reader can see before letting it.
+func TestEveryVerbHelpStatesItsEffect(t *testing.T) {
+	t.Parallel()
+
+	for verb, want := range map[string]string{
+		"slowtests":      "effect: inspection: reads, writes nothing\n",
+		"functional":     "effect: inspection: reads, writes nothing\n",
+		"version":        "effect: inspection: reads, writes nothing\n",
+		"local":          "effect: local write: runs this checkout's unit tests, writing only a temp dir\n",
+		"new-rule":       "effect: local write: writes files on this machine\n",
+		"new-verb":       "effect: local write: writes files on this machine\n",
+		"github receipt": "effect: delivery: writes one row of a CI run to a Redis store\n",
+	} {
+		code, stdout, _ := runCI(t, append(strings.Fields(verb), "-h"), "")
+		require.Equal(t, 0, code, verb)
+		assert.True(t, strings.HasSuffix(stdout, want), "%s -h does not end with %q:\n%s", verb, want, stdout)
+	}
+}

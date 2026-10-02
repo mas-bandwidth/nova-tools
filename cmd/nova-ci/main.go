@@ -140,6 +140,18 @@ example:
 // missing or unknown verb names.
 const verbs = "slowtests, functional, local, new-rule, new-verb, github receipt, version, help"
 
+// verbEffect is what running a verb does beyond printing, the last line of its -h, in
+// internal/tool's words (inspection, local write or delivery; docs/STANDARD.md section 2).
+var verbEffect = map[string]tool.Effect{
+	"slowtests":      tool.Inspection,
+	"functional":     tool.Inspection,
+	"version":        tool.Inspection,
+	"local":          "local write: runs this checkout's unit tests, writing only a temp dir",
+	"new-rule":       tool.LocalWrite,
+	"new-verb":       tool.LocalWrite,
+	"github receipt": "delivery: writes one row of a CI run to a Redis store",
+}
+
 // refuse prints this tool's one refusal line, `nova-ci[ <verb>] REFUSED:
 // <what>; run: <remedy>` (STANDARD §2), at exit 2. The remedy is the verb's
 // own help, or the banner when no verb was named. Package flag is given no
@@ -202,7 +214,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		if !ok {
 			panic(r)
 		}
-		verbflag.Print(stdout, "nova-ci", exitTable(verbflag.Verb("nova-ci", h.FS)), h.FS)
+		verb := verbflag.Verb("nova-ci", h.FS)
+		verbflag.Print(stdout, "nova-ci", exitTable(verb), h.FS)
+		if e, ok := verbEffect[verb]; ok {
+			fmt.Fprintf(stdout, "effect: %s\n", e)
+		}
 		code = 0
 	}()
 	if len(args) == 0 {
