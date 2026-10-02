@@ -265,8 +265,8 @@ lane name and hex — `ada-3f9a1c2b8d40` — so it is one path segment by
 construction, while `--reply-to` may resolve a note without an `Id:` line to a repo-relative
 path, and a path holds `/`. A filename built from one would put the draft in a
 directory nobody named, or in none at all. **A target with no `Id:` line gets a
-derived id instead**, stated here so nobody has to guess it: a fixed prefix
-followed by the first 12 lowercase hex digits of the SHA-256 of the
+derived id instead**, stated here so nobody has to guess it: the literal
+prefix followed by the first 12 lowercase hex digits of the SHA-256 of the
 target's repo-relative path, exactly as the path appears on the `Re:` line the
 draft writes. It is one segment, it is deterministic, and two targets without an `Id:` line
 cannot collide onto one name — which is the whole job of the field. The `Re:`
@@ -1097,8 +1097,8 @@ receipt is quoted up to `next=` and the token is asserted by decode.
   for the first four, an `inbox` run for the fifth.
 - `TestReplyResolvesAPathForANoteWrittenBeforeIds` — a target without an `Id:` line is answered
   by path, and the path is what lands on the `Re:` line, while the draft's
-  filename uses the derived id and holds no `/`; two targets without an `Id:` line
-  in one directory produce two names.
+  filename uses the derived id and holds no `/`; two
+  targets in one directory produce two names.
 - `TestAReplyToANoteWhoseIdTheOpenListCannotCarryIsResolvedByPath` — a target
   carrying an `Id:` the open list cannot carry is resolved by PATH, and the
   `Re:` line takes the open entry's target name.
