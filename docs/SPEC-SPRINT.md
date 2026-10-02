@@ -15,7 +15,7 @@ SPRINT TABLE
 work  | waiting | ready | working | review | merging | landed | cost
 readers | asked | reading | ok | broken
 merge | queued | merged | stuck | ci | state
-friends | status
+friends | ready | working | width | done | ok% | status
 fleet | ready | working | width | done | ok% | status | load
 ```
 
@@ -25,7 +25,7 @@ fleet | ready | working | width | done | ok% | status | load
 | readers | readers | read cards | the reads of primaries in review |
 | merge | streams | primaries | merging, made visible |
 | fleet | fleet members | work cards | the swarm across machines |
-| friends | friends | none | who of the friends is here to help |
+| friends | friends | job cards | who of the friends is here to help, and her jobs |
 
 The work table's last column, `cost` (the owner, 2026-10-01: "can you please
 add a final column to the work stream table, which is "cost". This is the sum of
@@ -47,28 +47,63 @@ empties it with the tables.
 The friends table (the owner, 2026-10-02: "add a friends table, above fleet and
 below merge. friends | status for now. up/down/held"; "friends should be
 configured in nova-config"; "you should use heartbeats from each friend to track
-their state, and sort them alphabetically, and then by status, like with fleet")
-has one row per friend and one column, `status`: `up`, `down` or `held`. Its rows
-are nova-config's friend rows and nothing else: `friend sync` (`--pg`, else
-NOVA_PG_DSN, as nova-config takes it) copies their names into the store's
-`friends` record, adding a friend the record lacks, taking off one nova-config no
-longer has with its beat, and keeping the hold of a friend that stays; a config
-that cannot be read or holds no friend row is refused (exit 3) and changes
-nothing. A friend says it is there with `friend beat <friend>`, which its own
-machinery runs every few seconds beside its harness (it writes
-`friend-beat:<friend>`, the time to the second; a friend not in the record is
-refused, exit 1). Its status is the fleet's rule (`sprint.PresenceStatus`): `held`
-while the coordinator holds it (`friend down`; `friend up` releases the hold),
-whatever it beats; else `up` until it has missed MissedBeatsDown beat windows of
-BeatDeadline in a row; else `down`, and `down` when it has never beaten. The rows
-are in the fleet table's order (`FleetOrder`): up, then held, then down, each by
-name. The table is drawn by `where` from those records when it draws the frame,
-never stored as a table: no tick, step, epoch or clear touches it, `teardown`
-deletes its records, and the stored view `sprint` has the four tables only. Its
-one column is text, so its summary row, under the rule after its rows, has a
-blank label and a blank cell, as the fleet table's status cell is blank in its
-summary row; an empty friends table is its header, its one rule and the summary
-row, as every empty table is.
+their state, and sort them alphabetically, and then by status, like with fleet";
+and the same day: "please give friends in the friends table the same ready,
+working, width, done, ok%, status that we have for machines, but no load, since
+they don't correspond to a machine (at the moment...)"; "you can even use the
+inbox/outbox standard in friend's working dirs") has one row per friend and the
+fleet table's columns but `load`: `ready`, `working`, `width`, `done`, `ok%`,
+`status`, with `ok` and `failed` hidden under `done` and `ok%` as the fleet's
+are. Its rows are nova-config's friend rows and nothing else: `friend sync`
+(`--pg`, else NOVA_PG_DSN, as nova-config takes it) copies their names into the
+store's `friends` record, adding a friend the record lacks, taking off one
+nova-config no longer has with her beat and her jobs, and keeping the hold of a
+friend that stays; a config that cannot be read or holds no friend row is
+refused (exit 3) and changes nothing.
+
+A friend's unit of work is a job, and her jobs are the inbox/outbox standard of
+her working directory, `<root>/<friend>-working` (`friend sync --root <dir>`,
+else `HOME`): she works only inside it; the coordinator delivers a job as the
+directory `inbox/<job>/` (its `BRIEF.md` and everything the job needs), and
+only the coordinator reaches out; the friend makes `outbox/<job>/` when she
+starts the job and writes `outbox/<job>/REPORT.md` when it is done, and only
+she writes there. `friend sync` reads every friend's directory and writes her
+job cards into the store (`friend-jobs:<friend>`): each directory under
+`inbox/` is a job (a file, or a name beginning with a dot, is none); it is
+`ready` while `outbox/<job>/` is not there, `working` while it is there without
+`REPORT.md`, and `done` once `REPORT.md` is there, done ok or done failed by
+the one rule of a report's verdict: the first line of `REPORT.md` whose key,
+after any markdown marks (`#`, `*`, `-`, `_`, spaces), is `Verdict` or
+`Status` in any case; its first word HOLD, FAIL, FAILED or BROKEN, in any case,
+is a job done failed, and any other word, or no such line, is a job done ok. The
+records are set from the directories, never added to, so a sync after a sync
+writes nothing and says so; a friend with no directory, or no `inbox/`, has no
+jobs; a directory that cannot be read is refused (exit 1), naming it, with
+nothing written. The sync reads the directories and never writes them, and
+runs where they are (the coordinator's machine), by the coordinator's loop or
+by hand after a job is delivered or collected; the view reads the store, never
+a directory (the card is the persistent store). `ready` and `working` count
+her job cards in those states; `width` is her width, `1` (a person-like agent
+works one job at a time; the friend row of nova-config has no width), summed in
+the footer; `ok` and `failed` count her jobs done; `done` is `sum(ok+failed)`
+and `ok%` is `pct(ok/ok+failed)`, pooled over the friends in the footer, the
+fleet table's own formulas.
+
+A friend says she is there with `friend beat <friend>`, which her own machinery
+runs every few seconds beside her harness (it writes `friend-beat:<friend>`,
+the time to the second; a friend not in the record is refused, exit 1). Her
+status is the fleet's rule (`sprint.PresenceStatus`): `held` while the
+coordinator holds her (`friend down`; `friend up` releases the hold), whatever
+she beats; else `up` until she has missed MissedBeatsDown beat windows of
+BeatDeadline in a row; else `down`, and `down` when she has never beaten. The
+rows are in the fleet table's order (`FleetOrder`): up, then held, then down,
+each by name. The table is drawn by `where` from those records when it draws
+the frame, never stored as a table: no tick, step, epoch or clear touches it,
+`teardown` deletes its records (the roster, each friend's beat and jobs), and
+the stored view `sprint` has the four tables only. Its footer is the table
+layer's: the sums of `ready`, `working`, `width` and `done`, the pooled `ok%`,
+and a blank status cell, as the fleet table's; an empty friends table is its
+header, its one rule and that footer at zero, as every empty table is.
 
 The view shows work, readers, merge, friends, fleet in that order. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
