@@ -1940,7 +1940,7 @@ One per rule:
    `cat /etc/hosts` succeeds and `/bin/sh -c true` exits 0 inside the wall
    (both fail without the `/etc`, `/tmp`, `/var` literals and
    `/private/var/select`). On darwin a wrapped `/usr/bin/c++` compiles and
-   runs a C++ probe inside the write set; it fails without the
+   runs a C++ probe inside the write set (it fails without the
    `xcode_select_link` literals). On linux a wrapped command's **child** reads
    `/proc/self/status` successfully, which `/proc/self` as a root would
    deny.
@@ -2014,7 +2014,8 @@ One per rule:
    variable the child still has is a false statement about the wall.
 10. `TestProbeProvesTheWall`: the `write_outside` path is the named one and is
     asserted to be outside every list **with `TMPDIR` pointed inside the wall
-    by the rule** — a probe built on `os.TempDir()` turns this red; a first
+    by the rule that `$TMPDIR` names the first `--write`** — a probe built on
+    `os.TempDir()` turns this red; a first
     `--write` whose parent is inside a list is exit 2
     `reason=probe_outside_inside`; all five checks run even when the first
     fails; a named outside path that this user cannot write to anyway is exit 2
