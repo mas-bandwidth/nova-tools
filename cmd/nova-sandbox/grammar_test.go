@@ -21,6 +21,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // probeRefusedGrammarPrefix is how the grammar writes the line whose alternatives are the
@@ -36,9 +39,7 @@ const probeStepRefusalReason = "probe_step_not_a_child"
 func specSandbox(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SANDBOX.md"))
-	if err != nil {
-		t.Fatalf("the grammar is the spec's, so the spec has to be readable: %s", err)
-	}
+	require.NoError(t, err, "the grammar is the spec's, so the spec has to be readable: %s", err)
 	return string(raw)
 }
 
@@ -58,20 +59,14 @@ func specProbeRefusalReasons(t *testing.T) map[string]bool {
 			found = append(found, line)
 		}
 	}
-	if len(found) != 1 {
-		t.Fatalf("docs/SPEC-SANDBOX.md has %d fenced lines beginning %q, want exactly 1; this test would otherwise pass by reading nothing:\n%s",
-			len(found), probeRefusedGrammarPrefix, strings.Join(found, "\n"))
-	}
+	require.Len(t, found, 1, "docs/SPEC-SANDBOX.md has %d fenced lines beginning %q, want exactly 1; this test would otherwise pass by reading nothing:\n%s",
+		len(found), probeRefusedGrammarPrefix, strings.Join(found, "\n"))
 	alts, _, ok := strings.Cut(strings.TrimPrefix(found[0], probeRefusedGrammarPrefix), ">")
-	if !ok {
-		t.Fatalf("the grammar's PROBE REFUSED alternatives are not closed by `>`: %q", found[0])
-	}
+	require.True(t, ok, "the grammar's PROBE REFUSED alternatives are not closed by `>`: %q", found[0])
 	set := map[string]bool{}
 	for _, word := range strings.Split(alts, "|") {
 		word = strings.TrimSpace(word)
-		if word == "" {
-			t.Fatalf("the grammar's PROBE REFUSED alternatives hold an empty word: %q", found[0])
-		}
+		require.NotEmpty(t, word, "the grammar's PROBE REFUSED alternatives hold an empty word: %q", found[0])
 		set[word] = true
 	}
 	return set
@@ -93,10 +88,9 @@ func TestProbeRefusalReasonsAreTheSpecsOwnSet(t *testing.T) {
 	t.Parallel()
 
 	spec := specProbeRefusalReasons(t)
-	if got, want := sorted(probeRefusalReasons), sorted(spec); strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Errorf("the PROBE REFUSED reason set in these tests is not docs/SPEC-SANDBOX.md's:\n  tests: %s\n  spec:  %s\nthe spec's grammar block is the contract; update the tests to it (or the spec, if the tool changed)",
-			strings.Join(got, "|"), strings.Join(want, "|"))
-	}
+	got, want := sorted(probeRefusalReasons), sorted(spec)
+	assert.Equal(t, strings.Join(want, "|"), strings.Join(got, "|"), "the PROBE REFUSED reason set in these tests is not docs/SPEC-SANDBOX.md's:\n  tests: %s\n  spec:  %s\nthe spec's grammar block is the contract; update the tests to it (or the spec, if the tool changed)",
+		strings.Join(got, "|"), strings.Join(want, "|"))
 }
 
 // #119 item 2. The internal verb prints a SEVENTH reason, and leaving it out of the six is
@@ -112,13 +106,10 @@ func TestTheInternalVerbsRefusalIsOutsideTheSetAndNamedInTheSpec(t *testing.T) {
 	// test pointed at nothing.
 	j := newJob(t)
 	code, _, errOut := j.tool(t, j.env(), "probe-step")
-	if code != 2 || !strings.Contains(errOut, "reason="+probeStepRefusalReason) {
-		t.Fatalf("`probe-step` by hand does not refuse with reason=%s: exit %d, stderr %q", probeStepRefusalReason, code, errOut)
-	}
+	require.Equal(t, 2, code, "`probe-step` by hand does not refuse with reason=%s: exit %d, stderr %q", probeStepRefusalReason, code, errOut)
+	require.Contains(t, errOut, "reason="+probeStepRefusalReason, "`probe-step` by hand does not refuse with reason=%s: exit %d, stderr %q", probeStepRefusalReason, code, errOut)
 
-	if specProbeRefusalReasons(t)[probeStepRefusalReason] {
-		t.Errorf("%s is inside the spec's PROBE REFUSED set; it is the internal verb's own refusal and the set is the contract a caller's parser stands on -- if it genuinely joined the set, probeRefusalReasons and this test's premise both change", probeStepRefusalReason)
-	}
+	assert.False(t, specProbeRefusalReasons(t)[probeStepRefusalReason], "%s is inside the spec's PROBE REFUSED set; it is the internal verb's own refusal and the set is the contract a caller's parser stands on -- if it genuinely joined the set, probeRefusalReasons and this test's premise both change", probeStepRefusalReason)
 
 	// And the section that describes the verb has to name what it prints. Bounded to that
 	// section on purpose: the token appearing anywhere in the file would be satisfied by a
@@ -133,15 +124,11 @@ func TestTheInternalVerbsRefusalIsOutsideTheSetAndNamedInTheSpec(t *testing.T) {
 	const heading = "### The internal verb, and what its guard is and is not"
 	spec := specSandbox(t)
 	_, after, ok := strings.Cut(spec, heading)
-	if !ok {
-		t.Fatalf("docs/SPEC-SANDBOX.md has no %q section; this test cannot say where the refusal belongs", heading)
-	}
+	require.True(t, ok, "docs/SPEC-SANDBOX.md has no %q section; this test cannot say where the refusal belongs", heading)
 	for _, next := range []string{"\n### ", "\n## "} {
 		if i := strings.Index(after, next); i >= 0 {
 			after = after[:i]
 		}
 	}
-	if !strings.Contains(after, probeStepRefusalReason) {
-		t.Errorf("the internal verb's section does not name `PROBE REFUSED reason=%s`, the refusal its guard prints; the grammar above is fixed at six, so a reader has nowhere to learn that this seventh token exists", probeStepRefusalReason)
-	}
+	assert.Contains(t, after, probeStepRefusalReason, "the internal verb's section does not name `PROBE REFUSED reason=%s`, the refusal its guard prints; the grammar above is fixed at six, so a reader has nowhere to learn that this seventh token exists", probeStepRefusalReason)
 }

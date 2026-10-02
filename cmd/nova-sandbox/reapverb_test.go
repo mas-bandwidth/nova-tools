@@ -23,6 +23,9 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // reapBench stands up the four seams reap reaches the machine through.
@@ -86,9 +89,8 @@ func (b *reapBench) volume(t *testing.T, name, disk string) string {
 func (b *reapBench) owner(t *testing.T, mount string, pid int, start string) {
 	t.Helper()
 	b.starts[pid] = start
-	if err := os.WriteFile(filepath.Join(mount, ownerMarker), []byte(fmt.Sprintf("pid=%d\nstart=%s\n", pid, start)), 0o600); err != nil {
-		t.Fatalf("write the owner marker: %v", err)
-	}
+	err := os.WriteFile(filepath.Join(mount, ownerMarker), []byte(fmt.Sprintf("pid=%d\nstart=%s\n", pid, start)), 0o600)
+	require.NoError(t, err, "write the owner marker: %v", err)
 }
 
 func reapOnce(t *testing.T, dryRun bool) (int, string) {
@@ -106,24 +108,16 @@ func TestReapKillsWhatHeldAnOrphanedVolumeAndDeletesIt(t *testing.T) {
 	b.alive[7001] = true
 
 	code, errOut := reapOnce(t, false)
-	if code != 0 {
-		t.Fatalf("a reap that cleaned the machine is exit 0: got %d\n%s", code, errOut)
-	}
-	if !strings.Contains(errOut, "SANDBOX REAP volume=nova-orphan procs=1 deleted=yes") {
-		t.Errorf("the reap did not report the volume it took:\n%s", errOut)
-	}
-	if !strings.Contains(errOut, "SANDBOX REAP OK volumes=1") {
-		t.Errorf("the reap printed no closing count:\n%s", errOut)
-	}
+	require.Equal(t, 0, code, "a reap that cleaned the machine is exit 0: got %d\n%s", code, errOut)
+	assert.Contains(t, errOut, "SANDBOX REAP volume=nova-orphan procs=1 deleted=yes", "the reap did not report the volume it took:\n%s", errOut)
+	assert.Contains(t, errOut, "SANDBOX REAP OK volumes=1", "the reap printed no closing count:\n%s", errOut)
 	// TERM first, and only then KILL: a process with work in hand is asked before it is
 	// taken, which is the same grace the run verb gives its own group.
 	want := fmt.Sprintf("7001:%d", syscall.SIGTERM)
-	if len(b.signals) == 0 || b.signals[0] != want {
-		t.Errorf("the reap's first signal was %v, want %s first", b.signals, want)
+	if assert.NotEmpty(t, b.signals, "the reap's first signal was %v, want %s first", b.signals, want) {
+		assert.Equal(t, want, b.signals[0], "the reap's first signal was %v, want %s first", b.signals, want)
 	}
-	if !strings.Contains(strings.Join(b.vols.calls, " "), "delete:disk3s9") {
-		t.Errorf("the orphaned volume was not deleted: %v", b.vols.calls)
-	}
+	assert.Contains(t, strings.Join(b.vols.calls, " "), "delete:disk3s9", "the orphaned volume was not deleted: %v", b.vols.calls)
 }
 
 // And the guard. A volume whose owner marker names a LIVE run with the start time it was
@@ -137,18 +131,10 @@ func TestReapNeverTakesAVolumeFromALiveRun(t *testing.T) {
 	b.procs[mount] = []int{7100}
 
 	code, errOut := reapOnce(t, false)
-	if code != 0 {
-		t.Fatalf("a live run is not a failure of the reap: got %d\n%s", code, errOut)
-	}
-	if !strings.Contains(errOut, "SANDBOX REAP volume=nova-live procs=1 deleted=no") {
-		t.Errorf("the reap did not report the live volume it left alone:\n%s", errOut)
-	}
-	if len(b.signals) != 0 {
-		t.Errorf("the reap signalled a live run's processes: %v", b.signals)
-	}
-	if strings.Contains(strings.Join(b.vols.calls, " "), "delete:") {
-		t.Errorf("the reap deleted a live run's volume: %v", b.vols.calls)
-	}
+	require.Equal(t, 0, code, "a live run is not a failure of the reap: got %d\n%s", code, errOut)
+	assert.Contains(t, errOut, "SANDBOX REAP volume=nova-live procs=1 deleted=no", "the reap did not report the live volume it left alone:\n%s", errOut)
+	assert.Empty(t, b.signals, "the reap signalled a live run's processes: %v", b.signals)
+	assert.NotContains(t, strings.Join(b.vols.calls, " "), "delete:", "the reap deleted a live run's volume: %v", b.vols.calls)
 }
 
 // The other half of the marker, and the reason the start time is in it: a pid is a small
@@ -164,12 +150,8 @@ func TestReapReadsTheStartTimeAndNotJustThePid(t *testing.T) {
 	b.starts[7200] = "Fri Sep 18 14:02:11 2026"
 
 	code, errOut := reapOnce(t, false)
-	if code != 0 {
-		t.Fatalf("exit %d\n%s", code, errOut)
-	}
-	if !strings.Contains(errOut, "SANDBOX REAP volume=nova-recycled procs=0 deleted=yes") {
-		t.Errorf("a marker on a RECYCLED pid held the volume; the guard is the pid AND the start time:\n%s", errOut)
-	}
+	require.Equal(t, 0, code, "exit %d\n%s", code, errOut)
+	assert.Contains(t, errOut, "SANDBOX REAP volume=nova-recycled procs=0 deleted=yes", "a marker on a RECYCLED pid held the volume; the guard is the pid AND the start time:\n%s", errOut)
 }
 
 // --dry-run prints and touches nothing, and says the machine is not clean.
@@ -180,18 +162,10 @@ func TestReapDryRunTouchesNothing(t *testing.T) {
 	b.alive[7300] = true
 
 	code, errOut := reapOnce(t, true)
-	if code != exitLeak {
-		t.Fatalf("a dry run that FOUND an orphan is exit %d, because the machine still holds it: got %d\n%s", exitLeak, code, errOut)
-	}
-	if !strings.Contains(errOut, "SANDBOX REAP volume=nova-orphan procs=1 deleted=no") {
-		t.Errorf("the dry run did not report what a real one would take:\n%s", errOut)
-	}
-	if len(b.signals) != 0 {
-		t.Errorf("--dry-run signalled a process: %v", b.signals)
-	}
-	if strings.Contains(strings.Join(b.vols.calls, " "), "delete:") {
-		t.Errorf("--dry-run deleted a volume: %v", b.vols.calls)
-	}
+	require.Equal(t, exitLeak, code, "a dry run that FOUND an orphan is exit %d, because the machine still holds it: got %d\n%s", exitLeak, code, errOut)
+	assert.Contains(t, errOut, "SANDBOX REAP volume=nova-orphan procs=1 deleted=no", "the dry run did not report what a real one would take:\n%s", errOut)
+	assert.Empty(t, b.signals, "--dry-run signalled a process: %v", b.signals)
+	assert.NotContains(t, strings.Join(b.vols.calls, " "), "delete:", "--dry-run deleted a volume: %v", b.vols.calls)
 }
 
 // A clean machine is one line and exit 0, which is what makes the dry run a gate a card
@@ -199,9 +173,8 @@ func TestReapDryRunTouchesNothing(t *testing.T) {
 func TestReapOnACleanMachineIsExitZero(t *testing.T) {
 	newReapBench(t)
 	code, errOut := reapOnce(t, true)
-	if code != 0 || !strings.Contains(errOut, "SANDBOX REAP OK volumes=0") {
-		t.Fatalf("a machine with no nova- volumes is `SANDBOX REAP OK volumes=0` and exit 0: got %d\n%s", code, errOut)
-	}
+	require.Equal(t, 0, code, "a machine with no nova- volumes is `SANDBOX REAP OK volumes=0` and exit 0: got %d\n%s", code, errOut)
+	require.Contains(t, errOut, "SANDBOX REAP OK volumes=0", "a machine with no nova- volumes is `SANDBOX REAP OK volumes=0` and exit 0: got %d\n%s", code, errOut)
 }
 
 // A delete that fails is exit 3, the same status a leaked volume costs the run verb: the
@@ -212,32 +185,21 @@ func TestReapExitsThreeWhenAVolumeRemains(t *testing.T) {
 	b.vols.deleteErr = fmt.Errorf("Resource busy")
 
 	code, errOut := reapOnce(t, false)
-	if code != exitLeak {
-		t.Fatalf("a volume that would not delete is exit %d: got %d\n%s", exitLeak, code, errOut)
-	}
-	if !strings.Contains(errOut, "SANDBOX REAP volume=nova-stuck procs=0 deleted=no") {
-		t.Errorf("the failed delete was not reported on the volume's own line:\n%s", errOut)
-	}
+	require.Equal(t, exitLeak, code, "a volume that would not delete is exit %d: got %d\n%s", exitLeak, code, errOut)
+	assert.Contains(t, errOut, "SANDBOX REAP volume=nova-stuck procs=0 deleted=no", "the failed delete was not reported on the volume's own line:\n%s", errOut)
 }
 
 // The marker is the run verb's, written before the command starts, so that a reap after a
 // SIGKILL can tell that volume from one a working card is using.
 func TestTheRunVerbWritesAnOwnerMarkerAtTheVolumeRoot(t *testing.T) {
 	b := newRunBench(t, 0)
-	if code, errOut := runOnce(t, b, runFlagsFor(t)...); code != 0 {
-		t.Fatalf("exit %d\n%s", code, errOut)
-	}
+	code, errOut := runOnce(t, b, runFlagsFor(t)...)
+	require.Equal(t, 0, code, "exit %d\n%s", code, errOut)
 	raw, err := os.ReadFile(filepath.Join(b.vols.mount, ownerMarker))
-	if err != nil {
-		t.Fatalf("the run left no %s at its volume root, so a reap cannot tell it from an orphan: %v", ownerMarker, err)
-	}
+	require.NoError(t, err, "the run left no %s at its volume root, so a reap cannot tell it from an orphan: %v", ownerMarker, err)
 	got := string(raw)
-	if !strings.Contains(got, fmt.Sprintf("pid=%d", os.Getpid())) {
-		t.Errorf("the marker does not name the running tool's pid:\n%s", got)
-	}
-	if !strings.Contains(got, "start=") {
-		t.Errorf("the marker carries no start time, and a pid alone is a number the OS hands out again:\n%s", got)
-	}
+	assert.Contains(t, got, fmt.Sprintf("pid=%d", os.Getpid()), "the marker does not name the running tool's pid:\n%s", got)
+	assert.Contains(t, got, "start=", "the marker carries no start time, and a pid alone is a number the OS hands out again:\n%s", got)
 }
 
 // A marker that is not there, or is not a marker, is an ORPHAN and never a live run. The
@@ -246,13 +208,11 @@ func TestTheRunVerbWritesAnOwnerMarkerAtTheVolumeRoot(t *testing.T) {
 func TestAnUnreadableMarkerIsAnOrphan(t *testing.T) {
 	b := newReapBench(t)
 	mount := b.volume(t, "junk", "disk3s5")
-	if err := os.WriteFile(filepath.Join(mount, ownerMarker), []byte("not a marker\n"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	err := os.WriteFile(filepath.Join(mount, ownerMarker), []byte("not a marker\n"), 0o600)
+	require.NoError(t, err, "write: %v", err)
 	code, errOut := reapOnce(t, false)
-	if code != 0 || !strings.Contains(errOut, "SANDBOX REAP volume=nova-junk procs=0 deleted=yes") {
-		t.Fatalf("a volume with an unreadable marker was kept; it is an orphan: exit %d\n%s", code, errOut)
-	}
+	require.Equal(t, 0, code, "a volume with an unreadable marker was kept; it is an orphan: exit %d\n%s", code, errOut)
+	require.Contains(t, errOut, "SANDBOX REAP volume=nova-junk procs=0 deleted=yes", "a volume with an unreadable marker was kept; it is an orphan: exit %d\n%s", code, errOut)
 }
 
 // Every other platform refuses the verb for the reason `run` refuses: there are no
@@ -261,9 +221,9 @@ func TestReapRefusesWhereThereAreNoDisposableVolumes(t *testing.T) {
 	t.Parallel()
 
 	line, remedy, refused := noDisposableBody("linux")
-	if !refused || !strings.Contains(line, "reason=no_sandbox") || remedy == "" {
-		t.Fatalf("reap and run share one platform gate, and it did not refuse linux: %q %q %v", line, remedy, refused)
-	}
+	require.True(t, refused, "reap and run share one platform gate, and it did not refuse linux: %q %q %v", line, remedy, refused)
+	require.Contains(t, line, "reason=no_sandbox", "reap and run share one platform gate, and it did not refuse linux: %q %q %v", line, remedy, refused)
+	require.NotEmpty(t, remedy, "reap and run share one platform gate, and it did not refuse linux: %q %q %v", line, remedy, refused)
 }
 
 // `reap --help` answers the question rather than complaining about the argv that asked
@@ -272,12 +232,10 @@ func TestReapHelpIsExitZeroOnStdout(t *testing.T) {
 	t.Parallel()
 
 	var out, errb bytes.Buffer
-	if code := reapVerb([]string{"--help"}, &out, &errb); code != 0 {
-		t.Fatalf("`reap --help` exited %d\n%s", code, errb.String())
-	}
-	if !strings.Contains(out.String(), "nova-sandbox reap") || !strings.Contains(out.String(), "--dry-run") {
-		t.Errorf("`reap --help` does not print the verb's usage:\n%s", out.String())
-	}
+	code := reapVerb([]string{"--help"}, &out, &errb)
+	require.Equal(t, 0, code, "`reap --help` exited %d\n%s", code, errb.String())
+	assert.Contains(t, out.String(), "nova-sandbox reap", "`reap --help` does not print the verb's usage:\n%s", out.String())
+	assert.Contains(t, out.String(), "--dry-run", "`reap --help` does not print the verb's usage:\n%s", out.String())
 }
 
 // A flag the verb does not have is a refusal that names it, not a silent ignore.
@@ -286,7 +244,6 @@ func TestReapRefusesAFlagItDoesNotHave(t *testing.T) {
 
 	var out, errb bytes.Buffer
 	code := reapVerb([]string{"--force"}, &out, &errb)
-	if code != 125 || !strings.Contains(errb.String(), "--force") {
-		t.Fatalf("`reap --force` is a refusal naming the flag: got %d\n%s", code, errb.String())
-	}
+	require.Equal(t, 125, code, "`reap --force` is a refusal naming the flag: got %d\n%s", code, errb.String())
+	require.Contains(t, errb.String(), "--force", "`reap --force` is a refusal naming the flag: got %d\n%s", code, errb.String())
 }
