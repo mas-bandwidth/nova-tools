@@ -878,6 +878,11 @@ func TestAReadWithNoVerdictIsReturnedForTheSprintToAskAgain(t *testing.T) {
 			`read --as r --return r1 --reason no verdict (ran=false verdict=""): STAGE FAIL no bench mirror --epoch 7`},
 		{"did not run, a stale verdict line", Result{Ran: false, Verdict: "ok", Report: "the child ended without a result"},
 			`read --as r --return r1 --reason no verdict (ran=false verdict="ok"): the child ended without a result --epoch 7`},
+		// names-05.r1.reader-superman, epoch 15, 2026-10-02: the provider refused every
+		// request (429) and native's log said so; the return named only the absence
+		{"the provider failed the run", Result{Ran: false, End: EndProvider, Report: "the child ended without a result (see LOG)",
+			Provider: "provider: class=rate-limited status=429 msg=[Alibaba] qwen/qwen3.8-flash is temporarily rate-limited upstream. Please retry shortly, or add your own key [redacted]"},
+			`read --as r --return r1 --reason no verdict (ran=false verdict=""): provider failure: provider: class=rate-limited status=429 msg=[Alibaba] qwen/qwen3.8-flash is temporarily rate-limited upstream. Please retry shortly, or add your own key [redacted] --epoch 7`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

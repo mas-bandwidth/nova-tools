@@ -453,7 +453,8 @@ func statusRank(status string) int {
 }
 
 // FleetOrder is the fleet's rows by name, then stably by status: up, held,
-// down, anything else last. status is each row's status cell.
+// down, anything else last. status is each row's status cell. The friends
+// table is ordered by it too (FriendRows): one order for both.
 func FleetOrder(rows []string, status map[string]string) []string {
 	out := slices.Clone(rows)
 	slices.Sort(out)

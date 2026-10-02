@@ -61,7 +61,10 @@ nova_pg_password_key: NOVA_PG_CONFIG_PASSWORD
 # The build tools.yml installs: nova_version (required, -e) built from the
 # nova-tools checkout nova_source on the machine that runs the play, under
 # nova_release_out. nova_release_gate_args is passed to the build as is, for
-# its definition-of-done gate (--cli <file> --receipts <dir>).
+# its definition-of-done gate: the checkout's command reference and the dogfood
+# receipts in nova_dogfood_receipts (required, -e: the build guesses no
+# receipts directory, SPEC-RELEASE rule 12). A waiver replaces the list whole:
+#   -e '{"nova_release_gate_args": ["--no-dogfood-gate", "--reason", "<why>"]}'
 nova_release_out: "{{ lookup('env', 'HOME') }}/nova-bench/release-build"
 nova_release_gocache: "{{ lookup('env', 'HOME') }}/nova-bench/release-gocache"
-nova_release_gate_args: []
+nova_release_gate_args: ["--cli", "{{ nova_source }}/docs/CLI.md", "--receipts", "{{ nova_dogfood_receipts }}"]

@@ -107,8 +107,16 @@ func NextBeat(prev Beat, now time.Time, pct float64, how string, meter hostload.
 // coordinator holds it, else up while it has missed fewer than
 // MissedBeatsDown beat windows, else down.
 func MemberStatus(ctl *Card, b Beat, now time.Time) string {
+	return PresenceStatus(ctl.F("held") != "", b, now)
+}
+
+// PresenceStatus is the one rule of a fleet member's and a friend's status at
+// now: held while the coordinator holds it (fleet down, friend down), else up
+// while it has missed fewer than MissedBeatsDown beat windows of BeatDeadline,
+// else down (never beaten, or lapsed).
+func PresenceStatus(held bool, b Beat, now time.Time) string {
 	switch {
-	case ctl.F("held") != "":
+	case held:
 		return Held
 	case b.Alive(now):
 		return Up

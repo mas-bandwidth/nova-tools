@@ -14,6 +14,13 @@
 # cell (the stream's landed cost, "$" and four places, "-" when none was priced) and the
 # footer the exact sum over the streams. Held by TestSprintTablesAreLocked.
 #
+# Change, 2026-10-02, asked by Glenn in words: "I like these sentinels. I think it would
+# be a good idea for you to add a friends table, above fleet and below merge. friends |
+# status for now. up/down/held :)" friends.status is that table's one column: a row per
+# friend of nova-config's friend rows, its status up, down or held by the fleet's rule,
+# drawn by where after merge and before fleet and never stored as a table. Held by
+# TestSprintTablesAreLocked.
+#
 # Change, 2026-10-02, asked by Glenn in words, at a fleet footer of 132 over members of
 # which 52 could take a card: "width 132?!". The fleet table's footer in the view's text
 # (nova-sprint where) folds ready, working, width, done and ok% over the members whose
@@ -50,4 +57,5 @@ fleet.withdrawn count sum hidden
 fleet.ok count sum hidden
 fleet.failed count sum hidden
 fleet.ctl first none hidden
-view work readers merge fleet
+friends.status text none shown
+view work readers merge friends fleet

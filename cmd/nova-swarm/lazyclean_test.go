@@ -340,7 +340,7 @@ func TestOneCacheRoundRemovesAtMostItsBound(t *testing.T) {
 func TestTheTrimmedCacheIsTheOneLaunchesUse(t *testing.T) {
 	t.Parallel()
 	p := newPool(t)
-	env := nativeChildEnv("data", "job", "tmp", nativeCacheDir(nativeRunConfig{root: p.r.root}), "", "", "")
+	env := nativeChildEnv("data", "job", "tmp", nativeCacheDir(nativeRunConfig{root: p.r.root}), "", "", "", "")
 	assert.Contains(t, env, "GOCACHE="+p.r.goBuildCache())
 	assert.Empty(t, (&nativeRunner{}).goBuildCache(), "no root, no cache")
 	assert.Equal(t, "2.0 GiB", sizeWord(2*gib))

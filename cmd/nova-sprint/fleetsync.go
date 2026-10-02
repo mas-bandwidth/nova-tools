@@ -51,25 +51,37 @@ type inventoryFn func(ctx context.Context, pg string) ([]config.MachineWidth, er
 // readInventory is the real inventoryFn: Postgres by config.ResolveDSN,
 // bounded.
 func (a *app) readInventory(ctx context.Context, pg string) ([]config.MachineWidth, error) {
+	var ws []config.MachineWidth
+	err := a.withConfig(ctx, pg, func(ctx context.Context, st config.Store) (err error) {
+		ws, err = config.Widths(ctx, st)
+		return err
+	})
+	return ws, err
+}
+
+// withConfig runs read on nova-config's Postgres store, found by the config
+// tool's own address rules (config.ResolveDSN), within 30 s; a schema behind
+// this binary's is refused before read runs.
+func (a *app) withConfig(ctx context.Context, pg string, read func(context.Context, config.Store) error) error {
 	dsn, err := config.ResolveDSN(pg, a.getenv)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	st, err := config.OpenPG(ctx, dsn)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer st.Close()
 	have, err := st.Version(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if all, err := config.Migrations(); err == nil && have < len(all) {
-		return nil, fmt.Errorf("schema config is at version %d and this binary carries %d; run: nova-config migrate", have, len(all))
+		return fmt.Errorf("schema config is at version %d and this binary carries %d; run: nova-config migrate", have, len(all))
 	}
-	return config.Widths(ctx, st)
+	return read(ctx, st)
 }
 
 // syncReport is fleet sync's --json output, one shape whether the verb
