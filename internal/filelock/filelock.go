@@ -3,10 +3,9 @@
 // dies, with the holder's stamp written inside the file for a refusal to name and
 // a probe that asks without taking. Its design and invariants are tla/FileLock.tla.
 //
-// It is the consolidation target for the private copies in internal/bus,
-// internal/swarm, internal/tokens, internal/update (the snapshot lock) and
-// cmd/nova-sandbox (the volume-creation lock). Until those callers move onto it no
-// command imports it: that is an adoption not yet landed, not dead code.
+// It is the one file lock in the tree. Its callers: internal/update (the snapshot
+// lock), cmd/nova-sandbox (the volume-creation lock), internal/swarm (the slot
+// store's lock, behind an in-process turn) and internal/tokens (the fold lock).
 package filelock
 
 import (
