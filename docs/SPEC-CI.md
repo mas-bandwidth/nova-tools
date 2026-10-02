@@ -1797,6 +1797,28 @@ so an edit elsewhere selects no shard to run its class tests`.
 expression over `internal/pkgselect/select.go`; another path into the package set
 would need its own row here, and the test cannot know it exists.
 
+**A second edge (nova-tools#5111): a changed file that is not Go selects the
+packages whose tests read it.** `Select` also adds every package whose
+`_test.go` files or `testdata` name a changed non-Go file (by its base name, as
+a whole name: a test names a doc through `filepath.Join("..", "..", "docs",
+"X.md")`, so the path as one string is not in its text), and the package a
+changed file under its `testdata` belongs to (`keyedPackages`,
+`internal/pkgselect/keyed.go`). Card docsd-16 changed a heading in
+`docs/SPEC-SWARM.md`, `internal/swarm`'s test asserts the heading, and the run
+tested only the touched packages and their importers, so a red test landed
+green. A reference over-selects (a `README.md` is named by many tests) and never
+under-selects. A non-test source file's mention does not select its package; a
+deprecated package is dropped as everywhere. A test that reads a whole
+directory of docs (a glob, `os.ReadDir`) names no file and is not found; such a
+test belongs in `internal/docs` or `internal/ci`, which every run selects.
+**Its test.** `TestSelectPackagesAddsThePackagesWhoseTestsReadAChangedFile`
+(`internal/ci/ci_selection_test.go`), over a fixture where the doc is named by a
+test in a package the diff did not touch, with a doc no test names as the
+reversed witness; `internal/pkgselect`'s
+`TestSelectChangeMapsANonGoFileToThePackagesWhoseTestsReadIt` holds the
+boundaries (a longer name ending the same way, a source file's mention, a
+deprecated package's test, a testdata file's owner).
+
 ### `toolchainroots` — the bench standard and the wall name one list per OS, with one kind each
 
 **The rule.** `internal/swarm/toolchain.go` is the ONE list of the bench
@@ -2460,8 +2482,18 @@ history, or one `origin/dev` cannot vouch for here (stale, or shallow),
 excuses nothing and is a finding of its own naming the fetch. On dev a merge
 commit whose second parent is not sprint/foundation's is not a promotion: it
 excuses nothing and is compared as everywhere, with a NOTE and no finding of
-its own; a missing or shallow `origin/sprint/foundation` is the finding naming
-the fetch, as on main. What is not excused is a finding as everywhere: a file
+its own; a shallow `origin/sprint/foundation` is the finding naming the fetch,
+as on main. A missing one is not: dev is the integration branch and
+sprint/foundation exists only while a promotion is in flight, and `ci
+fetch-ancestry --promotion sprint/foundation` (which asks the remote with `git
+ls-remote --exit-code --heads`, exit 2) says "origin has no branch
+sprint/foundation: no promotion to read" and fetches nothing; the dev run then
+has no promotion branch to excuse anything, so the merge is compared as
+everywhere (every deletion a finding, the merge's own change still checked
+against the second parent) and the note names the fetch to run if the branch
+does exist. Nothing is loosened: only an excuse is lost, never a check. Any other
+`ls-remote` failure is a red run, and a main run's missing `origin/dev` stays a
+finding (`TestDevLandingWithNoPromotionBranchIsOrdinary`). What is not excused is a finding as everywhere: a file
 the base branch alone had and the merge lost, since the side branch never
 deleted it. And the merge's own change is checked against the second parent:
 every guarded path the side branch's tip has and HEAD lacks is a finding

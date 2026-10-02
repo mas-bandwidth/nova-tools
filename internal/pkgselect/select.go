@@ -46,7 +46,8 @@ func (e *ListError) Error() string { return strings.TrimRight(e.Text, "\n") }
 // Select prints the ./cmd, ./internal and ./tools Go packages a change touches,
 // plus every in-repo package that imports one of them, or with All the whole
 // tree. The diff is read against Options.Base. A go.mod or go.sum change puts
-// every package in scope. Deprecated packages are never selected (Live).
+// every package in scope. A changed file that is not Go selects the packages
+// whose tests or testdata name it (keyedPackages). Deprecated packages are never selected (Live).
 //
 // NEVER SILENTLY NOTHING. On PR #4370's final head the shards reported
 // `test (nothing)` because `go list` failed on a runner (a shared GOCACHE race:
@@ -298,6 +299,16 @@ func (s *selector) selectChange() (Outcome, error) {
 	// class test without naming a dependent in the import graph. Select it on
 	// every run for the same reason.
 	want["./internal/docs"] = true
+
+	// A changed file that is not Go reaches the packages whose tests read it
+	// (nova-tools#5111), which no import edge says.
+	keyed, err := s.keyedPackages(changed)
+	if err != nil {
+		return Outcome{}, err
+	}
+	for p := range keyed {
+		want[p] = true
+	}
 
 	var selected []string
 	for _, p := range all {
