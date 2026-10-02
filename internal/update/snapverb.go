@@ -130,7 +130,7 @@ func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo
 // executables sit in a bin directory or on PATH. With --bin/--out it inventories
 // a directory of binaries by running each one's own `version`. Every path comes
 // from a flag; neither the file's name nor PATH is trusted for the reading.
-func snapshotVerb(c *tool.Call) *tool.Out {
+func snapshotVerb(c *tool.Call, env Environment) *tool.Out {
 	// Read once at entry, so a refusal on the way keeps its own reason: the
 	// skeleton fails a --dry-run call whose verb never read it.
 	dryRun := c.DryRun()
@@ -141,7 +141,7 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 		if c.Given("timeout") {
 			timeout = c.Dur("timeout")
 		}
-		return snapshotAdopted(c.Str("file"), timeout, c.Dur("budget"))
+		return snapshotAdopted(c.Str("file"), timeout, c.Dur("budget"), env)
 	}
 	bin, outPath := c.Str("bin"), c.Str("out")
 	timeout, budget := c.Dur("timeout"), c.Dur("budget")
@@ -165,7 +165,7 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 		}
 		path := filepath.Join(bin, e.Name())
 		ctx, cancel := context.WithTimeout(run, timeout)
-		p := process(ctx, []string{path, "version"}, nil, ChildCap)
+		p := env.runProcess(ctx, []string{path, "version"}, nil, ChildCap)
 		// A deadline spent before the child even started (a loaded machine) is the
 		// same timeout as one spent while it ran, whatever the start reported.
 		if p.Reason != "" && errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -268,7 +268,7 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 // is written: the manifest is adopted, not discovered. The verdict mirrors
 // report's: one count line, exit 0 when every adopted tool answers and exit 1
 // when any does not.
-func snapshotAdopted(file string, timeout, budget time.Duration) *tool.Out {
+func snapshotAdopted(file string, timeout, budget time.Duration, env Environment) *tool.Out {
 	f, err := os.Open(file)
 	if err != nil {
 		return tool.Refuse(fmt.Sprintf("cannot open %s (supply a readable --file: %s; nova-version example --out %s writes one to start from)", file, manifestShape, file))
@@ -285,7 +285,7 @@ func snapshotAdopted(file string, timeout, budget time.Duration) *tool.Out {
 	for _, e := range entries {
 		// Installed bounds the tool by timeout under the run's context, and tells a
 		// spent budget from a slow tool by that context.
-		r := Installed(run, e, timeout, true)
+		r := installed(run, e, timeout, true, env.runProcess)
 		if r.Known() {
 			known++
 			continue

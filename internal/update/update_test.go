@@ -16,11 +16,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+var helperTiming func([]string) bool
 
 func TestHelperProcess(t *testing.T) {
 	t.Parallel()
@@ -51,8 +54,6 @@ func TestHelperProcess(t *testing.T) {
 	case "fail":
 		fmt.Print("v9.9.9\n")
 		os.Exit(3)
-	case "hang":
-		time.Sleep(30 * time.Second)
 	case "huge":
 		fmt.Println("v1.2.3")
 		for i := 0; i < 2048; i++ {
@@ -83,27 +84,6 @@ func TestHelperProcess(t *testing.T) {
 		if c.Start() != nil {
 			os.Exit(5)
 		}
-	case "hold":
-		if len(a) > 2 && a[2] != "" {
-			_ = os.WriteFile(a[2], []byte(strconv.Itoa(os.Getpid())), 0600)
-		}
-		d, err := time.ParseDuration(a[1])
-		if err != nil {
-			os.Exit(6)
-		}
-		time.Sleep(d)
-	case "escaped":
-		// Leave a grandchild holding stdout open in its OWN process group, then
-		// hang, so the grandchild survives this process's group kill: the
-		// escaped-pipe case a deadline must still close.
-		readyFile := ""
-		if len(a) > 2 {
-			readyFile = a[2]
-		}
-		if err := spawnEscapedHolder(a[1], readyFile); err != nil {
-			os.Exit(5)
-		}
-		time.Sleep(30 * time.Second)
 	case "flood":
 		// Print a version, then a bounded but substantial stream, and exit at
 		// once. This is the healthy child a deadline must still drain in full.
@@ -117,7 +97,9 @@ func TestHelperProcess(t *testing.T) {
 			fmt.Print(chunk)
 		}
 	default:
-		os.Exit(20)
+		if helperTiming == nil || !helperTiming(a) {
+			os.Exit(20)
+		}
 	}
 	os.Exit(0)
 }
@@ -210,45 +192,6 @@ func TestModelDigestAndPinIdentity(t *testing.T) {
 		if v, _ := verdict(r); v != "EQUAL" {
 			require.EqualValues(t, "EQUAL", v, r)
 		}
-	}
-}
-func TestProcessesAreBoundedAndRawSurvivesFailure(t *testing.T) {
-	// Each case carries its own timeout because they measure two different
-	// things. The hang needs a timeout SHORT enough to fire; the others need one
-	// long enough that starting a race-instrumented child on a loaded box is not
-	// mistaken for a hang -- at 100ms for all four, the exit-3 case read
-	// "timeout" on a busy machine and the assertion it was making was lost.
-	for _, tc := range []struct {
-		cmd, want string
-		timeout   time.Duration
-		bound     time.Duration
-	}{
-		{command(t, "fail"), "exit 3", 5 * time.Second, 6 * time.Second},
-		{command(t, "huge"), "output", 5 * time.Second, 6 * time.Second},
-		{command(t, "hang"), "timeout", 20 * time.Millisecond, time.Second + killGrace},
-		{"nova-version-no-such-binary", "not_found", 5 * time.Second, time.Second},
-	} {
-		a, _ := argv(tc.cmd)
-		start := time.Now()
-		r := Installed(context.Background(), Entry{Kind: "tool", Installed: a}, tc.timeout, true)
-		if r.Reason != tc.want {
-			require.EqualValuesf(t, tc.want, r.Reason, "%s: %+v", tc.want, r)
-		}
-		if took := time.Since(start); took > tc.bound {
-			require.LessOrEqualf(t, took, tc.bound, "%s: %s is past the %s bound", tc.want, took, tc.bound)
-		}
-		if tc.want == "exit 3" && r.Raw != "v9.9.9" {
-			require.Fail(t, fmt.Sprintln(r))
-		}
-	}
-	a, _ := argv(command(t, "stderr", base64.StdEncoding.EncodeToString([]byte("v1.2.3\n"))))
-	if r := Installed(context.Background(), Entry{Kind: "tool", Installed: a}, time.Second, true); r.Version != "1.2.3" {
-		require.EqualValues(t, "1.2.3", r.Version, r)
-	}
-	a, _ = argv(command(t, "args", ";", "&&", "|", "$(x)", "`x`", "*"))
-	p := process(context.Background(), a, nil, ChildCap)
-	if p.Stdout != ";|&&|||$(x)|`x`|*" {
-		require.EqualValuesf(t, ";|&&|||$(x)|`x`|*", p.Stdout, "shell interpretation: %+v", p)
 	}
 }
 
@@ -378,31 +321,34 @@ func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 	}
 }
 func TestFourReadLimitAndOverallBudget(t *testing.T) {
-	hang := transportFunc(func(r *http.Request) (*http.Response, error) {
-		<-r.Context().Done()
-		return nil, r.Context().Err()
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		hang := transportFunc(func(r *http.Request) (*http.Response, error) {
+			deadline, ok := r.Context().Deadline()
+			assert.True(t, ok)
+			assert.Equal(t, start.Add(30*time.Second), deadline, "the whole budget bounds every transport request")
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		})
+		client := &http.Client{Transport: hang}
+
+		entries := make([]Entry, 40)
+		for i := range entries {
+			entries[i] = Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: []string{"1.0.0"}, Latest: "npm:pkg"}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		r := readEntries(ctx, entries, options{timeout: time.Minute}, Environment{Client: client}, false)
+		if len(r) != 40 {
+			require.Lenf(t, r, 40, "expected 40 results, got %d", len(r))
+		}
+		if r[39].Installed.Reason != "budget" && r[39].Latest.Reason != "budget" {
+			require.Failf(t, "", "expected budget reason on unread entry, got: %+v", r[39])
+		}
 	})
-	client := &http.Client{Transport: hang}
-
-	entries := make([]Entry, 40)
-	for i := range entries {
-		entries[i] = Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: []string{"1.0.0"}, Latest: "npm:pkg"}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-
-	started := time.Now()
-	r := readEntries(ctx, entries, options{timeout: time.Second}, Environment{Client: client}, false)
-	if took := time.Since(started); took > 30*time.Second {
-		require.Failf(t, "", "budget exceeded: took %s", took)
-	}
-	if len(r) != 40 {
-		require.Lenf(t, r, 40, "expected 40 results, got %d", len(r))
-	}
-	if r[39].Installed.Reason != "budget" && r[39].Latest.Reason != "budget" {
-		require.Failf(t, "", "expected budget reason on unread entry, got: %+v", r[39])
-	}
 }
 
 func TestFourReadConcurrencyLimit(t *testing.T) {
@@ -506,14 +452,13 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	if err != nil || len(state.Delivered) != 0 || len(state.Pending) != 0 {
 		require.Fail(t, fmt.Sprintln(state, err))
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	unlock, err := lockSnapshot(ctx, s)
 	if err != nil {
 		require.NoError(t, err, err)
 	}
-	blocked, cancel2 := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel2()
+	blocked, cancel2 := context.WithCancel(context.Background())
+	cancel2()
 	if release, err := lockSnapshot(blocked, s); err == nil {
 		release()
 		require.Fail(t, fmt.Sprintln("two snapshot writers acquired lock"))
@@ -553,14 +498,6 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 // cleanly, its output is complete, and only the copy of that output is still
 // finishing. A ten millisecond grace lost that race under load and reported a
 // healthy tool as UNKNOWN. The grace has to outlast an ordinary handoff.
-func TestHealthyCommandWithLingeringGrandchildStillReads(t *testing.T) {
-	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte("x 1.2.3\n")), "100ms"))}
-	r := Installed(context.Background(), e, 5*time.Second, false)
-	if !r.Known() || r.Version != "1.2.3" {
-		require.Failf(t, "", "healthy read refused: reason=%q version=%q raw=%q", r.Reason, r.Version, r.Raw)
-	}
-}
-
 // The three process failures a person acts on differently must stay
 // distinguishable in the reason, which one collapsed "execution failed" did not.
 func TestProcessFailuresAreDistinguishable(t *testing.T) {

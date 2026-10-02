@@ -27,6 +27,7 @@ import (
 // Environment supplies deterministic clock/network seams. Nil values use the
 // machine clock and a credential-free, redirect-bounded HTTP client.
 type Environment struct {
+	Process     processFunc
 	Now         func() time.Time
 	Client      *http.Client
 	Context     context.Context
@@ -549,7 +550,7 @@ func readEntries(ctx context.Context, entries []Entry, o options, env Environmen
 			started.Done()
 			for i := range jobs {
 				e := entries[i]
-				r := entryRead{Entry: e, Installed: Installed(ctx, e, o.timeout, report), Latest: Read{Source: e.Latest}}
+				r := entryRead{Entry: e, Installed: installed(ctx, e, o.timeout, report, env.runProcess), Latest: Read{Source: e.Latest}}
 				if !report {
 					r.Latest = Latest(ctx, e, o.timeout, env.Client)
 				} else if strings.HasPrefix(e.Latest, "local:") {
@@ -727,7 +728,7 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	defer cancelRun()
 	runChild := func(argv []string) ProcessResult {
 		ctx, cancel := context.WithTimeout(run, timeout)
-		p := process(ctx, argv, nil, ChildCap)
+		p := env.runProcess(ctx, argv, nil, ChildCap)
 		cancel()
 		return p
 	}
