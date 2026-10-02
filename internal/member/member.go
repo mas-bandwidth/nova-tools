@@ -291,6 +291,7 @@ type launch struct {
 	// A busy launch is left alone: not reported, not reaped, not forgotten, until the work
 	// posts what it found and a pass collects it.
 	busy    bool
+	busyAt  time.Time // when that long work began
 	res     *Result   // how the child ended, once its end has been collected
 	push    *Push     // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
 	spent   bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
@@ -325,6 +326,11 @@ type Member struct {
 	// last advanced, in unix nanoseconds
 	beatMu   sync.Mutex
 	progress atomic.Int64
+	// longSince is when the oldest long work still in flight began, in unix nanoseconds
+	// (0: none), set by the pass (longWork) and read by the beat (Stalled); longs counts
+	// the long work in flight, for a bounded run's end (WaitLong)
+	longSince atomic.Int64
+	longs     sync.WaitGroup
 
 	// lastStart is when this member last started a harness, for StartGap.
 	lastStart time.Time
@@ -443,7 +449,14 @@ func (m *Member) clock() time.Time {
 // Stalled is how long the work pass has gone without advancing, when that is past
 // BeatStall; 0 while it is going on.
 func (m *Member) Stalled() time.Duration {
-	since := m.clock().Sub(time.Unix(0, m.progress.Load()))
+	now := m.clock()
+	since := now.Sub(time.Unix(0, m.progress.Load()))
+	// long work a launch began and has not posted (a push or a start that never
+	// returns) stalls the member as a verb that never returns does: the pass itself
+	// goes on round it, so its own advance is no evidence the work is moving
+	if at := m.longSince.Load(); at != 0 {
+		since = max(since, now.Sub(time.Unix(0, at)))
+	}
 	if since <= BeatStall {
 		return 0
 	}
@@ -631,7 +644,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		var args []string
 		ok := r.OK // as reported: a work card whose push was refused is reported failed
 		if m.cfg.Reader {
-			if r.End == EndStaging && !l.retried {
+			if r.End == EndStaging && !l.retried && !m.drain {
+				// (a draining reader starts nothing: its stage failure is handed back below)
 				// RULE (docs/SPEC-SPRINT.md, the readers): a read's stage failure is never a
 				// verdict. The stage is tried once more here after ReadStageRetry; a second
 				// failure falls to the return below, which hands the read to another reader.
@@ -917,7 +931,7 @@ func (m *Member) start(p Packet) bool {
 	}
 	// the launch holds its lane from here; its start is long (a stagger, a slot made, a
 	// process begun) and is done apart from the pass, one start after another
-	m.running[p.Card] = launch{busy: true, gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p, retried: m.stageRetried[p.Card]}
+	m.running[p.Card] = launch{busy: true, busyAt: m.clock(), gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p, retried: m.stageRetried[p.Card]}
 	m.long(func() {
 		m.startMu.Lock()
 		m.staggerStart()
@@ -925,6 +939,7 @@ func (m *Member) start(p Packet) bool {
 		m.startMu.Unlock()
 		m.post(p.Card, post{child: ch, startErr: err})
 	})
+	m.longWork()
 	if m.cfg.Background {
 		return true
 	}
@@ -937,11 +952,31 @@ func (m *Member) start(p Packet) bool {
 // the pass asks for it when it is not (a test's member: a pass is one step).
 func (m *Member) long(work func()) {
 	if m.cfg.Background {
-		go work()
+		m.longs.Add(1)
+		go func() {
+			defer m.longs.Done()
+			work()
+		}()
 		return
 	}
 	work()
 }
+
+// longWork records when the oldest long work still in flight began, for the beat: a push
+// or a start that never returns stalls the member (Stalled) though the pass goes on.
+func (m *Member) longWork() {
+	var oldest int64
+	for _, l := range m.running {
+		if at := l.busyAt.UnixNano(); l.busy && (oldest == 0 || at < oldest) {
+			oldest = at
+		}
+	}
+	m.longSince.Store(oldest)
+}
+
+// WaitLong waits for the long work in flight to end: a member run for a bounded number of
+// passes does not leave a start half made or a push cut off when its process exits.
+func (m *Member) WaitLong() { m.longs.Wait() }
 
 // post leaves what a launch's long work found for the next pass, and wakes the loop.
 func (m *Member) post(card string, p post) {
@@ -997,6 +1032,7 @@ func (m *Member) collect() (acted int) {
 			m.running[card] = l
 		}
 	}
+	m.longWork()
 	return acted
 }
 
@@ -1109,11 +1145,13 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 		if !ours || l.busy || l.res != nil || l.spent || (c.Col != "working" && c.Col != "reading") || m.moved(l, c) || !l.child.Done() {
 			continue
 		}
-		l.busy = true
+		l.busy, l.busyAt = true, m.clock()
 		m.running[id] = l
 		child, p, branch := l.child, l.packet, l.branch
 		ends.Add(1)
+		m.longs.Add(1)
 		go func() {
+			defer m.longs.Done()
 			defer ends.Done()
 			r := child.Result()
 			if m.cfg.Reader {
@@ -1139,6 +1177,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 			m.post(id, post{res: &r, push: &pu})
 		}()
 	}
+	m.longWork()
 	if !m.cfg.Background {
 		ends.Wait() // a pass is one step: the ends it began, side by side, are its own
 	}

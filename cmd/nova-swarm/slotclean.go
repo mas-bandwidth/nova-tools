@@ -98,11 +98,27 @@ func (r *nativeRunner) cleaner() {
 // clean removes a tagged launch's directory (an ok one's) and prunes the pool.
 func (r *nativeRunner) clean(e ended) {
 	if !e.failed {
-		if err := r.removeLaunch(e.name); err != nil {
+		if err := r.removeEnded(e.name); err != nil {
 			fmt.Fprintf(r.stderr, "nova-swarm member: NOTE the directory of launch %s was not removed: %s\n", oneline.Field(e.name), oneline.Err(err))
 		}
 	}
 	r.prune(time.Now())
+}
+
+// removeEnded removes a launch's directory unless a launch of that name is live: the member
+// starts a card again under the same name when its report was refused and the sprint still
+// has it working, and that launch's checkout is never removed under it. The removal and a
+// start's claim of the name exclude each other (removing), so one always sees the other.
+func (r *nativeRunner) removeEnded(name string) error {
+	r.removing.Lock()
+	defer r.removing.Unlock()
+	r.mu.Lock()
+	live := r.live[name]
+	r.mu.Unlock()
+	if live {
+		return nil
+	}
+	return r.removeLaunch(name)
 }
 
 // prune removes every ended launch directory under the slots but the newest keepFailed
@@ -138,10 +154,11 @@ func (r *nativeRunner) prune(now time.Time) (removed, kept int) {
 			kept++
 			continue
 		}
-		if err := r.removeLaunch(e.name); err != nil {
+		if err := r.removeEnded(e.name); err != nil {
 			fmt.Fprintf(r.stderr, "nova-swarm member: NOTE the directory of ended launch %s was not removed: %s\n", oneline.Field(e.name), oneline.Err(err))
 			continue
 		}
+
 		r.mu.Lock()
 		delete(r.kept, e.name)
 		r.mu.Unlock()

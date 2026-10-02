@@ -293,8 +293,10 @@ func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() s
 				spent.Queue.Seconds(), spent.Push.Seconds(), spent.Report.Seconds(), spent.Fill.Seconds())
 		}
 		if limit > 0 && n >= limit {
+			m.WaitLong() // no start half made, no push cut off, when the process exits
 			return n, false
 		}
+
 		// the next pass at the interval, or at once when a push ended or a child exited
 		wait := time.NewTimer(every)
 		select {
@@ -340,7 +342,9 @@ type nativeRunner struct {
 	// is the cleaner's queue; nil cleans in Ended
 	mu         sync.Mutex
 	live, kept map[string]bool
-	tagged     chan ended
+	removing   sync.Mutex // held while a launch directory is removed, and while one is claimed
+
+	tagged chan ended
 }
 
 // started marks a launch running, so no prune of the pool touches its directory until the
@@ -354,10 +358,27 @@ func (r *nativeRunner) started(name string) {
 	r.live[name] = true
 }
 
+// Start runs a packet as a child. The launch is claimed (live) before its directory is
+// touched and for as long as it runs, so the cleaner, which removes ended launches apart
+// from the pass, never removes the directory of a launch of the same name started again.
 func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	if !safepath.NameOK(p.Card) {
 		return nil, fmt.Errorf("card %q is not a name", p.Card)
 	}
+	name := launchName(p)
+	r.removing.Lock() // a removal in flight ends first: it may be this name's old directory
+	r.started(name)
+	r.removing.Unlock()
+	c, err := r.start(p)
+	if err != nil {
+		r.mu.Lock()
+		delete(r.live, name)
+		r.mu.Unlock()
+	}
+	return c, err
+}
+
+func (r *nativeRunner) start(p member.Packet) (member.Child, error) {
 	// one slot and one results root per launch (the card at its generation, or
 	// attempt, in its epoch), so a result can only be this launch's; a launch
 	// whose pid file names a live process is adopted, never run twice

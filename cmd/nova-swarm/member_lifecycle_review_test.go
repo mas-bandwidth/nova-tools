@@ -126,10 +126,11 @@ func TestReviewTheCleanerKeepsTheDirectoryOfANewLaunchOfTheSameName(t *testing.T
 
 // lcrHeldRunner's Start waits for release, and closes returned when it gives the child.
 type lcrHeldRunner struct {
-	release, returned chan struct{}
+	entered, release, returned chan struct{}
 }
 
 func (h *lcrHeldRunner) Start(member.Packet) (member.Child, error) {
+	close(h.entered)
 	<-h.release
 	close(h.returned)
 	return &lcrChild{}, nil
@@ -143,17 +144,34 @@ func (h *lcrHeldRunner) Start(member.Packet) (member.Child, error) {
 // it and stages the slot again under the running child); a push in flight is cut off.
 func TestReviewABoundedMemberLoopDoesNotReturnWithAStartInFlight(t *testing.T) {
 	t.Parallel()
-	rn := &lcrHeldRunner{release: make(chan struct{}), returned: make(chan struct{})}
-	t.Cleanup(func() { close(rn.release) })
+	rn := &lcrHeldRunner{entered: make(chan struct{}), release: make(chan struct{}), returned: make(chan struct{})}
 	sp := &lcrSprint{}
 	var out, errb bytes.Buffer
 	m := member.New(member.Config{As: "m1", Width: 1, Background: true}, sp, rn, lcrShaPusher{}, &out)
-	n, replaced := memberLoop(m, time.Hour, 1, func() string { return "" }, &out, &errb)
-	require.Equal(t, 1, n)
-	require.False(t, replaced)
+	// the loop waits for the start it began (WaitLong), so it runs beside the test, which
+	// lets the start go once it is in flight
+	type result struct {
+		n        int
+		replaced bool
+	}
+	done := make(chan result)
+	go func() {
+		n, replaced := memberLoop(m, time.Hour, 1, func() string { return "" }, &out, &errb)
+		done <- result{n, replaced}
+	}()
+	<-rn.entered
+	select {
+	case <-done:
+		t.Fatal("memberLoop --once returned while the start it began is still in flight; the process exits under it")
+	default:
+	}
+	close(rn.release)
+	got := <-done
+	require.Equal(t, 1, got.n)
+	require.False(t, got.replaced)
 	select {
 	case <-rn.returned:
 	default:
-		t.Error("memberLoop --once returned while the start it began is still in flight; the process exits under it")
+		t.Error("memberLoop --once returned before the start it began had ended")
 	}
 }
