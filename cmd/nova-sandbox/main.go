@@ -221,7 +221,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Enviro
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is probed, wrapped or written (the CLI style's rule (b), #4505).
+	// before the tool probes, wraps, or writes anything.
 	// Only -h: every other exit of this tool, the bare wrap's 125 included, is
 	// unchanged, and nothing after -- is ever read as help.
 	defer recoverVerbHelp(stdout, &code)
@@ -250,10 +250,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 			return sandbox.ExitCannotRun
 		}
 		// The same four tokens every other binary prints, then the two facts a
-		// sandbox is judged by as named extras. This line used to be a shape of its
+		// sandbox is judged by as named extras.
 		// own -- `SANDBOX VERSION tool=... version=...` -- and a shape of its own is
 		// a shape every reader has to be taught: `nova-version snapshot` could not
-		// read it at all (#1297). The backend and the platform are not lost; they
+		// The backend and the platform are not lost; they
 		// are now said in the grammar the whole set shares.
 		fmt.Fprintln(stdout, buildinfo.Line("nova-sandbox", version,
 			"backend="+sandbox.Backend, "platform="+runtime.GOOS))
@@ -352,7 +352,7 @@ func parseVerb(verb string, args []string) flags {
 		case "--name":
 			f.name, i = want(i, "--name")
 		case "--acl":
-			// Rule 22's flag, and it is the WINDOWS body's. The spec's verb table has it
+			// This flag belongs to the windows implementation. The spec's verb table has it
 			// on the bare form for all three platforms and says --name and --acl are
 			// "accepted and ignored" on darwin and linux, "so one caller has one script
 			// for three platforms" — a caller that builds one argv and gets
@@ -415,7 +415,7 @@ func bareFlagText(text string) string {
 	return head + "; the flags are " + verbflag.List(bareFlags) + near + "; run: " + run
 }
 
-// refuseAll prints one SANDBOX REFUSED line per independent problem — rule 16 asks for
+// refuseAll prints one SANDBOX REFUSED line per independent problem — this
 // every problem at once, and one line per problem is how a scanner reads them — and
 // returns 125 unless EVERY problem is not_found, in which case it returns 127. Returning
 // the first problem's code made the status depend on the order the flags were typed: two
@@ -438,7 +438,7 @@ func refuseAll(stderr io.Writer, bad []sandbox.Refusal) int {
 
 // homeRemedy gives every home_outside refusal in bad the command that answers it: make a
 // data home inside the first --write and run the same invocation with HOME set there.
-// HOME is never defaulted (rule 9); the caller pastes the line, and nothing is guessed.
+// HOME is never defaulted; the caller provides it, and the tool does not guess.
 // argv is the invocation after `nova-sandbox`, verb included.
 func homeRemedy(bad []sandbox.Refusal, writes, argv []string) {
 	if len(writes) == 0 || !filepath.IsAbs(writes[0]) {
@@ -483,7 +483,7 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 		f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command",
 			Text: "no --; the command comes after it: nova-sandbox --write <dir> -- <command> <args...>"})
 	}
-	// Rule 16: "a refusal names the flag and the form it wants", and a flag that belongs
+	// A refusal names the flag and the form it wants, and a flag that belongs
 	// to another verb was accepted here and then ignored — the opposite. --secret is
 	// probe's and --max is probe's and check's; the spec's verb table has neither on the
 	// bare form.
@@ -611,7 +611,7 @@ func checkVerb(args []string, stdout, stderr io.Writer) int {
 		"backend", name, "abi", sandbox.ABI(), "net", net, "hosts", "none", "note", note)
 }
 
-// probeVerb is rule 10: four or five checks under the REAL policy for this platform, run once
+// probeVerb runs four or five checks under the policy for this platform, once
 // before the first task (the fifth, read_secret, runs only where a --secret file is named;
 // a key delivered by nova-secrets exec has no file). A wall that denies the work too is
 // broken, and a two-check probe would call it a pass.
@@ -623,7 +623,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	f.bad = append(f.bad, notForThisVerb("probe", "nova-sandbox probe -h", map[string]bool{
 		"--acl": f.acl != "", "--name": f.name != "", "--cwd": f.cwd != "", "--tmp": f.tmp != "", "--net-allow": len(f.netAllow) > 0,
 	}, ownerOf)...)
-	// EVERY independent problem in ONE run. Emma, dogfooding v0.12.0 (nova-tools #104):
+	// The tool reports every independent problem in one run. Earlier versions required
 	// a bare `probe` named the missing --secret, and named the missing --write only on
 	// the NEXT run, once --secret had been supplied -- a first run sequenced into as many
 	// runs as it had mistakes. `nova-wake serve` names all nine of its missing flags at
@@ -640,7 +640,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		}
 		return v.done(stderr, "", sandbox.ExitCannotRun)
 	}
-	// Rule 10: the probe re-executes THIS binary under the policy it just generates, with
+	// The probe re-executes this binary under the policy it generates, with
 	// an internal verb, never a shell. os.Executable() is the resolved command of that
 	// wrapped run, so its directory is the root "the directory of the resolved command"
 	// by construction: read_root then exercises the one root the generator computes at run
@@ -651,11 +651,11 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		bad = append(bad, sandbox.Refusal{Reason: "check",
 			Text: "this binary cannot name its own path: " + oneline.Err(err)})
 	}
-	// --secret is a caller path like every other, so rule 5 resolves it: absolute,
+	// --secret is a caller path; it must be absolute,
 	// existing, symlinks followed, and refused for absence rather than passing a probe
 	// against a file that is not there. A probe WITHOUT --secret is sound: a caller
 	// whose key arrives by environment (nova-secrets exec) has no key FILE for the wall
-	// to protect, and the probe then proves the wall's other four checks (issue #881).
+	// to protect, and the probe then proves the wall's other checks.
 	var secret string
 	if f.secret != "" {
 		got, refusal := sandbox.ResolveCallerFile("--secret", f.secret)
@@ -686,8 +686,8 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 			// `PROBE REFUSED reason=check ... home_outside` ("The probe"). The
 			// refusal's own token is therefore named IN THE TEXT, where a reader
 			// searching for home_outside or bad_write still finds it and the grammar
-			// stays the one the spec publishes. DeepSeek's read of #108 at ab880be,
-			// finding 1: the previous revision forwarded bad_write, home_outside,
+			// stays the one the spec publishes.
+			// The refusal reason includes bad_write, home_outside,
 			// bad_read and no_command into reason=, tokens the grammar does not list.
 			// the token goes before a remedy the text carries, so the remedy stays a paste
 			text, next, hasNext := strings.Cut(r.Text, "; run: ")
@@ -701,7 +701,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		}
 		return v.done(stderr, "", sandbox.ExitCannotRun)
 	}
-	// rule 6: a --secret inside a named path is a misconfiguration, not a failed probe.
+	// A --secret inside a named path is a misconfiguration, not a failed probe.
 	// A probe without --secret has no secret to place, and the check is skipped.
 	if secret != "" {
 		for _, d := range append(append([]string{}, p.Reads...), p.Writes...) {
@@ -713,7 +713,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		}
 	}
 
-	// rule 10: the outside path is NAMED, never os.TempDir(), because rule 8 points
+	// The outside path is named explicitly, not os.TempDir(), because
 	// TMPDIR inside the wall and a probe built on it would fail on a working wall.
 	outside := filepath.Join(filepath.Dir(p.Writes[0]), fmt.Sprintf(".nova-sandbox-probe-%d", os.Getpid()))
 	for _, d := range append(append([]string{}, p.Reads...), p.Writes...) {
@@ -724,7 +724,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		}
 	}
 
-	// Rule 10's child is this binary, and NOTHING ELSE may be: the verb opens, truncates
+	// The probe's child is this binary, and nothing else. The verb opens, truncates
 	// and reads paths it is handed, so a caller who types it by hand truncates a file with
 	// no wall around it (measured at 1922f9d: `nova-sandbox probe-step write_outside
 	// <path>` emptied an ordinary file from an ordinary shell, exit 0).
@@ -750,7 +750,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	}
 	nonce := hex.EncodeToString(rawNonce[:])
 
-	// FIVE CHECKS, OR FOUR WHERE NO --secret was named (issue #881): a caller whose key
+	// The probe runs five checks, or four if no --secret is named. If a caller's key
 	// arrives by environment has no key file, so there is no read_secret to prove. The
 	// order is the spec's own.
 	type step struct{ name, path, expect string }
