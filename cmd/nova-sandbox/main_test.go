@@ -23,6 +23,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox/darwincheck"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/mas-bandwidth/nova-tools/profiles"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Every test here runs the REAL thing on this Mac: a real sandbox-exec, a real profile
@@ -58,13 +60,9 @@ func newJob(t *testing.T) job {
 	secretDir := filepath.Join(base, "secret")
 	j.secret = filepath.Join(secretDir, "env")
 	for _, d := range []string{j.write, j.read, j.home, secretDir, j.outside} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(d, 0o755))
 	}
-	if err := os.WriteFile(j.secret, []byte("not-a-real-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(j.secret, []byte("not-a-real-key\n"), 0o600))
 	return j
 }
 
@@ -138,16 +136,11 @@ func TestWrappedCommandRunsAndTheLineNamesTheWall(t *testing.T) {
 	needDarwin(t)
 	j := newJob(t)
 	code, _, errOut := j.wrapped(t, "true")
-	if code != 0 {
-		t.Fatalf("exit %d, want 0; stderr: %s", code, errOut)
+	require.Equal(t, 0, code, "exit %d, want 0; stderr: %s", code, errOut)
+	for _, want := range []string{"SANDBOX OK backend=sandbox-exec", "net=nopromise", "cmd=sh"} {
+		require.Contains(t, errOut, want, "the OK line is not the grammar the spec fixes: %q", errOut)
 	}
-	if !strings.Contains(errOut, "SANDBOX OK backend=sandbox-exec") ||
-		!strings.Contains(errOut, "net=nopromise") || !strings.Contains(errOut, "cmd=sh") {
-		t.Fatalf("the OK line is not the grammar the spec fixes: %q", errOut)
-	}
-	if strings.Contains(errOut, "-c") {
-		t.Fatal("the OK line printed an argument; arguments carry task text")
-	}
+	require.NotContains(t, errOut, "-c", "the OK line printed an argument; arguments carry task text")
 }
 
 // Rule 3, and the reason the tool exists: the named secret is unreadable INSIDE the wall
@@ -158,26 +151,19 @@ func TestTheNamedSecretIsUnreadableInsideTheWall(t *testing.T) {
 
 	needDarwin(t)
 	j := newJob(t)
-	if b, err := os.ReadFile(j.secret); err != nil || !strings.Contains(string(b), "not-a-real-key") {
-		t.Fatalf("control: the secret is not readable outside the wall: %v", err)
-	}
-	if code, _, _ := j.wrapped(t, "cat '"+j.secret+"' > /dev/null"); code == 0 {
-		t.Fatal("the secret was readable inside the wall")
-	}
+	b, err := os.ReadFile(j.secret)
+	require.NoError(t, err, "control: the secret is not readable outside the wall: %v", err)
+	require.Contains(t, string(b), "not-a-real-key", "control: the secret is not readable outside the wall: %v", err)
+	code, _, _ := j.wrapped(t, "cat '"+j.secret+"' > /dev/null")
+	require.NotEqual(t, 0, code, "the secret was readable inside the wall")
 	ssh := filepath.Join(j.base, "fakehome", ".ssh")
-	if err := os.MkdirAll(ssh, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(ssh, 0o700))
 	key := filepath.Join(ssh, "id_test")
-	if err := os.WriteFile(key, []byte("PRIVATE KEY\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if code, _, _ := j.wrapped(t, "cat '"+key+"' > /dev/null"); code == 0 {
-		t.Fatal("a private key outside both lists was readable inside the wall")
-	}
-	if _, err := os.ReadFile(key); err != nil {
-		t.Fatalf("control: the key is not readable outside the wall: %v", err)
-	}
+	require.NoError(t, os.WriteFile(key, []byte("PRIVATE KEY\n"), 0o600))
+	code, _, _ = j.wrapped(t, "cat '"+key+"' > /dev/null")
+	require.NotEqual(t, 0, code, "a private key outside both lists was readable inside the wall")
+	_, err = os.ReadFile(key)
+	require.NoError(t, err, "control: the key is not readable outside the wall: %v", err)
 }
 
 // The three escapes read 4 of PR #70 tried, each attempted from INSIDE the wall, and
@@ -194,14 +180,11 @@ func TestTheThreeEscapesFailClosed(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, _, _ := j.wrapped(t, tc.script)
-			if code == 0 {
-				t.Fatalf("%s SUCCEEDED inside the wall", tc.name)
-			}
+			require.NotEqual(t, 0, code, "%s SUCCEEDED inside the wall", tc.name)
 		})
 	}
-	if _, err := os.Stat(filepath.Join(j.outside, "f")); err == nil {
-		t.Fatal("a write through a symlink landed outside the wall")
-	}
+	_, err := os.Stat(filepath.Join(j.outside, "f"))
+	require.Error(t, err, "a write through a symlink landed outside the wall")
 }
 
 // The wall stands and the job still runs: the first second of a real job, by absolute
@@ -223,18 +206,15 @@ func TestTheFirstSecondOfARealJob(t *testing.T) {
 		{"tmpdir_is_inside", "test -n \"$TMPDIR\" && echo x > \"$TMPDIR/t\" && test -f '" + j.write + "/.nova-sandbox-tmp/t'"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if code, _, errOut := j.wrapped(t, tc.script); code != 0 {
-				t.Fatalf("%s failed inside the wall: exit %d; %s", tc.name, code, errOut)
-			}
+			code, _, errOut := j.wrapped(t, tc.script)
+			require.Equal(t, 0, code, "%s failed inside the wall: exit %d; %s", tc.name, code, errOut)
 		})
 	}
 	t.Run("write_outside_is_denied", func(t *testing.T) {
-		if code, _, _ := j.wrapped(t, ": > '"+j.outside+"/probe'"); code == 0 {
-			t.Fatal("a write outside every named path succeeded")
-		}
-		if err := os.WriteFile(filepath.Join(j.outside, "control"), []byte("x"), 0o600); err != nil {
-			t.Fatalf("control: the outside path is unwritable anyway, so the denial proves nothing: %v", err)
-		}
+		code, _, _ := j.wrapped(t, ": > '"+j.outside+"/probe'")
+		require.NotEqual(t, 0, code, "a write outside every named path succeeded")
+		err := os.WriteFile(filepath.Join(j.outside, "control"), []byte("x"), 0o600)
+		require.NoError(t, err, "control: the outside path is unwritable anyway, so the denial proves nothing: %v", err)
 	})
 }
 
@@ -252,25 +232,18 @@ func TestCXXCompilesInsideTheWallOnDarwin(t *testing.T) {
 	}
 	j := newJob(t)
 	src := filepath.Join(j.write, "probe.cpp")
-	if err := os.WriteFile(src, []byte("#include <iostream>\nint main(){ std::cout << \"ok\\n\"; return 0; }\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(src, []byte("#include <iostream>\nint main(){ std::cout << \"ok\\n\"; return 0; }\n"), 0o644))
 	outsideBin := filepath.Join(j.outside, "probe")
 	if out, err := exec.Command("/usr/bin/c++", "-o", outsideBin, src).CombinedOutput(); err != nil {
 		t.Skipf("skipped: /usr/bin/c++ does not compile outside the wall, so a denial inside it proves nothing: %s", out)
 	}
 	insideBin := filepath.Join(j.write, "probe")
 	code, out, errOut := j.tool(t, j.env(), "--write", j.write, "--", "/usr/bin/c++", "-o", insideBin, src)
-	if code != 0 {
-		t.Fatalf("c++ inside the wall exited %d; want 0\nstdout: %s\nstderr: %s", code, out, errOut)
-	}
-	if strings.Contains(errOut, "xcode_select_link") {
-		t.Fatalf("the wall still denies /var/db/xcode_select_link:\n%s", errOut)
-	}
+	require.Equal(t, 0, code, "c++ inside the wall exited %d; want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	require.NotContains(t, errOut, "xcode_select_link", "the wall still denies /var/db/xcode_select_link:\n%s", errOut)
 	code, out, errOut = j.tool(t, j.env(), "--write", j.write, "--", insideBin)
-	if code != 0 || !strings.Contains(out, "ok") {
-		t.Fatalf("the C++ probe did not run inside the wall: exit %d stdout %q stderr %s", code, out, errOut)
-	}
+	require.Equal(t, 0, code, "the C++ probe did not run inside the wall: exit %d stdout %q stderr %s", code, out, errOut)
+	require.Contains(t, out, "ok", "the C++ probe did not run inside the wall: exit %d stdout %q stderr %s", code, out, errOut)
 }
 
 // zsh switches large heredocs from a pipe to a temporary file. On macOS it chooses
@@ -288,12 +261,10 @@ func TestZshLargeHeredocKeepsItsTemporaryFileInsideTheWall(t *testing.T) {
 	script := "test \"$TMPPREFIX\" = \"$TMPDIR/zsh\" || exit 1\ncat <<'NOVA_REPORT' > \"$TMPDIR/report\"\n" + payload + "NOVA_REPORT\ntest \"$(wc -c < \"$TMPDIR/report\")\" -eq 16001\n"
 	args := []string{"--read", j.read, "--write", j.write, "--", "/bin/zsh", "-c", script}
 	code, _, errOut := j.tool(t, j.env("TMPPREFIX="+j.outside+"/zsh"), args...)
-	if code != 0 {
-		t.Fatalf("large zsh heredoc failed inside the wall: exit %d; %s", code, errOut)
-	}
-	if info, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp", "report")); err != nil || info.Size() != 16001 {
-		t.Fatalf("report was not written inside the selected temp directory at its full size: info=%v err=%v", info, err)
-	}
+	require.Equal(t, 0, code, "large zsh heredoc failed inside the wall: exit %d; %s", code, errOut)
+	info, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp", "report"))
+	require.NoError(t, err, "report was not written inside the selected temp directory at its full size: info=%v err=%v", info, err)
+	require.Equal(t, int64(16001), info.Size(), "report was not written inside the selected temp directory at its full size: info=%v err=%v", info, err)
 }
 
 // This build's fix to the spec: (allow network*) reaches every unix-domain socket, so
@@ -327,18 +298,15 @@ func TestTheAgentSocketIsUnreachable(t *testing.T) {
 		t.Helper()
 		select {
 		case l, ok := <-lines:
-			if !ok {
-				t.Fatalf("control: the listener exited before %s", what)
-			}
+			require.True(t, ok, "control: the listener exited before %s", what)
 			return l
 		case <-time.After(60 * time.Second):
 			t.Fatalf("control: no %s from the listener in 60 s", what)
 		}
 		return ""
 	}
-	if l := next("READY"); l != "READY" {
-		t.Fatalf("control: no listener could be bound outside the wall: %s", l)
-	}
+	l := next("READY")
+	require.Equal(t, "READY", l, "control: no listener could be bound outside the wall: %s", l)
 
 	sock := filepath.Join(j.outside, "agent.sock")
 	env := j.env("SSH_AUTH_SOCK="+sock, "SSH_AGENT_PID=1")
@@ -351,33 +319,25 @@ func TestTheAgentSocketIsUnreachable(t *testing.T) {
 		cmd := exec.Command("/bin/sh", "-c", dial(tag))
 		cmd.Dir = j.write
 		cmd.Env = env
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("control: the socket is not connectable outside the wall (%s): %v %s", tag, err, out)
-		}
-		if got := next("ACCEPT " + tag); got != "ACCEPT "+tag {
-			if got == "ACCEPT walled" {
-				t.Fatal("a unix socket outside the wall was connectable from inside it: the listener accepted the walled client")
-			}
-			t.Fatalf("control: the listener saw %q, want %q", got, "ACCEPT "+tag)
-		}
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "control: the socket is not connectable outside the wall (%s): %v %s", tag, err, out)
+		got := next("ACCEPT " + tag)
+		require.NotEqual(t, "ACCEPT walled", got, "a unix socket outside the wall was connectable from inside it: the listener accepted the walled client")
+		require.Equal(t, "ACCEPT "+tag, got, "control: the listener saw %q, want %q", got, "ACCEPT "+tag)
 	}
 
 	control("control-before")
 	code, _, errOut := j.tool(t, env, "--read", j.read, "--write", j.write, "--",
 		"/bin/sh", "-c", dial("walled"))
-	if code == 0 {
-		t.Fatal("a unix socket outside the wall was connectable from inside it")
-	}
+	require.NotEqual(t, 0, code, "a unix socket outside the wall was connectable from inside it")
 	// The listener serves in accept order, and the walled client has exited, so had it
 	// connected its line would come before this control's.
 	control("control-after")
-	if !strings.Contains(errOut, "SANDBOX NOTE dropped") || !strings.Contains(errOut, "SSH_AUTH_SOCK") {
-		t.Fatalf("the dropped agent variables were not named before the command started: %q", errOut)
-	}
-	if code, _, _ := j.tool(t, env, "--read", j.read, "--write", j.write, "--",
-		"/bin/sh", "-c", "test -z \"$SSH_AUTH_SOCK\" && test -z \"$SSH_AGENT_PID\""); code != 0 {
-		t.Fatal("SSH_AUTH_SOCK reached the child's environment")
-	}
+	require.Contains(t, errOut, "SANDBOX NOTE dropped", "the dropped agent variables were not named before the command started: %q", errOut)
+	require.Contains(t, errOut, "SSH_AUTH_SOCK", "the dropped agent variables were not named before the command started: %q", errOut)
+	code, _, _ = j.tool(t, env, "--read", j.read, "--write", j.write, "--",
+		"/bin/sh", "-c", "test -z \"$SSH_AUTH_SOCK\" && test -z \"$SSH_AGENT_PID\"")
+	require.Equal(t, 0, code, "SSH_AUTH_SOCK reached the child's environment")
 }
 
 // unixListenerVerb is the test binary's internal verb for TestTheAgentSocketIsUnreachable's
@@ -394,20 +354,15 @@ const unixListenerNameEnv = "NOVA_SANDBOX_TEST_UNIX_NAME"
 func startUnixListener(t *testing.T, dir, name string) <-chan string {
 	t.Helper()
 	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	cmd := exec.Command(self, unixListenerVerb)
 	cmd.Env = append(os.Environ(), unixListenerNameEnv+"="+name)
 	cmd.Dir = dir
 	cmd.Stdout = pw
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("control: no listener could be started outside the wall: %v", err)
-	}
+	err = cmd.Start()
+	require.NoError(t, err, "control: no listener could be started outside the wall: %v", err)
 	_ = pw.Close()
 	lines := make(chan string, 16)
 	go func() {
@@ -458,20 +413,14 @@ func TestGitPushOutOfTheJobFails(t *testing.T) {
 	mustRun(t, git, "init", "-q", "--bare", remote)
 	repo := filepath.Join(j.write, "repo")
 	mustRun(t, git, "init", "-q", repo)
-	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x\n"), 0o600))
 	mustRun(t, git, "-C", repo, "add", "-A")
 	mustRun(t, git, "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "seed")
 	mustRun(t, git, "-C", repo, "remote", "add", "origin", remote)
 	code, _, _ := j.wrapped(t, "cd '"+repo+"' && '"+git+"' push -q origin HEAD:refs/heads/main")
-	if code == 0 {
-		t.Fatal("a push out of the job succeeded; the remote is outside every named path")
-	}
+	require.NotEqual(t, 0, code, "a push out of the job succeeded; the remote is outside every named path")
 	out := mustOutput(t, git, "-C", remote, "for-each-ref", "--format=%(refname)")
-	if strings.TrimSpace(out) != "" {
-		t.Fatalf("the push landed: %q", out)
-	}
+	require.Empty(t, strings.TrimSpace(out), "the push landed: %q", out)
 }
 
 // Rule 12's exit grammar: the child's status is the tool's, and a death by signal N is
@@ -481,18 +430,15 @@ func TestExitStatusPassesThrough(t *testing.T) {
 
 	needDarwin(t)
 	j := newJob(t)
-	if code, _, _ := j.wrapped(t, "exit 3"); code != 3 {
-		t.Fatalf("exit %d, want 3", code)
-	}
-	if code, _, _ := j.wrapped(t, "kill -9 $$"); code != 137 {
-		t.Fatalf("exit %d, want 137 for a SIGKILL death", code)
-	}
+	code, _, _ := j.wrapped(t, "exit 3")
+	require.Equal(t, 3, code, "exit %d, want 3", code)
+	code, _, _ = j.wrapped(t, "kill -9 $$")
+	require.Equal(t, 137, code, "exit %d, want 137 for a SIGKILL death", code)
 	// A command that itself exits 125 gives 125 with NO refusal line: the number alone
 	// cannot tell the tool's NO from the command's, and the line is how a caller can.
 	code, _, errOut := j.wrapped(t, "exit 125")
-	if code != 125 || strings.Contains(errOut, "SANDBOX REFUSED") {
-		t.Fatalf("a command's own 125 was confused with the tool's: exit %d, stderr %q", code, errOut)
-	}
+	require.Equal(t, 125, code, "a command's own 125 was confused with the tool's: exit %d, stderr %q", code, errOut)
+	require.NotContains(t, errOut, "SANDBOX REFUSED", "a command's own 125 was confused with the tool's: exit %d, stderr %q", code, errOut)
 }
 
 // The end-to-end job: a real command under a read set that EXCLUDES the secret
@@ -508,12 +454,10 @@ func TestEndToEndTheWorkRunsAndTheSecretDoesNot(t *testing.T) {
 		command, args = oc, []string{"--version"}
 	}
 	argv := append([]string{"--read", j.read, "--write", j.write, "--", command}, args...)
-	if code, _, errOut := j.tool(t, j.env(), argv...); code != 0 {
-		t.Fatalf("%s did not run inside the wall: exit %d; %s", command, code, errOut)
-	}
-	if code, _, _ := j.wrapped(t, "cat '"+j.secret+"'"); code == 0 {
-		t.Fatal("the same wall that ran the work also handed over the secret")
-	}
+	code, _, errOut := j.tool(t, j.env(), argv...)
+	require.Equal(t, 0, code, "%s did not run inside the wall: exit %d; %s", command, code, errOut)
+	code, _, _ = j.wrapped(t, "cat '"+j.secret+"'")
+	require.NotEqual(t, 0, code, "the same wall that ran the work also handed over the secret")
 }
 
 // Rule 10: five checks under the real policy, and the probe proves the wall before the
@@ -524,9 +468,7 @@ func TestProbeProvesTheWall(t *testing.T) {
 	needDarwin(t)
 	j := newJob(t)
 	code, out, errOut := j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write, "--secret", j.secret)
-	if code != 0 {
-		t.Fatalf("probe exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
-	}
+	require.Equal(t, 0, code, "probe exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
 	for _, want := range []string{
 		"PROBE STEP name=write_outside_control expect=allow got=allow",
 		"PROBE STEP name=write_outside expect=deny got=deny",
@@ -536,22 +478,16 @@ func TestProbeProvesTheWall(t *testing.T) {
 		"PROBE OK backend=sandbox-exec",
 		"steps=5 passed=5",
 	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("the probe did not print %q:\n%s", want, out)
-		}
+		require.Contains(t, out, want, "the probe did not print %q:\n%s", want, out)
 	}
-	if strings.Contains(out, "not-a-real-key") || strings.Contains(errOut, "not-a-real-key") {
-		t.Fatal("the probe printed the secret's contents")
-	}
+	require.NotContains(t, out, "not-a-real-key", "the probe printed the secret's contents")
+	require.NotContains(t, errOut, "not-a-real-key", "the probe printed the secret's contents")
 	// Rule 6: a --secret inside a named list is a misconfiguration, not a failed probe.
 	inside := filepath.Join(j.read, "env")
-	if err := os.WriteFile(inside, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(inside, []byte("x"), 0o600))
 	code, _, errOut = j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write, "--secret", inside)
-	if code != 2 || !strings.Contains(errOut, "reason=secret_inside_allow") {
-		t.Fatalf("a --secret inside --read was exit %d: %s", code, errOut)
-	}
+	require.Equal(t, 2, code, "a --secret inside --read was exit %d: %s", code, errOut)
+	require.Contains(t, errOut, "reason=secret_inside_allow", "a --secret inside --read was exit %d: %s", code, errOut)
 }
 
 // Rule 10 with no --secret (issue #881): a key delivered by nova-secrets exec is never a
@@ -563,9 +499,7 @@ func TestAProbeWithoutASecretProvesTheWall(t *testing.T) {
 	needDarwin(t)
 	j := newJob(t)
 	code, out, errOut := j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write)
-	if code != 0 {
-		t.Fatalf("probe without --secret exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
-	}
+	require.Equal(t, 0, code, "probe without --secret exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
 	for _, want := range []string{
 		"PROBE STEP name=write_outside_control expect=allow got=allow",
 		"PROBE STEP name=write_outside expect=deny got=deny",
@@ -574,13 +508,9 @@ func TestAProbeWithoutASecretProvesTheWall(t *testing.T) {
 		"PROBE OK backend=sandbox-exec",
 		"steps=4 passed=4",
 	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("the probe did not print %q:\n%s", want, out)
-		}
+		require.Contains(t, out, want, "the probe did not print %q:\n%s", want, out)
 	}
-	if strings.Contains(out, "read_secret") {
-		t.Fatalf("a probe without --secret must not invent a read_secret step:\n%s", out)
-	}
+	require.NotContains(t, out, "read_secret", "a probe without --secret must not invent a read_secret step:\n%s", out)
 }
 
 // Rule 4 and the refusal grammar, through the binary's own argv.
@@ -605,9 +535,8 @@ func TestRefusalsThroughTheArgv(t *testing.T) {
 				env = []string{"HOME=" + j.base, "PATH=/usr/bin:/bin"}
 			}
 			code, _, errOut := j.tool(t, env, tc.args...)
-			if code != 125 || !strings.Contains(errOut, tc.want) {
-				t.Fatalf("exit %d, stderr %q; want 125 and %s", code, errOut, tc.want)
-			}
+			require.Equal(t, 125, code, "exit %d, stderr %q; want 125 and %s", code, errOut, tc.want)
+			require.Contains(t, errOut, tc.want, "exit %d, stderr %q; want 125 and %s", code, errOut, tc.want)
 		})
 	}
 }
@@ -618,41 +547,35 @@ func TestCheckAndVersion(t *testing.T) {
 
 	j := newJob(t)
 	code, out, _ := j.tool(t, j.env(), "check")
-	if code != 0 || !strings.HasPrefix(out, "CHECK OK backend=") {
-		t.Fatalf("check exit %d: %q", code, out)
-	}
-	if runtime.GOOS == "darwin" && !strings.Contains(out, "backend=sandbox-exec") {
-		t.Fatalf("check did not name the backend on darwin: %q", out)
+	require.Equal(t, 0, code, "check exit %d: %q", code, out)
+	require.True(t, strings.HasPrefix(out, "CHECK OK backend="), "check exit %d: %q", code, out)
+	if runtime.GOOS == "darwin" {
+		require.Contains(t, out, "backend=sandbox-exec", "check did not name the backend on darwin: %q", out)
 	}
 	// linux names landlock when the kernel has it and none when it does not; the abi and
 	// the net= field are asserted against each other in TestCheckReportsLandlock.
-	if runtime.GOOS == "linux" && !strings.Contains(out, "backend=landlock") && !strings.Contains(out, "backend=none") {
-		t.Fatalf("check named neither landlock nor none on linux: %q", out)
+	if runtime.GOOS == "linux" {
+		require.True(t, strings.Contains(out, "backend=landlock") || strings.Contains(out, "backend=none"), "check named neither landlock nor none on linux: %q", out)
 	}
-	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && !strings.Contains(out, "backend=none") {
-		t.Fatalf("check named a backend on %s, where this build has none: %q", runtime.GOOS, out)
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		require.Contains(t, out, "backend=none", "check named a backend on %s, where this build has none: %q", runtime.GOOS, out)
 	}
 	// `version` is SPEC.md's Conventions line -- the four tokens every binary in the
 	// set prints -- and then this tool's two named extras. It used to be a shape of
 	// its own, `SANDBOX VERSION tool=... version=...`, which no reader of a version
 	// line could take apart (#1297): the facts survive, the second shape does not.
 	code, out, _ = j.tool(t, j.env(), "version")
-	if code != 0 {
-		t.Fatalf("version exit %d: %q", code, out)
-	}
+	require.Equal(t, 0, code, "version exit %d: %q", code, out)
 	f, ok := buildinfo.Parse(out)
-	if !ok {
-		t.Fatalf("version printed a line internal/buildinfo.Parse refuses: %q", out)
-	}
-	if f.Tool != "nova-sandbox" || f.Version == "" {
-		t.Fatalf("version does not name this tool and its build in fields one and two: %q", out)
-	}
-	if b, have := f.Extra("backend"); !have || b != sandbox.Backend {
-		t.Fatalf("version does not carry backend=%s: %q", sandbox.Backend, out)
-	}
-	if p, have := f.Extra("platform"); !have || p != runtime.GOOS {
-		t.Fatalf("version does not carry platform=%s: %q", runtime.GOOS, out)
-	}
+	require.True(t, ok, "version printed a line internal/buildinfo.Parse refuses: %q", out)
+	require.Equal(t, "nova-sandbox", f.Tool, "version does not name this tool and its build in fields one and two: %q", out)
+	require.NotEmpty(t, f.Version, "version does not name this tool and its build in fields one and two: %q", out)
+	b, have := f.Extra("backend")
+	require.True(t, have, "version does not carry backend=%s: %q", sandbox.Backend, out)
+	require.Equal(t, sandbox.Backend, b, "version does not carry backend=%s: %q", sandbox.Backend, out)
+	p, have := f.Extra("platform")
+	require.True(t, have, "version does not carry platform=%s: %q", runtime.GOOS, out)
+	require.Equal(t, runtime.GOOS, p, "version does not carry platform=%s: %q", runtime.GOOS, out)
 }
 
 // The usage banner carries the --read remedy, which is where it has to live: on linux
@@ -662,12 +585,9 @@ func TestUsageCarriesTheReadRemedy(t *testing.T) {
 
 	j := newJob(t)
 	code, out, _ := j.tool(t, j.env(), "help")
-	if code != 0 || !strings.Contains(out, readRemedy) {
-		t.Fatalf("the usage banner does not carry the --read remedy: %q", out)
-	}
-	if !strings.Contains(out, "example:") {
-		t.Fatal("the usage banner has no runnable example: block")
-	}
+	require.Equal(t, 0, code, "the usage banner does not carry the --read remedy: %q", out)
+	require.Contains(t, out, readRemedy, "the usage banner does not carry the --read remedy: %q", out)
+	require.Contains(t, out, "example:", "the usage banner has no runnable example: block")
 }
 
 // PR 948 re-cut (#893): the linux read roots are not switchable, so the banner must not
@@ -677,12 +597,8 @@ func TestHelpDoesNotAdvertiseNoSystemReads(t *testing.T) {
 
 	j := newJob(t)
 	code, out, _ := j.tool(t, j.env(), "help")
-	if code != 0 {
-		t.Fatalf("help exit %d", code)
-	}
-	if strings.Contains(out, "no-system-reads") {
-		t.Fatalf("the usage banner still advertises --no-system-reads:\n%s", out)
-	}
+	require.Equal(t, 0, code, "help exit %d", code)
+	require.NotContains(t, out, "no-system-reads", "the usage banner still advertises --no-system-reads:\n%s", out)
 }
 
 // Rule 1 on every platform whose body is not built: the refusal names the platform and
@@ -696,12 +612,11 @@ func TestUnbuiltPlatformsRefuse(t *testing.T) {
 	j := newJob(t)
 	marker := filepath.Join(j.write, "ran")
 	code, _, errOut := j.wrapped(t, touchScript(marker))
-	if code != 125 || !strings.Contains(errOut, "reason=no_sandbox") || !strings.Contains(errOut, runtime.GOOS) {
-		t.Fatalf("exit %d, stderr %q; want 125, reason=no_sandbox and the platform named", code, errOut)
-	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("the command ran on a platform with no wall")
-	}
+	require.Equal(t, 125, code, "exit %d, stderr %q; want 125, reason=no_sandbox and the platform named", code, errOut)
+	require.Contains(t, errOut, "reason=no_sandbox", "exit %d, stderr %q; want 125, reason=no_sandbox and the platform named", code, errOut)
+	require.Contains(t, errOut, runtime.GOOS, "exit %d, stderr %q; want 125, reason=no_sandbox and the platform named", code, errOut)
+	_, err := os.Stat(marker)
+	require.Error(t, err, "the command ran on a platform with no wall")
 }
 
 // realGit is the git a caller would use. Homebrew's git is preferred when
@@ -721,17 +636,14 @@ func realGit(t *testing.T) string {
 
 func mustRun(t *testing.T, name string, args ...string) {
 	t.Helper()
-	if out, err := exec.Command(name, args...).CombinedOutput(); err != nil {
-		t.Fatalf("%s %v: %v: %s", name, args, err, out)
-	}
+	out, err := exec.Command(name, args...).CombinedOutput()
+	require.NoError(t, err, "%s %v: %v: %s", name, args, err, out)
 }
 
 func mustOutput(t *testing.T, name string, args ...string) string {
 	t.Helper()
 	out, err := exec.Command(name, args...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s %v: %v: %s", name, args, err, out)
-	}
+	require.NoError(t, err, "%s %v: %v: %s", name, args, err, out)
 	return string(out)
 }
 
@@ -751,9 +663,8 @@ func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
 	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-sandbox")
 	build.Dir = repoRoot(t)
 	build.Env = goenv.Clean(os.Environ())
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building the tool: %v\n%s", err, out)
-	}
+	buildOut, err := build.CombinedOutput()
+	require.NoError(t, err, "building the tool: %v\n%s", err, buildOut)
 	// Test 16 is absolute: no test reaches outside t.TempDir() or touches the network.
 	// The check's own scratch is handed to it, and its two DNS checks curl a third-party
 	// host -- right for the operator run and for the mac CI job, where the spec's work list
@@ -768,21 +679,15 @@ func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
 		Stdout:    &out,
 		Stderr:    &errOut,
 	}, darwincheck.OSSystem{})
-	if code != 0 {
-		t.Fatalf("the darwin check against the tool's generated profile failed: exit %d\n%s%s", code, out.String(), errOut.String())
-	}
+	require.Equal(t, 0, code, "the darwin check against the tool's generated profile failed: exit %d\n%s%s", code, out.String(), errOut.String())
 	// The count is the CHECK's, and no number here or in the spec states it: a test that
 	// named one would go red every time a check was added. What is asserted is that the
 	// check ran a real suite and that none of it failed.
-	if n := strings.Count(out.String(), "CHECK OK name="); n < 20 {
-		t.Fatalf("only %d checks passed; the check's own count is higher than that:\n%s", n, out.String())
-	}
-	if n := strings.Count(out.String(), "CHECK SKIP name="); n != 2 {
-		t.Fatalf("want the two DNS checks skipped under NoNetwork, got %d SKIP lines:\n%s", n, out.String())
-	}
-	if strings.Contains(out.String(), "CHECK FAIL") {
-		t.Fatalf("a check failed against the tool's profile:\n%s", out.String())
-	}
+	n := strings.Count(out.String(), "CHECK OK name=")
+	require.GreaterOrEqual(t, n, 20, "only %d checks passed; the check's own count is higher than that:\n%s", n, out.String())
+	n = strings.Count(out.String(), "CHECK SKIP name=")
+	require.Equal(t, 2, n, "want the two DNS checks skipped under NoNetwork, got %d SKIP lines:\n%s", n, out.String())
+	require.NotContains(t, out.String(), "CHECK FAIL", "a check failed against the tool's profile:\n%s", out.String())
 }
 
 // #1557 HOLD: the darwin check fills the template two ways. The tool generator
@@ -810,13 +715,9 @@ func TestDarwinCheckHandFillerGrantsTheSameXcodeRoot(t *testing.T) {
 		Home:   j.home,
 		Argv:   []string{"/bin/echo"},
 	})
-	if len(bad) > 0 {
-		t.Fatalf("generated policy refused: %v", bad)
-	}
+	require.Empty(t, bad, "generated policy refused: %v", bad)
 	generated, _, err := sandbox.DarwinProfile(p)
-	if err != nil {
-		t.Fatalf("generated profile: %v", err)
-	}
+	require.NoError(t, err, "generated profile: %v", err)
 
 	var hand, errOut bytes.Buffer
 	code := darwincheck.Run(darwincheck.Options{
@@ -827,19 +728,13 @@ func TestDarwinCheckHandFillerGrantsTheSameXcodeRoot(t *testing.T) {
 		Stdout:      &hand,
 		Stderr:      &errOut,
 	}, darwincheck.OSSystem{})
-	if code != 0 {
-		t.Fatalf("hand-filling the profile: exit %d\n%s%s", code, hand.String(), errOut.String())
-	}
+	require.Equal(t, 0, code, "hand-filling the profile: exit %d\n%s%s", code, hand.String(), errOut.String())
 	handText := hand.String()
 
 	for _, r := range xcode {
 		grant := `(allow file-read* (subpath "` + r + `"))`
-		if !strings.Contains(generated, grant) {
-			t.Fatalf("the generated profile does not grant %s, which OptionalRoots named: %v", grant, xcode)
-		}
-		if !strings.Contains(handText, grant) {
-			t.Errorf("the hand-filled profile does not grant %s, which the generated profile has; the two filler modes drifted", grant)
-		}
+		require.Contains(t, generated, grant, "the generated profile does not grant %s, which OptionalRoots named: %v", grant, xcode)
+		assert.Contains(t, handText, grant, "the hand-filled profile does not grant %s, which the generated profile has; the two filler modes drifted", grant)
 	}
 	if t.Failed() {
 		t.Logf("hand-filled profile:\n%s", handText)
@@ -851,17 +746,13 @@ func TestDarwinCheckHandFillerGrantsTheSameXcodeRoot(t *testing.T) {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("no go.mod above this package")
-		}
+		require.NotEqual(t, dir, parent, "no go.mod above this package")
 		dir = parent
 	}
 }
@@ -892,20 +783,14 @@ func TestProbeReExecsTheToolAndNeverAShell(t *testing.T) {
 	needDarwin(t)
 	j := newJob(t)
 	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if r, err := filepath.EvalSymlinks(self); err == nil {
 		self = r
 	}
 	code, out, errOut := j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write, "--secret", j.secret)
-	if code != 0 {
-		t.Fatalf("probe exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
-	}
+	require.Equal(t, 0, code, "probe exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
 	want := "PROBE STEP name=read_root expect=allow got=allow path=" + self
-	if !strings.Contains(out, want) {
-		t.Fatalf("read_root did not read the probe's own executable.\nwant a line %q\ngot:\n%s", want, out)
-	}
+	require.Contains(t, out, want, "read_root did not read the probe's own executable.\nwant a line %q\ngot:\n%s", want, out)
 	// No step stands on a shell. /bin and /usr/bin are fixed roots, so a read under one
 	// of them proves nothing about the root the generator computes at run time.
 	for _, line := range strings.Split(out, "\n") {
@@ -913,9 +798,7 @@ func TestProbeReExecsTheToolAndNeverAShell(t *testing.T) {
 			continue
 		}
 		for _, shell := range []string{"path=/bin/sh", "path=/bin/dash", "path=/bin/bash", "path=/usr/bin/sh"} {
-			if strings.Contains(line, shell) {
-				t.Fatalf("the probe still stands on a shell: %s", line)
-			}
+			require.NotContains(t, line, shell, "the probe still stands on a shell: %s", line)
 		}
 	}
 }
@@ -931,16 +814,11 @@ func probeChild(t *testing.T, exe string, raw []byte, nonceVar string, args ...s
 	var fd3 *os.File
 	if raw != nil {
 		pr, pw, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		defer pr.Close()
-		if _, err := pw.Write(raw); err != nil {
-			t.Fatal(err)
-		}
-		if err := pw.Close(); err != nil {
-			t.Fatal(err)
-		}
+		_, err = pw.Write(raw)
+		require.NoError(t, err)
+		require.NoError(t, pw.Close())
 		fd3 = pr
 	}
 	return probeChildOnFD(t, exe, fd3, nonceVar, args...)
@@ -951,13 +829,9 @@ func probeChild(t *testing.T, exe string, raw []byte, nonceVar string, args ...s
 func probeChildFile(t *testing.T, exe string, raw []byte, nonceVar string, args ...string) (int, string) {
 	t.Helper()
 	name := filepath.Join(t.TempDir(), "fd3")
-	if err := os.WriteFile(name, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(name, raw, 0o600))
 	f, err := os.Open(name)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer f.Close()
 	return probeChildOnFD(t, exe, f, nonceVar, args...)
 }
@@ -974,9 +848,7 @@ func probeChildOnFD(t *testing.T, exe string, fd3 *os.File, nonceVar string, arg
 		cmd.ExtraFiles = []*os.File{fd3}
 	}
 	_ = cmd.Run()
-	if cmd.ProcessState == nil {
-		t.Fatalf("probe-step child never ran: %s", errb.String())
-	}
+	require.NotNil(t, cmd.ProcessState, "probe-step child never ran: %s", errb.String())
 	return cmd.ProcessState.ExitCode(), errb.String()
 }
 
@@ -987,9 +859,7 @@ func probeChildOnFD(t *testing.T, exe string, fd3 *os.File, nonceVar string, arg
 func copyOfThisBinary(t *testing.T) string {
 	t.Helper()
 	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	name := "nova-sandbox-copy"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
@@ -997,9 +867,7 @@ func copyOfThisBinary(t *testing.T) string {
 	copied := filepath.Join(t.TempDir(), name)
 	// A COPY, never a link: this helper exists to hand the probe a parent that is
 	// not this binary, and a hard link is this binary (internal/testbin.PlaceCopy).
-	if err := testbin.PlaceCopy(self, copied); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.PlaceCopy(self, copied))
 	return copied
 }
 
@@ -1016,16 +884,13 @@ func TestProbeStepIsTheInternalVerb(t *testing.T) {
 	// run()'s switch with nothing between an ordinary shell and that O_TRUNC. Measured:
 	// `nova-sandbox probe-step write_outside <file>` emptied a file outside every wall and
 	// exited 0.
-	if err := os.WriteFile(target, []byte("MUST-SURVIVE\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(target, []byte("MUST-SURVIVE\n"), 0o600))
 	code, _, errOut := j.tool(t, j.env(), "probe-step", "write_outside", target)
-	if code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
-		t.Fatalf("probe-step by hand was accepted: exit %d, stderr %q", code, errOut)
-	}
-	if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
-		t.Fatalf("the refused step still touched the file: %q, %v", string(got), err)
-	}
+	require.Equal(t, 2, code, "probe-step by hand was accepted: exit %d, stderr %q", code, errOut)
+	require.Contains(t, errOut, "probe_step_not_a_child", "probe-step by hand was accepted: exit %d, stderr %q", code, errOut)
+	got, err := os.ReadFile(target)
+	require.NoError(t, err, "the refused step still touched the file: %q, %v", string(got), err)
+	require.Equal(t, "MUST-SURVIVE\n", string(got), "the refused step still touched the file: %q, %v", string(got), err)
 	// The second measurement, on 29646c1, and the reason the guard is no longer a
 	// comparison between the argv and the environment: BOTH of those are the caller's own
 	// to set, so `NOVA_SANDBOX_PROBE_NONCE=<x> nova-sandbox probe-step <x> write_outside
@@ -1033,15 +898,15 @@ func TestProbeStepIsTheInternalVerb(t *testing.T) {
 	// in process and as a child, and the file survives both.
 	raw := []byte("0123456789abcdef")
 	nonce := hex.EncodeToString(raw)
-	if code, _, errOut := j.tool(t, j.env(probeNonceVar+"="+nonce), "probe-step", nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
-		t.Fatalf("argv equal to the environment was accepted in process: exit %d, stderr %q", code, errOut)
-	}
-	if code, errOut := probeChild(t, selfExecutable(t), nil, probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
-		t.Fatalf("argv equal to the environment was accepted as a child: exit %d, stderr %q", code, errOut)
-	}
-	if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
-		t.Fatalf("a refused step touched the file: %q, %v", string(got), err)
-	}
+	code, _, errOut = j.tool(t, j.env(probeNonceVar+"="+nonce), "probe-step", nonce, "write_outside", target)
+	require.Equal(t, 2, code, "argv equal to the environment was accepted in process: exit %d, stderr %q", code, errOut)
+	require.Contains(t, errOut, "probe_step_not_a_child", "argv equal to the environment was accepted in process: exit %d, stderr %q", code, errOut)
+	code, errOut = probeChild(t, selfExecutable(t), nil, probeNonceVar+"="+nonce, nonce, "write_outside", target)
+	require.Equal(t, 2, code, "argv equal to the environment was accepted as a child: exit %d, stderr %q", code, errOut)
+	require.Contains(t, errOut, "probe_step_not_a_child", "argv equal to the environment was accepted as a child: exit %d, stderr %q", code, errOut)
+	got, err = os.ReadFile(target)
+	require.NoError(t, err, "a refused step touched the file: %q, %v", string(got), err)
+	require.Equal(t, "MUST-SURVIVE\n", string(got), "a refused step touched the file: %q, %v", string(got), err)
 
 	if runtime.GOOS == "windows" {
 		// Everything below hands a child a descriptor, and exec.Cmd.ExtraFiles is not
@@ -1054,62 +919,54 @@ func TestProbeStepIsTheInternalVerb(t *testing.T) {
 	}
 	// A pipe on fd 3 carrying the WRONG value is refused too: the value is what the
 	// descriptor is for, and holding a descriptor is not holding the probe's secret.
-	if code, errOut := probeChild(t, selfExecutable(t), []byte("fedcba9876543210"), probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
-		t.Fatalf("a pipe carrying the wrong value was accepted: exit %d, stderr %q", code, errOut)
-	}
+	code, errOut = probeChild(t, selfExecutable(t), []byte("fedcba9876543210"), probeNonceVar+"="+nonce, nonce, "write_outside", target)
+	require.Equal(t, 2, code, "a pipe carrying the wrong value was accepted: exit %d, stderr %q", code, errOut)
+	require.Contains(t, errOut, "probe_step_not_a_child", "a pipe carrying the wrong value was accepted: exit %d, stderr %q", code, errOut)
 	// A SHORT pipe is refused: fewer bytes than the parent promised is not the parent.
-	if code, errOut := probeChild(t, selfExecutable(t), raw[:8], probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
-		t.Fatalf("a short pipe was accepted: exit %d, stderr %q", code, errOut)
-	}
+	code, errOut = probeChild(t, selfExecutable(t), raw[:8], probeNonceVar+"="+nonce, nonce, "write_outside", target)
+	require.Equal(t, 2, code, "a short pipe was accepted: exit %d, stderr %q", code, errOut)
+	require.Contains(t, errOut, "probe_step_not_a_child", "a short pipe was accepted: exit %d, stderr %q", code, errOut)
 	// MORE bytes than the parent promised is refused too: the parent writes exactly
 	// probeNonceLen and closes, so a longer pipe is not the parent's pipe.
-	if code, errOut := probeChild(t, selfExecutable(t), append(append([]byte{}, raw...), 'x'), probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
-		t.Fatalf("a pipe carrying more than the promised bytes was accepted: exit %d, stderr %q", code, errOut)
-	}
+	code, errOut = probeChild(t, selfExecutable(t), append(append([]byte{}, raw...), 'x'), probeNonceVar+"="+nonce, nonce, "write_outside", target)
+	require.Equal(t, 2, code, "a pipe carrying more than the promised bytes was accepted: exit %d, stderr %q", code, errOut)
+	require.Contains(t, errOut, "probe_step_not_a_child", "a pipe carrying more than the promised bytes was accepted: exit %d, stderr %q", code, errOut)
 	// fd 3 a REGULAR FILE holding the right bytes is refused: what the guard wants is the
 	// parent's pipe, and a file is a thing a caller can make.
-	if code, errOut := probeChildFile(t, selfExecutable(t), raw, probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
-		t.Fatalf("a regular file on fd 3 was accepted: exit %d, stderr %q", code, errOut)
-	}
+	code, errOut = probeChildFile(t, selfExecutable(t), raw, probeNonceVar+"="+nonce, nonce, "write_outside", target)
+	require.Equal(t, 2, code, "a regular file on fd 3 was accepted: exit %d, stderr %q", code, errOut)
+	require.Contains(t, errOut, "probe_step_not_a_child", "a regular file on fd 3 was accepted: exit %d, stderr %q", code, errOut)
 	// The right value in the argv, in the environment AND on the pipe, and still refused,
 	// because the parent is not this binary. This is the half a caller who has learned the
 	// shape of the guard cannot supply without already being the tool.
-	if code, errOut := probeChild(t, copyOfThisBinary(t), raw, probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
-		t.Fatalf("a foreign parent was accepted: exit %d, stderr %q", code, errOut)
-	}
-	if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
-		t.Fatalf("a refused step touched the file: %q, %v", string(got), err)
-	}
+	code, errOut = probeChild(t, copyOfThisBinary(t), raw, probeNonceVar+"="+nonce, nonce, "write_outside", target)
+	require.Equal(t, 2, code, "a foreign parent was accepted: exit %d, stderr %q", code, errOut)
+	require.Contains(t, errOut, "probe_step_not_a_child", "a foreign parent was accepted: exit %d, stderr %q", code, errOut)
+	got, err = os.ReadFile(target)
+	require.NoError(t, err, "a refused step touched the file: %q, %v", string(got), err)
+	require.Equal(t, "MUST-SURVIVE\n", string(got), "a refused step touched the file: %q, %v", string(got), err)
 	// With everything the parent passes — the pipe, the argv copy, the environment copy
 	// and this binary for a parent — the steps are themselves.
 	env := probeNonceVar + "=" + nonce
 	self := selfExecutable(t)
 	// A relative path is not the parent's: the parent builds every step path absolute.
-	if code, errOut := probeChild(t, self, raw, env, nonce, "write_inside", "step"); code != 2 || !strings.Contains(errOut, "absolute") {
-		t.Fatalf("a relative step path was accepted: exit %d, stderr %q", code, errOut)
-	}
-	if err := os.Remove(target); err != nil {
-		t.Fatal(err)
-	}
-	if code, errOut := probeChild(t, self, raw, env, nonce, "write_inside", target); code != 0 {
-		t.Fatalf("probe-step write_inside exit %d: %s", code, errOut)
-	}
-	if _, err := os.Stat(target); err == nil {
-		t.Fatal("write_inside left its file behind; the step writes and removes")
-	}
-	if code, _ := probeChild(t, self, raw, env, nonce, "read_root", filepath.Join(j.base, "no-such-file")); code == 0 {
-		t.Fatal("read_root reported success on a file that is not there")
-	}
-	if code, _ := probeChild(t, self, raw, env, nonce, "read_secret", j.secret); code != 0 {
-		t.Fatal("read_secret could not open a file that is readable outside the wall")
-	}
-	if code, errOut := probeChild(t, self, raw, env, nonce, "not_a_step", target); code != 2 || !strings.Contains(errOut, "is not a probe step") {
-		t.Fatalf("an unknown step was accepted: exit %d, stderr %q", code, errOut)
-	}
+	code, errOut = probeChild(t, self, raw, env, nonce, "write_inside", "step")
+	require.Equal(t, 2, code, "a relative step path was accepted: exit %d, stderr %q", code, errOut)
+	require.Contains(t, errOut, "absolute", "a relative step path was accepted: exit %d, stderr %q", code, errOut)
+	require.NoError(t, os.Remove(target))
+	code, errOut = probeChild(t, self, raw, env, nonce, "write_inside", target)
+	require.Equal(t, 0, code, "probe-step write_inside exit %d: %s", code, errOut)
+	_, err = os.Stat(target)
+	require.Error(t, err, "write_inside left its file behind; the step writes and removes")
+	code, _ = probeChild(t, self, raw, env, nonce, "read_root", filepath.Join(j.base, "no-such-file"))
+	require.NotEqual(t, 0, code, "read_root reported success on a file that is not there")
+	code, _ = probeChild(t, self, raw, env, nonce, "read_secret", j.secret)
+	require.Equal(t, 0, code, "read_secret could not open a file that is readable outside the wall")
+	code, errOut = probeChild(t, self, raw, env, nonce, "not_a_step", target)
+	require.Equal(t, 2, code, "an unknown step was accepted: exit %d, stderr %q", code, errOut)
+	require.Contains(t, errOut, "is not a probe step", "an unknown step was accepted: exit %d, stderr %q", code, errOut)
 	// It stays out of the banner: a verb a caller must not run is not offered to one.
-	if strings.Contains(usage, probeStepVerbName) {
-		t.Fatal("probe-step is in the usage banner")
-	}
+	require.NotContains(t, usage, probeStepVerbName, "probe-step is in the usage banner")
 }
 
 // The parent half of the guard is an IDENTITY test, and this is that half on its own, with
@@ -1136,33 +993,23 @@ func TestTheParentGuardComparesFilesAndNotNames(t *testing.T) {
 	dir := t.TempDir()
 	elsewhere := t.TempDir()
 	tool := filepath.Join(dir, "tool")
-	if err := testbin.WriteExecutable(tool, []byte("not really a tool\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(tool, []byte("not really a tool\n"), 0o700))
 	// A COPY: the same bytes, a different file. This is the foreign parent, and it is the
 	// case that must be false under every load and from every direction. PlaceCopy, never
 	// Place: a hard link would BE this binary and the case would stop being false.
 	copied := filepath.Join(dir, "tool-copy")
-	if err := testbin.PlaceCopy(tool, copied); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.PlaceCopy(tool, copied))
 	// A SYMLINK and a HARD LINK are the same file under another name, and a hard link is the
 	// honest answer: there is no sense in which it is a different image.
 	symlinked := filepath.Join(dir, "tool-symlink")
-	if err := os.Symlink(tool, symlinked); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Symlink(tool, symlinked))
 	hardLinked := filepath.Join(dir, "tool-hardlink")
-	if err := os.Link(tool, hardLinked); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Link(tool, hardLinked))
 	// The same file reached through a DIFFERENT SPELLING of its directory: this is the case
 	// the string comparison got wrong whenever the symlink walk could not finish, and the
 	// one that made the legitimate probe's own child refusable.
 	alias := filepath.Join(elsewhere, "alias")
-	if err := os.Symlink(dir, alias); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Symlink(dir, alias))
 	missing := filepath.Join(dir, "no-such-tool")
 
 	for _, c := range []struct {
@@ -1179,9 +1026,8 @@ func TestTheParentGuardComparesFilesAndNotNames(t *testing.T) {
 		{"a self that is not there", missing, tool, false},
 		{"neither is there", missing, missing, false},
 	} {
-		if got := sameImage(c.self, c.parent); got != c.want {
-			t.Errorf("%s: sameImage(%q, %q) = %v, want %v", c.name, c.self, c.parent, got, c.want)
-		}
+		got := sameImage(c.self, c.parent)
+		assert.Equal(t, c.want, got, "%s: sameImage(%q, %q) = %v, want %v", c.name, c.self, c.parent, got, c.want)
 	}
 }
 
@@ -1245,28 +1091,19 @@ func TestTheParentGuardRereadsTheImageAndNotJustThePid(t *testing.T) {
 	// can replace what lives at `image` without touching what `self` names. That is what makes
 	// "the second read is a fresh stat" an assertion rather than a hope.
 	image := filepath.Join(dir, "image")
-	if err := testbin.WriteExecutable(image, []byte("the tool\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(image, []byte("the tool\n"), 0o700))
 	self := filepath.Join(dir, "self")
-	if err := os.Link(image, self); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Link(image, self))
 	other := filepath.Join(dir, "other")
-	if err := testbin.WriteExecutable(other, []byte("the tool\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(other, []byte("the tool\n"), 0o700))
 	missing := filepath.Join(dir, "no-such-image")
 	failed := errors.New("proc_pidpath(7): no such process")
 	// replaceImage is an exec in place with no exec in it: the same path, a different file.
 	replaceImage := func() {
-		if err := os.Remove(image); err != nil {
-			t.Error(err)
+		if !assert.NoError(t, os.Remove(image)) {
 			return
 		}
-		if err := testbin.WriteExecutable(image, []byte("something else\n"), 0o700); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, testbin.WriteExecutable(image, []byte("something else\n"), 0o700))
 	}
 
 	for _, c := range []struct {
@@ -1329,22 +1166,15 @@ func TestTheParentGuardRereadsTheImageAndNotJustThePid(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			// Each case gets the file back as it was, because one of them replaces it.
-			if err := os.Remove(image); err != nil && !os.IsNotExist(err) {
-				t.Fatal(err)
+			if err := os.Remove(image); !os.IsNotExist(err) {
+				require.NoError(t, err)
 			}
-			if err := os.Link(self, image); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.Link(self, image))
 			p := c.parent
-			if got := parentIsThisImage(self, p.getppid, p.imageOf); got != c.want {
-				t.Errorf("parentIsThisImage = %q, want %q", got, c.want)
-			}
-			if p.pidCalls != c.wantPids {
-				t.Errorf("the guard read the pid %d times, want %d", p.pidCalls, c.wantPids)
-			}
-			if p.imgCalls != c.wantImgs {
-				t.Errorf("the guard read the parent's image %d times, want %d", p.imgCalls, c.wantImgs)
-			}
+			got := parentIsThisImage(self, p.getppid, p.imageOf)
+			assert.Equal(t, c.want, got, "parentIsThisImage = %q, want %q", got, c.want)
+			assert.Equal(t, c.wantPids, p.pidCalls, "the guard read the pid %d times, want %d", p.pidCalls, c.wantPids)
+			assert.Equal(t, c.wantImgs, p.imgCalls, "the guard read the parent's image %d times, want %d", p.imgCalls, c.wantImgs)
 		})
 	}
 }
@@ -1397,16 +1227,13 @@ func TestParentGuardRefusesACopiedParentUnderLoad(t *testing.T) {
 			// Each child gets its own file OUTSIDE any wall, so an acceptance is not just a
 			// wrong exit code: it is a truncated file, and the file says so.
 			target := filepath.Join(j.write, "under-load-"+strconv.Itoa(i))
-			if err := os.WriteFile(target, []byte("MUST-SURVIVE\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(target, []byte("MUST-SURVIVE\n"), 0o600))
 			code, errOut := probeChild(t, copied, raw, env, nonce, "write_outside", target)
-			if code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
-				t.Fatalf("a copied parent was accepted under load: exit %d, stderr %q", code, errOut)
-			}
-			if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
-				t.Fatalf("a step refused under load still touched the file: %q, %v", string(got), err)
-			}
+			require.Equal(t, 2, code, "a copied parent was accepted under load: exit %d, stderr %q", code, errOut)
+			require.Contains(t, errOut, "probe_step_not_a_child", "a copied parent was accepted under load: exit %d, stderr %q", code, errOut)
+			got, err := os.ReadFile(target)
+			require.NoError(t, err, "a step refused under load still touched the file: %q, %v", string(got), err)
+			require.Equal(t, "MUST-SURVIVE\n", string(got), "a step refused under load still touched the file: %q, %v", string(got), err)
 		})
 	}
 }
@@ -1416,9 +1243,7 @@ func TestParentGuardRefusesACopiedParentUnderLoad(t *testing.T) {
 func selfExecutable(t *testing.T) string {
 	t.Helper()
 	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return self
 }
 
@@ -1436,21 +1261,14 @@ func TestSecretPathIsNeverInterpreted(t *testing.T) {
 	injected := filepath.Join(j.write, "INJECTED")
 	evil := "/etc/hosts' ; : > '" + injected
 	code, out, errOut := j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write, "--secret", evil)
-	if _, err := os.Stat(injected); err == nil {
-		t.Fatalf("a --secret path injected a command that ran inside the wall: %s exists\nstdout: %s", injected, out)
-	}
-	if strings.Contains(out, "name=read_secret expect=deny got=allow") {
-		t.Fatalf("the injected command flipped read_secret's verdict:\n%s", out)
-	}
-	if code == 0 {
-		t.Fatalf("a --secret that names no file was a probe PASS: exit %d\n%s\n%s", code, out, errOut)
-	}
+	_, err := os.Stat(injected)
+	require.Error(t, err, "a --secret path injected a command that ran inside the wall: %s exists\nstdout: %s", injected, out)
+	require.NotContains(t, out, "name=read_secret expect=deny got=allow", "the injected command flipped read_secret's verdict:\n%s", out)
+	require.NotEqual(t, 0, code, "a --secret that names no file was a probe PASS: exit %d\n%s\n%s", code, out, errOut)
 	// A --secret that simply does not exist is the same refusal, and it is rule 5's.
 	code, _, errOut = j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write,
 		"--secret", filepath.Join(j.base, "secret", "NO-SUCH-FILE"))
-	if code == 0 {
-		t.Fatalf("a misspelled --secret was a probe PASS: %s", errOut)
-	}
+	require.NotEqual(t, 0, code, "a misspelled --secret was a probe PASS: %s", errOut)
 }
 
 // Rule 9's NOTE line, which no test pinned: it is printed before the command starts,
@@ -1465,22 +1283,15 @@ func TestTheNoteNamesExactlyWhatWasDropped(t *testing.T) {
 	env := j.env("SSH_AUTH_SOCK=/private/tmp/a.sock", "GPG_AGENT_INFO=/private/tmp/g:1:1",
 		"AI_AGENT=rowan", "CLAUDE_AGENT_SDK_VERSION=1.2.3", "FOO_TOKEN=keep-me")
 	code, _, errOut := j.tool(t, env, "--read", j.read, "--write", j.write, "--", "/bin/sh", "-c", "true")
-	if code != 0 {
-		t.Fatalf("exit %d: %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "exit %d: %s", code, errOut)
 	want := "SANDBOX NOTE dropped from the child's environment: GPG_AGENT_INFO SSH_AUTH_SOCK; an agent socket speaks for a key the wall denies"
-	if !strings.Contains(errOut, want) {
-		t.Fatalf("the NOTE line is not the grammar rule 9 fixes.\nwant: %s\ngot:  %s", want, errOut)
-	}
+	require.Contains(t, errOut, want, "the NOTE line is not the grammar rule 9 fixes.\nwant: %s\ngot:  %s", want, errOut)
 	for _, kept := range []string{"AI_AGENT", "CLAUDE_AGENT_SDK_VERSION", "FOO_TOKEN"} {
-		if strings.Contains(errOut, kept) {
-			t.Fatalf("the NOTE claims to have dropped %s, which rule 9 passes through: %s", kept, errOut)
-		}
+		require.NotContains(t, errOut, kept, "the NOTE claims to have dropped %s, which rule 9 passes through: %s", kept, errOut)
 	}
 	// And never otherwise: nothing dropped, no NOTE.
-	if _, _, errOut := j.tool(t, j.env(), "--read", j.read, "--write", j.write, "--", "/bin/sh", "-c", "true"); strings.Contains(errOut, "SANDBOX NOTE") {
-		t.Fatalf("a NOTE was printed with nothing dropped: %s", errOut)
-	}
+	_, _, errOut = j.tool(t, j.env(), "--read", j.read, "--write", j.write, "--", "/bin/sh", "-c", "true")
+	require.NotContains(t, errOut, "SANDBOX NOTE", "a NOTE was printed with nothing dropped: %s", errOut)
 }
 
 // Rule 12: "every file it opens is CLOEXEC and only 0, 1 and 2 are passed". The observable
@@ -1494,36 +1305,25 @@ func TestOnlyStdinStdoutStderrArePassedToTheChild(t *testing.T) {
 	j := newJob(t)
 	code, out, errOut := j.tool(t, j.env(), "--read", j.read, "--write", j.write, "--",
 		"/bin/sh", "-c", "ls /dev/fd")
-	if code != 0 {
-		t.Fatalf("ls /dev/fd inside the wall: exit %d; %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "ls /dev/fd inside the wall: exit %d; %s", code, errOut)
 	// The control is the SAME listing outside the wall: `ls` opens the directory it is
 	// listing, so a bare count would assert the shape of ls rather than the shape of the
 	// wrap. What the rule claims is that the tool adds none of its own, and the two
 	// listings being equal is exactly that claim.
 	control, err := exec.Command("/bin/sh", "-c", "ls /dev/fd").Output()
-	if err != nil {
-		t.Fatalf("control: ls /dev/fd outside the wall: %v", err)
-	}
-	if strings.Fields(out) == nil || strings.Join(strings.Fields(out), " ") != strings.Join(strings.Fields(string(control)), " ") {
-		t.Fatalf("the child's descriptors differ from the same command's outside the wall:\ninside:  %q\noutside: %q", out, control)
-	}
+	require.NoError(t, err, "control: ls /dev/fd outside the wall: %v", err)
+	require.NotNil(t, strings.Fields(out), "the child's descriptors differ from the same command's outside the wall:\ninside:  %q\noutside: %q", out, control)
+	require.Equal(t, strings.Join(strings.Fields(string(control)), " "), strings.Join(strings.Fields(out), " "), "the child's descriptors differ from the same command's outside the wall:\ninside:  %q\noutside: %q", out, control)
 	for _, fd := range []string{"0", "1", "2"} {
-		if !strings.Contains(out, fd) {
-			t.Fatalf("the child is missing descriptor %s: %q", fd, out)
-		}
+		require.Contains(t, out, fd, "the child is missing descriptor %s: %q", fd, out)
 	}
 	// A descriptor THIS process holds onto the secret does not reach the child.
 	f, err := os.Open(j.secret)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer f.Close()
 	_, out, _ = j.tool(t, j.env(), "--read", j.read, "--write", j.write, "--",
 		"/bin/sh", "-c", "cat /dev/fd/"+strconv.Itoa(int(f.Fd()))+" 2>/dev/null; exit 0")
-	if strings.Contains(out, "not-a-real-key") {
-		t.Fatalf("a descriptor the caller held reached the child: %q", out)
-	}
+	require.NotContains(t, out, "not-a-real-key", "a descriptor the caller held reached the child: %q", out)
 }
 
 // Test 15: the `policy` verb prints the generated policy and runs NOTHING, twice
@@ -1537,32 +1337,20 @@ func TestPolicyVerbPrintsAndRunsNothing(t *testing.T) {
 	j := newJob(t)
 	marker := filepath.Join(j.write, "ran")
 	code, out, errOut := j.tool(t, j.env(), "policy", "--read", j.read, "--write", j.write)
-	if code != 0 {
-		t.Fatalf("policy exit %d: %s", code, errOut)
-	}
-	if !strings.Contains(out, "(version 1)") || !strings.Contains(out, "(deny default)") {
-		t.Fatalf("the printed policy is not a profile:\n%s", out)
-	}
-	if !strings.Contains(errOut, "POLICY OK backend=sandbox-exec") {
-		t.Fatalf("the POLICY OK line is not the grammar the spec fixes: %q", errOut)
-	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("the policy verb ran something")
-	}
+	require.Equal(t, 0, code, "policy exit %d: %s", code, errOut)
+	require.Contains(t, out, "(version 1)", "the printed policy is not a profile:\n%s", out)
+	require.Contains(t, out, "(deny default)", "the printed policy is not a profile:\n%s", out)
+	require.Contains(t, errOut, "POLICY OK backend=sandbox-exec", "the POLICY OK line is not the grammar the spec fixes: %q", errOut)
+	_, err := os.Stat(marker)
+	require.Error(t, err, "the policy verb ran something")
 	_, again, _ := j.tool(t, j.env(), "policy", "--read", j.read, "--write", j.write)
-	if again != out {
-		t.Fatal("the same lists printed two different policies")
-	}
+	require.Equal(t, out, again, "the same lists printed two different policies")
 	// Rule 15: the tool never accepts a caller-supplied profile file, and the way a
 	// reader can tell is that no such flag exists.
 	for _, flag := range []string{"--profile", "--policy-file", "-f", "--print-policy"} {
 		code, _, errOut := j.tool(t, j.env(), "policy", "--write", j.write, flag, "x")
-		if code == 0 {
-			t.Fatalf("%s was accepted by the policy verb", flag)
-		}
-		if !strings.Contains(errOut, "unknown flag "+flag+"; run: nova-sandbox help policy") {
-			t.Fatalf("%s was refused for the wrong reason: %s", flag, errOut)
-		}
+		require.NotEqual(t, 0, code, "%s was accepted by the policy verb", flag)
+		require.Contains(t, errOut, "unknown flag "+flag+"; run: nova-sandbox help policy", "%s was refused for the wrong reason: %s", flag, errOut)
 	}
 }
 
@@ -1579,29 +1367,21 @@ func TestProbeRefusesWhenItCannotAnswerTheQuestion(t *testing.T) {
 	// secret out of that --read, so the refusal under test is the one that fires.
 	nest := filepath.Join(j.base, "nest")
 	nestWrite := filepath.Join(nest, "w")
-	if err := os.MkdirAll(filepath.Join(nestWrite, "home"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(nestWrite, "home"), 0o755))
 	nestEnv := []string{"HOME=" + filepath.Join(nestWrite, "home"), "PATH=/opt/homebrew/bin:/usr/bin:/bin"}
 	code, _, errOut := j.tool(t, nestEnv, "probe", "--read", nest, "--write", nestWrite, "--secret", j.secret)
-	if code != 2 || !strings.Contains(errOut, "reason=probe_outside_inside") {
-		t.Fatalf("exit %d, stderr %q; want 2 and reason=probe_outside_inside", code, errOut)
-	}
+	require.Equal(t, 2, code, "exit %d, stderr %q; want 2 and reason=probe_outside_inside", code, errOut)
+	require.Contains(t, errOut, "reason=probe_outside_inside", "exit %d, stderr %q; want 2 and reason=probe_outside_inside", code, errOut)
 	// And a parent this user cannot write to: a deny there proves nothing, because it was
 	// never possible.
 	ro := filepath.Join(j.base, "ro")
-	if err := os.MkdirAll(filepath.Join(ro, "w", "home"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(ro, 0o500); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(ro, "w", "home"), 0o755))
+	require.NoError(t, os.Chmod(ro, 0o500))
 	t.Cleanup(func() { _ = os.Chmod(ro, 0o755) })
 	env := []string{"HOME=" + filepath.Join(ro, "w", "home"), "PATH=/opt/homebrew/bin:/usr/bin:/bin"}
 	code, _, errOut = j.tool(t, env, "probe", "--write", filepath.Join(ro, "w"), "--secret", j.secret)
-	if code != 2 || !strings.Contains(errOut, "reason=probe_outside_unwritable") {
-		t.Fatalf("exit %d, stderr %q; want 2 and reason=probe_outside_unwritable", code, errOut)
-	}
+	require.Equal(t, 2, code, "exit %d, stderr %q; want 2 and reason=probe_outside_unwritable", code, errOut)
+	require.Contains(t, errOut, "reason=probe_outside_unwritable", "exit %d, stderr %q; want 2 and reason=probe_outside_unwritable", code, errOut)
 }
 
 // toolBinary builds nova-sandbox once for a test that needs a REAL process, not run() in
@@ -1613,9 +1393,8 @@ func toolBinary(t *testing.T) string {
 	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-sandbox")
 	build.Dir = repoRoot(t)
 	build.Env = goenv.Clean(os.Environ())
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building the tool: %v\n%s", err, out)
-	}
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "building the tool: %v\n%s", err, out)
 	return bin
 }
 
@@ -1628,13 +1407,9 @@ func TestFlagsOfAnotherVerbAreRefusedByTheBareForm(t *testing.T) {
 
 	j := newJob(t)
 	code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--secret", j.secret, "--max", "3", "--", "/bin/sh", "-c", "true")
-	if code != 125 {
-		t.Fatalf("exit %d, want 125; stderr %q", code, errOut)
-	}
+	require.Equal(t, 125, code, "exit %d, want 125; stderr %q", code, errOut)
 	for _, want := range []string{"--secret is not a flag of the bare form", "--max is not a flag of the bare form", "probe"} {
-		if !strings.Contains(errOut, want) {
-			t.Fatalf("the refusal does not say %q: %q", want, errOut)
-		}
+		require.Contains(t, errOut, want, "the refusal does not say %q: %q", want, errOut)
 	}
 	// --acl is the other half of the same sentence and goes the OTHER way: the spec's verb
 	// table has it on the bare form for all three platforms and says it is accepted and
@@ -1643,16 +1418,11 @@ func TestFlagsOfAnotherVerbAreRefusedByTheBareForm(t *testing.T) {
 		return
 	}
 	code, _, errOut = j.tool(t, j.env(), "--write", j.write, "--acl", "caller", "--", "/bin/sh", "-c", "true")
-	if code != 0 {
-		t.Fatalf("--acl was not accepted: exit %d, stderr %q", code, errOut)
-	}
-	if !strings.Contains(errOut, "SANDBOX NOTE --acl caller is accepted and ignored") {
-		t.Fatalf("--acl was ignored in silence: %q", errOut)
-	}
-	if code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--acl", "nonsense", "--", "/bin/sh", "-c", "true"); code != 125 ||
-		!strings.Contains(errOut, "--acl wants tool or caller") {
-		t.Fatalf("a misspelt --acl value was accepted: exit %d, stderr %q", code, errOut)
-	}
+	require.Equal(t, 0, code, "--acl was not accepted: exit %d, stderr %q", code, errOut)
+	require.Contains(t, errOut, "SANDBOX NOTE --acl caller is accepted and ignored", "--acl was ignored in silence: %q", errOut)
+	code, _, errOut = j.tool(t, j.env(), "--write", j.write, "--acl", "nonsense", "--", "/bin/sh", "-c", "true")
+	require.Equal(t, 125, code, "a misspelt --acl value was accepted: exit %d, stderr %q", code, errOut)
+	require.Contains(t, errOut, "--acl wants tool or caller", "a misspelt --acl value was accepted: exit %d, stderr %q", code, errOut)
 }
 
 // Build's own comment: it "creates exactly one directory, rule 8's, and only when the rest
@@ -1665,38 +1435,30 @@ func TestARefusedRunCreatesNothing(t *testing.T) {
 
 	j := newJob(t)
 	code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--", "no-such-command-xyz")
-	if code != 127 {
-		t.Fatalf("exit %d, want 127; stderr %q", code, errOut)
-	}
-	if _, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp")); err == nil {
-		t.Fatal("a run refused at not_found created the temp directory anyway")
-	}
+	require.Equal(t, 127, code, "exit %d, want 127; stderr %q", code, errOut)
+	_, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp"))
+	require.Error(t, err, "a run refused at not_found created the temp directory anyway")
 	// The same for a command that is there and is not executable. The executable BIT is
 	// rule 5's pre-flight and it is a unix idea: on windows a .txt is refused later and
 	// for another reason, so that half of this test is unix's.
 	if runtime.GOOS != "windows" {
 		notExec := filepath.Join(j.read, "data.txt")
-		if err := os.WriteFile(notExec, []byte("x\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--", notExec); code != 125 {
-			t.Fatalf("exit %d, want 125; stderr %q", code, errOut)
-		}
-		if _, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp")); err == nil {
-			t.Fatal("a run refused at not_executable created the temp directory anyway")
-		}
+		require.NoError(t, os.WriteFile(notExec, []byte("x\n"), 0o600))
+		code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--", notExec)
+		require.Equal(t, 125, code, "exit %d, want 125; stderr %q", code, errOut)
+		_, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp"))
+		require.Error(t, err, "a run refused at not_executable created the temp directory anyway")
 	}
 	// And a run that is sound still gets it, because rule 8 is the reason it exists. That
 	// half needs a backend, so it is darwin's until the linux body is built: on linux the
 	// wrap is reason=no_sandbox and no run is sound.
 	t.Run("a sound run still gets it", func(t *testing.T) {
 		needDarwin(t)
-		if code, _, errOut := j.wrapped(t, noopScript()); code != 0 {
-			t.Fatalf("a sound run was refused: exit %d, %s", code, errOut)
-		}
-		if fi, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp")); err != nil || !fi.IsDir() {
-			t.Fatalf("the one directory this tool creates was not created for a sound run: %v", err)
-		}
+		code, _, errOut := j.wrapped(t, noopScript())
+		require.Equal(t, 0, code, "a sound run was refused: exit %d, %s", code, errOut)
+		fi, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp"))
+		require.NoError(t, err, "the one directory this tool creates was not created for a sound run: %v", err)
+		require.True(t, fi.IsDir(), "the one directory this tool creates was not created for a sound run: %v", err)
 	})
 }
 
@@ -1708,9 +1470,7 @@ func TestTheTranscriptNamesTheToolsOwnBinary(t *testing.T) {
 	t.Parallel()
 
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var line string
 	for _, l := range strings.Split(string(doc), "\n") {
 		if strings.Contains(l, "PROBE STEP name=read_root") {
@@ -1718,16 +1478,10 @@ func TestTheTranscriptNamesTheToolsOwnBinary(t *testing.T) {
 			break
 		}
 	}
-	if line == "" {
-		t.Fatal("TESTS.md has no read_root transcript line to pin")
-	}
-	if !strings.HasSuffix(line, "/nova-sandbox") {
-		t.Fatalf("the transcript's read_root does not name the tool's own binary: %q", line)
-	}
+	require.NotEmpty(t, line, "TESTS.md has no read_root transcript line to pin")
+	require.True(t, strings.HasSuffix(line, "/nova-sandbox"), "the transcript's read_root does not name the tool's own binary: %q", line)
 	for _, shell := range []string{"/bin/sh", "/bin/dash", "/bin/bash", "/usr/bin/sh"} {
-		if strings.Contains(line, shell) {
-			t.Fatalf("the transcript's read_root stands on a shell: %q", line)
-		}
+		require.NotContains(t, line, shell, "the transcript's read_root stands on a shell: %q", line)
 	}
 }
 
@@ -1761,34 +1515,24 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 
 	t.Run("bare", func(t *testing.T) {
 		code, _, errOut := j.tool(t, j.env(), "probe")
-		if code != 2 {
-			t.Fatalf("exit = %d, want 2:\n%s", code, errOut)
-		}
+		require.Equal(t, 2, code, "exit = %d, want 2:\n%s", code, errOut)
 		for _, want := range []string{"--write is required"} {
-			if !strings.Contains(errOut, want) {
-				t.Errorf("a bare probe does not name %q; a first run must not be sequenced into one run per mistake:\n%s", want, errOut)
-			}
+			assert.Contains(t, errOut, want, "a bare probe does not name %q; a first run must not be sequenced into one run per mistake:\n%s", want, errOut)
 		}
 		// --secret is no longer required (issue #881): a key delivered by nova-secrets
 		// exec is never a file, so a probe without one is a probe, not a refusal.
-		if strings.Contains(errOut, "--secret is required") {
-			t.Errorf("a bare probe demands a --secret that is no longer required:\n%s", errOut)
-		}
-		if lines := strings.Count(strings.TrimSpace(errOut), "\n") + 1; lines < 1 {
-			t.Errorf("the refusal must be printed, one line:\n%s", errOut)
-		}
+		assert.NotContains(t, errOut, "--secret is required", "a bare probe demands a --secret that is no longer required:\n%s", errOut)
+		lines := strings.Count(strings.TrimSpace(errOut), "\n") + 1
+		assert.GreaterOrEqual(t, lines, 1, "the refusal must be printed, one line:\n%s", errOut)
 		// One refusal per problem, and every one of them inside the published
 		// grammar: a bare probe's missing --write is reason=check naming bad_write,
 		// not reason=bad_write.
 		for _, line := range strings.Split(strings.TrimSpace(errOut), "\n") {
 			reason, _, ok := strings.Cut(strings.TrimPrefix(line, "PROBE REFUSED reason="), ":")
-			if !ok || !strings.HasPrefix(line, "PROBE REFUSED reason=") {
-				t.Errorf("not a PROBE REFUSED line: %q", line)
+			if !assert.True(t, ok && strings.HasPrefix(line, "PROBE REFUSED reason="), "not a PROBE REFUSED line: %q", line) {
 				continue
 			}
-			if !probeRefusalReasons[reason] {
-				t.Errorf("reason=%s is not in the PROBE REFUSED grammar of SPEC-SANDBOX.md:\n%s", reason, line)
-			}
+			assert.True(t, probeRefusalReasons[reason], "reason=%s is not in the PROBE REFUSED grammar of SPEC-SANDBOX.md:\n%s", reason, line)
 		}
 	})
 
@@ -1796,9 +1540,8 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 	// either direction.
 	t.Run("only --secret", func(t *testing.T) {
 		code, _, errOut := j.tool(t, j.env(), "probe", "--secret", j.secret)
-		if code != 2 || !strings.Contains(errOut, "--write is required") {
-			t.Errorf("exit = %d; the missing --write is not named:\n%s", code, errOut)
-		}
+		assert.Equal(t, 2, code, "exit = %d; the missing --write is not named:\n%s", code, errOut)
+		assert.Contains(t, errOut, "--write is required", "exit = %d; the missing --write is not named:\n%s", code, errOut)
 	})
 
 	t.Run("only --write", func(t *testing.T) {
@@ -1806,9 +1549,7 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 		// --secret is no longer required (issue #881), so the missing one is never
 		// named: a probe without a --secret is a probe, and its refusal (if any) is
 		// about the wall, never about a file the caller's nova-secrets delivery has.
-		if code == 2 && strings.Contains(errOut, "--secret is required") {
-			t.Errorf("a probe without --secret is refused for one:\n%s", errOut)
-		}
+		assert.False(t, code == 2 && strings.Contains(errOut, "--secret is required"), "a probe without --secret is refused for one:\n%s", errOut)
 	})
 
 	// Every one of these refusals is a PROBE REFUSED of the SPEC-SANDBOX grammar,
@@ -1821,28 +1562,18 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 	t.Run("a --secret that does not exist is reason=check naming bad_read", func(t *testing.T) {
 		code, _, errOut := j.tool(t, j.env(), "probe", "--write", j.write,
 			"--secret", filepath.Join(j.base, "no-such-file"))
-		if code != 2 {
-			t.Errorf("exit = %d, want 2:\n%s", code, errOut)
-		}
-		if !strings.Contains(errOut, "PROBE REFUSED reason=check: ") {
-			t.Errorf("the refusal does not carry a reason of the PROBE REFUSED set; SPEC-SANDBOX fixes it to check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable:\n%s", errOut)
-		}
-		if !strings.Contains(errOut, "(bad_read)") {
-			t.Errorf("the refusal drops the bad_read token a reader greps for; it belongs in the text:\n%s", errOut)
-		}
+		assert.Equal(t, 2, code, "exit = %d, want 2:\n%s", code, errOut)
+		assert.Contains(t, errOut, "PROBE REFUSED reason=check: ", "the refusal does not carry a reason of the PROBE REFUSED set; SPEC-SANDBOX fixes it to check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable:\n%s", errOut)
+		assert.Contains(t, errOut, "(bad_read)", "the refusal drops the bad_read token a reader greps for; it belongs in the text:\n%s", errOut)
 		// And no reason= outside the published set reaches the reader.
 		for _, line := range strings.Split(errOut, "\n") {
 			if !strings.HasPrefix(line, "PROBE REFUSED reason=") {
 				continue
 			}
 			reason, _, _ := strings.Cut(strings.TrimPrefix(line, "PROBE REFUSED reason="), ":")
-			if !probeRefusalReasons[reason] {
-				t.Errorf("reason=%s is not in the PROBE REFUSED grammar of SPEC-SANDBOX.md:\n%s", reason, line)
-			}
+			assert.True(t, probeRefusalReasons[reason], "reason=%s is not in the PROBE REFUSED grammar of SPEC-SANDBOX.md:\n%s", reason, line)
 		}
-		if strings.Contains(errOut, "--write is required") {
-			t.Errorf("a run that named --write was told it had not:\n%s", errOut)
-		}
+		assert.NotContains(t, errOut, "--write is required", "a run that named --write was told it had not:\n%s", errOut)
 	})
 }
 
@@ -1855,21 +1586,15 @@ func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
 
 	j := newJob(t)
 	code, out, errOut := j.tool(t, j.env(), "help")
-	if code != 0 {
-		t.Fatalf("help exit %d", code)
-	}
+	require.Equal(t, 0, code, "help exit %d", code)
 	probe := ""
 	for _, block := range strings.Split(out, "\n\n") {
 		if strings.Contains(block, "nova-sandbox probe ") {
 			probe = block
 		}
 	}
-	if probe == "" {
-		t.Fatal("the banner has no probe example at all")
-	}
-	if !strings.Contains(probe, "HOME=") {
-		t.Fatalf("the probe example omits HOME=, so a reader who pastes it is refused by rule 9:\n%s", probe)
-	}
+	require.NotEmpty(t, probe, "the banner has no probe example at all")
+	require.Contains(t, probe, "HOME=", "the probe example omits HOME=, so a reader who pastes it is refused by rule 9:\n%s", probe)
 
 	// ONBOARDING.md: the example block's lines are RUN, not grepped. A grep for
 	// "HOME=" goes green on an example that still exits 2 for any other reason --
@@ -1886,17 +1611,11 @@ func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
 		switch {
 		case strings.HasPrefix(line, "mkdir -p "):
 			target := strings.Trim(strings.TrimPrefix(line, "mkdir -p "), `"'`)
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.MkdirAll(target, 0o755))
 		case strings.HasPrefix(line, "touch "):
 			target := strings.Trim(strings.TrimPrefix(line, "touch "), `"'`)
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(target, nil, 0o600); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755))
+			require.NoError(t, os.WriteFile(target, nil, 0o600))
 		case strings.Contains(line, "nova-sandbox probe "):
 			fields := strings.Fields(line)
 			for i, f := range fields {
@@ -1914,29 +1633,21 @@ func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
 			t.Fatalf("the probe example has a line this test cannot run: %q", line)
 		}
 	}
-	if home == "" || len(argv) == 0 {
-		t.Fatalf("the probe example is not a HOME= plus a nova-sandbox command:\n%s", probe)
-	}
+	require.NotEmpty(t, home, "the probe example is not a HOME= plus a nova-sandbox command:\n%s", probe)
+	require.NotEmpty(t, argv, "the probe example is not a HOME= plus a nova-sandbox command:\n%s", probe)
 	// The one thing a reader supplies that a temp dir cannot: the credential file the
 	// example names. It is created empty -- the probe proves it CANNOT be read, and
 	// rule 5 refuses a --secret that is not there.
 	for i, a := range argv {
 		if a == "--secret" && i+1 < len(argv) {
-			if err := os.MkdirAll(filepath.Dir(argv[i+1]), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(argv[i+1], nil, 0o600); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.MkdirAll(filepath.Dir(argv[i+1]), 0o755))
+			require.NoError(t, os.WriteFile(argv[i+1], nil, 0o600))
 		}
 	}
 	code, out, errOut = j.tool(t, []string{"HOME=" + home, "PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"}, argv...)
-	if code == 2 {
-		t.Fatalf("the pasted probe example could not run (exit 2); an example that exits 2 is a documentation defect:\n%s\nstderr: %s", probe, errOut)
-	}
-	if code != 0 || !strings.Contains(out, "PROBE OK") {
-		t.Fatalf("the pasted probe example exits %d rather than proving the wall:\nstdout: %s\nstderr: %s", code, out, errOut)
-	}
+	require.NotEqual(t, 2, code, "the pasted probe example could not run (exit 2); an example that exits 2 is a documentation defect:\n%s\nstderr: %s", probe, errOut)
+	require.Equal(t, 0, code, "the pasted probe example exits %d rather than proving the wall:\nstdout: %s\nstderr: %s", code, out, errOut)
+	require.Contains(t, out, "PROBE OK", "the pasted probe example exits %d rather than proving the wall:\nstdout: %s\nstderr: %s", code, out, errOut)
 }
 
 // exampleCommands turns one banner example block into the lines a reader would type:
@@ -1963,9 +1674,7 @@ func exampleCommands(t *testing.T, block, base string) []string {
 		lines = append(lines, cmdLine)
 		joined = ""
 	}
-	if joined != "" {
-		t.Fatalf("the example block ends in a continuation:\n%s", block)
-	}
+	require.Empty(t, joined, "the example block ends in a continuation:\n%s", block)
 	return lines
 }
 
@@ -1982,40 +1691,29 @@ func TestASecretSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing.
 	t.Parallel()
 
 	j := newJob(t)
-	if err := os.WriteFile(filepath.Join(j.base, "CaseProbe"), []byte("x\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(j.base, "CaseProbe"), []byte("x\n"), 0o600))
 	if _, err := os.Stat(filepath.Join(j.base, "caseprobe")); err != nil {
 		t.Skipf("the filesystem under %s is case-SENSITIVE: caseprobe is not CaseProbe, so a --secret spelled in another case is a different file here and the fold this test is about cannot happen", j.base)
 	}
 	// `<base>/r` is the --read; there is no `<base>/R`, so this write goes through the fold
 	// and the file it makes IS a file inside the read set.
 	folded := filepath.Join(j.base, "R", "env")
-	if err := os.WriteFile(folded, []byte("not-a-real-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(folded, []byte("not-a-real-key\n"), 0o600))
 	code, _, errOut := j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write, "--secret", folded)
-	if code != 2 || !strings.Contains(errOut, "reason=secret_inside_allow") {
-		t.Fatalf("a --secret inside --read spelled in another case was exit %d: %s", code, errOut)
-	}
-	if !strings.Contains(errOut, "the secret is never inside either list") {
-		t.Errorf("the refusal does not quote the rule:\n%s", errOut)
-	}
+	require.Equal(t, 2, code, "a --secret inside --read spelled in another case was exit %d: %s", code, errOut)
+	require.Contains(t, errOut, "reason=secret_inside_allow", "a --secret inside --read spelled in another case was exit %d: %s", code, errOut)
+	assert.Contains(t, errOut, "the secret is never inside either list", "the refusal does not quote the rule:\n%s", errOut)
 	// The same question about the write set, whose folded spelling is the one a job would
 	// have written into.
 	foldedWrite := filepath.Join(j.base, "W", "env")
-	if err := os.WriteFile(foldedWrite, []byte("not-a-real-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(foldedWrite, []byte("not-a-real-key\n"), 0o600))
 	code, _, errOut = j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write, "--secret", foldedWrite)
-	if code != 2 || !strings.Contains(errOut, "reason=secret_inside_allow") {
-		t.Fatalf("a --secret inside --write spelled in another case was exit %d: %s", code, errOut)
-	}
+	require.Equal(t, 2, code, "a --secret inside --write spelled in another case was exit %d: %s", code, errOut)
+	require.Contains(t, errOut, "reason=secret_inside_allow", "a --secret inside --write spelled in another case was exit %d: %s", code, errOut)
 	// And a secret in NEITHER list is still not refused for being one: the repair widens no
 	// list. `<base>/secret/env` is the placement the wall is built around.
-	if code, _, errOut := j.tool(t, j.env(), "policy", "--read", j.read, "--write", j.write, "--secret", j.secret); code != 0 {
-		t.Fatalf("a secret outside both lists was exit %d: %s", code, errOut)
-	}
+	code, _, errOut = j.tool(t, j.env(), "policy", "--read", j.read, "--write", j.write, "--secret", j.secret)
+	require.Equal(t, 0, code, "a secret outside both lists was exit %d: %s", code, errOut)
 }
 
 // --read-noexec IS A FLAG, and the reason it exists is the reason it is separate: a
@@ -2034,23 +1732,20 @@ func TestReadNoExecIsAFlagOfTheBareForm(t *testing.T) {
 
 	j := newJob(t)
 	// The banner names it, or a caller cannot find it (ONBOARDING.md point 2).
-	if _, out, _ := j.tool(t, j.env(), "help"); !strings.Contains(out, "--read-noexec") {
-		t.Errorf("the banner does not name --read-noexec:\n%s", out)
-	}
+	_, out, _ := j.tool(t, j.env(), "help")
+	assert.Contains(t, out, "--read-noexec", "the banner does not name --read-noexec:\n%s", out)
 	// Rule 5: a path that is not there is a refusal, named by flag, and NOT created.
 	missing := filepath.Join(j.base, "no-such-cache")
 	code, _, errOut := j.tool(t, j.env(), "--read-noexec", missing, "--write", j.write, "--", "/bin/sh", "-c", "true")
-	if code != 125 || !strings.Contains(errOut, "reason=bad_read") || !strings.Contains(errOut, "--read-noexec") {
-		t.Fatalf("a --read-noexec that is not there was exit %d: %s", code, errOut)
-	}
-	if _, err := os.Stat(missing); err == nil {
-		t.Error("the tool CREATED the --read-noexec path; every path is yours and none is guessed")
-	}
+	require.Equal(t, 125, code, "a --read-noexec that is not there was exit %d: %s", code, errOut)
+	require.Contains(t, errOut, "reason=bad_read", "a --read-noexec that is not there was exit %d: %s", code, errOut)
+	require.Contains(t, errOut, "--read-noexec", "a --read-noexec that is not there was exit %d: %s", code, errOut)
+	_, err := os.Stat(missing)
+	assert.Error(t, err, "the tool CREATED the --read-noexec path; every path is yours and none is guessed")
 	// A flag with no value names itself and the form it wants (rule 16).
-	if code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--read-noexec"); code == 0 ||
-		!strings.Contains(errOut, "--read-noexec wants a value") {
-		t.Fatalf("a bare --read-noexec was exit %d: %s", code, errOut)
-	}
+	code, _, errOut = j.tool(t, j.env(), "--write", j.write, "--read-noexec")
+	require.NotEqual(t, 0, code, "a bare --read-noexec was exit %d: %s", code, errOut)
+	require.Contains(t, errOut, "--read-noexec wants a value", "a bare --read-noexec was exit %d: %s", code, errOut)
 }
 
 // The wall's two read sets, end to end on darwin: a script under --read-noexec is
@@ -2062,30 +1757,21 @@ func TestReadNoExecReadsAndRefusesToExecuteOnDarwin(t *testing.T) {
 	needDarwin(t)
 	j := newJob(t)
 	cache := filepath.Join(j.base, "cache")
-	if err := os.MkdirAll(cache, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(cache, 0o755))
 	script := filepath.Join(cache, "x.sh")
-	if err := testbin.WriteExecutable(script, []byte("#!/bin/sh\necho ran\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(script, []byte("#!/bin/sh\necho ran\n"), 0o755))
 	args := []string{"--read", j.read, "--read-noexec", cache, "--write", j.write, "--", "/bin/sh", "-c"}
 	code, out, errOut := j.tool(t, j.env(), append(args, "cat "+script)...)
-	if code != 0 || !strings.Contains(out, "echo ran") {
-		t.Fatalf("the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
-	}
-	if !strings.Contains(errOut, "read-noexec=1") {
-		t.Errorf("the SANDBOX OK line does not count the no-exec reads: %q", errOut)
-	}
-	if code, _, _ := j.tool(t, j.env(), append(args, script)...); code == 0 {
-		t.Fatal("the script under --read-noexec EXECUTED inside the wall; readable is not executable")
-	}
+	require.Equal(t, 0, code, "the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
+	require.Contains(t, out, "echo ran", "the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
+	assert.Contains(t, errOut, "read-noexec=1", "the SANDBOX OK line does not count the no-exec reads: %q", errOut)
+	code, _, _ = j.tool(t, j.env(), append(args, script)...)
+	require.NotEqual(t, 0, code, "the script under --read-noexec EXECUTED inside the wall; readable is not executable")
 	// The control: the same file under --read runs, so the denial above is the no-exec
 	// grant and not a broken script.
 	ctl := []string{"--read", cache, "--write", j.write, "--", "/bin/sh", "-c", script}
-	if code, _, errOut := j.tool(t, j.env(), ctl...); code != 0 {
-		t.Fatalf("the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
-	}
+	code, _, errOut = j.tool(t, j.env(), ctl...)
+	require.Equal(t, 0, code, "the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
 }
 
 // An unknown verb exits 2 and names the unknown verb explicitly, rather than
@@ -2117,15 +1803,9 @@ func TestUnknownVerbRefused(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, out, errOut := j.tool(t, j.env(), tc.args...)
-			if code != sandbox.ExitCannotRun {
-				t.Fatalf("exit %d, want %d (ExitCannotRun)", code, sandbox.ExitCannotRun)
-			}
-			if out != "" {
-				t.Fatalf("stdout %q, want empty", out)
-			}
-			if errOut != tc.want {
-				t.Fatalf("stderr %q, want %q", errOut, tc.want)
-			}
+			require.Equal(t, sandbox.ExitCannotRun, code, "exit %d, want %d (ExitCannotRun)", code, sandbox.ExitCannotRun)
+			require.Empty(t, out, "stdout %q, want empty", out)
+			require.Equal(t, tc.want, errOut, "stderr %q, want %q", errOut, tc.want)
 		})
 	}
 }
@@ -2189,17 +1869,11 @@ func TestCheckFlagParsing(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, out, errOut := j.tool(t, j.env(), tc.args...)
-			if code != tc.wantCode {
-				t.Fatalf("exit %d, want %d; stderr: %q", code, tc.wantCode, errOut)
-			}
-			if tc.wantOut != "" && !strings.Contains(out, tc.wantOut) {
-				t.Errorf("stdout %q does not contain %q", out, tc.wantOut)
-			}
-			if tc.wantErr != "" && !strings.Contains(errOut, tc.wantErr) {
-				t.Errorf("stderr %q does not contain %q", errOut, tc.wantErr)
-			}
-			if tc.wantCode == sandbox.ExitCannotRun && !strings.Contains(errOut, "run: nova-sandbox help check") {
-				t.Errorf("stderr %q does not contain door 'run: nova-sandbox help check'", errOut)
+			require.Equal(t, tc.wantCode, code, "exit %d, want %d; stderr: %q", code, tc.wantCode, errOut)
+			assert.Contains(t, out, tc.wantOut, "stdout %q does not contain %q", out, tc.wantOut)
+			assert.Contains(t, errOut, tc.wantErr, "stderr %q does not contain %q", errOut, tc.wantErr)
+			if tc.wantCode == sandbox.ExitCannotRun {
+				assert.Contains(t, errOut, "run: nova-sandbox help check", "stderr %q does not contain door 'run: nova-sandbox help check'", errOut)
 			}
 		})
 	}
