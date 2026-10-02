@@ -1299,9 +1299,8 @@ func TestDevLandingWithNoPromotionBranchIsOrdinary(t *testing.T) {
 		if tc.event == "" {
 			branch = "dev"
 		}
-		if got, note := r.run(plain, tc.event, tc.ref, branch); len(got) != 0 {
-			t.Errorf("%s: a plain merge with no origin/sprint/foundation: findings = %q, note = %q; want none", tc.name, got, note)
-		}
+		got, note := r.run(plain, tc.event, tc.ref, branch)
+		assert.Empty(t, got, "%s: a plain merge with no origin/sprint/foundation: findings = %q, note = %q; want none", tc.name, got, note)
 	}
 }
 
