@@ -25,11 +25,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
@@ -93,26 +95,31 @@ var (
 	reapGraceSleep = func() { time.Sleep(reapGrace) }
 )
 
-// reapFlags is the verb's argv: one flag, parsed by hand like every other verb's.
+// reapFlags is the verb's argv: one flag.
 type reapFlags struct {
 	dryRun bool
 	help   bool
 	bad    []sandbox.Refusal
 }
 
+// parseReap reads the argv with the flag package, through verbflag as every skeleton
+// tool's verbs are read: --dry-run, -dry-run and --dry-run=<bool> (=false is a real reap).
+// A help word anywhere is the question, asked before any complaint about the argv.
 func parseReap(args []string) reapFlags {
 	var f reapFlags
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--dry-run":
-			f.dryRun = true
-		case "help", "--help", "-h":
-			f.help = true
-		default:
-			text, took := unknownArg(args, i, "reap")
-			f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command", Text: text})
-			i += took
-		}
+	if slices.ContainsFunc(args, func(a string) bool { return a == "help" || verbflag.IsHelp(a) }) {
+		f.help = true
+		return f
+	}
+	fs := verbflag.New("reap")
+	fs.BoolVar(&f.dryRun, "dry-run", false, "print what a reap would take and touch nothing")
+	refuse := func(text string) {
+		f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command", Text: text + "; run: nova-sandbox help reap"})
+	}
+	if err := verbflag.Parse(fs, args); err != nil {
+		refuse(verbflag.Explain(fs, err))
+	} else if fs.NArg() > 0 {
+		refuse("unexpected argument " + oneline.Escape(fs.Arg(0)) + "; reap takes flags only")
 	}
 	return f
 }

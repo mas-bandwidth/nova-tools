@@ -42,7 +42,7 @@ func TestMisspelledFlagIsOneCleanLine(t *testing.T) {
 		{"a flag with no value", badTexts(parseVerb("policy", []string{"--wrte", "--write", "/b"})), "unknown flag --wrte; run: nova-sandbox help policy"},
 		{"run", runBad(parseRun([]string{"--nmae", "x", "--size", "8g"})), "unknown flag --nmae; run: nova-sandbox help run"},
 		{"egress", egressBad(parseEgress([]string{"--polcy", "p.json"})), "unknown flag --polcy; run: nova-sandbox help egress"},
-		{"reap", reapBad(parseReap([]string{"--dry-rn", "x"})), "unknown flag --dry-rn; run: nova-sandbox help reap"},
+		{"reap", reapBad(parseReap([]string{"--dry-rn", "x"})), "unknown flag --dry-rn; the flags of reap are --dry-run; did you mean --dry-run?; run: nova-sandbox help reap"},
 	} {
 		assert.Equal(t, []string{c.want}, c.got, "%s: refusals %q, want exactly %q", c.name, c.got, c.want)
 	}
