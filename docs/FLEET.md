@@ -77,10 +77,20 @@ The friends are nova-config's friend rows: `nova-sprint friend sync --actor ada`
 copies their names into the sprint's friends table, and each friend says it is
 there by beating from its own machinery, beside its harness, every few seconds
 (the same window and misses as a member's beat; `where` shows it `up`, `down`,
-or `held` while `nova-sprint friend down <friend>` holds it). On any harness the
-wrapper that starts the friend adds one line before it, with
-`NOVA_SPRINT_SERVER` (the run loop's loopback address) or `NOVA_SPRINT_REDIS`
-set for the friend:
+or `held` while `nova-sprint friend down <friend>` holds it). The same sync
+reads each friend's working directory, `<root>/<friend>-working` (`--root
+<dir>`, else `HOME`, so it runs on the machine that holds them), and writes her
+job cards, which `where` counts as the fleet's columns but load: `ready`,
+`working`, `width` (1), `done`, `ok%`, `status`. A job is the inbox/outbox
+standard: the coordinator delivers `inbox/<job>/` (with its `BRIEF.md`) and
+only the coordinator reaches out; the friend makes `outbox/<job>/` when she
+starts and writes `outbox/<job>/REPORT.md` when done, with a `Verdict:` line
+(any word but HOLD, FAIL, FAILED or BROKEN is ok; no line is ok). A brief to a
+friend says so. The sync reads and never writes a friend's directory; run it
+after a job is delivered or collected, or every minute from the coordinator's
+loop. On any harness the wrapper that starts the friend adds one line before
+it, with `NOVA_SPRINT_SERVER` (the run loop's loopback address) or
+`NOVA_SPRINT_REDIS` set for the friend:
 
 ```
 while :; do nova-sprint friend beat friend-a >/dev/null 2>&1; sleep 5; done &

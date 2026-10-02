@@ -570,11 +570,18 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	if err != nil {
 		return whereView{}, "", err
 	}
+	ft := friendsTable(friends)
 	v.Tables[sprint.Friends] = map[string]map[string]string{}
-	for _, f := range friends {
-		v.Tables[sprint.Friends][f.Name] = map[string]string{sprint.Status: f.Status}
+	for _, r := range ft.Rows {
+		cells := map[string]string{}
+		for j, col := range ft.Columns {
+			cells[col.Name] = ntable.CellText(ft.Columns, r, j)
+		}
+		v.Tables[sprint.Friends][r.Key] = cells
 	}
-	parts[sprint.Friends] = friendsText(friends)
+	// the table layer draws it as it draws the fleet: header, rule, rows, rule,
+	// the folded footer; with no friend the header, its rule and the footer
+	parts[sprint.Friends] = ntable.Render(ft, ntable.RenderOpts{Title: sprint.Friends})
 	var shown []string
 	for _, t := range sprint.ShownOrder {
 		shown = append(shown, parts[t])
@@ -589,25 +596,27 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	return v, b.String(), nil
 }
 
-// friendsText is the friends table as the view draws it (sprint.FriendsDef):
-// its header, a rule, a row per friend in the order given, then a rule and the
-// summary row, whose cell is blank, as the fleet table's status cell is (the
-// table's one column is text, which has no fold, so the table layer draws no
-// footer of its own). With no friend it is the header, its one rule and the
-// summary row, as every empty table is (ntable.Render).
-func friendsText(friends []store.FriendRow) string {
+// friendsTable is the friends table (sprint.FriendsDef) with a row per friend
+// in the order given: her job cards' counts in ready, working and the hidden
+// ok and failed, her width and her status as text; done and ok% are the
+// table's own formulas over the counts (ntable.CellText), as the fleet
+// table's are.
+func friendsTable(friends []store.FriendRow) ntable.Table {
 	t := sprint.FriendsDef()
+	at := map[string]int{}
+	for j, c := range t.Columns {
+		at[c.Name] = j
+	}
 	for _, f := range friends {
-		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Texts: map[string]string{sprint.Status: f.Status}})
+		cells := make([]ntable.Cell, len(t.Columns))
+		cells[at[string(sprint.Ready)]].Count = int64(f.Ready)
+		cells[at[string(sprint.Working)]].Count = int64(f.Working)
+		cells[at[sprint.DoneOK]].Count = int64(f.OK)
+		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
+		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
+			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: f.Status}})
 	}
-	text := ntable.Render(t, ntable.RenderOpts{Title: sprint.Friends})
-	header, rest, _ := strings.Cut(text, "\n")
-	rule, _, _ := strings.Cut(rest, "\n")
-	label, _, _ := strings.Cut(header, " | ")
-	if len(friends) > 0 {
-		text += rule + "\n"
-	}
-	return text + strings.Repeat(" ", len(label)) + " |\n"
+	return t
 }
 
 // allRow is the label of the one row the view draws for the readers and the
