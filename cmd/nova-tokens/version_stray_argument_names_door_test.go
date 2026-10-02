@@ -9,7 +9,7 @@ import (
 
 // TestVersionsStrayArgumentRefusalNamesTheDoor is the site PR #1749 disclosed as owed:
 // `nova-tokens version <stray>` is an invocation the tool could not run, so it exits 2
-// and its one refusal line must end in the door. every_refusal_names_door_test.go enumerates BARE verbs
+// and its one refusal line must end in the door. issue1451_test.go enumerates BARE verbs
 // from the help banner, and a bare `version` is not a refusal at all -- it prints the
 // version and exits 0 -- so the stray-argument path is outside that table. This asserts
 // the door is the literal end of the line, appears exactly once, and that the refusal
