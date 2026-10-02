@@ -195,7 +195,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 	t.Run("the fleet row", func(t *testing.T) {
 		t.Parallel()
 		st := open(t)
-		// The row is there before anything is set, both fields empty, and
+		// The row is there before anything is set, with both endpoints unset, and
 		// has no history yet: migrate made it, nobody added it.
 		row, found, err := st.Get(ctx, KindFleet, KindFleet)
 		assertionMsg159 := []any{"fresh fleet row: %+v %v %v", row, found, err}
@@ -203,6 +203,8 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		require.True(t, found, assertionMsg159...)
 		require.Equal(t, "", row.Fields["store"], assertionMsg159...)
 		require.Equal(t, "", row.Fields["coordinator"], assertionMsg159...)
+		require.Empty(t, row.Fields["redis_port"], assertionMsg159...)
+		require.Equal(t, "", row.Fields["pg_dsn"], assertionMsg159...)
 		require.NotEqual(t, "", row.CreatedAt, assertionMsg159...)
 		{
 			hist, err := st.History(ctx, KindFleet, KindFleet)
@@ -231,6 +233,20 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		require.NoError(t, setupErr11974)
 		_, setupErr12147 := st.Insert(ctx, KindMachine, mk(machine, "studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64"}), "rowan")
 		require.NoError(t, setupErr12147)
+		for _, changes := range []map[string]string{
+			{"redis_port": "65536"},
+			{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova"},
+			{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print;sslmode=disable"},
+			{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print%zz"},
+			{"pg_dsn": "postgres://user@localhost:5432/nova?%70aSsWoRd=do-not-print"},
+		} {
+			_, _, err = st.Update(ctx, KindFleet, KindFleet, changes, "rowan")
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "do-not-print")
+		}
+		rev, err := st.Rev(ctx, KindFleet)
+		require.NoError(t, err)
+		require.Zero(t, rev, "a refused endpoint update wrote history")
 		after, id, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "space", "coordinator": "studio"}, "rowan")
 		assertionMsg182 := []any{"set the fleet: %+v id %d err %v", after.Fields, id, err}
 		require.NoError(t, err, assertionMsg182...)
