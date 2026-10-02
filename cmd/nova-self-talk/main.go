@@ -33,7 +33,7 @@ how it works: each named file (- is stdin) is read sentence by sentence, line nu
 and matched against one table of shapes: a first-person claim carrying a word of failure
 (STANDING: cannot check, bad at, worst) or a neutral-worded verdict (INSTALLATION: a
 self-superlative, a door stated shut, a habit). A dated claim is a record, never flagged.
-It writes nothing; nova-self-talk shapes prints the table, each row with a sentence it finds.
+A scan writes nothing; nova-self-talk shapes prints the table, each row with a sentence it finds.
 first run: nova-self-talk example ./pages writes the example pages from the binary itself;
 then each line under example: exits 1, because the pages hold findings.
 
