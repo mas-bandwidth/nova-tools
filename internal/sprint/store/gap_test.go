@@ -134,3 +134,74 @@ func TestMemSnapshotAndRestoreRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, doc, doc2, "restored store must produce identical snapshot")
 }
+
+func TestRulesPathRoundTrip(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMem()
+	st := &Store{B: m, Names: sprint.Names{Prefix: "test-"}}
+
+	path, err := st.RulesPath(ctx)
+	require.NoError(t, err)
+	require.Empty(t, path)
+
+	require.NoError(t, st.SetRulesPath(ctx, "child-rules.txt"))
+	path, err = st.RulesPath(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "child-rules.txt", path)
+
+	require.NoError(t, st.SetRulesPath(ctx, ""))
+	path, err = st.RulesPath(ctx)
+	require.NoError(t, err)
+	require.Empty(t, path)
+}
+
+func TestTimesLineFormat(t *testing.T) {
+	t.Parallel()
+	res := TickResult{
+		Took: 150 * time.Millisecond,
+		Times: []PartTime{
+			{
+				Table: "work",
+				Name:  "fetch work",
+				Took:  50 * time.Millisecond,
+				Trips: 2,
+				Reads: 1,
+				Rows:  10,
+			},
+			{
+				Name:  "clean",
+				Took:  100 * time.Millisecond,
+				Trips: 1,
+				Reads: 0,
+				Rows:  0,
+			},
+		},
+	}
+	line := res.TimesLine()
+	require.Equal(t, "TIMES 150ms trips=3 reads=1 rows=10 stale=0 mismatch=0: work/fetch-work=50ms/2t/1r/10n clean=100ms/1t/0r/0n", line)
+}
+
+func TestFinishStepPricesFlag(t *testing.T) {
+	t.Parallel()
+	sNoUsage := FinishStep(sprint.FinishReq{As: "m1"})
+	require.False(t, sNoUsage.Prices)
+
+	sWithUsage := FinishStep(sprint.FinishReq{As: "m1", Usage: "tokens=100"})
+	require.True(t, sWithUsage.Prices)
+}
+
+func TestChangeIDsBatchEventAccount(t *testing.T) {
+	t.Parallel()
+	_, err := changeIDs(changeEvent{verb: "apply"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "a batch event without its account")
+
+	ids, err := changeIDs(changeEvent{verb: "other", members: `[{"id":"m1"}]`})
+	require.NoError(t, err)
+	require.Equal(t, []string{"m1"}, ids)
+
+	ids, err = changeIDs(changeEvent{verb: "apply", batchDelta: `{"members":[{"id":"m2"}]}`})
+	require.NoError(t, err)
+	require.Equal(t, []string{"m2"}, ids)
+}
