@@ -155,7 +155,7 @@ beat does not carry yet and `beat=none` for a machine that has never beaten:
 ```
 nova-config machine list --redis db1:6380
 MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 beat=none
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
+MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 os=- arch=- cores=64 memory_gb=- beat=<t>
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -179,9 +179,9 @@ charged to the machine her live beat named, else to the fleet row's
 coordinator machine. 0012 adds `width` and fills it with that rule's
 beat-free part, since a migration reads no beats: every friend's `slots` are
 charged to the coordinator machine (never below 0), every other machine gets
-its `slots`. The fill is the old width exactly when no friend with slots had
+its `slots`. The fill is the derived width exactly when no friend with slots had
 a beat naming another machine. To see any machine where it is not, compare
-with the fleet table the last sync wrote under the old rule, before syncing
+with the fleet table the last sync wrote under the derived rule, before syncing
 again: `nova-sprint fleet sync --check` prints each width that differs and
 writes nothing; set each one back with `nova-config machine set <m> --width
 <n> --as <name>`. Before any migrate, `nova-config migrate --dry-run` prints
@@ -217,7 +217,7 @@ unset endpoint; declare both with one `nova-config fleet set --redis_port
 nova-config fleet set --store m2 --coordinator m1 --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova --as f1
 CONFIG SET kind=fleet name=fleet rev=3 changed=coordinator,pg_dsn,redis_port,store
 nova-config fleet show
-FLEET name=fleet store=m2 coordinator=m1 redis_port=6380 pg_dsn=postgres://nova_config@localhost:5432/nova created=2026-09-27T02:00:00Z updated=2026-09-27T02:10:00Z
+FLEET name=fleet store=m2 coordinator=m1 redis_port=6380 pg_dsn=postgres://nova_config@localhost:5432/nova created=<t> updated=<t>
 ```
 
 ### friend
@@ -236,8 +236,8 @@ nova-config friend list
 FRIEND name=f1 slots=32 tiers=frontier,pro roles=builder,reader
 CONFIG LIST kind=friend rows=1
 nova-config friend history f1
-HISTORY id=4 kind=friend name=f1 op=add actor=f1 at=2026-09-27T02:10:00Z roles=builder slots=64 tiers=frontier,pro
-HISTORY id=5 kind=friend name=f1 op=set actor=f1 at=2026-09-27T02:11:00Z roles=builder>builder,reader slots=64>32
+HISTORY id=4 kind=friend name=f1 op=add actor=f1 at=<t> roles=builder slots=64 tiers=frontier,pro
+HISTORY id=5 kind=friend name=f1 op=set actor=f1 at=<t> roles=builder>builder,reader slots=64>32
 CONFIG HISTORY kind=friend name=f1 changes=2
 ```
 
@@ -257,7 +257,7 @@ it is the handover; a friend the sprint names cannot be removed.
 nova-config sprint set --coordinator f1 --as f1
 CONFIG SET kind=sprint name=sprint rev=6 changed=coordinator
 nova-config sprint show
-SPRINT name=sprint coordinator=f1 created=2026-09-27T02:00:00Z updated=2026-09-27T02:12:00Z
+SPRINT name=sprint coordinator=f1 created=<t> updated=<t>
 ```
 
 ### loop
@@ -279,9 +279,9 @@ CONFIG LIST kind=loop rows=2
 nova-config loop set reader-m1 --width 16 --as a1
 CONFIG SET kind=loop name=reader-m1 rev=14 changed=width
 nova-config loop show reader-m1
-LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=16 enabled=true created=2026-09-30T02:00:00Z updated=2026-09-30T02:10:00Z command=["/opt/bin/nova-swarm","member","--reader","--width","16"]
+LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=16 enabled=true created=<t> updated=<t> command=["/opt/bin/nova-swarm","member","--reader","--width","16"]
 nova-config machine show m1
-MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 created=2026-09-30T02:00:00Z updated=2026-09-30T02:00:00Z loops=reader-m1,refresh-m1
+MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 created=<t> updated=<t> loops=reader-m1,refresh-m1
 ```
 
 `--every <seconds>` runs it periodically and `--keepalive true` keeps a
@@ -339,7 +339,7 @@ float; a price not set is empty, and a card on a route with no price has no
 predicted cost, never a zero:
 
 ```
-nova-config route set pro-deepseek-opencode --price_input 0.27 --price_cache_read 0.07 --price_cache_write 0 --price_output 1.10 --price_source https://example.com/pricing --price_as_of 2026-10-01
+nova-config route set pro-deepseek-opencode --price_input 0.27 --price_cache_read 0.07 --price_cache_write 0 --price_output 1.10 --price_source https://example.com/pricing --price_as_of YYYY-MM-DD
 nova-config route set pro-grok-openrouter --price_input 3 --price_output 15 --long_context 128000 --price_input_long 6 --price_output_long 30 --gateway_percent 5.5
 nova-config apply
 ```
