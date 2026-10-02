@@ -228,6 +228,14 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		// install every machine runs is the one this host is holding.
 		return release.Main(name, args, stamp, out, errs)
 	}
+	// `install` is the friend's one-step command to install the release (#4321):
+	// `nova-update install` dispatches to `release install`.
+	if verb == "install" {
+		if name != "nova-update" {
+			return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
+		}
+		return release.Main(name, append([]string{"install"}, args...), stamp, out, errs)
+	}
 	if verb == "adoption" {
 		if name != "nova-update" {
 			return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
