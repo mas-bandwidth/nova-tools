@@ -14,7 +14,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// THE CIRCLE THIS VERB BREAKS (the Air seat, 2026-09-18).
+// THE CIRCLE THIS VERB BREAKS.
 //
 // `seal` folds one value into a seat file, and to do that it must first DECRYPT that
 // file: sops rewrites the whole document, so the values already in it have to be read

@@ -14,14 +14,14 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// THE SECOND CIRCLE (the store's move to hetzner, 2026-09-27).
+// THE SECOND CIRCLE.
 //
 // `seat add` gives a NEW seat its first values out of a seat the coordinator can open.
 // The night the store moved, every bench seat that already existed needed the store's
 // new NOVA_REDIS_BENCH_PASSWORD, which the coordinator's seat held sealed; `seal` runs
 // only where the target's own key lives, and `seat add` refuses a seat file that exists.
 // So a value the coordinator holds could reach an existing seat by no verb at all, and
-// Glenn's rule is that a hand fix is not a road.
+// A hand fix is not a road.
 //
 // `seat inject` is `seat add`'s pipe pointed at an EXISTING seat's file: the named
 // values come out of the source through sops, go straight into the encrypt of the

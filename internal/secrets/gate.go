@@ -136,12 +136,13 @@ func RunGate(in GateInput) (string, int) {
 				return gateRefuse(ruleNum, ".sops.yaml", fmt.Sprintf("path_regex names %d seat files; expected exactly one", named)), 2
 			}
 
-			// 4. A recipient key this pull request introduces is a GRANT, and the review that
-			// used to catch it is gone (Glenn 2026-09-18: a seat is set up with no second
-			// human). The fleet's machines registry stands in its place: the new key is
-			// permitted only when a machine in the registry carries this file's seat, so the
-			// question "whose key is this, and does that machine exist?" has a mechanical
-			// answer. With no --machines the rule is dormant and the APPROVE line says so.
+			// 4. A recipient key this pull request introduces is a GRANT, and a seat can
+			// be brought up with no second human on the bench. The fleet's machines
+			// registry is the only mechanical check that stands in for a human review:
+			// the new key is permitted only when a machine in the registry carries this
+			// file's seat, so the question "whose key is this, and does that machine
+			// exist?" has a mechanical answer. With no --machines the rule is dormant
+			// and the APPROVE line says so.
 			if fleetSeats != nil {
 				seat := strings.TrimSuffix(seatFile, ".yaml")
 				for _, key := range rule.Recipients {

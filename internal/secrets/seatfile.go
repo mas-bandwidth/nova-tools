@@ -25,7 +25,7 @@ type SeatFile struct {
 // the caller's identities and parses it. It is the one path from a seat to its
 // values: `nova-secrets exec` takes it before it replaces itself with the
 // command, and a nova tool given --seat takes it in its own process
-// (internal/seatcred, nova-tools#4052), so no shell wrapper stands between the
+// (internal/seatcred), so no shell wrapper stands between the
 // two and neither can check less than the other.
 func OpenSeatFile(storeDir, asName, keyPath, sopsPath string) (SeatFile, error) {
 	// 1. The invocation and the store's shape, every problem at once
