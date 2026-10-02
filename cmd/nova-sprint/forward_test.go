@@ -237,7 +237,7 @@ func TestTheLoopbackListenerHoldsAWorkersVerbToItsEpoch(t *testing.T) {
 	assert.Len(t, taken(t, local[1]), 1)
 	assert.Equal(t, 0, local[2].Code, "a coordinator's verb, from this machine: %s%s", local[2].Stdout, local[2].Stderr)
 
-	fleet := r.a.serve(sprintwire.Request{Verbs: [][]string{{"fleet", "up", "m1", "--width", "64", "--actor", "boss"}}}).Results
+	fleet := r.a.serveFrom(sprintwire.Request{Verbs: [][]string{{"fleet", "up", "m1", "--width", "64", "--actor", "boss"}}}, false).Results
 	assert.Equal(t, 2, fleet[0].Code, "from the fleet, a coordinator's verb is not run")
 	for _, argv := range [][]string{{"run"}, {"tick"}, {"land", "--stream", "s1"}, {"play"}, {"fleet", "sync"}, {"where", "--redis", "mem:x"}, {"no-such-verb"}} {
 		res := r.a.serveFrom(sprintwire.Request{Verbs: [][]string{argv}}, true).Results[0]
