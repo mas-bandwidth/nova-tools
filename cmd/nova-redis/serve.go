@@ -109,7 +109,7 @@ func cmdServe(args []string, stdout, stderr io.Writer, d deps) int {
 	}
 	program, err := d.lookPath(redisServerProgram)
 	if err != nil {
-		fmt.Fprintf(stderr, "SERVE FAIL err=%s remedy=%q\n", oneline.Err(fmt.Errorf("%s not found on PATH: %w", redisServerProgram, err)),
+		fmt.Fprintf(stderr, "SERVE FAILED err=%s remedy=%q\n", oneline.Err(fmt.Errorf("%s not found on PATH: %w", redisServerProgram, err)),
 			"install redis-server (Redis 7 or later) so it is on PATH, then run nova-redis serve again")
 		return 1
 	}
@@ -125,7 +125,7 @@ func cmdServe(args []string, stdout, stderr io.Writer, d deps) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := d.launch(ctx, spec, stdout, stderr); err != nil {
-		fmt.Fprintf(stderr, "SERVE FAIL err=%s remedy=%q\n", oneline.Err(err), "run: ls -ld -- "+shellWord(dir)+"; compare directory access and the explicit --bind/--port with the launch error and any redis-server output")
+		fmt.Fprintf(stderr, "SERVE FAILED err=%s remedy=%q\n", oneline.Err(err), "run: ls -ld -- "+shellWord(dir)+"; compare directory access and the explicit --bind/--port with the launch error and any redis-server output")
 		return 1
 	}
 	fmt.Fprintf(stdout, "SERVE STOP bind=%s port=%d\n", oneline.Field(strings.Join(binds, ",")), port)
