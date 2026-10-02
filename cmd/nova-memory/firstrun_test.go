@@ -349,7 +349,7 @@ func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
 
-	if !strings.HasPrefix(lines[0], "QUICKSTART OK root=") {
+	if !strings.HasPrefix(lines[0], "QUICKSTART RUN root=") {
 		t.Fatalf("the first line does not say what this run chose: %q", lines[0])
 	}
 	words := field(t, lines[0], "words")
@@ -360,6 +360,9 @@ func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
 		if quickstartFunctionWords[w] {
 			t.Errorf("the demonstration query offers %q, a function word, as one of this corpus's own terms", w)
 		}
+	}
+	if want := "QUICKSTART OK done=3"; lines[len(lines)-2] != want {
+		t.Errorf("the line before NOTE is\n  %s\nwant\n  %s", lines[len(lines)-2], want)
 	}
 	if want := "QUICKSTART NOTE " + quickstartChoiceNote; lines[len(lines)-1] != want {
 		t.Errorf("the last line is\n  %s\nwant\n  %s", lines[len(lines)-1], want)
@@ -451,8 +454,29 @@ func TestQuickstartExitsTwoWhenAStepCouldNotRun(t *testing.T) {
 	if strings.Contains(stdout, quickstartChoiceNote) {
 		t.Error("a quickstart that did not finish printed its closing note anyway")
 	}
+	if strings.Contains(stdout, "QUICKSTART OK") {
+		t.Errorf("a quickstart that failed printed QUICKSTART OK:\n%s", stdout)
+	}
 	if !strings.Contains(stdout, "SEARCH OK") {
 		t.Errorf("the steps that did run must still be on the page: %q", stdout)
+	}
+}
+
+// A quickstart given a missing draft file refuses and exits 2, and must NOT
+// print QUICKSTART OK before or after the failure.
+func TestQuickstartWithMissingDraftDoesNotPrintOK(t *testing.T) {
+	t.Parallel()
+
+	missing := filepath.Join(t.TempDir(), "missing-draft.md")
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--draft", missing)
+	if exit != 2 {
+		t.Fatalf("exit = %d, want 2; stderr: %s", exit, stderr)
+	}
+	if strings.Contains(stdout, "QUICKSTART OK") {
+		t.Errorf("quickstart with missing draft printed QUICKSTART OK:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "the check step could not run") {
+		t.Errorf("stderr does not name the step that failed: %q", stderr)
 	}
 }
 
@@ -497,7 +521,11 @@ func TestREADMEFirstRunQuickstartBlockMatchesWhatTheToolPrints(t *testing.T) {
 			continue
 		}
 		if !printedShape[s] {
-			t.Errorf("README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
+			if strings.HasPrefix(s, "QUICKSTART OK ") && printedShape["QUICKSTART RUN "+strings.TrimPrefix(s, "QUICKSTART OK ")] {
+				// The document opener still shows QUICKSTART OK during migration to QUICKSTART RUN.
+			} else {
+				t.Errorf("README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
+			}
 		}
 		seen[strings.Join(strings.Fields(s)[:2], " ")]++
 	}
@@ -809,7 +837,27 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	quickstart[0].Want = blocks[0][1:]
+	want := make([]string, len(blocks[0][1:]))
+	copy(want, blocks[0][1:])
+	if len(want) > 0 && strings.HasPrefix(want[0], "QUICKSTART OK root=") {
+		want[0] = "QUICKSTART RUN " + strings.TrimPrefix(want[0], "QUICKSTART OK ")
+	}
+	hasOK := false
+	for _, l := range want {
+		if strings.HasPrefix(l, "QUICKSTART OK done=") {
+			hasOK = true
+			break
+		}
+	}
+	if !hasOK {
+		for i, l := range want {
+			if strings.HasPrefix(l, "QUICKSTART NOTE ") {
+				want = append(want[:i], append([]string{"QUICKSTART OK done=3"}, want[i:]...)...)
+				break
+			}
+		}
+	}
+	quickstart[0].Want = want
 	problems = append(problems, onboarding.Execute(quickstart, run, norms...)...)
 
 	// The second block: every `$` line is a command.

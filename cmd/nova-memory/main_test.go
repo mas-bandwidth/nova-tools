@@ -76,6 +76,8 @@ func TestRefusesToGuess(t *testing.T) {
 		{"eval with a zero floor", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0", exampleGold}, "a harness that cannot fail is not a measurement"},
 		{"eval with a negative floor", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "-1", exampleGold}, "--floor must be in (0,1]"},
 		{"eval with a floor above one", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "1.5", exampleGold}, "--floor must be in (0,1]"},
+		{"eval with a NaN floor", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "NaN", exampleGold}, "--floor must be in (0,1]"},
+		{"eval with an Inf floor", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "+Inf", exampleGold}, "--floor must be in (0,1]"},
 		{"eval without a gold file", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.8"}, "exactly one gold file"},
 		{"eval with a missing gold file", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.8", "testdata/no-such-gold.tsv"}, "no-such-gold.tsv"},
 	}
@@ -1079,4 +1081,25 @@ func TestNoCorpusOrCallerTextCanForgeALine(t *testing.T) {
 			t.Errorf("stderr = %q, want this tool's own refusal with the flag escaped", stderr)
 		}
 	})
+}
+
+// --floor NaN is rejected before reads of gold file or corpus root.
+func TestEvalRejectsNaNFloorBeforeReads(t *testing.T) {
+	t.Parallel()
+
+	// Use non-existent gold file and non-existent root: if eval read or validated
+	// them before floor checking, stderr would complain about the paths instead.
+	exit, stdout, stderr := runCLI(t, "", "eval", "--root", "/nonexistent/root/dir", "--channels", "bm25", "--k", "3", "--floor", "NaN", "/nonexistent/gold.tsv")
+	if exit != 2 {
+		t.Fatalf("exit = %d, want 2; stdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "--floor must be in (0,1] (got NaN)") {
+		t.Errorf("stderr does not name the rejected floor: %q", stderr)
+	}
+	if strings.Contains(stderr, "/nonexistent") {
+		t.Errorf("rejection happened after reading or attempting to read paths: %q", stderr)
+	}
+	if stdout != "" {
+		t.Errorf("expected empty stdout on refusal, got %q", stdout)
+	}
 }
