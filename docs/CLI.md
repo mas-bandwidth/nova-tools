@@ -205,10 +205,10 @@ travel.
 ```
 $ nova-check convergence --repo mas-bandwidth/nova-tools \
     --ledger ~/rowan-new/reports/pitstop-tests-2026-09-17.md \
-    --receipts ~/rowan-working/dogfood \
-    --retired ~/rowan-working/bin/retired/README.md \
-    --bin ~/rowan-working/bin --repo-dir . \
-    --since 2026-09-18T00:00:00Z --state ~/rowan-working/convergence.json
+    --receipts ~/docs/dogfood \
+    --retired ~/docs/bin/retired/README.md \
+    --bin ~/docs/bin --repo-dir . \
+    --since 2026-09-18T00:00:00Z --state ~/docs/convergence.json
 CONVERGENCE LANDING now=2 before=5 ratio=0.40 trend=contracting measure=rounds-per-batch batches=4 per-hour=0.25
 CONVERGENCE CLASSES now=29 before=27 ratio=1.07 trend=contracting measure=class-test-index-entries rev=04bb4e1c9f2a
 CONVERGENCE SCRIPTS now=42 before=66 ratio=0.64 trend=contracting measure=scripts-left-in-bin retired-in-window=24
@@ -1143,8 +1143,7 @@ $ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 5
   fallback: containment that only holds inside WSL is containment on a machine
   the card was not sent to.
 
-**This is not measured on a Windows machine.** The estate has none. The verb's sequence is proven against a fake on every host, the
-binary cross-compiles and vets for `GOOS=windows`, and until the **wall**
+**This is not measured on a Windows machine.** The estate has none. The verb's sequence is proven against a fake on every host. The
 (AppContainer) is built the verb refuses there with `reason=no_sandbox` naming
 the half that is missing — a place without a wall is hygiene, not containment.
 
@@ -1157,7 +1156,7 @@ the verb's own usage.
 volume is the one step that cannot be shared: two `diskutil apfs addVolume`
 running at the same time leave the new volume's root owned by `root:wheel`
 instead of you, it never settles, and the run dies at `mkdir` with `permission
-denied` before its card starts, and three of four concurrent runs — then four of four — die that way. `run`
+denied` before its card starts. `run`
 serializes creation across processes with a lock file under your own cache
 directory, and checks the new root is yours and writable before it hands it to
 anything. Nothing else is serialized: the runs themselves overlap freely.
@@ -1263,7 +1262,7 @@ What a first run gets wrong, and what each one wants:
 
 There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` carries seven example lines a stranger can paste instead — six under its first `example:` and one under the `session` example, and `sources` is the one verb that only looks.
 
-**The token ledger on Redis** (SPEC-STATE test 17). `ledger` indexes folded day files
+**The token ledger on Redis**. `ledger` indexes folded day files
 into the fleet Redis, one hash per day, and `report --redis` is the month as one GROUP BY
 over those hashes -- every one of the five types apart, a dash where no row reported a type,
 and equal to the folded day TSVs to the token. The day files stay the record.
@@ -1362,8 +1361,7 @@ past it: classify from a complete local list instead, with `--local-diff <checko
 that nobody has run since and said it did, is an **open edge**, and an open edge refuses —
 `RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or --no-dogfood-gate
 --reason <why>"`. `--cli` defaults to `docs/CLI.md` beside the checkout the verb was already given
-(`--changelog` for `cut`, `--source` for `build`); `--receipts` names the receipts directory.
-When the directory is omitted, the run says `dogfood-gate=skipped` rather than passing quietly.
+ (`--changelog` for `cut`, `--source` for `build`); `--receipts` defaults to `~/docs/dogfood` when it exists.
 The gate judges the **shipped set** only: the tools under the checkout's `cmd/`. A receipt
 naming any other tool is set aside and counted on `RELEASE CUT NOTE dogfood-gate shipped=<n>
 outside=<n> cmd=<dir>`. `--no-dogfood-gate` needs `--reason <why>`, and the reason is printed, put on the release
