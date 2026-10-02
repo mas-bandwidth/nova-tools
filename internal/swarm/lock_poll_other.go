@@ -8,10 +8,8 @@ import (
 	"time"
 )
 
-// takeKernelLock where there is no flock: lock_other.go's exclusive create of a sibling
-// file, polled until deadline. This is the loop every platform ran before the unix build
-// moved onto internal/filelock; it stays as it was until a migration in which an old and
-// a new binary on one machine still excludes the other.
+// takeKernelLock uses lock_other.go's exclusive sibling-file create on platforms without
+// flock. It polls until the deadline so concurrent processes continue to exclude each other.
 func takeKernelLock(path string, deadline time.Time) (func(), bool, error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {

@@ -8,26 +8,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// A card that ends by asking.
-//
-// The receipt. The worker wrote its test file into a phantom nested path, committed nothing,
-// and ended its last turn by asking whether to proceed with moving RESULT.md into the nested repo.
-//
-// The mechanism described in the issue is not real, and this is not a fix for it.
-// An operator approves and tells the model to ask and wait. `opencode run` is non-interactive,
-// it finishes the turn and exits 0, and the slot is freed at once. There is no slot to free here
-// and nothing to interrupt.
-//
-// WHAT IS REAL IS THE VERDICT. Both dogfood runs ended `NATIVE INCOMPLETE ... why=no-result`
-// -- the token reserved for a MODEL THAT CHOSE TO PUBLISH NOTHING -- with nothing anywhere
-// recording that the card ended by asking a question. A card that asked and a card that
-// crashed into silence are then the same row to every reader: the requeue cannot retry the
-// asker once on another route, and the ledger cannot count which models ask. The two are
-// The report the card fails to write indicates the difference.
-//
-// This file is the detection and the verdict. Feed the question to the bus and wait for
-// an answer to feed it back as one more user turn, which is a later task.
-// The never-ask sentence in the card preamble is also handled elsewhere.
+// A native run can finish successfully after asking a question instead of publishing a
+// report. Asked detects that outcome so the verdict distinguishes it from a silent crash,
+// and WriteAskedResult records the question where the normal gatherer looks for reports.
+// This file records the outcome; another component can decide how to obtain an answer.
 
 // AskedResultName is the report a run writes FOR a card that ended by asking. It is
 // `RESULT.md` for the same reason the blocked report is: that is the one file every gather
