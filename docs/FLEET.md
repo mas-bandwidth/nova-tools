@@ -146,6 +146,17 @@ password reaches the tool's environment and no file, line or log. That the
 3. On every machine: the platform's directory copied to `~/nova-bench/release/<version>/<platform>/` (only files that differ), then that release's own `nova-update release install`, which verifies the `SHA256SUMS` whole and skips a tool that already answers the version, then, last, removes the old version directories under `~/nova-bench/release/`: it keeps the version installed, every version the bin directory's binaries answered before it (so a bad build can be put back), and the 3 newest of the rest; only names that parse as a version are touched, and a removal that fails is counted (`prune-failed=<n>` on the `RELEASE INSTALLED` line) and never fails the install; the tools named in `fleet/retired-tools.txt` (tools nova-tools once shipped and ships no more, by exact name) are removed from the bin directory, and nothing else is: a binary the list does not name (a credential helper, a loop wrapper of the fleet's own, a `.prev` copy) is never touched, whatever its name; the build fact (`~/.config/nova/build`) holds the version. `--check` prints `TOOLS host=<m> ... UP-TO-DATE` or `WOULD-INSTALL` from the installed `nova-update version`, and `WOULD-REMOVE <path>` for each retired tool present.
 4. On `store_deployer`: `nova-config migrate` (the schema a kind the build adds needs: run before any `nova-config loop add`), then `nova-redis fn load` as the deploy user; `--check` runs `nova-redis fn check` instead.
 
+The role that runs migrate must own every table in schema config. The play
+runs it as the role `nova_pg_dsn` names (the config role), so a schema whose
+tables another role made (an admin role at setup) is refused before any
+migration is applied, and the refusal is the play's failure line: it names
+the role, each table it does not own with its owner, and ends in `run:` and
+one `ALTER TABLE config.<table> OWNER TO <role>;` per table. Run those once,
+in psql, as a role with the owners' rights (the owner or a superuser), then
+run the play again. `nova-config migrate --dry-run` prints the same finding,
+applies nothing, and exits 1 when migrate would refuse (`ready=no`), 0 when
+it would apply.
+
 ## redis.yml
 
 `nova-redis acl render` on the machine running the play prints the users this

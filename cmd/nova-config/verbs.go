@@ -23,6 +23,9 @@ const (
 	effectInventory = "inspection: reads Redis (the state apply wrote) or the --fixture file, never PostgreSQL, and writes nothing"
 )
 
+// migrateMore is the ownership rule migrate -h states.
+const migrateMore = "the role that runs migrate must own every table in schema config and be able to create in it; when it does not, migrate refuses before applying any migration and prints one ALTER TABLE config.<table> OWNER TO <role>; per table, for a role with the owners' rights to run once; --dry-run prints the same finding (MIGRATE NOT-OWNED, MIGRATE WOULD-REFUSE) and exits 1 when migrate would refuse (ready=no); a --file store has no roles, so there it checks nothing\n"
+
 // kindExamples is each kind's worked example per verb, in the order a first
 // try runs them on one --file store (TestEveryKindsExamplesRunInOrder runs
 // them all, in this order, on one file). A verb with none here shows none.
@@ -86,6 +89,7 @@ func verbExtra(verb string) string {
 		effect = effectBinary
 	case verb == "migrate":
 		effect = effectMigrate
+		more = migrateMore
 	case verb == "status":
 		effect = effectStatus
 	case verb == "apply":
