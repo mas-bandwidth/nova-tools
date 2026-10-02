@@ -97,9 +97,10 @@ in-memory twin of the store, loaded from the file before the verb and saved
 to it after, the file made by the first verb that writes; run one command at a
 time. Every member and reader of the twin beats at every verb, so a member
 added is up from the next tick; no machine runs between commands, so the tick
-is yours: nova-sprint tick; run, inbox --wait and where --watch are refused. A
-card's whole flow, landed for real (origin.git, a bare repository, stands for
-the forge; work is the worker's checkout and the clone land merges and pushes in):
+is yours: nova-sprint tick; run, play, inbox --wait and where --watch are
+refused. A card's whole flow, landed for real (origin.git, a bare repository,
+stands for the forge; work is the worker's checkout and the clone land merges
+and pushes in):
 
   export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
 `)

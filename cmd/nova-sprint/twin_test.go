@@ -86,6 +86,13 @@ func TestTheTwinRefusesWhatWaitsForAMachine(t *testing.T) {
 	code, out, _ = twinProcess(t, file, "nova-sprint start")
 	assert.Equal(t, 0, code, "start in a twin tells the reader to tick by hand, not to run: exit %d\n%s", code, out)
 	assert.Contains(t, out, "tick by hand: nova-sprint tick", "start in a twin tells the reader to tick by hand, not to run: exit %d\n%s", code, out)
+	// play plays the world around a running machine; a started twin has none
+	// between commands, so play is refused as run is (USE defect 2: it printed
+	// PLAY OK over ticks that moved nothing)
+	code, out, errs = twinProcess(t, file, "nova-sprint play --simulation --seed 7 --ticks 2 --every 10ms")
+	assert.Equal(t, 2, code, "play in a started twin: exit %d, stdout %q, stderr %q; want a refusal that names tick", code, out, errs)
+	assert.Contains(t, errs, "nova-sprint play REFUSED: a mem twin has no machine running between commands", "play in a started twin: stderr %q", errs)
+	assert.Empty(t, out, "play in a started twin prints nothing on stdout")
 }
 
 // A store taken to a snapshot and restored answers as the store it was: the

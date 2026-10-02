@@ -59,6 +59,10 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	if _, err := a.store(*c); err != nil {
 		return refuse(stderr, "play", err.Error())
 	}
+	if a.twinOpen(c.redis) {
+		// play plays the world around a running machine; a twin has none between commands
+		return refuse(stderr, "play", twinMachine)
+	}
 	var base []string
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "redis" {

@@ -1090,7 +1090,7 @@ command that loads it.
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17); --max keeps the newest lines that match and says the cut (`MORE kind=line shown=<n> total=<n>`, `more` under `--json`), 0 is all; a line's words are printed under it, a brief by its size and the card that shows it (`card <id>`), never whole (`--json` carries it) |
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch` (redrawn in place, section 1); `--json` also carries the pending operation, the stalled streams, the people and the coordinator |
-| play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
+| play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running, and on a mem twin, which has no machine between commands (as `run` is) |
 | goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
 | clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm sprint` |
 | teardown | drops the tables, the view and every key of the sprint, of every epoch; `--confirm sprint` |
