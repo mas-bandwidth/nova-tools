@@ -943,7 +943,7 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 		return emit(stdout, o)
 	}
 	for _, row := range rows {
-		fmt.Fprintln(stdout, config.RowLine(k, row)+liveSuffix(bs, row.Name))
+		fmt.Fprintln(stdout, config.ListLine(k, row)+liveSuffix(bs, row.Name))
 	}
 	fmt.Fprintf(stdout, "CONFIG LIST kind=%s rows=%d\n", k.Name, len(rows))
 	return 0
@@ -986,8 +986,7 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	// machine show reads the loops table beside the machine row.
-	if laterKind(k) || (k.Name == config.KindMachine && which == "show") {
+	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code
 		}
@@ -1248,12 +1247,13 @@ func ownershipRemedy(role string, gaps []config.Gap) string {
 	return oneline.Escape(strings.Join(lines, " "))
 }
 
-// laterKind is a kind whose table a later migration made (loops since
-// version 6, routes since 7, tiers since 8, fleet endpoints since 14): each
-// of its verbs refuses on a store older
+// laterKind is a kind whose table, or a column of it the verbs read and
+// write, a later migration made (loops since version 6, routes since 7, tiers
+// since 8, the machine's width since 12, fleet endpoints since 14, the note of
+// a route and a machine since 15): each of its verbs refuses on a store older
 // than this binary's migrations (behindSchema), which does not have it.
 func laterKind(k *config.Kind) bool {
-	return k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier || k.Name == config.KindFleet
+	return k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier || k.Name == config.KindFleet || k.Name == config.KindMachine
 }
 
 // behindSchema is the refusal for a store whose schema is older than this
