@@ -239,17 +239,17 @@ func TestEveryJudgmentPrintsItsDecisionsAsCommands(t *testing.T) {
 	want := `JUDGMENT N1   work came back failed  stream=s2  size=1  waited=1m2s  due=HH:MM:SS  (s2-1)
   the tests went red
   rework with a fix:
-    nova-sprint rework --group N1 --expect 1 --answers N1
+    nova-sprint rework s2-1
   drop:
-    nova-sprint drop --group N1 --expect 1 --reason '<why>' --answers N1
+    nova-sprint drop s2-1 --reason '<why>'
 JUDGMENT N2   a reader found it broken  stream=s2  size=1  waited=1m1s  due=HH:MM:SS  (s2-2)
   the empty case is not handled
   rework with the finding:
-    nova-sprint rework --group N2 --expect 1 --answers N2
+    nova-sprint rework s2-2
   ask another reader:
-    nova-sprint ask --group N2 --expect 1 --another --answers N2
+    nova-sprint ask s2-2 --another
   drop:
-    nova-sprint drop --group N2 --expect 1 --reason '<why>' --answers N2
+    nova-sprint drop s2-2 --reason '<why>'
 JUDGMENT N3   stream stopped: stream branch red  stream=s1  size=3  waited=1m0s  due=HH:MM:SS  (s1-1,s1-2,s1-3)
   suspects: s1-2 (of the batch of 3)
   take the suspect off and resume:
@@ -313,6 +313,27 @@ func TestInboxPrintsTheReaderFindingInFullUnderTheJudgment(t *testing.T) {
 	require.NotContains(t, judgment, "panics", "the finding is inline in the judgment line: %q", judgment)
 	// the finding stands whole on its own line under the judgment
 	require.Contains(t, out, "  "+finding+"\n", "the finding under the judgment:\n%s", out)
+	ta.clean()
+}
+
+// I9: a judgment about exactly one card names that card, so the coordinator
+// pastes no group token; the group form stays for a group of several.
+func TestInboxNamesASingleCardJudgmentByItsCard(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 1")
+	ta.deal(1)
+	ta.ok("take --as m1 --limit 1")
+	ta.ok("finish --as m1 s1-1.w1@1")
+	ta.ok("ask")
+	ta.a.sleep(time.Second)
+	ta.ok("read --as reader-a --broken --finding 'off by one' s1-1.r1.reader-a")
+	out := ta.ok("inbox")
+	require.Contains(t, out, "nova-sprint rework s1-1\n", "rework with the finding names the card:\n%s", out)
+	require.Contains(t, out, "nova-sprint ask s1-1 --another\n", "ask --another names the card:\n%s", out)
+	require.Contains(t, out, "nova-sprint drop s1-1 --reason '<why>'\n", "drop names the card:\n%s", out)
+	require.NotContains(t, out, "--group ", "a single-card judgment names a group token:\n%s", out)
 	ta.clean()
 }
 

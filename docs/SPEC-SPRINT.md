@@ -854,7 +854,9 @@ open notification (a stalled stream's is `stale:<stream>`); overdue marks a
 group and does not split it. `inbox` prints each group's id and size (the
 members a verb given the group acts on), and each judgment's decisions as the
 commands that make them, one per line, with the group id, `--expect` and
-`--answers` filled in; a cut list of primaries ends with
+`--answers` filled in — a judgment about one card instead names the card (`rework
+s1-1 --fix '<fix>'`, `ask s1-1 --another`, `drop s1-1 --reason '<why>'`), so no
+group token is pasted; a cut list of primaries ends with
 `nova-sprint inbox --open <id>`.
 
 A red branch's notification lists the suspects the caller named
