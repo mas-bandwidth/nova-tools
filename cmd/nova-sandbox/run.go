@@ -295,6 +295,12 @@ func parseRun(args []string) runFlags {
 			i++
 			return args[i]
 		}
+		if bad, ok := setSwitch(a, "run", map[string]*bool{"--go": &f.useGo}); ok {
+			if bad != "" {
+				add("no_command", bad)
+			}
+			continue
+		}
 		switch a {
 		case "--name":
 			f.name = want("--name")
@@ -324,8 +330,6 @@ func parseRun(args []string) runFlags {
 			if v := want("--artifact"); v != "" {
 				f.artifacts = append(f.artifacts, v)
 			}
-		case "--go":
-			f.useGo = true
 		case "help", "--help", "-h":
 			f.help = true
 		default:

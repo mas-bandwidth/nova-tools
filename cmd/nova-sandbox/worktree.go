@@ -111,6 +111,12 @@ type worktreeFlags struct {
 func parseWorktree(args []string) worktreeFlags {
 	var f worktreeFlags
 	for i := 0; i < len(args); i++ {
+		if bad, ok := setSwitch(args[i], "worktree", map[string]*bool{"--prune": &f.prune}); ok {
+			if bad != "" {
+				f.unknown = append(f.unknown, bad)
+			}
+			continue
+		}
 		if !worktreeFlagNames[args[i]] {
 			text, took := unknownArg(args, i, "worktree")
 			f.unknown = append(f.unknown, text)
@@ -144,14 +150,12 @@ func parseWorktree(args []string) worktreeFlags {
 					f.pr, f.prNumeric = n, true
 				}
 			}
-		case "--prune":
-			f.prune = true
 		}
 	}
 	return f
 }
 
-var worktreeFlagNames = map[string]bool{"--repo": true, "--scratch": true, "--base": true, "--pr": true, "--prune": true}
+var worktreeFlagNames = map[string]bool{"--repo": true, "--scratch": true, "--base": true, "--pr": true}
 
 // worktreeRecord is what <scratch>/<id>.pr holds: the guid that names the tree,
 // the base branch compared against, and the head the tree was placed at.

@@ -44,7 +44,7 @@ func TestMisspelledFlagIsOneCleanLine(t *testing.T) {
 		{"a flag with no value", texts(parseVerb("policy", []string{"--wrte", "--write", "/b"}).bad), "unknown flag --wrte; run: nova-sandbox help policy"},
 		{"run", texts(parseRun([]string{"--nmae", "x", "--size", "8g"}).bad), "unknown flag --nmae; run: nova-sandbox help run"},
 		{"egress", texts(parseEgress([]string{"--polcy", "p.json"}).bad), "unknown flag --polcy; run: nova-sandbox help egress"},
-		{"reap", texts(parseReap([]string{"--dry-rn", "x"}).bad), "unknown flag --dry-rn; run: nova-sandbox help reap"},
+		{"reap", texts(parseReap([]string{"--dry-rn", "x"}).bad), "unknown flag --dry-rn; the flags of reap are --dry-run; did you mean --dry-run?; run: nova-sandbox help reap"},
 	} {
 		assert.Equal(t, []string{c.want}, c.got, c.name)
 	}
@@ -80,4 +80,63 @@ func TestCheckUnknownFlagIsTheSameLine(t *testing.T) {
 	t.Parallel()
 	r := testkit.Streams(checkVerb).Do(t, "--wrte", "./x").Exit(2)
 	assert.Equal(t, "CHECK REFUSED reason=bad_flag: unknown flag --wrte; run: nova-sandbox help check\n", r.Stderr)
+}
+
+// Every switch the hand-read verbs take reads as Go's flag package reads one, the way
+// reap's --dry-run and every skeleton tool's switches do: bare, -name, =true and =false,
+// and a value that is no boolean refused with what the switch wants. The parse alone:
+// nothing here runs a command, a probe or a forge.
+func TestEverySwitchTakesGosBooleanForms(t *testing.T) {
+	t.Parallel()
+	type got struct {
+		on  bool
+		bad []string
+	}
+	read := map[string]func(args ...string) got{
+		"--net-deny": func(a ...string) got {
+			f := parseVerb("policy", append([]string{"--write", "/b"}, a...))
+			return got{f.netDeny, texts(f.bad)}
+		},
+		"--net-listen": func(a ...string) got {
+			f := parseVerb("policy", append([]string{"--write", "/b"}, a...))
+			return got{f.netListen, texts(f.bad)}
+		},
+		"--json": func(a ...string) got { f := parseVerb("probe", a); return got{f.json, texts(f.bad)} },
+		"--go":   func(a ...string) got { f := parseRun(a); return got{f.useGo, texts(f.bad)} },
+		"--prune": func(a ...string) got {
+			f := parseWorktree(a)
+			return got{f.prune, f.unknown}
+		},
+	}
+	for name, parse := range read {
+		bare := strings.TrimPrefix(name, "--")
+		for _, c := range []struct {
+			arg string
+			on  bool
+			bad bool
+		}{
+			{name, true, false},
+			{"-" + bare, true, false},
+			{name + "=true", true, false},
+			{name + "=1", true, false},
+			{name + "=false", false, false},
+			{name + "=maybe", false, true},
+		} {
+			t.Run(c.arg, func(t *testing.T) {
+				t.Parallel()
+				g := parse(c.arg)
+				assert.Equal(t, c.on, g.on, "%s: %+v", c.arg, g)
+				if !c.bad {
+					assert.Empty(t, g.bad, "%s refused: %+v", c.arg, g)
+					return
+				}
+				if assert.Len(t, g.bad, 1, "%s: %+v", c.arg, g) {
+					assert.True(t, strings.HasPrefix(g.bad[0], name+" wants true or false, got maybe"), "%s: %q", c.arg, g.bad[0])
+				}
+			})
+		}
+	}
+	// check reads --json from the argv it parses: a refusal asked for as --json=true is JSON
+	r := testkit.Streams(checkVerb).Do(t, "--json=true", "--bogus").Exit(2)
+	assert.True(t, strings.HasPrefix(r.Stdout, `{"result":{"verb":"check","status":"refused"`), "check --json=true refused in lines: %s", r)
 }

@@ -86,6 +86,10 @@ failure), 2 could not run or refused (one line naming the remedy); exec ends wit
 the command's own status, and 125 when exec itself refused and the command never
 ran.
 
+seat add commits nothing, and seat inject refuses a store with uncommitted changes:
+after the seat add line below, commit what it wrote, then run the seat inject lines:
+  git -C ./secrets add .sops.yaml bo.yaml && git -C ./secrets commit -m 'seat bo'
+
 example:
   nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen
   nova-secrets names  --store ./secrets --as ada

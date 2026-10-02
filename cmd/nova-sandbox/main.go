@@ -13,6 +13,7 @@
 package main
 
 import (
+	"cmp"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -23,7 +24,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -320,6 +320,7 @@ func parse(args []string) flags { return parseVerb("", args) }
 // verb's help to run (unknownArg).
 func parseVerb(verb string, args []string) flags {
 	f := flags{max: 20}
+	switches := map[string]*bool{"--net-deny": &f.netDeny, "--net-listen": &f.netListen, "--json": &f.json}
 	want := func(i int, flag string) (string, int) {
 		if i+1 >= len(args) {
 			f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command", Text: flag + " wants a value: " + flag + " <dir>"})
@@ -333,6 +334,12 @@ func parseVerb(verb string, args []string) flags {
 			f.sawDashDash = true
 			f.argv = append(f.argv, args[i+1:]...)
 			return f
+		}
+		if bad, ok := setSwitch(a, verb, switches); ok {
+			if bad != "" {
+				f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command", Text: bad})
+			}
+			continue
 		}
 		var v string
 		switch a {
@@ -369,12 +376,6 @@ func parseVerb(verb string, args []string) flags {
 			f.secret, i = want(i, "--secret")
 		case "--gpu":
 			f.gpu, i = want(i, "--gpu")
-		case "--net-deny":
-			f.netDeny = true
-		case "--net-listen":
-			f.netListen = true
-		case "--json":
-			f.json = true
 		case "--net-allow":
 			v, i = want(i, "--net-allow")
 			f.netAllow = append(f.netAllow, v)
@@ -587,13 +588,18 @@ func asRefusal(err error, out *sandbox.Refusal) bool {
 // checkVerb reports what this machine can enforce and exits 0 either way, because it is
 // a question, not an attempt.
 func checkVerb(args []string, stdout, stderr io.Writer) int {
-	v := newVerbOut("check", slices.Contains(args, "--json"), stdout, stderr)
+	// --json is read from the whole argv first, so a refusal it asked for is JSON too
+	asJSON, text := false, ""
 	for i, a := range args {
-		if a == "--json" {
-			continue
+		bad, ok := setSwitch(a, "check", map[string]*bool{"--json": &asJSON})
+		if !ok {
+			bad, _ = unknownArg(args, i, "check")
 		}
-		// the first argument is the refusal: an unknown flag, or a word where none goes
-		text, _ := unknownArg(args, i, "check")
+		text = cmp.Or(text, bad)
+	}
+	v := newVerbOut("check", asJSON, stdout, stderr)
+	if text != "" {
+		// the first argument that is no switch, or a switch given no boolean, is the refusal
 		v.refuse(tool.Refused, "bad_flag", oneline.WithRemedy(text, "nova-sandbox help check"))
 		return v.done(stderr, "", sandbox.ExitCannotRun)
 	}

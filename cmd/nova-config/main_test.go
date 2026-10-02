@@ -186,11 +186,15 @@ func (h *harness) deps() deps {
 				return nil, fmt.Errorf("postgres at %s: connection refused", config.Redact(dsn))
 			}
 			if path, ok := strings.CutPrefix(dsn, filePrefix); ok {
-				// a --file is a real file store, under the test's own directory, on the fixed clock
-				if h.dir == "" {
-					return nil, fmt.Errorf("the harness has no directory for --file %s; set h.dir = t.TempDir()", path)
+				// a --file is a real file store, under the test's own directory (or at the
+				// absolute path a test's own TempDir names), on the fixed clock
+				if !filepath.IsAbs(path) {
+					if h.dir == "" {
+						return nil, fmt.Errorf("the harness has no directory for --file %s; set h.dir = t.TempDir()", path)
+					}
+					path = filepath.Join(h.dir, path)
 				}
-				f, err := config.OpenFile(filepath.Join(h.dir, path))
+				f, err := config.OpenFile(path)
 				if err != nil {
 					return nil, err
 				}
@@ -534,16 +538,16 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema="+strconv.Itoa(n)+" machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 route=0 route_rev=0 tier=2 tier_rev=0 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 route_applied=0 tier_applied=0\n", out, "status behind: %q %q", out, errs)
 	require.Contains(t, errs, "status REFUSED: Redis is not at the store's revision for 4 kind(s); run: nova-config apply", "status behind: %q %q", out, errs)
 	delete(h.env, "NOVA_FRIEND")
-	out, _ = step(0, "apply", "--check")
+	// Without --as or NOVA_FRIEND the dry run refuses as the real run does.
+	for _, args := range [][]string{{"apply", "--check"}, {"apply"}} {
+		_, errs = step(2, args...)
+		require.Contains(t, errs, "apply REFUSED: --as is required: the name the write is recorded under (or NOVA_FRIEND); run: nova-config apply -h", "%v without --as: %q", args, errs)
+	}
+	out, _ = step(0, "apply", "--check", "--as", "rowan")
 	want := "CHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0\nCHECK SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=3 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=5 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=2 set=0 remove=0 rev=0 applied=0\n"
-	require.Equal(t, want, out, "apply --check without --as:\n%s\nwant:\n%s", out, want)
+	require.Equal(t, want, out, "apply --check with --as:\n%s\nwant:\n%s", out, want)
 	require.Len(t, h.redis.log, 0, "--check wrote: %v %v", h.redis.log, h.redis.revs)
 	require.Len(t, h.redis.revs, 0, "--check wrote: %v %v", h.redis.log, h.redis.revs)
-	out, _ = step(0, "apply", "--check", "--as", "rowan")
-	require.Equal(t, want, out, "apply --check with --as:\n%s\nwant:\n%s", out, want)
-	// Real apply without --as or NOVA_FRIEND refuses.
-	_, errs = step(2, "apply")
-	require.Contains(t, errs, "apply REFUSED: --as is required: the name the write is recorded under (or NOVA_FRIEND); run: nova-config apply -h", "apply without --as refusal: %q", errs)
 	h.env["NOVA_FRIEND"] = "rowan"
 	out, _ = step(0, "apply")
 	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nCONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0\nAPPLY ADD kind=tier name=flash\nAPPLY ADD kind=tier name=pro\nCONFIG APPLY kind=tier add=2 set=0 remove=0 rev=0 ms=0\n"

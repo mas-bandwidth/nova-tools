@@ -387,7 +387,7 @@ repeats the `--pg` or `--file` the run was given, so it pastes.
 ## Apply: Redis as a copy
 
 ```
-nova-config apply --check
+nova-config apply --check --as f1
 CHECK ADD kind=machine name=m1
 CHECK ADD kind=machine name=m2
 CONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0

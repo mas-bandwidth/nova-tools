@@ -79,7 +79,7 @@ usage:
   nova-config kinds [--json]
   nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--json]
   nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]
-  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>] [--kind <kind>] [--dry-run] [--json]
+  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] --as <name> [--kind <kind>] [--dry-run] [--json]
   nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>] [--timeout <duration>]
   nova-config <kind> add <name> --<field> <value> ... --as <name> [--dry-run] [--json]
   nova-config <kind> set <name> --<field> <value> ... --as <name> [--dry-run] [--json]
@@ -225,6 +225,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	// before anything is dialed or written (the CLI style's rule (b), #4505),
 	// with the verb's effect and worked example (verbExtra).
 	defer verbflag.RecoverWith(stdout, toolName, banner(), &code, verbExtra)
+	stderr = &refusals{Writer: stderr, stdout: stdout, json: verbflag.BoolAsked(args, "json")}
 	ctx := context.Background()
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb; want kinds, migrate, status, apply, inventory, or a kind ("+strings.Join(config.KindNames(), ", ")+") then add|set|remove|list|show|history")
@@ -269,24 +270,50 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	return refuse(stderr, "", fmt.Sprintf("unknown verb %s; want kinds, migrate, status, apply, inventory, or a kind (%s) then add|set|remove|list|show|history", oneline.Quote(args[0]), strings.Join(config.KindNames(), ", ")))
 }
 
+// refusals is where a run's refusal goes: run hands every verb its stderr
+// wrapped in one. When the run asked for --json (verbflag.BoolAsked before a
+// verb's flags parse, the verb's own --json once they do), a refusal is one
+// JSON object on stdout, internal/tool's Out rendered by its own Render, as a
+// skeleton tool answers (tool.Run); else it is the one stderr line.
+type refusals struct {
+	io.Writer // stderr
+	stdout    io.Writer
+	json      bool
+}
+
+// answer writes a refusal: o as JSON on stdout when the run asked for --json,
+// else line on stderr. It returns o.Exit.
+func answer(stderr io.Writer, verb string, o *tool.Out, line string) int {
+	if r, ok := stderr.(*refusals); ok && r.json {
+		o.Verb = verb
+		return emit(r.stdout, o)
+	}
+	fmt.Fprintln(stderr, line)
+	return o.Exit
+}
+
 // refuse is the exit 2 line: the invocation could not run (a flag, an input,
 // a store that did not answer). It is one line in the one grammar,
 // `nova-config[ <verb>] REFUSED: <what>; run: <the verb's help>`
 // (docs/STANDARD.md, section 3, point 1).
 func refuse(stderr io.Writer, verb, what string) int {
-	next := "; run: " + helpFor(verb)
-	if strings.Contains(what, "; run: ") {
-		next = "" // the reason names its own next command (a --file migrate has not made)
+	why, next, named := strings.Cut(what, "; run: ")
+	tail := ""
+	if !named { // else the reason names its own next command (a --file migrate has not made)
+		next = helpFor(verb)
+		tail = "; run: " + next
 	}
-	fmt.Fprintf(stderr, "%s REFUSED: %s%s\n", strings.TrimSpace(toolName+" "+verb), plain(what), next)
-	return 2
+	o := tool.Refuse(plain(why))
+	o.Remedy = plain(next)
+	return answer(stderr, verb, o, strings.TrimSpace(toolName+" "+verb)+" REFUSED: "+plain(what)+tail)
 }
 
 // refused is the exit 1 line: the verb ran and the store or Redis said no.
 // next names the command that resolves it.
 func refused(stderr io.Writer, verb, what, next string) int {
-	fmt.Fprintf(stderr, "%s %s REFUSED: %s; run: %s\n", toolName, verb, plain(what), next)
-	return 1
+	o := tool.Fail(plain(what))
+	o.Remedy = next
+	return answer(stderr, verb, o, fmt.Sprintf("%s %s REFUSED: %s; run: %s", toolName, verb, plain(what), next))
 }
 
 // helpFor is the door a usage refusal names: the verb's own help, else the
@@ -308,6 +335,11 @@ func plain(s string) string { return oneline.Escape(strings.Join(strings.Fields(
 // flag package's stock line.
 func parse(fs *stdflag.FlagSet, args []string, stderr io.Writer, verb string) (int, bool) {
 	err := fs.Parse(args)
+	if r, ok := stderr.(*refusals); ok {
+		// the verb's own --json decides now; a verb with none (inventory) answers in lines
+		f := fs.Lookup("json")
+		r.json = f != nil && (err == nil && f.Value.String() == "true" || err != nil && verbflag.BoolGiven(fs, args, "json"))
+	}
 	if err == nil {
 		return 0, true
 	}
@@ -425,7 +457,7 @@ func actorFlag(fs *stdflag.FlagSet) *string {
 
 // jsonFlag adds --json.
 func jsonFlag(fs *stdflag.FlagSet) *bool {
-	return fs.Bool("json", false, "print one JSON object (internal/tool's result shape) instead of the lines")
+	return fs.Bool("json", false, "print one JSON object (internal/tool's result shape) instead of the lines, a refusal included")
 }
 
 // redisAddress resolves --redis: the flag, else NOVA_SPRINT_REDIS, else
@@ -1324,12 +1356,11 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	finish := func(code int, why, next string) int {
 		if *asJSON {
 			if code != 0 {
-				o.Status, o.Exit, o.Why, o.Remedy = tool.Failed, code, []string{why}, next
+				o.Status, o.Exit, o.Why, o.Remedy = tool.Failed, code, []string{plain(why)}, next
 			}
-			emit(stdout, o)
-		} else {
-			fmt.Fprintln(stdout, line)
+			return emit(stdout, o) // the refusal is in the one object
 		}
+		fmt.Fprintln(stdout, line)
 		if code != 0 {
 			return refused(stderr, verb, why, next)
 		}
@@ -1418,17 +1449,12 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		}
 		kinds = []string{*kind}
 	}
-	var actor string
-	if !*check {
-		var err error
-		actor, err = actorName(*as, d.getenv)
-		if err != nil {
-			problems = append(problems, err.Error())
-		}
-	} else if *as != "" {
-		actor = *as
-	} else if v := d.getenv(envActor); v != "" {
-		actor = v
+	// The dry run makes every refusal the real run makes, in its order: --as
+	// too, though it records nothing (docs/STANDARD.md, section 2, "A verb that
+	// writes has a dry run").
+	actor, err := actorName(*as, d.getenv)
+	if err != nil {
+		problems = append(problems, err.Error())
 	}
 	dsn, err := c.dsn(d.getenv)
 	if err != nil {

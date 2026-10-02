@@ -190,3 +190,41 @@ func TestReapRefusesAFlagItDoesNotHave(t *testing.T) {
 	t.Parallel()
 	testkit.Streams(reapVerb).Do(t, "--force").ExitErr(125, "--force")
 }
+
+// reap reads --dry-run as Go's flag package reads a switch, the way every other tool's
+// verbs read theirs: bare, `=true` and `=false` (a real reap), and a value that is no
+// boolean refused. The parse alone: nothing here lists a volume or reaps one.
+func TestReapParsesDryRunAsEveryToolDoes(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		args       []string
+		dryRun     bool
+		help       bool
+		refusedFor string
+	}{
+		{args: nil},
+		{args: []string{"--dry-run"}, dryRun: true},
+		{args: []string{"-dry-run"}, dryRun: true},
+		{args: []string{"--dry-run=true"}, dryRun: true},
+		{args: []string{"--dry-run=false"}},
+		{args: []string{"--dry-run=maybe"}, refusedFor: "--dry-run"},
+		{args: []string{"--force"}, refusedFor: "--force"},
+		{args: []string{"orphan"}, refusedFor: "orphan"},
+		{args: []string{"--help"}, help: true},
+		{args: []string{"help"}, help: true},
+	} {
+		t.Run(strings.Join(c.args, " "), func(t *testing.T) {
+			t.Parallel()
+			f := parseReap(c.args)
+			assert.Equal(t, c.dryRun, f.dryRun, "dry run")
+			assert.Equal(t, c.help, f.help, "help")
+			if c.refusedFor == "" {
+				assert.Empty(t, f.bad, "refused")
+				return
+			}
+			require.Len(t, f.bad, 1, "one refusal")
+			assert.Contains(t, f.bad[0].Text, c.refusedFor)
+			assert.Contains(t, f.bad[0].Text, "run: nova-sandbox help reap")
+		})
+	}
+}
