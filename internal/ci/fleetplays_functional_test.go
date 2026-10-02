@@ -319,7 +319,8 @@ func TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks(t *testing.T) {
 	assert.Regexp(t, `TASK \[the stage seeded from the installed build's directory, on the machine\][^\n]*\n(?:[^\n]*\n)?changed: \[localhost\]`, second)
 	assert.Contains(t, second, "(item=nova-extra)")
 	assert.Contains(t, second, "(item=SHA256SUMS)")
-	assert.NotContains(t, second, "(item=nova-update)", "a file the machine already held was sent")
+	assert.Contains(t, second, "ok: [localhost] => (item=nova-update)", "the binary the play runs is always compared")
+	assert.NotContains(t, second, "changed: [localhost] => (item=nova-update)", "a file the machine already held was sent")
 	assert.Contains(t, second, "was=v0.0.0-one removed=0 INSTALLED RELEASE INSTALLED version=v0.0.0-two tools=1 skipped=1 ")
 	after, err := os.Stat(installed)
 	require.NoError(t, err)
@@ -330,4 +331,77 @@ func TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks(t *testing.T) {
 
 	check := r.play(t, "tools.yml", append(vars("v0.0.0-two"), "--check")...)
 	assert.Contains(t, check, "was=v0.0.0-two removed=0 UP-TO-DATE", "a reused nova-update answers the earlier version; the build fact says the install is done")
+}
+
+// TestToolsPlayNeverRunsAnUnverifiedSeed: the seed copies the installed
+// build's directory on the machine without verifying it, and the send skips
+// a file whose SHA256SUMS line did not change. nova-update, the one binary
+// the play runs, is always compared and sent again when it differs, so a
+// corrupt seeded nova-update never runs. Any other corrupt seeded file is
+// refused by the install's whole verification before its first rename (the
+// bin directory unchanged), and the next run, the directory begun, compares
+// every file, sends it again and installs.
+func TestToolsPlayNeverRunsAnUnverifiedSeed(t *testing.T) {
+	t.Parallel()
+	built := ""
+	var update []byte
+	for _, corrupt := range []string{"nova-update", "nova-same"} {
+		t.Run(corrupt, func(t *testing.T) {
+			r := newFleetPlayRig(t, "check-fixture.yml")
+			platform := runtime.GOOS + "-" + runtime.GOARCH
+			out := filepath.Join(r.dir, "release")
+			if built == "" {
+				built = filepath.Join(r.dir, "built")
+				r.build(t, filepath.Join(built, "nova-update"), "v0.0.0-one", "./cmd/nova-update")
+				var err error
+				update, err = os.ReadFile(filepath.Join(built, "nova-update"))
+				require.NoError(t, err)
+			}
+			for _, version := range []string{"v0.0.0-one", "v0.0.0-two"} {
+				dir := filepath.Join(out, version, platform)
+				require.NoError(t, os.MkdirAll(dir, 0o755))
+				var sums strings.Builder
+				for _, f := range []struct {
+					name string
+					body []byte
+				}{
+					{"nova-extra", []byte("#!/bin/sh\necho nova-extra " + version + "\n")},
+					{"nova-same", []byte("#!/bin/sh\necho nova-same\n")},
+					{"nova-update", update},
+				} {
+					require.NoError(t, os.WriteFile(filepath.Join(dir, f.name), f.body, 0o755))
+					s := sha256.Sum256(f.body)
+					sums.WriteString(hex.EncodeToString(s[:]) + "  " + f.name + "\n")
+				}
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums.String()), 0o644))
+			}
+			vars := func(version string) []string {
+				return []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root,
+					"-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
+			}
+			r.play(t, "tools.yml", vars("v0.0.0-one")...)
+			seed := filepath.Join(r.home, "nova-bench", "release", "v0.0.0-one", platform, corrupt)
+			require.NoError(t, os.WriteFile(seed, []byte("corrupt on the machine\n"), 0o755))
+			extraNow := func() string {
+				b, err := exec.Command(filepath.Join(r.home, ".local", "bin", "nova-extra")).Output()
+				require.NoError(t, err)
+				return string(b)
+			}
+
+			second, err := r.playResult(t, "tools.yml", vars("v0.0.0-two")...)
+			if corrupt == "nova-update" {
+				require.NoError(t, err, second)
+				assert.Contains(t, second, "changed: [localhost] => (item=nova-update)", "the corrupt seeded nova-update was not sent again")
+				assert.Contains(t, second, "INSTALLED RELEASE INSTALLED version=v0.0.0-two tools=1 skipped=2 ")
+				assert.Equal(t, "nova-extra v0.0.0-two\n", extraNow())
+				return
+			}
+			require.Error(t, err, second)
+			assert.Contains(t, second, "nova-same does not match SHA256SUMS")
+			assert.Equal(t, "nova-extra v0.0.0-one\n", extraNow(), "a refused install changed the bin directory")
+			third := r.play(t, "tools.yml", vars("v0.0.0-two")...)
+			assert.Contains(t, third, "INSTALLED RELEASE INSTALLED version=v0.0.0-two tools=1 skipped=2 ")
+			assert.Equal(t, "nova-extra v0.0.0-two\n", extraNow())
+		})
+	}
 }

@@ -317,7 +317,11 @@ func (ExecSource) Packages(ctx context.Context, dir, goos, goarch string, pkgs [
 
 // parsePackages turns go list's lines into each asked package's directories
 // relative to root. A package outside root (the module cache) is left out: it
-// changes only through go.mod and go.sum, which rebuild everything.
+// changes only through go.mod and go.sum, which rebuild everything. A tool's
+// own line already carries the closure: .Deps is "all (recursively) imported
+// dependencies" (`go help list`), not .Imports, so A -> B -> C puts C on A's
+// line (TestATransitiveChangeRebuildsTheTool runs the real go list on that
+// chain, and fails if .Imports is read instead).
 func parsePackages(out, root string, pkgs []string) (map[string][]string, error) {
 	real := func(p string) string {
 		if r, err := filepath.EvalSymlinks(p); err == nil {

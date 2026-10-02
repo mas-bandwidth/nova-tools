@@ -108,7 +108,11 @@
     # SHA256SUMS differs are sent -- with an --incremental build, the tools it
     # rebuilt. Without an installed build to seed from, or with this version's
     # directory already begun, every file is compared and sent when it differs.
-    # `release install` verifies the whole set against SHA256SUMS either way.
+    # The seed itself is not verified: nova-update, the one binary run here, is
+    # always compared with the build's and sent when it differs, and it verifies
+    # the whole set against SHA256SUMS before its first rename, so a seed file
+    # corrupted on the machine refuses the install, and the next run (the
+    # directory begun) compares every file and sends it again.
     - name: the installed build's checksum file (what the seed compares)
       ansible.builtin.slurp: { src: "{{ nova_release_dir }}/{{ tools_was_version }}/{{ nova_platform }}/SHA256SUMS" }
       register: tools_was_sums
@@ -132,10 +136,14 @@
     - name: the files to send, whose line in the two SHA256SUMS differs, and the checksum files
       ansible.builtin.set_fact:
         tools_send: >-
-          {{ tools_new_sums | difference(tools_old_sums) | map('split', '  ') | map('last') | list + ['SHA256SUMS']
-             + (['SUMS.digest'] if (tools_built_dir ~ '/SUMS.digest') is file else []) }}
+          {{ (tools_new_sums | difference(tools_old_sums) | map('split', '  ') | map('last') | list)
+             | union([tools_updater, 'SHA256SUMS'] + (['SUMS.digest'] if (tools_built_dir ~ '/SUMS.digest') is file else [])) }}
       vars:
         tools_built_dir: "{{ nova_release_out }}/{{ nova_version }}/{{ nova_platform }}"
+        # The one binary the play runs on the machine is always sent (copy skips it
+        # when its bytes already match): the seed is not verified, and nova-update
+        # is what verifies the rest against SHA256SUMS before the first rename.
+        tools_updater: "{{ 'nova-update.exe' if nova_platform.startswith('windows') else 'nova-update' }}"
         tools_new_sums: "{{ lookup('ansible.builtin.file', tools_built_dir ~ '/SHA256SUMS').splitlines() }}"
         tools_old_sums: "{{ (tools_was_sums.content | b64decode).splitlines() }}"
       when: tools_seeded is changed
