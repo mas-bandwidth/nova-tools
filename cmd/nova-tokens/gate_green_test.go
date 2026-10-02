@@ -228,3 +228,88 @@ func TestSourcesUnattributedCountsEveryTokenOfAMessage(t *testing.T) {
 	wantContains(t, r.stdout, "SOURCES UNATTRIBUTED stem=/home/nova/elsewhere tokens=1")
 	wantContains(t, lineWith(r.stdout, "SOURCES OK"), "unattributed=2")
 }
+
+// TestSourcesDayScopeAppliesToStatisticsAndTallies: sources --day must filter day-scoped
+// tallies (messages, rows, and unattributed stems) to only the requested day, while
+// inventory metadata (files, unreadables, unparsed) remains source-wide. --all covers every day.
+func TestSourcesDayScopeAppliesToStatisticsAndTallies(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	repos := reposFile(t, dir) // names schema and serialize
+
+	// Write transcript with messages on two distinct days:
+	// Day 2026-09-11: 1 message on repo "schema", 1 message on unmatched stem "/x/unmatched1" (2 rows: schema, other)
+	// Day 2026-09-12: 1 message on repo "serialize", 1 message on unmatched stem "/x/unmatched2" (2 rows: serialize, other)
+	lines := []string{
+		msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 10}, "/x/schema/a.go"),
+		msg("m2", "2026-09-11T11:00:00Z", "fable", map[string]int{"input_tokens": 20}, "/x/unmatched1/b.go"),
+		msg("m3", "2026-09-12T10:00:00Z", "fable", map[string]int{"input_tokens": 30}, "/x/serialize/c.go"),
+		msg("m4", "2026-09-12T11:00:00Z", "fable", map[string]int{"input_tokens": 40}, "/x/unmatched2/d.go"),
+	}
+	write(t, filepath.Join(tr, "a.jsonl"), strings.Join(lines, "\n")+"\n")
+
+	// 1. Inspecting 2026-09-11 with --unattributed:
+	// exactly 2 messages, 2 rows (schema, other), and only the first day's unmatched stem.
+	// files=1 is source-wide metadata and remains present.
+	r1 := invoke(t, "sources", "--repos", repos, "--day", "2026-09-11", "--claude", "bench="+tr, "--unattributed")
+	wantExit(t, r1, 0)
+	wantContains(t, lineWith(r1.stdout, "SOURCES SOURCE bench"), "files=1")
+	wantContains(t, lineWith(r1.stdout, "SOURCES SOURCE bench"), "messages=2")
+	wantContains(t, lineWith(r1.stdout, "SOURCES SOURCE bench"), "rows=2")
+	wantContains(t, r1.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched1 tokens=1")
+	wantNotContains(t, r1.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched2")
+	wantContains(t, lineWith(r1.stdout, "SOURCES OK"), "files=1")
+	wantContains(t, lineWith(r1.stdout, "SOURCES OK"), "messages=2")
+	wantContains(t, lineWith(r1.stdout, "SOURCES OK"), "rows=2")
+	wantContains(t, lineWith(r1.stdout, "SOURCES OK"), "unattributed=1")
+
+	// 2. Inspecting 2026-09-12 with --unattributed:
+	// exactly 2 messages, 2 rows (serialize, other), and only the second day's unmatched stem.
+	r2 := invoke(t, "sources", "--repos", repos, "--day", "2026-09-12", "--claude", "bench="+tr, "--unattributed")
+	wantExit(t, r2, 0)
+	wantContains(t, lineWith(r2.stdout, "SOURCES SOURCE bench"), "files=1")
+	wantContains(t, lineWith(r2.stdout, "SOURCES SOURCE bench"), "messages=2")
+	wantContains(t, lineWith(r2.stdout, "SOURCES SOURCE bench"), "rows=2")
+	wantContains(t, r2.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched2 tokens=1")
+	wantNotContains(t, r2.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched1")
+	wantContains(t, lineWith(r2.stdout, "SOURCES OK"), "files=1")
+	wantContains(t, lineWith(r2.stdout, "SOURCES OK"), "messages=2")
+	wantContains(t, lineWith(r2.stdout, "SOURCES OK"), "rows=2")
+	wantContains(t, lineWith(r2.stdout, "SOURCES OK"), "unattributed=1")
+
+	// 3. Inspecting 2026-09-13 (a day with no messages) with --unattributed:
+	// 0 messages, 0 rows, 0 unattributed, but source-wide files=1 is preserved.
+	r3 := invoke(t, "sources", "--repos", repos, "--day", "2026-09-13", "--claude", "bench="+tr, "--unattributed")
+	wantExit(t, r3, 0)
+	wantContains(t, lineWith(r3.stdout, "SOURCES SOURCE bench"), "files=1")
+	wantContains(t, lineWith(r3.stdout, "SOURCES SOURCE bench"), "messages=0")
+	wantContains(t, lineWith(r3.stdout, "SOURCES SOURCE bench"), "rows=0")
+	wantNotContains(t, r3.stdout, "SOURCES UNATTRIBUTED")
+	wantContains(t, lineWith(r3.stdout, "SOURCES OK"), "files=1")
+	wantContains(t, lineWith(r3.stdout, "SOURCES OK"), "messages=0")
+	wantContains(t, lineWith(r3.stdout, "SOURCES OK"), "rows=0")
+	wantContains(t, lineWith(r3.stdout, "SOURCES OK"), "unattributed=0")
+
+	// 4. Inspecting --all with --unattributed: all 4 messages, 3 rows (schema, serialize, other),
+	// and both unattributed stems reported across the sources.
+	rAll := invoke(t, "sources", "--repos", repos, "--all", "--claude", "bench="+tr, "--unattributed")
+	wantExit(t, rAll, 0)
+	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE bench"), "files=1")
+	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE bench"), "messages=4")
+	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE bench"), "rows=3")
+	wantContains(t, rAll.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched1 tokens=1")
+	wantContains(t, rAll.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched2 tokens=1")
+	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "files=1")
+	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "messages=4")
+	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "rows=3")
+	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "unattributed=2")
+
+	// 5. Without --unattributed: day scope applies to messages and rows, unattributed is a dash
+	rPlain := invoke(t, "sources", "--repos", repos, "--day", "2026-09-11", "--claude", "bench="+tr)
+	wantExit(t, rPlain, 0)
+	wantContains(t, lineWith(rPlain.stdout, "SOURCES SOURCE bench"), "messages=2")
+	wantContains(t, lineWith(rPlain.stdout, "SOURCES SOURCE bench"), "rows=2")
+	wantContains(t, lineWith(rPlain.stdout, "SOURCES OK"), "unattributed=-")
+}

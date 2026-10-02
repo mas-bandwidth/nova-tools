@@ -44,9 +44,11 @@ type Rules struct {
 	rules []rule
 	// watch is off unless a caller asked for the tally, so an ordinary fold pays nothing
 	// for it: neither the map nor the second pass over the tokens.
-	watch bool
-	stems map[string]int
-	total int
+	watch      bool
+	currentDay string
+	dayFilter  string
+	stems      map[string]int
+	total      int
 }
 
 // stemLimit is the ceiling on distinct stems held while watching. A transcript tree can
@@ -83,8 +85,27 @@ type UnattributedStem struct {
 // by fold: `sources --unattributed` is a verb that only looks.
 func (r *Rules) WatchUnattributed() {
 	r.watch = true
+	r.currentDay = ""
+	r.dayFilter = ""
 	r.stems = map[string]int{}
 	r.total = 0
+}
+
+// FilterDay limits unattributed tallying to messages on the named day.
+// When day is empty, all days are tallied.
+func (r *Rules) FilterDay(day string) {
+	if r == nil {
+		return
+	}
+	r.dayFilter = day
+}
+
+// SetDay sets the day of the message currently being attributed.
+func (r *Rules) SetDay(day string) {
+	if r == nil {
+		return
+	}
+	r.currentDay = day
 }
 
 // Unattributed is the tally, heaviest first and then by stem, so two runs over one tree
@@ -109,6 +130,9 @@ func (r *Rules) TotalUnattributed() int { return r.total }
 
 // record tallies the tokens of one message that named no repo this file knows.
 func (r *Rules) record(tokens []string) {
+	if r.dayFilter != "" && r.currentDay != r.dayFilter {
+		return
+	}
 	for _, tok := range tokens {
 		if tok == "" {
 			continue
