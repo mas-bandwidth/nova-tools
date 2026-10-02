@@ -24,7 +24,8 @@ package main
 //     regular file or a directory on the volume's own device. The bytes are read
 //     from the descriptor that was checked, never from a path opened again, so a
 //     process that outlived the command cannot swap a symlink in and make the
-//     handoff copy something off the volume.
+//     handoff copy something off the volume. A default that is not there is skipped;
+//     an artifact the caller named and is not there is a refusal.
 //   - The whole set is MEASURED before a byte is written and refused over
 //     `--out-max-bytes` (64 MiB by default). A handoff is a door, not a backup:
 //     a card that wants to move gigabytes wants a bundle, or it wants a

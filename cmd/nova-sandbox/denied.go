@@ -4,10 +4,9 @@
 // when a contained command exits non-zero, so a reader can see which paths were blocked
 // and what flag would have allowed them.
 //
-// The root cause of that particular one is fixed where it belonged, in the optional roots'
-// ancestors (internal/sandbox/policy.go). This file is the class: when a contained command
-// exits non-zero, ASK THE OPERATING SYSTEM what it refused and print one line per path,
-// with the flag that would have allowed it.
+// This file is the class: when a contained command exits non-zero, ASK THE
+// OPERATING SYSTEM what it refused and print one line per path, with the flag
+// that would have allowed it.
 //
 // This limit appears in the code so a reader understands why the parser caps output:
 //

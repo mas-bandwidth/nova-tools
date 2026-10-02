@@ -19,8 +19,7 @@
 // `winPlacer` interface below, and the SEQUENCE over that interface is the contract: create
 // the job before the process, put the child in the job at creation, close the job before
 // the delete, delete on every path out. That sequence is what runwin_test.go asserts, with
-// a fake placer, ON ANY HOST — a contract that could only be tested where it runs would
-// be tested nowhere. The Win32 calls
+// a fake placer, ON ANY HOST. The Win32 calls
 // themselves are in runwin_windows.go behind `//go:build windows`, and runwin_other.go is
 // the same interface refusing off windows so this file compiles everywhere.
 //
@@ -116,7 +115,7 @@ type winPlacer interface {
 	Exists(dir string) (bool, error)
 
 	// MakeScratch creates <scratch>/nova-<n> and the two directories the place is born
-	// with -- work/ (the working directory) and home/ (the child's HOME) -- and grants the
+	// with -- work/ (the working directory) and home/ (rule 9's HOME) -- and grants the
 	// AppContainer SID read+write on it and on nothing else the run created.
 	MakeScratch(dir string) error
 
@@ -143,10 +142,9 @@ type winPlacer interface {
 	// RemoveTree removes <scratch>/nova-<n>, retrying a transient hold for a bounded
 	// window before it is a leak (W7). The ROOT is the caller's --scratch and it is passed
 	// separately on purpose: deletion in this repository is a verb over a validated path
-	// BELOW A ROOT — one error away from deleting everything on disk — and the class test
-	// in internal/ci holds every os.RemoveAll of a computed path
-	// to safepath.RemoveUnder. A removal that only knew the leaf could not be checked
-	// against anything but its own parent, which is no check at all.
+	// BELOW A ROOT, one error away from deleting everything on disk. The class test
+	// in internal/ci holds every os.RemoveAll of a computed path to safepath.RemoveUnder.
+	// A removal that only knew the leaf could not be checked against its own parent.
 	RemoveTree(root, dir string, window time.Duration) error
 
 	// WSBAvailable reports whether Windows Sandbox is on this machine at all: it is Pro
@@ -174,11 +172,10 @@ var (
 	// runWinReadExit is how the host reads W10's status file. A test replaces it; the
 	// production body reads the file the guest wrote in the mapped writable folder.
 	runWinReadExit = readWSBExit
-	// runWinWall is OS-ENFORCED OR REFUSED on windows. The PLACE is built (this
+	// runWinWall is rule 1: OS-ENFORCED OR REFUSED on windows. The PLACE is built (this
 	// file); the WALL is the AppContainer body of the section above, and it is not. A place
 	// without a wall is a directory that gets deleted, which is hygiene and not containment,
-	// so the verb refuses under --place job until the wall lands -- and the refusal names the
-	// half that is missing rather than saying "the sandbox failed".
+	// so the verb refuses under --place job until the wall lands.
 	//
 	// Under --place wsb the boundary is the VM, not the AppContainer, so this is not asked.
 	runWinWall = winWallAvailable
@@ -210,7 +207,7 @@ func runDisposableWindows(f runFlags, deadline time.Duration, stdin io.Reader, s
 			"%s names WSL, and WSL is never the answer on windows -- not as the wall, not as the place, not as a fallback: containment that only holds inside WSL is containment on another machine. Run the command itself, or refuse", oneline.Escape(bad))
 	}
 
-	// Before anything is made: a place with no wall is not this verb. The check is
+	// Before anything is made: a place with no wall is not this verb (rule 1). The check is
 	// here rather than inside Start so that a machine with no AppContainer body never gets a
 	// scratch directory made on it and removed again for nothing.
 	if f.place == placeJob {

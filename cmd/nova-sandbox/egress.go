@@ -4,9 +4,9 @@
 // themselves live in internal/sandbox (egress.go); this file is the verb, the flags and the
 // three seams that touch the machine.
 //
-// The wall is on the BENCH, not in the card: the worker applies rules it cannot see,
-// so this ruleset exists outside the card's reach. A card cannot see this ruleset, cannot name a host
-// for it and cannot take it down; it can only find out that a destination is denied.
+// The wall is on the BENCH, not in the card: the bench enforces rules outside the worker,
+// so this ruleset exists outside the card's reach. A card cannot see this ruleset, cannot
+// name a host for it and cannot take it down; it can only find out that a destination is denied.
 //
 // apply and drop are LINUX's, because nftables is. On darwin the outbound wall is the
 // seatbelt profile this binary already generates, and both verbs refuse there rather than
@@ -39,8 +39,8 @@ const egressRemedy = "run: nova-sandbox egress plan --run <id> --policy infra/im
 const nftRemedy = "install it and let this user run it without a password: sudo apt-get install -y nftables, then one sudoers line: nova ALL=(root) NOPASSWD: /usr/sbin/nft"
 
 // egressDeniedLine is the whole message when a card reaches for a destination the
-// wall denies: `EGRESS DENIED host=<name>` on the
-// card's stdout, with a non-zero exit. Fail closed, no retry to a different host.
+// wall denies: `EGRESS DENIED host=<name>` on the card's stdout, with a non-zero exit.
+// Fail closed, no retry to a different host.
 const egressDeniedLine = "EGRESS DENIED host="
 
 // sandboxResolver is the resolver seam, named here because the tests replace it.

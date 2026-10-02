@@ -28,8 +28,7 @@ import (
 // the function that signals the WHOLE group.
 func startInOwnGroup(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
 	// No root, the same as the bare form. The wall is sized for an unprivileged user
-	// and says nothing about a root child, and a root child could delete far more than
-	// its own volume.
+	// and a root child could delete far more than its own volume.
 	if os.Geteuid() == 0 {
 		return startedRun{}, sandbox.Refusal{Reason: "sandbox_failed",
 			Text: "this tool does not run as root: the wall holds for an ordinary unprivileged user, and a disposable volume made and deleted by root is not the thing this verb was measured as"}
