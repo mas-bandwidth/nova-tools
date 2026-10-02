@@ -13,7 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// THE CARD'S SHELL NEVER SEES A SECRET.
+// THE CARD'S SHELL NEVER SEES A SECRET (issue #1814).
 //
 // The harness needs the provider key: `opencode.json` declares the provider as
 // `{env:DEEPSEEK_API_KEY}` and the harness reads it from its own environment to make the
@@ -45,7 +45,7 @@ import (
 // WHAT IT IS NOT. It is not the whole fix. A card that calls `/usr/bin/bash` by its
 // absolute path skips the wrapper, and a harness that spawns a shell some third way skips
 // it too. The layer that closes those is handing the key to the harness by file descriptor
-// instead of by environment, which is a design question for a later layer,
+// instead of by environment, which is a design question in issue #1814 layer 2,
 // not this file. This is the cheap layer that closes the channel a card actually has, and
 // the harvest's key-shape scan (internal/keyshape) is the backstop behind it.
 //
@@ -151,7 +151,7 @@ func writeNativeShellShims(slotDir string) (dir, shell string, err error) {
 		written[name] = path
 	}
 	// The refusing `gh` sits beside the shells: a card's shell that
-	// reaches for the GitHub CLI by name gets exit 2 and a refusal, never a GitHub call.
+	// reaches for the GitHub CLI by name gets exit 2 and #3594, never a GitHub call.
 	if _, ghErr := nogh.Install(dir); ghErr != nil {
 		return "", "", ghErr
 	}

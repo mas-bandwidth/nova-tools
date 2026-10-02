@@ -37,7 +37,7 @@ func cmdSlots(args []string, stdout, stderr io.Writer) int {
 
 // cmdSlotsInit makes a bench slot store: the directory, its `slots/` subdirectory and one
 // shares.tsv holding a capacity, a reserve of 0 and one owner's share. It exists because
-// `native` REFUSES to launch without a store, and a refusal whose
+// `native` now REFUSES to launch without a store (nova-tools#1546), and a refusal whose
 // remedy is "pass --slots-store <dir>" is no remedy at all on a bench that has never had
 // one: the operator would be left to discover the file format by reading loadSlotShares.
 //
@@ -163,7 +163,7 @@ func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 	owner := f.fs.String("owner", "", "required: whose leases are freed")
 	label := f.fs.String("label", "", "free the owner's leases carrying this `label` (or --all)")
 	all := f.fs.Bool("all", false, "free every lease of the owner (or --label)")
-	// --force is the loud way to free a seat whose holder is still running. It
+	// --force is the loud way to free a seat whose holder is still running (#1902). It
 	// exists because a person can know something the store cannot -- a holder on another
 	// host, a pid the kernel has since handed to somebody else -- and it is a flag rather
 	// than the default because freeing a live seat without stopping its holder is how two
