@@ -393,7 +393,7 @@ Fixture: `cmd/nova-memory/testdata/corpus`.
 
 ```
 $ nova-memory quickstart --root ./corpus
-QUICKSTART OK root=./corpus steps=3 channels=bm25 k=3/2 words=glazing\x20signal\x20tide words-source=corpus-top-terms candidate=corpus-first-paragraph
+QUICKSTART RUN root=./corpus steps=3 channels=bm25 k=3/2 words=glazing\x20signal\x20tide words-source=corpus-top-terms candidate=corpus-first-paragraph
 $ nova-memory stats --root ./corpus
 STATS OK schema=nova-memory/1 files=6 chunks=23 bytes=4866 vocab=382 avg-terms=34.8 build=520.916µs
 STATS OK class=. chunks=3
@@ -416,6 +416,7 @@ MEMORY HIT cand=1 rank=2 score=15.70 score-channel=bm25 fused=0.01639 class=log 
 MEMORY NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
 MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours
 MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
+QUICKSTART OK done=3
 QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults: see --channels and --k
 ```
 

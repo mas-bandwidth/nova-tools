@@ -521,11 +521,7 @@ func TestREADMEFirstRunQuickstartBlockMatchesWhatTheToolPrints(t *testing.T) {
 			continue
 		}
 		if !printedShape[s] {
-			if strings.HasPrefix(s, "QUICKSTART OK ") && printedShape["QUICKSTART RUN "+strings.TrimPrefix(s, "QUICKSTART OK ")] {
-				// The document opener still shows QUICKSTART OK during migration to QUICKSTART RUN.
-			} else {
-				t.Errorf("README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
-			}
+			t.Errorf("README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
 		}
 		seen[strings.Join(strings.Fields(s)[:2], " ")]++
 	}
@@ -837,27 +833,7 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := make([]string, len(blocks[0][1:]))
-	copy(want, blocks[0][1:])
-	if len(want) > 0 && strings.HasPrefix(want[0], "QUICKSTART OK root=") {
-		want[0] = "QUICKSTART RUN " + strings.TrimPrefix(want[0], "QUICKSTART OK ")
-	}
-	hasOK := false
-	for _, l := range want {
-		if strings.HasPrefix(l, "QUICKSTART OK done=") {
-			hasOK = true
-			break
-		}
-	}
-	if !hasOK {
-		for i, l := range want {
-			if strings.HasPrefix(l, "QUICKSTART NOTE ") {
-				want = append(want[:i], append([]string{"QUICKSTART OK done=3"}, want[i:]...)...)
-				break
-			}
-		}
-	}
-	quickstart[0].Want = want
+	quickstart[0].Want = blocks[0][1:]
 	problems = append(problems, onboarding.Execute(quickstart, run, norms...)...)
 
 	// The second block: every `$` line is a command.
