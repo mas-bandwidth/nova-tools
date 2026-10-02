@@ -165,6 +165,7 @@ func TestAFailedPageIsAskedAgainSmaller(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []int{80, 40, 20}, sizes, "sizes %v log %q, want 80 40 20 with two PAGE RETRY lines", sizes, log.String())
 	require.Equal(t, 2, strings.Count(log.String(), "PAGE RETRY"), "sizes %v log %q, want 80 40 20 with two PAGE RETRY lines", sizes, log.String())
+	assert.Regexp(t, `PAGE RETRY repo=o/r size=40 reason="[^"]* [^"]*"\n`, log.String(), "the retry's reason is not quoted with its spaces kept")
 }
 
 // TestRefuseMutation: the seam refuses a document that could write.
@@ -223,4 +224,21 @@ func TestANullSourceIsKeptAsNoSource(t *testing.T) {
 	require.NoError(t, err)
 	d := workfile.Diff(back, tree, nil)
 	require.Empty(t, d, "differences after the round trip: %+v", d)
+}
+
+// TestAFailedGhRunSaysWhatItPrinted: a gh that failed is named with how it
+// ended and its stderr, and one that printed nothing says so rather than
+// ending its reason on an empty colon.
+func TestAFailedGhRunSaysWhatItPrinted(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, stderr, want string }{
+		{"a message", "  not logged in\n", "/x/gh api graphql: exit status 4: not logged in"},
+		{"nothing", "", "/x/gh api graphql: exit status 4: it printed nothing on stderr"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.EqualError(t, ghError("/x/gh", errors.New("exit status 4"), tc.stderr), tc.want)
+		})
+	}
 }
