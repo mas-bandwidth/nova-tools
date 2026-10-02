@@ -151,6 +151,66 @@ func (h *harness) through(ids ...string) {
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: ids}}))
 }
 
+// assertConflict runs a step expecting an OpConflictError with the recorded verb
+// and otherArgs flag, asserting no replay and no moved cards.
+func (h *harness) assertConflict(step Step, wantRecorded string, wantOtherArgs bool, msg string) (*OpConflictError, Result) {
+	h.t.Helper()
+	res, err := h.st.Run(h.ctx, step)
+	var ce *OpConflictError
+	if !assert.ErrorAs(h.t, err, &ce, "%s: %+v %v", msg, res, err) {
+		return nil, res
+	}
+	assert.Equal(h.t, wantRecorded, ce.Recorded, "%s: %+v %v", msg, res, err)
+	assert.Equal(h.t, wantOtherArgs, ce.OtherArgs, "%s: %+v %v", msg, res, err)
+	assert.Contains(h.t, err.Error(), wantRecorded, "%s: %+v %v", msg, res, err)
+	assert.False(h.t, res.Replay, "%s: %+v %v", msg, res, err)
+	assert.Empty(h.t, res.Moved, "%s: %+v %v", msg, res, err)
+	return ce, res
+}
+
+// assertNoRevisionsWritten asserts that no table moved and no pending operation is held.
+func (h *harness) assertNoRevisionsWritten(before map[string]uint64) {
+	h.t.Helper()
+	h.nothingWritten(before)
+}
+
+// workCard returns the card for id from the current snapshot.
+func (h *harness) workCard(id string) *sprint.Card {
+	h.t.Helper()
+	return h.snap().Work.Card(id)
+}
+
+// seedMissingNeeds recreates already-persisted data from the old admission bug.
+// Production verbs no longer create it; recovery must still surface it to the coordinator.
+func (h *harness) seedMissingNeeds(id, needs string) {
+	h.t.Helper()
+	h.m.mu.Lock()
+	defer h.m.mu.Unlock()
+	table := h.m.tables["t-work"]
+	c := table.members[id]
+	c.fields["needs"] = needs
+	c.rev++
+	table.rev++
+}
+
+// seedMissingNeeds is a backward-compatible wrapper around harness.seedMissingNeeds.
+func seedMissingNeeds(h *harness, id, needs string) {
+	h.t.Helper()
+	h.seedMissingNeeds(id, needs)
+}
+
+// openJudgments returns open judgment notes of the given type, optionally filtered by subject.
+func (h *harness) openJudgments(typ, subject string) []sprint.Open {
+	h.t.Helper()
+	return h.nOpenOf(typ, subject)
+}
+
+// allJudgments returns all judgment notes of the given type.
+func (h *harness) allJudgments(typ string) []sprint.Note {
+	h.t.Helper()
+	return h.nAllNotes(typ)
+}
+
 func TestTheLifeOfAStreamThroughTheStore(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)

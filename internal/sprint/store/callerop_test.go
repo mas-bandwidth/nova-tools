@@ -1,8 +1,6 @@
 package store
 
 import (
-	"errors"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -23,12 +21,8 @@ func TestACallerOpOfAnotherVerbIsAConflict(t *testing.T) {
 	c := h.snap().Fleet.Card("s1-1.w1")
 	take := TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}})
 	take.CallerOp = "op-A"
-	res, err := h.st.Run(h.ctx, take)
-	var ce *OpConflictError
-	if !errors.As(err, &ce) || ce.Recorded != "deal" || res.Replay || len(res.Moved) != 0 || !strings.Contains(err.Error(), "deal") {
-		t.Fatalf("take under start's operation id: %+v %v", res, err)
-	}
-	h.nothingWritten(before)
+	h.assertConflict(take, "deal", false, "take under start's operation id")
+	h.assertNoRevisionsWritten(before)
 	again := h.must(start)
 	require.True(t, again.Replay, "start's own retry: %+v", again)
 }
@@ -46,14 +40,10 @@ func TestACallerOpWithOtherArgumentsIsAConflict(t *testing.T) {
 		return s
 	}
 	first := h.must(add(1))
-	if again := h.must(add(1)); !again.Replay || again.Op != first.Op {
-		t.Fatalf("the same add again: %+v", again)
-	}
+	again := h.must(add(1))
+	require.True(t, again.Replay, "the same add again: %+v", again)
+	require.Equal(t, first.Op, again.Op, "the same add again: %+v", again)
 	before := h.revisions()
-	res, err := h.st.Run(h.ctx, add(2))
-	var ce *OpConflictError
-	if !errors.As(err, &ce) || !ce.OtherArgs || ce.Recorded != "add" || res.Replay {
-		t.Fatalf("add with other arguments under the same id: %+v %v", res, err)
-	}
-	h.nothingWritten(before)
+	h.assertConflict(add(2), "add", true, "add with other arguments under the same id")
+	h.assertNoRevisionsWritten(before)
 }
