@@ -546,10 +546,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// (4) THE AUTH COPY. One entry, the model's provider's, moved to the data home so
 	// the child's account resolves, and left mode 0600. A source that is looser than
 	// 0600 is refused: its copy would spread a secret further than its owner.
-	// --auth stays only the legacy shape: a description that names
+	// --auth stays ONLY the legacy shape's (issue #881): a description that names
 	// "secret": "<NAME>" takes the key from the environment and writes no auth file, so
-	// this step is skipped for that case. When --auth is explicitly given with a legacy
-	// description, a note line reports that the copy follows the legacy path.
+	// this step is skipped entirely for one. When a description IS given and --auth is
+	// used, the auth copy is made and one note line says so.
 	//
 	// AND THE COPY DIES WITH THE CARD. The child reads the copy for as long as it runs
 	// -- every launch of a retried card included -- and when the run returns by any path
@@ -586,17 +586,19 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// ollama, inception, zen -- is unknown to the harness and the run dies rc=1 in under a
 	// second. --config copies an opencode.json beside the carried auth file, mode 0600, so
 	// the harness resolves the provider exactly as it does when a person adds it to
-	// ~/.config/opencode. Only the model's own provider is checked: a config whose entry for
+	// ~/.config/opencode. Only THE MODEL'S OWN provider is checked: a config whose entry for
 	// it has no key in --auth is refused before anything runs, naming the provider and never
 	// the key; a provider whose options carry a baseURL and no apiKey field has no key to be
 	// absent (ollama on localhost) and is admitted without one. Every other provider in the
 	// file is carried verbatim and not checked -- this run never calls them, and checking
-	// them would reject local-model cards that do not use those providers.
+	// them refused local-model cards for an absent inception key on every adoption pass
+	// for a card that does not use those providers.
 	//
 	// (4c) AND THE JOB'S OWN FENCE. The harness's `permission` block is written
 	// into the SAME file, whether or not --config named one, because a run with no config at
 	// all still runs under the harness's default fence -- which auto-rejects the job's own
-	// `../scratch` and every read-only path a card names. The block names this job's directories; the carried
+	// `../scratch` and every read-only path a card names -- and that fence is what killed 8
+	// cards. The block names this job's directories; the carried
 	// provider config keeps its own bytes and its own rules beside them (internal/swarm/fence.go).
 	// On a walled bench the wall owns what the child may read, so only a --no-wall run takes
 	// the card's `READ:` paths: with no OS wall there is nothing else to open them.
@@ -610,7 +612,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// read of a staged path the desk had granted, the card came back with the whole row
 	// owed, and the run still printed `NATIVE OK ... rc=0 harness=ok`.
 	//
-	// THE WALL IS STILL THE REAL BOUNDARY (SPEC-SANDBOX rule 1). The harness's fence is a
+	// THE WALL IS STILL THE REAL BOUNDARY. The harness's fence is a
 	// second, weaker one, and a second fence that denies what the first one grants can only
 	// cost cards. What it is handed here is EXACTLY what the wall is handed below and never
 	// more: the DESCRIPTION's roots, which a person wrote at the desk.
@@ -638,7 +640,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 	// The keyless provider's loopback host:port travels to the wall as --net-allow
-	// (allow network-outbound (remote ip)) does not reach 127.0.0.1, so a
+	// because `(allow network-outbound (remote ip))` does not reach 127.0.0.1: a
 	// local-model card runs and dies silently without the named grant.
 	if cfg.configFile != "" {
 		cfg.netAllow = providerLoopback(cfg.configFile, provider)
@@ -720,8 +722,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		return nativeRunResult{}, 2
 	}
 	// NO-REPO-STAGED: a card that NAMES a repo (base-repo:, REPO:, or a clone
-	// URL) and ends with nothing staged is a staging failure. A card with `REPO: owner/name`
-	// would launch into job dirs with no repo after `STAGE OK repo= base=`;
+	// URL) and ends with nothing staged is a staging failure. quack-0925b launched all 12 of
+	// its `REPO: owner/name` cards into job dirs with no repo after `STAGE OK repo= base=`;
 	// the models cloned it themselves (75 s on one bench), were refused by the wall on another bench, or
 	// ran out of wall. The wrapper hands the model the repo, or the card does not start.
 	if !stageRes.Staged && swarm.CardNamesRepo(cfg.card) {
@@ -758,8 +760,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 
-	// (5) THE WALL. Every native run is walled unless the caller typed --no-wall:
-	// the wall is never implied away (SPEC-SANDBOX rule 1). A --sandbox name is used as typed;
+	// (5) THE WALL (slice 11). Every native run is walled unless the caller typed --no-wall:
+	// the wall is never implied away. A --sandbox name is used as typed;
 	// otherwise the tool's own name is resolved on PATH. A wall that cannot express a repo
 	// allow rule is still a wall -- a card naming no repos runs inside it without the rule,
 	// and one naming repos is refused, never unwalled. A machine with no wall binary at all
