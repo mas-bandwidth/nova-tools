@@ -1,5 +1,5 @@
 // Package redisauth is the one fleet Redis seat every tool dials with from
-// the environment (#3461): the ACL user and the variable holding its password.
+// the environment: the ACL user and the variable holding its password.
 // It is a leaf (os and fmt only) so a tool that must import no network or
 // subprocess code, nova-tokens under its boundary tests, reads its login here
 // rather than through internal/nsprint/store, which reaches net and, through
@@ -51,7 +51,7 @@ func Auth(user, passwordEnv string) (string, string, error) {
 }
 
 // NoUserHint is the refusal the fleet Redis needs when the default user is off
-// (#3520): the password is already in the environment but the ACL user is
+// : the password is already in the environment but the ACL user is
 // unset, so the verb connected as the default user and was refused NOAUTH. The
 // line names the missing variable and the pair (user + password) in one line.
 func NoUserHint() string {
