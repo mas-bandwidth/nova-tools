@@ -89,7 +89,9 @@ func TestReadRegularHugeSparseFileRefusedWithoutHugeAllocation(t *testing.T) {
 	require.ErrorIs(t, err, fs.ErrInvalid, "expected fs.ErrInvalid wrapper, got %v", err)
 	require.Contains(t, err.Error(), "passes ceiling", "expected error mentioning passes ceiling, got %v", err)
 	// Verify it refused instantaneously (at stat time) without reading or allocating.
-	require.LessOrEqual(t, elapsed, 30*time.Second, "readRegular took %v on sparse file; stat-time refusal should be near instantaneous", elapsed)
+	if elapsed > 30*time.Second {
+		t.Fatalf("readRegular took %v on sparse file; stat-time refusal should be near instantaneous", elapsed)
+	}
 }
 
 func TestReadRegularMaxRecordBoundary(t *testing.T) {

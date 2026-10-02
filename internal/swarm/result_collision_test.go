@@ -113,8 +113,9 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 	started := time.Now()
 	_, err := readFileSteadyBy(other, time.Now().Add(20*steadyPoll))
 	require.Error(t, err, "reading a directory answered no error at all; this fixture has nothing to arm on")
-	waited := time.Since(started)
-	assert.GreaterOrEqual(t, waited, steadyPoll, "an armed seam called a wrong-path failure final after %s: the transient answer must not be narrowed by path (bd6f3d7)", waited)
+	if waited := time.Since(started); waited < steadyPoll {
+		t.Errorf("an armed seam called a wrong-path failure final after %s: the transient answer must not be narrowed by path (bd6f3d7)", waited)
+	}
 
 	// Half two: the COUNT is narrowed. Nothing above was a read of the armed path.
 	n := hits.Load()
