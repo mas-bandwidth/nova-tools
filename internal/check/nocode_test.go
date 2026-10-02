@@ -405,8 +405,8 @@ func TestParseDenyListRefusesNonExtensions(t *testing.T) {
 
 	for _, spec := range []string{"mylist.txt", "*.py", "src/x", ".a b", "..", "."} {
 		t.Run(spec, func(t *testing.T) {
-			_, err := ParseDenyList(spec)
-			assert.Error(t, err, "accepted %q; a guard that forbids nothing must refuse", spec)
+			got, err := ParseDenyList(spec)
+			assert.Error(t, err, "accepted %q as %v; a guard that forbids nothing must refuse", spec, got)
 		})
 	}
 }

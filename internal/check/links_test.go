@@ -186,8 +186,9 @@ func TestLinksTitleQuoteForms(t *testing.T) {
 			_, checked, broken, err := Links(dir)
 			require.NoError(t, err)
 			assert.Equal(t, 1, checked, "checked = %d, want 1", checked)
-			require.Len(t, broken, 1, "broken = %v, want missing.md reported", broken)
-			assert.Equal(t, "missing.md", broken[0].Target, "broken = %v, want missing.md reported", broken)
+			if len(broken) != 1 || broken[0].Target != "missing.md" {
+				assert.Failf(t, "assertion failed", "broken = %v, want missing.md reported", broken)
+			}
 		})
 	}
 }
@@ -221,9 +222,13 @@ func TestLinksNestedFourBacktickFenceHidesInnerThree(t *testing.T) {
 		"a.md": "````\n```\n[fake](missing.md)\n```\n````\n",
 	})
 	_, checked, broken, err := Links(dir)
-	require.NoError(t, err)
+	if err != nil {
+		require.FailNowf(t, "Links: %s", brief(err.Error()))
+	}
 	assert.Equal(t, 0, checked, "checked = %d, want 0: a link inside a four-backtick fence is illustration", checked)
-	assert.Empty(t, broken, "broken = %s, want none: the nested three-backtick example is not a link", brief(fmt.Sprint(broken)))
+	if len(broken) != 0 {
+		assert.Failf(t, "assertion failed", "broken = %s, want none: the nested three-backtick example is not a link", brief(fmt.Sprint(broken)))
+	}
 }
 
 // Issue #30 (fence length): the spurious close above re-opened a fence on the
@@ -238,10 +243,13 @@ func TestLinksUnclosedFenceDoesNotSwallowRealBrokenLink(t *testing.T) {
 		"a.md": "````\n```\n````\n[real](missing.md)\n",
 	})
 	_, checked, broken, err := Links(dir)
-	require.NoError(t, err)
+	if err != nil {
+		require.FailNowf(t, "Links: %s", brief(err.Error()))
+	}
 	assert.Equal(t, 1, checked, "checked = %d, want 1: the link below the closed four-fence must be checked", checked)
-	require.Len(t, broken, 1, "broken = %s, want the real missing.md reported", brief(fmt.Sprint(broken)))
-	assert.Equal(t, "missing.md", broken[0].Target, "broken = %s, want the real missing.md reported", brief(fmt.Sprint(broken)))
+	if len(broken) != 1 || broken[0].Target != "missing.md" {
+		assert.Failf(t, "assertion failed", "broken = %s, want the real missing.md reported", brief(fmt.Sprint(broken)))
+	}
 }
 
 // Reviewer (#66, finding 1): the two tests above only exercise a SHORTER run
@@ -260,10 +268,13 @@ func TestLinksLongerRunClosesShorterFence(t *testing.T) {
 		"a.md": "```\n[fake](inside.md)\n````\n[real](missing.md)\n",
 	})
 	_, checked, broken, err := Links(dir)
-	require.NoError(t, err)
+	if err != nil {
+		require.FailNowf(t, "Links: %s", brief(err.Error()))
+	}
 	assert.Equal(t, 1, checked, "checked = %d, want 1: a four-backtick run is at least as long as the three-backtick opener, so it closes it", checked)
-	require.Len(t, broken, 1, "broken = %s, want the link below the closed fence reported", brief(fmt.Sprint(broken)))
-	assert.Equal(t, "missing.md", broken[0].Target, "broken = %s, want the link below the closed fence reported", brief(fmt.Sprint(broken)))
+	if len(broken) != 1 || broken[0].Target != "missing.md" {
+		assert.Failf(t, "assertion failed", "broken = %s, want the link below the closed fence reported", brief(fmt.Sprint(broken)))
+	}
 }
 
 func TestLinksSameLengthRunWithTrailingTextDoesNotClose(t *testing.T) {
@@ -274,9 +285,13 @@ func TestLinksSameLengthRunWithTrailingTextDoesNotClose(t *testing.T) {
 		"a.md": "```\n[fake](inside.md)\n``` not a closer\n[alsofake](missing.md)\n",
 	})
 	_, checked, broken, err := Links(dir)
-	require.NoError(t, err)
+	if err != nil {
+		require.FailNowf(t, "Links: %s", brief(err.Error()))
+	}
 	assert.Equal(t, 0, checked, "checked = %d, want 0: a run carrying text after it does not close the fence, so both links stay illustration", checked)
-	assert.Empty(t, broken, "broken = %s, want none: nothing below an unclosed fence is a link", brief(fmt.Sprint(broken)))
+	if len(broken) != 0 {
+		assert.Failf(t, "assertion failed", "broken = %s, want none: nothing below an unclosed fence is a link", brief(fmt.Sprint(broken)))
+	}
 }
 
 func TestLinksReportsLineNumbers(t *testing.T) {

@@ -214,8 +214,9 @@ func TestSpellingEscapedBackticks(t *testing.T) {
 	escaped := "A literal \\`recieve\\` here.\n"
 	findings, _, err := check.CheckSpellingText("test.md", escaped, check.SpellingOptions{Markdown: true})
 	require.NoError(t, err)
-	require.Len(t, findings, 1, "expected recieve to be flagged when backtick is escaped, got %+v", findings)
-	assert.Equal(t, "recieve", findings[0].Original, "expected recieve to be flagged when backtick is escaped, got %+v", findings)
+	if len(findings) != 1 || findings[0].Original != "recieve" {
+		assert.Failf(t, "assertion failed", "expected recieve to be flagged when backtick is escaped, got %+v", findings)
+	}
 
 	// An even number of backslashes escapes the backslash, so backtick starts a code span.
 	unescaped := "A literal \\\\`recieve\\\\` here.\n"
@@ -230,8 +231,9 @@ func TestSpellingBlankLineTerminatesSpan(t *testing.T) {
 	text := "`start\n\nrecieve`\n"
 	findings, _, err := check.CheckSpellingText("test.md", text, check.SpellingOptions{Markdown: true})
 	require.NoError(t, err)
-	require.Len(t, findings, 1, "expected recieve to be flagged across blank line, got %+v", findings)
-	assert.Equal(t, "recieve", findings[0].Original, "expected recieve to be flagged across blank line, got %+v", findings)
+	if len(findings) != 1 || findings[0].Original != "recieve" {
+		assert.Failf(t, "assertion failed", "expected recieve to be flagged across blank line, got %+v", findings)
+	}
 }
 
 func TestSpellingSymlinkWriteRefusal(t *testing.T) {
@@ -253,13 +255,11 @@ func TestSpellingSymlinkWriteRefusal(t *testing.T) {
 
 	// 1. CheckSpellingDir refuses symlink
 	_, err = check.CheckSpellingDir(scan, opts)
-	require.Error(t, err, "CheckSpellingDir did not refuse symlink: %v", err)
-	assert.Contains(t, err.Error(), "is a symlink", "CheckSpellingDir did not refuse symlink: %v", err)
+	require.ErrorContains(t, err, "is a symlink", "CheckSpellingDir did not refuse symlink: %v", err)
 
 	// 2. CheckSpellingFiles refuses symlink
 	_, err = check.CheckSpellingFiles(scan, []string{"link.md"}, opts)
-	require.Error(t, err, "CheckSpellingFiles did not refuse symlink: %v", err)
-	assert.Contains(t, err.Error(), "is a symlink", "CheckSpellingFiles did not refuse symlink: %v", err)
+	require.ErrorContains(t, err, "is a symlink", "CheckSpellingFiles did not refuse symlink: %v", err)
 
 	// Verify outside target bytes remain strictly unchanged across all attempts
 	after, err := os.ReadFile(outside)
