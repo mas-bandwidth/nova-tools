@@ -22,11 +22,10 @@ import (
 //     whichever the other two settle on (internal/pulse/harvest.go, classifyResult).
 //
 // The cost of the disagreement: every card `cut` writes drew a `result-first` drift, and
-// six hand-written cards drew one each, for a colon.
+// a hand-written card in the other form draws one, for a colon.
 //
-// RULED: THE COLON FORM WINS, on the cold read of the change that made the
-// disagreement visible. It is SPEC-SWARM's own law and it is what the
-// majority of writers already write -- `cut --kind` (internal/pulse/cutkind.go),
+// THE COLON FORM WINS. It is SPEC-SWARM's own law and it is what the majority
+// of writers already write -- `cut --kind` (internal/pulse/cutkind.go),
 // `internal/pulse/manager.go`. `RESULT: <label>
 // sha=<sha12>` is the form to WRITE.
 //
