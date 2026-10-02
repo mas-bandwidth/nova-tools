@@ -21,6 +21,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/gocache"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
@@ -354,7 +355,7 @@ type nativeRunner struct {
 	// cleaner's own, touched by no other goroutine
 	epoch     atomic.Uint64
 	oldFailed map[string]bool
-	cache     cacheTrim
+	cache     gocache.Trim
 }
 
 // started marks a launch running, so no prune of the pool touches its directory until the

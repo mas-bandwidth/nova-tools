@@ -73,7 +73,9 @@ Both loops name the identity every child commits under, `--identity
 <owner>,<name>,<email>`, in their argv, so no file is written into a pool by
 hand; a loop without it reads the pool's `identity.tsv`.
 
-The friends are nova-config's friend rows: `nova-sprint friend sync --actor ada`
+A friend's working directory, how her jobs arrive and are reported, and how
+their clones are removed once done, is docs/FRIENDS.md. The friends are
+nova-config's friend rows: `nova-sprint friend sync --actor ada`
 copies their names into the sprint's friends table, and each friend says it is
 there by beating from its own machinery, beside its harness, every few seconds
 (the same window and misses as a member's beat; `where` shows it `up`, `down`,
