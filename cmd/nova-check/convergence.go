@@ -1,9 +1,9 @@
 package main
 
 // The convergence verb asks whether each stream is converging: it reports
-// the health metric, the contraction ratio per stream, on every tick. It
-// computes that result from the streams in one place instead of by hand,
-// and the answer was a paragraph nobody could diff against the next one.
+// the health metric, the contraction ratio per stream, on every tick, from
+// one place, so that one run's answer can be diffed against the next one's.
+// Answered by hand out of several places, the answer is a paragraph nobody can diff.
 //
 // Seven streams, each read from a real source through a seam: the forge, a
 // checkout, the receipts, the retired README, a bin, a version snapshot and the
