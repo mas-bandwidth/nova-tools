@@ -28,7 +28,7 @@ func fixtureIn(t *testing.T) string {
 	dst := t.TempDir()
 	src := filepath.Join("testdata", "example-bench")
 	root, err := filepath.Abs(src)
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	{
 		err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -48,11 +48,11 @@ func fixtureIn(t *testing.T) string {
 			}
 			return os.WriteFile(target, raw, 0o644)
 		})
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 	{
 		err := os.MkdirAll(filepath.Join(dst, "out"), 0o755)
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 	t.Chdir(dst)
 	return dst
@@ -66,10 +66,10 @@ func TestTheExampleLinesRun(t *testing.T) {
 	var banner bytes.Buffer
 	{
 		exit := run([]string{"help"}, &banner, io.Discard, firstRunStamp)
-		require.False(t, exit != 0, "`nova-tokens help` exits %d, want 0", exit)
+		require.Equal(t, 0, exit, "`nova-tokens help` exits %d, want 0", exit)
 	}
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-tokens")
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	require.False(t, len(examples) == 0, "the example: block holds no line")
 	for _, line := range examples {
 		args := strings.Fields(line)[1:]
@@ -90,7 +90,7 @@ func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.
 	wantExit(t, r, 2)
 	{
 		n := strings.Count(r.stderr, "\n")
-		assert.False(t, n != 3, "%d refusal lines for three independent problems:\n%s", n, r.stderr)
+		assert.Equal(t, 3, n, "%d refusal lines for three independent problems:\n%s", n, r.stderr)
 	}
 	for _, want := range []string{"refusing to guess", "it wants the directory", "it wants a file of", "it wants --claude"} {
 		wantContains(t, r.stderr, want)
@@ -100,7 +100,7 @@ func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.
 	wantExit(t, r, 2)
 	{
 		n := strings.Count(strings.TrimSuffix(r.stderr, "\n"), "\n")
-		assert.False(t, n != 0, "a flag typo cost %d lines; the banner is behind `nova-tokens help`:\n%s", n+1, r.stderr)
+		assert.Equal(t, 0, n, "a flag typo cost %d lines; the banner is behind `nova-tokens help`:\n%s", n+1, r.stderr)
 	}
 	wantContains(t, r.stderr, "run: nova-tokens help")
 	// An unknown verb, and a bare invocation, do the same.
@@ -110,11 +110,11 @@ func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.
 	r = invoke(t)
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "run: nova-tokens help")
-	assert.False(t, r.stdout != "", "a bare invocation wrote to stdout: %q", r.stdout)
+	assert.Equal(t, "", r.stdout, "a bare invocation wrote to stdout: %q", r.stdout)
 	// And the door opens on stdout at exit 0.
 	r = invoke(t, "help")
 	wantExit(t, r, 0)
-	assert.False(t, r.stderr != "", "`help` wrote to stderr: %q", r.stderr)
+	assert.Equal(t, "", r.stderr, "`help` wrote to stderr: %q", r.stderr)
 }
 
 // There is no quickstart verb, and docs/ONBOARDING.md point 4 wants that said rather than
@@ -128,7 +128,7 @@ func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "unknown subcommand")
 	cli := readRepoFile(t, filepath.Join("docs", "CLI.md"))
-	assert.False(t, !strings.Contains(cli, "no `quickstart`"), "docs/CLI.md does not say why there is no quickstart verb (docs/STANDARD.md, onboarding point 4)")
+	assert.True(t, strings.Contains(cli, "no `quickstart`"), "docs/CLI.md does not say why there is no quickstart verb (docs/STANDARD.md, onboarding point 4)")
 }
 
 // The TESTS.md transcript is compared by SHAPE -- the two-token event prefix and the field
@@ -137,7 +137,7 @@ func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
 func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 	doc := readRepoFile(t, filepath.Join("docs", "TESTS.md"))
 	lines, err := onboarding.FirstRun(doc, "nova-tokens")
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	fixtureIn(t)
 	var want []string
 	var got []string
@@ -166,7 +166,7 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 	require.False(t, len(want) == 0, "the transcript holds no event line")
 	for i, w := range want {
 		require.False(t, i >= len(got), "the transcript has a line the tool does not print: %q", w)
-		assert.False(t, got[i] != w, "line %d of the transcript is\n  %s\nand the tool prints\n  %s", i+1, w, got[i])
+		assert.Equal(t, w, got[i], "line %d of the transcript is\n  %s\nand the tool prints\n  %s", i+1, w, got[i])
 	}
 	if len(got) > len(want) {
 		assert.Failf(t, "extra event lines", "the tool prints %d event lines and the transcript shows %d; the first missing is %q", len(got), len(want), got[len(want)])
@@ -193,16 +193,16 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 // longer the line the document promised.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-tokens")
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	steps, err := onboarding.Steps("nova-tokens", lines)
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	require.False(t, len(steps) == 0, "the `### First run` block holds no nova-tokens command; this test would pass by running nothing")
 	// A first run is three commands: fold writes the day, check reads it back,
 	// sum reads it a month at a time. A transcript that lost one still matches
 	// line for line and is still short of the run a reader is promised.
-	assert.False(t, len(steps) != 3, "the `### First run` block runs %d commands, want 3", len(steps))
+	assert.Equal(t, 3, len(steps), "the `### First run` block runs %d commands, want 3", len(steps))
 	// The fold WRITES, so it runs against a copy of the fixture in t.TempDir()
 	// and the test moves into it; the documented paths are relative to here.
 	fixtureIn(t)
@@ -230,8 +230,8 @@ func runDocumented(t *testing.T) onboarding.Runner {
 func readRepoFile(t *testing.T, name string) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	raw, err := os.ReadFile(filepath.Join(root, name))
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	return string(raw)
 }
