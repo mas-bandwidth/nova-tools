@@ -36,11 +36,6 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 			want: `unknown channel "journal": --channels names a retrieval method, not a directory; the channels are bm25 and trigram, and bm25 alone is the usual start`,
 		},
 		{
-			name: "search without k",
-			args: []string{"search", "--root", corpus, "--channels", "bm25", "x"},
-			want: "--k is required; it wants the number of hits to return (search: 3 to 5; check: 2 or 3 per paragraph)",
-		},
-		{
 			name: "search without root",
 			args: []string{"search", "--channels", "bm25", "--k", "3", "x"},
 			want: "--root is required; it wants your corpus directory, the tree to index; it is never guessed from the working directory or the environment, so write it out every run",
@@ -49,14 +44,9 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 		// it: a first run of check must not be told less than a first run of
 		// search.
 		{
-			name: "check without k",
-			args: []string{"check", "--root", corpus, "--channels", "bm25", "-"},
-			want: "--k is required; it wants " + kWants,
-		},
-		{
-			name: "check without channels",
-			args: []string{"check", "--root", corpus, "--k", "3", "-"},
-			want: "--channels is required; it wants a retrieval method, not a directory",
+			name: "check without root",
+			args: []string{"check", "-"},
+			want: "--root is required; it wants " + rootWants,
 		},
 		{
 			name: "an empty channel list",
@@ -71,6 +61,39 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 			assert.Containsf(t, stderr, tc.want, "stderr = %q,\nwant it to contain %q", stderr, tc.want)
 			assert.Equalf(t, "", stdout, "a refusal must print nothing on stdout, got %q", stdout)
 		})
+	}
+}
+
+// --channels and --k have defaults, stated in their flag text: every channel and k=10,
+// named on the OK line. A value given behaves as it always did. (A rater: two required
+// flags a first run had to look up before it could search at all.)
+func TestChannelsAndKHaveDefaults(t *testing.T) {
+	t.Parallel()
+
+	draft := writeDraft(t)
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"search with neither", []string{"search", "--root", corpus, "glazing"}, "SEARCH OK hits=6 k=10 channels=bm25,trigram "},
+		{"search with both given", []string{"search", "--root", corpus, "--channels", "bm25", "--k", "3", "lantern"}, "SEARCH OK hits=3 k=3 channels=bm25 "},
+		{"search with k alone", []string{"search", "--root", corpus, "--k", "2", "lantern"}, "SEARCH OK hits=2 k=2 channels=bm25,trigram "},
+		{"search with channels alone", []string{"search", "--root", corpus, "--channels", "trigram", "glazing"}, "SEARCH OK hits=6 k=10 channels=trigram "},
+		{"check with neither", []string{"check", "--root", corpus, draft}, "MEMORY OK candidates=1 source=" + draft + " k=10 channels=bm25,trigram "},
+		{"eval with neither", []string{"eval", "--root", corpus, "--floor", "0.5", exampleGold}, "EVAL OK recall@10="},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			exit, stdout, stderr := runCLI(t, "", tc.args...)
+			require.Equalf(t, 0, exit, "exit = %d; stderr: %s", exit, stderr)
+			line, _, _ := strings.Cut(stdout, "\n")
+			assert.Truef(t, strings.HasPrefix(line, tc.want), "stdout opens %q, want %q", line, tc.want)
+		})
+	}
+	for _, verb := range []string{"search", "check", "eval"} {
+		_, help, _ := runCLI(t, "", verb, "-h")
+		assert.Contains(t, help, "retrieval channels, bm25 and trigram (default: both)")
+		assert.Contains(t, help, "positive (default 10)")
 	}
 }
 
@@ -507,14 +530,6 @@ func TestARefusalReportsEveryReasonAtOnce(t *testing.T) {
 		want []string
 	}{
 		{
-			name: "search missing both channels and k",
-			args: []string{"search", "--root", corpus, "x"},
-			want: []string{
-				"--k is required", kWants,
-				"--channels is required",
-			},
-		},
-		{
 			name: "search with a bad channel and a bad k, and no query",
 			args: []string{"search", "--root", corpus, "--channels", "journal", "--k", "0"},
 			want: []string{
@@ -528,8 +543,6 @@ func TestARefusalReportsEveryReasonAtOnce(t *testing.T) {
 			args: []string{"check"},
 			want: []string{
 				"--root is required", rootWants,
-				"--k is required", kWants,
-				"--channels is required",
 				"takes <file|->, exactly 1 argument, got 0",
 			},
 		},
@@ -542,13 +555,6 @@ func TestARefusalReportsEveryReasonAtOnce(t *testing.T) {
 				"--floor must be in (0,1]",
 			},
 		},
-		// A missing flag says one thing, not two: the value of a flag nobody
-		// gave is not a second mistake the caller made.
-		{
-			name: "a missing channels flag does not also complain about its empty value",
-			args: []string{"search", "--root", corpus, "--k", "3", "x"},
-			want: []string{"--channels is required"},
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -557,9 +563,6 @@ func TestARefusalReportsEveryReasonAtOnce(t *testing.T) {
 			assert.Equalf(t, "", stdout, "a refusal must print nothing on stdout, got %q", stdout)
 			for _, w := range tc.want {
 				assert.Containsf(t, stderr, w, "stderr does not report %q; one run must report them all, got:\n%s", w, stderr)
-			}
-			if strings.Contains(stderr, "--channels is required") {
-				assert.NotContainsf(t, stderr, "named no channels", "a missing --channels was reported twice, once as missing and once as empty:\n%s", stderr)
 			}
 		})
 	}

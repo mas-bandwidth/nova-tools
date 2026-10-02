@@ -63,7 +63,7 @@ func TestRetrievalJSONRefusalReportsAllMissingInputs(t *testing.T) {
 	assert.Empty(t, stderr)
 	var out map[string]any
 	require.NoError(t, json.Unmarshal([]byte(raw), &out))
-	for _, missing := range []string{"--root", "--k", "--channels", "takes <words>..."} {
+	for _, missing := range []string{"--root", "takes <words>..."} {
 		assert.Contains(t, raw, missing)
 	}
 }

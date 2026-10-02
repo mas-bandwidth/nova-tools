@@ -48,8 +48,6 @@ func TestRefusesToGuess(t *testing.T) {
 		{"quickstart stray argument", []string{"quickstart", "--root", corpus, "extra"}, `takes no positional arguments, got "extra"`},
 
 		{"search without root", []string{"search", "--channels", "bm25", "--k", "3", "x"}, "--root is required"},
-		{"search without channels", []string{"search", "--root", corpus, "--k", "3", "x"}, "--channels is required"},
-		{"search without k", []string{"search", "--root", corpus, "--channels", "bm25", "x"}, "--k is required"},
 		{"search with zero k", []string{"search", "--root", corpus, "--channels", "bm25", "--k", "0", "x"}, "--k must be a positive"},
 		{"search with negative k", []string{"search", "--root", corpus, "--channels", "bm25", "--k", "-2", "x"}, "--k must be a positive"},
 		{"search without a query", []string{"search", "--root", corpus, "--channels", "bm25", "--k", "3"}, "takes <words>..., at least 1 argument, got 0"},
@@ -58,8 +56,6 @@ func TestRefusesToGuess(t *testing.T) {
 		{"search with a stray comma in channels", []string{"search", "--root", corpus, "--channels", "bm25,", "--k", "3", "x"}, "empty entry"},
 
 		{"check without root", []string{"check", "--channels", "bm25", "--k", "3", "-"}, "--root is required"},
-		{"check without channels", []string{"check", "--root", corpus, "--k", "3", "-"}, "--channels is required"},
-		{"check without k", []string{"check", "--root", corpus, "--channels", "bm25", "-"}, "--k is required"},
 		{"check without a named input", []string{"check", "--root", corpus, "--channels", "bm25", "--k", "3"}, "takes <file|->, exactly 1 argument, got 0"},
 		{"check with two inputs", []string{"check", "--root", corpus, "--channels", "bm25", "--k", "3", "a", "b"}, "takes <file|->, exactly 1 argument, got 2"},
 
@@ -72,8 +68,6 @@ func TestRefusesToGuess(t *testing.T) {
 		{"verify stray argument", []string{"verify", "--root", corpus, "--links", "gate", "extra"}, `takes no positional arguments, got "extra"`},
 
 		{"eval without root", []string{"eval", "--channels", "bm25", "--k", "3", "--floor", "0.8", exampleGold}, "--root is required"},
-		{"eval without channels", []string{"eval", "--root", corpus, "--k", "3", "--floor", "0.8", exampleGold}, "--channels is required"},
-		{"eval without k", []string{"eval", "--root", corpus, "--channels", "bm25", "--floor", "0.8", exampleGold}, "--k is required"},
 		{"eval without floor", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", exampleGold}, "--floor is required"},
 		{"eval with a zero floor", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0", exampleGold}, "a harness that cannot fail is not a measurement"},
 		{"eval with a negative floor", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "-1", exampleGold}, "--floor must be in (0,1]"},
@@ -101,7 +95,7 @@ func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		exit, _, stderr := runCLI(t, "", "eval")
 		require.Equalf(t, 2, exit, "exit = %d, want 2", exit)
-		want := []string{"--root is required", "--k is required", "--channels is required", "--floor is required"}
+		want := []string{"--root is required", "--floor is required"}
 		at := -1
 		for _, w := range want {
 			idx := strings.Index(stderr, w)

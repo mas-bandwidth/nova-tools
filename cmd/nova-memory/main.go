@@ -14,10 +14,10 @@
 // linear read that meets what you did not ask for), and not authoritative
 // (the tree is the store; the index stops existing when the process exits).
 //
-// Every path, every scope, and every budget comes from a flag. There are no
-// defaults, no config file, and no environment variable: a missing flag is a
-// refusal, never a guess. Exit 0 ran and passed, 1 ran and failed, 2 could
-// not run.
+// Every path and every scope comes from a flag, with no config file and no
+// environment variable: a missing --root is a refusal, never a guess. The
+// retrieval has defaults (every channel, k=10), named on every line that used
+// them. Exit 0 ran and passed, 1 ran and failed, 2 could not run.
 package main
 
 import (
@@ -200,28 +200,27 @@ func channelNames(spec string) ([]string, string) {
 	return out, ""
 }
 
-// addRetrievalFlags declares --channels and --k, both required, and refuses a value of
-// either that names no retrieval, in the same run as every other problem.
+// The retrieval defaults: every channel, and k=10 receipts. A run that names neither
+// says both on its OK line (channels=, k=), so what was chosen is never hidden.
+const (
+	allChannels = "bm25,trigram"
+	defaultK    = 10
+)
+
+// addRetrievalFlags declares --channels and --k, and refuses a value of either that
+// names no retrieval, in the same run as every other problem.
 func addRetrievalFlags(f *tool.Flags, kIs string) {
-	f.String("channels", "", "a comma-separated `list` of retrieval channels, bm25 and trigram (required)")
-	f.Int("k", 0, kIs+", positive (required): k is the mind's budget, and zero is not unlimited")
+	f.String("channels", allChannels, "a comma-separated `list` of retrieval channels, bm25 and trigram (default: both); the OK line names the channels that ran")
+	f.Int("k", defaultK, kIs+", positive (default 10): k is the mind's budget, and zero is not unlimited")
 	f.Check(func(c *tool.Call) {
-		switch k := c.Int("k"); {
-		case !c.Given("k"):
-			c.Problem("--k is required; it wants " + kWants + "; refusing to guess")
-		case k <= 0:
+		if k := c.Int("k"); k <= 0 {
 			c.Problem(fmt.Sprintf("--k must be a positive receipt budget (got %d); refusing to guess", k))
 		}
-		if !c.Given("channels") {
-			c.Problem("--channels is required; it wants a retrieval method, not a directory: the channels are bm25 and trigram, and bm25 alone is the usual start; refusing to guess")
-		} else if _, why := channelNames(c.Str("channels")); why != "" {
+		if _, why := channelNames(c.Str("channels")); why != "" {
 			c.Problem(why)
 		}
 	})
 }
-
-// kWants is what --k is, in the words of its refusal.
-const kWants = "the number of hits to return (search: 3 to 5; check: 2 or 3 per paragraph)"
 
 // newChannels builds the channels for names channelNames already accepted, so
 // the only names reaching this switch are the two that exist.
@@ -707,7 +706,7 @@ func readPin(name string) ([]string, error) {
 func cmdSearch() tool.Verb {
 	return tool.Verb{
 		Name:    "search",
-		Usage:   "search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <words>...",
+		Usage:   "search --root <dir>... [--channels <list>] [--k <n>] [--exclude <glob>]... <words>...",
 		Example: "search --root ./corpus --channels bm25 --k 3 lantern glazing brass",
 		Effect:  inspection,
 		Detail:  rankDetail,
@@ -743,7 +742,7 @@ func cmdCheck() tool.Verb {
 	return tool.Verb{
 		Name:    "check",
 		Token:   "MEMORY",
-		Usage:   "check --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <file|->",
+		Usage:   "check --root <dir>... [--channels <list>] [--k <n>] [--exclude <glob>]... <file|->",
 		Example: "check --root ./corpus --channels bm25 --k 3 draft.md",
 		Effect:  inspection,
 		Detail:  rankDetail,
@@ -940,7 +939,7 @@ cannot bury the one frontmatter finding; the count line carries every total.`,
 func cmdEval() tool.Verb {
 	return tool.Verb{
 		Name:   "eval",
-		Usage:  "eval --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>",
+		Usage:  "eval --root <dir>... [--channels <list>] [--k <n>] --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>",
 		Effect: inspection,
 		Detail: `eval is the known-answer harness: each gold row is query<TAB>path[,path], and the
 run measures recall@k and MRR and fails below --floor. Misses are listed; hits are a count.`,

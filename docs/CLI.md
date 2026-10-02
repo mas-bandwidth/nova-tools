@@ -335,13 +335,13 @@ nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--excl
                                                                         the first run: stats, one search, one check, each with the line that ran it
 nova-memory stats  --root <dir>... [--exclude <glob>]...
                                                                         measure m: files, chunks, bytes, vocab, build time, classes
-nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <words>...
+nova-memory search --root <dir>... [--channels <list>] [--k <n>] [--exclude <glob>]... [--json] <words>...
                                                                         one query, k receipted hits (for work retrieval)
-nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
+nova-memory check  --root <dir>... [--channels <list>] [--k <n>] [--exclude <glob>]... [--json] <file|->
                                                                         do I already know this? k receipts per candidate paragraph
 nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]... [--exempt <prefix>]... [--fail-max <n>] [--exclude <glob>]...
                                                                         coverage, backlinks, wikilinks, frontmatter — it finds, you decide
-nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>
+nova-memory eval   --root <dir>... [--channels <list>] [--k <n>] --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>
                                                                         known-answer harness: recall@k and MRR, fails below the floor
 nova-memory boot   --root <dir> --pin <file>                            the session loads exactly the pinned memories, never walks the directory
 ```
@@ -406,7 +406,7 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 **Reading it.** `CAL` is the score an unrelated control probe gets on your corpus, this run: the band below which a raw score means nothing. A `HIT` means something only when its score is clearly above `CAL`. Each receipt carries `class=` (the top-level directory the chunk came from, so a dated log reads as different evidence from a distilled note), `name=` and `type=` from frontmatter, `root=` naming the root directory the hit came from, and a `file:line` address to go read. Both runs end in `NOTE` lines: the index is lexical only, and `check` never judges.
 
-**What the flags want.** `--channels` is a retrieval method, `bm25` or `trigram`, never a directory. `--k` is the number of hits, your reading budget; there is no default. `--root` is your corpus, written out every run, and repeatable: two roots are indexed together in one ranking, each hit naming its root. A run short two flags prints two sentences and stops once.
+**What the flags want.** `--channels` is a retrieval method, `bm25` or `trigram`, never a directory; it defaults to both. `--k` is the number of hits, your reading budget; it defaults to 10. Both are named on every OK line. `--root` is your corpus, written out every run, and repeatable: two roots are indexed together in one ranking, each hit naming its root. A run short two things prints two sentences and stops once.
 
 **`verify` and `eval` are bounded**, per kind: at most `--fail-max` findings per kind, one `MORE` line per kind that elided anything, then the count line. On a 5,000-entry corpus `verify` used to print 10,000 lines and no total. `eval` lists misses only; a passing row is a number, not a line.
 

@@ -122,7 +122,7 @@ func TestEveryMistakeIsOneRefusalNamingTheWayForward(t *testing.T) {
 		{"bare", nil, "MEMORY REFUSED: no verb given; the verbs are quickstart, stats, search, check, verify, eval, boot, version; run: nova-memory help\n"},
 		{"unknown verb", []string{"serch"}, `MEMORY REFUSED: unknown verb "serch"; did you mean search? the verbs are quickstart, stats, search, check, verify, eval, boot, version; run: nova-memory help` + "\n"},
 		{"unknown flag", []string{"stats", "--rot", corpus}, "STATS REFUSED: unknown flag --rot; the flags of stats are --exclude, --json, --root; did you mean --root?; run: nova-memory stats -h\n"},
-		{"a flag with no value", []string{"search", "--root", corpus, "--channels", "bm25", "x", "--k"}, "SEARCH REFUSED: --k needs a value: it wants a whole number (receipts per query, positive (required): k is the mind's budget, and zero is not unlimited); run: nova-memory search -h\n"},
+		{"a flag with no value", []string{"search", "--root", corpus, "--channels", "bm25", "x", "--k"}, "SEARCH REFUSED: --k needs a value: it wants a whole number (receipts per query, positive (default 10): k is the mind's budget, and zero is not unlimited); run: nova-memory search -h\n"},
 		{"check's lines are MEMORY's", []string{"check", "--root", corpus, "--channels", "bm25", "--k", "2", "a.md", "b.md"}, "MEMORY REFUSED: takes <file|->, exactly 1 argument, got 2; run: nova-memory check -h\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
