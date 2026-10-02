@@ -186,7 +186,12 @@ func TestReviewAHungBackgroundPushStillStopsTheBeat(t *testing.T) {
 	<-pu.began // the push is in flight and never returns
 
 	// the loop passes every --every; the push is still hung BeatStall later
-	for _, d := range []time.Duration{time.Minute, 3 * time.Minute, BeatStall + time.Minute} {
+	// a push inside its budgets never stops the beat: BeatStall later the member still beats
+	at.Store(start.Add(BeatStall + time.Minute).UnixNano())
+	_, err = m.Tick(start.Add(BeatStall + time.Minute))
+	require.NoError(t, err)
+	assert.Zero(t, m.Stalled(), "a slow push that may still be inside its budgets does not stop the beat")
+	for _, d := range []time.Duration{LongStall / 2, LongStall + time.Minute} {
 		at.Store(start.Add(d).UnixNano())
 		_, err = m.Tick(start.Add(d))
 		require.NoError(t, err)

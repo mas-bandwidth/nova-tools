@@ -176,7 +176,7 @@ func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
 	// 20:18 ET). The briefs are text and alike, and go to a twentieth. Go's client asks
 	// for gzip and reads it by itself.
 	var out io.Writer = w
-	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+	if takesGzip(r.Header.Get("Accept-Encoding")) {
 		w.Header().Set("Content-Encoding", "gzip")
 		gz := gzip.NewWriter(w)
 		// ignored: a worker that has gone reads no answer
@@ -185,6 +185,22 @@ func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
 	}
 	// ignored: a worker that has gone reads no answer; what ran is in the sprint's log
 	_ = json.NewEncoder(out).Encode(a.serveFrom(req, local))
+}
+
+// takesGzip says a request's Accept-Encoding names gzip and does not refuse it (q=0).
+func takesGzip(accept string) bool {
+	for _, part := range strings.Split(accept, ",") {
+		name, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+		if strings.TrimSpace(name) != "gzip" {
+			continue
+		}
+		q := strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(params), " ", ""), "q=")
+		if f, err := strconv.ParseFloat(q, 64); params != "" && err == nil && f == 0 {
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // listen starts the server on the address for the store the run loop ticks,

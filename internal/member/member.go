@@ -418,6 +418,13 @@ func (m *Member) woken() {
 // five minutes without one is a pass that is stuck, not slow.
 const BeatStall = 5 * time.Minute
 
+// LongStall is how long a launch's long work (its start, its result read, its push) may be
+// in flight before the member stops beating. It is above the sum of that work's own budgets
+// (a fetch and a push of up to five minutes each, the push tried again, a pull request of a
+// minute) and above a start's wait behind a width of others, so work that is slow and
+// bounded never stops the beat; only work that outlives every budget does.
+const LongStall = 30 * time.Minute
+
 // PassTimes is where one pass's time went: reading the queue, pushing the ended
 // children's commits, reporting them, and filling the lanes (the take and the starts,
 // their stagger with them). A pass is the member's one line of control, so a child that
@@ -455,7 +462,11 @@ func (m *Member) Stalled() time.Duration {
 	// returns) stalls the member as a verb that never returns does: the pass itself
 	// goes on round it, so its own advance is no evidence the work is moving
 	if at := m.longSince.Load(); at != 0 {
-		since = max(since, now.Sub(time.Unix(0, at)))
+		// only past LongStall: a push inside its own budgets, or a start waiting its
+		// turn behind others, is slow and not stuck, and must not down a healthy machine
+		if d := now.Sub(time.Unix(0, at)); d > LongStall {
+			since = max(since, d)
+		}
 	}
 	if since <= BeatStall {
 		return 0

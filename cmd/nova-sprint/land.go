@@ -644,7 +644,8 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	baseRef := "+refs/heads/" + base + ":refs/remotes/origin/" + base
 	fetch := []string{"fetch", "--no-tags", "origin", baseRef}
 	for _, c := range cards {
-		if shaRE.MatchString(c.head) {
+		// a fetch by id wants the whole id; a short head is found at its merge
+		if shaRE.MatchString(c.head) && (len(c.head) == 40 || len(c.head) == 64) {
 			fetch = append(fetch, c.head)
 		}
 	}
@@ -694,7 +695,15 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 		_, ferr := l.git(ctx, dir, "fetch", "--no-tags", "origin", c.head)
 		switch {
 		case ferr != nil && containsAny(ferr.Error(), notOnOrigin):
-			return "the head " + c.head + " of " + c.id + " is missing: origin holds no such commit (" + firstLine("", ferr) + ")", ""
+			// before the card is blamed, every branch is fetched once: a head given
+			// short (a fetch by id wants the whole id) or one behind its branch's tip on
+			// a remote that serves only advertised refs is on origin all the same
+			if _, all := l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/*:refs/remotes/origin/*"); all != nil {
+				return "", "the fetch of origin's branches for the head " + c.head + " of " + c.id + " failed: " + firstLine("", all)
+			}
+			if _, still := l.git(ctx, dir, "cat-file", "-e", c.head+"^{commit}"); still != nil {
+				return "the head " + c.head + " of " + c.id + " is missing: origin holds no such commit (" + firstLine("", ferr) + ")", ""
+			}
 		case ferr != nil:
 			return "", "the fetch of the head " + c.head + " of " + c.id + " failed: " + firstLine("", ferr)
 		}
