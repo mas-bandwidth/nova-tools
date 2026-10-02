@@ -132,3 +132,23 @@ func TestFleetSyncRemovalDeletesTheBeat(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, beats, "m2", "the removed member's beat is deleted")
 }
+
+// TestFleetSyncResolvesTheDefaultWidthFromTheBeat: a machine row with no width
+// has the default, half the cores the machine's beat reports (the owner,
+// 2026-10-02: "default is CPUs/2"); the sync writes the resolved number, which
+// the fleet table shows as a number. A default row whose machine has not beaten
+// is no member yet, and a NOTE says it joins when it beats.
+func TestFleetSyncResolvesTheDefaultWidthFromTheBeat(t *testing.T) {
+	t.Parallel()
+	ta, inv := syncApp(t)
+	inv.set("m1", 4)
+	inv.setDefault("m3")
+	out := ta.ok("fleet sync")
+	assert.Contains(t, out, "NOTE m3 has the default width")
+	assert.Nil(t, ta.fleetRows()["m3"], "no beat, no cores: m3 waits")
+	ta.ok("fleet beat m3 --cores 32 --load 0")
+	out = ta.ok("fleet sync")
+	assert.Contains(t, out, "MOVED m3 added, down until it beats width=16")
+	assert.Equal(t, "16", ta.fleetRows()["m3"]["width"], "32 cores: width 16")
+	assert.Contains(t, ta.ok("fleet sync"), "nothing to do")
+}

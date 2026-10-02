@@ -32,7 +32,8 @@ measured), the highest of the last `+sprint.LoadWindow.String()+`.
 
 fleet sync makes the fleet match nova-config's machine rows in one step (--pg,
 else NOVA_PG_DSN, as nova-config takes it): a member the table lacks is added
-at its width (the row's width, nova-config machine set <m> --width <n>), a
+at its width (the row's width, nova-config machine set <m> --width <n>; a row
+with no width takes half the cores its machine's beat reports), a
 width that differs is set, a width of 0 is no member and its row is held and
 its cards are dealt to the members that stay; a row with no machine row is held
 the same way and removed (its row and width out of the fleet) once no card stays
@@ -90,11 +91,13 @@ type beatReport struct {
 	Load   float64   `json:"load"`
 	Last   float64   `json:"last"`
 	How    string    `json:"how"`
+	Cores  int       `json:"cores"`
 }
 
 func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("fleet beat")
 	load := fs.String("load", "", "the load as a percent of all the machine's cores, instead of measuring it (a test's, or another meter's)")
+	cores := fs.Int("cores", 0, "the machine's logical cores the beat reports, instead of this machine's own (a test's, or another meter's); a member with the default width takes half")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())
@@ -110,12 +113,19 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		}
 		given = &v
 	}
+	if *cores < 0 {
+		return refuse(stderr, "fleet beat", fmt.Sprintf("--cores wants a count of logical cores of at least 1, found %d", *cores))
+	}
+	src := a.meter
+	if *cores > 0 {
+		src.NCPU = *cores
+	}
 	c.orActor(pos[0])
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())
 	}
-	b, err := st.Beat(context.Background(), pos[0], given, a.meter)
+	b, err := st.Beat(context.Background(), pos[0], given, src)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
@@ -125,10 +135,10 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		last = b.Samples[n-1].Pct
 	}
 	if c.json {
-		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How})
+		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores})
 		fmt.Fprintln(stdout, string(out))
 		return 0
 	}
-	fmt.Fprintf(stdout, "FLEET-BEAT OK %s at=%s load=%.1f%% last=%.1f%% how=%s\n", pos[0], b.At.Format(time.RFC3339), b.Load, last, b.How)
+	fmt.Fprintf(stdout, "FLEET-BEAT OK %s at=%s load=%.1f%% last=%.1f%% how=%s cores=%d\n", pos[0], b.At.Format(time.RFC3339), b.Load, last, b.How, b.Cores)
 	return 0
 }

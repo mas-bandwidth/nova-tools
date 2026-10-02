@@ -456,7 +456,11 @@ and it is the coordinator's decision, receipted.
   `width` field, set directly (`nova-config machine set <m> --width <n>`;
   `nova-config machine width` prints it); no friend row, no beat and not the
   machine's `slots` take part. A machine with width 1 or more is a member, and
-  one with width 0 is none. The sync
+  one with width 0 is none. A row with no width has the default, half the
+  logical cores the machine's last `fleet beat` reported (the beat carries
+  `cores`; `fleet beat --cores <n>` gives them instead; `sprint.WidthOfCores`),
+  which the sync writes as a number; until a beat reports them the machine is
+  no member and a NOTE line says it joins at the sync after it beats. The sync
   writes only what differs: a member the table lacks is added at its width,
   down until it beats (presence brings it up, as for `fleet up`); a member whose
   width differs has its width set; a row whose machine has width 0 is held,

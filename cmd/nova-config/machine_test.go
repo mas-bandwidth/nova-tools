@@ -151,16 +151,42 @@ func TestMachineSelfCheckIsThreeWhenTheRowCannotBeRead(t *testing.T) {
 	require.Contains(t, errs, "the config cannot be read: postgres: connection reset", "%d %q %q", code, out, errs)
 }
 
-// TestAMachineAddedWithNoWidthIsToldItIsNoMember: width is set apart from
-// slots and defaults to 0, no sprint member; add says so in a NOTE with the
-// set line that makes it one, and says nothing when a width was given.
-func TestAMachineAddedWithNoWidthIsToldItIsNoMember(t *testing.T) {
+// TestAMachineAddedWithNoWidthIsToldItIsTheDefault: width is set apart from
+// slots and is unset by default, the default width (half the machine's cores,
+// as fleet sync resolves it from its beat); add says so in a NOTE with the set
+// lines that change it, and says nothing when a width was given.
+func TestAMachineAddedWithNoWidthIsToldItIsTheDefault(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
 	code, out, errs := h.run(t, "machine", "add", "m1", "--user", "u", "--seat", "s", "--slots", "8", "--pg", dsn, "--as", "a1")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\nNOTE machine=m1 width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: nova-config machine set m1 --width <n> --as a1 --pg "+dsn+"\n", out)
+	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\nNOTE machine=m1 width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: nova-config machine set m1 --width <n> (0: no member) --as a1 --pg "+dsn+"\n", out)
 	code, out, errs = h.run(t, "machine", "add", "m2", "--user", "u", "--seat", "s", "--slots", "8", "--width", "4", "--pg", dsn, "--as", "a1")
 	require.Equal(t, 0, code, errs)
 	assert.Equal(t, "CONFIG ADD kind=machine name=m2 rev=2\n", out)
+}
+
+// TestMachineWidthDefaultIsUnset: a machine row's width is optional, and unset
+// is the default, half the machine's cores as its beat reports them, which
+// nova-sprint fleet sync resolves (the owner, 2026-10-02: "width=-1 in config
+// means default and default is CPUs/2"; the shape: unset means default).
+// --width default clears a set width back to unset; -1 is refused, and 0 stays
+// no member.
+func TestMachineWidthDefaultIsUnset(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	h.machine(t, "m1", "16")
+	code, out, errs := h.run(t, "machine", "set", "m1", "--width", "default", "--pg", dsn, "--as", "t")
+	require.Equal(t, 0, code, "set default: %d %q %q", code, out, errs)
+	_, out, _ = h.run(t, "machine", "width", "m1", "--pg", dsn)
+	assert.Equal(t, "CONFIG WIDTH machine=m1 width=default member=true\n", out, "an unset width is the default")
+	_, out, _ = h.run(t, "machine", "width", "m1", "--pg", dsn, "--json")
+	assert.Equal(t, `{"machine":"m1","width":0,"default":true,"member":true}`+"\n", out)
+	code, _, errs = h.run(t, "machine", "set", "m1", "--width", "-1", "--pg", dsn, "--as", "t")
+	assert.Equal(t, 2, code, "-1 is no width: %q", errs)
+	assert.Contains(t, errs, "--width")
+	code, _, errs = h.run(t, "machine", "set", "m1", "--width", "0", "--pg", dsn, "--as", "t")
+	require.Equal(t, 0, code, errs)
+	_, out, _ = h.run(t, "machine", "width", "m1", "--pg", dsn)
+	assert.Equal(t, "CONFIG WIDTH machine=m1 width=0 member=false\n", out, "0 stays no member")
 }

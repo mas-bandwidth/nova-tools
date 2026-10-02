@@ -87,6 +87,9 @@ type syncReport struct {
 	// Holding is a line for each member with no machine row that cards keep on
 	// the fleet: it stays held until none does.
 	Holding []string `json:"holding"`
+	// Waiting is a line for each machine with the default width whose cores no
+	// beat has reported: not a member until one does.
+	Waiting []string `json:"waiting"`
 	Moved   []string `json:"moved"`
 	Refused []string `json:"refused"`
 	Error   string   `json:"error,omitempty"`
@@ -135,19 +138,47 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s: the config holds no machine row, and syncing to none would hold every member down; is this the fleet's config? run: nova-config machine list; nothing was changed\n", prog, name)
 		return exitCannotRead
 	}
+	// a row with no width has the default, half the cores its machine's beat
+	// reports (sprint.WidthOfCores); the sync writes the number it resolves
+	var defaults []string
+	for _, w := range ws {
+		if w.Default {
+			defaults = append(defaults, w.Machine)
+		}
+	}
+	beats := map[string]sprint.Beat{}
+	if len(defaults) > 0 {
+		if beats, err = st.Beats(ctx, defaults); err != nil {
+			fmt.Fprintf(stderr, "%s %s: the beats of the machines with the default width cannot be read: %s; nothing was changed; run: %s %s --check\n", prog, name, oneline.Escape(err.Error()), prog, name)
+			return exitCannotRead
+		}
+	}
 	var want []sprint.SyncMember
 	var machines, names []string
+	waiting := []string{}
 	for _, w := range ws {
 		machines = append(machines, w.Machine)
+		width := w.Width
+		if w.Default {
+			if width = sprint.WidthOfCores(beats[w.Machine].Cores); width == 0 {
+				waiting = append(waiting, fmt.Sprintf("%s has the default width, half its cores, and no beat has reported its cores yet; it joins the fleet at the sync after it beats (nova-sprint fleet beat %s on the machine)", w.Machine, w.Machine))
+				continue
+			}
+		}
 		if w.Member() {
-			want = append(want, sprint.SyncMember{Name: w.Machine, Width: w.Width})
+			want = append(want, sprint.SyncMember{Name: w.Machine, Width: width})
 			names = append(names, w.Machine)
+		}
+	}
+	for _, l := range waiting {
+		if !c.json {
+			fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(l))
 		}
 	}
 	sort.Slice(want, func(i, j int) bool { return want[i].Name < want[j].Name })
 	if problems := sprint.SyncProblems(want); len(problems) > 0 {
 		if c.json {
-			rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: []string{}, Holding: []string{}, Moved: []string{}, Refused: []string{}}
+			rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: []string{}, Holding: []string{}, Waiting: waiting, Moved: []string{}, Refused: []string{}}
 			for _, p := range problems {
 				rep.Refused = append(rep.Refused, p.Key+": "+p.Why)
 			}
@@ -184,7 +215,7 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 	if holding == nil {
 		holding = []string{}
 	}
-	rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: held, Holding: holding, Moved: []string{}, Refused: []string{}}
+	rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: held, Holding: holding, Waiting: waiting, Moved: []string{}, Refused: []string{}}
 	for _, m := range rejoined {
 		rep.Moved = append(rep.Moved, m+" placed again: its machine row is back")
 		if !c.json {

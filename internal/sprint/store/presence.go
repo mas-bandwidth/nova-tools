@@ -1,6 +1,7 @@
 package store
 
 import (
+	"runtime"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -176,6 +177,11 @@ func (st *Store) Beat(ctx context.Context, member string, given *float64, src ho
 		}
 	}
 	b := sprint.NextBeat(prev, now, pct, how, meter)
+	// the machine's logical cores: the source's when it names them (a meter's,
+	// or fleet beat --cores), else this process's machine
+	if b.Cores = src.NCPU; b.Cores <= 0 {
+		b.Cores = runtime.NumCPU()
+	}
 	out, err := json.Marshal(b)
 	if err != nil {
 		return b, err

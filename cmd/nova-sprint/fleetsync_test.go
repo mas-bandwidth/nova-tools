@@ -45,6 +45,14 @@ func (i *inventory) set(name string, width int) {
 	require.NoError(i.t, err)
 }
 
+// setDefault makes a machine row with no width: the default width.
+func (i *inventory) setDefault(name string) {
+	i.t.Helper()
+	row := config.Row{Name: name, Fields: map[string]string{"user": "u", "seat": "s", "slots": "160", "runners": "0", "width": ""}}
+	_, err := i.m.Insert(context.Background(), config.KindMachine, row, "t")
+	require.NoError(i.t, err)
+}
+
 func (i *inventory) remove(name string) {
 	i.t.Helper()
 	_, err := i.m.Delete(context.Background(), config.KindMachine, name, "t")
