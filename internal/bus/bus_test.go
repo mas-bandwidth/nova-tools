@@ -54,7 +54,7 @@ func TestReadBusReadsEveryLane(t *testing.T) {
 	require.Len(t, tab.Notes, 4, "read %d notes, want 4", len(tab.Notes))
 	{
 		n, ok := tab.NoteByID("bo-abcdef012345")
-		require.False(t, !ok || n.Header.Subject != "A question about the gate", "NoteByID = %v %v", n, ok)
+		require.True(t, ok && n.Header.Subject == "A question about the gate", "NoteByID = %v %v", n, ok)
 	}
 	_, ok := tab.NoteByPath("from-bo/2026-09-06-legacy-note.md")
 	require.True(t, ok, "a legacy note is not addressable by path")
@@ -109,7 +109,7 @@ The answer.
 	byID, _ := tab.NoteByID("bo-abcdef012345")
 	{
 		by, ok := tab.AnsweredBy(byID, "from-ada")
-		require.False(t, !ok || by != "from-ada/2026-09-07T0010Z-an-answer-999999999999.md", "a note answered by id reads as %q %v", by, ok)
+		require.True(t, ok && by == "from-ada/2026-09-07T0010Z-an-answer-999999999999.md", "a note answered by id reads as %q %v", by, ok)
 	}
 	// The same note is NOT answered in Bo's own lane: the rule is per reader.
 	{
@@ -124,7 +124,7 @@ The answer.
 	receipted, _ := tab.NoteByID("bo-111111111111")
 	{
 		by, ok := tab.AnsweredBy(receipted, "from-ada")
-		require.False(t, !ok || by != "from-ada/RECEIPTS", "a receipt did not answer: %q %v", by, ok)
+		require.True(t, ok && by == "from-ada/RECEIPTS", "a receipt did not answer: %q %v", by, ok)
 	}
 
 	// Now answer the legacy note by its PATH, which is the only name it has.
@@ -141,7 +141,7 @@ The answer to a note that has no id.
 	legacy, _ = tab.NoteByPath("from-bo/2026-09-06-legacy-note.md")
 	{
 		by, ok := tab.AnsweredBy(legacy, "from-ada")
-		require.False(t, !ok || !strings.Contains(by, "888888888888"), "a legacy note answered by path reads as %q %v", by, ok)
+		require.True(t, ok && strings.Contains(by, "888888888888"), "a legacy note answered by path reads as %q %v", by, ok)
 	}
 }
 
@@ -175,7 +175,7 @@ func TestInboxSeparatesReceiptsFromNotesAndOrdersNewestFirst(t *testing.T) {
 	if len(items) != 4 {
 		require.Equal(t, 4, len(items), "inbox has %d items, want 4", len(items))
 	}
-	require.False(t, !items[0].Note.When().After(items[len(items)-1].Note.When()), "the inbox is not newest first")
+	require.True(t, items[0].Note.When().After(items[len(items)-1].Note.When()), "the inbox is not newest first")
 	var receipts, notes []string
 	for _, it := range items {
 		if it.Receipt {
@@ -184,12 +184,12 @@ func TestInboxSeparatesReceiptsFromNotesAndOrdersNewestFirst(t *testing.T) {
 			notes = append(notes, it.Note.Header.Subject)
 		}
 	}
-	require.False(t, len(receipts) != 1 || receipts[0] != "Heard", "receipts = %v, want just the bare acknowledgement", receipts)
+	require.True(t, len(receipts) == 1 && receipts[0] == "Heard", "receipts = %v, want just the bare acknowledgement", receipts)
 	require.Equal(t, 3, len(notes), "notes = %v, want the other three", notes)
 	// The Cc'd note is in the inbox, marked as a Cc rather than a direct address.
 	for _, it := range items {
 		if it.Note.Header.ID == "bo-222222222222" && it.Address != "cc" {
-			require.False(t, it.Note.Header.ID == "bo-222222222222" && it.Address != "cc", "a Cc'd note reads as addr=%q", it.Address)
+			require.True(t, it.Note.Header.ID != "bo-222222222222" || it.Address == "cc", "a Cc'd note reads as addr=%q", it.Address)
 		}
 	}
 }
@@ -216,7 +216,7 @@ The answer.
 	bo := mustParticipant(t, tab.Config, "Bo")
 	items := tab.Inbox(bo, 40)
 	if len(items) != 1 || items[0].Note.Header.ID != "ada-999999999999" {
-		require.False(t, len(items) != 1 || items[0].Note.Header.ID != "ada-999999999999", "Bo's inbox = %d items, want just Ada's answer", len(items))
+		require.True(t, len(items) == 1 && items[0].Note.Header.ID == "ada-999999999999", "Bo's inbox = %d items, want just Ada's answer", len(items))
 	}
 }
 
@@ -396,7 +396,7 @@ Something everyone needs, said once.
 	// And the resolution itself names every member, including the one with no lane, who is
 	// addressable and never a sender.
 	to, unknown := tab.Config.ResolveList("Everybody on the bus")
-	require.False(t, len(unknown) > 0 || strings.Join(to, "; ") != "Ada; Bo; Dana", "the group resolved to %v %v", to, unknown)
+	require.True(t, len(unknown) == 0 && strings.Join(to, "; ") == "Ada; Bo; Dana", "the group resolved to %v %v", to, unknown)
 }
 
 // A file that will not parse is a note somebody wrote, on the bus, that inbox used to
@@ -410,7 +410,7 @@ func TestUnreadableNotesAreNamedAndNotSilent(t *testing.T) {
 	ada := mustParticipant(t, tab.Config, "Ada")
 
 	bad := tab.Unreadable(ada.Lane)
-	require.False(t, len(bad) != 1 || bad[0].Path != "from-bo/2026-09-07T0005Z-prose.md", "Unreadable = %v, want the one file outside my own lane", bad)
+	require.True(t, len(bad) == 1 && bad[0].Path == "from-bo/2026-09-07T0005Z-prose.md", "Unreadable = %v, want the one file outside my own lane", bad)
 	require.False(t, bad[0].Parse == nil || bad[0].Parse.Err == nil, "an unreadable note carries no reason")
 	// It is NOT in the inbox listing: an unreadable note has no To line, so nothing can
 	// honestly say it was addressed to me. It is reported separately, which is the whole
@@ -474,9 +474,9 @@ Re lines named filenames once, and a rename orphaned this one.
 		"from-bo/2026-09-01T0001Z-old-prose.md",
 		"from-bo/2026-09-01T0002Z-old-dangling.md:4",
 	} {
-		require.False(t, !warned[where], "%s was not tolerated; warned=%v failed=%v", where, warned, failed)
+		require.True(t, warned[where], "%s was not tolerated; warned=%v failed=%v", where, warned, failed)
 	}
-	require.False(t, !failed["from-bo/2026-09-08T0001Z-new-prose.md"], "a note written after the cutoff was tolerated; failed=%v", failed)
+	require.True(t, failed["from-bo/2026-09-08T0001Z-new-prose.md"], "a note written after the cutoff was tolerated; failed=%v", failed)
 }
 
 // The four header findings a real bus failed 163 times on, with the line
@@ -521,7 +521,7 @@ func TestTheHeaderFindingsAreInsideTheLegacyTolerance(t *testing.T) {
 			}
 			require.False(t, oldP == nil || newP == nil, "the planted findings are missing: old=%v new=%v", oldP, newP)
 			if !strings.Contains(oldP.Reason, k.want) || !strings.Contains(newP.Reason, k.want) {
-				require.False(t, !strings.Contains(oldP.Reason, k.want) || !strings.Contains(newP.Reason, k.want), "the message changed: old=%q new=%q, want both to name %q", oldP.Reason, newP.Reason, k.want)
+				require.True(t, strings.Contains(oldP.Reason, k.want) && strings.Contains(newP.Reason, k.want), "the message changed: old=%q new=%q, want both to name %q", oldP.Reason, newP.Reason, k.want)
 			}
 			if !oldP.Warn {
 				require.True(t, oldP.Warn, "a note dated before the line still FAILS on %s: %s", k.name, oldP.Reason)
@@ -575,7 +575,7 @@ body
 		"from-bo/2026-09-01T0005Z-bad-id.md:4",
 		"from-bo/notes.txt",
 	} {
-		require.False(t, !failed[where], "%s was tolerated as legacy; failed=%v", where, failed)
+		require.True(t, failed[where], "%s was tolerated as legacy; failed=%v", where, failed)
 	}
 }
 
@@ -620,16 +620,16 @@ func TestTheLegacyLineReadsTheDayAtTheFrontOfAFilename(t *testing.T) {
 		}
 	}
 	for _, name := range shapes {
-		require.False(t, !warned["from-bo/"+name], "%s names its day and was not tolerated; warned=%v failed=%v", name, warned, failed)
+		require.True(t, warned["from-bo/"+name], "%s names its day and was not tolerated; warned=%v failed=%v", name, warned, failed)
 	}
-	require.False(t, !failed["from-bo/2026-09-08-after-the-line.md"], "a note whose filename names a day AFTER the line was tolerated; failed=%v", failed)
+	require.True(t, failed["from-bo/2026-09-08-after-the-line.md"], "a note whose filename names a day AFTER the line was tolerated; failed=%v", failed)
 	// And the day is read for the line only. What the listing orders by is unchanged: a
 	// note whose Date line cannot be read and whose filename is not the minute still has no
 	// moment, so no catalogue line and no at= field is invented for it.
 	n, ok := tab.NoteByPath("from-bo/2026-09-01-just-the-day.md")
 	require.True(t, ok, "the note is not on the bus")
 	if !n.When().IsZero() {
-		require.False(t, !n.When().IsZero(), "When() now reads a day it did not read before (%v); ordering, INDEX Date and at= would change with it", n.When())
+		require.True(t, n.When().IsZero(), "When() now reads a day it did not read before (%v); ordering, INDEX Date and at= would change with it", n.When())
 	}
 }
 
