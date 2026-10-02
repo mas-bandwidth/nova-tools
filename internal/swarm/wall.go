@@ -14,11 +14,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// THE WALL DEATH (issue #918). A harness that DENIES a tool call returns a tool error the
+// A harness that DENIES a tool call returns a tool error the
 // model routes around and keeps working -- that is the configured fence (fence.go). But a
 // harness build that still auto-rejects stops the model there, and the run ends with no
-// RESULT.md while the card's commits sit in ./repo: eight of thirty cards died this way on
-// 2026-09-16 and the batch scored them `no-result`, a model that chose to publish nothing,
+// RESULT.md while the card's commits sit in ./repo: a card died this way,
 // with the work stranded and unpushed.
 //
 // WallDeath is what such a run is: the harness's own fence named a path it would not touch,
@@ -97,9 +96,7 @@ func repoBase(dir string) string {
 	return ""
 }
 
-// A WALL DEATH IS A NAMED END (issue #644 and its follow-up).
-//
-// Card 8311 committed its fix and then died on
+// A WALL DEATH IS A NAMED END. Card 8311 committed its fix and then died on
 //
 //	permission requested: external_directory (/.../jobs/scratch/*); auto-rejecting
 //
@@ -157,7 +154,7 @@ func WallRefused(log []byte) (WallRefusal, bool) {
 			// something that is not a path -- a signal, a socket -- and is not the wall
 			// refusing a read or a write outside the write set. The same guard carries the
 			// LINUX spelling: landlock refuses with EACCES and the C library says
-			// `Permission denied`, measured inside the swarm's own wall on hulk, so before
+			// `Permission denied`, measured inside the swarm's own wall, so before
 			// this mark existed no linux refusal was classified at all -- and `Permission
 			// denied` is a sentence a card's own test output is full of, which is exactly
 			// why it counts only when the line names a path.
@@ -300,8 +297,7 @@ func gitOut(dir string, args ...string) string {
 	return out
 }
 
-// A DENIAL IN THE CAPTURE IS NEVER AN OK, AND IT IS NEVER A DIAGNOSIS EITHER
-// (issue #1465, and Stella's HOLD on PR #1478, comment 5737662335).
+// A DENIAL IN THE CAPTURE IS NEVER AN OK, AND IT IS NEVER A DIAGNOSIS EITHER.
 //
 // THE RUN THIS CLOSES. A `native` Go card was handed GOMODCACHE, GOCACHE and
 // GOTOOLCHAIN=local for a toolchain under a user directory that the wall admitted no root
@@ -309,11 +305,11 @@ func gitOut(dir string, args ...string) string {
 // reported `NATIVE OK ... rc=0 sandbox=landlock harness=ok`. A commit nobody had compiled
 // read as green, because the only record of the failure was one line in a log:
 //
-//	/usr/bin/bash: line 1: /home/glenn/go/bin/go: Permission denied
+//	<path>: Permission denied                a common shell format
 //
 // WHAT THAT LINE PROVES, AND WHAT IT DOES NOT. The first version of this reader called the
 // line an EXEC refusal, named the path a program, concluded that the gate never ran and that
-// nothing had been compiled, and prescribed `read_roots`. Stella measured that none of it
+// an unverified compilation failure was inferred from the log text, and prescribed `read_roots`.
 // follows. An owned bash running `: > "$1"; printf "RECOVERED\n"` against a non-writable
 // directory prints
 //
@@ -326,7 +322,7 @@ func gitOut(dir string, args ...string) string {
 //
 // SO THE VERDICT IS A REFUSAL AND THE CAUSE IS UNVERIFIED. What is established is enough on
 // its own: the card's shell was denied something, nobody read it, and a disposition of OK
-// over an unread denial is what cost the card of #1465. The run is refused. The line is
+// over an unread denial is what the first version missed. The run is refused. The line is
 // quoted verbatim, the operation is labelled `unverified`, and the remedy is to re-run the
 // gate and read its stderr -- not a cause invented to fill the field. On a WALLED run the
 // read set is offered as ONE CANDIDATE, said to be a candidate.
@@ -378,14 +374,13 @@ func ShellDenied(log []byte) (ShellDenial, bool) {
 	return ShellDenial{}, false
 }
 
-// ShellDenialReader is ShellDenied asked of the bytes AS THE PARENT RECEIVES THEM (Johnny's
-// hold on #1478 at 29047871, the #1892 class). The run used to ask ShellDenied of
-// `<job>/harness-output.log` by path after the child was gone -- a file inside the card's
-// own --write directory, and the card's cwd. A card could replace that name after printing
-// the denial (unlink and write a clean file), and a read error left the denial empty: either
-// way the run said NATIVE OK. This writer sits in the capture chain beside the logs, so the
-// verdict is taken from the parent's own copy of the child's output, and nothing the card
-// does to a file afterwards reaches it.
+// ShellDenialReader is ShellDenied asked of the bytes as the parent receives them.
+// It reads inline from the capture chain instead of asking ShellDenied of a log file
+// by path after the child exits -- the old approach let a card replace the file after
+// printing the denial (unlink and write a clean file), and a read error left the
+// denial empty: either way the run said NATIVE OK. This reader sits in the capture
+// chain beside the logs, so the verdict comes from the parent's own copy of the
+// child's output, and nothing the card does to a file afterwards reaches it.
 //
 // It answers exactly what ShellDenied answers of the same bytes: the FIRST denial, with the
 // LAST `STEP <n>` in the whole capture. It is safe for the child's concurrent stdout and
@@ -469,17 +464,17 @@ func (r *ShellDenialReader) Denied() (ShellDenial, bool) {
 // deniedPath is the grammar, and nothing outside it is this class. Five spellings are read,
 // each measured off a real log:
 //
-//	/usr/bin/bash: line 1: /home/glenn/go/bin/go: Permission denied   bash, by path
-//	bash: /home/glenn/go/bin/go: Permission denied                    bash, by name
+//	<path>: Permission denied                a common shell format
+//	bash: <path>: Permission denied                       bash, by name
 //	sh: 1: /opt/sdk/go1.26.5/bin/go: Permission denied                dash, which numbers
 //	zsh: permission denied: /opt/sdk/go1.26.5/bin/go                  zsh, path last
 //	fork/exec /opt/sdk/go1.26.5/bin/go: permission denied             Go's own os/exec
 //
-// THE PATH IS THE WHOLE SEGMENT BETWEEN THE DELIMITERS (Stella's P1). A shell delimits its
+// THE PATH IS THE WHOLE SEGMENT BETWEEN THE DELIMITERS. A shell delimits its
 // fields with `: `, and everything between two delimiters is the path -- spaces, parentheses
 // and all, because those are ordinary pathname characters. The first version required a
 // token with no spaces in it, and `/opt/sdk tool/bin/go` therefore recreated the whole silent
-// green of #1465 through an ordinary absolute path. A whitespace-bearing path is not prose.
+// ordinary absolute path through a segment holding blanks. A whitespace-bearing path is not prose.
 //
 // WHAT KEEPS IT FROM EATING PROSE is the shell at the head of the line, not the shape of the
 // path: `cat: /etc/shadow: Permission denied` is some other program's complaint, and a

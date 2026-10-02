@@ -26,12 +26,10 @@ import (
 // CardUsageColumns are the fourteen columns of one card's usage.tsv, in this order. The
 // order is the contract between the native run that writes it and the batch that sums it.
 //
-// `end` JOINED THEM WITH SPEC-SWARM RULE 13d (issue #1545). The word was being computed by
-// every native launch and thrown away: `writeNativeUsage` has set `row["end"]` since issue
-// #644's follow-up, and there was no column to put it in, so `end=wall` for a card the wall
-// stopped -- and now `end=budget` for one a budget stopped -- reached no reader at all.
-// Rule 13d requires it by name: "The launch a budget ended has `end=budget` in its row",
-// and demanded test 13d reads it there.
+// The `end` field records what caused a launch to stop, set by every native run from its own
+// result into `row["end"]`. A value of `wall` marks a card the wall stopped, `budget` marks
+// one a budget capped, and a launch without a reason is empty. Every rule about this field
+// names it explicitly, so downstream readers depend on the column header, not position.
 //
 // IT IS INSERTED WHERE RULE 12 PUTS IT, after `ended` and before `rc`, so that a person who
 // knows the pool's sixteen-column file reads this one without relearning it. THAT IS SAFE
@@ -83,13 +81,14 @@ func cardStoreLocations(dataHome string) []string {
 }
 
 // ReadCardUsageAfter is the same read with a FLOOR under the window, and the floor is what
-// keeps a retried card's rows DISJOINT (SPEC-SWARM rule 13d, issue #1545).
+// keeps a retried card's rows DISJOINT. The floor under the read window prevents consecutive
+// launches from overlapping their measurements.
 //
 // THE DEFECT IT CLOSES, measured: the window is widened five seconds each side, because the
 // launch's own clock and the store's need not agree to the millisecond. On a retried card
 // the SECOND launch begins within those five seconds of the first one's end -- the launch
 // grace's retry is seconds, and a test pins it shorter still -- so the second launch's
-// window reached back over the first launch's rows and counted them again. Rule 13d's own
+// window reached back over the first launch's rows and counted them again. The spec's own
 // worked example is exactly this: two launches finally reported at 40 and 70 "print
 // `budget=110/100`, and their rows hold 40 and 70, never 40 and 110". Before this floor the
 // rows held 40 and 110 and added to 150, which is what a downstream `cost` would have
@@ -151,7 +150,7 @@ func dashCardTokens() map[string]string {
 }
 
 // queryCardMessages runs the one statement, read-only, under the same timeout every usage
-// read carries (rule 13). The statement's window is the caller's two ms bounds.
+// read carries. The statement's window is the caller's two ms bounds.
 func queryCardMessages(path string, startedMs, endedMs int64) ([][]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
 	defer cancel()
@@ -253,7 +252,7 @@ func foldCardMessages(rows [][]string) (ProviderUsage, string) {
 }
 
 // AppendCardUsage appends one attempt's usage row to a card's usage.tsv, writing the header
-// first when the file is new (issue #900). A native run that retried a launch writes one row
+// first when the file does not exist. A native run that retried a launch writes one row
 // per attempt -- attempt=1,2,3 for one card -- so the file holds the header and one row per
 // launch, and a reader folds them. A field the provider did not report stays a dash, never a
 // zero, and a tab or a newline in a value is scrubbed so the row is always one row.
