@@ -1711,7 +1711,7 @@ prose: identifiers and code snippets in fences and backticks are skipped.
 nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] [--json] <file>...
 nova-self-talk scan [flags] <file>...
 nova-self-talk shapes [--json]
-nova-self-talk example [--dry-run] <dir>
+nova-self-talk example [--dry-run] [--json] <dir>
 nova-self-talk version
 nova-self-talk help [<verb>]
 ```
