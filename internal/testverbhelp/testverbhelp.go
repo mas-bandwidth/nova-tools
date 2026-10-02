@@ -11,7 +11,8 @@
 // {addr} is RefusedAddr, a loopback port nothing listens on: the check owns
 // no socket, and a verb that dials before it answers -h meets a refusal and
 // fails the exit or stderr clause. How long help takes is a performance
-// check, not a unit one: it is held only under -tags perf (budget_perf.go).
+// check, not a unit one: it is held only under -tags perf (budget_perf.go), and
+// the perf job runs it through each tool's perf-only TestEveryVerbsHelpIsWithinTheBudget.
 package testverbhelp
 
 import (
