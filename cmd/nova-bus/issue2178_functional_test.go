@@ -26,7 +26,7 @@ func TestIssue2178(t *testing.T) {
 
 	t.Run("refuses on-note without required flags", func(t *testing.T) {
 		// --on-note without --timeout: refused
-		r := invoke(t, "", "wait", "--on-note", "--bus", checkout, "--as", "Ada",
+		r := invoke(t, "", "wait", "--on-note", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 			"--remote", "origin", "--branch", "main")
 		if r.code != 2 {
 			t.Errorf("exit = %d, want 2", r.code)
@@ -40,7 +40,7 @@ func TestIssue2178(t *testing.T) {
 	})
 
 	t.Run("refuses on-note with --open", func(t *testing.T) {
-		r := invoke(t, "", "wait", "--on-note", "--bus", checkout, "--as", "Ada",
+		r := invoke(t, "", "wait", "--on-note", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 			"--timeout", "1s", "--remote", "origin", "--branch", "main", "--open")
 		if r.code != 2 {
 			t.Errorf("exit = %d, want 2", r.code)

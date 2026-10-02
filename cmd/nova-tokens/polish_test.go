@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // Every registered flag has a help description that tells a cold reader what value it takes
@@ -29,13 +31,9 @@ func TestEveryVerbFlagHasADescription(t *testing.T) {
 					continue
 				}
 				count++
-				if !strings.Contains(line[2:], "  ") {
-					t.Errorf("%s flag has no help description: %s", verb, line)
-				}
+				assert.Contains(t, line[2:], "  ", "%s flag has no help description", verb)
 			}
-			if count == 0 && verb != "version" {
-				t.Errorf("%s help listed no flags; the test did not inspect anything", verb)
-			}
+			assert.Greater(t, count, 0, "%s help listed no flags; the test did not inspect anything", verb)
 		})
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestHelpExampleLinesRunAsPrinted: every line of this tool's `example:` block runs, as printed,
@@ -40,9 +41,7 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 			"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
 			"The missing line is:\n  %s", wantFixtureSetup)
 	}
-	if strings.Contains(setup, "cmd/nova-tokens/testdata") {
-		t.Fatalf("the setup still depends on a source checkout: %s", setup)
-	}
+	assert.NotContains(t, setup, "cmd/nova-tokens/testdata", "the setup still depends on a source checkout")
 
 	bin := buildExampleBinary(t)
 

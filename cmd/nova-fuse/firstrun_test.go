@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -86,6 +87,22 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	// surface it quarantined is lifted again by its last line.
 	exit, stdout, _ := runFuse(t, "check", "--box", box, "a-forum")
 	assert.Equal(t, 0, exit, "after the example sitting, a-forum is still not clear (exit %d): %s", exit, stdout)
+}
+
+func TestInitBannerExampleThroughTheComparator(t *testing.T) {
+	t.Parallel()
+
+	const example = "nova-fuse init --box ./fuse-box.json"
+	require.Equal(t, example, examples(t)[0])
+	box := filepath.Join(t.TempDir(), "fuse-box.json")
+	exit, stdout, stderr := runFuse(t, localize(fields(example), box)...)
+	require.Equal(t, 0, exit, "stderr: %s", stderr)
+	step := onboarding.Step{Line: "$ " + example, Want: []string{
+		"INIT OK box=./fuse-box.json: an empty box, no fuse blown (verified by re-reading the box)",
+	}}
+	path, err := onboarding.Elide("the fresh box path", regexp.QuoteMeta("box="+box+": "), "box=./fuse-box.json: ")
+	require.NoError(t, err)
+	assert.Empty(t, onboarding.Compare(step, onboarding.Result{Code: exit, Stdout: stdout, Stderr: stderr}, []onboarding.Norm{path}))
 }
 
 // fields splits an example command line the way the reader's shell does — a

@@ -35,7 +35,7 @@ func (w *jsonOutput) refuse(where, why string) int {
 		w.refusal = &tool.Out{Verb: strings.TrimSpace(where), Status: tool.Refused, Exit: 2, Remedy: "nova-check help"}
 	}
 	w.refusal.Why = append(w.refusal.Why, why)
-	return 2
+	return w.refusal.Exit
 }
 
 func (w *jsonOutput) finish() {

@@ -39,9 +39,8 @@ func cmdVersionWith(args []string, stdout, stderr io.Writer, ver string) int {
 	defer stderr.(*jsonOutput).finish()
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)
 	fs.BoolVar(&asJSON, "json", false, "print this build identity in a JSON envelope")
-	verbflag.HelpIfAsked(args, "version")
 	fs.SetOutput(io.Discard)
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " version", "takes no flags and no arguments except --json: "+err.Error())
 	}
 	args = fs.Args()

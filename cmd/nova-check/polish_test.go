@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -210,6 +211,32 @@ func TestPolishJSONDoesNotSwallowHelp(t *testing.T) {
 			assert.Empty(t, stderr)
 			assert.Contains(t, stdout, "nova-check "+verb)
 			assert.Contains(t, stdout, "--json")
+			if verb == "version" {
+				assert.Contains(t, stdout, "print this build identity in a JSON envelope")
+			}
 		})
 	}
+}
+
+func TestPolishLinksBannerExampleMatchesOutput(t *testing.T) {
+	t.Parallel()
+	const command = "nova-check links --dir ./self"
+	_, help, _ := runCheck(t, "help")
+	require.Contains(t, help, command)
+	scratch := t.TempDir()
+	start := strings.Index(help, "mkdir -p ")
+	require.GreaterOrEqual(t, start, 0)
+	end := strings.Index(help[start:], "\n\nexample:")
+	require.GreaterOrEqual(t, end, 0)
+	setup := exec.Command("sh", "-c", help[start:start+end])
+	setup.Dir = scratch
+	output, err := setup.CombinedOutput()
+	require.NoError(t, err, string(output))
+	args := strings.Fields(command)[1:]
+	args[2] = filepath.Join(scratch, args[2])
+	exit, stdout, stderr := runCheck(t, args...)
+	assert.Empty(t, stderr)
+	step := onboarding.Step{Line: "$ " + command, Args: args, Want: []string{"LINKS OK files=1 links=0 excluded=0"}, StderrWhole: true}
+	result := onboarding.Result{Code: exit, Stdout: stdout, Stderr: stderr}
+	assert.Empty(t, onboarding.Compare(step, result, nil))
 }
