@@ -15,7 +15,6 @@ docs/MODELS.md:space 2
 docs/SPEC-BUS-DELIVERY.md:rowan 1
 docs/SPEC-BUS-DELIVERY.md:stella 3
 docs/SPEC-BUS-REPLY.md:space 1
-docs/SPEC-BUS.md:johnny 1
 docs/SPEC-CI.md:batman 1
 docs/SPEC-CI.md:hulk 1
 docs/SPEC-CI.md:mas-bandwidth 1
