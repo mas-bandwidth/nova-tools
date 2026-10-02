@@ -727,8 +727,11 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				// JudgedOnlyAfterTheBound). A return refused leaves the
 				// launch spent: the read stays for the lateness rule.
 				why := oneLine(r.Report)
-				if r.End == EndStaging {
+				switch {
+				case r.End == EndStaging:
 					why = EndStaging + ": " + oneLine(r.Staging) // the stage's reason, to the inbox
+				case r.End == EndProvider && r.Provider != "":
+					why = EndProvider + ": " + oneLine(r.Provider) // the provider's cause, as Judge names it
 				}
 				reason := cut(fmt.Sprintf("no verdict (ran=%t verdict=%q): %s", r.Ran, r.Verdict, why))
 				args := append(append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, usageArgs(r)...), launched...)

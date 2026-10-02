@@ -541,7 +541,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	v.Machine = st.MachineLine(ctx)
 	var b strings.Builder
 	b.WriteString("SPRINT TABLE\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
-	var parts []string
+	parts := map[string]string{}
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]
 		rows := map[string]map[string]string{}
@@ -564,9 +564,29 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 			t = mergeAll(t)
 		}
 		// every table shows, every stream row in it, empty or not
-		parts = append(parts, ntable.Render(t, ntable.RenderOpts{Title: logical}))
+		parts[logical] = ntable.Render(t, ntable.RenderOpts{Title: logical})
 	}
-	b.WriteString(strings.Join(parts, "\n"))
+	friends, err := st.FriendRows(ctx, now)
+	if err != nil {
+		return whereView{}, "", err
+	}
+	ft := friendsTable(friends)
+	v.Tables[sprint.Friends] = map[string]map[string]string{}
+	for _, r := range ft.Rows {
+		cells := map[string]string{}
+		for j, col := range ft.Columns {
+			cells[col.Name] = ntable.CellText(ft.Columns, r, j)
+		}
+		v.Tables[sprint.Friends][r.Key] = cells
+	}
+	// the table layer draws it as it draws the fleet: header, rule, rows, rule,
+	// the folded footer; with no friend the header, its rule and the footer
+	parts[sprint.Friends] = ntable.Render(ft, ntable.RenderOpts{Title: sprint.Friends})
+	var shown []string
+	for _, t := range sprint.ShownOrder {
+		shown = append(shown, parts[t])
+	}
+	b.WriteString(strings.Join(shown, "\n"))
 	a.goalsView(ctx, st, &v)
 	for _, c := range clocks {
 		if c.Stalled(now, stale) {
@@ -576,11 +596,35 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	return v, b.String(), nil
 }
 
-// allRow is the label of the one row the view draws for the readers and the
-// merge tables.
-const allRow = "all"
+// friendsTable is the friends table (sprint.FriendsDef) with a row per friend
+// in the order given: her job cards' counts in ready, working and the hidden
+// ok and failed, her width and her status as text; done and ok% are the
+// table's own formulas over the counts (ntable.CellText), as the fleet
+// table's are.
+func friendsTable(friends []store.FriendRow) ntable.Table {
+	t := sprint.FriendsDef()
+	at := map[string]int{}
+	for j, c := range t.Columns {
+		at[c.Name] = j
+	}
+	for _, f := range friends {
+		cells := make([]ntable.Cell, len(t.Columns))
+		cells[at[string(sprint.Ready)]].Count = int64(f.Ready)
+		cells[at[string(sprint.Working)]].Count = int64(f.Working)
+		cells[at[sprint.DoneOK]].Count = int64(f.OK)
+		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
+		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
+			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: f.Status}})
+	}
+	return t
+}
 
-// readersAll is the readers table as the view's text draws it: one row, all,
+// allRow is the label of the one row the view draws for the readers and the
+// merge tables: blank, as the work table's footer is (the owner, 2026-10-02:
+// "please remove 'all'").
+const allRow = ""
+
+// readersAll is the readers table as the view's text draws it: one row, unlabelled,
 // whose cells are the sums over every reader (hidden rows, readers away or down,
 // counted as the footer counted them), and no footer, which would say the same
 // thing twice (the owner, 2026-10-01: "change the table to just be one row, sum
@@ -634,7 +678,7 @@ func worst(rows []ntable.Row, col string, order ...string) (string, int) {
 	return w, n
 }
 
-// allOf is the table as one row, all, whose count cells are the sums over every
+// allOf is the table as one row, unlabelled, whose count cells are the sums over every
 // row (an unread set prints "?", as the footer's sum did) and whose text cells
 // are texts, with no footer: the stored table, its rows and where --json are as
 // they were.

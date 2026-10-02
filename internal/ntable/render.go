@@ -37,7 +37,10 @@ type RenderOpts struct {
 // column is padded only when it is right-aligned, so no line ends in a
 // space. A table always renders, with its header and its footer, and with no
 // body line when it has no row (Glenn 2026-09-30, the owner's ruling: tables
-// and rows always show, empty or not).
+// and rows always show, empty or not); with no body line the footer sits under
+// the header's one rule, and the rule above the footer is not drawn (the owner,
+// 2026-10-02: "when the work stream table is empty, please just show the
+// summary row" / "not the extra --------------------+-----------+----------- etc.").
 //
 // The row's label is always the first column (Glenn 2026-09-27, the live
 // session: eight benches rendered as eight anonymous rows of numbers), put
@@ -161,7 +164,9 @@ func Render(t Table, opts RenderOpts) string {
 		line(cells, false)
 	}
 	if hasFooter {
-		rule()
+		if len(body) > 0 {
+			rule()
+		}
 		line(footer, true)
 	}
 	return b.String()

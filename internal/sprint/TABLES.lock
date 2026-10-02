@@ -13,6 +13,25 @@
 # for that work stream, and then a total at the bottom." work.cost is that column: a text
 # cell (the stream's landed cost, "$" and four places, "-" when none was priced) and the
 # footer the exact sum over the streams. Held by TestSprintTablesAreLocked.
+#
+# Change, 2026-10-02, asked by Glenn in words: "I like these sentinels. I think it would
+# be a good idea for you to add a friends table, above fleet and below merge. friends |
+# status for now. up/down/held :)" friends.status is that table's one column: a row per
+# friend of nova-config's friend rows, its status up, down or held by the fleet's rule,
+# drawn by where after merge and before fleet and never stored as a table. Held by
+# TestSprintTablesAreLocked.
+#
+# Change, 2026-10-02, asked by Glenn in words: "please give friends in the friends
+# table the same ready, working, width, done, ok%, status that we have for machines,
+# but no load, since they don't correspond to a machine (at the moment...)" and "you
+# can even use the inbox/outbox standard in friend's working dirs". The friends table
+# takes the fleet table's columns but load: ready and working count a friend's job
+# cards (friend sync reads each friend's working directory, inbox/<job> and
+# outbox/<job>/REPORT.md, and writes the cards into the store; the view never reads
+# the directories), width is her width as text (1, one job at a time), ok and failed
+# (hidden) count her jobs done, done and ok% are the same formulas as the fleet's with
+# the footer pooling ok%, and status stays up, down or held by the fleet's rule. Held by
+# TestSprintTablesAreLocked.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
@@ -43,4 +62,12 @@ fleet.withdrawn count sum hidden
 fleet.ok count sum hidden
 fleet.failed count sum hidden
 fleet.ctl first none hidden
-view work readers merge fleet
+friends.ready count sum shown
+friends.working count sum shown
+friends.width text sum shown
+friends.done sum(ok+failed) sum shown
+friends.okpct pct(ok/ok+failed) pooled shown label=ok%
+friends.status text none shown
+friends.ok count sum hidden
+friends.failed count sum hidden
+view work readers merge friends fleet

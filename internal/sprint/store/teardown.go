@@ -23,7 +23,7 @@ var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen,
 
 // machineKeys are the machine's records and the people's goals: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
-var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules}
+var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules, keyFriends}
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
 // revision, definition record and change log; and its operation records,
@@ -43,6 +43,9 @@ type Epochs struct {
 	// Readers is every reader of the readers table of every epoch: each may
 	// have a beat record and a hold (readers.go).
 	Readers []string
+	// Friends is every friend of the roster: each may have a beat record
+	// and a jobs record (friends.go).
+	Friends []string
 }
 
 // TeardownKeys is every key a deployment leaves after its tables are dropped
@@ -95,6 +98,9 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 	}
 	for _, r := range epochs.Readers {
 		keys = append(keys, names.Key(readerBeatKey(r)), names.Key(readerAwayKey(r)))
+	}
+	for _, f := range epochs.Friends {
+		keys = append(keys, names.Key(friendBeatKey(f)), names.Key(friendJobsKey(f)))
 	}
 	return append(keys, names.EpochKey())
 }
@@ -160,6 +166,7 @@ func (st *Store) Teardown(ctx context.Context) (int, error) {
 	}
 	epochs.Beating = slices.Sorted(maps.Keys(beating))
 	epochs.Readers = slices.Sorted(maps.Keys(reading))
+	epochs.Friends = st.friendNames(ctx)
 	_ = st.B.ViewDelete(ctx, st.Names.View())
 	for _, t := range All {
 		if err := st.B.AtEpoch(es.N, false).DropTable(ctx, st.Names.Table(t)); err != nil && refusalCode(err) != "NOTABLE" {
