@@ -12,8 +12,10 @@ import (
 // A reader's state (docs/SPEC-SPRINT.md section 6, the readers table; the
 // model is tla/DirtyTick.tla, the readers update: a read is placed only on a
 // reader up, and a read asked of a reader that goes away is taken back). A
-// reader says it is there by asking for its own queue (queue --as <reader>
-// writes its beat). Its state is derived, never typed: away while the
+// reader is a row of the readers table, which the coordinator declares (init
+// --readers, reader add); a reader with its row says it is there by asking for its
+// own queue (queue --as <reader> writes its beat; a name with no row writes none,
+// and its queue answers reader false). Its state is derived, never typed: away while the
 // coordinator holds it away (reader away; reader up releases the hold),
 // whatever it beats; else up while its last beat is within ReaderBeatBound;
 // else away when it beat once and has lapsed, down when it has never beaten.

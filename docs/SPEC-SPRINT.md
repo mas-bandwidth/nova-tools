@@ -573,9 +573,14 @@ id (`--op`) returns the original result, with no second counter or notification.
 
 ## 6. The readers
 
-- A reader row has a state, as a fleet member has: up, away or down. A reader
-  says it is there by asking for its own queue: `queue --as <reader>` writes its
-  beat (a record outside the tables, as a member's beat is). It is up while its
+- A reader row has a state, as a fleet member has: up, away or down. The rows
+  are the coordinator's: `init --readers` and `reader add` declare them, and no
+  beat, no queue and no loop record makes one. A reader with its row says it is
+  there by asking for its own queue: `queue --as <reader>` writes its beat (a
+  record outside the tables, as a member's beat is); the queue of a name with no
+  row writes none, and its `--json` answer carries `reader: false` (`true` for a
+  row), which the reader loop prints once as `MEMBER NOT A READER <name>: ...`
+  naming `nova-sprint reader add <name>` (nova-tools#5096 item 23). It is up while its
   last beat is within the beat bound (`ReaderBeatBound`, the fleet's 15 s),
   away when it beat and has lapsed, down when it has never beaten; the
   coordinator's `reader away <reader>` holds it away whatever it beats, and
