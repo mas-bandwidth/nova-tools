@@ -4,6 +4,15 @@ MCEpochMemberBroken.cfg	MCEpochMemberTable.tla	invariant	NoEpochLeak	ignore-term
 MCEpochMemberBrokenStale.cfg	MCEpochMemberTable.tla	action	StaleWritesRefuse	ignore-terminal	epochmembertable	required	-
 MCEpochMemberFixedPoint.cfg	MCEpochMemberTable.tla	pass	-	ignore-terminal	epoch-fixed-point	required	-
 MCEpochMemberTable.cfg	MCEpochMemberTable.tla	pass	-	ignore-terminal	epochmembertable	required	-
+MCFileLock.cfg	MCFileLock.tla	pass	-	ignore-terminal	filelock	bench	-
+MCFileLockBrokenExProbe.cfg	MCFileLock.tla	invariant	HeldIsTrue	ignore-terminal	filelock	bench	-
+MCFileLockBrokenKeepStamp.cfg	MCFileLock.tla	invariant	UncleanIsTold	ignore-terminal	filelock	bench	-
+MCFileLockBrokenPidLive.cfg	MCFileLock.tla	invariant	HeldIsTrue	ignore-terminal	filelock	bench	-
+MCFileLockBrokenSentinel.cfg	MCFileLock.tla	invariant	NothingToClear	ignore-terminal	filelock	bench	-
+MCFileLockBrokenStale.cfg	MCFileLock.tla	invariant	MutualExclusion	ignore-terminal	filelock	bench	-
+MCFileLockBrokenUnlink.cfg	MCFileLock.tla	invariant	MutualExclusion	ignore-terminal	filelock	bench	-
+MCFileLockCandidate.cfg	MCFileLock.tla	invariant	HeldIsTrue|MutualExclusion	ignore-terminal	filelock	bench	-
+MCFileLockFour.cfg	MCFileLock.tla	pass	-	ignore-terminal	filelock	bench	-
 MCFirstConn.cfg	MCFirstConn.tla	pass	-	ignore-terminal	firstconn	required	-
 MCFirstConnBrokenAny.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal	firstconn	required	-
 MCFirstConnBrokenHang.cfg	MCFirstConn.tla	temporal	AnswerDelivered	ignore-terminal	firstconn	required	-
