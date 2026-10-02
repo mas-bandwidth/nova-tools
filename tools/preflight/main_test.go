@@ -71,7 +71,7 @@ func TestHelpPrintsUsageAndExitsZero(t *testing.T) {
 
 func TestUnformattedFilesFailTheRunBeforeVetAndTests(t *testing.T) {
 	t.Parallel()
-	f := &fakeRunner{fmtOut: "internal/x/unformatted.go\ndeprecated/old/old.go\n"}
+	f := &fakeRunner{fmtOut: "internal/x/unformatted.go\n"}
 	code, _, errOut := preflight(t, f, nil, "./internal/x")
 	if code != 1 {
 		t.Fatalf("code=%d, want 1", code)
@@ -79,20 +79,8 @@ func TestUnformattedFilesFailTheRunBeforeVetAndTests(t *testing.T) {
 	if !strings.Contains(errOut, "unformatted.go") || !strings.Contains(errOut, "gofmt check FAILED") {
 		t.Errorf("stderr does not name the unformatted file:\n%s", errOut)
 	}
-	if strings.Contains(errOut, "deprecated/old") {
-		t.Errorf("a file under deprecated/ was reported:\n%s", errOut)
-	}
 	if len(f.named("fake-go"))+len(f.named("fake-make")) != 0 {
 		t.Errorf("vet or tests ran after a gofmt finding: %v", f.calls)
-	}
-}
-
-func TestDeprecatedFilesAloneDoNotFailGofmt(t *testing.T) {
-	t.Parallel()
-	f := &fakeRunner{fmtOut: "deprecated/old/old.go\n"}
-	code, out, _ := preflight(t, f, nil, "./internal/x")
-	if code != 0 || !strings.Contains(out, "gofmt: OK") {
-		t.Fatalf("code=%d out=%s", code, out)
 	}
 }
 

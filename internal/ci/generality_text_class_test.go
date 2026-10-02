@@ -38,7 +38,7 @@ import (
 //     mas-bandwidth/secrets (the secrets store design), and the @mas-bandwidth.com
 //     contact addresses in docs/SECURITY.md. Any other reference to that account is.
 //
-// What is scanned. Every file the shared walk finds outside deprecated/ whose name is
+// What is scanned. Every file the shared walk finds whose name is
 // Makefile or Containerfile or ends in one of textScanSuffixes (.lua .tsv .yml .yaml
 // .j2 .md .sh .json .txt, the workflows under .github/ among them, and the rest of the
 // text formats the repository ships). .go files are the other test's; .git is never
