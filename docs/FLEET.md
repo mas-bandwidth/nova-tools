@@ -230,6 +230,13 @@ takes it over (the record's unit replaces it) or `nova_retire_units` names it.
 changes nothing; every run ends with `LOOPS host=<m> place=<dir> records=<n>
 enabled=<n> written=<n> retired=<n>`.
 
+`-e nova_loop_only=<name>,<name>` (or a JSON list) limits a run to those
+records (nova-tools#5096 item 24): only their units are rendered, restarted
+and counted (`records=` of the receipt, which ends `only=<names>`); every other
+unit on the machine is left as it is and nothing is retired, so a pass over the
+readers alone touches no member. A name that no record of the run's machines
+carries is refused before anything is written.
+
 A unit whose file (or timer) changed is restarted, and the run says so first:
 `RESTART <name> on <machine>: its unit file changed; <why>` (`WOULD-RESTART`
 under `--check`, which restarts nothing). A member's unit (a record whose argv

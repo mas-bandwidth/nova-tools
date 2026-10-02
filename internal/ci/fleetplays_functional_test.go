@@ -276,3 +276,38 @@ func TestToolsPlayNamesTheDogfoodReceipts(t *testing.T) {
 	out = r.play(t, "tools.yml", append(vars, "-e", `{"nova_release_gate_args": ["--no-dogfood-gate", "--reason", "the test"]}`)...)
 	assert.Contains(t, out, "WOULD-BUILD version=v0.0.0-check")
 }
+
+// TestLoopsPlayRecordFilter: nova_loop_only names the records a run renders and
+// restarts (nova-tools#5096 item 24, the readers-only pass of 2026-10-02); every
+// other unit on the machine is left as it is, and none is retired, not even a
+// marked unit no record names. A name no record on the run's machines carries is
+// refused before anything is written.
+func TestLoopsPlayRecordFilter(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "check-fixture.yml")
+	units := filepath.Join(r.home, ".config", "systemd", "user")
+	require.NoError(t, os.MkdirAll(units, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(units, "nova-loop-old.service"), []byte("# written by fleet/loops.yml from the loop record old\n[Service]\n"), 0o644))
+	check := []string{"--check", "--diff", "-e", "ansible_system=Linux", "-e", "nova_home=" + r.home, "-e", "nova_sops=/usr/bin/sops-of-the-fixture"}
+
+	plain := r.play(t, "loops.yml", check...)
+	assert.Contains(t, plain, "WOULD-RETIRE old on localhost")
+	assert.Contains(t, plain, "nova-loop-tick-local.timer")
+
+	only := r.play(t, "loops.yml", append(check, "-e", "nova_loop_only=member-local")...)
+	assert.Contains(t, only, "nova-loop-member-local.service")
+	assert.NotContains(t, only, "nova-loop-tick-local", "a record not named is not rendered")
+	assert.NotContains(t, only, "WOULD-RETIRE", "a filtered run retires nothing")
+	assert.Contains(t, only, "WOULD-RESTART member-local on localhost")
+	assert.Contains(t, only, "LOOPS host=localhost place="+units+" records=1 enabled=1 written=1 retired=0 only=member-local (check: nothing changed)")
+	assert.False(t, strings.Contains(only, "FAILED!"), "a task failed")
+
+	list := r.play(t, "loops.yml", append(check, "-e", `{"nova_loop_only": ["member-local", "tick-local"]}`)...)
+	assert.Contains(t, list, "records=2 enabled=1 written=")
+	assert.Contains(t, list, "only=member-local,tick-local")
+
+	out, err := r.playResult(t, "loops.yml", append(check, "-e", "nova_loop_only=member-locl")...)
+	require.Error(t, err)
+	assert.Contains(t, out, "nova_loop_only names member-locl, which no loop record of this run's machines is")
+	assert.NotContains(t, out, "LOOPS host=")
+}

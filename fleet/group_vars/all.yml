@@ -28,6 +28,11 @@ nova_systemd_scope: user
 # alone and listed.
 nova_retire_units: []
 
+# The loop records loops.yml renders and restarts, by name (a list, or one
+# comma-separated word); empty is every record of the machine. Under it every
+# other unit is left as it is and nothing is retired.
+nova_loop_only: []
+
 # How long the supervisor waits for a member loop (nova-swarm member) it stops
 # before it kills what is left, in seconds: a member drains on SIGTERM (takes
 # nothing new, lets its running cards finish and reports them) for at most
