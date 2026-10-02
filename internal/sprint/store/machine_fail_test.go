@@ -49,15 +49,17 @@ func TestCRTickFailsAtEveryCallAndRecovers(t *testing.T) {
 			t.Errorf("%s: after recovery: %q", where, l)
 		}
 		s := h.snap()
-		// every due move happened: w resolved and dealt, s3 resumed, rv asked, s1 dealt
+		// every due move happened: w resolved and dealt, s3 resumed, rv asked
+		// (of two, and of the third reader as one more once the recovery's
+		// minutes ran its reads past the late bound), s1 dealt
 		if st := s.StateOf("w"); st == sprint.Waiting {
 			t.Errorf("%s: w still waiting after recovery", where)
 		}
 		if st := s.StreamCtl("s3").F("state"); st == sprint.StreamStopped {
 			t.Errorf("%s: s3 still stopped after recovery", where)
 		}
-		if len(s.Readers.Of("rv")) != 2 {
-			t.Errorf("%s: rv asked of %d", where, len(s.Readers.Of("rv")))
+		if n := len(s.Readers.Of("rv")); n < 2 {
+			t.Errorf("%s: rv asked of %d", where, n)
 		}
 		if n := h.written(sprint.NResumed); n != 1 {
 			t.Errorf("%s: resumed written %d", where, n)

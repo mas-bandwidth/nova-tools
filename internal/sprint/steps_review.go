@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -16,6 +17,9 @@ import (
 type AskReq struct {
 	Sel
 	Another bool // one more reader for a primary already asked
+	// More is the primaries the tick asks of one more reader, as Another does,
+	// beside the ones it asks of two: a primary whose reads are late (TickAsk)
+	More    []string
 	Answers []string
 	Who     string
 }
@@ -42,13 +46,15 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 // "yes on the decision."). A read its reader handed back with no verdict is not a read: it is asked of a reader
 // free at the attempt, or of the same reader again when none is
 // (tla/DirtyTick.tla, JudgedOnlyAfterTheBound). With Another, a primary already asked is dealt to
-// one more reader, the next round the readers.
+// one more reader, the next round the readers; a primary of More (the tick's
+// late reads) the same, to the reader the level would give a read.
 func Ask(s *Snapshot, r AskReq) Plan {
 	var p Plan
 	// in stream turns from the ask's stream index on the work table
 	// (streamTurns), so a limit asks of every stream alike, and the index moves
 	// past the stream of the last primary asked
 	srr := askStreamRound(s)
+	another := func(c *Card) bool { return r.Another || contains(r.More, c.ID) }
 	eligible := func(c *Card) string {
 		if why := inState(c, Review); why != "" {
 			return why
@@ -58,10 +64,10 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		asked := len(readsAt(s, c, c.Int("attempt")))
 		have := len(liveReadsAt(s, c, c.Int("attempt")))
-		if r.Another && asked == 0 {
+		if another(c) && asked == 0 {
 			return "not asked yet at attempt " + itoa(c.Int("attempt")) + ": the machine's tick asks it, or run: nova-sprint ask " + c.ID + "; --another adds a reader to one already asked"
 		}
-		if !r.Another && have >= 2 {
+		if !another(c) && have >= 2 {
 			return "asked already"
 		}
 		return ""
@@ -69,6 +75,12 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Review), eligible, srr), rowOf, eligible, s.primaryCard)
 	rr := askRound(s)
 	moves := roundMoves{}
+	// the readers' loads as the plan places reads, for the tick's one more
+	// reader of a late read (More)
+	load, room := map[string]int{}, map[string]int{}
+	for _, rd := range s.UpReaders() {
+		load[rd], room[rd] = readerLoad(s, rd), math.MaxInt
+	}
 	// a read card's route is drawn as a work card's is, from its primary's tier
 	// at that tier's rolling index on the fleet table (route.go, readRouteOf;
 	// tla/RouteIndex.tla, THE READS); a step that read no fleet table or no
@@ -91,7 +103,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 				away = append(away, rc.F("reader"))
 				continue
 			}
-			if !r.Another && returnedRead(rc) {
+			if !another(c) && returnedRead(rc) {
 				// handed back with no verdict: placed again below
 				returned = append(returned, rc)
 				continue
@@ -108,21 +120,48 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			}
 		}
 		want := 2 - len(all) // a read taken back from a reader away leaves one to ask
-		if r.Another {
+		if another(c) {
 			want = 1
 		}
-		chosenReaders := rr.picks(want, nil, func(x string) bool { return contains(free, x) })
+		var chosenReaders []string
+		levelledTo := false
+		if contains(r.More, c.ID) {
+			// the tick's one more reader of a late read goes where the level
+			// puts a read (round.levelTo: round the readers from the ask's
+			// index, a free reader whose load is below the mean, else at it),
+			// so the next tick's level has nothing to move (errata 3
+			// amendment 12); levelTo moves the index past it. With none such,
+			// the next free reader round the readers, as ask --another
+			var busy []string
+			for _, rd := range s.UpReaders() {
+				if !contains(free, rd) {
+					busy = append(busy, rd)
+				}
+			}
+			if to := rr.levelTo(s.UpReaders(), load, load, room, busy); to != "" {
+				chosenReaders, levelledTo = []string{to}, true
+				moves[c.ID] = to
+			}
+		}
+		if !levelledTo {
+			chosenReaders = rr.picks(want, nil, func(x string) bool { return contains(free, x) })
+		}
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
 		// own reader is asked it again, in place, the round not moved and no
 		// bound of the primary spent (ReasksBounded: Read counts each return
 		// in reasked and retires the one past MaxReadReasks, and the refusal
-		// below is then the "cannot ask" judgment).
+		// below is then the "cannot ask" judgment). Asked again in place, it
+		// runs on a route drawn afresh, never the one it returned on while
+		// the tier has another (the owner, 2026-10-01: "We can't get stuck on
+		// the last card.").
 		var again, retiredFrom []string
 		for _, rc := range returned {
 			if len(chosenReaders)+len(again) < want {
-				takenBack = append(takenBack, change(Readers, setEntry(rc, map[string]string{"asked": stamp(s.Now)}, FieldReturned)))
+				set := map[string]string{"asked": stamp(s.Now)}
+				maps.Copy(set, s.readRouteOf(ri, c, rc.F(FieldRoute)))
+				takenBack = append(takenBack, change(Readers, setEntry(rc, set, FieldReturned)))
 				again = append(again, rc.F("reader"))
 				continue
 			}
@@ -135,18 +174,19 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: takenBack}
 		for _, rd := range chosenReaders {
-			rr.moved(rd)
-			moves[c.ID] = joinMoves(moves[c.ID], rd)
+			load[rd]++
+			if !levelledTo {
+				rr.moved(rd)
+				moves[c.ID] = joinMoves(moves[c.ID], rd)
+			}
 		}
 		for _, rd := range chosenReaders {
 			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)}
-			for k, v := range s.readRouteOf(ri, c) {
-				fields[k] = v
-			}
+			maps.Copy(fields, s.readRouteOf(ri, c, ""))
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
 		}
 		all = append(append(all, chosenReaders...), again...)
-		if pair := strings.Join(all, ","); !r.Another && pair != c.F("asked") {
+		if pair := strings.Join(all, ","); !another(c) && pair != c.F("asked") {
 			// the primary's asked field names the readers of its attempt;
 			// --another's reader is one more, not one of the two
 			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": pair})))
@@ -162,7 +202,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		if len(retiredFrom) > 0 {
 			u.Moved += "; its returned read taken back from " + strings.Join(retiredFrom, ", ")
 		}
-		if r.Another {
+		if another(c) {
 			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted, NStranded, NStalled}, c.ID)
 		} else {
 			u.Closes = closesFor(s.Open, []string{NStranded, NStalled}, c.ID)
@@ -185,7 +225,12 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		// the ask's stream index moves with the asks of the streams' cards
 		// (errata 3 amendment 10; the reference model's AskAnother moves no
 		// stream index)
-		streamIndexWrite(&p, srr, s.Work.Placed)
+		streamIndexWrite(&p, srr, func(key string) *Card {
+			if contains(r.More, key) {
+				return nil
+			}
+			return s.Work.Placed(key)
+		})
 	}
 	answered(&p, s, r.Answers, r.Who)
 	return p

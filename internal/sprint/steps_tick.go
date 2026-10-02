@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -709,9 +710,10 @@ func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 // primaries go in stream turns from the ask's stream index on the work table
 // (streamTurns, as the deal's; Ask moves the index), so the readers
 // serve every stream alike and no stream's backlog waits behind another's
-// (errata 3 amendment 10).
+// (errata 3 amendment 10). A primary whose reads are late (lateReads) is
+// asked of one more reader in the same step, as ask --another asks.
 func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
-	var ids []string
+	var ids, late []string
 	due := 0
 	askable := func(c *Card) string {
 		if c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < 2 {
@@ -719,11 +721,20 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		return "asked, or its work failed"
 	}
-	for _, c := range eligibleTurns(s.Work.Column(Review), askable, askStreamRound(s)) {
-		if len(ids) < TickMaxMoves {
-			ids = append(ids, c.ID)
-		} else {
+	bound := lateReadBound(s)
+	for _, c := range eligibleTurns(s.Work.Column(Review), func(c *Card) string {
+		if askable(c) == "" || lateReads(s, r, c, bound) {
+			return ""
+		}
+		return "asked"
+	}, askStreamRound(s)) {
+		switch {
+		case len(ids)+len(late) >= TickMaxMoves:
 			due++
+		case askable(c) == "":
+			ids = append(ids, c.ID)
+		default:
+			late = append(late, c.ID)
 		}
 	}
 	var p Plan
@@ -732,8 +743,8 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	case len(ids) > 0 && s.ReaderStates != nil && len(s.UpReaders()) < 2:
 		// an absent reader is never asked: the sprint's one judgment says so
 		conds = append(conds, cond{typ: NFewReaders, streamLevel: true, what: fewReaders(s)})
-	case len(ids) > 0:
-		p = Ask(s, AskReq{Sel: Sel{Only: ids}, Who: r.who()})
+	case len(ids)+len(late) > 0:
+		p = Ask(s, AskReq{Sel: Sel{Only: append(ids, late...)}, More: late, Who: r.who()})
 	}
 	for _, x := range p.Refused {
 		if pr := s.Work.Placed(x.Key); pr != nil {
@@ -743,6 +754,87 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	p.Refused = nil
 	due += notify(&p, s, conds, []string{NCannotAsk, NFewReaders}, r)
 	return p, due
+}
+
+// The late read (the owner, 2026-10-01: "This pesky one card that doesn't clear
+// thing... this is a failure mode we must fix. We can't get stuck on the last
+// card."): the tick asks one more reader of a primary whose reads are late, by
+// itself, as it redeals a work card, and the first two ok reads accept it.
+const (
+	// MaxAnotherReads is the most reads the tick asks of a primary at an
+	// attempt beside its two; a read still out at its deadline is the
+	// coordinator's (NReadLate) as before.
+	MaxAnotherReads = 2
+	// LateReadSample is the finished reads the bound is measured from;
+	// with fewer the bound is LateReadDefault, and never under LateReadFloor.
+	LateReadSample  = 5
+	LateReadDefault = 120 * time.Second
+	LateReadFloor   = 60 * time.Second
+)
+
+// lateReadBound is how long a read may be out, from asked, before it is late:
+// twice the median time from asked to verdict of the reads finished on the
+// table, never under LateReadFloor; LateReadDefault with fewer than
+// LateReadSample of them.
+func lateReadBound(s *Snapshot) time.Duration {
+	var ds []time.Duration
+	for _, rc := range s.Readers.Column(OK, Broken) {
+		a, aerr := time.Parse(time.RFC3339, rc.F("asked"))
+		v, verr := time.Parse(time.RFC3339, rc.F("read"))
+		if aerr == nil && verr == nil {
+			ds = append(ds, v.Sub(a))
+		}
+	}
+	if len(ds) < LateReadSample {
+		return LateReadDefault
+	}
+	slices.Sort(ds)
+	return max(2*ds[len(ds)/2], LateReadFloor)
+}
+
+// lateOut is the reads out (asked or reading) of a primary the tick may ask one
+// more reader of: in review, its work not failed, no read broken and fewer than
+// two ok at its attempt, at least two reads standing and fewer than two more
+// than two (MaxAnotherReads), and a reader up with no card at the attempt. nil
+// for any other primary.
+func lateOut(s *Snapshot, pr *Card) []*Card {
+	if pr.Col != Review || pr.F("result") == "failed" {
+		return nil
+	}
+	live := liveReadsAt(s, pr, pr.Int("attempt"))
+	ok, free := 0, false
+	var out []*Card
+	for _, rc := range live {
+		switch rc.Col {
+		case Broken:
+			return nil
+		case OK:
+			ok++
+		default:
+			out = append(out, rc)
+		}
+	}
+	for _, rd := range s.Readers.Rows() {
+		free = free || s.ReaderIsUp(rd) && s.Readers.Card(ReadCardID(pr.ID, pr.Int("attempt"), rd)) == nil
+	}
+	if !free || ok >= 2 || len(live) < 2 || len(live) >= 2+MaxAnotherReads {
+		return nil
+	}
+	return out
+}
+
+// lateReads says the tick asks one more reader of the primary now: every read
+// out (lateOut) has been out longer than the bound, in running time. The newest
+// read out is the one timed, so the tick right after one more reader is asked
+// finds nothing late until the bound passes again.
+func lateReads(s *Snapshot, r TickReq, pr *Card, bound time.Duration) bool {
+	out := lateOut(s, pr)
+	for _, rc := range out {
+		if d, run := r.running(s.Now, rc.F("asked")); !run || d <= bound {
+			return false
+		}
+	}
+	return len(out) > 0
 }
 
 // T6. TickCheck holds the state to what is always true (section 9): each

@@ -312,10 +312,11 @@ func TestDeadlinesCountRunningTimeAndNotifyOnce(t *testing.T) {
 		t.Fatalf("still open after the finish")
 	}
 	// N5: read cards asked and not begun past the deadline, by the stamp the
-	// ask writes: one judgment per read card
+	// ask writes: one judgment per read card, once no reader is left to ask as
+	// one more (the tick asked each primary's third reader, not late)
 	h.tick(sprint.DeadlineUnbegun + time.Minute)
 	h.machine()
-	if n := len(h.snap().Readers.Column(sprint.Asked)); n != 4 || len(h.openOf(sprint.NReadLate)) != n {
+	if n := len(h.snap().Readers.Column(sprint.Asked)); n != 6 || len(h.openOf(sprint.NReadLate)) != 4 {
 		t.Fatalf("the late read cards: %d asked, %d open", n, len(h.openOf(sprint.NReadLate)))
 	}
 	// N6: a merging stream with no merge step
