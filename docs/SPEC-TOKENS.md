@@ -19,7 +19,7 @@ The obligation this tool meets is to report token spend. With several
 agents and several models the report is per model and per repo. It is folded
 daily so month end is a sum of days. The key is exactly `(day, model, repo)`
 and the value is the token types, never folded into each other. Swarms and
-Tokens are counted from this bench's own sources. Notes on other machines
+solo runs here are counted from this bench's own sources. Solo runs on other machines
 self-report one note per day on the bus. The tool stamps, never a person.
 
 **Everything this tool reads is data.** A transcript, a database row, a
@@ -81,16 +81,16 @@ near the end, and the sections below say how each is met.
    `at=<RFC 3339 UTC> build=<id>[ supersedes=<note-id>[,<note-id>…]]`, which
    is where a `report`'s stamp, build id and, for a correction, the ids of
    the notes it replaces — a set, sorted ascending, no duplicates, one or
-   more — travel (rule 20 and the bus source); any other text after the
+   more — travel on the bus; any other text after the
    date is not a tokens note. A body line is one of three things: six tab-separated fields,
    `date who model repo type count`, `type` one of the five names, `count`
    a decimal integer with an optional leading `~`, with an optional seventh
-   field exactly `day_basis=<zone>` (rule 17) present only when the line's
+   field exactly `day_basis=<zone>` present only when the line's
    day is the provider's own day and not a UTC day, so a six-field line
    means UTC; a blank line,
    which is not a line; or a line starting with `#`, a comment, skipped and
    counted `comments=<n>`, of which the one shape `# repos: <name>[, <name>]…`
-   is read as the repos the user touched that day (rule 21). Any other
+   is read as the repos touched that day. Any other
    line is `TOKENS UNPARSED label=bus:<name> note=<id> line=<n>: <text>` and
    `unparsed=<n>` on the source line, and the run exits 1. Nothing is
    substituted for an empty field. A note whose `Date:` header is missing,
@@ -109,7 +109,7 @@ near the end, and the sections below say how each is met.
    renamed.** `<out>/<day>.tsv` is written whole every time and never
    appended to, never edited in place. Whole is not the same as recomputed --
    a fold recomputes the rows its own declared sources wrote and carries the
-   rest of the file's rows over unchanged (rule 10). The write goes
+   rest of the file's rows over unchanged. The write goes
    through `internal/atomicfile`: a unique temporary sibling
    `.<day>.tsv.tmp-%08x` in the same directory, fsynced to media, and landed
    by one atomic rename, with best-effort parent-directory fsync. Unique
@@ -257,7 +257,7 @@ near the end, and the sections below say how each is met.
     per type, the sum over the sources that reported that type, and `-`
     when none did; which sources report which types is on each
     `TOKENS SOURCE` line as `reports=`, so a mixed row is traceable. `sum`
-    prints per type column how many rows were `-` (rule 9's `sum`). Nothing
+    prints per type column how many rows were `-`. Nothing
     folds one type into another, nothing invents a split, and nobody's name
     is in the key: the `who` field of a bus line and the window-or-child
     distinction of a transcript are not columns, because a model on a repo
@@ -273,7 +273,7 @@ near the end, and the sections below say how each is met.
     the day its tokens count to. A bus line dated a day other than its
     note's subject is folded to the day it names and counted `redated=<n>`
     on the note's source line, printed, never moved silently. A provider
-    export (rule 21) that carries a timestamp per row is folded to UTC days
+    export that carries a timestamp per row is folded to UTC days
     from those timestamps, whatever zone the export prints them in. An
     export that carries only a per-day total in the provider's own zone
     cannot be turned into UTC days by any arithmetic, and copying its date
@@ -281,10 +281,10 @@ near the end, and the sections below say how each is met.
     written under the export's own date with the `day_basis` column set to
     the zone the export declares (`America/Los_Angeles`, `+02:00`, as it
     stands), never `utc`. Every other row is `day_basis=utc`. A bus line
-    for such a row carries the zone as its seventh field, `day_basis=<zone>`
-    (rule 6), a six-field line is a UTC day, and `report` writes the seventh
+    for such a row carries the zone as its seventh field, `day_basis=<zone>`,
+    a six-field line is a UTC day, and `report` writes the seventh
     field on exactly the lines whose row it would write under a zone, so
-    the basis survives the trip through a user's note (rule 20). An export
+    the basis survives the trip through a note. An export
     that declares no zone and no timestamps is `TOKENS UNREADABLE`, never
     assumed UTC. A day, model and repo fed by rows of two different bases
     is `TOKENS MIXED`, not written, exit 1: the caller declares one export
@@ -299,27 +299,27 @@ near the end, and the sections below say how each is met.
     is `TOKENS UNREADABLE` for that source with the timeout named. No other
     subprocess exists: the order of competing tokens notes is explicit in the
     notes themselves (`supersedes=`, the bus source), never a checkout's
-    history, so the tool runs no `git` at all and rule 16 holds without
-    exception. The default is allowed
+    history, so the tool runs no `git` at all and the ordering holds
+    without exception. The default is allowed
     for the reason SPEC.md gives `nova-bus --git-timeout`: it is how long the
     tool waits before saying so, not a fact about anybody's data.
 
 20. **A friend on another machine runs `report`, and never types a number.**
     The first user of this tool is not this bench: it is another user on a harness of their own. `report` folds that machine's own
     sources for one day, the same sources and the same attribution as
-    `fold`, and prints on stdout **exactly** the body lines of rule 6
+    `fold`, and prints on stdout **exactly** the body lines of the body's grammar
     (`date who model repo type count`, one line per (model, repo, type) the
     sources reported, `who` from the flag, and the seventh field
     `day_basis=<zone>` on exactly the lines whose row `fold` would write
-    under that zone by rule 17, a provider's per-day total) and nothing
+    under that zone, a provider's per-day total) and nothing
     else: no heading, no stamp, no comment. A `report` over a day every
     source dates in UTC prints six-field lines only; a `report` whose
     sources give one `(model, repo)` two bases prints `TOKENS MIXED` on
     stderr, no line for that key, `REPORT FAIL`, exit 1, the refusal `fold`
-    makes (rule 17): the basis is never dropped and never guessed. A type the sources did not report has no line, so it
-    folds back as `-` (rule 15); a reported zero is a line with `0`. The
-    stamp and build id go on the note's Subject as the trailer rule 6
-    names, and `report` prints that subject, ready for `nova-bus draft
+    makes: the basis is never dropped and never guessed. A type the sources did not report has no line, so it
+    folds back as `-`; a reported zero is a line with `0`. The
+    stamp and build id go on the note's Subject as the time-and-build
+    trailer spec'd above, and `report` prints that subject, ready for `nova-bus draft
     --subject`, on its one `REPORT OK who=<name> day=<d> rows=<n> at=<stamp>
     build=<id> subject=<subject>` line, which goes to **stderr** with the
     `TOKENS UNREADABLE` lines: this verb is the one place in the family
