@@ -239,7 +239,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 		return 0
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return run(append(args[1:], "--help"), stdout, stderr, d)
+			return run(verbflag.HelpArgs(args[1:], usage, "nova-redis"), stdout, stderr, d)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0

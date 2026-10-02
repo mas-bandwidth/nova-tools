@@ -39,3 +39,11 @@ func TestHelpNeverReachesTheBareWrap(t *testing.T) {
 	require.True(t, strings.HasPrefix(r.Stdout, "nova-sandbox:"), r)
 	require.Empty(t, r.Stderr, r)
 }
+
+// `help <verb>` is that verb's help whatever follows the verb, for every verb the
+// tool's help names, `egress plan` included; `--` and a word after it are never the
+// command of a wrap.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+	testverbhelp.HelpWhateverFollows(t, sandboxRun, usage, "nova-sandbox")
+}

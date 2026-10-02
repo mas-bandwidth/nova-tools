@@ -30,3 +30,10 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	})
 	testverbhelp.HelpVerb(t, run, "nova-check", "quickstart", "dogfood gate", "spelling", "version")
 }
+
+// `help <verb>` is that verb's help whatever follows the verb, for every verb the
+// tool's help names, `dogfood gate` included.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+	testverbhelp.HelpWhateverFollows(t, run, usage, "nova-check")
+}

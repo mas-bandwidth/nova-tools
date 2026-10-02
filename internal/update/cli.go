@@ -302,7 +302,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	args = args[1:]
 	if verb == "help" || verb == "--help" || verb == "-h" {
 		if verb == "help" && len(args) > 0 && args[0] != "help" && !verbflag.IsHelp(args[0]) {
-			return Run(name, append(args, "--help"), stamp, out, errs, env)
+			return Run(name, verbflag.HelpArgs(args, helpText(name)+"\n"+release.Verbs, name), stamp, out, errs, env)
 		}
 		help(name, out)
 		return 0

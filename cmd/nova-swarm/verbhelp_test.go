@@ -54,3 +54,10 @@ func TestAVerbHelpStatesItsEffect(t *testing.T) {
 		assert.True(t, strings.HasPrefix(verbEffect[verb], "delivery: "), "%s is not stated as a delivery: %q", verb, verbEffect[verb])
 	}
 }
+
+// `help <verb>` is that verb's help whatever follows the verb, for every verb the
+// tool's help names, a verb of two words included.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+	testverbhelp.HelpWhateverFollows(t, swarmRun, usage, "nova-swarm")
+}
