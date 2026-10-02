@@ -99,15 +99,18 @@ monthly-report test as this spec's test 17.
     every `(day, model, repo)`; `ledger` writes exactly one `tokens:ledger:<day>` per folded
     day, re-indexing a day replaces it, and the day files are left byte for byte as the fold
     wrote them.
-18. `TestReportRedisRefusesWithoutMonth` — the report refuses a missing `--month`, a `--by`
+18. `TestReportAndLedgerOnAStoreShortOfTheMonth`, rows `report --redis wants --month` and
+    `report --by names its groups` — the report refuses a missing `--month`, a `--by`
     outside the four, and `--redis` with `--ledger`.
-19. `TestLedgerRefusesWithoutRedisAndNamesAMissingDay` — `ledger` refuses without `--redis`,
-    and a day with no file is a `NO` naming the fold, with nothing written.
-20. `TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly` — with no user, no password
+19. The same test, rows `ledger wants --redis` and `ledger names a missing day` — `ledger`
+    refuses without `--redis`, and a day with no file is a `NO` naming the fold, with nothing
+    written.
+20. `TestLedgerAndReportDialAsTheAclUser`, its first steps — with no user, no password
     variable is consulted unless `--password-env` names it.
-21. `TestReportRedisNoIndexedDaysExitsOne` — a month with no indexed day is `REPORT NO`, exit 1.
-22. `TestReportRedisPartialMonthNamesIndexedMissing` — a partly indexed month names
-    `indexed` and `missing` on the `OK` line.
+21. `TestReportAndLedgerOnAStoreShortOfTheMonth`, row `a month with no indexed day is NO` — a
+    month with no indexed day is `REPORT NO`, exit 1.
+22. The same test, row `a partial month names indexed and missing` — a partly indexed month
+    names `indexed` and `missing` on the `OK` line.
 23. `TestLedgerAndReportDialAsTheAclUser` — both verbs connect as the ACL user from `--user`
     or `NOVA_SPRINT_REDIS_USER`, and a user with an empty password variable is a `FAILED`
     line at exit 1 before any dial.

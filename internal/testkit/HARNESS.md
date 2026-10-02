@@ -13,7 +13,8 @@ package's `harness_test.go`; a helper with fewer than three callers is inlined.
 **The shape.** `testkit.Main` is the entry point
 `func(args []string, stdin io.Reader, stdout, stderr io.Writer) int`; a tool
 that also takes an environment, a clock or an app is bound to it by one small
-adapter (`withEnv(run, env)` in cmd/nova-sandbox). `Main.Do` returns a `Ran`
+adapter (`withEnv(run, env)` in cmd/nova-sandbox); one that reads no stdin is
+`testkit.Streams(f)`, closing over its clock (`at(now)` in cmd/nova-tokens). `Main.Do` returns a `Ran`
 (`r.Code`, `r.Stdout`, `r.Stderr`), so every run in every file is one value, not
 three locals and a buffer. `Ran.Exit`, `Out`, `NotOut`, `Err`, `NotErr` and
 `Refused` are `require` checks that fail with the run as their message;
@@ -45,7 +46,7 @@ r.ExitErr(125, "reason=volume_exists", "a duplicate name is not refused with rea
 A package with three or more seam swaps keeps a generic `swap(t, &seam, v)` in
 its `harness_test.go`: the swap stays at the call site, only the restore moves.
 Such a test still cannot open with `t.Parallel()` and stays on the serial list.
-Files are `WriteFile`, `ReadFile`, `ReadJSON`, `JSON` and `Tree` (which refuses a
+Files are `WriteFile` and `Mkdir` (each returns its path), `ReadFile`, `ReadJSON`, `JSON` and `Tree` (which refuses a
 path outside its root); `SkipOn` names the platform a property cannot be seen on.
 Time is `testing/synctest` first; `Waits` only for code that must do real I/O.
 
@@ -87,3 +88,21 @@ agents only after the shared helpers are settled (in `harness_test.go` and here)
 because helpers added late collide; write the inventory with the check count
 per `Test` so the mapping is mechanical; and read every allowlist that keys on a
 test name before merging any.
+
+**The second package** (cmd/nova-tokens, 2026-10-02): 7,619 -> 5,128 lines (-32.7%),
+154 top-level tests -> 104 with 97 -> 181 subtests, 2.4 s from 5.5-9.8 s, twelve probes
+red. Shared with cmd/nova-sandbox, so moved here: `Streams`, `Mkdir`, `WriteFile`'s
+path and `Main.Version` (the version line: one line, buildinfo-parsed, tool, platform,
+toolchain). Not shared, and why: `swap` (nova-tokens swaps no seam; its fakes ride PATH
+by t.Setenv); a first-run reader (nova-sandbox's block has `HOME=... nova-sandbox` lines
+`onboarding.Steps` refuses); the built-binary example runner (nova-tokens and
+nova-self-talk only); the line checks `holds`, `lacks`, `linesHold` (one package so far).
+How: the shared pieces and the package's harness were committed first, with a
+`shim_test.go` holding the old helpers so every file still compiled; each agent took
+its own worktree off that commit and edited only its files; the coordinator merged,
+deleted the shim and made every ledger edit (serial and env rows by the update mode,
+deletions declared). Lessons: name the helpers each agent may add, or two will write
+`holds` with different signatures; the deletion ledger is read at HEAD against its
+parent, so a branch that deletes and declares across commits lands as one commit; a
+fixed-wait rewritten as `assert.GreaterOrEqual` hid it from the checker, so it stays
+a comparison. Left: 984 comment, 415 blank, 3,729 code lines (fakes, tripwires, fixtures).

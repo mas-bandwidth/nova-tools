@@ -142,7 +142,7 @@ func TestReapKillsWhatHeldAnOrphanedVolumeAndDeletesIt(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			b := newReapBench(t)
 			c.setup(t, b)
-			r := streams(func(_ []string, _, stderr io.Writer) int { return reapAll(c.dry, stderr) }).Do(t).Exit(c.code)
+			r := testkit.Streams(func(_ []string, _, stderr io.Writer) int { return reapAll(c.dry, stderr) }).Do(t).Exit(c.code)
 			for _, s := range c.says {
 				assert.Contains(t, r.Stderr, s, r)
 			}
@@ -178,7 +178,7 @@ func TestReapRefusesWhereThereAreNoDisposableVolumes(t *testing.T) {
 // it, the way `run --help` does (ONBOARDING.md point 2).
 func TestReapHelpIsExitZeroOnStdout(t *testing.T) {
 	t.Parallel()
-	r := streams(reapVerb).Do(t, "--help").Exit(0)
+	r := testkit.Streams(reapVerb).Do(t, "--help").Exit(0)
 	for _, want := range []string{"nova-sandbox reap", "--dry-run"} {
 		assert.Contains(t, r.Stdout, want, r)
 	}
@@ -187,5 +187,5 @@ func TestReapHelpIsExitZeroOnStdout(t *testing.T) {
 // A flag the verb does not have is a refusal that names it, not a silent ignore.
 func TestReapRefusesAFlagItDoesNotHave(t *testing.T) {
 	t.Parallel()
-	streams(reapVerb).Do(t, "--force").ExitErr(125, "--force")
+	testkit.Streams(reapVerb).Do(t, "--force").ExitErr(125, "--force")
 }

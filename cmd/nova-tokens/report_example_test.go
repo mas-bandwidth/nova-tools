@@ -1,8 +1,6 @@
 package main
 
 import (
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,17 +18,9 @@ func TestTheHelpReportExampleIsWhatItPrints(t *testing.T) {
 
 	line := "nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts"
 	examples, err := onboarding.ExampleLines(usage, "nova-tokens")
-	require.False(t, err != nil, err)
-	found := false
-	for _, ex := range examples {
-		found = found || ex == line
-	}
-	require.False(t, !found, "the help's example block does not hold %q:\n  %s", line, strings.Join(examples, "\n  "))
-	bench := t.TempDir()
-	copyExampleTree(t, filepath.Join("testdata", "example-bench"), bench)
-	args := strings.Fields(strings.ReplaceAll(strings.TrimPrefix(line, "nova-tokens "), "./", bench+"/"))
-	r := invoke(t, args...)
-	wantExit(t, r, 0)
+	require.NoError(t, err)
+	require.Contains(t, examples, line, "the help's example block does not hold the line")
+	r := novaTokens.Do(t, pasted(exampleBench(t), line)...).Exit(0)
 	step := onboarding.Step{Line: "$ " + line, Want: []string{
 		"2026-09-11\tada\tclaude-fable-5-1\tschema\tinput\t908",
 		"2026-09-11\tada\tclaude-fable-5-1\tschema\toutput\t1535",
@@ -43,7 +33,5 @@ func TestTheHelpReportExampleIsWhatItPrints(t *testing.T) {
 		"! TOKENS AVG-ALL day=2026-09-11 tokens=250131 usd=- usd_per_mtok=-",
 		"! REPORT OK who=ada day=2026-09-11 rows=7 at=2026-09-11T23:55:02Z build=devel subject=tokens 2026-09-11 at=2026-09-11T23:55:02Z build=devel",
 	}}
-	for _, p := range onboarding.CompareTranscript([]onboarding.Step{step}, []onboarding.Result{{Code: r.exit, Stdout: r.stdout, Stderr: r.stderr}}, []onboarding.Field{{Name: "build"}}) {
-		assert.Fail(t, "onboarding example comparison failed", "%v", p)
-	}
+	assert.Empty(t, onboarding.CompareTranscript([]onboarding.Step{step}, []onboarding.Result{onboarding.Result(r.Result)}, []onboarding.Field{{Name: "build"}}))
 }

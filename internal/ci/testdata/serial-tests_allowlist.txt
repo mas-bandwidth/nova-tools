@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 181
+# ceiling: 180
 cmd/nova-bus/bare_verb_door_test.go:TestEveryBareVerbRefusalNamesItsDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -77,7 +77,6 @@ cmd/nova-tokens/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineFo
 cmd/nova-tokens/firstrun_test.go:TestTheExampleLinesRun serial: t.Chdir
 cmd/nova-tokens/gen_transcript_test.go:TestGenerateTranscript serial: t.Chdir
 cmd/nova-tokens/slow_test.go:TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn serial: t.Setenv
-cmd/nova-tokens/token_ledger_test.go:TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly serial: t.Setenv
 cmd/nova-tokens/xai_usage_test.go:TestXaiProviderOneUsageFileFoldsRow serial: t.Setenv
 cmd/nova-update/firstrun_test.go:TestExecutableFirstRun serial: t.Chdir
 cmd/nova-update/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir

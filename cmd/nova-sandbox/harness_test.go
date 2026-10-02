@@ -16,7 +16,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
-	"github.com/stretchr/testify/require"
 )
 
 // Every test here runs the REAL thing on this Mac: a real sandbox-exec, a real profile
@@ -51,10 +50,10 @@ func newJob(t *testing.T) job {
 	j.home = filepath.Join(j.write, "home")
 	secretDir := filepath.Join(base, "secret")
 	j.secret = filepath.Join(secretDir, "env")
-	for _, d := range []string{j.write, j.read, j.home, secretDir, j.outside} {
-		require.NoError(t, os.MkdirAll(d, 0o755))
+	for _, d := range []string{j.write, j.read, j.home, j.outside} {
+		testkit.Mkdir(t, d)
 	}
-	require.NoError(t, os.WriteFile(j.secret, []byte("not-a-real-key\n"), 0o600))
+	testkit.WriteFile(t, j.secret, "not-a-real-key\n", 0o600)
 	return j
 }
 
@@ -85,14 +84,8 @@ func withEnv(main func(args []string, stdin io.Reader, stdout, stderr io.Writer,
 }
 
 // novaSandbox is the tool with no environment at all, for the tests that name every path
-// themselves; streams is a verb that takes neither stdin nor an environment, as a Main.
+// themselves.
 var novaSandbox = withEnv(run, nil)
-
-func streams(verb func(args []string, stdout, stderr io.Writer) int) testkit.Main {
-	return func(args []string, _ io.Reader, stdout, stderr io.Writer) int {
-		return verb(args, stdout, stderr)
-	}
-}
 
 // swap sets the package seam *seam to v for the rest of the test and puts the old value
 // back when the test ends. A test that swaps a seam cannot run in parallel: it stays on

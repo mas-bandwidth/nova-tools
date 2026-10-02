@@ -1,7 +1,6 @@
 package main
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,16 +19,9 @@ func TestTheHelpReadingExamplesAreWhatTheyPrint(t *testing.T) {
 
 	examples, err := onboarding.ExampleLines(usage, "nova-tokens")
 	require.NoError(t, err)
-	bench := t.TempDir()
-	copyExampleTree(t, filepath.Join("testdata", "example-bench"), bench)
-	mkdir(t, filepath.Join(bench, "out"))
-	run := func(line string) onboarding.Result {
-		args := strings.Fields(strings.ReplaceAll(strings.TrimPrefix(line, "nova-tokens "), "./", bench+"/"))
-		r := invoke(t, args...)
-		local := func(s string) string { return strings.ReplaceAll(s, bench+"/", "./") }
-		return onboarding.Result{Code: r.exit, Stdout: local(r.stdout), Stderr: local(r.stderr)}
-	}
-	require.Equal(t, 0, run("nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts").Code)
+	bench := exampleBench(t)
+	local := strings.NewReplacer(bench+"/", "./").Replace
+	novaTokens.Do(t, pasted(bench, "nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts")...).Exit(0)
 
 	source := "SOURCES SOURCE label=claude:bench kind=claude path=./transcripts reports=input,output,cache_write,cache_read day_basis=utc files=1 unreadable=0 messages=3 dup=1 noid=0 nousage=- unparsed=- comments=- redated=- superseded=- rows=2"
 	steps := []onboarding.Step{
@@ -57,9 +49,8 @@ func TestTheHelpReadingExamplesAreWhatTheyPrint(t *testing.T) {
 	for _, step := range steps {
 		line := strings.TrimPrefix(step.Line, "$ ")
 		assert.Contains(t, examples, line, "the help's example block does not hold %q", line)
-		results = append(results, run(line))
+		r := novaTokens.Do(t, pasted(bench, line)...)
+		results = append(results, onboarding.Result{Code: r.Code, Stdout: local(r.Stdout), Stderr: local(r.Stderr)})
 	}
-	for _, p := range onboarding.CompareTranscript(steps, results, []onboarding.Field{{Name: "at"}, {Name: "build"}}) {
-		assert.Fail(t, "onboarding example comparison failed", "%v", p)
-	}
+	assert.Empty(t, onboarding.CompareTranscript(steps, results, []onboarding.Field{{Name: "at"}, {Name: "build"}}))
 }

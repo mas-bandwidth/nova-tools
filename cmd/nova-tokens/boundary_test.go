@@ -4,19 +4,22 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"go/ast"
 	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE PUBLICATION BOUNDARY, over the whole binary.
@@ -25,11 +28,7 @@ import (
 // tool never runs git"; rule 19, "No other subprocess exists ... the tool runs no git at
 // all and rule 16 holds without exception"; rule 9, "The tool removes nothing"; and, under
 // what it deliberately does not do, "It does not pull the bus, fetch, push, run git, or
-// talk to a network. It reads a checkout as files."
-//
-// These tests hold the whole binary to it: every package the binary reaches and every
-// directory the tool owns (a publisher cannot hide in a subpackage), and every verb, over a
-// checkout that has a remote, with a fake git on PATH that must never run.
+// talk to a network. It reads a checkout as files." These tests hold the whole binary to it.
 
 // binaryPackages returns every first-party package reachable from cmd/nova-tokens.
 //
@@ -39,56 +38,45 @@ func binaryPackages(t *testing.T) []string {
 	t.Helper()
 	const mod = "github.com/mas-bandwidth/nova-tools/"
 	seen := map[string]bool{}
-	var order []string
 	var walk func(pkg string)
 	walk = func(pkg string) {
 		if seen[pkg] {
 			return
 		}
 		seen[pkg] = true
-		order = append(order, pkg)
 		for _, f := range pkgFiles(t, pkg) {
 			for _, imp := range f.Imports {
-				path := strings.Trim(imp.Path.Value, `"`)
-				if strings.HasPrefix(path, mod) {
+				if path := strings.Trim(imp.Path.Value, `"`); strings.HasPrefix(path, mod) {
 					walk(strings.TrimPrefix(path, mod))
 				}
 			}
 		}
 	}
 	walk("cmd/nova-tokens")
-	// Plus every subpackage under the two this tool owns: a package no import reaches yet
-	// is still source that ships in this repository, and the point of the walk is that a
-	// publisher cannot hide in a directory.
+	// Plus every directory of source under the two this tool owns: a package no import
+	// reaches yet is still source that ships in this repository, and the point of the walk
+	// is that a publisher cannot hide in a directory.
 	root := repoRoot(t)
 	for _, owned := range []string{"internal/tokens", "cmd/nova-tokens"} {
-		err := filepath.WalkDir(filepath.Join(root, owned), func(path string, d fs.DirEntry, err error) error {
-			if err != nil || !d.IsDir() {
+		require.NoError(t, filepath.WalkDir(filepath.Join(root, owned), func(path string, d fs.DirEntry, err error) error {
+			switch {
+			case err != nil:
+				return err
+			case d.IsDir() && d.Name() == "testdata":
+				return fs.SkipDir
+			case !d.IsDir() && isSource(d.Name()):
+				rel, err := filepath.Rel(root, filepath.Dir(path))
+				walk(filepath.ToSlash(rel))
 				return err
 			}
-			rel, rerr := filepath.Rel(root, path)
-			if rerr != nil {
-				return rerr
-			}
-			rel = filepath.ToSlash(rel)
-			if base := filepath.Base(rel); base == "testdata" {
-				return fs.SkipDir
-			}
-			if hasGoFiles(t, filepath.Join(root, rel)) {
-				walk(rel)
-			}
 			return nil
-		})
-		require.False(t, err != nil, err)
+		}))
 	}
-	sort.Strings(order)
-	// The floor: the five packages of the binary's own graph. Fewer
-	// than that and the walk found nothing and this test would pass by checking nothing.
-	for _, must := range []string{
-		"cmd/nova-tokens", "internal/tokens", "internal/oneline",
-		"internal/bounded", "internal/buildinfo",
-	} {
-		require.False(t, !seen[must], "the import walk did not reach %s; it was looking in the wrong place and would have passed by checking nothing (found %v)", must, order)
+	order := slices.Sorted(maps.Keys(seen))
+	// The floor: the five packages of the binary's own graph. Fewer than that and the walk
+	// found nothing and this test would pass by checking nothing.
+	for _, must := range []string{"cmd/nova-tokens", "internal/tokens", "internal/oneline", "internal/bounded", "internal/buildinfo"} {
+		require.Contains(t, order, must, "the import walk did not reach %s; it was looking in the wrong place and would have passed by checking nothing", must)
 	}
 	return order
 }
@@ -96,22 +84,8 @@ func binaryPackages(t *testing.T) []string {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.False(t, err != nil, err)
+	require.NoError(t, err)
 	return root
-}
-
-func hasGoFiles(t *testing.T, dir string) bool {
-	t.Helper()
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, e := range ents {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") && !strings.HasSuffix(e.Name(), "_test.go") {
-			return true
-		}
-	}
-	return false
 }
 
 // spawners are the ways a Go program can start another program. exec.Command is the ordinary
@@ -138,21 +112,15 @@ var spawners = []string{
 //     tripwire that cries wolf gets deleted rather than obeyed.
 //
 // So the test is not "does this string contain git" but "does this string look like a program
-// to run": the literal IS git, or it carries git as a path component, or it begins a command
-// line with it, or it is a short token-shaped string. A sentence with git in the middle of it
-// is prose, and the behavioural test is what stands behind this one.
+// to run": the literal IS git, or it begins a command line with it, or one of its words is a
+// path (it carries a separator) with git as a component. A sentence with git in the middle of
+// it is prose, and the behavioural test is what stands behind this one.
 func namesGit(lit string) bool {
-	trimmed := strings.TrimSpace(lit)
-	lower := strings.ToLower(trimmed)
+	lower := strings.ToLower(strings.TrimSpace(lit))
 	isGit := func(tok string) bool { return strings.TrimSuffix(tok, ".exe") == "git" }
-	// The literal IS the program, or it begins a command line with it.
 	if isGit(lower) || strings.HasPrefix(lower, "git ") {
 		return true
 	}
-	// Or one whitespace-separated word is a PATH whose last-or-any component is git. The word
-	// has to carry the separator itself: "/usr/bin/git" is a path, and the bare word git in
-	// the middle of a sentence is prose -- cmd/nova-tokens/main.go's banner has one, and it is
-	// the tool telling a person it does not read the git history.
 	for _, word := range strings.Fields(lower) {
 		word = strings.Trim(word, `"'()[]{},;:=`+"`")
 		if !strings.ContainsAny(word, `/\`) {
@@ -167,69 +135,61 @@ func namesGit(lit string) bool {
 	return false
 }
 
-// Rules 16 and 19, over every package of the binary rather than one of them. The one
-// subprocess is sqlite3 and it lives in internal/tokens/opencode.go; there is no network; and
-// no source file of this tool spells git.
+// Rules 16 and 19, over every package of the binary rather than one of them, and demanded
+// tests 6 and 16 (once TestTheOnlySubprocessIsSqlite3AndThereIsNoNetwork, over
+// internal/tokens alone): the one subprocess is sqlite3 and it lives in
+// internal/tokens/opencode.go; there is no network; and no source file of this tool spells
+// git (an earlier draft ran `git log` to order competing notes, and that order is now in the
+// notes themselves).
 //
-// WHAT THIS CANNOT SEE, stated so nobody reads it as more than it is: it checks source TEXT
-// and string literals, so a program name assembled at run time -- "/usr/bin/" + "gi" + "t",
-// or bytes from a file -- passes it. That is not a hole a publisher could land in by
-// accident, but it is not proof either. The behavioural half is
-// TestNoVerbTouchesACheckoutOrItsRemote, which measures the remote and the checkout rather
-// than the source; it catches a real push whatever the path was spelled like, and it catches
-// it only for the verbs it runs. Between them: a publisher cannot be written here in the
-// ordinary way, and cannot push to a fixture remote under any verb, and a determined author
-// who hides the name from the source is caught by the second and not the first.
+// WHAT THIS CANNOT SEE: it checks source TEXT and string literals, so a program name
+// assembled at run time ("/usr/bin/" + "gi" + "t", or bytes from a file) passes it. The
+// behavioural half, TestNoVerbTouchesACheckoutOrItsRemote, measures the remote and the
+// checkout instead, whatever the path was spelled like, but only for the verbs it runs: a
+// determined author who hides the name from the source is caught there and not here.
 func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 	t.Parallel()
 
 	const theOneSubprocess = "internal/tokens/opencode.go"
-	checked := 0
-	literals := 0
+	checked, literals := 0, 0
 	for _, pkg := range binaryPackages(t) {
-		for name, f := range pkgFiles(t, pkg) {
-			path := pkg + "/" + name
-			checked++
-			for _, imp := range f.Imports {
-				ip := strings.Trim(imp.Path.Value, `"`)
-				assert.False(t, ip == "net" || strings.HasPrefix(ip, "net/"), "%s imports %q; this tool talks to no network, and a publisher is a separate spec gate (rule 16)", path, ip)
-				assert.False(t, ip == "os/exec" && path != theOneSubprocess, "%s imports os/exec; the one subprocess is sqlite3 and it lives in %s (rule 19)", path, theOneSubprocess)
-			}
-		}
 		for name, body := range pkgText(t, pkg) {
 			path := pkg + "/" + name
+			assert.NotContains(t, body, `"git"`, "%s names git; the tool runs none (rule 16)", path)
 			if path == theOneSubprocess {
 				continue
 			}
 			for _, spawn := range spawners {
-				assert.False(t, strings.Contains(body, spawn), "%s calls %s; this tool starts one subprocess, sqlite3, and it lives in %s (rule 19)", path, spawn, theOneSubprocess)
+				assert.NotContains(t, body, spawn, "%s calls %s; this tool starts one subprocess, sqlite3, and it lives in %s (rule 19)", path, spawn, theOneSubprocess)
 			}
 		}
-		// And the literals, in the syntax tree rather than the text, so an import path is an
-		// import path and not a string that happens to hold a program name.
 		for name, f := range pkgFiles(t, pkg) {
 			path := pkg + "/" + name
+			checked++
 			imports := map[*ast.BasicLit]bool{}
 			for _, imp := range f.Imports {
 				imports[imp.Path] = true
+				ip := strings.Trim(imp.Path.Value, `"`)
+				assert.False(t, ip == "net" || strings.HasPrefix(ip, "net/"), "%s imports %q; this tool talks to no network, and a publisher is a separate spec gate (rule 16)", path, ip)
+				assert.False(t, ip == "os/exec" && path != theOneSubprocess, "%s imports os/exec; the one subprocess is sqlite3 and it lives in %s (rule 19)", path, theOneSubprocess)
 			}
+			// The literals, in the syntax tree rather than the text, so an import path is an
+			// import path and not a string that happens to hold a program name.
 			ast.Inspect(f, func(n ast.Node) bool {
-				lit, ok := n.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING || imports[lit] {
-					return true
+				if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING && !imports[lit] {
+					literals++
+					text, err := strconv.Unquote(lit.Value)
+					if err != nil {
+						text = lit.Value
+					}
+					assert.False(t, namesGit(text), "%s spells git in a string literal %q; the tool runs none -- it reads a checkout as files (rule 16)", path, text)
 				}
-				literals++
-				text, err := strconv.Unquote(lit.Value)
-				if err != nil {
-					text = lit.Value
-				}
-				assert.False(t, namesGit(text), "%s spells git in a string literal; the tool runs none -- it reads a checkout as files (rule 16)", path)
 				return true
 			})
 		}
 	}
-	require.False(t, checked < 10, "examined %d source files; this tripwire was looking in the wrong place and would have passed by checking almost nothing", checked)
-	require.False(t, literals < 50, "examined %d string literals; the literal half was looking in the wrong place and would have passed by checking almost nothing", literals)
+	require.GreaterOrEqual(t, checked, 10, "examined %d source files; this tripwire was looking in the wrong place and would have passed by checking almost nothing", checked)
+	require.GreaterOrEqual(t, literals, 50, "examined %d string literals; the literal half was looking in the wrong place and would have passed by checking almost nothing", literals)
 }
 
 // namesGit's own test: the tripwire above is only as good as this function, and the two
@@ -237,11 +197,8 @@ func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
 	t.Parallel()
 
-	for _, yes := range []string{
-		"git", "GIT", "git.exe", "/usr/bin/git", "git push", `C:\bin\git.exe`,
-		"git -C x push", "/opt/homebrew/bin/git", "  git  ",
-	} {
-		assert.False(t, !namesGit(yes), "namesGit(%q) is false; that is a program to run", yes)
+	for _, yes := range []string{"git", "GIT", "git.exe", "/usr/bin/git", "git push", `C:\bin\git.exe`, "git -C x push", "/opt/homebrew/bin/git", "  git  "} {
+		assert.True(t, namesGit(yes), "namesGit(%q) is false; that is a program to run", yes)
 	}
 	for _, no := range []string{
 		"github.com/mas-bandwidth/nova-tools/internal/oneline",
@@ -267,210 +224,97 @@ func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
 // called, the bare repository is byte-identical, and the checkout's own .git is too.
 func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 	realGit, _ := exec.LookPath("git")
-	if realGit == "" || runtime.GOOS == "windows" {
-		t.Skip("the fixture wants a real git to build the checkout and a shell script for the fake")
+	if realGit == "" {
+		t.Skip("the fixture wants a real git to build the checkout")
 	}
-	dir := t.TempDir()
-	repos := reposFile(t, dir)
-	out := mkdir(t, filepath.Join(dir, "out"))
-	tr := mkdir(t, filepath.Join(dir, "tr"))
-	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 100}, "/x/schema/a.go")+"\n")
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "n.md", "emma-00000000000a", "tokens 2026-09-11", busDate,
-		"2026-09-11\temma\tg\tschema\tinput\t250\n")
+	testkit.SkipOn(t, "windows", "the fake git is a shell script")
+	b := newBench(t)
+	b.transcript("a.jsonl", msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 100}, "/x/schema/a.go"))
+	bus := busDir(t, filepath.Join(b.dir, "bus"), "emma")
+	busNote(t, bus, "emma", "n.md", "emma-00000000000a", "tokens 2026-09-11", busDate, "2026-09-11\temma\tg\tschema\tinput\t250\n")
 
 	// A bare repository is the fake remote: a push has somewhere to go, and nothing here
 	// may go there. It is built with the real git, before the fake goes on PATH.
-	bare := filepath.Join(dir, "remote.git")
-	gitRun(t, realGit, dir, "init", "--bare", "-q", bare)
-	gitRun(t, realGit, bare, "config", "receive.autogc", "false")
-	gitRun(t, realGit, bare, "config", "gc.auto", "0")
-	gitRun(t, realGit, bare, "config", "maintenance.auto", "false")
-	gitRun(t, realGit, bus, "init", "-q")
-	gitRun(t, realGit, bus, "add", "-A")
-	gitRun(t, realGit, bus, "commit", "-q", "-m", "the lane")
-	gitRun(t, realGit, bus, "remote", "add", "origin", bare)
-	gitRun(t, realGit, bus, "push", "-q", "origin", "HEAD:refs/heads/main")
-
+	bare := filepath.Join(b.dir, "remote.git")
+	gitRun(t, realGit, b.dir, "init", "--bare", "-q", bare)
+	for _, kv := range [][2]string{{"receive.autogc", "false"}, {"gc.auto", "0"}, {"maintenance.auto", "false"}} {
+		gitRun(t, realGit, bare, "config", kv[0], kv[1])
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}, {"commit", "-q", "-m", "the lane"}, {"remote", "add", "origin", bare}, {"push", "-q", "origin", "HEAD:refs/heads/main"}} {
+		gitRun(t, realGit, bus, args...)
+	}
 	gitLog := fakeGit(t)
-	beforeBare := readTree(t, bare)
-	beforeGit := readTree(t, filepath.Join(bus, ".git"))
+	beforeBare, beforeGit := readTree(t, bare), readTree(t, filepath.Join(bus, ".git"))
 
-	// Every verb, including the two that only look and the one that only says which build.
-	runs := [][]string{
-		{"fold", "--out", out, "--all", "--repos", repos, "--claude", "glenn=" + tr, "--bus", bus},
-		{"sources", "--repos", repos, "--all", "--claude", "glenn=" + tr, "--bus", bus},
-		{"report", "--who", "rowan", "--day", "2026-09-11", "--repos", repos, "--claude", "glenn=" + tr},
-		{"sum", "--out", out, "--month", "2026-09"},
-		{"check", "--out", out},
+	// Every verb, including the two that only look and the one that only says which build;
+	// each is a run the tool can complete.
+	for _, args := range [][]string{
+		{"fold", "--out", b.out, "--all", "--repos", b.repos, "--claude", "glenn=" + b.tr, "--bus", bus},
+		{"sources", "--repos", b.repos, "--all", "--claude", "glenn=" + b.tr, "--bus", bus},
+		{"report", "--who", "rowan", "--day", "2026-09-11", "--repos", b.repos, "--claude", "glenn=" + b.tr},
+		{"sum", "--out", b.out, "--month", "2026-09"},
+		{"check", "--out", b.out},
 		{"version"},
 		{"help"},
+	} {
+		r := novaTokens.Do(t, args...)
+		assert.LessOrEqual(t, r.Code, 1, r)
 	}
-	for _, args := range runs {
-		r := invoke(t, args...)
-		assert.False(t, r.exit > 1, "%v exits %d; the fixture is meant to be a run the tool can complete\n%s", args, r.exit, r.all())
-	}
-
-	{
-		_, err := os.Stat(gitLog)
-		if err == nil {
-			assert.Failf(t, "git was invoked", "git was invoked: %s", read(t, gitLog))
-		}
-	}
-	{
-		after := readTree(t, bare)
-		assert.False(t, after.digest != beforeBare.digest, "the remote changed; this tool does not push, fetch or talk to a network (rule 16): diff: %s", diffTrees(beforeBare, after))
-	}
-	{
-		after := readTree(t, filepath.Join(bus, ".git"))
-		assert.False(t, after.digest != beforeGit.digest, "the checkout's .git changed; the bus is read as files and nothing else (rule 16): diff: %s", diffTrees(beforeGit, after))
-	}
+	assert.NoFileExists(t, gitLog, "git was invoked")
+	assert.Equal(t, beforeBare, readTree(t, bare), "the remote changed; this tool does not push, fetch or talk to a network (rule 16)")
+	assert.Equal(t, beforeGit, readTree(t, filepath.Join(bus, ".git")), "the checkout's .git changed; the bus is read as files and nothing else (rule 16)")
 }
 
 // gitRunErr runs git the way the fixture does -- no global or system config, a fixed
 // clock, and background maintenance/auto-gc turned off -- and returns an error rather than
 // failing the test, so a test can run several of them in parallel goroutines.
 func gitRunErr(git, dir string, args ...string) error {
-	full := append([]string{
+	cmd := exec.Command(git, append([]string{
 		"-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
 		"-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main",
 		"-c", "receive.autogc=false", "-c", "gc.auto=0", "-c", "gc.autoDetach=false",
 		"-c", "maintenance.auto=false", "-c", "maintenance.autoDetach=false",
 		"-C", dir,
-	}, args...)
-	cmd := exec.Command(git, full...)
-	cmd.Env = append(os.Environ(),
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-		"GIT_CONFIG_NOSYSTEM=1",
+	}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_DATE=2026-09-11T20:00:00Z", "GIT_COMMITTER_DATE=2026-09-11T20:00:00Z")
-	if outb, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git %v: %v: %s", args, err, outb)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git %v: %v: %s", args, err, out)
 	}
 	return nil
 }
 
+// fakeGit puts a git on PATH that records every call into the file it returns. One helper
+// for its two callers: the package's t.Setenv sites (testdata/testify) only fall.
+func fakeGit(t *testing.T) (logPath string) {
+	t.Helper()
+	testkit.SkipOn(t, "windows", "the fake git is a shell script")
+	bin := testkit.Mkdir(t, filepath.Join(t.TempDir(), "bin"))
+	logPath = filepath.Join(filepath.Dir(bin), "git-argv.log")
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho \"$@\" >> "+logPath+"\n"), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
 func gitRun(t *testing.T, git, dir string, args ...string) {
 	t.Helper()
-	{
-		err := gitRunErr(git, dir, args...)
-		require.False(t, err != nil, err)
-	}
+	require.NoError(t, gitRunErr(git, dir, args...))
 }
 
-type treeSnapshot struct {
-	digest string
-	files  map[string]string
-}
-
-func readTree(t *testing.T, root string) treeSnapshot {
+// readTree is every file under root, by relative path, as the sha256 of its bytes: two
+// snapshots compared with assert.Equal name the files added, removed and changed.
+func readTree(t *testing.T, root string) map[string]string {
 	t.Helper()
-	sum := sha256.New()
-	var names []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
+	files := map[string]string{}
+	require.NoError(t, filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
 			return err
 		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, rerr := filepath.Rel(root, path)
-		if rerr != nil {
-			return rerr
-		}
-		names = append(names, rel)
-		return nil
-	})
-	require.False(t, err != nil, err)
-	sort.Strings(names)
-	files := make(map[string]string, len(names))
-	for _, rel := range names {
-		raw, err := os.ReadFile(filepath.Join(root, rel))
-		if err != nil {
-			// A file git holds open or replaces under us is named, not skipped.
-			require.FailNowf(t, "unreadable source file", "%s: %v", rel, err)
-		}
-		h := sha256.Sum256(raw)
-		files[rel] = hex.EncodeToString(h[:])
-		sum.Write([]byte(rel))
-		sum.Write([]byte{0})
-		sum.Write(raw)
-		sum.Write([]byte{0})
-	}
-	require.False(t, len(names) == 0, "nothing under %s; this comparison would hold whatever happened", root)
-	return treeSnapshot{
-		digest: hex.EncodeToString(sum.Sum(nil)),
-		files:  files,
-	}
-}
-
-func diffTrees(before, after treeSnapshot) string {
-	var diffs []string
-	for rel, hBefore := range before.files {
-		if hAfter, ok := after.files[rel]; !ok {
-			diffs = append(diffs, fmt.Sprintf("removed %s", rel))
-		} else if hBefore != hAfter {
-			diffs = append(diffs, fmt.Sprintf("modified %s (was %s..now %s)", rel, hBefore[:8], hAfter[:8]))
-		}
-	}
-	for rel := range after.files {
-		if _, ok := before.files[rel]; !ok {
-			diffs = append(diffs, fmt.Sprintf("added %s", rel))
-		}
-	}
-	sort.Strings(diffs)
-	if len(diffs) == 0 {
-		return "digest mismatch with identical file contents"
-	}
-	return strings.Join(diffs, ", ")
-}
-
-func TestDiffTreesReportsDifferences(t *testing.T) {
-	t.Parallel()
-
-	a := treeSnapshot{
-		digest: "1",
-		files: map[string]string{
-			"same": "aaa",
-			"mod":  "1111111111",
-			"del":  "333",
-		},
-	}
-	b := treeSnapshot{
-		digest: "2",
-		files: map[string]string{
-			"same":  "aaa",
-			"mod":   "2222222222",
-			"added": "444",
-		},
-	}
-	diff := diffTrees(a, b)
-	want := "added added, modified mod (was 11111111..now 22222222), removed del"
-	assert.False(t, diff != want, "diffTrees = %q; want %q", diff, want)
-}
-
-// The records namespace is not a verb. SPEC-TOKENS' verb list has none that writes
-// anywhere but the day file, so this tool refuses `records` as an unknown subcommand,
-// exit 2, and writes nothing. A verb that publishes changes this test and the spec in the
-// same hand.
-func TestTheRecordsNamespaceIsNotAVerbUntilItsGateIsDecided(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	out := mkdir(t, filepath.Join(dir, "out"))
-	for _, args := range [][]string{
-		{"records"},
-		{"records", "collect", "--sources", "x", "--ledger", out, "--out", dir},
-		{"records", "publish", "--batch", dir, "--ledger", out, "--remote", "origin", "--branch", "main"},
-	} {
-		r := invoke(t, args...)
-		wantExit(t, r, 2)
-		wantContains(t, r.stderr, `unknown verb "records"; did you mean report?`)
-		wantContains(t, r.stderr, "run: nova-tokens help")
-	}
-	ents, err := os.ReadDir(out)
-	require.False(t, err != nil, err)
-	assert.False(t, len(ents) != 0, "a refused verb wrote %d entries under --out", len(ents))
-	// And the banner does not advertise it: a usage block naming a verb the tool refuses
-	// is a first run that fails on its own instructions.
-	assert.False(t, strings.Contains(usage, "records"), "the usage banner names a records verb this tool refuses")
+		rel, err := filepath.Rel(root, path)
+		h := sha256.Sum256([]byte(testkit.ReadFile(t, path)))
+		files[filepath.ToSlash(rel)] = hex.EncodeToString(h[:])
+		return err
+	}))
+	require.NotEmpty(t, files, "nothing under %s; this comparison would hold whatever happened", root)
+	return files
 }

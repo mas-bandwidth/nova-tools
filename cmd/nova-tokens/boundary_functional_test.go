@@ -6,6 +6,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,9 +26,11 @@ import (
 // asynchronously and a snapshot taken before it settles sees loose objects become a pack
 // file, which is the intermittent "the remote changed" mutation #205 saw in CI. Eight
 // writers push to one bare remote concurrently, and the remote's tree -- per relative path
-// -- must not move once they have all returned. The fixture turns receive.autogc, gc.auto
-// and maintenance.auto off (the repair), and this test pins that: any later change is one
-// this tool may not make.
+// -- must not move for a second once they have all returned. The fixture turns
+// receive.autogc, gc.auto and maintenance.auto off (the repair, as
+// TestNoVerbTouchesACheckoutOrItsRemote's does), and this test pins that: any later change
+// is one this tool may not make. A detached process signals nothing, so the second is
+// watched, not waited for.
 func TestConcurrentWritersDoNotMutateTheBareRemote(t *testing.T) {
 	t.Parallel()
 
@@ -37,48 +41,31 @@ func TestConcurrentWritersDoNotMutateTheBareRemote(t *testing.T) {
 	dir := t.TempDir()
 	bare := filepath.Join(dir, "remote.git")
 	gitRun(t, realGit, dir, "init", "--bare", "-q", bare)
-	gitRun(t, realGit, bare, "config", "receive.autogc", "false")
-	gitRun(t, realGit, bare, "config", "gc.auto", "0")
-	gitRun(t, realGit, bare, "config", "maintenance.auto", "false")
-
+	for _, kv := range [][2]string{{"receive.autogc", "false"}, {"gc.auto", "0"}, {"maintenance.auto", "false"}} {
+		gitRun(t, realGit, bare, "config", kv[0], kv[1])
+	}
 	const writers = 8
 	buses := make([]string, writers)
 	for i := range buses {
-		buses[i] = mkdir(t, filepath.Join(dir, fmt.Sprintf("bus%d", i)))
+		buses[i] = filepath.Dir(testkit.WriteFile(t, filepath.Join(dir, fmt.Sprintf("bus%d", i), "note.md"), fmt.Sprintf("writer %d\n", i)))
+		for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}, {"commit", "-q", "-m", "writer"}, {"remote", "add", "origin", bare}} {
+			gitRun(t, realGit, buses[i], args...)
+		}
 	}
-	for i, bus := range buses {
-		gitRun(t, realGit, bus, "init", "-q")
-		write(t, filepath.Join(bus, "note.md"), fmt.Sprintf("writer %d\n", i))
-		gitRun(t, realGit, bus, "add", "-A")
-		gitRun(t, realGit, bus, "commit", "-q", "-m", "writer")
-		gitRun(t, realGit, bus, "remote", "add", "origin", bare)
-	}
-
-	errs := make(chan error, writers)
+	errs := make([]error, writers)
 	var wg sync.WaitGroup
 	for i, bus := range buses {
-		wg.Add(1)
-		go func(bus string, i int) {
-			defer wg.Done()
-			errs <- gitRunErr(realGit, bus, "push", "-q", "origin", fmt.Sprintf("HEAD:refs/heads/w%d", i))
-		}(bus, i)
+		wg.Go(func() {
+			errs[i] = gitRunErr(realGit, bus, "push", "-q", "origin", fmt.Sprintf("HEAD:refs/heads/w%d", i))
+		})
 	}
 	wg.Wait()
-	close(errs)
-	for err := range errs {
-		require.False(t, err != nil, err)
-	}
+	require.NoError(t, errors.Join(errs...))
 
 	before := readTree(t, bare)
-	deadline := time.Now().Add(time.Second)
-	for {
-		if after := readTree(t, bare); after.digest != before.digest {
-			assert.Failf(t, "remote changed under concurrent writers", "the remote changed under concurrent writers; this tool does not push, fetch or talk to a network (rule 16): diff: %s", diffTrees(before, after))
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if !assert.Equal(t, before, readTree(t, bare), "the remote changed under concurrent writers; this tool does not push, fetch or talk to a network (rule 16)") {
 			return
 		}
-		if time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
 	}
 }

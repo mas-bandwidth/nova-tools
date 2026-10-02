@@ -4,8 +4,8 @@ package main
 
 import (
 	"os"
-
 	"os/exec"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -28,12 +28,30 @@ func makeUnreadable(t *testing.T, path string) (release func()) {
 	t.Helper()
 	for _, m := range []struct {
 		how   string
-		apply func(*testing.T, string) (func(), bool)
+		apply func(string) (func(), bool)
 	}{
-		{"an exclusive handle (dwShareMode 0)", lockExclusive},
-		{"a deny ACE for Everyone (icacls /deny)", denyEveryone},
+		// no sharing, so every other open is a sharing violation.
+		{"an exclusive handle (dwShareMode 0)", func(path string) (func(), bool) {
+			p, err := syscall.UTF16PtrFromString(path)
+			if err != nil {
+				return nil, false
+			}
+			h, err := syscall.CreateFile(p, syscall.GENERIC_READ, 0 /* no sharing */, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+			if err != nil {
+				return nil, false
+			}
+			return func() { _ = syscall.CloseHandle(h) }, true
+		}},
+		// The SID rather than the group NAME, because the name is localised and a runner is
+		// not necessarily English.
+		{"a deny ACE for Everyone (icacls /deny)", func(path string) (func(), bool) {
+			if err := exec.Command("icacls", path, "/deny", "*S-1-1-0:(R)").Run(); err != nil {
+				return nil, false
+			}
+			return func() { _ = exec.Command("icacls", path, "/remove:d", "*S-1-1-0").Run() }, true
+		}},
 	} {
-		undo, ok := m.apply(t, path)
+		undo, ok := m.apply(path)
 		if !ok {
 			continue
 		}
@@ -44,7 +62,11 @@ func makeUnreadable(t *testing.T, path string) (release func()) {
 				continue
 			}
 			t.Logf("unreadable by %s", m.how)
-			return once(t, undo)
+			// Once, so a test may release it early (before deleting the file, which an open
+			// handle or a deny ACE would otherwise prevent) and the cleanup is still safe.
+			release = sync.OnceFunc(undo)
+			t.Cleanup(release)
+			return release
 		}
 		// It did not take: give the file back and try the next one.
 		f.Close()
@@ -52,42 +74,4 @@ func makeUnreadable(t *testing.T, path string) (release func()) {
 	}
 	require.FailNowf(t, "Windows unreadable fixture remained readable", "no mechanism on this Windows made %s refuse a read: an exclusive handle and a deny ACE were each tried and the file stayed readable", path)
 	return func() {}
-}
-
-// once wraps an undo so that a test may call it early -- before deleting the file, which
-// an open handle or a deny ACE would otherwise prevent -- and the cleanup is still safe.
-func once(t *testing.T, undo func()) func() {
-	done := false
-	release := func() {
-		if done {
-			return
-		}
-		done = true
-		undo()
-	}
-	t.Cleanup(release)
-	return release
-}
-
-// lockExclusive opens the file with no sharing, so every other open is a sharing violation.
-func lockExclusive(t *testing.T, path string) (func(), bool) {
-	p, err := syscall.UTF16PtrFromString(path)
-	if err != nil {
-		return nil, false
-	}
-	h, err := syscall.CreateFile(p, syscall.GENERIC_READ, 0 /* no sharing */, nil,
-		syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
-	if err != nil {
-		return nil, false
-	}
-	return func() { _ = syscall.CloseHandle(h) }, true
-}
-
-// denyEveryone puts a deny ACE on the file. The SID rather than the group NAME, because
-// the name is localised and a runner is not necessarily English.
-func denyEveryone(t *testing.T, path string) (func(), bool) {
-	if err := exec.Command("icacls", path, "/deny", "*S-1-1-0:(R)").Run(); err != nil {
-		return nil, false
-	}
-	return func() { _ = exec.Command("icacls", path, "/remove:d", "*S-1-1-0").Run() }, true
 }

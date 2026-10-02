@@ -1315,3 +1315,16 @@ deprecated/internal/workreconcile/sprint_test.go deprecated/ removed 2026-10-01;
 deprecated/internal/workreconcile/types_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 internal/ci/sizetable_test.go dead: its only helper readSizeTable had no caller; the size tables it read are checked nowhere else (dead-code pass 2026-10-01)
 cmd/nova-secrets/issue2378_test.go not deleted by this branch: the lander batch of 2026-10-02 renamed it to gate_unborn_test.go (da9b6725c) after rewriting it (e9b17771a), and across this merge of that base into child/compact-sandbox git sees the rename as a deletion because the file it renames from is foundation's older text
+cmd/nova-tokens/examplelines_test.go the compaction of 2026-10-02 merged it into fold_example_test.go (TestHelpFoldExampleIsComparedToOutput/every example line runs as printed), one build of the binary for both
+cmd/nova-tokens/avg_test.go the compaction of 2026-10-02 merged it into alldropped_test.go (TestAvgLinesPerModelAndAll), the fold's notes in one file
+cmd/nova-tokens/swarm_retry_test.go the compaction of 2026-10-02 merged it into alldropped_test.go (TestIssue181SwarmRetryAttemptIsItsOwnRow)
+cmd/nova-tokens/foldout_test.go the compaction of 2026-10-02 made it rows of audit_repairs_test.go's TestEveryPathAFlagCannotUseIsRefused
+cmd/nova-tokens/fold_lock_path_test.go the compaction of 2026-10-02 made it rows of audit_repairs_test.go's TestEveryPathAFlagCannotUseIsRefused
+cmd/nova-tokens/grok_fold_test.go the compaction of 2026-10-02 made it a row of xai_usage_test.go's TestGrokUsageFoldsToOneRowWithInOutUsd
+cmd/nova-tokens/grok_test.go the compaction of 2026-10-02 made it a row of xai_usage_test.go's TestGrokUsageFoldsToOneRowWithInOutUsd
+cmd/nova-tokens/issue1451_test.go the compaction of 2026-10-02 moved TestIssue1451EveryRefusalNamesTheDoor, whole, into help_test.go
+cmd/nova-tokens/issue1451version_test.go the compaction of 2026-10-02 made it the version_stray_argument row of help_test.go's TestIssue1451EveryRefusalNamesTheDoor
+cmd/nova-tokens/polish_test.go the compaction of 2026-10-02 made it the report row of help_test.go's TestEveryVerbFlagHasADescription
+cmd/nova-tokens/verbhelp_test.go the compaction of 2026-10-02 moved TestEveryVerbAnswersHelpAndTouchesNothing, whole, into help_test.go
+cmd/nova-tokens/spec_drift_363_test.go the compaction of 2026-10-02 made it a row of help_test.go's TestTheSpecPromisesWhatTheToolPrints
+cmd/nova-tokens/eff85_efficiency_card_test.go the compaction of 2026-10-02 made it a row of help_test.go's TestTheSpecPromisesWhatTheToolPrints
