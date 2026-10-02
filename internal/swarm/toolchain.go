@@ -12,7 +12,7 @@ import (
 
 // THE BENCH TOOLCHAIN ROOTS.
 //
-// TWO CONTRACTS CONTRADICT EACH OTHER, and every Go card dies in the gap. The
+// TWO CONTRACTS CONTRADICT EACH OTHER, and every Go card on the bench dies in the gap. The
 // bench provisioning standard puts the toolchain in a USER directory -- Go and sbcl under
 // `~/sdk`, the standard's own PATH entry `~/go/bin`, the module cache at `~/go/pkg/mod` --
 // while the native wall named NO toolchain root at all and pinned `GOTOOLCHAIN=local`. So
@@ -31,7 +31,7 @@ import (
 // `go` the card must run, and `--read-noexec`, which does not, for the tree the card only
 // reads.
 //
-// THE SAME HURT HAS A DARWIN FACE. A Mac bench's
+// THE SAME HURT HAS A DARWIN FACE, measured on the Air. A Mac bench's
 // toolchains are INSTALLED and on `PATH`, and three of them still died inside the bare wall,
 // because each resolves its own runtime FROM THE DIRECTORY OF THE LAUNCHER THAT RAN IT and
 // that launcher is a symlink OUT of any granted tree:
@@ -143,7 +143,7 @@ func (r ToolchainRoot) Home() bool { return !strings.HasPrefix(r.Name, "/") }
 //	            provisioned bench ~/go/bin/go is a SYMLINK into the sdk tree, and the kernel
 //	            checks the resolved target, so a card whose PATH finds ~/go/bin/go first
 //	            still runs the granted toolchain -- while a real binary sitting in that
-//	            directory is Permission denied.
+//	            directory is Permission denied. Measured on a linux bench.
 //
 // The same rule is why no bin directory appears on the darwin side either: every grant there
 // is on a toolchain TREE (`/opt/homebrew/Cellar/go/<ver>`) and never on `/opt/homebrew/bin`,
@@ -196,7 +196,7 @@ func ToolchainRootOSes() []string {
 
 // ToolchainRoots is the wall's side: this machine's list, absolute, carrying each root's
 // kind, and SKIPPED IF ABSENT. Absent is the machine's shape and not the caller's mistake --
-// a Mac bench has no `~/sdk` and may have no dotnet -- while the wall REFUSES a
+// a Mac bench has no `~/sdk` and may have no dotnet -- while rule 5 of the wall REFUSES a
 // `--read` or a `--read-noexec` naming a path that is not there, so a root that does not
 // exist must never reach the argv. An empty home names no HOME-relative root, because a
 // relative root is a refusal and a root at the filesystem's top is not a toolchain; a system
