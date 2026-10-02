@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -182,7 +183,7 @@ func quackBrief(id, stream, tier, repo, base string, rules []swarm.ChildRule) st
 		fmt.Sprintf("Files: %s only.", file),
 		fmt.Sprintf("Gate: none; `cat %s` prints quack.", file),
 		fmt.Sprintf("Finish: the report is the PR. `gh pr create` with the title `quack: %s` and the body `quack` plus the diff stat, last line 🤖 Generated with [Claude Code](https://claude.com/claude-code); or, as JOB.md says for your profile, RESULT.md with output and report both containing quack.", id),
-		fmt.Sprintf("As a read (JOB.md says kind read): change nothing, commit nothing. Approve (`gh pr review --approve`) when, and only when, the report contains the word quack and the diff is exactly the one file %s holding the one line quack; otherwise `gh pr review --request-changes --body <what is missing>`. A read of a quack takes under a minute: do not run tests or read the repo.", file),
+		fmt.Sprintf("As a read (only when JOB.md's first line is `%s <card>, attempt <n>`; under any other JOB.md you are the work, which does the What above and never reviews): change nothing, commit nothing. Approve (`gh pr review --approve`) when, and only when, the report contains the word quack and the work's diff, from the start commit JOB.md names, is exactly the one file %s holding the one line quack; a diff against BASE's tip shows every card landed since as deleted, and that is never the work's. Otherwise `gh pr review --request-changes --body <what is missing>`. A read of a quack takes under a minute: do not run tests or read the repo.", cardcontract.ReadTitle, file),
 	}
 	return strings.Join(lines, "\n") + "\n\n" + strings.TrimSuffix(swarm.RulesParagraph(rules), "\n")
 }
