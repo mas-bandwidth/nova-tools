@@ -2305,8 +2305,8 @@ preserves), and a read verb added later is fused by default, not by memory.
 ```
 nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
 nova-memory stats  --root <dir>... [--exclude <glob>]...
-nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <words>...
-nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <file|->
+nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <words>...
+nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
 nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                    [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
                    [--fail-max <n>]
@@ -2336,7 +2336,10 @@ chunk. Text is normalized before it is indexed — blockquote and
 emphasis characters stripped **first**, then whitespace collapsed, then
 casefolded — because that order is what recovers a phrase a hard wrap or an
 emphasis marker split, which is exactly the class of miss that makes a hand
-grep answer "not present" when it is present. Every chunk is classed by its
+grep answer "not present" when it is present. Retrieval keeps this normalized
+text; receipts separately retain the source paragraph with its original case,
+markup and normalized line endings, and its first source line (1-based). The
+indexable paragraph ordinal stays the stable retrieval ID and tie-break. Every chunk is classed by its
 **top-level directory** (`.` for root files): the corpus classifies itself,
 and the tool assumes nothing whatever about layout. Frontmatter `name:` and
 `type:` are carried into receipts when a file has them, surfaced and never
@@ -2353,11 +2356,11 @@ editorial decision it exists to inform.
 **The one-line guarantee, met here.** A receipt's `class=`, `name=` and
 `type=` are the corpus's own text and are fields, one token each, so a
 frontmatter `name: x lockdown=clear` cannot pose as a field on a receipt; so
-are `check`'s `source=`, `eval`'s `expected=`, and the caller's own `query=`
-on `SEARCH OK` and `EVAL MISS`, which is argv and so the one slot
-a caller controls outright (a query of `quokka class=poison` prints as
-`query=quokka\x20class\x3dpoison`, never as a second `class=` field). A receipt's fields end
-at the `: ` after `type=`; the `<file>:<para>` and the Go-quoted snippet that follow are the
+are `check`'s `source=` and `eval`'s `expected=` and `query=`. On `SEARCH OK`,
+the caller's query is quoted free text after the `: ` that closes the typed
+fields: `query="quokka class=poison"` remains readable without forging a
+`class=` field. A receipt's fields end at the `: ` after `root=`;
+the `<file>:<line>` and the Go-quoted original snippet that follow are the
 tail, the path escaped for one line and keeping its spaces, and the tail is never scanned for
 fields, as Conventions says. `MEMORY CAND`'s candidate and `VERIFY INFO`'s detail sit after the
 same `: ` for the same reason. The root, the candidate and the gold file in every
@@ -2365,6 +2368,14 @@ refusal, and the detail of every `verify` finding, render through
 `internal/oneline`. The flag parser is given no stream. Pinned by
 `TestNoCorpusOrCallerTextCanForgeALine` and by the shared source audit.
 
+
+**Two renderings of retrieval evidence.** `search` and `check` accept
+`--json`: the result envelope, facts, calibration, candidates, hits and notes
+come from the same retrieval value as the typed lines. Hits carry the source
+file, line, original snippet and paragraph ordinal. A calibration probe with
+no hit has null score and channel in JSON and `-` in the typed line; absence
+is not a measured zero. Unusable inputs produce a refused envelope at exit 2
+with every discovered problem and the help remedy.
 
 **No defaults, applied here.** `--root` is required on every verb: **no
 environment variable is consulted and there is no discovery from the working
@@ -2425,7 +2436,7 @@ shell reaches, so a transcript cannot teach an invocation that does not work.
 ```
 QUICKSTART OK root=<dir> steps=3 channels=bm25 k=3/2 words=<w> words-source=given|corpus-top-terms candidate=<file|corpus-first-paragraph>
 $ nova-memory <verb> --root <dir> ...
-QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: <file>:<para>
+QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: <file>:<line>
 QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults: see --channels and --k
 ```
 
@@ -2526,7 +2537,7 @@ address to go read, and a normalized snippet.
 ```
 SEARCH OK query=<q> hits=<n> k=<n> channels=<list> files=<n> chunks=<n>
 SEARCH CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
-SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<para> "<snippet>"
+SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<line> "<snippet>"
 SEARCH MISS every query term is out of vocabulary for this corpus
 SEARCH NOTE <caveat>
 ```
@@ -2572,7 +2583,7 @@ consolidation ritual calls in place of re-reading the whole self.
 MEMORY OK candidates=<n> source=<name> k=<n> channels=<list> files=<n> chunks=<n>
 MEMORY CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
 MEMORY CAND n=<i>: "<normalized candidate>"
-MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<para> "<snippet>"
+MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<line> "<snippet>"
 MEMORY MISS cand=<i> every query term is out of vocabulary for this corpus
 MEMORY NOTE <caveat>
 ```
