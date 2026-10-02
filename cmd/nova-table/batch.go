@@ -125,6 +125,9 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, fmt.Sprintf("--actor %q differs from the manifest's actor %q; make them equal or drop --actor; changed=no; run: nova-table batch -h", *actor, manifest.Actor))
 	}
 
+	if code, refused := app.overridden(stderr, fs, verb); refused {
+		return code
+	}
 	if fs.Lookup("dry-run").Value.String() == "true" {
 		return batchPlan(stdout, stderr, manifest, *addr, *asJSON)
 	}

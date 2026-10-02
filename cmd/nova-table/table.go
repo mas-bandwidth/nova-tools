@@ -76,7 +76,7 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	if !ntable.ValidName(t.Name) {
 		return refuse(stderr, verb, "the table name wants letters, digits, _ . and -, got "+strconv.Quote(t.Name))
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
 		return code
 	}
 	ctx := context.Background()
@@ -123,7 +123,7 @@ func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
 		f := *footer
 		o.Footer = &f
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
 		return code
 	}
 	ctx := context.Background()
@@ -187,7 +187,7 @@ func (app *application) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	if len(pos) != 1 {
 		return refuse(stderr, verb, "wants one table name: drop <table>")
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
 		return code
 	}
 	ctx := context.Background()
@@ -251,7 +251,7 @@ func (app *application) cmdClear(args []string, stdout, stderr io.Writer) int {
 	if len(pos) != 1 {
 		return refuse(stderr, verb, "wants one table name: clear <table>")
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
 		return code
 	}
 	ctx := context.Background()
@@ -485,7 +485,7 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, verb, "wants --tables <a,b,...>")
 		}
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
 		return code
 	}
 	ctx := context.Background()

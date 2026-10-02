@@ -276,7 +276,8 @@ func effectOf(verb string) string {
 		return "inspection: reads nothing, writes nothing"
 	case "shell":
 		return "store write: runs each line's verb on one connection, so a line that writes changes the store; " +
-			"entered with --dry-run, every write line is planned instead and nothing is written (a line that reads still reads the store)"
+			"entered with --dry-run, every write line is planned instead and nothing is written to the store, and a line saying --dry-run=false is refused " +
+			"(a line that reads still reads the store, and a watch --out line still writes its one local file)"
 	case "batch":
 		return "store write: applies the manifest in one atomic call and prints a receipt; --dry-run makes every check made before sending " +
 			"and prints the plan instead, dialling nothing; the epoch, the revision and each member's expectation are the store's to check, on the real run"

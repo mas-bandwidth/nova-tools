@@ -31,7 +31,7 @@ func (app *application) cmdCellAdd(args []string, stdout, stderr io.Writer) int 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
 		return code
 	}
 	ctx := context.Background()
@@ -76,7 +76,7 @@ func (app *application) cmdCellRemove(args []string, stdout, stderr io.Writer) i
 	if len(pos) < 4 {
 		return refuse(stderr, verb, "wants a table, a row, a column and one or more members: cell remove <table> <row> <col> <member>...")
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
 		return code
 	}
 	ctx := context.Background()
@@ -107,7 +107,7 @@ func (app *application) cmdCellMove(args []string, stdout, stderr io.Writer) int
 	if len(pos) < 5 {
 		return refuse(stderr, verb, "wants a table, a row, the column left, the column joined and one or more members: cell move <table> <row> <from-col> <to-col> <member>...")
 	}
-	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
 		return code
 	}
 	ctx := context.Background()

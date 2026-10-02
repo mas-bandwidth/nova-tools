@@ -32,7 +32,10 @@ func dryRunFlag(fs *flag.FlagSet, value bool) {
 // can check (the table, its epoch, its rows and columns, a bound cell) is left
 // to the real run. It reports whether it answered, and the exit: 0, or 1 when
 // the line did not reach stdout (a closed pipe), as a verb's own output does.
-func planned(stdout io.Writer, fs *flag.FlagSet, verb, addr string, args []string) (int, bool) {
+func (app *application) planned(stdout, stderr io.Writer, fs *flag.FlagSet, verb, addr string, args []string) (int, bool) {
+	if code, refused := app.overridden(stderr, fs, verb); refused {
+		return code, true
+	}
 	if f := fs.Lookup("dry-run"); f == nil || f.Value.String() != "true" {
 		return 0, false
 	}
@@ -54,6 +57,26 @@ func planned(stdout io.Writer, fs *flag.FlagSet, verb, addr string, args []strin
 		return 1, true
 	}
 	return 0, true
+}
+
+// overridden refuses a write line that turns the dry run off inside a shell
+// entered with --dry-run. A dry shell is dry for every line, whatever the
+// line says: refusing --dry-run=false (rather than planning the line anyway
+// with a note) is the answer that cannot surprise, because a reader who
+// wrote --dry-run=false meant to write, and a plan printed in place of the
+// write would read like a write that happened; the refusal says the line did
+// nothing and how to write for real.
+func (app *application) overridden(stderr io.Writer, fs *flag.FlagSet, verb string) (int, bool) {
+	if !app.dryRun {
+		return 0, false
+	}
+	off := false
+	fs.Visit(func(f *flag.Flag) { off = off || (f.Name == "dry-run" && f.Value.String() != "true") })
+	if !off {
+		return 0, false
+	}
+	return refuse(stderr, verb, "this shell was entered with --dry-run, so every write line is planned and none is written; "+
+		"--dry-run=false does not turn that off; to write, leave the shell (quit) and run the verb on its own; run: nova-table help shell"), true
 }
 
 func printReceipt(out io.Writer, opts *ntable.WriteOptions, enabled bool) {
