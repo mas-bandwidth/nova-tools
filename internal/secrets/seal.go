@@ -223,8 +223,7 @@ type sealCarry struct {
 
 // carry writes the ciphertext into place on a fresh branch and carries it to
 // the store. It returns the pull request number ("" under noPR) and whether the
-// request merged. On every path out the store is back on the branch it was on
-// (#2016); the commit stays on c.branch.
+// request merged. On every path out the store is back on the branch it was on; the commit stays on c.branch.
 func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err error) {
 	say := c.say
 	if say == nil {

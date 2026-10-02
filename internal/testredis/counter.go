@@ -12,7 +12,7 @@ import (
 )
 
 // CommandCounter listens on 127.0.0.1, on a port the kernel chose, and counts
-// every command a Redis client sends it, handshake included (#3277). It is
+// every command a Redis client sends it, handshake included. It is
 // not a redis-server and starts no process. It answers just enough RESP2 for
 // a go-redis client to finish a command: HELLO is refused so the client falls
 // back to RESP2, PING is PONG and anything else is OK. A test calls a
