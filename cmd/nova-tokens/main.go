@@ -231,7 +231,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 	switch verb {
 	case "help", "-h", "--help":
 		if verb == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
-			return run(append(rest, "--help"), stdout, stderr, now)
+			// --help goes right after the verb: after a word or a -- it would be one.
+			return run(append([]string{rest[0], "--help"}, rest[1:]...), stdout, stderr, now)
 		}
 		fmt.Fprintf(stdout, "%s", usage)
 		return 0

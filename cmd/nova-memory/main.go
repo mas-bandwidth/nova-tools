@@ -252,7 +252,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	switch args[0] {
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return run(append(args[1:], "--help"), stdin, stdout, stderr)
+			// --help goes right after the verb: after a word or a -- it would be one.
+			return run(append([]string{args[1], "--help"}, args[2:]...), stdin, stdout, stderr)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -634,11 +635,23 @@ func step(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return run(argv, stdin, stdout, stderr)
 }
 
-// jsonStep runs one step under --json and records it as an item of o: the command line,
-// its exit, and its own result object.
+// stepArgs is one step's argv, built in the order the parser reads it: the verb, its
+// flags, then -- when a positional starts with a dash (a lone - is stdin and stays a
+// positional), then the positionals. A flag is never added to a finished argv: after
+// -- it would be a query word or a file, not a flag.
+func stepArgs(verb string, flags []string, positionals ...string) []string {
+	argv := append([]string{verb}, flags...)
+	if slices.ContainsFunc(positionals, func(p string) bool { return p != "-" && strings.HasPrefix(p, "-") }) {
+		argv = append(argv, "--")
+	}
+	return append(argv, positionals...)
+}
+
+// jsonStep runs one step whose argv carries --json among its flags and records it as an
+// item of o: the command line, its exit, and its own result object.
 func jsonStep(o *tool.Out, argv []string, stdin io.Reader, stderr io.Writer) int {
 	var out bytes.Buffer
-	code := run(append(argv, "--json"), stdin, &out, stderr)
+	code := run(argv, stdin, &out, stderr)
 	o.Item("step", "command", tool.Text("nova-memory "+commandLine(argv)), "exit", code, "result", json.RawMessage(bytes.TrimSpace(out.Bytes())))
 	return code
 }
@@ -737,6 +750,11 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	for _, e := range rf.excludes {
 		common = append(common, "--exclude", e)
 	}
+	if *asJSON {
+		// Each step answers in JSON too, and --json is one of its flags, before any
+		// -- and any word (stepArgs).
+		common = append(common, "--json")
+	}
 	// The words are free text, quoted at the end of the line as typed: one field per word
 	// would split a word holding a blank, and a hex escape is no way to show a reader what
 	// was searched.
@@ -755,35 +773,25 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 			oneline.Field(wordsSource), oneline.Field(candidate), oneline.Quote(strings.Join(words, " ")))
 	}
 
-	statsArgs := append([]string{"stats"}, common...)
+	statsArgs := stepArgs("stats", common)
 	if code := runStep(statsArgs, strings.NewReader("")); code != 0 {
 		return stepFailed("stats", code, stderr)
 	}
 
-	searchArgs := append([]string{"search"}, common...)
-	searchArgs = append(searchArgs, "--channels", "bm25", "--k", quickstartSearchK)
-	for _, w := range words {
-		if strings.HasPrefix(w, "-") {
-			searchArgs = append(searchArgs, "--")
-			break
-		}
-	}
-	searchArgs = append(searchArgs, words...)
+	searchArgs := stepArgs("search", append(slices.Clone(common), "--channels", "bm25", "--k", quickstartSearchK), words...)
 	if code := runStep(searchArgs, strings.NewReader("")); code != 0 {
 		return stepFailed("search", code, stderr)
 	}
 
-	checkArgs := append([]string{"check"}, common...)
-	checkArgs = append(checkArgs, "--channels", "bm25", "--k", quickstartCheckK)
+	checkFlags := append(slices.Clone(common), "--channels", "bm25", "--k", quickstartCheckK)
+	checkArgs := stepArgs("check", checkFlags, *draft)
 	checkIn := strings.NewReader("")
-	if *draft != "" {
-		checkArgs = append(checkArgs, *draft)
-	} else {
+	if *draft == "" {
 		// The demonstration with the answer known: a paragraph the corpus
 		// certainly holds, so a first run sees what "you already know this"
 		// looks like when it is true, and can compare it against the
 		// calibration band on the same screen.
-		checkArgs = append(checkArgs, "-")
+		checkArgs = stepArgs("check", checkFlags, "-")
 		checkIn = strings.NewReader(c.Chunks[0].Original)
 		if *asJSON {
 			o.Fact("demo", c.Chunks[0].File+":"+strconv.Itoa(c.Chunks[0].Line))
