@@ -37,7 +37,7 @@ func TestClearStaleIndexLockAgeBoundary(t *testing.T) {
 	}
 	for _, young := range []time.Duration{0, staleIndexLockAge - time.Nanosecond, staleIndexLockAge} {
 		cleared, err := clearStaleIndexLock(dir, fi.ModTime().Add(young), noGit)
-		require.False(t, err != nil || cleared, "a lock aged %v: cleared=%v err=%v, want left alone", young, cleared, err)
+		require.True(t, err == nil && !cleared, "a lock aged %v: cleared=%v err=%v, want left alone", young, cleared, err)
 		{
 			_, err := os.Lstat(lock)
 			require.NoError(t, err, "the lock was removed at %v, not older than %v: %v", young, staleIndexLockAge, err)
@@ -45,10 +45,10 @@ func TestClearStaleIndexLockAgeBoundary(t *testing.T) {
 	}
 	require.Equal(t, 0, scans, "a lock not older than %v was put to the process scan %d times; age must decide first", staleIndexLockAge, scans)
 	cleared, err := clearStaleIndexLock(dir, fi.ModTime().Add(staleIndexLockAge+time.Nanosecond), noGit)
-	require.False(t, err != nil || !cleared, "a lock older than 60s: cleared=%v err=%v, want removed", cleared, err)
+	require.True(t, err == nil && cleared, "a lock older than 60s: cleared=%v err=%v, want removed", cleared, err)
 	{
 		_, err := os.Lstat(lock)
-		require.False(t, !os.IsNotExist(err), "the stale lock is still there: %v", err)
+		require.True(t, os.IsNotExist(err), "the stale lock is still there: %v", err)
 	}
 	require.Equal(t, 1, scans, "a stale lock was removed after %d process scans, want exactly 1", scans)
 }
@@ -82,7 +82,7 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	deadline := time.Now().Add(testWaitBound())
 	for {
 		owns, oerr := gitOwnsCheckout(dir)
-		require.False(t, oerr != nil && !scanUnknownElsewhere(t, oerr, lock), oerr)
+		require.True(t, oerr == nil || scanUnknownElsewhere(t, oerr, lock), oerr)
 		if owns {
 			break
 		}
@@ -104,7 +104,7 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	deadline = time.Now().Add(testWaitBound())
 	for {
 		owns, oerr := gitOwnsCheckout(dir)
-		require.False(t, oerr != nil && !scanUnknownElsewhere(t, oerr, lock), oerr)
+		require.True(t, oerr == nil || scanUnknownElsewhere(t, oerr, lock), oerr)
 		if oerr == nil && !owns {
 			break
 		}
@@ -125,7 +125,7 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	deadline = time.Now().Add(testWaitBound())
 	for {
 		cleared, err := clearStaleIndexLock(dir, time.Now(), scan)
-		require.False(t, err != nil && !scanUnknownElsewhere(t, err, lock), "stale lock with no git: cleared=%v err=%v", cleared, err)
+		require.True(t, err == nil || scanUnknownElsewhere(t, err, lock), "stale lock with no git: cleared=%v err=%v", cleared, err)
 		if err == nil {
 			require.True(t, cleared, "stale lock with no git: cleared=%v err=%v", cleared, err)
 			break
@@ -137,7 +137,7 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	}
 	{
 		_, err := os.Lstat(lock)
-		require.False(t, !os.IsNotExist(err), "the lock is still there after the git exited")
+		require.True(t, os.IsNotExist(err), "the lock is still there after the git exited")
 	}
 }
 
@@ -232,7 +232,7 @@ func TestStaleLockStaysForCwdGitWithoutDashC(t *testing.T) {
 	require.True(t, saw, "cwd git with no -C was not recorded as an owner")
 	rep, err := ClearStaleIndexLock(dir, time.Now())
 	if err != nil || rep.Cleared {
-		require.False(t, err != nil || rep.Cleared, "cleared=%v err=%v, want the lock left because the cwd git owns the checkout", rep.Cleared, err)
+		require.True(t, err == nil && !rep.Cleared, "cleared=%v err=%v, want the lock left because the cwd git owns the checkout", rep.Cleared, err)
 	}
 	{
 		_, statErr := os.Lstat(lock)
@@ -258,7 +258,7 @@ func TestStaleLockStaysWhenProcessInspectionIsDenied(t *testing.T) {
 	hermetic(t)
 	dir, lock := oldIndexLock(t)
 	_, skip, verr := gitProcFromView(procView{commErr: os.ErrNotExist})
-	require.False(t, verr != nil || !skip, "a vanished process: skip=%v err=%v, want skipped and no error", skip, verr)
+	require.True(t, verr == nil && skip, "a vanished process: skip=%v err=%v, want skipped and no error", skip, verr)
 	_, _, perr := gitProcFromView(procView{comm: "git\n", cmdErr: os.ErrPermission})
 	require.False(t, perr == nil, "permission denied on cmdline was treated as a vanished process")
 	cleared, err := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
@@ -276,19 +276,19 @@ func TestEmptyCmdlineDeadProcessDoesNotBlockLockCleanup(t *testing.T) {
 	hermetic(t)
 	{
 		dead, ok := procStatDead("12 (git) Z 1 1")
-		require.False(t, !ok || !dead, "zombie stat: dead=%v ok=%v", dead, ok)
+		require.True(t, ok && dead, "zombie stat: dead=%v ok=%v", dead, ok)
 	}
 	{
 		dead, ok := procStatDead("12 (git defunct) X 1")
-		require.False(t, !ok || !dead, "dead stat: dead=%v ok=%v", dead, ok)
+		require.True(t, ok && dead, "dead stat: dead=%v ok=%v", dead, ok)
 	}
 	{
 		dead, ok := procStatDead("12 (git) S 1 1")
-		require.False(t, !ok || dead, "sleeping stat was dead: dead=%v ok=%v", dead, ok)
+		require.True(t, ok && !dead, "sleeping stat was dead: dead=%v ok=%v", dead, ok)
 	}
 
 	_, skip, err := gitProcFromView(procView{comm: "git\n", dead: true})
-	require.False(t, err != nil || !skip, "dead empty cmdline: skip=%v err=%v, want skipped and no error", skip, err)
+	require.True(t, err == nil && skip, "dead empty cmdline: skip=%v err=%v, want skipped and no error", skip, err)
 
 	dir, lock := oldIndexLock(t)
 	ownerCmd := []byte("git\x00-C\x00" + dir + "\x00status")
@@ -300,11 +300,13 @@ func TestEmptyCmdlineDeadProcessDoesNotBlockLockCleanup(t *testing.T) {
 	found, oerr := gitOwnsCheckoutScan(dir, func() ([]gitProc, error) {
 		return procs, err
 	})
-	require.False(t, oerr != nil || found.Owner != 1 || found.Unknown != 1, "known owner was not recognized behind an empty cmdline: found=%+v err=%v", found, oerr)
+	require.NoError(t, oerr, "known owner was not recognized behind an empty cmdline: found=%+v err=%v", found, oerr)
+	require.Equal(t, 1, found.Owner, "known owner was not recognized behind an empty cmdline: found=%+v err=%v", found, oerr)
+	require.Equal(t, 1, found.Unknown, "known owner was not recognized behind an empty cmdline: found=%+v err=%v", found, oerr)
 	kept, kerr := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
 		return procs, err
 	})
-	require.False(t, kerr != nil || kept, "owner's lock: cleared=%v err=%v, want kept", kept, kerr)
+	require.True(t, kerr == nil && !kept, "owner's lock: cleared=%v err=%v, want kept", kept, kerr)
 	{
 		_, statErr := os.Lstat(lock)
 		require.Equal(t, nil, statErr, "owner's lock is gone: %v", statErr)
