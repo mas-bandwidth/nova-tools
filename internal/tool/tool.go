@@ -1,7 +1,7 @@
 // Package tool is the one shape of a nova command. A Tool is its verbs; a Verb
 // declares its flags and returns one value, Out, which is rendered either as
 // typed lines or as the JSON of the same value (out.go). Everything a command
-// used to write for itself lives here once: the verb dispatch, the banner (what
+// writes for itself lives here once: the verb dispatch, the banner (what
 // the tool is, how it works, its usage lines, its exit codes, a runnable
 // example block), `help` and `<verb> -h`, the `version` verb, the standard
 // flags (--json on every verb; --max, --actor, --op, --redis and --dry-run
