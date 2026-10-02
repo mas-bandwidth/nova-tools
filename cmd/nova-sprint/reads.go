@@ -383,6 +383,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 			// the machine keeps a stream's since; the view does not show it
 			t.Hidden = append(append([]string(nil), t.Hidden...), sprint.Since)
 		}
+		if logical == sprint.Readers {
+			t = readersAll(t) // the text only: v.Tables keeps every reader's row
+		}
 		// every table shows, every stream row in it, empty or not
 		parts = append(parts, ntable.Render(t, ntable.RenderOpts{Title: logical}))
 	}
@@ -394,6 +397,35 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		}
 	}
 	return v, b.String(), nil
+}
+
+// readersAllRow is the label of the readers table's one row in the view.
+const readersAllRow = "all"
+
+// readersAll is the readers table as the view's text draws it: one row, all,
+// whose cells are the sums over every reader (hidden rows, readers away or down,
+// counted as the footer counted them), and no footer, which would say the same
+// thing twice (the owner, 2026-10-01: "change the table to just be one row, sum
+// of all"; "i just need to see reader *progress* overall"). A cell some reader's
+// set did not come back for prints "?", as the footer's sum did. Display only:
+// the stored table, its rows and where --json are as they were.
+func readersAll(t ntable.Table) ntable.Table {
+	all := ntable.Row{Key: readersAllRow, Cells: make([]ntable.Cell, len(t.Columns))}
+	for _, r := range t.Rows {
+		for j := range t.Columns {
+			if j >= len(r.Cells) || r.Cells[j].Unread {
+				all.Cells[j].Unread = true
+				continue
+			}
+			all.Cells[j].Count += r.Cells[j].Count
+		}
+	}
+	cols := slices.Clone(t.Columns)
+	for j := range cols {
+		cols[j].Fold = ntable.None
+	}
+	t.Columns, t.Rows = cols, []ntable.Row{all}
+	return t
 }
 
 // whereHeader is the one line under the title of the where view: STOPPED when
