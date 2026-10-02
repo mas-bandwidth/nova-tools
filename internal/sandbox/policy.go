@@ -308,9 +308,9 @@ func defaultCallerHomes() []string {
 //
 // The roots section says "The home directory is never a root", so the guard is a refusal
 // rather than a silent drop: dropping it would leave a command that cannot be read and a
-// run that dies at exec with no reason given. Rule 3's "a caller that adds one back has
-// done so in its own argv" is the one exemption, so a directory the caller already named
-// in --read or --write is not refused: nothing new is granted there.
+// run that dies at exec with no reason given. A directory the caller already named in
+// --read or --write is not refused: the caller has explicitly granted it, so nothing new
+// is granted there.
 func commandDirRefusal(command string, named []string, homes []string) *Refusal {
 	dir := filepath.Dir(command)
 	if got, err := filepath.EvalSymlinks(dir); err == nil {
@@ -321,7 +321,7 @@ func commandDirRefusal(command string, named []string, homes []string) *Refusal 
 	}
 	for _, home := range homes {
 		// A home the caller pointed INTO the job is not the home this guard is about:
-		// rule 9 makes the tool's own $HOME the job's data home, which is inside a
+		// The tool's own $HOME is the job's data home, which is inside a
 		// --write by construction, so guarding it would refuse every command installed
 		// anywhere above the job directory — the tool's own binary included. Measured
 		// while writing this: `nova-sandbox probe --write <job>` refused itself.
@@ -344,7 +344,7 @@ func commandDirRefusal(command string, named []string, homes []string) *Refusal 
 // AND "BENEATH" IS A QUESTION FOR THE FILESYSTEM, NOT FOR A STRING PREFIX. This was
 // `strings.HasPrefix`, a case-SENSITIVE comparison, and APFS is case-INsensitive by default
 // (NTFS too): a `--secret` spelled in another case than the `--read` it actually sits inside
-// passed rule 6's own `secret_inside_allow` check and the probe reported a pass, and a `HOME`
+// passed the secret-inside-allow check and the probe reported a pass, and a `HOME`
 // inside a `--write` under a spelling the filesystem folds was refused `home_outside` -- the
 // same fold, read the other way about, refusing a configuration that is sound.
 // `filepath.EvalSymlinks` does not fold case on darwin, so a resolved path does not close it,
@@ -363,7 +363,7 @@ func commandDirRefusal(command string, named []string, homes []string) *Refusal 
 //     whole answer: an ancestor of path at dir's own depth either is dir or is not;
 //   - where dir is NOT there, nothing has an inode and the name is all there is: the prefix
 //     again, case-insensitively, and only where the filesystem is MEASURED to fold
-//     (dirFoldsCase, never runtime.GOOS). Every caller path of this package exists by rule 5,
+//     (dirFoldsCase, not a platform assumption). Every caller path of this package exists,
 //     so this last answer is defence in depth.
 //
 // This runs while the policy is built, never per operation inside the wall.
@@ -405,7 +405,7 @@ const sbplMetacharacters = "\"\\()"
 
 // loopbackHostText reports whether host names the machine's own loopback: the literal
 // "localhost" (case-insensitively) or a numeric address in 127.0.0.0/8 or ::1. It is
-// deliberately narrower than "resolves to loopback" (issue #591): --net-allow opens a
+// deliberately narrower than "resolves to loopback": --net-allow opens a
 // single named port back up for a local-model provider, never a promise a DNS answer
 // could widen.
 func loopbackHostText(host string) bool {
@@ -441,7 +441,7 @@ func badPathTextFor(goos, path string) string {
 	return ""
 }
 
-// resolvePath is rule 5 for one caller path: absolute, existing, symlinks resolved. A
+// resolvePath validates one caller path as absolute and existing, with symlinks resolved. A
 // relative path is refused with the absolute form it WOULD have taken, so the refusal is
 // a line the caller can edit rather than a complaint.
 func resolvePath(reason, flag, raw string) (string, *Refusal) {
@@ -483,7 +483,7 @@ func resolvePath(reason, flag, raw string) (string, *Refusal) {
 	return resolved, nil
 }
 
-// ResolveCallerFile is rule 5 for a caller path that names a FILE rather than a
+// ResolveCallerFile validates a caller path that names a FILE rather than a
 // directory: --secret is the only one, and before this it was the one caller path the
 // tool never resolved and never metacharacter-checked. It is absolute, it exists, it is
 // not a directory, its symlinks are followed, and it carries nothing the generated policy
@@ -529,7 +529,7 @@ func ResolveCallerFile(flag, raw string) (string, *Refusal) {
 }
 
 // Build turns an Input into a Policy, or into every independent refusal it holds. It
-// creates exactly one directory, rule 8's, and only when the rest of the input is sound.
+// creates exactly one directory, and only when the rest of the input is sound.
 func Build(in Input) (*Policy, []Refusal) {
 	return build(in, callerHomes)
 }
@@ -538,7 +538,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	var bad []Refusal
 	p := &Policy{NetDeny: in.NetDeny, NetListen: in.NetListen, Name: in.Name}
 
-	// Issue #230: the local GPU capability is explicit and bounded. The default
+	// The local GPU capability is explicit and bounded. The default
 	// is none; metal records intent without widening mach-lookup or granting
 	// blanket device access, whose minimum mechanisms are still unmeasured.
 	if mode, r := ParseGPUMode(in.GPU); r != nil {
@@ -553,7 +553,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 		bad = append(bad, refuse("bad_net", "--net-deny and --net-listen together: one asks for an enforced denial and the other for an inbound grant; pass at most one"))
 	}
 
-	// --net-allow names one host:port the wall opens back up (issue #591): a keyless
+	// --net-allow names one host:port the wall opens back up: a keyless
 	// local-model provider on its own loopback port, never a wider promise. An entry that
 	// does not split into host and port, or whose host is not the machine's own loopback,
 	// is refused rather than carried into a profile that would grant more than a loopback
@@ -611,7 +611,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 		p.Writes = append(p.Writes, got)
 	}
 	// A path given to both lists is a refusal naming both flags, never a silent merge
-	// (rule 4): the caller asked for two different things about one directory.
+	// The caller asked for two different things about one directory.
 	for _, r := range p.Reads {
 		for _, w := range p.Writes {
 			if r == w {
@@ -641,7 +641,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	}
 	first := p.Writes[0]
 
-	// rule 13: the cwd defaults to the first --write and must resolve inside the write set.
+	// The cwd defaults to the first --write and must resolve inside the write set.
 	p.Cwd = first
 	if in.Cwd != "" {
 		got, r := resolvePath("bad_cwd", "--cwd", in.Cwd)
@@ -655,7 +655,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 		}
 	}
 
-	// rule 8: temp is inside the wall, and this is the one directory the tool creates.
+	// Temp is inside the wall, and this is the one directory the tool creates.
 	if in.Tmp != "" {
 		got, r := resolvePath("bad_write", "--tmp", in.Tmp)
 		switch {
@@ -674,9 +674,9 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	// directory it never ran in. A refusal makes nothing.
 	makeTmp := in.Tmp == ""
 
-	// rule 9: the caller points the child's HOME into the write set, and a HOME outside
-	// every --write is a refusal BEFORE the command runs — a wall that lets the job start
-	// and kills its first git command is the silent sandbox rule 1 exists to prevent.
+	// The caller points the child's HOME into the write set, and a HOME outside
+	// every --write is a refusal BEFORE the command runs. A wall that lets the job start
+	// and then kills its first git command would fail to protect the job's data.
 	home := in.Home
 	if strings.TrimSpace(home) == "" {
 		bad = append(bad, refuse("home_outside", "HOME is unset; rule 9 wants HOME set to a data home inside a --write, because almost every tool a worker runs derives a path from it"))
@@ -714,9 +714,9 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	if len(bad) > 0 {
 		return nil, bad
 	}
-	// Issue #893, PR 948 re-cut: the linux system read roots are not a field here and
+	// The linux system read roots are not a field here and
 	// not a caller switch. The linux backend's linuxReadRoots is the one policy, applied
-	// by addRules (rule 3): a harness that cannot resolve a name inside the sandbox is a
+	// by addRules: a harness that cannot resolve a name inside the sandbox is a
 	// sandbox bug, not a network one.
 	// rule 8, and the one directory this tool creates: everything above passed.
 	if makeTmp {
