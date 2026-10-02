@@ -20,7 +20,7 @@ const (
 )
 
 // Auth is the one fleet Redis seat every tool dials with (nova-sprint, nova-tokens
-// ledger/report through --user and --password-env, #3461). user is the ACL user, else
+// credential management. The user is the ACL user, else
 // UserEnv; passwordEnv names the variable holding its password, else PasswordEnvEnv, else
 // DefaultPasswordEnv. With no user the connection is the default user's: a password is read
 // only when passwordEnv names its variable, so a throwaway test Redis needs nothing. A user
