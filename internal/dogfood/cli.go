@@ -223,6 +223,12 @@ func declaredVerb(line string) (tool, verb string, ok bool) {
 	if len(fields) == 0 || !isToolName(fields[0]) {
 		return "", "", false
 	}
+	// `<tool> is ...` is a sentence about the tool (a banner's stage line:
+	// "nova-work is pre-alpha: not ready for production use."), never a
+	// command: no tool has a verb named is.
+	if len(fields) > 1 && fields[1] == "is" {
+		return "", "", false
+	}
 	var words []string
 	for _, f := range fields[1:] {
 		if len(words) == 2 || !isBareWord(f) {

@@ -213,7 +213,7 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 		{"bare verify", []string{"verify"}, []string{"VERIFY REFUSED", "--tree is required", "run: nova-work help"}},
 		{"bad max-bytes", []string{"verify", "--tree", "t.lisp", "--max-bytes", "0"}, []string{"--max-bytes must be positive"}},
 		{"unknown verb", []string{"frob"}, []string{"REFUSED", `unknown verb "frob"`, "import", "verify"}},
-		{"no verb", []string{}, []string{"REFUSED", "no verb given", "import", "verify", "run: nova-work help"}},
+		{"no verb", []string{}, []string{"REFUSED", "no verb given", "import", "verify", "run: nova-work help", "\n  " + preAlpha + "\n"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -222,7 +222,9 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 			assert.Equal(t, 2, res.Code, "%v: exit %d\n%s%s", tc.args, res.Code, res.Stdout, res.Stderr)
 			assert.Empty(t, res.Stdout, "%v: a refusal on stdout", tc.args)
 			for _, l := range strings.SplitAfter(strings.TrimSuffix(res.Stderr, "\n"), "\n") {
-				assert.Contains(t, l, " REFUSED", "%v: a refusal line without the word:\n%s", tc.args, res.Stderr)
+				if strings.TrimSpace(l) != preAlpha { // the bare command's indented stage hint
+					assert.Contains(t, l, " REFUSED", "%v: a refusal line without the word:\n%s", tc.args, res.Stderr)
+				}
 			}
 			for _, w := range tc.want {
 				assert.Contains(t, res.Stderr, w, "%v: stderr lacks %q:\n%s", tc.args, w, res.Stderr)
@@ -236,6 +238,7 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 		want string
 	}{
 		{"bare help", []string{"help"}, "example:"},
+		{"-h", []string{"-h"}, "example:"},
 		{"help import", []string{"help", "import"}, "effect: local write"},
 		{"help verify", []string{"help", "verify"}, "effect: inspection"},
 		{"import -h", []string{"import", "-h"}, "--org <string>"},
@@ -248,6 +251,11 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 			res := workMain(unreachable(t)).Run(tc.args...)
 			assert.Equal(t, 0, res.Code, "%v: exit %d\n%s", tc.args, res.Code, res.Stdout)
 			assert.Contains(t, res.Stdout, tc.want, "%v: exit %d\n%s", tc.args, res.Code, res.Stdout)
+			// The stage, once, in the first lines of every help (the banner's
+			// line 2, a verb's -h line 2).
+			head := strings.Join(strings.SplitN(res.Stdout, "\n", 3)[:2], "\n")
+			assert.Contains(t, head, preAlpha, "%v: the pre-alpha sentence is not in the first two lines:\n%s", tc.args, res.Stdout)
+			assert.Equal(t, 1, strings.Count(res.Stdout, preAlpha), "%v: the pre-alpha sentence is not there exactly once:\n%s", tc.args, res.Stdout)
 		})
 	}
 }

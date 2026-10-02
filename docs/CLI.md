@@ -2285,6 +2285,8 @@ the last good frame and one `store unreachable since <time>` line until recovery
 
 ## nova-work
 
+nova-work is pre-alpha: not ready for production use.
+
 Every issue of every repository of a GitHub organization in one tree file, with
 each issue's full contents, and a check that the file holds exactly what GitHub
 holds. The design is [SPEC-WORK-V1.md](SPEC-WORK-V1.md); this section is how to

@@ -36,6 +36,11 @@ import (
 type Tool struct {
 	Name      string // the binary: nova-<name>
 	What      string // line 1 of the banner: what the tool is for
+	// Stage, when set, is one sentence on how ready the tool is ("nova-x is
+	// pre-alpha: not ready for production use."): the banner's line 2, the
+	// second line of every verb's -h, and an indented hint under a bare
+	// command's refusal, so no reader meets the tool without it.
+	Stage string
 	How       string // how it works: the paragraph under line 1
 	Verbs     []Verb // in banner order; version and help are added here
 	ExitTable string // "0 ..., 1 ..., 2 ...": the banner's exit-codes line
@@ -99,7 +104,11 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 		if t.Default != "" {
 			given = "no verb and no file given"
 		}
-		return t.emit(nil, Refuse(given+"; the verbs are "+verbflag.List(t.names())), false, stdout, stderr)
+		code := t.emit(nil, Refuse(given+"; the verbs are "+verbflag.List(t.names())), false, stdout, stderr)
+		if t.Stage != "" {
+			fmt.Fprintf(stderr, "  %s\n", t.Stage)
+		}
+		return code
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -225,7 +234,12 @@ func (t *Tool) help(stdout io.Writer, code *int) {
 	if detail != "" {
 		detail += "\n"
 	}
-	fmt.Fprintf(stdout, "%seffect: %s\n", verbflag.Insert(b.String(), detail), effect)
+	text := b.String()
+	if t.Stage != "" { // line 2, under the usage line
+		usage, rest, _ := strings.Cut(text, "\n")
+		text = usage + "\n" + t.Stage + "\n" + rest
+	}
+	fmt.Fprintf(stdout, "%seffect: %s\n", verbflag.Insert(text, detail), effect)
 	*code = 0
 }
 
@@ -311,7 +325,11 @@ func (t *Tool) names() []string {
 // codes, and the example block last (docs/ONBOARDING.md point 1).
 func (t *Tool) Banner() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s: %s\n\n", t.Name, t.What)
+	fmt.Fprintf(&b, "%s: %s\n", t.Name, t.What)
+	if t.Stage != "" {
+		b.WriteString(t.Stage + "\n")
+	}
+	b.WriteString("\n")
 	if how := strings.TrimSpace(t.How); how != "" {
 		b.WriteString(HowLabel + how + "\n\n")
 	}

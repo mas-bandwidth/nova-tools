@@ -42,10 +42,16 @@ func realGitHub() github {
 	return github{lookPath: exec.LookPath, query: workgh.GhQuery, now: time.Now}
 }
 
+// preAlpha is the tool's stage, in the same words in its banner, every verb's
+// -h, docs/CLI.md, docs/SPEC-WORK-V1.md and the README row (internal/docs
+// holds the README, the banner source and the reference to it).
+const preAlpha = "nova-work is pre-alpha: not ready for production use."
+
 func workTool(gh github) *tool.Tool {
 	return &tool.Tool{
 		Name:  "nova-work",
 		What:  "every issue of an organization's repositories in one tree file, verified field for field",
+		Stage: preAlpha,
 		Stamp: version,
 		How: `import reads every issue through your gh login, read-only, into one tree file.
 --dry-run reads GitHub exactly as the import does (every issue, the same calls) and writes nothing.

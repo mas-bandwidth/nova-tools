@@ -1,5 +1,7 @@
 # nova-work v1, layer 1: the tree (SPEC-WORK-V1)
 
+nova-work is pre-alpha: not ready for production use.
+
 `nova-work` holds every issue of every repository of an organization in **one tree file**: a
 restricted s-expression that `internal/worklang` reads and never evaluates
 ([SPEC-WORKLANG.md](SPEC-WORKLANG.md) section 1). The tree is the working store the verbs above
