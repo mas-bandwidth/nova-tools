@@ -534,17 +534,29 @@ reads the machine file it is handed and no other source.
 in a `--json` object or a dry-run plan is derived from a secret's plaintext in a way a reader
 without the key could test a guess against: no hash of the value, whole or truncated, salted or
 not, and not its length. A short value behind a published hash is found by trying candidates.
-So a placement is identified by the sealed file instead: `file` is the seat file the value was
-sealed in, `head` the store's HEAD commit when it was placed (`-` when HEAD named none), and
-`blob` the git blob id of that file's sealed bytes as `place` read them. The blob id hashes the
-ciphertext, which sops encrypts under a random data key, so it tells a reader nothing about the
-value. Whether a machine is at the store's current value is a comparison of public ids: the
+So a placement is identified by the sealed file instead:
+
+- `file` is the seat file the value was sealed in (`<seat>.yaml`).
+- `blob` is the git blob id of that file's bytes exactly as `place` decrypted them. `place`
+  reads the sealed file once, takes the blob id of those bytes, and has sops decrypt a private
+  copy of the same bytes (mode 0600 in a fresh 0700 directory under the process's temp dir,
+  removed on every path out), never the store's pathname a second time; so a reseal while
+  `place` runs cannot deliver one value under another's blob. The blob id hashes the
+  ciphertext, which sops encrypts under a random data key, so it tells a reader nothing about
+  the value.
+- `head` is the commit the store's HEAD named when `place` started, read once (`-` when it named
+  none). It records where the store stood and is no claim that this commit holds `blob`: a
+  seat file with an uncommitted change places bytes HEAD does not hold.
+
+Whether a machine holds the store's committed value is a comparison of public ids: the
 receipt's `blob` against `git -C <store> rev-parse HEAD:<file>`. Equal blobs mean the same
 ciphertext and so the same value; a different blob means the seat file changed (this value or
 another in it) and the value is placed again. `place --dry-run` says `action=unchanged` only when
 the receipt already records this blob, file and path. The rule is held by
 `TestNoOutputCarriesADigestOfTheValue` (cmd/nova-secrets), over every line `place`, `place
---dry-run` and `placed` print and every receipt they write.
+--dry-run` and `placed` print and every receipt they write; `TestTheBlobPlacedIsTheBlobDecrypted`
+holds the blob to the bytes decrypted when the store's file is resealed between reads, and
+`TestThePrivateSnapshotIsRemovedOnEveryPathOut` the removal of the private copy.
 
 **Receipts from an older build.** A receipt line written before this rule has four fields, the
 third a sha256 of the value. A current build reads such a line with that field dropped: it is

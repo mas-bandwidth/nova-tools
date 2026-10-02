@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
@@ -28,11 +30,12 @@ import (
 // travels to the machine on the ssh child's stdin, never in an argument list.
 //
 // What was placed is identified by the SEALED file, never by the value (docs/SPEC-SECRETS.md,
-// "Nothing derived from a value"): the store's HEAD commit and the git blob id of the seat
-// file as it was read. The blob id is a hash of the ciphertext, which sops encrypts under a
+// "Nothing derived from a value"): the git blob id of the seat file's bytes, read once and
+// decrypted from a private copy of those same bytes, and the store's HEAD commit read when
+// place started. The blob id is a hash of the ciphertext, which sops encrypts under a
 // random data key, so a reader without the key can test no guess of the value against it,
 // unlike a hash of the value itself, which a short value gives up to anyone who tries
-// candidates. "Is the machine at the store's current value?" is then a comparison of two
+// candidates. Whether the machine holds the store's committed value is a comparison of two
 // public ids: the receipt's blob against `git -C <store> rev-parse HEAD:<file>`.
 
 // FleetMachine is one machine in the fleet registry: a name, the ssh target that reaches it,
@@ -69,8 +72,10 @@ type PlacedInput struct {
 
 // placedReceipt is one line of a machine's receipt file: six tab-separated fields,
 // secret, path, file, head, blob, stamp. It holds nothing derived from the value: File is
-// the seat file (<seat>.yaml) the value was sealed in, Head the store's HEAD commit when it
-// was placed ("-" when HEAD named none), Blob the git blob id of that file's sealed bytes.
+// the seat file (<seat>.yaml) the value was sealed in; Blob the git blob id of that file's
+// bytes exactly as place read and decrypted them; Head the commit the store's HEAD named
+// when place started ("-" when it named none), which holds those bytes unless the file had
+// an uncommitted change.
 //
 // A line written by an older build has four fields, the third an unkeyed sha256 of the
 // value. It is read with that field DROPPED, never kept, compared or printed: File, Head
@@ -98,29 +103,55 @@ func dash(s string) string {
 // field is a receipt value as a line prints it.
 func field(s string) string { return oneline.Field(dash(s)) }
 
-// sealedIdentity is the store's HEAD commit and the git blob id of the sealed seat file
-// at file: the public ids a receipt records in place of anything derived from a value.
-// HEAD is read from .git as files and is "" when it names no commit yet.
-func sealedIdentity(storeDir, file string) (head, blob string, err error) {
-	sealed, err := os.ReadFile(file)
-	if err != nil {
-		return "", "", fmt.Errorf("cannot read the sealed file %s: %w", file, err)
-	}
-	id := GitBlobSHA1(sealed)
+// storeHead is the commit the store's HEAD names, read once from .git as files when place
+// starts; "" when it names none yet. It records which commit the store stood on, and is no
+// claim that this commit's tree holds the placed bytes: an uncommitted reseal can differ.
+func storeHead(storeDir string) string {
 	gitDir := filepath.Join(storeDir, ".git")
-	if raw, err := os.ReadFile(filepath.Join(gitDir, "HEAD")); err == nil {
-		head = strings.TrimSpace(string(raw))
-		if ref, ok := strings.CutPrefix(head, "ref: "); ok {
-			// A branch with no commit yet resolves to nothing, and the receipt says head=-.
-			if head, err = resolveRef(gitDir, ref); err != nil {
-				head = ""
-			}
-		}
-		if !isValidHexSHA(head) {
-			head = ""
+	raw, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	if err != nil {
+		return ""
+	}
+	head := strings.TrimSpace(string(raw))
+	if ref, ok := strings.CutPrefix(head, "ref: "); ok {
+		// A branch with no commit yet resolves to nothing, and the receipt says head=-.
+		if head, err = resolveRef(gitDir, ref); err != nil {
+			return ""
 		}
 	}
-	return head, hex.EncodeToString(id[:]), nil
+	if !isValidHexSHA(head) {
+		return ""
+	}
+	return head
+}
+
+// decryptSnapshot decrypts sealed, the seat file's bytes as place read them ONCE, from a
+// private copy, never from the store's pathname a second time: the bytes sops decrypts are
+// then exactly the bytes the receipt's blob id names, whatever happens to the store's file
+// meanwhile (a reseal between two reads would deliver the old value under the new blob).
+// The copy keeps the file's name, which sops reads the format from, at mode 0600 in a
+// fresh 0700 directory under the process's temp dir, removed on every path out.
+func decryptSnapshot(sopsPath, keyPath, file string, sealed []byte) (out []byte, err error) {
+	dir, err := os.MkdirTemp("", "nova-secrets-place-*")
+	if err != nil {
+		return nil, fmt.Errorf("cannot make a private snapshot directory for %s: %w", file, err)
+	}
+	defer func() {
+		// A copy of sealed bytes left behind is reported, never left silently.
+		if rmErr := safepath.RemoveUnder(os.TempDir(), dir); rmErr != nil && err == nil {
+			out, err = nil, fmt.Errorf("cannot remove the private snapshot %s: %w; remove it: rm -r %s", dir, rmErr, dir)
+		}
+	}()
+	snapshot := filepath.Join(dir, filepath.Base(file))
+	if err := os.WriteFile(snapshot, sealed, 0o600); err != nil {
+		return nil, fmt.Errorf("cannot write the private snapshot of %s: %w", file, err)
+	}
+	out, err = DecryptFile(sopsPath, keyPath, snapshot)
+	if err != nil {
+		// The snapshot is gone when this is read; the remedy names the store's file.
+		return nil, errors.New(strings.ReplaceAll(err.Error(), snapshot, file))
+	}
+	return out, nil
 }
 
 // ReadFleetMachines parses the tab-separated fleet registry: name, ssh target, home, and
@@ -188,6 +219,7 @@ func RunPlace(in PlaceInput) (string, error) {
 	if _, err := os.Stat(targetFile); err != nil {
 		return "", seatAbsent(in.StoreDir, in.AsName)
 	}
+	head := storeHead(in.StoreDir)
 
 	if err := CheckInvariant6(in.KeyPath); err != nil {
 		return "", err
@@ -215,8 +247,13 @@ func RunPlace(in PlaceInput) (string, error) {
 		remotePath = filepath.ToSlash(filepath.Join(machine.Home, ".config", "nova-secrets", in.Secret+".env"))
 	}
 
-	// Decrypt the seat file and take the one named secret out of it.
-	decData, err := DecryptFile(in.SopsPath, in.KeyPath, targetFile)
+	// Read the sealed file once; its blob id and the decrypt both come from these bytes.
+	sealed, err := os.ReadFile(targetFile)
+	if err != nil {
+		return "", fmt.Errorf("cannot read the sealed file %s: %w", targetFile, err)
+	}
+	blobID := GitBlobSHA1(sealed)
+	decData, err := decryptSnapshot(in.SopsPath, in.KeyPath, targetFile, sealed)
 	if err != nil {
 		return "", err
 	}
@@ -229,10 +266,7 @@ func RunPlace(in PlaceInput) (string, error) {
 		return "", fmt.Errorf("secret %s is not in %s; run: sops %s", in.Secret, targetFile, targetFile)
 	}
 
-	head, blob, err := sealedIdentity(in.StoreDir, targetFile)
-	if err != nil {
-		return "", err
-	}
+	blob := hex.EncodeToString(blobID[:])
 	receipt := placedReceipt{Secret: in.Secret, Path: remotePath, File: in.AsName + ".yaml", Head: head, Blob: blob}
 
 	if in.DryRun {

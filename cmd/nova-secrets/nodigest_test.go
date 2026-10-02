@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -105,6 +107,99 @@ func TestAPlacementIsIdentifiedByTheSealedFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(f.store, "rowan.yaml"), []byte("DEEPSEEK_API_KEY: ENC[FAKE-RESEALED]\n"), 0o644))
 	resealed, _, _ := runNovaSecrets(f.bin, dry...)
 	assert.Contains(t, resealed, "action=replace", "a resealed file is placed again")
+}
+
+// runWithTemp runs the binary with its temp dir set to tmp, so a test can see what place
+// leaves there.
+func runWithTemp(t *testing.T, bin, tmp string, args ...string) (string, string, int) {
+	t.Helper()
+	var stdout, stderr strings.Builder
+	cmd := exec.Command(bin, args...)
+	// GOTMPDIR keeps the test's own temp root a temp root for the host guard, which tells a
+	// fake ssh from the fleet by whether it lives under one; TMPDIR moves only place's.
+	cmd.Env = append(os.Environ(), "TMPDIR="+tmp, "GOTMPDIR="+os.TempDir())
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	switch {
+	case errors.As(err, &exitErr):
+		return stdout.String(), stderr.String(), exitErr.ExitCode()
+	case err != nil:
+		t.Fatalf("nova-secrets did not run: %v", err)
+	}
+	return stdout.String(), stderr.String(), 0
+}
+
+// TestTheBlobPlacedIsTheBlobDecrypted is the reseal-between-reads interleave: a fake sops
+// that, when asked to decrypt, replaces the store's sealed file with other bytes and then
+// answers with the OLD plaintext. place reads the sealed file once and decrypts a private
+// copy of those bytes, so the receipt's blob is the id of the bytes decrypted, not of the
+// replacement; sops is never handed the store's pathname; and a later dry run, finding the
+// replacement on disk, says replace, never unchanged against a blob that was never placed.
+func TestTheBlobPlacedIsTheBlobDecrypted(t *testing.T) {
+	t.Parallel()
+	f := newPlaceFixture(t)
+	sealedFile := filepath.Join(f.store, "rowan.yaml")
+	sopsSaw := filepath.Join(t.TempDir(), "sops.path")
+	const resealed = "DEEPSEEK_API_KEY: ENC[FAKE-RESEALED-BETWEEN-READS]\n"
+	writeFakeExe(t, f.sops, "#!/bin/sh\ncase \"$1\" in\n--version) echo 'sops 3.13.3'; exit 0 ;;\n"+
+		"-d) printf '%s\\n' \"$2\" >> '"+sopsSaw+"'; printf '"+strings.TrimSuffix(resealed, "\n")+"\\n' > '"+sealedFile+"'; printf 'DEEPSEEK_API_KEY: %s\\n' '"+f.value+"'; exit 0 ;;\n"+
+		"esac\nexit 0\n")
+	decrypted := blobOf(t, sealedFile)
+	tmp := t.TempDir()
+
+	ok, stderr, code := runWithTemp(t, f.bin, tmp, f.placeArgs("mini", "DEEPSEEK_API_KEY", f.remotePath)...)
+	require.Equal(t, 0, code, stderr)
+	replacement := blobOf(t, sealedFile)
+	require.NotEqual(t, decrypted, replacement, "the fake sops resealed the store's file")
+	assert.Contains(t, ok, " blob="+decrypted+" ", "the OK line names the bytes decrypted")
+	receipt, err := os.ReadFile(filepath.Join(f.receipts, "mini.receipt"))
+	require.NoError(t, err)
+	assert.Contains(t, string(receipt), "\t"+decrypted+"\t", "the receipt names the bytes decrypted")
+	assert.NotContains(t, string(receipt), replacement, "the receipt never names bytes that were not decrypted")
+
+	saw, err := os.ReadFile(sopsSaw)
+	require.NoError(t, err)
+	assert.NotContains(t, string(saw), sealedFile, "sops decrypts a private copy, never the store's pathname")
+	assert.Equal(t, "rowan.yaml", filepath.Base(strings.TrimSpace(string(saw))), "the copy keeps the file's name")
+	left, err := os.ReadDir(tmp)
+	require.NoError(t, err)
+	assert.Empty(t, left, "the private snapshot is removed")
+
+	plan, _, code := runWithTemp(t, f.bin, tmp, append(f.placeArgs("mini", "DEEPSEEK_API_KEY", f.remotePath), "--dry-run")...)
+	require.Equal(t, 0, code)
+	assert.Contains(t, plan, "action=replace")
+	assert.NotContains(t, plan, "action=unchanged")
+}
+
+// TestThePrivateSnapshotIsRemovedOnEveryPathOut: a decrypt that fails and a decrypt
+// that lacks the asked name both refuse, leave nothing in the temp dir, and name the
+// store's file, never the snapshot's path, in the refusal.
+func TestThePrivateSnapshotIsRemovedOnEveryPathOut(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, sops, want string
+	}{
+		{"decrypt fails", "-d) exit 1 ;;", "sops -d "},
+		{"name absent", "-d) printf 'OTHER: x\\n'; exit 0 ;;", "secret DEEPSEEK_API_KEY is not in "},
+	} {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			f := newPlaceFixture(t)
+			writeFakeExe(t, f.sops, "#!/bin/sh\ncase \"$1\" in\n--version) echo 'sops 3.13.3'; exit 0 ;;\n"+c.sops+"\nesac\nexit 0\n")
+			tmp := t.TempDir()
+			_, stderr, code := runWithTemp(t, f.bin, tmp, f.placeArgs("mini", "DEEPSEEK_API_KEY", f.remotePath)...)
+			assert.Equal(t, 2, code, stderr)
+			assert.Contains(t, stderr, c.want+filepath.Join(f.store, "rowan.yaml"))
+			assert.NotContains(t, stderr, tmp)
+			left, err := os.ReadDir(tmp)
+			require.NoError(t, err)
+			assert.Empty(t, left, "the private snapshot is removed")
+			_, err = os.Stat(f.sshStdinFile)
+			assert.True(t, os.IsNotExist(err), "nothing was delivered")
+		})
+	}
 }
 
 // TestAnOlderReceiptIsReadWithoutItsDigest: a receipt line from an older build (secret,
