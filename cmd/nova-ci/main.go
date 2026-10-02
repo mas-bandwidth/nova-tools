@@ -359,11 +359,11 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 
 // renderJSON prints o as one JSON object on stdout and returns its exit. A
 // value that cannot be marshalled is never an empty line at exit 0: it is a
-// FAIL line on stderr and exit 1.
+// FAILED line on stderr and exit 1.
 func renderJSON(stdout, stderr io.Writer, o *tool.Out) int {
 	raw, err := json.Marshal(o)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-ci %s FAIL: the verdict could not be rendered as JSON: %s; run: nova-ci %s -h\n", o.Verb, oneline.Err(err), o.Verb)
+		fmt.Fprintf(stderr, "nova-ci %s FAILED: the verdict could not be rendered as JSON: %s; run: nova-ci %s -h\n", o.Verb, oneline.Err(err), o.Verb)
 		return 1
 	}
 	fmt.Fprintf(stdout, "%s\n", raw)

@@ -397,7 +397,7 @@ func localResult(action string) string {
 	case "pass":
 		return "ok"
 	case "fail":
-		return "FAIL"
+		return "FAILED"
 	}
 	return action
 }

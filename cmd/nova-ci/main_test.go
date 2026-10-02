@@ -206,7 +206,7 @@ func TestSlowtestsRefusesANonFiniteFloat(t *testing.T) {
 	}
 }
 
-// A JSON rendering that fails is said, as a FAIL line at exit 1, never an
+// A JSON rendering that fails is said, as a FAILED line at exit 1, never an
 // empty line at exit 0.
 func TestSlowtestsJSONRenderFailureIsAFailLine(t *testing.T) {
 	t.Parallel()
@@ -217,7 +217,7 @@ func TestSlowtestsJSONRenderFailureIsAFailLine(t *testing.T) {
 	code := renderJSON(&stdout, &stderr, o)
 	assert.Equal(t, 1, code)
 	assert.Empty(t, stdout.String())
-	assert.Regexp(t, `^nova-ci slowtests FAIL: the verdict could not be rendered as JSON: .*unsupported value: NaN.*; run: nova-ci slowtests -h\n$`, stderr.String())
+	assert.Regexp(t, `^nova-ci slowtests FAILED: the verdict could not be rendered as JSON: .*unsupported value: NaN.*; run: nova-ci slowtests -h\n$`, stderr.String())
 }
 
 // --json is the same verdict as one object: the findings typed, the exit the

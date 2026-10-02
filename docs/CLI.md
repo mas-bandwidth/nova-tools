@@ -1745,7 +1745,7 @@ environment's seat (`NOVA_SPRINT_REDIS_USER`, `NOVA_SPRINT_REDIS_PASSWORD_ENV`);
 `CI RECEIPT <owner/name> sha=<sha> run=<id> workflow=<name> conclusion=<word>
 pr=<n|-> ev=<stream id>`, exit 0; a write the store refuses or cannot confirm
 (`XADD ev:github: WRONGTYPE ...`, a NOPERM seat, reply loss, or a store that is
-down) is one line on stderr, `nova-ci github receipt FAIL: ...`, ending `receipt
+down) is one line on stderr, `nova-ci github receipt FAILED: ...`, ending `receipt
 write could not be confirmed: fix the store or the bench seat and rerun ci-ok`,
 exit 1, which reddens ci-ok (repeat receipts from retries or reruns are
 acceptable wake hints for consumers). `--dry-run` checks the fields and prints
