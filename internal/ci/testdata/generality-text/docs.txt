@@ -1,5 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 67
+# ceiling: 66
 docs/CLI.md:emma 2
 docs/CLI.md:freddy 1
 docs/CLI.md:johnny 2
@@ -16,7 +16,6 @@ docs/MODELS.md:space 2
 docs/SPEC-BUS-DELIVERY.md:rowan 1
 docs/SPEC-BUS-DELIVERY.md:stella 3
 docs/SPEC-BUS-REPLY.md:space 1
-docs/SPEC-BUS.md:johnny 1
 docs/SPEC-CI.md:batman 1
 docs/SPEC-CI.md:hulk 1
 docs/SPEC-CI.md:mas-bandwidth 1
