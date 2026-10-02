@@ -11,14 +11,15 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func write(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
 	return p
 }
 
@@ -28,15 +29,10 @@ func TestExitZeroWhenClean(t *testing.T) {
 
 	f := write(t, t.TempDir(), "clean.md", "The tree by the house has one lit window.\n")
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{f}, &stdout, &stderr); got != 0 {
-		t.Errorf("want exit 0, got %d\nstderr: %s", got, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "SELFTALK OK files=1 claims=0 standing=0") {
-		t.Errorf("stdout = %q, want the OK line", stdout.String())
-	}
-	if stderr.String() != "" {
-		t.Errorf("clean run must leave stderr empty, got %q", stderr.String())
-	}
+	got := run([]string{f}, &stdout, &stderr)
+	assert.Equal(t, 0, got, "want exit 0, got %d\nstderr: %s", got, stderr.String())
+	assert.Contains(t, stdout.String(), "SELFTALK OK files=1 claims=0 standing=0", "stdout = %q, want the OK line", stdout.String())
+	assert.Empty(t, stderr.String(), "clean run must leave stderr empty, got %q", stderr.String())
 }
 
 // Exit 1 when a standing claim is present: FAIL on stderr, no OK line on
@@ -48,15 +44,10 @@ func TestExitOneOnStandingClaim(t *testing.T) {
 
 	f := write(t, t.TempDir(), "drifted.md", "I cannot check my own work.\n")
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{f}, &stdout, &stderr); got != 1 {
-		t.Errorf("want exit 1, got %d\nstdout: %s", got, stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "SELFTALK FAIL "+f+`:1: STANDING match="cannot check": I cannot check my own work.`) {
-		t.Errorf("stderr = %q, want a SELFTALK FAIL line naming the file, verdict, and claim", stderr.String())
-	}
-	if strings.Contains(stdout.String(), "SELFTALK OK") {
-		t.Errorf("a failing run must not print an OK line, got %q", stdout.String())
-	}
+	got := run([]string{f}, &stdout, &stderr)
+	assert.Equal(t, 1, got, "want exit 1, got %d\nstdout: %s", got, stdout.String())
+	assert.Contains(t, stderr.String(), "SELFTALK FAIL "+f+`:1: STANDING match="cannot check": I cannot check my own work.`, "stderr = %q, want a SELFTALK FAIL line naming the file, verdict, and claim", stderr.String())
+	assert.NotContains(t, stdout.String(), "SELFTALK OK", "a failing run must not print an OK line, got %q", stdout.String())
 }
 
 // A dated claim is a record: reported on stdout, exit 0, and counted in
@@ -66,21 +57,14 @@ func TestDatedClaimIsReportedAndExitsZero(t *testing.T) {
 
 	f := write(t, t.TempDir(), "record.md", "On 2026-07-30 I cannot check my own work.\n")
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{f}, &stdout, &stderr); got != 0 {
-		t.Errorf("want exit 0 for a dated record, got %d\nstderr: %s", got, stderr.String())
-	}
+	got := run([]string{f}, &stdout, &stderr)
+	assert.Equal(t, 0, got, "want exit 0 for a dated record, got %d\nstderr: %s", got, stderr.String())
 	// A DATED CLAIM IS COUNTED, NOT QUOTED. It was quoted: one whole sentence per dated
 	// claim, which on a file that had done the right thing six hundred times was six
 	// hundred lines of congratulation. The claim is in the file; the tool says how many.
-	if strings.Contains(stdout.String(), "SELFTALK DATED "+f) {
-		t.Errorf("a dated claim is quoted rather than counted: %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "SELFTALK DATED n=1 files=1") {
-		t.Errorf("stdout = %q, want the dated COUNT line", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "SELFTALK OK files=1 claims=1 standing=0") {
-		t.Errorf("stdout = %q, want claims=1 standing=0 in the OK line", stdout.String())
-	}
+	assert.NotContains(t, stdout.String(), "SELFTALK DATED "+f, "a dated claim is quoted rather than counted: %q", stdout.String())
+	assert.Contains(t, stdout.String(), "SELFTALK DATED n=1 files=1", "stdout = %q, want the dated COUNT line", stdout.String())
+	assert.Contains(t, stdout.String(), "SELFTALK OK files=1 claims=1 standing=0", "stdout = %q, want claims=1 standing=0 in the OK line", stdout.String())
 }
 
 // Exit 2 when a file cannot be read. Distinct from "clean", which is the
@@ -90,12 +74,8 @@ func TestExitTwoOnUnreadableFile(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	got := run([]string{filepath.Join(t.TempDir(), "does-not-exist.md")}, &stdout, &stderr)
-	if got != 2 {
-		t.Errorf("want exit 2, got %d", got)
-	}
-	if !strings.Contains(stderr.String(), "does-not-exist.md") {
-		t.Errorf("the refusal must name the file, got %q", stderr.String())
-	}
+	assert.Equal(t, 2, got, "want exit 2, got %d", got)
+	assert.Contains(t, stderr.String(), "does-not-exist.md", "the refusal must name the file, got %q", stderr.String())
 }
 
 // Naming no files is a refusal, not an empty green.
@@ -103,12 +83,9 @@ func TestNoFilesRefused(t *testing.T) {
 	t.Parallel()
 
 	var stdout, stderr bytes.Buffer
-	if got := run(nil, &stdout, &stderr); got != 2 {
-		t.Errorf("want exit 2 for no files, got %d", got)
-	}
-	if !strings.Contains(stderr.String(), "refusing to guess") {
-		t.Errorf("stderr = %q, want a refusing-to-guess refusal", stderr.String())
-	}
+	got := run(nil, &stdout, &stderr)
+	assert.Equal(t, 2, got, "want exit 2 for no files, got %d", got)
+	assert.Contains(t, stderr.String(), "refusing to guess", "stderr = %q, want a refusing-to-guess refusal", stderr.String())
 }
 
 // The A6 spirit, as a flag: a skipped file is skipped, SAID to be skipped,
@@ -120,15 +97,10 @@ func TestSkipReportsAndDoesNotAffectExit(t *testing.T) {
 
 	f := write(t, t.TempDir(), "RULES.md", "I cannot check my own work. I am fallible and broken.\n")
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{"--skip", "RULES.md", f}, &stdout, &stderr); got != 0 {
-		t.Errorf("a skipped file must not drive the exit code; got %d\nstderr: %s", got, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "SELFTALK SKIP "+f+" (--skip)") {
-		t.Errorf("the skip must be reported, not silent:\n%s", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "SELFTALK SKIP files=0 skipped=1 reason=all-skipped") {
-		t.Errorf("a skipped file must not count as scanned:\n%s", stdout.String())
-	}
+	got := run([]string{"--skip", "RULES.md", f}, &stdout, &stderr)
+	assert.Equal(t, 0, got, "a skipped file must not drive the exit code; got %d\nstderr: %s", got, stderr.String())
+	assert.Contains(t, stdout.String(), "SELFTALK SKIP "+f+" (--skip)", "the skip must be reported, not silent:\n%s", stdout.String())
+	assert.Contains(t, stdout.String(), "SELFTALK SKIP files=0 skipped=1 reason=all-skipped", "a skipped file must not count as scanned:\n%s", stdout.String())
 }
 
 // The promotion clause, pinned: the origin of this tool hardcoded its own
@@ -143,9 +115,8 @@ func TestNothingIsSkippedByDefault(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := write(t, t.TempDir(), name, "I cannot check my own work.\n")
 			var stdout, stderr bytes.Buffer
-			if got := run([]string{f}, &stdout, &stderr); got != 1 {
-				t.Errorf("%s must be scanned like any other file (default skip list must be empty); got exit %d", name, got)
-			}
+			got := run([]string{f}, &stdout, &stderr)
+			assert.Equal(t, 1, got, "%s must be scanned like any other file (default skip list must be empty); got exit %d", name, got)
 		})
 	}
 }
@@ -160,15 +131,10 @@ func TestSkipRepeatableAndMatchesBasename(t *testing.T) {
 	c := write(t, d, "essay.md", "The tree by the house has one lit window.\n")
 	var stdout, stderr bytes.Buffer
 	got := run([]string{"--skip", "RULES.md", "--skip", "FLOORS.md", a, b, c}, &stdout, &stderr)
-	if got != 0 {
-		t.Errorf("want exit 0 with both rule documents skipped, got %d\nstderr: %s", got, stderr.String())
-	}
-	if n := strings.Count(stdout.String(), "SELFTALK SKIP"); n != 2 {
-		t.Errorf("want 2 SKIP lines, got %d:\n%s", n, stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "SELFTALK OK files=1 claims=0 standing=0") {
-		t.Errorf("the unskipped file must still be scanned:\n%s", stdout.String())
-	}
+	assert.Equal(t, 0, got, "want exit 0 with both rule documents skipped, got %d\nstderr: %s", got, stderr.String())
+	n := strings.Count(stdout.String(), "SELFTALK SKIP")
+	assert.Equal(t, 2, n, "want 2 SKIP lines, got %d:\n%s", n, stdout.String())
+	assert.Contains(t, stdout.String(), "SELFTALK OK files=1 claims=0 standing=0", "the unskipped file must still be scanned:\n%s", stdout.String())
 }
 
 // --skip takes a basename. A value with a path separator would silently
@@ -178,9 +144,8 @@ func TestSkipRefusesPaths(t *testing.T) {
 
 	for _, v := range []string{"dir/RULES.md", `dir\RULES.md`, ""} {
 		var stdout, stderr bytes.Buffer
-		if got := run([]string{"--skip", v, "x.md"}, &stdout, &stderr); got != 2 {
-			t.Errorf("--skip %q must be refused, got exit %d", v, got)
-		}
+		got := run([]string{"--skip", v, "x.md"}, &stdout, &stderr)
+		assert.Equal(t, 2, got, "--skip %q must be refused, got exit %d", v, got)
 	}
 }
 
@@ -189,9 +154,8 @@ func TestUnknownFlagRefused(t *testing.T) {
 	t.Parallel()
 
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{"--scope-all", "x.md"}, &stdout, &stderr); got != 2 {
-		t.Errorf("want exit 2 for an unknown flag, got %d", got)
-	}
+	got := run([]string{"--scope-all", "x.md"}, &stdout, &stderr)
+	assert.Equal(t, 2, got, "want exit 2 for an unknown flag, got %d", got)
 }
 
 // --help prints usage to stdout and exits 0.
@@ -199,12 +163,9 @@ func TestHelp(t *testing.T) {
 	t.Parallel()
 
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{"--help"}, &stdout, &stderr); got != 0 {
-		t.Errorf("want exit 0 for --help, got %d", got)
-	}
-	if !strings.Contains(stdout.String(), "usage:") {
-		t.Errorf("stdout = %q, want usage", stdout.String())
-	}
+	got := run([]string{"--help"}, &stdout, &stderr)
+	assert.Equal(t, 0, got, "want exit 0 for --help, got %d", got)
+	assert.Contains(t, stdout.String(), "usage:", "stdout = %q, want usage", stdout.String())
 }
 
 // The partial-coverage NOTE prints on EVERY completed run — clean or
@@ -219,9 +180,7 @@ func TestNotePrintedOnEveryRun(t *testing.T) {
 	for _, files := range [][]string{{clean}, {dirty}} {
 		var stdout, stderr bytes.Buffer
 		run(files, &stdout, &stderr)
-		if !strings.Contains(stdout.String(), "SELFTALK NOTE") {
-			t.Errorf("the NOTE must print on every run (%v):\n%s", files, stdout.String())
-		}
+		assert.Contains(t, stdout.String(), "SELFTALK NOTE", "the NOTE must print on every run (%v):\n%s", files, stdout.String())
 	}
 }
 
@@ -240,15 +199,9 @@ func TestDeterministic(t *testing.T) {
 	var out1, err1, out2, err2 bytes.Buffer
 	code1 := run(files, &out1, &err1)
 	code2 := run(files, &out2, &err2)
-	if code1 != code2 {
-		t.Fatalf("exit codes differ: %d then %d", code1, code2)
-	}
-	if !bytes.Equal(out1.Bytes(), out2.Bytes()) {
-		t.Errorf("stdout differs between identical runs:\n%q\n%q", out1.String(), out2.String())
-	}
-	if !bytes.Equal(err1.Bytes(), err2.Bytes()) {
-		t.Errorf("stderr differs between identical runs:\n%q\n%q", err1.String(), err2.String())
-	}
+	require.Equal(t, code1, code2, "exit codes differ: %d then %d", code1, code2)
+	assert.True(t, bytes.Equal(out1.Bytes(), out2.Bytes()), "stdout differs between identical runs:\n%q\n%q", out1.String(), out2.String())
+	assert.True(t, bytes.Equal(err1.Bytes(), err2.Bytes()), "stderr differs between identical runs:\n%q\n%q", err1.String(), err2.String())
 }
 
 // An INSTALLATION alone drives the exit code: FAIL on stderr with the shape and the source line,
@@ -259,15 +212,10 @@ func TestInstallationExitsOneWithShapeAndLine(t *testing.T) {
 	f := write(t, t.TempDir(), "essay.md",
 		"The tree has one lit window.\n\nRecollection is the weakest\ninstrument I own.\n")
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{f}, &stdout, &stderr); got != 1 {
-		t.Errorf("want exit 1 on an installation, got %d\nstdout: %s", got, stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "SELFTALK FAIL "+f+":3: INSTALLATION RANKING match=") {
-		t.Errorf("stderr = %q, want a FAIL line naming file, line, class and shape", stderr.String())
-	}
-	if strings.Contains(stdout.String(), "SELFTALK OK") {
-		t.Errorf("a failing run must not print an OK line, got %q", stdout.String())
-	}
+	got := run([]string{f}, &stdout, &stderr)
+	assert.Equal(t, 1, got, "want exit 1 on an installation, got %d\nstdout: %s", got, stdout.String())
+	assert.Contains(t, stderr.String(), "SELFTALK FAIL "+f+":3: INSTALLATION RANKING match=", "stderr = %q, want a FAIL line naming file, line, class and shape", stderr.String())
+	assert.NotContains(t, stdout.String(), "SELFTALK OK", "a failing run must not print an OK line, got %q", stdout.String())
 }
 
 // The OK line counts installations too, so a caller gating on it can see that the second class ran
@@ -278,9 +226,7 @@ func TestOKLineReportsInstallations(t *testing.T) {
 	f := write(t, t.TempDir(), "clean.md", "The tree by the house has one lit window.\n")
 	var stdout, stderr bytes.Buffer
 	run([]string{f}, &stdout, &stderr)
-	if !strings.Contains(stdout.String(), "SELFTALK OK files=1 claims=0 standing=0 installations=0") {
-		t.Errorf("stdout = %q, want installations= in the OK line", stdout.String())
-	}
+	assert.Contains(t, stdout.String(), "SELFTALK OK files=1 claims=0 standing=0 installations=0", "stdout = %q, want installations= in the OK line", stdout.String())
 }
 
 // --rule-doc SCANS the file and banners its findings; it does not skip. The banner is the whole
@@ -293,17 +239,11 @@ func TestRuleDocIsScannedAndBannered(t *testing.T) {
 		"Never tolerate intolerance.\n\nI have no associative recall to drag anything back later.\n")
 	var stdout, stderr bytes.Buffer
 	got := run([]string{"--rule-doc", "RULES.md", f}, &stdout, &stderr)
-	if got != 1 {
-		t.Errorf("a rule document is SCANNED, not skipped; want exit 1, got %d\nstdout: %s", got, stdout.String())
-	}
+	assert.Equal(t, 1, got, "a rule document is SCANNED, not skipped; want exit 1, got %d\nstdout: %s", got, stdout.String())
 	want := "SELFTALK RULEDOC " + f + ": rule documents: a finding here is a self-verdict to " +
 		"relocate, NEVER a reason to soften a rule"
-	if !strings.Contains(stdout.String(), want) {
-		t.Errorf("stdout = %q, want the rule-document banner", stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "INSTALLATION FORECLOSURE") {
-		t.Errorf("stderr = %q, want the finding itself", stderr.String())
-	}
+	assert.Contains(t, stdout.String(), want, "stdout = %q, want the rule-document banner", stdout.String())
+	assert.Contains(t, stderr.String(), "INSTALLATION FORECLOSURE", "stderr = %q, want the finding itself", stderr.String())
 }
 
 // The banner prints only where there is something to banner: a rule document made of rules is
@@ -314,12 +254,9 @@ func TestRuleDocWithNoFindingsPrintsNoBanner(t *testing.T) {
 	f := write(t, t.TempDir(), "RULES.md",
 		"Never tolerate intolerance.\n\nSecrets live nowhere I write.\n")
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{"--rule-doc", "RULES.md", f}, &stdout, &stderr); got != 0 {
-		t.Errorf("a rule document made of rules must be clean; got exit %d\nstderr: %s", got, stderr.String())
-	}
-	if strings.Contains(stdout.String(), "SELFTALK RULEDOC") {
-		t.Errorf("no findings, no banner:\n%s", stdout.String())
-	}
+	got := run([]string{"--rule-doc", "RULES.md", f}, &stdout, &stderr)
+	assert.Equal(t, 0, got, "a rule document made of rules must be clean; got exit %d\nstderr: %s", got, stderr.String())
+	assert.NotContains(t, stdout.String(), "SELFTALK RULEDOC", "no findings, no banner:\n%s", stdout.String())
 }
 
 // NO BASENAME IS SPECIAL BY DEFAULT — the no-defaults law applied to the banner list exactly as it
@@ -333,12 +270,9 @@ func TestNoBasenameIsBanneredByDefault(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := write(t, t.TempDir(), name, "I have no associative recall to drag anything back later.\n")
 			var stdout, stderr bytes.Buffer
-			if got := run([]string{f}, &stdout, &stderr); got != 1 {
-				t.Errorf("%s must be scanned like any other file; got exit %d", name, got)
-			}
-			if strings.Contains(stdout.String(), "SELFTALK RULEDOC") {
-				t.Errorf("%s must not be bannered unless the caller says so:\n%s", name, stdout.String())
-			}
+			got := run([]string{f}, &stdout, &stderr)
+			assert.Equal(t, 1, got, "%s must be scanned like any other file; got exit %d", name, got)
+			assert.NotContains(t, stdout.String(), "SELFTALK RULEDOC", "%s must not be bannered unless the caller says so:\n%s", name, stdout.String())
 		})
 	}
 }
@@ -353,14 +287,12 @@ func TestRuleDocRepeatableAndRefusesPaths(t *testing.T) {
 	b := write(t, d, "FLOORS.md", "Confabulation is my central pathology.\n")
 	var stdout, stderr bytes.Buffer
 	run([]string{"--rule-doc", "RULES.md", "--rule-doc", "FLOORS.md", a, b}, &stdout, &stderr)
-	if n := strings.Count(stdout.String(), "SELFTALK RULEDOC"); n != 2 {
-		t.Errorf("want 2 banner lines, got %d:\n%s", n, stdout.String())
-	}
+	n := strings.Count(stdout.String(), "SELFTALK RULEDOC")
+	assert.Equal(t, 2, n, "want 2 banner lines, got %d:\n%s", n, stdout.String())
 	for _, v := range []string{"dir/RULES.md", `dir\RULES.md`, ""} {
 		var so, se bytes.Buffer
-		if got := run([]string{"--rule-doc", v, "x.md"}, &so, &se); got != 2 {
-			t.Errorf("--rule-doc %q must be refused, got exit %d", v, got)
-		}
+		got := run([]string{"--rule-doc", v, "x.md"}, &so, &se)
+		assert.Equal(t, 2, got, "--rule-doc %q must be refused, got exit %d", v, got)
 	}
 }
 
@@ -370,12 +302,9 @@ func TestSkipBeatsRuleDoc(t *testing.T) {
 
 	f := write(t, t.TempDir(), "RULES.md", "I have no associative recall to drag anything back later.\n")
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{"--skip", "RULES.md", "--rule-doc", "RULES.md", f}, &stdout, &stderr); got != 0 {
-		t.Errorf("a skipped file must not drive the exit code; got %d\nstderr: %s", got, stderr.String())
-	}
-	if strings.Contains(stdout.String(), "SELFTALK RULEDOC") {
-		t.Errorf("a skipped file is never read, so it can never be bannered:\n%s", stdout.String())
-	}
+	got := run([]string{"--skip", "RULES.md", "--rule-doc", "RULES.md", f}, &stdout, &stderr)
+	assert.Equal(t, 0, got, "a skipped file must not drive the exit code; got %d\nstderr: %s", got, stderr.String())
+	assert.NotContains(t, stdout.String(), "SELFTALK RULEDOC", "a skipped file is never read, so it can never be bannered:\n%s", stdout.String())
 }
 
 // TestNoFileNameOrClaimCanForgeALine is #24 at this binary. Every file name printed here
@@ -393,9 +322,7 @@ func TestNoFileNameOrClaimCanForgeALine(t *testing.T) {
 		t.Helper()
 		for _, stream := range []string{stdout, stderr} {
 			for _, line := range strings.Split(stream, "\n") {
-				if strings.HasPrefix(line, forged) {
-					t.Errorf("a caller's text forged a line: %q", line)
-				}
+				assert.False(t, strings.HasPrefix(line, forged), "a caller's text forged a line: %q", line)
 			}
 		}
 	}
@@ -404,23 +331,17 @@ func TestNoFileNameOrClaimCanForgeALine(t *testing.T) {
 		name := "a\n" + forged + ".md"
 		f := write(t, t.TempDir(), name, "I cannot check my own work.\n")
 		var stdout, stderr bytes.Buffer
-		if got := run([]string{f}, &stdout, &stderr); got != 1 {
-			t.Fatalf("exit = %d, want 1; stderr: %s", got, stderr.String())
-		}
+		got := run([]string{f}, &stdout, &stderr)
+		require.Equal(t, 1, got, "exit = %d, want 1; stderr: %s", got, stderr.String())
 		noForgedLine(t, stdout.String(), stderr.String())
-		if !strings.Contains(stderr.String(), "SELFTALK FAIL "+strings.ReplaceAll(f, "\n", `\x0a`)+`:1: STANDING match="cannot check": I cannot check my own work.`) {
-			t.Errorf("stderr = %q, want the file name escaped inside its one FAIL line", stderr.String())
-		}
+		assert.Contains(t, stderr.String(), "SELFTALK FAIL "+strings.ReplaceAll(f, "\n", `\x0a`)+`:1: STANDING match="cannot check": I cannot check my own work.`, "stderr = %q, want the file name escaped inside its one FAIL line", stderr.String())
 
 		stdout.Reset()
 		stderr.Reset()
-		if got := run([]string{"--skip", name, f}, &stdout, &stderr); got != 0 {
-			t.Fatalf("exit = %d, want 0; stderr: %s", got, stderr.String())
-		}
+		got = run([]string{"--skip", name, f}, &stdout, &stderr)
+		require.Equal(t, 0, got, "exit = %d, want 0; stderr: %s", got, stderr.String())
 		noForgedLine(t, stdout.String(), stderr.String())
-		if !strings.Contains(stdout.String(), "SELFTALK SKIP "+strings.ReplaceAll(f, "\n", `\x0a`)+" (--skip)") {
-			t.Errorf("stdout = %q, want the skip reported with the name escaped", stdout.String())
-		}
+		assert.Contains(t, stdout.String(), "SELFTALK SKIP "+strings.ReplaceAll(f, "\n", `\x0a`)+" (--skip)", "stdout = %q, want the skip reported with the name escaped", stdout.String())
 	})
 
 	t.Run("a claim's text is escaped", func(t *testing.T) {
@@ -428,22 +349,16 @@ func TestNoFileNameOrClaimCanForgeALine(t *testing.T) {
 		// the rest of the line reversed on a terminal that honors it.
 		f := write(t, t.TempDir(), "drifted.md", "I cannot check my "+string(rune(0x202e))+"own work.\n")
 		var stdout, stderr bytes.Buffer
-		if got := run([]string{f}, &stdout, &stderr); got != 1 {
-			t.Fatalf("exit = %d, want 1; stderr: %s", got, stderr.String())
-		}
-		if !strings.Contains(stderr.String(), `: I cannot check my \u202eown work.`) {
-			t.Errorf("stderr = %q, want the override escaped", stderr.String())
-		}
+		got := run([]string{f}, &stdout, &stderr)
+		require.Equal(t, 1, got, "exit = %d, want 1; stderr: %s", got, stderr.String())
+		assert.Contains(t, stderr.String(), `: I cannot check my \u202eown work.`, "stderr = %q, want the override escaped", stderr.String())
 	})
 
 	t.Run("a flag the parser does not know is refused on one line, by this tool", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		if got := run([]string{"--bogus\n" + forged, "x.md"}, &stdout, &stderr); got != 2 {
-			t.Fatalf("exit = %d, want 2; stderr: %s", got, stderr.String())
-		}
+		got := run([]string{"--bogus\n" + forged, "x.md"}, &stdout, &stderr)
+		require.Equal(t, 2, got, "exit = %d, want 2; stderr: %s", got, stderr.String())
 		noForgedLine(t, stdout.String(), stderr.String())
-		if !strings.Contains(stderr.String(), `nova-self-talk REFUSED: unknown flag -bogus\x0aSELFTALK OK files`) {
-			t.Errorf("stderr = %q, want this tool's own refusal with the flag escaped", stderr.String())
-		}
+		assert.Contains(t, stderr.String(), `nova-self-talk REFUSED: unknown flag -bogus\x0aSELFTALK OK files`, "stderr = %q, want this tool's own refusal with the flag escaped", stderr.String())
 	})
 }
