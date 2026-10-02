@@ -5,11 +5,8 @@ package main
 // The run verb's whole contract is that nothing survives: the volume is created,
 // the command runs on it, and on every exit the volume is unmounted and deleted.
 // That is exactly right for scratch and exactly wrong for the one thing a card
-// is for. Measured 2026-09-18, dogfooding `nova-sandbox run` on a real card: the
-// card cloned the repo, made the fix, committed it — and the commit died with
-// the volume. There was no writable path out. A card that cannot hand back its
-// commit is a card that has to be re-done outside the sandbox, which is the same
-// as not having one.
+// is for: a card that cannot hand back its commit is a card that has to be re-done
+// outside the sandbox, which is the same as not having one.
 //
 // `--out <dir>` is the door, and it is narrow on purpose:
 //

@@ -19,8 +19,8 @@
 // `winPlacer` interface below, and the SEQUENCE over that interface is the contract: create
 // the job before the process, put the child in the job at creation, close the job before
 // the delete, delete on every path out. That sequence is what runwin_test.go asserts, with
-// a fake placer on any host; the contract is verified by testing behavior, not platform presence. The Win32 calls
-// contract that could only be tested where it runs would be tested nowhere. The Win32 calls
+// a fake placer, ON ANY HOST — a contract that could only be tested where it runs would
+// be tested nowhere. The Win32 calls
 // themselves are in runwin_windows.go behind `//go:build windows`, and runwin_other.go is
 // the same interface refusing off windows so this file compiles everywhere.
 //
