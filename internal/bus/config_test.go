@@ -12,13 +12,12 @@ func TestLoadConfigReadsTheRoster(t *testing.T) {
 	root := writeBus(t, nil)
 	c, err := LoadConfig(root)
 	require.NoError(t, err)
-	if got := c.Senders(); len(got) != 2 || got[0] != "Ada" || got[1] != "Bo" {
-		t.Fatalf("Senders() = %v, want [Ada Bo] -- Dana has no lane and is not a sender", got)
+	{
+		got := c.Senders()
+		require.False(t, len(got) != 2 || got[0] != "Ada" || got[1] != "Bo", "Senders() = %v, want [Ada Bo] -- Dana has no lane and is not a sender", got)
 	}
 	ada := mustParticipant(t, c, "the archivist")
-	if ada.Name != "Ada" || ada.Slug() != "ada" {
-		t.Fatalf("an alias resolved to %+v, want Ada with slug ada", ada)
-	}
+	require.False(t, ada.Name != "Ada" || ada.Slug() != "ada", "an alias resolved to %+v, want Ada with slug ada", ada)
 	_, ok := c.Lookup("Adda")
 	require.False(t, ok, "a misspelling resolved; the whole point of the roster is that it does not")
 }
@@ -94,7 +93,7 @@ func TestLoadConfigRefusalsCarryTheRosterShape(t *testing.T) {
 		}
 		_, err := LoadConfig(root)
 		if err == nil {
-			t.Errorf("%s: loaded", name)
+			assert.Failf(t, "assertion failed", "%s: loaded", name)
 			continue
 		}
 		for _, want := range []string{`"participants":[{"name":"Ada","lane":"from-ada"`, "git_email", "ROSTER AND LANES"} {

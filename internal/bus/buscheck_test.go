@@ -1,10 +1,10 @@
 package bus
 
 import (
+	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -64,20 +64,20 @@ func TestCountCheckFindingsCountsEveryFindingByClass(t *testing.T) {
 		Findings: 5, Fail: 4, Warn: 1,
 		Class: []ClassCount{{"header", 3}, {"id", 1}, {"receipt", 1}},
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("CountCheckFindings = %+v, want %+v", got, want)
-	}
+	require.Equal(t, want, got, "CountCheckFindings = %+v, want %+v", got, want)
 	// Same findings, reversed: the same counts, in the same order.
 	rev := make([]Problem, len(ps))
 	for i, p := range ps {
 		rev[len(ps)-1-i] = p
 	}
-	if again := CountCheckFindings(rev); !reflect.DeepEqual(again, want) {
-		t.Fatalf("the count line depends on walk order: %+v, want %+v", again, want)
+	{
+		again := CountCheckFindings(rev)
+		require.Equal(t, want, again, "the count line depends on walk order: %+v, want %+v", again, want)
 	}
 	// No findings, no classes, and zero everywhere.
-	if empty := CountCheckFindings(nil); empty.Findings != 0 || empty.Fail != 0 || empty.Warn != 0 || len(empty.Class) != 0 {
-		t.Fatalf("CountCheckFindings(nil) = %+v, want all zero", empty)
+	{
+		empty := CountCheckFindings(nil)
+		require.False(t, empty.Findings != 0 || empty.Fail != 0 || empty.Warn != 0 || len(empty.Class) != 0, "CountCheckFindings(nil) = %+v, want all zero", empty)
 	}
 }
 
@@ -93,7 +93,7 @@ func datedRepo(t *testing.T) (dir string, shas []string) {
 		cmd.Env = append(os.Environ(), env...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+			require.NoError(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
 		return strings.TrimSpace(string(out))
 	}
@@ -123,16 +123,14 @@ func TestLastCommitBefore(t *testing.T) {
 	} {
 		got, err := LastCommitBefore(dir, at(tc.when))
 		if err != nil {
-			t.Fatalf("LastCommitBefore(%s): %v", tc.when, err)
+			require.NoError(t, err, "LastCommitBefore(%s): %v", tc.when, err)
 		}
 		if got != tc.want {
-			t.Errorf("LastCommitBefore(%s) = %s, want %s", tc.when, got, tc.want)
+			assert.Equal(t, tc.want, got, "LastCommitBefore(%s) = %s, want %s", tc.when, got, tc.want)
 		}
 	}
 	_, err := LastCommitBefore(dir, at("2026-08-01T00:00:00Z"))
-	if err == nil || !strings.Contains(err.Error(), "no commit in this checkout is dated before 2026-08-01T00:00:00Z") {
-		t.Fatalf("a date before every commit was not refused by name: %v", err)
-	}
+	require.False(t, err == nil || !strings.Contains(err.Error(), "no commit in this checkout is dated before 2026-08-01T00:00:00Z"), "a date before every commit was not refused by name: %v", err)
 }
 
 // ResolveSinceCommit: a revision wins, even one spelled like a date; a date or instant
@@ -142,31 +140,43 @@ func TestResolveSinceCommit(t *testing.T) {
 	t.Parallel()
 	dir, shas := datedRepo(t)
 
-	if got, err := ResolveSinceCommit(dir, shas[0]); err != nil || got != shas[0] {
-		t.Fatalf("a sha: got %s, %v; want %s", got, err, shas[0])
+	{
+		got, err := ResolveSinceCommit(dir, shas[0])
+		if err != nil || got != shas[0] {
+			require.False(t, err != nil || got != shas[0], "a sha: got %s, %v; want %s", got, err, shas[0])
+		}
 	}
-	if got, err := ResolveSinceCommit(dir, "2026-09-06"); err != nil || got != shas[1] {
-		t.Fatalf("a date: got %s, %v; want %s (the last commit before 2026-09-06)", got, err, shas[1])
+	{
+		got, err := ResolveSinceCommit(dir, "2026-09-06")
+		if err != nil || got != shas[1] {
+			require.False(t, err != nil || got != shas[1], "a date: got %s, %v; want %s (the last commit before 2026-09-06)", got, err, shas[1])
+		}
 	}
-	if got, err := ResolveSinceCommit(dir, "2026-09-05T11:00:00Z"); err != nil || got != shas[0] {
-		t.Fatalf("an instant: got %s, %v; want %s", got, err, shas[0])
+	{
+		got, err := ResolveSinceCommit(dir, "2026-09-05T11:00:00Z")
+		if err != nil || got != shas[0] {
+			require.False(t, err != nil || got != shas[0], "an instant: got %s, %v; want %s", got, err, shas[0])
+		}
 	}
 	// A tag that looks like a date is a revision, and a revision wins.
 	cmd := exec.Command("git", "-C", dir, "tag", "2026-09-06", shas[2])
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("tag: %v %s", err, out)
+	{
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "tag: %v %s", err, out)
 	}
-	if got, err := ResolveSinceCommit(dir, "2026-09-06"); err != nil || got != shas[2] {
-		t.Fatalf("a tag spelled like a date: got %s, %v; want the tag's commit %s", got, err, shas[2])
+	{
+		got, err := ResolveSinceCommit(dir, "2026-09-06")
+		if err != nil || got != shas[2] {
+			require.False(t, err != nil || got != shas[2], "a tag spelled like a date: got %s, %v; want the tag's commit %s", got, err, shas[2])
+		}
 	}
 	// A date before the history refuses; neither a revision nor a date is the revision
 	// refusal, unchanged.
-	if _, err := ResolveSinceCommit(dir, "2020-01-01"); err == nil || !strings.Contains(err.Error(), "no commit in this checkout is dated before") {
-		t.Fatalf("a date before every commit: %v", err)
+	{
+		_, err := ResolveSinceCommit(dir, "2020-01-01")
+		require.False(t, err == nil || !strings.Contains(err.Error(), "no commit in this checkout is dated before"), "a date before every commit: %v", err)
 	}
 	_, err := ResolveSinceCommit(dir, "nosuchref")
 	_, revErr := ResolveCommit(dir, "nosuchref")
-	if err == nil || revErr == nil || err.Error() != revErr.Error() {
-		t.Fatalf("a value that is neither: got %v, want the revision refusal %v", err, revErr)
-	}
+	require.False(t, err == nil || revErr == nil || err.Error() != revErr.Error(), "a value that is neither: got %v, want the revision refusal %v", err, revErr)
 }

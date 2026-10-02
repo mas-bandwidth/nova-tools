@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/redis/go-redis/v9"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // screen is the writer the in-place tests hand the loop: it keeps what was
@@ -87,17 +88,17 @@ func TestWatchDrawsInPlaceTheTableAndNothingElse(t *testing.T) {
 	ticks <- clock.Add(time.Second)
 	<-out.drawn
 	cancel()
-	if code := <-done; code != 0 {
-		t.Fatalf("watch exited %d", code)
+	{
+		code := <-done
+		require.EqualValues(t, 0, code, "watch exited %d", code)
 	}
 	want := clearScreen + ntable.Render(tables[0], ntable.RenderOpts{Title: tables[0].Name}) +
 		clearScreen + ntable.Render(tables[1], ntable.RenderOpts{Title: tables[1].Name})
-	if got := out.buf.String(); got != want {
-		t.Fatalf("watched output:\n%q\nwant:\n%q", got, want)
+	{
+		got := out.buf.String()
+		require.Equal(t, want, got, "watched output:\n%q\nwant:\n%q", got, want)
 	}
-	if errOut.Len() != 0 {
-		t.Fatalf("stderr: %q", errOut.String())
-	}
+	require.EqualValues(t, 0, errOut.Len(), "stderr: %q", errOut.String())
 }
 
 // TestWatchKeepsTheLastGoodTableWithOneUnreachableLine: a read that fails
@@ -135,26 +136,27 @@ func TestWatchKeepsTheLastGoodTableWithOneUnreachableLine(t *testing.T) {
 		<-out.drawn
 	}
 	cancel()
-	if code := <-done; code != 0 {
-		t.Fatalf("watch exited %d", code)
+	{
+		code := <-done
+		require.EqualValues(t, 0, code, "watch exited %d", code)
 	}
 	want := clearScreen + "store unreachable since 03:00:00\n" +
 		clearScreen + table +
 		clearScreen + table + "store unreachable since 03:00:14\n" +
 		clearScreen + table + "store unreachable since 03:00:14\n" +
 		clearScreen + table
-	if strings.Contains(out.buf.String(), "stale") {
-		t.Fatalf("watched output holds a stale counter:\n%q", out.buf.String())
-	}
-	if got := out.buf.String(); got != want {
-		t.Fatalf("watched output:\n%q\nwant:\n%q", got, want)
+	require.NotContains(t, out.buf.String(), "stale", "watched output holds a stale counter:\n%q", out.buf.String())
+	{
+		got := out.buf.String()
+		require.Equal(t, want, got, "watched output:\n%q\nwant:\n%q", got, want)
 	}
 	wantErr := "nova-table watch: dial tcp: connection refused; the last good table stands until it answers\n" +
 		"nova-table watch: Redis answers again\n" +
 		"nova-table watch: dial tcp: connection refused; the last good table stands until it answers\n" +
 		"nova-table watch: Redis answers again\n"
-	if got := errOut.String(); got != wantErr {
-		t.Fatalf("stderr:\n%q\nwant:\n%q", got, wantErr)
+	{
+		got := errOut.String()
+		require.Equal(t, wantErr, got, "stderr:\n%q\nwant:\n%q", got, wantErr)
 	}
 }
 
@@ -175,20 +177,18 @@ func TestWatchPublishesToAFileByRename(t *testing.T) {
 	go func() { done <- watchLoop(ctx, &stdout, &errOut, read, ticks, time.Now, out) }()
 	ticks <- time.Time{}
 	cancel()
-	if code := <-done; code != 0 {
-		t.Fatalf("watch exited %d", code)
+	{
+		code := <-done
+		require.EqualValues(t, 0, code, "watch exited %d", code)
 	}
 	body, err := os.ReadFile(out)
-	if err != nil || string(body) != table {
-		t.Fatalf("published file: %q %v; want the table", body, err)
-	}
+	require.NoError(t, err, "published file: %q %v; want the table", body, err)
+	require.Equal(t, table, string(body), "published file: %q %v; want the table", body, err)
 	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("the directory holds %d entries (%v); want the one file, no temp", len(entries), err)
-	}
-	if stdout.Len() != 0 || errOut.Len() != 0 {
-		t.Fatalf("stdout %q stderr %q; --out draws nothing on the terminal", stdout.String(), errOut.String())
-	}
+	require.NoError(t, err, "the directory holds %d entries (%v); want the one file, no temp", len(entries), err)
+	require.Len(t, entries, 1, "the directory holds %d entries (%v); want the one file, no temp", len(entries), err)
+	require.EqualValues(t, 0, stdout.Len(), "stdout %q stderr %q; --out draws nothing on the terminal", stdout.String(), errOut.String())
+	require.EqualValues(t, 0, errOut.Len(), "stdout %q stderr %q; --out draws nothing on the terminal", stdout.String(), errOut.String())
 }
 
 // An output sink failure is terminal on the first frame. No timer, Redis
@@ -202,13 +202,9 @@ func TestWatchOutputFailureStopsWithSinkRemedy(t *testing.T) {
 	t.Run("stdout", func(t *testing.T) {
 		var stderr bytes.Buffer
 		code := watchLoop(context.Background(), brokenWatchOutput{}, &stderr, read, ticks, now, "")
-		if code != 1 {
-			t.Fatalf("exit %d, want 1", code)
-		}
+		require.EqualValues(t, 1, code, "exit %d, want 1", code)
 		for _, want := range []string{"stdout: broken pipe", "next: repair or replace the stdout consumer"} {
-			if !strings.Contains(stderr.String(), want) {
-				t.Fatalf("stderr %q lacks %q", stderr.String(), want)
-			}
+			require.Contains(t, stderr.String(), want, "stderr %q lacks %q", stderr.String(), want)
 		}
 	})
 
@@ -219,19 +215,14 @@ func TestWatchOutputFailureStopsWithSinkRemedy(t *testing.T) {
 		var stdout bytes.Buffer
 		stderr := &cancelWatchStderr{cancel: cancel}
 		code := watchLoop(ctx, &stdout, stderr, read, ticks, now, out)
-		if code != 1 {
-			t.Fatalf("exit %d, want 1", code)
-		}
-		if stdout.Len() != 0 {
-			t.Fatalf("--out wrote to stdout: %q", stdout.String())
-		}
+		require.EqualValues(t, 1, code, "exit %d, want 1", code)
+		require.EqualValues(t, 0, stdout.Len(), "--out wrote to stdout: %q", stdout.String())
 		for _, want := range []string{"--out:", out, "next: make --out", "parent directory present and writable"} {
-			if !strings.Contains(stderr.String(), want) {
-				t.Fatalf("stderr %q lacks %q", stderr.String(), want)
-			}
+			require.Contains(t, stderr.String(), want, "stderr %q lacks %q", stderr.String(), want)
 		}
-		if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("failed publication left target: %v", err)
+		{
+			_, err := os.Stat(out)
+			require.ErrorIs(t, err, os.ErrNotExist, "failed publication left target: %v", err)
 		}
 	})
 }
@@ -248,38 +239,44 @@ func TestRenderAllJoinsTablesWithOneBlankLine(t *testing.T) {
 	empty := ntable.Table{Name: "empty", Columns: a.Columns}
 	ra, rb := ntable.Render(a, ntable.RenderOpts{Title: "demo"}), ntable.Render(b, ntable.RenderOpts{Title: "other"})
 	re := ntable.Render(empty, ntable.RenderOpts{Title: "empty"})
-	if got := renderAll("", []ntable.Table{a, empty, b}, ntable.RenderOpts{}); got != ra+"\n"+re+"\n"+rb {
-		t.Fatalf("two tables and an empty one:\n%q", got)
+	{
+		got := renderAll("", []ntable.Table{a, empty, b}, ntable.RenderOpts{})
+		require.Equal(t, ra+"\n"+re+"\n"+rb, got, "two tables and an empty one:\n%q", got)
 	}
-	if got := renderAll("SPRINT", []ntable.Table{a}, ntable.RenderOpts{}); got != "SPRINT\n\n"+ra {
-		t.Fatalf("with a title:\n%q", got)
+	{
+		got := renderAll("SPRINT", []ntable.Table{a}, ntable.RenderOpts{})
+		require.Equal(t, "SPRINT\n\n"+ra, got, "with a title:\n%q", got)
 	}
-	if got := renderAll("", []ntable.Table{empty}, ntable.RenderOpts{}); got != re || re == "" {
-		t.Fatalf("an empty table alone renders %q, want its header and footer %q", got, re)
+	{
+		got := renderAll("", []ntable.Table{empty}, ntable.RenderOpts{})
+		require.Equal(t, re, got, "an empty table alone renders %q, want its header and footer %q", got, re)
+		require.NotEmpty(t, re, "an empty table alone renders %q, want its header and footer %q", got, re)
 	}
-	if strings.Contains(ra, "\n\n") {
-		t.Fatal("a render holds a blank line")
-	}
+	require.NotContains(t, ra, "\n\n", "%v", "a render holds a blank line")
 }
 
 func TestViewSummaryUsesAllKnownCounts(t *testing.T) {
 	t.Parallel()
-	if got := ntable.SummaryLine(ntable.View{Summary: "ready"}, demoTable(0)); got != "0/0 0.0% -> ETA" {
-		t.Fatalf("empty known counts: %s", got)
+	{
+		got := ntable.SummaryLine(ntable.View{Summary: "ready"}, demoTable(0))
+		require.Equal(t, "0/0 0.0% -> ETA", got, "empty known counts: %s", got)
 	}
 	tb := demoTable(3)
 	tb.Hidden = []string{"ready"}
 	tb.Rows[0].Hidden = true
-	if got := ntable.SummaryLine(ntable.View{Summary: "ready"}, tb); got != "3/3 100.0% -> ETA" {
-		t.Fatalf("hidden counts: %s", got)
+	{
+		got := ntable.SummaryLine(ntable.View{Summary: "ready"}, tb)
+		require.Equal(t, "3/3 100.0% -> ETA", got, "hidden counts: %s", got)
 	}
 	tb.Rows[0].Cells[1].Unread = true
-	if got := ntable.SummaryLine(ntable.View{Summary: "ready"}, tb); got != "?/? ? -> ETA" {
-		t.Fatalf("unknown count: %s", got)
+	{
+		got := ntable.SummaryLine(ntable.View{Summary: "ready"}, tb)
+		require.Equal(t, "?/? ? -> ETA", got, "unknown count: %s", got)
 	}
 	tb.Rows[0].Cells[1].Unread = false
-	if got := ntable.SummaryLine(ntable.View{Summary: "missing"}, tb); got != "?/? ? -> ETA" {
-		t.Fatalf("missing column: %s", got)
+	{
+		got := ntable.SummaryLine(ntable.View{Summary: "missing"}, tb)
+		require.Equal(t, "?/? ? -> ETA", got, "missing column: %s", got)
 	}
 }
 
@@ -299,16 +296,10 @@ func TestAViewsFrameShowsItsStateAloneAsTheSummaryLine(t *testing.T) {
 			return func(context.Context) ([]ntable.Table, error) { return []ntable.Table{tb}, nil }
 		}
 		got, err := viewReaderWith(nil, "sprint", ntable.RenderOpts{}, false, viewGet, snapshotter, nil)(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err, "%v", err)
 		_, frame, _ := strings.Cut(got, "\n\n") // the clock line first
-		if !strings.HasPrefix(frame, c.want) {
-			t.Fatalf("state %q: frame\n%s\nwant it to open with %q", c.state, frame, c.want)
-		}
-		if c.state != "" && strings.Contains(frame, "ETA") {
-			t.Fatalf("state %q: the frame still counts:\n%s", c.state, frame)
-		}
+		require.True(t, strings.HasPrefix(frame, c.want), "state %q: frame\n%s\nwant it to open with %q", c.state, frame, c.want)
+		require.False(t, c.state != "" && strings.Contains(frame, "ETA"), "state %q: the frame still counts:\n%s", c.state, frame)
 	}
 }
 
@@ -324,17 +315,11 @@ func TestWatchCheckTableFailureProducesStallRow(t *testing.T) {
 
 	read := tablesReaderWith(nil, []string{"demo"}, "", ntable.RenderOpts{}, true, snapshots, checker)
 	got, err := read(context.Background())
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
+	require.NoError(t, err, "read: %v", err)
 	wantTable := ntable.Render(tb, ntable.RenderOpts{Title: tb.Name})
 	wantStall := "stall: demo: member record and owned set disagree: [build ready job duplicate place]\n"
-	if !strings.HasPrefix(got, wantTable) {
-		t.Fatalf("expected table prefix:\n%s\ngot:\n%s", wantTable, got)
-	}
-	if !strings.HasSuffix(got, wantStall) {
-		t.Fatalf("expected stall row suffix:\n%s\ngot:\n%s", wantStall, got)
-	}
+	require.True(t, strings.HasPrefix(got, wantTable), "expected table prefix:\n%s\ngot:\n%s", wantTable, got)
+	require.True(t, strings.HasSuffix(got, wantStall), "expected stall row suffix:\n%s\ngot:\n%s", wantStall, got)
 }
 
 func TestWatchCheckViewFailureProducesStallRow(t *testing.T) {
@@ -354,16 +339,10 @@ func TestWatchCheckViewFailureProducesStallRow(t *testing.T) {
 
 	read := viewReaderWith(nil, "myview", ntable.RenderOpts{}, true, viewGet, snapshotter, checker)
 	got, err := read(context.Background())
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
+	require.NoError(t, err, "read: %v", err)
 	wantStall := "stall: demo: requested epoch is stale, not the active epoch: requested 1, active 2\n"
-	if !strings.Contains(got, "Work View") {
-		t.Fatalf("expected view title in output:\n%s", got)
-	}
-	if !strings.HasSuffix(got, wantStall) {
-		t.Fatalf("expected stall row suffix:\n%s\ngot:\n%s", wantStall, got)
-	}
+	require.Contains(t, got, "Work View", "expected view title in output:\n%s", got)
+	require.True(t, strings.HasSuffix(got, wantStall), "expected stall row suffix:\n%s\ngot:\n%s", wantStall, got)
 }
 
 func TestWatchCheckSuccessProducesNoStallRow(t *testing.T) {
@@ -380,19 +359,11 @@ func TestWatchCheckSuccessProducesNoStallRow(t *testing.T) {
 
 	read := tablesReaderWith(nil, []string{"demo"}, "", ntable.RenderOpts{}, true, snapshots, checker)
 	got, err := read(context.Background())
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if !checkCalled {
-		t.Fatal("expected check to be called")
-	}
-	if strings.Contains(got, "stall:") {
-		t.Fatalf("expected no stall row on successful check, got:\n%s", got)
-	}
+	require.NoError(t, err, "read: %v", err)
+	require.True(t, checkCalled, "%v", "expected check to be called")
+	require.NotContains(t, got, "stall:", "expected no stall row on successful check, got:\n%s", got)
 	wantTable := ntable.Render(tb, ntable.RenderOpts{Title: tb.Name})
-	if got != wantTable {
-		t.Fatalf("got %q, want %q", got, wantTable)
-	}
+	require.Equal(t, wantTable, got, "got %q, want %q", got, wantTable)
 }
 
 func TestWatchCheckDisabledDoesNotRunCheck(t *testing.T) {
@@ -409,57 +380,56 @@ func TestWatchCheckDisabledDoesNotRunCheck(t *testing.T) {
 
 	read := tablesReaderWith(nil, []string{"demo"}, "", ntable.RenderOpts{}, false, snapshots, checker)
 	got, err := read(context.Background())
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if checkCalled {
-		t.Fatal("expected ntable.Check NOT to be called when check is false")
-	}
-	if strings.Contains(got, "stall:") {
-		t.Fatalf("expected no stall row, got:\n%s", got)
-	}
+	require.NoError(t, err, "read: %v", err)
+	require.False(t, checkCalled, "%v", "expected ntable.Check NOT to be called when check is false")
+	require.NotContains(t, got, "stall:", "expected no stall row, got:\n%s", got)
 }
 
 func TestWatchCheckFlagWired(t *testing.T) {
 	t.Parallel()
 	code, stdout, errout := runTable("watch", "--help")
-	if code != 0 || errout != "" {
-		t.Fatalf("watch --help: code %d errout %q", code, errout)
-	}
-	if !strings.Contains(stdout, "-check") || !strings.Contains(stdout, "run table check every tick") {
-		t.Fatalf("expected --check flag in watch help, got:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, code, "watch --help: code %d errout %q", code, errout)
+	require.Empty(t, errout, "watch --help: code %d errout %q", code, errout)
+	require.Contains(t, stdout, "-check", "expected --check flag in watch help, got:\n%s", stdout)
+	require.Contains(t, stdout, "run table check every tick", "expected --check flag in watch help, got:\n%s", stdout)
 }
 
 func TestFormatStall(t *testing.T) {
 	t.Parallel()
 	err1 := fmt.Errorf("table demo: %w: [row col id duplicate place]; run: nova-table show 'demo'", ntable.ErrDrift)
-	if got := formatStall("demo", err1); got != "stall: demo: member record and owned set disagree: [row col id duplicate place]" {
-		t.Fatalf("unexpected format: %q", got)
+	{
+		got := formatStall("demo", err1)
+		require.Equal(t, "stall: demo: member record and owned set disagree: [row col id duplicate place]", got, "unexpected format: %q", got)
 	}
 	err2 := fmt.Errorf("table demo: %w: requested 1, active 2; run: nova-table show 'demo'", ntable.ErrStale)
-	if got := formatStall("demo", err2); got != "stall: demo: requested epoch is stale, not the active epoch: requested 1, active 2" {
-		t.Fatalf("unexpected format: %q", got)
+	{
+		got := formatStall("demo", err2)
+		require.Equal(t, "stall: demo: requested epoch is stale, not the active epoch: requested 1, active 2", got, "unexpected format: %q", got)
 	}
 	err3 := errors.New("connection failed")
-	if got := formatStall("demo", err3); got != "stall: demo: connection failed" {
-		t.Fatalf("unexpected format: %q", got)
+	{
+		got := formatStall("demo", err3)
+		require.Equal(t, "stall: demo: connection failed", got, "unexpected format: %q", got)
 	}
 }
 
 func TestAppendStalls(t *testing.T) {
 	t.Parallel()
-	if got := appendStalls("table\n", nil); got != "table\n" {
-		t.Fatalf("empty stalls: got %q", got)
+	{
+		got := appendStalls("table\n", nil)
+		require.Equal(t, "table\n", got, "empty stalls: got %q", got)
 	}
-	if got := appendStalls("table\n", []string{"stall: a: b"}); got != "table\nstall: a: b\n" {
-		t.Fatalf("with trailing newline: got %q", got)
+	{
+		got := appendStalls("table\n", []string{"stall: a: b"})
+		require.Equal(t, "table\nstall: a: b\n", got, "with trailing newline: got %q", got)
 	}
-	if got := appendStalls("table", []string{"stall: a: b"}); got != "table\nstall: a: b\n" {
-		t.Fatalf("without trailing newline: got %q", got)
+	{
+		got := appendStalls("table", []string{"stall: a: b"})
+		require.Equal(t, "table\nstall: a: b\n", got, "without trailing newline: got %q", got)
 	}
-	if got := appendStalls("", []string{"stall: a: b"}); got != "stall: a: b\n" {
-		t.Fatalf("empty text: got %q", got)
+	{
+		got := appendStalls("", []string{"stall: a: b"})
+		require.Equal(t, "stall: a: b\n", got, "empty text: got %q", got)
 	}
 }
 
@@ -475,10 +445,8 @@ func TestViewReaderDrawsZeroRowsOfEveryTable(t *testing.T) {
 		return func(context.Context) ([]ntable.Table, error) { return []ntable.Table{zero, kept}, nil }
 	}
 	got, err := viewReaderWith(nil, "v", ntable.RenderOpts{}, false, viewGet, snapshotter, nil)(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(got, "demo") || !strings.Contains(got, "kept") || !strings.Contains(got, "build") {
-		t.Fatalf("demo (all zero) and kept are both drawn:\n%s", got)
-	}
+	require.NoError(t, err, "%v", err)
+	require.Contains(t, got, "demo", "demo (all zero) and kept are both drawn:\n%s", got)
+	require.Contains(t, got, "kept", "demo (all zero) and kept are both drawn:\n%s", got)
+	require.Contains(t, got, "build", "demo (all zero) and kept are both drawn:\n%s", got)
 }

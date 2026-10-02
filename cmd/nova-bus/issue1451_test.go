@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // #1451: every nova-bus refusal stopped at `; refusing to guess`, naming what was
@@ -29,15 +32,13 @@ func TestIssue1451EveryBareVerbRefusalNamesTheDoor(t *testing.T) {
 			continue
 		}
 		if r.code != 2 {
-			t.Errorf("bare `nova-bus %s`: exit = %d, want 2 (could not run); stderr: %q", v.verb, r.code, r.stderr)
+			assert.Failf(t, "assertion failed", "bare `nova-bus %s`: exit = %d, want 2 (could not run); stderr: %q", v.verb, r.code, r.stderr)
 			continue
 		}
 		checked++
 		requireDoorOnEveryRefusal(t, "bare `nova-bus "+v.verb+"`", r.stderr)
 	}
-	if checked < 8 {
-		t.Fatalf("only %d bare verbs refused; the usage reader is broken or the list shrank, and this test checked too little to mean anything", checked)
-	}
+	require.Falsef(t, checked < 8, "only %d bare verbs refused; the usage reader is broken or the list shrank, and this test checked too little to mean anything", checked)
 
 	// The shared printers and per-verb literals a bare verb short-circuits before, one
 	// minimal invocation each, so the sweep is not sampled: a site that lost its door
@@ -61,7 +62,7 @@ func TestIssue1451EveryBareVerbRefusalNamesTheDoor(t *testing.T) {
 	} {
 		r := invoke(t, "", tc.args...)
 		if r.code != 2 {
-			t.Errorf("%s: exit = %d, want 2 (could not run); stderr: %q", tc.label, r.code, r.stderr)
+			assert.Failf(t, "assertion failed", "%s: exit = %d, want 2 (could not run); stderr: %q", tc.label, r.code, r.stderr)
 			continue
 		}
 		requireDoorOnEveryRefusal(t, tc.label, r.stderr)
@@ -80,14 +81,11 @@ func requireDoorOnEveryRefusal(t *testing.T, label, stderr string) {
 			continue
 		}
 		lines++
-		if !strings.HasSuffix(line, door) {
-			t.Errorf("%s: refusal does not end at the door: %q", label, line)
-		}
-		if n := strings.Count(line, door); n != 1 {
-			t.Errorf("%s: the door appears %d times, want exactly 1: %q", label, n, line)
+		assert.Truef(t, strings.HasSuffix(line, door), "%s: refusal does not end at the door: %q", label, line)
+		{
+			n := strings.Count(line, door)
+			assert.Equalf(t, 1, n, "%s: the door appears %d times, want exactly 1: %q", label, n, line)
 		}
 	}
-	if lines == 0 {
-		t.Errorf("%s: exit 2 with no refusal line: %q", label, stderr)
-	}
+	assert.NotEqualf(t, 0, lines, "%s: exit 2 with no refusal line: %q", label, stderr)
 }

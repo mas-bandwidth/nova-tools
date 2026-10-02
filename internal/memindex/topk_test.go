@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
-	"reflect"
 	"sort"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A full sort is deliberately retained as the independent ordering oracle.
@@ -45,8 +46,9 @@ func TestTopKMatchesFullSort(t *testing.T) {
 		for _, k := range []int{0, 1, 7, 50, n, n + 1} {
 			want := sortedScores(scores, k)
 			for repeat := 0; repeat < 3; repeat++ {
-				if got := topK(scores, k); !reflect.DeepEqual(got, want) {
-					t.Fatalf("n=%d k=%d: got %v, want %v", n, k, got, want)
+				{
+					got := topK(scores, k)
+					require.Equalf(t, want, got, "n=%d k=%d: got %v, want %v", n, k, got, want)
 				}
 			}
 		}
@@ -61,9 +63,7 @@ func TestTopKSelectsWithABoundedHeap(t *testing.T) {
 	t.Parallel()
 
 	src, err := os.ReadFile("channels.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	text := string(src)
 	for _, want := range []string{
 		`"container/heap"`,
@@ -71,14 +71,10 @@ func TestTopKSelectsWithABoundedHeap(t *testing.T) {
 		"heap.Init",
 		"heap.Fix",
 	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("channels.go must keep the bounded heap top-k selector; missing %q", want)
-		}
+		assert.Containsf(t, text, want, "channels.go must keep the bounded heap top-k selector; missing %q", want)
 	}
 	// The unguarded selector allocated every candidate, sorted, then sliced.
-	if strings.Contains(text, "make([]Scored, 0, len(scores))") {
-		t.Error("topK must not collect every candidate before selecting k")
-	}
+	assert.NotContains(t, text, "make([]Scored, 0, len(scores))", "topK must not collect every candidate before selecting k")
 }
 
 func BenchmarkTopK(b *testing.B) {

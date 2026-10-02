@@ -6,6 +6,9 @@ import (
 	"testing"
 	"testing/fstest"
 	"unicode/utf8"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The grep failure modes this package exists to mechanize away, as fixtures.
@@ -35,9 +38,7 @@ func corpusFS() fstest.MapFS {
 func build(t *testing.T) *Corpus {
 	t.Helper()
 	c, err := Build(corpusFS(), nil)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	require.NoErrorf(t, err, "Build: %v", err)
 	return c
 }
 
@@ -49,12 +50,8 @@ func TestNormalizeRecoversHiddenPhrases(t *testing.T) {
 		{"emphasis", emphSpecimen, "every instrument reading as a measurement"},
 	}
 	for _, tc := range cases {
-		if strings.Contains(strings.ToLower(tc.src), tc.phrase) {
-			t.Fatalf("%s: the fixture already contains the phrase raw — the test would prove nothing", tc.name)
-		}
-		if !strings.Contains(Normalize(tc.src), tc.phrase) {
-			t.Errorf("%s: Normalize did not recover %q from %q", tc.name, tc.phrase, tc.src)
-		}
+		require.NotContainsf(t, strings.ToLower(tc.src), tc.phrase, "%s: the fixture already contains the phrase raw — the test would prove nothing", tc.name)
+		assert.Containsf(t, Normalize(tc.src), tc.phrase, "%s: Normalize did not recover %q from %q", tc.name, tc.phrase, tc.src)
 	}
 }
 
@@ -66,13 +63,9 @@ func TestTruncateCutsOnARuneBoundary(t *testing.T) {
 	s := strings.Repeat("a", 9) + "é" + strings.Repeat("b", 40)
 	for n := 5; n < 20; n++ {
 		got := Truncate(s, n)
-		if !utf8.ValidString(got) {
-			t.Fatalf("Truncate(%q, %d) = %q, which is not valid UTF-8", s, n, got)
-		}
+		require.Truef(t, utf8.ValidString(got), "Truncate(%q, %d) = %q, which is not valid UTF-8", s, n, got)
 	}
-	if Truncate("short", 99) != "short" {
-		t.Error("Truncate must not touch a string already within the limit")
-	}
+	assert.Equal(t, "short", Truncate("short", 99), "Truncate must not touch a string already within the limit")
 }
 
 func TestBuildClassesAndFrontmatter(t *testing.T) {
@@ -85,24 +78,17 @@ func TestBuildClassesAndFrontmatter(t *testing.T) {
 			wind = &c.Chunks[i]
 		}
 	}
-	if wind == nil {
-		t.Fatal("notes/wind.md produced no chunks")
-	}
-	if wind.Class != "notes" {
-		t.Errorf("class = %q, want notes", wind.Class)
-	}
-	if wind.FMName != "wind-log" || wind.FMType != "measured" {
-		t.Errorf("frontmatter = %q/%q, want wind-log/measured", wind.FMName, wind.FMType)
-	}
+	require.NotNil(t, wind, "notes/wind.md produced no chunks")
+	assert.Equalf(t, "notes", wind.Class, "class = %q, want notes", wind.Class)
+	assert.Equalf(t, "wind-log", wind.FMName, "frontmatter = %q/%q, want wind-log/measured", wind.FMName, wind.FMType)
+	assert.Equalf(t, "measured", wind.FMType, "frontmatter = %q/%q, want wind-log/measured", wind.FMName, wind.FMType)
 	root := 0
 	for _, ch := range c.Chunks {
 		if ch.Class == "." {
 			root++
 		}
 	}
-	if root == 0 {
-		t.Error("root files got no '.' class chunks — the corpus must classify itself")
-	}
+	assert.NotEqual(t, 0, root, "root files got no '.' class chunks — the corpus must classify itself")
 }
 
 // A CRLF file must chunk exactly as its LF twin does. The blank-line split is
@@ -119,16 +105,12 @@ func TestBuildChunkingIsLineEndingAgnostic(t *testing.T) {
 		"the second paragraph names the jetty and the eighteen minutes it runs late.\n\n" +
 		"the third paragraph names the glazing and the salt haze that etches it.\n"
 	lf, err := Build(fstest.MapFS{"twin.md": {Data: []byte(body)}}, nil)
-	if err != nil {
-		t.Fatalf("LF build: %v", err)
-	}
+	require.NoErrorf(t, err, "LF build: %v", err)
 	// Four: the frontmatter block is itself a paragraph over MinTerms, then
 	// the three prose paragraphs. The number is pinned so a regression that
 	// stops splitting shows up as one chunk here rather than as a quiet
 	// ranking change.
-	if len(lf.Chunks) != 4 {
-		t.Fatalf("the fixture is meant to hold 4 indexable paragraphs, got %d", len(lf.Chunks))
-	}
+	require.Lenf(t, lf.Chunks, 4, "the fixture is meant to hold 4 indexable paragraphs, got %d", len(lf.Chunks))
 	// The lone-CR twin is not a hypothetical: it is what classic-Mac-era
 	// tooling and a few exporters still emit, and it is what a CRLF fix that
 	// only replaces "\r\n" leaves behind untouched.
@@ -138,24 +120,18 @@ func TestBuildChunkingIsLineEndingAgnostic(t *testing.T) {
 	} {
 		t.Run(tw.name, func(t *testing.T) {
 			twin, err := Build(fstest.MapFS{"twin.md": {Data: []byte(strings.ReplaceAll(body, "\n", tw.ending))}}, nil)
-			if err != nil {
-				t.Fatalf("%s build: %v", tw.name, err)
-			}
-			if len(twin.Chunks) != len(lf.Chunks) {
-				t.Fatalf("%s twin indexed as %d chunks, LF twin as %d — that corpus becomes one giant chunk per file",
-					tw.name, len(twin.Chunks), len(lf.Chunks))
-			}
+			require.NoErrorf(t, err, "%s build: %v", tw.name, err)
+			require.Lenf(t, twin.Chunks, len(lf.Chunks), "%s twin indexed as %d chunks, LF twin as %d — that corpus becomes one giant chunk per file",
+				tw.name, len(twin.Chunks), len(lf.Chunks))
 			for i := range lf.Chunks {
-				if lf.Chunks[i].Text != twin.Chunks[i].Text || lf.Chunks[i].Para != twin.Chunks[i].Para {
-					t.Errorf("chunk %d differs between twins:\n  LF: %d %q\n%4s: %d %q",
-						i, lf.Chunks[i].Para, lf.Chunks[i].Text, tw.name, twin.Chunks[i].Para, twin.Chunks[i].Text)
-				}
+				assert.Equalf(t, lf.Chunks[i].Text, twin.Chunks[i].Text, "chunk %d differs between twins:\n  LF: %d %q\n%4s: %d %q",
+					i, lf.Chunks[i].Para, lf.Chunks[i].Text, tw.name, twin.Chunks[i].Para, twin.Chunks[i].Text)
+				assert.Equalf(t, lf.Chunks[i].Para, twin.Chunks[i].Para, "chunk %d differs between twins:\n  LF: %d %q\n%4s: %d %q",
+					i, lf.Chunks[i].Para, lf.Chunks[i].Text, tw.name, twin.Chunks[i].Para, twin.Chunks[i].Text)
 			}
 			// Frontmatter is read from the same normalized text, so the twin's
 			// name: reaches receipts too.
-			if twin.Chunks[0].FMName != "crlf-twin" {
-				t.Errorf("%s frontmatter name = %q, want crlf-twin", tw.name, twin.Chunks[0].FMName)
-			}
+			assert.Equalf(t, "crlf-twin", twin.Chunks[0].FMName, "%s frontmatter name = %q, want crlf-twin", tw.name, twin.Chunks[0].FMName)
 		})
 	}
 }
@@ -163,30 +139,24 @@ func TestBuildChunkingIsLineEndingAgnostic(t *testing.T) {
 func TestBuildRefusesEmptyCorpus(t *testing.T) {
 	t.Parallel()
 
-	if _, err := Build(fstest.MapFS{"a.txt": {Data: []byte("no markdown here")}}, nil); err == nil {
-		t.Fatal("Build accepted a corpus with no markdown — the confident-zero engine this tool exists to remove")
-	}
+	_, err := Build(fstest.MapFS{"a.txt": {Data: []byte("no markdown here")}}, nil)
+	require.Error(t, err, "Build accepted a corpus with no markdown — the confident-zero engine this tool exists to remove")
 }
 
 func TestBuildRefusesCorpusWithNoIndexableParagraph(t *testing.T) {
 	t.Parallel()
 
-	if _, err := Build(fstest.MapFS{"a.md": {Data: []byte("# h\n\nok\n")}}, nil); err == nil {
-		t.Fatal("Build accepted a corpus whose every paragraph is below MinTerms")
-	}
+	_, err := Build(fstest.MapFS{"a.md": {Data: []byte("# h\n\nok\n")}}, nil)
+	require.Error(t, err, "Build accepted a corpus whose every paragraph is below MinTerms")
 }
 
 func TestBuildHonoursExclude(t *testing.T) {
 	t.Parallel()
 
 	c, err := Build(corpusFS(), func(p string) bool { return strings.HasPrefix(p, "notes") })
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	require.NoErrorf(t, err, "Build: %v", err)
 	for _, f := range c.Files {
-		if strings.HasPrefix(f, "notes/") {
-			t.Errorf("excluded path %s was indexed anyway", f)
-		}
+		assert.Falsef(t, strings.HasPrefix(f, "notes/"), "excluded path %s was indexed anyway", f)
 	}
 }
 
@@ -198,9 +168,8 @@ func TestBM25FindsFunctionWordVariant(t *testing.T) {
 	// preposition was used.
 	c := build(t)
 	hits := Retrieve(c, []Channel{NewBM25(c)}, "the anemometer is reliable on the gusts and unreliable on the mean", 3)
-	if len(hits) == 0 || hits[0].File != "notes/wind.md" {
-		t.Fatalf("function-word variant did not retrieve notes/wind.md first; hits=%+v", hits)
-	}
+	require.NotEmptyf(t, hits, "function-word variant did not retrieve notes/wind.md first; hits=%+v", hits)
+	require.Equalf(t, "notes/wind.md", hits[0].File, "function-word variant did not retrieve notes/wind.md first; hits=%+v", hits)
 }
 
 func TestBM25FindsWrappedPhrase(t *testing.T) {
@@ -208,9 +177,8 @@ func TestBM25FindsWrappedPhrase(t *testing.T) {
 
 	c := build(t)
 	hits := Retrieve(c, []Channel{NewBM25(c)}, "somebody is awake and watching and the light is how that travels", 3)
-	if len(hits) == 0 || hits[0].File != "HANDBOOK.md" {
-		t.Fatalf("wrapped phrase did not retrieve HANDBOOK.md first; hits=%+v", hits)
-	}
+	require.NotEmptyf(t, hits, "wrapped phrase did not retrieve HANDBOOK.md first; hits=%+v", hits)
+	require.Equalf(t, "HANDBOOK.md", hits[0].File, "wrapped phrase did not retrieve HANDBOOK.md first; hits=%+v", hits)
 }
 
 func TestRetrieveDeterministic(t *testing.T) {
@@ -233,9 +201,7 @@ func TestRetrieveDeterministic(t *testing.T) {
 	}
 	a := format(build(t))
 	bOut := format(build(t))
-	if a != bOut {
-		t.Fatalf("two builds produced different results:\n--- a ---\n%s--- b ---\n%s", a, bOut)
-	}
+	require.Equalf(t, a, bOut, "two builds produced different results:\n--- a ---\n%s--- b ---\n%s", a, bOut)
 }
 
 func TestRetrieveNeverEmptyForInVocabularyQuery(t *testing.T) {
@@ -246,18 +212,15 @@ func TestRetrieveNeverEmptyForInVocabularyQuery(t *testing.T) {
 	// query may return nothing, and the CLI says so in words when it does.
 	c := build(t)
 	hits := Retrieve(c, []Channel{NewBM25(c)}, "the boat and the coast and the water", 5)
-	if len(hits) == 0 {
-		t.Fatal("expected low-score hits for an in-vocabulary unrelated query, got none")
-	}
+	require.NotEmpty(t, hits, "expected low-score hits for an in-vocabulary unrelated query, got none")
 }
 
 func TestRetrieveEmptyForOutOfVocabularyQuery(t *testing.T) {
 	t.Parallel()
 
 	c := build(t)
-	if hits := Retrieve(c, []Channel{NewBM25(c)}, "zzqq xxvv wwjj", 5); len(hits) != 0 {
-		t.Fatalf("out-of-vocabulary query returned hits: %+v", hits)
-	}
+	hits := Retrieve(c, []Channel{NewBM25(c)}, "zzqq xxvv wwjj", 5)
+	require.Emptyf(t, hits, "out-of-vocabulary query returned hits: %+v", hits)
 }
 
 // crowdingFS holds one file owning far more matching paragraphs than any
@@ -285,9 +248,7 @@ func TestRetrieveDoesNotLetOneLongFileCrowdOutOthers(t *testing.T) {
 	t.Parallel()
 
 	c, err := Build(crowdingFS(), nil)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	require.NoErrorf(t, err, "Build: %v", err)
 	for _, chans := range [][]Channel{
 		{NewBM25(c)},
 		{NewBM25(c), NewTrigram(c)},
@@ -297,9 +258,7 @@ func TestRetrieveDoesNotLetOneLongFileCrowdOutOthers(t *testing.T) {
 		for _, h := range hits {
 			files = append(files, h.File)
 		}
-		if len(hits) != 2 {
-			t.Errorf("%d channel(s): asked for 2 files, got %d: %v — one long file exhausted the headroom",
-				len(chans), len(hits), files)
+		if !assert.Lenf(t, hits, 2, "%d channel(s): asked for 2 files, got %d: %v — one long file exhausted the headroom", len(chans), len(hits), files) {
 			continue
 		}
 		var haveLong, haveOther bool
@@ -311,9 +270,8 @@ func TestRetrieveDoesNotLetOneLongFileCrowdOutOthers(t *testing.T) {
 				haveOther = true
 			}
 		}
-		if !haveLong || !haveOther {
-			t.Errorf("%d channel(s): top-2 files were %v, want both a-long.md and b-relevant.md", len(chans), files)
-		}
+		assert.Truef(t, haveLong, "%d channel(s): top-2 files were %v, want both a-long.md and b-relevant.md", len(chans), files)
+		assert.Truef(t, haveOther, "%d channel(s): top-2 files were %v, want both a-long.md and b-relevant.md", len(chans), files)
 	}
 }
 
@@ -322,9 +280,8 @@ func TestRetrieveRefusesNonPositiveK(t *testing.T) {
 
 	c := build(t)
 	for _, k := range []int{0, -1} {
-		if hits := Retrieve(c, []Channel{NewBM25(c)}, "glazing", k); hits != nil {
-			t.Errorf("k=%d returned %d hits; a non-positive budget is not unlimited", k, len(hits))
-		}
+		hits := Retrieve(c, []Channel{NewBM25(c)}, "glazing", k)
+		assert.Nilf(t, hits, "k=%d returned %d hits; a non-positive budget is not unlimited", k, len(hits))
 	}
 }
 
@@ -334,13 +291,10 @@ func TestSingleChannelOrderIsChannelOrder(t *testing.T) {
 	c := build(t)
 	raw := NewBM25(c).Query("brass paste scratches optical glass", 10)
 	fused := Retrieve(c, []Channel{NewBM25(c)}, "brass paste scratches optical glass", 10)
-	if len(raw) == 0 || len(fused) == 0 {
-		t.Fatal("no results")
-	}
-	if c.Chunks[raw[0].Chunk].File != fused[0].File {
-		t.Errorf("single-channel fusion reordered results: raw top %s, fused top %s",
-			c.Chunks[raw[0].Chunk].File, fused[0].File)
-	}
+	require.NotEmpty(t, raw, "no results")
+	require.NotEmpty(t, fused, "no results")
+	assert.Equalf(t, c.Chunks[raw[0].Chunk].File, fused[0].File, "single-channel fusion reordered results: raw top %s, fused top %s",
+		c.Chunks[raw[0].Chunk].File, fused[0].File)
 }
 
 // The multi-channel receipt artifact. `native` used to be filled from the
@@ -359,39 +313,25 @@ func TestNativeScoreComesFromTheChannelThatSurfacedTheChunk(t *testing.T) {
 	// vocabulary, so bm25 reaches notes/glass.md. One query, two channels,
 	// two different surfacing channels.
 	hits := Retrieve(c, []Channel{NewBM25(c), NewTrigram(c)}, "anemometers glazing", 10)
-	if len(hits) == 0 {
-		t.Fatal("no hits")
-	}
+	require.NotEmpty(t, hits, "no hits")
 	byFile := map[string]FileHit{}
 	for _, h := range hits {
-		if h.NativeChan == "" {
-			t.Errorf("%s carries no surfacing channel — its score=%.2f is unattributable", h.File, h.Native)
-		}
+		assert.NotEqualf(t, "", h.NativeChan, "%s carries no surfacing channel — its score=%.2f is unattributable", h.File, h.Native)
 		byFile[h.File] = h
 	}
 	wind, ok := byFile["notes/wind.md"]
-	if !ok {
-		t.Fatalf("the trigram-only file did not surface at all; hits=%+v", hits)
-	}
-	if wind.NativeChan != "trigram" {
-		t.Errorf("notes/wind.md surfaced through %q, want trigram", wind.NativeChan)
-	}
-	if wind.Native <= 0 {
-		t.Errorf("notes/wind.md printed a fabricated score %.4f — the artifact this test exists for", wind.Native)
-	}
+	require.Truef(t, ok, "the trigram-only file did not surface at all; hits=%+v", hits)
+	assert.Equalf(t, "trigram", wind.NativeChan, "notes/wind.md surfaced through %q, want trigram", wind.NativeChan)
+	assert.Positivef(t, wind.Native, "notes/wind.md printed a fabricated score %.4f — the artifact this test exists for", wind.Native)
 	glass, ok := byFile["notes/glass.md"]
-	if !ok {
-		t.Fatalf("the bm25 file did not surface at all; hits=%+v", hits)
-	}
-	if glass.NativeChan != "bm25" {
-		t.Errorf("notes/glass.md surfaced through %q, want bm25 (the first channel that scored it)", glass.NativeChan)
-	}
+	require.Truef(t, ok, "the bm25 file did not surface at all; hits=%+v", hits)
+	assert.Equalf(t, "bm25", glass.NativeChan, "notes/glass.md surfaced through %q, want bm25 (the first channel that scored it)", glass.NativeChan)
 	// Naming the channels in the other order must move the attribution, never
 	// silently keep the first-listed one.
 	rev := Retrieve(c, []Channel{NewTrigram(c), NewBM25(c)}, "anemometers glazing", 10)
 	for _, h := range rev {
-		if h.File == "notes/glass.md" && h.NativeChan != "trigram" {
-			t.Errorf("with trigram named first, notes/glass.md still reported %q", h.NativeChan)
+		if h.File == "notes/glass.md" {
+			assert.Equalf(t, "trigram", h.NativeChan, "with trigram named first, notes/glass.md still reported %q", h.NativeChan)
 		}
 	}
 }
@@ -404,9 +344,7 @@ func TestSingleChannelNativeIsThatChannel(t *testing.T) {
 	c := build(t)
 	for _, ch := range []Channel{NewBM25(c), NewTrigram(c)} {
 		for _, h := range Retrieve(c, []Channel{ch}, "salt haze glazing daylight", 5) {
-			if h.NativeChan != ch.Name() {
-				t.Errorf("channel %s: %s reported score-channel %q", ch.Name(), h.File, h.NativeChan)
-			}
+			assert.Equalf(t, ch.Name(), h.NativeChan, "channel %s: %s reported score-channel %q", ch.Name(), h.File, h.NativeChan)
 		}
 	}
 }
@@ -417,20 +355,16 @@ func TestCoverage(t *testing.T) {
 	fsys := corpusFS()
 	// Clean case: both notes are named in index-a.md.
 	fnds, err := Coverage(fsys, "notes/*.md", "notes/index-*.md")
-	if err != nil {
-		t.Fatalf("Coverage: %v", err)
-	}
+	require.NoErrorf(t, err, "Coverage: %v", err)
 	for _, f := range fnds {
-		t.Errorf("unexpected finding on a clean corpus: %s: %s", f.Kind, f.Detail)
+		assert.Failf(t, "unexpected finding", "unexpected finding on a clean corpus: %s: %s", f.Kind, f.Detail)
 	}
 	// Prove it can fail, in both directions: an orphan note nothing points
 	// at, and an index line pointing at nothing.
 	fsys["notes/orphan.md"] = &fstest.MapFile{Data: []byte("---\nname: orphan\n---\n\nan undistilled lesson that no index names at all")}
 	fsys["notes/index-a.md"] = &fstest.MapFile{Data: []byte("# Index\n\n- [wind-log](wind.md)\n- [glazing-care](glass.md)\n- [gone](gone.md)\n")}
 	fnds, err = Coverage(fsys, "notes/*.md", "notes/index-*.md")
-	if err != nil {
-		t.Fatalf("Coverage: %v", err)
-	}
+	require.NoErrorf(t, err, "Coverage: %v", err)
 	var haveOrphan, haveDangling bool
 	for _, f := range fnds {
 		if f.Kind == "coverage" && strings.Contains(f.Detail, "orphan") {
@@ -440,12 +374,8 @@ func TestCoverage(t *testing.T) {
 			haveDangling = true
 		}
 	}
-	if !haveOrphan {
-		t.Error("planted orphan not found — the check cannot fail, so its pass means nothing")
-	}
-	if !haveDangling {
-		t.Error("planted dangling index link not found")
-	}
+	assert.True(t, haveOrphan, "planted orphan not found — the check cannot fail, so its pass means nothing")
+	assert.True(t, haveDangling, "planted dangling index link not found")
 }
 
 // The planted fault the old regex waved through green. `\]\(([^)#?:]+\.md)\)`
@@ -482,18 +412,14 @@ func TestCoverageChecksAnchoredAndQueriedLinks(t *testing.T) {
 				Data: []byte("# Index\n\n- [wind-log](wind.md)\n- [glazing-care](glass.md)\n- " + tc.link + "\n"),
 			}
 			fnds, err := Coverage(fsys, "notes/*.md", "notes/index-*.md")
-			if err != nil {
-				t.Fatalf("Coverage: %v", err)
-			}
+			require.NoErrorf(t, err, "Coverage: %v", err)
 			var bad bool
 			for _, f := range fnds {
 				if f.Kind == "backlink" {
 					bad = true
 				}
 			}
-			if bad != tc.wantBad {
-				t.Errorf("backlink finding = %v, want %v; findings: %+v", bad, tc.wantBad, fnds)
-			}
+			assert.Equalf(t, tc.wantBad, bad, "backlink finding = %v, want %v; findings: %+v", bad, tc.wantBad, fnds)
 		})
 	}
 }
@@ -516,30 +442,28 @@ func TestCoverageCollidingStemIsNotCoverage(t *testing.T) {
 		"# Index\n\n- [wind-log](wind.md) — the anemometer\n- [glazing-care](glass.md) — the glazing\n- [foobar](foobar.md) — the longer stem\n")}
 
 	fnds, err := Coverage(fsys, "notes/*.md", "notes/index-*.md")
-	if err != nil {
-		t.Fatalf("Coverage: %v", err)
-	}
+	require.NoErrorf(t, err, "Coverage: %v", err)
 	var haveFoo bool
 	for _, f := range fnds {
 		if f.Kind == "coverage" && strings.Contains(f.Detail, "notes/foo.md") {
 			haveFoo = true
 			continue
 		}
-		t.Errorf("unexpected finding on a genuinely indexed file: %s: %s", f.Kind, f.Detail)
+		assert.Failf(t, "unexpected finding", "unexpected finding on a genuinely indexed file: %s: %s", f.Kind, f.Detail)
 	}
-	if !haveFoo {
-		t.Error("notes/foo.md passed coverage on foobar.md's index entry — a substring is not membership")
-	}
+	assert.True(t, haveFoo, "notes/foo.md passed coverage on foobar.md's index entry — a substring is not membership")
 }
 
 func TestCoverageRefusesEmptySide(t *testing.T) {
 	t.Parallel()
 
-	if _, err := Coverage(corpusFS(), "nothing/*.md", "notes/index-*.md"); err == nil {
-		t.Error("Coverage accepted an empty A side — a broken check reported as a pass")
+	{
+		_, err := Coverage(corpusFS(), "nothing/*.md", "notes/index-*.md")
+		assert.Error(t, err, "Coverage accepted an empty A side — a broken check reported as a pass")
 	}
-	if _, err := Coverage(corpusFS(), "notes/*.md", "nothing/index-*.md"); err == nil {
-		t.Error("Coverage accepted an empty B side — a broken check reported as a pass")
+	{
+		_, err := Coverage(corpusFS(), "notes/*.md", "nothing/index-*.md")
+		assert.Error(t, err, "Coverage accepted an empty B side — a broken check reported as a pass")
 	}
 }
 
@@ -549,25 +473,17 @@ func TestWikilinks(t *testing.T) {
 	fsys := corpusFS()
 	fsys["notes/linked.md"] = &fstest.MapFile{Data: []byte("---\nname: linked\n---\n\nsee [[wind-log]] and the unwritten [[storm-glass]] page for the rest")}
 	c, err := Build(fsys, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fnds, err := Wikilinks(fsys, c)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var hit bool
 	for _, f := range fnds {
 		if strings.Contains(f.Detail, "storm-glass") {
 			hit = true
 		}
-		if strings.Contains(f.Detail, "[[wind-log]]") {
-			t.Errorf("a link that resolves through frontmatter was reported unresolved: %s", f.Detail)
-		}
+		assert.NotContainsf(t, f.Detail, "[[wind-log]]", "a link that resolves through frontmatter was reported unresolved: %s", f.Detail)
 	}
-	if !hit {
-		t.Error("unresolved wikilink not reported — the check cannot fail")
-	}
+	assert.True(t, hit, "unresolved wikilink not reported — the check cannot fail")
 }
 
 // The aliased and heading forms are the two commonest wikilink shapes, and
@@ -586,13 +502,9 @@ func TestWikilinksScansAliasedAndHeadingForms(t *testing.T) {
 			"beside [[wind-log|the anemometer log]] and [[glazing-care#the-brass]] which both resolve,\n" +
 			"and [[#a-heading-on-this-page]] which names nothing in the corpus at all.\n")}
 	c, err := Build(fsys, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fnds, err := Wikilinks(fsys, c)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	reported := map[string]bool{}
 	for _, f := range fnds {
 		reported[f.Detail] = true
@@ -606,21 +518,15 @@ func TestWikilinksScansAliasedAndHeadingForms(t *testing.T) {
 		return false
 	}
 	for _, stem := range []string{"nowhere-page", "nowhere-sec"} {
-		if !has(stem) {
-			t.Errorf("dangling wikilink [[%s]] not reported — the gate has a hole; findings: %+v", stem, fnds)
-		}
+		assert.Truef(t, has(stem), "dangling wikilink [[%s]] not reported — the gate has a hole; findings: %+v", stem, fnds)
 	}
 	for _, stem := range []string{"wind-log", "glazing-care"} {
-		if has(stem) {
-			t.Errorf("a wikilink that resolves was reported unresolved: [[%s]]; findings: %+v", stem, fnds)
-		}
+		assert.Falsef(t, has(stem), "a wikilink that resolves was reported unresolved: [[%s]]; findings: %+v", stem, fnds)
 	}
 	// A body that is only a heading is a same-page anchor, not a corpus
 	// reference: reporting it would gate on something no corpus can satisfy.
 	for d := range reported {
-		if strings.Contains(d, "a-heading-on-this-page") {
-			t.Errorf("a heading-only wikilink was reported as a corpus reference: %s", d)
-		}
+		assert.NotContainsf(t, d, "a-heading-on-this-page", "a heading-only wikilink was reported as a corpus reference: %s", d)
 	}
 }
 
@@ -628,15 +534,13 @@ func TestFrontmatterPresent(t *testing.T) {
 	t.Parallel()
 
 	fnds, err := FrontmatterPresent(corpusFS(), "notes/wind.md", nil)
-	if err != nil || len(fnds) != 0 {
-		t.Fatalf("a file with frontmatter was flagged: %v %v", fnds, err)
-	}
+	require.NoErrorf(t, err, "a file with frontmatter was flagged: %v %v", fnds, err)
+	require.Lenf(t, fnds, 0, "a file with frontmatter was flagged: %v %v", fnds, err)
 	fsys := corpusFS()
 	fsys["notes/bare.md"] = &fstest.MapFile{Data: []byte("no frontmatter at all, just a paragraph of prose")}
 	fnds, err = FrontmatterPresent(fsys, "notes/bare.md", nil)
-	if err != nil || len(fnds) != 1 {
-		t.Fatalf("a bare file was not flagged exactly once: %v %v", fnds, err)
-	}
+	require.NoErrorf(t, err, "a bare file was not flagged exactly once: %v %v", fnds, err)
+	require.Lenf(t, fnds, 1, "a bare file was not flagged exactly once: %v %v", fnds, err)
 }
 
 // The no-defaults law applied to scope: the tool this was ported from
@@ -647,23 +551,19 @@ func TestFrontmatterExemptionIsTheCallersAndNeverADefault(t *testing.T) {
 
 	fsys := corpusFS()
 	fnds, err := FrontmatterPresent(fsys, "notes/index-a.md", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(fnds) != 1 {
-		t.Fatalf("index-a.md must be scanned when no exemption is stated, got %d findings — a default skip list has returned", len(fnds))
-	}
+	require.NoError(t, err)
+	require.Lenf(t, fnds, 1, "index-a.md must be scanned when no exemption is stated, got %d findings — a default skip list has returned", len(fnds))
 	fnds, err = FrontmatterPresent(fsys, "notes/index-a.md", []string{"index-"})
-	if err != nil || len(fnds) != 0 {
-		t.Fatalf("the caller's stated exemption was not honoured: %v %v", fnds, err)
-	}
+	require.NoErrorf(t, err, "the caller's stated exemption was not honoured: %v %v", fnds, err)
+	require.Lenf(t, fnds, 0, "the caller's stated exemption was not honoured: %v %v", fnds, err)
 }
 
 func TestFrontmatterRefusesEmptyGlob(t *testing.T) {
 	t.Parallel()
 
-	if _, err := FrontmatterPresent(corpusFS(), "nothing/*.md", nil); err == nil {
-		t.Error("FrontmatterPresent accepted a glob matching nothing — a broken check reported as a pass")
+	{
+		_, err := FrontmatterPresent(corpusFS(), "nothing/*.md", nil)
+		assert.Error(t, err, "FrontmatterPresent accepted a glob matching nothing — a broken check reported as a pass")
 	}
 }
 
@@ -678,17 +578,15 @@ func TestFrontmatterToleratesCRLF(t *testing.T) {
 
 	lf := "---\nname: lantern\ntype: reference\n---\n\nbody\n"
 	wantName, wantType := frontmatter(lf)
-	if wantName != "lantern" || wantType != "reference" {
-		t.Fatalf("LF baseline broken: name=%q type=%q", wantName, wantType)
-	}
+	require.Equalf(t, "lantern", wantName, "LF baseline broken: name=%q type=%q", wantName, wantType)
+	require.Equalf(t, "reference", wantType, "LF baseline broken: name=%q type=%q", wantName, wantType)
 	for _, tw := range []struct{ name, ending string }{
 		{"CRLF", "\r\n"},
 		{"CR", "\r"}, // the twin a "\r\n" replacement leaves untouched
 	} {
 		gotName, gotType := frontmatter(strings.ReplaceAll(lf, "\n", tw.ending))
-		if gotName != wantName || gotType != wantType {
-			t.Errorf("%s: name=%q type=%q, want %q/%q", tw.name, gotName, gotType, wantName, wantType)
-		}
+		assert.Equalf(t, wantName, gotName, "%s: name=%q type=%q, want %q/%q", tw.name, gotName, gotType, wantName, wantType)
+		assert.Equalf(t, wantType, gotType, "%s: name=%q type=%q, want %q/%q", tw.name, gotName, gotType, wantName, wantType)
 	}
 }
 
@@ -714,28 +612,18 @@ func TestWikilinksIgnoresQuotedSpecimens(t *testing.T) {
 			"prose about `[[quoted-specimen]]` and a real dangling [[genuinely-missing]] one\n\n" +
 			"```\nfenced [[fenced-specimen]] here\n```\n")}
 	c, err := Build(fsys, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fnds, err := Wikilinks(fsys, c)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var sawReal bool
 	for _, f := range fnds {
-		if strings.Contains(f.Detail, "quoted-specimen") {
-			t.Errorf("inline-code specimen reported as a citation: %s", f.Detail)
-		}
-		if strings.Contains(f.Detail, "fenced-specimen") {
-			t.Errorf("fenced-block specimen reported as a citation: %s", f.Detail)
-		}
+		assert.NotContainsf(t, f.Detail, "quoted-specimen", "inline-code specimen reported as a citation: %s", f.Detail)
+		assert.NotContainsf(t, f.Detail, "fenced-specimen", "fenced-block specimen reported as a citation: %s", f.Detail)
 		if strings.Contains(f.Detail, "genuinely-missing") {
 			sawReal = true
 		}
 	}
-	if !sawReal {
-		t.Error("negative control failed: a genuinely dangling wikilink was not reported")
-	}
+	assert.True(t, sawReal, "negative control failed: a genuinely dangling wikilink was not reported")
 }
 
 // The masking in maskCode can fail in TWO directions, and only one of them is
@@ -760,19 +648,15 @@ func TestMaskingNeverHidesARealLink(t *testing.T) {
 			fsys := corpusFS()
 			fsys["notes/hazard.md"] = &fstest.MapFile{Data: []byte("---\nname: hazard\n---\n\n" + body)}
 			c, err := Build(fsys, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			fnds, err := Wikilinks(fsys, c)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			for _, f := range fnds {
 				if strings.Contains(f.Detail, "really-missing") {
 					return
 				}
 			}
-			t.Errorf("masking HID a real dangling link (%s)", name)
+			assert.Failf(t, "missing dangling-link finding", "masking HID a real dangling link (%s)", name)
 		})
 	}
 }
@@ -802,11 +686,10 @@ func TestIssue2306(t *testing.T) {
 			"a.md": {Data: []byte("alpha beta gamma")},
 			"b.md": {Data: []byte("alpha delta epsilon")},
 		}, nil)
-		if err != nil {
-			t.Fatalf("Build: %v", err)
-		}
-		if got := NewBM25(c).idf("alpha"); got <= 0 {
-			t.Errorf("idf for a term in every chunk = %v, want > 0", got)
+		require.NoErrorf(t, err, "Build: %v", err)
+		{
+			got := NewBM25(c).idf("alpha")
+			assert.Positivef(t, got, "idf for a term in every chunk = %v, want > 0", got)
 		}
 	})
 
@@ -814,16 +697,10 @@ func TestIssue2306(t *testing.T) {
 		c, err := Build(fstest.MapFS{
 			"a.md": {Data: []byte("alpha beta gamma")},
 		}, nil)
-		if err != nil {
-			t.Fatalf("Build: %v", err)
-		}
+		require.NoErrorf(t, err, "Build: %v", err)
 		bm := NewBM25(c)
-		if bm.K1 != 1.2 {
-			t.Errorf("K1 = %v, want 1.2", bm.K1)
-		}
-		if bm.B != 0.75 {
-			t.Errorf("B = %v, want 0.75", bm.B)
-		}
+		assert.Equalf(t, 1.2, bm.K1, "K1 = %v, want 1.2", bm.K1)
+		assert.Equalf(t, 0.75, bm.B, "B = %v, want 0.75", bm.B)
 	})
 
 	t.Run("TrigramJaccardIsBounded", func(t *testing.T) {
@@ -832,16 +709,13 @@ func TestIssue2306(t *testing.T) {
 		got := trig.Query("anemometers", len(c.Chunks))
 		var foundWind bool
 		for _, s := range got {
-			if s.Score < 0 || s.Score > 1 {
-				t.Errorf("trigram score %v out of [0,1] for chunk %d", s.Score, s.Chunk)
-			}
+			assert.GreaterOrEqualf(t, s.Score, 0.0, "trigram score %v out of [0,1] for chunk %d", s.Score, s.Chunk)
+			assert.LessOrEqualf(t, s.Score, 1.0, "trigram score %v out of [0,1] for chunk %d", s.Score, s.Chunk)
 			if c.Chunks[s.Chunk].File == "notes/wind.md" {
 				foundWind = true
 			}
 		}
-		if !foundWind {
-			t.Errorf("morphology variant \"anemometers\" did not reach notes/wind.md; got %+v", got)
-		}
+		assert.Truef(t, foundWind, "morphology variant \"anemometers\" did not reach notes/wind.md; got %+v", got)
 	})
 
 	t.Run("FusionIsReciprocalRankOnly", func(t *testing.T) {
@@ -849,9 +723,7 @@ func TestIssue2306(t *testing.T) {
 			"a.md": {Data: []byte("alpha beta gamma")},
 			"b.md": {Data: []byte("delta epsilon zeta")},
 		}, nil)
-		if err != nil {
-			t.Fatalf("Build: %v", err)
-		}
+		require.NoErrorf(t, err, "Build: %v", err)
 		chA := fixedChannel{name: "A", res: []Scored{
 			{Chunk: 0, Rank: 0, Score: 10},
 			{Chunk: 1, Rank: 1, Score: 5},
@@ -869,12 +741,8 @@ func TestIssue2306(t *testing.T) {
 		const eps = 1e-12
 		for _, f := range []string{"a.md", "b.md"} {
 			got, ok := byFile[f]
-			if !ok {
-				t.Fatalf("missing hit for %s", f)
-			}
-			if diff := got - want; diff < -eps || diff > eps {
-				t.Errorf("%s fused = %v, want %v (reciprocal-rank sum)", f, got, want)
-			}
+			require.Truef(t, ok, "missing hit for %s", f)
+			assert.InDeltaf(t, want, got, eps, "%s fused = %v, want %v (reciprocal-rank sum)", f, got, want)
 		}
 	})
 }
@@ -897,17 +765,11 @@ func TestMaskingDoesSilenceQuotedSpecimens(t *testing.T) {
 			fsys := corpusFS()
 			fsys["notes/quiet.md"] = &fstest.MapFile{Data: []byte("---\nname: quiet\n---\n\n" + body)}
 			c, err := Build(fsys, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			fnds, err := Wikilinks(fsys, c)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			for _, f := range fnds {
-				if strings.Contains(f.Detail, "quiet-one") {
-					t.Errorf("quoted specimen reported as a citation (%s): %s", name, f.Detail)
-				}
+				assert.NotContainsf(t, f.Detail, "quiet-one", "quoted specimen reported as a citation (%s): %s", name, f.Detail)
 			}
 		})
 	}
@@ -924,24 +786,19 @@ func TestIssue2305(t *testing.T) {
 	}
 
 	c, err := Build(fsys, nil)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	require.NoErrorf(t, err, "Build: %v", err)
 
 	for _, ch := range c.Chunks {
-		if strings.HasPrefix(ch.File, ".git/") {
-			t.Errorf("chunk from .git/ reached the index: %s", ch.File)
-		}
+		assert.Falsef(t, strings.HasPrefix(ch.File, ".git/"), "chunk from .git/ reached the index: %s", ch.File)
 	}
 
 	for _, f := range c.Files {
-		if strings.HasPrefix(f, ".git/") {
-			t.Errorf(".git/ file listed in Files: %s", f)
-		}
+		assert.Falsef(t, strings.HasPrefix(f, ".git/"), ".git/ file listed in Files: %s", f)
 	}
 
-	if _, ok := c.ByClass[".git"]; ok {
-		t.Errorf(".git class appeared in ByClass -- git content reached the index")
+	{
+		_, ok := c.ByClass[".git"]
+		assert.Falsef(t, ok, ".git class appeared in ByClass -- git content reached the index")
 	}
 }
 
@@ -959,25 +816,17 @@ func TestBuildSkipsNestedGitDirectory(t *testing.T) {
 	}
 
 	c, err := Build(fsys, nil)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	require.NoErrorf(t, err, "Build: %v", err)
 
 	for _, ch := range c.Chunks {
-		if strings.Contains("/"+ch.File, "/.git/") {
-			t.Errorf("chunk from a nested .git/ reached the index: %s", ch.File)
-		}
+		assert.NotContainsf(t, "/"+ch.File, "/.git/", "chunk from a nested .git/ reached the index: %s", ch.File)
 	}
 	sawReal := false
 	for _, f := range c.Files {
-		if strings.Contains("/"+f, "/.git/") {
-			t.Errorf("nested .git/ file listed in Files: %s", f)
-		}
+		assert.NotContainsf(t, "/"+f, "/.git/", "nested .git/ file listed in Files: %s", f)
 		if f == "sub/real.md" {
 			sawReal = true
 		}
 	}
-	if !sawReal {
-		t.Errorf("sub/real.md missing from Files %v: the skip must drop only .git, not its parent", c.Files)
-	}
+	assert.Truef(t, sawReal, "sub/real.md missing from Files %v: the skip must drop only .git, not its parent", c.Files)
 }
