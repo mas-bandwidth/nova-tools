@@ -60,9 +60,8 @@ func TestNativeRetriesAProvider5xxLaunch(t *testing.T) {
 			usdAt = i
 		}
 	}
-	if attemptAt < 0 || usdAt < 0 {
-		t.Fatalf("the header does not carry attempt and usd:\n%s", rows[0])
-	}
+	require.GreaterOrEqual(t, attemptAt, 0, "the header does not carry attempt and usd:\n%s", rows[0])
+	require.GreaterOrEqual(t, usdAt, 0, "the header does not carry attempt and usd:\n%s", rows[0])
 	got := strings.Split(rows[1], "\t")[attemptAt]
 	assert.Equal(t, "1", got, "the first launch row carries attempt=%s, want 1", got)
 	got = strings.Split(rows[2], "\t")[attemptAt]
@@ -88,9 +87,8 @@ func TestNativeLostResponseStaysUnknownAndLaunchesOnce(t *testing.T) {
 		slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
 	require.Equal(t, 0, code, "native run exits 0, got %d:\n%s", code, errOut.String())
-	if !res.lost || res.end != "unknown" {
-		t.Fatalf("lost=%v end=%s, want a retained unknown", res.lost, res.end)
-	}
+	require.True(t, res.lost, "lost=%v end=%s, want a retained unknown", res.lost, res.end)
+	require.Equal(t, "unknown", res.end, "lost=%v end=%s, want a retained unknown", res.lost, res.end)
 	jobDir := filepath.Join(slot, "jobs", label)
 	launches, err := os.ReadFile(filepath.Join(jobDir, "launches"))
 	require.NoError(t, err)
@@ -135,9 +133,8 @@ func TestPersistUnknownFallsBackWhenTheMarkerCannotBeWritten(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(job, "harness-output.log"), 0o755))
 	require.NoError(t, persistUnknown(job))
 	raw, err := os.ReadFile(filepath.Join(job, "harness.log"))
-	if err != nil || !strings.Contains(string(raw), "why=unknown-acceptance") {
-		t.Fatalf("the fallback log does not hold the unknown: %q, %v", raw, err)
-	}
+	require.NoError(t, err, "the fallback log does not hold the unknown: %q, %v", raw, err)
+	require.Contains(t, string(raw), "why=unknown-acceptance", "the fallback log does not hold the unknown: %q, %v", raw, err)
 }
 
 func TestPersistUnknownFailsWhenNothingCanBeWritten(t *testing.T) {
@@ -155,7 +152,6 @@ func TestNativeLostResponseLineSaysUnknownAcceptance(t *testing.T) {
 	out := nativeVerdict(t, "lost", "FAKE-LOST-RESPONSE\n")
 	require.NotContains(t, out, "NATIVE OK", "a lost response said OK:\n%s", out)
 	require.Contains(t, out, "why=unknown-acceptance", "the verdict did not keep unknown-acceptance:\n%s", out)
-	if strings.Contains(out, "why=no-result") || strings.Contains(out, "why=rc") {
-		t.Fatalf("a lost response was filed as an ordinary incomplete:\n%s", out)
-	}
+	require.NotContains(t, out, "why=no-result", "a lost response was filed as an ordinary incomplete:\n%s", out)
+	require.NotContains(t, out, "why=rc", "a lost response was filed as an ordinary incomplete:\n%s", out)
 }

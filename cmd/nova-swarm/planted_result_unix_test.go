@@ -9,13 +9,13 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func plantNativeResultFIFO(t *testing.T, job string) {
 	t.Helper()
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(job, 0o755))
 	if err := syscall.Mkfifo(filepath.Join(job, "RESULT.md"), 0o644); err != nil {
 		t.Skipf("this platform will not make a FIFO: %v", err)
 	}
@@ -62,9 +62,7 @@ func TestNativeDoesNotBlockOnAPlantedFIFOAtResult(t *testing.T) {
 	}()
 	select {
 	case got := <-done:
-		if got.harness == "ok" {
-			t.Fatal("native treated a FIFO at RESULT.md as a published result")
-		}
+		require.NotEqual(t, "ok", got.harness, "native treated a FIFO at RESULT.md as a published result")
 	case <-time.After(plantedWaitBound()):
 		t.Fatal("STILL BLOCKED after waiting on a FIFO at RESULT.md: native is wedged")
 	}
@@ -81,9 +79,7 @@ func TestNativeHarnessStateDoesNotBlockOnAPlantedFIFO(t *testing.T) {
 	go func() { done <- harnessState(job) }()
 	select {
 	case got := <-done:
-		if got == "ok" {
-			t.Fatal("native's result lookup treated a FIFO at RESULT.md as a published result")
-		}
+		require.NotEqual(t, "ok", got, "native's result lookup treated a FIFO at RESULT.md as a published result")
 	case <-time.After(plantedWaitBound()):
 		t.Fatal("STILL BLOCKED after waiting on a FIFO at RESULT.md: native's result lookup is wedged")
 	}

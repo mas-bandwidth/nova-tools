@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -209,7 +210,7 @@ func TestLiveSamplerNeverRunsTwoReadsAtOnce(t *testing.T) {
 		if time.Now().After(deadline) {
 			answered, _ := s.Counts()
 			s.Stop()
-			t.Fatalf("the sampler answered %d reads in 30s; it wants two", answered)
+			require.Fail(t, fmt.Sprintf("the sampler answered %d reads in 30s; it wants two", answered))
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -245,7 +246,7 @@ func TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			_, _, _, failures, _ := s.Observed()
-			t.Fatalf("three consecutive failed reads were counted; got %d in 30s", failures)
+			require.Fail(t, fmt.Sprintf("three consecutive failed reads were counted; got %d in 30s", failures))
 		}
 		time.Sleep(5 * time.Millisecond)
 	}

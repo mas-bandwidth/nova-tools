@@ -272,9 +272,7 @@ func TestNativeIdleZeroWatchesNothing(t *testing.T) {
 	_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
 	require.NotContains(t, stdout.String(), "CARD IDLE", "a run with no idle window ends nothing for idleness:\n%s", stdout.String())
 	raw, err := os.ReadFile(filepath.Join(slot, "jobs", "unwatched", "RESULT.md"))
-	if err == nil && strings.Contains(string(raw), "RESULT: BLOCKED") {
-		t.Fatalf("a run that was never ended by the watch writes no blocked report:\n%s", raw)
-	}
+	require.False(t, err == nil && strings.Contains(string(raw), "RESULT: BLOCKED"), "a run that was never ended by the watch writes no blocked report:\n%s", raw)
 	// The refusal is still NAMED, because naming it costs the card nothing -- and this is
 	// now the test that holds native.go|nativeRun|line byte for byte in the audit, so it
 	// asserts the WHOLE line. A run with no idle window cannot race the watch for it.

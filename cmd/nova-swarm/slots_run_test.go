@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // RED TESTS FOR #880 ITEM 18: `nova-swarm run` HOLDS A BENCH SLOT LEASE PER TASK.
@@ -20,9 +22,7 @@ import (
 func slotShares(t *testing.T, body string) string {
 	t.Helper()
 	store := filepath.Join(t.TempDir(), "slots-store")
-	if err := os.MkdirAll(store, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(store, 0o755))
 	write(t, filepath.Join(store, "shares.tsv"), body)
 	return store
 }

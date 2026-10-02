@@ -4,6 +4,7 @@ package swarm
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -48,7 +49,7 @@ func TestNoHeadersIsOneUpstreamRequestAndUnknown(t *testing.T) {
 	resp, err := client.Do(req)
 	if err == nil {
 		resp.Body.Close()
-		t.Fatalf("a request with no upstream headers was answered %d", resp.StatusCode)
+		require.Fail(t, fmt.Sprintf("a request with no upstream headers was answered %d", resp.StatusCode))
 	}
 	require.True(t, p.Lost(), "no headers after a written request was not unknown")
 	require.GreaterOrEqual(t, p.HeaderWall(), 200*time.Millisecond, "header wall %s silence wall %s", p.HeaderWall(), p.SilenceWall())

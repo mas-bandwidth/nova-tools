@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE CONTRACT TESTS. Every one of them runs against the FAKE HARNESS binary on PATH,
@@ -50,9 +52,7 @@ func newBench(t *testing.T) *bench {
 	dir := t.TempDir()
 	b := &bench{t: t, dir: dir, pool: filepath.Join(dir, "pool")}
 	t.Cleanup(func() { reapLeftoverSupervise(b) })
-	if err := os.MkdirAll(b.pool, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(b.pool, 0o755))
 	write(t, filepath.Join(b.pool, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	// The three binaries are built ONCE for the whole package, not once per bench. Thirty
 	// benches building them each saturated the machine, and a dispatcher that cannot start
@@ -62,16 +62,12 @@ func newBench(t *testing.T) *bench {
 	b.sandbox, b.fakeSandbox = builtSandbox, builtFakeSandbox
 
 	home := filepath.Join(dir, "worker-home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(home, 0o755))
 	write(t, filepath.Join(home, "AGENTS.md"), "the worker's own self, copied one way into every slot\n")
 
 	b.keyFile = filepath.Join(dir, "key")
 	write(t, b.keyFile, "FAKE_KEY="+fakeKey+"\na second line nothing may read\n")
-	if err := os.Chmod(b.keyFile, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chmod(b.keyFile, 0o600))
 
 	b.worker = filepath.Join(dir, "worker.json")
 	desc := map[string]any{
@@ -94,9 +90,8 @@ func newBench(t *testing.T) *bench {
 // the compile (the studio bench charged it to TestBenchProbeOK).
 func builtBinaries(t *testing.T) (string, string) {
 	t.Helper()
-	if err := buildShared(); err != nil {
-		t.Fatalf("building the binaries these tests run: %v", err)
-	}
+	err := buildShared()
+	require.NoError(t, err, "building the binaries these tests run: %v", err)
 	return builtTool, builtPath
 }
 
@@ -269,9 +264,7 @@ func buildWith(into, name, pkg string, tags ...string) (string, error) {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := repoRootPath()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return root
 }
 
@@ -282,12 +275,8 @@ func repoRootPath() (string, error) {
 
 func write(t *testing.T, path, body string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 }
 
 // swarm runs the built binary, which is what a stranger meets at a shell prompt. It fails
@@ -332,9 +321,7 @@ func (b *bench) swarmTry(args ...string) (exit int, stdout, stderr string, err e
 
 func mustContain(t *testing.T, what, body, want string) {
 	t.Helper()
-	if !strings.Contains(body, want) {
-		t.Errorf("%s does not contain %q:\n%s", what, want, body)
-	}
+	assert.Contains(t, body, want, "%s does not contain %q:\n%s", what, want, body)
 }
 
 // ---------------------------------------------------------------------------------------

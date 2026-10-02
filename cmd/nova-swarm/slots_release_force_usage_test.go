@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE FLAG THE HELP DID NOT HAVE (#1902, hold on PR #1943).
@@ -19,9 +22,7 @@ func TestUsageNamesForceAndTheKeepOnSlotsRelease(t *testing.T) {
 	t.Parallel()
 
 	exit, stdout, stderr := runSwarm(t, "help")
-	if exit != 0 {
-		t.Fatalf("`nova-swarm help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)
-	}
+	require.Equal(t, 0, exit, "`nova-swarm help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)
 	var block []string
 	for _, line := range strings.Split(stdout, "\n") {
 		if strings.Contains(line, "nova-swarm slots release") {
@@ -37,9 +38,7 @@ func TestUsageNamesForceAndTheKeepOnSlotsRelease(t *testing.T) {
 			break
 		}
 	}
-	if len(block) == 0 {
-		t.Fatalf("the usage banner has no `nova-swarm slots release` line at all:\n%s", stdout)
-	}
+	require.NotEmpty(t, block, "the usage banner has no `nova-swarm slots release` line at all:\n%s", stdout)
 	usage := strings.Join(block, "\n")
 	for _, want := range []string{
 		"--force",
@@ -47,13 +46,9 @@ func TestUsageNamesForceAndTheKeepOnSlotsRelease(t *testing.T) {
 		"live=",
 		"exit 2",
 	} {
-		if !strings.Contains(usage, want) {
-			t.Errorf("the usage banner's slots release entry does not name %q; a release that keeps a live holder and exits 2 has to say so where a person looks:\n%s", want, usage)
-		}
+		assert.Contains(t, usage, want, "the usage banner's slots release entry does not name %q; a release that keeps a live holder and exits 2 has to say so where a person looks:\n%s", want, usage)
 	}
 	// --force is optional and it is not the default: the line carries it in brackets, and
 	// a banner that printed it as required would be teaching the oversubscribing form.
-	if !strings.Contains(usage, "[--force]") {
-		t.Errorf("the usage banner must show --force as the optional override, `[--force]`:\n%s", usage)
-	}
+	assert.Contains(t, usage, "[--force]", "the usage banner must show --force as the optional override, `[--force]`:\n%s", usage)
 }
