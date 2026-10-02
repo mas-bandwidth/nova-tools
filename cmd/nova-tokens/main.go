@@ -5,7 +5,7 @@
 // It exists because we have an obligation to report token spend, and the first thing that
 // shape was built as — three scripts of Python under zsh — produced nine day files and
 // every way it could fail at once: five paths defaulted inside the script, so a run on
-// each run keeps day files as the source of truth and does not remove existing month data;
+// another bench folds the wrong bench; every path here is a flag, and the tool removes no month file on a real
 // run; nine unreadable files were one line at the bottom of a summary and the run exited
 // 0; a day could shrink silently the moment a source went quiet; two repo-attribution
 // tables in two scripts disagreed about three repos; five different caps, none a flag,
@@ -1171,7 +1171,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	// Report folds that the caller's own sources produce for one day, with the same sources and
-	// the same attribution as fold". That has to include what the fold SAYS about them.
+	// the same attribution as fold. That has to include what the fold SAYS about them.
 	// This verb counted only the unreadables, so a transcript line whose stamp does not
 	// parse and a message with no id -- both counted by the reader, both dropped before
 	// the body -- left no trace at all, and the friend pasted a short day onto the bus
