@@ -5,11 +5,16 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cairn"
 )
 
 func runOK(t *testing.T, stdin string, args ...string) (string, string) {
@@ -405,5 +410,74 @@ func TestAMalformedOpenRecordRefusesTheAppendAndWritesNothing(t *testing.T) {
 				t.Fatalf("s2 append printed %q, want its own session's source", out)
 			}
 		})
+	}
+}
+
+type infiniteByteReader byte
+
+func (b infiniteByteReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = byte(b)
+	}
+	return len(p), nil
+}
+
+func TestAppendStdinCappedAtTenMiB(t *testing.T) {
+	t.Parallel()
+
+	store := t.TempDir()
+	runOK(t, "", "open", "--store", store, "--session", "s", "--publish", "never")
+
+	// Supply more than 10 MiB of data via stdin (e.g. 10 MiB + 1024 bytes).
+	const limit = 10 << 20
+	excess := limit + 1024
+	r := io.LimitReader(infiniteByteReader('z'), int64(excess))
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"append", "--store", store, "--session", "s", "--entry", "capped", "--file", "-", "--publish", "never"}, r, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("append failed: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+
+	raw, err := os.ReadFile(filepath.Join(store, "entries", "s", "capped.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Text) != limit {
+		t.Fatalf("stored text length = %d, want capped at %d (10 MiB)", len(stored.Text), limit)
+	}
+}
+
+func BenchmarkNovaCairnIndex(b *testing.B) {
+	store := b.TempDir()
+	now := time.Now().UTC()
+	for s := 0; s < 5; s++ {
+		sess := fmt.Sprintf("session-%d", s)
+		if err := cairn.Open(store, sess, "", now, cairn.PublishNever); err != nil {
+			b.Fatal(err)
+		}
+		for e := 0; e < 20; e++ {
+			entry := fmt.Sprintf("entry-%d", e)
+			if _, err := cairn.Append(store, sess, entry, "words of entry note", "", now, cairn.PublishNever); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"index", "--store", store}, strings.NewReader(""), &stdout, &stderr)
+		if code != 0 {
+			b.Fatalf("index failed with code %d: %s", code, stderr.String())
+		}
 	}
 }

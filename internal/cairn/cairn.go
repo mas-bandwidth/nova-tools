@@ -676,10 +676,11 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 	return rows, total, nil
 }
 
-// Coverage derives the ledger from the store: session records and stored
-// entries counted, never remembered, so the number cannot drift from the
-// tree it reports on.
-func Coverage(store string) Ledger {
+// CoverageFromIndex derives the ledger from the store using an already-computed
+// index: session records are counted from the store, and entries come from
+// the index rows. This avoids re-indexing the entire store when the caller
+// has already indexed it.
+func CoverageFromIndex(store string, idx []IndexRow) Ledger {
 	var led Ledger
 	names := map[string]bool{}
 	for _, dir := range []string{filepath.Join(store, "sessions"), store} {
@@ -695,8 +696,17 @@ func Coverage(store string) Ledger {
 		}
 	}
 	led.Sessions = len(names)
-	if _, total, err := Index(store, "", 0); err == nil {
-		led.Entries = total
-	}
+	led.Entries = len(idx)
 	return led
+}
+
+// Coverage derives the ledger from the store: session records and stored
+// entries counted, never remembered, so the number cannot drift from the
+// tree it reports on.
+func Coverage(store string) Ledger {
+	idx, _, err := Index(store, "", 0)
+	if err != nil {
+		return CoverageFromIndex(store, nil)
+	}
+	return CoverageFromIndex(store, idx)
 }
