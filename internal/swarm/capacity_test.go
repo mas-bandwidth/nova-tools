@@ -3,6 +3,9 @@ package swarm
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE CAPACITY TEMPLATE IS #176'S NEAR-TERM ENDPOINT: a manual census and routing log
@@ -28,9 +31,7 @@ func TestTheCapacityTemplateIsTheCensusAndRoutingLogNotAScheduler(t *testing.T) 
 	t.Parallel()
 
 	body, err := Template("capacity")
-	if err != nil {
-		t.Fatalf("template capacity: %v", err)
-	}
+	require.NoError(t, err, "template capacity: %v", err)
 	for _, want := range []string{
 		"capacity — one friend's offered capacity and the manual routing log (#176)",
 		"offered by: <",
@@ -72,27 +73,21 @@ func TestTheCapacityTemplateIsTheCensusAndRoutingLogNotAScheduler(t *testing.T) 
 		"no token",
 		"no private host detail",
 	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the capacity template does not carry %q", want)
-		}
+		assert.Contains(t, body, want, "the capacity template does not carry %q", want)
 	}
 	lower := strings.ToLower(body)
 	for _, private := range []string{"rowan", "freddy", "stella", "emma", "johnny", "glenn", "deepseek", "age1", "sk-", "ghp_", "mas-bandwidth", "/users/", "/opt/homebrew"} {
-		if strings.Contains(lower, private) {
-			t.Errorf("the capacity template publishes a private or live detail: %q", private)
-		}
+		assert.NotContains(t, lower, private, "the capacity template publishes a private or live detail: %q", private)
 	}
 	// THE BANNER AND THE REFUSAL NAME THE SAME SET. A name Template answers to that
 	// the list omits is the drift that lost `worker` once, and `capacity` lands today
 	// in the same place the setup form of #184 did.
-	if names := strings.Join(TemplateNames(), ","); !strings.Contains(names, "capacity") {
-		t.Errorf("TemplateNames must carry capacity so the banner and the refusal name the same set: %s", names)
-	}
+	names := strings.Join(TemplateNames(), ",")
+	assert.Contains(t, names, "capacity", "TemplateNames must carry capacity so the banner and the refusal name the same set: %s", names)
 	// It is a form, not a task's conditions: `add --template capacity` is refused the
 	// way `result` and `setup` are, because wrapping a task inside an offer/routing
 	// form produces a prompt that is neither a task nor a form a person and a friend
 	// fill together.
-	if _, err := WrapTemplate("capacity", 3, []byte("a task")); err == nil {
-		t.Error("`capacity` is the issue #176 census-and-routing-log form and not a task template; add --template capacity must be refused the way ` result` and `setup` are")
-	}
+	_, err = WrapTemplate("capacity", 3, []byte("a task"))
+	assert.Error(t, err, "`capacity` is the issue #176 census-and-routing-log form and not a task template; add --template capacity must be refused the way ` result` and `setup` are")
 }
