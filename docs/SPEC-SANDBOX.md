@@ -30,10 +30,10 @@ Landlock on Linux; other platforms refuse to run the command.
 | a sandbox that silently does nothing on a platform it does not support | rules 1, 11 |
 | a credential file readable inside the wall | rules 6, 10 |
 | `/tmp` on macOS is a symlink to `/private/tmp`, and a policy written against the unresolved path grants nothing |
-| a deny-by-default policy makes the inherited temp directory unwritable and half a toolchain dies on its first scratch file | rule 8 |
+| a deny-by-default policy makes the inherited temp directory unwritable and half a toolchain dies on its first scratch file | the tool creates its own temp directory under the **first** `--write` |
 | The harness's `external_directory` is relative to the harness cwd, so a job directory that is not the cwd is "external" to itself |
-| 120 native cards each download the Go toolchain and every module into their own data home, up to 5 GB per slot, and the runners fill their disk | rule 17: an explicitly named shared cache directory in the write set |
-| the wall stands and the job's first `git status` dies on `~/.gitconfig`, which reads as a broken sandbox | rule 9: the caller sets `HOME` to the per-job data home, and a `HOME` outside both lists is a refusal |
+| 120 native cards each download the Go toolchain and every module into their own data home, up to 5 GB per slot, and the runners fill their disk | an explicitly named shared cache directory in the write set |
+| the wall stands and the job's first `git status` dies on `~/.gitconfig`, which reads as a broken sandbox | the caller sets `HOME` to the per-job data home, and a `HOME` outside both lists is a refusal |
 
 ## The rules, numbered
 
@@ -45,7 +45,7 @@ The test requirements are listed under **Tests this spec demands**.
    `sandbox-exec` on `darwin` and Landlock on `linux`. On both, the tool
    waits and returns the command's status. On `linux` it restricts **itself**
    first and starts the command afterwards, so the tool is inside the wall it
-   applied while it waits (rule 12 and the Linux section). If the platform's backend is not available at run time — no
+    applied while it waits, as the Linux section describes. If the platform's backend is not available at run time — no
    Landlock in the running kernel, no `sandbox-exec` on `PATH` and none at
    `/usr/bin/sandbox-exec`, or a platform without an implemented backend — the tool prints `SANDBOX REFUSED
    reason=no_sandbox` and **the command does not run**. A backend that is
@@ -83,8 +83,8 @@ The test requirements are listed under **Tests this spec demands**.
    `--read-noexec` and `--write`, is a refusal naming both flags: one asks for
    execute and the other takes it away, and `--write` carries both. A
    default write set would be a guess about somebody else's job. **The two
-   named exceptions**, and there are no others: rule 8 puts the temp directory
-   under the **first** `--write` and rule 13 defaults the `--cwd` to the
+   named exceptions**, and there are no others: the tool puts the temp directory
+   under the **first** `--write` and defaults the `--cwd` to the
    **first** `--write`. Neither is a guess about the *lists* — the caller gave
    both paths — and both are stated here so that "never guessed" and "the first
    `--write`" stop contradicting each other. The order of `--write` flags is
@@ -156,7 +156,7 @@ The test requirements are listed under **Tests this spec demands**.
    `(allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))`
    the same curl is `200`. Every wrapped worker would otherwise fail its first
    request while the `SANDBOX OK` line said `net=nopromise`, which is the
-   silent sandbox rule 1 forbids. The literal is emitted **inside** the network
+   silent sandbox this spec forbids. The literal is emitted **inside** the network
    marker, so `--net-deny` takes the resolver away with the network.
    (`tools/sandboxcheck`, checks `dns_resolves` and
    `dns_resolves_control`: the same profile with the literal removed does not
@@ -194,7 +194,7 @@ The test requirements are listed under **Tests this spec demands**.
    flag is not loud in the argv; the word on the line is what a reader sees,
    and it is the same word whether the caller never wanted a denial or gave
    one up. There is no `SANDBOX NOTE` that proceeds with a weaker wall than the
-   caller asked for — that is the silent sandbox rule 1 exists to prevent.
+   caller asked for — that is the silent sandbox this spec exists to prevent.
    Landlock restricts only TCP `bind`/`connect` even at ABI 4; UDP is not
    restricted at any ABI, and `net=denied` on linux means exactly TCP.
 8. **Temp is inside the wall.** The tool creates
@@ -227,10 +227,10 @@ The test requirements are listed under **Tests this spec demands**.
    starts: `SANDBOX NOTE dropped from the child's environment: <names>; an agent
    socket speaks for a key the wall denies`. `<names>` lists exactly the
    variables removed by the set above.
-   The scrub is the second half of rule 7's network policy: the wall denies
+   The scrub is the second half of the network policy: the wall denies
    the agent's *socket* and the scrub removes the *address* of it, so a
    command that would otherwise sign a push with a key it cannot read has
-   neither half. It is by **exclusion**, never an allow-list, because rule 6's
+   neither half. It is by **exclusion**, never an allow-list, because the caller's
    credential must still arrive: the tool drops the names it knows are agents
    and passes everything else through untouched. The evidence is a **Go test**, not
    the check: `internal/sandbox/policy_test.go`'s `TestChildEnv` and
@@ -241,7 +241,7 @@ The test requirements are listed under **Tests this spec demands**.
    thing end to end through the binary. `tools/sandboxcheck`'s
    `env_no_ssh_auth_sock` builds the child environment by its **own** filter
    before `sandbox-exec` runs, so it can only agree with itself. The credential
-   the caller deliberately passed by environment (rule 6) must arrive.
+   the caller deliberately passed by environment must arrive.
 
    **A credential passed by environment reaches the child.** The caller owns
    any further filtering before that child starts a tool subprocess; the
@@ -284,13 +284,13 @@ The test requirements are listed under **Tests this spec demands**.
    no XDG variable reaches — while the quartet covers only the tools that
    honour it and must grow a name every time a toolchain invents one. (The
    quartet was measured too: `GIT_CONFIG_GLOBAL` + `XDG_CONFIG_HOME` fixes
-   git. It fixes git.) The tool does not set `HOME` itself: rule 4 forbids it
-   guessing which write path is a data home (rule 4 names its only two
+   git. It fixes git.) The tool does not set `HOME` itself: guessing
+   which write path is a data home is forbidden (the spec names its only two
    exceptions, and this is not one of them). It does **check**: a run whose
    `HOME` resolves outside every `--write` path is
    `SANDBOX REFUSED reason=home_outside` at exit 125 and the command does not
    run, because a wall that lets the job start and kills its first git
-   command is the silent sandbox rule 1 exists to prevent. The refusal (and
+   command is the silent sandbox this spec exists to prevent. The refusal (and
    `probe`'s and `policy`'s) ends with the command that answers it, the same
    invocation with a data home made inside the first `--write`:
    `run: mkdir -p <first --write>/home && HOME=<first --write>/home nova-sandbox <the same arguments>`.
@@ -304,7 +304,7 @@ The test requirements are listed under **Tests this spec demands**.
     check that comes back the wrong way is `PROBE REFUSED` at exit 1 naming
     the check. The last two are not decoration: a wall that denies the work
     too is broken, and a two-check probe would call it a pass. **`--secret` is
-    optional **. A caller whose key is delivered by `nova-secrets
+    optional.** A caller whose key is delivered by `nova-secrets
     exec` into the environment has **no key file** for the wall to protect —
     the key is never a file on disk — so the probe runs its other four checks
     and no `read_secret` step is invented; the `secret_inside_allow` check of
