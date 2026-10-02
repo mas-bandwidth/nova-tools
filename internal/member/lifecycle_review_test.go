@@ -65,7 +65,7 @@ func TestReviewABackgroundStartHeldWhileItsCardLeavesTheQueueIsNeitherForgottenN
 	hr.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "h"})
 	_, err = m.Tick(time.Unix(0, 0))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"c1:false"}, hr.endedLaunches(), "reaped once it ended")
+	assert.Equal(t, []string{"c1:true"}, hr.endedLaunches(), "reaped once it ended: the sprint let the launch go")
 	assert.Zero(t, m.Running())
 	assert.Empty(t, s.lines("finish"), "a card no longer listed is never reported")
 }
@@ -105,7 +105,7 @@ func TestReviewAPostKeyedByCardGoesToTheLaunchItWasMadeForAcrossARedeal(t *testi
 	hr.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "h"})
 	_, err = m.Tick(time.Unix(0, 0))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"c1:false"}, hr.endedLaunches(), "gen 1 reaped")
+	assert.Equal(t, []string{"c1:true"}, hr.endedLaunches(), "gen 1 reaped")
 	<-hr.began
 	<-m.Wake()
 	_, err = m.Tick(time.Unix(0, 0))
@@ -305,6 +305,6 @@ func TestReviewABackgroundMemberRunsEveryCardOnceWithinItsWidth(t *testing.T) {
 	assert.LessOrEqual(t, most, 4, "the lanes never pass the width")
 	assert.Len(t, r.endedLaunches(), 12)
 	for _, e := range r.endedLaunches() {
-		assert.True(t, strings.HasSuffix(e, ":false"), "an ok finish is not failed: %s", e)
+		assert.True(t, strings.HasSuffix(e, ":true"), "an accepted finish is accepted: %s", e)
 	}
 }

@@ -48,18 +48,23 @@ type Runner interface {
 }
 
 // Ender is a Runner told when the member is done with a launch whose child ended: reported,
-// returned or reaped, so nothing reads its working tree again. failed is whether it ended in
-// a way a person may want to inspect (a failed finish, a read returned with no verdict); the
-// runner removes or keeps what the launch staged (docs/SPEC-SWARM.md, `member`).
+// returned or reaped, so nothing reads its working tree again. accepted is whether the sprint
+// took the launch's word: its finish (ok or failed) or its return answered 0, or its card left
+// this member's queue (the claim moved, the card dropped); the runner then retires what the
+// launch staged, apart from the pass. A report the sprint refused is not accepted: the runner
+// keeps the slot and says so, and its sweep retires it once the queue no longer holds the card
+// (docs/SPEC-SWARM.md, `member`; tla/MemberSlot.tla).
 type Ender interface {
-	Ended(p Packet, failed bool)
+	Ended(p Packet, accepted bool)
 }
 
-// Epocher is a Runner told the sprint's epoch each pass, as the queue answered it: its
-// cleaner, apart from the pass, removes what launches of epochs long cleared left behind
-// (docs/SPEC-SWARM.md, `member`). Epoch only records the number; it never waits.
-type Epocher interface {
-	Epoch(epoch uint64)
+// Holder is a Runner told, each pass, the cards the sprint's queue holds for this member (one
+// packet per card of its columns, as the queue answered): its cleaner, apart from the pass,
+// retires every slot of a launch none of them names and nothing runs (a crash or a kill left
+// it, or its report was refused), so a member restarted sweeps what the sprint has let go
+// (docs/SPEC-SWARM.md, `member`). Holds only records the names; it never waits.
+type Holder interface {
+	Holds(cards []Packet)
 }
 
 // Child is one running card.
@@ -603,8 +608,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		return 0, fmt.Errorf("queue: not JSON: %w", err)
 	}
 	m.epoch = q.Epoch
-	if e, ok := m.runner.(Epocher); ok {
-		e.Epoch(q.Epoch)
+	if h, ok := m.runner.(Holder); ok {
+		h.Holds(m.heldCards(q))
 	}
 	if m.cfg.Width == 0 && q.Width != m.width {
 		// the fleet row changed (fleet up --width, fleet sync): said once, run from now
@@ -666,7 +671,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			}
 			epoch, gen, attempt := m.claim(c)
 			fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, id, l.epoch, l.gen, l.attempt, epoch, gen, attempt)
-			m.forget(id, false) // reaped: the result is nobody's
+			m.forget(id, true) // reaped: the result is nobody's, and the sprint has let the launch go
 			claimMoved[id] = true
 			continue
 		}
@@ -794,7 +799,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			noAnswer(args[0]+" "+id, out)
 			continue
 		}
-		m.forget(id, !m.cfg.Reader && !ok) // refused (1) too: the card is no longer ours to report
+		// refused (1) too: the card is no longer ours to report; the runner keeps its slot
+		m.forget(id, code == 0)
 		acted++
 	}
 	// A child whose card the queue no longer lists (the sprint was cleared, the
@@ -802,7 +808,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// ended it is forgotten, so it does not hold a place of the width for ever.
 	for id, l := range m.running {
 		if _, listed := byID[id]; !listed && !l.busy && l.child.Done() {
-			m.forget(id, false)
+			m.forget(id, true)
 			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
 		}
 	}
@@ -1074,15 +1080,34 @@ func (m *Member) collect() (acted int) {
 }
 
 // forget drops a launch and what is remembered of its card, and tells a runner that is an
-// Ender the launch is done with (failed: a person may want to inspect it).
-func (m *Member) forget(id string, failed bool) {
+// Ender the launch is done with (accepted: the sprint took its word, so its slot is retired).
+func (m *Member) forget(id string, accepted bool) {
 	if l, ok := m.running[id]; ok {
 		if e, ok := m.runner.(Ender); ok {
-			e.Ended(l.packet, failed)
+			e.Ended(l.packet, accepted)
 		}
 	}
 	delete(m.running, id)
 	delete(m.stageRetried, id)
+}
+
+// heldCards is every card the queue holds for this member, one packet each (Holder): the
+// card's own packet when the answer carries one, else its claim (the answer's epoch, its gen
+// and attempt) under this loop's kind, which is all a launch's name is made of.
+func (m *Member) heldCards(q queueOut) []Packet {
+	kind := "work"
+	if m.cfg.Reader {
+		kind = "read"
+	}
+	held := make([]Packet, 0, len(q.Cards))
+	for _, c := range q.Cards {
+		if c.Packet != nil {
+			held = append(held, *c.Packet)
+			continue
+		}
+		held = append(held, Packet{Card: c.ID, Kind: kind, Gen: c.Gen, Attempt: c.Attempt, Epoch: q.Epoch})
+	}
+	return held
 }
 
 // Waiter is a child that says when it has ended: a Background member's loop is woken then

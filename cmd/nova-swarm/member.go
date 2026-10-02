@@ -66,6 +66,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	ghBin := fs.String("gh", "gh", "the gh `path` the member opens a work card's pull request with, outside the wall (default gh)")
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
 	diskFloor := fs.Int("disk-floor", 10, "the free `GiB` the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)")
+	slotsMaxGB := fs.Int("slots-max-gb", 0, "the `GiB` the slots directory may hold: over it the oldest done entries go first, then no card starts until working slots end (default 0: a tenth of the volume)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
 	if !f.parse(args, stderr) {
@@ -121,6 +122,9 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *diskFloor < 0 {
 		f.add("--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more (0 checks nothing; default 10)")
 	}
+	if *slotsMaxGB < 0 {
+		f.add("--slots-max-gb is the GiB the slots directory may hold: 0 or more (0 is a tenth of its volume)")
+	}
 	// the pool identity every child commits under, from the loop's argv in nova-config;
 	// without it native reads the pool's identity.tsv
 	if *identity != "" {
@@ -175,8 +179,14 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass, identity: *identity,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass, identity: *identity, reader: *reader,
 	}
+	// the cap over the slots directory (slotclean.go): --slots-max-gb, or a tenth of its volume
+	volume, err := diskSize(*slots)
+	if err != nil {
+		return refuse(stderr, " member", "the size of the volume of "+*slots+" could not be read ("+err.Error()+"); give --slots-max-gb")
+	}
+	rn.cap = slotsCap(*slotsMaxGB, volume)
 	// a work card's commit is pushed by the member, outside the wall, at its
 	// finish (memberpush.go); a read pushes nothing
 	var pu member.Pusher
@@ -195,11 +205,11 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		defer stop()
 		go meter.Run(ctx)
 	}
-	// a launch the member is done with leaves no checkout behind, and none is started on a
-	// volume under the floor (slotclean.go); what a crash or a kill left is swept first
-	var room func() (bool, string)
+	// a launch the sprint has taken the word of is retired, apart from the pass, and none is
+	// started on a volume under the floor or with the slots over their cap (slotclean.go)
+	room := rn.slotsRoom
 	if *diskFloor > 0 {
-		room = diskRoom(*slots, *diskFloor, diskFree)
+		room = rooms(diskRoom(*slots, *diskFloor, diskFree), rn.slotsRoom)
 	}
 	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
 	kind := "member"
@@ -220,10 +230,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if note := passNote(*model, pass, *auth); note != "" {
 		fmt.Fprintln(stdout, note)
 	}
-	if removed, kept := rn.prune(time.Now()); removed > 0 {
-		fmt.Fprintf(stdout, "NOTE sweep: removed %d ended launch directories under %s, kept the newest %d\n", removed, oneline.Field(*slots), kept)
-	}
-	rn.cleaner() // from here a launch the member ends is tagged, and removed apart from its pass
+	fmt.Fprintf(stdout, "SLOTS %s cap=%s done=%s: a launch the sprint accepts is retired to done/<launch> (its log, card, frame and RESULT.md), the sweep retires what the queue no longer holds, done entries go after a day or first under the cap\n", oneline.Field(*slots), oneline.Escape(sizeWord(rn.cap)), doneKeep)
+	rn.cleaner() // from here a launch the member ends is tagged and retired apart from its pass; the sweep does the rest
 	n, replaced := memberLoop(m, every.d, loopTicks(*once, ticksGiven, *ticks), func() string { return binstamp.Of(self) }, stdout, stderr)
 	if replaced {
 		return exitReplaced
@@ -340,21 +348,27 @@ type nativeRunner struct {
 	env                                            []string // added to this process's environment: none in production, a test's
 	pass                                           []string // the secret names handed to native (--pass, the worker's secret)
 
-	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
-	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
-	// is the cleaner's queue; nil cleans in Ended
-	mu         sync.Mutex
-	live, kept map[string]bool
-	removing   sync.Mutex // held while a launch directory is removed, and while one is claimed
+	reader bool // a reader's runner: its sweep judges reads, a member's work cards (slotclean.go)
 
-	tagged chan ended
+	// launches started and not yet ended (slotclean.go); mu guards them: the member's pass
+	// claims and ends a launch while the cleaner sweeps. tagged is the cleaner's queue of
+	// launch names to retire; nil retires in Ended. held is the launches the sprint's queue
+	// holds for this member, as the last pass read it (Holds; nil: none read yet)
+	mu       sync.Mutex
+	live     map[string]bool
+	removing sync.Mutex // held while a launch is retired, and while one is claimed
+	tagged   chan string
+	held     atomic.Pointer[map[string]bool]
 
-	// the cleaner's lazy work (lazyclean.go): epoch is the sprint's epoch plus one as the
-	// member's last pass read it (Epoch; 0: none read yet); oldFailed and cache are the
-	// cleaner's own, touched by no other goroutine
-	epoch     atomic.Uint64
-	oldFailed map[string]bool
-	cache     cacheTrim
+	// the cap over the slots directory (slotclean.go): cap is the bytes (0: none); full and
+	// size are the cleaner's last measure, read by the pass (slotsRoom). measuredAt, failed
+	// and cache are the cleaner's own, touched by no other goroutine
+	cap        int64
+	full       atomic.Bool
+	size       atomic.Int64
+	measuredAt time.Time
+	failed     map[string]bool
+	cache      cacheTrim
 }
 
 // started marks a launch running, so no prune of the pool touches its directory until the
