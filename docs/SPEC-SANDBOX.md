@@ -834,6 +834,10 @@ What a run allows, and it is the whole list:
 | the resolver `--resolver` names | **UDP 53 only** |
 | everything else | dropped |
 
+`plan` judges every flag and the policy file before it resolves a name, and a
+plan refused there names every problem at once and resolves nothing, so a
+mistyped invocation never waits on a resolver.
+
 Denied outright, before any allow is considered: `169.254.169.254/32` (the
 metadata address, **by name**, so a reader finds it without arithmetic), the rest
 of `169.254.0.0/16`, `127.0.0.0/8` as a destination, `::1/128` and `fe80::/10`,

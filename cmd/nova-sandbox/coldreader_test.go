@@ -193,6 +193,22 @@ func TestAHomeOutsideRefusalNamesTheCommandThatAnswersIt(t *testing.T) {
 	assert.Equal(t, "/a/b", shellWord("/a/b"))
 }
 
+// egress plan names every problem its flags have before it resolves a name: a plan with no
+// --run and no selector is refused at once, every problem in the one run, and no
+// resolution starts (the resolve step's line never prints), so no resolver is waited on.
+func TestEgressPlanNamesItsFlagProblemsBeforeResolving(t *testing.T) {
+	t.Parallel()
+	var out, errb strings.Builder
+	code := sandboxRun([]string{"egress", "plan", "--policy", filepath.Join("..", "..", "infra", "image", "egress.txt"),
+		"--resolver", "10.9.0.53", "--out", filepath.Join(t.TempDir(), "plan.nft")}, &out, &errb)
+	assert.Equal(t, 2, code)
+	for _, want := range []string{"reason=no_name", "reason=no_selector", "reason=bad_model_host"} {
+		assert.Contains(t, errb.String(), "EGRESS REFUSED "+want)
+	}
+	assert.NotContains(t, errb.String(), "EGRESS STEP name=resolve")
+	assert.NotContains(t, errb.String(), "resolve_failed")
+}
+
 // worktree names every problem in one run, an unknown flag among them, and never ignores
 // a flag it does not have.
 func TestWorktreeNamesEveryProblemInOneRun(t *testing.T) {
