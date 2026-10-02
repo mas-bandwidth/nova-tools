@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -93,6 +94,14 @@ func TestARoutesDollarBudgetRidesTheCardAndThePacket(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "0.5", ps[0].USD, "the packet hands the member the dollar budget")
 	assert.Empty(t, ps[1].USD)
+	// an empty dollar budget is no cap: the packet the member reads carries no usd at all,
+	// so the member puts no --usd on the launch (member.go; TestAMemberLaunchesEachCardOnItsPacketsRoute)
+	raw, err := json.Marshal(ps[1])
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"usd"`, "an empty dollar budget is no word in the packet: %s", raw)
+	raw, err = json.Marshal(ps[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"usd":"0.5"`)
 	assert.Equal(t, "0.5", RouteOf("r", map[string]string{"usd": "0.5", "tier": "pro"}).USD, "the route's hash carries it")
 }
 

@@ -387,6 +387,13 @@ func checkRoute(r Row) error {
 	if _, ok := r.Fields["deadline"]; ok && r.Int("deadline") <= 0 {
 		problems = append(problems, fmt.Sprintf("route %s has --deadline 0; want the seconds a card on it may run, above 0", r.Name))
 	}
+	// a dollar budget is above 0: empty is no cap, and a 0 would be dealt onto every card
+	// and refused by native at every launch (nova-tools #5094)
+	if v := r.Fields["usd"]; v != "" {
+		if d, err := cardcost.Decimal(v); err != nil || d.Sign() <= 0 {
+			problems = append(problems, fmt.Sprintf("route %s has --usd %s; want a dollar budget above 0, or --usd \"\" (empty) for no cap", r.Name, v))
+		}
+	}
 	// the long prices go with the threshold: one without the other prices nothing
 	if _, ok := r.Fields[cardcost.FieldLongContext]; ok {
 		long := r.Int(cardcost.FieldLongContext) > 0
