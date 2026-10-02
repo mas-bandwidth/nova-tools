@@ -706,7 +706,7 @@ exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complex
 
 ## What this deliberately is not
 
-`nova-check` is the record layer and nothing above it. It proves the files were present, whole, sized, linked, prose and in floor-set agreement when the check ran. It does not prove a model read them or acts from them, and it cannot detect a hostile input or a compromised reader; those defenses stay doctrine. What it closes is narrower and real: the posture no longer rests on records nothing checked.
+`nova-check` is the record layer and nothing above it. It proves the files were present, whole, sized, linked, prose and in floor-set agreement when the check ran. It does not prove a model read them or acts from them, and it cannot detect a hostile input or a compromised reader; those defenses stay doctrine. What it closes is narrower and real: a posture resting on records nothing checked.
 
 `nova-self-talk` reads sentence shapes, not a mind. It keeps no ratio and cannot see register, irony or an unmarked quotation, and it says so on every run, because a green from a partial check reads exactly like a green from a complete one.
 
@@ -847,7 +847,7 @@ Mark only checks actually performed as pass; no tests run does not mean no comma
 BOUND THE REPORT: findings only. No narration of the clone, no restated
 task, no praise, no summary. One line per finding: `file:line`, the rule
 quoted verbatim in at most twelve words (a longer rule by the twelve of its
-own words the finding rests on, never a paraphrase: rule 2 holds), the
+own words the finding rests on, never a paraphrase), the
 severity, and the fix in one clause. Keep RESULT.md under 40 lines and
 every line under 300 characters, and no pipe inside backticks: a `|` in a
 quote breaks the report's table grammar, so quote the rule without it. Put
@@ -1361,7 +1361,7 @@ past it: classify from a complete local list instead, with `--local-diff <checko
 that nobody has run since and said it did, is an **open edge**, and an open edge refuses —
 `RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or --no-dogfood-gate
 --reason <why>"`. `--cli` defaults to `docs/CLI.md` beside the checkout the verb was already given
- (`--changelog` for `cut`, `--source` for `build`); `--receipts` defaults to `~/docs/dogfood` when it exists.
+ (`--changelog` for `cut`, `--source` for `build`); `--receipts` defaults to `~/rowan-working/dogfood` when that directory exists, and a run with neither says `dogfood-gate=skipped` rather than passing quietly.
 The gate judges the **shipped set** only: the tools under the checkout's `cmd/`. A receipt
 naming any other tool is set aside and counted on `RELEASE CUT NOTE dogfood-gate shipped=<n>
 outside=<n> cmd=<dir>`. `--no-dogfood-gate` needs `--reason <why>`, and the reason is printed, put on the release
