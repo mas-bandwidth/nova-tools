@@ -69,14 +69,14 @@ func examples(t *testing.T) []string {
 
 // (a) The bare command prints usage ending in an `example:` block of lines that
 // actually run. "Run" is this repo's own exit law: 0 or 1 is an answer, and 2 is
-// "could not run". The five examples are one sitting and are executed in order
+// "could not run". The six examples are one sitting and are executed in order
 // against one box, because that is how a reader will type them.
 func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 
-	box := freshBox(t)
+	box := filepath.Join(t.TempDir(), "fuse-box.json")
 	exs := examples(t)
-	require.Len(t, exs, 5, "want the five-line sitting under `example:`, got %d: %q", len(exs), exs)
+	require.Len(t, exs, 6, "want the six-line sitting under `example:`, got %d: %q", len(exs), exs)
 	for _, ex := range exs {
 		exit, stdout, stderr := runFuse(t, localize(fields(ex), box)...)
 		assert.NotEqual(t, 2, exit, "the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, stderr)

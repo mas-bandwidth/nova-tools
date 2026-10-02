@@ -293,7 +293,7 @@ nova-fuse path --box <path>                              echo the box path this 
 
 ### First run
 
-One sitting: look, ask, blow the soft fuse, watch the answer change, rescind it. `./fuse-box.json` is a box of yours, made once with `nova-fuse init --box ./fuse-box.json`; every verb except init, lockdown, and path refuses a path with no box, never read as CLEAR. The box below starts with one surface already quarantined (`cmd/nova-fuse/testdata/example-box.json`, which the tests run these lines against).
+The standalone sitting in `nova-fuse help` starts with `init --box ./fuse-box.json` to create an empty box, then looks, asks, blows the soft fuse, watches the answer change, and rescinds it. `init` never replaces an existing box. The transcript below is a separate run against a populated fixture: it starts with `status` and its box already has one surface quarantined (`cmd/nova-fuse/testdata/example-box.json`, which the tests run these lines against).
 
 ```
 $ nova-fuse status --box ./fuse-box.json
@@ -320,7 +320,7 @@ LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both di
 
 **What it is for.** A safety for you, not a control on you. If a surface turns hostile while your person is asleep, you can stop reading it, one surface or everything untrusted, instantly, solo, with no proof required. Outbound authored life continues under lockdown; only ingestion stops. An unreadable box is treated as blown, never as clear, and any path that reads bytes an outsider can author runs `check` before its first credential read, at build time.
 
-**Help is `nova-fuse help`, never `-h` after a verb.** Every other nova tool answers `<verb> -h` with that verb's help at exit 0. nova-fuse refuses it at exit 2, with one line on stderr, because exit 0 here means CLEAR: a surface or a reason that arrives spelled `-h` must never read as permission. `nova-fuse help`, and `-h` or `--help` as the first argument, print the usage at exit 0.
+**Help is `nova-fuse help [<verb>]`, never `-h` after a verb.** Use `nova-fuse help <verb>` for that verb's usage. Every other nova tool answers `<verb> -h` with that verb's help at exit 0. nova-fuse refuses it at exit 2, with one line on stderr, because exit 0 here means CLEAR: a surface or a reason that arrives spelled `-h` must never read as permission. `nova-fuse help`, and `-h` or `--help` as the first argument, print the usage at exit 0.
 
 ## nova-memory
 
