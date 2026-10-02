@@ -168,7 +168,7 @@ type nativeRunResult struct {
 	survivors    string            // what the harness left in its group when it exited on its own: "", <pgid>:reaped or <pgid>:alive
 	starts       int               // the harness starts tried when every one failed (harnessStartFailed), else 0
 	// THE JOB'S OWN FIGURE (the budget rule keeps two numbers apart: the row is the launch's and
-	// the line is the job's"). These three are the JOB's -- the sum over every launch of
+	// the line is the job's). These three are the JOB's -- the sum over every launch of
 	// this one invocation of `native` -- and they are what the NATIVE OK line's `budget=`
 	// renders. The per-launch usage ROW is written elsewhere (writeNativeUsage) and carries
 	// that launch's own figures, never these: a job's rows are disjoint, so that adding
