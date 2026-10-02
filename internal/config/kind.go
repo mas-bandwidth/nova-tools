@@ -684,14 +684,6 @@ func hasWord(list, word string) bool {
 	return false
 }
 
-// Words splits a canonical list ("" is none).
-func Words(list string) []string {
-	if list == "" {
-		return nil
-	}
-	return strings.Split(list, ",")
-}
-
 // NewRow builds a canonical row of the kind from raw flag values: every
 // field named in raw is validated, every required field must be present,
 // and every problem is reported in one error so a first run is refused once
