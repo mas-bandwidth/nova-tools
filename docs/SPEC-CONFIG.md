@@ -118,8 +118,7 @@ a required field, a value outside its type, or a flag the kind has not, and
 names every problem in one line. `set` changes the fields named and no
 other. A `ref` field naming no row is refused (`--store space names no
 machine row`), and a row a `ref` field of another kind names cannot be
-removed (`machine <m> is the --coordinator of the fleet`, `friend <f>
-is the --coordinator of the sprint`): the structure enforces it (a foreign
+removed by the structure of the tool (a foreign
 key), the tool names it.
 
 ### The kinds of this cut
@@ -150,9 +149,7 @@ beat. Nothing is stored, nothing is typed; what the beat carries is the
 beat writer's, not this tool's.
 
 **The sprint's width.** The machine row's `width` is the sprint member's
-width, set directly (`nova-config machine set <m> --width <n>`; the owner,
-2026-10-01: "we should just be able to set width specifically in nova-config
-and it just works"). Nothing else takes part: not the machine's `slots`, not
+width, set directly (`nova-config machine set <m> --width <n>`). Nothing else takes part: not the machine's `slots`, not
 any friend row, not any beat, and no Redis is read. A machine with a width of
 1 or more is a member of the sprint's fleet; a machine with width 0 (the
 default) is not. It is a static share, the same on every read of the same row:
@@ -284,9 +281,7 @@ is not empty and has no blank, and `deadline` is above 0; `long_context`
 above 0 comes with both long prices, and a long price with a threshold;
 `price_as_of` is a date. A route names no row of another kind.
 
-**`tier`** (`config.tiers`): a model tier's route array (the owner,
-2026-10-01: "the per-tier provider/model array should be specified in
-nova-config"). It has two rows, `flash` and `pro`, made by migrate, so `set`
+**`tier`** (`config.tiers`): a model tier's route array. It has two rows, `flash` and `pro`, made by migrate, so `set`
 takes them on a new store and there is nothing to add. The deal takes
 `routes[index mod len]` for each card of the tier, the index a uint64
 counter on the fleet table (`route_index_flash`, `route_index_pro`), moved
