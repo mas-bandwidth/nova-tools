@@ -644,7 +644,7 @@ func TestRule8RandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
 	strandedAtomic := write(t, filepath.Join(out, ".2026-09-11.tsv.tmp-1a2b3c4d"), "partial atomic file\n")
 	{
 		got := read(t, filepath.Join(out, "2026-09-11.tsv"))
-		assert.False(t, got != before, "the day file was not left entire")
+		assert.Equal(t, before, got, "the day file was not left entire")
 	}
 	c := invoke(t, "check", "--out", out)
 	wantExit(t, c, 0)
@@ -657,7 +657,7 @@ func TestRule8RandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
 	wantContains(t, cUnrelated.all(), ".unrelated.txt.tmp-12345678")
 	{
 		err := os.Remove(unrelated)
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 
 	// The next fold writes the day file atomically via internal/atomicfile.
@@ -665,11 +665,11 @@ func TestRule8RandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr), 0)
 	{
 		_, err := os.Stat(stranded)
-		assert.False(t, err != nil, "legacy stranded temp was unexpectedly removed: %v", err)
+		assert.NoError(t, err, "legacy stranded temp was unexpectedly removed: %v", err)
 	}
 	{
 		_, err := os.Stat(strandedAtomic)
-		assert.False(t, err != nil, "stranded atomic temp was unexpectedly removed: %v", err)
+		assert.NoError(t, err, "stranded atomic temp was unexpectedly removed: %v", err)
 	}
 }
 
@@ -698,7 +698,7 @@ func TestRule9OneFilePerDayAndNothingIsRemoved(t *testing.T) {
 			days++
 		}
 	}
-	assert.False(t, days != 3, "%d day files, want 3", days)
+	assert.Equal(t, 3, days, "%d day files, want 3", days)
 	s := invoke(t, "sum", "--out", out, "--month", "2026-09")
 	wantExit(t, s, 0)
 	wantContains(t, s.stdout, "days=3")
@@ -707,9 +707,10 @@ func TestRule9OneFilePerDayAndNothingIsRemoved(t *testing.T) {
 	wantContains(t, c.stderr, "CHECK STRAY")
 	{
 		n := strings.Count(c.stderr, "CHECK STRAY")
-		assert.False(t, n != 2, "%d stray lines, want 2", n)
+		assert.Equal(t, 2, n, "%d stray lines, want 2", n)
 	}
-	assert.False(t, read(t, old) != "a month file from the prototype\n" || read(t, notes) != "a person's note\n", "a file under --out was touched")
+	assert.Equal(t, "a month file from the prototype\n", read(t, old), "a file under --out was touched")
+	assert.Equal(t, "a person's note\n", read(t, notes), "a file under --out was touched")
 }
 
 // ---------------------------------------------------------------- rule 10: a day that would shrink is refused
@@ -730,7 +731,7 @@ func TestRule10ADayThatWouldShrinkIsRefused(t *testing.T) {
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-11 type=input file=100 now=60 written=false")
-	assert.False(t, read(t, filepath.Join(out, "2026-09-11.tsv")) != before, "a refused shrink rewrote the file")
+	assert.Equal(t, before, read(t, filepath.Join(out, "2026-09-11.tsv")), "a refused shrink rewrote the file")
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr, "--allow-shrink")
 	wantExit(t, r, 0)
 	wantContains(t, r.stderr, "written=true")
@@ -846,11 +847,11 @@ func TestIssue268ABlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS PARTIAL date=2026-09-14 model=claude-x repo=serialize sources=swarm:freddy,swarm:glenn folded=swarm:freddy written=false")
 	wantContains(t, r.stderr, "partial=1")
-	assert.False(t, read(t, day) != before, "a refused partial fold rewrote the file")
+	assert.Equal(t, before, read(t, day), "a refused partial fold rewrote the file")
 	// --allow-shrink is about a shrink, not about a row this fold cannot compute.
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB, "--allow-shrink")
 	wantExit(t, r, 1)
-	assert.False(t, read(t, day) != before, "--allow-shrink wrote a row the fold could not compute")
+	assert.Equal(t, before, read(t, day), "--allow-shrink wrote a row the fold could not compute")
 }
 
 // R4: rule 10 still fires on a real shrink, now compared against the MERGED file, and
@@ -871,7 +872,7 @@ func TestIssue268Rule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testin
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=2410 now=1410 written=false")
-	assert.False(t, read(t, day) != before, "a refused shrink rewrote the file")
+	assert.Equal(t, before, read(t, day), "a refused shrink rewrote the file")
 
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB, "--allow-shrink")
 	wantExit(t, r, 0)
@@ -904,7 +905,7 @@ func TestIssue268MalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testin
 	wantContains(t, r.stderr, "TOKENS UNREADABLE label=out")
 	wantContains(t, r.stderr, "the sources cell is empty")
 	wantContains(t, r.stderr, "unreadable=1")
-	assert.False(t, read(t, day) != malformed, "a malformed existing day file was modified or overwritten")
+	assert.Equal(t, malformed, read(t, day), "a malformed existing day file was modified or overwritten")
 }
 
 // TOKENS DAY summarizes the merged day file, so rows=, models=, repos=, dashes=, nonutc=,
@@ -954,7 +955,7 @@ func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	// Remove the source usage file so the declared source now has zero rows for that day.
 	{
 		err := os.Remove(jobPath)
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 
 	// Refused under rule 10: input fell from 100 to unknown (now=-). File on disk is left untouched.
@@ -962,7 +963,7 @@ func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=100 now=- written=false")
 	wantContains(t, r.stderr, "shrank=4")
-	assert.False(t, read(t, day) != before, "a refused quiet source on explicit day modified the day file")
+	assert.Equal(t, before, read(t, day), "a refused quiet source on explicit day modified the day file")
 
 	// With --allow-shrink on a day that shrank to 0 rows: fold does not write an empty day file.
 	// Both SHRANK and DAY agree that written=false, and the file on disk remains unchanged.
@@ -971,7 +972,7 @@ func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=100 now=- written=false")
 	wantContains(t, r.stdout, "TOKENS DAY date=2026-09-14")
 	wantContains(t, r.stdout, "written=false")
-	assert.False(t, read(t, day) != before, "an empty day write modified the existing day file")
+	assert.Equal(t, before, read(t, day), "an empty day write modified the existing day file")
 }
 
 // When one source of a multi-source day goes quiet, shrinking under --allow-shrink preserves
