@@ -12,12 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestIssue2281BehavioursAreProvedInNovaRedis ties the serve behaviours of
+// TestSpecBehavioursAreProvenInNovaRedis ties the serve behaviours of
 // docs/SPEC-REDIS.md "Tests this spec demands" (bind, auth, persistence,
 // restart) to the tests that prove them: each name the spec lists must be
 // declared as a test in cmd/nova-redis, where `serve` lives, so the spec cannot
 // claim a proof the tree does not carry.
-func TestIssue2281BehavioursAreProvedInNovaRedis(t *testing.T) {
+func TestSpecBehavioursAreProvenInNovaRedis(t *testing.T) {
 	t.Parallel()
 
 	spec, err := os.ReadFile("../../docs/SPEC-REDIS.md")
