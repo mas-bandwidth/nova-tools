@@ -48,6 +48,26 @@ func TestASecondFoldWaitsAndThenRefusesNamingTheHolder(t *testing.T) {
 	}
 }
 
+// fakeSleepMode is the sqlite3 that answers nothing and outlives any timeout a test would
+// set: the subprocess rule 19 is about. It waits on the wall clock, so it lives here.
+const (
+	fakeSleepMode = "sleep"
+	fakeSleep     = 30 * time.Second
+)
+
+func init() {
+	fakeModes[fakeSleepMode] = func() int {
+		time.Sleep(fakeSleep)
+		return 0
+	}
+}
+
+// fakeSqlite3Sleeping puts the sleeping sqlite3 on PATH.
+func fakeSqlite3Sleeping(t *testing.T) {
+	t.Helper()
+	fakeSqlite3OnPath(t, fakeSleepMode)
+}
+
 // SLOW: 1.0 s on hetzner at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.
 func TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn(t *testing.T) {
 	dir := t.TempDir()
