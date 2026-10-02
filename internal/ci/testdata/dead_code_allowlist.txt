@@ -30,8 +30,8 @@ internal/redisconn 1
 internal/redisfn 9
 internal/release 1
 internal/sandbox 1
-internal/seatcred 4
-internal/secrets 24
+internal/seatcred 1
+internal/secrets 22
 internal/selftalk 1
 internal/sprint 6
 internal/sprint/store 4

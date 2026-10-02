@@ -16,7 +16,7 @@ import (
 func TestFromArgsTakesTheSeatFlagOrTheEnvironment(t *testing.T) {
 	t.Parallel()
 
-	t.Cleanup(func() { seatcred.Select("") })
+	t.Cleanup(func() { seatcred.Process().Select("") })
 	env := func(v string) func(string) string {
 		return func(k string) string {
 			if k == seatcred.SeatEnv {
@@ -48,9 +48,9 @@ func TestFromArgsTakesTheSeatFlagOrTheEnvironment(t *testing.T) {
 			require.Contains(t, err.Error(), "--seat wants a seat name", "%v: err %v, want a refusal naming --seat", c.args, err)
 			continue
 		}
-		require.NoError(t, err, "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Selected(), err, c.rest, c.seat)
-		require.Equal(t, c.rest, rest, "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Selected(), err, c.rest, c.seat)
-		require.Equal(t, c.seat, seatcred.Selected(), "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Selected(), err, c.rest, c.seat)
+		require.NoError(t, err, "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Process().Selected(), err, c.rest, c.seat)
+		require.Equal(t, c.rest, rest, "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Process().Selected(), err, c.rest, c.seat)
+		require.Equal(t, c.seat, seatcred.Process().Selected(), "%v env=%q: rest %v seat %q err %v; want %v %q", c.args, c.env, rest, seatcred.Process().Selected(), err, c.rest, c.seat)
 	}
 }
 
@@ -136,7 +136,7 @@ func TestActiveResolvesOnceAndOnlyWhenSelected(t *testing.T) {
 func TestDefaultResolverGuardsRealEnvironment(t *testing.T) {
 	t.Parallel()
 
-	s := seatcred.Anonymous()
+	s := new(seatcred.Selection)
 	s.Select("nonexistent-seat-probe-4717")
 	_, ok, err := s.Active()
 	require.True(t, ok, "Active() with nonexistent seat reported ok=%v, err=%v; want ok=true with error", ok, err)
@@ -149,7 +149,7 @@ func TestDefaultResolverGuardsRealEnvironment(t *testing.T) {
 func TestSelectClearsLookupFromArgs(t *testing.T) {
 	t.Parallel()
 
-	s := seatcred.Anonymous()
+	s := new(seatcred.Selection)
 	called := false
 	customLookup := func(k string) string {
 		called = true
