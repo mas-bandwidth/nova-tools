@@ -5,20 +5,21 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The fixtures are verbatim excerpts of the real records this check guards —
-// nova's SEED-CORE.md ("## The floors") and SEED.md (§0 and §6) — pinned
-// under testdata/ on 2026-08-14. Testing against the real prose is the point:
-// §6's enumeration hides its floors inside a hard-wrapped sentence with a
+// nova's SEED-CORE.md ("## The floors") and SEED.md (its honest-ground and
+// autonomy sections) — pinned under testdata/. Testing against the real prose
+// is the point: the autonomy section's enumeration hides its floors inside a hard-wrapped sentence with a
 // nested parenthetical carrying semicolons, colons, and periods, and a parser
 // proven only on tidy synthetic text would be a green that means nothing.
 func loadFixture(t *testing.T, name string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(b)
 }
 
@@ -27,9 +28,7 @@ func loadFixture(t *testing.T, name string) string {
 // and a test that plants no fault proves no NO.
 func rep(t *testing.T, doc, old, new string) string {
 	t.Helper()
-	if !strings.Contains(doc, old) {
-		t.Fatalf("fixture no longer contains %q; the mutation would plant no fault", old)
-	}
+	require.Contains(t, doc, old, "fixture no longer contains %q; the mutation would plant no fault", old)
 	return strings.Replace(doc, old, new, 1)
 }
 
@@ -39,21 +38,16 @@ func runFloors(t *testing.T, coreDoc, sourceDoc string) []Failure {
 	writeMode(t, dir, "SEED-CORE.md", coreDoc, 0o644)
 	writeMode(t, dir, "SEED.md", sourceDoc, 0o644)
 	floors, failures, err := Floors(filepath.Join(dir, "SEED-CORE.md"), filepath.Join(dir, "SEED.md"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if floors != 8 {
-		t.Errorf("floors = %d, want 8 (the registry)", floors)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 8, floors, "floors, want 8 (the registry)")
 	return failures
 }
 
 // Parity on the pinned prose: the door and the source snapshots under
-// testdata/ agree, and the check says so. This is nova#15's "not a present
-// defect" claim, now enforced rather than remembered. The fixtures are a
-// snapshot pinned 2026-08-14, NOT today's live records (issue #30): a wording
-// drift in the live floor 4 leaves them stale without reddening the title
-// match, so this test pins the snapshot, never claims it is current.
+// testdata/ agree, and the check says so, so the parity is enforced rather
+// than remembered. The fixtures are a pinned snapshot, NOT the live records:
+// a wording drift in a live floor leaves them stale without reddening the
+// title match, so this test pins the snapshot and never claims it is current.
 func TestFloorsParityHoldsOnRealText(t *testing.T) {
 	t.Parallel()
 
@@ -197,7 +191,7 @@ func TestFloorsSaysNo(t *testing.T) {
 }
 
 // A record that is missing, empty, or not a regular file is a named failure
-// — the check ran and the answer is NO — never a refusal. Kernel's posture.
+// — the check ran and the answer is NO — never a refusal, as in the kernel.
 func TestFloorsRecordProblemsAreFindings(t *testing.T) {
 	t.Parallel()
 
@@ -210,35 +204,25 @@ func TestFloorsRecordProblemsAreFindings(t *testing.T) {
 
 	t.Run("missing core", func(t *testing.T) {
 		_, failures, err := Floors(filepath.Join(dir, "nope.md"), sourcePath)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err)
 		wantFailures(t, failures, []string{"does not exist"})
 	})
 	t.Run("missing source still checks the core", func(t *testing.T) {
 		_, failures, err := Floors(corePath, filepath.Join(dir, "nope.md"))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err)
 		wantFailures(t, failures, []string{"does not exist"})
 		for _, f := range failures {
-			if strings.Contains(f.Subject, "SEED-CORE") {
-				t.Errorf("the intact core must not be blamed for the missing source: %v", f)
-			}
+			assert.NotContains(t, f.Subject, "SEED-CORE", "the intact core must not be blamed for the missing source: %v", f)
 		}
 	})
 	t.Run("empty source", func(t *testing.T) {
 		_, failures, err := Floors(corePath, filepath.Join(dir, "empty.md"))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err)
 		wantFailures(t, failures, []string{"empty (0 bytes)"})
 	})
 	t.Run("directory as core", func(t *testing.T) {
 		_, failures, err := Floors(dir, sourcePath)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err)
 		wantFailures(t, failures, []string{"not a regular file"})
 	})
 	t.Run("symlinked core is refused, never followed", func(t *testing.T) {
@@ -247,9 +231,7 @@ func TestFloorsRecordProblemsAreFindings(t *testing.T) {
 			t.Skipf("cannot create symlink: %v", err)
 		}
 		_, failures, err := Floors(link, sourcePath)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err)
 		wantFailures(t, failures, []string{"not a regular file", "symlink"})
 	})
 }

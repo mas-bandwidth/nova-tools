@@ -5,34 +5,33 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// CARD #86, nova-check: efficiency card, 2026-09-12. The card is a measurement
-// of the work nova-check pays for twice, and its contract lives in the spec:
-// one walk of the root per quickstart behind a shared path list, a capped
-// coordinator read with the remedy on the MORE line, and no clock, subprocess,
-// network or lock to wait on. This doc test reads the section out of the spec
-// the way TestCrossToolEfficiencyCardNamesItsRules reads its section out of
-// SPEC-SWARM.md: the spec is the one place the contract is written.
+// The efficiency contract of nova-check lives in docs/SPEC.md: one walk of the
+// root per quickstart behind a shared path list, a capped read with the remedy
+// on the MORE line, and no clock, subprocess, network or lock to wait on. This
+// test reads that section out of the spec, because the spec is the one place
+// the contract is written.
 func TestNovaCheckEfficiencyCardNamesItsRules(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC.md"))
-	if err != nil {
-		t.Fatalf("the nova-check efficiency card's contract is the spec's: %s", err)
-	}
+	require.NoError(t, err, "the nova-check efficiency contract is the spec's")
 	spec := string(raw)
 	section := novaCheckEfficiencySection(t, spec)
 	// The contract is prose, so its line wrapping is the spec's; collapse runs
 	// of whitespace so a phrase is checked for its words, not its column.
 	section = strings.Join(strings.Fields(section), " ")
 	for _, want := range []string{
-		// the measurement the card published, on the bench, 2026-09-12.
+		// the measurement the section publishes.
 		"1,496 + 1,810",
 		"71 MB",
 		"0.27 s",
 		// the repeat: two walks of one tree in one quickstart, at the two
-		// file:line sites the card names.
+		// file:line sites the section names.
 		"two full walks of one tree in one quickstart",
 		"the same tree, read twice",
 		"internal/check/links.go:52",
@@ -55,9 +54,7 @@ func TestNovaCheckEfficiencyCardNamesItsRules(t *testing.T) {
 		"a `quickstart` of one tree walks the root once and hands the same path list to `links` and `nocode`",
 		"`--fail-max <n>` caps each kind's findings at `n`, the `MORE` line names the flag that lifts it",
 	} {
-		if !strings.Contains(section, want) {
-			t.Errorf("SPEC.md nova-check efficiency card names %q; the section holds:\n%s", want, section)
-		}
+		assert.Contains(t, section, want, "the SPEC.md nova-check efficiency section must name it")
 	}
 }
 
@@ -68,10 +65,7 @@ func novaCheckEfficiencySection(t *testing.T, spec string) string {
 	t.Helper()
 	const header = "## The efficiency card, nova-check"
 	start := strings.Index(spec, header)
-	if start < 0 {
-		t.Fatalf("the spec has no %q section", header)
-		return ""
-	}
+	require.GreaterOrEqual(t, start, 0, "the spec has no %q section", header)
 	rest := spec[start+len(header):]
 	end := strings.Index(rest, "\n## ")
 	if end < 0 {

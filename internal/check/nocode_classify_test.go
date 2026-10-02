@@ -8,6 +8,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // indexMode is the permission mask a git index record carries: git keeps
@@ -26,8 +29,8 @@ func blobPeek(blob []byte) func() ([]byte, error) {
 	return func() ([]byte, error) { return readFirstTwo(bytes.NewReader(blob)) }
 }
 
-// TestNoCodeStagedClassifyTakesParameterisedInputs (issue #2294, docs/SPEC.md
-// "What called unchanged costs"): the classifier produces identical findings
+// TestNoCodeStagedClassifyTakesParameterisedInputs (docs/SPEC.md, "What called
+// unchanged costs"): the classifier produces identical findings
 // when fed a FileInfo-derived permission mask and an os.Open reader (the walk)
 // versus an index-derived mask and a blob reader over the same bytes. The file
 // is REMOVED from disk before the index side runs, so a blob reader that
@@ -53,44 +56,32 @@ func TestNoCodeStagedClassifyTakesParameterisedInputs(t *testing.T) {
 		{"empty file", "empty.txt", "", false},
 	}
 	rules, err := newNoCodeRules(NoCodeOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeMode(t, dir, tc.rel, tc.content, indexMode(tc.exec))
 			fullPath := filepath.Join(dir, filepath.FromSlash(tc.rel))
 			fi, err := os.Lstat(fullPath)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 
 			// Walk-derived: the mask off the FileInfo, the bytes via os.Open.
 			walk := rules.classify(tc.rel, fi.Mode().Perm(), false, func() ([]byte, error) { return peekTwoFile(fullPath) })
 			// The full walk agrees with the walk-derived call.
 			_, findings, err := NoCode(NoCodeOptions{Dir: dir})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got, want := findingsByPath(findings)[tc.rel], strings.Join(walk, "; "); got != want {
-				t.Fatalf("NoCode walk %q != walk-derived classify %q", got, want)
-			}
+			require.NoError(t, err)
+			require.Equal(t, strings.Join(walk, "; "), findingsByPath(findings)[tc.rel], "the NoCode walk disagrees with the walk-derived classify")
 
-			if err := os.Remove(fullPath); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.Remove(fullPath))
 			// Index-derived: the mask from the record, the bytes from the blob.
 			index := rules.classify(tc.rel, indexMode(tc.exec), false, blobPeek([]byte(tc.content)))
 
-			if strings.Join(walk, "; ") != strings.Join(index, "; ") {
-				t.Fatalf("parity broken for %s:\n walk =%q\n index=%q", tc.rel, walk, index)
-			}
+			require.Equal(t, strings.Join(walk, "; "), strings.Join(index, "; "), "parity broken for %s", tc.rel)
 		})
 	}
 }
 
-// TestNoCodeStagedReusesTheClassifierUnchanged (issue #2294): the same --allow
+// TestNoCodeStagedReusesTheClassifierUnchanged: the same --allow
 // prefixes and --deny-ext / --deny-ext-add act identically through the
 // parameterised seam. For each flag set, NoCode's filesystem walk and an
 // index-shaped caller (rules from the same NoCodeOptions, index masks, blob
@@ -115,9 +106,7 @@ func TestNoCodeStagedReusesTheClassifierUnchanged(t *testing.T) {
 		".github/workflows/ci.yml": {"on: push\n", false},
 	}
 	floor, err := FloorDenyExts()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	added := append(append([]string{}, floor...), ".xyz")
 
 	cases := []struct {
@@ -181,16 +170,12 @@ func TestNoCodeStagedReusesTheClassifierUnchanged(t *testing.T) {
 			opts := tc.opts
 			opts.Dir = dir
 			walkScanned, findings, err := NoCode(opts)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			walk := findingsByPath(findings)
 
 			// Index-shaped caller: same options, no filesystem.
 			rules, err := newNoCodeRules(tc.opts)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			rels := make([]string, 0, len(tree))
 			for rel := range tree {
 				rels = append(rels, rel)
@@ -209,23 +194,15 @@ func TestNoCodeStagedReusesTheClassifierUnchanged(t *testing.T) {
 				}
 			}
 
-			if walkScanned != indexScanned {
-				t.Errorf("scanned differs: walk=%d index=%d", walkScanned, indexScanned)
-			}
+			assert.Equal(t, walkScanned, indexScanned, "scanned differs between the walk and the index")
 			for rel := range tree {
-				if walk[rel] != index[rel] {
-					t.Errorf("%s: walk=%q index=%q", rel, walk[rel], index[rel])
-				}
+				assert.Equal(t, walk[rel], index[rel], "%s: the walk and the index disagree", rel)
 			}
 			for rel, want := range tc.flagged {
-				if !strings.Contains(index[rel], want) {
-					t.Errorf("%s: index reason %q lacks %q", rel, index[rel], want)
-				}
+				assert.Contains(t, index[rel], want, "%s: the index reason lacks it", rel)
 			}
 			for _, rel := range tc.clean {
-				if index[rel] != "" {
-					t.Errorf("%s: want clean on the index path, got %q", rel, index[rel])
-				}
+				assert.Empty(t, index[rel], "%s: want clean on the index path", rel)
 			}
 		})
 	}
@@ -246,18 +223,12 @@ func TestNoCodeClassifyFlagsASymlinkWithoutReadingIt(t *testing.T) {
 	t.Parallel()
 
 	rules, err := newNoCodeRules(NoCodeOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	called := false
 	peek := func() ([]byte, error) { called = true; return []byte("#!"), nil }
 	reasons := rules.classify("run.sh", 0o644, true, peek)
-	if called {
-		t.Error("symlink target was read through peekTwo")
-	}
-	if !strings.Contains(strings.Join(reasons, "; "), "target not followed") {
-		t.Errorf("expected 'target not followed' in reasons: %v", reasons)
-	}
+	assert.False(t, called, "symlink target was read through peekTwo")
+	assert.Contains(t, strings.Join(reasons, "; "), "target not followed")
 }
 
 // TestNoCodeClassifyNamesAnUnreadablePeek asserts that a read error
@@ -267,14 +238,10 @@ func TestNoCodeClassifyNamesAnUnreadablePeek(t *testing.T) {
 	t.Parallel()
 
 	rules, err := newNoCodeRules(NoCodeOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	errPeek := func() ([]byte, error) { return nil, errors.New("permission denied") }
 	for name, peek := range map[string]func() ([]byte, error){"read error": errPeek, "nil reader": nil} {
 		reasons := rules.classify("secret", 0o644, false, peek)
-		if !strings.Contains(strings.Join(reasons, "; "), "unreadable") {
-			t.Errorf("%s: expected an unreadable reason, got %v", name, reasons)
-		}
+		assert.Contains(t, strings.Join(reasons, "; "), "unreadable", "%s: expected an unreadable reason", name)
 	}
 }
