@@ -1163,9 +1163,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 			break
 		}
-		// AND A BUDGET STOP IS THE END: nothing is launched again, by `native` or by a
-		// batch, and running the card once more is a person's act. So it breaks out above
-		// the retry, terminally.
+		// AND A BUDGET STOP IS THE END (rule 13d): nothing is launched again, by `native`
+		// or by a batch, and running the card once more is a person's act with a number of
+		// their own. So it breaks out above the retry, terminally.
 		if res.stopped != "" {
 			break
 		}
@@ -1204,17 +1204,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// this path.
 		_, launchFailure := swarm.ProviderLaunchFailure(tail)
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
-			// ONCE MORE BEFORE ANY RELAUNCH: the stop is a spent budget, tested at every
-			// sample and once more before any relaunch. The first launch's spend is already
-			// in the job's data home, so a budget the earlier launches have ALREADY reached
-			// must not buy a third launch -- a first launch that reached the budget alone
-			// is never launched again.
+			// ONCE MORE BEFORE ANY RELAUNCH (rule 13d): the stop is rule 13's `spent >= n`,
+			// tested at every sample and once more before any relaunch. The first launch's
+			// spend is already in the job's data home, so a budget the earlier launches have
+			// ALREADY reached must not buy a third launch -- a first launch that reached the
+			// budget alone is never launched again.
 			//
 			// THIS LAUNCH'S ROW IS ALREADY WRITTEN AND KEEPS ITS OWN WORD. This launch did
 			// not end on the budget -- it died on a provider 5xx -- so its row says what
 			// happened to it, and the `stopped=` on the LINE says why there is no launch
-			// after it. The two are different facts about different things: the row is the
-			// launch's and the line is the job's.
+			// after it. The two are different facts about different things; rule 13d
+			// separates them: the row is the launch's and the line is the job's.
 			// AND THE FINAL READS COUNT: the job's spend just folded from this launch's
 			// final read is tested too, so a launch that died before its first sample
 			// cannot buy a relaunch past the budget.
@@ -1228,7 +1228,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		break
 	}
 	// The card is over, so no further sample is wanted. Stop SIGNALS and never joins: a
-	// read in flight is abandoned where it stands.
+	// read in flight is abandoned where it stands (rule 13d).
 	sampler.Stop()
 	// WHAT THE LINE WILL PRINT. "Final" means the last thing the harness reported and
 	// nothing more: where every launch's final read answered, this is their sum; where one
@@ -1237,10 +1237,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	res.spent, res.observed, res.partial = jobSpent, jobObserved, jobPartial
 	res.spend = spendWord(launchSpends)
 	// AND WHERE NO FINAL READ ANSWERED AT ALL, the last sum a SAMPLE saw stands in, with
-	// the plus: a final read that cannot be made leaves a dash in every column of the row
-	// it could not fill, the line then prints the last sum a sample saw with the plus, and
-	// nowhere does the tool say that all that was spent was seen. A sample's figure is
-	// never allowed to pass for a final read, which is what the plus is for.
+	// the plus (rule 13d: a final read that cannot be made leaves a dash in every column
+	// of the row it could not fill, the line then prints the last sum a sample saw with
+	// the plus, and nowhere does the tool say that all that was spent was seen). A
+	// sample's figure is never allowed to pass for a final read, which is what the plus
+	// is for.
 	if !res.observed {
 		if spent, observed, _, _, _ := sampler.Observed(); observed {
 			res.spent, res.observed, res.partial = spent, true, true
@@ -1373,7 +1374,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 	// A CARD THAT ENDED BY ASKING OWES THE SAME REPORT. `opencode run` is non-interactive:
-	// a final turn that is a question finishes the turn and exits 0 in seconds, so the run
+	// a final turn that is a question finishes the turn and exits 0 in seconds -- 5.22 s
+	// and 5.49 s on two benches, measured 2026-09-22 -- so the run
 	// never holds its slot, and the end it gets today is a plain `no-result`, the token
 	// for a model that chose to publish nothing. The question is read out of the card's
 	// own capture and written into a report that SAYS it was a question, so a requeue can
