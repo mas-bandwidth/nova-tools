@@ -53,7 +53,7 @@ func TestADoneSprintStopsItsMachineAndTellsTheCoordinator(t *testing.T) {
 	}
 	require.Equal(t, "DONE", ta.viewLine(), "the view")
 	where := ta.ok("where")
-	require.Contains(t, where, "SPRINT TABLE\n\nDONE\n", "where's header")
+	require.Contains(t, where, "SPRINT TABLE  coordinator coordinator\n\nDONE\n", "where's header")
 	inbox := ta.ok("inbox")
 	// the sprint done is the first thing the coordinator reads
 	lines := strings.Split(inbox, "\n")

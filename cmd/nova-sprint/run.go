@@ -132,6 +132,7 @@ func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx := context.Background()
 	res, err := st.Tick(ctx)
+	err = noSprintYet(err)
 	line := sprintLine(ctx, st)
 	if c.json {
 		o := machineOut{Tick: &res, Notes: res.Notes(), Sprint: line, Moved: res.Moved()}

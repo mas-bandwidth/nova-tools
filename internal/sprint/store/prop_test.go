@@ -393,7 +393,7 @@ func (r *propRun) act(a pAct) {
 			if a.F {
 				v = "broken"
 			}
-			r.run(fmt.Sprintf("nova-sprint read %s --as %s --verdict %s --finding f", c.ID, reader, v), ReadStep(sprint.ReadReq{As: reader, Verdict: v, Finding: "f", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: reader}))
+			r.run(fmt.Sprintf("nova-sprint read %s --as %s --verdict %s --finding f:1", c.ID, reader, v), ReadStep(sprint.ReadReq{As: reader, Verdict: v, Finding: "f:1", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: reader}))
 		}
 	case "merge":
 		r.merge(stream, a.B, a.C, a.F)
