@@ -1,6 +1,8 @@
 package secrets
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,6 +127,31 @@ func TestASealNotYetInTheStoreSaysSoAndWhatIsNext(t *testing.T) {
 	assert.Equal(t, "SECRETS SEAL NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C "+
 		f.storeDir+" push -u origin seal/rowan-TARGET-20260917-120000, then open and merge its pull request", lines[1])
 	assert.False(t, Leaks(out, NewSecret(value)), "a seal's receipt carries no value")
+}
+
+// TestAFirstStoreRefusalSaysWhatIsMissingAndHowToMakeIt: the two refusals a first store
+// meets past its shape, a missing recovery.pub and a sops encrypt that failed, say what
+// the thing is and what to run, and the failed encrypt still withholds the transcript.
+func TestAFirstStoreRefusalSaysWhatIsMissingAndHowToMakeIt(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	_, err := ReadRecoveryPub(store)
+	got := errText(err)
+	assert.Contains(t, got, "recovery.pub is absent: it holds the store's recovery key")
+	assert.Contains(t, got, "run: age-keygen -o ")
+	assert.Contains(t, got, filepath.Join(store, "recovery.pub"))
+
+	const value = "qzxjwkvbnmplqzxj"
+	failing := func(io.Reader, []string, string, string, ...string) ([]byte, error) {
+		return []byte("sops said: " + value), errors.New("exit status 1")
+	}
+	_, err = sealEncrypt(failing, "sops", "k", store, "ada.yaml", []byte(value))
+	got = errText(err)
+	assert.Contains(t, got, "transcript withheld")
+	assert.Contains(t, got, "the .sops.yaml rule for ada.yaml")
+	assert.Contains(t, got, "<recovery key> placeholder")
+	assert.Contains(t, got, "--dry-run lists the recipients")
+	assert.False(t, Leaks(got, NewSecret(value)))
 }
 
 // TestAnAbsentSeatNamesTheSeatsAndTheVerbThatStartsOne: the refusal for a seat with no

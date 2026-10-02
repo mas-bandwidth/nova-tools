@@ -18,13 +18,13 @@ import (
 
 const usage = `nova-secrets: encrypted secrets in a git repository, handed to one command at a time
 
-how it works: the store is a git working copy with a .sops.yaml and one
-sops-encrypted <seat>.yaml per seat; a seat is a named identity whose age key
-file (mode 0600) opens that file. exec decrypts only the names in --only into
-one command's environment; names lists the names without decrypting; no value
-is ever printed. check and exec want the store on a branch with an upstream.
-first run: keygen makes a key (it needs age-keygen); the other lines need a store
-made with git init and a .sops.yaml naming your key, and sops on PATH.
+how it works: the store is a git working copy holding a .sops.yaml (one rule per
+seat naming its recipients), a recovery.pub (the recovery key every file is also
+sealed to) and one sops-encrypted <seat>.yaml per seat; a seat is a named identity
+whose age key file (mode 0600) opens its file. exec decrypts only the --only names
+into one command's environment; names reads names without decrypting; no value is printed.
+first run: keygen makes a key and prints its .sops.yaml rule; a new store is git init,
+recovery.pub, that rule and a branch with an upstream; seal writes a seat's first value.
 
 usage:
   nova-secrets version  print this build identity (--version also accepted)
