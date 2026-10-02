@@ -4389,7 +4389,7 @@ bus as read and leaves you what arrives after that moment, or pass
 today behind the line — a date is midnight at its **START**, so tomorrow's date
 is a moment AFTER every note anybody sends today, and a reader who pasted such a
 line would lose the whole switch day: the notes their friends were writing to
-them while they read the refusal would be legacy before they arrived. A guard
+them while they read the refusal arrive past the line. A guard
 that hands out that shape is the fastest way to spread it. The instant draws the line where
 the reader actually is: history behind, news in front.
 
@@ -4521,7 +4521,7 @@ another run refuses on: a `CURSOR` whose commit will not read stops a reader, an
 `OPEN` cut in half stops them, an `INDEX` cut in half resolves a thread to
 nothing. A write in place makes all three reachable by killing the tool between
 the truncate and the write — a lid, a CI timeout, a ctrl-C — and what it leaves
-is neither the old file nor the new one. So the content goes to `<file>.tmp` in
+is neither the file being replaced nor the new one. So the content goes to `<file>.tmp` in
 the SAME directory (a rename across filesystems is not a rename) and is renamed
 over the target, which is atomic: a kill leaves the OLD file, entire, which is a
 state every reader already handles. The temporary's name is fixed rather than
@@ -4787,7 +4787,7 @@ run, not the first.
 
 **A lane's `README.md` is not a note.** It ends in `.md` and it sits in a lane,
 so a walk that parsed it would fail, tell every reader `INBOX UNREADABLE` about it
-forever, and fail `check` at every date — the legacy tolerance cannot forgive
+forever, and fail `check` at every date — the tolerance cannot forgive
 it, because a README genuinely cannot say when it was written and genuinely is
 not a note. So a lane may hold exactly one non-note, non-state file, under
 exactly that name: the file a person opening the lane in a browser reads first.
@@ -4831,7 +4831,7 @@ there are two honest ways in, and a bus must pick one:
   a header at any date, still `BUS FAIL`s. Without the flag there is no
   tolerance: every finding fails, which is what CI on a bus only this tool has
   written should use.
-- **A one-time sweep**: fix the old notes by hand and adopt the check with no
+- **A one-time sweep**: fix the notes by hand and adopt the check with no
   flag at all.
 
 `check` takes no `--legacy-now`. Its flag draws a tolerance over a history, and
