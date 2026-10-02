@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The tool-answers rule: every tool answers a mistake with the way forward,
@@ -175,9 +176,7 @@ type toolAnswers struct {
 func newToolAnswers(t *testing.T) *toolAnswers {
 	t.Helper()
 	allow, err := allowlist.LoadPackages(toolAnswersLedgerPath, allowlist.Options{Ceiling: true, Counted: true, PackageKeys: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	requireReasons(t, allow)
 	return &toolAnswers{ledger: &siteLedger{path: toolAnswersLedgerPath, allow: allow, sites: map[string][]string{}}}
 }
