@@ -48,7 +48,7 @@ const SteadyWindow = 2 * time.Second
 
 const steadyPoll = 5 * time.Millisecond
 
-// THE WINDOW IS A CEILING, NEVER AN ADDITION TO SOMEBODY ELSE'S CLOCK (Stella, #126).
+// THE WINDOW IS A CEILING, NEVER AN ADDITION TO SOMEBODY ELSE'S CLOCK.
 //
 // SteadyWindow is what ONE collision may cost. A caller that retries -- the launch
 // handshake reads a slot file every 20ms for its whole launch timeout -- would otherwise
