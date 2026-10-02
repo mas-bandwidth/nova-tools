@@ -1,10 +1,11 @@
 # nova-version — specification
 
-`nova-version moved` writes the TOOLS MOVED note from two revisions' binaries;
-`nova-version snapshot` records what a bin holds, and `nova-version diff` compares two
-records. SPEC.md's **Conventions** govern — exit codes, the one-line grammar, the field law,
-no guessed paths — and [SPEC-UPDATE.md](SPEC-UPDATE.md) holds the manifest verbs
-(`snapshot --file`, `report`, `send`) this file does not restate. The lines of
+`nova-version` reports which version of each tool is installed, records it, and compares two records or two revisions.
+This specification covers `moved`, which compares two revisions' binaries,
+`snapshot --bin`, which records a directory's binaries, and `diff`, which compares
+two inventories. SPEC.md's **Conventions** govern exit codes, output fields and
+explicit paths. [SPEC-UPDATE.md](SPEC-UPDATE.md) covers the shared manifest verbs
+(`example`, `snapshot --file`, `report`, `send`). The lines of
 `nova-version help` for the verbs this file specifies:
 
 ```
@@ -109,20 +110,13 @@ nova-version diff --from <a.tsv> --to <b.tsv>
 10. **Both are bounded and clockless.** Each prints one line beyond the changed-binary rows
     `diff` exists to print, caps every child through `internal/bounded`, takes its clock
     from the injected seam, and touches no network.
-11. **`snapshot`'s bounds are the caller's, and its per-binary default is thirty seconds
-    because its first exec is always a cold one.** `--timeout <d>` bounds one binary's
+11. **`snapshot` takes per-binary and whole-run bounds.** `--timeout <d>` bounds one binary's
     `version`, default `30s`; `--budget <d>` bounds the whole run, default `60s`; a
-    non-positive either is a refusal naming both flags. Thirty rather than the five every
-    other verb in [SPEC-UPDATE.md](SPEC-UPDATE.md) takes: those verbs probe tools a person
-    has been running for days, while every binary `snapshot` reads is one the machine has
-    never executed — the documented sequence is `go install ./cmd/...` and then
-    `nova-version snapshot` — so the platform's one-time assessment of a never-seen
-    executable is charged to this deadline on every row of every run, and a five-second
-    bound refuses healthy binaries and sends the reader to repair a build that is fine. A
-    cold first exec can take seconds on a loaded machine where the warm one takes
-    milliseconds. A warm-up exec outside the bound buys nothing: an exec killed early
-    leaves the assessment unpaid, and one under `--budget` would turn a genuinely broken
-    binary's prompt refusal into a whole-budget wait.
+    non-positive value is a refusal naming both flags. The thirty-second default allows
+    for platforms that assess a newly installed executable on its first run. That work
+    counts against the deadline; it is not moved into an unbounded warm-up. A timeout
+    can therefore mean either a slow first execution or a faulty version command.
+    The caller can adjust `--timeout` without changing the whole-run `--budget`.
 
 ### Tests this section demands
 

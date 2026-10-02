@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The first run needs the binary alone, so it runs in an empty directory: the
+// The first run needs this binary and Go on PATH. It runs in an empty directory: the
 // example lines write their own manifest there, never into the checkout.
 func TestExecutableFirstRun(t *testing.T) {
 	doc, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
@@ -82,14 +82,9 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	steps, err := onboarding.Steps("nova-version", lines)
 	require.NoError(t, err)
 	require.NotEmpty(t, steps, "the `### First run` block holds no nova-version command; this test would pass by running nothing")
-	// The transcript declares four values as owned by the RUN or the BENCH
-	// rather than by the document, and nothing else: the instant of the run
-	// (`at=`) and its duration (`took=`), and the three fields of the
-	// `REPORT TOOL` line that say which Go THIS machine runs (`version=`),
-	// what its `version` command printed (`raw=`) and where it is installed
-	// (`path=`). The document records one machine's arm64 Go; a bench runs its
-	// own, so those three cannot be compared as written. Every other value --
-	// the file, the counts, the kinds, the bounds -- is compared exactly.
+	// Only run-specific values are normalized: at=, took=, and the installed
+	// Go's version=, raw= and path=. File names, counts, kinds and bounds are
+	// compared exactly so normalization cannot hide a contract change.
 	norms := []onboarding.Norm{
 		onboarding.Instant("at"),
 		elide(t, "took= (the duration of this run)", `took=[^ ]+`, "took=<the duration of this run>"),

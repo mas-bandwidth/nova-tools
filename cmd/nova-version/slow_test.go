@@ -25,14 +25,10 @@ import (
 )
 
 // SLOW: 9.1 s on hetzner at dev 64b9bec48, over the five-second line.
-// TestHelpExampleLinesRunAsPrinted: every line of this tool's `example:` block runs, as printed,
-// from the root of a checkout, and exits 0. nova-tools #1455 measured 28 of 61 pasted example lines
-// exiting 2 because the line names an input the reader has not made. An example exiting 2 is a broken
-// example (ONBOARDING point 1). SCOPE, said out loud: this covers nova-version's own `example:` block
-// and the `## nova-version` section of docs/CLI.md -- the two sources this sweep changes -- and
-// nothing else. The block is read from the bytes the tool prints and from main.go's documented copy,
-// so neither can drift; the document's fenced blocks are read from docs/CLI.md and run in order, so a
-// line that stops running as printed goes red here naming that line.
+// TestHelpExampleLinesRunAsPrinted runs nova-version's example block and its
+// docs/CLI.md section from a checkout root. Each line must work as printed.
+// The banner and main.go's documented copy must agree; fenced documentation
+// blocks run in order so earlier lines can create inputs for later ones.
 func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	t.Parallel()
 

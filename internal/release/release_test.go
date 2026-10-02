@@ -536,7 +536,7 @@ func TestBuildStampsEveryToolAndWritesOneChecksumFile(t *testing.T) {
 			require.Contains(t, call, "-trimpath", "no -trimpath: %s", call)
 		}
 		// The stamp is what makes `nova-X version` answer the release rather
-		// than `devel`; an empty -X is a legal linker flag and was #118.
+		// than `devel`; an empty -X is a legal linker flag, so pin its value.
 		if !strings.Contains(call, "-ldflags -s -w -X main.version=v0.16.0") {
 			require.Contains(t, call, "-ldflags -s -w -X main.version=v0.16.0", "no version stamp: %s", call)
 		}
@@ -622,15 +622,14 @@ var hostPlatform = runtime.GOOS + "-" + runtime.GOARCH
 // assertRunnable is what "this tool was installed and can be run" means, on
 // each of the two kinds of filesystem this suite runs on.
 //
-// THE HOST DECIDES THIS, NOT THE TARGET -- and that is the distinction the
-// sharded Windows leg found. Everything else about a platform in these tests is
-// the TARGET's (a windows release is called nova-bus.exe whoever builds it), but
+// File modes are properties of the host filesystem. Artifact naming follows
+// the target (a windows release is called nova-bus.exe whoever builds it), but
 // a file's mode is a property of the filesystem the bytes actually landed on. On
 // a windows runner BOTH the windows-amd64 case and the linux-amd64 one report
 // `-rw-rw-rw-`, because NTFS has no execute bit for Go to report: os.Chmod there
 // moves one read-only attribute and nothing else. An assertion on 0o111 is not
 // false on windows, it is meaningless -- it cannot fail for a real defect and it
-// cannot pass for a real guarantee, which is the same trap #1262 fell into.
+// cannot pass for a real guarantee.
 //
 // So what is asserted is what the install actually promises and what each
 // filesystem can actually answer: the file is there, under the target's name,
@@ -1117,7 +1116,7 @@ func TestAdoptFetchesTheReleaseFromAnotherMachine(t *testing.T) {
 	t.Parallel()
 
 	goos, goarch := platformOf(t, "linux-amd64")
-	// hulk built it; this host has never seen the artifacts.
+	// The build host holds artifacts this coordinator has not yet verified.
 	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	stage := t.TempDir()
 	served := ArtifactDir(onHulk, "v0.16.0", goos, goarch)
@@ -1416,7 +1415,7 @@ func TestReleaseHelpCarriesTheMachinesFormatAndTheAdoptRule(t *testing.T) {
 	// And the three gates (SPEC-RELEASE §1 to §3), because
 	// a gate a person meets as a refusal and not as a sentence in the help is a
 	// gate they meet at the worst moment.
-	for _, s := range []string{"--security-read", "RELEASE CUT SENSITIVE", "sums=", "THE TAG STAYS"} {
+	for _, s := range []string{"--security-read", "RELEASE CUT SENSITIVE", "sums=", "The tag stays"} {
 		if !strings.Contains(o.String(), s) {
 			assert.Contains(t, o.String(), s, "the help does not carry %q:\n%s", s, o.String())
 		}
@@ -1996,7 +1995,7 @@ func TestAdoptStreamsNothingToAMachineThatAlreadyHasTheRelease(t *testing.T) {
 		require.NoError(t, err, err)
 	}
 	s := &fakeSSH{
-		// hulk answers the probe with the same checksum file it was sent
+		// The target answers the probe with the checksum file it was sent
 		// last time; vision has never seen this release.
 		remoteSums: map[string]string{"hulk": string(localSums)},
 		answer: map[string]string{

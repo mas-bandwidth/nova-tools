@@ -20,13 +20,12 @@ import (
 // back: a second run must not stack a second note.
 const PulledPrefix = "**PULLED "
 
-// PullNote is what a person needs before their first pull, in the help, because
-// every sentence of it is a decision somebody would otherwise have to guess at.
-const PullNote = "pull withdraws a release that should not have shipped (a leak, a key, a file that was never meant to travel). " +
-	"THE TAG STAYS: a tag that vanishes is a history that cannot be read, so the CHANGELOG section is marked " + PulledPrefix + "<date>** instead, carrying --reason. " +
-	"What is deleted is the ARTIFACTS: the release's own files under --out here, and the same files under --dest on every machine in --machines, by name, never recursively. " +
-	"The names come from that release's own " + SumsFile + " under --out, so --out must still hold the release being pulled. " +
-	"It does not touch an INSTALLED binary: a machine keeps running what it is running until the next release is adopted over it."
+// PullNote distinguishes withdrawal of artifacts from removal of installed binaries.
+const PullNote = "pull withdraws a release's artifacts. The tag stays; the CHANGELOG section is marked\n" +
+	PulledPrefix + "<date>** with --reason, preserving the release's history.\n" +
+	"It deletes the release's files under --out here and --dest on the named machines,\n" +
+	"by the names in " + SumsFile + ", never recursively. --out must still hold that release.\n" +
+	"Installed binaries remain in place until another release is installed or adopted."
 
 // remoteArtifactName is what may be named in a remote `rm`. The names come from
 // the release's own checksum file, which ReadSums has already refused a

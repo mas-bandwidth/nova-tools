@@ -38,9 +38,7 @@ var dotted = regexp.MustCompile(`[0-9]\.[0-9]`)
 var digit = regexp.MustCompile(`[0-9]`)
 var bareCommit = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
-// dottedRelease is a plain numeric release tag, `1.2` or `1.2.3`. It is named for
-// what it matches rather than for the concept, because the package now also
-// carries the `release` VERB and one name for two things is one too few.
+// dottedRelease matches a plain numeric release such as 1.2 or 1.2.3.
 var dottedRelease = regexp.MustCompile(`^[0-9]+(\.[0-9]+)+$`)
 var digest = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
 var pseudo = regexp.MustCompile(`^([0-9]+\.[0-9]+\.[0-9]+)-0\.[0-9]+-([0-9a-f]{7,40})(\+.*)?$`)
@@ -260,10 +258,9 @@ func clip(s string, max int) string {
 	return s[:max] + "..."
 }
 
-// recordedVersion reports the version an installed column HOLDS rather than names a
+// recordedVersion recognizes a literal version in the installed column rather than a
 // command to read: one token, beginning with a digit, carrying a dotted number, and no
-// path separator. It is what `nova-version snapshot` writes -- a reading taken at a
-// moment -- and it is unambiguous against every argv a manifest can hold: `go version` is
+// path separator. It is a recorded reading, not a fresh probe: `go version` is
 // two tokens, `nova-bus` carries no dotted number, and a path to a binary carries a
 // separator.
 func recordedVersion(installed []string) (string, bool) {
@@ -292,9 +289,8 @@ func recordedVersion(installed []string) (string, bool) {
 // caller's sentence and is run exactly as written, once: appending to it would run a verb
 // the caller did not ask for.
 //
-// A `tool` row that names nothing but the executable is the other case. `nova-version
-// snapshot` writes such rows, and so does a hand-written manifest: `nova-swarm  tool
-// nova-swarm  ...`. Run bare, every nova tool answers a usage refusal (the banner is
+// A `tool` row that names only the executable uses the probe ladder. Run bare,
+// a nova tool answers a usage refusal (the banner is
 // behind `help`), so a bare-only read would be UNKNOWN for a tool that can say which
 // build it is. Such a row is asked the verb a tool answers: `version`, then `--version`,
 // then bare for a foreign tool that prints its version with no argument at all.

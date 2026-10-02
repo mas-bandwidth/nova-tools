@@ -1,17 +1,11 @@
-// Package release is the last mile: a green commit on main becomes a version, a
-// set of binaries, and the same binaries answering for themselves on every bench
-// in the fleet.
+// Package release cuts tags, builds artifacts, and installs them locally or on
+// remote machines. Each step is a verb with its own checks and receipt:
 //
-// A build, a copy, an install and a verify run as one shell loop cannot SAY
-// what it has done: a bench can run hours-old tools while the coordinator
-// believes it current, because the line that reports an install is composed
-// from the same ssh it is reporting on. So the steps are verbs, each of which
-// can refuse and each of which prints its own receipt:
-//
-//	cut      main is green, here is the version, here is what changed
-//	build    every cmd/nova-* for one platform, stamped, with a checksum file
+//	cut      check the selected commit, write the changelog, and tag the version
+//	build    every cmd/nova-* for the chosen platforms, stamped, with checksums
 //	install  verify the checksums, put them in place atomically, skip what is current
 //	adopt    do the install on every machine in a file, one receipt line each
+//	pull     remove a release's named artifacts and mark its changelog section
 //
 // The three edges to the world outside this process -- the forge, ssh, and the
 // Go toolchain -- are interfaces, so that a test can watch every argument this
@@ -19,8 +13,8 @@
 // short enough to read line by line. No unit test here reaches the network or a
 // real machine.
 //
-// NOTHING HERE TOUCHES A SECRET. gh carries its own credential, ssh carries
-// its own key, and neither is read, logged or passed by this package.
+// Authentication belongs to gh and ssh; this package does not read their
+// credentials or keys.
 package release
 
 import (
@@ -107,11 +101,8 @@ type SSH interface {
 	Fetch(ctx context.Context, machine, dir, dest string) (string, error)
 }
 
-// Machine is one line of the --machines file: which machine, and optionally
-// where ITS tools go. The fleet has three different home directories, so a
-// single --bin is right for most machines and wrong for one; the columns are
-// how that one is said in the file rather than by a second run with different
-// flags -- which is a second chance to get the version wrong.
+// Machine is one line of the --machines file: the host and optional paths that
+// override the run's --bin and --dest for that host.
 type Machine struct {
 	Name string
 	// Bin and Dest override --bin and --dest for this machine. Empty means
@@ -125,18 +116,12 @@ type Machine struct {
 // correctly the first time.
 const MachinesShape = "one machine per line: <name>[TAB<bin>[TAB<dest>]]; blank lines and #-comments skipped; user@host allowed; the optional columns override --bin and --dest for that machine"
 
-// RemotePathsNote says the one thing about --bin and --dest that is easy to get
-// wrong and silent when you do. They are paths ON THE MACHINE: the remote shell
-// expands a leading ~, so `--bin '~/.local/bin'` is how three different home
-// directories are named at once -- and the quotes are load-bearing, because an
-// unquoted ~ is expanded by the LOCAL shell into the adopting host's home,
-// which is a path the machine has probably never heard of.
-//
-// And the windows bench's own form is said here rather than found out at a
-// refusal: it is what docs/BENCH-WINDOWS.md puts in that bench's runner .path,
-// so it is what a person will type.
-const RemotePathsNote = "--bin and --dest are paths on each machine; the remote shell expands a leading ~, so quote it ('~/.local/bin') or the local shell expands it here instead. " +
-	`A windows target takes the drive form too ('C:\Users\nova\.local\bin'), folded to forward slashes before any command is composed -- the far side's ssh shell is Git Bash (docs/BENCH-WINDOWS.md) and a backslash there is an escape. The drive form is refused for every other target`
+// RemotePathsNote explains remote tilde expansion and Windows drive paths.
+const RemotePathsNote = `--bin and --dest are paths on each machine. The remote shell expands a leading ~;
+quote it ('~/.local/bin') so the local shell does not expand it first.
+A windows target also takes drive paths ('C:\Users\nova\.local\bin'), folded to
+forward slashes for the POSIX remote shell (see docs/BENCH-WINDOWS.md).
+The drive form is refused for every other target`
 
 // Toolchain is the edge to `go build`. The arguments are handed over whole, so
 // that a test asserting -trimpath and the -ldflags stamp is asserting the exact

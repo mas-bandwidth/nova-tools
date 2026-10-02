@@ -1,24 +1,14 @@
 package release
 
-// THE DEFINITION OF DONE, IN FRONT OF THE TAG (SPEC-RELEASE §12).
+// The release dogfood gate reads reports of real use (SPEC-RELEASE §12).
+// An open edge is a reported failure with no later successful use closing it.
+// Filing feedback alone does not close the edge.
 //
-// A tool is finished when it has been tested, dogfooded by somebody who did NOT
-// write it on real work, the edges that found have been filed, and the fixes
-// have been applied. `nova-check dogfood gate` makes that mechanical -- receipts
-// on disk, read against the command reference, an exit code (internal/dogfood)
-// -- and a tag is the one thing in this repository that cannot be quietly
-// amended and pushed again.
-//
-// So `cut` and `build` ask it FIRST -- before the forge is read, before a
-// single tool is compiled -- and refuse on an open edge. An open edge is
-// somebody having run a verb, it not having done what they needed, and nobody
-// having run it since and said it did: feedback FILED is not feedback APPLIED.
-//
-// The gate is the same read the CLI does, in process rather than through a
-// shell: `nova-check dogfood gate --cli <cli> --receipts <dir>` is
-// internal/dogfood.Gate over dogfood.ParseCLI and dogfood.ReadReceipts, and
-// calling it directly is one process, one set of refusals, and no shell to get
-// wrong.
+// When both inputs are available, cut and build run the gate before forge
+// reads or compilation. Missing inputs skip it; an explicit waiver requires
+// a reason. Those outcomes are recorded separately from a passed gate.
+// ReadDogfood uses the same parser and judgment as nova-check dogfood gate,
+// in process, without starting a shell.
 
 import (
 	"errors"
@@ -50,15 +40,17 @@ const DogfoodRemedy = "fix the open edges or " + DogfoodWaiveFlag + " " + Dogfoo
 // is a waiver nobody can weigh in six months.
 const DogfoodWaiverPrefix = "Dogfood gate waived: "
 
-// DogfoodNote is the gate said where a person will meet it: on `release help`,
-// and on `--help` for the two verbs that run it.
-var DogfoodNote = "cut and build run the dogfood gate FIRST -- `nova-check dogfood gate --cli <reference> --receipts <dir>`, in process -- and refuse on an OPEN EDGE: " +
-	"a verb somebody ran, that did not do what they needed, and that nobody has run since and said it did. " +
-	"A tool is done when it is tested, dogfooded by a non-author on real work, and the feedback is APPLIED; feedback filed is not feedback applied. " +
-	"--cli names the command reference and defaults to docs/CLI.md beside the checkout the verb was already given (--changelog for cut, --source for build). " +
-	"--receipts names the receipts directory and has no default (no path is guessed). " +
-	"A run with neither is NOT a run that passed: it prints `dogfood-gate=skipped` and names what was missing. " +
-	"The way past an open edge is to fix it, or " + DogfoodWaiveFlag + " " + DogfoodReasonFlag + " <why> -- and the waiver is printed on the line AND written into the CHANGELOG section, because a waiver nobody can find later is a gate nobody has."
+// DogfoodNote explains the gate's inputs and its distinct pass, skip and waiver outcomes.
+var DogfoodNote = "cut and build check dogfood receipts before forge reads or compilation when both inputs are available.\n" +
+	"The gate refuses an open edge: a reported failure with no later successful use closing it.\n" +
+	"It checks reported failures; it does not require a receipt for every verb.\n\n" +
+	"--cli names the command reference. If omitted, an existing docs/CLI.md is read from\n" +
+	"the checkout named by --changelog (cut) or --source (build).\n" +
+	"--receipts names the receipts directory; there is no default.\n" +
+	"If no reference is resolved or no receipts directory is named, the release continues\n" +
+	"with dogfood-gate=skipped and a note naming the missing input. Skipped does not mean passed.\n\n" +
+	"To proceed despite an open edge, fix it or use " + DogfoodWaiveFlag + " " + DogfoodReasonFlag + " <why>.\n" +
+	"The waiver appears in the release output and, for cut, in the CHANGELOG section."
 
 // addDogfoodFlags puts the gate's flags on one verb's flag set. Both verbs
 // that run the gate get them from here, so `cut` and `build` cannot drift
@@ -66,7 +58,7 @@ var DogfoodNote = "cut and build run the dogfood gate FIRST -- `nova-check dogfo
 func addDogfoodFlags(f *flag.FlagSet, o *options, cliDefault string) {
 	f.StringVar(&o.cli, "cli", "", "the command reference the dogfood gate reads its verbs from (default: "+cliDefault+")")
 	f.StringVar(&o.receipts, "receipts", "", "the dogfood receipts directory; without it the gate is skipped and the line says so")
-	f.BoolVar(&o.noDogfood, "no-dogfood-gate", false, "release without the definition of done; "+DogfoodReasonFlag+" <why> is then required")
+	f.BoolVar(&o.noDogfood, "no-dogfood-gate", false, "waive the dogfood gate; "+DogfoodReasonFlag+" <why> is then required")
 	f.StringVar(&o.reason, "reason", "", "why the gate was waived; it goes on the line and into the changelog")
 }
 
@@ -125,15 +117,9 @@ func ReadDogfood(cli, receipts, cmd string) (DogfoodVerdict, error) {
 			"%s in %s will not parse: %s: %s", plural(len(failures), "receipt"), receipts,
 			failures[0].Subject, failures[0].Reason)
 	}
-	// requireAll is FALSE. `cut` asks the question the release actually turns
-	// on -- is there an edge somebody found and nobody fixed -- and not the
-	// stronger one, whether every verb in the reference has been run by a
-	// non-author. The stronger question is `dogfood gate --require-all`, and a
-	// tag held hostage to the last unrun verb in a 200-verb reference is a tag
-	// nobody ever cuts.
-	// THE GATE JUDGES WHAT SHIPS. A receipt about a tool that is not under
-	// cmd/ is true about that tool and says nothing about this
-	// release, which does not contain it.
+	// The release gate checks reported failures, without requiring a receipt for
+	// every verb. When cmd is given, only shipped tools contribute to the verdict;
+	// receipts for other tools are set aside and counted.
 	var shipped, outside int
 	if cmd != "" {
 		set, err := dogfood.ReadShipped(cmd)
@@ -155,13 +141,10 @@ func ReadDogfood(cli, receipts, cmd string) (DogfoodVerdict, error) {
 
 // dogfoodPaths resolves what the gate reads.
 //
-// THE REFERENCE IS RESOLVED FIRST, AND AN ABSENT ONE ENDS IT. `cut` and
-// `build` are already told a path inside the checkout -- the changelog, the
-// source tree -- so the reference beside it is derived rather than retyped;
-// but a derived path that is not there means this is not a nova-tools checkout
-// and there is nothing to gate against. The receipts are --receipts alone: no
-// path is guessed (SPEC-UPDATE rule 1), so two machines running one command
-// read the same receipts or say that none were named.
+// An explicit --cli is retained. Otherwise, the reference is derived from
+// the caller's checkout only if that file exists. If neither supplies a
+// reference, the gate is skipped. Receipts come only from --receipts; there
+// is no home-directory fallback (SPEC-UPDATE, no guessed paths).
 func dogfoodPaths(o options, checkout string) (cli, receipts, cmd string) {
 	cli = o.cli
 	if derived := filepath.Join(checkout, "docs", "CLI.md"); cli == "" && checkout != "" && exists(derived) {
@@ -189,9 +172,7 @@ func exists(path string) bool {
 // written.
 func dogfoodCheck(token string, o options, deps Deps, checkout string, out, errs io.Writer) (string, error) {
 	if o.noDogfood {
-		// A WAIVER WITHOUT A REASON IS NOT A WAIVER. It is the gate turned
-		// off, which is the state this whole file exists to make impossible to
-		// reach by accident.
+		// An explicit waiver must record why it was requested.
 		if strings.TrimSpace(o.reason) == "" {
 			return "", refuse("say why: "+DogfoodWaiveFlag+" "+DogfoodReasonFlag+" <why>",
 				"%s waives the definition of done and no reason was given", DogfoodWaiveFlag)

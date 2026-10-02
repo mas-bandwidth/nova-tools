@@ -3,7 +3,7 @@
 // tool is internal/update's Run; its contracts are docs/SPEC-UPDATE.md for
 // example, check, status, apply, report, watch and adoption, and
 // docs/SPEC-RELEASE.md for the release verbs. Its help banner ends in the
-// block below, which runs as printed with the binary alone.
+// block below, which runs in an empty directory with Go on PATH.
 //
 //	example:
 //	  nova-update example --out versions.tsv

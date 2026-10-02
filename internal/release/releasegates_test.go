@@ -81,10 +81,8 @@ func TestCutNamesTheTruncationBeforeTheHitsItFoundInIt(t *testing.T) {
 	}
 }
 
-// AND JOHNNY'S READ DOES NOT GET PAST IT. --security-read is a read OF A LIST,
-// and the list is the thing that may be short: a read of a prefix of the truth
-// vouches for a prefix of the truth. The only way past a truncated compare is
-// a complete list.
+// A security review cannot repair an incomplete path list. A truncated compare
+// requires a complete list before the release can be classified.
 func TestCutRefusesATruncatedRangeEvenWithASecurityRead(t *testing.T) {
 	t.Parallel()
 
@@ -404,9 +402,8 @@ func TestAdoptExpectSumsFromReadsTheCoordinatorsDigestFile(t *testing.T) {
 	if code != 0 {
 		require.Equal(t, 0, code, "code=%d errs=%s out=%s", code, errs.String(), out.String())
 	}
-	// THE FETCH SOURCE NEVER HASHES. Decision 2: a digest computed where the
-	// bits live is not evidence about the bits. Destination `sha256sum -c` of
-	// a copy this host already verified is #1981, not this lesson.
+	// A digest supplied by the artifact source is not independent evidence.
+	// The destination's checksum verification is a separate check.
 	for _, run := range s.runs {
 		if strings.HasPrefix(run, "build-host:") {
 			for _, banned := range []string{"sha256sum", "shasum", "openssl", "md5"} {

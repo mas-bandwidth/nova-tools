@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// #3880 DONE-WHEN: two fake benches beating different nova-sprint stamps make
+// Two fake benches beating different nova-sprint stamps make
 // `nova-update report --store` print exactly one DRIFT line, naming the stale
 // bench, with no ssh and no bus note. The beats are what ns_bench_beat writes
 // (bench:<b>:beat, field build = the nova-sprint version line) and the

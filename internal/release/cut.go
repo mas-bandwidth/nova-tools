@@ -16,12 +16,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// prNumber matches the `(#123)` a squash merge puts at the end of the subject.
-// It is anchored to the END of the subject on purpose: this repository's own
-// merges read `feat: nova-pulse hygiene, the path-safe bench cleanup verbs
-// (#1142) (#1253)`, where the first number is the ISSUE the work closes and the
-// last is the pull request that merged it. Taking the first would file every
-// such commit under a number that never existed as a pull request.
+// prNumber matches the trailing pull-request number in a squash-merge subject.
+// Earlier parenthesized numbers can name issues, so only the last one counts.
 var prNumber = regexp.MustCompile(`\(#(\d+)\)\s*$`)
 
 // memberNumber matches a `#123` anywhere in a commit body. An integration batch

@@ -102,18 +102,15 @@ func Load(r io.Reader) ([]Entry, error) {
 		if err != nil {
 			add(line, "installed: %v", err)
 		}
-		// "-" is the field a snapshot leaves for a person to fill in, and it is the same
-		// answer as "none": there is no command to apply an update with. It is not a
-		// command named "-".
+		// "-" and "none" both mean that no update command is recorded.
 		if f[4] != "none" && f[4] != "-" {
 			e.Apply, err = argv(f[4])
 			if err != nil {
 				add(line, "apply: %v", err)
 			}
 		}
-		// A latest of "-" is NOT YET KNOWN, which is what a snapshot writes and what a
-		// person promotes to a source by hand. It is read, reported as unknown, and never
-		// guessed at; every other value is still a <scheme>:<locator> or a refusal.
+		// A latest of "-" is unknown. The caller can replace it with a source;
+		// every other value must be a valid <scheme>:<locator>.
 		if e.Latest == "-" {
 			out = append(out, e)
 			continue

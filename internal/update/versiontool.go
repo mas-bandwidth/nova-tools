@@ -20,11 +20,11 @@ func VersionTool(stamp string, env Environment) *tool.Tool {
 		Name:  "nova-version",
 		What:  "report which version of each tool is installed, record it, and compare two records or two revisions",
 		Stamp: stamp,
-		How: `report reads each tool's installed version; snapshot records a directory's binaries;
-diff compares two snapshots; moved writes the note of what two commits' binaries changed.
-It is one of two binaries sharing the manifest and report; latest and installing are nova-update's.
+		How: `report reads installed versions; snapshot counts a manifest or records a directory's binaries.
+diff compares two recorded inventories; moved builds two revisions and compares their help.
+It is one of two binaries sharing the manifest and report; latest-release checks and installs are nova-update's.
 The manifest is the file --file names, written by hand; report -h states its six rules.
-first run: the binary alone; the example lines write a one-tool manifest and read it.`,
+first run: Go on PATH; the example lines write a one-tool manifest and read its version.`,
 		ExitTable: "0 the verb ran and passed: a report whose every entry answered (under send, whose note nova-bus took), a snapshot whose tools all answer, a diff, a moved note written; 1 the tool said NO (a report or a snapshot with an UNKNOWN tool, a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).",
 		Verbs: []tool.Verb{
 			{
@@ -42,7 +42,7 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 				Usage:  "moved --from <sha> --to <sha> --repo <dir> --out <path> [--timeout <d>] [--budget <d>] [--dry-run]",
 				Effect: tool.LocalWrite + "; with --dry-run, the note is printed and nothing is written but the builds' scratch",
 				// No banner example: it needs a checkout and builds every cmd/* twice.
-				Detail: "example, in a checkout of these tools (it builds both revisions; raise --budget when two builds outlast it):\n" +
+				Detail: "example, in a checkout containing both revisions (requires Go and Git; raise --budget if the builds need longer):\n" +
 					"  nova-version moved --from HEAD~1 --to HEAD --repo . --out moved.txt --dry-run\n",
 				Flags: func(f *tool.Flags) {
 					f.Required("from", "the revision to compare from")
@@ -68,9 +68,8 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 					f.Duration("timeout", snapshotChildTimeout, "one binary's read deadline")
 					f.Duration("budget", snapshotBudget, "whole run deadline")
 					f.Bool("dry-run", false, "read every binary and list the rows; write no --out")
-					// Neither path is guessed: both are the caller's to name
-					// (SPEC-UPDATE rule 1), unless --file asks the manifest shape.
-					// The refusal names both shapes, so either is the next call.
+					// The caller names either a manifest or both inventory paths.
+					// The refusal explains both shapes (SPEC-UPDATE, no guessed paths).
 					f.Check(func(c *tool.Call) {
 						var missing []string
 						for _, n := range []string{"bin", "out"} {

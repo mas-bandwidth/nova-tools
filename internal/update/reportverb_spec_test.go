@@ -9,11 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// #121: the report verb's contract is a paragraph in SPEC-UPDATE.md, and the
-// spec the issue names must read as prose, not as a half-resolved merge. The
-// stray conflict marker left in that paragraph is red the same way the verbs
-// block is: the sentences a reader needs are still there, but the document they
-// live in is broken, so a reader cannot trust the section the issue points at.
+// The report contract must remain present and free of merge conflict markers.
 func TestSpecUpdateReportVerbSectionIsIntact(t *testing.T) {
 	t.Parallel()
 

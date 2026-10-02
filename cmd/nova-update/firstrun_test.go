@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The first run needs the binary alone, so it runs in an empty directory: the
+// The first run needs this binary and Go on PATH. It runs in an empty directory: the
 // example lines write their own manifest there, never into the checkout.
 func TestExecutableFirstRun(t *testing.T) {
 	doc, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
@@ -91,13 +91,9 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 //     onboarding.Instant, which PARSES the value, so an impossible stamp the
 //     tool printed is still a finding rather than a value a norm erased.
 //   - `took=` is how long this run's version reads took.
-//   - `version=`, `raw=` and `path=` are the `go version` THIS bench answers.
-//     The documented transcript was cut on one machine (go1.27.1, darwin/arm64,
-//     /opt/homebrew/bin/go); the same command on a Linux bench answers a
-//     different release, a different GOOS/GOARCH and a different executable
-//     path. The fixture (`testdata/example.tsv`) declares `go version` as the
-//     installed command, so these three fields are the bench's by construction
-//     and no run of this test on another machine could reproduce that one's.
+//   - `version=`, `raw=` and `path=` describe this machine's Go installation.
+//     The fixture (`testdata/example.tsv`) runs `go version`, so its release,
+//     platform and executable path can differ from the documented transcript.
 //
 // What is NOT declared is the point of comparing line for line: the number of
 // lines, their order, and `entries=`, `kinds=`, `checked=`, `known=`,

@@ -44,12 +44,9 @@ type receipt struct {
 	Issue int    `json:"issue,omitempty"`
 }
 
-// writeReceipts appends receipts as files, newest-sorting last. The NAME
-// carries no timestamp: `dogfood.Record` slugs the colons out of an RFC3339 `at`
-// before it names a file, and a test that spelled the name itself put them back
-// -- on windows a `:` is not a filename character at all, and every one of these
-// tests failed there and nowhere else (test-windows-pr, #1423). The ledger reads
-// the `at` INSIDE the record, so the file may be called anything that sorts.
+// writeReceipts appends receipts as files, newest-sorting last. Filenames omit
+// timestamps because RFC3339 colons are invalid on Windows. The ledger reads
+// the timestamp inside each record.
 func writeReceipts(t *testing.T, dir string, rs ...receipt) string {
 	t.Helper()
 	existing, err := os.ReadDir(dir)

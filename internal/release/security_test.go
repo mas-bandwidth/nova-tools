@@ -628,16 +628,9 @@ func TestPullRefusesWhenItCannotNameTheFiles(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Issue #2285: pull edge-fences the spec names but no test proves.
-//
-// Four fences in the `pull` section of docs/SPEC-RELEASE.md have code paths
-// but no test that asserts the receipt/refusal actually happens. This test
-// adds those assertions as regression guards; each subtest runs against the
-// existing pull.go and pins the behaviour the spec describes.
-// ---------------------------------------------------------------------------
-
-func TestIssue2285(t *testing.T) {
+// Pull preserves non-regular files and installed binaries, reports absent remote
+// artifacts, and identifies a changelog failure after artifact removal.
+func TestPullPreservesNonArtifactsAndReportsPartialRemoval(t *testing.T) {
 	t.Parallel()
 
 	// -- fence 1: Locally it goes through safepath.RemoveUnder, only for

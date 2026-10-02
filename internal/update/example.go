@@ -12,9 +12,8 @@ import (
 
 // exampleManifest is the manifest the `example` verb prints or writes: one tool,
 // Go, whose installed and latest versions are both read on this machine, so a
-// first run needs nothing but the binary and the help's example lines (STANDARD
-// §3.6, "an example block that runs as printed"). Its apply column is real, and
-// the help runs it only under --dry-run.
+// first run needs Go on PATH. Its apply column is real, and the help's example
+// lines run it only under --dry-run.
 const exampleManifest = Header + "\n" +
 	"# The example manifest: Go, read with go version on both sides. Replace it with your own tools.\n" +
 	"go\ttool\tgo version\tlocal:go version\tgo install golang.org/dl/go{version}@latest\tcaller\n"

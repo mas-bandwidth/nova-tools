@@ -12,43 +12,47 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// Verbs is the usage block `nova-update help` prints for this verb, and the same
-// five lines docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
-// default path: SPEC-UPDATE rule 1 (no search of the cwd, no $HOME) is why a
-// release cut from a laptop and a release cut from a bench are the same release.
+// Verbs is the release usage block shared with docs/SPEC-UPDATE.md.
+// Paths come from flags, except the command reference derived from the named
+// checkout; dogfoodPaths documents that rule. No path comes from a home directory.
 const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
 nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
 nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]`
 
-// CutNote is the gate in front of a tag, said where a person will meet it
-// (SPEC-RELEASE §1). It is a var rather than a const
-// because it names the list, and the list has ONE home: composing this from
-// SensitivePaths is why the help cannot fall behind the gate.
-var CutNote = "cut classifies the range since the previous tag against the sensitive path list in internal/release/sensitive.go and docs/SPEC-RELEASE.md " +
-	"(" + SensitiveShape + "). A range that touches one of them REFUSES until --security-read names the security reader's read -- a note id or the url of the comment -- " +
-	"and the cut then prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt. " +
-	"A range TOO BIG FOR THE FORGE TO LIST is a different refusal and --security-read does not get past it: a read of a list that may be short is a read of a prefix of the truth. " +
-	"Classify such a range from a complete local list instead -- `--local-diff <checkout>` runs `git diff --name-only <previous tag>...<head>` in that checkout, and `--paths-from <file>` writes the answer there for a later cut to read back. " +
-	"The tag is annotated, and the annotation carries `sums=<sha256 of SHA256SUMS>` when --sums names the built checksum file, which is the digest `adopt --repo` reads back. " +
-	"`build` writes one SHA256SUMS per platform, under <out>/<version>/<goos-goarch>/, and --sums takes one of them: the tag and the CHANGELOG section carry THAT platform's digest, and `adopt --repo` verifies that platform only. " +
-	"Every other platform the release built is adopted with --expect-sums-from <out>/<version>/<goos-goarch>/" + DigestFile + " on the host that built it, or --expect-sums <sha256> from the sums= field of its `RELEASE BUILT` line."
+// CutNote explains the tag's gates (SPEC-RELEASE §1). SensitiveShape comes from
+// the same path list as the classifier, so the help names the paths it checks.
+var CutNote = "cut checks the range since the previous tag for sensitive paths (SPEC-RELEASE.md):\n" +
+	SensitiveShape + ".\n" +
+	"A matching path requires --security-read <note id|url>. The cut records that review as\n" +
+	"RELEASE CUT SENSITIVE paths=<n> read=<id> above its receipt.\n\n" +
+	"An incomplete forge comparison refuses even with --security-read. Supply a complete list:\n" +
+	"--local-diff <checkout> runs git diff --name-only <previous tag>...<head>.\n" +
+	"Add --paths-from <file> to save that list, or use --paths-from alone to read a saved list.\n\n" +
+	"--sums names one platform's SHA256SUMS. The annotated tag and CHANGELOG record its\n" +
+	"digest as sums=<sha256>; adopt --repo verifies that platform only.\n" +
+	"For another platform, use --expect-sums-from <out>/<version>/<goos-goarch>/" + DigestFile + "\n" +
+	"from a local build, or --expect-sums <sha256> from that platform's RELEASE BUILT line."
 
-// AdoptNote is what a person needs before their first adopt: each sentence
-// answers a mistake a first adopt makes.
-const AdoptNote = "adopt runs FROM the host that has ssh to every machine and fans out from there; it never needs the machines to reach each other. " +
-	"When the release was built elsewhere, --from may name that machine as host:dir and --stage <dir> says where to fetch it first. " +
-	"Such a fetch is verified against a digest that did NOT travel with the bits: --repo <owner/name> reads it off the annotated tag the cut wrote, --expect-sums <sha256> names it outright, or --expect-sums-from <file> reads it out of the " + DigestFile + " this host's own `release build` wrote. " +
-	"A dev build has no tag, which is why the third exists; the file must be a LOCAL one, because a digest computed on the machine holding the bits is that machine vouching for itself. " +
-	"Install the release on this host before adopting it: the nova-update running the fan-out is the one here, and a coordinator older than the release it is adopting refuses and says so. " +
-	"--machines is " + MachinesShape + ". " + RemotePathsNote + ". " +
-	"--retire <dir> removes this release's own nova-* files from a second directory nobody should still be running from (~/go/bin); it refuses to be --bin or the live stamp. " +
-	"--bin, --dest and --retire must be absolute or ~/-rooted and free of shell metacharacters; they are validated before any remote command is composed."
+// AdoptNote explains the coordinator, digest source and remote paths.
+const AdoptNote = "adopt runs on a coordinator with SSH access to each target; targets need no access to each other.\n" +
+	"Install the release on the coordinator first: an older nova-update refuses to adopt a newer release.\n" +
+	"--from host:dir fetches the release into --stage <dir> before distributing it.\n\n" +
+	"A remote fetch needs a digest obtained independently of those artifacts:\n" +
+	"--repo <owner/name> reads the annotated tag; --expect-sums <sha256> names the digest;\n" +
+	"--expect-sums-from <file> reads a local " + DigestFile + " from this host's release build.\n" +
+	"The local file also works for an untagged build. A digest fetched with the artifacts\n" +
+	"does not independently establish which artifacts were intended.\n\n" +
+	"--machines is " + MachinesShape + ".\n" + RemotePathsNote + ".\n" +
+	"--retire <dir> removes this release's nova-* files from a second installation directory;\n" +
+	"it must differ from --bin and the live stamp directory. Remote paths are validated\n" +
+	"before commands are composed; use the platform's absolute or ~/-rooted path form,\n" +
+	"without shell metacharacters."
 
-// Deps are the seams. A zero Deps is the production one: the forge is gh, the
-// remote is ssh, the compiler is go, the clock is the machine's. A test fills in
-// what it needs and nothing it fills in can reach the network.
+// Deps supplies the release's external operations. Zero fields use production
+// implementations: gh, ssh, go and the machine clock. Tests inject fakes for
+// the operations their chosen verb reaches.
 type Deps struct {
 	Forge     Forge
 	SSH       SSH
@@ -56,9 +60,8 @@ type Deps struct {
 	// Git is the local checkout `cut --local-diff` reads the complete path
 	// list out of when the forge's compare is at its ceiling.
 	Git Git
-	// Dogfood is the definition-of-done gate `cut` and `build` run first. A
-	// nil Dogfood is ReadDogfood, which reads the command reference and the
-	// receipts off disk and reaches nothing else.
+	// Dogfood checks release receipts when its inputs are available. A nil value
+	// uses ReadDogfood, which reads the reference and receipts from disk.
 	Dogfood Dogfood
 	Now     func() time.Time
 	// Self answers what the nova-update RUNNING THIS is stamped with. It is a
@@ -174,9 +177,8 @@ func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 	return Run(name, args, out, errs, Deps{Self: func() string { return stamp }})
 }
 
-// Run is `nova-update release <verb>`. The verb is dispatched here and each of
-// the four validates its own flags, so a missing flag is named by the verb that
-// wanted it rather than by a shared check that knows about all of them.
+// Run dispatches `nova-update release <verb>`. Each verb validates its own
+// flags so a refusal describes that operation's requirements.
 func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	if deps.Now == nil {
 		deps.Now = time.Now

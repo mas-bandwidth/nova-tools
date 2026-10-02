@@ -285,8 +285,8 @@ func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
 	}
 }
 
-// Both tools' first run needs the binary alone: `example` prints
-// the example manifest, or writes it to --out and names the next command; the
+// Both tools' example verb prints the manifest, or writes it to --out and names
+// the next command. The report that follows needs Go on PATH. Writing the
 // same file again is unchanged, so the help's example lines run twice, and a file
 // holding anything else is never overwritten.
 func TestExampleWritesAManifestTheFirstRunReads(t *testing.T) {

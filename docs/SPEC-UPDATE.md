@@ -3,17 +3,19 @@
 nova-update compares installed tools with their latest releases, updates one when asked,
 and cuts and adopts releases of these tools. It installs only what a person names.
 
-This file covers the manifest verbs and the two that read other files; the release verbs'
-gates are [SPEC-RELEASE.md](SPEC-RELEASE.md), and nova-version's `moved`, `snapshot --bin`
-and `diff` are [SPEC-VERSION.md](SPEC-VERSION.md). The verbs, all listed in
+This specification covers the manifest operations, adoption checks and adoption
+ledger. It also covers the manifest operations shared with nova-version:
+`example`, `report`, `send` and `snapshot --file`. [SPEC-RELEASE.md](SPEC-RELEASE.md)
+defines the release gates; [SPEC-VERSION.md](SPEC-VERSION.md) defines `moved`,
+`snapshot --bin` and `diff`. The commands are listed in
 [The verbs](#the-verbs):
 
 - `nova-update example [--out <path>]` prints, or writes, a one-tool manifest to start
   from; it never writes over another file.
 - `nova-update check --file <path>` reads one versions file kept in git and asks of every
-  dependency it names what is INSTALLED on this box and what is the LATEST its own source
+  dependency it names what is installed on this machine and what its latest source
   publishes. A count line first, always, then one line per finding, exit 1 when anything is not current
-  — STALE, NEWER, DIFFERENT or UNKNOWN; it never installs, never pulls.
+  — STALE, NEWER, DIFFERENT or UNKNOWN; it installs nothing.
 - `nova-update status --file <path>` is `check` with every entry's line shown, the
   current ones too: one line per tool, installed against latest, exit 0 when every entry
   is equal and 1 when any differs; it never installs, never pulls, writes nothing.
@@ -21,10 +23,10 @@ and `diff` are [SPEC-VERSION.md](SPEC-VERSION.md). The verbs, all listed in
   way the file says, on a person's word — and refuses a model, a name the file does
   not carry, and any run with no name at all.
 - `nova-update report --file <path>` prints what this box runs — the same file, the
-  `installed` side only, the whole identity of each tool beside its key — with no network,
-  no recipients and no bus; `--draft` and `--send` hand that report to nova-bus, on the
-  caller's word (rules 20–26). `nova-version report` and `nova-version send` are the
-  same verb under nova-version's name.
+  `installed` side only, the whole identity of each tool beside its key. It makes no
+  latest-source requests and needs no recipients or bus. `--draft` prints a note;
+  `--send` delivers it through nova-bus (rules 20–26). `nova-version report` shares
+  this behavior; `nova-version send` requests delivery directly.
 - `nova-update watch --adopt <checks.tsv>` runs a file of adoption checks and, with
   `--bus`, posts the receipt (rule 26).
 - `nova-update adoption --file <path>` lists the adoption ledger: which tool each
@@ -32,14 +34,12 @@ and `diff` are [SPEC-VERSION.md](SPEC-VERSION.md). The verbs, all listed in
 - `nova-update release <cut|build|install|adopt|pull>` releases these tools
   ([The release verb](#the-release-verb)).
 
-`check` reads somebody else's server, so every rule below is about a bound: a bounded
-read, a bounded budget, a bounded listing, and a failure never allowed to read as *up to
-date*. SPEC.md's **Conventions** govern — exit codes, the one-line grammar, the field law,
-`internal/oneline`, `internal/bounded`, no guessed paths — and this file says only what is
-more. A caller may run it on a schedule; the tool has no clock of its own — no daemon, no
-timer, no state file of its own (rule 25's snapshot is the caller's, named by flag) —
-nothing reacts to its exit code, no verdict starts an `apply`. `watch` is a verb that runs
-one pass of checks, not a loop.
+Version sources may be remote, so reads, the whole run and listings have explicit
+bounds. A failed read never means *up to date*. SPEC.md's **Conventions** govern
+exit codes, output fields, `internal/oneline`, `internal/bounded` and explicit paths.
+The tool installs no daemon or timer. A caller may schedule it, but no verdict
+starts an `apply`. `watch` runs one pass of checks. Delivery state belongs to the
+caller-named `--snapshot` file (rule 25).
 
 `nova-version snapshot --file <manifest>` counts how many of the ADOPTED tools the rule-2 manifest names answer: it reads the manifest and reports `known=<n>` on the `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line, then one `SNAPSHOT UNKNOWN name=<name> reason=<why> remedy=<what to do>` line per tool that did not answer (capped by `--max`), exit 1 when any adopted tool is unknown — the manifest's tools, never how many `nova-*` executables sit on a bin dir or PATH. A recorded installed version is known without starting a process; an installed argv is probed the way report probes it (rule 4), `--timeout` a tool (default `5s` in this shape) and `--budget` the run. The verb writes nothing: the manifest is adopted, not discovered, so a draft for a person to fill in is a hand-written file, not a scan. `nova-version snapshot --bin <dir> --out <file.tsv>` instead inventories a directory of `nova-*` executables as a four-column TSV, and `nova-version diff --from <a.tsv> --to <b.tsv>` compares two such inventories.
 

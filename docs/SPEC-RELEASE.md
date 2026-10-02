@@ -366,20 +366,17 @@ reason still fails, with the old binary put back under its own name.
 `TestInstallMovesARunningFileAsideWhenTheRenameIsRefused`,
 `TestSnapshotReadsExeNamesAndKeepsTheSuffix`, `TestTheWindowsBenchIsInTheReleaseSpec`.*
 
-## 12. A release is cut only when a non-author has run it
+## 12. Dogfood receipts and the release gate
 
-The definition of done: a tool is finished when it has been **tested**, **dogfooded by somebody who
-did not write it** on real work, and the **feedback applied**. `nova-check dogfood gate` makes that
-mechanical — receipts on disk, read against the command reference, an exit code — and the release
-verbs are its caller, so the claim that a release has been dogfooded is never just whatever the last
-person said it was. A tag cannot be quietly amended and pushed again.
+The definition of done requires tests, real-work use by a non-author, and the feedback applied.
+The release gate checks one part of that claim: reported failures in the receipts. It does not
+require a receipt for every verb or establish that the whole definition of done has been met.
 
-**`cut` and `build` run the gate FIRST.** Before the forge is asked anything, before a single tool is
-compiled. The gate is `internal/dogfood.Gate` in process rather than a shell out to `nova-check` — one
-process, one set of refusals, no shell to get wrong — and it is the same read
-`nova-check dogfood gate --cli <reference> --receipts <dir>` does.
+**With both inputs available, `cut` and `build` run the gate before forge reads or compilation.**
+They call `internal/dogfood.Gate` in process, using the same check as
+`nova-check dogfood gate --cli <reference> --receipts <dir>`.
 
-**An OPEN EDGE refuses.** An open edge is a verb somebody ran, that did not do what they needed, and
+**An open edge refuses.** An open edge is a verb somebody ran, that did not do what they needed, and
 that nobody has run since and said it did. Feedback *filed* is not feedback *applied*, and without the
 gate the third step of the definition is the one that goes missing:
 
@@ -389,9 +386,8 @@ RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or -
 
 `build` refuses the same way under `RELEASE BUILD REFUSED`, because a dev build has no tag and no
 changelog and still reaches every bench through `adopt`. The refusal shows at most ten open edges and
-points at `nova-check dogfood ledger` for the rest. The gate asks the question a release turns on, not
-the stronger `--require-all` one: a tag held hostage to the last unrun verb in a long reference is a
-tag nobody ever cuts.
+points at `nova-check dogfood ledger` for the rest. The release gate does not enable `--require-all`:
+the absence of a receipt for a verb does not by itself block a release.
 
 **The gate judges what ships.** The shipped set is the tools under the checkout's `cmd/` — the
 directory beside the reference and the changelog — and a receipt naming any other tool is set aside
@@ -410,11 +406,12 @@ refuses, and so does a shipped tool's not-ok receipt on a verb the reference doe
 cannot be read refuses naming its path: an I/O error is not a tool outside the release.
 `nova-check dogfood gate --shipped <cmd dir>` is the same read.
 
-**The two inputs.** `--cli` names the command reference and defaults to `docs/CLI.md` beside the
-checkout the verb was already given (`--changelog` for `cut`, `--source` for `build`): a path derived
-from one the verb was handed, never searched for. `--receipts` names the receipts directory and has
-no default (SPEC-UPDATE rule 1: no path is guessed). A run without both is not a run that passed: it
-prints `RELEASE CUT NOTE dogfood-gate=skipped …` naming what was missing.
+**The two inputs.** `--cli` names the command reference. If omitted, an existing `docs/CLI.md` beside
+the given checkout is used (`--changelog` for `cut`, `--source` for `build`). `--receipts` names the
+receipts directory and has no default (SPEC-UPDATE rule 1: no path is guessed). If no reference is
+resolved or no receipts directory is named, the release continues and prints
+`RELEASE CUT NOTE dogfood-gate=skipped …` (or `RELEASE BUILD NOTE …`), naming the missing input.
+Skipped does not mean passed. Once both inputs resolve, a read failure produces an error.
 
 **The waiver is work, and it outlives the terminal.** `--no-dogfood-gate` without `--reason <why>`
 refuses. With one, the reason is printed as `RELEASE CUT DOGFOOD WAIVED reason=<why>`, the receipt line
@@ -491,14 +488,11 @@ One numbered line per test; where one test holds several behaviours, they share 
 45. `TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts` — a cross-built windows artifact is not self-verified; the build claims only the checksum round trip.
 46. `TestInstallMovesARunningFileAsideWhenTheRenameIsRefused` — `install` moves a running binary aside (dot-prefixed) when its rename is refused, and restores the old binary if the fallback also fails.
 47. `TestTheWindowsBenchIsInTheReleaseSpec` — the windows bench is in the release spec.
+48. `TestPullPreservesNonArtifactsAndReportsPartialRemoval` — non-regular files and installed binaries survive; an absent remote release reports `held=no`; a changelog failure after artifact deletion names the manual repair.
 
-Demanded, and proven by no test yet (8):
+Demanded, and covered by no test here yet (4):
 
 - (absent) — when `--repo` and `--expect-sums` are both given, `--expect-sums` wins.
-- (absent) — local deletion goes through `safepath.RemoveUnder` only for regular files; a non-regular file is left alone.
-- (absent) — `pull` does not touch an installed binary; it deletes the release's artifact directory only.
-- (absent) — a machine that never held the release says so (`held=no`) rather than refusing.
-- (absent) — artifacts are deleted first, the record last; if the changelog cannot be written the receipt is `PULL FAIL … the artifacts are deleted; mark the section by hand`.
 - (absent) — no verb in this package ever asks a machine to hash `SHA256SUMS` itself as evidence (`sha256sum SHA256SUMS`, `shasum`, `openssl dgst`); the bench's `sha256sum -c` of the artifacts is a different check.
 - (absent) — precedence when more than one digest source is given: `--expect-sums`, then `--expect-sums-from`, then `--repo`.
 - (absent) — an adopt whose local binary has no readable stamp does not refuse.

@@ -10,7 +10,7 @@ import (
 
 // Every verb answers -h and --help with its own help on stdout at exit 0, and
 // none of them reads the manifest, builds a revision, runs a binary or writes
-// a snapshot (the CLI style's rule (b), #4505).
+// a snapshot.
 func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
 	file := []string{"--file", "{dir}/manifest.tsv"}

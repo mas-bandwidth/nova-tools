@@ -3,8 +3,8 @@
 // VersionTool on internal/tool, sharing nova-update's manifest reader and
 // report. Its contracts are docs/SPEC-VERSION.md for moved, snapshot --bin and
 // diff, and docs/SPEC-UPDATE.md for example, report, send and snapshot --file.
-// Its help banner ends in the runnable block below, which
-// cmd/nova-version/slow_test.go runs, as printed, with the binary alone.
+// Its help banner ends in the block below, which runs in an empty directory
+// with Go on PATH; cmd/nova-version/slow_test.go exercises the sequence.
 //
 //	example:
 //	  nova-version example --out versions.tsv

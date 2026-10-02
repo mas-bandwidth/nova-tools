@@ -1287,7 +1287,11 @@ no user, no variable is read unless `--password-env` names it.
 
 ## nova-update
 
-`nova-update` compares installed tools with their latest releases, updates one when asked, and cuts and adopts releases of these tools. Reads are bounded, an unanswered read is UNKNOWN, and nothing is installed unless `apply` names it. The contracts are [SPEC-UPDATE.md](SPEC-UPDATE.md) for `example`, `check`, `status`, `apply`, `report`, `watch` and `adoption`, and [SPEC-RELEASE.md](SPEC-RELEASE.md) for `release`.
+`nova-update` compares installed tools with their latest releases, updates one when asked, and cuts and adopts releases of these tools.
+Reads are bounded; an unanswered read is UNKNOWN. Manifest updates require an
+explicit `apply <name>`; release installation uses `release install` or `release adopt`.
+[SPEC-UPDATE.md](SPEC-UPDATE.md) covers `example`, `check`, `status`, `apply`, `report`,
+`watch` and `adoption`; [SPEC-RELEASE.md](SPEC-RELEASE.md) covers the release gates.
 
 ### First run
 
@@ -1296,7 +1300,7 @@ nova-update example --out versions.tsv
 nova-update report --file versions.tsv
 ```
 
-Run this with the binary alone, in any directory: `example` writes a one-tool
+Run this in any writable directory with Go on PATH: `example` writes a one-tool
 manifest (Go, read with `go version` on both sides) and names the next command; the
 same file again is left unchanged, and a file holding anything else is never
 overwritten. The executable transcript is in [TESTS.md](TESTS.md#nova-update).
@@ -1352,23 +1356,26 @@ that platform only. Every other platform the release built is adopted with `--ex
 <out>/<version>/<goos-goarch>/SUMS.digest` on the host that built it, or `--expect-sums <sha256>`
 from the `sums=` field of its `RELEASE BUILT` line. It also
 classifies the range since the previous tag against the sensitive path list and refuses until
-`--security-read <note id|url>` names the security reader's read. A compare the forge could only answer in part —
+`--security-read <note id|url>` names the security review. A compare the forge could only answer in part —
 300 files, its ceiling — is a different refusal, `reason=compare-truncated`, and a read does not get
 past it: classify from a complete local list instead, with `--local-diff <checkout>` to produce one
 (`git diff --name-only <previous>...<head>`) and `--paths-from <file>` to write it or read it back.
 `--dry-run` decides and prints and writes nothing.
 
-**Before any of that, `cut` and `build` run the dogfood gate.** It is `nova-check dogfood gate --cli
+**With both inputs available, `cut` and `build` first run the dogfood gate.** It is `nova-check dogfood gate --cli
 <reference> --receipts <dir>` in process: a verb somebody ran that did not do what they needed, and
 that nobody has run since and said it did, is an **open edge**, and an open edge refuses —
 `RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or --no-dogfood-gate
 --reason <why>"`. `--cli` defaults to `docs/CLI.md` beside the checkout the verb was already given
-(`--changelog` for `cut`, `--source` for `build`); `--receipts` has no default, and a run without
-both says `dogfood-gate=skipped` rather than passing quietly. The gate judges the **shipped set** only: the tools under the checkout's `cmd/`. A receipt
+(`--changelog` for `cut`, `--source` for `build`), when that reference exists.
+`--receipts` has no default. If no reference is resolved or no receipts directory is
+named, the release continues with `dogfood-gate=skipped`; that is not a passed gate.
+The gate checks reported open edges, not whether every verb has a receipt.
+It judges the **shipped set** only: the tools under the checkout's `cmd/`. A receipt
 naming any other tool is set aside and counted on `RELEASE CUT NOTE dogfood-gate shipped=<n>
 outside=<n> cmd=<dir>`. `--no-dogfood-gate` needs `--reason <why>`, and the reason is printed, put on the release
 line as `dogfood=waived`, and written into the CHANGELOG section as `Dogfood gate waived: <why>`.
-Every release line carries `dogfood=ok|waived|skipped`. A tool is done when it is
+The cut and build receipts carry `dogfood=ok|waived|skipped`. A tool is done when it is
 tested, dogfooded by a non-author on real work, and the feedback is applied — see
 [SPEC-RELEASE.md](SPEC-RELEASE.md) §12.
 
@@ -1400,7 +1407,7 @@ and clears this release's own files out of `--retire`. Run it **on the coordinat
 refuses and says so.
 
 ```sh
-nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from bench1:/home/user/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64
+nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from bench1:/home/user/nova-bench/release --stage ./stage --expect-sums-from ./release/v0.17.0/linux-amd64/SUMS.digest --bin '~/.local/bin' --dest '~/nova-release' --platform linux-amd64 --certify ./registry.tsv --certs ./certs.tsv --standard ./docs/STANDARD.md
 ```
 
 `adopt` runs from the host that has ssh to every machine and fans out from there. A `--from host:dir`
@@ -1411,11 +1418,13 @@ it out of this host's own build (which is how a release with no tag is adopted a
 per line with optional TAB-separated `bin` and `dest` overrides; `--dry-run` asks every machine what
 it holds and installs nothing. The stream lands in `<version>.partial/` and is renamed into place
 only after the bench verifies every artifact against `SHA256SUMS`; "already holds" is that verified
-count (`22/22`), never an existence check.
+count, never an existence check. These examples require a machines registry, certificates file,
+and standard named by `--certify`, `--certs`, and `--standard`. `--no-certify` explicitly waives
+certification and is reported in the output.
 
 ```sh
 nova-update release build --version v0.17.0 --out ./release --source . --platform windows-amd64
-nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from ./release --bin 'C:\Users\nova\.local\bin' --dest 'C:\Users\nova\nova-release' --platform windows-amd64
+nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from ./release --bin 'C:\Users\nova\.local\bin' --dest 'C:\Users\nova\nova-release' --platform windows-amd64 --certify ./registry.tsv --certs ./certs.tsv --standard ./docs/STANDARD.md
 ```
 
 A **windows** bench is a target like any other. The build names every artifact for it — a
@@ -1439,7 +1448,10 @@ the date and `--reason`. `--dry-run` says what would be deleted and deletes noth
 
 ## nova-version
 
-`nova-version` reports which version of each tool is installed, records it, and compares two records or two revisions. It shares nova-update's manifest reader and report. The contracts are [SPEC-VERSION.md](SPEC-VERSION.md) for `moved`, `snapshot --bin` and `diff`, and [SPEC-UPDATE.md](SPEC-UPDATE.md) for `example`, `report`, `send` and `snapshot --file`.
+`nova-version` reports which version of each tool is installed, records it, and compares two records or two revisions.
+It shares nova-update's manifest reader and report. [SPEC-VERSION.md](SPEC-VERSION.md)
+covers `moved`, `snapshot --bin` and `diff`; [SPEC-UPDATE.md](SPEC-UPDATE.md) covers
+`example`, `report`, `send` and `snapshot --file`.
 
 ### First run
 
@@ -1448,7 +1460,7 @@ nova-version example --out versions.tsv
 nova-version report --file versions.tsv
 ```
 
-Run this with the binary alone, in any directory: `example` writes a one-tool
+Run this in any writable directory with Go on PATH: `example` writes a one-tool
 manifest (Go) and names the next command; the same file again is left unchanged,
 and a file holding anything else is never overwritten. The executable transcript is
 in [TESTS.md](TESTS.md#nova-version).
@@ -1483,10 +1495,8 @@ with a thirty-second `--timeout` per binary and a sixty-second `--budget` for th
 run, both of which you can set. It skips symlinks, refuses an unreadable
 version or mixed stamps, and writes `name`, `stamp`, `revision`, `platform` columns.
 
-The per-binary deadline is thirty seconds, not five, because a first exec of a
-new binary is slow: this verb runs right after `go install ./cmd/...`, and a
-platform assesses each never-run executable on its first exec. Lower it with
-`--timeout` on a bin whose binaries you have already run.
+The thirty-second default allows for platforms that assess a new executable on
+its first run. Lower `--timeout` when shorter reads are sufficient.
 `diff` reads two such files and reports changed, added or removed entries without
 executing the binaries.
 
@@ -1506,9 +1516,11 @@ without running a process; it exits 1 when any adopted tool does not answer.
 Snapshot reads the version line with `internal/buildinfo`, the package that
 writes it. Named `key=value` extras, such as `nova-sandbox`'s `backend=` and
 `platform=`, are accepted as metadata. A binary that prints no version line is
-refused by name; a partial inventory is not reported as complete. For recovery
-across process death, name `--snapshot`; a retry sends the prepared note again.
-`send` delivers the report as a note to the recipients `--to` names.
+refused by name; a partial inventory is not reported as complete.
+
+For report delivery, `send` names the recipients with `--to`. Its `--snapshot`
+option saves delivery state across process death so a retry sends the prepared
+note again. This state file is separate from the four-column binary inventory.
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.

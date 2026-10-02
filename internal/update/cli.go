@@ -24,9 +24,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-// Environment is the run's seams. A zero value is production: the machine
-// clock, a credential-free, redirect-bounded HTTP client, a background context
-// and no hooks.
+// Environment supplies dependencies and test hooks. A zero value uses the
+// machine clock, a credential-free, redirect-bounded HTTP client, a background
+// context and no hooks.
 type Environment struct {
 	// Now is the clock every took= and at= field reads.
 	Now func() time.Time
@@ -144,13 +144,12 @@ const manifestShape = "one line per tool, six tab-separated fields name kind ins
 const (
 	updateOpening = `nova-update: compare installed tools with their latest releases, update one when asked, and cut and adopt releases of these tools
 
-how it works: the manifest is a tab-separated file you write, one tool per line:
-how to read its installed version, where its latest release is published, and
-the command that installs it. check and report compare the two; apply runs one
-named entry's command and reads the version again, nothing else. The release
-verbs build, publish and install releases of these tools.
-first run: the binary alone; the lines under example: write a one-tool manifest
-(Go) to ./versions.tsv and read it; they install nothing.`
+how it works: a tab-separated manifest names each tool's installed-version command,
+latest-release source and install command. check and status compare installed with
+latest; report reads installed identities only. apply runs one named install command
+and reads the version again. The release verbs build, publish and install these tools.
+first run: Go on PATH; the example lines write ./versions.tsv for Go, read its
+version and preview an update. They install nothing.`
 )
 
 // helpText is what help prints, as a string: the text verbflag quotes a verb's
@@ -192,7 +191,7 @@ func twoBinaries() string {
 		"Use nova-version to record what is installed: snapshot, diff, moved and send are nova-version's.\n"
 }
 
-// manifestHelp is the manifest format in six lines, under the `report` example line so
+// manifestHelp states the manifest format under the `report` example line so
 // `report -h` quotes it (verbflag.Excerpt reads a verb's lines with the lines indented
 // beneath them): the rule-2 file --file names, the same for both tools.
 func manifestHelp(name string) string {
@@ -208,9 +207,9 @@ func manifestHelp(name string) string {
 
 // reportNotes is what `report -h` adds about delivery: how a prepared note
 // survives a process that dies before the bus took it.
-const reportNotes = `notes: a plain report needs no bus and no network.
---snapshot names a state file that carries a prepared note across processes:
-retry the saved note, and never prepare again while one is pending.
+const reportNotes = `notes: a plain report reads installed identities; it makes no latest-source requests.
+With --send, --snapshot names a state file that carries a prepared note across processes:
+retry the saved note while it is pending instead of preparing another.
 Without --snapshot, each send is a new note.
 The snapshot's sibling .lock file holds a kernel lock; the file being there never means a process runs.
 `
@@ -224,7 +223,7 @@ func verbDetail(name, verb string) string {
 		"check":    "inspection: reads each tool's installed version and asks its latest source (github:, npm:, brew: and ollama: are network reads); writes nothing",
 		"status":   "inspection: the reads of check, with every entry shown, the current ones too; writes nothing",
 		"apply":    "local write: runs the apply command of the one entry named, which installs; --dry-run starts no install process and writes nothing, after the version reads have run",
-		"report":   "inspection: reads each installed version, no latest, no network; --snapshot writes its state file (local write); --send delivers the note through nova-bus (delivery); --store reads the fleet's Redis",
+		"report":   "inspection: reads installed versions without latest-source requests; --send delivers through nova-bus and writes delivery state when --snapshot is named; --store reads the fleet's Redis",
 		"watch":    "inspection: runs each check's command; with --bus and its four companions, delivery: the receipt goes out through nova-bus",
 		"adoption": "inspection: reads the ledger, writes nothing",
 		"example":  "inspection: prints the example manifest; with --out, local write: writes it, never over another file",
@@ -238,8 +237,10 @@ func verbDetail(name, verb string) string {
 		detail = reportNotes
 	}
 	if verb == "watch" {
-		detail = "lines: ADOPT OK or ADOPT REFUSED per check; ADOPT ESCALATE names a refused check's owner, for whoever answers refusals (this tool files nothing); " +
-			"ADOPT DONE ends the pass, its sha= the first twelve hex of the sha256 of the pass's sorted results, so two passes with one outcome share it. It takes no --json.\n"
+		detail = "lines: ADOPT OK or ADOPT REFUSED per check; ADOPT ESCALATE names a refused check's owner.\n" +
+			"ADOPT DONE ends one pass; sha= is the first twelve hex digits of its sorted results' SHA-256.\n" +
+			"watch installs no timer, files no follow-up task and takes no --json.\n" +
+			"watch exits 0 when every check passes and any requested delivery is confirmed; 1 on a refused check or failed delivery; 2 when it cannot run.\n"
 	}
 	if e, ok := effects[verb]; ok {
 		detail += "effect: " + e + "\n"
@@ -668,10 +669,9 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 	for i := range args {
 		args[i] = strings.ReplaceAll(args[i], "{version}", target)
 	}
-	// --dry-run is the plan this function is about to take, printed and not taken
-	// (SPEC-UPDATE rule 13): every refusal above has passed, the target and the argv
-	// are the ones below, and the install process does not start. The version
-	// reads have already run: the installed one above, and a `local:` latest.
+	// --dry-run prints the validated install plan without starting the install.
+	// The installed-version read has already run, as has any required latest-source
+	// read; either can execute a local version command.
 	if o.dryRun {
 		return applyDryRun(*e, before, target, args)
 	}
@@ -696,11 +696,9 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 	return res.Fact("name", name).Fact("from", before.Version).Fact("to", after.Version).Fact("took", env.Now().Sub(started).Round(time.Millisecond).String())
 }
 
-// applyDryRun is what `apply` would do to one entry, done to none of it: the entry's
-// item as `status` shows it (installed against the target the real run would
-// install), and the plan, the argv the real run's RUN item carries. The install
-// process does not start and nothing is written; the version reads have already
-// run. It exits 0, the plan having been made (SPEC-UPDATE rule 13, `--dry-run`).
+// applyDryRun formats the installed reading against the selected target and the
+// install argv. Version reads have already run; this function starts no install
+// process. Exit 0 means the plan was produced, not that an update succeeded.
 func applyDryRun(e Entry, before Read, target string, argv []string) *tool.Out {
 	r := entryRead{Entry: e, Installed: before, Latest: Read{Version: target, Source: e.Latest}}
 	state, _ := verdict(r)

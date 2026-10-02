@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// CARD-8531 nova-tools #182: voluntary tool adoption and upgrade awareness.
 // The adoption matrix records each friend's own choice with provenance;
 // declined, equivalent and unknown are answers, never failures.
 func TestVoluntaryAdoptionMatrix(t *testing.T) {

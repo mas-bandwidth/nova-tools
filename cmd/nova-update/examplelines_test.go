@@ -18,13 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHelpExampleLinesRunAsPrinted: every line of this tool's `example:` block runs, as printed,
-// from the root of a checkout, and exits 0. nova-tools #1455 measured 28 of 61 pasted example lines
-// exiting 2 because the line names an input the reader has not made. An example exiting 2 is a broken
-// example (ONBOARDING point 1). SCOPE, said out loud: this covers nova-update's own block and nothing
-// else.
+// TestHelpExampleLinesRunAsPrinted runs nova-update's example block from a checkout
+// root. Each line must work as printed, including creation of its required inputs.
 //
-// THE BINARY, NOT AN IN-PROCESS CALL. The lines are run through `sh -c` with the built binary on PATH
+// The lines run through `sh -c` with the built binary on PATH
 // under the name the line uses, from a t.TempDir() copy of the checkout -- the way a stranger pastes
 // them. An in-process update.Main call would prove the arguments parse; it would not prove the command
 // a reader types exists, or that the fixture path in the banner resolves from a checkout root.

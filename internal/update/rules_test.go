@@ -381,8 +381,7 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	}
 }
 
-// #592: the snapshot verb is callable, yet help never printed it. Its whole
-// usage line belongs beside report so a reader discovers the inventory verb,
+// The snapshot usage line belongs beside report so a reader discovers the inventory verb,
 // distinguishable from report's unrelated --snapshot <path> option by the verb
 // spelling and its --bin/--out flags (docs/SPEC-VERSION.md).
 func TestHelpNamesTheSnapshotVerb(t *testing.T) {
@@ -398,7 +397,7 @@ func TestHelpNamesTheSnapshotVerb(t *testing.T) {
 	}
 }
 
-// #406 item 2: the usage line says what --file is and its shape, so a reader of
+// The usage line says what --file is and its shape, so a reader of
 // the help is told the file is a manifest (one line per tool, six tab-separated
 // fields) before a run, and the missing-file refusal says the same sentence.
 func TestUsageAndRefusalSayWhatTheFileIs(t *testing.T) {

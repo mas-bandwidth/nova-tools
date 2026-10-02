@@ -10,8 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// #525: watch --adopt runs the coordinator's own adoption pass after every
-// rebuild and escalates refusals.
+// watch --adopt runs the requested adoption checks and escalates refusals.
 func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
 	log := fakeBusPath(t)
 	bus := t.TempDir()

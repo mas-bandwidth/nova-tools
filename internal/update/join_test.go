@@ -7,9 +7,8 @@ package update
 // These tests use a disposable bare Git remote and the nova-bus built from this
 // same tree, so the thing under test is the pair.
 //
-// Until #138 lands in this tree, the nova-bus here has no prepared verbs and
-// every test in this file skips with that reason named. Nothing is stubbed to
-// make them pass: a skip says the gate is unproven, which is the truth.
+// If the built bus does not advertise prepared-send support, the tests skip.
+// Such a skip leaves the integration unproven.
 
 import (
 	"bytes"
@@ -1008,10 +1007,6 @@ func reporterDeathAfterRemoteConfirmation(t *testing.T, attempt int) bool {
 	return true
 }
 
-// TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers closes Item 2 of #206:
-// It establishes an existing INDEX prefix, interrupts a real prepared send, interrupts
-// its production recovery append before confirmation, then retries to prove byte-identical
-// prior entries and exactly one new contribution.
 // twoPhaseAttempt executes one staged two-phase interruption:
 // Phase 1 kills the send at killBeforeNote during prepared send.
 // Phase 2 verifies the pending ID is absent from local INDEX before starting,

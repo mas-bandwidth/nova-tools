@@ -64,14 +64,9 @@ func TestSnapshotStillRefusesALineThatIsNotAVersionLine(t *testing.T) {
 	}
 }
 
-// TestReportAsksOurOwnToolsTheVerbTheyAnswer is #1264.
-//
-// A manifest row whose installed column is the executable itself -- which is
-// what `nova-version snapshot` and every friend's hand-written manifest hold --
-// ran the binary BARE. Every nova tool answers a bare invocation with a usage
-// refusal, so every one of our own tools reported UNKNOWN. A tool is asked
-// `version`, then `--version`, then bare, and the first answer that carries a
-// version line is the reading.
+// A manifest row naming an executable alone uses the version-probe ladder:
+// `version`, then `--version`, then bare. A nova tool answers the first probe;
+// its bare usage refusal must not turn that valid reading into UNKNOWN.
 func TestReportAsksOurOwnToolsTheVerbTheyAnswer(t *testing.T) {
 	t.Parallel()
 
@@ -141,11 +136,8 @@ func TestReportRunsAnExplicitArgvExactlyAsWritten(t *testing.T) {
 	strict := specScript(t, bin, "strict", `if [ $# -ne 1 ] || [ "$1" != "report" ]; then printf 'argv was %s\n' "$*" >&2; exit 3; fi
 printf '%s\n' 'strict 4.5.6'`)
 	file := manifest(t, row("strict", "tool", strict+" report", "local:"+strict, "none"))
-	// The OS's first-exec toll is paid here and not out of the report's default
-	// five-second --timeout: see seen(). This is the same shape #1554 closed in
-	// TestReportAsksOurOwnToolsTheVerbTheyAnswer above, in the same file, and
-	// this sibling was missed -- a timeout here reads as "the ladder rewrote an
-	// explicit argv", which would be a false and very confusing red.
+	// Warm the fixture before the report's default timeout so platform first-exec
+	// work cannot masquerade as an explicit-argv parsing failure.
 	seen(t, strict)
 	code, stdout, stderr := specRun(t, Environment{}, "report", "--file", file)
 	if code != 0 || strings.Contains(stdout, "UNKNOWN") {

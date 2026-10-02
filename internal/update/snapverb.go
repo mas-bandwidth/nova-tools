@@ -14,49 +14,32 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-// snapshotChildTimeout is the default deadline one binary's `version` gets, and
-// `--timeout` is how a caller changes it. It is also a package seam so a test
-// can be bounded by a short clock rather than the machine's default.
-//
-// It is thirty seconds, not report's five, because a first exec of a new binary
-// is slow: `snapshot` reads a directory written a command ago (`go install
-// ./cmd/...`, then `nova-version snapshot`), and a platform assesses each
-// never-run executable on its first exec, a cost that runs to seconds while a
-// build runs beside it. Lower it with --timeout for binaries already run.
-//
-// A warm-up exec outside the bound buys nothing: an exec killed early leaves the
-// assessment unpaid, and one bounded by --budget would turn a broken binary's
-// prompt refusal into a whole-budget wait. One bound, reachable by flag.
+// snapshotChildTimeout bounds one binary's version read. The thirty-second
+// default allows for a platform's first-run assessment of a new executable;
+// --timeout changes it. Assessment stays inside the bound, with no separate
+// warm-up that could consume the whole run's budget. Tests can replace the default.
 var snapshotChildTimeout = 30 * time.Second
 
-// snapshotBudget is the default deadline for the WHOLE run, and `--budget` is
-// how a caller changes it. A per-binary bound alone is no bound on a directory:
-// sixteen tools at thirty seconds each is eight minutes, which is not an
-// inventory anybody waits for. It is the same pair -- per-child `--timeout`,
-// per-run `--budget` -- that `check`, `report` and `watch` already take.
+// snapshotBudget bounds the whole directory scan, independently of the number
+// of binaries. --budget changes it; --timeout still bounds each version read.
 var snapshotBudget = 60 * time.Second
 
-// snapshotAdoptedTimeout bounds one ADOPTED tool's identity read, the --file
-// shape of this verb. It is report's own per-tool read, so an entry whose
-// installed column records a version is known without starting a process; only
-// an installed argv is probed, and it gets this deadline and no more. The bound
-// is report's five-second default rather than the directory shape's thirty,
-// because a recorded version never pays a first-exec toll and the count is a
-// manifest of adopted tools, not a scan of freshly installed binaries.
+// snapshotAdoptedTimeout is the default bound for one --file identity read,
+// matching report. A literal version starts no process; a command gets one
+// deadline across all version-probe attempts.
 var snapshotAdoptedTimeout = 5 * time.Second
 
 // snapshotHeader is the TSV shape `snapshot` writes and `diff` reads. It is one
 // string so the writer and the reader cannot drift.
 const snapshotHeader = "name\tstamp\trevision\tplatform"
 
-// row is one binary as its OWN `version` reported it. Name is the executable's
+// snapRow records one binary's version response. Name is the executable's
 // file name; stamp, revision and platform are read off the four-token line, so
 // a renamed stub cannot forge a row. Source is the structured source metadata
 // the line carries (repository, revision, dirty flag, build host), and has
 // tells the mixed-source gate whether the line named source at all: a binary
 // that did not name source contributes no opinion to that gate, and a binary
-// that did is checked against every other binary that did (SPEC-VERSION
-// item 6).
+// that did is checked against every other binary that did.
 type snapRow struct {
 	name, stamp, revision, platform string
 	src                             buildinfo.Source
@@ -65,8 +48,7 @@ type snapRow struct {
 
 // sourceString is the one line a Source reads as on a refusal: every field
 // named, in the order internal/buildinfo writes them, so the reader of the
-// refusal can match it against a build's manifest without holding the
-// goroutine open.
+// refusal can compare it with the build's manifest.
 func sourceString(s buildinfo.Source) string {
 	return fmt.Sprintf("repo=%s revision=%s dirty=%t build_host=%s", s.Repository, s.Revision, s.Dirty, s.BuildHost)
 }
@@ -102,7 +84,7 @@ func revisionOf(stamp string) string {
 // from a tag) returns src with has=false: the row is still recorded, and
 // "no source" is the honest answer rather than a refusal at this verb's
 // normal case. The mixed-source gate downstream compares only what the rows
-// carry (SPEC-VERSION item 6).
+// carry.
 func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo.Source, has bool, ok bool) {
 	f, ok := buildinfo.Parse(s)
 	if !ok {

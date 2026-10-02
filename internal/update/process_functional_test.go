@@ -51,8 +51,8 @@ func TestJoinReporterDeathWithPendingSavedFinishesTheSameReport(t *testing.T) {
 	t.Skipf("no reporter death landed with a pending artifact saved and nothing confirmed in %d staged attempts, so this case is UNPROVEN in this run rather than green", stagingAttempts)
 }
 
-// TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers closes Item 2 of #206:
-// It establishes an existing INDEX prefix, interrupts a real prepared send, interrupts
+// TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers establishes an
+// existing INDEX prefix, interrupts a real prepared send, interrupts
 // its production recovery append before confirmation, then retries to prove byte-identical
 // prior entries and exactly one new contribution.
 func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {

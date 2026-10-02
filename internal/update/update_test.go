@@ -553,7 +553,7 @@ func mustArgv(t *testing.T, s string) []string {
 	return a
 }
 
-// #3518: local:<path> locator with a version-string installed column gets REPORT OK,
+// A local:<path> locator with a version-string installed column gets REPORT OK,
 // not REPORT UNKNOWN not_found. The installed column is a version string (v1.2.3) and
 // latest is local:/path/to/binary that prints that same version.
 func TestReportLocalLocatorWithVersionStringInstalled(t *testing.T) {

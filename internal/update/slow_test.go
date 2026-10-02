@@ -169,7 +169,9 @@ func TestJoinLostConfirmationRecoversWithoutASecondNote(t *testing.T) {
 	head := git(t, r.bus.bare, "rev-parse", "main")
 	clearWrapper(t)
 	code, out, errs = r.send(t, r.bin)
-	require.EqualValuesf(t, 0, code, "recovery failed: %d\n%s\n%s\nthe bus, asked directly: %s", code, out, errs, r.busAskedDirectly(t))
+	if code != 0 {
+		require.EqualValuesf(t, 0, code, "recovery failed: %d\n%s\n%s\nthe bus, asked directly: %s", code, out, errs, r.busAskedDirectly(t))
+	}
 	if got := r.deliveredID(t); got != id {
 		require.EqualValuesf(t, id, got, "recovery confirmed %q, not the pending %q", got, id)
 	}
