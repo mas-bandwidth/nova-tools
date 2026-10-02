@@ -95,6 +95,11 @@ func verbExtra(verb string) string {
 		more = inventoryMore
 	case verb == "machine self":
 		effect = "inspection: prints this machine's name and opens no store; --check reads the machine rows"
+	case len(words) == 1:
+		if k, ok := config.Lookup(verb); ok {
+			// a kind alone is the group of its verbs: its help, and nothing run
+			effect = "inspection: this help of the " + k.Name + " verbs; each verb's own -h has its flags and an example"
+		}
 	case len(words) == 2:
 		switch words[1] {
 		case "add", "set", "remove":

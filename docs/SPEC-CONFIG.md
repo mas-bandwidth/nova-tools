@@ -481,9 +481,13 @@ CONFIG CHECK kind=<k> add=<n> set=<n> remove=<n> rev=<r> applied=<redis rev>
 APPLY ADD|SET|REMOVE kind=<k> name=<n> [changed=<f,g>]
 CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>
 MIGRATION version=<v> file=<f> lines=<n>                 (migrate --print)
+MIGRATION version=<v> file=<f> lines=<n> pending=true    (migrate --dry-run: one per migration it would apply)
 CONFIG MIGRATE print=<n> pg=-
-CONFIG MIGRATE pg=<user@host:port/db> from=<v> to=<v> applied=<n>
-CONFIG STATUS pg=<...> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
+CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [dry_run=true pending=<n>]
+CONFIG STATUS pg=<...>|file=<path> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
+CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing <field>=<v>|<field>=<before>><after> ...   (add, set, remove --dry-run)
+NOTE machine=<m> width=0: no sprint member, ...; run: nova-config machine set <m> --width <n> ...   (machine add with no --width)
+LOOP name=<n> <field>=<v> ... created=<t> updated=<t> command=<json>   (loop show: the words the unit runs)
 CONFIG KIND name=<k> table=config.<t> fields=<f,...> required=<f,...> rows=many|one
 CONFIG KINDS count=<n>
 ```
@@ -492,7 +496,11 @@ Exit codes: 0 done; 1 refused (the store or Redis said no: a duplicate, a
 missing row, a ref naming no row, a row another names, a set that breaks
 the kind's `Check`, a ceiling, working copies, `CONFLICT`, a status behind); 2 usage (a flag, a value, a name on a
 singleton, a store that did not answer). A refusal is
-one stderr line, `nova-config <verb>: <why>; run: <next step>`.
+one stderr line, `nova-config <verb> REFUSED: <why>; run: <next step>`; a
+usage refusal's next step is the verb's own `-h`. `--json` prints the same
+result as one object in `internal/tool`'s shape (`result`, `facts`, `items`,
+`notes`). `--file <path>` stands in for `--pg`: the same store, kept in a
+local JSON file (`config.FileStore`), for trying the tool with no database.
 
 ## Connecting
 
