@@ -19,7 +19,7 @@ import (
 // and the README's transcript is compared against what the tool actually prints.
 // Guidance nothing checks rots into a claim about a message that has since moved.
 
-// exampleSelf is the fixture self repo that ships with this tool: a five-file
+// exampleSelf is the fixture repository that ships with this tool: a five-file
 // tree the size of a first run, referenced by nothing outside testdata.
 const exampleSelf = "testdata/example-self"
 
@@ -32,7 +32,7 @@ func runCheck(t *testing.T, args ...string) (exit int, stdout, stderr string) {
 
 // exampleDogfood is the fixture the dogfood verb's banner example runs
 // against: a command reference the size of a first run, and the receipts two
-// friends left against it.
+// reviewers left against it.
 const exampleDogfood = "testdata/example-dogfood"
 
 // localize points an example or transcript command at the fixture, so what is
@@ -61,9 +61,9 @@ func localize(args []string) []string {
 
 func examples(t *testing.T) []string {
 	t.Helper()
-	// The banner is asked for, because a bare invocation no longer IS one: a refusal now
-	// costs one line and names the door (`run: nova-check help`). Reading it through that
-	// door is also a test that the door opens.
+	// The banner is asked for with `help`, because a bare invocation is a one-line
+	// refusal that names `run: nova-check help`; reading the banner that way also
+	// tests that the command the refusal names prints it.
 	exit, stdout, stderr := runCheck(t, "help")
 	require.EqualValues(t, 0, exit, "`nova-check help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)
 	lines, err := onboarding.ExampleLines(stdout, "nova-check")
@@ -71,7 +71,7 @@ func examples(t *testing.T) []string {
 	return lines
 }
 
-// (a) The bare command prints usage ending in an `example:` block of lines that
+// `help` prints usage ending in an `example:` block of lines that
 // actually run. They are run here against the fixture: an example that has
 // drifted out of the flag set teaches the wrong invocation to exactly the
 // reader who cannot tell.
@@ -88,8 +88,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	}
 }
 
-// Every verb the banner names is one a reader may type first, so every one of
-// them appears in the usage block above the examples.
+// quickstart is the first example the banner offers, and the usage block lists
+// it: it is the verb a first run types.
 func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
 	t.Parallel()
 
@@ -98,9 +98,8 @@ func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
 	assert.Contains(t, usage, "nova-check quickstart --dir <dir>", "the usage block does not list the quickstart verb")
 }
 
-// The seed has kept SEED-CORE.md and SEED.md under docs/ since nova#141. The
-// banner's floors line and kernel example used to point a first-time reader at
-// the root-level paths the seed no longer keeps; both must name docs/.
+// The seed keeps SEED-CORE.md and SEED.md under docs/, so the help's floors
+// line and kernel example name the docs/ paths and never the root-level ones.
 func TestHelpNamesTheSeedFilesUnderDocs(t *testing.T) {
 	t.Parallel()
 
@@ -111,7 +110,7 @@ func TestHelpNamesTheSeedFilesUnderDocs(t *testing.T) {
 		"--source <SEED.md>",
 		"./self/SEED-CORE.md",
 	} {
-		assert.NotContains(t, stdout, gone, "the help still names %q, a root-level seed path the seed has not kept since nova#141", gone)
+		assert.NotContains(t, stdout, gone, "the help still names %q, a root-level seed path; the seed keeps it under docs/", gone)
 	}
 	for _, want := range []string{
 		"--core <docs/SEED-CORE.md>",
@@ -122,7 +121,7 @@ func TestHelpNamesTheSeedFilesUnderDocs(t *testing.T) {
 	}
 }
 
-// (b) A refusal says what the flag or input WANTS, not only what was wrong.
+// A refusal says what the flag or input WANTS, not only what was wrong.
 func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 	t.Parallel()
 
@@ -156,7 +155,7 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 	}
 }
 
-// (b), the other half: a run reports every problem it can find in one go. These
+// A run reports every problem it can find in one go. These
 // flags are independent of each other, so a caller who omitted two learns about
 // two — being sent back a second time for something the first run could already
 // see is the stumble this pins shut.
@@ -204,12 +203,11 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 // command is run, in order, and its whole output is compared with the block
 // written under it -- same number of lines, same lines, same order.
 //
-// WHAT THIS REPLACES. The old test collected the SHAPES a command printed into
-// a `printed map[string]bool`, with the numbers, paths and tails deliberately
-// NOT compared. Under that comparison `LINKS OK files=4 links=3 excluded=0`
-// and `LINKS OK files=0 links=0 excluded=0` are the same line -- a quickstart
-// that had stopped finding the fixture's files would read as green -- and a
-// dropped line removes a lookup rather than an assertion.
+// EVERY FIELD IS COMPARED, not only the shape of the line. Under a shape-only
+// comparison `LINKS OK files=4 links=3 excluded=0` and `LINKS OK files=0
+// links=0 excluded=0` are the same line -- a quickstart that had stopped
+// finding the fixture's files would read as green -- and a dropped line
+// removes a lookup rather than failing an assertion.
 //
 // NOTHING IS NORMALISED. The fixture is on disk and every count on every line
 // is of it, so all of them reproduce; onboarding.Execute is handed no Norm and
@@ -218,8 +216,8 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 // The fixture is typed as written. The documented `./self` is what a reader
 // types and what the tool PRINTS BACK on `dir=`, so the fixture is copied to
 // that name in a directory of the test's own rather than the path being
-// rewritten, which is what the old `localize` did and why it could not have
-// compared the line the document promised.
+// rewritten (as `localize` does for the banner's examples), so the line the
+// document promises is the line compared.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
@@ -275,9 +273,9 @@ func copyTree(t *testing.T, from, to string) {
 	}
 }
 
-// THE OK WORD IS A CLAIM THAT EVERY CHECK PASSED (a cold rating of the tools, 2026-09-30:
-// `QUICKSTART OK ... worst-exit=1` over two failed checks). With one failing check the run
-// prints no OK line at all, closes with FAIL naming exactly the failed check, and exits 1.
+// THE OK WORD IS A CLAIM THAT EVERY CHECK PASSED: `QUICKSTART OK ... worst-exit=1` over a
+// failed check would contradict itself. With one failing check the run prints no OK line at
+// all, closes with FAIL naming exactly the failed check, and exits 1.
 func TestQuickstartWithOneFailingCheckPrintsFailAndNoOK(t *testing.T) {
 	t.Parallel()
 
@@ -297,5 +295,6 @@ func TestQuickstartWithEveryCheckPassingPrintsOK(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("no links here\n"), 0o644))
 	exit, stdout, stderr := runCheck(t, "quickstart", "--dir", dir)
 	require.EqualValues(t, 0, exit, "exit = %d, want 0; stdout: %s\nstderr: %s", exit, stdout, stderr)
-	assert.False(t, !strings.Contains(stdout, "QUICKSTART OK done=2 worst-exit=0 ") || strings.Contains(stdout, "QUICKSTART FAIL"), "a clean run closes with OK:\n%s", stdout)
+	assert.Contains(t, stdout, "QUICKSTART OK done=2 worst-exit=0 ", "a clean run closes with OK:\n%s", stdout)
+	assert.NotContains(t, stdout, "QUICKSTART FAIL", "a clean run closes with OK:\n%s", stdout)
 }

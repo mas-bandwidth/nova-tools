@@ -12,13 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The gate's blind spot at the command line. On 2026-09-18 the gate reported
-// `open-edges=0` at exit 0 with not-ok receipts sitting in the directory it had
-// just read, and `findings=1` while three more sat unmatched beside it: every
-// receipt for a verb the list does not declare -- `harvest`, `ledger` for
-// `dogfood ledger`, every nova-sandbox verb, `nova-merge batch` and
-// `nova-merge queue` at 65e23fb0 -- simply vanished from the arithmetic. A
-// count that silently leaves evidence out is worse than no count.
+// Receipts for a verb the list does not declare, at the command line: they are
+// counted on the ledger and gate lines, and a not-ok one is a failure, so no
+// receipt vanishes from the arithmetic. A count that silently leaves evidence
+// out is worse than no count.
 
 // The number is on the line both reads print, so nobody has to read a note to
 // learn that evidence was discarded.
@@ -61,16 +58,15 @@ func TestDogfoodGateFailsOnAnUnmatchedNotOkReceipt(t *testing.T) {
 		"at": "2026-09-18T09:05:00Z", "ok": false, "notes": "it refused a batch that was on dev",
 	})
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
-	require.EqualValues(t, 1, code, "exit %d, want 1: a not-ok receipt nobody can match is not an open-edges=0 bench\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	require.EqualValues(t, 1, code, "exit %d, want 1: a not-ok receipt nobody can match is not an open-edges=0 gate\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	for _, want := range []string{"bad.json", "nova-merge", "batch"} {
 		assert.Contains(t, stderr, want, "the gate does not name %q:\n%s", want, stderr)
 	}
 	assert.Contains(t, stderr, "unmatched=1", "the red count line does not carry the unmatched count:\n%s", stderr)
 }
 
-// `record --tools <dir>` takes the verb list from the binaries themselves. The
-// report found no --tools on record at 65e23fb0; this locks in that it is there
-// and that it is the list the spelling is checked against.
+// `record --tools <dir>` takes the verb list from the binaries themselves, and
+// that is the list the spelling is checked against.
 func TestDogfoodRecordChecksTheSpellingAgainstTheBinaries(t *testing.T) {
 	t.Parallel()
 

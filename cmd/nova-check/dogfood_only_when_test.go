@@ -13,11 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Issue #2311: `docs/SPEC.md` claims `record` writes a dated clock stamp,
-// `ledger`/`gate` run git only with `--repo` and help only with `--tools`, each
-// under its own timeout, and `--repo` warns on stderr that the read can take
-// seconds. This test pins all four "only-when" boundaries and the progress
-// notice.
+// `record` writes the clock's stamp; `ledger` and `gate` run git only with
+// `--repo` and help only with `--tools`, each under its own timeout; and `--repo`
+// warns on stderr that the read can take seconds (docs/SPEC.md, "The efficiency
+// card, nova-check", "WAITS ON: nothing").
 func TestDogfoodRunsGitAndHelpOnlyWhenAsked(t *testing.T) {
 	t.Run("RecordWritesTheClockTimestamp", func(t *testing.T) {
 		fixed := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)

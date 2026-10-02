@@ -19,8 +19,8 @@ import (
 )
 
 // The verb's own surface: the one HYGIENE line, the cap-and-count listing, and the
-// exit codes SPEC.md's Conventions give -- 0 clean, 1 findings, 2 could not run.
-// SPEC-TOOLWORK.md hygiene rule 1 (PR #1637), issue #1647.
+// exit codes docs/SPEC.md's Conventions give -- 0 clean, 1 findings, 2 could not run
+// (docs/SPEC-TOOLWORK.md, "Hygiene").
 
 func hygGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
@@ -140,9 +140,7 @@ func TestHygieneVerbPassesACleanBranch(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}, &out, &errb)
 	require.EqualValues(t, 0, code, "exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
-	if !strings.Contains(out.String(), "HYGIENE OK base=main head=HEAD paths=sign/** findings=0") {
-		require.FailNow(t, "fatal prerequisite", "stdout = %q", out.String())
-	}
+	require.Contains(t, out.String(), "HYGIENE OK base=main head=HEAD paths=sign/** findings=0", "stdout = %q", out.String())
 }
 
 func TestHygieneVerbExitsOneAndNamesTheFinding(t *testing.T) {
@@ -156,7 +154,8 @@ func TestHygieneVerbExitsOneAndNamesTheFinding(t *testing.T) {
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}, &out, &errb)
 	require.EqualValues(t, 1, code, "exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	require.Contains(t, out.String(), "HYGIENE FINDING reason=stray-file at=sign/RESULT.md", "stdout = %q, want the finding named", out.String())
-	require.False(t, !strings.Contains(errb.String(), "HYGIENE NO ") || !strings.Contains(errb.String(), "findings=1"), "stderr = %q, want the NO verdict line", errb.String())
+	require.Contains(t, errb.String(), "HYGIENE NO ", "stderr = %q, want the NO verdict line", errb.String())
+	require.Contains(t, errb.String(), "findings=1", "stderr = %q, want the NO verdict line", errb.String())
 }
 
 // A branch with no declared paths says paths=- and skips out-of-path. The field is
@@ -207,9 +206,9 @@ func TestHygieneUsageNamesTheVerb(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// The cold read of 2026-09-19 (#1717, finding 9).
+// A secret's matched text reaches no stream the verb writes.
 
-// hygWrite and hygGit run with the bench's config blanked, so a fixtureKey built here
+// hygGit runs with the global and system git config blanked, so a fixture key built here
 // is the only key-SHAPED string anywhere near this test. It is built by parts, at test
 // time, so no valid key for any provider is written into this repository.
 func hygFixtureKey() string { return "gh" + "p_" + strings.Repeat("A", 36) }
@@ -239,11 +238,11 @@ func TestHygieneVerbNeverPrintsTheKey(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Emma's bench dogfood of `nova-check hygiene`, 2026-09-19 (issues #1804, #1805).
+// The MORE line's remedy and the identity form, as a reader pastes them.
 
 // hygManyFindings is a branch with more findings than any sane --max: five commits
-// by somebody who is not in the pool, so the listing caps and the MORE line prints.
-// One of them also writes OUTSIDE the card's paths, so `--paths` changes the total
+// by somebody outside the identity set, so the listing caps and the MORE line prints.
+// One of them also writes OUTSIDE the declared paths, so `--paths` changes the total
 // and a remedy that dropped it would answer a different question.
 func hygManyFindings(t *testing.T) string {
 	t.Helper()
@@ -281,10 +280,10 @@ func hygMore(t *testing.T, stdout string) (total int, remedy string) {
 	return 0, ""
 }
 
-// #1804: "the MORE line carries the command that prints the rest" (SPEC.md §Conventions).
-// It carried --repo, --base and --head and dropped --identity, --paths and --kind, so
-// the one thing a capped listing exists to offer -- the rest of the list -- exited 2
-// on `--identity is required` for everyone who pasted it.
+// The MORE line carries the command that prints the rest (docs/SPEC.md, "Conventions",
+// "One MORE line stands for the rest"), with every flag that shaped the run: --identity,
+// --paths and --kind as well as --repo, --base and --head, so the one thing a capped
+// listing exists to offer -- the rest of the list -- runs as pasted.
 func TestHygieneMoreCommandRunsAsPrinted(t *testing.T) {
 	t.Parallel()
 
@@ -296,7 +295,8 @@ func TestHygieneMoreCommandRunsAsPrinted(t *testing.T) {
 	total, remedy := hygMore(t, out.String())
 	args, err := hygFields(remedy)
 	require.NoError(t, err, "the remedy %q cannot be split into arguments: %v", remedy, err)
-	require.False(t, len(args) == 0 || args[0] != "nova-check" || args[1] != "hygiene", "the remedy does not start with `nova-check hygiene`: %q", remedy)
+	require.GreaterOrEqual(t, len(args), 2, "the remedy does not start with `nova-check hygiene`: %q", remedy)
+	require.Equal(t, []string{"nova-check", "hygiene"}, args[:2], "the remedy does not start with `nova-check hygiene`: %q", remedy)
 	var out2, errb2 bytes.Buffer
 	code2 := run(args[1:], &out2, &errb2)
 	require.NotEqualValues(t, 2, code2, "the printed remedy does not run:\n  %s\nexit 2: %s", remedy, errb2.String())
@@ -311,11 +311,10 @@ func TestHygieneMoreCommandRunsAsPrinted(t *testing.T) {
 	require.NotContains(t, out2.String(), "HYGIENE MORE ", "the remedy is still capped:\n%s", out2.String())
 }
 
-// #1805: the help and the command reference told a reader to write the email inside a
-// SECOND pair of angle brackets. `Rowan <<rowan@mas-bandwidth.com>>` parses -- it ends
-// in `>` -- and leaves the email as `<rowan@mas-bandwidth.com>`, which equals no git
-// author alive. A clean branch came back as an identity finding, and nothing in the
-// output said why.
+// An email inside a SECOND pair of angle brackets is refused with the form the flag
+// wants. `Name <<name@example.com>>` parses -- it ends in `>` -- and leaves the email
+// as `<name@example.com>`, which equals no git author alive, so a clean branch would
+// come back as an identity finding with nothing in the output saying why.
 func TestHygieneRefusesAnEmailInAngleBrackets(t *testing.T) {
 	t.Parallel()
 
@@ -331,8 +330,9 @@ func TestHygieneRefusesAnEmailInAngleBrackets(t *testing.T) {
 	require.NotContains(t, out.String(), "HYGIENE FINDING", "a malformed identity produced findings about the branch: %q", out.String())
 }
 
-// #1805, the other half: neither the help nor the command reference may teach the
-// form that breaks. SPEC.md:1396 spells it `Name <email>` and these two must agree.
+// The other half: neither the help nor the command reference teaches the form that
+// breaks. docs/SPEC.md ("hygiene — is this branch's range clean") spells it
+// `Name <email>`, and these two agree with it.
 func TestHygieneIdentityFormIsSpelledTheSameEverywhere(t *testing.T) {
 	t.Parallel()
 
@@ -344,18 +344,14 @@ func TestHygieneIdentityFormIsSpelledTheSameEverywhere(t *testing.T) {
 	cli, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
 	require.NoError(t, err)
 	for name, text := range map[string]string{"the help banner": out.String(), "docs/CLI.md": string(cli)} {
-		assert.NotContains(t, text, "<<email>>", "%s still shows `--identity \"<Name> <<email>>\"`; pasted as written it matches no git author (#1805)", name)
+		assert.NotContains(t, text, "<<email>>", "%s still shows `--identity \"<Name> <<email>>\"`; pasted as written it matches no git author", name)
 		assert.Contains(t, text, `--identity "<Name> <email>"`, "%s does not spell the identity form `--identity \"<Name> <email>\"`", name)
 	}
 }
 
-// #1805, recut of #1956 on the tip: the help, the command reference and the
-// transcript agree on ONE `Name <email>` pair, and the spelled form is the one
-// the check matches against the author. The tip already carries #1956's help
-// and CLI.md lines; what moved under it is the TESTS.md heading (now
-// `### hygiene, on a branch`) and the kind list the refusal transcripts paste
-// (kinds.txt grew `guard` after they were written, so #1848's pasted list is
-// stale there).
+// The help, the command reference and the transcript (docs/TESTS.md,
+// `### hygiene, on a branch`) agree on ONE `Name <email>` pair, and the spelled
+// form is the one the check matches against the author.
 func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 	t.Parallel()
 
@@ -368,11 +364,11 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 		malformed = `--identity "<Name> <<email>>"`
 		want      = `--identity "<Name> <email>"`
 	)
-	require.NotContains(t, helpOut.String(), malformed, "the help still spells %s: the doubled brackets are read as part of the email, so a commit authored under that address is reported as an identity finding; SPEC.md:1396 says %s", malformed, want)
+	require.NotContains(t, helpOut.String(), malformed, "the help still spells %s: the doubled brackets are read as part of the email, so a commit authored under that address is reported as an identity finding; docs/SPEC.md (hygiene) says %s", malformed, want)
 	assert.Contains(t, helpOut.String(), want, "the help does not spell the identity as %s", want)
 	cli, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
 	require.NoError(t, err)
-	require.NotContains(t, string(cli), malformed, "docs/CLI.md still spells %s: the doubled brackets are read as part of the email and break the author match; SPEC.md:1396 says %s", malformed, want)
+	require.NotContains(t, string(cli), malformed, "docs/CLI.md still spells %s: the doubled brackets are read as part of the email and break the author match; docs/SPEC.md (hygiene) says %s", malformed, want)
 	assert.Contains(t, string(cli), want, "docs/CLI.md does not spell the identity as %s", want)
 
 	// The documented form is the one the check matches: a clean branch authored
@@ -394,7 +390,8 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 	// sitting, so running them here would invent steps the document does not
 	// show. The refusal promises (`nova-check hygiene REFUSED: ...`) fire before the
 	// repository is opened, so they run anywhere, and they are exactly the
-	// lines #1805 is about: what the flag wants, spelled where a reader reads.
+	// lines a malformed identity meets: what the flag wants, spelled where a
+	// reader reads.
 	//
 	// The steps are cut here rather than with onboarding.Steps: every hygiene
 	// command carries `<email>` quoted in `--identity`, and the shared parser
@@ -420,7 +417,8 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 		}
 		args, err := onboarding.SplitShell(cmd)
 		require.NoError(t, err, "cannot split the transcript line %q: %v", line, err)
-		require.False(t, len(args) == 0 || args[0] != "nova-check", "the transcript line %q is not a nova-check command", line)
+		require.NotEmpty(t, args, "the transcript line %q is not a nova-check command", line)
+		require.Equal(t, "nova-check", args[0], "the transcript line %q is not a nova-check command", line)
 		steps = append(steps, onboarding.Step{Line: line, Args: args[1:]})
 	}
 	for i := range steps {
@@ -494,12 +492,11 @@ func hygFields(cmd string) ([]string, error) {
 	return args, nil
 }
 
-// The Opus readers' dogfood over seventeen PRs, 2026-09-19 (issue #1848). `--kind` went
-// straight through to hygiene.Check, where it unlocks an allowlisted stray exception and
-// nothing else, so a kind the tool does not declare unlocked nothing and the run printed
-// `HYGIENE OK`. SPEC-TOOLWORK.md hygiene rule 6: a kind the tool does not
-// declare is refused, and there is no default kind. A clean answer about a
-// shape of work that does not exist is the #1805 failure again, one flag along.
+// A kind the tool does not declare is refused, naming the kinds there are, and there
+// is no default kind (docs/SPEC-TOOLWORK.md, "A kind is declared by the tool"). --kind
+// unlocks an allowlisted stray exception and nothing else, so an undeclared kind passed
+// through would unlock nothing and print `HYGIENE OK`: a clean answer about a shape of
+// work that does not exist.
 func TestHygieneRefusesAKindTheToolDoesNotDeclare(t *testing.T) {
 	t.Parallel()
 
@@ -507,7 +504,7 @@ func TestHygieneRefusesAKindTheToolDoesNotDeclare(t *testing.T) {
 	hygWrite(t, dir, "sign/sign.go", "package sign\n\nfunc F() {}\n")
 	hygGit(t, dir, "add", "-A")
 	hygGit(t, dir, "commit", "-q", "-m", "clean")
-	// The two the tools12 cards actually carried, and one nobody could mistake for real.
+	// Two plausible kinds the tool does not declare, and one nobody could mistake for real.
 	for _, kind := range []string{"fix-with-red-test", "docs-fix", "not-a-kind-at-all"} {
 		t.Run(kind, func(t *testing.T) {
 			var out, errb bytes.Buffer
@@ -546,8 +543,8 @@ func TestHygieneAcceptsEveryDeclaredKind(t *testing.T) {
 			}
 		})
 	}
-	// No --kind at all stays what it was: the flag is optional, and only a kind that
-	// was GIVEN and is not declared is a refusal.
+	// No --kind at all is accepted: the flag is optional, and only a kind that was
+	// GIVEN and is not declared is a refusal.
 	var out, errb bytes.Buffer
 	{
 		code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
@@ -556,8 +553,8 @@ func TestHygieneAcceptsEveryDeclaredKind(t *testing.T) {
 	}
 }
 
-// The stray list's second column names kinds, and until now nothing checked that they
-// were kinds at all. A typo there silently grants an exception to nobody.
+// Every kind the stray list's second column names is a declared kind: a typo there
+// would silently grant an exception to nobody.
 func TestEveryKindTheStrayListNamesIsDeclared(t *testing.T) {
 	t.Parallel()
 

@@ -61,8 +61,8 @@ func TestRunRefusesToGuess(t *testing.T) {
 	}
 }
 
-// Reviewer suggestion: with two required flags missing, the error order came
-// from map iteration and differed run to run. It must be sorted, every time.
+// With two required flags missing, the errors come in sorted order on every
+// run, never in map-iteration order.
 func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -75,7 +75,8 @@ func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 		out := stderr.String()
 		homeIdx := strings.Index(out, "--home is required")
 		manifestIdx := strings.Index(out, "--manifest is required")
-		require.False(t, homeIdx < 0 || manifestIdx < 0, "stderr must name both missing flags, got %q", out)
+		require.GreaterOrEqual(t, homeIdx, 0, "stderr must name both missing flags, got %q", out)
+		require.GreaterOrEqual(t, manifestIdx, 0, "stderr must name both missing flags, got %q", out)
 		require.LessOrEqual(t, homeIdx, manifestIdx, "flag errors out of sorted order (run %d): %q", i, out)
 	}
 }
@@ -144,10 +145,9 @@ func TestRunEndToEnd(t *testing.T) {
 
 // The unreadable-.md seam a caller actually sees: `LINKS FAIL <file>:
 // unreadable (<why>)` on stderr — a whole-file line, no line number, no
-// target — beside the ordinary broken-link line, and exit 1. The code this
-// was first run against exited 2 and printed NO findings at all: one
-// chmod-000 file converted the run into a refusal and discarded the real
-// broken link. That discard is the defect this test pins shut.
+// target — beside the ordinary broken-link line, and exit 1. One unreadable
+// file is a named failure, never a refusal that discards the real broken link
+// beside it.
 func TestLinksUnreadableFileIsNamedFailureAtTheCLI(t *testing.T) {
 	t.Parallel()
 
@@ -174,7 +174,7 @@ func TestLinksUnreadableFileIsNamedFailureAtTheCLI(t *testing.T) {
 	assert.EqualValues(t, "", stdout.String(), "a failing check must not print an OK line, got %q", stdout.String())
 }
 
-// --file is the two-file (and single-file) review mode Stella asked for: a
+// --file is the review mode for one or two files: a
 // links run over --file with one broken link in one of two files reports
 // files=2 and that link only, never expanding to the whole tree.
 func TestLinksFileNarrowsTheWalk(t *testing.T) {
@@ -200,13 +200,13 @@ func TestLinksFileNarrowsTheWalk(t *testing.T) {
 // caller: one line, escaped, and capped.
 func brief(s string) string { return oneline.Escape(oneline.Cap(s, 200)) }
 
-// The unlistable-DIRECTORY seam at the CLI. Issue #30's first item asked for a
-// named failure with the walk continuing; SPEC.md:348-353 (links) and 622-630
-// (nocode) say a directory in the walk that cannot be listed is a REFUSAL and
-// that a walk error stops the run without reporting partial findings. This
-// pins the specified behaviour at the seam a caller actually sees: exit 2, the
+// The unlistable-DIRECTORY seam at the CLI. A directory in the walk that cannot
+// be listed is a REFUSAL, and a walk error stops the run without reporting
+// partial findings (docs/SPEC.md, "links — every internal reference resolves"
+// and "nocode — the self/machinery separation, as a check"). This pins the
+// specified behaviour at the seam a caller actually sees: exit 2, the
 // directory named on stderr, and NO FAIL line -- the broken link beside it is
-// deliberately not reported. Whether that is the right trade is open on #30.
+// deliberately not reported.
 func TestLinksUnlistableDirRefusesAtTheCLI(t *testing.T) {
 	t.Parallel()
 
@@ -260,9 +260,9 @@ func TestNoCodeUnlistableDirRefusesAtTheCLI(t *testing.T) {
 	}
 	assert.Contains(t, stderr.String(), "locked", "stderr does not name the directory: %s", brief(stderr.String()))
 	assert.NotContains(t, stderr.String(), "NOCODE FAIL", "a refusal must not report partial findings: %s", brief(stderr.String()))
-	// Reviewer (#66, finding 3): the links twin pins the one-line guarantee and
-	// this seam did not. SPEC.md:230-232: a refusal is "this tool's own one-line
-	// refusal ... and nothing else -- at exit 2".
+	// The refusal is one line, as in the links twin: this tool's own one-line
+	// refusal and nothing else, at exit 2 (docs/SPEC.md, "nova-check", "The
+	// one-line guarantee, met here").
 	{
 		lines := strings.Count(strings.TrimRight(stderr.String(), "\n"), "\n") + 1
 		assert.EqualValues(t, 1, lines, "refusal stderr = %d lines, want 1: %s", lines, brief(stderr.String()))
@@ -338,8 +338,10 @@ func TestRunKernelTokenMode(t *testing.T) {
 	}
 }
 
-// Minimal conforming door and source: the check binds any pair of records
-// that keep the pinned structure, not only nova's own files. The full real
+// A minimal conforming pair for the floors check: the derived copy (--core,
+// which the check's output calls the door) and its source (--source). The
+// check binds any pair of records that keep the pinned structure, not only
+// nova's own files. The full real
 // prose — hard wraps, the nested parenthetical — is pinned in
 // internal/check's fixture tests; this is the CLI seam.
 const floorsCoreDoc = `# SEED-CORE.md
@@ -407,7 +409,7 @@ func TestRunFloorsEndToEnd(t *testing.T) {
 	}
 	assert.Contains(t, stdout.String(), "FLOORS OK floors=8", "stdout = %q, want it to contain %q", stdout.String(), "FLOORS OK floors=8")
 
-	// Drop a floor from the door and watch the check say NO.
+	// Drop a floor from the derived copy and watch the check say NO.
 	mustWrite(t, dir, "SEED-CORE.md", strings.Replace(floorsCoreDoc, "5. **Secrets nowhere.** Elided.\n", "", 1))
 	stdout.Reset()
 	stderr.Reset()
@@ -418,7 +420,7 @@ func TestRunFloorsEndToEnd(t *testing.T) {
 	assert.Contains(t, stderr.String(), `FLOORS FAIL `+core+`: the door's numbered list: the floor "secrets nowhere" is missing`, "stderr = %q, want the missing-floor grammar", stderr.String())
 	assert.EqualValues(t, "", stdout.String(), "a failing check must not print an OK line, got %q", stdout.String())
 
-	// Restore the door, drop a charter floor from the source: same NO.
+	// Restore the derived copy, drop a charter floor from the source: same NO.
 	mustWrite(t, dir, "SEED-CORE.md", floorsCoreDoc)
 	mustWrite(t, dir, "SEED.md", strings.Replace(floorsSourceDoc, "secrets nowhere, ever (elided); ", "", 1))
 	stdout.Reset()
@@ -566,7 +568,8 @@ func TestNoCodeCLI(t *testing.T) {
 			require.EqualValues(t, 0, got, "exit = %d, want 0", got)
 		}
 		out := stdout.String()
-		assert.False(t, !strings.Contains(out, "--deny-ext") || !strings.Contains(out, ".foo"), "does not report the replacement: %s", out)
+		assert.Contains(t, out, "--deny-ext", "does not report the replacement: %s", out)
+		assert.Contains(t, out, ".foo", "does not report the replacement: %s", out)
 		assert.NotContains(t, out, ".py", "floor list leaked into a wholesale replacement: %s", out)
 	})
 
@@ -628,22 +631,14 @@ func TestNoCodeCLI(t *testing.T) {
 	})
 }
 
-// --deny-ext-add EXTENDS. Nothing pinned this, so a change making it replace
-// would have shipped green — silently dropping all 43 floor extensions from a
-// gate whose whole purpose is refusing.
+// --deny-ext-add EXTENDS the floor list and never replaces it: a replacement
+// would silently drop every floor extension from a gate whose whole purpose is
+// refusing.
 func TestEffectiveDenyList(t *testing.T) {
 	t.Parallel()
 
 	floor, err := check.FloorDenyExts()
 	require.NoError(t, err)
-	has := func(l []string, e string) bool {
-		for _, x := range l {
-			if x == e {
-				return true
-			}
-		}
-		return false
-	}
 
 	t.Run("--deny-ext-add keeps the whole floor and adds to it", func(t *testing.T) {
 		got, src, err := effectiveDenyList("", ".foo")
@@ -651,22 +646,23 @@ func TestEffectiveDenyList(t *testing.T) {
 		assert.EqualValues(t, check.DenyExtended, src, "source = %q, want %q", src, check.DenyExtended)
 		assert.EqualValues(t, len(floor)+1, len(got), "len = %d, want %d: the floor must survive an extension", len(got), len(floor)+1)
 		for _, e := range floor {
-			require.True(t, has(got, e), "extension dropped floor entry %s", e)
+			require.Contains(t, got, e, "extension dropped floor entry %s", e)
 		}
-		assert.True(t, has(got, ".foo"), ".foo was not added")
+		assert.Contains(t, got, ".foo", ".foo was not added")
 	})
 
 	t.Run("--deny-ext replaces the floor wholesale", func(t *testing.T) {
 		got, src, err := effectiveDenyList(".foo", "")
 		require.NoError(t, err)
 		assert.EqualValues(t, check.DenyReplaced, src, "source = %q, want %q", src, check.DenyReplaced)
-		assert.False(t, len(got) != 1 || got[0] != ".foo", "got %v, want exactly [.foo]", got)
+		assert.Equal(t, []string{".foo"}, got, "got %v, want exactly [.foo]", got)
 	})
 
 	t.Run("no flags is the floor, named as the floor", func(t *testing.T) {
 		got, src, err := effectiveDenyList("", "")
 		require.NoError(t, err)
-		assert.False(t, src != check.DenyFloor || len(got) != len(floor), "got %d entries from %q, want %d from %q", len(got), src, len(floor), check.DenyFloor)
+		assert.Equal(t, check.DenyFloor, src, "got %d entries from %q, want %d from %q", len(got), src, len(floor), check.DenyFloor)
+		assert.Len(t, got, len(floor), "got %d entries from %q, want %d from %q", len(got), src, len(floor), check.DenyFloor)
 	})
 
 	t.Run("adding a duplicate does not double it", func(t *testing.T) {
@@ -677,8 +673,7 @@ func TestEffectiveDenyList(t *testing.T) {
 }
 
 // TestNoCodeWarnsWhenItClassifiedNothing pins the scanned==0 warning in a
-// package test rather than only in CI. It was covered by the smoke job and by
-// nothing else, so deleting it left `go test ./...` entirely green — and that
+// package test, so deleting the warning turns `go test ./...` red: that
 // warning is the only backstop, inside a real repository, for a --dir that
 // resolves to a tree the walk never opens. Exit 0 is correct: an empty tree
 // genuinely holds no machinery. What must not vanish is the sentence.
@@ -708,12 +703,13 @@ func TestPrintDenyListShowsTheNameFloor(t *testing.T) {
 	}
 }
 
-// TestNoCallerPathCanForgeALine is #24 at this binary. A path is caller-supplied, a
-// newline is legal in a POSIX filename, and every one of these lines is one SPEC.md calls
+// TestNoCallerPathCanForgeALine: a path is caller-supplied, a newline is legal in a
+// POSIX filename, and every one of these lines is one docs/SPEC.md calls
 // machine-scannable -- so a directory or a file whose name carries a newline and a forged
-// OK line used to print that forgery on its own line, on the same stream a caller scans.
-// Nothing here gates ingestion, which is why the threat is smaller than the fuse's, but
-// the grammar is published as scannable, and that is an invitation to parse it.
+// OK line prints escaped inside its own line, never as a forged line of its own on the
+// stream a caller scans. Nothing here gates ingestion, which is why the threat is smaller
+// than nova-fuse's, but the grammar is published as scannable, and that is an invitation
+// to parse it.
 func TestNoCallerPathCanForgeALine(t *testing.T) {
 	t.Parallel()
 
@@ -731,7 +727,8 @@ func TestNoCallerPathCanForgeALine(t *testing.T) {
 				assert.False(t, strings.HasPrefix(line, forged), "a caller path forged a line: %q", line)
 			}
 		}
-		assert.False(t, strings.Contains(stdout, "\n"+forged) || strings.Contains(stderr, "\n"+forged), "the forgery reached a stream on its own line:\nstdout: %q\nstderr: %q", stdout, stderr)
+		assert.NotContains(t, stdout, "\n"+forged, "the forgery reached a stream on its own line:\nstdout: %q\nstderr: %q", stdout, stderr)
+		assert.NotContains(t, stderr, "\n"+forged, "the forgery reached a stream on its own line:\nstdout: %q\nstderr: %q", stdout, stderr)
 	}
 
 	t.Run("links FAIL names a file whose name holds a newline", func(t *testing.T) {
@@ -809,13 +806,11 @@ func TestNoCallerPathCanForgeALine(t *testing.T) {
 	})
 }
 
-// TestAnUnusableInvocationCarriesTheDoor is SPEC.md's Conventions law at the one place
-// this binary drifted from it: "An unusable invocation costs ONE line. A flag typo, an
-// unknown verb or a bare invocation prints `<tool>[ <verb>]: <what was wrong>; run:
-// <tool> help`". The unknown verb and the flag typo carried the door because they go
-// through refuse(); the stray positional argument printed its own Fprintf and dropped it,
-// so `nova-check links --dir . extra` told a reader what was wrong and nothing about
-// where to look. The door is what makes the one line enough.
+// TestAnUnusableInvocationCarriesTheDoor is docs/SPEC.md's Conventions law, "An unusable
+// invocation costs ONE line": a bare invocation, an unknown verb, a flag typo or a stray
+// positional argument prints `<tool>[ <verb>]: <what was wrong>; run: <tool> help` on one
+// line. The door is that closing `run: nova-check help`, the command that says where to
+// look, and it is what makes the one line enough.
 func TestAnUnusableInvocationCarriesTheDoor(t *testing.T) {
 	t.Parallel()
 
@@ -841,7 +836,7 @@ func TestAnUnusableInvocationCarriesTheDoor(t *testing.T) {
 				require.EqualValues(t, 2, rc, "exit = %d, want 2; stderr: %s", rc, stderr.String())
 			}
 			got := stderr.String()
-			assert.Contains(t, got, "; run: nova-check help", "refusal drops the door: %q", got)
+			assert.Contains(t, got, "; run: nova-check help", "refusal drops `run: nova-check help`: %q", got)
 			{
 				lines := strings.Count(strings.TrimRight(got, "\n"), "\n") + 1
 				assert.EqualValues(t, 1, lines, "an unusable invocation cost %d lines, not one: %q", lines, got)
@@ -850,7 +845,7 @@ func TestAnUnusableInvocationCarriesTheDoor(t *testing.T) {
 	}
 }
 
-// TestTheDenyListFieldIsOneToken is SPEC.md's "A field is one token" at the
+// TestTheDenyListFieldIsOneToken is docs/SPEC.md's "A field is one token" at the
 // `deny-list=` and `source=` fields: each holds one of three provenance labels, and each
 // label is one token with no space and no "=" -- `floor-list`, `--deny-ext`,
 // `floor-list+--deny-ext-add` -- so a whitespace-splitting scanner reads the field the
@@ -859,7 +854,7 @@ func TestAnUnusableInvocationCarriesTheDoor(t *testing.T) {
 func TestTheDenyListFieldIsOneToken(t *testing.T) {
 	t.Parallel()
 
-	// The rendered spellings of the three provenance labels, as oneline.Field writes them.
+	// The rendered spelling of the floor list's provenance label, as oneline.Field writes it.
 	floor := "floor-list"
 
 	lineWith := func(t *testing.T, stream, token string) string {
@@ -872,9 +867,9 @@ func TestTheDenyListFieldIsOneToken(t *testing.T) {
 		require.FailNow(t, "fatal prerequisite", "no %q line in:\n%s", token, stream)
 		return ""
 	}
-	// noFieldHoldsASpace is the property the rule exists for: every token of the line
-	// either holds no "=" at all or is a whole key=value field, so the field count a
-	// scanner reads is the field count the tool wrote.
+	// fieldCount counts the key=value tokens of a line. The property the rule exists for:
+	// every token of the line either holds no "=" at all or is a whole key=value field, so
+	// the field count a scanner reads is the field count the tool wrote.
 	fieldCount := func(line string) int {
 		n := 0
 		for _, f := range strings.Fields(line) {
@@ -944,7 +939,7 @@ func TestTheDenyListFieldIsOneToken(t *testing.T) {
 			assert.Contains(t, line, "source="+floor+" ", "%s line does not name its source as one token: %q", token, line)
 			{
 				n := fieldCount(line)
-				assert.False(t, n != 2 && n != 3, "a scanner reads %d fields on %q, want the ones the tool wrote", n, line)
+				assert.Contains(t, []int{2, 3}, n, "a scanner reads %d fields on %q, want the ones the tool wrote", n, line)
 			}
 		}
 	})

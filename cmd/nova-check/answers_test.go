@@ -110,7 +110,7 @@ func TestDryRunWritesNothing(t *testing.T) {
 		assert.Contains(t, stdout, "file="+receipts+string(filepath.Separator))
 		assert.True(t, strings.HasSuffix(stdout, ".json dry_run=true\n"), stdout)
 		_, err := os.Stat(receipts)
-		assert.True(t, os.IsNotExist(err), "a dry run made the receipts directory: %v", err)
+		assert.ErrorIs(t, err, os.ErrNotExist, "a dry run made the receipts directory: %v", err)
 	})
 
 	t.Run("spelling --write", func(t *testing.T) {
@@ -136,7 +136,7 @@ func TestDryRunWritesNothing(t *testing.T) {
 		assert.Contains(t, stdout, "CONVERGENCE")
 		assert.Contains(t, stderr, "CONVERGENCE NOTE dry_run=true: --state")
 		_, err := os.Stat(state)
-		assert.True(t, os.IsNotExist(err), "a dry run wrote the state: %v", err)
+		assert.ErrorIs(t, err, os.ErrNotExist, "a dry run wrote the state: %v", err)
 	})
 }
 

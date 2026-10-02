@@ -19,9 +19,9 @@ var (
 	largeSelf500Once sync.Once
 )
 
-// largeSelf builds the state the audit measured this binary at: a self repo with n broken
-// markdown links and n code files, which is what an unchecked repo looks like on the day
-// a stranger first runs quickstart against it.
+// largeSelf builds a repository with n broken markdown links and n code files: an
+// unchecked repository as a stranger's first quickstart meets it. The 500-file tree is
+// built once and shared by every test that asks for it.
 func largeSelf(t *testing.T, n int) string {
 	t.Helper()
 	if n == 500 {
@@ -70,8 +70,7 @@ func TestLinksCapsFindingsAndAlwaysPrintsTheCount(t *testing.T) {
 		assert.EqualValues(t, bounded.Default+2, got, "stderr is %d lines, want %d findings + MORE + count", got, bounded.Default)
 	}
 	assert.Contains(t, stderr, "LINKS MORE kind=broken shown=20 total=500", "no MORE line naming the total:\n%s", stderr)
-	// The count line used to print only on PASS, so a run that found 800 broken links
-	// said nothing about 800 and stdout was empty.
+	// The count line prints on failure too, so a run that finds 500 broken links says 500.
 	assert.Contains(t, stderr, "broken=500 shown=20", "no count line on failure:\n%s", stderr)
 	assert.EqualValues(t, "", stdout, "a failing links wrote to stdout: %q", stdout)
 }
@@ -90,8 +89,8 @@ func TestNoCodeCapsFindingsAndAlwaysPrintsTheCount(t *testing.T) {
 	assert.Contains(t, stderr, "findings=500 shown=20", "no count line on failure:\n%s", stderr)
 }
 
-// THE FIRST-RUN VERB. Uncapped it was 1,400 lines for two lines of verdict — the most
-// expensive thing a stranger could type, on the run where they know the least.
+// quickstart, the first-run verb, passes the caps down to both checks, so a stranger's
+// first run on a large repository costs about forty lines, not one per finding.
 func TestQuickstartInheritsTheCaps(t *testing.T) {
 	t.Parallel()
 
@@ -100,7 +99,8 @@ func TestQuickstartInheritsTheCaps(t *testing.T) {
 	require.EqualValues(t, 1, exit, "exit = %d, want 1; stderr: %s", exit, stderr)
 	total := countLines(stdout) + countLines(stderr)
 	assert.LessOrEqual(t, total, 50, "a first run on a 1,000-file repo costs %d lines; it should cost about forty", total)
-	assert.False(t, !strings.Contains(stderr, "LINKS MORE") || !strings.Contains(stderr, "NOCODE MORE"), "quickstart did not pass the cap down to both checks:\n%s", stderr)
+	assert.Contains(t, stderr, "LINKS MORE", "quickstart did not pass the cap down to both checks:\n%s", stderr)
+	assert.Contains(t, stderr, "NOCODE MORE", "quickstart did not pass the cap down to both checks:\n%s", stderr)
 	assert.Contains(t, stdout, "QUICKSTART FAIL checks=2", "the closing line is missing: %q", stdout)
 }
 
@@ -134,11 +134,12 @@ func TestRefusesANegativeCeiling(t *testing.T) {
 	dir := largeSelf(t, 2)
 	for _, verb := range []string{"links", "nocode", "quickstart"} {
 		exit, _, stderr := runCheck(t, verb, "--dir", dir, "--fail-max", "-1")
-		assert.False(t, exit != 2 || !strings.Contains(stderr, "--fail-max must be a line ceiling"), "%s: exit = %d, stderr = %q", verb, exit, stderr)
+		assert.Equal(t, 2, exit, "%s: exit = %d, stderr = %q", verb, exit, stderr)
+		assert.Contains(t, stderr, "--fail-max must be a line ceiling", "%s: exit = %d, stderr = %q", verb, exit, stderr)
 	}
 }
 
-// A flag typo used to cost the whole 38-line banner.
+// A flag typo costs one refusal line, never the banner.
 func TestAFlagTypoIsOneLine(t *testing.T) {
 	t.Parallel()
 
@@ -154,9 +155,10 @@ func TestAFlagTypoIsOneLine(t *testing.T) {
 			got := countLines(stderr)
 			assert.EqualValues(t, 1, got, "%v: the refusal is %d lines, want 1:\n%s", args, got, stderr)
 		}
-		assert.Contains(t, stderr, "run: nova-check help", "%v: the refusal names no door: %q", args, stderr)
+		assert.Contains(t, stderr, "run: nova-check help", "%v: the refusal does not point to the help: %q", args, stderr)
 		assert.EqualValues(t, "", stdout, "%v: a refusal wrote to stdout: %q", args, stdout)
 	}
 	exit, stdout, _ := runCheck(t, "help")
-	assert.False(t, exit != 0 || !strings.Contains(stdout, "usage:"), "`help` did not print the usage: exit %d", exit)
+	assert.Equal(t, 0, exit, "`help` did not print the usage: exit %d", exit)
+	assert.Contains(t, stdout, "usage:", "`help` did not print the usage: exit %d", exit)
 }

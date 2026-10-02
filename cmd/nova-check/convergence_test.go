@@ -98,7 +98,9 @@ func (f *convFixture) run(t *testing.T, extra ...string) (int, string, string) {
 	return runCheck(t, append(append([]string(nil), f.args...), extra...)...)
 }
 
-// 17
+// Each required flag omitted is refused with exit 2 and `refusing to guess`,
+// and one run names every missing flag (docs/SPEC-CHECK.md, "Every path comes
+// from a flag").
 func TestConvergenceRefusesAMissingFlag(t *testing.T) {
 	t.Parallel()
 
@@ -124,12 +126,14 @@ func TestConvergenceRefusesAMissingFlag(t *testing.T) {
 	for _, missing := range required {
 		assert.Contains(t, stderr, "--"+missing+" is required", "one run must name every missing flag; %s was not named:\n%s", missing, stderr)
 	}
-	// The --ledger hint is this verb's own: the pit-stop ledger, not the corpus
-	// ledger the same flag names on `corpus`.
+	// The --ledger hint is this verb's own: the ledger of checks whose result
+	// cells say PASS, FAIL, PARTIAL or TODO, not the corpus ledger of protected
+	// lines the same flag names on `corpus`.
 	assert.Contains(t, stderr, "pit-stop ledger", "the --ledger hint names the wrong document:\n%s", stderr)
 }
 
-// 18
+// A --since that does not parse, or that falls after the injected clock, is
+// refused with exit 2 and prints no stream line (docs/SPEC-CHECK.md, "The refusals").
 func TestConvergenceRefusesASinceItCannotRead(t *testing.T) {
 	t.Parallel()
 
@@ -193,7 +197,8 @@ func TestConvergenceJSONIsTheWholeReading(t *testing.T) {
 	assert.EqualValues(t, 2, len(back.Absent), "absent=%v, want the two streams with no source", back.Absent)
 }
 
-// 15, at the command line: the streak is the only exit 1, and it lives in --state.
+// At the command line, the streak is the only exit 1, and it lives in --state
+// (docs/SPEC-CHECK.md, "The final line is the verdict, and the exit code is the streak").
 func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
 	t.Parallel()
 
@@ -222,7 +227,8 @@ func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
 	owe("| c | three | TODO |\n")
 	exit, stdout, _ := f.run(t, "--state", state, "--now", "2026-09-18T13:00:00Z")
 	require.EqualValues(t, 0, exit, "one widening tick exited %d, want 0 with a WARN:\n%s", exit, stdout)
-	require.False(t, !strings.Contains(stdout, "CONVERGENCE WARN") || !strings.Contains(stdout, "widening=LEDGER"), "one widening tick did not warn:\n%s", stdout)
+	require.Contains(t, stdout, "CONVERGENCE WARN", "one widening tick did not warn:\n%s", stdout)
+	require.Contains(t, stdout, "widening=LEDGER", "one widening tick did not warn:\n%s", stdout)
 	// And another: the same stream widening twice running is the red.
 	owe("| d | four | TODO |\n")
 	exit, stdout, _ = f.run(t, "--state", state, "--now", "2026-09-18T14:00:00Z")
@@ -285,7 +291,8 @@ func TestConvergenceRefusesAForgeThatWillNotAnswer(t *testing.T) {
 	exit, stdout, stderr := f.run(t, "--gh", bad)
 	require.EqualValues(t, 2, exit, "a forge that refused exited %d, want 2", exit)
 	assert.NotContains(t, stdout, "CONVERGENCE", "a partial reading was printed:\n%s", stdout)
-	assert.False(t, !strings.Contains(stderr, "nova-check convergence REFUSED:") || !strings.Contains(stderr, "gh pr list"), "the refusal does not name the child: %q", stderr)
+	assert.Contains(t, stderr, "nova-check convergence REFUSED:", "the refusal does not name the child: %q", stderr)
+	assert.Contains(t, stderr, "gh pr list", "the refusal does not name the child: %q", stderr)
 }
 
 // A --timeout of zero or less is a wait with no end.
@@ -295,6 +302,7 @@ func TestConvergenceRefusesATimeoutThatIsNotOne(t *testing.T) {
 	f := newConvFixture(t)
 	for _, bad := range []string{"0", "-5"} {
 		exit, _, stderr := f.run(t, "--timeout", bad)
-		assert.False(t, exit != 2 || !strings.Contains(stderr, "--timeout"), "--timeout %s exited %d saying %q", bad, exit, stderr)
+		assert.Equal(t, 2, exit, "--timeout %s exited %d saying %q", bad, exit, stderr)
+		assert.Contains(t, stderr, "--timeout", "--timeout %s exited %d saying %q", bad, exit, stderr)
 	}
 }

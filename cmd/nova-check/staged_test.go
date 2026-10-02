@@ -1,17 +1,17 @@
 package main
 
-// nova-tools#2296: the nocode --staged verb -- required --dir, the root test,
-// the base detector, and the exit codes. SPEC.md:805 classifies what is about
-// to be committed, not what is on disk; SPEC.md:831 makes --dir required on
-// the no-guessing law; SPEC.md:1021 makes the root test
-// `git rev-parse --show-toplevel` compared with --dir after resolving
-// symlinks, never a `.git`-is-a-directory test; SPEC.md:1028 makes the base
+// The nocode --staged mode -- required --dir, the root test, the base
+// detector, and the exit codes (docs/SPEC.md, "`--staged` — the audit's
+// classifier over the index, as an ADVISORY"). It classifies what is about to
+// be committed, not what is on disk; --dir is required on the no-guessing
+// law; the root test is `git rev-parse --show-toplevel` compared with --dir
+// after resolving symlinks, never a `.git`-is-a-directory test; the base is
 // HEAD, except on an unborn HEAD, detected by `git rev-parse -q --verify
 // HEAD`'s exit code, where the empty tree comes from `git hash-object -t tree
-// /dev/null` run inside the repository rather than a hard-coded constant;
-// SPEC.md:1005,1010 give the exit codes: 0 with a count of zero when nothing
-// classifiable is staged, 1 with `NOCODE FAIL <path>: <reason>` per path on
-// stderr, 2 for every refusal.
+// /dev/null` run inside the repository rather than a hard-coded constant; and
+// the exit codes are 0 with a count of zero when nothing classifiable is
+// staged, 1 with `NOCODE FAIL <path>: <reason>` per path on stderr, 2 for
+// every refusal.
 //
 // Every case drives the command line end to end through run(), over real
 // temporary git repositories, so the file is red on a tree without the verb
@@ -37,7 +37,7 @@ import (
 
 // stGitOut runs one git command in dir under the hermetic test environment
 // and returns its combined output and error. Real git, real repositories:
-// the whole point of #2296 is what the plumbing actually prints.
+// what is pinned is what the plumbing actually prints.
 func stGitOut(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
@@ -141,10 +141,10 @@ func stLine(t *testing.T, stream, prefix string) string {
 	return ""
 }
 
-// TestNoCodeStagedWholeSurface is the anchor: the whole #2296 surface in one test, so the
-// card's check (`go test ./cmd/nova-check/ -run TestIssue2296`) exercises
-// every behaviour the issue names. The six bodies also stand as the six
-// top-level tests below, under the issue's own names.
+// TestNoCodeStagedWholeSurface is the anchor: the whole --staged surface in one test, so
+// `go test ./cmd/nova-check/ -run TestNoCodeStagedWholeSurface` exercises every
+// behaviour the spec names. The six bodies also stand as the six top-level
+// tests below.
 func TestNoCodeStagedWholeSurface(t *testing.T) {
 	t.Run("TestNoCodeStagedClassifiesTheIndex", noCodeStagedClassifiesTheIndex)
 	t.Run("TestNoCodeStagedRequiresDir", noCodeStagedRequiresDir)
@@ -159,10 +159,10 @@ func TestNoCodeStagedClassifiesTheIndex(t *testing.T) {
 	noCodeStagedClassifiesTheIndex(t)
 }
 
-// A commit commits an index, not a tree (SPEC.md:805). Staging a shebang and
-// then replacing the file with prose on disk leaves the shebang in what will
-// be committed while every working-tree reader sees prose -- measured in the
-// issue, and the whole reason this mode exists. The staged blob is what is
+// A commit commits an index, not a tree (docs/SPEC.md, "`--staged`", "What it
+// is for"). Staging a shebang and then replacing the file with prose on disk
+// leaves the shebang in what will be committed while every working-tree
+// reader sees prose -- the whole reason this mode exists. The staged blob is what is
 // classified; the audit over the same tree must stay clean, and the two
 // answers together are the point.
 func noCodeStagedClassifiesTheIndex(t *testing.T) {
@@ -186,7 +186,8 @@ func noCodeStagedClassifiesTheIndex(t *testing.T) {
 
 	// The audit over the SAME tree walks the disk and sees prose only.
 	aexit, astdout, _ := runCheck(t, "nocode", "--dir", dir)
-	assert.False(t, aexit != 0 || !strings.Contains(astdout, "NOCODE OK"), "the audit over prose on disk exited %d:\n%s", aexit, astdout)
+	assert.Equal(t, 0, aexit, "the audit over prose on disk exited %d:\n%s", aexit, astdout)
+	assert.Contains(t, astdout, "NOCODE OK", "the audit over prose on disk exited %d:\n%s", aexit, astdout)
 }
 
 func TestNoCodeStagedRequiresDir(t *testing.T) {
@@ -195,9 +196,10 @@ func TestNoCodeStagedRequiresDir(t *testing.T) {
 }
 
 // --dir is required on the no-guessing law, never inferred from the working
-// directory (SPEC.md:831). The test binary runs inside this repository, so
-// the working directory IS inside a git repository: a tool that inferred
-// --dir from it would pass this case, and the refusal is what the law wants.
+// directory (docs/SPEC.md, "`--staged`", "Asserts"). The test binary runs
+// inside this repository, so the working directory IS inside a git
+// repository: a tool that inferred --dir from it would answer here instead of
+// refusing, and the refusal is what the law wants.
 func noCodeStagedRequiresDir(t *testing.T) {
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged")
 	require.EqualValues(t, 2, exit, "exit = %d, want 2 (a missing --dir is a refusal, never a guess); stderr:\n%s", exit, stderr)
@@ -212,8 +214,9 @@ func TestNoCodeStagedNothingToSay(t *testing.T) {
 
 // Nothing staged, or deletions only, is exit 0 with a count of zero -- an
 // empty change set is a fact about the commit, not a broken check
-// (SPEC.md:1005). An unborn HEAD with an empty index reaches the same answer
-// through the base detector, which is the only route to it.
+// (docs/SPEC.md, "`--staged`", "Says nothing to say"). An unborn HEAD with an
+// empty index reaches the same answer through the base detector, which is the
+// only route to it.
 func noCodeStagedNothingToSay(t *testing.T) {
 	ok0 := func(t *testing.T, dir, why string) {
 		t.Helper()
@@ -248,9 +251,10 @@ func TestNoCodeStagedSaysNo(t *testing.T) {
 
 // Any staged path classified as machinery is one `NOCODE FAIL <path>:
 // <reason>` line per path on stderr, exit 1, and no OK line anywhere; a clean
-// index prints the OK line on stdout (SPEC.md:1010,1013). The three staged
-// tells: the extension floor, a shebang with no extension and no executable
-// bit, and prose whose INDEX mode alone is executable.
+// index prints the OK line on stdout (docs/SPEC.md, "`--staged`", "Says NO
+// when"). The three staged tells: the extension floor, a shebang with no
+// extension and no executable bit, and prose whose INDEX mode alone is
+// executable.
 func noCodeStagedSaysNo(t *testing.T) {
 	dir := stLab(t)
 	mustWrite(t, dir, "run.sh", "echo hi\n")
@@ -292,9 +296,10 @@ func noCodeStagedSaysNo(t *testing.T) {
 
 func TestNoCodeStagedRefusals(t *testing.T) { noCodeStagedRefusals(t) }
 
-// The refusals are exit 2 (SPEC.md:1015-1021): a --dir that is not the root
-// of a git repository, a diff-index that itself fails, unmerged entries, an
-// unrecognised status letter, an unclassifiable destination mode, and the
+// The refusals are exit 2 (docs/SPEC.md, "`--staged`", "Refuses (exit 2)
+// when"): a --dir that is not the root of a git repository, a diff-index that
+// itself fails, unmerged entries, an unrecognised status letter, an
+// unclassifiable destination mode, and the
 // deny-list refusals the audit already makes.
 func noCodeStagedRefusals(t *testing.T) {
 	refused := func(t *testing.T, why string, exit int, stderr, want string) {
@@ -454,7 +459,8 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	// arriving by reference: classified from its mode alone, its OID never
 	// read -- the one matching rule this mode adds to the audit's.
 	oexit, _, ostderr := runCheck(t, "nocode", "--staged", "--dir", outer)
-	assert.False(t, oexit != 1 || !strings.Contains(ostderr, "NOCODE FAIL sub: submodule gitlink (machinery arriving by reference)"), "the staged gitlink exited %d, want 1 with the gitlink finding:\n%s", oexit, ostderr)
+	assert.Equal(t, 1, oexit, "the staged gitlink exited %d, want 1 with the gitlink finding:\n%s", oexit, ostderr)
+	assert.Contains(t, ostderr, "NOCODE FAIL sub: submodule gitlink (machinery arriving by reference)", "the staged gitlink exited %d, want 1 with the gitlink finding:\n%s", oexit, ostderr)
 
 	// An unborn HEAD is gated like every later commit: the base detector
 	// reaches for the empty tree, and the shebang staged for the FIRST commit
@@ -464,7 +470,8 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	mustWrite(t, first, "runner", "#!/bin/sh\necho hi\n")
 	stGit(t, first, "add", "runner")
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", first)
-	require.False(t, exit != 1 || !strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)"), "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.Equal(t, 1, exit, "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.Contains(t, stderr, "NOCODE FAIL runner: executable script (shebang)", "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
 
 	// The sha256 form: the empty tree is obtained inside the repository, never
 	// hard-coded. The sha1 constant 4b825dc6... names no object a sha256
@@ -478,28 +485,28 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	stGit(t, s256, "add", "runner")
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", s256)
 	require.NotEqualValues(t, 2, exit, "the unborn sha256 repository was refused; the empty tree was not obtained from inside it (a hard-coded sha1 constant does not exist there):\n%s", stderr)
-	require.False(t, exit != 1 || !strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)"), "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.Equal(t, 1, exit, "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.Contains(t, stderr, "NOCODE FAIL runner: executable script (shebang)", "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
 	{
 		et := strings.TrimSpace(stGit(t, s256, "hash-object", "-t", "tree", os.DevNull))
 		require.NotEqualValues(t, "4b825dc642cb6eb9a060e54bf8d69288fbee4904", et, "this sha256 repository names the sha1 empty tree %q", et)
 	}
 }
 
-// TestStagedAdvisoryCommitSequence is the sequence a friend runs the
-// --staged verb inside (WORKER-CARDS.md practice 21): stage, advisory, act on
-// what the advisory named, advisory again, commit, and the audit over what was
-// committed. A verb's own tests see what the verb prints; only the sequence
-// sees the state it leaves -- here, that an advisory that said clean leaves an
-// index whose commit the audit over the same repository also calls clean, which
-// is the composition this verb exists for. CI's e2e job selects this test by
-// name (`-run TestFriendSequence`), so the round trip runs on every pull
-// request once it lands here.
-func TestStagedAdvisoryCommitSequence(t *testing.T) {
+// TestFriendSequenceStagedAdvisoryCommit is the sequence a contributor runs the
+// --staged verb inside: stage, advisory, act on what the advisory named,
+// advisory again, commit, and the audit over what was committed. A verb's own
+// tests see what the verb prints; only the sequence sees the state it leaves --
+// here, that an advisory that said clean leaves an index whose commit the audit
+// over the same repository also calls clean, which is the composition this
+// verb exists for. The TestFriendSequence prefix is what the end-to-end
+// selector (`make test-e2e`, `-run TestFriendSequence`) runs by.
+func TestFriendSequenceStagedAdvisoryCommit(t *testing.T) {
 	t.Parallel()
 
 	dir := stLab(t)
 
-	// The friend stages a script beside the prose -- the pre-commit moment
+	// The contributor stages a script beside the prose -- the pre-commit moment
 	// this verb is for.
 	mustWrite(t, dir, "runner", "#!/bin/sh\necho hi\n")
 	stGit(t, dir, "add", "runner")
@@ -510,21 +517,21 @@ func TestStagedAdvisoryCommitSequence(t *testing.T) {
 	require.EqualValues(t, 1, exit, "the advisory over the staged script exited %d, want 1; stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	require.Contains(t, stderr, "NOCODE FAIL runner: executable script (shebang)", "the advisory did not name the staged script:\n%s", stderr)
 	// The advisory leaves the index exactly as it found it: the script is
-	// still staged, which is the state the friend acts on next. An advisory
-	// that mutated the index would decide the commit, not the friend.
+	// still staged, which is the state the contributor acts on next. An advisory
+	// that mutated the index would decide the commit, not the contributor.
 	{
 		got := strings.TrimSpace(stGit(t, dir, "diff", "--cached", "--name-only"))
 		require.EqualValues(t, "runner", got, "the index the advisory left holds %q, want the staged runner untouched", got)
 	}
 
-	// The friend acts on the finding: the script is unstaged and removed, and
+	// The contributor acts on the finding: the script is unstaged and removed, and
 	// the prose this commit exists for is staged in its place.
 	stGit(t, dir, "rm", "-q", "--cached", "runner")
 	require.NoError(t, os.Remove(filepath.Join(dir, "runner")))
 	mustWrite(t, dir, "g.md", "the prose this commit exists for\n")
 	stGit(t, dir, "add", "g.md")
 
-	// The advisory again, over the index the friend left: clean, with the one
+	// The advisory again, over the index the contributor left: clean, with the one
 	// prose record classified.
 	exit, stdout, stderr = runCheck(t, "nocode", "--staged", "--dir", dir)
 	require.EqualValues(t, 0, exit, "the advisory over the corrected index exited %d, want 0; stderr:\n%s", exit, stderr)
@@ -538,5 +545,6 @@ func TestStagedAdvisoryCommitSequence(t *testing.T) {
 	// tree the audit calls clean.
 	stGit(t, dir, "commit", "-q", "-m", "prose only")
 	aexit, astdout, _ := runCheck(t, "nocode", "--dir", dir)
-	assert.False(t, aexit != 0 || !strings.Contains(astdout, "NOCODE OK"), "the audit over the committed tree exited %d:\n%s", aexit, astdout)
+	assert.Equal(t, 0, aexit, "the audit over the committed tree exited %d:\n%s", aexit, astdout)
+	assert.Contains(t, astdout, "NOCODE OK", "the audit over the committed tree exited %d:\n%s", aexit, astdout)
 }

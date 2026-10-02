@@ -13,7 +13,7 @@ import (
 // The rule this test holds: a flag the verb's own refusal tells a reader to
 // pass must be named on that verb's line in the banner the same refusal sends
 // them to. The refusal and the banner are two halves of one answer, and a
-// reader who is told "pass --allow-empty" and then opens the door they were
+// reader who is told "pass --allow-empty" and then opens the banner they were
 // sent to must not be told the flag does not exist.
 //
 // Both halves run the binary; neither scrapes Go source. The first invocation

@@ -122,7 +122,8 @@ func TestDogfoodLedgerNamesAReceiptItCannotReadAndPrintsNoLedger(t *testing.T) {
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
 	require.EqualValues(t, 1, code, "exit %d, want 1", code)
 	require.NotContains(t, stdout, "DOGFOOD OK", "a ledger was printed over records it could not read:\n%s", stdout)
-	require.False(t, !strings.Contains(stderr, "DOGFOOD FAIL") || !strings.Contains(stderr, "broken.json"), "stderr does not name the bad record:\n%s", stderr)
+	require.Contains(t, stderr, "DOGFOOD FAIL", "stderr does not name the bad record:\n%s", stderr)
+	require.Contains(t, stderr, "broken.json", "stderr does not name the bad record:\n%s", stderr)
 }
 
 func TestDogfoodLedgerNotesAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
@@ -160,7 +161,8 @@ func TestDogfoodRecordWritesAReceiptTheLedgerReadsBack(t *testing.T) {
 
 	code, stdout, stderr = dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
 	require.EqualValues(t, 0, code, "ledger exit %d\n%s", code, stderr)
-	require.False(t, !strings.Contains(stdout, "verb=links by=Stella") || !strings.Contains(stdout, "dogfooded=1 by-nonauthor=1"), "the receipt record wrote did not reach the ledger:\n%s", stdout)
+	require.Contains(t, stdout, "verb=links by=Stella", "the receipt record wrote did not reach the ledger:\n%s", stdout)
+	require.Contains(t, stdout, "dogfooded=1 by-nonauthor=1", "the receipt record wrote did not reach the ledger:\n%s", stdout)
 }
 
 func TestDogfoodRecordRefusesEveryMissingFieldWithOneRemedyEach(t *testing.T) {
@@ -187,7 +189,8 @@ func TestDogfoodRecordRefusesAVerdictItWasNotGiven(t *testing.T) {
 		"--by", "Stella", "--notes", "real work", "--receipts", receipts}
 	code, _, stderr := dogfoodRun(t, args...)
 	require.EqualValues(t, 2, code, "exit %d, want 2: a receipt with no verdict is not a receipt", code)
-	require.False(t, !strings.Contains(stderr, "--ok") || !strings.Contains(stderr, "--not-ok"), "the refusal does not say how to state the verdict:\n%s", stderr)
+	require.Contains(t, stderr, "--ok", "the refusal does not say how to state the verdict:\n%s", stderr)
+	require.Contains(t, stderr, "--not-ok", "the refusal does not say how to state the verdict:\n%s", stderr)
 	code, _, stderr = dogfoodRun(t, append(args, "--ok", "--not-ok")...)
 	require.EqualValues(t, 2, code, "exit %d, want 2: both verdicts at once is a typo with two readings", code)
 	require.Contains(t, stderr, "--ok", "the refusal does not name the flags:\n%s", stderr)
@@ -288,7 +291,8 @@ func TestDogfoodGateShippedJudgesOnlyTheToolsUnderCmd(t *testing.T) {
 	}
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--shipped", shipped)
 	require.EqualValues(t, 0, code, "with --shipped exit %d, want 0\nstderr:%s", code, stderr)
-	require.False(t, !strings.Contains(stderr, "DOGFOOD NOTE shipped=1 outside=1") || !strings.Contains(stdout, "DOGFOOD GATE OK"), "the scope is not said:\nstdout:%s\nstderr:%s", stdout, stderr)
+	require.Contains(t, stderr, "DOGFOOD NOTE shipped=1 outside=1", "the scope is not said:\nstdout:%s\nstderr:%s", stdout, stderr)
+	require.Contains(t, stdout, "DOGFOOD GATE OK", "the scope is not said:\nstdout:%s\nstderr:%s", stdout, stderr)
 
 	writeReceipt(t, receipts, "c.json", map[string]any{
 		"tool": "nova-example", "verb": "corpus", "by": "Stella",
@@ -312,9 +316,8 @@ func TestDogfoodGateCapsItsFindingsAndSaysHowToSeeTheRest(t *testing.T) {
 	require.EqualValues(t, 1, strings.Count(stderr, "DOGFOOD GATE FAIL tool="), "the cap did not hold:\n%s", stderr)
 	require.Contains(t, stderr, "--fail-max", "a cap with no remedy is censorship:\n%s", stderr)
 	require.Contains(t, stderr, "shown=1", "no count line:\n%s", stderr)
-	// The first run of this verb against the repository's own reference printed
-	// `DOGFOOD\x20GATE MORE`: bounded escapes the token it is given, so the token
-	// is one word.
+	// bounded escapes the kind token it is given, so the token is one word:
+	// `DOGFOOD MORE`, never `DOGFOOD\x20GATE MORE`.
 	require.Contains(t, stderr, "DOGFOOD MORE kind=verb", "the MORE line is not readable:\n%s", stderr)
 	require.NotContains(t, stderr, "\\x20", "an escaped space reached a printed line:\n%s", stderr)
 }
@@ -337,7 +340,8 @@ func TestDogfoodRefusesAMissingPath(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			code, _, stderr := dogfoodRun(t, tc.args...)
 			require.EqualValues(t, 2, code, "exit %d, want 2", code)
-			require.False(t, !strings.Contains(stderr, tc.want) || !strings.Contains(stderr, "refusing to guess"), "refusal:\n%s", stderr)
+			require.Contains(t, stderr, tc.want, "refusal:\n%s", stderr)
+			require.Contains(t, stderr, "refusing to guess", "refusal:\n%s", stderr)
 		})
 	}
 }
@@ -347,7 +351,7 @@ func TestDogfoodRefusesAnUnknownSubVerb(t *testing.T) {
 
 	code, _, stderr := dogfoodRun(t, "dogfood", "ledgre")
 	require.EqualValues(t, 2, code, "exit %d, want 2", code)
-	require.Contains(t, stderr, "run: nova-check help", "a typo was answered without the door:\n%s", stderr)
+	require.Contains(t, stderr, "run: nova-check help", "a typo was answered without `run: nova-check help`:\n%s", stderr)
 	code, _, stderr = dogfoodRun(t, "dogfood")
 	require.EqualValues(t, 2, code, "exit %d, want 2", code)
 	require.Contains(t, stderr, "ledger", "the refusal does not name the sub-verbs:\n%s", stderr)
@@ -424,13 +428,12 @@ func TestDogfoodLedgerReadsAuthorshipFromGit(t *testing.T) {
 	})
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts, "--repo", repo)
 	require.EqualValues(t, 0, code, "exit %d\n%s", code, stderr)
-	require.Contains(t, stdout, "dogfooded=1 by-nonauthor=0", "git said Rowan Claude wrote the verb and the ledger counted his own run:\n%s", stdout)
+	require.Contains(t, stdout, "dogfooded=1 by-nonauthor=0", "git names the receipt author as the verb's author, and the ledger counted the author's own run:\n%s", stdout)
 }
 
-// The 2026-09-18 dogfood pass, edge 3: the ledger said nine receipts named a
-// verb the reference does not declare and named none of them, so nine real
-// runs were invisible and nobody could tell how the verb should have been
-// spelled.
+// The ledger names every receipt whose verb the reference does not declare,
+// what the receipt claimed and the nearest declared verb, so no real run is
+// invisible and a reader can tell how the verb was meant to be spelled.
 func TestDogfoodLedgerNamesEveryStrandedReceiptAndTheNearestVerb(t *testing.T) {
 	t.Parallel()
 
@@ -443,14 +446,15 @@ func TestDogfoodLedgerNamesEveryStrandedReceiptAndTheNearestVerb(t *testing.T) {
 	})
 	code, _, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
 	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
-	require.False(t, !strings.Contains(stderr, "stranded") || !strings.Contains(stderr, "stranded.json"), "the stranded receipt is not named:\n%s", stderr)
+	require.Contains(t, stderr, "stranded", "the stranded receipt is not named:\n%s", stderr)
+	require.Contains(t, stderr, "stranded.json", "the stranded receipt is not named:\n%s", stderr)
 	require.Contains(t, stderr, "verb=lnks", "the note does not say what the receipt claimed:\n%s", stderr)
 	require.Contains(t, stderr, "nova-example links", "the note does not say what it was probably meant to be:\n%s", stderr)
 }
 
-// Edge 4: the gate — the line the release lane actually calls — dropped the
-// note entirely, so a lane could pass or fail without ever learning that every
-// receipt it read had been discarded.
+// The gate, the line a release calls, names the stranded receipts too, red or
+// green, so no release passes or fails without learning which receipts it
+// discarded.
 func TestDogfoodGateAlsoNamesTheStrandedReceipts(t *testing.T) {
 	t.Parallel()
 
@@ -463,14 +467,16 @@ func TestDogfoodGateAlsoNamesTheStrandedReceipts(t *testing.T) {
 	})
 	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all")
 	require.EqualValues(t, 1, code, "exit %d, want 1", code)
-	require.False(t, !strings.Contains(stderr, "stranded.json") || !strings.Contains(stderr, "nova-example links"), "the gate discarded a receipt and did not say so:\n%s", stderr)
+	require.Contains(t, stderr, "stranded.json", "the gate discarded a receipt and did not say so:\n%s", stderr)
+	require.Contains(t, stderr, "nova-example links", "the gate discarded a receipt and did not say so:\n%s", stderr)
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
 	require.EqualValues(t, 0, code, "exit %d, want 0 without --require-all\n%s", code, stderr)
 	require.Contains(t, stderr, "stranded.json", "a green gate said nothing about the receipt it discarded:\n%s\n%s", stdout, stderr)
 }
 
-// Edge 5: every receipt of the pass was written with --ok, because the verbs
-// worked, and the edges were in the notes where the family writes them.
+// An edge named in the notes of an --ok receipt is an open edge, unfiled until
+// an issue names it: a verb can work and still have edges, and the notes are
+// where a reviewer writes them.
 func TestDogfoodLedgerCountsAnEdgeNamedInTheNotes(t *testing.T) {
 	t.Parallel()
 
@@ -490,9 +496,9 @@ func TestDogfoodLedgerCountsAnEdgeNamedInTheNotes(t *testing.T) {
 	require.Contains(t, stderr, "no issue filed", "the gate does not say the edge was never filed:\n%s", stderr)
 }
 
-// Edge 2 at the CLI: `record` had --cli available and checked nothing, so a
-// receipt for a verb spelled differently was accepted silently and discovered
-// later as a NOTE that named nothing. Nine receipts were lost that way.
+// `record` checks the verb against --cli and refuses one the reference does not
+// declare, naming the nearest declared verb, so a misspelled receipt is refused
+// when it is written rather than stranded and found later.
 func TestDogfoodRecordRefusesAVerbTheReferenceDoesNotDeclare(t *testing.T) {
 	t.Parallel()
 
@@ -531,8 +537,9 @@ func TestDogfoodRecordRefusesWithNothingToCheckAgainst(t *testing.T) {
 	code, _, stderr := dogfoodRun(t, "dogfood", "record",
 		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--ok",
 		"--notes", "real work", "--receipts", receipts)
-	require.EqualValues(t, 2, code, "exit %d, want 2: a receipt checked against nothing is how nine of them were stranded", code)
-	require.False(t, !strings.Contains(stderr, "--cli") || !strings.Contains(stderr, "--tools"), "the refusal does not name either source:\n%s", stderr)
+	require.EqualValues(t, 2, code, "exit %d, want 2: a receipt checked against nothing strands receipts", code)
+	require.Contains(t, stderr, "--cli", "the refusal does not name either source:\n%s", stderr)
+	require.Contains(t, stderr, "--tools", "the refusal does not name either source:\n%s", stderr)
 }
 
 // The binaries are the authoritative list when they are to hand: a reference
@@ -564,9 +571,9 @@ func TestDogfoodReadsTheVerbsFromTheBinariesWhenToldTo(t *testing.T) {
 	require.EqualValues(t, 0, code, "record exit %d against the binaries' own list\n%s", code, stderr)
 }
 
-// DOGFOOD ROUND 5, EDGE 2, THROUGH THE VERB A PERSON ACTUALLY RUNS. Stella finds
-// something; somebody else's later pass does not close it; the fixer records a receipt
-// that NAMES it, and the gate goes green.
+// Through `record`, the verb a person runs: one reviewer's not-ok finding stays
+// open when somebody else's later pass works for them, a --closes naming no
+// receipt closes nothing, and the fixer's receipt that NAMES it turns the gate green.
 func TestDogfoodRecordClosesTheFindingItNames(t *testing.T) {
 	t.Parallel()
 
@@ -594,7 +601,7 @@ func TestDogfoodRecordClosesTheFindingItNames(t *testing.T) {
 		require.EqualValues(t, 0, code, "record exit %d\n%s", code, stderr)
 	}
 	code, stdout, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
-	require.EqualValues(t, 1, code, "the gate passed over Stella's open finding: exit %d\n%s\n%s", code, stdout, stderr)
+	require.EqualValues(t, 1, code, "the gate passed over a reviewer's open finding: exit %d\n%s\n%s", code, stdout, stderr)
 	require.Contains(t, stderr, "receipt="+id, "the gate never named the id a closer must use (%s):\n%s", id, stderr)
 
 	// An id that names nothing closes nothing.

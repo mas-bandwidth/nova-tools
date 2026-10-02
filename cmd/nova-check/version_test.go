@@ -15,12 +15,6 @@ import (
 // a run of it has to be one line and four tokens -- and asserting only that the output
 // "contains" a version would pass over a line broken in two, which is the failure the
 // escaping in internal/buildinfo exists to prevent.
-//
-// Before this verb existed the same invocation was:
-//
-//	nova-check: unknown subcommand "version"; run: nova-check help
-//
-// on stderr at exit 2.
 func TestVersionLineShape(t *testing.T) {
 	t.Parallel()
 	var out, errOut bytes.Buffer
@@ -30,12 +24,14 @@ func TestVersionLineShape(t *testing.T) {
 	}
 	assert.EqualValues(t, 0, errOut.Len(), "wrote to stderr: %q", errOut.String())
 	line := out.String()
-	require.False(t, !strings.HasSuffix(line, "\n") || strings.Count(line, "\n") != 1, "want exactly one terminated line, got %q", line)
+	require.True(t, strings.HasSuffix(line, "\n"), "want exactly one terminated line, got %q", line)
+	require.Equal(t, 1, strings.Count(line, "\n"), "want exactly one terminated line, got %q", line)
 	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
 	require.EqualValues(t, 4, len(fields), "want 4 fields, got %d: %q", len(fields), line)
 	assert.EqualValues(t, "nova-check", fields[0], "field 1 is the binary's name: got %q", fields[0])
 	assert.NotEqualValues(t, "", fields[1], "field 2 is the build identity and is never empty: %q", line)
-	assert.False(t, strings.ContainsAny(fields[1], " \t"), "field 2 is one token: %q", line)
+	assert.NotContains(t, fields[1], " ", "field 2 is one token: %q", line)
+	assert.NotContains(t, fields[1], "\t", "field 2 is one token: %q", line)
 	{
 		want := runtime.GOOS + "/" + runtime.GOARCH
 		assert.EqualValues(t, want, fields[2], "field 3: got %q, want %q", fields[2], want)
@@ -104,6 +100,7 @@ func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
 				continue
 			}
 		}
-		assert.False(t, !strings.HasPrefix(out.String(), "nova-check ") || strings.Count(out.String(), "\n") != 1, "%s: not the version line: %q", verb, out.String())
+		assert.True(t, strings.HasPrefix(out.String(), "nova-check "), "%s: not the version line: %q", verb, out.String())
+		assert.Equal(t, 1, strings.Count(out.String(), "\n"), "%s: not the version line: %q", verb, out.String())
 	}
 }

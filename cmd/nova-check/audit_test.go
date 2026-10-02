@@ -37,7 +37,7 @@ var checkAudit = audit.Config{
 	// (U+2028, U+2029 and the bidi controls among them) and the quote and the backslash
 	// itself, so it is one line whatever the value holds. It renders the four values of
 	// the `hygiene` MORE line's remedy, which is a command a PERSON pastes back into a
-	// shell (#1804): Field would spell an identity `Emma\x20<emma@example.com>`, which
+	// shell: Field would spell an identity `Ada\x20<ada@example.com>`, which
 	// is one token for a scanner and a line nobody can run. TestHygieneMoreCommandRuns-
 	// AsPrinted is the behavioural test for those sites -- it splits the printed remedy
 	// the way a shell would and runs it.
@@ -70,7 +70,7 @@ var checkAudit = audit.Config{
 		"staged.go|stagedBlobHeads|oid": "a hex object id from git's own diff-index output, written to the batch reader's stdin pipe rather than to any output stream; it is a lookup key that must reach git verbatim, and the reply's classification -- not this -- is what gets printed, escaped, in the FAIL lines",
 	},
 	Imports: []string{
-		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
+		// the verb-help seam (docs/CLI-STYLE.md, "Help"): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
 		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,

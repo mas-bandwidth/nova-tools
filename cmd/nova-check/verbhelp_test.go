@@ -7,8 +7,8 @@ import (
 )
 
 // Every verb answers -h and --help with its own help on stdout at exit 0, and
-// none of them reads or writes the place it was pointed at (the CLI style's
-// rule (b), #4505).
+// none of them reads or writes the place it was pointed at (docs/CLI-STYLE.md,
+// "Grammar and help", "Help").
 func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
 	testverbhelp.Check(t, run, []testverbhelp.Case{

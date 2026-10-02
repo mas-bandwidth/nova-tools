@@ -8,11 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Defect #1451: every refusal of an invocation this tool cannot run must end with the
-// door `; run: nova-check help`, per docs/ONBOARDING.md point 1 -- "an invocation the
-// tool cannot run prints one line ... '<tool>[ <verb>]: <what was wrong>; run: <tool>
-// help'". The missing-flag and bad-value refusals bypassed the one helper (`refuse`) that
-// writes that door, so a reader learned what was wrong and not where to look it up.
+// Every refusal of an invocation this tool cannot run ends with the door
+// `; run: nova-check help`, the command that says where to look (docs/STANDARD.md,
+// "Help and refusal: the six onboarding points"): `<tool>[ <verb>]: <what was wrong>;
+// run: <tool> help`. The missing-flag and bad-value refusals carry it too, so a reader
+// learns both what was wrong and where to look it up.
 //
 // Asserting only that the substring "help" appears somewhere in stderr would pass a line
 // that says "refusing to guess" and then dumps the whole usage banner: the door has to be
@@ -69,7 +69,7 @@ func TestEveryRefusalNamesTheDoor(t *testing.T) {
 				// line: the door belongs on the refusal line, before the hint.
 				continue
 			}
-			assert.True(t, strings.HasSuffix(line, door), "%s: refusal line without the door: %q", verb, line)
+			assert.True(t, strings.HasSuffix(line, door), "%s: refusal line without `run: nova-check help`: %q", verb, line)
 		}
 	}
 	require.NotEqualValues(t, 0, refused, "no bare verb refused; this test proved nothing")
