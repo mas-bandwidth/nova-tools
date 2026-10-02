@@ -757,9 +757,9 @@ func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) 
 // head and attempt pinned; "" when it does. The cards are looked for by name,
 // wherever they stand: the tick's accepts put cards in the queue by their order
 // of work while a landing builds, often ahead of the batch, and that is no
-// change to the batch (the fleet pass of 2026-10-01 18:31 ET: with cards
-// accepted every second a landing was refused almost every round, 49 queued and
-// 2 landed, and one batch was pushed and could not be reported). A pinned card
+// change to the batch: cards are accepted continuously while a landing builds,
+// and counting that as a change would refuse almost every landing, or leave a
+// pushed batch with nothing to report. A pinned card
 // gone from the queue, or reworked to another head, still refuses.
 func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 	// a stream stopped since land read it (a red recorded while an earlier stream of the
@@ -796,7 +796,7 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	// heads by their ids, in one exchange. A fetch of every branch of origin costs a
 	// negotiation over all of them, once a stream a round: on a repository with two
 	// thousand card branches it was 15 s a fetch and landing fell to a third of the
-	// fleet's rate (the fleet pass of 2026-10-01 20:18 ET, 1000 cards). A head origin
+	// fleet's rate. A head origin
 	// does not hold fails the one fetch; then the base alone is fetched and each head at
 	// its merge (mergeHead), which names the card.
 	baseRef := "+refs/heads/" + base + ":refs/remotes/origin/" + base
