@@ -66,7 +66,7 @@ A missing base object or an operational failure while finding the merge base als
 read before writing its frame. Valid unrelated histories have no common ancestor; their frame
 names no exact start (`TestReviewAMissingImmutableBaseRefusesTheReadBeforeWritingItsFrame`,
 `TestReviewUnrelatedHistoriesKeepTheUnknownStartPolicy`). On the
-1000-card load test of 2026-10-01 cards landed on the base every few seconds, and a reader that
+moving base, cards land every few seconds, and a reader that
 ran `git diff origin/dev` saw every file landed since the work began as a deletion and sent a
 correct work card back (`TestAReadIsToldTheWorksChangeWhenTheBaseMoved`). The fetch is because
 the checkout is cloned from the bench mirror, whose base can be older than the work's start: the
@@ -140,7 +140,7 @@ template asked) overwrites nothing: it rides at the end of the pull request body
 writes `<job>/RESULT.md` itself. The finish record wins over RESULT.md. A result without the six
 keys is no result.
 
-The rulings of 2026-09-30 on the shape:
+The rules on the shape:
 
 - **Every work card ends with a commit.** A child with nothing to do says `verdict: nothing`
   with the reason as its report (claude: `gh pr create --title "nothing: <why>"`); the finish
@@ -234,7 +234,7 @@ child made exactly one line of work: exactly one fetched tip descends from the s
 with a commit of its own; it is pushed, never forced, and the member's output says
 `NOTE push <card> head: the result named <claimed>, which is no commit of the checkout; the
 checkout's own head <sha> was pushed`. With no such tip, or more than one, the refusal stands
-(on the 1000-card load test of 2026-10-01, five of the first twelve failures were a model
+(the failure it refuses is a model
 writing a sha whose first characters were right and whose tail was invented, from one route,
 the commit on the checkout's branch: `TestAWrongTailHeadPushesTheCheckoutsOwnCommit`,
 `TestAnAbsentHeadWithTwoCandidateBranchesIsStillRefused`, `TestARightHeadIsPushedAsBefore`).
