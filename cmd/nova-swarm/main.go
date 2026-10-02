@@ -191,11 +191,11 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0, before
-	// anything is read, dialed or written (the CLI style's rule (b), #4505). Only -h:
+	// anything is read, dialed or written, so help has no side effects. Only -h:
 	// every other exit of this tool is unchanged.
 	defer recoverHelp(stdout, &code)
 	// --seat <name> (or NOVA_SEAT): the Redis login is read from that seat's
-	// file through nova-secrets' library, in this process (#4052).
+	// file through the secrets library, in this process.
 	args, err := seatcred.FromArgs(args, os.Getenv)
 	if err != nil {
 		return refuse(stderr, "", err.Error())
@@ -351,7 +351,7 @@ func (f *flags) tokens(value string) (int, bool) {
 		return 0, true
 	}
 	// THE WHOLE WORD. fmt.Sscanf("%d") accepts a numeric prefix, so --tokens 50oops
-	// used to launch as 50 (review finding on PR #2131). strconv.Atoi reads the full
+	// would launch as 50 if Sscanf were used here. strconv.Atoi reads the full
 	// string and refuses overflow, so a trailing junk, a decimal, and a number that
 	// does not fit in int are all the same refusal.
 	n, err := strconv.Atoi(strings.TrimSpace(value))
@@ -371,7 +371,7 @@ func maxFlag(fs *flag.FlagSet) *int {
 
 // wantMax refuses a NEGATIVE ceiling. Zero already means all, so a negative number is a typo
 // with two readings -- and the reading this tool took was "all", on the one flag whose job
-// is to bound output, at the largest state (the new-user audit, F6, 2026-09-11).
+// is to bound output, at the largest state.
 func (f *flags) wantMax(value int) {
 	if value < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all, so a negative ceiling is a typo with two readings and this tool refuses to pick one", value))
@@ -605,7 +605,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if *noWall && *sandbox != "" {
 		f.add("--no-wall and --sandbox together: one asks for no containment at all and the other names the wall to use; pass at most one")
 	}
-	// ISSUE #881: `--worker <file>` names a worker description, and the description is the
+	// --worker <file> names a worker description, and the description is the
 	// source of the model and of the key. It is loaded HERE, before the flag checks, so a
 	// description that is not readable is one refusal and a description whose fields are
 	// wrong is the same. Without --worker, native keeps --model and --auth as today.
@@ -621,10 +621,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		}
 		w = loaded
 		if w.Secret != "" {
-			// The key is in the environment, never in a file: --auth and --config are the
-			// legacy shape's, and a description that names a secret writes no auth file and
-			// carries its own provider declaration. Both are refused where the caller can
-			// still fix them.
+			// The key is in the environment, never in a file. --auth and --config are
+			// the legacy shape's flags (still read without --worker), and a description that
+			// names a secret writes no auth file and carries its own provider declaration.
+			// Both are refused where the caller can still fix them.
 			if *auth != "" {
 				f.add("--auth is the legacy shape's and this worker description names a secret; the key comes from the environment and no auth file is written")
 			}
@@ -641,7 +641,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	f.want(*slot, "slot", "the slot directory this run executes in")
 	f.want(*root, "root", "the configured root the slot directory must sit under")
 	f.want(*deadline, "deadline", "the wall duration that kills the child (e.g. 60s, 5m)")
-	// THE WORD, READ WITH EVERY OTHER FLAG AND REFUSED WITH THEM (rule 13d). It sits in
+	// THE WORD, READ WITH EVERY OTHER FLAG AND REFUSED WITH THEM. It sits in
 	// the collector so a caller who left out the budget AND the deadline is told both in
 	// one run; and it sits HERE, above every line below that touches the disk --
 	// nativeRun's own job directory, data home and temp directory -- because 13d
@@ -665,15 +665,15 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm native: --deadline wants a positive duration: %s\n", oneline.Err(err))
 		return 2
 	}
-	// A BUDGET NEEDS A SOURCE THE TOOL CAN READ (rule 13d), AND THE INTERVAL HAS A FLOOR
+	// A BUDGET NEEDS A SOURCE THE TOOL CAN READ, AND THE INTERVAL HAS A FLOOR
 	// AND A CEILING. Both are checked HERE: after the deadline is parsed, because the
 	// interval's ceiling is the deadline; and above everything below, because 13d refuses
 	// "before any directory is made" and nativeRun's first act is to make the job
 	// directory. Neither check reads a file or starts a process.
 	//
 	// The source is the worker description's `usage`, and `opencode` when there is no
-	// `--worker` -- rule 13d's own sentence, which swarm.NativeUsageSource holds so that
-	// nobody retypes the default.
+	// `--worker`. swarm.NativeUsageSource holds that pairing so nobody retypes the
+	// default.
 	var workerForBudget *swarm.Worker
 	if workerGiven {
 		workerForBudget = &w
@@ -771,7 +771,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if workerGiven {
 		cfg.worker = &w
 	}
-	// CI over work (nova-tools#4293): this run, the wall, the harness and everything
+	// CI over work: this run, the wall, the harness and everything
 	// the card's child runs, before anything starts. The member that launched it stays
 	// at its own priority, so a busy machine still beats.
 	if !yieldNative(nativeToCI, stderr) {
@@ -781,9 +781,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 && !res.lost && !res.unrecorded {
 		return code
 	}
-	// AN UNREAD DENIAL IS NEVER AN OK (issue #1465; review finding on #1478). This is the ONE
+	// AN UNREAD DENIAL IS NEVER AN OK. This is the ONE
 	// refusal that lands AFTER the spend, and it is a refusal rather than a token on the OK
-	// line on purpose: the run of #1465 carried `rc=0 sandbox=landlock harness=ok` over a
+	// line on purpose: a past run carried `rc=0 sandbox=landlock harness=ok` over a
 	// card whose shell had been denied the toolchain, and a coordinator reading dispositions
 	// and not prose shipped a commit nobody had compiled. There is no OK line here at all.
 	//
@@ -795,7 +795,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		refuseNative(stderr, swarm.ShellDenialReason(cfg.label, res.job, res.wall, res.rc, res.shellDenial))
 		return 2
 	}
-	// OK IS A VERDICT, NOT A PUNCTUATION MARK (nova-tools #1844). This line said
+	// OK IS A VERDICT, NOT A PUNCTUATION MARK. This line said
 	// `NATIVE OK` for every run that reached it, including a run that produced NOTHING:
 	// a card came back rc=1 on both attempts, zero tokens, zero
 	// dollars, no RESULT.md and no repo -- and the launcher's one log line read
@@ -809,17 +809,17 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// The request may have been accepted and the response was lost. That is
 	// not a delivered card and not an ordinary failure the coordinator may retry.
 	verdict, why := nativeVerdictWhy(res)
-	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
+	// harness=<ok|silent> is ALWAYS present: the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
 	//
-	// AND SO IS budget= (rule 13d: "`NATIVE OK` always carries `budget=`"). It sits
+	// AND SO IS budget= -- the OK line always carries it. It sits
 	// immediately after harness= and ahead of every optional tail, where the output
 	// grammar puts it (docs/SPEC-SWARM.md, "Output grammar", the NATIVE OK line), so the
 	// fixed part of the line stays one fixed part. It is the JOB's figure -- the sum over
 	// every launch at the final read -- and never a launch's row. The VERDICT above and
 	// this field are independent: budget= and stopped= are carried by an INCOMPLETE line
-	// too, because #1844's own sentence is that "every other field is byte-for-byte the
-	// same, so a reader that parses fields still reads them all".
+	// too, because every other field is byte-for-byte the same in every line, so a
+	// reader that parses fields still reads them all.
 	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s%s",
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
 		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
@@ -838,14 +838,14 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout)
 	// THE PROMPT-DEFECT LINE, ON NATIVE'S OWN STDOUT AFTER THE `NATIVE` LINE, AND IN NO
-	// FILE (rule 13d, decision 16). The pool appends it to the job's RESULT.md, creating the
+	// FILE. The pool appends it to the job's RESULT.md, creating the
 	// file where the worker published none; on this route that would score the card
 	// `line1-mismatch`, and 13d promises the published report is kept byte for byte -- so
 	// here it is printed and nothing is written.
 	if res.defect != "" {
 		fmt.Fprintln(stdout, oneline.Escape(res.defect))
 	}
-	// THE WALL REPORT (issue #918): a run the fence stopped with no result ends `wall`,
+	// THE WALL REPORT: a run the fence stopped with no result ends `wall`,
 	// and the line names the path and the commits so the harvester pushes the work.
 	if res.wallReport != "" {
 		fmt.Fprintln(stdout, oneline.Escape(res.wallReport))
