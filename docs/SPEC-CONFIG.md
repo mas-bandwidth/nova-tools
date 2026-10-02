@@ -481,9 +481,9 @@ CONFIG CHECK kind=<k> add=<n> set=<n> remove=<n> rev=<r> applied=<redis rev>
 APPLY ADD|SET|REMOVE kind=<k> name=<n> [changed=<f,g>]
 CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>
 MIGRATION version=<v> file=<f> lines=<n>                 (migrate --print)
-MIGRATION version=<v> file=<f> lines=<n> pending=true    (migrate --dry-run: one per migration it would apply)
+MIGRATION version=<v> file=<f> lines=<n> state=applied|pending|missing   (migrate --dry-run: the ledger; missing is below the greatest recorded and not in the ledger, which migrate will not apply)
 CONFIG MIGRATE print=<n> pg=-
-CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [dry_run=true pending=<n>]
+CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [dry_run=true pending=<n> missing=<n>]
 CONFIG STATUS pg=<...>|file=<path> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
 CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing <field>=<v>|<field>=<before>><after> ...   (add, set, remove --dry-run)
 NOTE machine=<m> width=0: no sprint member, ...; run: nova-config machine set <m> --width <n> ...   (machine add with no --width)

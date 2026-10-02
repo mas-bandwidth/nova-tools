@@ -157,6 +157,8 @@ type pgStore interface {
 	config.Store
 	Migrate(ctx context.Context) (from, to int, applied []int, err error)
 	Version(ctx context.Context) (int, error)
+	// Applied is the migration ledger, every version recorded, in order.
+	Applied(ctx context.Context) ([]int, error)
 	Close() error
 }
 
@@ -1062,7 +1064,7 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	fs := verbflag.New(verb)
 	c := storeFlags(fs)
 	print := fs.Bool("print", false, "list the migrations this binary carries and connect to nothing")
-	dry := fs.Bool("dry-run", false, "read the store's schema version and list the migrations a migrate would apply, applying none")
+	dry := fs.Bool("dry-run", false, "read the ledger (config.schema_migrations) and print every migration applied, pending (migrate applies it) or missing (below the greatest recorded, which migrate will not apply), applying none")
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {
 		return code
@@ -1100,29 +1102,7 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	defer st.Close()
 	key, value := where(dsn)
 	if *dry {
-		have, err := st.Version(ctx)
-		if err != nil {
-			return refuse(stderr, verb, err.Error())
-		}
-		var pending []config.Migration
-		for _, m := range all {
-			if m.Version > have {
-				pending = append(pending, m)
-			}
-		}
-		if *asJSON {
-			o := tool.Done().Fact(key, value).Fact("from", have).Fact("to", len(all)).Fact("applied", 0).Fact("dry_run", true).Fact("pending", len(pending))
-			o.Verb = verb
-			for _, m := range pending {
-				o.Item("migration", "version", m.Version, "file", m.Name, "lines", strings.Count(m.SQL, "\n"))
-			}
-			return emit(stdout, o)
-		}
-		for _, m := range pending {
-			fmt.Fprintf(stdout, "MIGRATION version=%d file=%s lines=%d pending=true\n", m.Version, config.Value(m.Name), strings.Count(m.SQL, "\n"))
-		}
-		fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=0 dry_run=true pending=%d\n", key, config.Value(value), have, len(all), len(pending))
-		return 0
+		return migrateDryRun(ctx, st, all, stdout, stderr, key, value, *asJSON)
 	}
 	from, to, applied, err := st.Migrate(ctx)
 	if err != nil {
@@ -1134,6 +1114,58 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 		return emit(stdout, o)
 	}
 	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=%d\n", key, config.Value(value), from, to, len(applied))
+	return 0
+}
+
+// migrateDryRun is migrate --dry-run: the ledger read, every migration this
+// binary carries with its state, and nothing applied. A migration is applied
+// (its version is in the ledger), pending (above the greatest recorded:
+// migrate applies it), or missing (not in the ledger and below the greatest:
+// migrate, which applies only versions above the greatest, will not apply
+// it, and a NOTE says so).
+func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, stdout, stderr io.Writer, key, value string, asJSON bool) int {
+	const verb = "migrate"
+	ledger, err := st.Applied(ctx)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	have := 0
+	recorded := map[int]bool{}
+	for _, v := range ledger {
+		recorded[v] = true
+		have = max(have, v)
+	}
+	o := tool.Done()
+	o.Verb = verb
+	var lines []string
+	var missing []string
+	pending := 0
+	for _, m := range all {
+		state := "applied"
+		switch {
+		case recorded[m.Version]:
+		case m.Version > have:
+			state = "pending"
+			pending++
+		default:
+			state = "missing"
+			missing = append(missing, strconv.Itoa(m.Version))
+		}
+		o.Item("migration", "version", m.Version, "file", m.Name, "lines", strings.Count(m.SQL, "\n"), "state", state)
+		lines = append(lines, fmt.Sprintf("MIGRATION version=%d file=%s lines=%d state=%s", m.Version, config.Value(m.Name), strings.Count(m.SQL, "\n"), state))
+	}
+	o.Fact(key, value).Fact("from", have).Fact("to", len(all)).Fact("applied", 0).Fact("dry_run", true).Fact("pending", pending).Fact("missing", len(missing))
+	if len(missing) > 0 {
+		o.Note(fmt.Sprintf("version(s) %s are not in the ledger and are below %d, the greatest recorded: migrate applies only versions above it, so it will not apply them", strings.Join(missing, ","), have))
+	}
+	if asJSON {
+		return emit(stdout, o)
+	}
+	for _, l := range lines {
+		fmt.Fprintln(stdout, l)
+	}
+	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=0 dry_run=true pending=%d missing=%d\n", key, config.Value(value), have, len(all), pending, len(missing))
+	printNotes(stdout, o.Notes)
 	return 0
 }
 

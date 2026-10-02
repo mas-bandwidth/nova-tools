@@ -20,6 +20,7 @@ import (
 type memStore struct {
 	*config.Mem
 	version int
+	ledger  []int
 }
 
 func (m *memStore) Migrate(context.Context) (int, int, []int, error) {
@@ -38,6 +39,19 @@ func (m *memStore) Migrate(context.Context) (int, int, []int, error) {
 	return from, m.version, applied, nil
 }
 func (m *memStore) Version(context.Context) (int, error) { return m.version, nil }
+
+// Applied is the ledger: ledger when a test sets one (a gap), else every
+// version up to the store's.
+func (m *memStore) Applied(context.Context) ([]int, error) {
+	if m.ledger != nil {
+		return m.ledger, nil
+	}
+	var out []int
+	for v := 1; v <= m.version; v++ {
+		out = append(out, v)
+	}
+	return out, nil
+}
 func (m *memStore) Close() error                         { return nil }
 
 // fakeRedis records what apply asked for, and holds the beats list and

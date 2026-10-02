@@ -173,7 +173,9 @@ a beat naming another machine. To see any machine where it is not, compare
 with the fleet table the last sync wrote under the old rule, before syncing
 again: `nova-sprint fleet sync --check` prints each width that differs and
 writes nothing; set each one back with `nova-config machine set <m> --width
-<n> --as <name>`.
+<n> --as <name>`. Before any migrate, `nova-config migrate --dry-run` prints
+the ledger: each migration applied, pending (the ones migrate will apply) or
+missing (below the greatest recorded, which migrate will not apply).
 
 `machine self` prints this machine's own name, so a process learns it and types
 none: `NOVA_MACHINE`, else the tailnet's name for the host when a tailnet is

@@ -240,6 +240,31 @@ func TestMigrationTwelveChecksAWidthColumnAlreadyThere(t *testing.T) {
 	}
 }
 
+// TestAppliedIsTheLedger: Applied reads every version recorded, so a gap
+// below the greatest is seen (migrate --dry-run prints it as missing); none
+// before the first migrate.
+func TestAppliedIsTheLedger(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st, err := OpenPG(ctx, server.Database(t))
+	require.NoError(t, err)
+	defer st.Close()
+	got, err := st.Applied(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, got, "no ledger before the first migrate")
+	_, _, _, err = st.Migrate(ctx)
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(ctx, `DELETE FROM config.schema_migrations WHERE version = 11`)
+	require.NoError(t, err)
+	got, err = st.Applied(ctx)
+	require.NoError(t, err)
+	all, err := Migrations()
+	require.NoError(t, err)
+	assert.NotContains(t, got, 11)
+	assert.Len(t, got, len(all)-1)
+	assert.Equal(t, len(all), got[len(got)-1])
+}
+
 // TestMigrationThirteenKeepsEveryLoopsCommand: 0013 sets each loop's width
 // field to the value its argv's --width carries (0 when none), so the command
 // LoopCommand renders after it is the command the argv ran before it, row by

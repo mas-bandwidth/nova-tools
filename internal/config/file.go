@@ -214,6 +214,23 @@ func (f *FileStore) Version(context.Context) (int, error) {
 	return len(all), nil
 }
 
+// Applied is the ledger: every migration once the file is there (a file is
+// read up to this binary's schema), none before.
+func (f *FileStore) Applied(context.Context) ([]int, error) {
+	if !f.exists {
+		return nil, nil
+	}
+	all, err := Migrations()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int, 0, len(all))
+	for _, m := range all {
+		out = append(out, m.Version)
+	}
+	return out, nil
+}
+
 // Migrate makes the file when it is not there (from 0, every migration
 // applied) and otherwise rewrites it at this binary's schema, applying none.
 func (f *FileStore) Migrate(ctx context.Context) (from, to int, applied []int, err error) {
