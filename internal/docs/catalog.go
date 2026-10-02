@@ -20,7 +20,6 @@ var DefaultCatalog = []Entry{
 	Page("internal", "packages and libraries", "nova-ci local", "make test"),
 	E("tla", "the TLA+ models of the state machines and their runners", "go test ./internal/tlc", "make tlc-test"),
 	E("profiles", "the darwin sandbox profile template internal/sandbox embeds, and the check that measures it (tools/sandboxcheck)", "go test ./internal/sandbox", "go test ./internal/sandbox"),
-	E("deprecated", "tools and modules not in use, kept for reference only; never built, tested or maintained", "none", "none"),
 	E("testdata", "shared test fixtures and data", "go test ./internal/ci", "make test"),
 	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
 

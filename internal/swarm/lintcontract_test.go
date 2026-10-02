@@ -11,7 +11,7 @@ import (
 // `cut` renders line 1, `lint --card` checks it on the bench, and `gather` compares the
 // `RESULT.md`'s line 1 against the card's. They did not agree: `cut` writes and accepts
 // `RESULT <label> sha=<sha12>` (the deleted internal/pulse cut), while the lint's `result-first`
-// wanted `RESULT: ` with a colon (deprecated/docs/WORKER-CARDS.md practice 1). Every card `cut`
+// wanted `RESULT: ` with a colon (WORKER-CARDS.md practice 1, now in the nova-work-old repository). Every card `cut`
 // writes therefore drew a `result-first` drift, which is how six cards written this
 // session each drew one.
 //
@@ -55,7 +55,7 @@ func TestTheDocumentsContractLineIsOneTheLintAccepts(t *testing.T) {
 }
 
 // BOTH FORMS ARE ACCEPTED, AND THAT IS A STOPGAP. `cut` writes one form and
-// deprecated/docs/WORKER-CARDS.md practice 1 names the other; until #1741 settles one of them the
+// WORKER-CARDS.md practice 1 names the other; until #1741 settles one of them the
 // lint accepts both, because refusing either one refuses real cards. When #1741 closes,
 // one of these two lines goes.
 func TestBothContractFormsAreAcceptedUntilTheIssueSettlesIt(t *testing.T) {

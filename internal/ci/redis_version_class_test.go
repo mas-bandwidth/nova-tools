@@ -51,8 +51,7 @@ import (
 //
 // What it does not read: release history (CHANGELOG.md, the release notes),
 // captured data under testdata, other people's code (vendor, node_modules, a
-// Python virtualenv: .venv, venv, site-packages), deprecated/ (the shared tree
-// does not walk it), and the deprecated-in-place packages listed in
+// Python virtualenv: .venv, venv, site-packages), and the deprecated-in-place packages listed in
 // redisVersionHistory, whose fixtures are the recorded output of servers of
 // other versions. One- and two-part mentions (`Redis 7`, `Redis 6.2`, "before
 // Redis 7") name a feature generation, never the version the repository runs,
@@ -208,8 +207,7 @@ func redisVersionSkipped(rel string) bool {
 // repo-relative path: not this test, not release history, not captured data or
 // other people's code (vendor, node_modules, a Python virtualenv), and only a
 // text kind: an extension of redisVersionTextExts, or a name of
-// redisVersionTextNames. (deprecated/ never reaches the sweep: the shared tree
-// does not walk it.)
+// redisVersionTextNames.
 func redisVersionReadsFile(rel string) bool {
 	if redisVersionSkipped(rel) {
 		return false

@@ -388,7 +388,7 @@ tag nobody ever cuts.
 
 **The gate judges what ships.** The shipped set is the tools under the checkout's `cmd/` — the
 directory beside the reference and the changelog — and a receipt naming any other tool is set aside
-before the gate reads it: a tool under `deprecated/` is not built, not tested and not in the release,
+before the gate reads it: a tool outside `cmd/` is not built, not tested and not in the release,
 so its open edges and its not-ok runs are true about that tool and say nothing about this one. What
 is set aside is counted, never dropped in silence:
 

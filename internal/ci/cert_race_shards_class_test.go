@@ -111,7 +111,7 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 	heavy := dealHeavy(t, script)
 
 	want := liveRepoPackages(t)
-	// The deal reads deprecated/PACKAGES: a package under its internal/nsprint
+	// The deal reads pkgselect.DeprecatedFile: a package under its internal/nsprint
 	// prefix that no keep line names is dropped. No such package is in the tree
 	// any more, so the control is one that is not.
 	probe := "github.com/mas-bandwidth/nova-tools/internal/nsprint/deprecatedprobe"
@@ -120,7 +120,7 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	if dep.LivePackage(probe) {
-		t.Fatalf("the deprecated list kept %s; the stand-in for deprecated/PACKAGES is not being read", probe)
+		t.Fatalf("the deprecated list kept %s; the stand-in for %s is not being read", probe, pkgselect.DeprecatedFile)
 	}
 
 	// One deal per distinct shard count: two OSes at the same n deal the same.
