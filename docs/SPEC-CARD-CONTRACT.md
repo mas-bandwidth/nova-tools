@@ -45,8 +45,14 @@ exactly: the commit the work started from, a full sha, the two commands that sho
 (`git diff <start>..HEAD`, `git diff --stat <start>..HEAD`), and that the base branch may have
 moved since and is not what to compare against. The packet carries the base's name, never the
 commit the work was staged on, so native finds the start when it stages the read: the merge base
-of the read's head and `origin/<base>` (else `<base>`) in the staged checkout, `origin/<base>`
-fetched from origin first; the gh shim's `pr diff` and `pr view` read from it too. On the
+of the read's head and the base in the staged checkout; the gh shim's `pr diff` and `pr view`
+read from it too. The base is a full sha, else a branch when the checkout holds
+`origin/<base>`, else a tag when it holds `refs/tags/<base>`, else a branch. A sha or a tag never
+moves and is used as it is. A branch is fetched from origin into `origin/<base>` first, and a
+fetch that fails refuses the read at staging: native prints a STAGE FAIL line naming the base
+and the fetch error, writes no JOB.md, and the sprint deals the read again; the checkout's own
+branch is never trusted in its place
+(`TestAReadWhoseBaseCannotBeFetchedIsRefusedAtStaging`, `TestAReadAgainstATagOrAShaNeedsNoFetch`). On the
 1000-card load test of 2026-10-01 cards landed on the base every few seconds, and a reader that
 ran `git diff origin/dev` saw every file landed since the work began as a deletion and sent a
 correct work card back (`TestAReadIsToldTheWorksChangeWhenTheBaseMoved`). The fetch is because
