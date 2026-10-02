@@ -1,6 +1,6 @@
 # nova-table: current implementation model and counterexamples
 
-Source: `internal/nsprint/fn/lua/table.lua`, with the public-call shape in `internal/ntable/store.go`. The coordinator spec defines a table as a dimension and placement as one cell per member **per table**.
+Source: `internal/nsprint/fn/lua/table.lua` (`f77458853af46fdbbafd6881a4b46006431f266f`), with the public-call shape in `internal/ntable/store.go`. The coordinator spec defines a table as a dimension and placement as one cell per member **per table**.
 
 **Disposition: the desired ONE PLACE and lossless-bind contract is not implemented.** The model intentionally contains the current behavior. Passing the narrower current-contract suite is not approval of the desired foundation. The default `strict` runner fails on an outstanding invariant; `witnesses` verifies that each named known failure remains reproducible. No assumed repair has been inserted into the model.
 
