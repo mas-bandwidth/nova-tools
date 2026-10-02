@@ -44,10 +44,9 @@ func issue1458Index(t *testing.T, code, want string) int {
 	return i
 }
 
-// TestWSL2BootstrapScriptRequiresSingleApproval: the elevated run and the auth
-// key parameter are the only things a person supplies. Nothing prompts again,
-// nothing re-elevates, and the elevation guard refuses before the first change
-// to the host.
+// One approval: the elevated run and the auth key parameter are the only
+// things a person supplies. Nothing prompts again, nothing re-elevates, and the
+// elevation guard refuses before the first change to the host.
 func TestWSL2BootstrapScriptRequiresSingleApproval(t *testing.T) {
 	t.Parallel()
 	code := issue1458Code(t)
@@ -68,10 +67,9 @@ func TestWSL2BootstrapScriptRequiresSingleApproval(t *testing.T) {
 	assert.LessOrEqual(t, guard+refuse, first, "tools/bench-wsl2.ps1: the elevation guard does not refuse before the first host change (winget install); a non-elevated run would change the host and then fail")
 }
 
-// TestWSL2BootstrapGreensOnlyAfterSshProbe: the run is green only after a
-// non-interactive ssh to the nova user on the tailnet address answers, and a
-// failed probe is a refusal. The OK line and exit 0 come after that probe and
-// nowhere else.
+// The keeper adopts over ssh: the run is green only after a non-interactive
+// ssh to the nova user on the tailnet address answers, and a failed probe is a
+// refusal. The OK line and exit 0 come after that probe and nowhere else.
 func TestWSL2BootstrapGreensOnlyAfterSshProbe(t *testing.T) {
 	t.Parallel()
 	code := issue1458Code(t)
