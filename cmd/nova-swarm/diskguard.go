@@ -187,11 +187,13 @@ func (g *guard) run() int {
 			g.say(fmt.Sprintf("DISK-GUARD WARN free=%d floor=%d on the volume of %s: members there start no card; run: df -h %s, and read what this log removed and kept", n, g.floor, oneline.Field(p), oneline.Field(p)))
 		}
 	}
+	// the closing line is written here, beside the exit it explains (law #2573): numbers
+	// only, so it needs neither say's escape nor its dry-run wording
 	if g.failed > 0 {
-		g.say(fmt.Sprintf("DISK-GUARD INCOMPLETE freed=%d free=%d failed=%d", g.freed, free, g.failed))
+		fmt.Fprintf(g.out, "DISK-GUARD INCOMPLETE freed=%d free=%d failed=%d\n", g.freed, free, g.failed)
 		return 1
 	}
-	g.say(fmt.Sprintf("DISK-GUARD OK freed=%d free=%d", g.freed, free))
+	fmt.Fprintf(g.out, "DISK-GUARD OK freed=%d free=%d\n", g.freed, free)
 	return 0
 }
 
