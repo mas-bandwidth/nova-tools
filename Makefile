@@ -40,8 +40,8 @@ export NOVA_TEST_NO_HOST := 1
 # Windows machine and no ceiling at all.
 #
 # DARWIN_TIMEOUT is the per-package ceiling on the merge group's darwin leg, and
-# it is a MEASUREMENT taken on that leg. That leg used the linux 100 s value,
-# after merge-group run 35369433950 had its darwin shards 0 and 1
+# it is a MEASUREMENT and not a convention carried over from another platform.
+# That leg used the linux 100 s until merge-group run 35369433950 (batch 7) had its darwin shards 0 and 1
 # CANCELLED at the five-minute leg cap on a macOS runner.
 #
 # READ THAT RUN BEFORE BELIEVING THE OBVIOUS STORY, because the ceiling is not
