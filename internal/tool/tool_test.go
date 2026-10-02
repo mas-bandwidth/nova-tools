@@ -237,6 +237,16 @@ func demo() *Tool {
 				fmt.Fprintln(c.Stdout, "a line of its own")
 				return Exit(1)
 			}},
+			{Name: "fn load", Usage: "fn load --name <n>", Effect: LocalWrite, DryRun: true, ExitTable: "0 loaded, 2 could not run.",
+				Flags: func(f *Flags) { f.Required("name", "the function's name") },
+				Run: func(c *Call) *Out {
+					if c.DryRun() {
+						return Done().Fact("would_load", c.Str("name"))
+					}
+					return Done().Fact("loaded", c.Str("name"))
+				}},
+			{Name: "fn ls", Usage: "fn ls", Effect: Inspection, Run: func(*Call) *Out { return Done() }},
+			{Name: "careless", Usage: "careless", Effect: LocalWrite, DryRun: true, Run: func(*Call) *Out { return Done() }},
 		},
 	}
 }
@@ -251,12 +261,13 @@ func TestRun(t *testing.T) {
 		code        int
 		stdout      []string // substrings, in order
 		stderr      []string
+		absent      []string // in neither stream
 		emptyStdout bool
 		emptyStderr bool
 		stderrLines int
 	}{
 		{name: "bare refuses in one line naming the door", args: nil, code: 2, emptyStdout: true, stderrLines: 1,
-			stderr: []string{"DEMO REFUSED: no verb given; the verbs are put, who, deny, forget, raw, version; run: nova-demo help"}},
+			stderr: []string{"DEMO REFUSED: no verb given; the verbs are put, who, deny, forget, raw, fn load, fn ls, careless, version; run: nova-demo help"}},
 		{name: "help is the banner: what, how, usage, exit codes, example last", args: []string{"help"}, code: 0, emptyStderr: true,
 			stdout: []string{"nova-demo: a tool that exists to be tested\n\nhow it works: It keeps nothing.\n", "usage:\n  nova-demo put --store <dir> --key <k> [--max <n>]\n",
 				"  nova-demo version\n  nova-demo help [<verb>]\n", "Every verb but raw takes --json", "\nexit codes: 0 done, 1 said no, 2 could not run.\n", "\nexample:\n  nova-demo put --store ./s --key k\n"}},
@@ -290,8 +301,39 @@ func TestRun(t *testing.T) {
 			stdout: []string{"effect: unstated\n"}},
 		{name: "a refusal under --json is one object on stdout", args: []string{"put", "--json"}, code: 2, emptyStderr: true,
 			stdout: []string{`{"result":{"verb":"put","status":"refused","exit":2,"remedy":"nova-demo help","why":["--store is required`}},
-		{name: "an unknown flag under --json is still JSON", args: []string{"put", "--json", "--nope"}, code: 2, emptyStderr: true,
-			stdout: []string{`"status":"refused"`, `not defined: -nope`}},
+		{name: "an unknown flag under --json is still JSON, with the reason and the remedy", args: []string{"put", "--json", "--nope"}, code: 2, emptyStderr: true,
+			stdout: []string{`{"result":{"verb":"put","status":"refused","exit":2,"remedy":"nova-demo put -h","why":["unknown flag --nope; put takes --json`}},
+		{name: "a misspelled flag names the nearest flag and the verb's flags", args: []string{"put", "--stor", "s", "--key", "k"}, code: 2,
+			emptyStdout: true, stderrLines: 1, absent: []string{"not defined", "nova-demo help"},
+			stderr: []string{"PUT REFUSED: unknown flag --stor; did you mean --store? put takes --json, --key, --max, --n, --store; run: nova-demo put -h\n"}},
+		{name: "an unknown flag with nothing near names the flags alone", args: []string{"who", "--zzzz"}, code: 2, emptyStdout: true,
+			stderr: []string{"WHO REFUSED: unknown flag --zzzz; who takes --actor, --json, --op, --redis, --width; run: nova-demo who -h\n"}},
+		{name: "a bad value says what the flag wants", args: []string{"put", "--n", "x"}, code: 2, emptyStdout: true,
+			stderr: []string{`PUT REFUSED: invalid value "x" for flag --n: parse error; --n wants how many rows; run: nova-demo put -h`}},
+		{name: "a flag with no value says what it wants", args: []string{"put", "--store"}, code: 2, emptyStdout: true,
+			stderr: []string{"PUT REFUSED: flag needs an argument: --store; --store wants a directory (required); run: nova-demo put -h"}},
+		{name: "a misspelled verb names the nearest verb and the verbs", args: []string{"pt"}, code: 2, emptyStdout: true,
+			stderr: []string{`DEMO REFUSED: unknown verb "pt"; did you mean put? the verbs are put, who,`, "; run: nova-demo help\n"}},
+		{name: "a group's -h lists its verbs at exit 0", args: []string{"fn", "-h"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage: nova-demo fn <verb> [flags]\n  nova-demo fn load --name <n>\n  nova-demo fn ls\n", "exit codes: 0 done, 1 said no"}},
+		{name: "help of a group is its -h", args: []string{"help", "fn"}, code: 0, emptyStderr: true,
+			stdout: []string{"usage: nova-demo fn <verb> [flags]\n"}},
+		{name: "a bare group is refused with its verbs", args: []string{"fn"}, code: 2, emptyStdout: true, stderrLines: 1,
+			stderr: []string{"DEMO REFUSED: fn wants one of its verbs; the verbs are fn load, fn ls; run: nova-demo fn -h\n"}},
+		{name: "a bare group under --json refuses in JSON", args: []string{"fn", "--json"}, code: 2, emptyStderr: true,
+			stdout: []string{`"status":"refused"`, `"remedy":"nova-demo fn -h"`}},
+		{name: "a misspelled verb of a group names the nearest", args: []string{"fn", "lod"}, code: 2, emptyStdout: true,
+			stderr: []string{`DEMO REFUSED: unknown verb "fn lod" in fn; did you mean fn load? the verbs are fn load, fn ls; run: nova-demo fn -h`}},
+		{name: "a verb of a group runs", args: []string{"fn", "load", "--name", "a"}, code: 0, emptyStderr: true,
+			stdout: []string{"FN-LOAD OK loaded=a\n"}},
+		{name: "a dry run plans and says so", args: []string{"fn", "load", "--name", "a", "--dry-run"}, code: 0, emptyStderr: true,
+			stdout: []string{"FN-LOAD OK would_load=a dry_run=true\n"}},
+		{name: "a verb's own exit table stands in its -h for the tool's", args: []string{"fn", "load", "-h"}, code: 0, emptyStderr: true,
+			absent: []string{"1 said no"}, stdout: []string{"--dry-run", "exit codes: 0 loaded, 2 could not run.\neffect: local write"}},
+		{name: "a dry run the verb never read is a failure, never an OK", args: []string{"careless", "--dry-run"}, code: 1, emptyStdout: true,
+			stderr: []string{"CARELESS FAIL: --dry-run was given and the verb never read it"}},
+		{name: "a verb that does not write takes no --dry-run", args: []string{"fn", "ls", "--dry-run"}, code: 2, emptyStdout: true,
+			stderr: []string{"FN-LS REFUSED: unknown flag --dry-run;"}},
 		{name: "ok goes to stdout", args: []string{"put", "--store", "s", "--key", "k"}, code: 0, emptyStderr: true,
 			stdout: []string{"PUT OK store=s key=k\n"}},
 		{name: "--max caps the items and says MORE", args: []string{"put", "--store", "s", "--key", "k", "--n", "3", "--max", "1"}, code: 0,
@@ -314,7 +356,7 @@ func TestRun(t *testing.T) {
 		{name: "a verb that prints its own keeps its exit and takes no --json", args: []string{"raw"}, code: 1, emptyStderr: true,
 			stdout: []string{"a line of its own\n"}},
 		{name: "--json on a verb that prints its own is an unknown flag", args: []string{"raw", "--json"}, code: 2, emptyStdout: true,
-			stderr: []string{"RAW REFUSED: flag provided but not defined: -json"}},
+			stderr: []string{"RAW REFUSED: unknown flag --json; raw takes no flags; run: nova-demo raw -h"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -337,6 +379,9 @@ func TestRun(t *testing.T) {
 					rest = rest[i+len(s):]
 				}
 			}
+			for _, s := range tc.absent {
+				assert.NotContains(t, out.String()+errs.String(), s)
+			}
 			if tc.stderrLines > 0 {
 				n := strings.Count(errs.String(), "\n")
 				assert.Equal(t, tc.stderrLines, n, "stderr has %d lines, want %d:\n%s", n, tc.stderrLines, errs.String())
@@ -353,15 +398,36 @@ func TestBannerMeetsTheOnboardingStandard(t *testing.T) {
 	banner := demo().Banner()
 	examples, err := onboarding.ExampleLines(banner, "nova-demo")
 	require.True(t, err == nil && len(examples) == 1 && examples[0] == "nova-demo put --store ./s --key k", "example lines %q (%v) from:\n%s", examples, err, banner)
-	for _, verb := range []string{"put", "who", "deny", "forget", "raw", "version"} {
+	for _, verb := range []string{"put", "who", "deny", "forget", "raw", "fn load", "fn ls", "careless", "version"} {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
 			var out, errs bytes.Buffer
-			code := demo().Run([]string{verb, "-h"}, strings.NewReader(""), &out, &errs)
-			assert.True(t, code == 0 && errs.Len() == 0 && strings.HasPrefix(out.String(), "usage: nova-demo "+verb) && strings.Contains(out.String(), "exit codes: 0 done"),
+			code := demo().Run(append(strings.Fields(verb), "-h"), strings.NewReader(""), &out, &errs)
+			assert.True(t, code == 0 && errs.Len() == 0 && strings.HasPrefix(out.String(), "usage: nova-demo "+verb) && strings.Contains(out.String(), "\nexit codes: 0 "),
 				"%s -h: exit %d stderr %q stdout:\n%s", verb, code, errs.String(), out.String())
 		})
 	}
+}
+
+// TestNamesInARefusal pins the two helpers every unknown name is answered
+// with: the nearest name within its edit bound, and a list cut to one line.
+func TestNamesInARefusal(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ got, want string }{
+		{"--sesion", " did you mean --session?"},
+		{"--sessoin", " did you mean --session?"},
+		{"--zzzz", ""},
+		{"opne", " did you mean open?"},
+		{"seal", ""},
+	} {
+		assert.Equal(t, tc.want, didYouMean(tc.got, []string{"--session", "--store", "--key", "open", "put", "deny"}), tc.got)
+	}
+	var many []string
+	for i := range listMax + 4 {
+		many = append(many, fmt.Sprintf("v%d", i))
+	}
+	assert.True(t, strings.HasSuffix(listOf(many), ", v15 and 4 more"), listOf(many))
+	assert.Equal(t, "a, b", listOf([]string{"a", "b"}))
 }
 
 // TestProblems holds a definition to the standard the banner cannot enforce by
@@ -393,6 +459,12 @@ func TestProblems(t *testing.T) {
 			}
 			d.Verbs[0].Effect = "writes a little"
 		}, []string{`nova-demo put: the effect "writes a little"`}},
+		{"a flag with no description", func(d *Tool) {
+			for i := range d.Verbs {
+				d.Verbs[i].Effect = Inspection
+			}
+			d.Verbs[1].Flags = func(f *Flags) { f.Int("width", 0, " ") }
+		}, []string{"nova-demo who: --width has no description; say what it wants"}},
 		{"no what and no exit table", func(d *Tool) {
 			for i := range d.Verbs {
 				d.Verbs[i].Effect = LocalWrite
