@@ -44,7 +44,7 @@ func TestRefusingToGuess(t *testing.T) {
 		{"check without --bus", []string{"check", "--full"}, "--bus is required"},
 		{"names without --bus", []string{"names"}, "--bus is required"},
 		{"a positional argument", []string{"check", "--bus", checkout, "--full", "extra"}, "takes no positional arguments"},
-		{"an unknown flag", []string{"check", "--bus", checkout, "--full", "--wibble"}, "nova-bus check:"},
+		{"an unknown flag", []string{"check", "--bus", checkout, "--full", "--wibble"}, "CHECK REFUSED:"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -107,7 +107,7 @@ func TestSendNoPushCommitsAndSaysTheNoteIsNotOnTheBus(t *testing.T) {
 	require.NotContainsf(t, files, "from-ada/", "--no-push pushed:\n%s", files)
 }
 
-// A refusal is exit 1 and a SEND FAIL line, and the bus is untouched.
+// A refusal is exit 1 and a SEND FAILED line, and the bus is untouched.
 func TestSendRefusesAndWritesNothing(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -123,7 +123,7 @@ func TestSendRefusesAndWritesNothing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			invoke(t, tc.draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
 				mustCode(t, 1).
-				mustContain(t, "stderr", "SEND FAIL (stdin): ").
+				mustContain(t, "stderr", "SEND FAILED (stdin): ").
 				mustContain(t, "stderr", tc.want)
 			{
 				entries, err := os.ReadDir(filepath.Join(checkout, "from-ada"))
@@ -199,7 +199,7 @@ func TestReceiptRefuses(t *testing.T) {
 	checkout, _ := busDir(t)
 	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-deadbeefcafe",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
-		mustCode(t, 1).mustContain(t, "stderr", "RECEIPT FAIL")
+		mustCode(t, 1).mustContain(t, "stderr", "RECEIPT FAILED")
 	invoke(t, "", "receipt", "--bus", checkout, "--as", "Adda", "--note", "bo-abcdef012345",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 2).mustContain(t, "stderr", "names no one on this bus")
@@ -211,10 +211,10 @@ func TestCheckFailsAndNamesEveryFinding(t *testing.T) {
 	writeFile(t, checkout, "from-ada/broken.md", "From: Ada\nthis is prose\n\nbody\n")
 	writeFile(t, checkout, "from-ada/stranger.md", "From: Ada\nTo: Boe\nSubject: s\n\nbody\n")
 	r := invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-ada/broken.md: ").
-		mustContain(t, "stderr", "BUS FAIL from-ada/stranger.md")
+		mustContain(t, "stderr", "BUS FAILED from-ada/broken.md: ").
+		mustContain(t, "stderr", "BUS FAILED from-ada/stranger.md")
 	{
-		n := strings.Count(r.stderr, "BUS FAIL")
+		n := strings.Count(r.stderr, "BUS FAILED")
 		require.Falsef(t, n < 2, "check reported %d findings over two broken files:\n%s", n, r.stderr)
 	}
 	// A failing check says on stdout what it WALKED and nothing else: no OK line, no
@@ -376,17 +376,17 @@ func TestCheckLegacyBefore(t *testing.T) {
 	// Without the flag, both fail and the run fails.
 	r := invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1)
 	{
-		n := strings.Count(r.stderr, "BUS FAIL")
+		n := strings.Count(r.stderr, "BUS FAILED")
 		require.Equalf(t, 2, n, "check reported %d failures, want 2:\n%s", n, r.stderr)
 	}
 
 	// With it, the old one warns, the new one still fails, and the run still fails.
 	r = invoke(t, "", "check", "--bus", checkout, "--full", "--legacy-before", "2026-09-05").mustCode(t, 1).
-		mustContain(t, "stdout", "BUS WARN from-bo/2026-09-01T0001Z-old-prose.md").
-		mustContain(t, "stderr", "BUS FAIL from-bo/2026-09-08T0001Z-new-prose.md")
-	require.NotContainsf(t, r.stderr, "BUS WARN", "a warning reached stderr, where only failures and refusals go:\n%s", r.stderr)
+		mustContain(t, "stdout", "BUS NOTE from-bo/2026-09-01T0001Z-old-prose.md").
+		mustContain(t, "stderr", "BUS FAILED from-bo/2026-09-08T0001Z-new-prose.md")
+	require.NotContainsf(t, r.stderr, "BUS NOTE", "a warning reached stderr, where only failures and refusals go:\n%s", r.stderr)
 	{
-		n := strings.Count(r.stderr, "BUS FAIL")
+		n := strings.Count(r.stderr, "BUS FAILED")
 		require.Equalf(t, 1, n, "check failed %d findings, want only the one after the cutoff:\n%s", n, r.stderr)
 	}
 

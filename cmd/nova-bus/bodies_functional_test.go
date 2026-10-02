@@ -29,7 +29,7 @@ func TestBodiesBrokenOutputCannotAdvanceCursor(t *testing.T) {
 	addBodyCommit(t, checkout, "from-bo/output.md", "bo-dddddddddddd", "output")
 	var stderr strings.Builder
 	code := run([]string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--bodies", "--max-notes", "1", "--max-bytes", "100", "--advance", "--remote", "origin", "--branch", "main"}, strings.NewReader(""), refusingWriter{}, &stderr, now())
-	require.Falsef(t, code != 1 || !strings.Contains(stderr.String(), "INBOX FAIL output"), "broken stdout did not refuse safely: code=%d stderr=%s", code, stderr.String())
+	require.Falsef(t, code != 1 || !strings.Contains(stderr.String(), "INBOX FAILED output"), "broken stdout did not refuse safely: code=%d stderr=%s", code, stderr.String())
 	after, err := bus.ReadCursor(checkout, "from-ada")
 	require.NoError(t, err)
 	require.Falsef(t, after.Commit != before.Commit, "cursor advanced across failed body output: before=%s after=%s", before.Commit, after.Commit)

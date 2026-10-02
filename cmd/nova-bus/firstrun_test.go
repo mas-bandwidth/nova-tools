@@ -67,7 +67,7 @@ func documentedDraftEdit(md string) (string, error) {
 		}
 	}
 	if len(edits) != 1 {
-		return "", fmt.Errorf("docs/CLI.md's nova-bus %s writes %d `sed` step(s) over %q between\n  %s\nand\n  %s\nwant exactly one: `send` refuses a draft whose body is still the placeholder (SEND FAIL, exit 1), so a page without that step cannot be followed as written", onboarding.FirstRunHeading, len(edits), bus.PlaceholderBody, cliFirstRunDraft, cliFirstRunSend)
+		return "", fmt.Errorf("docs/CLI.md's nova-bus %s writes %d `sed` step(s) over %q between\n  %s\nand\n  %s\nwant exactly one: `send` refuses a draft whose body is still the placeholder (SEND FAILED, exit 1), so a page without that step cannot be followed as written", onboarding.FirstRunHeading, len(edits), bus.PlaceholderBody, cliFirstRunDraft, cliFirstRunSend)
 	}
 	return edits[0], nil
 }
