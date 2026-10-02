@@ -107,7 +107,7 @@ const fsReadSubset = fsExecute | fsReadFile | fsReadDir
 // fsReadNoExecSubset is fsReadSubset WITHOUT fsExecute: what Policy.ReadsNoExec gets. A
 // --read root is EXECUTABLE by construction, so a data tree named with --read lets the job
 // run anything its own user can drop into it; this subset is the grant that says READ and
-// means it (Johnny's security read of #1364).
+// means it.
 const fsReadNoExecSubset = fsReadFile | fsReadDir
 
 // fsFileSubset is what a rule on a FILE may carry, and it is not an optimisation: the
@@ -144,7 +144,7 @@ func writeSubset(abi int) uint64 { return handledFS(abi) }
 // directory, masked to the ABI. See fsFileSubset for why the two cannot be the same.
 func fileWriteSubset(abi int) uint64 { return fsFileSubset & handledFS(abi) }
 
-// netHandled is rule 7 for this platform. The handled net set is non-empty ONLY under
+// netHandled handles network access for this platform. The handled net set is non-empty only under
 // --net-deny: handling an access and adding no rule for it is how Landlock denies, and
 // handling nothing is how it leaves the network alone. There is no middle setting, which
 // is why --net-listen (inbound allowed) handles nothing here.
@@ -222,7 +222,7 @@ func createRuleset(abi int, netDeny bool) (int, error) {
 }
 
 // addPathRule grants `allowed` beneath `path`. A path that is ABSENT is skipped and is
-// not an error: the roots table is "skip if absent" (rule 5 refuses a CALLER's missing
+// not an error: the roots table is "skip if absent" (the caller's missing
 // path, and Build has already resolved those, so anything missing here is a root).
 // The descriptor is O_PATH, which needs no read permission on the directory itself.
 func addPathRule(rulesetFd int, path string, allowed uint64) error {

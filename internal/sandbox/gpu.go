@@ -1,4 +1,4 @@
-// Local GPU capability for docs/SPEC-SANDBOX.md, nova-tools #230.
+// Local GPU capability for docs/SPEC-SANDBOX.md.
 //
 // The only explicit capability is `--gpu none|metal` (default none). Opting
 // in records intent on the SANDBOX OK line; it never widens mach-lookup and

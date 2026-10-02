@@ -9,11 +9,11 @@ import (
 // A FILESYSTEM IS NOT A STRING, and this file is the one place in this package that says so.
 // APFS is case-INsensitive by default and NTFS is too, so two spellings that differ only in
 // case are ONE file while a `strings` comparison says they are two. `Inside` and `insideAny` are
-// the predicate behind six questions and no others: rule 6's `--secret`, rule 10's outside path,
-// rule 9's `HOME`, rule 13's `--cwd`, rule 8's `--tmp`, and the command-directory home guard's
+// the predicate behind six questions and no others: `--secret`, outside path,
+// `HOME`, `--cwd`, `--tmp`, and the command-directory home guard's
 // "did the caller already name this". So a containment answer a case fold walks around is either
-// a secret the tool says is outside the lists it sits inside (issue #145) or a sound `HOME`
-// refused as `home_outside` (rule 1's silent sandbox, the other way about).
+// a secret the tool says is outside the lists it sits inside or a sound `HOME`
+// refused as `home_outside` (the silent sandbox, the other way about).
 //
 // `os.SameFile` is the answer wherever both sides EXIST, because device and inode is the
 // question the filesystem itself answers: it holds for a case fold, for one directory mounted
@@ -27,8 +27,8 @@ import (
 // AND THE MEASUREMENT IS MADE IN THE DIRECTORY BEING JUDGED, NEVER ON ITS OWN NAME IN ITS
 // PARENT. A previous revision took a read-only shortcut -- re-case dir's own name and ask the
 // parent for it back -- and that measures the PARENT's filesystem, which differs at a mount
-// boundary and on a filesystem with a per-directory casefold setting (both eyes of #159:
-// Stella, comment 5648066751; the Fable read, comment 5648102050; measured on a case-sensitive
+// boundary and on a filesystem with a per-directory casefold setting (
+// measured on a case-sensitive
 // APFS image mounted under the folding `/Volumes`, where the mountpoint's own name folds and
 // nothing inside it does). The shortcut was never REACHED from this package -- `Inside` asks
 // this only about a directory that does not exist, and the shortcut needed it to exist -- but
