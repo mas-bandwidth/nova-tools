@@ -121,6 +121,13 @@ func DropStep(r sprint.DropReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Drop(s, r) }}
 }
 
+// BriefStep is the coordinator replacing the brief of a primary that has not
+// started, on a STOPPED machine (sprint.Brief).
+func BriefStep(r sprint.BriefReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "brief", Load: tables(sprint.Work),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Brief(s, r) }}
+}
+
 // RankStep is the coordinator changing scores.
 func RankStep(r sprint.RankReq) Step {
 	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "rank", Load: All,

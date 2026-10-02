@@ -57,6 +57,7 @@ func init() {
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
+		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>]", "brief s1-4 --brief-file s1-4.md", (*app).cmdBrief},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'rebased s1-4'", (*app).cmdResume},
@@ -872,11 +873,11 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if *brief != "" {
 			return refuse(stderr, "add", "--brief and --brief-file are two ways to give the brief: give one")
 		}
-		text, err := readTextFile(briefFiles[0], briefReadCap)
+		text, err := readBriefFile(briefFiles[0])
 		if err != nil {
 			return refuse(stderr, "add", "--brief-file: "+err.Error())
 		}
-		*brief = strings.TrimSuffix(text, "\n")
+		*brief = text
 	}
 	if *sentinel != "" {
 		if len(ids) > 0 || *count != 0 {
@@ -904,11 +905,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "add", "--rules is the rule set a brief is held to, and this add gives no brief; give --brief or --brief-file")
 	}
 	if *sentinel == "" && *brief != "" {
-		rs, code := a.briefRules(*rules, c, &st, stderr)
-		if code != 0 {
-			return code
-		}
-		if code := lintBrief(*brief, rs, c.max, stderr); code != 0 {
+		if code := a.holdBrief("add", *brief, *rules, c, &st, stderr); code != 0 {
 			return code
 		}
 	}
@@ -954,7 +951,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		return code
 	}
 	var st *store.Store
-	rs, code := a.briefRules(rules, c, &st, stderr)
+	rs, code := a.briefRules("add", rules, c, &st, stderr)
 	if code != 0 {
 		return code
 	}
@@ -1131,41 +1128,59 @@ func lintBriefFiles(cards []sprint.CardAdd, rules []swarm.ChildRule, max int, st
 // file init --rules recorded for the sprint (read through the store, opened once into *st
 // for the add to use), else swarm.DefaultChildRules. A file that cannot be read or is no
 // rule set is a usage refusal naming it.
-func (a *app) briefRules(file string, c *common, st **store.Store, stderr io.Writer) ([]swarm.ChildRule, int) {
+func (a *app) briefRules(verbName, file string, c *common, st **store.Store, stderr io.Writer) ([]swarm.ChildRule, int) {
 	if file != "" {
 		rs, err := swarm.ReadChildRules(file)
 		if err != nil {
-			return nil, refuse(stderr, "add", "--rules: "+err.Error())
+			return nil, refuse(stderr, verbName, "--rules: "+err.Error())
 		}
 		return rs, 0
 	}
 	s, err := a.store(*c)
 	if err != nil {
-		return nil, refuse(stderr, "add", err.Error())
+		return nil, refuse(stderr, verbName, err.Error())
 	}
 	*st = s
 	path, err := s.RulesPath(context.Background())
 	if err != nil {
-		return nil, a.readFailed("add", err, stderr)
+		return nil, a.readFailed(verbName, err, stderr)
 	}
 	if path == "" {
 		return swarm.DefaultChildRules, 0
 	}
 	rs, err := swarm.ReadChildRules(path)
 	if err != nil {
-		return nil, refuse(stderr, "add", "the sprint's rules file (recorded by init --rules) cannot serve: "+err.Error()+"; give --rules <file> for this add, or run: nova-sprint init --rules <file>")
+		return nil, refuse(stderr, verbName, "the sprint's rules file (recorded by init --rules) cannot serve: "+err.Error()+"; give --rules <file> for this "+verbName+", or run: nova-sprint init --rules <file>")
 	}
 	return rs, 0
+}
+
+// holdBrief holds one brief to the card lint under the rule set briefRules
+// finds (rules, else the sprint's, else the general ones): add's one brief and
+// brief's replacement, so a brief is held the same however it comes.
+func (a *app) holdBrief(verbName, brief, rules string, c *common, st **store.Store, stderr io.Writer) int {
+	rs, code := a.briefRules(verbName, rules, c, st, stderr)
+	if code != 0 {
+		return code
+	}
+	return lintBrief(verbName, brief, rs, c.max, stderr)
+}
+
+// readBriefFile is a --brief-file's brief: the file's bytes as they are, read
+// whole up to briefReadCap, its one trailing newline cut.
+func readBriefFile(path string) (string, error) {
+	text, err := readTextFile(path, briefReadCap)
+	return strings.TrimSuffix(text, "\n"), err
 }
 
 // lintBrief holds one brief to the card lint's child rules and its model lines
 // (lintBriefReads): the findings print on stderr in the lint's own grammar, at
 // most max of them (0 is all) before a MORE line, and a brief with any is
 // refused, exit 2.
-func lintBrief(brief string, rules []swarm.ChildRule, max int, stderr io.Writer) int {
+func lintBrief(verbName, brief string, rules []swarm.ChildRule, max int, stderr io.Writer) int {
 	modelWhy, findings := lintBriefReads(brief, rules)
 	if modelWhy != "" {
-		return refuse(stderr, "add", modelLinesWhy(modelWhy))
+		return refuse(stderr, verbName, modelLinesWhy(modelWhy))
 	}
 	if len(findings) == 0 {
 		return 0
@@ -1179,9 +1194,9 @@ func lintBrief(brief string, rules []swarm.ChildRule, max int, stderr io.Writer)
 			oneline.Escape(oneline.Cap(f.Excerpt, oneline.TailBytes)), oneline.Escape(swarm.ChildRemedy(rules, f.Check)))
 	}
 	if more {
-		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=add --max 0\n", len(findings))
+		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=%s --max 0\n", len(findings), verbName)
 	}
-	return refuse(stderr, "add", fmt.Sprintf("the brief fails the card lint (%d findings); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", len(findings)))
+	return refuse(stderr, verbName, fmt.Sprintf("the brief fails the card lint (%d findings); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", len(findings)))
 }
 
 func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {
@@ -1518,6 +1533,41 @@ func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	}, func(ids []string, s *sel, c *common) store.Step {
 		return store.DropStep(sprint.DropReq{Sel: s.sel(ids), Reason: *reason, Answers: answers(*ans), Who: c.actor})
 	})
+}
+
+// cmdBrief replaces the brief of a primary that has not started (the owner,
+// 2026-10-01: "What other things should you be able to do to mutate a stopped
+// sprint" / "I don't want you manually hopping in and working around it and
+// doing manual stuff."): the brief held to the card lint as add's is
+// (holdBrief), then one step (sprint.Brief), refused on a RUNNING machine and
+// for a card dealt; the card keeps its id, stream, score and needs.
+func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("brief")
+	brief := fs.String("brief", "", fmt.Sprintf("the new brief: a child's whole brief, at most %d KiB, held to the card lint as add holds one (--rules, else the file init --rules recorded, else the built-in general rules) and refused, exit 2, nothing written, when it fails", cardlimits.MaxBriefBytes>>10))
+	briefFile := fs.String("brief-file", "", "the new brief, read from this file: its bytes as they are, its one trailing newline cut; not with --brief")
+	rules := fs.String("rules", "", "the child rules file the brief is held to (default: the file init --rules recorded, else the built-in general rules)")
+	ids, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "brief", err.Error())
+	}
+	if len(ids) != 1 || (*brief == "") == (*briefFile == "") {
+		return refuse(stderr, "brief", "wants one primary and one of --brief <text>, --brief-file <path>")
+	}
+	if *briefFile != "" {
+		text, err := readBriefFile(*briefFile)
+		if err != nil {
+			return refuse(stderr, "brief", "--brief-file: "+err.Error())
+		}
+		if text == "" {
+			return refuse(stderr, "brief", "--brief-file "+*briefFile+" holds no brief")
+		}
+		*brief = text
+	}
+	var st *store.Store
+	if code := a.holdBrief("brief", *brief, *rules, c, &st, stderr); code != 0 {
+		return code
+	}
+	return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Brief: *brief, Who: c.actor}), stdout, stderr)
 }
 
 func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
