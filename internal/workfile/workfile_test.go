@@ -112,10 +112,10 @@ func TestTheReaderRefusesWhatTheWriterWouldNotWrite(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			require.Contains(t, s, tc.from, "the fixture lacks %q", tc.from)
+			require.Contains(t, s, tc.from, "%s: the fixture lacks %q", tc.name, tc.from)
 			bad := strings.Replace(s, tc.from, tc.to, 1)
 			_, err := workfile.Decode("t.lisp", []byte(bad), workfile.Limits(len(bad)))
-			assert.ErrorContains(t, err, tc.want, "err=%v, want it to say %q", err, tc.want)
+			assert.ErrorContains(t, err, tc.want, "%s: err=%v, want it to say %q", tc.name, err, tc.want)
 		})
 	}
 
