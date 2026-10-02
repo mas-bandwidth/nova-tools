@@ -22,7 +22,7 @@ const stageFetchRetryDelay = 2 * time.Second
 // ErrStageTimeout is returned when card staging exceeds the hard timeout.
 var ErrStageTimeout = errors.New("stage-timeout")
 
-// CardBase is what a card's header says to stage into <job>/repo (nova-tools#3711).
+// CardBase is what a card's header says to stage into <job>/repo.
 type CardBase struct {
 	Repo  string   // the clone URL (or a local path) to stage; "" when the card names none that can be read
 	Sha   string   // base-sha: (or the sha of BASE: <ref>@<sha40>); "" when absent
@@ -261,8 +261,7 @@ func WriteStageTimeoutResult(jobDir, bench string, secs int) (string, error) {
 
 // stageWaitDelay bounds how long a staging git call waits for its pipes after the deadline
 // kill. git clone runs helpers (git-remote-https, index-pack) that inherit the output pipe;
-// killing git alone left them holding it, which is how hulk had 193 clones stuck 43-65
-// minutes (#2882). Each call leads its own process group, the deadline kills the group, and
+// killing git alone left them holding it. Each call leads its own process group, the deadline kills the group, and
 // WaitDelay closes the pipes a bounded time after that, so the 120 s timeout is hard.
 const stageWaitDelay = 2 * time.Second
 
@@ -328,7 +327,7 @@ type StageResult struct {
 // StageCard stages the repository for a card into TargetDir using the bench mirror.
 // The repo, sha and ref are ReadCardBase's (base-repo:, REPO:, or a clone URL; base-sha:
 // or BASE:). If the card names no repo that can be read, staging is skipped and Staged is
-// false; the caller refuses such a card when CardNamesRepo says it named one (#3711).
+// false; the caller refuses such a card when CardNamesRepo says it named one.
 // The checkout is at the sha (else the ref, else the clone's default head) on the branch
 // CardStageBranch names, so the card commits on a branch, not a detached HEAD.
 // If base-repo is remote and no bench mirror is found, staging fails without contacting GitHub.

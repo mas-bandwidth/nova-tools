@@ -7,7 +7,7 @@ package swarm
 // is published by renaming a fully-written staging directory into place, so a
 // directory in the store always arrives WITH its `lease` file already inside:
 // a concurrent take scanning the store can never meet a half-written take and
-// reap it (nova-tools#1868). A lease is never inferred from a count but from
+// reap it. A lease is never inferred from a count but from
 // the directories on disk. Each lease directory holds a file `lease`
 // with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>` and optional
 // `weight=` / `kind=`. Shares live in
@@ -20,7 +20,7 @@ package swarm
 // process it names is still running and its slot is not free. A lease whose
 // until= is still ahead and whose pid is gone is stranded: it stays, still
 // counts as held, and list prints stranded=1 with the label so a manager can
-// re-queue it (nova-tools#2033).
+// re-queue it.
 
 import (
 	"crypto/rand"
@@ -320,14 +320,13 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 
 // takeSlotLeases grants k leases to owner when both caps hold after reaping:
 // the owner's held+demand stays within its share, and the total held+demand
-// stays within capacity-reserve, where demand is k times weight (nova-tools#2033).
+// stays within capacity-reserve, where demand is k times weight.
 // Expired leases with a dead pid are reaped first; expired leases with a live
 // pid are DRIFT and stay held. New leases carry the caller's pid and until=now+dur.
 //
 // IT RETURNS THE IDS IT GRANTED, not a count, and that is deliberate: the
 // count was what let a holder release by owner and label instead of by
-// identity, and give away a seat that was never its own (nova-tools#1546,
-// Stella's hold on PR #1562). len(ids) is the count for anyone who only
+// identity, and give away a seat that was never its own. len(ids) is the count for anyone who only
 // wanted that; taking a lease without learning which one is now impossible.
 // Hand the ids back to ReleaseSlotLeasesByID.
 func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Duration, label string, now time.Time, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
@@ -352,7 +351,7 @@ func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Du
 	if _, _, _, err := loadSlotShares(store); err != nil {
 		return nil, 0, 0, 0, "", false, err
 	}
-	// THE WHOLE GRANT IS ONE TRANSACTION (issue #1900). Reap, count, test against the
+	// THE WHOLE GRANT IS ONE TRANSACTION. Reap, count, test against the
 	// share and the capacity, and make the lease directories -- under the store lock, so
 	// that two takers cannot both read total=0 and both win the last seat. Everything
 	// read before this point is read again under it.
@@ -450,9 +449,9 @@ func ReleaseSlotLeases(store, owner, label string, all bool) (released, held int
 
 // ReleaseSlotLeasesForcing is the body, with the live-seat fence spelled out.
 //
-// A LEASE IS NOT A TICKET SOMEBODY ELSE MAY TEAR UP (issue #1902). Deleting a lease
+// A LEASE IS NOT A TICKET SOMEBODY ELSE MAY TEAR UP. Deleting a lease
 // does not stop the process holding it: the holder keeps running, keeps spending, and
-// the seat it is sitting in is handed to the next taker. Johnny freed a live `native`'s
+// the seat it is sitting in is handed to the next taker.
 // only seat from outside and watched a second `native` take it -- two cards on a
 // capacity-1 bench, both printing NATIVE OK -- and a card given --no-wall did the same
 // to a bystander from inside its own shell. `--owner` is an unauthenticated string and
@@ -468,7 +467,7 @@ func ReleaseSlotLeasesForcing(store, owner, label string, all, force bool) (rele
 	if strings.TrimSpace(owner) == "" {
 		return 0, 0, 0, fmt.Errorf("owner is required")
 	}
-	// Under the store lock (issue #1900), so that a release cannot interleave with a
+	// Under the store lock, so that a release cannot interleave with a
 	// take's count-then-mkdir and leave the count the grant was made against wrong.
 	if unlock, lerr := takeSlotStoreLock(store); lerr == nil {
 		defer unlock()
@@ -512,8 +511,7 @@ func ReleaseSlotLeasesForcing(store, owner, label string, all, force bool) (rele
 // ReleaseSlotLeasesByID removes EXACTLY the leases named, and only while they are still
 // the caller's. It exists because releasing by owner and label is not releasing by
 // identity: an owner is a bench and a label is a card's name, and two runs that share both
-// -- two slots, two benches, a retry -- would each give away the other's seat
-// (nova-tools#1546, Stella's hold on PR #1562). A holder that took leases learns their ids
+// -- two slots, two benches, a retry -- would each give away the other's seat. A holder that took leases learns their ids
 // from TakeSlotLeases and hands exactly those back here.
 //
 // The pid is a fence, not bookkeeping. An id whose lease has since been reaped and remade
@@ -529,7 +527,7 @@ func ReleaseSlotLeasesByID(store string, ids []string, pid int) (released int, e
 	if pid <= 0 {
 		return 0, fmt.Errorf("pid is required")
 	}
-	// Under the store lock (issue #1900): the same reason as ReleaseSlotLeases. A store
+	// Under the store lock: the same reason as ReleaseSlotLeases. A store
 	// this process cannot lock -- one that is already gone, say -- is not a reason to
 	// refuse to stop holding, so the release goes on unlocked rather than erroring.
 	if unlock, lerr := takeSlotStoreLock(store); lerr == nil {
@@ -570,7 +568,7 @@ const SlotStoreLockName = "slots.lock"
 // wait longer than this is a holder that is stuck, not a bench that is busy.
 const SlotStoreWait = 10 * time.Second
 
-// takeSlotStoreLock serialises the whole grant (issue #1900). os.Mkdir is atomic PER
+// takeSlotStoreLock serialises the whole grant. os.Mkdir is atomic PER
 // ID, which is what the comment at the top of this file says; it is not atomic per
 // CAPACITY. Two takers who both read total=0 against a capacity-1 store both counted,
 // both passed the share test, and both made a directory with a different name: three

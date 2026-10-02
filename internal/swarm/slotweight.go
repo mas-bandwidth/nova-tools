@@ -5,13 +5,13 @@ import (
 	"time"
 )
 
-// Slot admission weight (nova-tools#2033).
+// Slot admission weight.
 //
 // Capacity is refused at take, before any child starts. A schema card spawns
 // make/cargo/dotnet and is far heavier than a read-only card; charging the
 // kind's weight against the store's share is the ceiling. A load reading after
-// launch is a brake that arrives too late: captainamerica reached load 172 on
-// 64 cores and fell off the network.
+// launch is a brake that arrives too late: load can grow too high before the kind's weight
+// caps it at admission.
 
 const (
 	SlotWeightRead  = 1
