@@ -672,8 +672,7 @@ sources that track messages, `-` when none do, aggregated by `sum` onto
 `SUM MONTH` and `SUM TOTAL` as `turns=`. A file whose first line does not
 start with `nova-tokens v1` is refused by `sum` and named by `check`, fixed
 with `fold --day <d>`. Rows sort by `(model, repo)` and stay unique by it.
-The write goes out atomically through an atomic-file helper using a uniquely
-named temporary file and rename.
+The write lands atomically through internal/atomicfile via a unique random-sibling temporary file `.<day>.tsv.tmp-%08x` and rename.
 
 **Absent and empty are one state.** A day with no rows has no file. A fold
 never writes an empty day file and `check` names one as malformed.
@@ -747,7 +746,7 @@ export, unmodified; the label names the provider and the parser (`google`,
 with the first unparsed line quoted, never a guess. Rows land with repo
 `unattributed` and the model as the export names it; a type the export has
 no column for is `-`, and `reports=` on the source line names the columns it
-has. The day is an export with a timestamp per row is folded to
+has. The day: an export with a timestamp per row is folded to
 UTC days from the timestamps, in whatever zone they are printed, and its
 rows are `day_basis=utc`; an export with only per-day totals is folded under
 its own dates with `day_basis=<zone>`, the zone taken from the export's own
@@ -763,7 +762,7 @@ same rows: `endedAt` is the day, `primaryModelId` the model, and
 a `-`, never a zero. `costUsdTicks` is the turn's cost, an integer count of
 micro-dollar ticks — the unit `usd=` holds — folded into the model's `usd=`
 on the day's `TOKENS AVG` lines: the cost is "from the
-usage `usd` column or a cost tick the source reported"); a lexeme that is
+usage `usd` column or a cost tick the source reported"; a lexeme that is
 not a non-negative integer is an absence, and `usd=` is `0` where no source
 reported one. The flag names that one file. A path that is not there is
 `TOKENS UNREADABLE` saying the file is not there and that a session store is
@@ -789,8 +788,8 @@ date<TAB>who<TAB>model<TAB>repo<TAB>type<TAB>count[<TAB>day_basis=<zone>]
 ```
 
 Six fields, tab separated, with an optional seventh. `date` is `YYYY-MM-DD`.
-The seventh field, when present, is exactly `day_basis=<zone>`, the zone as
-accepts it in the day file (no whitespace) and never `utc`: it puts
+The seventh field, when present, is exactly `day_basis=<zone>`, the zone the
+day file accepts (no whitespace) and never `utc`: it puts
 the line's row under the line's date with that `day_basis`, which is how a
 provider's local-day total (rule 17) crosses the bus without being called
 UTC. A line without it is a UTC day. `day_basis=utc` spelled out is
