@@ -177,7 +177,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) 
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
 func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read or written, so help has no side effects.
+	// before anything is read or written, so help has no side effects (the CLI style's rule (b)).
 	defer verbflag.Recover(stdout, "nova-tokens", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; `sources` is the one that only looks")
@@ -623,7 +623,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 	conflictDays := map[string]bool{}
 	// The labels this run declared: exactly what lands in a row's sources column, and so
-	// exactly the rows this fold is entitled to recompute.
+	// exactly the rows this fold is entitled to recompute (rule 10).
 	declared := make([]string, 0, len(sources))
 	for _, s := range sources {
 		declared = append(declared, s.Label)
@@ -712,8 +712,9 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 				// Merge by source BEFORE anything else touches the file: a row no
 				// declared source wrote is carried over, a row they all wrote is
 				// replaced, and a row this fold can neither keep nor recompute refuses
-				// the day. The comparison uses the merged file, so it compares like with
-				// like and cannot hide an erased row when this run's numbers are bigger.
+				// the day. Rule 10 then compares the file with the merged file, so it
+				// compares like with like and cannot hide an erased row when this run's
+				// numbers are bigger.
 				merged, retained, partials := tokens.MergeDay(old.Rows, file.Rows, declared)
 				for _, pt := range partials {
 					partial = true
@@ -936,9 +937,9 @@ func firstUnreadableLabel(sources []*tokens.Source) string {
 // firstUnparsed names the kind of the first source with an unparsed line and what it was
 // reading, so that the one remedy line is the remedy for the thing that failed.
 // noidAndDup is the sentence for spend that was read and then dropped: a message with no
-// id is not folded and a repeated id is counted once. Both are numbers on a green
+// id is not folded (rule 4) and a repeated id is counted once. Both are numbers on a green
 // TOKENS SOURCE line and nowhere else, and 100% of a file's usage can be a message with no
-// id (lesson 95: a number is not a sentence).
+// id (a number is not a sentence).
 func noidAndDup(sources []*tokens.Source) string {
 	noid, dup, label := 0, 0, "-"
 	for _, s := range sources {
@@ -960,7 +961,7 @@ func noidAndDup(sources []*tokens.Source) string {
 const allDroppedWhy = "no message had an id, so none was folded (a message is counted by its id: a transcript's message.id, an opencode message id, a swarm row's job); run: nova-tokens sources <the same source flags> --day <d> to see noid= per source"
 
 // allMessagesDropped says whether the sources read at least one message and dropped every
-// one of them for having no id: the count dropped, the count read (dropped, plus
+// one of them for having no id (rule 4): the count dropped, the count read (dropped, plus
 // the messages folded), and whether that is the whole of it. Some dropped and some folded
 // is false: the TOKENS NOTE names that one.
 func allMessagesDropped(sources []*tokens.Source) (dropped, of int, all bool) {
@@ -1170,12 +1171,12 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			folder.Add(s.Label, m)
 		}
 	}
-	// Report folds that the caller's own sources produce for one day, with the same sources and
-	// the same attribution as fold. That has to include what the fold SAYS about them.
+	// Rule 20: report folds that the caller's own sources produce for one day, with the same
+	// sources and the same attribution as fold. That has to include what the fold SAYS about them.
 	// This verb counted only the unreadables, so a transcript line whose stamp does not
 	// parse and a message with no id -- both counted by the reader, both dropped before
 	// the body -- left no trace at all, and the friend pasted a short day onto the bus
-	// under REPORT OK, so every counted input is printed rather than skipped silently.
+	// under REPORT OK (rule 3: counted and printed, never skipped silently).
 	unreadable, unparsed := 0, 0
 	for _, s := range sources {
 		for _, u := range s.Unreadables {
@@ -1300,7 +1301,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
 		oneline.Field(buildVersion()),
 		oneline.Escape(tokens.Subject(*day, stamp(now), buildVersion(), sorted)))
-	// The exit table makes an unreadable declared source exit 1,
+	// Rule 3 and the exit table: an unreadable declared source is exit 1,
 	// and a line that did not parse is the same wall under fold (main.go's counts). The
 	// body still printed and --note still landed -- exit 1 still writes -- but a friend
 	// about to paste this onto the bus is told it does not cover what it claims.

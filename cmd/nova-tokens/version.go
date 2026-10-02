@@ -1,6 +1,6 @@
 // nova-tokens version: which build wrote a day file.
 //
-// A day file carries the build id of the fold that wrote it, so the first question
+// A day file carries the build id of the fold that wrote it (rule 12), so the first question
 // after two day files disagree is which build wrote each -- an id scheme, a header, a push
 // protocol that two senders have to implement identically. So the first question after a
 // bus misbehaves is which build each line is running, and until this verb existed the

@@ -17,8 +17,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
-// The token ledger writes each folded day to tokens:ledger:<day> as the day files' index,
-// and `report --redis` reads those day hashes as one monthly GROUP BY.
+// The token ledger (docs/SPEC-STATE.md test 17): `ledger` writes each folded day to
+// tokens:ledger:<day> as the day files' index, and `report --redis` reads those day hashes
+// as one monthly GROUP BY.
 // The fold is untouched and the day TSVs stay the record; the ledger is what a month query
 // reads instead of every file. The key layout is internal/record's package comment.
 
@@ -26,7 +27,7 @@ import (
 // (redisauth.Auth): --user, else NOVA_SPRINT_REDIS_USER; the password is never a flag,
 // it is the variable --password-env names, else (for a user) NOVA_SPRINT_REDIS_PASSWORD_ENV's
 // or NOVA_REDIS_BENCH_PASSWORD. With no user, no variable is consulted unless --password-env
-// names one. Dialing does not ping (#7fbdefecf56e).
+// names one. Dialing does not ping.
 func openLedger(addr, user, passwordEnv string) (record.LedgerStore, error) {
 	user, password, err := redisauth.Auth(user, passwordEnv)
 	if err != nil {
