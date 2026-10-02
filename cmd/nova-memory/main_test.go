@@ -41,7 +41,7 @@ func TestRefusesToGuess(t *testing.T) {
 		wantStderr string
 	}{
 		{"no subcommand", nil, "run: nova-memory help"},
-		{"unknown subcommand", []string{"frobnicate"}, "unknown subcommand"},
+		{"unknown verb", []string{"frobnicate"}, `unknown verb "frobnicate"; the verbs are quickstart, stats, search, check, verify, eval, boot, version`},
 
 		{"stats without root", []string{"stats"}, "--root is required"},
 		{"stats stray argument", []string{"stats", "--root", corpus, "extra"}, "unexpected argument"},
@@ -153,7 +153,7 @@ func TestStats(t *testing.T) {
 	exit, stdout, stderr := runCLI(t, "", "stats", "--root", corpus)
 	require.Equalf(t, 0, exit, "exit = %d, want 0; stderr: %s", exit, stderr)
 	for _, want := range []string{
-		"STATS OK schema=nova-memory/1 files=6",
+		"STATS OK schema=nova-memory/2 files=6",
 		"STATS OK class=. chunks=",
 		"STATS OK class=log chunks=",
 		"STATS OK class=notes chunks=",
@@ -238,7 +238,7 @@ func TestCalibrationProbeAndSchemaVersionMoveTogether(t *testing.T) {
 	t.Parallel()
 
 	const wantProbe = "the quarterly marketing budget for the regional office needs revised headcount projections before the fiscal deadline"
-	const wantSchema = "nova-memory/1"
+	const wantSchema = "nova-memory/2"
 	assert.Equalf(t, wantProbe, calibrationProbe, "the calibration probe changed:\n got: %q\nwant: %q\n"+
 		"The probe defines the negative-control band, so every band printed under the old probe is incomparable "+
 		"with every band printed under the new one. If the change is intended, bump memindex.SchemaVersion in the "+
@@ -874,7 +874,7 @@ func TestNoCorpusOrCallerTextCanForgeALine(t *testing.T) {
 		exit, stdout, stderr := runCLI(t, "", "stats", "--root", corpus, "--bogus\n"+forged)
 		require.Equalf(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
 		noForgedLine(t, forged, stdout, stderr)
-		assert.Containsf(t, stderr, `nova-memory stats: flag provided but not defined: -bogus\x0aSTATS OK schema`, "stderr = %q, want this tool's own refusal with the flag escaped", stderr)
+		assert.Containsf(t, stderr, `STATS REFUSED: flag provided but not defined: -bogus\x0aSTATS OK schema`, "stderr = %q, want this tool's own refusal with the flag escaped", stderr)
 	})
 }
 

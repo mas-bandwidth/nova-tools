@@ -22,6 +22,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -33,6 +35,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,16 +60,16 @@ values, with "-" meaning absent.
 
 usage:
   nova-memory version    print this build identity (--version also accepted)
-  nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
-  nova-memory stats  --root <dir>... [--exclude <glob>]...
+  nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]... [--json]
+  nova-memory stats  --root <dir>... [--exclude <glob>]... [--json]
   nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <words>...
   nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
   nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                      [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
-                     [--fail-max <n>]
+                     [--fail-max <n>] [--json]
   nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]...
-                     [--fail-max <n>] <gold.tsv>
-  nova-memory boot   --root <dir> --pin <file>
+                     [--fail-max <n>] [--json] <gold.tsv>
+  nova-memory boot   --root <dir> --pin <file> [--json]
 
 quickstart is the first run and nothing else: it runs stats, then one search,
 then one check, PRINTING each command line above that command's output, so
@@ -75,7 +78,8 @@ default channel or a default k — it names both on every line it prints, and
 says so again at the end.
 
 flags:
-  --json                search/check: JSON of the same retrieval evidence.
+  --json                every verb but version: the same result as one JSON
+                        object on stdout, a refusal included.
   --root <dir>          the corpus root. Required, always: there is no
                         environment variable and no discovery from the working
                         directory. Repeatable (--root <dir> --root <dir> ...):
@@ -85,9 +89,13 @@ flags:
                         know this" about someone else's.
   --channels <list>     comma-separated retrieval channels: bm25, trigram.
                         Required: which retrieval you ran is part of what an
-                        answer means, and no channel set is right by default —
-                        on the corpus this was ported from, eval measured
-                        bm25+trigram WORSE than bm25 alone.
+                        answer means, and no channel set is right by default:
+                        eval can measure bm25+trigram worse than bm25 alone.
+                        With two channels a hit is ranked by fused= (rank
+                        fusion over the channels); its score= is its score in
+                        the channel named beside it (score-channel=), which
+                        compares only with scores of that channel and with the
+                        CAL line, so score= need not fall with rank.
   --k <n>               receipts per query, positive. Required: k IS the mind's
                         budget, and zero is not "unlimited".
   --exclude <glob>      path or glob to skip, repeatable. Nothing is excluded
@@ -127,7 +135,10 @@ flags:
                         names the load, never walks the directory.
 
 A refusal reports every flag it can see at once — two missing flags are two
-sentences and one run, not two runs.
+sentences and one run, not two runs. Flags may stand before or after the
+file or the query words; -- ends the flags, and a query word that starts
+with - goes after it. Every verb is an inspection: it reads the corpus and
+writes nothing (` + "`<verb> -h`" + ` says so, with the verb's flags).
 
 exit codes: 0 ran and passed, 1 ran and failed, 2 could not run (bad invocation).
 
@@ -151,7 +162,7 @@ example:
 // same guessing the tool refuses to do, moved onto the reader. Each hint says
 // what the flag IS and what a first run should put there.
 const (
-	rootHint = `--root <dir> is your corpus directory, the tree to index; it is never guessed from the working directory or the environment, so write it out every run — and repeat it to index several roots in one ranking (the cairn beside memory/)`
+	rootHint = `--root <dir> is your corpus directory, the tree to index; it is never guessed from the working directory or the environment, so write it out every run — and repeat it to index several roots in one ranking`
 	// The same sentence serves the missing flag and the unknown name, because
 	// naming a directory is exactly how the flag gets misread.
 	channelsHint = `--channels names a retrieval method, not a directory; the channels are bm25 and trigram, and bm25 alone is the usual start`
@@ -175,6 +186,13 @@ func hintFor(name string) string {
 	return ""
 }
 
+// result is a verb's one result under --json, the same values its lines carry.
+func result(verb string) *tool.Out {
+	o := tool.Done()
+	o.Verb = verb
+	return o
+}
+
 // calibrationProbe is a fixed, corpus-unrelated English sentence, scored once
 // per run so every report carries a LIVE negative band — "unrelated text
 // scores about this much on YOUR corpus" — instead of a stale number from
@@ -192,54 +210,97 @@ const noteLexical = "lexical only — a paraphrase sharing almost no vocabulary 
 // shown says in the same breath how to see it.
 const failMaxRemedy = "--fail-max <n> raises the ceiling, --fail-max 0 prints every finding"
 
-// refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
-// door to the usage rather than the usage itself.
-//
-// It used to be the whole 62-line banner, on every flag typo -- 3,908 bytes to say that
-// a dash was in the wrong place. That is the wrong trade twice over: a reader who
-// mistyped a flag knows what the flags are and wanted the one sentence, and a reader who
-// does not know can type the four words at the end of the line. The usage is still there,
-// still complete, and now it is asked for.
+// verbs are the verbs in the order the usage names them. Every one is an inspection: the
+// index is built in memory from the corpus and nothing is written.
+var verbs = []string{"quickstart", "stats", "search", "check", "verify", "eval", "boot", "version"}
+
+// tokens are the words a verb's lines open with; check's are MEMORY.
+var tokens = map[string]string{"check": "MEMORY"}
+
+// refuse is what an unusable invocation costs: ONE line in the refusal grammar every tool
+// shares, `<TOKEN> REFUSED: <what>; run: nova-memory help`, naming what was wrong, and the
+// door to the usage rather than the usage itself. where is "" for the tool, or " <verb>".
 func refuse(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-memory%s: %s; run: nova-memory help\n", oneline.Escape(where), oneline.Escape(what))
+	return refuseWith(stderr, where, what, "nova-memory help")
+}
+
+// refuseWith is refuse with the command to run next.
+func refuseWith(stderr io.Writer, where, what, remedy string) int {
+	verb := strings.TrimSpace(where)
+	token := strings.ToUpper(verb)
+	if t, ok := tokens[verb]; ok {
+		token = t
+	}
+	if token == "" {
+		token = "MEMORY"
+	}
+	fmt.Fprintf(stderr, "%s REFUSED: %s; run: %s\n", oneline.Field(token), oneline.Escape(what), oneline.Escape(remedy))
 	return 2
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
-	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read or written (the CLI style's rule (b), #4505).
-	defer verbflag.Recover(stdout, "nova-memory", usage, &code)
+	// `<verb> -h` and `help <verb>` print that verb's help, its effect included, on stdout
+	// at exit 0, before anything is read or written (the CLI style's rule (b)).
+	defer verbflag.RecoverWith(stdout, "nova-memory", usage, &code, func(string) string {
+		return "effect: " + string(tool.Inspection) + " (the index lives in memory for the run)\n"
+	})
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; quickstart is the first run")
+		return refuse(stderr, "", "no verb given; the verbs are "+verbflag.List(verbs)+", and quickstart is the first run")
 	}
 	switch args[0] {
-	case "quickstart":
-		return cmdQuickstart(args[1:], stdout, stderr)
-	case "stats":
-		return cmdStats(args[1:], stdout, stderr)
-	case "search":
-		return cmdSearch(args[1:], stdout, stderr)
-	case "check":
-		return cmdCheck(args[1:], stdin, stdout, stderr)
-	case "verify":
-		return cmdVerify(args[1:], stdout, stderr)
-	case "eval":
-		return cmdEval(args[1:], stdout, stderr)
-	case "boot":
-		return cmdBoot(args[1:], stdout, stderr)
-	case "version", "--version":
-		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
 			return run(append(args[1:], "--help"), stdin, stdout, stderr)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
-	default:
-		return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", args[0]))
 	}
+	if !verbflag.BoolAsked(args[1:], "json") {
+		return dispatch(args[0], args[1:], stdin, stdout, stderr)
+	}
+	// Under --json a verb prints its one result on stdout and no line on stderr, so what
+	// reaches stderr is a refusal: it becomes one refused result on stdout too.
+	var problems bytes.Buffer
+	code = dispatch(args[0], args[1:], stdin, stdout, &problems)
+	if problems.Len() == 0 {
+		return code
+	}
+	var why []string
+	for _, l := range strings.Split(strings.TrimSpace(problems.String()), "\n") {
+		why = append(why, strings.TrimSpace(l))
+	}
+	o := tool.Refuse(why...)
+	o.Verb, o.Remedy = args[0], "nova-memory help"
+	return o.Render(stdout, true)
+}
+
+// dispatch runs one verb.
+func dispatch(verb string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	switch verb {
+	case "quickstart":
+		return cmdQuickstart(args, stdout, stderr)
+	case "stats":
+		return cmdStats(args, stdout, stderr)
+	case "search":
+		return cmdSearch(args, stdout, stderr)
+	case "check":
+		return cmdCheck(args, stdin, stdout, stderr)
+	case "verify":
+		return cmdVerify(args, stdout, stderr)
+	case "eval":
+		return cmdEval(args, stdout, stderr)
+	case "boot":
+		return cmdBoot(args, stdout, stderr)
+	case "version", "--version":
+		return cmdVersion(args, stdout, stderr)
+	}
+	near := ""
+	if n := verbflag.Nearest(verb, verbs); n != "" {
+		near = " did you mean " + n + "?"
+	}
+	return refuse(stderr, "", "unknown verb "+strconv.Quote(verb)+";"+near+" the verbs are "+verbflag.List(verbs))
 }
 
 // ---------------------------------------------------------------------------
@@ -252,47 +313,50 @@ type multiFlag []string
 func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
 
-// parse runs a subcommand flag set and enforces the no-guessing rule: every
-// required flag must have been GIVEN. Whether it was given is asked of the
-// flag set, not inferred from the value, so "--k 0" is a different (and
-// differently worded) refusal from a missing --k.
+// parse runs a verb's flag set and enforces the no-guessing rule: every required flag
+// must have been GIVEN. Whether it was given is asked of the flag set, not inferred from
+// the value, so "--k 0" is a different (and differently worded) refusal from a missing --k.
 //
-// EVERY missing flag is reported, not the first: a first run that is two flags
-// short must learn that in one run. The returned set says which flags were
-// given, so a caller can check the VALUE of each flag it actually received and
-// add those refusals to the same run — "--channels is required" and
-// "--channels named a directory" must never both print about one invocation,
-// and neither must a bad --k hide a bad --channels.
+// EVERY missing flag is reported, not the first: a first run that is two flags short
+// learns that in one run. The returned set says which flags were given, so a caller
+// checks the VALUE of each flag it actually received and adds those refusals to the same
+// run, and neither does a bad --k hide a bad --channels.
 //
-// given is nil when the arguments could not be parsed at all: nothing after
-// that is knowable, so the caller stops rather than guessing which flags
-// arrived.
+// Flags may stand before, between or after the positional arguments (a file, the query
+// words): `check ... draft.md --json` is --json, never a second file. `--` ends the flags,
+// and a query word that starts with a dash comes after it.
 //
-// Package flag is given no stream: its error text quotes the argument it
-// could not parse, raw, and its usage dump follows -- so an argument holding
-// a newline authored a whole line of stderr before any code in this file ran.
-// The refusal is printed here instead, escaped. -h after a verb is not refused:
-// verbflag.Parse raises that verb's help, which run prints on stdout at exit 0.
-func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) (given map[string]bool, ok bool) {
+// given is nil when the arguments could not be parsed at all: nothing after that is
+// knowable. An unknown flag, one missing its value or one with a value it cannot take is
+// refused naming the verb's flags and the nearest one (verbflag.Explain, the wording
+// internal/tool gives every tool), with the verb's help as the remedy. -h after a verb is
+// not refused: verbflag.Parse raises that verb's help, which run prints on stdout at exit 0.
+func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) (given map[string]bool, pos []string, ok bool) {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if err := verbflag.Parse(fs, args); err != nil {
-		refuse(stderr, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes))
-		return nil, false
+	for {
+		if err := verbflag.Parse(fs, args); err != nil {
+			refuseWith(stderr, " "+fs.Name(), oneline.Cap(verbflag.Explain(fs, err), oneline.TailBytes), "nova-memory "+fs.Name()+" -h")
+			return nil, nil, false
+		}
+		rest := fs.Args()
+		if len(rest) == 0 || slices.Contains(args[:len(args)-len(rest)], "--") {
+			pos = append(pos, rest...)
+			break
+		}
+		pos, args = append(pos, rest[0]), rest[1:]
 	}
 	given = map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
-	sorted := append([]string(nil), required...)
-	sort.Strings(sorted) // deterministic order, not map or caller order
 	ok = true
-	for _, name := range sorted {
+	for _, name := range slices.Sorted(slices.Values(required)) { // deterministic order, not caller order
 		if !given[name] {
 			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
 			fmt.Fprint(stderr, hintFor(name))
 			ok = false
 		}
 	}
-	return given, ok
+	return given, pos, ok
 }
 
 // rootFlags carries the flags every verb needs to build an index.
@@ -373,12 +437,8 @@ func channelNames(spec, verb string, stderr io.Writer) ([]string, bool) {
 			refuse(stderr, " "+verb, fmt.Sprintf("--channels %q has an empty entry; refusing to guess", spec))
 			return nil, false
 		default:
-			// This hint is on the same line rather than indented below it, so the
-			// suffix is appended in place at the end; inserting the door before
-			// the hint would rewrite the line the caller is told to read. The
-			// ordering is deliberate, and firstrun_test.go:65 pins this line's
-			// shape.
-			fmt.Fprintf(stderr, "nova-memory %s: unknown channel %q: %s; run: nova-memory help\n", verb, n, channelsHint)
+			// The hint is on the same line, so the one line names the channels there are.
+			refuse(stderr, " "+verb, fmt.Sprintf("unknown channel %q: %s", n, channelsHint))
 			return nil, false
 		}
 	}
@@ -549,7 +609,7 @@ func shellArg(s string, windows bool) string {
 // needsQuoting is true for every character but the ones a shell hands to the
 // program unchanged. The list is deliberately short — anything unlisted is
 // quoted, which is never wrong, only noisier — and it differs by platform in
-// the two characters this bug was about: a backslash is a path separator on
+// two characters: a backslash is a path separator on
 // Windows and an escape on a POSIX shell, and a tilde is an ordinary character
 // in a short Windows path (RUNNER~1) and an expansion on a POSIX one.
 func needsQuoting(s string, windows bool) bool {
@@ -572,6 +632,15 @@ func needsQuoting(s string, windows bool) bool {
 func step(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "$ nova-memory %s\n", commandLine(argv))
 	return run(argv, stdin, stdout, stderr)
+}
+
+// jsonStep runs one step under --json and records it as an item of o: the command line,
+// its exit, and its own result object.
+func jsonStep(o *tool.Out, argv []string, stdin io.Reader, stderr io.Writer) int {
+	var out bytes.Buffer
+	code := run(append(argv, "--json"), stdin, &out, stderr)
+	o.Item("step", "command", tool.Text("nova-memory "+commandLine(argv)), "exit", code, "result", json.RawMessage(bytes.TrimSpace(out.Bytes())))
+	return code
 }
 
 // stepFailed reports a step that could not run. quickstart exits 0 only when
@@ -615,13 +684,14 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	var words multiFlag
 	fs.Var(&words, "words", "word for the demonstration search, repeatable (default: the corpus's three most frequent non-function words)")
 	draft := fs.String("draft", "", "candidate file for the demonstration check (default: this corpus's own first paragraph)")
-	given, ok := parse(fs, args, stderr, "root")
+	asJSON := fs.Bool("json", false, "print the three steps' results as one JSON object instead of lines")
+	given, pos, ok := parse(fs, args, stderr, "root")
 	if given == nil {
 		return 2
 	}
 	bad := !ok
-	if fs.NArg() > 0 {
-		refuse(stderr, " quickstart", fmt.Sprintf("unexpected argument %q; the words for the search go after --words", fs.Arg(0)))
+	if len(pos) > 0 {
+		refuse(stderr, " quickstart", fmt.Sprintf("unexpected argument %q; the words for the search go after --words", pos[0]))
 		bad = true
 	}
 	if given["draft"] && strings.TrimSpace(*draft) == "" {
@@ -667,12 +737,26 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	for _, e := range rf.excludes {
 		common = append(common, "--exclude", e)
 	}
-	fmt.Fprintf(stdout, "QUICKSTART RUN root=%s steps=3 channels=bm25 k=%s/%s words=%s words-source=%s candidate=%s\n",
-		oneline.Field(strings.Join(rf.root, " ")), quickstartSearchK, quickstartCheckK,
-		oneline.Field(strings.Join(words, " ")), oneline.Field(wordsSource), oneline.Field(candidate))
+	// The words are free text, quoted at the end of the line as typed: one field per word
+	// would split a word holding a blank, and a hex escape is no way to show a reader what
+	// was searched.
+	o := result("quickstart").Fact("root", strings.Join(rf.root, " ")).Fact("steps", 3).Fact("channels", "bm25").
+		Fact("k", quickstartSearchK+"/"+quickstartCheckK).Fact("words-source", wordsSource).Fact("candidate", candidate).
+		Fact("words", tool.Text(strings.Join(words, " ")))
+	runStep := func(argv []string, stdin io.Reader) int {
+		if *asJSON {
+			return jsonStep(o, argv, stdin, stderr)
+		}
+		return step(argv, stdin, stdout, stderr)
+	}
+	if !*asJSON {
+		fmt.Fprintf(stdout, "QUICKSTART RUN root=%s steps=3 channels=bm25 k=%s/%s words-source=%s candidate=%s words=%s\n",
+			oneline.Field(strings.Join(rf.root, " ")), quickstartSearchK, quickstartCheckK,
+			oneline.Field(wordsSource), oneline.Field(candidate), oneline.Quote(strings.Join(words, " ")))
+	}
 
 	statsArgs := append([]string{"stats"}, common...)
-	if code := step(statsArgs, strings.NewReader(""), stdout, stderr); code != 0 {
+	if code := runStep(statsArgs, strings.NewReader("")); code != 0 {
 		return stepFailed("stats", code, stderr)
 	}
 
@@ -685,7 +769,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	searchArgs = append(searchArgs, words...)
-	if code := step(searchArgs, strings.NewReader(""), stdout, stderr); code != 0 {
+	if code := runStep(searchArgs, strings.NewReader("")); code != 0 {
 		return stepFailed("search", code, stderr)
 	}
 
@@ -701,13 +785,20 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 		// calibration band on the same screen.
 		checkArgs = append(checkArgs, "-")
 		checkIn = strings.NewReader(c.Chunks[0].Original)
-		fmt.Fprintf(stdout, "QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: %s:%d\n",
-			oneline.Escape(c.Chunks[0].File), c.Chunks[0].Line)
+		if *asJSON {
+			o.Fact("demo", c.Chunks[0].File+":"+strconv.Itoa(c.Chunks[0].Line))
+		} else {
+			fmt.Fprintf(stdout, "QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: %s:%d\n",
+				oneline.Escape(c.Chunks[0].File), c.Chunks[0].Line)
+		}
 	}
-	if code := step(checkArgs, checkIn, stdout, stderr); code != 0 {
+	if code := runStep(checkArgs, checkIn); code != 0 {
 		return stepFailed("check", code, stderr)
 	}
 
+	if *asJSON {
+		return o.Fact("done", 3).Note(quickstartChoiceNote).Render(stdout, true)
+	}
 	fmt.Fprintf(stdout, "QUICKSTART OK done=3\n")
 	fmt.Fprintf(stdout, "QUICKSTART NOTE %s\n", quickstartChoiceNote)
 	return 0
@@ -719,13 +810,14 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 func cmdStats(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
 	rf := addRootFlags(fs)
-	given, ok := parse(fs, args, stderr, "root")
+	asJSON := fs.Bool("json", false, "print the result as one JSON object instead of lines")
+	given, pos, ok := parse(fs, args, stderr, "root")
 	if given == nil {
 		return 2
 	}
 	bad := !ok
-	if fs.NArg() > 0 {
-		refuse(stderr, " stats", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+	if len(pos) > 0 {
+		refuse(stderr, " stats", fmt.Sprintf("unexpected argument %q", pos[0]))
 		bad = true
 	}
 	if bad {
@@ -737,6 +829,14 @@ func cmdStats(args []string, stdout, stderr io.Writer) int {
 	}
 	// build= is the one field that is not byte-reproducible: it is a measured
 	// duration, labelled as one. Everything else is derived from the tree.
+	if *asJSON {
+		o := result("stats").Fact("schema", memindex.SchemaVersion).Fact("files", len(c.Files)).Fact("chunks", len(c.Chunks)).
+			Fact("bytes", c.Bytes).Fact("vocab", len(c.DF)).Fact("avg-terms", math.Round(c.AvgLen*10)/10).Fact("build", buildTime.String())
+		for _, cl := range slices.Sorted(maps.Keys(c.ByClass)) {
+			o.Item("class", "class", cl, "chunks", c.ByClass[cl])
+		}
+		return o.Render(stdout, true)
+	}
 	fmt.Fprintf(stdout, "STATS OK schema=%s files=%d chunks=%d bytes=%d vocab=%d avg-terms=%.1f build=%v\n",
 		memindex.SchemaVersion, len(c.Files), len(c.Chunks), c.Bytes, len(c.DF), c.AvgLen, buildTime)
 	for _, cl := range slices.Sorted(maps.Keys(c.ByClass)) {
@@ -752,13 +852,14 @@ func cmdBoot(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("boot", flag.ContinueOnError)
 	root := fs.String("root", "", "memory root directory (required)")
 	pin := fs.String("pin", "", "pin file naming the memories to load (required)")
-	given, ok := parse(fs, args, stderr, "root", "pin")
+	asJSON := fs.Bool("json", false, "print the result as one JSON object instead of lines")
+	given, pos, ok := parse(fs, args, stderr, "root", "pin")
 	if given == nil {
 		return 2
 	}
 	bad := !ok
-	if fs.NArg() > 0 {
-		refuse(stderr, " boot", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+	if len(pos) > 0 {
+		refuse(stderr, " boot", fmt.Sprintf("unexpected argument %q", pos[0]))
 		bad = true
 	}
 	if given["pin"] && strings.TrimSpace(*pin) == "" {
@@ -771,6 +872,9 @@ func cmdBoot(args []string, stdout, stderr io.Writer) int {
 	n, bytes, ok := loadPin(*root, *pin, stderr)
 	if !ok {
 		return 2
+	}
+	if *asJSON {
+		return result("boot").Fact("files", n).Fact("bytes", bytes).Render(stdout, true)
 	}
 	fmt.Fprintf(stdout, "BOOT OK files=%d bytes=%d\n", n, bytes)
 	return 0
@@ -859,26 +963,10 @@ func readPin(name string) ([]string, error) {
 func cmdSearch(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "render the retrieval result as JSON")
-	var problems strings.Builder
-	errors := stderr
-	stderr = &problems
-	defer func() {
-		if problems.Len() == 0 {
-			return
-		}
-		if *asJSON {
-			out := tool.Refuse(strings.TrimSpace(problems.String()))
-			out.Verb = "search"
-			out.Remedy = "nova-memory help"
-			out.Render(stdout, true)
-		} else {
-			fmt.Fprint(errors, problems.String())
-		}
-	}()
 	rf := addRootFlags(fs)
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per query, positive (required)")
-	given, ok := parse(fs, args, stderr, "root", "channels", "k")
+	given, pos, ok := parse(fs, args, stderr, "root", "channels", "k")
 	if given == nil {
 		return 2
 	}
@@ -894,14 +982,14 @@ func cmdSearch(args []string, stdout, stderr io.Writer) int {
 			bad = true
 		}
 	}
-	if fs.NArg() == 0 {
+	if len(pos) == 0 {
 		refuse(stderr, " search", "no query words given; refusing to guess")
 		bad = true
 	}
 	if bad {
 		return 2
 	}
-	query := strings.Join(fs.Args(), " ")
+	query := strings.Join(pos, " ")
 	c, _, ok := rf.build("search", stderr)
 	if !ok {
 		return 2
@@ -919,26 +1007,10 @@ func cmdSearch(args []string, stdout, stderr io.Writer) int {
 func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "render the retrieval result as JSON")
-	var problems strings.Builder
-	errors := stderr
-	stderr = &problems
-	defer func() {
-		if problems.Len() == 0 {
-			return
-		}
-		if *asJSON {
-			out := tool.Refuse(strings.TrimSpace(problems.String()))
-			out.Verb = "check"
-			out.Remedy = "nova-memory help"
-			out.Render(stdout, true)
-		} else {
-			fmt.Fprint(errors, problems.String())
-		}
-	}()
 	rf := addRootFlags(fs)
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per candidate, positive (required)")
-	given, ok := parse(fs, args, stderr, "root", "channels", "k")
+	given, pos, ok := parse(fs, args, stderr, "root", "channels", "k")
 	if given == nil {
 		return 2
 	}
@@ -952,7 +1024,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			bad = true
 		}
 	}
-	if fs.NArg() != 1 {
+	if len(pos) != 1 {
 		refuse(stderr, " check", "name exactly one candidate file, or - for stdin; refusing to guess")
 		bad = true
 	}
@@ -962,13 +1034,13 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	src := stdin
 	name := "-"
-	if fs.Arg(0) != "-" {
-		f, err := os.Open(fs.Arg(0))
+	if pos[0] != "-" {
+		f, err := os.Open(pos[0])
 		if err != nil {
 			return refuse(stderr, " check", oneline.Err(err))
 		}
 		defer f.Close()
-		src, name = f, fs.Arg(0)
+		src, name = f, pos[0]
 	}
 	raw, err := io.ReadAll(src)
 	if err != nil {
@@ -1016,13 +1088,14 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&front, "frontmatter", "glob whose files must carry a frontmatter name:, repeatable")
 	fs.Var(&exempt, "exempt", "basename prefix exempt from --frontmatter, repeatable (nothing is exempt by default)")
 	failMax := fs.Int("fail-max", bounded.Default, "finding lines to print per kind before one MORE line stands for the rest; 0 prints all")
-	given, ok := parse(fs, args, stderr, "root", "links")
+	asJSON := fs.Bool("json", false, "print the result as one JSON object instead of lines")
+	given, pos, ok := parse(fs, args, stderr, "root", "links")
 	if given == nil {
 		return 2
 	}
 	bad := !ok
-	if fs.NArg() > 0 {
-		refuse(stderr, " verify", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+	if len(pos) > 0 {
+		refuse(stderr, " verify", fmt.Sprintf("unexpected argument %q", pos[0]))
 		bad = true
 	}
 	gateLinks := false
@@ -1101,6 +1174,22 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		info = wl
 	}
 
+	if *asJSON {
+		o := result("verify")
+		for _, f := range info {
+			o.Item(f.Kind, "gating", false, "detail", tool.Text(f.Detail))
+		}
+		for _, f := range gating {
+			o.Item(f.Kind, "gating", true, "detail", tool.Text(f.Detail))
+		}
+		o.Fact("gating", len(gating)).Fact("info", len(info)).Fact("coverage", coverageFindings).
+			Fact("frontmatter", frontmatterFindings).Fact("links", *links)
+		if len(gating) > 0 {
+			o.Status, o.Exit = tool.Failed, 1
+		}
+		return o.Cap(*failMax).Render(stdout, true)
+	}
+
 	// EACH KIND IS CAPPED SEPARATELY. A flat cap over the concatenated findings would
 	// mean that on a corpus with ten thousand unresolved wikilinks the twenty lines a
 	// reader gets are twenty wikilinks, and the one frontmatter finding -- the finding
@@ -1117,9 +1206,8 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	}
 	fails.More()
 
-	// THE COUNT LINE PRINTS ON FAILURE TOO. It did not: a failing run gave N lines and
-	// never N, so a reader who wanted to know how bad it was had to count the output --
-	// and the output was capped from here on, which would have made counting it a lie.
+	// THE COUNT LINE PRINTS ON FAILURE TOO: the listing above is capped, so counting
+	// its lines would understate how bad a failing run is, and the total is here.
 	if fails.Total() > 0 {
 		fmt.Fprintf(stderr, "VERIFY FAIL gating=%d shown=%d info=%d coverage=%d frontmatter=%d links=%s\n",
 			fails.Total(), fails.Shown(), infos.Total(), coverageFindings, frontmatterFindings, *links)
@@ -1140,7 +1228,8 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	k := fs.Int("k", 0, "receipts per query, positive (required)")
 	floor := fs.Float64("floor", 0, "minimum recall@k in (0,1] (required)")
 	failMax := fs.Int("fail-max", bounded.Default, "MISS lines to print before one MORE line stands for the rest; 0 prints all")
-	given, ok := parse(fs, args, stderr, "root", "channels", "k", "floor")
+	asJSON := fs.Bool("json", false, "print the result as one JSON object instead of lines")
+	given, pos, ok := parse(fs, args, stderr, "root", "channels", "k", "floor")
 	if given == nil {
 		return 2
 	}
@@ -1162,14 +1251,14 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 		refuse(stderr, " eval", fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", *failMax))
 		bad = true
 	}
-	if fs.NArg() != 1 {
+	if len(pos) != 1 {
 		refuse(stderr, " eval", "name exactly one gold file; refusing to guess")
 		bad = true
 	}
 	if bad {
 		return 2
 	}
-	rows, err := readGold(fs.Arg(0))
+	rows, err := readGold(pos[0])
 	if err != nil {
 		return refuse(stderr, " eval", oneline.Err(err))
 	}
@@ -1180,12 +1269,15 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	}
 	chans := newChannels(c, names)
 
-	// THE HIT IS THE GOOD CASE AND IT WAS THE OUTPUT. A five-hundred-row harness printed
-	// five hundred lines to say a number the summary line already carries; on a passing
-	// run every one of them said "this worked". So the hits are a count, and only the
-	// misses -- the rows a reader can act on -- are listed, capped like every other
-	// listing here.
-	misses := bounded.Capped(stdout, *failMax, "EVAL", "miss", failMaxRemedy)
+	// THE HITS ARE A COUNT: a line per passing row would say "this worked" five hundred
+	// times beside the summary that already carries the number. Only the misses -- the
+	// rows a reader can act on -- are listed, capped like every other listing here.
+	listing := stdout
+	if *asJSON {
+		listing = io.Discard
+	}
+	o := result("eval")
+	misses := bounded.Capped(listing, *failMax, "EVAL", "miss", failMaxRemedy)
 	hits := 0
 	var mrr float64
 	for _, row := range rows {
@@ -1209,10 +1301,20 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 		misses.Line(fmt.Sprintf("EVAL MISS query=%s expected=%s",
 			oneline.Field(oneline.Cap(row.query, oneline.TailBytes)),
 			oneline.Field(oneline.Cap(strings.Join(row.expected, ","), oneline.TailBytes))))
+		o.Item("miss", "query", tool.Text(row.query), "expected", strings.Join(row.expected, ","))
 	}
 	misses.More()
 	recall := float64(hits) / float64(len(rows))
 	mrr /= float64(len(rows))
+	if *asJSON {
+		o.Fact("k", *k).Fact("recall", recall).Fact("floor", *floor).Fact("rows", len(rows)).Fact("hits", hits).
+			Fact("misses", misses.Total()).Fact("mrr", mrr).Fact("channels", chanNames(chans))
+		if recall < *floor {
+			o.Status, o.Exit = tool.Failed, 1
+			o.Why = []string{fmt.Sprintf("recall@%d=%.3f is below the floor %.3f", *k, recall, *floor)}
+		}
+		return o.Cap(*failMax).Render(stdout, true)
+	}
 	if recall < *floor {
 		fmt.Fprintf(stderr, "EVAL FAIL recall@%d=%.3f below floor %.3f (%d/%d, misses=%d shown=%d, mrr=%.3f, channels=%s)\n",
 			*k, recall, *floor, hits, len(rows), misses.Total(), misses.Shown(), mrr, chanNames(chans))

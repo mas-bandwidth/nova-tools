@@ -347,10 +347,8 @@ func Wikilinks(fsys fs.FS, c *Corpus) ([]Finding, error) {
 // otherwise fire forever, and a gate that fires forever on known-good files
 // trains wave-through.
 //
-// Nothing is exempt by default. The tool this was ported from hardcoded one
-// filename prefix from its own corpus, which is a guess about someone else's
-// layout; here the prefix is the caller's, stated per run, the same posture
-// nova-self-talk's --skip took as the condition of its own promotion.
+// Nothing is exempt by default: a built-in prefix would be a guess about someone
+// else's layout, so the prefix is the caller's, stated per run.
 func FrontmatterPresent(fsys fs.FS, glob string, exempt []string) ([]Finding, error) {
 	files, err := fs.Glob(fsys, glob)
 	if err != nil {
