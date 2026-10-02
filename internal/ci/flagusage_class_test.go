@@ -46,6 +46,10 @@ func undescribedFlags(fset *token.FileSet, f *ast.File) []undescribedFlag {
 	var out []undescribedFlag
 	visit := func(fn string, n ast.Node) {
 		ast.Inspect(n, func(n ast.Node) bool {
+			if name, ok := undescribedHandFlag(n); ok {
+				out = append(out, undescribedFlag{fn, name, fset.Position(n.Pos()).Line})
+				return true
+			}
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -87,6 +91,47 @@ func undescribedFlags(fset *token.FileSet, f *ast.File) []undescribedFlag {
 		visit("package", d)
 	}
 	return out
+}
+
+// undescribedHandFlag reads a `verbflag.Flag{...}` literal, the flag a verb
+// that reads its flags by hand names for its help (verbflag.HelpIfAsked):
+// its name, and whether its Wants is missing or an empty literal.
+func undescribedHandFlag(n ast.Node) (string, bool) {
+	lit, ok := n.(*ast.CompositeLit)
+	if !ok {
+		return "", false
+	}
+	sel, ok := lit.Type.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Flag" || exprText(sel.X) != "verbflag" {
+		return "", false
+	}
+	text := func(e ast.Expr) (string, bool) {
+		b, ok := e.(*ast.BasicLit)
+		if !ok || b.Kind != token.STRING {
+			return "", false
+		}
+		s, err := strconv.Unquote(b.Value)
+		return s, err == nil
+	}
+	name, wants, built := "?", "", false
+	for i, e := range lit.Elts {
+		key, v := "", e
+		if kv, ok := e.(*ast.KeyValueExpr); ok {
+			key, v = exprText(kv.Key), kv.Value
+		} else {
+			key = []string{"Name", "Wants", "Bool"}[min(i, 2)]
+		}
+		s, isLit := text(v)
+		switch key {
+		case "Name":
+			if isLit {
+				name = s
+			}
+		case "Wants":
+			wants, built = s, !isLit
+		}
+	}
+	return name, !built && strings.TrimSpace(wants) == ""
 }
 
 // TestEveryFlagSaysWhatItWants holds X7 of the tool ledger: every flag a tool
@@ -142,6 +187,8 @@ func (t) declare(fs *flag.FlagSet, usage string) {
 	fs.String("built", "", usage)
 	fs.Bool("concat", false, "" + usage)
 	_ = slog.String("k", "")
+	verbflag.HelpIfAsked(nil, "push", verbflag.Flag{Name: "id"}, verbflag.Flag{Name: "as", Wants: " "},
+		verbflag.Flag{Name: "ok", Wants: "who pushes"}, verbflag.Flag{"pos", "", false}, verbflag.Flag{Name: "run", Wants: usage})
 }
 `
 	fset := token.NewFileSet()
@@ -151,5 +198,6 @@ func (t) declare(fs *flag.FlagSet, usage string) {
 	for _, s := range undescribedFlags(fset, f) {
 		got = append(got, s.fn+":"+s.name)
 	}
-	assert.Equal(t, []string{"package:top", "t.declare:a", "t.declare:b", "t.declare:c", "t.declare:d", "t.declare:e"}, got)
+	assert.Equal(t, []string{"package:top", "t.declare:a", "t.declare:b", "t.declare:c", "t.declare:d", "t.declare:e",
+		"t.declare:id", "t.declare:as", "t.declare:pos"}, got)
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
 )
 
@@ -65,6 +66,75 @@ func TestWhatTheHelpLicensesIsNotFound(t *testing.T) {
 			exit, stdout, stderr := runSelfTalk(t, f)
 			assert.Equal(t, 0, exit, "stderr: %s", stderr)
 			assert.Contains(t, stdout, "SELFTALK OK files=1")
+		})
+	}
+}
+
+// A rule document with ANY finding carries its banner, a STANDING one as much as an INSTALLATION
+// one: the banner says what a finding there is for, whichever class found it. Both renderings.
+func TestRuleDocBannerCoversEveryClass(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, body string }{
+		{"standing only", "I am bad at estimating time.\n"},
+		{"installation only", "I have no associative recall to drag anything back later.\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := write(t, t.TempDir(), "POLICY.md", tc.body)
+			exit, stdout, _ := runSelfTalk(t, "--rule-doc", "POLICY.md", f)
+			assert.Equal(t, 1, exit)
+			assert.Contains(t, stdout, "SELFTALK RULEDOC "+f+": "+selftalk.RuleDocumentBanner)
+
+			exit, stdout, _ = runSelfTalk(t, "--json", "--rule-doc", "POLICY.md", f)
+			assert.Equal(t, 1, exit)
+			var got struct {
+				Items []struct {
+					Kind   string
+					Fields map[string]any
+				}
+			}
+			require.NoError(t, json.Unmarshal([]byte(stdout), &got), stdout)
+			require.NotEmpty(t, got.Items)
+			assert.Equal(t, "ruledoc", got.Items[0].Kind)
+			assert.Equal(t, f, got.Items[0].Fields["file"])
+		})
+	}
+}
+
+// Every flag a verb registers is named on that verb's usage line in the banner, so the usage a
+// reader meets first and the flags the verb takes cannot disagree. The flags are read from each
+// verb's own -h, which lists what its flag set defines.
+func TestEveryVerbsUsageLineNamesItsFlags(t *testing.T) {
+	t.Parallel()
+
+	usageLine := func(prefix string) string {
+		for _, l := range strings.Split(usage, "\n") {
+			if l = strings.TrimSpace(l); strings.HasPrefix(l, prefix) {
+				return l
+			}
+		}
+		return ""
+	}
+	for verb, prefix := range map[string]string{
+		"scan":    "nova-self-talk [--", // the scan's flags stand on the plain usage line
+		"shapes":  "nova-self-talk shapes ",
+		"example": "nova-self-talk example ",
+		"version": "nova-self-talk version ",
+	} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+			line := usageLine(prefix)
+			require.NotEmpty(t, line, "the banner has no usage line for %s", verb)
+			exit, help, _ := runSelfTalk(t, verb, "-h")
+			require.Equal(t, 0, exit)
+			_, flags, _ := strings.Cut(help, "flags:\n")
+			for _, l := range strings.Split(flags, "\n") {
+				if name, ok := strings.CutPrefix(l, "  --"); ok {
+					name, _, _ = strings.Cut(name, " ")
+					assert.Contains(t, line, "[--"+name, "%s registers --%s and its usage line does not name it: %s", verb, name, line)
+				}
+			}
 		})
 	}
 }
@@ -246,4 +316,105 @@ func TestExampleWritesThePagesFromTheBinary(t *testing.T) {
 	exit, _, stderr = runSelfTalk(t, "example")
 	assert.Equal(t, 2, exit)
 	assert.Contains(t, stderr, "takes one directory to write the pages into, got 0 arguments: nova-self-talk example ./pages")
+}
+
+// The command example points to must survive shell parsing as one literal path, including a
+// leading dash that would otherwise be parsed as a scan flag.
+func TestExampleNextQuotesPathAsOneShellArgument(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name, verb, file string
+		want             []string
+	}{
+		{"ordinary path", "", "pages/journal.md", []string{"nova-self-talk", "pages/journal.md"}},
+		{"spaces", "", "pages/my journal.md", []string{"nova-self-talk", "pages/my journal.md"}},
+		{"apostrophe", "", "pages/O'Brien.md", []string{"nova-self-talk", "pages/O'Brien.md"}},
+		{"literal shell syntax", "example", "pages/$HOME;$(touch marker).md", []string{"nova-self-talk", "example", "pages/$HOME;$(touch marker).md"}},
+		{"leading dash", "", "-pages/journal.md", []string{"nova-self-talk", "--", "-pages/journal.md"}},
+		{"leading dash directory", "example", "-pages", []string{"nova-self-talk", "example", "--", "-pages"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := onboarding.SplitShell(exampleNext(tc.verb, tc.file))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// The emitted line and JSON remedy both hold a path the existing shell parser reads as one word.
+func TestExampleEmitsRunnableNextCommandInBothFormats(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), "O'Brien $HOME;$(touch marker) pages")
+	exit, text, stderr := runSelfTalk(t, "example", dir)
+	require.Equal(t, 0, exit, stderr)
+	_, next, found := strings.Cut(strings.TrimSpace(text), "; run: ")
+	require.True(t, found, text)
+	want := []string{"nova-self-talk", filepath.Join(dir, "journal.md")}
+	got, err := onboarding.SplitShell(next)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+
+	exit, raw, stderr := runSelfTalk(t, "example", "--json", dir)
+	require.Equal(t, 0, exit, stderr)
+	var result struct {
+		Result struct {
+			Remedy string `json:"remedy"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &result), raw)
+	assert.Equal(t, next, result.Result.Remedy)
+	got, err = onboarding.SplitShell(result.Result.Remedy)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+// Paths whose characters the one-line renderer escapes cannot be replayed; refuse before writing
+// the example directory, in both result formats.
+func TestExampleRefusesControlCharactersBeforeWriting(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		char rune
+	}{
+		{"tab", '\t'},
+		{"newline", '\n'},
+		{"delete", 0x7f},
+		{"c1", '\u0085'},
+		{"line separator", '\u2028'},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, asJSON := range []bool{false, true} {
+				t.Run(map[bool]string{false: "text", true: "json"}[asJSON], func(t *testing.T) {
+					t.Parallel()
+					root := t.TempDir()
+					dir := filepath.Join(root, "bad"+string(tc.char)+"name")
+					args := []string{"example"}
+					if asJSON {
+						args = append(args, "--json")
+					}
+					args = append(args, dir)
+					exit, stdout, stderr := runSelfTalk(t, args...)
+					assert.Equal(t, 2, exit)
+					if asJSON {
+						assert.Empty(t, stderr)
+						assert.Contains(t, stdout, `"status":"refused"`)
+						assert.Contains(t, stdout, "characters the one-line output must escape")
+						assert.Contains(t, stdout, "would not name the same path")
+					} else {
+						assert.Empty(t, stdout)
+						assert.Contains(t, stderr, "characters the one-line output must escape")
+						assert.Contains(t, stderr, "would not name the same path")
+					}
+					entries, err := os.ReadDir(root)
+					require.NoError(t, err)
+					assert.Empty(t, entries)
+				})
+			}
+		})
+	}
 }

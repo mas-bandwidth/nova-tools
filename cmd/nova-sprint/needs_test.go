@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -17,18 +20,13 @@ func TestTheReadsShowTheNeeds(t *testing.T) {
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("add --stream s2 b --needs s1-1,s1-2")
 	out := ta.ok("card --fields b")
-	if !strings.Contains(out, "NEEDS s1-1 ready\n") || !strings.Contains(out, "NEEDS s1-2 ready\n") {
-		t.Fatalf("card b: %s", out)
-	}
-	if out := ta.ok("card --fields s1-1"); !strings.Contains(out, "NEEDED-BY b\n") {
-		t.Fatalf("card s1-1: %s", out)
-	}
-	if out := ta.ok("queue --stream s2 --col waiting"); !strings.Contains(out, "b work:s2:waiting waits for: s1-1,s1-2") {
-		t.Fatalf("queue: %s", out)
-	}
-	if code, _, errs := ta.do("queue --as m1 --col waiting"); code != 2 || !strings.Contains(errs, "--col takes waiting, with --stream") {
-		t.Fatalf("--col without --stream: %d %s", code, errs)
-	}
+	require.Contains(t, out, "NEEDS s1-1 ready\n", "card b")
+	require.Contains(t, out, "NEEDS s1-2 ready\n", "card b")
+	require.Contains(t, ta.ok("card --fields s1-1"), "NEEDED-BY b\n", "card s1-1")
+	require.Contains(t, ta.ok("queue --stream s2 --col waiting"), "b work:s2:waiting waits for: s1-1,s1-2", "queue")
+	code, _, errs := ta.do("queue --as m1 --col waiting")
+	require.Equal(t, 2, code, "--col without --stream: %d %s", code, errs)
+	require.Contains(t, errs, "--col takes waiting, with --stream", "--col without --stream: %d %s", code, errs)
 	ta.clean()
 }
 
@@ -43,9 +41,8 @@ func TestCardShowsTheWaivedNeeds(t *testing.T) {
 	g := ta.group(sprint.NBlocked, "s2")
 	ta.ok("ack " + g.Notes[0] + " --reason fine")
 	out := ta.ok("card --fields b")
-	if !strings.Contains(out, "NEEDS s1-1 off the table (dropped) waived by ") || !strings.Contains(out, " at 20") {
-		t.Fatalf("card b: %s", out)
-	}
+	require.Contains(t, out, "NEEDS s1-1 off the table (dropped) waived by ", "card b")
+	require.Contains(t, out, " at 20", "card b")
 	ta.clean()
 }
 
@@ -54,12 +51,10 @@ func TestAddDoesNotAdmitAWaiterOfAnInvalidID(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	code, out, errs := ta.do("add --stream s1 --needs bad.id bad.id waiter")
-	if code != 1 || !strings.Contains(out+errs, "bad.id") || !strings.Contains(out+errs, "waiter") {
-		t.Fatalf("refusal: code=%d out=%s errors=%s", code, out, errs)
-	}
-	if out := ta.ok("queue --stream s1 --col waiting"); strings.Contains(out, "waiter work:") {
-		t.Fatalf("admitted waiter: %s", out)
-	}
+	require.Equal(t, 1, code, "refusal: code=%d out=%s errors=%s", code, out, errs)
+	require.Contains(t, out+errs, "bad.id", "refusal: code=%d out=%s errors=%s", code, out, errs)
+	require.Contains(t, out+errs, "waiter", "refusal: code=%d out=%s errors=%s", code, out, errs)
+	require.NotContains(t, ta.ok("queue --stream s1 --col waiting"), "waiter work:", "admitted waiter")
 	ta.clean()
 }
 
@@ -71,15 +66,9 @@ func TestTheCardSaysWhatHoldsIt(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 1")
 	ta.ok("add --stream s2 b --needs s1-1")
-	if out := ta.ok("card --fields s1-1"); !strings.Contains(out, "HELD (e) the machine is STOPPED; the next tick: s1-1") {
-		t.Fatalf("card s1-1: %s", out)
-	}
-	if out := ta.ok("card --fields b"); !strings.Contains(out, "HELD (d) needs s1-1 (e)") {
-		t.Fatalf("card b: %s", out)
-	}
-	if out := ta.ok("card b --json"); !strings.Contains(out, `"held":{"id":"b","by":"d"`) {
-		t.Fatalf("card b --json: %s", out)
-	}
+	require.Contains(t, ta.ok("card --fields s1-1"), "HELD (e) the machine is STOPPED; the next tick: s1-1", "card s1-1")
+	require.Contains(t, ta.ok("card --fields b"), "HELD (d) needs s1-1 (e)", "card b")
+	require.Contains(t, ta.ok("card b --json"), `"held":{"id":"b","by":"d"`, "card b --json")
 }
 
 // inbox --open lists the whole needs of a blocked judgment, one per line, as
@@ -98,28 +87,18 @@ func TestInboxOpenListsEveryDroppedNeed(t *testing.T) {
 	g := ta.group(sprint.NBlocked, "s2")
 	list := ta.ok("inbox --open " + g.ID)
 	for _, id := range ids {
-		if !strings.Contains(list, "\n  NEEDS "+id+"\n") {
-			t.Errorf("inbox --open %s does not list the need %s:\n%s", g.ID, id, list)
-		}
+		assert.Contains(t, list, "\n  NEEDS "+id+"\n", "inbox --open %s does not list the need %s", g.ID, id)
 	}
-	if !strings.Contains(list, "... and 4 more") {
-		t.Errorf("the judgment's line no longer previews the needs:\n%s", list)
-	}
-	if plain := ta.ok("inbox"); strings.Contains(plain, "NEEDS ") {
-		t.Errorf("inbox without --open lists needs:\n%s", plain)
-	}
+	assert.Contains(t, list, "... and 4 more", "the judgment's line no longer previews the needs")
+	assert.NotContains(t, ta.ok("inbox"), "NEEDS ", "inbox without --open lists needs")
 	var open struct {
 		Needs []string `json:"needs"`
 	}
 	ta.json("inbox --open "+g.ID, &open)
-	if len(open.Needs) != 12 {
-		t.Errorf("inbox --open --json needs: %v", open.Needs)
-	}
+	assert.Len(t, open.Needs, 12, "inbox --open --json needs: %v", open.Needs)
 	card := ta.ok("card --fields b")
 	for _, id := range ids {
-		if !strings.Contains(card, "NEEDS "+id+" ") {
-			t.Errorf("card --fields b lacks %s", id)
-		}
+		assert.Contains(t, card, "NEEDS "+id+" ", "card --fields b lacks %s", id)
 	}
 	ta.clean()
 }

@@ -65,8 +65,13 @@ each participant and, for each one who sends, a directory: that sender's lane.
 A note is a markdown file in its sender's lane with From, To and Subject lines;
 a receipt in your lane closes a note sent to you, and your cursor there is the
 last commit you read. git fetch and push carry it all; nothing lives elsewhere.
-first run: copy the example bus (the cp line above example:), then run the lines
-under example: in order; reading needs no remote, sending needs one.
+first run: use the Standalone setup below, then run example: in order.
+Reading needs no remote; sending publishes unless --no-push is explicit.
+
+exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a draft
+refused, a bus that failed check, a push that could not be landed, a cursor
+that is no longer on this history, another run holding this checkout; 2 could
+not run: missing flag, unreadable bus, bad invocation.
 
 usage:
   nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>] [--out <path> [--overwrite] | > <file>]
@@ -75,11 +80,10 @@ usage:
   nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
   nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push] [--dry-run] [--git-timeout <seconds>]
         the bus is a git repository, and the roster is <bus>/participants.json:
-        {"participants":[{"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com"},{"name":"Bo"}]}
-        a sender is a participant with a "lane" (from-<slug>, lower case: the directory <bus>/<lane>/ its notes
-        land in, which send creates) and a git_name and git_email (the commit identity); Bo has no lane, so
-        Bo can be written to and never sends ("has no lane on this bus" means this line has none). --no-push
-        commits without pushing; the help's ROSTER AND LANES paragraph goes from nothing to a first send
+        {"participants":[{"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com"},{"name":"Bo","lane":"from-bo","git_name":"Bo","git_email":"bo@example.com"}]}
+        a sender needs a lane (from-<slug>) plus git_name and git_email (the commit identity).
+        A participant with no lane is addressable but cannot send or read a lane's inbox.
+        --no-push commits locally; ROSTER AND LANES below explains setup and identities
   nova-bus send --bus <dir> (--prepared <path>|--prepared-stdin) --as <name> --remote <name> --branch <name> [--attempts <n>] [--git-timeout <seconds>]
   nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--advance] [--dry-run] [--attempts <n>] [--git-timeout <seconds>]
   nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]] [--full] [--open [--open-max <n>]] [--open-warn <n>] [--max-commits <n>]
@@ -101,11 +105,6 @@ usage:
   nova-bus names --bus <dir>
 
 every verb that runs git also takes [--git-timeout <seconds>], default 60.
-
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a draft
-refused, a bus that failed check, a push that could not be landed, a cursor
-that is no longer on this history, another run holding this checkout; 2 could
-not run: missing flag, unreadable bus, bad invocation.
 
 Every path comes from a flag. There is no default bus, no default remote and no
 default branch; a missing one is a refusal: refusing to guess. The receipt word count
@@ -257,7 +256,7 @@ lane directory per sender. The roster is one JSON object:
 
   {"participants":[
     {"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com","aliases":["A"]},
-    {"name":"Bo"}],
+    {"name":"Bo","lane":"from-bo","git_name":"Bo","git_email":"bo@example.com"}],
    "groups":[{"name":"all","members":["Ada","Bo"]}]}
 
 A participant is a name that can be written to. It SENDS only with a "lane": from-<slug>, a
@@ -268,9 +267,22 @@ git_name and git_email are required beside a lane: they are the commit identity,
 git -c. "aliases" are other names that resolve to the participant; a group
 is a name that stands for several participants and is never a sender. The roster is strict: an
 unknown key, a duplicate name and a lane shared by two participants are each refused by name.
-From nothing to a first send, in a scratch directory, with git's user.name and user.email set
-(the first commit needs them) and the draft kept OUTSIDE the checkout (an untracked file in it
-is "changes that are not this note", and send refuses):
+Standalone setup, in a fresh scratch directory (requires git; writes only ./bus):
+
+  git init -b main bus
+  git -C bus config user.name Example
+  git -C bus config user.email example@example.com
+  printf '%s\n' '{"participants":[{"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com"},{"name":"Bo","lane":"from-bo","git_name":"Bo","git_email":"bo@example.com"}]}' > bus/participants.json
+  git -C bus add participants.json
+  git -C bus commit -m roster
+
+Then run the example commands below. There is no quickstart verb: creating a bus
+requires choosing its participant identities and lanes; the explicit setup above
+makes those local writes visible before adoption.
+
+From nothing to a first send, alternatively, in another fresh scratch directory,
+with git's user.name and user.email set. Save the roster above as participants.json
+in the checkout; keep the draft outside it and replace its placeholder body:
 
   git init -b main bus && cd bus      (save the roster above as participants.json here)
   git add participants.json && git commit -m roster
@@ -300,7 +312,8 @@ instants can assign different Date values and IDs even when the original draft
 is identical. send --prepared confirms or publishes that exact saved artifact
 with bounded recovery.
 
-Copy the example bus out first; every line below runs against it.
+For a populated fixture when using the source checkout, copy the example bus
+out instead of the standalone setup above; every line below runs against either.
 
   cp -R cmd/nova-bus/testdata/example-bus ./bus
 
@@ -347,7 +360,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		if cmd == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
 			return run(append(rest, "--help"), stdin, stdout, stderr, now)
 		}
-		fmt.Fprint(stdout, usage)
+		fmt.Fprintf(stdout, "%s", usage)
 		return 0
 	case "draft":
 		return cmdDraft(rest, stdout, stderr, now)

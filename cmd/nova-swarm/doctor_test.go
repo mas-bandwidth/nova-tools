@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -77,15 +80,10 @@ func TestDoctorOKWhenBothStampsMatch(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	code := env.cmdDoctor([]string{"--path", "/opt/go/bin/nova-swarm", "--local", "/home/me/.local/bin/nova-swarm"}, &out, &errOut)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut.String())
-	}
-	if errOut.Len() != 0 {
-		t.Errorf("a matching pair wrote to stderr: %q", errOut.String())
-	}
-	if want := "DOCTOR OK stamp=" + doctorRebuiltLine + "\n"; out.String() != want {
-		t.Errorf("OK line:\n got %q\nwant %q", out.String(), want)
-	}
+	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
+	assert.Zero(t, errOut.Len(), "a matching pair wrote to stderr: %q", errOut.String())
+	want := "DOCTOR OK stamp=" + doctorRebuiltLine + "\n"
+	assert.Equal(t, want, out.String(), "OK line:\n got %q\nwant %q", out.String(), want)
 }
 
 // A DIFFERENT STAMP IS A REFUSAL, exit 2, with BOTH full version lines printed and one
@@ -102,16 +100,10 @@ func TestDoctorRefusesWhenThePATHBinaryIsShadowed(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	code := env.cmdDoctor([]string{"--path", "/opt/go/bin/nova-swarm", "--local", "/home/me/.local/bin/nova-swarm"}, &out, &errOut)
-	if code != 2 {
-		t.Fatalf("exit %d, want 2\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
-	}
+	require.Equal(t, 2, code, "exit %d, want 2\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
 	both := out.String() + errOut.String()
-	if !strings.Contains(both, doctorStaleLine) {
-		t.Errorf("the PATH binary's full line is not printed:\n%s", both)
-	}
-	if !strings.Contains(both, doctorRebuiltLine) {
-		t.Errorf("the ~/.local/bin binary's full line is not printed:\n%s", both)
-	}
+	assert.Contains(t, both, doctorStaleLine, "the PATH binary's full line is not printed:\n%s", both)
+	assert.Contains(t, both, doctorRebuiltLine, "the ~/.local/bin binary's full line is not printed:\n%s", both)
 	if !strings.Contains(both, "copy") || !strings.Contains(both, ".local/bin") {
 		t.Errorf("the refusal names no fix:\n%s", both)
 	}
@@ -128,19 +120,14 @@ func TestDoctorResolvesNovaSwarmOnPATH(t *testing.T) {
 			doctorLocal("/home/me"):     doctorRebuiltLine,
 		},
 		func(name string) (string, error) {
-			if name != "nova-swarm" {
-				t.Errorf("the resolver was asked for %q, want nova-swarm", name)
-			}
+			assert.Equal(t, "nova-swarm", name, "the resolver was asked for %q, want nova-swarm", name)
 			return "/usr/local/bin/nova-swarm", nil
 		}, "/home/me")
 
 	var out, errOut bytes.Buffer
-	if code := env.cmdDoctor(nil, &out, &errOut); code != 0 {
-		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut.String())
-	}
-	if !strings.HasPrefix(out.String(), "DOCTOR OK stamp=") {
-		t.Errorf("not the OK line: %q", out.String())
-	}
+	code := env.cmdDoctor(nil, &out, &errOut)
+	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
+	assert.True(t, strings.HasPrefix(out.String(), "DOCTOR OK stamp="), "not the OK line: %q", out.String())
 }
 
 // PATH's nova-swarm IS ~/.local/bin/nova-swarm: there is no second binary and so nothing to
@@ -151,15 +138,10 @@ func TestDoctorOKWhenPATHResolvesToTheLocalBinary(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	code := env.cmdDoctor([]string{"--path", doctorLocal("/home/me"), "--local", doctorLocal("/home/me")}, &out, &errOut)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut.String())
-	}
-	if errOut.Len() != 0 {
-		t.Errorf("wrote to stderr: %q", errOut.String())
-	}
-	if want := "DOCTOR OK stamp=" + doctorRebuiltLine + "\n"; out.String() != want {
-		t.Errorf("OK line:\n got %q\nwant %q", out.String(), want)
-	}
+	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
+	assert.Zero(t, errOut.Len(), "wrote to stderr: %q", errOut.String())
+	want := "DOCTOR OK stamp=" + doctorRebuiltLine + "\n"
+	assert.Equal(t, want, out.String(), "OK line:\n got %q\nwant %q", out.String(), want)
 }
 
 // The one binary a launch would run must answer even when there is no second one to compare
@@ -185,12 +167,9 @@ func TestDoctorOKWhenTheLocalBinaryIsAbsent(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	code := env.cmdDoctor([]string{"--path", "/opt/go/bin/nova-swarm"}, &out, &errOut)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut.String())
-	}
-	if want := "DOCTOR OK stamp=" + doctorStaleLine + "\n"; out.String() != want {
-		t.Errorf("OK line:\n got %q\nwant %q", out.String(), want)
-	}
+	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
+	want := "DOCTOR OK stamp=" + doctorStaleLine + "\n"
+	assert.Equal(t, want, out.String(), "OK line:\n got %q\nwant %q", out.String(), want)
 }
 
 // THE LAUNCH SEAM. `native` is the verb that starts a card, and the preflight is
@@ -240,9 +219,7 @@ func TestPreflightLeavesNonLaunchVerbsAlone(t *testing.T) {
 	if code, stop := env.preflight([]string{"template", "--name", "read-pr"}, &errOut); stop || code != 0 {
 		t.Fatalf("template: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
 	}
-	if errOut.Len() != 0 {
-		t.Errorf("a verb that starts nothing was refused: %q", errOut.String())
-	}
+	assert.Zero(t, errOut.Len(), "a verb that starts nothing was refused: %q", errOut.String())
 }
 
 // The verb is reachable from the dispatcher, and `doctor` is not a launch verb itself, so
@@ -255,12 +232,9 @@ func TestDoctorVerbIsReachableFromTheDispatch(t *testing.T) {
 		},
 		noPath, "/home/me")
 	var out, errOut bytes.Buffer
-	if code := run([]string{"doctor", "--path", "/opt/go/bin/nova-swarm", "--local", "/home/me/.local/bin/nova-swarm"}, strings.NewReader(""), &out, &errOut, time.Now().UTC()); code != 0 {
-		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut.String())
-	}
-	if !strings.HasPrefix(out.String(), "DOCTOR OK stamp=") {
-		t.Errorf("not the OK line: %q", out.String())
-	}
+	code := run([]string{"doctor", "--path", "/opt/go/bin/nova-swarm", "--local", "/home/me/.local/bin/nova-swarm"}, strings.NewReader(""), &out, &errOut, time.Now().UTC())
+	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
+	assert.True(t, strings.HasPrefix(out.String(), "DOCTOR OK stamp="), "not the OK line: %q", out.String())
 }
 
 // A PATH binary that is named and cannot be read is a refusal, not an OK with the other
@@ -272,18 +246,12 @@ func TestDoctorRefusesAnUnreadablePATHBinary(t *testing.T) {
 		noPath, "/home/me")
 	var out, errOut bytes.Buffer
 	code := env.cmdDoctor([]string{"--path", "/opt/go/bin/gone", "--local", "/home/me/.local/bin/nova-swarm"}, &out, &errOut)
-	if code != 2 {
-		t.Fatalf("exit %d, want 2\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
-	}
+	require.Equal(t, 2, code, "exit %d, want 2\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
 	got := errOut.String()
 	for _, want := range []string{"DOCTOR UNREADABLE", "/opt/go/bin/gone", "not found", doctorRebuiltLine, "by hand"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the refusal does not contain %q:\n%s", want, got)
-		}
+		assert.Contains(t, got, want, "the refusal does not contain %q:\n%s", want, got)
 	}
-	if out.Len() != 0 {
-		t.Errorf("a refusal wrote a DOCTOR OK line: %q", out.String())
-	}
+	assert.Zero(t, out.Len(), "a refusal wrote a DOCTOR OK line: %q", out.String())
 }
 
 // Preflight stands aside for -h and --help: asking for help is not a launch.
@@ -314,18 +282,14 @@ func TestReadVersionLineWithinKillsAHungBinary(t *testing.T) {
 	dir := t.TempDir()
 
 	answers := filepath.Join(dir, "answers")
-	if err := testbin.WriteExecutable(answers, []byte("#!/bin/sh\necho 'nova-swarm v1 stamp'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(answers, []byte("#!/bin/sh\necho 'nova-swarm v1 stamp'\n"), 0o755))
 	line, err := readVersionLineWithin(answers, doctorGoodDeadline, time.Second, doctorVersionLineMax)
 	if err != nil || line != "nova-swarm v1 stamp" {
 		t.Fatalf("a binary that answers: got (%q, %v)", line, err)
 	}
 
 	hangs := filepath.Join(dir, "hangs")
-	if err := testbin.WriteExecutable(hangs, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(hangs, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755))
 	line, err = readVersionLineWithin(hangs, doctorHungDeadline, 50*time.Millisecond, doctorVersionLineMax)
 	if err == nil || err.Error() != "timed out after 100ms" || line != "" {
 		t.Errorf("a hung binary: got (%q, %v), want an empty line and \"timed out after 100ms\"", line, err)
@@ -379,12 +343,8 @@ func doctorStubsGrace(t *testing.T, pathScript, localScript, hung string, grace 
 		if script == "" {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := testbin.WriteExecutable(bin, []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(bin), 0o755))
+		require.NoError(t, testbin.WriteExecutable(bin, []byte("#!/bin/sh\n"+script+"\n"), 0o755))
 	}
 	env = doctorEnv{
 		lookPath: func(string) (string, error) { return pathBin, nil },
@@ -456,20 +416,14 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 			}
 			got := errOut.String()
 			for _, want := range c.contains {
-				if !strings.Contains(got, want) {
-					t.Errorf("stderr lacks %q:\n%s", want, got)
-				}
+				assert.Contains(t, got, want, "stderr lacks %q:\n%s", want, got)
 			}
 			for _, no := range c.absent {
-				if strings.Contains(got, no) {
-					t.Errorf("stderr holds %q:\n%s", no, got)
-				}
+				assert.NotContains(t, got, no, "stderr holds %q:\n%s", no, got)
 			}
 
 			// The doctor verb says the same as a finding, and exits non-zero.
-			if dcode != c.wantExit {
-				t.Errorf("doctor exit %d, want %d\nstdout: %s\nstderr: %s", dcode, c.wantExit, out.String(), derr.String())
-			}
+			assert.Equal(t, c.wantExit, dcode, "doctor exit %d, want %d\nstdout: %s\nstderr: %s", dcode, c.wantExit, out.String(), derr.String())
 			if c.wantExit != 0 && (out.Len() != 0 || derr.String() != got) {
 				t.Errorf("doctor's finding differs from the preflight's\nstdout: %q\nstderr: %q\nwant stderr: %q", out.String(), derr.String(), got)
 			}
@@ -529,9 +483,7 @@ func TestReadVersionLineWithinBoundsWhatItKeeps(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) string {
 		p := filepath.Join(dir, name)
-		if err := testbin.WriteExecutable(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, testbin.WriteExecutable(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755))
 		return p
 	}
 
@@ -562,15 +514,12 @@ func TestDoctorPrintsABoundedExcerptOfAStamp(t *testing.T) {
 	env := doctorFake(map[string]string{"/opt/nova-swarm": long, "/home/me/.local/bin/nova-swarm": doctorRebuiltLine}, noPath, "/home/me")
 
 	var out, errOut bytes.Buffer
-	if code := env.cmdDoctor([]string{"--path", "/opt/nova-swarm"}, &out, &errOut); code != 2 {
-		t.Fatalf("exit %d, want 2", code)
-	}
+	code := env.cmdDoctor([]string{"--path", "/opt/nova-swarm"}, &out, &errOut)
+	require.Equal(t, 2, code, "exit %d, want 2", code)
 	if len(errOut.String()) > 4*doctorStampExcerpt+2000 || strings.Contains(errOut.String(), strings.Repeat("x", doctorStampExcerpt+50)) {
 		t.Errorf("the refusal printed the whole stamp (%d bytes)", errOut.Len())
 	}
-	if !strings.Contains(errOut.String(), "...+") {
-		t.Errorf("the excerpt does not say it was cut:\n%.400s", errOut.String())
-	}
+	assert.Contains(t, errOut.String(), "...+", "the excerpt does not say it was cut:\n%.400s", errOut.String())
 
 	out.Reset()
 	env = doctorFake(map[string]string{"/opt/nova-swarm": long}, noPath, "/home/me")
@@ -595,9 +544,7 @@ func TestCompareBinariesReadsTheTwoAtTheSameTime(t *testing.T) {
 		},
 	}
 	r := env.compareBinaries("/a/nova-swarm", "/b/nova-swarm")
-	if len(r.unreadable) != 0 {
-		t.Fatalf("the reads were not concurrent: %+v", r.unreadable)
-	}
+	require.Empty(t, r.unreadable, "the reads were not concurrent: %+v", r.unreadable)
 	if !r.shadowed || r.pathLine != "nova-swarm /a/nova-swarm" || r.localLine != "nova-swarm /b/nova-swarm" {
 		t.Errorf("the comparison lost a stamp: %+v", r)
 	}
@@ -678,22 +625,16 @@ func TestDoctorUnreadableLineSaysWhatTheOtherBinaryCameTo(t *testing.T) {
 		} else {
 			env.homeDir = func() (string, error) { return "", errors.New("no home") }
 		}
-		if code := env.cmdDoctor(args, &out, &errOut); code != 2 {
-			t.Errorf("%s: exit %d, want 2\n%s", c.name, code, errOut.String())
+		code := env.cmdDoctor(args, &out, &errOut)
+		if !assert.Equal(t, 2, code, "%s: exit %d, want 2\n%s", c.name, code, errOut.String()) {
 			continue
 		}
 		got := errOut.String()
-		if !strings.Contains(got, c.want) {
-			t.Errorf("%s: the line lacks %q:\n%s", c.name, c.want, got)
-		}
+		assert.Contains(t, got, c.want, "%s: the line lacks %q:\n%s", c.name, c.want, got)
 		for _, no := range c.not {
-			if strings.Contains(got, no) {
-				t.Errorf("%s: the line holds %q:\n%s", c.name, no, got)
-			}
+			assert.NotContains(t, got, no, "%s: the line holds %q:\n%s", c.name, no, got)
 		}
-		if strings.Contains(got, "no other binary reported") {
-			t.Errorf("%s: the line reads as its opposite:\n%s", c.name, got)
-		}
+		assert.NotContains(t, got, "no other binary reported", "%s: the line reads as its opposite:\n%s", c.name, got)
 	}
 }
 
@@ -706,9 +647,8 @@ func TestDoctorSaysWhenThereIsNothingToCompare(t *testing.T) {
 	if code := env.cmdDoctor(nil, &out, &errOut); code != 0 || errOut.Len() != 0 {
 		t.Fatalf("exit %d, stderr %q, want 0 and silence", code, errOut.String())
 	}
-	if want := "DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory\n"; out.String() != want {
-		t.Errorf("got %q, want %q", out.String(), want)
-	}
+	want := "DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory\n"
+	assert.Equal(t, want, out.String(), "got %q, want %q", out.String(), want)
 	if strings.Contains(out.String(), "devel") || strings.Contains(out.String(), "stamp=") {
 		t.Errorf("the line reports a stamp nobody read: %q", out.String())
 	}
@@ -742,9 +682,7 @@ func TestDoctorLinesAreTheOnesTheDocsList(t *testing.T) {
 					printed[p], known = true, true
 				}
 			}
-			if !known {
-				t.Errorf("the doctor printed a line the docs do not list: %q", line)
-			}
+			assert.True(t, known, "the doctor printed a line the docs do not list: %q", line)
 		}
 	}
 	run := func(env doctorEnv, args ...string) {
@@ -759,22 +697,16 @@ func TestDoctorLinesAreTheOnesTheDocsList(t *testing.T) {
 	run(doctorFake(map[string]string{"/p": doctorStaleLine, "/l": doctorRebuiltLine}, noPath, "/home/me"), "--path", "/p", "--local", "/l")
 	run(doctorFake(map[string]string{"/l": doctorRebuiltLine}, noPath, "/home/me"), "--path", "/p", "--local", "/l")
 	for _, p := range prefixes {
-		if !printed[p] {
-			t.Errorf("no run printed a line starting %q", p)
-		}
+		assert.True(t, printed[p], "no run printed a line starting %q", p)
 	}
 
 	checkDoctorCausesAgainstDocs(t)
 
 	for _, doc := range []string{"SPEC-SWARM.md", "CLI.md"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "docs", doc))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, p := range prefixes {
-			if !strings.Contains(string(raw), p) {
-				t.Errorf("docs/%s does not list %q", doc, p)
-			}
+			assert.Contains(t, string(raw), p, "docs/%s does not list %q", doc, p)
 		}
 	}
 }
@@ -796,9 +728,7 @@ func checkDoctorCausesAgainstDocs(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string, perm os.FileMode) string {
 		p := filepath.Join(dir, name)
-		if err := testbin.WriteExecutable(p, []byte(body), perm); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, testbin.WriteExecutable(p, []byte(body), perm))
 		return p
 	}
 	stubs := map[string]string{
@@ -817,32 +747,23 @@ func checkDoctorCausesAgainstDocs(t *testing.T) {
 			deadline = doctorHungDeadline
 		}
 		_, err := readVersionLineWithin(stub, deadline, 50*time.Millisecond, 64)
-		if err == nil {
-			t.Errorf("%s: the run gave no cause", form)
+		if !assert.Error(t, err, "%s: the run gave no cause", form) {
 			continue
 		}
-		if !strings.HasPrefix(err.Error(), form) {
-			t.Errorf("a run expected to give %q gave %q", form, err)
-		}
+		assert.True(t, strings.HasPrefix(err.Error(), form), "a run expected to give %q gave %q", form, err)
 		seen[form] = true
 	}
 	for _, form := range forms {
-		if !seen[form] {
-			t.Errorf("no run produced a cause starting %q", form)
-		}
+		assert.True(t, seen[form], "no run produced a cause starting %q", form)
 	}
 	for _, doc := range []string{"SPEC-SWARM.md", "CLI.md"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "docs", doc))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, want := range []string{
 			"`timed out after <deadline>`", "`exited <n>`", "`was killed (<signal>)`", "`printed nothing`",
 			"`printed a line longer than <n> bytes`", "`not found`", "`fork/exec <path>: permission denied`",
 		} {
-			if !strings.Contains(string(raw), want) {
-				t.Errorf("docs/%s does not list the cause %s", doc, want)
-			}
+			assert.Contains(t, string(raw), want, "docs/%s does not list the cause %s", doc, want)
 		}
 	}
 }

@@ -1,42 +1,43 @@
 package main
 
 import (
-	"bytes"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
+	"io"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// vetlaw is the vettool's entry point in process.
+var vetlaw = testkit.Main(func(args []string, _ io.Reader, stdout, stderr io.Writer) int { return vet(args, stdout, stderr) })
 
 func parse(t *testing.T, name, src string) (*token.FileSet, *ast.File) {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, name, src, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return fset, f
 }
 
 // The fixture trips all three laws (the positive control).
 func TestFixtureTripsEveryLaw(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "../../fixtures/fixtures.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for name, got := range map[string][]string{
 		"zero-byte":    checkZeroByte(fset, f),
 		"help-refused": checkHelpRefused(fset, f),
 		"argv-text":    checkArgvText(fset, f),
 	} {
-		if len(got) != 1 {
-			t.Errorf("%s: want 1 diagnostic on the fixture, got %d: %q", name, len(got), got)
-		}
+		assert.Len(t, got, 1, "%s: want 1 diagnostic on the fixture", name)
 	}
 }
 
@@ -65,10 +66,9 @@ func run(args []string) int {
 `
 
 func TestHelpAndRefusedInSeparateBranchesIsClean(t *testing.T) {
+	t.Parallel()
 	fset, f := parse(t, "verb.go", verbShape)
-	if got := checkHelpRefused(fset, f); len(got) != 0 {
-		t.Fatalf("want no diagnostic, got %q", got)
-	}
+	require.Empty(t, checkHelpRefused(fset, f))
 }
 
 const helpRefusedCase = `package p
@@ -84,102 +84,79 @@ func run(args []string) int {
 `
 
 func TestHelpCaseAnsweringRefusedIsFlagged(t *testing.T) {
+	t.Parallel()
 	fset, f := parse(t, "verb.go", helpRefusedCase)
 	got := checkHelpRefused(fset, f)
-	if len(got) != 1 || !strings.Contains(got[0], "verb.go:6:") {
-		t.Fatalf("want one diagnostic at verb.go:6, got %q", got)
-	}
+	require.Len(t, got, 1, "want one diagnostic at verb.go:6")
+	require.Contains(t, got[0], "verb.go:6:")
 }
 
 func TestTestFilesAreNeverFlagged(t *testing.T) {
+	t.Parallel()
 	fset, f := parse(t, "verb_test.go", helpRefusedCase)
-	if got := checkHelpRefused(fset, f); len(got) != 0 {
-		t.Fatalf("want no diagnostic in a _test.go file, got %q", got)
-	}
+	require.Empty(t, checkHelpRefused(fset, f), "a _test.go file is never flagged")
 }
 
 // refused runs vet and requires the #2724 HOLD 6 shape: exit 2, nothing on
 // stdout, exactly one stderr line carrying every want fragment.
 func refused(t *testing.T, args []string, want ...string) {
 	t.Helper()
-	var out, errb bytes.Buffer
-	if code := vet(args, &out, &errb); code != 2 {
-		t.Fatalf("vet(%q) = %d, want 2; stderr %q", args, code, errb.String())
-	}
-	if out.Len() != 0 {
-		t.Errorf("stdout = %q, want empty", out.String())
-	}
-	lines := strings.Split(strings.TrimRight(errb.String(), "\n"), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("stderr has %d lines, want 1: %q", len(lines), errb.String())
-	}
-	for _, w := range want {
-		if !strings.Contains(lines[0], w) {
-			t.Errorf("stderr %q does not name %q", lines[0], w)
-		}
-	}
+	r := vetlaw.Do(t, args...).Exit(2)
+	assert.Empty(t, r.Stdout, r)
+	require.Len(t, strings.Split(strings.TrimRight(r.Stderr, "\n"), "\n"), 1, "want one stderr line: %s", r)
+	r.Err(want...)
 }
 
 func TestConfigAbsentRefuses(t *testing.T) {
+	t.Parallel()
 	refused(t, nil, "vet config", "absent")
 	missing := filepath.Join(t.TempDir(), "no-such.cfg")
 	refused(t, []string{missing}, missing, "unreadable")
 }
 
 func TestConfigUnreadableRefuses(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir() // a directory: ReadFile fails for every user, root included
 	refused(t, []string{dir}, dir, "unreadable")
 }
 
 func TestConfigInvalidJSONRefuses(t *testing.T) {
+	t.Parallel()
 	cfg := filepath.Join(t.TempDir(), "vet.cfg")
-	if err := os.WriteFile(cfg, []byte("{not json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	testkit.WriteFile(t, cfg, "{not json")
 	refused(t, []string{cfg}, cfg, "invalid JSON")
 }
 
 func TestGoFileParseErrorRefuses(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "bad.go")
-	if err := os.WriteFile(bad, []byte("package p\nfunc {"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg := filepath.Join(dir, "vet.cfg")
-	if err := os.WriteFile(cfg, []byte(`{"GoFiles":[`+strconv.Quote(bad)+`]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	refused(t, []string{cfg}, bad, "does not parse")
+	testkit.Tree(t, dir, map[string]string{"bad.go": "package p\nfunc {", "vet.cfg": `{"GoFiles":[` + strconv.Quote(bad) + `]}`})
+	refused(t, []string{filepath.Join(dir, "vet.cfg")}, bad, "does not parse")
 }
 
 func TestVetxOutputUnwritableRefuses(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	vetx := filepath.Join(dir, "missing-dir", "vet.out")
 	cfg := filepath.Join(dir, "vet.cfg")
-	if err := os.WriteFile(cfg, []byte(`{"VetxOnly":true,"VetxOutput":`+strconv.Quote(vetx)+`}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	testkit.WriteFile(t, cfg, `{"VetxOnly":true,"VetxOutput":`+strconv.Quote(vetx)+`}`)
 	refused(t, []string{cfg}, vetx, "unwritable")
 }
 
 // The good path still answers 0 with a clean file and 1 on the fixture.
 func TestValidConfigRuns(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	clean := filepath.Join(dir, "clean.go")
-	if err := os.WriteFile(clean, []byte("package p\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	testkit.WriteFile(t, clean, "package p\n")
 	for _, c := range []struct {
 		file string
 		code int
 	}{{clean, 0}, {"../../fixtures/fixtures.go", 1}} {
 		cfg := filepath.Join(dir, "vet.cfg")
-		if err := os.WriteFile(cfg, []byte(`{"GoFiles":["`+c.file+`"]}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		var out, errb bytes.Buffer
-		if got := vet([]string{cfg}, &out, &errb); got != c.code {
-			t.Errorf("%s: vet = %d, want %d; stderr %q", c.file, got, c.code, errb.String())
-		}
+		testkit.WriteFile(t, cfg, `{"GoFiles":["`+c.file+`"]}`)
+		r := vetlaw.Do(t, cfg)
+		assert.Equal(t, c.code, r.Code, "%s: %s", c.file, r)
 	}
 }

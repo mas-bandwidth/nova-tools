@@ -320,9 +320,9 @@ The test requirements are listed under **Tests this spec demands**.
     a shell.
 11. **This tool has no way to run a command unwalled.** There is no
     `--no-sandbox`, no environment variable and no config file: a
-    `nova-sandbox --no-sandbox` is `SANDBOX REFUSED reason=no_command:
-    unknown flag --no-sandbox; run: nova-sandbox help` at exit 125, like any other flag
-    the tool does not have. A wall this tool cannot build is a refusal (rule 1),
+    `nova-sandbox --no-sandbox` is `SANDBOX REFUSED reason=bad_flag:
+    unknown flag --no-sandbox; the flags are --read, ...; run: nova-sandbox help` at
+    exit 125, like any other flag the tool does not have. A wall this tool cannot build is a refusal (rule 1),
     and it stays a refusal — a tool whose whole reason is containment does not
     ship the switch that turns containment off.
 12. **The exec verb is transparent, and what happens to the tool's own process
@@ -1039,7 +1039,7 @@ range. This departure from the conventions preserves the child's exit status.
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
 | 3 | `run` only: the disposable volume could not be deleted — `SANDBOX LEAK`, naming the disk and the one command that removes it. It overrides the command's own status, because "nothing survives" is the whole contract and a caller that read `0` would believe the machine was clean |
 | 124 | `run` only: `--timeout` passed, the whole process group was killed and the volume was deleted anyway — `timeout(1)`'s status |
-| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), a missing `--` or nothing after it (`reason=no_command`); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`), a volume that could not be made, or that was made and not mounted (`reason=volume_failed`), and the handoff's own — `--artifact` or `--out-max-bytes` with no `--out`, or `--out` on windows (`reason=no_out`), an artifact path that is absolute, empty, `.` or carries `..` (`reason=bad_artifact`), a `--out-max-bytes` that is not a positive quantity (`reason=bad_out_max`), and a handoff that could not be completed after a command that exited 0 (`reason=out_failed`) |
+| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), a missing `--` or nothing after it (`reason=no_command`), a flag the bare form does not have (`reason=bad_flag`, naming the flags it has); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`), a volume that could not be made, or that was made and not mounted (`reason=volume_failed`), and the handoff's own — `--artifact` or `--out-max-bytes` with no `--out`, or `--out` on windows (`reason=no_out`), an artifact path that is absolute, empty, `.` or carries `..` (`reason=bad_artifact`), a `--out-max-bytes` that is not a positive quantity (`reason=bad_out_max`), and a handoff that could not be completed after a command that exited 0 (`reason=out_failed`) |
 | 126 | the command could not be executed **and the tool was still there to say so**: on `linux` the child could not be started inside the wall. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
 | 127 | the command could not be resolved on the caller's `PATH`: `SANDBOX REFUSED reason=not_found`, printed like every other refusal of the tool's own |
 | 128+N | the wrapped command was killed by signal `N` |
@@ -1109,7 +1109,7 @@ stdout. A wrapped command's stdout is its own and the tool writes nothing there.
 ```
 SANDBOX OK backend=<sandbox-exec|landlock> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
-SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|no_name|no_container|no_command|not_found|not_executable|volume_exists|volume_failed|unknown_verb>: <text>
+SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|no_name|no_container|no_command|bad_flag|not_found|not_executable|volume_exists|volume_failed|unknown_verb>: <text>
 SANDBOX STEP name=<container|look|create|delete|denials|list> state=<start|done> [ms=<n>]
 SANDBOX DENIED path=<p> op=<read|write> remedy="--read <dir>"
 SANDBOX TIMEOUT after=<d> name=<n>
@@ -1707,20 +1707,11 @@ closes it without reading and reports `got=allow`.
 A bounded local model trial on Apple Silicon runs MLX GPU arithmetic normally
 outside the wall but fails at import inside it with `[metal::load_device] No
 Metal device available`, under the narrowed mach-lookup profile with no IOKit
-clauses. The cheap answer is a tiny engine/device probe run under the proposed
-child policy — real GPU arithmetic, never an unconfined parent probe — and the
-bounded taxonomy it reports is `gpu_ok`, `missing_runtime`,
-`package_discovery`, `device_unavailable`, or `policy_refusal`
-(`internal/sandbox.ClassifyGPUProbe`, fakes only, no provider calls). The
-virtualenv half is explicit first: the wrapper resolves the venv Python
-symlink to its base executable and loses the venv's packages, so
-`VenvSitePackages` reads the link's own `<venv>/lib/python*/site-packages`
-and the caller names it with `--read` before Metal itself is tested. The only
+clauses. The only
 opt-in is `--gpu none|metal` (default `none`, printed as `gpu=` on every OK
 line); it records intent and never widens mach-lookup nor grants blanket
 device access, whose minimum mechanisms are still unmeasured — the generated
-profile stays closed and a metal run that reaches no device reports
-`device_unavailable`. The compared option is a separately supervised inference
+profile stays closed. The compared option is a separately supervised inference
 service: sandboxing its client does not sandbox the service, and that trust
 and resource boundary stays visible. Dedicated child HOME/cache/output roots,
 deadlines, process ownership, and measured receipts are unchanged.
@@ -2048,8 +2039,8 @@ One per rule:
     than a probe that "could not read" a file that was never there.
 11. `--no-sandbox` is **not a flag this tool has**: the test runs
     `nova-sandbox --no-sandbox -- <command>` and asserts the existing refusal,
-    `SANDBOX REFUSED reason=no_command: unknown flag --no-sandbox; run:
-    nova-sandbox help`, at exit 125, with the command not run. No
+    `SANDBOX REFUSED reason=bad_flag: unknown flag --no-sandbox; the flags are
+    ...; run: nova-sandbox help`, at exit 125, with the command not run. No
     environment variable and no file can turn the wall off either — the test
     sets every plausible name and the tool still sandboxes.
 12. A wrapped command exiting 3 gives exit 3; one killed by `SIGKILL` gives

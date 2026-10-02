@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"github.com/stretchr/testify/require"
+	"testing"
+)
 
 // #1496: parse ranges over a Go map, so a bare `nova-bus send` -- missing --bus,
 // --remote and --branch at once -- names whichever flag map order reaches first,
@@ -18,16 +21,12 @@ func TestIssue1496ABareVerbNamesEveryMissingRequiredFlagInAFixedOrder(t *testing
 	first := ""
 	for i := 0; i < 20; i++ {
 		r := invoke(t, "", "send")
-		if r.code != 2 {
-			t.Fatalf("run %d: exit = %d, want 2\nstderr: %s", i, r.code, r.stderr)
-		}
+		require.Equalf(t, 2, r.code, "run %d: exit = %d, want 2\nstderr: %s", i, r.code, r.stderr)
 		if first == "" {
 			first = r.stderr
-		} else if r.stderr != first {
-			t.Fatalf("run %d stderr differs from run 0:\n run 0: %q\n run %d: %q", i, first, i, r.stderr)
+		} else {
+			require.Equalf(t, first, r.stderr, "run %d stderr differs from run 0:\n run 0: %q\n run %d: %q", i, first, i, r.stderr)
 		}
 	}
-	if first != want {
-		t.Fatalf("stderr = %q, want %q", first, want)
-	}
+	require.Equalf(t, want, first, "stderr = %q, want %q", first, want)
 }

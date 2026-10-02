@@ -95,12 +95,12 @@ func ledgerEntries(d tokens.DayFile) []record.LedgerEntry {
 // writes nothing beside them.
 func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("ledger")
-	out := fs.String("out", "", "")
-	day := fs.String("day", "", "")
-	month := fs.String("month", "", "")
-	addr := fs.String("redis", "", "")
-	user := fs.String("user", "", "")
-	passwordEnv := fs.String("password-env", "", "")
+	out := fs.String("out", "", "directory containing daily token files")
+	day := fs.String("day", "", "one UTC day to index as YYYY-MM-DD")
+	month := fs.String("month", "", "month of day files to index as YYYY-MM")
+	addr := fs.String("redis", "", "Redis address for the ledger store")
+	user := fs.String("user", "", "Redis username for the ledger store")
+	passwordEnv := fs.String("password-env", "", "environment variable holding the Redis password")
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " ledger", oneline.Cap(err.Error(), oneline.TailBytes))
 	}

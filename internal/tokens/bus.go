@@ -438,6 +438,7 @@ func parseBody(n *note, label string, body []string, offset int, rules *Rules) {
 			n.redated++
 		}
 		n.zones[basis] = true
+		rules.SetDay(day)
 		m := Message{Day: day, Basis: basis, Model: model, Repo: rules.Attribute([]string{repo}, ""), Rough: rough}
 		m.Counts.Set(t, v)
 		n.msgs = append(n.msgs, m)

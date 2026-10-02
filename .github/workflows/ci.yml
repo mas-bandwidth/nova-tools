@@ -763,7 +763,7 @@ jobs:
         # almost always proved by its merge-group run above and runs nothing.
         # THE VERDICT IS THE SAME ON ANY MACHINE (#4413): on every leg the
         # CI-SLOW lines and a CI-LOAD line are printed and exit 0, and a
-        # CI-SLEEPS line (a SLEEPS skip off the ledger) is exit 2, the push leg
+        # CI-SLEEPS line (a SLEEPS skip off the ledger) fails the leg, the push leg
         # included. The one leg that fails on a CI-SLOW line is the schedule
         # branch below, the nightly whole tree on the space shards, with
         # SLOWTESTS_ENFORCE=1. It is not test-hosted's ubuntu leg (a fresh VM,
@@ -1044,7 +1044,7 @@ jobs:
         # The heavy packages first, one per shard: cmd/nova-bus (46 s -short on
         # the Studio) and cmd/nova-merge (28 s) shared shard 3 of 4, the ubuntu
         # leg the cap cancelled at 123 s, and a count-only deal kept them together
-        # at eight. cmd/nova-merge is under deprecated/ and in no deal; cmd/nova-swarm
+        # at eight. cmd/nova-merge is deleted and in no deal; cmd/nova-swarm
         # is the reader's other named heavy command. Then every other package
         # round-robin in go list order (stable: go list sorts), continuing after the
         # heavy ones. One line of space-separated packages, so vet and test below
@@ -1418,9 +1418,9 @@ jobs:
               - 'lisp/**'
 
   lisp:
-    # PARKED SUBJECT (2026-09-27). nova-work, the one Lisp system, moved to
-    # deprecated/lisp/nova-work (Glenn: deprecated code is not tested, not built
-    # and never blocks CI), and lisp/ holds no system. The job stays, because
+    # PARKED SUBJECT (2026-09-27). The old nova-work's Lisp kernel, the one Lisp
+    # system, was parked and then moved out of this repository (2026-10-01) to the
+    # nova-work-old repository, for reference only, and lisp/ holds no system. The job stays, because
     # the merge gate names a lisp step. The filter above fires only on a lisp/
     # path, so today it never runs; if it does, `make test-lisp` runs
     # `go run ./tools/ci lisp-test`, which refuses a lisp/ tree it does not

@@ -105,9 +105,9 @@ func TestTheInternalVerbsRefusalIsOutsideTheSetAndNamedInTheSpec(t *testing.T) {
 	// The binary, first: a test that the spec describes a line the tool never prints is a
 	// test pointed at nothing.
 	j := newJob(t)
-	code, _, errOut := j.tool(t, j.env(), "probe-step")
-	require.Equal(t, 2, code, "`probe-step` by hand does not refuse with reason=%s: exit %d, stderr %q", probeStepRefusalReason, code, errOut)
-	require.Contains(t, errOut, "reason="+probeStepRefusalReason, "`probe-step` by hand does not refuse with reason=%s: exit %d, stderr %q", probeStepRefusalReason, code, errOut)
+	r := j.main().Do(t, "probe-step")
+	require.Equal(t, 2, r.Code, "`probe-step` by hand does not refuse with reason=%s: exit %d, stderr %q", probeStepRefusalReason, r.Code, r.Stderr)
+	require.Contains(t, r.Stderr, "reason="+probeStepRefusalReason, "`probe-step` by hand does not refuse with reason=%s: exit %d, stderr %q", probeStepRefusalReason, r.Code, r.Stderr)
 
 	assert.False(t, specProbeRefusalReasons(t)[probeStepRefusalReason], "%s is inside the spec's PROBE REFUSED set; it is the internal verb's own refusal and the set is the contract a caller's parser stands on -- if it genuinely joined the set, probeRefusalReasons and this test's premise both change", probeStepRefusalReason)
 

@@ -812,6 +812,9 @@ var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, 
 // fixed work is asked round the readers when it returns. With no member up, or none below its width (tla/DirtyTick.tla,
 // WidthRespected), the primary moves review -> ready with the fix and the
 // tick's deal cuts its card when a member has room.
+//
+// A primary that takes no rework is refused with what to run instead, by its
+// state (reworkWhy), as brief is (briefStarted).
 func Rework(s *Snapshot, r ReworkReq) Plan {
 	var p Plan
 	// a primary in review, or one at its redeal bound (ready, its work card
@@ -829,7 +832,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if AtRedealBound(s, c) != nil {
 			return ""
 		}
-		return inState(c, Review)
+		return reworkWhy(c)
 	}, s.primaryCard)
 	up := s.UpMembers()
 	// the room of each member is its width (width.go, errata 3 amendment 9)

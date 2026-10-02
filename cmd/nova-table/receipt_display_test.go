@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
 )
 
 // The receipt's display of a changed field: a digest identifies a value and does
@@ -24,17 +25,20 @@ func TestChangedFieldsListsTwoLongValuesWithTheirDigests(t *testing.T) {
 	}}
 	got := changedFields(m)
 	for _, name := range []string{"same-long", "diff-long", "long-short", "changed"} {
-		if _, ok := got[name]; !ok {
-			t.Errorf("%s is not listed: %v", name, got)
+		{
+			_, ok := got[name]
+			assert.True(t, ok, "%s is not listed: %v", name, got)
 		}
 	}
 	for _, name := range []string{"same-short", "both-none"} {
-		if _, ok := got[name]; ok {
-			t.Errorf("%s changed nothing and is listed: %v", name, got)
+		{
+			_, ok := got[name]
+			assert.False(t, ok, "%s changed nothing and is listed: %v", name, got)
 		}
 	}
-	if line := fmt.Sprint(got["same-long"]); strings.Count(line, sha) != 2 {
-		t.Errorf("two long sides are shown with their digests side by side: %s", line)
+	{
+		line := fmt.Sprint(got["same-long"])
+		assert.EqualValues(t, 2, strings.Count(line, sha), "two long sides are shown with their digests side by side: %s", line)
 	}
 }
 
@@ -47,15 +51,12 @@ func TestCreateColumnsPastTheBoundExitsOne(t *testing.T) {
 		names[i] = fmt.Sprintf("c%d", i)
 	}
 	code, stdout, stderr := runTable("create", "wide", "--columns", strings.Join(names, ","))
-	if code != 1 || stdout != "" || !strings.Contains(stderr, "columns per table: bound 1000, observed 1001") {
-		t.Errorf("create with %d columns: exit %d stdout %q stderr %q", len(names), code, stdout, stderr)
-	}
+	assert.EqualValues(t, 1, code, "create with %d columns: exit %d stdout %q stderr %q", len(names), code, stdout, stderr)
+	assert.Empty(t, stdout, "create with %d columns: exit %d stdout %q stderr %q", len(names), code, stdout, stderr)
+	assert.Contains(t, stderr, "columns per table: bound 1000, observed 1001", "create with %d columns: exit %d stdout %q stderr %q", len(names), code, stdout, stderr)
 	code, _, stderr = runTable("create", "wide", "--columns", "a,a")
-	if code != 2 {
-		t.Errorf("create with a repeated column: exit %d stderr %q; want usage, 2", code, stderr)
-	}
+	assert.EqualValues(t, 2, code, "create with a repeated column: exit %d stderr %q; want usage, 2", code, stderr)
 	code, _, stderr = runTable("set", "wide", "--columns", strings.Join(names, ","))
-	if code != 1 || !strings.Contains(stderr, "columns per table") {
-		t.Errorf("set --columns past the bound: exit %d stderr %q", code, stderr)
-	}
+	assert.EqualValues(t, 1, code, "set --columns past the bound: exit %d stderr %q", code, stderr)
+	assert.Contains(t, stderr, "columns per table", "set --columns past the bound: exit %d stderr %q", code, stderr)
 }

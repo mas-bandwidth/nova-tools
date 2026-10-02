@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -45,17 +48,11 @@ func budgetWorker(t *testing.T, usage string, maxTurns, maxCacheRead int) string
 	if maxCacheRead > 0 {
 		desc["max_cache_read"] = maxCacheRead
 	}
-	if err := os.WriteFile(desc["key_file"].(string), []byte("a fake key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(desc["key_file"].(string), []byte("a fake key\n"), 0o600))
 	raw, err := json.MarshalIndent(desc, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "worker.json")
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, raw, 0o644))
 	return path
 }
 
@@ -75,9 +72,8 @@ func madeNothing(t *testing.T, slot string) {
 		filepath.Join(slot, "data"),
 		filepath.Join(slot, "tmp"),
 	} {
-		if _, err := os.Stat(made); err == nil {
-			t.Errorf("the refusal made %s; rule 13d refuses before any directory is made", made)
-		}
+		_, err := os.Stat(made)
+		assert.Error(t, err, "the refusal made %s; rule 13d refuses before any directory is made", made)
 	}
 }
 
@@ -132,17 +128,11 @@ func TestNativeRefusesABudgetNothingCanObserve(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
 			if !tc.wantRefus {
-				if rc != 0 {
-					t.Fatalf("this launch runs, got exit %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
-				}
+				require.Equal(t, 0, rc, "this launch runs, got exit %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 				return
 			}
-			if rc != 2 {
-				t.Fatalf("this launch is NATIVE REFUSED at exit 2, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
-			}
-			if !strings.Contains(stderr.String(), "NATIVE REFUSED") {
-				t.Errorf("the refusal is a NATIVE REFUSED line:\n%s", stderr.String())
-			}
+			require.Equal(t, 2, rc, "this launch is NATIVE REFUSED at exit 2, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
+			assert.Contains(t, stderr.String(), "NATIVE REFUSED", "the refusal is a NATIVE REFUSED line:\n%s", stderr.String())
 			if tc.names != "" && !strings.Contains(stderr.String(), tc.names) {
 				t.Errorf("the refusal names %q:\n%s", tc.names, stderr.String())
 			}
@@ -183,14 +173,10 @@ func TestNativeUsageIntervalFloorAndCeiling(t *testing.T) {
 			args = append(args, "--usage-interval", tc.interval)
 			var stdout, stderr bytes.Buffer
 			rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
-			if rc != tc.want {
-				t.Fatalf("--usage-interval %s beside --deadline %s is exit %d, got %d\nstdout:\n%s\nstderr:\n%s",
-					tc.interval, tc.deadline, tc.want, rc, stdout.String(), stderr.String())
-			}
+			require.Equal(t, tc.want, rc, "--usage-interval %s beside --deadline %s is exit %d, got %d\nstdout:\n%s\nstderr:\n%s",
+				tc.interval, tc.deadline, tc.want, rc, stdout.String(), stderr.String())
 			if tc.want == 2 {
-				if !strings.Contains(stderr.String(), "--usage-interval") {
-					t.Errorf("the refusal names --usage-interval:\n%s", stderr.String())
-				}
+				assert.Contains(t, stderr.String(), "--usage-interval", "the refusal names --usage-interval:\n%s", stderr.String())
 				madeNothing(t, slot)
 			}
 		})

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/stretchr/testify/assert"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,5 @@ func TestHelpListsOneSumForm(t *testing.T) {
 			n++
 		}
 	}
-	if n != 1 {
-		t.Errorf("the help banner's usage block carries %d `nova-tokens sum` synopsis lines, want 1:\n%s", n, r.stdout)
-	}
+	assert.False(t, n != 1, "the help banner's usage block carries %d `nova-tokens sum` synopsis lines, want 1:\n%s", n, r.stdout)
 }

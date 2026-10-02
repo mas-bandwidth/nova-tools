@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A file that is not a terminal is not one and has no size: a regular file,
@@ -12,28 +15,17 @@ import (
 func TestNothingButATerminalIsOneOrHasASize(t *testing.T) {
 	t.Parallel()
 	regular, err := os.Create(filepath.Join(t.TempDir(), "plain"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer regular.Close()
 	null, err := os.Open(os.DevNull)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer null.Close()
 	closed, err := os.Create(filepath.Join(t.TempDir(), "closed"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := closed.Close(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
 	for name, f := range map[string]*os.File{"a regular file": regular, "the null device": null, "a closed file": closed} {
-		if IsTerminal(f) {
-			t.Errorf("%s is a terminal", name)
-		}
-		if rows, cols := Size(f); rows != 0 || cols != 0 {
-			t.Errorf("%s has a size, %d rows by %d columns", name, rows, cols)
-		}
+		assert.False(t, IsTerminal(f), "%s is a terminal", name)
+		rows, cols := Size(f)
+		assert.Equal(t, [2]int{0, 0}, [2]int{rows, cols}, "%s has a size, %d rows by %d columns", name, rows, cols)
 	}
 }

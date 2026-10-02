@@ -9,7 +9,7 @@ import (
 )
 
 // Shipped is the set of tools a release ships: the nova-* directories under
-// cmd/ at the release commit, which is the list `release build` compiles. A tool parked under deprecated/
+// cmd/ at the release commit, which is the list `release build` compiles. A tool not under cmd/
 // is not built, not tested and not shipped, so no receipt about it can speak
 // for or against the release.
 //

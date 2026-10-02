@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The fleet table's done and ok% are the table's own formulas over the hidden
@@ -23,9 +25,7 @@ func TestFleetDoneAndOkPctAreTableFormulas(t *testing.T) {
 	ta.ok("fleet up m2")
 	out := ta.ok("where")
 	i := strings.Index(out, "fleet |")
-	if i < 0 {
-		t.Fatalf("where has no fleet table:\n%s", out)
-	}
+	require.GreaterOrEqual(t, i, 0, "where has no fleet table:\n%s", out)
 	fleet := out[i:]
 	if j := strings.Index(fleet, "\n\n"); j >= 0 {
 		fleet = fleet[:j+1]
@@ -36,16 +36,15 @@ func TestFleetDoneAndOkPctAreTableFormulas(t *testing.T) {
 		"m2    |     0 |       0 |    64 |    0 | 0.0%  | up     | 0.0%\n" +
 		"------+-------+---------+-------+------+-------+--------+-----\n" +
 		"      |     0 |       0 |   128 |    4 | 75.0% |        |\n"
-	if fleet != want {
-		t.Fatalf("the fleet table:\n%s\nwant:\n%s", fleet, want)
-	}
+	require.Equal(t, want, fleet, "the fleet table")
 	var v whereView
-	if err := json.Unmarshal([]byte(ta.ok("where --json")), &v); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, json.Unmarshal([]byte(ta.ok("where --json")), &v))
 	m1, m2 := v.Tables["fleet"]["m1"], v.Tables["fleet"]["m2"]
-	if m1["done"] != "4" || m1["okpct"] != "75.0%" || m1["ok"] != "3" || m1["failed"] != "1" || m2["done"] != "0" || m2["okpct"] != "0.0%" {
-		t.Fatalf("where --json fleet: %v %v", m1, m2)
-	}
+	require.Equal(t, "4", m1["done"], "where --json fleet: %v %v", m1, m2)
+	require.Equal(t, "75.0%", m1["okpct"], "where --json fleet: %v %v", m1, m2)
+	require.Equal(t, "3", m1["ok"], "where --json fleet: %v %v", m1, m2)
+	require.Equal(t, "1", m1["failed"], "where --json fleet: %v %v", m1, m2)
+	require.Equal(t, "0", m2["done"], "where --json fleet: %v %v", m1, m2)
+	require.Equal(t, "0.0%", m2["okpct"], "where --json fleet: %v %v", m1, m2)
 	ta.clean()
 }

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The property test's findings, each its shortest sequence as a test.
@@ -14,9 +16,7 @@ import (
 func (h *harness) commandsOf(typ string) []sprint.Command {
 	h.t.Helper()
 	v, err := h.st.Inbox(h.ctx, sprint.DeadlineJudgment, 0, 1000)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	for _, g := range v.Groups {
 		if g.Type == typ {
 			return g.Commands
@@ -48,9 +48,7 @@ func TestACrossStopsCommandsNameTheStuckCardAndTheCardItNeeds(t *testing.T) {
 		"drop":                 "nova-sprint drop p8 --reason",
 		"look at both":         "nova-sprint card p8 && nova-sprint card p10",
 	} {
-		if !strings.HasPrefix(got[d], want) {
-			t.Errorf("%s: %q, want it to start %q", d, got[d], want)
-		}
+		assert.True(t, strings.HasPrefix(got[d], want), "%s: %q, want it to start %q", d, got[d], want)
 	}
 	// The printed return, then resume: the stream moves again.
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"p8"}}, Reason: "r"}))
@@ -76,24 +74,19 @@ func TestTheTickClosingALateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	for _, rc := range h.snap().Readers.Of("p2") {
 		cards = append(cards, rc)
 	}
-	if len(cards) != 2 {
-		t.Fatalf("asked: %d read cards", len(cards))
-	}
+	require.Len(t, cards, 2, "asked: %d read cards", len(cards))
 	h.must(ReadStep(sprint.ReadReq{As: cards[0].Row, Verdict: "broken", Finding: "f", Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))
 	h.tick(sprint.DeadlineUnbegun + time.Minute)
 	h.machine() // the second read is late
-	if len(h.openOf(sprint.NReadLate)) != 1 {
-		t.Fatalf("no late read: %v", h.openOf(sprint.NReadLate))
-	}
+	require.Len(t, h.openOf(sprint.NReadLate), 1, "no late read: %v", h.openOf(sprint.NReadLate))
 	// ack does not answer the broken read (it is the coordinator's to rework,
 	// ask another or drop): it stays open and names p2 whatever the tick closes
 	var broken []string
 	for _, o := range h.openOf(sprint.NReadBroken) {
 		broken = append(broken, o.Note.ID)
 	}
-	if res := h.run(AckStep(sprint.AckReq{Notes: broken, Reason: "none"})); len(res.Refused) == 0 {
-		t.Fatalf("ack of a broken read: %+v", res)
-	}
+	res := h.run(AckStep(sprint.AckReq{Notes: broken, Reason: "none"}))
+	require.NotEmpty(t, res.Refused, "ack of a broken read: %+v", res)
 	h.must(ReadStep(sprint.ReadReq{As: cards[1].Row, Verdict: "ok", Finding: "f", Sel: sprint.Sel{IDs: []string{cards[1].ID}}}))
 	h.tick(time.Second)
 	h.machine() // closes the late read
@@ -121,9 +114,7 @@ func TestTheTickClosingTheOnlyLateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	h.takeAndFinish(false, "p2")
 	h.machine() // asks two readers
 	cards := h.snap().Readers.Of("p2")
-	if len(cards) != 2 {
-		t.Fatalf("asked: %d read cards", len(cards))
-	}
+	require.Len(t, cards, 2, "asked: %d read cards", len(cards))
 	h.must(ReadStep(sprint.ReadReq{As: cards[0].Row, Verdict: "broken", Finding: "f", Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))
 	broken := h.openOf(sprint.NReadBroken)
 	h.must(Step{Verb: "persisted", Plan: func(*sprint.Snapshot) sprint.Plan { return sprint.Plan{Closes: broken} }})

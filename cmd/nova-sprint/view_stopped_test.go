@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
@@ -12,13 +14,9 @@ import (
 func (ta *testApp) viewLine() string {
 	ta.t.Helper()
 	v, ok := ta.m.View("sprint")
-	if !ok {
-		ta.t.Fatal("no sprint view")
-	}
+	require.True(ta.t, ok, "no sprint view")
 	shapes, err := ta.m.Shapes(context.Background(), v.Tables[:1])
-	if err != nil {
-		ta.t.Fatal(err)
-	}
+	require.NoError(ta.t, err)
 	return ntable.SummaryLine(v, shapes[0])
 }
 
@@ -30,41 +28,25 @@ func TestTheViewsSummaryLineIsStoppedAloneWhileTheMachineIsStopped(t *testing.T)
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	if got := ta.viewLine(); got != "STOPPED" {
-		t.Fatalf("after init: %q", got)
-	}
+	require.Equal(t, "STOPPED", ta.viewLine(), "after init")
 	ta.ok("add --stream s1 --count 3")
-	if got := ta.viewLine(); got != "STOPPED" {
-		t.Fatalf("after add, stopped: %q", got)
-	}
+	require.Equal(t, "STOPPED", ta.viewLine(), "after add, stopped")
 	ta.ok("start")
-	if got := ta.viewLine(); got != "0/3 0.0% -> ETA" {
-		t.Fatalf("after start: %q", got)
-	}
+	require.Equal(t, "0/3 0.0% -> ETA", ta.viewLine(), "after start")
 	ta.ok("stop")
-	if got := ta.viewLine(); got != "STOPPED" {
-		t.Fatalf("after stop: %q", got)
-	}
+	require.Equal(t, "STOPPED", ta.viewLine(), "after stop")
 	ta.ok("start")
 	ta.ok("clear --confirm sprint")
-	if got := ta.viewLine(); got != "STOPPED" {
-		t.Fatalf("after clear: %q", got)
-	}
+	require.Equal(t, "STOPPED", ta.viewLine(), "after clear")
 	// A view stored without a state (before it had one) while STOPPED: stop,
 	// which changes nothing else, writes the view's state again.
-	if err := ta.m.ShowState(context.Background(), "sprint", ""); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ta.m.ShowState(context.Background(), "sprint", ""))
 	ta.ok("stop")
-	if got := ta.viewLine(); got != "STOPPED" {
-		t.Fatalf("stop on a stopped machine, view without a state: %q", got)
-	}
+	require.Equal(t, "STOPPED", ta.viewLine(), "stop on a stopped machine, view without a state")
 	// init on a sprint that has a machine writes the view's state from it.
 	ta.ok("start")
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	if got := ta.viewLine(); got != "0/0 0.0% -> ETA" {
-		t.Fatalf("init on a running sprint: %q", got)
-	}
+	require.Equal(t, "0/0 0.0% -> ETA", ta.viewLine(), "init on a running sprint")
 }
 
 // The view init stores names no rule that hides a table or a row: every table
@@ -74,10 +56,6 @@ func TestTheStoredViewHoldsTheFourTablesAndHidesNothing(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1")
 	v, ok := ta.m.View("sprint")
-	if !ok {
-		t.Fatal("no sprint view")
-	}
-	if len(v.Tables) != 4 {
-		t.Fatalf("the view holds %v, want the four tables of the view", v.Tables)
-	}
+	require.True(t, ok, "no sprint view")
+	require.Len(t, v.Tables, 4, "the view holds %v, want the four tables of the view", v.Tables)
 }

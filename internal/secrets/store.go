@@ -693,29 +693,6 @@ func VerifyFileMatchesIndex(storeDir, filePath string, index *GitIndexData) erro
 	return nil
 }
 
-// VerifyFileMatchesHEADTree checks that filePath matches the blob committed in HEAD commit tree.
-func VerifyFileMatchesHEADTree(storeDir, filePath string, headBlobs map[string]string) error {
-	rel, err := filepath.Rel(storeDir, filePath)
-	if err != nil {
-		rel = filePath
-	}
-	cleanRel := filepath.Clean(filepath.ToSlash(rel))
-	expectedSHA, ok := headBlobs[cleanRel]
-	if !ok {
-		return fmt.Errorf("%s is not committed in HEAD tree", rel)
-	}
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("unable to read %s: %w", rel, err)
-	}
-	actual := GitBlobSHA1(data)
-	actualSHA := hex.EncodeToString(actual[:])
-	if actualSHA != expectedSHA {
-		return fmt.Errorf("%s has uncommitted modifications (working copy blob differs from HEAD tree)", rel)
-	}
-	return nil
-}
-
 // IsValidAsName checks if a seat name matches [A-Za-z0-9_-]+
 func IsValidAsName(name string) bool {
 	if len(name) == 0 {

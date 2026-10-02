@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -101,7 +100,7 @@ const EmptyCardCheck = "empty"
 const EmptyCardRemedy = "the card is empty, and a card is a child's whole brief: `nova-swarm template --name card` prints one that passes; put it in the file and fill in its <...> lines"
 
 // LibrariesConsideredRemedy is what that token wants, in the remedies' table shape.
-const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>` (docs/STANDARD.md section 7), filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
+const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>`, filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
 
 var (
 	// childLibrariesLine is a `Libraries considered:` line; group 1 is what follows the colon.
@@ -485,20 +484,4 @@ func childClause(before string) string {
 		return before[all[len(all)-1][1]:]
 	}
 	return before
-}
-
-// ChildRuleNames is every child-rule check token, sorted, for listings and tests.
-func ChildRuleNames() []string {
-	names := make([]string, 0, len(CardChildRemedies))
-	for n := range CardChildRemedies {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// ChildFindingLine is one finding as `nova-sprint add` and `nova-swarm lint` print it
-// after their own prefix: `<check>: <line>: <excerpt>`.
-func ChildFindingLine(f CardHeaderFinding) string {
-	return fmt.Sprintf("%s: %d: %s", f.Check, f.Line, f.Excerpt)
 }

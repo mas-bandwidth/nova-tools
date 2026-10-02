@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The interrupt a command gets when nothing has replaced it is the terminal's
@@ -18,9 +20,7 @@ import (
 func TestTheInterruptOfTheCommandIsSIGINTAndSIGTERM(t *testing.T) {
 	t.Parallel()
 	self, err := os.FindProcess(os.Getpid())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// One signal at a time: a signal reaches every context listening for it.
 	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
 		t.Run(sig.String(), func(t *testing.T) {
@@ -31,9 +31,7 @@ func TestTheInterruptOfTheCommandIsSIGINTAndSIGTERM(t *testing.T) {
 			defer signal.Stop(guard)
 			ctx, stop := newApp(func(string) string { return "" }).notify(context.Background())
 			defer stop()
-			if err := self.Signal(sig); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, self.Signal(sig))
 			select {
 			case <-ctx.Done():
 			case <-time.After(30 * time.Second):

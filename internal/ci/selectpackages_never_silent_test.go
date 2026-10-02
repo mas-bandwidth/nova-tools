@@ -117,7 +117,7 @@ func selectFixture(t *testing.T) string {
 	repo := t.TempDir()
 	files := map[string]string{
 		"go.mod":                       "module example.com/m\n",
-		"deprecated/PACKAGES":          "# the fixture's list\ncmd/gone\n",
+		pkgselect.DeprecatedFile:       "# the fixture's list\ncmd/gone\n",
 		"cmd/foo/foo.go":               "package main\n",
 		"internal/bar/bar.go":          "package bar\n",
 		"internal/ci/ci.go":            "package ci\n",

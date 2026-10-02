@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -28,9 +27,7 @@ func TestFriendSequencePlantedIndexIsRefused(t *testing.T) {
 	plant(t, v, link)
 	_, err := ReadLaneIndex(root, "from-x")
 	require.Error(t, err, "ReadLaneIndex read through a planted symlink at INDEX")
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("the symlink refusal does not name the kind: %v", err)
-	}
+	require.Contains(t, err.Error(), "symlink", "the symlink refusal does not name the kind: %v", err)
 	unchangedHolding(t, v, body)
 
 	fifoRoot := filepath.Join(dir, "bus-fifo")
@@ -47,11 +44,9 @@ func TestFriendSequencePlantedIndexIsRefused(t *testing.T) {
 	select {
 	case err := <-done:
 		require.Error(t, err, "a FIFO read as a lane INDEX")
-		if !strings.Contains(err.Error(), "fifo") {
-			t.Fatalf("the fifo refusal does not name the kind: %v", err)
-		}
+		require.Contains(t, err.Error(), "fifo", "the fifo refusal does not name the kind: %v", err)
 	case <-time.After(plantedIndexWait()):
-		t.Fatal("STILL BLOCKED after waiting on a FIFO at INDEX: the lane reader is wedged")
+		require.FailNow(t, "STILL BLOCKED after waiting on a FIFO at INDEX: the lane reader is wedged")
 	}
 }
 

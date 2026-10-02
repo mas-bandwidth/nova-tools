@@ -460,7 +460,9 @@ func TestGoAddsTheToolchainRootAndTheModuleCache(t *testing.T) {
 	f := runFlags{useGo: true, reads: []string{"/usr"}}
 	var errb bytes.Buffer
 	r := applyGoReads(&f, &errb)
-	require.Nil(t, r, "--go refused with a real toolchain: %v", r)
+	if r != nil {
+		require.Nil(t, r, "--go refused with a real toolchain: %s", r.Text)
+	}
 	require.Contains(t, f.reads, root, "--go did not add GOROOT and GOMODCACHE to the reads: %v", f.reads)
 	require.Contains(t, f.reads, mod, "--go did not add GOROOT and GOMODCACHE to the reads: %v", f.reads)
 	assert.Contains(t, f.reads, "/usr", "--go dropped a --read the caller named: %v", f.reads)
@@ -480,7 +482,9 @@ func TestGoSkipsAToolchainPathThatIsNotThere(t *testing.T) {
 	f := runFlags{useGo: true}
 	var errb bytes.Buffer
 	r := applyGoReads(&f, &errb)
-	require.Nil(t, r, "--go refused because a derived path was absent: %v", r)
+	if r != nil {
+		require.Nil(t, r, "--go refused because a derived path was absent: %s", r.Text)
+	}
 	require.Equal(t, []string{root}, f.reads, "--go added %v, want just the toolchain root", f.reads)
 	assert.True(t, strings.Contains(errb.String(), "not there") || strings.Contains(errb.String(), "skipped"), "--go skipped a path without saying which:\n%s", errb.String())
 }

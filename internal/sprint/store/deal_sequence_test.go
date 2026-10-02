@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // The rolling indexes continue across plans (errata 3, amendment 5, the
@@ -162,9 +163,7 @@ func prop(t *testing.T, s *sprint.Snapshot, table, name string) uint64 {
 		return 0
 	}
 	c, err := strconv.ParseUint(v, 10, 64)
-	if err != nil {
-		t.Fatalf("%s's %s is %q, not a counter: the index is a uint64 (errata 3 amendment 5)", table, name, v)
-	}
+	require.NoError(t, err, "%s's %s is %q, not a counter: the index is a uint64 (errata 3 amendment 5)", table, name, v)
 	return c
 }
 
@@ -183,19 +182,12 @@ func dealSequenceAcrossTicks(t *testing.T, h *harness, ticks, batch int) {
 		at := prop(t, h.snap(), sprint.Fleet, sprint.PropDealIndex)
 		t.Logf("tick %d: deal parts=%d deal_index=%d deals=%v", i, got.parts, at, got.members)
 		want := seqRound(widthMembers, counter, batch)
-		if !slices.Equal(got.members, want) {
-			t.Fatalf("tick %d dealt %v, want %v: each tick's deal starts at the member the counter names, and deals the whole batch", i, got.members, want)
-		}
-		if got.parts != 1 {
-			t.Fatalf("tick %d ran %d deal parts, want one: the deal is one plan a tick", i, got.parts)
-		}
+		require.True(t, slices.Equal(got.members, want), "tick %d dealt %v, want %v: each tick's deal starts at the member the counter names, and deals the whole batch", i, got.members, want)
+		require.Equal(t, 1, got.parts, "tick %d ran %d deal parts, want one: the deal is one plan a tick", i, got.parts)
 		counter += uint64(batch)
-		if at != counter {
-			t.Fatalf("tick %d: deal_index %d after the deal, want %d, the placements made", i, at, counter)
-		}
-		if n := len(h.snap().Work.Column(sprint.Ready)); n != 0 {
-			t.Fatalf("tick %d left %d ready: every ready card the fleet has room for is dealt in the tick", i, n)
-		}
+		require.Equal(t, counter, at, "tick %d: deal_index %d after the deal, want %d, the placements made", i, at, counter)
+		n := len(h.snap().Work.Column(sprint.Ready))
+		require.Equal(t, 0, n, "tick %d left %d ready: every ready card the fleet has room for is dealt in the tick", i, n)
 		h.tick(time.Second)
 	}
 }
@@ -293,17 +285,13 @@ func dealStreamsAcrossTicks(t *testing.T, h *harness) {
 	var counter uint64
 	for i := range r.deal {
 		want, next := seqTurns(seqStreams, r.dealCounts[i], counter, streamsRoom)
-		if !slices.Equal(r.deal[i].streams, want) || r.deal[i].parts != 1 {
-			t.Fatalf("tick %d: the deal took the streams %v in %d parts, want %v in one: stream turns from the counter %d", i+1, r.deal[i].streams, r.deal[i].parts, want, counter)
-		}
-		if got := r.props[i]["stream deal"]; got != next {
-			t.Fatalf("tick %d: stream_index %d, want %d", i+1, got, next)
-		}
+		require.True(t, slices.Equal(r.deal[i].streams, want), "tick %d: the deal took the streams %v in %d parts, want %v in one: stream turns from the counter %d", i+1, r.deal[i].streams, r.deal[i].parts, want, counter)
+		require.Equal(t, 1, r.deal[i].parts, "tick %d: the deal took the streams %v in %d parts, want %v in one: stream turns from the counter %d", i+1, r.deal[i].streams, r.deal[i].parts, want, counter)
+		got := r.props[i]["stream deal"]
+		require.Equal(t, next, got, "tick %d: stream_index %d, want %d", i+1, got, next)
 		counter = next
 	}
-	if counter != 4*streamsRoom {
-		t.Fatalf("stream_index %d after %d cards dealt from three streams that never ran out, want %d", counter, 4*streamsRoom, 4*streamsRoom)
-	}
+	require.Equal(t, uint64(4*streamsRoom), counter, "stream_index %d after %d cards dealt from three streams that never ran out, want %d", counter, 4*streamsRoom, 4*streamsRoom)
 }
 
 // askAcrossTicks: the ask's reader index (ask_index) and its stream index
@@ -320,27 +308,20 @@ func askAcrossTicks(t *testing.T, h *harness) {
 			k += n
 		}
 		want, next := seqTurns(seqStreams, r.askCounts[i], streams, k)
-		if !slices.Equal(r.ask[i].streams, want) {
-			t.Fatalf("tick %d: the ask took the streams %v, want %v: stream turns from the counter %d", i+1, r.ask[i].streams, want, streams)
-		}
+		require.True(t, slices.Equal(r.ask[i].streams, want), "tick %d: the ask took the streams %v, want %v: stream turns from the counter %d", i+1, r.ask[i].streams, want, streams)
 		streams = next
-		if got := r.props[i]["stream ask"]; got != streams {
-			t.Fatalf("tick %d: stream_index_ask %d, want %d", i+1, got, streams)
-		}
+		got := r.props[i]["stream ask"]
+		require.Equal(t, streams, got, "tick %d: stream_index_ask %d, want %d", i+1, got, streams)
 		for j, pair := range r.ask[i].readers {
-			if w := seqRound(seqReaders, readers, 2); !slices.Equal(pair, w) {
-				t.Fatalf("tick %d, primary %d: asked of %v, want %v: the next two readers from the counter %d", i+1, j+1, pair, w, readers)
-			}
+			w := seqRound(seqReaders, readers, 2)
+			require.True(t, slices.Equal(pair, w), "tick %d, primary %d: asked of %v, want %v: the next two readers from the counter %d", i+1, j+1, pair, w, readers)
 			readers += 2
 		}
 		asked += len(r.ask[i].readers)
-		if got := r.props[i]["ask"]; got != readers {
-			t.Fatalf("tick %d: ask_index %d, want %d, two a primary asked", i+1, got, readers)
-		}
+		got = r.props[i]["ask"]
+		require.Equal(t, readers, got, "tick %d: ask_index %d, want %d, two a primary asked", i+1, got, readers)
 	}
-	if asked != 3*streamsRoom {
-		t.Fatalf("%d primaries asked in four ticks, want %d: the three ticks after the first each ask the %d finished", asked, 3*streamsRoom, streamsRoom)
-	}
+	require.Equal(t, 3*streamsRoom, asked, "%d primaries asked in four ticks, want %d: the three ticks after the first each ask the %d finished", asked, 3*streamsRoom, streamsRoom)
 }
 
 // acceptAcrossTicks: the accept's stream index (stream_index_accept) goes on
@@ -356,18 +337,13 @@ func acceptAcrossTicks(t *testing.T, h *harness) {
 			k += n
 		}
 		want, next := seqTurns(seqStreams, r.accCounts[i], counter, k)
-		if !slices.Equal(r.accept[i].streams, want) {
-			t.Fatalf("accept %d took the streams %v, want %v: stream turns from the counter %d", i+1, r.accept[i].streams, want, counter)
-		}
+		require.True(t, slices.Equal(r.accept[i].streams, want), "accept %d took the streams %v, want %v: stream turns from the counter %d", i+1, r.accept[i].streams, want, counter)
 		counter = next
-		if got := r.props[i]["stream accept"]; got != counter {
-			t.Fatalf("accept %d: stream_index_accept %d, want %d", i+1, got, counter)
-		}
+		got := r.props[i]["stream accept"]
+		require.Equal(t, counter, got, "accept %d: stream_index_accept %d, want %d", i+1, got, counter)
 		accepted += len(r.accept[i].streams)
 	}
-	if accepted != 3*streamsRoom {
-		t.Fatalf("%d accepted, want %d", accepted, 3*streamsRoom)
-	}
+	require.Equal(t, 3*streamsRoom, accepted, "%d accepted, want %d", accepted, 3*streamsRoom)
 }
 
 func TestTheDealsStreamIndexContinuesAcrossTicks(t *testing.T) {

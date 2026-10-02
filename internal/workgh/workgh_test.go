@@ -8,14 +8,14 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/workfile"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func fixture(t *testing.T) Query {
 	t.Helper()
 	q, err := Replay("testdata/reliable")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return q
 }
 
@@ -26,36 +26,29 @@ func TestFetchReadsTheRecordedRepository(t *testing.T) {
 	t.Parallel()
 	f := &Fetcher{Q: fixture(t), PageSize: 15, MaxCalls: 10}
 	m, err := f.Repo(context.Background(), "mas-bandwidth/reliable")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	r, err := f.Issues(context.Background(), m)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(r.Issues) != m.Issues || m.Issues != 20 {
-		t.Fatalf("read %d issues, the listing counts %d, the recording holds 20", len(r.Issues), m.Issues)
-	}
-	if f.Calls != 3 || f.Points <= 0 {
-		t.Fatalf("calls=%d points=%d, want 3 calls and the points GitHub charged", f.Calls, f.Points)
-	}
+	require.NoError(t, err)
+
+	require.Len(t, r.Issues, m.Issues, "read %d issues, the listing counts %d, the recording holds 20", len(r.Issues), m.Issues)
+	require.Equal(t, 20, m.Issues, "read %d issues, the listing counts %d, the recording holds 20", len(r.Issues), m.Issues)
+	require.Equal(t, 3, f.Calls, "calls=%d points=%d, want 3 calls and the points GitHub charged", f.Calls, f.Points)
+	require.Greater(t, f.Points, 0, "calls=%d points=%d, want 3 calls and the points GitHub charged", f.Calls, f.Points)
+
 	comments, refs := 0, 0
 	for i, is := range r.Issues {
-		if i > 0 && is.Number <= r.Issues[i-1].Number {
-			t.Fatalf("issues out of order at %d", is.Number)
+		if i > 0 {
+			require.Greater(t, is.Number, r.Issues[i-1].Number, "issues out of order at %d", is.Number)
 		}
-		if is.URL != workfile.IssueURL("mas-bandwidth/reliable", is.Number) || is.NodeID == "" || is.Created == "" {
-			t.Fatalf("issue %d lacks its identity: %+v", is.Number, is)
-		}
-		if is.Origin != "internal" && is.Origin != "external" {
-			t.Fatalf("issue %d origin %q", is.Number, is.Origin)
-		}
+		require.Equal(t, workfile.IssueURL("mas-bandwidth/reliable", is.Number), is.URL, "issue %d lacks its identity: %+v", is.Number, is)
+		require.NotEmpty(t, is.NodeID, "issue %d lacks its identity: %+v", is.Number, is)
+		require.NotEmpty(t, is.Created, "issue %d lacks its identity: %+v", is.Number, is)
+		require.Contains(t, []string{"internal", "external"}, is.Origin, "issue %d origin %q", is.Number, is.Origin)
 		comments += len(is.Comments)
 		refs += len(is.References)
 	}
-	if comments == 0 || refs == 0 {
-		t.Fatalf("comments=%d references=%d: the recording holds both", comments, refs)
-	}
+	require.NotZero(t, comments, "comments=%d references=%d: the recording holds both", comments, refs)
+	require.NotZero(t, refs, "comments=%d references=%d: the recording holds both", comments, refs)
 }
 
 // fake answers by document: the issues page, then the follow-up pages.
@@ -106,32 +99,39 @@ func TestFetchFollowsALongConnection(t *testing.T) {
 	}}
 	f := &Fetcher{Q: fk.q, PageSize: 50, MaxCalls: 10}
 	r, err := f.Issues(context.Background(), RepoMeta{Name: "o/r", URL: workfile.Web + "o/r", Issues: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+
 	cs := r.Issues[0].Comments
-	if len(cs) != 2 || cs[0].Body != "one" || cs[1].Body != "two" || cs[1].Author != "" {
-		t.Fatalf("comments %+v, want both pages in order, a deleted author as \"\"", cs)
-	}
-	if f.Calls != 2 || fk.calls[1]["after"] != "C1" || fk.calls[1]["number"] != 1 {
-		t.Fatalf("calls=%d follow-up vars %v, want one follow-up after C1 for issue 1", f.Calls, fk.calls)
-	}
+	require.Len(t, cs, 2, "comments %+v, want both pages in order, a deleted author as \"\"", cs)
+	require.Equal(t, "one", cs[0].Body, "comments %+v, want both pages in order, a deleted author as \"\"", cs)
+	require.Equal(t, "two", cs[1].Body, "comments %+v, want both pages in order, a deleted author as \"\"", cs)
+	require.Empty(t, cs[1].Author, "comments %+v, want both pages in order, a deleted author as \"\"", cs)
+
+	require.Equal(t, 2, f.Calls, "calls=%d follow-up vars %v, want one follow-up after C1 for issue 1", f.Calls, fk.calls)
+	require.Equal(t, "C1", fk.calls[1]["after"], "calls=%d follow-up vars %v, want one follow-up after C1 for issue 1", f.Calls, fk.calls)
+	require.Equal(t, 1, fk.calls[1]["number"], "calls=%d follow-up vars %v, want one follow-up after C1 for issue 1", f.Calls, fk.calls)
 }
 
 // TestFetchRefusesACountThatDisagrees: a repository or a connection whose
 // pages hold fewer than GitHub counts is refused, never half-captured.
 func TestFetchRefusesACountThatDisagrees(t *testing.T) {
 	t.Parallel()
-	for name, page := range map[string]string{
-		"issues":   issuePage(3, 1, false, 2),
-		"comments": issuePage(1, 5, false, 1),
-	} {
-		fk := &fake{issues: page}
-		f := &Fetcher{Q: fk.q, PageSize: 50, MaxCalls: 10}
-		_, err := f.Issues(context.Background(), RepoMeta{Name: "o/r"})
-		if err == nil || !strings.Contains(err.Error(), "run again") {
-			t.Fatalf("%s: err=%v, want a refusal that says run again", name, err)
-		}
+	cases := []struct {
+		name string
+		page string
+	}{
+		{name: "issues", page: issuePage(3, 1, false, 2)},
+		{name: "comments", page: issuePage(1, 5, false, 1)},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fk := &fake{issues: tc.page}
+			f := &Fetcher{Q: fk.q, PageSize: 50, MaxCalls: 10}
+			_, err := f.Issues(context.Background(), RepoMeta{Name: "o/r"})
+			assert.ErrorContains(t, err, "run again", "%s: err=%v, want a refusal that says run again", tc.name, err)
+		})
 	}
 }
 
@@ -142,9 +142,8 @@ func TestTheBudgetRefusesTheCallPastIt(t *testing.T) {
 	fk := &fake{issues: issuePage(1, 2, true, 1)}
 	f := &Fetcher{Q: fk.q, PageSize: 50, MaxCalls: 1}
 	_, err := f.Issues(context.Background(), RepoMeta{Name: "o/r"})
-	if !errors.Is(err, ErrBudget) || len(fk.calls) != 1 {
-		t.Fatalf("err=%v calls made=%d, want ErrBudget after exactly one call", err, len(fk.calls))
-	}
+	require.ErrorIs(t, err, ErrBudget, "err=%v calls made=%d, want ErrBudget after exactly one call", err, len(fk.calls))
+	require.Len(t, fk.calls, 1, "err=%v calls made=%d, want ErrBudget after exactly one call", err, len(fk.calls))
 }
 
 // TestAFailedPageIsAskedAgainSmaller: a page GitHub fails to answer is
@@ -162,28 +161,41 @@ func TestAFailedPageIsAskedAgainSmaller(t *testing.T) {
 	}
 	var log strings.Builder
 	f := &Fetcher{Q: q, PageSize: 80, MaxCalls: 10, Log: &log}
-	if _, err := f.Issues(context.Background(), RepoMeta{Name: "o/r"}); err != nil {
-		t.Fatal(err)
-	}
-	if fmt.Sprint(sizes) != "[80 40 20]" || strings.Count(log.String(), "PAGE RETRY") != 2 {
-		t.Fatalf("sizes %v log %q, want 80 40 20 with two PAGE RETRY lines", sizes, log.String())
-	}
+	_, err := f.Issues(context.Background(), RepoMeta{Name: "o/r"})
+	require.NoError(t, err)
+	require.Equal(t, []int{80, 40, 20}, sizes, "sizes %v log %q, want 80 40 20 with two PAGE RETRY lines", sizes, log.String())
+	require.Equal(t, 2, strings.Count(log.String(), "PAGE RETRY"), "sizes %v log %q, want 80 40 20 with two PAGE RETRY lines", sizes, log.String())
 }
 
 // TestRefuseMutation: the seam refuses a document that could write.
 func TestRefuseMutation(t *testing.T) {
 	t.Parallel()
-	for _, doc := range []string{`mutation{closeIssue(input:{issueId:"x"}){clientMutationId}}`, `subscription{x}`, `query{ a } mutation{ b }`, ``} {
-		if RefuseMutation(doc) == nil {
-			t.Fatalf("%q was not refused", doc)
-		}
+	cases := []struct {
+		name string
+		doc  string
+	}{
+		{name: "closeIssue mutation", doc: `mutation{closeIssue(input:{issueId:"x"}){clientMutationId}}`},
+		{name: "subscription", doc: `subscription{x}`},
+		{name: "query and mutation", doc: `query{ a } mutation{ b }`},
+		{name: "empty document", doc: ``},
 	}
-	if err := RefuseMutation(issuesDoc); err != nil {
-		t.Fatalf("the issues document was refused: %v", err)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Error(t, RefuseMutation(tc.doc), "%q was not refused", tc.doc)
+		})
 	}
-	if _, err := GhQuery("/nonexistent/gh")(context.Background(), `mutation{x}`, nil); err == nil || !strings.Contains(err.Error(), "refused") {
-		t.Fatalf("GhQuery ran a mutation document: %v", err)
-	}
+	t.Run("issues document allowed", func(t *testing.T) {
+		t.Parallel()
+		err := RefuseMutation(issuesDoc)
+		require.NoError(t, err, "the issues document was refused: %v", err)
+	})
+	t.Run("GhQuery refuses mutation", func(t *testing.T) {
+		t.Parallel()
+		_, err := GhQuery("/nonexistent/gh")(context.Background(), `mutation{x}`, nil)
+		require.ErrorContains(t, err, "refused", "GhQuery ran a mutation document: %v", err)
+	})
 }
 
 // TestANullSourceIsKeptAsNoSource: a cross-reference whose source GitHub
@@ -196,23 +208,19 @@ func TestANullSourceIsKeptAsNoSource(t *testing.T) {
 	fk := &fake{issues: page}
 	f := &Fetcher{Q: fk.q, PageSize: 50, MaxCalls: 10}
 	r, err := f.Issues(context.Background(), RepoMeta{Name: "o/r", URL: workfile.Web + "o/r"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+
 	refs := r.Issues[0].References
-	if len(refs) != 1 || refs[0].Kind != "" || refs[0].Number != 0 || refs[0].At != "t" {
-		t.Fatalf("references %+v, want one with no source", refs)
-	}
+	require.Len(t, refs, 1, "references %+v, want one with no source", refs)
+	require.Empty(t, refs[0].Kind, "references %+v, want one with no source", refs)
+	require.Equal(t, 0, refs[0].Number, "references %+v, want one with no source", refs)
+	require.Equal(t, "t", refs[0].At, "references %+v, want one with no source", refs)
+
 	tree := &workfile.Tree{Source: "github", Org: "o", Repos: []workfile.Repo{r}}
 	data, err := workfile.Encode(tree)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	back, err := workfile.Decode("t", data, workfile.Limits(len(data)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if d := workfile.Diff(back, tree, nil); len(d) != 0 {
-		t.Fatalf("differences after the round trip: %+v", d)
-	}
+	require.NoError(t, err)
+	d := workfile.Diff(back, tree, nil)
+	require.Empty(t, d, "differences after the round trip: %+v", d)
 }

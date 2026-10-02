@@ -191,6 +191,7 @@ func printCommandHelp(out io.Writer, c command, fs *flag.FlagSet) {
 	fmt.Fprintln(out, "  nova-table "+c.example)
 	if c.name == "batch" {
 		fmt.Fprintln(out, "  nova-table batch - < manifest.json")
+		fmt.Fprintln(out, "\n"+batchUsageDetails)
 	}
 	if fs != nil {
 		// Product flags first, connection next, receipt metadata last. Never print

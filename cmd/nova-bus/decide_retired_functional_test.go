@@ -5,8 +5,10 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInboxCarriesSameMessagesWithOrWithoutPublicMarker(t *testing.T) {
@@ -14,19 +16,11 @@ func TestInboxCarriesSameMessagesWithOrWithoutPublicMarker(t *testing.T) {
 	checkout, _ := busDir(t)
 	args := []string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "12", "--full"}
 	private := invoke(t, "", args...).mustCode(t, 0)
-	if err := os.WriteFile(filepath.Join(checkout, ".public"), []byte("public\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(checkout, ".public"), []byte("public\n"), 0600))
 	public := invoke(t, "", args...).mustCode(t, 0)
-	if public.stdout != private.stdout || public.stderr != private.stderr {
-		t.Fatal("public marker changed ordinary message listing")
-	}
+	require.False(t, public.stdout != private.stdout || public.stderr != private.stderr, "public marker changed ordinary message listing")
 	for _, unexpected := range []string{"INBOX DECIDED", "needs_reply=", "decider=", "conf="} {
-		if strings.Contains(public.stdout, unexpected) {
-			t.Errorf("inbox classified notes: %s", unexpected)
-		}
+		assert.NotContainsf(t, public.stdout, unexpected, "inbox classified notes: %s", unexpected)
 	}
-	if !strings.Contains(public.stdout, "A question about the gate") {
-		t.Fatal("ordinary note disappeared")
-	}
+	require.Contains(t, public.stdout, "A question about the gate", "ordinary note disappeared")
 }

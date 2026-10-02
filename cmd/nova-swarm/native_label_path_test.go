@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ISSUE #1923. `native` checks that the SLOT is under the root and then joins the
@@ -33,16 +36,10 @@ func TestNativeRefusesALabelThatWalksOutOfTheSwarmRoot(t *testing.T) {
 			base := t.TempDir()
 			root := filepath.Join(base, "swarm-root")
 			slot := filepath.Join(root, "1")
-			if err := os.MkdirAll(slot, 0o755); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.MkdirAll(slot, 0o755))
 			outside := filepath.Join(base, "OUTSIDE")
-			if err := os.MkdirAll(outside, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("not the card's\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.MkdirAll(outside, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(outside, "keep"), []byte("not the card's\n"), 0o644))
 
 			var errOut bytes.Buffer
 			_, code := nativeRun(nativeRunConfig{
@@ -51,30 +48,18 @@ func TestNativeRefusesALabelThatWalksOutOfTheSwarmRoot(t *testing.T) {
 				slotDir: slot, root: root, deadline: time.Minute, noWall: true,
 			}, &errOut)
 
-			if code != 2 {
-				t.Errorf("a label that is a path exits 2, got %d:\n%s", code, errOut.String())
-			}
-			if !strings.Contains(errOut.String(), "NATIVE REFUSED") {
-				t.Errorf("the refusal is one REFUSED line, got:\n%s", errOut.String())
-			}
-			if !strings.Contains(errOut.String(), "label") {
-				t.Errorf("the refusal does not name the label:\n%s", errOut.String())
-			}
+			assert.Equal(t, 2, code, "a label that is a path exits 2, got %d:\n%s", code, errOut.String())
+			assert.Contains(t, errOut.String(), "NATIVE REFUSED", "the refusal is one REFUSED line, got:\n%s", errOut.String())
+			assert.Contains(t, errOut.String(), "label", "the refusal does not name the label:\n%s", errOut.String())
 			// Nothing was made, leased or removed outside the root.
-			if _, err := os.Lstat(filepath.Join(outside, ".lease")); err == nil {
-				t.Errorf("a lease was published outside the swarm root at %s", outside)
-			}
-			if _, err := os.Lstat(filepath.Join(outside, "keep")); err != nil {
-				t.Errorf("the bytes outside the swarm root did not survive: %v", err)
-			}
+			_, err := os.Lstat(filepath.Join(outside, ".lease"))
+			assert.Error(t, err, "a lease was published outside the swarm root at %s", outside)
+			_, err = os.Lstat(filepath.Join(outside, "keep"))
+			assert.NoError(t, err, "the bytes outside the swarm root did not survive")
 			entries, err := os.ReadDir(base)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			for _, e := range entries {
-				if e.Name() != "swarm-root" && e.Name() != "OUTSIDE" {
-					t.Errorf("the run made %s beside the swarm root", filepath.Join(base, e.Name()))
-				}
+				assert.Contains(t, []string{"swarm-root", "OUTSIDE"}, e.Name(), "the run made %s beside the swarm root", filepath.Join(base, e.Name()))
 			}
 		})
 	}
@@ -89,9 +74,7 @@ func TestNativeStillAcceptsAnOrdinaryLabel(t *testing.T) {
 	base := t.TempDir()
 	root := filepath.Join(base, "swarm-root")
 	slot := filepath.Join(root, "1")
-	if err := os.MkdirAll(slot, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(slot, 0o755))
 	write(t, filepath.Join(root, "identity.tsv"),
 		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	var errOut bytes.Buffer
@@ -103,7 +86,6 @@ func TestNativeStillAcceptsAnOrdinaryLabel(t *testing.T) {
 	if code == 2 && strings.Contains(errOut.String(), "not a job name") {
 		t.Fatalf("an ordinary label was refused as a path:\n%s", errOut.String())
 	}
-	if _, err := os.Stat(filepath.Join(slot, "jobs", "card-1.a_b")); err != nil {
-		t.Fatalf("the honest job directory was not made: %v", err)
-	}
+	_, err := os.Stat(filepath.Join(slot, "jobs", "card-1.a_b"))
+	require.NoError(t, err, "the honest job directory was not made")
 }

@@ -81,6 +81,10 @@ func cmdExample(args []string, stdout, stderr io.Writer) int {
 			fmt.Sprintf("takes one directory to write the pages into, got %d arguments: nova-self-talk example ./pages", fset.NArg()))
 	}
 	dir := fset.Arg(0)
+	if oneline.Escape(dir) != dir {
+		return refuse(stdout, stderr, asJSON, "example", "",
+			"directory path contains characters the one-line output must escape, so its follow-up command would not name the same path")
+	}
 	entries, err := pages.ReadDir("testdata/example-pages")
 	if err != nil {
 		return refuse(stdout, stderr, asJSON, "example", "", "the pages built into this binary cannot be read: "+err.Error())
@@ -119,9 +123,9 @@ func cmdExample(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	wrote, next := "wrote", "nova-self-talk "+filepath.Join(dir, "journal.md")
+	wrote, next := "wrote", exampleNext("", filepath.Join(dir, "journal.md"))
 	if *dry {
-		wrote, next = "would-write", "nova-self-talk example "+dir
+		wrote, next = "would-write", exampleNext("example", dir)
 	}
 	if asJSON {
 		o := tool.Done()
@@ -133,6 +137,38 @@ func cmdExample(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "EXAMPLE OK dir=%s %s=%s kept=%s; run: %s\n", oneline.Field(dir), oneline.Field(wrote),
 		oneline.Field(dash(strings.Join(write, ","))), oneline.Field(dash(strings.Join(kept, ","))), oneline.Escape(next))
 	return 0
+}
+
+// exampleNext implements SPEC.md §2's runnable next-command rule: it keeps the path one
+// POSIX-shell argument, and ends flags when the path begins with a dash.
+func exampleNext(verb, file string) string {
+	command := "nova-self-talk"
+	if verb != "" {
+		command += " " + verb
+	}
+	if strings.HasPrefix(file, "-") {
+		command += " --"
+	}
+	return command + " " + shellQuote(file)
+}
+
+// shellQuote renders one path for exampleNext (SPEC.md §2). Ordinary paths stay unchanged;
+// adjacent quote segments preserve shell syntax and apostrophes literally.
+func shellQuote(s string) string {
+	if s != "" {
+		safe := true
+		for _, c := range s {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+				c == '/' || c == '.' || c == '_' || c == '-' || c == ':') {
+				safe = false
+				break
+			}
+		}
+		if safe {
+			return s
+		}
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 // dash is a field's empty value as the typed line spells it.

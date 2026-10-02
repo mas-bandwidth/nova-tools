@@ -3,6 +3,9 @@ package swarm
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // EMMA'S ITEM-4 DOGFOOD, TURNED INTO TESTS (#1853, #1854).
@@ -58,15 +61,11 @@ func TestAWindowsDriveLetterIsNotARepoRelativeGlob(t *testing.T) {
 
 	for _, g := range []string{`C:/Windows/system32/evil.go`, `C:\Windows\system32\evil.go`, `d:/x/y.go`} {
 		fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+g, "TEST: ./internal/x TestA"))
-		if !hasCheck(fs, "paths-declared") {
-			t.Errorf("a drive-letter path is absolute and is not repo-relative: %q\n%s", g, dumpFindings(fs))
-		}
+		assert.True(t, hasCheck(fs, "paths-declared"), "a drive-letter path is absolute and is not repo-relative: %q\n%s", g, dumpFindings(fs))
 	}
 	// And the same glob in the TEST: package field, which runs the same rule.
 	fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: internal/x/a.go", `TEST: C:/x TestA`))
-	if !hasCheck(fs, "test-named") {
-		t.Errorf("the TEST: package runs the same path rule\n%s", dumpFindings(fs))
-	}
+	assert.True(t, hasCheck(fs, "test-named"), "the TEST: package runs the same path rule\n%s", dumpFindings(fs))
 }
 
 // #1853.2 THE CAP ON PATHS: IS EIGHT (SPEC-TOOLWORK.md:579-580, internal/hygiene maxPaths).
@@ -76,14 +75,11 @@ func TestNineGlobsIsOverThePathsCap(t *testing.T) {
 
 	nine := "a1.go, a2.go, a3.go, a4.go, a5.go, a6.go, a7.go, a8.go, a9.go"
 	fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+nine, "TEST: ./internal/x TestA"))
-	if !hasCheck(fs, "paths-declared") {
-		t.Fatalf("nine globs is over the cap of eight\n%s", dumpFindings(fs))
-	}
+	require.True(t, hasCheck(fs, "paths-declared"), "nine globs is over the cap of eight\n%s", dumpFindings(fs))
 	// Eight is the cap, not the refusal.
 	eight := "a1.go, a2.go, a3.go, a4.go, a5.go, a6.go, a7.go, a8.go"
-	if fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+eight, "TEST: ./internal/x TestA")); len(fs) != 0 {
-		t.Fatalf("eight globs is exactly the cap and is clean\n%s", dumpFindings(fs))
-	}
+	fs = findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+eight, "TEST: ./internal/x TestA"))
+	require.Empty(t, fs, "eight globs is exactly the cap and is clean\n%s", dumpFindings(fs))
 }
 
 // #1853.3 A COMMA-ONLY PATHS: LINE DECLARES NOTHING. `PATHS: , , ` is not `PATHS: none`
@@ -94,14 +90,11 @@ func TestACommaOnlyPathsLineDeclaresNothing(t *testing.T) {
 
 	for _, v := range []string{", , ", ",", " , "} {
 		fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+v, "TEST: ./internal/x TestA"))
-		if !hasCheck(fs, "paths-declared") {
-			t.Errorf("PATHS: %q names no glob and is not `none`\n%s", v, dumpFindings(fs))
-		}
+		assert.True(t, hasCheck(fs, "paths-declared"), "PATHS: %q names no glob and is not `none`\n%s", v, dumpFindings(fs))
 	}
 	// The ordinary spelling, a comma and a space between globs, stays clean.
-	if fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: internal/x/a.go, internal/x/a_test.go", "TEST: ./internal/x TestA")); len(fs) != 0 {
-		t.Fatalf("`<glob>, <glob>` is how every card writes it\n%s", dumpFindings(fs))
-	}
+	fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: internal/x/a.go, internal/x/a_test.go", "TEST: ./internal/x TestA"))
+	require.Empty(t, fs, "`<glob>, <glob>` is how every card writes it\n%s", dumpFindings(fs))
 }
 
 // #1853.4 AN UNKNOWN KIND IS NOT A KIND. The typed header asked only that KIND: have
@@ -111,17 +104,14 @@ func TestAnUnknownKindDrawsKindDeclared(t *testing.T) {
 	t.Parallel()
 
 	fs := findingsOn(headerCard(t, "KIND: completely-unknown-kind", "PATHS: internal/x/a.go", "TEST: ./internal/x TestA"))
-	if !hasCheck(fs, "kind-declared") {
-		t.Fatalf("an unknown kind is not a kind this toolchain declares\n%s", dumpFindings(fs))
-	}
+	require.True(t, hasCheck(fs, "kind-declared"), "an unknown kind is not a kind this toolchain declares\n%s", dumpFindings(fs))
 	for _, f := range fs {
 		if f.Check == "kind-declared" && !strings.Contains(f.Excerpt, "completely-unknown-kind") {
 			t.Fatalf("the finding names the kind\n%s", dumpFindings(fs))
 		}
 	}
-	if fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: internal/x/a.go", "TEST: ./internal/x TestA")); len(fs) != 0 {
-		t.Fatalf("a declared kind is clean\n%s", dumpFindings(fs))
-	}
+	fs = findingsOn(headerCard(t, "KIND: fix-red", "PATHS: internal/x/a.go", "TEST: ./internal/x TestA"))
+	require.Empty(t, fs, "a declared kind is clean\n%s", dumpFindings(fs))
 }
 
 // #1854.1 A TYPED HEADER LINE THE GATE WILL NEVER READ IS A DEFECT, NOT A SILENCE. The
@@ -138,12 +128,8 @@ func TestATypedHeaderBelowTheBlockIsNamedNotSkipped(t *testing.T) {
 		"PATHS: internal/x/a.go",
 		"TEST: ./internal/x TestA")
 	fs := findingsOn(raw)
-	if len(fs) == 0 {
-		t.Fatalf("a KIND: the gate will never read is a finding, not a pass\n%s", dumpFindings(fs))
-	}
-	if !hasCheck(fs, "kind-declared") {
-		t.Fatalf("the stranded line is named by its own token\n%s", dumpFindings(fs))
-	}
+	require.NotEmpty(t, fs, "a KIND: the gate will never read is a finding, not a pass\n%s", dumpFindings(fs))
+	require.True(t, hasCheck(fs, "kind-declared"), "the stranded line is named by its own token\n%s", dumpFindings(fs))
 	for _, f := range fs {
 		if f.Check == "kind-declared" && f.Line != 3 {
 			t.Fatalf("the finding names the line the stranded KIND: sits on, got %d\n%s", f.Line, dumpFindings(fs))
@@ -161,25 +147,19 @@ func TestADuplicateHeaderKeyIsRefusedNotSilentlyDropped(t *testing.T) {
 		"KIND: transcript-test",
 		"PATHS: internal/x/a.go",
 		"TEST: ./internal/x TestA"))
-	if !hasCheck(fs, "kind-declared") {
-		t.Fatalf("two KIND: lines is a card with no kind\n%s", dumpFindings(fs))
-	}
+	require.True(t, hasCheck(fs, "kind-declared"), "two KIND: lines is a card with no kind\n%s", dumpFindings(fs))
 	fs = findingsOn(headerCard(t,
 		"KIND: fix-red",
 		"PATHS: internal/x/a.go",
 		"PATHS: internal/y/b.go",
 		"TEST: ./internal/x TestA"))
-	if !hasCheck(fs, "paths-declared") {
-		t.Fatalf("two PATHS: lines is a card with no bound\n%s", dumpFindings(fs))
-	}
+	require.True(t, hasCheck(fs, "paths-declared"), "two PATHS: lines is a card with no bound\n%s", dumpFindings(fs))
 	fs = findingsOn(headerCard(t,
 		"KIND: fix-red",
 		"PATHS: internal/x/a.go",
 		"TEST: ./internal/x TestA",
 		"TEST: ./internal/y TestB"))
-	if !hasCheck(fs, "test-named") {
-		t.Fatalf("two TEST: lines is a card with no gate\n%s", dumpFindings(fs))
-	}
+	require.True(t, hasCheck(fs, "test-named"), "two TEST: lines is a card with no gate\n%s", dumpFindings(fs))
 }
 
 // THE VALIDATOR IS CALLED, NOT RESTATED. lintheader.go's own comment said `validGlob`
@@ -191,14 +171,10 @@ func TestThePathRuleIsTheValidatorsNotACopy(t *testing.T) {
 
 	for _, g := range []string{"../out/x.go", "/etc/passwd", "**/*", "*/**", "*"} {
 		fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+g, "TEST: ./internal/x TestA"))
-		if !hasCheck(fs, "paths-declared") {
-			t.Errorf("hygiene.ValidatePaths refuses %q, so the lint does\n%s", g, dumpFindings(fs))
-		}
+		assert.True(t, hasCheck(fs, "paths-declared"), "hygiene.ValidatePaths refuses %q, so the lint does\n%s", g, dumpFindings(fs))
 	}
 	for _, g := range []string{"sign/**", "*.go", "**/*.go", "internal/x/a.go"} {
 		fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+g, "TEST: ./internal/x TestA"))
-		if len(fs) != 0 {
-			t.Errorf("hygiene.ValidatePaths clears %q, so the lint does\n%s", g, dumpFindings(fs))
-		}
+		assert.Empty(t, fs, "hygiene.ValidatePaths clears %q, so the lint does\n%s", g, dumpFindings(fs))
 	}
 }

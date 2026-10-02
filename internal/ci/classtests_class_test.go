@@ -651,7 +651,7 @@ func (m *mergeDeletions) ordinaryFindings() []string {
 func TestNoMergeDeletesATestFileUndeclared(t *testing.T) {
 	t.Parallel()
 
-	log := loadAllowlist(t, "testdata/deleted-tests.txt", allowlist.Options{})
+	log := loadAllowlist(t, "testdata/deleted-tests.txt", allowlist.Options{RepeatedKeys: true})
 	for _, row := range distinctRows(log.Rows()) {
 		if _, why, _ := strings.Cut(row.Text, " "); strings.TrimSpace(why) == "" {
 			t.Errorf("%s: %q carries no why", deletedTestsLogPath, row.Text)

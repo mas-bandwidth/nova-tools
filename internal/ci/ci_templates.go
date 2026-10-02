@@ -115,10 +115,6 @@ func checkTemplatesWith(root, allowlistPath string, seams SourceSeams) (Template
 			case "testdata", ".git", "vendor":
 				return filepath.SkipDir
 			}
-			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-			if isDeprecatedDir(root, path) {
-				return filepath.SkipDir
-			}
 			return nil
 		}
 		if !strings.HasSuffix(path, "_test.go") {
@@ -178,14 +174,10 @@ func matchTemplateAllow(entries []waitAllow, f TemplateFinding) int {
 	return -1
 }
 
-// scanTemplateFile parses one _test.go and returns its unquoted-path findings.
+// scanTemplateFileWith parses one _test.go and returns its unquoted-path findings.
 // The second result is false when the file does not parse: a file that is not
 // Go cannot carry the shape this check reads, and a fixture deliberately
 // holding a broken literal is not the offender itself.
-func scanTemplateFile(rel string, src []byte) ([]TemplateFinding, bool) {
-	return scanTemplateFileWith(rel, src, defaultSourceSeams())
-}
-
 func scanTemplateFileWith(rel string, src []byte, seams SourceSeams) ([]TemplateFinding, bool) {
 	fset, file, err := seams.parseFile(rel, src, 0)
 	if err != nil {

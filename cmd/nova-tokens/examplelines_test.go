@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestHelpExampleLinesRunAsPrinted: every line of this tool's `example:` block runs, as printed,
@@ -20,8 +22,8 @@ import (
 // The usage banner is read AS SOURCE -- the `usage` constant beside this test -- rather than by
 // running `help`, because the lines under test are the ones a reader pastes; the binary is built
 // only so the lines can be RUN, with that binary on PATH and stdin closed, exactly as a stranger
-// would. The block reads ./repos.tsv, ./transcripts, ./bus, ./session.jsonl and ./out, so the setup
-// line the block now carries is executed first, in a checkout-shaped temp root holding the fixture.
+// would. The block reads ./repos.tsv, ./transcripts, ./session.jsonl and ./out, so the setup
+// line creates its inputs directly in an otherwise empty temporary directory.
 //
 // No example line here pushes, publishes, contacts a forge, acts on a machine or needs a key:
 // fold, check, sum, sources, report and session read files and write one day file, so no line is
@@ -30,42 +32,32 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	t.Parallel()
 
 	lines := exampleBlockLines(usage)
-	if len(lines) == 0 {
-		t.Fatal("the usage banner's `example:` blocks hold no line; this test would pass by running nothing")
-	}
+	require.False(t, len(lines) == 0, "the usage banner's `example:` blocks hold no line; this test would pass by running nothing")
 
 	setup := fixtureSetupLine(usage)
-	if setup == "" {
-		t.Fatalf("the usage banner has no fixture setup line above the block, so a stranger pasting it names\n"+
-			"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
-			"The missing line is:\n  %s", wantFixtureSetup)
-	}
+	require.False(t, setup == "", "the usage banner has no fixture setup line above the block, so a stranger pasting it names\n"+
+		"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
+		"The missing line is:\n  %s", wantFixtureSetup)
+	assert.NotContains(t, setup, "cmd/nova-tokens/testdata", "the setup still depends on a source checkout")
 
 	bin := buildExampleBinary(t)
 
 	root := t.TempDir()
-	// The one path the setup line reads, at the path it names: the checkout shape, and nothing
-	// else, because the block only reaches cmd/nova-tokens/testdata/example-bench.
-	copyExampleTree(t, filepath.Join("testdata", "example-bench"),
-		filepath.Join(root, "cmd", "nova-tokens", "testdata", "example-bench"))
-
-	if exit, out := runExampleLine(t, root, filepath.Dir(bin), setup); exit != 0 {
-		t.Fatalf("the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
+	{
+		exit, out := runExampleLine(t, root, filepath.Dir(bin), setup)
+		require.False(t, exit != 0, "the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
 			exit, setup, exampleFirstLine(out))
 	}
 
 	for _, line := range lines {
 		exit, out := runExampleLine(t, root, filepath.Dir(bin), line)
-		if exit != 0 {
-			t.Errorf("the example `%s` exits %d, want 0 -- a line a stranger pastes must run as printed:\nfirst output line: %s",
-				line, exit, exampleFirstLine(out))
-		}
+		assert.False(t, exit != 0, "the example `%s` exits %d, want 0 -- a line a stranger pastes must run as printed:\nfirst output line: %s",
+			line, exit, exampleFirstLine(out))
 	}
 }
 
-// wantFixtureSetup is the line the class fix added above the block, named so a test that finds it
-// missing says which line a reader lost.
-const wantFixtureSetup = "cp -R cmd/nova-tokens/testdata/example-bench/. . && cp ./transcripts/window.jsonl ./session.jsonl && mkdir -p ./out"
+// wantFixtureSetup is the standalone shell setup expected above the example block.
+const wantFixtureSetup = "mkdir -p ./transcripts"
 
 // exampleBlockLines returns every command under an `example:` heading in a usage banner, in
 // banner order, across every block. A line beginning with the tool's name under the heading is
@@ -98,7 +90,7 @@ func exampleBlockLines(usage string) []string {
 // line is the source of truth and this test runs what the banner carries.
 func fixtureSetupLine(usage string) string {
 	for _, line := range strings.Split(usage, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "cp -R cmd/nova-tokens/testdata/example-bench") {
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, wantFixtureSetup) {
 			return trimmed
 		}
 	}
@@ -118,8 +110,9 @@ func buildExampleBinary(t *testing.T) string {
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Env = goenv.Clean(os.Environ())
 	cmd.Dir = "."
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building nova-tokens: %v\n%s", err, out)
+	{
+		out, err := cmd.CombinedOutput()
+		require.False(t, err != nil, "building nova-tokens: %v\n%s", err, out)
 	}
 	return bin
 }
@@ -141,7 +134,7 @@ func runExampleLine(t *testing.T, dir, binDir, line string) (int, string) {
 	case errors.As(err, &exitErr):
 		return exitErr.ExitCode(), out.String()
 	default:
-		t.Fatalf("running %q: %v", line, err)
+		require.FailNowf(t, "example command failed", "running %q: %v", line, err)
 		return 0, ""
 	}
 }
@@ -168,9 +161,7 @@ func copyExampleTree(t *testing.T, src, dst string) {
 		}
 		return os.WriteFile(target, raw, 0o644)
 	})
-	if err != nil {
-		t.Fatalf("copying the fixture %s: %v", src, err)
-	}
+	require.False(t, err != nil, "copying the fixture %s: %v", src, err)
 }
 
 // exampleFirstLine is the first line of an output, which is where a refusal says what was wrong.

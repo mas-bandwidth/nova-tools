@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"gopkg.in/yaml.v3"
 )
 
@@ -231,6 +232,8 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 	if l.Width, err = strconv.Atoi(orZero(v["width"])); err != nil || l.Width < 0 {
 		return bad("width", "is not a count")
 	}
+	// the unit runs the command with the row's width (LoopCommand)
+	l.Argv = LoopCommand(l.Argv, l.Width)
 	if l.Keepalive, err = strconv.ParseBool(orFalse(v["keepalive"])); err != nil {
 		return bad("keepalive", "is not true or false")
 	}
@@ -349,7 +352,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&f); err != nil {
-		return nil, fmt.Errorf("--fixture %s: %w", path, err)
+		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, os, arch), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, oneline.Quote(strings.Join(strings.Fields(err.Error()), " ")))
 	}
 	snap := &Snapshot{Machines: map[string]View{}, Beats: map[string]*Beat{}, Revs: map[string]int64{}}
 	for m, r := range f.Machines {

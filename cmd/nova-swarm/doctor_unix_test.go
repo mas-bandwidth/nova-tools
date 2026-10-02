@@ -15,6 +15,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // reapRecordedChildren ends every process a stub recorded in pidFile (one pid per line, one
@@ -44,9 +47,7 @@ func reapRecordedChildren(t *testing.T, pidFile string) {
 		for syscall.Kill(pid, 0) == nil && ctx.Err() == nil {
 			runtime.Gosched()
 		}
-		if syscall.Kill(pid, 0) == nil {
-			t.Errorf("the stub's background child %d is still alive after it was killed", pid)
-		}
+		assert.Error(t, syscall.Kill(pid, 0), "the stub's background child %d is still alive after it was killed", pid)
 	}
 }
 
@@ -63,9 +64,9 @@ func TestPreflightReadsABinaryWhoseChildHoldsThePipe(t *testing.T) {
 		"echo 'nova-swarm good-stamp'", "", doctorPipeGrace)
 	t.Cleanup(func() { reapRecordedChildren(t, pidFile) })
 	var errOut bytes.Buffer
-	if code, stop := env.preflight([]string{"native", "--card", "c"}, &errOut); stop || code != 0 {
-		t.Fatalf("preflight(exit=%d, stop=%v), want (0, false)\n%s", code, stop, errOut.String())
-	}
+	code, stop := env.preflight([]string{"native", "--card", "c"}, &errOut)
+	require.False(t, stop, "preflight(exit=%d, stop=%v), want (0, false)\n%s", code, stop, errOut.String())
+	require.Equal(t, 0, code, "preflight(exit=%d, stop=%v), want (0, false)\n%s", code, stop, errOut.String())
 	var out, derr bytes.Buffer
 	if code := env.cmdDoctor(nil, &out, &derr); code != 0 || out.String() != "DOCTOR OK stamp=nova-swarm good-stamp\n" {
 		t.Errorf("doctor: exit %d, stdout %q, stderr %q", code, out.String(), derr.String())
@@ -85,14 +86,10 @@ func TestPreflightReadsABinaryWhoseChildHoldsThePipe(t *testing.T) {
 func TestPreflightComparesTheStampOfABinaryThatPrintsThenHangs(t *testing.T) {
 	t.Parallel()
 	signal := filepath.Join(t.TempDir(), "printed")
-	if err := syscall.Mkfifo(signal, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, syscall.Mkfifo(signal, 0o600))
 	// Opened for reading and writing, the pipe never ends and a stub's write never blocks.
 	pipe, err := os.OpenFile(signal, os.O_RDWR, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = pipe.Close() })
 
 	env, pathBin, _ := doctorStubs(t,
@@ -139,14 +136,11 @@ func TestPreflightComparesTheStampOfABinaryThatPrintsThenHangs(t *testing.T) {
 	}()
 	code, stop := env.preflight([]string{"native", "--tokens", "unmetered"}, &errOut)
 	<-done
-	if code != 2 || !stop {
-		t.Fatalf("preflight(exit=%d, stop=%v), want (2, true)\n%s", code, stop, errOut.String())
-	}
+	require.Equal(t, 2, code, "preflight(exit=%d, stop=%v), want (2, true)\n%s", code, stop, errOut.String())
+	require.True(t, stop, "preflight(exit=%d, stop=%v), want (2, true)\n%s", code, stop, errOut.String())
 	got := errOut.String()
 	for _, want := range []string{"DOCTOR DRIFT path=", "stale-stamp", "shadows", "DOCTOR UNREADABLE", "timed out after 2s"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("stderr lacks %q:\n%s", want, got)
-		}
+		assert.Contains(t, got, want, "stderr lacks %q:\n%s", want, got)
 	}
 	if dcode != 2 || out.Len() != 0 || derr.String() != got {
 		t.Errorf("doctor exit %d, want 2 with the preflight's finding\nstdout: %q\nstderr: %q\nwant stderr: %q", dcode, out.String(), derr.String(), got)

@@ -42,7 +42,7 @@ usage:
   nova-self-talk scan [flags] <file>...        the same scan, named as a verb
   nova-self-talk shapes [--json]               every shape and licence the scan uses, with a
                                                sentence each finds and a near miss each passes
-  nova-self-talk example [--dry-run] <dir>     write the two example pages into <dir>
+  nova-self-talk example [--dry-run] [--json] <dir>   write the two example pages into <dir>
   nova-self-talk version                       print this build identity (--version also accepted)
   nova-self-talk help [<verb>]                 this text, or one verb's help
 
@@ -186,12 +186,6 @@ func refuse(stdout, stderr io.Writer, asJSON bool, verb, hint string, problems .
 }
 
 func main() { os.Exit(runStdin(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
-
-// run is the binary with an empty standard input: the entry the tests and the verb-help
-// check call.
-func run(args []string, stdout, stderr io.Writer) int {
-	return runStdin(args, strings.NewReader(""), stdout, stderr)
-}
 
 func runStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` is that verb's help on stdout at exit 0, with the verb's effect, before
@@ -371,11 +365,10 @@ func scan(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				r.installed++
 				p.findings = append(p.findings, finding{"installation", in.Line, string(in.Shape), in.Match, in.Text})
 			}
-			// The banner prints ONCE per file that has findings, before them, so a reader
-			// cannot meet a finding in a rule document without meeting the sentence that
-			// says what it is for.
-			p.ruledoc = pinned[selftalk.Base(f)] &&
-				slices.ContainsFunc(p.findings, func(f finding) bool { return f.class == "installation" })
+			// The banner prints ONCE per file that has findings of either class, before them,
+			// so a reader cannot meet a finding in a rule document without meeting the
+			// sentence that says what it is for.
+			p.ruledoc = pinned[selftalk.Base(f)] && len(p.findings) > 0
 		}
 		r.pages = append(r.pages, p)
 	}
