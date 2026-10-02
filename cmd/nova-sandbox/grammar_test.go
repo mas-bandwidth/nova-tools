@@ -3,25 +3,21 @@ package main
 // The PROBE REFUSED reason set is the spec's, read off the spec, never copied into a test.
 //
 // nova-tools #119 item 1, from the Fable read of #108: `probeRefusalReasons` in main_test.go
-// was a hand copy of the output grammar with a comment saying it was "copied verbatim", and
-// nothing read the line it was copied from. An edit to docs/SPEC-SANDBOX.md's grammar would
-// leave the copy green, and the tool and the spec would be silently apart -- the exact
-// disagreement the comment says it guards. The repository already answers this two ways:
-// cmd/nova-tokens/grammar_test.go reads docs/SPEC-TOKENS.md's fenced grammar block, and
-// internal/swarm/grammar_run_test.go reads SPEC-SWARM's. This is the same pattern for the
-// third spec that publishes a fixed reason set.
-//
-// Both tests here read the FENCED block, not the prose: a spec sentence that happens to
-// mention a reason token cannot satisfy either one, and the grammar a caller's parser
-// stands on is the block.
+// was a hand copy of the output grammar ("copied verbatim") that nothing read back, so an
+// edit to docs/SPEC-SANDBOX.md's grammar would leave it green with the tool and the spec
+// silently apart. This is the pattern of cmd/nova-tokens/grammar_test.go (SPEC-TOKENS) and
+// internal/swarm/grammar_run_test.go (SPEC-SWARM), for the third spec with a fixed reason
+// set. Both tests read the FENCED block, not the prose: a spec sentence that mentions a
+// reason token cannot satisfy either, and the block is what a caller's parser stands on.
 
 import (
-	"os"
+	"maps"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,9 +34,22 @@ const probeStepRefusalReason = "probe_step_not_a_child"
 
 func specSandbox(t *testing.T) string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SANDBOX.md"))
-	require.NoError(t, err, "the grammar is the spec's, so the spec has to be readable: %s", err)
-	return string(raw)
+	return testkit.ReadFile(t, filepath.Join("..", "..", "docs", "SPEC-SANDBOX.md"))
+}
+
+// specFenced is every line of the spec inside a fenced block that begins with prefix.
+func specFenced(t *testing.T, prefix string) []string {
+	t.Helper()
+	var found []string
+	inFence := false
+	for _, line := range strings.Split(specSandbox(t), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence = !inFence
+		} else if inFence && strings.HasPrefix(line, prefix) {
+			found = append(found, line)
+		}
+	}
+	return found
 }
 
 // specProbeRefusalReasons returns the reason alternatives of the spec's own PROBE REFUSED
@@ -48,19 +57,8 @@ func specSandbox(t *testing.T) string {
 // would mean two contracts, none would mean this test was asserting nothing and passing.
 func specProbeRefusalReasons(t *testing.T) map[string]bool {
 	t.Helper()
-	var found []string
-	inFence := false
-	for _, line := range strings.Split(specSandbox(t), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			inFence = !inFence
-			continue
-		}
-		if inFence && strings.HasPrefix(line, probeRefusedGrammarPrefix) {
-			found = append(found, line)
-		}
-	}
-	require.Len(t, found, 1, "docs/SPEC-SANDBOX.md has %d fenced lines beginning %q, want exactly 1; this test would otherwise pass by reading nothing:\n%s",
-		len(found), probeRefusedGrammarPrefix, strings.Join(found, "\n"))
+	found := specFenced(t, probeRefusedGrammarPrefix)
+	require.Len(t, found, 1, "docs/SPEC-SANDBOX.md's fenced lines beginning %q, want exactly 1", probeRefusedGrammarPrefix)
 	alts, _, ok := strings.Cut(strings.TrimPrefix(found[0], probeRefusedGrammarPrefix), ">")
 	require.True(t, ok, "the grammar's PROBE REFUSED alternatives are not closed by `>`: %q", found[0])
 	set := map[string]bool{}
@@ -72,63 +70,36 @@ func specProbeRefusalReasons(t *testing.T) map[string]bool {
 	return set
 }
 
-func sorted(set map[string]bool) []string {
-	out := make([]string, 0, len(set))
-	for k := range set {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // The set the tests police is the set the spec publishes, both directions: a reason added
 // to the spec that no test knows about, and a reason the tests still allow after the spec
-// dropped it, are the same defect from either end.
+// dropped it, are the same defect from either end. The spec's grammar block is the
+// contract; update the tests to it (or the spec, if the tool changed).
 func TestProbeRefusalReasonsAreTheSpecsOwnSet(t *testing.T) {
 	t.Parallel()
-
-	spec := specProbeRefusalReasons(t)
-	got, want := sorted(probeRefusalReasons), sorted(spec)
-	assert.Equal(t, strings.Join(want, "|"), strings.Join(got, "|"), "the PROBE REFUSED reason set in these tests is not docs/SPEC-SANDBOX.md's:\n  tests: %s\n  spec:  %s\nthe spec's grammar block is the contract; update the tests to it (or the spec, if the tool changed)",
-		strings.Join(got, "|"), strings.Join(want, "|"))
+	assert.Equal(t, slices.Sorted(maps.Keys(specProbeRefusalReasons(t))), slices.Sorted(maps.Keys(probeRefusalReasons)), "the PROBE REFUSED reason set in these tests is not docs/SPEC-SANDBOX.md's")
 }
 
-// #119 item 2. The internal verb prints a SEVENTH reason, and leaving it out of the six is
-// right -- no caller runs the verb, so no parser stands on that token -- but the grammar
-// line then does not describe every `PROBE REFUSED` the binary can print, and the spec's
-// internal-verb section named the guard's three mechanisms without ever naming the refusal
-// the guard prints. This asserts all three halves: the binary prints it, the grammar set
-// does not hold it, and the internal-verb section says so in words.
+// #119 item 2. The internal verb prints a SEVENTH reason, rightly outside the six (no
+// caller runs the verb, so no parser stands on it), but the spec's internal-verb section
+// never named the refusal its guard prints. All three halves: the binary prints it (or the
+// test points at nothing), the grammar set does not hold it, and the section says so.
 func TestTheInternalVerbsRefusalIsOutsideTheSetAndNamedInTheSpec(t *testing.T) {
 	t.Parallel()
-
-	// The binary, first: a test that the spec describes a line the tool never prints is a
-	// test pointed at nothing.
-	j := newJob(t)
-	r := j.main().Do(t, "probe-step")
-	require.Equal(t, 2, r.Code, "`probe-step` by hand does not refuse with reason=%s: exit %d, stderr %q", probeStepRefusalReason, r.Code, r.Stderr)
-	require.Contains(t, r.Stderr, "reason="+probeStepRefusalReason, "`probe-step` by hand does not refuse with reason=%s: exit %d, stderr %q", probeStepRefusalReason, r.Code, r.Stderr)
+	newJob(t).run(t, "probe-step").ExitErr(2, "reason="+probeStepRefusalReason)
 
 	assert.False(t, specProbeRefusalReasons(t)[probeStepRefusalReason], "%s is inside the spec's PROBE REFUSED set; it is the internal verb's own refusal and the set is the contract a caller's parser stands on -- if it genuinely joined the set, probeRefusalReasons and this test's premise both change", probeStepRefusalReason)
 
-	// And the section that describes the verb has to name what it prints. Bounded to that
-	// section on purpose: the token appearing anywhere in the file would be satisfied by a
-	// changelog line, and a reader looking for this refusal reads the verb's section.
-	//
-	// The window ends at the next heading of the same level or higher -- whichever of
-	// `### ` and `## ` comes first. Cutting only at the next `## ` was the read's LOW: a
-	// sibling `###` added after this section would sit inside the window, so a token there
-	// would satisfy the test, and the sentence above would have stopped being true with
-	// nothing saying so. Measured: with the paragraph moved into a sibling `###` section,
-	// the `## `-only cut stayed green and this cut goes red.
+	// Bounded to the verb's own section (anywhere in the file, a changelog line would do),
+	// ending at the next `### ` or `## `. Cutting only at `## ` was the read's LOW: measured,
+	// with the paragraph moved into a sibling `###` section that cut stayed green and this
+	// one goes red.
 	const heading = "### The internal verb, and what its guard is and is not"
-	spec := specSandbox(t)
-	_, after, ok := strings.Cut(spec, heading)
+	_, after, ok := strings.Cut(specSandbox(t), heading)
 	require.True(t, ok, "docs/SPEC-SANDBOX.md has no %q section; this test cannot say where the refusal belongs", heading)
 	for _, next := range []string{"\n### ", "\n## "} {
 		if i := strings.Index(after, next); i >= 0 {
 			after = after[:i]
 		}
 	}
-	assert.Contains(t, after, probeStepRefusalReason, "the internal verb's section does not name `PROBE REFUSED reason=%s`, the refusal its guard prints; the grammar above is fixed at six, so a reader has nowhere to learn that this seventh token exists", probeStepRefusalReason)
+	assert.Contains(t, after, probeStepRefusalReason, "the internal verb's section does not name `PROBE REFUSED reason=%s`, the refusal its guard prints; the grammar is fixed at six, so a reader has nowhere to learn that this seventh token exists", probeStepRefusalReason)
 }

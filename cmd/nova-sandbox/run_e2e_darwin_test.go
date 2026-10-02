@@ -14,7 +14,6 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,25 +26,21 @@ import (
 
 func TestARealRunLeavesNothingBehind(t *testing.T) {
 	t.Parallel()
-
 	needDarwin(t)
 	name := "e2e" + strconv.Itoa(os.Getpid())
 	volume := "/Volumes/" + volumePrefix + name
 
-	var out, errb bytes.Buffer
-	code := run([]string{"run", "--name", name, "--size", "64m", "--timeout", "2m", "--",
-		"/bin/sh", "-c", "echo hi > out; sleep 1"},
-		nil, &out, &errb, []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"})
-	t.Logf("exit %d\nstdout:\n%s\nstderr:\n%s", code, out.String(), errb.String())
-
-	require.Equal(t, 0, code, "the real run exited %d, want 0", code)
-	assert.Contains(t, errb.String(), "SANDBOX DONE name="+name+" exit=0", "the run printed no receipt for a clean exit")
-	// The volume is GONE: the mount point, and the machine's own list of volumes.
-	_, err := os.Lstat(volume)
-	assert.Error(t, err, "%s is still mounted after the run; the whole point is that nothing survives", volume)
-	_, err = os.Lstat(filepath.Join(volume, "work", "out"))
-	assert.Error(t, err, "the file the command wrote is still readable; the volume it was on was not deleted")
+	r := withEnv(run, []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}).Do(t, "run", "--name", name, "--size", "64m", "--timeout", "2m", "--",
+		"/bin/sh", "-c", "echo hi > out; sleep 1")
+	t.Logf("%s", r)
+	r.ExitErr(0, "SANDBOX DONE name="+name+" exit=0")
+	// The volume is GONE: the mount point, the file the command wrote on it, and the
+	// machine's own list of volumes.
+	for _, p := range []string{volume, filepath.Join(volume, "work", "out")} {
+		_, err := os.Lstat(p)
+		assert.Error(t, err, "%s is still there after the run; the whole point is that nothing survives", p)
+	}
 	listed, err := exec.Command("/usr/sbin/diskutil", "apfs", "list").Output()
-	require.NoError(t, err, "diskutil apfs list: %s", err)
-	assert.NotContains(t, string(listed), volumePrefix+name, "a volume named %s%s is still in `diskutil apfs list` after the run", volumePrefix, name)
+	require.NoError(t, err)
+	assert.NotContains(t, string(listed), volumePrefix+name, "the volume is still in `diskutil apfs list` after the run")
 }

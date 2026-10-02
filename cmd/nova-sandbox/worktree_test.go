@@ -5,18 +5,19 @@ package main
 // a fake process probe, so no test touches a network, a real forge or the clock.
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,22 +125,17 @@ func (f *fakeForge) PR(id int) (worktreePR, error) {
 
 func useFakeGit(t *testing.T, g *fakeGit) {
 	t.Helper()
-	old := worktreeGit
-	worktreeGit = g.run
-	t.Cleanup(func() { worktreeGit = old })
+	swap(t, &worktreeGit, g.run)
 }
 
-// errForge is the forge seam for the failure tests: every call answers one
-// error.
+// errForge is the forge seam for the failure tests: every call answers one error.
 type errForge struct{ err error }
 
 func (f errForge) PR(int) (worktreePR, error) { return worktreePR{}, f.err }
 
 func useForge(t *testing.T, f worktreeForge) {
 	t.Helper()
-	old := worktreeForgeFactory
-	worktreeForgeFactory = func(repo string, env []string) worktreeForge { return f }
-	t.Cleanup(func() { worktreeForgeFactory = old })
+	swap(t, &worktreeForgeFactory, func(repo string, env []string) worktreeForge { return f })
 }
 
 type wjob struct{ base, repo, scratch string }
@@ -157,394 +153,232 @@ func newWJob(t *testing.T) wjob {
 	return j
 }
 
-func (j wjob) tool(t *testing.T, env []string, args ...string) (int, string, string) {
+// runEnv is `nova-sandbox worktree <args>` under env; on is the same with no environment
+// and against this job's repo and scratch, which is every call but the flag tests'.
+func (j wjob) runEnv(t *testing.T, env []string, args ...string) testkit.Ran {
 	t.Helper()
-	var out, errb bytes.Buffer
-	code := run(append([]string{"worktree"}, args...), nil, &out, &errb, env)
-	return code, out.String(), errb.String()
+	return withEnv(run, env).Do(t, append([]string{"worktree"}, args...)...)
 }
 
-func recordGUID(t *testing.T, scratch string, id int) string {
+func (j wjob) on(t *testing.T, args ...string) testkit.Ran {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(scratch, fmt.Sprintf("%d.pr", id)))
-	require.NoError(t, err, "the record file is not there: %s", err)
-	for _, line := range strings.Split(string(raw), "\n") {
-		if v, ok := strings.CutPrefix(line, "guid="); ok {
-			return v
+	return j.runEnv(t, nil, append([]string{"--repo", j.repo, "--scratch", j.scratch}, args...)...)
+}
+
+// wbench is a worktree job with the fake git and a fake forge in place, the forge
+// answering every pr in ids as open at head sha.
+type wbench struct {
+	wjob
+	g   *fakeGit
+	ff  *fakeForge
+	sha string
+}
+
+func newWBench(t *testing.T, sha string, ids ...int) wbench {
+	t.Helper()
+	b := wbench{wjob: newWJob(t), ff: &fakeForge{byID: map[int]worktreePR{}}, sha: sha}
+	b.g = newFakeGit(b.repo)
+	for _, id := range ids {
+		b.ff.byID[id] = worktreePR{Head: sha, Base: "main", State: "open"}
+	}
+	useFakeGit(t, b.g)
+	useForge(t, b.ff)
+	return b
+}
+
+// create runs --pr id under env and requires exit 0 and exactly WORKTREE OK
+// path=<scratch>/<guid> head=<sha>, the guid read off the record; it returns the run and
+// the tree's path.
+func (b wbench) create(t *testing.T, id int, env ...string) (testkit.Ran, string) {
+	t.Helper()
+	r := b.runEnv(t, env, "--repo", b.repo, "--scratch", b.scratch, "--pr", strconv.Itoa(id)).Exit(0)
+	raw := testkit.ReadFile(t, filepath.Join(b.scratch, fmt.Sprintf("%d.pr", id)))
+	for _, line := range strings.Split(raw, "\n") {
+		if guid, ok := strings.CutPrefix(line, "guid="); ok {
+			path := filepath.Join(b.scratch, guid)
+			require.Equal(t, "WORKTREE OK path="+path+" head="+b.sha+"\n", r.Stdout, r)
+			return r, path
 		}
 	}
 	t.Fatalf("the record file has no guid= line: %q", raw)
-	return ""
+	return r, ""
 }
 
-func okLine(scratch, guid, sha string) string {
-	return "WORKTREE OK path=" + filepath.Join(scratch, guid) + " head=" + sha + "\n"
-}
-
-func createTree(t *testing.T, j wjob, sha, id string) string {
-	t.Helper()
-	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", id)
-	require.Equal(t, 0, code, "creating the tree for --pr %s: exit %d, stderr %q", id, code, errb)
-	expect := "WORKTREE OK path=" + filepath.Join(j.scratch, recordGUID(t, j.scratch, atoi(t, id))) + " head=" + sha + "\n"
-	require.Equal(t, expect, out, "creating the tree for --pr %s: stdout %q, want %q", id, out, expect)
-	return filepath.Join(j.scratch, recordGUID(t, j.scratch, atoi(t, id)))
-}
-
-func atoi(t *testing.T, s string) int {
-	t.Helper()
-	var n int
-	_, err := fmt.Sscanf(s, "%d", &n)
-	require.NoError(t, err, "%q is not a number", s)
-	return n
-}
-
-// 1. A fake forge answering head <sha> makes the verb print exactly WORKTREE OK
-// path=<tmp>/<guid> head=<sha>, and the tree and its .git file exist.
+// The tree's life from docs/SPEC-SANDBOX.md's list, one step on the next: 1. a fake forge
+// answering head <sha> makes the verb print exactly the WORKTREE OK line and the tree's
+// .git file exists, with 8. a forge token in the environment on no byte the verb wrote;
+// 2. a second call for the same --pr prints the same line with no git worktree add; 3. a
+// tree deleted under its record is rebuilt with exactly one.
 func TestWorktreeMaterialisesThePRHead(t *testing.T) {
-	j := newWJob(t)
-	g := newFakeGit(j.repo)
-	useFakeGit(t, g)
-	sha := strings.Repeat("a", 40)
-	useForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
-
-	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "7")
-	require.Equal(t, 0, code, "exit %d, want 0; stderr %q", code, errb)
-	guid := recordGUID(t, j.scratch, 7)
-	want := okLine(j.scratch, guid, sha)
-	require.Equal(t, want, out, "stdout %q, want %q", out, want)
-	_, err := os.Stat(filepath.Join(j.scratch, guid, ".git"))
-	require.NoError(t, err, "the worktree's .git file is not there: %s", err)
-}
-
-// 2. A second call for the same --pr reuses the first path, prints the same
-// line, and adds no second entry to the fake git worktree call log.
-func TestWorktreeSecondCallReusesTheTree(t *testing.T) {
-	j := newWJob(t)
-	g := newFakeGit(j.repo)
-	useFakeGit(t, g)
-	sha := strings.Repeat("b", 40)
-	useForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
-
-	code, first, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "7")
-	require.Equal(t, 0, code, "exit %d, want 0; stderr %q", code, errb)
-	g.log = nil
-	code, second, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "7")
-	require.Equal(t, 0, code, "second exit %d, want 0; stderr %q", code, errb)
-	require.Equal(t, first, second, "the second call printed %q, want the first line %q", second, first)
-	n := g.addCount()
-	require.Equal(t, 0, n, "the reuse ran %d git worktree add calls, want 0", n)
-}
-
-// 3. A record whose tree the test deletes is rebuilt on the next call with
-// exactly one git worktree add.
-func TestWorktreeDeletedTreeIsRebuilt(t *testing.T) {
-	j := newWJob(t)
-	g := newFakeGit(j.repo)
-	useFakeGit(t, g)
-	sha := strings.Repeat("c", 40)
-	useForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
-
-	path := createTree(t, j, sha, "7")
-	require.NoError(t, os.RemoveAll(path))
-	g.log = nil
-	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "7")
-	require.Equal(t, 0, code, "exit %d, want 0; stderr %q", code, errb)
-	n := g.addCount()
-	require.Equal(t, 1, n, "the rebuild ran %d git worktree add calls, want exactly 1", n)
-	want := okLine(j.scratch, recordGUID(t, j.scratch, 7), sha)
-	require.Equal(t, want, out, "stdout %q, want %q", out, want)
-	_, err := os.Stat(filepath.Join(path, ".git"))
-	require.NoError(t, err, "the rebuilt tree has no .git file: %s", err)
-}
-
-// 4. --prune with a fake forge reporting one PR merged and one closed prints
-// one WORKTREE REMOVED reason=pr_merged and one reason=pr_closed, removes both
-// trees, and leaves a third open PR's tree standing.
-func TestWorktreePruneRemovesMergedAndClosedAndKeepsOpen(t *testing.T) {
-	j := newWJob(t)
-	g := newFakeGit(j.repo)
-	useFakeGit(t, g)
-	sha := strings.Repeat("d", 40)
-	ff := &fakeForge{byID: map[int]worktreePR{}}
-	for _, id := range []int{1, 2, 3} {
-		ff.byID[id] = worktreePR{Head: sha, Base: "main", State: "open"}
-	}
-	useForge(t, ff)
-
-	paths := map[int]string{}
-	for _, id := range []int{1, 2, 3} {
-		paths[id] = createTree(t, j, sha, fmt.Sprintf("%d", id))
-	}
-	ff.byID[1] = worktreePR{Head: sha, Base: "main", State: "merged"}
-	ff.byID[2] = worktreePR{Head: sha, Base: "main", State: "closed"}
-
-	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
-	require.Equal(t, 0, code, "exit %d, want 0; stderr %q", code, errb)
-	require.Contains(t, out, "WORKTREE REMOVED path="+paths[1]+" reason=pr_merged\n", "no pr_merged line for %s in %q", paths[1], out)
-	require.Contains(t, out, "WORKTREE REMOVED path="+paths[2]+" reason=pr_closed\n", "no pr_closed line for %s in %q", paths[2], out)
-	require.True(t, strings.HasSuffix(strings.TrimSpace(out), "WORKTREE OK removed=2 kept=1"), "the prune summary is not removed=2 kept=1: %q", out)
-	for _, id := range []int{1, 2} {
-		_, err := os.Stat(paths[id])
-		require.ErrorIs(t, err, fs.ErrNotExist, "the tree for --pr %d is still there", id)
-	}
-	_, err := os.Stat(paths[3])
-	require.NoError(t, err, "the open PR's tree (%s) was removed: %s", paths[3], err)
-}
-
-// 5. --prune with a fake clock one day and one minute past a tree's guid mtime
-// removes it as reason=stale while one minute under a day is kept, and a stale
-// tree the fake process probe reports in use is kept with no line.
-func TestWorktreePruneStaleUsesTheClockAndTheProbe(t *testing.T) {
-	j := newWJob(t)
-	g := newFakeGit(j.repo)
-	useFakeGit(t, g)
-	sha := strings.Repeat("e", 40)
-	ff := &fakeForge{byID: map[int]worktreePR{}}
-	for _, id := range []int{1, 2, 3} {
-		ff.byID[id] = worktreePR{Head: sha, Base: "main", State: "open"}
-	}
-	useForge(t, ff)
-
-	paths := map[int]string{}
-	for _, id := range []int{1, 2, 3} {
-		paths[id] = createTree(t, j, sha, fmt.Sprintf("%d", id))
-	}
-
-	now := time.Now()
-	old := worktreeNow
-	worktreeNow = func() time.Time { return now }
-	t.Cleanup(func() { worktreeNow = old })
-
-	oldProbe := worktreeInUse
-	inUse := map[string]bool{}
-	worktreeInUse = func(dir string) bool { return inUse[dir] }
-	t.Cleanup(func() { worktreeInUse = oldProbe })
-
-	touch := func(path string, age time.Duration) {
-		stamp := now.Add(-age)
-		require.NoError(t, os.Chtimes(path, stamp, stamp))
-	}
-	touch(paths[1], 24*time.Hour+time.Minute) // stale, not in use -> removed
-	touch(paths[2], 24*time.Hour-time.Minute) // under a day -> kept
-	touch(paths[3], 24*time.Hour+time.Minute) // stale, in use -> kept with no line
-	inUse[paths[3]] = true
-
-	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
-	require.Equal(t, 0, code, "exit %d, want 0; stderr %q", code, errb)
-	require.Contains(t, out, "WORKTREE REMOVED path="+paths[1]+" reason=stale\n", "no stale removal for %s in %q", paths[1], out)
-	require.NotContains(t, out, paths[2], "the under-a-day tree %s was named in %q", paths[2], out)
-	require.NotContains(t, out, paths[3], "the in-use tree %s was named in %q", paths[3], out)
-	require.True(t, strings.HasSuffix(strings.TrimSpace(out), "WORKTREE OK removed=1 kept=2"), "the prune summary is not removed=1 kept=2: %q", out)
-}
-
-// 6. --prune over a fake git worktree list holding a hand-made worktree no
-// record names leaves it byte-identical and prints removed=0 kept=<n>.
-func TestWorktreePruneLeavesTheHandMadeWorktree(t *testing.T) {
-	j := newWJob(t)
-	g := newFakeGit(j.repo)
-	hand := filepath.Join(j.scratch, "hand-made")
-	require.NoError(t, os.MkdirAll(hand, 0o755))
-	keep := filepath.Join(hand, "keep.txt")
-	require.NoError(t, os.WriteFile(keep, []byte("hello\n"), 0o644))
-	g.trees[hand] = strings.Repeat("f", 40)
-	useFakeGit(t, g)
-	useForge(t, &fakeForge{byID: map[int]worktreePR{}})
-
-	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
-	require.Equal(t, 0, code, "a prune that removed nothing is the verb doing its job and must exit 0, got %d; stderr %q", code, errb)
-	require.Contains(t, out, "WORKTREE OK removed=0 kept=1\n", "stdout %q, want a removed=0 kept=1 summary", out)
-	got, err := os.ReadFile(keep)
-	require.NoError(t, err, "the hand-made worktree was touched: %q, %v", got, err)
-	require.Equal(t, "hello\n", string(got), "the hand-made worktree was touched: %q, %v", got, err)
-}
-
-// 7. No --repo, no --scratch, --repo <tmp>/not-a-repo, --scratch <tmp>/absent,
-// --pr 0, --pr abc and --pr --prune are each exit 2 with one remedy line, and
-// the absent scratch dir still does not exist.
-func TestWorktreeRefusals(t *testing.T) {
-	j := newWJob(t)
-	g := newFakeGit(j.repo)
-	useFakeGit(t, g)
-	useForge(t, &fakeForge{byID: map[int]worktreePR{}})
-	absent := filepath.Join(j.base, "absent")
-	remedy := "run: nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id>"
-
-	cases := []struct {
-		name   string
-		args   []string
-		reason string
-		says   string
-	}{
-		{"no repo", []string{"--scratch", j.scratch, "--pr", "1"}, "bad_repo", ""},
-		{"no scratch", []string{"--repo", j.repo, "--pr", "1"}, "bad_scratch", ""},
-		{"not a repo", []string{"--repo", filepath.Join(j.base, "not-a-repo"), "--scratch", j.scratch, "--pr", "1"}, "bad_repo", ""},
-		{"relative repo", []string{"--repo", ".", "--scratch", j.scratch, "--pr", "1"}, "bad_repo", "--repo wants an existing repository named by an absolute path"},
-		{"absent scratch", []string{"--repo", j.repo, "--scratch", absent, "--pr", "1"}, "bad_scratch", ""},
-		{"pr zero", []string{"--repo", j.repo, "--scratch", j.scratch, "--pr", "0"}, "bad_pr", ""},
-		{"pr abc", []string{"--repo", j.repo, "--scratch", j.scratch, "--pr", "abc"}, "bad_pr", ""},
-		{"pr with prune", []string{"--repo", j.repo, "--scratch", j.scratch, "--pr", "1", "--prune"}, "bad_pr", ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			code, out, errb := j.tool(t, nil, c.args...)
-			require.Equal(t, 2, code, "exit %d, want 2; stderr %q", code, errb)
-			require.Empty(t, out, "a refusal wrote to stdout: %q", out)
-			require.Contains(t, errb, "WORKTREE REFUSED reason="+c.reason+":", "stderr %q does not refuse reason=%s", errb, c.reason)
-			if c.says != "" {
-				require.Contains(t, errb, c.says, "stderr %q does not say %q", errb, c.says)
-			}
-			require.Contains(t, errb, remedy, "stderr %q carries no remedy line %q", errb, remedy)
-		})
-	}
-	_, err := os.Stat(absent)
-	require.ErrorIs(t, err, fs.ErrNotExist, "a refusal created the scratch dir %s", absent)
-}
-
-// 9. --prune over a scratch holding one open-PR worktree and nothing prunable
-// is the verb doing its job: it prints WORKTREE OK removed=0 kept=1 and exits 0.
-func TestWorktreePruneKeptOpenExitsZero(t *testing.T) {
-	j := newWJob(t)
-	g := newFakeGit(j.repo)
-	useFakeGit(t, g)
-	sha := strings.Repeat("9", 40)
-	useForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
-	createTree(t, j, sha, "7")
-
-	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
-	require.Equal(t, 0, code, "a prune that kept an open PR must exit 0, got %d; stderr %q", code, errb)
-	require.Contains(t, out, "WORKTREE OK removed=0 kept=1\n", "stdout %q, want a removed=0 kept=1 summary", out)
-}
-
-// 10. --prune over an empty scratch is the verb doing its job: it prints
-// WORKTREE OK removed=0 kept=0 and exits 0.
-func TestWorktreePruneEmptyScratchExitsZero(t *testing.T) {
-	j := newWJob(t)
-	g := newFakeGit(j.repo)
-	useFakeGit(t, g)
-	useForge(t, &fakeForge{byID: map[int]worktreePR{}})
-
-	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
-	require.Equal(t, 0, code, "a prune of an empty scratch must exit 0, got %d; stderr %q", code, errb)
-	require.Contains(t, out, "WORKTREE OK removed=0 kept=0\n", "stdout %q, want a removed=0 kept=0 summary", out)
-}
-
-// 8. A fake forge token in the environment appears on no line, scanned over
-// every byte the verb wrote.
-func TestWorktreeNeverPrintsTheToken(t *testing.T) {
-	j := newWJob(t)
-	g := newFakeGit(j.repo)
-	useFakeGit(t, g)
-	sha := strings.Repeat("0", 40)
-	useForge(t, &fakeForge{byID: map[int]worktreePR{5: {Head: sha, Base: "main", State: "open"}}})
 	const token = "sekret-forge-token-do-not-print"
-
-	code, out, errb := j.tool(t, []string{"GH_TOKEN=" + token}, "--repo", j.repo, "--scratch", j.scratch, "--pr", "5")
-	require.Equal(t, 0, code, "exit %d, want 0; stderr %q", code, errb)
-	require.NotContains(t, out+errb, token, "the token leaked into the verb's output: %q", out+errb)
+	b := newWBench(t, strings.Repeat("a", 40), 7)
+	var first testkit.Ran
+	var path string
+	require.True(t, t.Run("materialises the PR head and never prints the token", func(t *testing.T) {
+		first, path = b.create(t, 7, "GH_TOKEN="+token)
+		require.NotContains(t, first.Stdout+first.Stderr, token, "the token leaked into the verb's output")
+		require.NoError(t, statErr(filepath.Join(path, ".git")))
+	}))
+	require.True(t, t.Run("second call reuses the tree", func(t *testing.T) {
+		b.g.log = nil
+		r, _ := b.create(t, 7)
+		require.Equal(t, first.Stdout, r.Stdout, r)
+		require.Equal(t, 0, b.g.addCount(), "the reuse ran git worktree add")
+	}))
+	t.Run("deleted tree is rebuilt", func(t *testing.T) {
+		require.NoError(t, os.RemoveAll(path))
+		b.g.log = nil
+		b.create(t, 7)
+		require.Equal(t, 1, b.g.addCount(), "the rebuild's git worktree add calls")
+		require.NoError(t, statErr(filepath.Join(path, ".git")))
+	})
 }
 
-// 9. The owner and name the forge client names come out of the origin remote's
-// path in every shape git stores a remote in, an ssh Host alias standing where
-// the forge's own name would included, and a remote whose path names no
-// owner/name yields nothing at all.
-func TestWorktreeParseOwnerRepo(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct{ name, url, want string }{
-		{"https with .git", "https://example.com/o/n.git", "o/n"},
-		{"https without .git", "https://example.com/o/n", "o/n"},
-		{"scp-like", "git@example.com:o/n.git", "o/n"},
-		{"ssh url", "ssh://git@example.com/o/n.git", "o/n"},
-		{"ssh url with a port", "ssh://git@example.com:22/o/n.git", "o/n"},
-		{"ssh host alias", "git@forge-alias:o/n.git", "o/n"},
-		{"owner and name alone", "o/n", "o/n"},
-		{"alias with no path", "git@forge-alias:", ""},
-		{"host with no path", "https://example.com/", ""},
-		{"one path word", "https://example.com/n.git", ""},
-		{"nothing", "", ""},
-		{"file url", "file:///tmp/x/o/n.git", ""},
-		{"relative path up", "../o/n.git", ""},
-		{"relative path here", "./o/n", ""},
-		{"absolute path", "/abs/path/o/n.git", ""},
-		{"drive letter", "C:/repos/o/n", ""},
-		{"drive letter backslashes", `C:\repos\o\n`, ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := parseOwnerRepo(c.url)
-			require.Equal(t, c.want, got, "parseOwnerRepo(%q) = %q, want %q", c.url, got, c.want)
-		})
-	}
+// Every --prune here is the verb doing its job, whatever it removed, and exits 0.
+func TestWorktreePruneStaleUsesTheClockAndTheProbe(t *testing.T) {
+	sha := strings.Repeat("d", 40)
+	// 4. One PR merged and one closed are each removed with their reason; an open one stands.
+	t.Run("merged and closed removed, open kept", func(t *testing.T) {
+		b := newWBench(t, sha, 1, 2, 3)
+		paths := map[int]string{}
+		for _, id := range []int{1, 2, 3} {
+			_, paths[id] = b.create(t, id)
+		}
+		b.ff.byID[1] = worktreePR{Head: sha, Base: "main", State: "merged"}
+		b.ff.byID[2] = worktreePR{Head: sha, Base: "main", State: "closed"}
+		r := b.on(t, "--prune").Exit(0).Out(
+			"WORKTREE REMOVED path="+paths[1]+" reason=pr_merged\n",
+			"WORKTREE REMOVED path="+paths[2]+" reason=pr_closed\n")
+		require.True(t, strings.HasSuffix(strings.TrimSpace(r.Stdout), "WORKTREE OK removed=2 kept=1"), r)
+		for _, id := range []int{1, 2} {
+			require.ErrorIs(t, statErr(paths[id]), fs.ErrNotExist, "the tree for --pr %d is still there", id)
+		}
+		require.NoError(t, statErr(paths[3]), "the open PR's tree was removed")
+	})
+	// 6. A hand-made worktree in git's list that no record names is left byte-identical.
+	t.Run("hand-made worktree left alone", func(t *testing.T) {
+		b := newWBench(t, sha)
+		keep := filepath.Join(b.scratch, "hand-made", "keep.txt")
+		testkit.WriteFile(t, keep, "hello\n")
+		b.g.trees[filepath.Dir(keep)] = strings.Repeat("f", 40)
+		b.on(t, "--prune").Exit(0).Out("WORKTREE OK removed=0 kept=1\n")
+		require.Equal(t, "hello\n", testkit.ReadFile(t, keep), "the hand-made worktree was touched")
+	})
+	// 9. One open PR's tree and nothing prunable.
+	t.Run("kept open exits zero", func(t *testing.T) {
+		b := newWBench(t, sha, 7)
+		b.create(t, 7)
+		b.on(t, "--prune").Exit(0).Out("WORKTREE OK removed=0 kept=1\n")
+	})
+	// 10. An empty scratch.
+	t.Run("empty scratch exits zero", func(t *testing.T) {
+		newWBench(t, sha).on(t, "--prune").Exit(0).Out("WORKTREE OK removed=0 kept=0\n")
+	})
+	// 5. A fake clock one day and one minute past a tree's guid mtime removes it as
+	// reason=stale; one a minute under a day is kept, and so is a stale tree the fake process
+	// probe reports in use, with no line for either.
+	t.Run("stale uses the clock and the probe", func(t *testing.T) {
+		b := newWBench(t, sha, 1, 2, 3)
+		paths := map[int]string{}
+		for _, id := range []int{1, 2, 3} {
+			_, paths[id] = b.create(t, id)
+		}
+		now := time.Now()
+		swap(t, &worktreeNow, func() time.Time { return now })
+		swap(t, &worktreeInUse, func(dir string) bool { return dir == paths[3] })
+		for id, age := range map[int]time.Duration{1: 24*time.Hour + time.Minute, 2: 24*time.Hour - time.Minute, 3: 24*time.Hour + time.Minute} {
+			require.NoError(t, os.Chtimes(paths[id], now.Add(-age), now.Add(-age)))
+		}
+		r := b.on(t, "--prune").Exit(0).Out("WORKTREE REMOVED path="+paths[1]+" reason=stale\n").NotOut(paths[2], paths[3])
+		require.True(t, strings.HasSuffix(strings.TrimSpace(r.Stdout), "WORKTREE OK removed=1 kept=2"), r)
+	})
 }
 
-// 10. An origin remote the forge client can read no owner/name out of, and a
-// repository with no origin remote at all, are errBadOrigin and not a forge that
-// could not be reached, and the error names the origin it read.
-func TestGhForgeBadOriginIsNotAnOutage(t *testing.T) {
-	cases := []struct {
-		name string
-		git  gitRunner
-		says string
-	}{
-		{"origin names no owner/name", func(string, ...string) (string, error) {
-			return "git@forge-alias:\n", nil
-		}, "git@forge-alias:"},
-		{"no origin remote", func(string, ...string) (string, error) {
-			return "", fmt.Errorf("fatal: no such remote 'origin'")
-		}, ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			old := worktreeGit
-			worktreeGit = c.git
-			t.Cleanup(func() { worktreeGit = old })
-
-			_, err := ghForge{repo: t.TempDir()}.PR(7)
-			require.ErrorIs(t, err, errBadOrigin, "PR error %v, want errBadOrigin", err)
-			require.NotErrorIs(t, err, errNoForge, "PR error %v reads as a forge that could not be reached", err)
-			if c.says != "" {
-				require.Contains(t, err.Error(), c.says, "PR error %v does not name the origin it read (%q)", err, c.says)
-			}
-		})
-	}
-}
-
-// 11. The forge seam's three failures each refuse in their own words: an origin
-// with no owner/name says what it wants and what it read and carries the plain
-// remedy, while the two that are the forge's own carry the retry line.
-func TestWorktreeForgeRefusalsSayWhichFailureItWas(t *testing.T) {
-	j := newWJob(t)
+// 7. No --repo, no --scratch, --repo <tmp>/not-a-repo or relative, --scratch <tmp>/absent,
+// --pr 0, --pr abc and --pr --prune, and 11. the forge seam's three failures: each is exit
+// 2, nothing on stdout, a WORKTREE REFUSED reason=<r> line in its own words and one remedy.
+// The forge's own two failures carry the retry line; an origin with no owner/name says
+// what it wants and what it read and carries the plain remedy, never the retry. The absent
+// scratch dir still does not exist afterwards.
+func TestWorktreeRefusals(t *testing.T) {
+	b := newWBench(t, "")
+	absent := filepath.Join(b.base, "absent")
 	remedy := "run: nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id>"
 	retry := "retry once the forge answers"
-
-	cases := []struct {
-		name   string
-		err    error
-		reason string
-		says   []string
-		wants  string
-	}{
-		{"unknown pr", errNoPR, "no_pr", []string{"the forge does not know this pull request"}, retry},
-		{"forge unreachable", errNoForge, "no_forge", []string{"the forge could not be reached"}, retry},
-		{"origin with no owner/name", badOrigin("git@forge-alias:"), "bad_origin",
-			[]string{"--repo wants an origin remote", "git@forge-alias:"}, remedy},
+	at := func(args ...string) []string {
+		return append([]string{"--repo", b.repo, "--scratch", b.scratch}, args...)
 	}
-	for _, c := range cases {
+	for _, c := range []struct {
+		name, reason string
+		args         []string
+		forge        error // the forge seam's one answer, for the forge's rows
+		says         []string
+		remedy       string
+	}{
+		{"no repo", "bad_repo", []string{"--scratch", b.scratch, "--pr", "1"}, nil, nil, remedy},
+		{"no scratch", "bad_scratch", []string{"--repo", b.repo, "--pr", "1"}, nil, nil, remedy},
+		{"not a repo", "bad_repo", []string{"--repo", filepath.Join(b.base, "not-a-repo"), "--scratch", b.scratch, "--pr", "1"}, nil, nil, remedy},
+		{"relative repo", "bad_repo", []string{"--repo", ".", "--scratch", b.scratch, "--pr", "1"}, nil,
+			[]string{"--repo wants an existing repository named by an absolute path"}, remedy},
+		{"absent scratch", "bad_scratch", []string{"--repo", b.repo, "--scratch", absent, "--pr", "1"}, nil, nil, remedy},
+		{"pr zero", "bad_pr", at("--pr", "0"), nil, nil, remedy},
+		{"pr abc", "bad_pr", at("--pr", "abc"), nil, nil, remedy},
+		{"pr with prune", "bad_pr", at("--pr", "1", "--prune"), nil, nil, remedy},
+		{"unknown pr", "no_pr", at("--pr", "9"), errNoPR, []string{"the forge does not know this pull request"}, retry},
+		{"forge unreachable", "no_forge", at("--pr", "9"), errNoForge, []string{"the forge could not be reached"}, retry},
+		{"origin with no owner/name", "bad_origin", at("--pr", "9"), badOrigin("git@forge-alias:"),
+			[]string{"--repo wants an origin remote", "git@forge-alias:"}, remedy},
+	} {
 		t.Run(c.name, func(t *testing.T) {
-			g := newFakeGit(j.repo)
-			useFakeGit(t, g)
-			useForge(t, errForge{err: c.err})
-
-			code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "9")
-			require.Equal(t, 2, code, "exit %d, want 2; stderr %q", code, errb)
-			require.Empty(t, out, "a refusal wrote to stdout: %q", out)
-			require.Contains(t, errb, "WORKTREE REFUSED reason="+c.reason+":", "stderr %q does not refuse reason=%s", errb, c.reason)
-			for _, says := range c.says {
-				require.Contains(t, errb, says, "stderr %q does not say %q", errb, says)
+			if c.forge != nil {
+				useForge(t, errForge{err: c.forge})
 			}
-			require.Contains(t, errb, c.wants, "stderr %q carries no %q", errb, c.wants)
-			if c.wants == remedy {
-				require.NotContains(t, errb, retry, "stderr %q tells the reader to retry a bad origin", errb)
+			r := b.runEnv(t, nil, c.args...).Exit(2).Err("WORKTREE REFUSED reason="+c.reason+":", c.remedy).Err(c.says...)
+			require.Empty(t, r.Stdout, r)
+			if c.remedy == remedy {
+				r.NotErr(retry)
+			}
+		})
+	}
+	require.ErrorIs(t, statErr(absent), fs.ErrNotExist, "a refusal created the scratch dir")
+}
+
+// The owner and name the forge client names come out of the origin remote's path in every
+// shape git stores a remote in, an ssh Host alias standing where the forge's own name would
+// included, and a remote whose path names no owner/name yields nothing at all.
+func TestWorktreeParseOwnerRepo(t *testing.T) {
+	t.Parallel()
+	for url, want := range map[string]string{
+		"https://example.com/o/n.git": "o/n", "https://example.com/o/n": "o/n", "git@example.com:o/n.git": "o/n",
+		"ssh://git@example.com/o/n.git": "o/n", "ssh://git@example.com:22/o/n.git": "o/n",
+		"git@forge-alias:o/n.git": "o/n", "o/n": "o/n",
+		"git@forge-alias:": "", "https://example.com/": "", "https://example.com/n.git": "", "": "",
+		"file:///tmp/x/o/n.git": "", "../o/n.git": "", "./o/n": "", "/abs/path/o/n.git": "",
+		"C:/repos/o/n": "", `C:\repos\o\n`: "",
+	} {
+		t.Run(url, func(t *testing.T) { require.Equal(t, want, parseOwnerRepo(url), url) })
+	}
+}
+
+// An origin remote the forge client can read no owner/name out of, and a repository with
+// no origin remote at all, are errBadOrigin and not a forge that could not be reached, and
+// the error names the origin it read.
+func TestGhForgeBadOriginIsNotAnOutage(t *testing.T) {
+	for _, c := range []struct {
+		name, origin string
+		err          error
+		says         string
+	}{
+		{"origin names no owner/name", "git@forge-alias:\n", nil, "git@forge-alias:"},
+		{"no origin remote", "", fmt.Errorf("fatal: no such remote 'origin'"), ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			swap(t, &worktreeGit, func(string, ...string) (string, error) { return c.origin, c.err })
+			_, err := ghForge{repo: t.TempDir()}.PR(7)
+			require.ErrorIs(t, err, errBadOrigin)
+			require.NotErrorIs(t, err, errNoForge, "a bad origin reads as a forge that could not be reached")
+			if c.says != "" {
+				require.Contains(t, err.Error(), c.says, "the error does not name the origin it read")
 			}
 		})
 	}
@@ -554,16 +388,12 @@ func TestWorktreeForgeRefusalsSayWhichFailureItWas(t *testing.T) {
 // (the head may already be here) and left to the add.
 func TestFetchHeadReportsATimeoutAndToleratesTheRest(t *testing.T) {
 	t.Parallel()
-
-	timedOut := func(string, ...string) (string, error) {
+	err := fetchHead(func(string, ...string) (string, error) {
 		return "", &subproc.TimeoutError{What: "git fetch origin abc", Budget: 5 * time.Minute, Err: errors.New("signal: killed")}
-	}
-	err := fetchHead(timedOut, "/repo", "abc")
+	}, "/repo", "abc")
 	var te *subproc.TimeoutError
-	require.Error(t, err, "a timed-out fetch was reported as %v", err)
-	require.ErrorAs(t, err, &te, "a timed-out fetch was reported as %v", err)
-	require.Contains(t, err.Error(), "fetching abc from origin", "a timed-out fetch was reported as %v", err)
-	refused := func(string, ...string) (string, error) { return "", errors.New("fatal: couldn't find remote ref") }
-	err = fetchHead(refused, "/repo", "abc")
-	require.NoError(t, err, "an ordinary fetch failure was reported: %v", err)
+	require.ErrorAs(t, err, &te)
+	require.Contains(t, err.Error(), "fetching abc from origin")
+	err = fetchHead(func(string, ...string) (string, error) { return "", errors.New("fatal: couldn't find remote ref") }, "/repo", "abc")
+	require.NoError(t, err, "an ordinary fetch failure was reported")
 }

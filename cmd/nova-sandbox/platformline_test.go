@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -21,41 +19,20 @@ import (
 func TestThePlatformLineNamesNoFieldThisBenchAlreadyPrints(t *testing.T) {
 	t.Parallel()
 
-	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	require.NoError(t, err)
-
-	var platform string
-	inSection := false
-	for _, l := range strings.Split(string(doc), "\n") {
-		if strings.HasPrefix(l, "## ") {
-			inSection = l == "## nova-sandbox"
-			continue
-		}
-		if !inSection {
-			continue
-		}
-		if strings.HasPrefix(strings.TrimSpace(l), "Platform:") {
-			require.Empty(t, platform, "the nova-sandbox section has more than one Platform: line: %q and %q", platform, l)
-			platform = l
-		}
-	}
-	require.NotEmpty(t, platform, "the nova-sandbox section has no Platform: line to read")
-
+	platform := onlyLine(t, "TESTS.md's nova-sandbox section", sandboxSection(t), "Platform:")
 	valued := map[string]bool{}
 	var bare []string
-	span := regexp.MustCompile("`([^`]*)`")
-	valuedRe := regexp.MustCompile(`^[a-z_]+=.+$`)
-	bareRe := regexp.MustCompile(`^[a-z_]+=$`)
-	for _, m := range span.FindAllStringSubmatch(platform, -1) {
-		s := m[1]
+	field := regexp.MustCompile(`^[a-z_]+=`)
+	for _, m := range regexp.MustCompile("`([^`]*)`").FindAllStringSubmatch(platform, -1) {
+		name, value, _ := strings.Cut(m[1], "=")
 		switch {
-		case valuedRe.MatchString(s):
-			valued[s[:strings.Index(s, "=")]] = true
-		case bareRe.MatchString(s):
-			bare = append(bare, s[:strings.Index(s, "=")])
+		case !field.MatchString(m[1]):
+		case value != "":
+			valued[name] = true
+		default:
+			bare = append(bare, name)
 		}
 	}
-
 	var claims []string
 	for _, name := range bare {
 		if !valued[name] {
@@ -64,22 +41,9 @@ func TestThePlatformLineNamesNoFieldThisBenchAlreadyPrints(t *testing.T) {
 	}
 	require.NotEmpty(t, claims, "the Platform: line makes no bare `name=` claim; this test would pass by checking nothing")
 
-	var out, errb bytes.Buffer
-	code := run([]string{"check"}, strings.NewReader(""), &out, &errb, os.Environ())
-	require.Equal(t, 0, code, "nova-sandbox check exited %d, want 0; stderr: %s", code, errb.String())
-	var printed string
-	for _, l := range strings.Split(out.String(), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(l), "CHECK OK ") {
-			printed = strings.TrimSpace(l)
-		}
-	}
-	require.NotEmpty(t, printed, "nova-sandbox check printed no CHECK OK line")
-
-	printedFields := map[string]bool{}
-	for _, n := range checkFieldNames(printed) {
-		printedFields[n] = true
-	}
+	r := withEnv(run, os.Environ()).Do(t, "check").Exit(0)
+	printed := onlyLine(t, "nova-sandbox check's stdout", r.Stdout, "CHECK OK ")
 	for _, name := range claims {
-		assert.False(t, printedFields[name], "TESTS.md Platform: line calls `%s=` a field this transcript has no slot for, but this bench's check prints `%s=`; the transcript has the slot, so the Platform: line is wrong\n Platform: line: %q\n printed line:  %q", name, name, platform, printed)
+		assert.NotContains(t, checkFieldNames(printed), name, "TESTS.md's Platform: line calls `%s=` a field this transcript has no slot for, but this bench's check prints it, so the Platform: line is wrong\n Platform: line: %q\n printed line:  %q", name, platform, printed)
 	}
 }

@@ -1,10 +1,11 @@
 package main
 
 import (
-	"bytes"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,55 +35,32 @@ func TestMisspelledFlagIsOneCleanLine(t *testing.T) {
 		got  []string // the refusals' texts
 		want string
 	}{
-		{"policy with a value", badTexts(parseVerb("policy", []string{"--read", "/a", "--wrte", "./x", "--write", "/b"})), "unknown flag --wrte; run: nova-sandbox help policy"},
-		{"probe with a value", badTexts(parseVerb("probe", []string{"--wrte", "./x"})), "unknown flag --wrte; run: nova-sandbox help probe"},
-		{"the bare form", badTexts(parse([]string{"--wrte", "./x", "--"})), "unknown flag --wrte; the flags are " + strings.Join(bareFlags, ", ") +
+		{"policy with a value", texts(parseVerb("policy", []string{"--read", "/a", "--wrte", "./x", "--write", "/b"}).bad), "unknown flag --wrte; run: nova-sandbox help policy"},
+		{"probe with a value", texts(parseVerb("probe", []string{"--wrte", "./x"}).bad), "unknown flag --wrte; run: nova-sandbox help probe"},
+		{"the bare form", texts(parse([]string{"--wrte", "./x", "--"}).bad), "unknown flag --wrte; the flags are " + strings.Join(bareFlags, ", ") +
 			"; did you mean --write?; run: nova-sandbox help"},
-		{"a flag given as --x=y", badTexts(parseVerb("policy", []string{"--wrte=./x"})), "unknown flag --wrte; run: nova-sandbox help policy"},
-		{"a flag with no value", badTexts(parseVerb("policy", []string{"--wrte", "--write", "/b"})), "unknown flag --wrte; run: nova-sandbox help policy"},
-		{"run", runBad(parseRun([]string{"--nmae", "x", "--size", "8g"})), "unknown flag --nmae; run: nova-sandbox help run"},
-		{"egress", egressBad(parseEgress([]string{"--polcy", "p.json"})), "unknown flag --polcy; run: nova-sandbox help egress"},
-		{"reap", reapBad(parseReap([]string{"--dry-rn", "x"})), "unknown flag --dry-rn; run: nova-sandbox help reap"},
+		{"a flag given as --x=y", texts(parseVerb("policy", []string{"--wrte=./x"}).bad), "unknown flag --wrte; run: nova-sandbox help policy"},
+		{"a flag with no value", texts(parseVerb("policy", []string{"--wrte", "--write", "/b"}).bad), "unknown flag --wrte; run: nova-sandbox help policy"},
+		{"run", texts(parseRun([]string{"--nmae", "x", "--size", "8g"}).bad), "unknown flag --nmae; run: nova-sandbox help run"},
+		{"egress", texts(parseEgress([]string{"--polcy", "p.json"}).bad), "unknown flag --polcy; run: nova-sandbox help egress"},
+		{"reap", texts(parseReap([]string{"--dry-rn", "x"}).bad), "unknown flag --dry-rn; run: nova-sandbox help reap"},
 	} {
-		assert.Equal(t, []string{c.want}, c.got, "%s: refusals %q, want exactly %q", c.name, c.got, c.want)
+		assert.Equal(t, []string{c.want}, c.got, c.name)
 	}
 	// a word that is no flag at all is not called one
-	got := badTexts(parseVerb("policy", []string{"stray"}))
-	if assert.Len(t, got, 1, "a stray word draws %q", got) {
-		assert.True(t, strings.HasPrefix(got[0], "unexpected argument stray; run: nova-sandbox help policy"), "a stray word draws %q", got)
+	got := texts(parseVerb("policy", []string{"stray"}).bad)
+	if assert.Len(t, got, 1) {
+		assert.True(t, strings.HasPrefix(got[0], "unexpected argument stray; run: nova-sandbox help policy"), got[0])
 	}
 	// everything after -- is the command's, flags included
-	got = badTexts(parse([]string{"--write", "/b", "--", "tool", "--wrte", "x"}))
-	assert.Empty(t, got, "the command's own flags draw %q", got)
+	got = texts(parse([]string{"--write", "/b", "--", "tool", "--wrte", "x"}).bad)
+	assert.Empty(t, got, "the command's own flags drew refusals")
 }
 
-func badTexts(f flags) []string {
+// texts is the text of each refusal a parser returned.
+func texts(bad []sandbox.Refusal) []string {
 	var out []string
-	for _, r := range f.bad {
-		out = append(out, r.Text)
-	}
-	return out
-}
-
-func runBad(f runFlags) []string {
-	var out []string
-	for _, r := range f.bad {
-		out = append(out, r.Text)
-	}
-	return out
-}
-
-func egressBad(f egressFlags) []string {
-	var out []string
-	for _, r := range f.bad {
-		out = append(out, r.Text)
-	}
-	return out
-}
-
-func reapBad(f reapFlags) []string {
-	var out []string
-	for _, r := range f.bad {
+	for _, r := range bad {
 		out = append(out, r.Text)
 	}
 	return out
@@ -92,19 +70,13 @@ func reapBad(f reapFlags) []string {
 // --write the misspelled flag was meant to be, reported missing) are not printed.
 func TestProbeStopsAtAnUnknownFlag(t *testing.T) {
 	t.Parallel()
-	var out, errb bytes.Buffer
-	code := probeVerb([]string{"--bogus"}, &out, &errb, nil)
-	require.Equal(t, 2, code, "exit %d, want 2", code)
-	got, want := errb.String(), "PROBE REFUSED reason=check: unknown flag --bogus; run: nova-sandbox help probe\n"
-	assert.Equal(t, want, got, "probe --bogus printed %q, want exactly %q", got, want)
+	r := streams(func(args []string, stdout, stderr io.Writer) int { return probeVerb(args, stdout, stderr, nil) }).Do(t, "--bogus").Exit(2)
+	assert.Equal(t, "PROBE REFUSED reason=check: unknown flag --bogus; run: nova-sandbox help probe\n", r.Stderr)
 }
 
 // `check` words an unknown flag the same way as every other verb.
 func TestCheckUnknownFlagIsTheSameLine(t *testing.T) {
 	t.Parallel()
-	var out, errb bytes.Buffer
-	code := checkVerb([]string{"--wrte", "./x"}, &out, &errb)
-	require.Equal(t, 2, code, "exit %d, want 2", code)
-	got, want := errb.String(), "CHECK REFUSED reason=bad_flag: unknown flag --wrte; run: nova-sandbox help check\n"
-	assert.Equal(t, want, got, "check --wrte printed %q, want %q", got, want)
+	r := streams(checkVerb).Do(t, "--wrte", "./x").Exit(2)
+	assert.Equal(t, "CHECK REFUSED reason=bad_flag: unknown flag --wrte; run: nova-sandbox help check\n", r.Stderr)
 }
