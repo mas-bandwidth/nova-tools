@@ -262,6 +262,30 @@ takes it over (the record's unit replaces it) or `nova_retire_units` names it.
 changes nothing; every run ends with `LOOPS host=<m> place=<dir> records=<n>
 enabled=<n> written=<n> retired=<n>`.
 
+`-e nova_loop_only=<name>,<name>` (or a JSON list) limits a run to those
+records (nova-tools#5096 item 24): only their units are rendered, restarted
+and counted (`records=` of the receipt, which ends `only=<names>`); every other
+unit on the machine is left as it is and nothing is retired, so a pass over the
+readers alone touches no member. A name that no record of the run's machines
+carries is refused before anything is written.
+
+A unit whose file (or timer) changed is restarted, and the run says so first:
+`RESTART <name> on <machine>: its unit file changed; <why>` (`WOULD-RESTART`
+under `--check`, which restarts nothing). A member's unit (a record whose argv
+runs `nova-swarm member`, a reader's too) is never killed mid-card
+(nova-tools#5096 items 25, 26): its unit signals the member alone (systemd
+`KillMode=mixed`; launchd signals the job's process and abandons its group)
+and waits `nova_member_stop_timeout` (7260 s, a minute above the member's
+longest drain) before it kills anything, and the member drains on that SIGTERM:
+it takes no new card, lets its running cards finish and reports them, then
+exits (at once when it runs none). So the restart is the drain: the play waits
+for it (on darwin until launchd no longer holds the member) and then starts the
+new unit. A unit written before the drain settings was started without them: on
+linux the daemon reload before the restart gives the stop its new settings; on
+darwin the old plist's bootout gives the member launchd's default 20 s, after
+which the member is killed and its children, abandoned with its group, are
+adopted by the new member while they live.
+
 The inventory carries `nova_loops` only once the loop kind has been applied to
 the store; until then `loops.yml` refuses each machine by name instead of
 reading the absence as "no loops" and retiring every unit.

@@ -2500,10 +2500,11 @@ every guarded path the side branch's tip has and HEAD lacks is a finding
 unless a row added beyond it declares it, which first-parent comparison alone
 never sees. The NOTE names how many deletions and rows the history excused. A
 one-parent commit on main or dev is compared with its parent as everywhere:
-the dev queue's merge method is squash, so a promotion that lands through the
-queue as a squash is the ordinary comparison and is red for every deletion the
-promoted branch made; only a promotion that lands as a merge commit is read as
-one (the squash of the same tree is not excused). The ancestry must be
+the dev queue's merge method is merge (fleet/land/ruleset-dev.json), so a batch
+lands as a merge commit; a promotion that lands as a one-parent squash (a pull
+request merged by hand with the squash method) is the ordinary comparison and is
+red for every deletion the promoted branch made; only a promotion that lands as a
+merge commit is read as one (the squash of the same tree is not excused). The ancestry must be
 complete: the landing steps of ci.yml (`test`, `test-hosted`) and
 certification.yml (`test`) run `git fetch --no-tags --filter=blob:none
 --unshallow origin +dev:refs/remotes/origin/dev` after checkout on the default
@@ -2796,6 +2797,15 @@ the original failed measurement.
 **Its allowlist.** None.
 **Its remedy line.** each finding names the play or template, the task and what it reads or runs.
 **Its narrowings.** Variables are found by their prefixes (`nova_`, `loop_`, `ansible_`, `l.`) in the plays' uncommented text and the templates' Jinja blocks; a variable of another spelling is not read.
+
+### `member-units-drain` — a member loop's unit stops it by draining it
+
+**The rule.** The loop templates stop a member loop (a record whose argv runs `nova-swarm member`, `loop_member`) by signalling the member alone and waiting: systemd's `KillMode=mixed` with `TimeoutStopSec={{ nova_member_stop_timeout }}`, launchd's `ExitTimeOut` of the same; and `nova_member_stop_timeout` in `fleet/group_vars/all.yml` is `member.DrainMost` and a minute, so a member's drain (SIGTERM: it takes nothing new, its running cards finish and are reported) always ends before its supervisor kills anything.
+**The mistake it prevents.** A unit restart that killed a member's whole cgroup, every harness child with it (nova-tools#5096 item 26): a plain loops play over five drifted member units would have killed 52 working cards on 2026-10-02.
+**The test.** `TestMemberUnitsStopByDraining` (`internal/ci/fleetplays_drain_class_test.go`); the functional half is in `TestFleetPlaysPassSyntaxAndCheckOnTheFixture`, which asserts the member's rendered unit alone carries the settings.
+**Its allowlist.** None.
+**Its remedy line.** the assertion names the template line or the group_vars value that differs.
+**Its narrowings.** The templates' text is matched as written; a member found by another shape of argv than `nova-swarm member` after its env words is not marked.
 
 ### `sprint-tables-locked` — the four sprint tables change only with their lock file
 

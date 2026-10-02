@@ -161,7 +161,7 @@ func TestInboxWaitPushWritesEachJudgmentOnce(t *testing.T) {
 	now := ta.a.now()
 	lines := strings.Split(strings.TrimSuffix(string(text), "\n"), "\n")
 	assert.Equal(t, groupLine(fresh, now)[:len("JUDGMENT "+fresh.ID)], lines[0][:len("JUDGMENT "+fresh.ID)], "line 1 is the judgment line:\n%s", text)
-	assert.Contains(t, string(text), "  rework with a fix:\n    nova-sprint rework --group "+fresh.ID+" --expect 1 --answers "+fresh.Notes[0]+"\n", "the answer lines, as inbox --open prints them:\n%s", text)
+	assert.Contains(t, string(text), "\n  tests red\n  rework with a fix:\n    nova-sprint rework s2-1\n", "the finding and the answer lines, as inbox --open prints them (a one-card judgment names its card):\n%s", text)
 	assert.Contains(t, string(text), "\n  s2-1\n", "the members, as inbox --open prints them:\n%s", text)
 	assert.Contains(t, string(text), "  notes: "+fresh.Notes[0]+"\n", "the notes, as inbox --open prints them:\n%s", text)
 	assert.Regexp(t, `(?m)^clock: 2030-01-02T\d\d:\d\d:\d\dZ$`, string(text), "the clock:\n%s", text)

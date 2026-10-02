@@ -59,8 +59,10 @@ func TestKindsApplyInDependencyOrder(t *testing.T) {
 
 // TestTheMachineRowIsTheDeclaredFactsSomethingReads: Glenn 2026-09-27, "I
 // only want the fleet to have actual defined useful things associated with
-// each machine, not invented rando stuff". Five declared fields, no address
-// (the name is the tailnet host), no measured fact, no note. width is the
+// each machine, not invented rando stuff". Five declared fields and the note
+// (Glenn 2026-10-02: "these should be saved somewhere permanent with notes
+// (ideally, nova-config)"), no address (the name is the tailnet host), no
+// measured fact. width is the
 // sprint member's width, set directly (the owner, 2026-10-01: "we should just
 // be able to set width specifically in nova-config and it just works").
 func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
@@ -68,14 +70,14 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 
 	machine, _ := Lookup(KindMachine)
 	scopedGot70 := strings.Join(machine.FieldNames(), ",")
-	require.Equal(t, "user,seat,slots,runners,width", scopedGot70, "machine fields %s, want user,seat,slots,runners,width", scopedGot70)
+	require.Equal(t, "user,seat,slots,runners,width,note", scopedGot70, "machine fields %s, want user,seat,slots,runners,width,note", scopedGot70)
 	for _, f := range machine.Fields {
-		scopedWant75 := f.Name != "runners" && f.Name != "width"
-		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0; the rest are typed on add)", f.Name, f.Required, scopedWant75)
+		scopedWant75 := f.Name != "runners" && f.Name != "width" && f.Name != "note"
+		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0 and the note to empty; the rest are typed on add)", f.Name, f.Required, scopedWant75)
 	}
-	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "note", "store", "coordinator", "machine", "harness", "logins", "wake"} {
+	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "store", "coordinator", "machine", "harness", "logins", "wake"} {
 		_, scopedOk81 := machine.Field(invented)
-		assert.False(t, scopedOk81, "machine has a field %s: an address is the name, a measured fact comes live from the beat, a fleet fact is the fleet's, a note is history", invented)
+		assert.False(t, scopedOk81, "machine has a field %s: an address is the name, a measured fact comes live from the beat, a fleet fact is the fleet's", invented)
 	}
 	assert.False(t, machine.Singleton, "machine is many rows")
 }

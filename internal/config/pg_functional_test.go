@@ -167,16 +167,21 @@ func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 			require.NoError(t, st.applyOne(ctx, twelve))
 			widths := func() map[string]string {
 				t.Helper()
-				rows, err := st.List(ctx, KindMachine)
+				// by SQL: the store at version 12 has no note column, which List reads
+				rows, err := st.db.QueryContext(ctx, `SELECT name, width::text FROM config.machines`)
 				require.NoError(t, err)
+				defer rows.Close()
 				out := map[string]string{}
-				for _, r := range rows {
-					out[r.Name] = r.Fields["width"]
+				for rows.Next() {
+					var name, width string
+					require.NoError(t, rows.Scan(&name, &width))
+					out[name] = width
 				}
+				require.NoError(t, rows.Err())
 				return out
 			}
 			assert.Equal(t, tc.want, widths(), "the fill")
-			_, _, err = st.Update(ctx, KindMachine, "m2", map[string]string{"width": "3"}, "t")
+			_, err = st.db.ExecContext(ctx, `UPDATE config.machines SET width = 3 WHERE name = 'm2'`) // by SQL: no note column yet
 			require.NoError(t, err)
 			_, err = st.db.ExecContext(ctx, twelve.SQL)
 			require.NoError(t, err, "the file run again")
@@ -231,10 +236,9 @@ func TestMigrationTwelveChecksAWidthColumnAlreadyThere(t *testing.T) {
 			if tc.want == nil {
 				require.NoError(t, err)
 				assert.Equal(t, 12, v)
-				row, found, err := st.Get(ctx, KindMachine, "m1")
-				require.NoError(t, err)
-				require.True(t, found)
-				assert.Equal(t, "7", row.Fields["width"], "a width column already there is kept, not refilled")
+				var width string
+				require.NoError(t, st.db.QueryRowContext(ctx, `SELECT width::text FROM config.machines WHERE name = 'm1'`).Scan(&width), "by SQL: the store at version 12 has no note column, which Get reads")
+				assert.Equal(t, "7", width, "a width column already there is kept, not refilled")
 				return
 			}
 			require.Error(t, err)
@@ -272,12 +276,12 @@ func TestAppliedIsTheLedger(t *testing.T) {
 	assert.Equal(t, len(all), got[len(got)-1])
 }
 
-// 0015 makes a loop's width the machine's: the second reader rows of
+// 0016 makes a loop's width the machine's: the second reader rows of
 // 2026-10-02 (reader-<m>-2) are removed, every nova-swarm member argv that
 // spells a width loses it (before any --; another program's is its own; the
 // rest of the argv kept word for word, canonical), and the loops' width column
 // goes. A row's argv after it is one the loop kind's Check accepts.
-func TestMigrationFifteenMovesTheLoopWidthToTheMachine(t *testing.T) {
+func TestMigrationSixteenMovesTheLoopWidthToTheMachine(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st, err := OpenPG(ctx, server.Database(t))
@@ -285,15 +289,15 @@ func TestMigrationFifteenMovesTheLoopWidthToTheMachine(t *testing.T) {
 	defer st.Close()
 	all, err := Migrations()
 	require.NoError(t, err)
-	var fifteen Migration
+	var sixteen Migration
 	for _, m := range all {
-		if m.Version == 15 {
-			fifteen = m
+		if m.Version == 16 {
+			sixteen = m
 			break
 		}
 		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
 	}
-	require.Equal(t, "0015_loop_width_is_the_machines.sql", fifteen.Name)
+	require.Equal(t, "0016_loop_width_is_the_machines.sql", sixteen.Name)
 	_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('m1', 'u', 's', 4, 0)`)
 	require.NoError(t, err)
 	_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('bench-2', 'u', 's', 4, 0)`)
@@ -322,7 +326,7 @@ func TestMigrationFifteenMovesTheLoopWidthToTheMachine(t *testing.T) {
 		_, err = st.db.ExecContext(ctx, `INSERT INTO config.loops (name, machine, argv, keepalive, width) VALUES ($1, $2, $3, true, $4)`, l.name, l.machine, l.argv, l.width)
 		require.NoError(t, err, l.name)
 	}
-	require.NoError(t, st.applyOne(ctx, fifteen))
+	require.NoError(t, st.applyOne(ctx, sixteen))
 	rows, err := st.List(ctx, KindLoop)
 	require.NoError(t, err)
 	got := map[string]Row{}
@@ -337,12 +341,12 @@ func TestMigrationFifteenMovesTheLoopWidthToTheMachine(t *testing.T) {
 			continue
 		}
 		require.True(t, there, "%s: the row is kept", l.name)
-		assert.Equal(t, l.want, r.Fields["argv"], "%s: the argv after 0015", l.name)
+		assert.Equal(t, l.want, r.Fields["argv"], "%s: the argv after 0016", l.name)
 		assert.NotContains(t, r.Fields, "width", "%s: no width field", l.name)
 		canonical, err := marshalArgv(Argv(r.Fields["argv"]))
 		require.NoError(t, err)
 		assert.Equal(t, string(canonical), r.Fields["argv"], "%s: the argv is canonical", l.name)
-		assert.NoError(t, loop.Check(r), "%s: the row after 0015 passes the loop kind's Check", l.name)
+		assert.NoError(t, loop.Check(r), "%s: the row after 0016 passes the loop kind's Check", l.name)
 	}
 	var column bool
 	require.NoError(t, st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'loops' AND column_name = 'width')`).Scan(&column))

@@ -36,7 +36,7 @@ func TestAddSaysACardsIdIsItsBriefFilesName(t *testing.T) {
 	a := writeNeedsBrief(t, dir, "a", "Fix a.", "")
 	b := writeNeedsBrief(t, dir, "b", "Fix b.", "")
 	out := ta.ok("add --stream s1 --brief-file " + a + " --brief-file " + b)
-	assert.Contains(t, out, "ADD OK moved=2 refused=0 notes=0 op=")
+	assert.Contains(t, out, "ADD OK stream=s1 cards=2 before=- moved=2 refused=0 notes=0 op=")
 	assert.Contains(t, out, "\nNOTE each card's id is its brief file's name without .md ("+a+" is a)\n")
 	other := t.TempDir()
 	writeNeedsBrief(t, other, "c", "Fix c.", "")
