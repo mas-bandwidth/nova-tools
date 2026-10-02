@@ -194,7 +194,7 @@ func TestTheStandardWorkloadsAreTheShippedClasses(t *testing.T) {
 	assert.Equal(t, ForgeRegistry, byClass["registry-truth"].Forge, "registry-truth must hold the registry against the forge, not ask a machine")
 	// The one report-only class, and the only one: a WARN that spreads is a WARN nobody reads.
 	for _, w := range loads {
-		assert.False(t, w.Report && w.Class != "diag-size", "%s is report-only; only diag-size is", w.Class)
+		assert.True(t, !w.Report || w.Class == "diag-size", "%s is report-only; only diag-size is", w.Class)
 	}
 	assert.True(t, byClass["diag-size"].Report, "diag-size must be report-only: 15.7 GB of _diag broke nothing and a FAIL for it is a check people learn to pass over")
 	// path-resolves and registry-truth apply to EVERY role: a stale shadow tool and a
