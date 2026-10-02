@@ -6,7 +6,7 @@
 cmd/nova-bus 1
 cmd/nova-cairn 1
 cmd/nova-sandbox 5
-cmd/nova-swarm 4
+cmd/nova-swarm 3
 cmd/nova-table 3
 internal/bounded 9
 internal/buildinfo 1
@@ -41,7 +41,7 @@ internal/selftalk 1
 internal/sprint 7
 internal/sprint/store 4
 internal/subproc 1
-internal/swarm 169
+internal/swarm 43
 internal/testguard 6
 internal/textbody 1
 internal/tokens 3
