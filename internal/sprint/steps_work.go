@@ -274,7 +274,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 	// place: the needs they name, and the needs of their places in line (a
 	// card behind a sentinel needs it; a sentinel needs every card of its
 	// stream before it). Only a cycle through a card the add places or
-	// changes is one it closes (errata 3 amendment 7; design section 3, add).
+	// changes is one it closes.
 	edges := map[string][]string{}
 	var placed []*Card
 	var roots []string
@@ -679,13 +679,12 @@ type DealReq struct {
 }
 
 // Deal moves ready -> working: for each primary, in work order, its work
-// card is dealt to the next member round the fleet (round.go, errata 3
-// amendment 5): the first from the rolling index, wrapping, that is up and
-// holds fewer work cards, ready and working, than its width (width.go, errata
-// 3 amendment 9; tla/DirtyTick.tla, Room and WidthRespected); a card no up
-// member has room for is refused, never dealt past a width; the index (the
-// fleet table's deal_index, a counter) moves past the member dealt to, written
-// with the deal.
+// card is dealt to the next member round the fleet (round.go): the first from
+// the rolling index, wrapping, that is up and holds fewer work cards, ready
+// and working, than its width (width.go; tla/DirtyTick.tla, Room and
+// WidthRespected); a card no up member has room for is refused, never dealt
+// past a width; the index (the fleet table's deal_index, a counter) moves
+// past the member dealt to, written with the deal.
 // Every card of the selection is dealt in the one plan, one card at a time
 // round the fleet. A card withdrawn because no member was up is the
 // same card dealt again at a new generation, its attempt unchanged; otherwise
@@ -697,8 +696,8 @@ func Deal(s *Snapshot, r DealReq) Plan {
 	roundWrites(&p, rr, moves)
 	// each tier's route index moves by the cards dealt on it (route.go)
 	ri.write(&p)
-	// the streams take turns from the work table's stream index (round.go,
-	// errata 3 amendment 10): it moves past the stream of the last card dealt
+	// the streams take turns from the work table's stream index (round.go):
+	// it moves past the stream of the last card dealt
 	streamIndexWrite(&p, streamRound(s, PropStreamIndex), s.Work.Placed)
 	return p
 }
@@ -884,7 +883,7 @@ func liveGen(verb string, c *Card, gens map[string]int) string {
 // Take moves the member's work cards fleet ready -> working. As may name
 // several members, comma separated: each takes from its own ready queue, up
 // to the limit, in the one plan (the world's workers move in one batch a
-// tick, every member's row at once: errata 3 amendment 10); a take by id
+// tick, every member's row at once); a take by id
 // names one member.
 func Take(s *Snapshot, r TakeReq) Plan {
 	members := Split(r.As)
@@ -931,8 +930,7 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	}
 	byID := named(sel)
 	// THE WIDTH IS HARD: a member's working cards never pass its width, held here, at the
-	// sprint's one writer, whatever the member asks (the owner, 2026-10-01: "this
-	// \"squishiness\" of having > width in the working set has me concerned."). A take by
+	// sprint's one writer, whatever the member asks. A take by
 	// count is cut to the room; a take by id past it is refused.
 	room := max(s.Width(r.As)-len(s.Fleet.Cell(r.As, Working)), 0)
 	if !byID {
@@ -946,8 +944,7 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	}
 	// the member's ready cards in stream turns (takeTurns), as the deal dealt
 	// them: a member holding DealAhead times its width takes its width of them
-	// from every stream alike, never one stream's lowest scores first (errata 3
-	// amendment 10)
+	// from every stream alike, never one stream's lowest scores first.
 	chosen := pick(&p, sel, takeTurns(s.Fleet.Cell(r.As, Ready), slices.Index(s.Fleet.Rows(), r.As)), fieldStream, func(c *Card) string {
 		if byID {
 			if why := liveGen("take", c, r.Gens); why != "" {
@@ -1000,7 +997,7 @@ type FinishReq struct {
 // a card without one is refused, naming the live generation, and a finish
 // by selection without --as is refused outright. As may name several
 // members, comma separated: every card named is on one of them, each
-// finished as its own member's, in the one plan (errata 3 amendment 10).
+// finished as its own member's, in the one plan.
 func Finish(s *Snapshot, r FinishReq) Plan { return Lawful(finishPlan(s, r)) }
 
 func finishPlan(s *Snapshot, r FinishReq) Plan {
@@ -1102,9 +1099,8 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		attempt := pr.Int("attempt")
 		// ONE PATH ASKS: the finish asks no reader. The machine's ask does, in the tick the
 		// finish wakes, the earlier pair first (Ask, the primary's asked field), each read
-		// with the route it draws. A read the finish created itself carried no route (a
-		// finish loads none) and no reader could start it (fleet pass 7, 2026-10-01: two
-		// such reads held a card twelve minutes)
+		// with the route it draws. A read the finish creates itself carries no route (a
+		// finish loads none), so no reader can start it.
 		asked := map[string]string{}
 		if !r.Failed {
 			n := happened(NWorkOK, pr.Row, s.Now, pr.ID)
@@ -1257,7 +1253,7 @@ type FleetReq struct {
 func FleetStep(s *Snapshot, r FleetReq) Plan {
 	// every card the step places on a member (a down member's cards dealt
 	// again, the levelling) goes round the fleet from the deal's rolling index
-	// and moves it (round.go, errata 3 amendment 5), written with the step
+	// and moves it (round.go), written with the step
 	extra := append([]string{r.Member}, r.Live...)
 	for _, m := range r.Sync {
 		extra = append(extra, m.Name)
@@ -1375,8 +1371,8 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 		}
 		headOf(&p, r.Member, head, n, line)
 	case "down", "hold":
-		// the room of each receiver is its width (width.go, errata 3 amendment
-		// 9): its work cards held, ready and working, under it
+		// the room of each receiver is its width (width.go): its work cards
+		// held, ready and working, under it
 		up := liveFor(s, r)
 		return downPlan(s, r, up, rr, moves, memberLoads(s, up), memberWidths(s, up))
 	case "level":
@@ -1402,8 +1398,8 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 // RedealsAreEndedTakes). q and widths are the
 // receivers' loads and widths, counted on as cards are dealt: a tick that
 // takes several members down in one plan (presence) shares them, so every
-// down member's cards go round the fleet together (the owner's rule: every
-// row of every table moves every tick, errata 3 amendment 10).
+// down member's cards go round the fleet together (every row of every table
+// moves every tick).
 func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves, q, widths map[string]int) Plan {
 	var p Plan
 	ctl := s.MemberCtl(r.Member)
@@ -1449,7 +1445,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 			// the next member round the fleet below its width (round.go), the
 			// index moved past it; with none below its width the card is
 			// withdrawn, and the next deal places it where there is room: a
-			// member at its width takes no more (errata 3 amendment 9)
+			// member at its width takes no more.
 			if m := rr.next(without(up, StagingRefusers(c)), q, widths, ""); m != "" {
 				rr.moved(m)
 				moves[c.ID] = m
@@ -1483,14 +1479,13 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	return p
 }
 
-// sweep is the rebalance's safety (the owner, 2026-10-01: "and it's a safety, if
-// ever there are cards on a held or down machine, rebalance moves them away."):
-// every work card, ready or working, on a member whose status is not up (down,
-// or held) goes as a member going down sends it (downPlan): to the next up
-// member round the fleet below DealAhead times its width, at a new generation,
-// a working card's redeal counted; withdrawn, its primary ready again, when none
-// has room or no member is up. held counts what each up member holds, the
-// cards placed here included, for the level after it.
+// sweep is the rebalance's safety: every work card, ready or working, on a
+// member whose status is not up (down, or held) goes as a member going down
+// sends it (downPlan): to the next up member round the fleet below DealAhead
+// times its width, at a new generation, a working card's redeal counted;
+// withdrawn, its primary ready again, when none has room or no member is up.
+// held counts what each up member holds, the cards placed here included, for
+// the level after it.
 func sweep(s *Snapshot, p *Plan, r FleetReq, up []string, rr *round, moves roundMoves, held map[string]int) {
 	widths := memberWidths(s, up)
 	for _, m := range s.Fleet.Rows() {
@@ -1508,17 +1503,15 @@ func sweep(s *Snapshot, p *Plan, r FleetReq, up []string, rr *round, moves round
 	}
 }
 
-// level evens the up members' backlogs, once at the start of every tick (the
-// owner, 2026-10-01: "both for readers and fleet, there needs to be a
-// rebalance step done at the start of each tick. it's simple. just once before
-// tick, rebalance each table."). A member's backlog is the work cards it holds,
+// level evens the up members' backlogs, once at the start of every tick.
+// A member's backlog is the work cards it holds,
 // ready and working, less its width: below zero it has free lanes its ready
 // cards do not fill, above zero it holds ready cards it cannot start. While the
 // largest backlog of a member with a ready card and the smallest of the members
 // below DealAhead times their width differ by more than one, the newest card
 // (the last in work order) of the largest moves to the next member round the
 // fleet below DealAhead times its width and at or below the mean backlog
-// (round.levelTo, errata 3 amendment 5: the levelling moves the deal's index
+// (round.levelTo: the levelling moves the deal's index
 // too). So no up member has free lanes and an empty ready column while another
 // holds ready cards it cannot start, a member that comes up takes its share at
 // once, and none is levelled past DealAhead times its width (width.go).
