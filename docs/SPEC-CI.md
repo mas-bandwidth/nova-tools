@@ -263,7 +263,7 @@ seconds=<s> budget=<b>`, unless an allowlist row
 (`pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>`, `-` in the test column for
 the package's own row) names a higher budget for exactly that package or test.
 Every row names the time it was measured at and where: `run<id>` (a CI run) or
-a bench (`slowtests.Benches`: space, studio, superman, batman, air), never free
+a bench (`slowtests.Benches`), never free
 text (`2s@guess` is refused), with a budget between that time and three times
 it (`TestSlowAllowlistRowsNameTheirMeasurement`,
 `TestSlowAllowlistRatchetRefusesAnUnmeasuredRow`,
@@ -704,7 +704,7 @@ is read as an option when nothing separates it. Staging also refuses such a valu
 by name before any git runs.
 **The mistake it prevents.** `git remote set-url origin <base-repo>` read a
 `base-repo: --bogus` as a flag, and the regression test for the set-url step relied
-on exactly that (ideas#829).
+on exactly that.
 **The test.** `TestCardDerivedGitOperandsFollowTheSeparator`
 (`internal/ci/gitoperand_class_test.go`), with
 `TestGitOperandClassTestRefusesItsProbes`, which pins each shape it refuses and its
@@ -1285,7 +1285,7 @@ test step carries `-race`, `-count=1` and `$HOSTED_PKGS`.
 a package in `certRaceHeavy` and in the step's `heavy=`; never raise the timeout.
 **Its narrowings.** The heavy list and the shard count come from the per-package
 times one hosted certification run reports (`ok <pkg> <seconds>`, the larger of the
-two OSes); the class test does not time a hosted leg, a certification run does. The build and vet this job used to run are
+two OSes); the class test does not time a hosted leg, a certification run does. The build and vet are
 ci.yml's (lint on every event, test-hosted on push); a package's race compile in
 its shard is the macOS and Linux compile of the race build.
 
@@ -1399,7 +1399,7 @@ it passes an abridged or a reordered block.
 **The test.** `TestEveryTranscriptIsExecutedLineForLine`
 (`internal/ci/transcripts_class_test.go`). It walks `cmd/` for the directories
 `docs/TESTS.md` has a section for, and reads each package's test sources for the
-one comparator called with that tool's own name, and for the comparisons rule 2
+one comparator called with that tool's own name, and for the comparisons it
 replaces: `onboarding.Execute`, `onboarding.Compare`, `onboarding.Shape` and a
 `printed` set.
 **Its allowlist.** `internal/ci/testdata/transcripts_allowlist.txt`, one `<tool>`
@@ -1730,8 +1730,8 @@ version offline: the image build's `sha256sum -c` checks it against the tarball.
 ### `cardtemplates` — no card template carries a command only one platform has
 
 **The rule.** A card template is the text a worker is handed verbatim; nothing
-rewrites it between `cut` and the shell. The estate is mixed — hulk, vision,
-space and mini are linux, the Studio and the Air are darwin — so a shipped
+rewrites it between `cut` and the shell. The estate is mixed — some machines
+run linux and others darwin — so a shipped
 template may spell only commands BOTH answer. The portable spellings are
 `command -v <name>` for presence, `go version`, `dotnet --version` and
 `java -version 2>&1` for the three toolchains that each spell it differently,
@@ -2254,8 +2254,8 @@ hosted legs' target, carried a literal `12m` no check read), so a run ends with 
 Go stack before the job cap kills it without one.
 
 **The reach.** These tests police the tree they run in. A scheduled run executes
-the default branch's copy of the workflow: the ci nightly of 2026-09-27 (run
-36292578789) ran `main`'s ci.yml of 2026-09-18, whose test-hosted still carried
+the default branch's copy of the workflow: its test-hosted
+carries
 `timeout-minutes: 15` and a windows-latest leg, and its four windows legs ran
 178-195 s to success uncancelled. The cap reaches a schedule when these files
 reach the default branch.
@@ -2353,7 +2353,7 @@ receipt step calls GitHub; the run's own context has every field`; the fix is
 the step, never the test.
 **Its narrowings.** It reads the step's text and does not run it, so a bench
 with no `card.env` is found by the run itself (the step's own refusal names
-the rowan-tools bench play), not here.
+the bench play), not here.
 
 ### `silent` — no silent failure on the copy model's live path
 
@@ -2686,7 +2686,7 @@ the original failed measurement.
 
 ### `generality` — no fleet, host, tailnet, friend or person names in living code, contracts, defaults or refusals
 
-**The rule.** No living Go file under `cmd/`, `internal/` or `tools/` (outside `testdata/`, `vendor/`, and `_test.go` files) carries a reference to our fleet machines, hostnames, tailnet nodes, friend or person names, or GitHub accounts (Rule 1: everything must be general; concepts like machine, bench, coordinator, friend, seat, store, route, pool, card, stream, repo, issue, entry are what code knows; fleet specifics belong in configuration or receipts, not in code, contracts, defaults or refusals).
+**The rule.** No living Go file under `cmd/`, `internal/` or `tools/` (outside `testdata/`, `vendor/`, and `_test.go` files) carries a reference to our fleet machines, hostnames, tailnet nodes, friend or person names, or GitHub accounts (everything must be general; concepts like machine, bench, coordinator, friend, seat, store, route, pool, card, stream, repo, issue, entry are what code knows; fleet specifics belong in configuration or receipts, not in code, contracts, defaults or refusals).
 **The mistake it prevents.** Code written with hardcoded machine names, friend identities or private accounts cannot be reused or operated as a general platform, leaks private infrastructure details into public source, and prevents running the tool suite against different fleets or configurations.
 **The test.** `TestGeneralityGuardrail` (`internal/ci/generality_class_test.go`), with `TestGeneralityTokenExtraction` for token extraction heuristics and boundary controls, `TestGeneralitySpaceHasNoSyntaxException` for a machine name counted in every syntax position, `TestGeneralityOccurrenceWitness` for proving that adding an occurrence of an allowed token to an already-allowed file fails the check, and `TestGeneralityAllowlistUpdate` for proving allowlist update refuses growth and cleanly writes on shrinking.
 **Its allowlist.** the `generality` package ledger, existing occurrences across the living tree, formatted as `path/to/file.go:token count`; sorted, shrink-only with ceiling.
@@ -2713,7 +2713,7 @@ the original failed measurement.
 
 ### `remedy` — every refusal in the tools names its next step
 
-**The rule.** The owner's rule for every tool (2026-09-30): "they should never fail silently, and they should always provide helpful breadcrumbs how to fix anything going wrong." Every refusal site in a non-test `.go` file under `cmd/` prints a remedy in the house form: `run: <command>` (a malformed invocation's is `<tool> <verb> -h`), `remedy=` on an event line, `wants <x>`, `see <where>`, `rerun`, or an imperative naming the flag, the file or the value (`pass --overwrite`, `give 1 to 64`). The forms are one list, `oneline.HasRemedy`, which the rule and the printers share; a printer ends a line that names none with `oneline.WithRemedy(what, next)`.
+**The rule.** The owner's rule for every tool: "they should never fail silently, and they should always provide helpful breadcrumbs how to fix anything going wrong." Every refusal site in a non-test `.go` file under `cmd/` prints a remedy in the house form: `run: <command>` (a malformed invocation's is `<tool> <verb> -h`), `remedy=` on an event line, `wants <x>`, `see <where>`, `rerun`, or an imperative naming the flag, the file or the value (`pass --overwrite`, `give 1 to 64`). The forms are one list, `oneline.HasRemedy`, which the rule and the printers share; a printer ends a line that names none with `oneline.WithRemedy(what, next)`.
 **The mistake it prevents.** A refusal that says what is wrong and nothing about what to do: `DRAFT REFUSED: write <path>: permission denied`, `nova-sandbox version` exiting 0 over a flag it never read, `SECRETS EXEC FAIL invocation: missing '--' delimiter` with no pointer to the form.
 **The test.** `TestEveryRefusalCarriesARemedy` (`internal/ci/remedy_class_test.go`), with the three sites proved over source in `TestRemedyRuleReadsTheThreeSites`. It finds a refusal three ways: a call to the package's refusal printer (a function with an `io.Writer` parameter whose name holds `refus`; it is clear when the printer prints a remedy itself, directly or through another printer, or when its arguments do); a `fmt` print whose text holds `REFUSED`, `refused`, `refusing` or `cannot`; and an exit-2 path (`return 2`, `os.Exit(2)`), read with the prints just before it in its block. The runtime half is `testverbhelp.RefusalProblems`, run by every tool's verb-help test: each verb handed `--no-such-flag-breadcrumb` exits non-zero, says something on stderr that names the flag, the usage or a remedy, closes no stdout line with OK, and writes nothing.
 **Its allowlist.** the `remedy` package ledger, `file:function:kind <sites> <why>`, kind `refuse-call`, `refuse-print` or `exit-2`; `<sites>` is how many unremedied sites the row covers. Shrink-only by site and by row: a new site under a listed key makes the measured count exceed the row's and the run is red; a fixed site leaves the count too high and the run is red until it is lowered (`NOVA_CI_UPDATE=1` lowers a count and drops a row with no site left, and never raises a count or adds a row); the row count has a `# ceiling:`; a row with no reason is red.
@@ -2750,7 +2750,7 @@ the original failed measurement.
 ### `deadcode` — no unreachable functions from production roots
 
 **The rule.** Production reachability is analyzed by `deadcode` from the `cmd/` mains as roots (`./cmd/...`), without `-test` (code reached only by tests is the next contraction's target). The analysis runs across three operating systems (GOOS `linux`, `darwin`, `windows`) and holds the union of dead functions to a per-package shrink-only ledger.
-**The mistake it prevents.** Unused, unreachable functions and methods accumulating across the codebase; maintainer directive 2026-09-30 contraction phase ("dead code to zero with a class test holding it").
+**The mistake it prevents.** Unused, unreachable functions and methods accumulating across the codebase; the maintainer's contraction-phase directive ("dead code to zero with a class test holding it").
 **The test.** `TestDeadCode` (`internal/ci/dead_code_class_test.go`), with its allowlist mechanics witness `TestDeadCodeWitness`. Runs in the functional tier behind `//go:build functional`.
 **Its allowlist.** `internal/ci/testdata/dead_code_allowlist.txt`, the shrink-only per-package ledger (`<package> <count>`); `NOVA_CI_UPDATE=1 go test -tags functional -run '^TestDeadCode$' ./internal/ci/` lowers counts and drops zero-count rows (the rule is functional-tier only, so `NOVA_CI_UPDATE=1 make test PKGS=./internal/ci` never reaches it, and the functional container mounts the source read-only). The list refuses to grow or raise any count.
 **Its remedy line.** `remedy="delete the unreachable function(s) or wire them into cmd/...; the dead code ledger only shrinks and refuses to raise counts or add rows"`.
@@ -2768,7 +2768,7 @@ the original failed measurement.
 ### `sprint-tables-locked` — the four sprint tables change only with their lock file
 
 **The rule.** `internal/sprint/TABLES.lock` pins the work, readers, merge and fleet tables as `schema.go` defines them (one line per column: `table.column projection fold hidden`, with `label=` where the column has a header label, in table order) and the order the sprint view shows the tables in. A PR that changes any table's shape turns the test red until the lock file changes in the same PR, where a read sees it.
-**The mistake it prevents.** A `provider` column added to the fleet table that nobody asked for (PR 4986); the installed build then failed every tick on the real store. The maintainer, 2026-10-01: "i never want new things unless i ask for them" and "i dislike this drift from the design of nova sprint tables that is *complete and locked*."
+**The mistake it prevents.** A `provider` column added to the fleet table that nobody asked for; the installed build fails every tick on the real store. The maintainer, 2026-10-01: "i never want new things unless i ask for them" and "i dislike this drift from the design of nova sprint tables that is *complete and locked*."
 **The test.** `TestSprintTablesAreLocked` (`internal/ci/sprint_tables_lock_class_test.go`): renders the lock's text from `sprint.Names{}.Definitions()` and `sprint.ViewOrder` and compares it, line by line, to the lock file's lines (comments and blanks aside).
 **Its allowlist.** None.
 **Its remedy line.** `schema.go no longer matches internal/sprint/TABLES.lock; a PR that changes a table's shape changes the lock file in the same PR, where a read sees it`, then each differing line, the lock's and the schema's.
@@ -2777,7 +2777,7 @@ the original failed measurement.
 ### `onewriter` — a worker is a client and does not open the store
 
 **The rule.** One process writes a sprint's state: the run loop, beside the store, which is also the sprint's server (`nova-sprint run --listen`). A worker sends its verbs to it and reads its replies. The packages a worker's machine runs (`cmd/nova-swarm`, `internal/member`, `internal/sprintwire`) import, directly or through any package of this module, none of the packages that open the store (`internal/sprint/store`, `internal/redisconn`, `internal/ntable`, `internal/nsprint/store`, any `github.com/redis/` module).
-**The mistake it prevents.** A distributed system where a client and a server would do. nova-sprint's workers each read the tables across the network, planned and wrote back behind one fence; from 108 ms away a write lost it for about 50 s and gave up, and a finished card took a median 391 s to be reported (the fleet pass of 2026-10-01). A lock, a reservation and a queue with four recovery rules each added states before the simple shape was seen. The maintainer, 2026-10-01: "never write a complicated distributed system when a simple client/server will work just fine." / "simple client/server always wins."
+**The mistake it prevents.** A distributed system where a client and a server would do. nova-sprint's workers each read the tables across the network, plan and write back behind one fence; from 108 ms away a write loses it for about 50 s and gives up, and a finished card takes a median 391 s to be reported. A lock, a reservation and a queue with four recovery rules each add states before the simple shape is seen. The maintainer, 2026-10-01: "never write a complicated distributed system when a simple client/server will work just fine." / "simple client/server always wins."
 **The test.** `TestAWorkerDoesNotOpenTheStore` (`internal/ci/onewriter_class_test.go`), with `TestOneWriterFindsAChainToTheStore`: it walks the imports of the non-test files from each worker package through the module's own packages and is red on the first chain that reaches the store, printing the chain.
 **Its allowlist.** None.
 **Its remedy line.** `remedy="a worker is a client: ask the sprint's server (internal/sprintwire) and never open the store from a worker's machine (docs/SPEC-CI.md, onewriter)"`.
