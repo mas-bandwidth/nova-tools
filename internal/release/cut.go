@@ -237,19 +237,20 @@ func SumsInAnnotation(message string) string {
 // reason a cut can refuse.
 var errTruncated = errors.New("compare-truncated")
 
-// classify is the gate in front of the tag: which of
+// classify is the gate SPEC-RELEASE decision 1 (rule 1: a sensitive range
+// needs the security reader's read) puts in front of the tag: which of
 // the paths this range touched are on SensitivePaths, and may this cut proceed.
 // It is its own function, and pure apart from the writers, because the decision
 // is the thing worth reading -- the cut around it is bookkeeping.
 //
-// THE ORDER IS THE POINT: completeness before any hit is named. One compare
-// answered with exactly 300 files -- the forge's ceiling -- and the verb
-// refused naming 24 sensitive paths out of the 58 the range really touched.
-// It looked like the gate working. It was the gate being lucky: the hits it
-// named were the ones that happened to fall inside the prefix it could see,
-// and a range whose only sensitive file sat past file 300 would have been cut
-// clean. So the truncation is decided FIRST and named FIRST, before anything
-// is said about what was found inside a list that may be short.
+// THE ORDER IS THE WHOLE LESSON OF THE FOURTH DOGFOOD. That cut's compare
+// answered with exactly 300 files -- the forge's ceiling -- and the
+// verb refused naming 24 sensitive paths out of the 58 the range really
+// touched. It looked like the gate working. It was the gate being lucky: the
+// hits it named were the ones that happened to fall inside the prefix it could
+// see, and a range whose only sensitive file sat past file 300 would have been
+// cut clean. So the truncation is decided FIRST and named FIRST, before
+// anything is said about what was found inside a list that may be short.
 //
 // And --security-read does not get past it. A security read is a read OF A LIST,
 // and a read of a prefix of the truth vouches for a prefix of the truth. The
@@ -274,7 +275,7 @@ func classify(files []string, complete bool, rangeName, securityRead string, out
 		return nil
 	}
 	if securityRead == "" {
-		return refuse("name a security read: --security-read <note id or url>",
+		return refuse("get Johnny's read of these paths and name it: --security-read <note id or the url of his comment>",
 			"this range touches %s on the sensitive list: %s", plural(len(hits), "path"), namedPaths(hits, 10))
 	}
 	// ON STDOUT, above the cut line: it is a receipt, not progress. A release
@@ -477,7 +478,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	}
 	prs := PullRequests(commits)
 	// WHICH PATHS THE RANGE TOUCHED, and whether that needs a read before a
-	// tag exists. Asked BEFORE --dry-run branches
+	// tag exists (SPEC-RELEASE decision 1, rule 1). Asked BEFORE --dry-run branches
 	// and before anything is written: a dry run exists to find out what would
 	// happen, and what would happen is this refusal.
 	files, complete, err := paths(ctx, o, deps, previous, sha, out, errs)

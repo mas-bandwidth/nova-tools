@@ -13,6 +13,7 @@ internal/release/build.go:studio 3
 internal/release/cli.go:glenn 2
 internal/release/cli.go:johnny 1
 internal/release/cli.go:studio 1
+internal/release/cut.go:johnny 1
 internal/release/dogfoodgate.go:rowan 1
 internal/release/install.go:glenn 1
 internal/release/install.go:johnny 1
