@@ -7,10 +7,8 @@
 // forget, no half-cleaned job directory to inherit, and no quota that leaks into the next
 // card's disk.
 //
-// Glenn, 2026-09-18: "build our own minimal isolation and hygiene sandboxes on Mac" — the
-// Mac equivalent of a container, built out of the two things macOS already has: the
-// seatbelt wall this binary already applies, and an APFS volume that costs nothing to make
-// and nothing to throw away.
+// This provides a minimal isolation and hygiene sandbox on macOS by combining the
+// seatbelt wall with an APFS volume that is created for the run and discarded afterward.
 //
 // A failure to delete is the one thing this verb may not do quietly: it prints
 // SANDBOX LEAK with the disk and the one command that removes it, and exits 3. A leak that
@@ -144,9 +142,8 @@ var (
 	// runGOOS is the platform this verb believes it is on. It is a var for the same reason
 	// internal/sandbox's winDir is a function of the platform rather than of runtime.GOOS:
 	// the windows half of this verb cannot be run on a Mac, and a test that only ever walks
-	// the darwin path calls a windows bug green. The estate has no Windows bench
-	// (2026-09-18), so this seam is the only thing standing between "the windows rules are
-	// written down" and "the windows rules are exercised".
+	// the darwin path calls a windows bug green. This seam lets tests exercise the Windows
+	// rules without requiring the host to be Windows.
 	runGOOS = runtime.GOOS
 )
 
@@ -197,8 +194,7 @@ func (f runFlags) limits() winLimits {
 
 // runUsage is the verb's own banner. It exists because `nova-sandbox run --help` printed
 // FOUR REFUSALS and exit 125 — one for the missing --name, one for the missing --size, one
-// for --help not being a flag of the verb, one for the missing -- (measured 2026-09-18 by
-// a non-author dogfooding the verb). ONBOARDING.md point 2 puts the banner behind `help`
+// for --help not being a flag of the verb, one for the missing --. ONBOARDING.md puts the banner behind `help`
 // rather than in front of every mistake; asking how to use a verb is not a mistake, and a
 // tool that answers the question with four complaints teaches the reader to stop asking.
 const runUsage = `nova-sandbox run: one command, in a DISPOSABLE place that is deleted on exit (darwin)
@@ -428,16 +424,11 @@ func readGoEnv() (goDirs, error) {
 
 // applyGoReads is --go: the toolchain's own roots, added to the read set.
 //
-// Measured 2026-09-18, dogfooding the verb on a real card step: a `go build` inside the
-// wall died with `go: cannot find GOROOT directory: 'go' binary is trimmed and GOROOT is
-// not set`, which names nothing about a sandbox. The root cause of THAT one is fixed in
-// the optional roots' ancestors, but the class remains — a toolchain installed anywhere
-// the profile's root table does not already cover is unreadable inside the wall, and the
-// module cache lives under the caller's home, which the wall denies by design.
+// A toolchain installed outside the profile's root table is unreadable inside the wall,
+// and the module cache lives under the caller's home, which the wall denies by design.
 //
-// A path that is not there is SKIPPED with a note, not refused: rule 5's
-// refusal-for-absence is about the paths the CALLER named, and an empty module cache on a
-// machine that has never downloaded a module is not a misconfiguration.
+// A path that is not there is SKIPPED with a note, not refused: absence is a refusal only
+// for paths the caller named, while an empty module cache is a valid state.
 func applyGoReads(f *runFlags, stderr io.Writer) *sandbox.Refusal {
 	if !f.useGo {
 		return nil
@@ -487,10 +478,9 @@ func runVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []str
 		fmt.Fprintln(stderr, remedyFor(goos))
 		return code
 	}
-	// Rule 1's shape for this verb: a platform whose disposable place is not built REFUSES,
-	// and the refusal says where the disposable place is on that platform instead. A run
-	// that quietly worked in an ordinary directory would leave exactly the debt the verb
-	// abolishes.
+	// A platform whose disposable place is not built REFUSES, and the refusal says where the
+	// disposable place is on that platform instead. Running in an ordinary directory would
+	// leave the cleanup debt this verb abolishes.
 	if line, remedy, refused := noDisposableBody(goos); refused {
 		fmt.Fprintln(stderr, line)
 		fmt.Fprintln(stderr, remedy)
@@ -539,9 +529,8 @@ func validateRun(f *runFlags, goos string) (time.Duration, []sandbox.Refusal) {
 
 	// W6. --size is REFUSED on windows, because NTFS quotas are per user per volume, a
 	// directory quota is FSRM (a server role) and a per-run quota is a VHDX, which needs
-	// administrator rights that rule 2 forbids this tool from requiring. A ceiling the tool
-	// only MEASURES is not a ceiling, and the precedent is rule 7's net_unenforceable: a
-	// promise this tool cannot enforce is a refusal, never a note.
+	// administrator rights that this tool does not require. A ceiling the tool only MEASURES
+	// is not a ceiling, so a promise this tool cannot enforce is a refusal, never a note.
 	switch {
 	case win && f.size != "":
 		add("size_unenforceable", "--size cannot be enforced on windows: NTFS quotas are per user per volume, a directory quota is FSRM (a server role) and a per-run quota is a VHDX that needs administrator rights this tool does not take. Two remedies: run under --place wsb, whose whole disk is discarded, or name a --scratch on a volume you have already sized")
@@ -699,11 +688,10 @@ func parseBytes(s string) (int64, bool) {
 	return int64(f * float64(mult)), true
 }
 
-// noDisposableBody is rule 1's shape for this verb, with the platform NAMED so that a
-// test on a Mac can ask what the tool says on linux. A platform whose disposable place is
-// not built REFUSES and the refusal says where the disposable place is there instead: a
-// run that quietly worked in an ordinary directory would leave exactly the cleanup debt
-// the verb abolishes, and would leave it on the platform nobody was watching.
+// noDisposableBody names the platform so that a test on a Mac can ask what the tool says
+// on linux. A platform whose disposable place is not built REFUSES and the refusal says
+// where the disposable place is there instead: running in an ordinary directory would
+// leave the cleanup debt this verb abolishes.
 func noDisposableBody(goos string) (line, remedy string, refused bool) {
 	// darwin's place is the APFS volume; windows's is W1's Job Object plus the per-run
 	// scratch (runwin.go). Both are built, so neither refuses here.
@@ -796,7 +784,7 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 	// The two directories the volume is born with. They are the TOOL's, not the caller's,
 	// so making them is not a breach of "every path is yours and none is guessed": the
 	// whole volume is thrown away, so nothing made here outlives the run. work/ is the
-	// working directory and home/ is rule 9's data home, kept apart so a command that
+	// working directory and home/ is the command's data home, kept apart so a command that
 	// writes its tree does not write into its own dotfiles.
 	work := filepath.Join(vol.Mount, "work")
 	home := filepath.Join(vol.Mount, "home")
@@ -814,8 +802,8 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 	}
 
 	// The wall: the volume is the ONE --write, so the only place on this machine the
-	// command may write is the place that is about to be deleted. Rule 8's temp directory
-	// defaults inside it, which is what puts TMPDIR on the volume too.
+	// command may write is the place that is about to be deleted. The temp directory defaults
+	// inside it, which puts TMPDIR on the volume too.
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads:  f.reads,
 		Writes: []string{vol.Mount},
@@ -861,11 +849,10 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 
 	code, timedOut := supervise(done, deadlineC, grace.C, sigs, killGroup)
 	// A TIMEOUT IS NOT A DENIAL, and this is the difference between the two sentences a
-	// failed run can be told. Measured in the 20-run soak (Studio, 2026-09-18): a run that
-	// passed its --timeout paid the bounded two-second denials query and was then told
-	// "this OS reported no seatbelt denials ... add a --read, or --go" — a remedy for a
-	// wall that was never in the way. The command was still working when its deadline
-	// passed; nothing refused it. So the probe is skipped and the one true line is printed.
+	// failed run can be told. A run that passes its --timeout has paid the bounded denials
+	// query and must not then be told to add a read for a wall that was never in the way.
+	// The command is still working when its deadline passes, so the probe is skipped and the
+	// timeout line is printed.
 	if timedOut {
 		fmt.Fprintf(stderr, "SANDBOX TIMEOUT after=%s name=%s\n", oneline.Field(deadline.String()), oneline.Field(f.name))
 		return code

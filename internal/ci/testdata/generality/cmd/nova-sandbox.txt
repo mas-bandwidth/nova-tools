@@ -1,13 +1,10 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 11
+# ceiling: 8
 cmd/nova-sandbox/denied.go:studio 1
 cmd/nova-sandbox/denied_darwin.go:studio 1
 cmd/nova-sandbox/egress.go:johnny 2
 cmd/nova-sandbox/main.go:emma 1
 cmd/nova-sandbox/main.go:johnny 1
-cmd/nova-sandbox/reapverb.go:studio 1
-cmd/nova-sandbox/run.go:glenn 1
-cmd/nova-sandbox/run.go:studio 1
 cmd/nova-sandbox/runwin.go:glenn 1
 cmd/nova-sandbox/runwin.go:space 2
 cmd/nova-sandbox/runwin_windows.go:space 1

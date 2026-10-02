@@ -1,16 +1,11 @@
 // The reap verb clears what a SIGKILL left behind, which is the one hole in the run
 // verb's contract that the run verb cannot close from inside.
 //
-// Measured on the Studio in a 20-run soak, 2026-09-18. `nova-sandbox run` deletes its
-// volume on every path out — a clean exit, an error, a signal it can catch, a --timeout —
-// and a delete that fails prints SANDBOX LEAK. A SIGKILL is none of those: the tool is
-// gone between one instruction and the next, so there is no path out to take and no line
-// to print. Both halves of the containment then leak. The volume stays mounted, and the
-// contained command's own `sleep 60` is reparented to PID 1 with its working directory
-// ON that volume, which holds it open against every unmount — so the leak is not even
-// one a later `diskutil apfs deleteVolume` clears by itself. `nova-sandbox check` says
-// nothing about it: check asks what the backend can enforce, not what this machine is
-// still holding.
+// The run verb deletes its volume on every path it can observe, but SIGKILL ends the
+// process before cleanup can run. The volume can remain mounted while a child keeps its
+// working directory open, so a later delete may need this verb to identify and clear the
+// orphan. The check verb reports backend capabilities; this verb reports and removes the
+// resources that remain on the machine.
 //
 // So: a verb that names the debt and clears it. It touches nothing it did not make —
 // `nova-` is the whole of its authority, exactly as the run verb's delete is — and it
