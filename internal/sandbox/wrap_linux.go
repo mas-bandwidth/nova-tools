@@ -10,8 +10,8 @@
 // this body, and the reason is `probe`: probeVerb runs FOUR walled steps in ONE process
 // and reads the status of each (cmd/nova-sandbox/main.go, walled()), so a Run that never
 // returns turns the probe into its own first step and the other three never happen. The
-// spec's own rule 10 requires those four, so the proposal and rule 10 could not both be
-// kept and rule 10 is the one with tests.
+// spec's own probe verb is the one with tests, so the proposal and the probe verb could
+// not both be kept.
 //
 // So: the tool restricts ITSELF, then starts the command as a child and waits, exactly
 // as the darwin body waits on sandbox-exec's child. The process count is the same as
@@ -36,10 +36,10 @@ import (
 const Backend = "landlock"
 
 // linuxReadRoots is the spec's linux roots table: read-only, and SKIPPED IF ABSENT (no
-// /lib64 on a pure-arm64 image, no /opt on a minimal one). Rule 5 refuses a CALLER's
-// missing path; a missing root is the machine's shape, not the caller's mistake.
+// /lib64 on a pure-arm64 image, no /opt on a minimal one). A CALLER's missing path is
+// refused; a missing root in this table is the machine's shape, not the caller's mistake.
 //
-// /run/systemd/resolve is here because the resolver and TLS need it (issue #893): a
+// /run/systemd/resolve is here because the resolver and TLS need it: a
 // harness that cannot resolve a name inside the sandbox is a sandbox bug, not a network
 // one. It is part of this one table, applied by addRules through linuxRoots (which adds
 // the resolver's own resolved directory for a machine whose config points elsewhere), and
@@ -51,14 +51,14 @@ const Backend = "landlock"
 var linuxReadRoots = []string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/run/systemd/resolve", "/opt", "/dev", "/proc"}
 
 // resolvConfPath is the system resolver's own configuration file. It is a var, and the one
-// seam here, so that a test can stand a symlink in front of it: the whole point of #1737 is
-// that the RESOLVED TARGET of this file may sit outside every static root in the table
-// above. Nothing outside a test changes it.
+// seam here, so that a test can stand a symlink in front of it: the resolved target of
+// this file may sit outside every static root in the table above. Nothing outside a
+// test changes it.
 var resolvConfPath = "/etc/resolv.conf"
 
 // linuxRoots is the roots addRules applies: the static table plus the directory the system
 // resolver's configuration resolves to on THIS machine. It exists because a table of fixed
-// paths cannot cover a symlink whose target is the machine's choice: measured 2026-09-19 on
+// paths cannot cover a symlink whose target is the machine's choice: on
 // WSL2 (kernel 6.18.33.2), the distro's /etc/resolv.conf -> /mnt/wsl/resolv.conf, /mnt/wsl
 // is in no row above, and glibc inside the wall had no nameserver -- every lookup failed
 // with "Could not resolve host" while TCP by IP still worked. systemd machines are already
@@ -66,7 +66,7 @@ var resolvConfPath = "/etc/resolv.conf"
 // path, not the property; this grants the property.
 //
 // The directory is granted rather than the file: WSL rewrites /mnt/wsl/resolv.conf, and a
-// rule on the old inode would be left behind holding a file that is no longer read. It is
+// rule on its inode would be left behind holding a file that is no longer read. It is
 // read-only and skip-if-absent, exactly like every other root -- a machine with no resolver
 // config is the machine's shape, not a caller's mistake.
 func linuxRoots() []string {
@@ -98,12 +98,13 @@ var linuxWriteFiles = []string{"/dev/null", "/dev/tty"}
 // the DISCOVERED ABI rather than a yes-or-no, because two of the three answers depend on
 // the number -- an ABI above maxKnownABI is CLAMPED to the table and said so
 // (TestNewerLandlockABIIsClampedToTheTableOnLinux), an ABI below minKnownABI is refused
-// (TestLandlockABIBelowTheTableRefusesOnLinux), and no landlock at all is rule 1's
+// , and no landlock at all is the
 // no_sandbox refusal (TestNoLandlockRefusesOnLinux). No kernel on the fleet reports any of
 // the three, so without the seam none of them has a test on the platform whose body is built.
 var available = landlockABI
 
-// Available answers rule 1's question for this machine. The string is what the check
+// Available reports whether the OS-enforced sandbox is here, on this machine. The
+// string is what the check
 // verb appends to its note, so it names the kernel rather than a path: there is no
 // binary to point at, the backend is in the running kernel or it is nowhere.
 func Available() (string, bool) {
@@ -144,8 +145,9 @@ func ClampedABIWith(abiFn func() (int, bool)) (int, bool) {
 	return wallABI(abi)
 }
 
-// NetEnforceable is rule 7 for this platform: TCP bind/connect arrived at ABI 4, so a
-// kernel below it cannot enforce --net-deny and must refuse rather than pretend.
+// NetEnforceable reports whether --net-deny can be enforced here: TCP bind/connect
+// arrived at ABI 4, so a kernel below it cannot enforce --net-deny and must refuse
+// rather than pretend.
 func NetEnforceable() bool {
 	abi, ok := available()
 	if !ok {
@@ -192,10 +194,10 @@ func NoteWith(abiFn func() (int, bool)) string {
 // second domain inside the first; that is what probeVerb does, and because every one of
 // its walled steps uses the same policy, the nested domain is the same wall again.
 // Anything a caller must do UNWALLED it must do before the first Run -- which is exactly
-// why rule 10 runs write_outside_control first.
+// why the probe verb runs write_outside_control first.
 func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okLine func()) (int, error) {
-	// Rule 2: no root. The wall is a wall for an ordinary user, and a policy applied by
-	// a root process is a different thing than the one this spec describes.
+	// The wall is for an ordinary user, and a policy applied by a root process is a
+	// different thing than the one this spec describes.
 	if os.Geteuid() == 0 {
 		return ExitRefused, refuse("sandbox_failed", "this tool does not run as root: rule 2 is that the wall holds for an ordinary unprivileged user, and a root child is outside what this policy was measured against")
 	}
@@ -213,7 +215,7 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 		return ExitRefused, refuse("no_sandbox", "this kernel has no landlock: it is below 5.13, or landlock is not compiled in, or it is not in the boot-time lsm= list. This tool does not run a command it cannot contain")
 	}
 	// BELOW the table's first row there is no ruleset this tool can describe and nothing
-	// to clamp to, so this stays the ABI refusal (rule 11: no workaround here; the
+	// to clamp to, so this stays the ABI refusal (no workaround; the
 	// caller's is nova-swarm run --no-sandbox). No kernel reports it -- landlockABI
 	// already answers "no landlock" below 1 -- and it is here because the table has a
 	// bottom as well as a top, and a number outside it must be said rather than assumed.
@@ -227,9 +229,9 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	// ABI it knows that is at or below the kernel's. The wall is built at the table's
 	// maximum and the SANDBOX OK line carries used=<n> so the clamp is on the record.
 	used, _ := wallABI(abi)
-	// Rule 7: an enforced denial the backend cannot give is a refusal, never a weaker
-	// wall than the caller asked for. The number that decides is the wall's, not the
-	// kernel's, for the reason NetEnforceable gives.
+	// An enforced denial the backend cannot give is a refusal, never a weaker wall than the
+	// caller asked for. The number that decides is the wall's, not the kernel's, for the
+	// reason NetEnforceable gives.
 	if p.NetDeny && used < 4 {
 		return ExitRefused, refuse("net_unenforceable",
 			"--net-deny needs landlock abi 4 (kernel 6.7) for TCP bind/connect and this kernel reports abi %d: this tool will not print net=denied over a network it cannot close", abi)
@@ -260,7 +262,7 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	}
 	// NO Setpgid, for the reason the darwin body gives at length: the wrapped tree stays
 	// in the CALLER's process group, because a swarm supervisor puts each job in a group
-	// of its making and reaps that group at the deadline (SPEC-SWARM rule 11).
+	// of its making and reaps that group at the deadline.
 
 	// SANDBOX OK is printed and FLUSHED before the wall goes up, because past
 	// restrictSelf this process is inside it.
@@ -336,14 +338,14 @@ func addRules(rulesetFd int, p *Policy, abi int) error {
 		// ignored: a rule that is not added denies more, never less; an optional root absent on this machine is the common case
 		_ = addPathRule(rulesetFd, root, read)
 	}
-	// The caller's paths. These are rule 5 paths: Build resolved them and proved they
-	// exist, so a failure HERE is real and is a refusal, not a skip.
+	// The caller's paths. Build resolved them and proved they exist, so a failure HERE is
+	// real and is a refusal, not a skip.
 	for _, dir := range p.Reads {
 		if err := addPathRule(rulesetFd, dir, read); err != nil {
 			return refuse("sandbox_failed", "--read %s could not be added to the landlock ruleset: %v", dir, err)
 		}
 	}
-	// The no-exec read set: the same rule 5 treatment, minus EXECUTE.
+	// The no-exec read set: the same treatment as the caller's paths above, minus EXECUTE.
 	for _, dir := range p.ReadsNoExec {
 		if err := addPathRule(rulesetFd, dir, uint64(fsReadNoExecSubset)); err != nil {
 			return refuse("sandbox_failed", "--read-noexec %s could not be added to the landlock ruleset: %v", dir, err)
