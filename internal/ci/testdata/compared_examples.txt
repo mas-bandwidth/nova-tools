@@ -86,3 +86,5 @@ cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example:
 cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example: nova-fuse lift quarantine --box ./fuse-box.json a-forum
 cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example: nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
 cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example: nova-fuse status --box ./fuse-box.json
+cmd/nova-check/answers_test.go:TestTheBannerQuickstartAndKernelExamplesMatchOutput example: nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
+cmd/nova-check/answers_test.go:TestTheBannerQuickstartAndKernelExamplesMatchOutput example: nova-check quickstart --dir ./self

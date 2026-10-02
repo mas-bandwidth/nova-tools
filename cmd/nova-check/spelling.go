@@ -26,6 +26,7 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 	var ignore repeatable
 	fs.Var(&ignore, "ignore", "allowlisted word or @file (repeatable, or comma-separated)")
 	write := fs.Bool("write", false, "apply spelling corrections to files in place")
+	dryRun := fs.Bool("dry-run", false, "with --write, print the corrections it would make and write nothing")
 	var exclude repeatable
 	fs.Var(&exclude, "exclude", "path prefix not scanned (repeatable; empty by default)")
 	failMax := addFailMax(fs)
@@ -68,7 +69,7 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 
 	opts := check.SpellingOptions{
 		Ignore:  ignore,
-		Write:   *write,
+		Write:   *write && !*dryRun,
 		Exclude: exclude,
 		Dir:     root,
 	}
@@ -107,7 +108,15 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if asJSON {
-		return renderSpelling(stdout, root, res, *write, *failMax)
+		return renderSpelling(stdout, root, res, *write && !*dryRun, *failMax)
+	}
+	if *write && *dryRun {
+		for _, f := range res.Findings {
+			fmt.Fprintf(stdout, "SPELLING FIX %s:%d:%d: %s -> %s\n",
+				oneline.Escape(f.File), f.Line, f.Column, oneline.Escape(f.Original), oneline.Escape(f.Replacement))
+		}
+		fmt.Fprintf(stdout, "SPELLING OK files=%d misspellings=%d written=0 dry_run=true\n", res.FilesScanned, len(res.Findings))
+		return 0
 	}
 	if *write {
 		for _, f := range res.Findings {
