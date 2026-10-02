@@ -193,10 +193,9 @@ type TableUpdate struct {
 // reads with the part's step: it has no planner here.
 const PartDrain = "drain"
 
-// TickTables is the tick's shape: each table gets one update in turn per
-// tick, work streams then readers, merge and fleet. The work table's update
-// is the pump, run once a tick: its queue drained, then its cards advanced
-// (a
+// TickTables is the tick's shape: each table gets one update in turn per tick,
+// work streams, then readers, merge and fleet. The work table's update is the
+// pump, run once a tick: its queue drained, then its cards advanced (a
 // waiting card to ready, a ready card to working by the deal, a card in
 // review with two ok reads to merging); "no new work moves from waiting ->
 // ready -> working except on the FIRST PASS on the work stream table, once
@@ -219,9 +218,8 @@ const (
 	PartLevelReads = "level reads"
 )
 
-// TickStart is the tick's start, once, before any table's update: the
-// readers and the fleet are each rebalanced once at the start of the tick,
-// before its update. The fleet's level (ready cards from a member that
+// TickStart is the tick's start, once, before any table's update: the fleet's level
+// (ready cards from a member that
 // cannot start them to one with free lanes, never past DealAhead times a
 // width) and the readers' (asked reads from a reader with a backlog to one
 // idle), each one batch. It runs once a tick: a table written again later in
