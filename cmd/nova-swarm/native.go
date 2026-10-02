@@ -1518,7 +1518,7 @@ func readSince(path string, offset int64) []byte {
 
 // fenceRejected is the first path the harness's own fence auto-rejected in this job's
 // capture, or "" when it rejected nothing. It is asked OF THE RUN'S OWN CAPTURE,
-// `<job>/harness-output.log` (issue #608), the file with one writer -- never `harness.log`,
+// `<job>/harness-output.log`, the file with one writer -- never `harness.log`,
 // which carries the runner's stdout and this very line.
 func fenceRejected(jobDir string) string {
 	raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
@@ -1533,7 +1533,7 @@ func fenceRejected(jobDir string) string {
 }
 
 // harnessState is the `harness=<ok|silent>` token the NATIVE OK line always carries. ONE
-// DEFINITION, and this is it (issues #591, #594, #608 folded): a run is `silent` when the
+// DEFINITION, and this is it: a run is `silent` when the
 // capture above holds nothing the child said AND no `RESULT.md` is found anywhere the gather
 // looks for one. Anything else is `ok`.
 //
@@ -1545,17 +1545,17 @@ func fenceRejected(jobDir string) string {
 // model; a model that had nothing to say), and the line now tells them apart. A harness that
 // SPOKE and published nothing is `ok` and scores `no-result`: there is evidence to read.
 //
-// THE FILE IS THE RUN'S OWN CAPTURE, `<job>/harness-output.log` (issue #608) -- never
+// THE FILE IS THE RUN'S OWN CAPTURE, `<job>/harness-output.log` -- never
 // `harness.log`, which a runner pin may own. Reading the capture rather than a file this
 // process does not write is what keeps the token honest on a bench.
 //
 // THE WALL'S OWN LINES ARE NOT THE HARNESS SPEAKING. The wall prints `SANDBOX ...` on the
 // child's stderr, which this capture also holds, and counting those bytes would make a WALLED
-// run -- the very run that wrote issue #591 -- impossible to call silent. They are skipped
+// run -- a run whose every line belongs to the wall -- impossible to call silent. They are skipped
 // here.
 //
 // THE RESULT IS LOOKED FOR by the one lookup (swarm.FindCardResult): the job root, then
-// `repo/` and one directory below it (issue #594). A card's STEP 1 makes `repo/` the model's
+// `repo/` and one directory below it. A card's STEP 1 makes `repo/` the model's
 // cwd, so a working run publishes there; a shallower lookup here would print `harness=silent` about a run that
 // worked, which is the same class of fault this token exists to end.
 func harnessState(jobDir string) string {
@@ -1599,7 +1599,7 @@ func harnessSpoke(path string) bool {
 
 // wroteBytes says whether a path is a regular file holding at least one byte: the test
 // harnessState applies to a result, so an empty RESULT.md is nothing published. Lstat, not
-// Stat: a planted symlink is not a published result (issue #233).
+// Stat: a planted symlink is not a published result.
 func wroteBytes(path string) bool {
 	fi, err := os.Lstat(path)
 	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
@@ -1645,7 +1645,7 @@ func refuseNative(w io.Writer, reason string) {
 // to github.com for the named repositories is a HOST rule, and the wall's `check` verb says
 // so with `hosts=enforceable`. Anything else -- a check that will not run, or a line without
 // that token -- is a wall that cannot express the rule, and the run refuses rather than run
-// the card unwalled (SPEC-SANDBOX rule 1 and rule 11).
+// the card unwalled (SPEC-SANDBOX rules 1 and 11).
 func sandboxHostRules(sandbox string) bool {
 	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, sandbox, "check")
 	defer cancel()
@@ -1657,8 +1657,10 @@ func sandboxHostRules(sandbox string) bool {
 }
 
 // nativeSandboxArgv is the wrap for a native run: the wall's flags, then --, then the
-// harness verbatim (SPEC-SANDBOX rule 12) -- launch, the one launcher's argv, binary first. The job directory is the first --write and the
-// --cwd (rule 13); the data home is the second --write and the child's HOME (rule 9); the
+// harness verbatim (SPEC-SANDBOX rule 12). The launch is the one launcher's argv, binary first;
+// the job directory is the first --write and the
+// --cwd (SPEC-SANDBOX rule 13); the data home is the second --write and the child's HOME
+// (SPEC-SANDBOX rule 9); the
 // temp directory is a --write so the child's TMPDIR is usable inside the wall; the
 // slot directory is the read set. Each repo the card named is a --repo allow rule, and a
 // recipient never appears: a bus send is denied by the wall itself, not granted by the
@@ -1679,12 +1681,12 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	}
 	if !cfg.noSharedCaches && cfg.root != "" {
 		// The shared per-bench cache root is a permitted write root beside the job directory
-		// and the data home (issue #1048, docs/SPEC-SANDBOX.md).
+		// and the data home (docs/SPEC-SANDBOX.md).
 		argv = append(argv, "--write", swarm.CacheRoot(cfg.root))
 	}
 	argv = append(argv, "--cwd", jobDir)
 	// The keyless provider's loopback address is opened back up by name, never by widening
-	// the wall's network promise (issue #591).
+	// the wall's network promise (SPEC-SANDBOX rule 1).
 	if cfg.netAllow != "" {
 		argv = append(argv, "--net-allow", cfg.netAllow)
 	}
@@ -1707,14 +1709,14 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	// for the sdk tree, whose `go` the card must RUN, and `--read-noexec` for the module
 	// cache, which the card only reads. A `--read` root carries EXECUTE on both wall bodies,
 	// so the cache under that flag would put every dependency's own files one exec away from
-	// running inside the wall (security review of #1364).
+	// running inside the wall (SPEC-SANDBOX rule 1).
 	//
 	// AND THE LIST IS PER GOOS, because a Mac bench's toolchains are INSTALLED rather than
 	// unpacked into a home and each one resolves its runtime from the directory of the
 	// launcher that ran it -- `/opt/homebrew/bin/go` is a symlink into the Cellar, and
 	// without the Cellar tree the wall left the M2 Air `go: cannot find GOROOT directory:
 	// 'go' binary is trimmed`, `java: Unable to locate a Java Runtime` and `dotnet: Failed to
-	// resolve full path of the current executable []` (measured 2026-09-18).
+	// resolve full path of the current executable []`.
 	for _, root := range swarm.ToolchainRoots(benchOS(cfg), benchHome(cfg)) {
 		flag := "--read-noexec"
 		if root.Exec {
@@ -1722,7 +1724,7 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 		}
 		argv = append(argv, flag, root.Path)
 	}
-	// The worker description's own read roots (issue #1463): the directories a person at the
+	// The worker description's own read roots: the directories a person at the
 	// desk declared every job of this worker may read. They are --read and never --write and
 	// never --read-noexec -- a root the desk names is a reference, not a workspace, and the
 	// execute question is the toolchain list's above, which decides its own kinds.
@@ -1776,14 +1778,14 @@ func benchOS(cfg nativeRunConfig) string {
 // the bench-shared caches under <root>/cache and pins GOTOOLCHAIN=local; empty is
 // --no-shared-caches, and the four names are then absent.
 //
-// secretEnv is the NAME a worker description's `secret` carries (issue #881): the value is
+// secretEnv is the NAME a worker description's `secret` carries: the value is
 // passed through to the child BY NAME, exactly once -- stripped from the inherited set even
 // when its name already carries KEY/TOKEN/SECRET -- so a name that does not itself carry one
 // still reaches the harness. The value is never written to a file and never printed; the
 // argv log redacts any name that carries a secret.
 //
 // shimDir and shimShell are the shell wrappers this run wrote under <slot>/shim
-// (shellshim.go, issue #1814). shimDir goes FIRST on the child's PATH and shimShell is
+// (shellshim.go). shimDir goes FIRST on the child's PATH and shimShell is
 // pinned as SHELL, which are the two names the harness resolves its bash tool's shell
 // through. The harness process keeps the key -- it is the process that makes the API call
 // -- and every shell under it is handed an environment with the secret names unset. Both
@@ -1832,7 +1834,7 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 		)
 	}
 	// The wrappers go on before the secret is re-added, so the ONE process that keeps the
-	// key is the harness itself and every shell it spawns by name is scrubbed (#1814).
+	// key is the harness itself and every shell it spawns by name is scrubbed.
 	out = pathWithShimFirst(out, shimDir)
 	if shimShell != "" {
 		out = append(out, "SHELL="+shimShell)
@@ -1848,7 +1850,7 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 // nativeCacheDir is the bench-shared Go cache root: <root>/cache, the one directory every
 // slot of a bench shares so a card's data home holds harness state only (card 8963). The
 // module and build caches are its two children. It is empty when the caller typed
-// --no-shared-caches, which restores the old per-card caches under HOME, and while the root
+// --no-shared-caches, which leaves caches under HOME instead, and while the root
 // is unset (a unit test of the argv builder), when there is nothing to share.
 func nativeCacheDir(cfg nativeRunConfig) string {
 	if cfg.noSharedCaches || cfg.root == "" {
