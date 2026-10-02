@@ -643,7 +643,7 @@ func validateRun(f *runFlags, goos string) (time.Duration, []sandbox.Refusal) {
 	}
 
 	if !f.sawDashDash {
-		add("no_command", "no --; the command comes after it: "+remedyFor(goos))
+		add("no_command", "no --; the command comes after it, as the run: line below shows")
 	} else if len(f.argv) == 0 {
 		add("no_command", "nothing after --; the run verb wraps one command")
 	}

@@ -24,8 +24,13 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "routes", k.Table)
 	assert.False(t, k.Singleton)
-	assert.Equal(t, "tier,provider,model,tokens,deadline,enabled", strings.Join(k.FieldNames(), ","), "the deal reads exactly these names")
-	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "tokens": TypeInt, "deadline": TypeInt, "enabled": TypeBool}
+	assert.Equal(t, "tier,provider,model,tokens,deadline,enabled,"+
+		"price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of",
+		strings.Join(k.FieldNames(), ","), "the deal reads exactly these names, and the card's cost the price sheet after them")
+	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "tokens": TypeInt, "deadline": TypeInt, "enabled": TypeBool,
+		"price_input": TypeDecimal, "price_cache_read": TypeDecimal, "price_cache_write": TypeDecimal, "price_output": TypeDecimal, "reasoning_as_output": TypeBool,
+		"long_context": TypeInt, "price_input_long": TypeDecimal, "price_output_long": TypeDecimal, "price_request": TypeDecimal, "billing": TypeEnum,
+		"gateway_percent": TypeDecimal, "price_source": TypeText, "price_as_of": TypeText}
 	required := map[string]bool{"tier": true, "provider": true, "model": true, "deadline": true}
 	for _, f := range k.Fields {
 		assert.Equal(t, types[f.Name], f.Type, "--%s", f.Name)
@@ -111,6 +116,45 @@ func TestRouteNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 			raw:  map[string]string{"tier": "max", "provider": "a/b", "model": "m", "deadline": "60", "tokens": "-1"},
 			errs: []string{`--tier "max"`, `--provider "a/b"`, `--tokens "-1": want a non-negative integer`},
 		},
+		{
+			name: "no price sheet: every price empty, reasoning billed as output, metered",
+			raw:  map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "60"},
+			want: map[string]string{"price_input": "", "price_output": "", "price_request": "", "gateway_percent": "", "reasoning_as_output": "true",
+				"long_context": "0", "billing": "metered", "price_source": "", "price_as_of": ""},
+		},
+		{
+			name: "a whole price sheet, each decimal in its one spelling",
+			raw: map[string]string{"tier": "pro", "provider": "p", "model": "m", "deadline": "60", "price_input": "0.30", "price_cache_read": "0.030",
+				"price_cache_write": "000.375", "price_output": "1.2", "reasoning_as_output": "false", "long_context": "200000", "price_input_long": "0.60",
+				"price_output_long": "2.40", "price_request": "0.0000125", "billing": "plan", "gateway_percent": "5.50", "price_source": "https://example.com/pricing",
+				"price_as_of": "2026-10-01"},
+			want: map[string]string{"price_input": "0.3", "price_cache_read": "0.03", "price_cache_write": "0.375", "price_output": "1.2", "reasoning_as_output": "false",
+				"long_context": "200000", "price_input_long": "0.6", "price_output_long": "2.4", "price_request": "0.0000125", "billing": "plan",
+				"gateway_percent": "5.5", "price_source": "https://example.com/pricing", "price_as_of": "2026-10-01"},
+		},
+		{
+			name: "a price with more digits than a float holds stays exact",
+			raw:  map[string]string{"tier": "pro", "provider": "p", "model": "m", "deadline": "60", "price_input": "0.10000000000000000000000000001"},
+			want: map[string]string{"price_input": "0.10000000000000000000000000001"},
+		},
+		{
+			name: "a negative, an exponent, a comma, an unknown billing and a bad date, all at once",
+			raw: map[string]string{"tier": "pro", "provider": "p", "model": "m", "deadline": "60", "price_input": "-1", "price_output": "1e-6",
+				"price_cache_read": "1,5", "billing": "monthly", "price_as_of": "10/01/2026"},
+			errs: []string{`--price_input "-1": want a non-negative decimal`, `--price_output "1e-6"`, `--price_cache_read "1,5"`,
+				`--billing "monthly": want one of metered, plan`, `--price_as_of "10/01/2026"; want the date the prices were read, YYYY-MM-DD`},
+		},
+		{
+			name: "a threshold with no long prices",
+			raw:  map[string]string{"tier": "pro", "provider": "p", "model": "m", "deadline": "60", "long_context": "200000", "price_input_long": "0.6"},
+			errs: []string{"--long_context 200000 and no --price_output_long; want both long prices with the threshold"},
+			not:  []string{"no --price_input_long"},
+		},
+		{
+			name: "long prices with no threshold",
+			raw:  map[string]string{"tier": "pro", "provider": "p", "model": "m", "deadline": "60", "price_input_long": "0.6", "price_output_long": "2.4"},
+			errs: []string{"--price_input_long 0.6 and no --long_context", "--price_output_long 2.4 and no --long_context"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -149,6 +193,10 @@ func TestRouteSetIsCheckedOnTheRowItWouldLeave(t *testing.T) {
 		{name: "an empty model", changes: map[string]string{"model": ""}, refuse: `--model ""`},
 		{name: "out of the deal", changes: map[string]string{"enabled": "false"}},
 		{name: "another provider and model", changes: map[string]string{"provider": "openrouter", "model": "x-ai/grok-4"}},
+		{name: "a price sheet", changes: map[string]string{"price_input": "0.27", "price_output": "1.10", "price_as_of": "2026-10-01"}},
+		{name: "a threshold with no long prices", changes: map[string]string{"long_context": "128000"}, refuse: "no --price_input_long"},
+		{name: "a long price with no threshold", changes: map[string]string{"price_output_long": "2"}, refuse: "--price_output_long 2 and no --long_context"},
+		{name: "a price cleared", changes: map[string]string{"price_input": ""}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -216,4 +264,48 @@ func TestApplyWritesRoutesAndReachesParity(t *testing.T) {
 	assert.Equal(t, []string{"APPLY SET kind=route name=pro-opencode changed=tokens", "APPLY REMOVE kind=route name=pro-deepseek"}, lines)
 	rev, _ = st.Rev(ctx, KindRoute)
 	assert.Equal(t, rev, ap.revs[KindRoute])
+
+	// a price sheet set is one SET of exactly the fields that changed, and the view
+	// holds each decimal in its one spelling
+	lines = nil
+	prices, err := k.Changes(map[string]string{"price_input": "0.270", "price_output": "1.10", "price_cache_read": "0.07", "price_as_of": "2026-10-01"})
+	require.NoError(t, err)
+	_, _, err = st.Update(ctx, KindRoute, "pro-opencode", prices, "t")
+	require.NoError(t, err)
+	_, err = Apply(ctx, st, ap, KindRoute, "t", false, report)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"APPLY SET kind=route name=pro-opencode changed=price_input,price_cache_read,price_output,price_as_of"}, lines, "in declaration order")
+	view := ap.views[KindRoute]["pro-opencode"]
+	assert.Equal(t, "0.27", view["price_input"])
+	assert.Equal(t, "1.1", view["price_output"])
+	assert.Equal(t, "0.07", view["price_cache_read"])
+	assert.Equal(t, "", view["price_cache_write"], "a price not set is empty, never 0")
+	assert.Equal(t, "true", view["reasoning_as_output"])
+	assert.Equal(t, "metered", view["billing"])
+}
+
+// A route a tier's array names is held, as a row a ref names is: removing it
+// would leave the deal an array naming a route that is not there, which set
+// itself refuses (checkTierRoutes). The remove names the tier; once the array
+// lets it go, the route goes.
+func TestARouteATierNamesIsHeld(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := NewMem()
+	route, _ := Lookup(KindRoute)
+	for _, name := range []string{"flash-a", "flash-b"} {
+		row, err := route.NewRow(name, map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "60"})
+		require.NoError(t, err)
+		_, err = st.Insert(ctx, KindRoute, row, "a1")
+		require.NoError(t, err)
+	}
+	_, _, err := st.Update(ctx, KindTier, "flash", map[string]string{"routes": "flash-b,flash-a,flash-b"}, "a1")
+	require.NoError(t, err)
+	_, err = st.Delete(ctx, KindRoute, "flash-a", "a1")
+	assert.ErrorIs(t, err, ErrReferenced)
+	assert.ErrorContains(t, err, "route flash-a is in the --routes of tier flash")
+	_, _, err = st.Update(ctx, KindTier, "flash", map[string]string{"routes": "flash-b"}, "a1")
+	require.NoError(t, err)
+	_, err = st.Delete(ctx, KindRoute, "flash-a", "a1")
+	assert.NoError(t, err)
 }

@@ -65,10 +65,7 @@ func runLabels(runID string, start, deadline time.Time, ownerID string) []string
 // rounded up, and never 0, which the runtime reads as no bound at all.
 func timeoutSeconds(d time.Duration) int {
 	s := int((d + time.Second - 1) / time.Second)
-	if s < 1 {
-		s = 1
-	}
-	return s
+	return max(s, 1)
 }
 
 func containerName(runID string) string { return namePrefix + runID }

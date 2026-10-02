@@ -5,11 +5,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -63,11 +64,11 @@ type KindP95 map[string]int
 // CardBaseRemedies is what each base token wants, in the table shape of
 // CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest.
 var CardBaseRemedies = map[string]string{
-	"paths-at-base":      "every PATHS entry names a file, directory or glob that exists at the card's base-sha (or is a new `_test` file); cut the card from the tree at that sha, not from the issue's words, and hand the lint a repository holding the sha with `--repo <dir>` (failed-cards-2026-09-22 class 9, nx-f19)",
-	"no-push-steps":      "a card ends at a local commit: no STEP runs `git push` or `gh`, because the wall holds no credential and the member pushes the card's commit at its finish; say `no gh, no push` in RULES, never as a STEP command (failed-cards-2026-09-22 class 8, holdfix and nx-r repair cards)",
-	"leg-in-fleet":       "LEG: (or each LEGS: entry) is a leg the fleet's leg table carries -- `sbcl`, not `lisp` -- and the table is handed over with `--legs <file>` (failed-cards-2026-09-22 LEG row, #2728)",
-	"donewhen-test-name": "DONE-WHEN: names the runner and a literal test that does not exist at the card's base-sha -- `go test ./<pkg> -run <TestName>`, `pytest <file>::<test_name>` (or `-k <test_name>`), `cargo test <name>` -- so the test can be red on base and green at head; an English outcome (\"applied cleanly\", \"make preflight\") or a runner with no test named is not a control, and the repository holding base-sha is handed over with `--repo <dir>` (#3083, the-control-is-the-sentence)",
-	"deadline-p95":       "DEADLINE: is at or above the measured p95 wall of the card's KIND, in seconds (or `finish within <n> minutes`), and the p95 table is handed over with `--p95 <file>`; a kind with no row needs a `*` row or a measurement first (failed-cards-2026-09-22 class 11)",
+	"paths-at-base":      "every PATHS entry names a file, directory or glob that exists at the card's base-sha (or is a new `_test` file); cut the card from the tree at that sha, not from the issue's words, and hand the lint a repository holding the sha with `--repo <dir>`",
+	"no-push-steps":      "a card ends at a local commit: no STEP runs `git push` or `gh`, because the wall holds no credential and the member pushes the card's commit at its finish; say `no gh, no push` in RULES, never as a STEP command",
+	"leg-in-fleet":       "LEG: (or each LEGS: entry) is a leg the fleet's leg table carries -- `sbcl`, not `lisp` -- and the table is handed over with `--legs <file>`",
+	"donewhen-test-name": "DONE-WHEN: names the runner and a literal test that does not exist at the card's base-sha -- `go test ./<pkg> -run <TestName>`, `pytest <file>::<test_name>` (or `-k <test_name>`), `cargo test <name>` -- so the test can be red on base and green at head; an English outcome (\"applied cleanly\", \"make preflight\") or a runner with no test named is not a control, and the repository holding base-sha is handed over with `--repo <dir>`",
+	"deadline-p95":       "DEADLINE: is at or above the measured p95 wall of the card's KIND, in seconds (or `finish within <n> minutes`), and the p95 table is handed over with `--p95 <file>`; a kind with no row needs a `*` row or a measurement first",
 }
 
 // LintCardBase returns the base-check findings for one card, in the order the
@@ -75,9 +76,7 @@ var CardBaseRemedies = map[string]string{
 func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 	var out []CardHeaderFinding
 	add := func(check string, line int, excerpt string) {
-		if line < 1 {
-			line = 1
-		}
+		line = max(line, 1)
 		out = append(out, CardHeaderFinding{Check: check, Line: line, Excerpt: excerpt})
 	}
 	h, _ := cardHeaderBlock(raw)
@@ -161,7 +160,7 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 			}
 		}
 		if len(unknown) > 0 {
-			add("leg-in-fleet", legLine, fmt.Sprintf("LEG %s is not in the fleet leg table (%s); no bench carries it", quoteDepends(unknown), strings.Join(sortedLegs(bc.Legs), ", ")))
+			add("leg-in-fleet", legLine, fmt.Sprintf("LEG %s is not in the fleet leg table (%s); no bench carries it", quoteDepends(unknown), strings.Join(slices.Sorted(maps.Keys(bc.Legs)), ", ")))
 		}
 	}
 
@@ -563,15 +562,6 @@ func splitLegs(v string) []string {
 			out = append(out, p)
 		}
 	}
-	return out
-}
-
-func sortedLegs(l FleetLegs) []string {
-	out := make([]string, 0, len(l))
-	for k := range l {
-		out = append(out, k)
-	}
-	sort.Strings(out)
 	return out
 }
 

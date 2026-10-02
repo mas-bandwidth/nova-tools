@@ -3,6 +3,8 @@
 package main
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 )
@@ -13,9 +15,8 @@ func TestWorkingStateAndViewLifecycle(t *testing.T) {
 	success := func(args ...string) string {
 		t.Helper()
 		code, out, errout := runTable(at(addr, args...)...)
-		if code != 0 || errout != "" {
-			t.Fatalf("%v: %d %q %q", args, code, out, errout)
-		}
+		require.EqualValues(t, 0, code, "%v: %d %q %q", args, code, out, errout)
+		require.Empty(t, errout, "%v: %d %q %q", args, code, out, errout)
 		return out
 	}
 	success("create", "work", "--columns", "todo,done,note:text,progress:pct(done)", "--footer", "total")
@@ -23,36 +24,38 @@ func TestWorkingStateAndViewLifecycle(t *testing.T) {
 	success("cell", "add", "work", "stream: build", "todo", "check-a", "check-b")
 	success("cell", "move", "work", "stream: build", "todo", "done", "check-a")
 	success("row", "set", "work", "stream: build", "note=review passed")
-	if out := success("set", "work", "--hide", "note"); !strings.Contains(out, `hide="note" trips=1`) {
-		t.Errorf("hide confirmation: %s", out)
+	{
+		out := success("set", "work", "--hide", "note")
+		assert.Contains(t, out, `hide="note" trips=1`, "hide confirmation: %s", out)
 	}
-	if out := success("set", "work", "--show", "note"); !strings.Contains(out, `show="note" trips=1`) {
-		t.Errorf("show confirmation: %s", out)
+	{
+		out := success("set", "work", "--show", "note")
+		assert.Contains(t, out, `show="note" trips=1`, "show confirmation: %s", out)
 	}
 
 	out := success("show", "work")
 	for _, part := range []string{`row="stream: build" todo=1 done=1 note="review passed" progress=50.0%`, `row=empty todo=0 done=0 note="" progress=0.0%`, `trips=1 epoch=0 revision=7`} {
-		if !strings.Contains(out, part) {
-			t.Errorf("show missing %q: %s", part, out)
-		}
+		assert.Contains(t, out, part, "show missing %q: %s", part, out)
 	}
 	out = success("member", "find", "work", "check-a")
-	if !strings.Contains(out, `state=placed row="stream: build" col=done epoch=0 table_revision=7 trips=1`) {
-		t.Errorf("find: %s", out)
-	}
+	assert.Contains(t, out, `state=placed row="stream: build" col=done epoch=0 table_revision=7 trips=1`, "find: %s", out)
 	success("member", "create", "work", "new")
-	if out = success("member", "find", "work", "new"); !strings.Contains(out, "state=unplaced epoch=0 table_revision=8 trips=1") {
-		t.Errorf("unplaced: %s", out)
+	{
+		out = success("member", "find", "work", "new")
+		assert.Contains(t, out, "state=unplaced epoch=0 table_revision=8 trips=1", "unplaced: %s", out)
 	}
-	if out = success("member", "find", "work", "unknown"); !strings.Contains(out, "state=missing epoch=0 table_revision=8 trips=1") {
-		t.Errorf("missing: %s", out)
+	{
+		out = success("member", "find", "work", "unknown")
+		assert.Contains(t, out, "state=missing epoch=0 table_revision=8 trips=1", "missing: %s", out)
 	}
 	success("view", "set", "today", "--tables", "work", "--summary", "done", "--title", "My work")
-	if out = success("view", "show", "today"); !strings.Contains(out, `title="My work" summary=done state="" trips=1`) {
-		t.Errorf("view show: %s", out)
+	{
+		out = success("view", "show", "today")
+		assert.Contains(t, out, `title="My work" summary=done state="" trips=1`, "view show: %s", out)
 	}
-	if out = success("view", "list"); out != "VIEW LIST views=1 trips=1\nVIEW view=today\n" {
-		t.Errorf("list: %s", out)
+	{
+		out = success("view", "list")
+		assert.Equal(t, "VIEW LIST views=1 trips=1\nVIEW view=today\n", out, "list: %s", out)
 	}
 	success("watch", "--view", "today", "--once")
 	for _, bad := range []struct {
@@ -64,25 +67,32 @@ func TestWorkingStateAndViewLifecycle(t *testing.T) {
 		{[]string{"view", "set", "bad", "--tables", "gone"}, `view "bad": referenced table "gone" does not exist; run: nova-table create 'gone' --columns <columns>`},
 	} {
 		code, out, errout := runTable(at(addr, bad.args...)...)
-		if code != 1 || out != "" || !strings.Contains(errout, bad.want) || strings.Count(errout, "; run:") != 1 {
-			t.Errorf("%v: %d %q %q", bad.args, code, out, errout)
-		}
+		assert.EqualValues(t, 1, code, "%v: %d %q %q", bad.args, code, out, errout)
+		assert.Empty(t, out, "%v: %d %q %q", bad.args, code, out, errout)
+		assert.Contains(t, errout, bad.want, "%v: %d %q %q", bad.args, code, out, errout)
+		assert.EqualValues(t, 1, strings.Count(errout, "; run:"), "%v: %d %q %q", bad.args, code, out, errout)
 	}
-	if code, _, errout := runTable(at(addr, "watch", "work", "--view", "today", "--once")...); code != 2 || !strings.Contains(errout, "or --view") {
-		t.Fatalf("mixed watch targets: %d %s", code, errout)
+	{
+		code, _, errout := runTable(at(addr, "watch", "work", "--view", "today", "--once")...)
+		require.EqualValues(t, 2, code, "mixed watch targets: %d %s", code, errout)
+		require.Contains(t, errout, "or --view", "mixed watch targets: %d %s", code, errout)
 	}
 
-	if out = success("view", "del", "today"); out != "VIEW DEL view=today existed=1 trips=1\n" {
-		t.Errorf("del: %s", out)
+	{
+		out = success("view", "del", "today")
+		assert.Equal(t, "VIEW DEL view=today existed=1 trips=1\n", out, "del: %s", out)
 	}
-	if out = success("view", "del", "today"); out != "VIEW DEL view=today existed=0 trips=1\n" {
-		t.Errorf("repeat del: %s", out)
+	{
+		out = success("view", "del", "today")
+		assert.Equal(t, "VIEW DEL view=today existed=0 trips=1\n", out, "repeat del: %s", out)
 	}
-	if out = success("view", "list"); out != "VIEW LIST views=0 trips=1\n" {
-		t.Errorf("empty list: %s", out)
+	{
+		out = success("view", "list")
+		assert.Equal(t, "VIEW LIST views=0 trips=1\n", out, "empty list: %s", out)
 	}
-	if out = success("check", "work"); !strings.Contains(out, "revision=8 members=2") {
-		t.Errorf("view operations changed table: %s", out)
+	{
+		out = success("check", "work")
+		assert.Contains(t, out, "revision=8 members=2", "view operations changed table: %s", out)
 	}
 }
 
@@ -95,18 +105,15 @@ func TestViewStateVerb(t *testing.T) {
 	success := func(args ...string) string {
 		t.Helper()
 		code, out, errout := runTable(at(addr, args...)...)
-		if code != 0 || errout != "" {
-			t.Fatalf("%v: %d %q %q", args, code, out, errout)
-		}
+		require.EqualValues(t, 0, code, "%v: %d %q %q", args, code, out, errout)
+		require.Empty(t, errout, "%v: %d %q %q", args, code, out, errout)
 		return out
 	}
 	summary := func() string {
 		t.Helper()
 		out := success("render", "--view", "today")
 		parts := strings.SplitN(out, "\n\n", 4) // clock, title, summary line, tables
-		if len(parts) < 3 {
-			t.Fatalf("frame: %q", out)
-		}
+		require.GreaterOrEqual(t, len(parts), 3, "frame: %q", out)
 		return parts[2]
 	}
 	success("create", "work", "--columns", "todo,done")
@@ -114,25 +121,31 @@ func TestViewStateVerb(t *testing.T) {
 	success("cell", "add", "work", "build", "todo", "a", "b")
 	success("cell", "move", "work", "build", "todo", "done", "a")
 	success("view", "set", "today", "--tables", "work", "--summary", "done", "--title", "My work")
-	if got := summary(); got != "1/2 50.0% -> ETA" {
-		t.Fatalf("no state: %q", got)
+	{
+		got := summary()
+		require.Equal(t, "1/2 50.0% -> ETA", got, "no state: %q", got)
 	}
-	if out := success("view", "state", "today", "STOPPED"); out != "VIEW STATE view=today state=\"STOPPED\" trips=1\n" {
-		t.Fatalf("view state: %q", out)
+	{
+		out := success("view", "state", "today", "STOPPED")
+		require.Equal(t, "VIEW STATE view=today state=\"STOPPED\" trips=1\n", out, "view state: %q", out)
 	}
-	if got := summary(); got != "STOPPED" {
-		t.Fatalf("with a state: %q, want STOPPED alone", got)
+	{
+		got := summary()
+		require.Equal(t, "STOPPED", got, "with a state: %q, want STOPPED alone", got)
 	}
-	if out := success("view", "show", "today"); !strings.Contains(out, `summary=done state="STOPPED" trips=1`) {
-		t.Fatalf("view show: %q", out)
+	{
+		out := success("view", "show", "today")
+		require.Contains(t, out, `summary=done state="STOPPED" trips=1`, "view show: %q", out)
 	}
 	success("view", "set", "today", "--tables", "work", "--summary", "done", "--title", "My work")
-	if got := summary(); got != "STOPPED" {
-		t.Fatalf("view set dropped the state: %q", got)
+	{
+		got := summary()
+		require.Equal(t, "STOPPED", got, "view set dropped the state: %q", got)
 	}
 	success("view", "state", "today", "--clear")
-	if got := summary(); got != "1/2 50.0% -> ETA" {
-		t.Fatalf("cleared: %q", got)
+	{
+		got := summary()
+		require.Equal(t, "1/2 50.0% -> ETA", got, "cleared: %q", got)
 	}
 	for _, bad := range []struct {
 		args []string
@@ -144,9 +157,9 @@ func TestViewStateVerb(t *testing.T) {
 		{[]string{"view", "state", "today", "a\nb"}, 2, "a state is one line"},
 	} {
 		code, out, errout := runTable(at(addr, bad.args...)...)
-		if code != bad.code || out != "" || !strings.Contains(errout, bad.want) {
-			t.Errorf("%v: %d %q %q", bad.args, code, out, errout)
-		}
+		assert.Equal(t, bad.code, code, "%v: %d %q %q", bad.args, code, out, errout)
+		assert.Empty(t, out, "%v: %d %q %q", bad.args, code, out, errout)
+		assert.Contains(t, errout, bad.want, "%v: %d %q %q", bad.args, code, out, errout)
 	}
 }
 
@@ -158,22 +171,20 @@ func TestViewDrawsEveryTableAndRow(t *testing.T) {
 	success := func(args ...string) string {
 		t.Helper()
 		code, out, errout := runTable(at(addr, args...)...)
-		if code != 0 || errout != "" {
-			t.Fatalf("%v: %d %q %q", args, code, out, errout)
-		}
+		require.EqualValues(t, 0, code, "%v: %d %q %q", args, code, out, errout)
+		require.Empty(t, errout, "%v: %d %q %q", args, code, out, errout)
 		return out
 	}
 	success("create", "work", "--columns", "todo,done")
 	success("create", "bare", "--columns", "todo,done")
 	success("row", "add", "work", "idle")
 	success("view", "set", "v", "--tables", "work,bare")
-	if out := success("view", "show", "v"); strings.Contains(out, "hide") {
-		t.Errorf("view show: %s", out)
+	{
+		out := success("view", "show", "v")
+		assert.NotContains(t, out, "hide", "view show: %s", out)
 	}
 	out := success("watch", "--view", "v", "--once")
 	for _, want := range []string{"\nidle ", "\nwork ", "\nbare "} {
-		if !strings.Contains(out, want) {
-			t.Errorf("the frame lacks %q:\n%s", want, out)
-		}
+		assert.Contains(t, out, want, "the frame lacks %q:\n%s", want, out)
 	}
 }

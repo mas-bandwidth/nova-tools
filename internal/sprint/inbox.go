@@ -1,6 +1,8 @@
 package sprint
 
 import (
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -166,9 +168,7 @@ func Inbox(r InboxReq) []Group {
 		if n.At.Before(g.Oldest) {
 			g.Oldest = n.At
 		}
-		if n.Before > g.Before {
-			g.Before = n.Before
-		}
+		g.Before = max(g.Before, n.Before)
 		if g.What == "" {
 			g.What = n.What
 		}
@@ -206,7 +206,7 @@ func Inbox(r InboxReq) []Group {
 	for i := range judg {
 		judg[i].ID = first[i].ID
 		judg[i].Waited = r.running(judg[i].Oldest)
-		judg[i].Members = sortedSet(members[i])
+		judg[i].Members = slices.Sorted(maps.Keys(members[i]))
 		judg[i].Size = len(judg[i].Members)
 		sort.Strings(judg[i].Primaries)
 		sort.Strings(judg[i].Notes)
@@ -265,7 +265,7 @@ func Inbox(r InboxReq) []Group {
 	}
 	var done, top, other []Group
 	for i := range rest {
-		rest[i].Members = sortedSet(restMembers[i])
+		rest[i].Members = slices.Sorted(maps.Keys(restMembers[i]))
 		rest[i].Size = len(rest[i].Members)
 		switch {
 		case rest[i].Type == NSprintDone:
@@ -289,15 +289,6 @@ func FindGroup(groups []Group, id string) (Group, bool) {
 		}
 	}
 	return Group{}, false
-}
-
-func sortedSet(m map[string]bool) []string {
-	var out []string
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // Command is one decision open to the coordinator as the commands that make

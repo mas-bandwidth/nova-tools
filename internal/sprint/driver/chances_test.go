@@ -12,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // locked is the owner's simulation, typed here once more and apart from the
@@ -22,17 +25,15 @@ var locked = Chances{Broken: 0.10, Fail: 0.10, Stuck: 0.10, Cross: 0.01, Down: 0
 func TestTheSimulationIsTheSixLockedChances(t *testing.T) {
 	t.Parallel()
 	got, err := Set(true, nil)
-	if err != nil || got != locked {
-		t.Fatalf("simulation: %+v %v\nwant %+v", got, err, locked)
-	}
-	if len(ChanceRows) != 6 {
-		t.Fatalf("%d chances in the table, not six", len(ChanceRows))
-	}
+	require.NoError(t, err, "simulation: %+v %v\nwant %+v", got, err, locked)
+	require.Equal(t, locked, got, "simulation: %+v %v\nwant %+v", got, err, locked)
+	require.Len(t, ChanceRows, 6, "%d chances in the table, not six", len(ChanceRows))
 	seen := map[string]bool{}
 	for _, r := range ChanceRows {
-		if seen[r.Flag] || Valid(r.Flag, r.Plain) != nil || Valid(r.Flag, r.Locked) != nil || r.Usage == "" {
-			t.Errorf("row %s is a repeat, out of range or unexplained", r.Flag)
-		}
+		assert.False(t, seen[r.Flag], "row %s is a repeat, out of range or unexplained", r.Flag)
+		assert.NoError(t, Valid(r.Flag, r.Plain), "row %s is a repeat, out of range or unexplained", r.Flag)
+		assert.NoError(t, Valid(r.Flag, r.Locked), "row %s is a repeat, out of range or unexplained", r.Flag)
+		assert.NotEmpty(t, r.Usage, "row %s is a repeat, out of range or unexplained", r.Flag)
 		seen[r.Flag] = true
 	}
 }
@@ -41,9 +42,8 @@ func TestWithoutTheSimulationTheChancesAreTheirPlainValues(t *testing.T) {
 	t.Parallel()
 	got, err := Set(false, nil)
 	want := Chances{Broken: 0.05, Fail: 0.10, Stuck: 0.10, Cross: 0.01}
-	if err != nil || got != want {
-		t.Fatalf("plain: %+v %v\nwant %+v", got, err, want)
-	}
+	require.NoError(t, err, "plain: %+v %v\nwant %+v", got, err, want)
+	require.Equal(t, want, got, "plain: %+v %v\nwant %+v", got, err, want)
 }
 
 // A chance given beside --simulation sets that one chance and no other, and a
@@ -53,20 +53,14 @@ func TestAFlagBesideTheSimulationSetsThatOneChance(t *testing.T) {
 	for _, r := range ChanceRows {
 		for _, v := range []float64{0.5, 0, 1} {
 			got, err := Set(true, map[string]float64{r.Flag: v})
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			want := locked
 			*r.At(&want) = v
-			if got != want {
-				t.Errorf("--simulation --%s %v: %+v\nwant %+v", r.Flag, v, got, want)
-			}
+			assert.Equal(t, want, got, "--simulation --%s %v: %+v\nwant %+v", r.Flag, v, got, want)
 		}
 	}
 	got, _ := Set(true, map[string]float64{"broken": 0.5})
-	if got != (Chances{Broken: 0.5, Fail: 0.10, Stuck: 0.10, Cross: 0.01, Down: 0.01, Up: 0.10}) {
-		t.Fatalf("--simulation --broken 0.5: %+v", got)
-	}
+	require.Equal(t, Chances{Broken: 0.5, Fail: 0.10, Stuck: 0.10, Cross: 0.01, Down: 0.01, Up: 0.10}, got, "--simulation --broken 0.5: %+v", got)
 }
 
 func TestFlapIsDownAndUpUnlessTheyAreNamed(t *testing.T) {
@@ -84,9 +78,9 @@ func TestFlapIsDownAndUpUnlessTheyAreNamed(t *testing.T) {
 		{true, nil, 0.01, 0.10},
 	} {
 		got, err := Set(c.simulation, c.given)
-		if err != nil || got.Down != c.down || got.Up != c.up {
-			t.Errorf("%v %v: down %v up %v (%v), want %v and %v", c.simulation, c.given, got.Down, got.Up, err, c.down, c.up)
-		}
+		assert.NoError(t, err, "%v %v: down %v up %v (%v), want %v and %v", c.simulation, c.given, got.Down, got.Up, err, c.down, c.up)
+		assert.Equal(t, c.down, got.Down, "%v %v: down %v up %v (%v), want %v and %v", c.simulation, c.given, got.Down, got.Up, err, c.down, c.up)
+		assert.Equal(t, c.up, got.Up, "%v %v: down %v up %v (%v), want %v and %v", c.simulation, c.given, got.Down, got.Up, err, c.down, c.up)
 	}
 }
 
@@ -96,22 +90,18 @@ func TestAChanceOutsideZeroToOneIsRefusedByName(t *testing.T) {
 		for _, v := range []float64{1.5, -0.1, math.NaN(), math.Inf(1)} {
 			for _, simulation := range []bool{false, true} {
 				_, err := Set(simulation, map[string]float64{flag: v})
-				if err == nil || !strings.Contains(err.Error(), "--"+flag+" wants a chance from 0 to 1") {
-					t.Errorf("--%s %v (simulation %v): %v", flag, v, simulation, err)
-				}
+				assert.ErrorContains(t, err, "--"+flag+" wants a chance from 0 to 1", "--%s %v (simulation %v): %v", flag, v, simulation, err)
 			}
 		}
 	}
-	if err := Valid("red", 2); err == nil || !strings.Contains(err.Error(), "--red") {
-		t.Errorf("--red 2: %v", err)
-	}
+	err := Valid("red", 2)
+	assert.ErrorContains(t, err, "--red", "--red 2: %v", err)
 }
 
 func TestTheChancesPrintAsTheFlagsThatSetThem(t *testing.T) {
 	t.Parallel()
-	if got, want := locked.String(), "broken=0.1 fail=0.1 stuck=0.1 cross=0.01 down=0.01 up=0.1"; got != want {
-		t.Fatalf("%s\nwant %s", got, want)
-	}
+	got, want := locked.String(), "broken=0.1 fail=0.1 stuck=0.1 cross=0.01 down=0.01 up=0.1"
+	require.Equal(t, want, got, "%s\nwant %s", got, want)
 }
 
 // A chance each second is the chance of a tick as long as a second, and a
@@ -119,23 +109,26 @@ func TestTheChancesPrintAsTheFlagsThatSetThem(t *testing.T) {
 func TestAChanceEachSecondIsScaledToTheTick(t *testing.T) {
 	t.Parallel()
 	for _, p := range []float64{0, 0.01, 0.10, 0.5, 1} {
-		if got := PerTick(p, time.Second); got != p {
-			t.Errorf("a second's tick of %v: %v", p, got)
-		}
-		if got := PerTick(p, 0); got != p {
-			t.Errorf("a tick of no time of %v: %v", p, got)
-		}
+		got := PerTick(p, time.Second)
+		assert.Equal(t, p, got, "a second's tick of %v: %v", p, got)
+		got = PerTick(p, 0)
+		assert.Equal(t, p, got, "a tick of no time of %v: %v", p, got)
 		half := PerTick(p, 500*time.Millisecond)
-		if got := 1 - (1-half)*(1-half); math.Abs(got-p) > 1e-12 {
-			t.Errorf("two ticks of half a second of %v make %v", p, got)
+		got = 1 - (1-half)*(1-half)
+		assert.LessOrEqual(t, math.Abs(got-p), 1e-12, "two ticks of half a second of %v make %v", p, got)
+		minTick := PerTick(p, time.Minute)
+		assert.GreaterOrEqual(t, minTick, p, "a minute's tick of %v: %v", p, minTick)
+		assert.LessOrEqual(t, minTick, 1.0, "a minute's tick of %v: %v", p, minTick)
+		if p == 0 {
+			assert.Equal(t, 0.0, minTick, "a minute's tick of %v: %v", p, minTick)
 		}
-		if got := PerTick(p, time.Minute); got < p || got > 1 || p == 0 && got != 0 || p == 1 && got != 1 {
-			t.Errorf("a minute's tick of %v: %v", p, got)
+		if p == 1 {
+			assert.Equal(t, 1.0, minTick, "a minute's tick of %v: %v", p, minTick)
 		}
 	}
-	if got := PerTick(0.01, time.Minute); got < 0.44 || got > 0.46 {
-		t.Errorf("1%% each second is %v in a minute's tick, about 45%%", got)
-	}
+	got := PerTick(0.01, time.Minute)
+	assert.GreaterOrEqual(t, got, 0.44, "1%% each second is %v in a minute's tick, about 45%%", got)
+	assert.LessOrEqual(t, got, 0.46, "1%% each second is %v in a minute's tick, about 45%%", got)
 }
 
 // draws is the seeded facts' draws at a chance each: how often each came up.
@@ -185,16 +178,12 @@ func TestEveryChanceIsWithinAPointOfItsSetting(t *testing.T) {
 	const n = 100000
 	s := NewSeeded(20260929)
 	c, err := Set(true, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	s.Use(c, time.Second)
 	got := draws(s, n)
 	want := map[string]float64{"broken": 0.10, "fail": 0.10, "stuck": 0.10, "cross": 0.01, "down": 0.01, "up": 0.10}
 	for flag, p := range want {
-		if !near(got[flag], p, n) {
-			t.Errorf("%s: %.4f in %d draws, its setting is %v", flag, got[flag], n, p)
-		}
+		assert.True(t, near(got[flag], p, n), "%s: %.4f in %d draws, its setting is %v", flag, got[flag], n, p)
 		t.Logf("%-6s %.4f (setting %v)", flag, got[flag], p)
 	}
 }
@@ -212,22 +201,18 @@ func TestAChanceGivenBesideTheSimulationDrawsAsGiven(t *testing.T) {
 	const n = 100000
 	for a, p := range distinct {
 		for b, q := range distinct {
-			if a != b && math.Abs(p-q) < 0.02 {
-				t.Fatalf("--%s %v and --%s %v are too near for the test to tell them apart", a, p, b, q)
+			if a != b {
+				require.GreaterOrEqual(t, math.Abs(p-q), 0.02, "--%s %v and --%s %v are too near for the test to tell them apart", a, p, b, q)
 			}
 		}
 	}
 	s := NewSeeded(5)
 	c, err := Set(true, distinct)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	s.Use(c, time.Second)
 	got := draws(s, n)
 	for flag, p := range distinct {
-		if !near(got[flag], p, n) {
-			t.Errorf("%s: %.4f in %d draws, its setting is %v", flag, got[flag], n, p)
-		}
+		assert.True(t, near(got[flag], p, n), "%s: %.4f in %d draws, its setting is %v", flag, got[flag], n, p)
 	}
 }
 
@@ -238,9 +223,7 @@ func TestAChanceGivenBesideTheSimulationDrawsAsGiven(t *testing.T) {
 func TestAPlainRunDrawsTheSequenceItDrewBeforeDownAndUpExisted(t *testing.T) {
 	t.Parallel()
 	plain, err := Set(false, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	played, before := NewSeeded(31), NewSeeded(31)
 	played.Use(plain, time.Second)
 	before.Use(plain, time.Second)
@@ -255,18 +238,17 @@ func TestAPlainRunDrawsTheSequenceItDrewBeforeDownAndUpExisted(t *testing.T) {
 		fb, nb := before.Read("c")
 		mp, mb := played.Merge("s1", batch, others), before.Merge("s1", batch, others)
 		next := played.Up(i, members, up)
-		if wp != wb || rp != rb || fp != fb || np != nb || fmt.Sprint(mp) != fmt.Sprint(mb) {
-			t.Fatalf("tick %d: the plain run drew another sequence than before", i)
-		}
+		require.Equal(t, wb, wp, "tick %d: the plain run drew another sequence than before", i)
+		require.Equal(t, rb, rp, "tick %d: the plain run drew another sequence than before", i)
+		require.Equal(t, fb, fp, "tick %d: the plain run drew another sequence than before", i)
+		require.Equal(t, nb, np, "tick %d: the plain run drew another sequence than before", i)
+		require.Equal(t, mb, mp, "tick %d: the plain run drew another sequence than before", i)
 		for _, m := range members {
-			if next[m] != up[m] {
-				t.Fatalf("tick %d: %s changed with a chance of 0", i, m)
-			}
+			require.Equal(t, up[m], next[m], "tick %d: %s changed with a chance of 0", i, m)
 		}
 	}
-	if a, b := played.rng.Float64(), before.rng.Float64(); a != b {
-		t.Fatalf("the plain run spent draws that the run before did not: %v against %v", a, b)
-	}
+	a, b := played.rng.Float64(), before.rng.Float64()
+	require.Equal(t, a, b, "the plain run spent draws that the run before did not: %v against %v", a, b)
 }
 
 // ticked is the seeded facts that say which tick they are asked about.
@@ -304,20 +286,18 @@ func TestAMachineThatIsDownTakesNoWorkAndOneThatComesBackTakesWorkAgain(t *testi
 	}
 	var out bytes.Buffer
 	d := &Driver{Run: run, Facts: f, Clock: &fakeClock{}, Out: &out, Config: Config{Every: time.Second, Ticks: 6}}
-	if why, err := d.Loop(); err != nil || why != "ticks" {
-		t.Fatalf("%s %v", why, err)
-	}
+	why, err := d.Loop()
+	require.NoError(t, err, "%s %v", why, err)
+	require.Equal(t, "ticks", why, "%s %v", why, err)
 	for tick := 1; tick <= 6; tick++ {
 		want := tick % 2 // 1 if the machine is up this tick
 		want = 1 - want
-		if takes[tick] != want || beats[tick] != want {
-			t.Errorf("tick %d: %d takes and %d beats, want %d of each\n%s", tick, takes[tick], beats[tick], want, out.String())
-		}
+		assert.Equal(t, want, takes[tick], "tick %d: %d takes and %d beats, want %d of each\n%s", tick, takes[tick], beats[tick], want, out.String())
+		assert.Equal(t, want, beats[tick], "tick %d: %d takes and %d beats, want %d of each\n%s", tick, takes[tick], beats[tick], want, out.String())
 	}
 	text := out.String()
-	if strings.Count(text, "(m1 falls silent: its machine stops beating)") != 3 || strings.Count(text, "(m1 beats again)") != 3 {
-		t.Errorf("the machine's downs and returns:\n%s", text)
-	}
+	assert.Equal(t, 3, strings.Count(text, "(m1 falls silent: its machine stops beating)"), "the machine's downs and returns:\n%s", text)
+	assert.Equal(t, 3, strings.Count(text, "(m1 beats again)"), "the machine's downs and returns:\n%s", text)
 }
 
 // A machine held down by the coordinator's hold takes no work either, and
@@ -349,17 +329,15 @@ func TestAMachineHeldDownTakesNoWorkAndTakesWorkAgainWhenReleased(t *testing.T) 
 		return w.run(args, stdout, stderr)
 	}
 	d := &Driver{Run: run, Facts: f, Clock: &fakeClock{}, Out: io.Discard, Config: Config{Every: time.Second, Ticks: 4, Hold: true}}
-	if why, err := d.Loop(); err != nil || why != "ticks" {
-		t.Fatalf("%s %v", why, err)
-	}
+	why, err := d.Loop()
+	require.NoError(t, err, "%s %v", why, err)
+	require.Equal(t, "ticks", why, "%s %v", why, err)
 	for tick := 1; tick <= 4; tick++ {
-		if want := 1 - tick%2; takes[tick] != want {
-			t.Errorf("tick %d: %d takes, want %d", tick, takes[tick], want)
-		}
+		want := 1 - tick%2
+		assert.Equal(t, want, takes[tick], "tick %d: %d takes, want %d", tick, takes[tick], want)
 	}
-	if index(w.ran, 0, "fleet down m1") < 0 || index(w.ran, 0, "fleet up m1") < 0 {
-		t.Errorf("no hold and release: %v", w.ran)
-	}
+	assert.GreaterOrEqual(t, index(w.ran, 0, "fleet down m1"), 0, "no hold and release: %v", w.ran)
+	assert.GreaterOrEqual(t, index(w.ran, 0, "fleet up m1"), 0, "no hold and release: %v", w.ran)
 }
 
 // eventful is a world with members, readers and streams whose queues never
@@ -385,14 +363,12 @@ func play(t *testing.T, seed uint64, ticks int) (ran, out string) {
 	var text bytes.Buffer
 	f := NewSeeded(seed)
 	c, err := Set(true, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	f.Use(c, time.Second)
 	d := &Driver{Run: w.run, Facts: f, Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}, Out: &text, Config: Config{Every: time.Second, Ticks: ticks}}
-	if why, err := d.Loop(); err != nil || why != "ticks" {
-		t.Fatalf("%s %v", why, err)
-	}
+	why, err := d.Loop()
+	require.NoError(t, err, "%s %v", why, err)
+	require.Equal(t, "ticks", why, "%s %v", why, err)
 	var lines []string
 	for _, a := range w.ran {
 		lines = append(lines, strings.Join(a, " "))
@@ -406,22 +382,15 @@ func TestTheSameSeedPlaysTheSameEventsAndAnotherSeedOthers(t *testing.T) {
 	t.Parallel()
 	ranA, outA := play(t, 11, 300)
 	ranB, outB := play(t, 11, 300)
-	if ranA != ranB || outA != outB {
-		t.Fatalf("the same seed played two runs")
-	}
+	require.Equal(t, ranB, ranA, "the same seed played two runs")
+	require.Equal(t, outB, outA, "the same seed played two runs")
 	ranC, _ := play(t, 12, 300)
-	if ranA == ranC {
-		t.Fatalf("another seed played the same run")
-	}
+	require.NotEqual(t, ranC, ranA, "another seed played the same run")
 	for _, want := range []string{"finish --as", "--failed", "read --as reader-a --broken", "--conflict", "--cross", "(m1 falls silent", "(m1 beats again)"} {
-		if !strings.Contains(ranA+outA, want) {
-			t.Errorf("300 ticks of the simulation never played %q", want)
-		}
+		assert.Contains(t, ranA+outA, want, "300 ticks of the simulation never played %q", want)
 	}
 	for _, l := range strings.Split(ranA, "\n") {
-		if coordinatorVerbs[strings.Fields(l)[0]] {
-			t.Fatalf("the simulation ran the coordinator's verb: %s", l)
-		}
+		require.False(t, coordinatorVerbs[strings.Fields(l)[0]], "the simulation ran the coordinator's verb: %s", l)
 	}
 }
 
@@ -431,9 +400,7 @@ func TestTheSameSeedPlaysTheSameEventsAndAnotherSeedOthers(t *testing.T) {
 func TestTheDriverImportsOnlyTheStandardLibrary(t *testing.T) {
 	t.Parallel()
 	files, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	seen := 0
 	for _, f := range files {
 		if !strings.HasSuffix(f.Name(), ".go") || strings.HasSuffix(f.Name(), "_test.go") {
@@ -441,17 +408,12 @@ func TestTheDriverImportsOnlyTheStandardLibrary(t *testing.T) {
 		}
 		seen++
 		parsed, err := parser.ParseFile(token.NewFileSet(), f.Name(), nil, parser.ImportsOnly)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, im := range parsed.Imports {
 			path, _ := strconv.Unquote(im.Path.Value)
-			if first, _, _ := strings.Cut(path, "/"); strings.Contains(first, ".") {
-				t.Errorf("%s imports %s: the driver reaches the tables only through verbs", f.Name(), path)
-			}
+			first, _, _ := strings.Cut(path, "/")
+			assert.False(t, strings.Contains(first, "."), "%s imports %s: the driver reaches the tables only through verbs", f.Name(), path)
 		}
 	}
-	if seen < 3 {
-		t.Fatalf("read %d files of the driver", seen)
-	}
+	require.GreaterOrEqual(t, seen, 3, "read %d files of the driver", seen)
 }

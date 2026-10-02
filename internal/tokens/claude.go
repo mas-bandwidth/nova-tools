@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -152,17 +154,18 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 			if line.Message.Model == syntheticModel {
 				continue
 			}
+			day, ok := DayOfStamp(line.Timestamp)
+			if !ok {
+				s.unparsed(path, n, "the timestamp is not an RFC 3339 stamp and is not a day this tool can read: "+line.Timestamp)
+				continue
+			}
+			rules.SetDay(day)
 			inputs := toolInputs(line.Message.Content)
 			repo := rules.AttributeInputs(inputs, prev)
 			if repo == Unknown && line.Cwd != "" {
 				repo = rules.Attribute(PathTokens([]string{line.Cwd}), "")
 			}
 			prev = repo
-			day, ok := DayOfStamp(line.Timestamp)
-			if !ok {
-				s.unparsed(path, n, "the timestamp is not an RFC 3339 stamp and is not a day this tool can read: "+line.Timestamp)
-				continue
-			}
 			m := Message{Day: day, Basis: UTC, Model: line.Message.Model, Repo: repo, Turn: true}
 			for key, t := range usageKeys {
 				if raw, ok := line.Message.Usage[key]; ok {
@@ -229,12 +232,7 @@ func jsonStrings(raw json.RawMessage) []string {
 				walk(e)
 			}
 		case map[string]any:
-			keys := make([]string, 0, len(t))
-			for k := range t {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
+			for _, k := range slices.Sorted(maps.Keys(t)) {
 				walk(t[k])
 			}
 		}

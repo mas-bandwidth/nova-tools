@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/stretchr/testify/require"
 )
 
 // THE FIRST SEND, at the binary. Each tolerance is asserted twice -- the SEND NOTE line
@@ -79,23 +80,18 @@ func TestSendTolerancesPrintANoticeAndLandTheNote(t *testing.T) {
 			r := invoke(t, tc.draft, args...).mustCode(t, 0).mustContain(t, "stdout", tc.notice)
 			path := field(t, r.stdout, "path=")
 			stored, err := os.ReadFile(filepath.Join(checkout, filepath.FromSlash(path)))
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			text := string(stored)
 			for _, line := range tc.wantLines {
-				if !strings.Contains(text, line+"\n") {
-					t.Fatalf("the note on the bus has no %q line:\n%s", line, text)
-				}
+				require.Containsf(t, text, line+"\n", "the note on the bus has no %q line:\n%s", line, text)
 			}
 			body := text[strings.Index(text, "\n\n")+2:]
-			if strings.TrimRight(body, "\n") != tc.wantBody {
-				t.Fatalf("body = %q, want %q", body, tc.wantBody)
-			}
+			require.Falsef(t, strings.TrimRight(body, "\n") != tc.wantBody, "body = %q, want %q", body, tc.wantBody)
 			// And the note that landed is one every reader on the bus reads with no
 			// tolerance of its own.
-			if _, err := bus.ParseNote(path, text); err != nil {
-				t.Fatalf("the stored note does not parse strictly: %v\n%s", err, text)
+			{
+				_, err := bus.ParseNote(path, text)
+				require.NoErrorf(t, err, "the stored note does not parse strictly: %v\n%s", err, text)
 			}
 		})
 	}
@@ -118,8 +114,9 @@ func TestSendStillRefusesWhatItCannotGuessAtTheBinary(t *testing.T) {
 				mustCode(t, 1).
 				mustContain(t, "stderr", "SEND FAIL (stdin): ").
 				mustContain(t, "stderr", tc.want)
-			if entries, err := os.ReadDir(filepath.Join(checkout, "from-ada")); err == nil && len(entries) > 0 {
-				t.Fatalf("a refused draft left %d files in the lane", len(entries))
+			{
+				entries, err := os.ReadDir(filepath.Join(checkout, "from-ada"))
+				require.Falsef(t, err == nil && len(entries) > 0, "a refused draft left %d files in the lane", len(entries))
 			}
 		})
 	}
@@ -135,18 +132,12 @@ func TestARefusalNamesEveryProblemOnItsOwnLine(t *testing.T) {
 		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 1)
 	lines := strings.Split(strings.TrimRight(r.stderr, "\n"), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("the run printed %d lines, want one per problem:\n%s", len(lines), r.stderr)
-	}
+	require.Equalf(t, 4, len(lines), "the run printed %d lines, want one per problem:\n%s", len(lines), r.stderr)
 	for _, line := range lines {
-		if !strings.HasPrefix(line, "SEND FAIL (stdin): ") {
-			t.Fatalf("a refusal line is off the grammar: %q", line)
-		}
+		require.Truef(t, strings.HasPrefix(line, "SEND FAIL (stdin): "), "a refusal line is off the grammar: %q", line)
 	}
 	for _, want := range []string{`"Boe" names no one`, "no Subject line", "the note has no body", "a slug is not a thread"} {
-		if !strings.Contains(r.stderr, want) {
-			t.Fatalf("no line named %q:\n%s", want, r.stderr)
-		}
+		require.Containsf(t, r.stderr, want, "no line named %q:\n%s", want, r.stderr)
 	}
 }
 
@@ -158,22 +149,12 @@ func TestDraftPrintsASkeletonTheParserReadsBack(t *testing.T) {
 	checkout, _ := busDir(t)
 	r := invoke(t, "", "draft", "--bus", checkout, "--as", "the archivist",
 		"--to", "Bo", "--cc", "Dana", "--subject", "The gate", "--re", "bo-abcdef012345").mustCode(t, 0)
-	if r.stderr != "DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>\n" {
-		t.Fatalf("draft wrote unexpected stderr: %q", r.stderr)
-	}
+	require.Equalf(t, "DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>\n", r.stderr, "draft wrote unexpected stderr: %q", r.stderr)
 	n, err := bus.ParseNote("", r.stdout)
-	if err != nil {
-		t.Fatalf("the skeleton does not parse: %v\n%s", err, r.stdout)
-	}
-	if n.Header.From != "Ada" || n.Header.To != "Bo" || n.Header.Cc != "Dana" || n.Header.Subject != "The gate" {
-		t.Fatalf("skeleton read back as %+v", n.Header)
-	}
-	if len(n.Header.Re) != 1 || n.Header.Re[0] != "bo-abcdef012345" {
-		t.Fatalf("Re read back as %v", n.Header.Re)
-	}
-	if n.Header.Date != "" || n.Header.ID != "" {
-		t.Fatalf("the skeleton carries a Date or an Id, which are the tool's to write:\n%s", r.stdout)
-	}
+	require.NoErrorf(t, err, "the skeleton does not parse: %v\n%s", err, r.stdout)
+	require.Falsef(t, n.Header.From != "Ada" || n.Header.To != "Bo" || n.Header.Cc != "Dana" || n.Header.Subject != "The gate", "skeleton read back as %+v", n.Header)
+	require.Falsef(t, len(n.Header.Re) != 1 || n.Header.Re[0] != "bo-abcdef012345", "Re read back as %v", n.Header.Re)
+	require.Falsef(t, n.Header.Date != "" || n.Header.ID != "", "the skeleton carries a Date or an Id, which are the tool's to write:\n%s", r.stdout)
 	// And it is a draft send takes: a body over the placeholder, and it lands.
 	sent := strings.Replace(r.stdout, bus.PlaceholderBody, "Bo, the key is misspelled in the matrix.", 1)
 	invoke(t, sent, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3", "--no-push").
@@ -187,17 +168,11 @@ func TestDraftRefusesEveryNameItCannotResolve(t *testing.T) {
 	checkout, _ := busDir(t)
 	r := invoke(t, "", "draft", "--bus", checkout, "--as", "Adda", "--to", "Boe", "--re", "nothing-here").mustCode(t, 2)
 	lines := strings.Split(strings.TrimRight(r.stderr, "\n"), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("draft printed %d refusals, want one per problem:\n%s", len(lines), r.stderr)
-	}
+	require.Equalf(t, 3, len(lines), "draft printed %d refusals, want one per problem:\n%s", len(lines), r.stderr)
 	for _, line := range lines {
-		if !strings.HasPrefix(line, "DRAFT REFUSED: ") {
-			t.Fatalf("a refusal line is off the grammar: %q", line)
-		}
+		require.Truef(t, strings.HasPrefix(line, "DRAFT REFUSED: "), "a refusal line is off the grammar: %q", line)
 	}
-	if r.stdout != "" {
-		t.Fatalf("a refused draft still printed a skeleton:\n%s", r.stdout)
-	}
+	require.Emptyf(t, r.stdout, "a refused draft still printed a skeleton:\n%s", r.stdout)
 	// A sender with no lane has nowhere to send from, and is refused here rather than at
 	// the end of a note somebody has written.
 	invoke(t, "", "draft", "--bus", checkout, "--as", "Dana", "--to", "Ada").

@@ -1,8 +1,10 @@
 package dogfood
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The gate's blind spot, found by a non-author on 2026-09-18: `record` took any
@@ -31,19 +33,11 @@ func TestUnmatchedReceiptsAreCountedOnTheLine(t *testing.T) {
 		stranded("nova-check ledger", "Stella", "2026-09-18T09:06:00Z", true, "receipts/b.json:1"),
 	}
 	_, summary := Ledger(list, got, nil)
-	if summary.Unmatched != 2 {
-		t.Fatalf("unmatched = %d, want 2", summary.Unmatched)
-	}
-	if !strings.Contains(summary.Line(), "unmatched=2") {
-		t.Errorf("the ledger line does not count the evidence it threw away: %s", summary.Line())
-	}
+	require.Equal(t, 2, summary.Unmatched, "unmatched = %d, want 2", summary.Unmatched)
+	assert.Contains(t, summary.Line(), "unmatched=2", "the ledger line does not count the evidence it threw away: %s", summary.Line())
 	_, gateSummary := Gate(list, got, nil, false)
-	if !strings.Contains(gateSummary.GateLine(false), "unmatched=2") {
-		t.Errorf("the gate line does not count the evidence it threw away: %s", gateSummary.GateLine(false))
-	}
-	if !strings.Contains(gateSummary.GateCountLine(1, 1), "unmatched=2") {
-		t.Errorf("the gate's red count line does not carry it either: %s", gateSummary.GateCountLine(1, 1))
-	}
+	assert.Contains(t, gateSummary.GateLine(false), "unmatched=2", "the gate line does not count the evidence it threw away: %s", gateSummary.GateLine(false))
+	assert.Contains(t, gateSummary.GateCountLine(1, 1), "unmatched=2", "the gate's red count line does not carry it either: %s", gateSummary.GateCountLine(1, 1))
 }
 
 // An unmatched receipt that says NOT OK is a finding, and the finding names the
@@ -57,21 +51,13 @@ func TestGateFailsOnAnUnmatchedNotOkReceipt(t *testing.T) {
 		stranded("nova-merge batch", "Stella", "2026-09-18T09:05:00Z", false, "receipts/b.json:1"),
 	}
 	findings, summary := Gate(list, got, nil, false)
-	if summary.OpenEdges != 0 {
-		t.Fatalf("open-edges = %d: an unmatched receipt is not one of the declared verbs' edges", summary.OpenEdges)
-	}
-	if len(findings) != 1 {
-		t.Fatalf("findings = %d, want 1: a not-ok receipt nobody can match is the gate's business", len(findings))
-	}
+	require.Equal(t, 0, summary.OpenEdges, "open-edges = %d: an unmatched receipt is not one of the declared verbs' edges", summary.OpenEdges)
+	require.Len(t, findings, 1, "findings = %d, want 1: a not-ok receipt nobody can match is the gate's business", len(findings))
 	f := findings[0]
-	if f.Kind != "unmatched" {
-		t.Errorf("kind = %q, want unmatched", f.Kind)
-	}
+	assert.Equal(t, "unmatched", f.Kind, "kind = %q, want unmatched", f.Kind)
 	line := f.Line()
 	for _, want := range []string{"receipts/b.json:1", "nova-merge", "batch"} {
-		if !strings.Contains(line, want) {
-			t.Errorf("the finding must name %q: %s", want, line)
-		}
+		assert.Contains(t, line, want, "the finding must name %q: %s", want, line)
 	}
 }
 
@@ -88,11 +74,9 @@ func TestAnUnmatchedOkReceiptIsCountedAndNotAFailure(t *testing.T) {
 	}
 	findings, summary := Gate(list, got, nil, false)
 	if len(findings) != 0 {
-		t.Fatalf("findings = %d, want 0: %v", len(findings), findings[0].Line())
+		require.FailNowf(t, "assertion failed", "findings = %d, want 0: %v", len(findings), findings[0].Line())
 	}
-	if summary.Unmatched != 1 {
-		t.Errorf("unmatched = %d, want 1", summary.Unmatched)
-	}
+	assert.Equal(t, 1, summary.Unmatched, "unmatched = %d, want 1", summary.Unmatched)
 }
 
 // The unmatched findings come FIRST: a lane reads what was thrown away before
@@ -106,12 +90,8 @@ func TestUnmatchedFindingsComeFirst(t *testing.T) {
 		stranded("nova-merge queue", "Stella", "2026-09-18T09:05:00Z", false, "receipts/d.json:1"),
 	}
 	findings, _ := Gate(list, got, nil, false)
-	if len(findings) != 2 {
-		t.Fatalf("findings = %d, want 2", len(findings))
-	}
-	if findings[0].Kind != "unmatched" {
-		t.Errorf("the discarded evidence is said first, got %q then %q", findings[0].Kind, findings[1].Kind)
-	}
+	require.Len(t, findings, 2, "findings = %d, want 2", len(findings))
+	assert.Equal(t, "unmatched", findings[0].Kind, "the discarded evidence is said first, got %q then %q", findings[0].Kind, findings[1].Kind)
 }
 
 // A stranded not-ok receipt is answered by a receipt that names it: the answer
@@ -124,12 +104,10 @@ func TestAStrandedNotOkReceiptIsAnsweredByAReceiptThatNamesIt(t *testing.T) {
 	lost := stranded("nova-check ledger", "Stella", "2026-09-18T09:05:00Z", false, "receipts/b.json:1")
 	typo := receipt("nova-check dogfood ledger", "Rowan", "2026-09-27T09:00:00Z", true, 0)
 	typo.Closes = "00000000"
-	if findings, _ := Gate(list, []Receipt{lost, typo}, nil, false); len(findings) != 1 || findings[0].Kind != "unmatched" {
-		t.Fatalf("findings = %+v, want the stranded one still open under a --closes that names nothing", findings)
-	}
+	findings, _ := Gate(list, []Receipt{lost, typo}, nil, false)
+	require.True(t, len(findings) == 1 && findings[0].Kind == "unmatched", "findings = %+v, want the stranded one still open under a --closes that names nothing", findings)
 	answer := receipt("nova-check dogfood ledger", "Rowan", "2026-09-27T09:01:00Z", true, 0)
 	answer.Closes = lost.ID()
-	if findings, _ := Gate(list, []Receipt{lost, typo, answer}, nil, false); len(findings) != 0 {
-		t.Fatalf("findings = %+v, want none once a receipt names the stranded finding", findings)
-	}
+	findings, _ = Gate(list, []Receipt{lost, typo, answer}, nil, false)
+	require.Empty(t, findings, "findings = %+v, want none once a receipt names the stranded finding", findings)
 }

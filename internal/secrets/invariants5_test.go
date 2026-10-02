@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestCheckInvariant5DotDotNamedDirIsInsideTheStore: a key file under a
@@ -14,9 +17,7 @@ func TestCheckInvariant5DotDotNamedDirIsInsideTheStore(t *testing.T) {
 
 	root := t.TempDir()
 	store := filepath.Join(root, "store")
-	if err := os.MkdirAll(store, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(store, 0o755))
 	inside := func(keyPath string) bool {
 		for _, f := range CheckInvariant5(store, keyPath) {
 			if f.Kind == "store-private-key" && f.Reason == "key file is inside store directory" {
@@ -25,18 +26,10 @@ func TestCheckInvariant5DotDotNamedDirIsInsideTheStore(t *testing.T) {
 		}
 		return false
 	}
-	if !inside(filepath.Join(store, "..cache", "key.txt")) {
-		t.Error("a key under store/..cache was not reported as inside the store")
-	}
-	if !inside(filepath.Join(store, "sub", "key.txt")) {
-		t.Error("a key under store/sub was not reported as inside the store")
-	}
-	if inside(filepath.Join(store, "..", "x")) {
-		t.Error("store/../x was reported as inside the store")
-	}
-	if inside(filepath.Join(root, "key.txt")) {
-		t.Error("a key beside the store was reported as inside it")
-	}
+	assert.True(t, inside(filepath.Join(store, "..cache", "key.txt")), "a key under store/..cache was not reported as inside the store")
+	assert.True(t, inside(filepath.Join(store, "sub", "key.txt")), "a key under store/sub was not reported as inside the store")
+	assert.False(t, inside(filepath.Join(store, "..", "x")), "store/../x was reported as inside the store")
+	assert.False(t, inside(filepath.Join(root, "key.txt")), "a key beside the store was reported as inside it")
 }
 
 // TestCheckInvariant5FollowsSymlinks: a key is inside the store by where it lands. A key
@@ -50,9 +43,7 @@ func TestCheckInvariant5FollowsSymlinks(t *testing.T) {
 	store := filepath.Join(root, "store")
 	other := filepath.Join(root, "other")
 	for _, d := range []string{filepath.Join(store, "sub"), other} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(d, 0o755))
 	}
 	link := func(target, name string) string {
 		p := filepath.Join(root, name)
@@ -70,27 +61,15 @@ func TestCheckInvariant5FollowsSymlinks(t *testing.T) {
 		return false
 	}
 	file := filepath.Join(store, "sub", "key.txt")
-	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
 	fileLink := link(file, "key-link")
 	dirLink := link(filepath.Join(store, "sub"), "sub-link")
 	storeLink := link(store, "store-link")
 	otherLink := link(other, "other-link")
 
-	if !inside(fileLink, store) {
-		t.Error("a key file that is a link into the store was not inside it")
-	}
-	if !inside(filepath.Join(dirLink, "absent.txt"), store) {
-		t.Error("a key under a directory that is a link into the store was not inside it")
-	}
-	if !inside(file, storeLink) {
-		t.Error("a key in the store was not inside it when the store was named through a link")
-	}
-	if inside(filepath.Join(otherLink, "key.txt"), store) {
-		t.Error("a key under a link to somewhere else was reported inside the store")
-	}
-	if inside(filepath.Join(other, "key.txt"), store) {
-		t.Error("a key beside the store was reported inside it")
-	}
+	assert.True(t, inside(fileLink, store), "a key file that is a link into the store was not inside it")
+	assert.True(t, inside(filepath.Join(dirLink, "absent.txt"), store), "a key under a directory that is a link into the store was not inside it")
+	assert.True(t, inside(file, storeLink), "a key in the store was not inside it when the store was named through a link")
+	assert.False(t, inside(filepath.Join(otherLink, "key.txt"), store), "a key under a link to somewhere else was reported inside the store")
+	assert.False(t, inside(filepath.Join(other, "key.txt"), store), "a key beside the store was reported inside it")
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // hooked is Mem with a hook before each apply, each read set, and around each
@@ -124,24 +125,17 @@ func TestRepairNeverAbandonsAnOperationThatApplied(t *testing.T) {
 	<-done
 	t.Logf("worker's finish: moved %v err %v; tick: repaired %+v err %v", wres.Moved, werr, tres.Repaired, terr)
 	h.clean("after")
-	if h.state("s1-1") != sprint.Review {
-		t.Fatalf("s1-1 is %s", h.state("s1-1"))
-	}
+	require.Equal(t, sprint.Review, h.state("s1-1"), "s1-1 is %s", h.state("s1-1"))
 	if n := h.written(sprint.NWorkFailed); n != 1 || len(h.openOf(sprint.NWorkFailed)) != 1 {
-		t.Fatalf("the finish applied (s1-1 in review, failed): work came back failed written %d, open %d", n, len(h.openOf(sprint.NWorkFailed)))
+		require.Failf(t, "", "the finish applied (s1-1 in review, failed): work came back failed written %d, open %d", n, len(h.openOf(sprint.NWorkFailed)))
 	}
-	if n := h.written(sprint.NAbandoned); n != 0 {
-		t.Fatalf("an operation that applied was released as abandoned (%d)", n)
-	}
-	if werr != nil {
-		t.Fatalf("the worker was told: %v", werr)
-	}
+	n := h.written(sprint.NAbandoned)
+	require.Equal(t, 0, n, "an operation that applied was released as abandoned (%d)", n)
+	require.NoError(t, werr, "the worker was told: %v", werr)
 	h.machine()
 	h.tick(time.Hour)
 	h.machine()
-	if len(h.openOf(sprint.NWorkFailed)) != 1 {
-		t.Fatalf("after an hour of ticks: %v", h.openOf(sprint.NWorkFailed))
-	}
+	require.Len(t, h.openOf(sprint.NWorkFailed), 1, "after an hour of ticks: %v", h.openOf(sprint.NWorkFailed))
 }
 
 // An operation whose first manifest never applied, and whose members moved,
@@ -157,9 +151,9 @@ func TestRepairAbandonsAnOperationNoneOfWhichApplied(t *testing.T) {
 	// sent. Then the work card moves under it, by a writer outside the fence.
 	st := *h.st
 	st.B = &failAt{Backend: h.m, at: "apply t-fleet"}
-	if _, err := st.Run(h.ctx, FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Who: "m1"})); err == nil || h.m.Pending() == nil {
-		t.Fatalf("the writer did not die with its operation pending: %v", err)
-	}
+	_, err := st.Run(h.ctx, FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Who: "m1"}))
+	require.Error(t, err, "the writer did not die with its operation pending: %v", err)
+	require.NotNil(t, h.m.Pending(), "the writer did not die with its operation pending: %v", err)
 	// Every member of its first manifest is changed by a writer outside the
 	// fence.
 	var outside []ntable.BatchMemberEntry
@@ -168,17 +162,16 @@ func TestRepairAbandonsAnOperationNoneOfWhichApplied(t *testing.T) {
 		outside = append(outside, ntable.BatchMemberEntry{ID: e.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(fleet.Card(e.ID).Rev)},
 			Set: map[string]string{"note": "outside"}})
 	}
-	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(fleet.Revision),
-		OperationID: "outside", Members: outside}); err != nil {
-		t.Fatal(err)
-	}
+	_, err = h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(fleet.Revision),
+		OperationID: "outside", Members: outside})
+	require.NoError(t, err)
 	h.tick(2 * time.Minute)
 	rr, err := h.st.Repair(h.ctx)
-	if err != nil || len(rr) != 1 || rr[0].Done != RepairAbandoned {
-		t.Fatalf("repair: %+v %v", rr, err)
-	}
+	require.NoError(t, err, "repair: %+v %v", rr, err)
+	require.Len(t, rr, 1, "repair: %+v %v", rr, err)
+	require.Equal(t, RepairAbandoned, rr[0].Done, "repair: %+v %v", rr, err)
 	if h.state("s1-1") != sprint.Working || h.written(sprint.NAbandoned) != 1 || len(h.skipNotes()) != 0 {
-		t.Fatalf("s1-1 %s, abandoned %d, skips %d", h.state("s1-1"), h.written(sprint.NAbandoned), len(h.skipNotes()))
+		require.Failf(t, "", "s1-1 %s, abandoned %d, skips %d", h.state("s1-1"), h.written(sprint.NAbandoned), len(h.skipNotes()))
 	}
 	h.clean("abandoned")
 }
@@ -212,36 +205,36 @@ func TestRepairAppliesWhatHoldsOfAFirstManifestPastTheGrace(t *testing.T) {
 	st := *h.st
 	st.B = &failAt{Backend: h.m, at: "apply t-fleet"}
 	gens := map[string]int{c.ID: c.Int("gen"), other.ID: other.Int("gen")}
-	if _, err := st.Run(h.ctx, FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{c.ID, other.ID}}, Gens: gens, Failed: true, Report: "boom", Who: "m1"})); err == nil || h.m.Pending() == nil {
-		t.Fatalf("the writer did not die with its operation pending: %v", err)
-	}
+	_, err := st.Run(h.ctx, FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{c.ID, other.ID}}, Gens: gens, Failed: true, Report: "boom", Who: "m1"}))
+	require.Error(t, err, "the writer did not die with its operation pending: %v", err)
+	require.NotNil(t, h.m.Pending(), "the writer did not die with its operation pending: %v", err)
 	// The work card moves under it: an outside writer sets a field on it.
 	fleet := h.snap().Fleet
 	card := fleet.Card(c.ID)
-	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(fleet.Revision),
-		OperationID: "outside", Members: []ntable.BatchMemberEntry{{ID: card.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(card.Rev)}, Set: map[string]string{"note": "outside"}}}}); err != nil {
-		t.Fatal(err)
-	}
+	_, err = h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(fleet.Revision),
+		OperationID: "outside", Members: []ntable.BatchMemberEntry{{ID: card.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(card.Rev)}, Set: map[string]string{"note": "outside"}}}})
+	require.NoError(t, err)
 	h.tick(2 * time.Minute)
 	rr, err := h.st.Repair(h.ctx)
-	if err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped || len(rr[0].Skipped) == 0 || !strings.Contains(strings.Join(rr[0].Skipped, " "), c.ID) {
-		t.Fatalf("repair: %+v %v", rr, err)
-	}
+	require.NoError(t, err, "repair: %+v %v", rr, err)
+	require.Len(t, rr, 1, "repair: %+v %v", rr, err)
+	require.Equal(t, RepairSkipped, rr[0].Done, "repair: %+v %v", rr, err)
+	require.NotEmpty(t, rr[0].Skipped, "repair: %+v %v", rr, err)
+	require.Contains(t, strings.Join(rr[0].Skipped, " "), c.ID, "repair: %+v %v", rr, err)
 	// The entry that held applied: the other card is in failed and its
 	// primary in review.
-	if h.snap().Fleet.Card(other.ID).Col != sprint.DoneFailed || h.state(other.F("primary")) != sprint.Review {
-		t.Fatalf("the entry that held: %s %s", h.snap().Fleet.Card(other.ID).Col, h.state(other.F("primary")))
-	}
+	require.Equal(t, string(sprint.DoneFailed), h.snap().Fleet.Card(other.ID).Col, "the entry that held: %s %s", h.snap().Fleet.Card(other.ID).Col, h.state(other.F("primary")))
+	require.Equal(t, sprint.Review, h.state(other.F("primary")), "the entry that held: %s %s", h.snap().Fleet.Card(other.ID).Col, h.state(other.F("primary")))
 	skips := h.skipNotes()
 	if h.written(sprint.NAbandoned) != 0 || len(skips) != 1 || !strings.Contains(skips[0].What, c.ID) {
-		t.Fatalf("skip judgments %+v, abandoned %d", skips, h.written(sprint.NAbandoned))
+		require.Failf(t, "", "skip judgments %+v, abandoned %d", skips, h.written(sprint.NAbandoned))
 	}
 	// The card whose entry was skipped is left half-moved, named in the skip
 	// judgment; check says so, and the judgment's drop restores the rules.
 	rep, _, err := h.st.Check(h.ctx, 5)
-	if err != nil || len(rep.Violations) == 0 || !strings.Contains(fmt.Sprint(rep.Violations), c.F("primary")) {
-		t.Fatalf("check after the half move: %+v %v", rep.Violations, err)
-	}
+	require.NoError(t, err, "check after the half move: %+v %v", rep.Violations, err)
+	require.NotEmpty(t, rep.Violations, "check after the half move: %+v %v", rep.Violations, err)
+	require.Contains(t, fmt.Sprint(rep.Violations), c.F("primary"), "check after the half move: %+v %v", rep.Violations, err)
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{c.F("primary")}}, Reason: "half moved by repair", Answers: []string{skips[0].ID}}))
 	h.clean("dropped the half-moved card")
 }
@@ -288,15 +281,11 @@ func TestAWriterIsNotToldCutWhenItsOperationWasFinished(t *testing.T) {
 	<-done
 	t.Logf("tick err %v; worker %+v err %v; s1-1 %s; pending %v", terr, wres, werr, h.state("s1-1"), h.m.Pending())
 	h.clean("after")
-	if h.state("s1-1") != sprint.Review || h.m.Pending() != nil {
-		t.Fatalf("s1-1 %s, pending %v", h.state("s1-1"), h.m.Pending())
-	}
-	if werr != nil {
-		t.Fatalf("the worker's finish applied and was committed, but the worker was told: %v", werr)
-	}
-	if len(wres.Moved) != 1 || !strings.Contains(wres.Moved[0], "s1-1") {
-		t.Fatalf("the worker's result: %+v", wres)
-	}
+	require.Equal(t, sprint.Review, h.state("s1-1"), "s1-1 %s, pending %v", h.state("s1-1"), h.m.Pending())
+	require.Nil(t, h.m.Pending(), "s1-1 %s, pending %v", h.state("s1-1"), h.m.Pending())
+	require.NoError(t, werr, "the worker's finish applied and was committed, but the worker was told: %v", werr)
+	require.Len(t, wres.Moved, 1, "the worker's result: %+v", wres)
+	require.Contains(t, wres.Moved[0], "s1-1", "the worker's result: %+v", wres)
 }
 
 // tagged is Mem shared by several writers in one test, each with its own
@@ -373,9 +362,7 @@ func TestTwoTickLoopsNeverTellAWriterItWasCut(t *testing.T) {
 		}
 		close(stop)
 		wg.Wait()
-		if bad != nil {
-			t.Fatalf("trial %d: a writer was told: %v", trial, bad)
-		}
+		require.NoError(t, bad, "trial %d: a writer was told: %v", trial, bad)
 		h.clean(fmt.Sprintf("trial %d", trial))
 	}
 }

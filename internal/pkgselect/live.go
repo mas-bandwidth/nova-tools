@@ -8,15 +8,15 @@ import (
 	"strings"
 )
 
-// DeprecatedFile is deprecated/PACKAGES, relative to the repository root.
-const DeprecatedFile = "deprecated/PACKAGES"
+// DeprecatedFile is the list of deprecated packages, relative to the
+// repository root. It was deprecated/PACKAGES until the deprecated/ folder was
+// removed (2026-10-01).
+const DeprecatedFile = "internal/pkgselect/DEPRECATED"
 
-// Deprecated is deprecated/PACKAGES read: the packages that are deprecated and
+// Deprecated is DeprecatedFile read: the packages that are deprecated and
 // still in the tree because living tools import them. A path names that package
 // and everything under it; a line `keep <path>` names one package under such a
 // path that stays tested until it is lifted out into a shared module.
-// Everything under deprecated/ itself is a separate Go module, which
-// `go list ./...` never lists.
 //
 // DEPRECATED PACKAGES ARE NEVER TESTED: tests do not run for deprecated tools
 // and modules, builds do not stop for them, and CI is not bogged down by them.
@@ -24,14 +24,14 @@ const DeprecatedFile = "deprecated/PACKAGES"
 // Live: Select, the hosted deal and the race-dependency build.
 // internal/ci's TestDeprecatedPackagesAreNeverSelected holds them.
 //
-// A nil *Deprecated drops nothing (a checkout with no deprecated/PACKAGES).
+// A nil *Deprecated drops nothing (a checkout with no DeprecatedFile).
 type Deprecated struct {
 	module string // the module path; a listed import path under it is ./<rest>
 	drop   []string
 	keep   map[string]bool
 }
 
-// ParseDeprecated reads the text of deprecated/PACKAGES: `#` starts a comment,
+// ParseDeprecated reads the text of DeprecatedFile: `#` starts a comment,
 // blank lines are ignored, a `keep` line names a kept package and every other
 // line names a dropped path. module is the module path, so a package listed by
 // import path is read as the directory under it.
@@ -52,7 +52,7 @@ func ParseDeprecated(text, module string) *Deprecated {
 	return d
 }
 
-// LoadDeprecated reads deprecated/PACKAGES under root. A missing file is not an
+// LoadDeprecated reads DeprecatedFile under root. A missing file is not an
 // error: it is a nil *Deprecated, which keeps every package.
 func LoadDeprecated(root string) (*Deprecated, error) {
 	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(DeprecatedFile)))

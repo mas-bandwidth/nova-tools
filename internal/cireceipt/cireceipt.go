@@ -12,7 +12,8 @@
 // the pr:<repo>:<n> claim that verb also wrote are not written here: their
 // only readers were nova-sprint's own (land pr, read brief --pr, its Lua).
 //
-// A refused receipt names the field and the remedy in one error; a failed
+// A refused receipt names every refused field and what each wants in one
+// error; a failed
 // write is an error the verb turns into a red ci-ok, because a receipt that
 // silently did not happen must never read as one that did. Repeat receipts
 // from retries or reruns are acceptable wake hints for stream consumers.
@@ -48,35 +49,37 @@ type Receipt struct {
 	Now func() time.Time
 }
 
-// Validate normalizes r and names the first field a receipt cannot be
-// written from, with what the field wants.
+// Validate normalizes r and names every field a receipt cannot be written
+// from, each with what the field wants, in one error (joined with "; ") so a
+// caller fixes the call once.
 func (r *Receipt) Validate() error {
+	var problems []string
 	r.Repo = strings.TrimSpace(r.Repo)
 	owner, name, ok := strings.Cut(r.Repo, "/")
 	if !ok || owner == "" || name == "" || strings.Contains(name, "/") || strings.ContainsAny(r.Repo, " :\t\r\n") {
-		return fmt.Errorf("--repo wants owner/name, got %q", r.Repo)
+		problems = append(problems, fmt.Sprintf("--repo wants owner/name, got %q", r.Repo))
 	}
 	r.SHA = strings.ToLower(strings.TrimSpace(r.SHA))
 	if !shaRx.MatchString(r.SHA) {
-		return fmt.Errorf("--sha wants the 40-hex head the run tested, got %q", r.SHA)
+		problems = append(problems, fmt.Sprintf("--sha wants the 40-hex head the run tested, got %q", r.SHA))
 	}
 	r.RunID = strings.TrimSpace(r.RunID)
 	if !decimal(r.RunID) {
-		return fmt.Errorf("--run-id wants the decimal github.run_id, got %q", r.RunID)
+		problems = append(problems, fmt.Sprintf("--run-id wants the decimal github.run_id, got %q", r.RunID))
 	}
 	r.Workflow = strings.Join(strings.Fields(r.Workflow), "-")
 	if r.Workflow == "" {
-		return errors.New("--workflow wants the workflow's name (github.workflow)")
+		problems = append(problems, "--workflow wants the workflow's name (github.workflow)")
 	}
 	r.Conclusion = strings.TrimSpace(r.Conclusion)
 	switch r.Conclusion {
 	case "success", "failure", "cancelled":
 	default:
-		return fmt.Errorf("--conclusion wants success, failure or cancelled (job.status), got %q", r.Conclusion)
+		problems = append(problems, fmt.Sprintf("--conclusion wants success, failure or cancelled (job.status), got %q", r.Conclusion))
 	}
 	r.PR = strings.TrimSpace(r.PR)
 	if r.PR != "" && !decimal(r.PR) {
-		return fmt.Errorf("--pr wants the pull request number or nothing, got %q", r.PR)
+		problems = append(problems, fmt.Sprintf("--pr wants the pull request number or nothing, got %q", r.PR))
 	}
 	r.At = strings.TrimSpace(r.At)
 	if r.At == "" {
@@ -87,7 +90,10 @@ func (r *Receipt) Validate() error {
 		r.At = now().UTC().Format(time.RFC3339)
 	}
 	if _, err := time.Parse(time.RFC3339, r.At); err != nil {
-		return fmt.Errorf("--at wants RFC3339, got %q", r.At)
+		problems = append(problems, fmt.Sprintf("--at wants RFC3339, got %q", r.At))
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
 }

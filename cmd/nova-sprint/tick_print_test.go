@@ -2,8 +2,9 @@ package main
 
 import (
 	"bytes"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -19,8 +20,6 @@ func TestATickSaysItHaltedAndWhatIsDue(t *testing.T) {
 	got := out.String()
 	for _, want := range []string{"HALTED the machine was stopped during the tick: the part deal did not begin",
 		"DUE 50 moves past the tick's bounds: the next ticks catch up"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("want %q in:\n%s", want, got)
-		}
+		require.Contains(t, got, want)
 	}
 }

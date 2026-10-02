@@ -2,6 +2,7 @@ package ntable
 
 import (
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"unicode"
@@ -35,7 +36,10 @@ type RenderOpts struct {
 // column is padded only when it is right-aligned, so no line ends in a
 // space. A table always renders, with its header and its footer, and with no
 // body line when it has no row (Glenn 2026-09-30, the owner's ruling: tables
-// and rows always show, empty or not).
+// and rows always show, empty or not); with no body line the footer sits under
+// the header's one rule, and the rule above the footer is not drawn (the owner,
+// 2026-10-02: "when the work stream table is empty, please just show the
+// summary row" / "not the extra --------------------+-----------+----------- etc.").
 //
 // The row's label is always the first column (Glenn 2026-09-27, the live
 // session: eight benches rendered as eight anonymous rows of numbers), put
@@ -159,7 +163,9 @@ func Render(t Table, opts RenderOpts) string {
 		line(cells, false)
 	}
 	if hasFooter {
-		rule()
+		if len(body) > 0 {
+			rule()
+		}
 		line(footer, true)
 	}
 	return b.String()
@@ -428,6 +434,9 @@ func foldText(cols []Column, c Column, rows []Row, j int) string {
 		}
 		return strings.TrimSuffix(strconv.FormatFloat(sum/float64(n), 'f', 1, 64), ".0")
 	case Sum, Max:
+		if m, ok := moneyFold(c, rows); ok {
+			return m
+		}
 		var v int64
 		for _, r := range rows {
 			n, ok := countValue(cols, r, j)
@@ -529,4 +538,65 @@ func RenderTables(title string, tables []Table, opts RenderOpts) string {
 		parts = append(parts, Render(t, o))
 	}
 	return strings.Join(parts, "\n")
+}
+
+// moneyFold is the footer of a text column of money amounts (a cost: "$1.24"), or
+// ok false for a column that holds none. A cell is an amount, "$" and a decimal, or
+// "-" or blank for none; a column whose cells are only those, one at least an amount
+// or "-", folds them exactly (math/big, never a float) to dollars and cents (Cents), "-"
+// when no cell is an amount, and "?" when an amount is not a decimal. Any other text
+// in the column leaves it to the whole-number fold.
+func moneyFold(c Column, rows []Row) (string, bool) {
+	if c.Projection != Text {
+		return "", false
+	}
+	var amounts []string
+	marked := false
+	for _, r := range rows {
+		v := r.Texts[c.Name]
+		switch {
+		case v == "":
+		case v == "-":
+			marked = true
+		case strings.HasPrefix(v, "$"):
+			marked = true
+			amounts = append(amounts, v[1:])
+		default:
+			return "", false
+		}
+	}
+	if !marked {
+		return "", false
+	}
+	if len(amounts) == 0 {
+		return "-", true
+	}
+	var acc *big.Rat
+	for _, a := range amounts {
+		x, ok := new(big.Rat).SetString(a)
+		if !ok || strings.ContainsAny(a, "eE/") {
+			return "?", true
+		}
+		switch {
+		case acc == nil:
+			acc = x
+		case c.Fold == Sum:
+			acc.Add(acc, x)
+		case x.Cmp(acc) > 0:
+			acc = x
+		}
+	}
+	return Cents(acc), true
+}
+
+// Cents is a dollar amount as a table shows it: "$" and the amount in dollars and
+// cents, rounded up to the next cent ("$1.24" for 1.2345, "$20.22" for 20.2111). What
+// a table keeps of an amount elsewhere is exact; this is only how it is shown.
+func Cents(usd *big.Rat) string {
+	cents := new(big.Rat).Mul(usd, big.NewRat(100, 1))
+	up := new(big.Int).Quo(cents.Num(), cents.Denom())
+	if cents.Sign() > 0 && !cents.IsInt() {
+		up.Add(up, big.NewInt(1))
+	}
+	return "$" + new(big.Rat).SetFrac(up, big.NewInt(100)).FloatString(2)
 }

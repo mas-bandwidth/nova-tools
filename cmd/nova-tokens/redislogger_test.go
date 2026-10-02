@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net"
 	"os"
 	"os/exec"
@@ -21,16 +23,12 @@ func TestReportRedisDialFailureStderrIsTheOneFailedLine(t *testing.T) {
 	t.Parallel()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.False(t, err != nil, err)
 	addr := ln.Addr().String()
 	ln.Close() // nothing listens there now: every dial is refused
 
 	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.False(t, err != nil, err)
 	cmd := exec.Command(self, "report", "--redis", addr, "--month", "2026-09")
 	cmd.Env = append(os.Environ(), asToolEnv+"=1")
 	var stdout, stderr bytes.Buffer
@@ -40,19 +38,13 @@ func TestReportRedisDialFailureStderrIsTheOneFailedLine(t *testing.T) {
 	if ee, ok := err.(*exec.ExitError); ok {
 		exit = ee.ExitCode()
 	} else if err != nil {
-		t.Fatal(err)
+		require.FailNow(t, "%v", err)
 	}
-	if exit != 1 {
-		t.Errorf("exit %d, want 1\nstdout:\n%s\nstderr:\n%s", exit, stdout.String(), stderr.String())
-	}
-	if stdout.Len() != 0 {
-		t.Errorf("stdout is not empty on a dial failure:\n%s", stdout.String())
-	}
+	assert.False(t, exit != 1, "exit %d, want 1\nstdout:\n%s\nstderr:\n%s", exit, stdout.String(), stderr.String())
+	assert.False(t, stdout.Len() != 0, "stdout is not empty on a dial failure:\n%s", stdout.String())
 	got := stderr.String()
 	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
-	if len(lines) != 1 || !strings.HasSuffix(got, "\n") ||
+	assert.False(t, len(lines) != 1 || !strings.HasSuffix(got, "\n") ||
 		!strings.HasPrefix(lines[0], "REPORT FAILED store=redis err=") ||
-		!strings.Contains(lines[0], addr) {
-		t.Errorf("stderr of a dial failure must be exactly one `REPORT FAILED store=redis err=... %s ...` line, got %d line(s):\n%s", addr, len(lines), got)
-	}
+		!strings.Contains(lines[0], addr), "stderr of a dial failure must be exactly one `REPORT FAILED store=redis err=... %s ...` line, got %d line(s):\n%s", addr, len(lines), got)
 }

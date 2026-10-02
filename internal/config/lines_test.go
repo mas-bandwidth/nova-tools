@@ -23,8 +23,8 @@ func TestRowLineNamesEveryFieldAndEscapesValues(t *testing.T) {
 	scopedN27 := len(strings.Fields(RowLine(friend, row)))
 	require.Equal(t, 1+1+len(friend.Fields), scopedN27, "%d tokens, want %d", scopedN27, 2+len(friend.Fields))
 	machine, _ := Lookup(KindMachine)
-	spaced := Row{Name: "studio", Fields: map[string]string{"user": "glenn f", "seat": "studio", "slots": "64", "runners": "0"}}
-	scopedGot33, scopedWant33 := RowLine(machine, spaced), `MACHINE name=studio user=glenn\x20f seat=studio slots=64 runners=0`
+	spaced := Row{Name: "studio", Fields: map[string]string{"user": "glenn f", "seat": "studio", "slots": "64", "runners": "0", "width": "32"}}
+	scopedGot33, scopedWant33 := RowLine(machine, spaced), `MACHINE name=studio user=glenn\x20f seat=studio slots=64 runners=0 width=32`
 	require.Equal(t, scopedWant33, scopedGot33, "escaped line\n got %s\nwant %s", scopedGot33, scopedWant33)
 }
 
@@ -53,7 +53,7 @@ func TestOpAndKindLines(t *testing.T) {
 	scopedGot71, scopedWant71 := KindLine(friend), "CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many"
 	assert.Equal(t, scopedWant71, scopedGot71, "kind\n got %s\nwant %s", scopedGot71, scopedWant71)
 	fleet, _ := Lookup(KindFleet)
-	scopedGot76, scopedWant76 := KindLine(fleet), "CONFIG KIND name=fleet table=config.fleet fields=store,coordinator required=- rows=one"
+	scopedGot76, scopedWant76 := KindLine(fleet), "CONFIG KIND name=fleet table=config.fleet fields=store,coordinator,redis_port,pg_dsn required=- rows=one"
 	assert.Equal(t, scopedWant76, scopedGot76, "fleet kind\n got %s\nwant %s", scopedGot76, scopedWant76)
 }
 
@@ -101,7 +101,9 @@ func TestEveryKindHasAMigrationDeclaringItsColumns(t *testing.T) {
 			if f.Name == "user" {
 				col = `"user"`
 			}
-			assert.True(t, strings.Contains(joined, "\n    "+col+" ") || strings.Contains(joined, "\n    "+col+"\t"), "kind %s: field %s has no column in any migration", k.Name, f.Name)
+			// a column of the CREATE TABLE, or one a later migration adds to it
+			assert.True(t, strings.Contains(joined, "\n    "+col+" ") || strings.Contains(joined, "\n    "+col+"\t") ||
+				strings.Contains(joined, "\n    ADD COLUMN IF NOT EXISTS "+col+" "), "kind %s: field %s has no column in any migration", k.Name, f.Name)
 		}
 	}
 }

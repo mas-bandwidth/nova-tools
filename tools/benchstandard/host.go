@@ -5,11 +5,12 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -172,10 +173,7 @@ func (h osHost) SourceEnv(file string, environ []string) (map[string]string, str
 	if res.err != nil {
 		return nil, res.stderr, res.err
 	}
-	before := map[string]string{}
-	for k, v := range parseEnv(environ) {
-		before[k] = v
-	}
+	before := maps.Clone(parseEnv(environ))
 	changed := map[string]string{}
 	for k, v := range parseEnv(strings.Split(strings.TrimRight(res.stdout, "\n"), "\n")) {
 		switch k {
@@ -225,13 +223,8 @@ func isEnvName(s string) bool {
 
 // envList is a map as a KEY=value list, in key order.
 func envList(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]string, 0, len(keys))
-	for _, k := range keys {
+	out := make([]string, 0, len(m))
+	for _, k := range slices.Sorted(maps.Keys(m)) {
 		out = append(out, k+"="+m[k])
 	}
 	return out

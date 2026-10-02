@@ -5,6 +5,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A tool built on internal/tool meets its banner's standard by construction
@@ -30,9 +33,7 @@ func TestEveryToolDefinitionIsHeldToTheStandard(t *testing.T) {
 			defines[dir] = true
 		}
 	}
-	if len(defines) == 0 {
-		t.Fatal("no package builds a tool.Tool; this test is looking in the wrong place and would pass by checking nothing")
-	}
+	require.NotEmpty(t, defines, "no package builds a tool.Tool; this test is looking in the wrong place and would pass by checking nothing")
 	var missing []string
 	for dir := range defines {
 		if !checks[dir] {
@@ -41,6 +42,6 @@ func TestEveryToolDefinitionIsHeldToTheStandard(t *testing.T) {
 	}
 	sort.Strings(missing)
 	for _, dir := range missing {
-		t.Errorf("%s builds a tool.Tool and no test of it calls Problems(); remedy=\"add a test that fails on each of its Problems() (as cmd/nova-cairn TestCairnToolMeetsTheStandard)\"", dir)
+		assert.Failf(t, "tool standard", "%s builds a tool.Tool and no test of it calls Problems(); remedy=\"add a test that fails on each of its Problems() (as cmd/nova-cairn TestCairnToolMeetsTheStandard)\"", dir)
 	}
 }

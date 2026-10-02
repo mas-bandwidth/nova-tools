@@ -2,13 +2,14 @@ package store
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // sleeps records the waits a store asks for, and sleeps none of them.
@@ -59,22 +60,14 @@ func TestABusyTableWaitsWithJitterAndNamesItself(t *testing.T) {
 	st.Sleep = sl.sleep
 	st.Rand = func(n int64) int64 { return n / 2 }
 	_, err := st.Load(h.ctx, tables(sprint.Fleet), nil)
-	if err == nil {
-		t.Fatal("a table that never stops changing loaded")
-	}
+	require.Error(t, err, "a table that never stops changing loaded")
 	for _, want := range []string{"the tables are busy", "table t-fleet kept changing", "12 reads", "nothing was changed"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error %q does not say %q", err, want)
-		}
+		require.ErrorContains(t, err, want, "error %q does not say %q", err, want)
 	}
-	if len(sl.d) != LoadTries-1 {
-		t.Fatalf("waits: %d, want %d", len(sl.d), LoadTries-1)
-	}
+	require.Len(t, sl.d, LoadTries-1, "waits: %d, want %d", len(sl.d), LoadTries-1)
 	for i, d := range sl.d {
 		step := min(backoffBase<<i, backoffCap)
-		if d != step/2 {
-			t.Fatalf("wait %d: %s, want half of the step %s", i, d, step)
-		}
+		require.Equal(t, step/2, d, "wait %d: %s, want half of the step %s", i, d, step)
 	}
 }
 
@@ -90,15 +83,11 @@ func TestABusyTableStopsAtTheBudget(t *testing.T) {
 	st.Sleep = sl.sleep
 	st.Rand = func(n int64) int64 { return n - 1 }
 	_, err := st.Load(h.ctx, tables(sprint.Work), nil)
-	if err == nil || !strings.Contains(err.Error(), "table t-work kept changing") {
-		t.Fatalf("load: %v", err)
-	}
-	if tot := sl.total(); tot > RetryBudget || tot < RetryBudget-backoffCap {
-		t.Fatalf("asleep %s, want at most %s and within a step of it", tot, RetryBudget)
-	}
-	if len(sl.d) >= LoadTries-1 {
-		t.Fatalf("%d waits: the budget did not stop them", len(sl.d))
-	}
+	require.ErrorContains(t, err, "table t-work kept changing", "load: %v", err)
+	tot := sl.total()
+	require.LessOrEqual(t, tot, RetryBudget, "asleep %s, want at most %s and within a step of it", tot, RetryBudget)
+	require.GreaterOrEqual(t, tot, RetryBudget-backoffCap, "asleep %s, want at most %s and within a step of it", tot, RetryBudget)
+	require.Less(t, len(sl.d), LoadTries-1, "%d waits: the budget did not stop them", len(sl.d))
 }
 
 // fenceMover is another writer that takes and releases the fence between
@@ -130,35 +119,32 @@ func TestABusyFenceWaitsWithJitter(t *testing.T) {
 	st.Sleep = sl.sleep
 	st.Rand = func(n int64) int64 { return n / 4 }
 	_, err := st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	if err == nil || !strings.Contains(err.Error(), "the sprint is busy") || !strings.Contains(err.Error(), "nothing was changed") ||
-		!strings.Contains(err.Error(), "12 reads") {
-		t.Fatalf("run: %v", err)
-	}
-	if len(sl.d) != FenceTries-1 || sl.d[0] != backoffBase/4 || sl.d[3] != 8*backoffBase/4 {
-		t.Fatalf("waits: %v", sl.d)
-	}
-	if h.snap().MemberCtl("m1") != nil {
-		t.Fatal("a busy step changed the fleet")
-	}
+	require.Error(t, err, "run: %v", err)
+	require.ErrorContains(t, err, "the sprint is busy", "run: %v", err)
+	require.ErrorContains(t, err, "nothing was changed", "run: %v", err)
+	require.ErrorContains(t, err, "12 reads", "run: %v", err)
+	require.Len(t, sl.d, FenceTries-1, "waits: %v", sl.d)
+	require.Equal(t, backoffBase/4, sl.d[0], "waits: %v", sl.d)
+	require.Equal(t, 8*backoffBase/4, sl.d[3], "waits: %v", sl.d)
+	require.Nil(t, h.snap().MemberCtl("m1"), "a busy step changed the fleet")
 }
 
 // A store with no NewID, Sleep or Rand runs a step: the defaults stand in.
 func TestAZeroStoreHasWorkingDefaults(t *testing.T) {
 	t.Parallel()
-	m := NewMem()
-	st := &Store{B: m, Names: sprint.Names{Prefix: "z-"}, Now: time.Now}
-	if err := st.Init(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	res, err := st.Run(context.Background(), FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	if err != nil || res.Op == "" {
-		t.Fatalf("run: %+v %v", res, err)
-	}
-	r := st.retry(context.Background())
-	st.Rand = func(int64) int64 { return 0 } // time.Sleep(0): the default sleeps, it does not spin on nil
-	if !r.next(2) || !r.next(2) || r.next(2) {
-		t.Fatal("two tries, then none")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		m := NewMem()
+		st := &Store{B: m, Names: sprint.Names{Prefix: "z-"}, Now: time.Now}
+		require.NoError(t, st.Init(context.Background()))
+		res, err := st.Run(context.Background(), FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+		require.NoError(t, err, "run: %+v %v", res, err)
+		require.NotEmpty(t, res.Op, "run: %+v %v", res, err)
+		r := st.retry(context.Background())
+		st.Rand = func(int64) int64 { return 0 } // time.Sleep(0): the default sleeps, it does not spin on nil
+		require.True(t, r.next(2), "two tries, then none")
+		require.True(t, r.next(2), "two tries, then none")
+		require.False(t, r.next(2), "two tries, then none")
+	})
 }
 
 // Two writers started fresh, as two processes or one restarted, generate
@@ -172,31 +158,19 @@ func TestFreshStoresGenerateDifferentOperationIDs(t *testing.T) {
 		return &Store{B: m, Names: names, Actor: "a", Now: func() time.Time { return t0 }, Sleep: func(time.Duration) {}}
 	}
 	a, b := fresh(), fresh()
-	if err := a.Init(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, a.Init(context.Background()))
 	ra, err := a.Run(context.Background(), FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	rb, err := b.Run(context.Background(), FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ra.Op == rb.Op {
-		t.Fatalf("both stores used operation id %s", ra.Op)
-	}
-	if a.newID() == b.newID() || NewID() == NewID() {
-		t.Fatal("two fresh ids are the same")
-	}
+	require.NoError(t, err)
+	require.NotEqual(t, rb.Op, ra.Op, "both stores used operation id %s", ra.Op)
+	require.NotEqual(t, b.newID(), a.newID(), "two fresh ids are the same")
+	require.NotEqual(t, NewID(), NewID(), "two fresh ids are the same")
 	s, err := a.Load(context.Background(), tables(sprint.Fleet), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, id := range []string{"m1", "m2"} {
-		if s.MemberCtl(id) == nil || s.MemberCtl(id).F("status") != sprint.Up {
-			t.Fatalf("%s is not up: the second step was swallowed", id)
-		}
+		require.NotNil(t, s.MemberCtl(id), "%s is not up: the second step was swallowed", id)
+		require.Equal(t, string(sprint.Up), s.MemberCtl(id).F("status"), "%s is not up: the second step was swallowed", id)
 	}
 }
 
@@ -209,18 +183,17 @@ func TestOneBudgetPerStep(t *testing.T) {
 	a, b := st.retry(ctx), st.retry(ctx)
 	for a.next(1000) {
 	}
-	if a.slept() > RetryBudget || a.slept() < RetryBudget-backoffCap {
-		t.Fatalf("the first loop slept %s", a.slept())
-	}
+	require.LessOrEqual(t, a.slept(), RetryBudget, "the first loop slept %s", a.slept())
+	require.GreaterOrEqual(t, a.slept(), time.Duration(RetryBudget-backoffCap), "the first loop slept %s", a.slept())
 	before := a.slept()
 	for b.next(1000) {
 	}
 	if b.slept() > RetryBudget || b.slept() < before || a.slept() != b.slept() {
-		t.Fatalf("two loops of one step: %s then %s, budget %s", before, b.slept(), RetryBudget)
+		require.Failf(t, "", "two loops of one step: %s then %s, budget %s", before, b.slept(), RetryBudget)
 	}
-	if other := st.retry(context.Background()); !other.next(2) || !other.next(2) {
-		t.Fatalf("another step has a budget of its own")
-	}
+	other := st.retry(context.Background())
+	require.True(t, other.next(2), "another step has a budget of its own")
+	require.True(t, other.next(2), "another step has a budget of its own")
 }
 
 // neverAcquire is a store where another writer takes the fence first,
@@ -238,10 +211,11 @@ func TestAStepThatLostEveryAttemptSaysSo(t *testing.T) {
 	st := *h.st
 	st.B = neverAcquire{h.m}
 	res, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 2}}))
-	if err != nil || !res.Lost || res.Notes != 0 || res.Op != "" || len(res.Moved) != 0 || len(res.Refused) == 0 {
-		t.Fatalf("a step that lost every attempt: %+v %v", res, err)
-	}
-	if h.state("s1-1") != sprint.Ready {
-		t.Fatalf("the lost step moved s1-1: %s", h.state("s1-1"))
-	}
+	require.NoError(t, err, "a step that lost every attempt: %+v %v", res, err)
+	require.True(t, res.Lost, "a step that lost every attempt: %+v %v", res, err)
+	require.Equal(t, 0, res.Notes, "a step that lost every attempt: %+v %v", res, err)
+	require.Equal(t, "", res.Op, "a step that lost every attempt: %+v %v", res, err)
+	require.Empty(t, res.Moved, "a step that lost every attempt: %+v %v", res, err)
+	require.NotEmpty(t, res.Refused, "a step that lost every attempt: %+v %v", res, err)
+	require.Equal(t, sprint.Ready, h.state("s1-1"), "the lost step moved s1-1: %s", h.state("s1-1"))
 }

@@ -1,10 +1,7 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 )
 
@@ -31,37 +28,4 @@ func wallOnly(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skipf("the wall is asked about the operating system itself, and only the darwin body (sandbox-exec) is built in this repository; on %s nova-sandbox REFUSES and there is no wall to question", runtime.GOOS)
 	}
-}
-
-// mustNotHaveProbeDir says that `run` left no probe directory behind in the pool.
-func mustNotHaveProbeDir(t *testing.T, b *bench) {
-	t.Helper()
-	if _, err := os.Stat(filepath.Join(b.pool, "sandbox-probe")); err == nil {
-		t.Errorf("%s outlived the probe that made it", filepath.Join(b.pool, "sandbox-probe"))
-	}
-}
-
-// refusedLine is the RUN REFUSED line of a pass, which is where the probe's own reason is
-// quoted.
-func refusedLine(out string) string {
-	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "RUN REFUSED ") {
-			return line
-		}
-	}
-	return ""
-}
-
-// harnessLog is what the worker said, which is where a refused read or write appears.
-func harnessLog(t *testing.T, b *bench, id string) string {
-	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(b.dir, "worker-home-*", "jobs", id, "harness.log"))
-	if err != nil || len(matches) == 0 {
-		t.Fatalf("no harness log for job %s: %v", id, err)
-	}
-	raw, err := os.ReadFile(matches[0])
-	if err != nil {
-		t.Fatalf("reading %s: %v", matches[0], err)
-	}
-	return string(raw)
 }

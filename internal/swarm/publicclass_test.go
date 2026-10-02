@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // CARD-8390 red tests: a public-class worker never sees a card that clones an
@@ -33,9 +35,7 @@ func writeAllowlist(t *testing.T, root string, lines ...string) {
 	if len(lines) > 0 {
 		body += "\n"
 	}
-	if err := os.WriteFile(filepath.Join(root, "public-repos.txt"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "public-repos.txt"), []byte(body), 0o644))
 }
 
 func TestPublicClassListedRepoIsAdmitted(t *testing.T) {
@@ -44,9 +44,8 @@ func TestPublicClassListedRepoIsAdmitted(t *testing.T) {
 	root := t.TempDir()
 	writeAllowlist(t, root, "acme/public")
 	card := "RESULT: x\nSTEP 1\n" + forgeClone("acme/public") + " repo\n"
-	if repo, refused := CheckPublicCard(publicTestWorker("muse", "public"), card, root); refused {
-		t.Fatalf("a public-class worker with a card cloning a listed repo is admitted, got refused repo=%s", repo)
-	}
+	repo, refused := CheckPublicCard(publicTestWorker("muse", "public"), card, root)
+	require.False(t, refused, "a public-class worker with a card cloning a listed repo is admitted, got refused repo=%s", repo)
 }
 
 func TestPublicClassUnlistedRepoIsRefusedNamingIt(t *testing.T) {
@@ -56,17 +55,11 @@ func TestPublicClassUnlistedRepoIsRefusedNamingIt(t *testing.T) {
 	writeAllowlist(t, root, "acme/public")
 	card := "RESULT: x\nSTEP 1\n" + forgeClone("acme/secret") + " repo\n"
 	repo, refused := CheckPublicCard(publicTestWorker("muse", "public"), card, root)
-	if !refused {
-		t.Fatal("an unlisted repo is refused, got admitted")
-	}
-	if repo != "acme/secret" {
-		t.Fatalf("the refusal names the repo, got %q want %q", repo, "acme/secret")
-	}
+	require.True(t, refused, "an unlisted repo is refused, got admitted")
+	require.Equal(t, "acme/secret", repo, "the refusal names the repo, got %q want %q", repo, "acme/secret")
 	line := PublicRefusalLine(repo, "muse")
 	want := "CARD REFUSED reason=private-source repo=acme/secret class=public worker=muse"
-	if line != want {
-		t.Fatalf("the refusal line is exact:\nwant %q\ngot  %q", want, line)
-	}
+	require.Equal(t, want, line, "the refusal line is exact:\nwant %q\ngot  %q", want, line)
 }
 
 func TestPaidClassAdmitsBoth(t *testing.T) {
@@ -76,13 +69,10 @@ func TestPaidClassAdmitsBoth(t *testing.T) {
 	writeAllowlist(t, root, "acme/public")
 	listed := "RESULT: x\n" + forgeClone("acme/public") + " repo\n"
 	unlisted := "RESULT: x\n" + forgeMention("acme/secret") + "\n"
-	if _, refused := CheckPublicCard(publicTestWorker("w", "paid"), unlisted, root); refused {
-		t.Fatal("a paid-class worker admits an unlisted repo, got refused")
-	}
-	if _, refused := CheckPublicCard(publicTestWorker("w", ""), unlisted, root); refused {
-		t.Fatal("a default (paid) worker admits an unlisted repo, got refused")
-	}
-	if _, refused := CheckPublicCard(publicTestWorker("w", "paid"), listed, root); refused {
-		t.Fatal("a paid-class worker admits a listed repo, got refused")
-	}
+	_, refused := CheckPublicCard(publicTestWorker("w", "paid"), unlisted, root)
+	require.False(t, refused, "a paid-class worker admits an unlisted repo, got refused")
+	_, refused = CheckPublicCard(publicTestWorker("w", ""), unlisted, root)
+	require.False(t, refused, "a default (paid) worker admits an unlisted repo, got refused")
+	_, refused = CheckPublicCard(publicTestWorker("w", "paid"), listed, root)
+	require.False(t, refused, "a paid-class worker admits a listed repo, got refused")
 }

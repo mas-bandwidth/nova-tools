@@ -32,7 +32,8 @@ measured), the highest of the last `+sprint.LoadWindow.String()+`.
 
 fleet sync makes the fleet match nova-config's machine rows in one step (--pg,
 else NOVA_PG_DSN, as nova-config takes it): a member the table lacks is added
-at its width (its slots less its friends'), a width that differs is set, a row
+at its width (the row's width, nova-config machine set <m> --width <n>), a
+width that differs is set, a width of 0 is no member, a row
 the inventory no longer names is held and its cards are dealt to the members
 that stay; nothing else changes, and a second sync writes nothing. --check
 prints the drift and writes nothing: exit 0 none, 2 some, 3 the config cannot

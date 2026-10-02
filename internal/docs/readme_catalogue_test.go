@@ -19,7 +19,7 @@ func TestReadmeCatalogueContainsOnlyLivingTools(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(root, "README.md"))
 	require.NoError(t, err)
 	page := string(raw)
-	living := strings.Fields("nova-bus nova-table nova-redis nova-config nova-swarm nova-secrets nova-tokens nova-memory nova-cairn nova-check nova-self-talk nova-fuse nova-sandbox nova-ci nova-version nova-update")
+	living := strings.Fields("nova-bus nova-table nova-sprint nova-redis nova-config nova-swarm nova-secrets nova-tokens nova-memory nova-cairn nova-check nova-self-talk nova-fuse nova-sandbox nova-ci nova-version nova-update")
 	expected := map[string]bool{}
 	for _, name := range living {
 		expected[name] = true
@@ -43,17 +43,15 @@ func TestReadmeCatalogueContainsOnlyLivingTools(t *testing.T) {
 	}
 	assert.Len(t, rows, len(living), "catalogue has %d rows, want %d", len(rows), len(living))
 
-	// Read directory names only; do not build or test archived code. Including
-	// non-catalogue cmd entries also catches a tool awaiting its physical move.
+	// Read directory names only. Including non-catalogue cmd entries also
+	// catches a tool that is not in the release.
 	forbidden := map[string]bool{"nova-pulse": true}
-	for _, dir := range []string{"cmd", "deprecated/cmd"} {
-		entries, err := os.ReadDir(filepath.Join(root, dir))
-		require.NoError(t, err)
-		for _, entry := range entries {
-			name := entry.Name()
-			if entry.IsDir() && strings.HasPrefix(name, "nova-") && (dir == "deprecated/cmd" || !expected[name]) {
-				forbidden[name] = true
-			}
+	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
+	require.NoError(t, err)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() && strings.HasPrefix(name, "nova-") && !expected[name] {
+			forbidden[name] = true
 		}
 	}
 	for name := range forbidden {

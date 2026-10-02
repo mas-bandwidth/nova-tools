@@ -30,6 +30,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // stGitOut runs one git command in dir under the hermetic test environment
@@ -53,9 +56,7 @@ func stGitOut(dir string, args ...string) (string, error) {
 func stGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	out, err := stGitOut(dir, args...)
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
+	require.NoError(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
 	return out
 }
 
@@ -122,9 +123,7 @@ func stLab(t *testing.T) string {
 	t.Helper()
 	stLabGoldenOnce.Do(initStLabGolden)
 	dir := t.TempDir()
-	if err := copyDir(stLabGoldenDir, dir); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, copyDir(stLabGoldenDir, dir))
 	return dir
 }
 
@@ -138,7 +137,7 @@ func stLine(t *testing.T, stream, prefix string) string {
 			return line
 		}
 	}
-	t.Fatalf("no %q line in:\n%s", prefix, stream)
+	require.FailNow(t, "fatal prerequisite", "no %q line in:\n%s", prefix, stream)
 	return ""
 }
 
@@ -174,24 +173,20 @@ func noCodeStagedClassifiesTheIndex(t *testing.T) {
 	mustWrite(t, dir, "runner", "harmless prose now\n")
 
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
-	if exit != 1 {
-		t.Fatalf("exit = %d, want 1 (the staged blob is the shebang); stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+	require.EqualValues(t, 1, exit, "exit = %d, want 1 (the staged blob is the shebang); stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+	{
+		want := "NOCODE FAIL runner: executable script (shebang)"
+		assert.Contains(t, stderr, want, "stderr = %q,\nwant the staged shebang named: %q", stderr, want)
 	}
-	if want := "NOCODE FAIL runner: executable script (shebang)"; !strings.Contains(stderr, want) {
-		t.Errorf("stderr = %q,\nwant the staged shebang named: %q", stderr, want)
+	{
+		got, want := stLine(t, stderr, "NOCODE FAIL staged="), "NOCODE FAIL staged=1 findings=1 shown=1 deny-list=floor-list"
+		assert.EqualValues(t, want, got, "FAIL summary = %q, want %q", got, want)
 	}
-	if got, want := stLine(t, stderr, "NOCODE FAIL staged="), "NOCODE FAIL staged=1 findings=1 shown=1 deny-list=floor-list"; got != want {
-		t.Errorf("FAIL summary = %q, want %q", got, want)
-	}
-	if strings.Contains(stdout, "NOCODE OK") {
-		t.Errorf("a failing run printed an OK line: %q", stdout)
-	}
+	assert.NotContains(t, stdout, "NOCODE OK", "a failing run printed an OK line: %q", stdout)
 
 	// The audit over the SAME tree walks the disk and sees prose only.
 	aexit, astdout, _ := runCheck(t, "nocode", "--dir", dir)
-	if aexit != 0 || !strings.Contains(astdout, "NOCODE OK") {
-		t.Errorf("the audit over prose on disk exited %d:\n%s", aexit, astdout)
-	}
+	assert.False(t, aexit != 0 || !strings.Contains(astdout, "NOCODE OK"), "the audit over prose on disk exited %d:\n%s", aexit, astdout)
 }
 
 func TestNoCodeStagedRequiresDir(t *testing.T) {
@@ -205,15 +200,9 @@ func TestNoCodeStagedRequiresDir(t *testing.T) {
 // --dir from it would pass this case, and the refusal is what the law wants.
 func noCodeStagedRequiresDir(t *testing.T) {
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged")
-	if exit != 2 {
-		t.Fatalf("exit = %d, want 2 (a missing --dir is a refusal, never a guess); stderr:\n%s", exit, stderr)
-	}
-	if !strings.Contains(stderr, "--dir is required; refusing to guess") {
-		t.Errorf("stderr = %q,\nwant the required-flag refusal", stderr)
-	}
-	if stdout != "" {
-		t.Errorf("a refusal printed to stdout: %q", stdout)
-	}
+	require.EqualValues(t, 2, exit, "exit = %d, want 2 (a missing --dir is a refusal, never a guess); stderr:\n%s", exit, stderr)
+	assert.Contains(t, stderr, "--dir is required; refusing to guess", "stderr = %q,\nwant the required-flag refusal", stderr)
+	assert.EqualValues(t, "", stdout, "a refusal printed to stdout: %q", stdout)
 }
 
 func TestNoCodeStagedNothingToSay(t *testing.T) {
@@ -229,11 +218,10 @@ func noCodeStagedNothingToSay(t *testing.T) {
 	ok0 := func(t *testing.T, dir, why string) {
 		t.Helper()
 		exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
-		if exit != 0 {
-			t.Fatalf("%s: exit = %d, want 0; stderr:\n%s", why, exit, stderr)
-		}
-		if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=0 clean deny-list=floor-list"; got != want {
-			t.Errorf("%s: OK line = %q, want %q", why, got, want)
+		require.EqualValues(t, 0, exit, "%s: exit = %d, want 0; stderr:\n%s", why, exit, stderr)
+		{
+			got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=0 clean deny-list=floor-list"
+			assert.EqualValues(t, want, got, "%s: OK line = %q, want %q", why, got, want)
 		}
 	}
 
@@ -275,24 +263,19 @@ func noCodeStagedSaysNo(t *testing.T) {
 	stGit(t, dir, "add", "--chmod=+x", "notes.txt")
 
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
-	if exit != 1 {
-		t.Fatalf("exit = %d, want 1; stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
-	}
+	require.EqualValues(t, 1, exit, "exit = %d, want 1; stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	for _, want := range []string{
 		"NOCODE FAIL run.sh: code extension .sh (floor-list)",
 		"NOCODE FAIL runner: executable script (shebang)",
 		"NOCODE FAIL notes.txt: executable (index mode 100755)",
 	} {
-		if !strings.Contains(stderr, want) {
-			t.Errorf("stderr = %q,\nwant the per-path line: %q", stderr, want)
-		}
+		assert.Contains(t, stderr, want, "stderr = %q,\nwant the per-path line: %q", stderr, want)
 	}
-	if got, want := stLine(t, stderr, "NOCODE FAIL staged="), "NOCODE FAIL staged=3 findings=3 shown=3 deny-list=floor-list"; got != want {
-		t.Errorf("FAIL summary = %q, want %q", got, want)
+	{
+		got, want := stLine(t, stderr, "NOCODE FAIL staged="), "NOCODE FAIL staged=3 findings=3 shown=3 deny-list=floor-list"
+		assert.EqualValues(t, want, got, "FAIL summary = %q, want %q", got, want)
 	}
-	if stdout != "" {
-		t.Errorf("a failing run printed to stdout: %q", stdout)
-	}
+	assert.EqualValues(t, "", stdout, "a failing run printed to stdout: %q", stdout)
 
 	// A clean index prints the OK line on stdout, with the count of the one
 	// record classified.
@@ -300,11 +283,10 @@ func noCodeStagedSaysNo(t *testing.T) {
 	mustWrite(t, clean, "g.md", "more prose\n")
 	stGit(t, clean, "add", "g.md")
 	cexit, cstdout, cstderr := runCheck(t, "nocode", "--staged", "--dir", clean)
-	if cexit != 0 {
-		t.Fatalf("a clean index exited %d, want 0; stderr:\n%s", cexit, cstderr)
-	}
-	if got, want := stLine(t, cstdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor-list"; got != want {
-		t.Errorf("OK line = %q, want %q", got, want)
+	require.EqualValues(t, 0, cexit, "a clean index exited %d, want 0; stderr:\n%s", cexit, cstderr)
+	{
+		got, want := stLine(t, cstdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor-list"
+		assert.EqualValues(t, want, got, "OK line = %q, want %q", got, want)
 	}
 }
 
@@ -317,12 +299,8 @@ func TestNoCodeStagedRefusals(t *testing.T) { noCodeStagedRefusals(t) }
 func noCodeStagedRefusals(t *testing.T) {
 	refused := func(t *testing.T, why string, exit int, stderr, want string) {
 		t.Helper()
-		if exit != 2 {
-			t.Fatalf("%s: exit = %d, want 2; stderr:\n%s", why, exit, stderr)
-		}
-		if !strings.Contains(stderr, want) {
-			t.Errorf("%s: stderr = %q,\nwant it to name %q", why, stderr, want)
-		}
+		require.EqualValues(t, 2, exit, "%s: exit = %d, want 2; stderr:\n%s", why, exit, stderr)
+		assert.Contains(t, stderr, want, "%s: stderr = %q,\nwant it to name %q", why, stderr, want)
 	}
 
 	// A --dir that is not a repository at all.
@@ -334,9 +312,7 @@ func noCodeStagedRefusals(t *testing.T) {
 	// --dir with the toplevel git reports, and a subdirectory is not it.
 	repo := stLab(t)
 	sub := filepath.Join(repo, "sub")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(sub, 0o755))
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", sub)
 	refused(t, "a subdirectory of a repository", exit, stderr, "is not the root of a git repository")
 
@@ -356,8 +332,9 @@ func noCodeStagedRefusals(t *testing.T) {
 	stGit(t, conflict, "checkout", "-q", "main")
 	mustWrite(t, conflict, "f.md", "main's line\n")
 	stGit(t, conflict, "commit", "-q", "-am", "main")
-	if _, err := stGitOut(conflict, "merge", "side"); err == nil {
-		t.Fatal("the merge was expected to conflict")
+	{
+		_, err := stGitOut(conflict, "merge", "side")
+		require.Error(t, err, "the merge was expected to conflict")
 	}
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", conflict)
 	refused(t, "unmerged entries", exit, stderr, "unmerged")
@@ -366,9 +343,7 @@ func noCodeStagedRefusals(t *testing.T) {
 	// empty list, a malformed entry, and both deny-list flags at once.
 	bad := stLab(t)
 	empty := filepath.Join(t.TempDir(), "empty-exts.txt")
-	if err := os.WriteFile(empty, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(empty, nil, 0o644))
 	for _, tc := range []struct {
 		why  string
 		args []string
@@ -380,9 +355,7 @@ func noCodeStagedRefusals(t *testing.T) {
 	} {
 		cexit, cstdout, cstderr := runCheck(t, tc.args...)
 		refused(t, tc.why, cexit, cstderr, tc.want)
-		if cstdout != "" {
-			t.Errorf("%s printed to stdout: %q", tc.why, cstdout)
-		}
+		assert.EqualValues(t, "", cstdout, "%s printed to stdout: %q", tc.why, cstdout)
 	}
 
 	// An unrecognised status letter and an unclassifiable destination mode.
@@ -407,9 +380,7 @@ func noCodeStagedRefusals(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			real, err := exec.LookPath("git")
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			dir := stLab(t)
 			mustWrite(t, dir, "g.md", "staged prose\n")
 			stGit(t, dir, "add", "g.md")
@@ -434,9 +405,7 @@ esac
 			exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
 			os.Setenv("PATH", orig)
 			refused(t, tc.name, exit, stderr, tc.want)
-			if stdout != "" {
-				t.Errorf("%s printed to stdout: %q", tc.name, stdout)
-			}
+			assert.EqualValues(t, "", stdout, "%s printed to stdout: %q", tc.name, stdout)
 		})
 	}
 }
@@ -460,11 +429,10 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	mustWrite(t, wt, "g.md", "prose in a linked worktree\n")
 	stGit(t, wt, "add", "g.md")
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", wt)
-	if exit != 0 {
-		t.Fatalf("a linked worktree was refused at the root test:\n%s", stderr)
-	}
-	if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor-list"; got != want {
-		t.Errorf("worktree OK line = %q, want %q", got, want)
+	require.EqualValues(t, 0, exit, "a linked worktree was refused at the root test:\n%s", stderr)
+	{
+		got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor-list"
+		assert.EqualValues(t, want, got, "worktree OK line = %q, want %q", got, want)
 	}
 
 	// A submodule: its .git is a file too, and it is its own repository root
@@ -477,19 +445,16 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	stGit(t, src, "commit", "-q", "-m", "sub")
 	stGit(t, outer, "-c", "protocol.file.allow=always", "submodule", "add", "-q", src, "sub")
 	exit, stdout, stderr = runCheck(t, "nocode", "--staged", "--dir", filepath.Join(outer, "sub"))
-	if exit != 0 {
-		t.Fatalf("a submodule was refused at the root test:\n%s", stderr)
-	}
-	if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=0 clean deny-list=floor-list"; got != want {
-		t.Errorf("submodule OK line = %q, want %q", got, want)
+	require.EqualValues(t, 0, exit, "a submodule was refused at the root test:\n%s", stderr)
+	{
+		got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=0 clean deny-list=floor-list"
+		assert.EqualValues(t, want, got, "submodule OK line = %q, want %q", got, want)
 	}
 	// And the gitlink the add staged in the outer repository is machinery
 	// arriving by reference: classified from its mode alone, its OID never
 	// read -- the one matching rule this mode adds to the audit's.
 	oexit, _, ostderr := runCheck(t, "nocode", "--staged", "--dir", outer)
-	if oexit != 1 || !strings.Contains(ostderr, "NOCODE FAIL sub: submodule gitlink (machinery arriving by reference)") {
-		t.Errorf("the staged gitlink exited %d, want 1 with the gitlink finding:\n%s", oexit, ostderr)
-	}
+	assert.False(t, oexit != 1 || !strings.Contains(ostderr, "NOCODE FAIL sub: submodule gitlink (machinery arriving by reference)"), "the staged gitlink exited %d, want 1 with the gitlink finding:\n%s", oexit, ostderr)
 
 	// An unborn HEAD is gated like every later commit: the base detector
 	// reaches for the empty tree, and the shebang staged for the FIRST commit
@@ -499,9 +464,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	mustWrite(t, first, "runner", "#!/bin/sh\necho hi\n")
 	stGit(t, first, "add", "runner")
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", first)
-	if exit != 1 || !strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)") {
-		t.Fatalf("the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
-	}
+	require.False(t, exit != 1 || !strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)"), "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
 
 	// The sha256 form: the empty tree is obtained inside the repository, never
 	// hard-coded. The sha1 constant 4b825dc6... names no object a sha256
@@ -514,14 +477,11 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	mustWrite(t, s256, "runner", "#!/bin/sh\necho hi\n")
 	stGit(t, s256, "add", "runner")
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", s256)
-	if exit == 2 {
-		t.Fatalf("the unborn sha256 repository was refused; the empty tree was not obtained from inside it (a hard-coded sha1 constant does not exist there):\n%s", stderr)
-	}
-	if exit != 1 || !strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)") {
-		t.Fatalf("the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
-	}
-	if et := strings.TrimSpace(stGit(t, s256, "hash-object", "-t", "tree", os.DevNull)); et == "4b825dc642cb6eb9a060e54bf8d69288fbee4904" {
-		t.Fatalf("this sha256 repository names the sha1 empty tree %q", et)
+	require.NotEqualValues(t, 2, exit, "the unborn sha256 repository was refused; the empty tree was not obtained from inside it (a hard-coded sha1 constant does not exist there):\n%s", stderr)
+	require.False(t, exit != 1 || !strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)"), "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	{
+		et := strings.TrimSpace(stGit(t, s256, "hash-object", "-t", "tree", os.DevNull))
+		require.NotEqualValues(t, "4b825dc642cb6eb9a060e54bf8d69288fbee4904", et, "this sha256 repository names the sha1 empty tree %q", et)
 	}
 }
 
@@ -547,36 +507,30 @@ func TestFriendSequenceStagedAdvisoryCommit(t *testing.T) {
 	// The advisory names the staged shebang: exit 1, one FAIL line on stderr,
 	// and no OK line anywhere.
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
-	if exit != 1 {
-		t.Fatalf("the advisory over the staged script exited %d, want 1; stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
-	}
-	if !strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)") {
-		t.Fatalf("the advisory did not name the staged script:\n%s", stderr)
-	}
+	require.EqualValues(t, 1, exit, "the advisory over the staged script exited %d, want 1; stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+	require.Contains(t, stderr, "NOCODE FAIL runner: executable script (shebang)", "the advisory did not name the staged script:\n%s", stderr)
 	// The advisory leaves the index exactly as it found it: the script is
 	// still staged, which is the state the friend acts on next. An advisory
 	// that mutated the index would decide the commit, not the friend.
-	if got := strings.TrimSpace(stGit(t, dir, "diff", "--cached", "--name-only")); got != "runner" {
-		t.Fatalf("the index the advisory left holds %q, want the staged runner untouched", got)
+	{
+		got := strings.TrimSpace(stGit(t, dir, "diff", "--cached", "--name-only"))
+		require.EqualValues(t, "runner", got, "the index the advisory left holds %q, want the staged runner untouched", got)
 	}
 
 	// The friend acts on the finding: the script is unstaged and removed, and
 	// the prose this commit exists for is staged in its place.
 	stGit(t, dir, "rm", "-q", "--cached", "runner")
-	if err := os.Remove(filepath.Join(dir, "runner")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Remove(filepath.Join(dir, "runner")))
 	mustWrite(t, dir, "g.md", "the prose this commit exists for\n")
 	stGit(t, dir, "add", "g.md")
 
 	// The advisory again, over the index the friend left: clean, with the one
 	// prose record classified.
 	exit, stdout, stderr = runCheck(t, "nocode", "--staged", "--dir", dir)
-	if exit != 0 {
-		t.Fatalf("the advisory over the corrected index exited %d, want 0; stderr:\n%s", exit, stderr)
-	}
-	if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor-list"; got != want {
-		t.Errorf("OK line = %q, want %q", got, want)
+	require.EqualValues(t, 0, exit, "the advisory over the corrected index exited %d, want 0; stderr:\n%s", exit, stderr)
+	{
+		got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor-list"
+		assert.EqualValues(t, want, got, "OK line = %q, want %q", got, want)
 	}
 
 	// The commit itself, then the audit over what was committed: the two
@@ -584,7 +538,5 @@ func TestFriendSequenceStagedAdvisoryCommit(t *testing.T) {
 	// tree the audit calls clean.
 	stGit(t, dir, "commit", "-q", "-m", "prose only")
 	aexit, astdout, _ := runCheck(t, "nocode", "--dir", dir)
-	if aexit != 0 || !strings.Contains(astdout, "NOCODE OK") {
-		t.Errorf("the audit over the committed tree exited %d:\n%s", aexit, astdout)
-	}
+	assert.False(t, aexit != 0 || !strings.Contains(astdout, "NOCODE OK"), "the audit over the committed tree exited %d:\n%s", aexit, astdout)
 }

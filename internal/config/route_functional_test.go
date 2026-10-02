@@ -81,6 +81,8 @@ func TestApplyWritesTheRouteViewTheDealReads(t *testing.T) {
 		_, err := st.Insert(ctx, KindRoute, row, "t")
 		require.NoError(t, err)
 	}
+	_, _, endpointErr := st.Update(ctx, KindFleet, KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, "t")
+	require.NoError(t, endpointErr)
 	res := applyKinds(t, st, ap, "t")
 	assert.Equal(t, 2, res[KindRoute].Add)
 
@@ -89,6 +91,9 @@ func TestApplyWritesTheRouteViewTheDealReads(t *testing.T) {
 	want := map[string]string{
 		"name": "pro-a", "tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4",
 		"tokens": "300000", "deadline": "1800", "enabled": "true",
+		// the price sheet, not set: every price empty, never 0
+		"price_input": "", "price_cache_read": "", "price_cache_write": "", "price_output": "", "reasoning_as_output": "true", "long_context": "0",
+		"price_input_long": "", "price_output_long": "", "price_request": "", "billing": "metered", "gateway_percent": "", "price_source": "", "price_as_of": "",
 	}
 	for f, v := range want {
 		assert.Equal(t, v, got[f], "route:pro-a %s", f)
@@ -157,6 +162,8 @@ func TestTheTierArrayRoundTripsAndApplyWritesIt(t *testing.T) {
 	_, err = st.Delete(ctx, KindTier, "pro", "t")
 	require.ErrorIs(t, err, ErrInvalid, "a tier migrate made is never removed")
 
+	_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, "t")
+	require.NoError(t, err)
 	applyKinds(t, st, ap, "t")
 	assert.Equal(t, "flash-a,flash-a", c.HGet(ctx, TierKey("flash"), "routes").Val())
 	assert.ElementsMatch(t, []string{"flash", "pro"}, c.SMembers(ctx, TiersKey).Val())

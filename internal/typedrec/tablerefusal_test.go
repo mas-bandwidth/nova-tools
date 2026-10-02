@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParseTableRefusal(t *testing.T) {
@@ -62,8 +63,7 @@ func TestParseTableRefusal(t *testing.T) {
 		{"UNRECOGNIZED", typedrec.TableRefusalUnknown},
 	}
 	for _, tc := range cases {
-		if got := typedrec.ParseTableRefusal(tc.in); got != tc.want {
-			t.Errorf("ParseTableRefusal(%q) = %v; want %v", tc.in, got, tc.want)
-		}
+		got := typedrec.ParseTableRefusal(tc.in)
+		assert.Equal(t, tc.want, got, "ParseTableRefusal(%q) = %v; want %v", tc.in, got, tc.want)
 	}
 }

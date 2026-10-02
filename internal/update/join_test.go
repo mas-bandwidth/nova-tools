@@ -1,3 +1,5 @@
+//go:build functional || slow
+
 package update
 
 // The join with the real prepared-send binary. Every other delivery test in this
@@ -20,7 +22,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +29,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------- the binaries
@@ -68,7 +71,7 @@ func joinBinaries(t *testing.T) string {
 		joinPrepared = bytes.Contains(out, []byte("--prepared-stdin")) && bytes.Contains(out, []byte("prepare --bus"))
 	})
 	if joinBusErr != nil {
-		t.Fatal(joinBusErr)
+		require.Nil(t, joinBusErr, joinBusErr)
 	}
 	if !joinPrepared {
 		t.Skip("waits on #138: nova-bus in this tree has no prepared verbs (no --prepared-stdin in help)")
@@ -99,7 +102,7 @@ func buildTreeBinaries(t *testing.T) string {
 		}
 	})
 	if joinBuildErr != nil {
-		t.Fatal(joinBuildErr)
+		require.Nil(t, joinBuildErr, joinBuildErr)
 	}
 	return joinDir
 }
@@ -116,7 +119,7 @@ func git(t *testing.T, dir string, args ...string) string {
 	c := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	out, err := c.CombinedOutput()
 	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		require.NoErrorf(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return string(out)
 }
@@ -131,7 +134,7 @@ func hermeticGit(t *testing.T) {
 	t.Helper()
 	cfg := filepath.Join(t.TempDir(), "gitconfig")
 	if err := os.WriteFile(cfg, []byte("[user]\n\tname = Ada\n\temail = ada@example.com\n[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n"), 0600); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
@@ -154,10 +157,10 @@ func realBus(t *testing.T) busFixture {
 	write := func(rel, content string) {
 		full := filepath.Join(checkout, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	write("participants.json", `{"participants":[`+
@@ -206,20 +209,20 @@ func (b busFixture) exactlyOneContribution(t *testing.T, id string) string {
 	t.Helper()
 	notes, index := b.published(t)
 	if len(notes) != 1 || len(index) != 1 {
-		t.Fatalf("want one note and one INDEX row, got notes=%v index=%v", notes, index)
+		require.Failf(t, "", "want one note and one INDEX row, got notes=%v index=%v", notes, index)
 	}
 	if !strings.Contains(index[0], id) {
-		t.Fatalf("INDEX row %q does not carry the prepared id %q", index[0], id)
+		require.Failf(t, "", "INDEX row %q does not carry the prepared id %q", index[0], id)
 	}
 	if !strings.Contains(index[0], notes[0]) {
-		t.Fatalf("INDEX row %q does not name the note %q", index[0], notes[0])
+		require.Failf(t, "", "INDEX row %q does not name the note %q", index[0], notes[0])
 	}
 	if body := b.noteBytes(t, notes[0]); !strings.Contains(body, "Id: "+id) {
-		t.Fatalf("note does not carry the prepared id %q", id)
+		require.Containsf(t, body, "Id: "+id, "note does not carry the prepared id %q", id)
 	}
 	other := git(t, b.bare, "show", "main:from-bo/INDEX")
 	if !strings.Contains(other, "bo-111111111111") {
-		t.Fatal("the other participant's lane did not survive")
+		require.Fail(t, fmt.Sprintln("the other participant's lane did not survive"))
 	}
 	return notes[0]
 }
@@ -240,7 +243,7 @@ func newReporter(t *testing.T, version string) reporter {
 	dir := t.TempDir()
 	m := filepath.Join(dir, "versions.tsv")
 	if err := os.WriteFile(m, []byte(Header+"\n"+row("x", "tool", printer(t, version), "npm:unused", "none")+"\n"), 0600); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	t.Setenv("NOVA_UPDATE_HELPER", "1")
 	return reporter{bus: b, bin: bin, manifest: m, snapshot: filepath.Join(dir, "s.json")}
@@ -262,14 +265,14 @@ func (r reporter) pendingID(t *testing.T) string {
 	t.Helper()
 	s, err := readSnapshot(r.snapshot)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if len(s.Pending) != 1 {
-		t.Fatalf("want one pending report, got %d (delivered %d)", len(s.Pending), len(s.Delivered))
+		require.Lenf(t, s.Pending, 1, "want one pending report, got %d (delivered %d)", len(s.Pending), len(s.Delivered))
 	}
 	for _, p := range s.Pending {
 		if p.ID == "" {
-			t.Fatal("pending report retained no identity")
+			require.NotEqualValues(t, "", p.ID, "pending report retained no identity")
 		}
 		return p.ID
 	}
@@ -279,10 +282,10 @@ func (r reporter) deliveredID(t *testing.T) string {
 	t.Helper()
 	s, err := readSnapshot(r.snapshot)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if len(s.Delivered) != 1 || len(s.Pending) != 0 {
-		t.Fatalf("want one confirmed delivery and no pending, got delivered=%d pending=%d", len(s.Delivered), len(s.Pending))
+		require.Failf(t, "", "want one confirmed delivery and no pending, got delivered=%d pending=%d", len(s.Delivered), len(s.Pending))
 	}
 	for _, d := range s.Delivered {
 		return d.ID
@@ -300,25 +303,25 @@ func (b busFixture) refusePushes(t *testing.T) (restore func(), how string) {
 	if runtime.GOOS != "windows" {
 		dir := filepath.Join(b.bare, "hooks")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		hook := filepath.Join(dir, "pre-receive")
 		if err := testbin.WriteExecutable(hook, []byte("#!/bin/sh\necho 'synthetic refusal' >&2\nexit 1\n"), 0o755); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		return func() {
 			if err := os.Remove(hook); err != nil {
-				t.Fatal(err)
+				require.NoError(t, err, err)
 			}
 		}, "a pre-receive hook that rejects every push"
 	}
 	aside := b.bare + ".aside"
 	if err := os.Rename(b.bare, aside); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return func() {
 		if err := os.Rename(aside, b.bare); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}, "moving the bare remote aside so the push cannot land"
 }
@@ -488,10 +491,10 @@ func (r reporter) wrapperOnPath(t *testing.T, boundary string) (dir, record stri
 	dir = t.TempDir()
 	self, err := os.Executable()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if err = testbin.Place(self, filepath.Join(dir, exeName("nova-bus"))); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	record = filepath.Join(dir, "record")
 	t.Setenv("NOVA_UPDATE_JOIN_REAL", filepath.Join(r.bin, exeName("nova-bus")))
@@ -525,19 +528,19 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 	wrap, record := r.wrapperOnPath(t, boundary)
 	code, out, errs := r.send(t, wrap)
 	if code != 1 {
-		t.Fatalf("a killed bus was not reported as a failure: %d\n%s\n%s", code, out, errs)
+		require.EqualValuesf(t, 1, code, "a killed bus was not reported as a failure: %d\n%s\n%s", code, out, errs)
 	}
 	if !strings.Contains(errs+out, "sent=uncertain") {
-		t.Fatalf("a killed bus was not reported as uncertain:\n%s\n%s", out, errs)
+		require.Containsf(t, errs+out, "sent=uncertain", "a killed bus was not reported as uncertain:\n%s\n%s", out, errs)
 	}
 	id := r.pendingID(t)
 	b, err := os.ReadFile(record)
 	if err != nil {
-		t.Fatalf("the wrapper left no record of what it staged: %v", err)
+		require.NoErrorf(t, err, "the wrapper left no record of what it staged: %v", err)
 	}
 	staged := strings.TrimSpace(string(b))
 	if !strings.Contains(staged, "observed=true") {
-		t.Fatalf("the boundary was never observed, so no death was staged: %s", staged)
+		require.Containsf(t, staged, "observed=true", "the boundary was never observed, so no death was staged: %s", staged)
 	}
 	if !strings.Contains(staged, "killed-alive=true") {
 		return false
@@ -550,7 +553,7 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 	// process is left to own the locks -- before removing anything, out loud.
 	if locks := staleGitTransactionLocks(filepath.Join(r.bus.checkout, ".git")); len(locks) > 0 {
 		if !strings.Contains(staged, "group-gone=true") {
-			t.Fatalf("a process may still own Git transaction locks, so the named repair is not available: %s", staged)
+			require.Containsf(t, staged, "group-gone=true", "a process may still own Git transaction locks, so the named repair is not available: %s", staged)
 		}
 		removed := removeStaleGitTransactionLocks(t, filepath.Join(r.bus.checkout, ".git"))
 		t.Logf("%s (attempt %d): the killed git left stale transaction locks %v; with the whole process group verified gone, the test performed the operator's named repair before retrying", boundary, attempt, removed)
@@ -561,19 +564,19 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 	clearWrapper(t)
 	code, out, errs = r.send(t, r.bin)
 	if code != 0 {
-		t.Fatalf("recovery failed: %d\n%s\n%s\nstaged: %s\nwhat the kill left: %s\nlocks: %v\nthe bus, asked directly: %s\n%s",
+		require.EqualValuesf(t, 0, code, "recovery failed: %d\n%s\n%s\nstaged: %s\nwhat the kill left: %s\nlocks: %v\nthe bus, asked directly: %s\n%s",
 			code, out, errs, staged, leftover, r.locks(), r.busAskedDirectly(t), r.checkoutState(t))
 	}
 	if got := r.deliveredID(t); got != id {
-		t.Fatalf("recovery delivered %q, not the retained %q", got, id)
+		require.EqualValuesf(t, id, got, "recovery delivered %q, not the retained %q", got, id)
 	}
 	r.bus.exactlyOneContribution(t, id)
 	before := git(t, r.bus.bare, "rev-parse", "main")
 	if code, out, errs = r.send(t, r.bin); code != 0 || !strings.Contains(out, "nothing sent") {
-		t.Fatalf("the recovered report did not settle: %d\n%s\n%s", code, out, errs)
+		require.Failf(t, "", "the recovered report did not settle: %d\n%s\n%s", code, out, errs)
 	}
 	if after := git(t, r.bus.bare, "rev-parse", "main"); after != before {
-		t.Fatal("a settled report moved the remote again")
+		require.EqualValues(t, before, after, "a settled report moved the remote again")
 	}
 	t.Logf("%s (attempt %d): live kill and recovery proven: %s", boundary, attempt, staged)
 	return true
@@ -587,13 +590,13 @@ func (r reporter) leftInTheLane(t *testing.T) string {
 	t.Helper()
 	st, err := readSnapshot(r.snapshot)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var want string
 	for _, p := range st.Pending {
 		var a struct{ Note, Path string }
 		if err := json.Unmarshal(p.Artifact, &a); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		want = a.Note
 		full := filepath.Join(r.bus.checkout, filepath.FromSlash(a.Path))
@@ -602,7 +605,7 @@ func (r reporter) leftInTheLane(t *testing.T) string {
 			return "no note at the prepared path"
 		}
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		got := string(b)
 		switch {
@@ -615,81 +618,6 @@ func (r reporter) leftInTheLane(t *testing.T) string {
 		}
 	}
 	return "nothing pending"
-}
-
-// staleGitTransactionLocks names only the Git transaction locks this test can
-// leave behind. In particular, next-index-* is Git's temporary replacement
-// index; this list is intentionally narrower than a wildcard lock cleanup.
-func staleGitTransactionLocks(gitDir string) []string {
-	var found []string
-	for _, pattern := range []string{"index.lock", "HEAD.lock", "next-index-*.lock", "refs/heads/*.lock", "logs/HEAD.lock", "logs/refs/heads/*.lock"} {
-		matches, _ := filepath.Glob(filepath.Join(gitDir, pattern))
-		found = append(found, matches...)
-	}
-	sort.Strings(found)
-	return found
-}
-
-// removeStaleGitTransactionLocks performs the named operator repair for the
-// disposable checkout used by these tests. Callers must establish that the
-// killed process group is gone before invoking it.
-func removeStaleGitTransactionLocks(t *testing.T, gitDir string) []string {
-	t.Helper()
-	var removed []string
-	for _, lock := range staleGitTransactionLocks(gitDir) {
-		if err := os.Remove(lock); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			t.Fatal(err)
-		}
-		removed = append(removed, lock)
-	}
-	return removed
-}
-
-func TestRemoveStaleGitTransactionLocksNamesOnly(t *testing.T) {
-	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-
-	gitDir := filepath.Join(t.TempDir(), ".git")
-	for _, dir := range []string{gitDir, filepath.Join(gitDir, "refs", "heads"), filepath.Join(gitDir, "logs", "refs", "heads")} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, name := range []string{
-		"HEAD.lock", "index.lock", "next-index-11397.lock",
-		"refs/heads/main.lock", "logs/HEAD.lock", "logs/refs/heads/main.lock",
-		"config.lock", "next-index.lock",
-	} {
-		if err := os.WriteFile(filepath.Join(gitDir, filepath.FromSlash(name)), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	removed := removeStaleGitTransactionLocks(t, gitDir)
-	var names []string
-	for _, path := range removed {
-		rel, err := filepath.Rel(gitDir, path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		names = append(names, filepath.ToSlash(rel))
-	}
-	sort.Strings(names)
-	want := []string{"HEAD.lock", "index.lock", "logs/HEAD.lock", "logs/refs/heads/main.lock", "next-index-11397.lock", "refs/heads/main.lock"}
-	if strings.Join(names, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("removed %v, want %v", names, want)
-	}
-	for _, name := range []string{"config.lock", "next-index.lock"} {
-		if _, err := os.Stat(filepath.Join(gitDir, name)); err != nil {
-			t.Fatalf("cleanup removed unrelated lock %s: %v", name, err)
-		}
-	}
 }
 
 // locks names any lock file a killed process could have left behind, because a
@@ -731,7 +659,7 @@ func (r reporter) removeStaleIndexLock(t *testing.T) bool {
 		return false
 	}
 	if err := os.Remove(lock); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return true
 }
@@ -747,7 +675,7 @@ func (r reporter) removeStaleBusLock(t *testing.T) bool {
 		return false
 	}
 	if err := os.Remove(lock); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
+		require.Fail(t, fmt.Sprintln(err))
 	}
 	return true
 }
@@ -796,7 +724,7 @@ func (r reporter) indexShape(t *testing.T) string {
 		return "no lane INDEX"
 	}
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	text := string(b)
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
@@ -838,10 +766,10 @@ func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached f
 	c.Stdout, c.Stderr = io.Discard, io.Discard
 	setGroup(c)
 	if err := c.Start(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if err := assignGroup(c); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	done := make(chan struct{})
 	go func() { _ = c.Wait(); close(done) }()
@@ -862,7 +790,7 @@ func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached f
 		time.Sleep(time.Millisecond)
 	}
 	if !observed {
-		t.Fatalf("%s was never observed", what)
+		require.Failf(t, "", "%s was never observed", what)
 	}
 	// THE KILL AND THE OBSERVATION ARE NOT ONE INSTANT. `reached()` spawns a git
 	// to answer, and the reporter can finish inside that answer -- so the signal
@@ -874,7 +802,7 @@ func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached f
 		select {
 		case <-done:
 		case <-time.After(30 * time.Second):
-			t.Fatalf("the reporter could not be killed and did not finish either: %v", err)
+			require.Failf(t, "", "the reporter could not be killed and did not finish either: %v", err)
 		}
 		return false
 	}
@@ -888,7 +816,7 @@ func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached f
 		time.Sleep(5 * time.Millisecond)
 	}
 	if !gone {
-		t.Fatalf("the reporter process group was not confirmed empty after kill")
+		require.Failf(t, "", "the reporter process group was not confirmed empty after kill")
 	}
 	return true
 }
@@ -929,14 +857,14 @@ func (r reporter) stagedPendingID(t *testing.T) (string, bool) {
 	t.Helper()
 	s, err := readSnapshot(r.snapshot)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if len(s.Pending) != 1 || len(s.Delivered) != 0 {
 		return "", false
 	}
 	for _, p := range s.Pending {
 		if p.ID == "" {
-			t.Fatal("pending report retained no identity")
+			require.NotEqualValues(t, "", p.ID, "pending report retained no identity")
 		}
 		return p.ID, true
 	}
@@ -997,10 +925,10 @@ func reporterDeathWithPendingSaved(t *testing.T, attempt int) bool {
 	r.repairAfterStagedDeath(t, attempt)
 	code, out, errs := r.send(t, r.bin)
 	if code != 0 {
-		t.Fatalf("the report did not finish: %d\n%s\n%s", code, out, errs)
+		require.EqualValuesf(t, 0, code, "the report did not finish: %d\n%s\n%s", code, out, errs)
 	}
 	if got := r.deliveredID(t); got != id {
-		t.Fatalf("a new identity was prepared: %q, not the saved %q", got, id)
+		require.EqualValuesf(t, id, got, "a new identity was prepared: %q, not the saved %q", got, id)
 	}
 	r.bus.exactlyOneContribution(t, id)
 	t.Logf("reporter death with pending saved verified on attempt %d: finished report for %s", attempt, id)
@@ -1018,7 +946,7 @@ func reporterDeathAfterRemoteConfirmation(t *testing.T, attempt int) bool {
 	}
 	notes, _ := r.bus.published(t)
 	if len(notes) != 1 {
-		t.Fatalf("want the one published note, got %v", notes)
+		require.Lenf(t, notes, 1, "want the one published note, got %v", notes)
 	}
 	id, staged := r.stagedPendingID(t)
 	if !staged {
@@ -1029,17 +957,17 @@ func reporterDeathAfterRemoteConfirmation(t *testing.T, attempt int) bool {
 	head := git(t, r.bus.bare, "rev-parse", "main")
 	code, out, errs := r.send(t, r.bin)
 	if code != 0 {
-		t.Fatalf("recovery failed: %d\n%s\n%s", code, out, errs)
+		require.EqualValuesf(t, 0, code, "recovery failed: %d\n%s\n%s", code, out, errs)
 	}
 	if got := r.deliveredID(t); got != id {
-		t.Fatalf("recovery confirmed %q, not the pending %q", got, id)
+		require.EqualValuesf(t, id, got, "recovery confirmed %q, not the pending %q", got, id)
 	}
 	r.bus.exactlyOneContribution(t, id)
 	if after := git(t, r.bus.bare, "rev-parse", "main"); after != head {
-		t.Fatalf("recovery published a second time: %s became %s", head, after)
+		require.EqualValuesf(t, head, after, "recovery published a second time: %s became %s", head, after)
 	}
 	if !strings.Contains(out, "already-published") {
-		t.Fatalf("recovery did not recognise the note it had already published: %s", out)
+		require.Containsf(t, out, "already-published", "recovery did not recognise the note it had already published: %s", out)
 	}
 	t.Logf("reporter death after remote confirmation verified on attempt %d: recovered single note %s without republishing", attempt, id)
 	return true
@@ -1064,39 +992,39 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 	// 1. Establish existing contribution and prior INDEX prefix
 	code, out, errs := r.send(t, r.bin)
 	if code != 0 {
-		t.Fatalf("initial report failed: %d\n%s\n%s", code, out, errs)
+		require.EqualValuesf(t, 0, code, "initial report failed: %d\n%s\n%s", code, out, errs)
 	}
 	priorNotes, priorIndexRows := r.bus.published(t)
 	if len(priorNotes) != 1 || len(priorIndexRows) != 1 {
-		t.Fatalf("want 1 prior note and 1 INDEX row, got notes=%v index=%v", priorNotes, priorIndexRows)
+		require.Failf(t, "", "want 1 prior note and 1 INDEX row, got notes=%v index=%v", priorNotes, priorIndexRows)
 	}
 	priorIndexContent := r.bus.noteBytes(t, r.bus.lane+"/INDEX")
 
 	// 2. Prepare next report for version v1.1.0
 	if err := os.WriteFile(r.manifest, []byte(Header+"\n"+row("x", "tool", printer(t, "v1.1.0"), "npm:unused", "none")+"\n"), 0600); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 
 	// 3. Phase 1: Interrupt during real prepared send (at killBeforeNote)
 	wrap1, record1 := r.wrapperOnPath(t, killBeforeNote)
 	code, out, errs = r.send(t, wrap1)
 	if code != 1 || !strings.Contains(errs+out, "sent=uncertain") {
-		t.Fatalf("phase 1 interruption was not reported as uncertain: %d\n%s\n%s", code, out, errs)
+		require.Failf(t, "", "phase 1 interruption was not reported as uncertain: %d\n%s\n%s", code, out, errs)
 	}
 	b1, err := os.ReadFile(record1)
 	if err != nil {
-		t.Fatalf("phase 1 wrapper left no record: %v", err)
+		require.NoErrorf(t, err, "phase 1 wrapper left no record: %v", err)
 	}
 	r1 := parseStageRecord(string(b1))
 	if !r1.observed {
-		t.Fatalf("phase 1 boundary was never observed: %s", string(b1))
+		require.Failf(t, "", "phase 1 boundary was never observed: %s", string(b1))
 	}
 	if !r1.killedAlive {
 		t.Logf("phase 1 kill missed live child on attempt %d: %s", attempt, string(b1))
 		return false
 	}
 	if !r1.groupGone {
-		t.Fatalf("phase 1 process tree failed to quiesce: %s", string(b1))
+		require.Failf(t, "", "phase 1 process tree failed to quiesce: %s", string(b1))
 	}
 	t.Logf("phase 1 staged live death verified (attempt %d): %s", attempt, strings.TrimSpace(string(b1)))
 
@@ -1105,7 +1033,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 	// Verify local INDEX invariant before phase 2: pending ID MUST be absent
 	localIndex1, err := os.ReadFile(filepath.Join(r.bus.checkout, r.bus.lane, "INDEX"))
 	if err != nil {
-		t.Fatalf("could not read local INDEX: %v", err)
+		require.NoErrorf(t, err, "could not read local INDEX: %v", err)
 	}
 	if bytes.Contains(localIndex1, []byte(id)) {
 		t.Logf("phase 1 raced past note creation to INDEX append before death; retrying: %s", string(localIndex1))
@@ -1126,7 +1054,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 
 	// Verify remote still has only the 1 prior note and 1 index row
 	if midNotes, midRows := r.bus.published(t); len(midNotes) != 1 || len(midRows) != 1 {
-		t.Fatalf("phase 1 prematurely published to remote: notes=%v index=%v", midNotes, midRows)
+		require.Failf(t, "", "phase 1 prematurely published to remote: notes=%v index=%v", midNotes, midRows)
 	}
 
 	// 4. Phase 2: Interrupt production recovery append before confirmation (at killAfterIndex)
@@ -1135,32 +1063,32 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 	wrap2, record2 := r.wrapperOnPath(t, killAfterIndex)
 	code, out, errs = r.send(t, wrap2)
 	if code != 1 || !strings.Contains(errs+out, "sent=uncertain") {
-		t.Fatalf("phase 2 interruption was not reported as uncertain: %d\n%s\n%s", code, out, errs)
+		require.Failf(t, "", "phase 2 interruption was not reported as uncertain: %d\n%s\n%s", code, out, errs)
 	}
 	b2, err := os.ReadFile(record2)
 	if err != nil {
-		t.Fatalf("phase 2 wrapper left no record: %v", err)
+		require.NoErrorf(t, err, "phase 2 wrapper left no record: %v", err)
 	}
 	r2 := parseStageRecord(string(b2))
 	if !r2.observed {
-		t.Fatalf("phase 2 boundary was never observed: %s", string(b2))
+		require.Failf(t, "", "phase 2 boundary was never observed: %s", string(b2))
 	}
 	if !r2.killedAlive {
 		t.Logf("phase 2 kill missed live child on attempt %d: %s", attempt, string(b2))
 		return false
 	}
 	if !r2.groupGone {
-		t.Fatalf("phase 2 process tree failed to quiesce: %s", string(b2))
+		require.Failf(t, "", "phase 2 process tree failed to quiesce: %s", string(b2))
 	}
 	t.Logf("phase 2 staged live death verified (attempt %d): %s", attempt, strings.TrimSpace(string(b2)))
 
 	// Verify local INDEX now contains the newly appended id
 	localIndex2, err := os.ReadFile(filepath.Join(r.bus.checkout, r.bus.lane, "INDEX"))
 	if err != nil {
-		t.Fatalf("could not read local INDEX after phase 2: %v", err)
+		require.NoErrorf(t, err, "could not read local INDEX after phase 2: %v", err)
 	}
 	if !bytes.Contains(localIndex2, []byte(id)) {
-		t.Fatalf("phase 2 was expected to append id %q to local INDEX before kill, but INDEX does not contain it:\n%s", id, string(localIndex2))
+		require.Failf(t, "", "phase 2 was expected to append id %q to local INDEX before kill, but INDEX does not contain it:\n%s", id, string(localIndex2))
 	}
 
 	// Operator lock cleanup: only after confirmed group quiescence (groupGone=true above)
@@ -1173,30 +1101,30 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 
 	// Remote still has only 1 note and 1 index row (kill landed before push to remote)
 	if mid2Notes, mid2Rows := r.bus.published(t); len(mid2Notes) != 1 || len(mid2Rows) != 1 {
-		t.Fatalf("phase 2 prematurely published to remote: notes=%v index=%v", mid2Notes, mid2Rows)
+		require.Failf(t, "", "phase 2 prematurely published to remote: notes=%v index=%v", mid2Notes, mid2Rows)
 	}
 
 	// 5. Phase 3: Final retry runs to completion with real binary
 	clearWrapper(t)
 	code, out, errs = r.send(t, r.bin)
 	if code != 0 {
-		t.Fatalf("phase 3 final recovery failed: %d\n%s\n%s", code, out, errs)
+		require.EqualValuesf(t, 0, code, "phase 3 final recovery failed: %d\n%s\n%s", code, out, errs)
 	}
 	if got := r.deliveredID(t); got != id {
-		t.Fatalf("phase 3 delivered ID %q, want retained %q", got, id)
+		require.EqualValuesf(t, id, got, "phase 3 delivered ID %q, want retained %q", got, id)
 	}
 
 	// 6. Verification: prior INDEX prefix is byte-identical, exactly 2 contributions exist
 	finalNotes, finalIndexRows := r.bus.published(t)
 	if len(finalNotes) != 2 || len(finalIndexRows) != 2 {
-		t.Fatalf("want exactly 2 notes and 2 INDEX rows, got notes=%v index=%v", finalNotes, finalIndexRows)
+		require.Failf(t, "", "want exactly 2 notes and 2 INDEX rows, got notes=%v index=%v", finalNotes, finalIndexRows)
 	}
 	finalIndexContent := r.bus.noteBytes(t, r.bus.lane+"/INDEX")
 	if !strings.HasPrefix(finalIndexContent, priorIndexContent) {
-		t.Fatalf("prior INDEX prefix was corrupted!\nPrior:\n%q\nFinal:\n%q", priorIndexContent, finalIndexContent)
+		require.Failf(t, "", "prior INDEX prefix was corrupted!\nPrior:\n%q\nFinal:\n%q", priorIndexContent, finalIndexContent)
 	}
 	if !strings.Contains(finalIndexRows[1], id) {
-		t.Fatalf("second INDEX row does not name id %q: %s", id, finalIndexRows[1])
+		require.Failf(t, "", "second INDEX row does not name id %q: %s", id, finalIndexRows[1])
 	}
 	t.Logf("two-phase recovery verified: prior prefix byte-identical, exactly 2 contributions published (id=%s)", id)
 	return true
@@ -1228,4 +1156,9 @@ func (r reporter) checkoutState(t *testing.T) string {
 	}
 	fmt.Fprintf(&b, ".git holds: %s\n", strings.Join(names, " "))
 	return b.String()
+}
+
+func init() {
+	joinMain = joinWrapper
+	joinCleanup = removeJoinBinaries
 }

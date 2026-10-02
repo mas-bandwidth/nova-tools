@@ -4,12 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	tassert "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func names(steps []Step) []string {
@@ -34,22 +35,20 @@ func TestTableStepsPlanEachMode(t *testing.T) {
 	}
 	for mode, want := range tests {
 		steps, err := TableSteps(mode)
-		if err != nil || !reflect.DeepEqual(names(steps), want) {
-			t.Errorf("%s: %v, %v; want %v", mode, names(steps), err, want)
-		}
+		tassert.NoError(t, err, "%s: %v, %v; want %v", mode, names(steps), err, want)
+		tassert.Equal(t, want, names(steps), "%s: %v, %v; want %v", mode, names(steps), err, want)
 	}
-	if _, err := TableSteps("everything"); err == nil {
-		t.Error("an unknown mode was planned")
-	}
+	_, err := TableSteps("everything")
+	tassert.Error(t, err, "an unknown mode was planned")
 }
 
 func TestStrictModeExpectsTheFindingsToPassAndTheOthersExpectThemToFail(t *testing.T) {
 	t.Parallel()
 	strict, _ := TableSteps("strict")
 	for _, s := range strict {
-		if s.Kind != "pass" || s.Met != VerdictPass || s.Workers != 1 {
-			t.Errorf("strict %s = %+v", s.Name, s)
-		}
+		tassert.Equal(t, "pass", s.Kind, "strict %s = %+v", s.Name, s)
+		tassert.Equal(t, VerdictPass, s.Met, "strict %s = %+v", s.Name, s)
+		tassert.Equal(t, 1, s.Workers, "strict %s = %+v", s.Name, s)
 	}
 	witnesses, _ := TableSteps("witnesses")
 	want := map[string]string{
@@ -57,19 +56,18 @@ func TestStrictModeExpectsTheFindingsToPassAndTheOthersExpectThemToFail(t *testi
 		"MCTableBoundAlias": "CellWritesPreserveBoundSets", "MCTableDropAlias": "DropPreservesBound",
 	}
 	for _, s := range witnesses {
-		if s.Kind != "invariant" || s.Property != want[s.Name] || s.Met != VerdictExpectedCounterexample {
-			t.Errorf("witness %s = %+v", s.Name, s)
-		}
+		tassert.Equal(t, "invariant", s.Kind, "witness %s = %+v", s.Name, s)
+		tassert.Equal(t, want[s.Name], s.Property, "witness %s = %+v", s.Name, s)
+		tassert.Equal(t, VerdictExpectedCounterexample, s.Met, "witness %s = %+v", s.Name, s)
 	}
 	all, _ := TableSteps("all")
 	first, last := all[0], all[len(all)-1]
-	if first.Workers != 2 || first.Kind != "pass" || last.Met != VerdictExpectedScopeControl || last.Property != "OneTablePerMember" {
-		t.Errorf("first = %+v, last = %+v", first, last)
-	}
+	tassert.Equal(t, 2, first.Workers, "first = %+v, last = %+v", first, last)
+	tassert.Equal(t, "pass", first.Kind, "first = %+v, last = %+v", first, last)
+	tassert.Equal(t, VerdictExpectedScopeControl, last.Met, "first = %+v, last = %+v", first, last)
+	tassert.Equal(t, "OneTablePerMember", last.Property, "first = %+v, last = %+v", first, last)
 	for _, s := range all {
-		if s.Module != "MCTableMachine.tla" {
-			t.Errorf("%s runs in %s", s.Name, s.Module)
-		}
+		tassert.Equal(t, "MCTableMachine.tla", s.Module, "%s runs in %s", s.Name, s.Module)
 	}
 }
 
@@ -86,35 +84,33 @@ func TestMemberStepsPlanEachSuite(t *testing.T) {
 	}
 	for suite, want := range tests {
 		steps, err := MemberSteps(suite, 4)
-		if err != nil || !reflect.DeepEqual(names(steps), want) {
-			t.Errorf("%s: %v, %v; want %v", suite, names(steps), err, want)
-		}
+		tassert.NoError(t, err, "%s: %v, %v; want %v", suite, names(steps), err, want)
+		tassert.Equal(t, want, names(steps), "%s: %v, %v; want %v", suite, names(steps), err, want)
 	}
 	steps, _ := MemberSteps("all", 3)
 	for _, s := range steps {
-		positive := s.Kind == "pass"
-		if positive && (s.Workers != 3 || s.Met != VerdictPass) || !positive && (s.Workers != 1 || s.Met != VerdictExpectedMutationFailure) {
-			t.Errorf("%s = %+v", s.Name, s)
+		if s.Kind == "pass" {
+			tassert.Equal(t, 3, s.Workers, "%s = %+v", s.Name, s)
+			tassert.Equal(t, VerdictPass, s.Met, "%s = %+v", s.Name, s)
+		} else {
+			tassert.Equal(t, 1, s.Workers, "%s = %+v", s.Name, s)
+			tassert.Equal(t, VerdictExpectedMutationFailure, s.Met, "%s = %+v", s.Name, s)
 		}
 	}
 	last := steps[len(steps)-1]
-	if last.Kind != "action" || last.Property != "StaleWritesRefuse" || last.Module != "MCEpochMemberTable.tla" {
-		t.Errorf("last = %+v", last)
-	}
-	if _, err := MemberSteps("nothing", 4); err == nil {
-		t.Error("an unknown suite was planned")
-	}
-	if _, err := MemberSteps("all", 0); err == nil {
-		t.Error("zero workers were planned")
-	}
+	tassert.Equal(t, "action", last.Kind, "last = %+v", last)
+	tassert.Equal(t, "StaleWritesRefuse", last.Property, "last = %+v", last)
+	tassert.Equal(t, "MCEpochMemberTable.tla", last.Module, "last = %+v", last)
+	_, err := MemberSteps("nothing", 4)
+	tassert.Error(t, err, "an unknown suite was planned")
+	_, err = MemberSteps("all", 0)
+	tassert.Error(t, err, "zero workers were planned")
 }
 
 func tlcLog(t *testing.T, name string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", "tlc", name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(raw)
 }
 
@@ -123,9 +119,8 @@ func models(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	for name, text := range map[string]string{"MCTableMachine.tla": "model\n", "MCTableOnePlace.cfg": "cfg\n", "notes.md": "not a model\n"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644)
+		require.NoError(t, err)
 	}
 	return dir
 }
@@ -138,9 +133,8 @@ func scripted(t *testing.T, answers map[string]struct {
 	return func(ctx context.Context, r tlc.Run, log string) int {
 		*seen = append(*seen, r)
 		a := answers[strings.TrimSuffix(r.Config, ".cfg")]
-		if err := os.WriteFile(log, []byte(a.log), 0o644); err != nil {
-			t.Error(err)
-		}
+		err := os.WriteFile(log, []byte(a.log), 0o644)
+		tassert.NoError(t, err)
 		return a.code
 	}
 }
@@ -167,37 +161,30 @@ func TestRunStepsHoldsEachStepToItsExpectation(t *testing.T) {
 	var reported []StepResult
 	results, err := RunSteps(steps, StepOptions{Jar: "/j.jar", Java: "java", Models: src, Dir: dir, Budget: time.Minute, Exec: exec,
 		OnStep: func(r StepResult) { reported = append(reported, r) }})
-	if err != nil || len(results) != 3 || len(reported) != 3 {
-		t.Fatalf("results = %v, %v", results, err)
-	}
+	require.NoError(t, err, "results = %v, %v", results, err)
+	require.Len(t, results, 3, "results = %v, %v", results, err)
+	require.Len(t, reported, 3, "results = %v, %v", results, err)
 	for i, want := range []string{VerdictPass, VerdictExpectedCounterexample, VerdictExpectedMutationFailure} {
-		if results[i].Verdict != want || !results[i].OK {
-			t.Errorf("step %d verdict = %s ok=%v, want %s", i, results[i].Verdict, results[i].OK, want)
-		}
+		tassert.Equal(t, want, results[i].Verdict, "step %d verdict = %s ok=%v, want %s", i, results[i].Verdict, results[i].OK, want)
+		tassert.True(t, results[i].OK, "step %d verdict = %s ok=%v, want %s", i, results[i].Verdict, results[i].OK, want)
 	}
-	if results[0].Outcome.Generated != "15518" || results[1].Outcome.Distinct != "3" {
-		t.Errorf("outcomes = %+v, %+v", results[0].Outcome, results[1].Outcome)
-	}
+	tassert.Equal(t, "15518", results[0].Outcome.Generated, "outcomes = %+v, %+v", results[0].Outcome, results[1].Outcome)
+	tassert.Equal(t, "3", results[1].Outcome.Distinct, "outcomes = %+v, %+v", results[0].Outcome, results[1].Outcome)
 	// Two workers for the positive case, one for a control; the private copy of
 	// the models holds the modules and configurations and nothing else.
-	if seen[0].Workers != 2 || seen[1].Workers != 1 || seen[0].LnCheckFinal || seen[0].NoDeadlock {
-		t.Errorf("runs = %+v", seen)
-	}
-	if !reflect.DeepEqual(seen[0].JVM, []string{"-XX:+UseParallelGC", "-Xmx2g"}) || seen[0].Config != "MCTableFixedPoint.cfg" {
-		t.Errorf("run = %+v", seen[0])
-	}
-	if seen[0].Dir != filepath.Join(dir, "work") {
-		t.Errorf("TLC ran in %s", seen[0].Dir)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "work", "MCTableMachine.tla")); err != nil {
-		t.Error("the model was not copied")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "work", "notes.md")); err == nil {
-		t.Error("a file that is not a model was copied")
-	}
-	if _, err := os.Stat(seen[0].TmpDir); err == nil {
-		t.Error("a temporary directory was left behind")
-	}
+	tassert.Equal(t, 2, seen[0].Workers, "runs = %+v", seen)
+	tassert.Equal(t, 1, seen[1].Workers, "runs = %+v", seen)
+	tassert.False(t, seen[0].LnCheckFinal, "runs = %+v", seen)
+	tassert.False(t, seen[0].NoDeadlock, "runs = %+v", seen)
+	tassert.Equal(t, []string{"-XX:+UseParallelGC", "-Xmx2g"}, seen[0].JVM, "run = %+v", seen[0])
+	tassert.Equal(t, "MCTableFixedPoint.cfg", seen[0].Config, "run = %+v", seen[0])
+	tassert.Equal(t, filepath.Join(dir, "work"), seen[0].Dir, "TLC ran in %s", seen[0].Dir)
+	_, err = os.Stat(filepath.Join(dir, "work", "MCTableMachine.tla"))
+	tassert.NoError(t, err, "the model was not copied")
+	_, err = os.Stat(filepath.Join(dir, "work", "notes.md"))
+	tassert.Error(t, err, "a file that is not a model was copied")
+	_, err = os.Stat(seen[0].TmpDir)
+	tassert.Error(t, err, "a temporary directory was left behind")
 }
 
 func TestRunStepsStopsAtTheFirstStepThatIsNotAsExpected(t *testing.T) {
@@ -207,12 +194,13 @@ func TestRunStepsStopsAtTheFirstStepThatIsNotAsExpected(t *testing.T) {
 	// The model is expected to pass; TLC found a violation.
 	exec := scripted(t, map[string]answer{"MCTableMachine": {12, tlcLog(t, "invariant.log")}}, &seen)
 	results, err := RunSteps(steps, StepOptions{Jar: "j", Java: "java", Models: models(t), Dir: t.TempDir(), Budget: time.Minute, Exec: exec})
-	if err != nil || len(results) != 1 || len(seen) != 1 {
-		t.Fatalf("results = %d, ran = %d, %v", len(results), len(seen), err)
-	}
-	if r := results[0]; r.OK || r.Verdict != VerdictFail || r.Code != 12 {
-		t.Fatalf("result = %+v", r)
-	}
+	require.NoError(t, err, "results = %d, ran = %d, %v", len(results), len(seen), err)
+	require.Len(t, results, 1, "results = %d, ran = %d, %v", len(results), len(seen), err)
+	require.Len(t, seen, 1, "results = %d, ran = %d, %v", len(results), len(seen), err)
+	r := results[0]
+	require.False(t, r.OK, "result = %+v", r)
+	require.Equal(t, VerdictFail, r.Verdict, "result = %+v", r)
+	require.Equal(t, 12, r.Code, "result = %+v", r)
 }
 
 func TestRunStepsCallsATimeoutATimeoutAndNeverAResult(t *testing.T) {
@@ -222,17 +210,16 @@ func TestRunStepsCallsATimeoutATimeoutAndNeverAResult(t *testing.T) {
 	exec := scripted(t, map[string]answer{"MCTableMachine": {tlc.ExitTimeout, "TLC suite budget exhausted during this case\n"}}, &seen)
 	// A budget already over: the context is done when the step ends.
 	results, err := RunSteps(steps, StepOptions{Jar: "j", Java: "java", Models: models(t), Dir: t.TempDir(), Budget: -time.Second, Exec: exec})
-	if err != nil || len(results) != 1 {
-		t.Fatalf("results = %v, %v", results, err)
-	}
-	if r := results[0]; r.OK || r.Verdict != VerdictTimeout {
-		t.Fatalf("result = %+v", r)
-	}
+	require.NoError(t, err, "results = %v, %v", results, err)
+	require.Len(t, results, 1, "results = %v, %v", results, err)
+	r := results[0]
+	require.False(t, r.OK, "result = %+v", r)
+	require.Equal(t, VerdictTimeout, r.Verdict, "result = %+v", r)
 	// The same exit inside the budget is a failure of the case, not a timeout.
 	results, _ = RunSteps(steps, StepOptions{Jar: "j", Java: "java", Models: models(t), Dir: t.TempDir(), Budget: time.Hour, Exec: exec})
-	if r := results[0]; r.OK || r.Verdict != VerdictFail {
-		t.Fatalf("result = %+v", r)
-	}
+	r = results[0]
+	require.False(t, r.OK, "result = %+v", r)
+	require.Equal(t, VerdictFail, r.Verdict, "result = %+v", r)
 }
 
 func TestRunStepsRefusesWhatAControlGetsWrong(t *testing.T) {
@@ -251,8 +238,10 @@ func TestRunStepsRefusesWhatAControlGetsWrong(t *testing.T) {
 		var seen []tlc.Run
 		exec := scripted(t, map[string]answer{"MCTableOnePlace": a}, &seen)
 		results, err := RunSteps([]Step{step}, StepOptions{Jar: "j", Java: "java", Models: models(t), Dir: t.TempDir(), Budget: time.Hour, Exec: exec})
-		if err != nil || len(results) != 1 || results[0].OK || !strings.Contains(results[0].Verdict, "fail") {
-			t.Errorf("%s: %+v, %v", name, results, err)
+		tassert.NoError(t, err, "%s: %+v, %v", name, results, err)
+		if tassert.Len(t, results, 1, "%s: %+v, %v", name, results, err) {
+			tassert.False(t, results[0].OK, "%s: %+v, %v", name, results, err)
+			tassert.Contains(t, results[0].Verdict, "fail", "%s: %+v, %v", name, results, err)
 		}
 	}
 }

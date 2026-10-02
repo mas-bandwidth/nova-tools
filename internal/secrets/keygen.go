@@ -41,17 +41,8 @@ func keygenLines(asName, keyPath, pubKey, recoveryKey string, placeholder bool) 
 // RunKeygen generates a new age private key and formats the .sops.yaml rule block.
 // It returns the receipt as ordered lines; the caller prints them in that order.
 func RunKeygen(asName, keyPath, ageKeygenPath, storeDir string) (lines []string, err error) {
-	if asName == "" {
-		return nil, fmt.Errorf("missing --as <name>")
-	}
-	if !IsValidAsName(asName) {
-		return nil, fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
-	}
-	if keyPath == "" {
-		return nil, fmt.Errorf("missing --key <path>")
-	}
-	if ageKeygenPath == "" {
-		return nil, fmt.Errorf("missing --age-keygen <path>")
+	if err := preflight(storeDir, need{asName, "--as <name>", true}, need{keyPath, "--key <path>", false}, need{ageKeygenPath, "--age-keygen <path>", false}); err != nil {
+		return nil, err
 	}
 
 	// 1. Directory and file existence checks
@@ -80,20 +71,7 @@ func RunKeygen(asName, keyPath, ageKeygenPath, storeDir string) (lines []string,
 	recoveryKey := "<recovery key>"
 	placeholder := true
 	if storeDir != "" {
-		sFi, err := os.Stat(storeDir)
-		if err != nil || !sFi.IsDir() {
-			return nil, fmt.Errorf("store %s is not a directory", storeDir)
-		}
-		gitDir := filepath.Join(storeDir, ".git")
-		gFi, err := os.Stat(gitDir)
-		if err != nil || !gFi.IsDir() {
-			return nil, fmt.Errorf("store %s is not a git repository", storeDir)
-		}
-		sopsPath := filepath.Join(storeDir, ".sops.yaml")
-		if _, err := os.Stat(sopsPath); err != nil {
-			return nil, fmt.Errorf("store %s carries no .sops.yaml", storeDir)
-		}
-
+		// The store's shape was checked with the flags.
 		recKey, err := ReadRecoveryPub(storeDir)
 		if err != nil {
 			return nil, fmt.Errorf("store %s: %w", storeDir, err)

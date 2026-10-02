@@ -35,10 +35,9 @@ nova_secrets_store: "{{ nova_home }}/nova-bench/secrets"
 nova_secrets_key_dir: "{{ nova_home }}/.config/nova-secrets"
 nova_sops_candidates: ["{{ nova_home }}/.local/bin/sops", /opt/homebrew/bin/sops, /usr/local/bin/sops]
 
-# The store: the fleet row's store machine (all.vars nova_store) on this port
-# (a fleet whose Redis listens elsewhere sets it in group_vars/benches.yml).
-nova_redis_port: 6379
-nova_redis_addr: "{{ nova_store | default('') }}:{{ nova_redis_port }}"
+# The store endpoint comes from the applied fleet row as host variables
+# nova_redis_port and nova_redis_addr. Host scope keeps this file's defaults
+# from replacing a declared nonstandard port.
 # Who loads the function library (fn load) and who writes the ACL (acl
 # apply), and the names of the secrets that hold their passwords in the
 # store_deployer machine's seat.
@@ -54,15 +53,18 @@ nova_redis_user_password_keys:
   bench: NOVA_REDIS_BENCH_PASSWORD
 
 # The configuration store tools.yml migrates before anything reads a kind the
-# build adds: Postgres on the fleet row's store machine, as this user, its
-# password the secret of this name in the store_deployer machine's seat.
-nova_pg_dsn: "postgres://nova_config@{{ nova_store | default('') }}:5432/nova"
+# build adds. Its explicit password-free nova_pg_dsn comes from the applied
+# fleet row; its password is the secret of this name in the store_deployer
+# machine's seat.
 nova_pg_password_key: NOVA_PG_CONFIG_PASSWORD
 
 # The build tools.yml installs: nova_version (required, -e) built from the
 # nova-tools checkout nova_source on the machine that runs the play, under
 # nova_release_out. nova_release_gate_args is passed to the build as is, for
-# its definition-of-done gate (--cli <file> --receipts <dir>).
+# its definition-of-done gate: the checkout's command reference and the dogfood
+# receipts in nova_dogfood_receipts (required, -e: the build guesses no
+# receipts directory, SPEC-RELEASE rule 12). A waiver replaces the list whole:
+#   -e '{"nova_release_gate_args": ["--no-dogfood-gate", "--reason", "<why>"]}'
 nova_release_out: "{{ lookup('env', 'HOME') }}/nova-bench/release-build"
 nova_release_gocache: "{{ lookup('env', 'HOME') }}/nova-bench/release-gocache"
-nova_release_gate_args: []
+nova_release_gate_args: ["--cli", "{{ nova_source }}/docs/CLI.md", "--receipts", "{{ nova_dogfood_receipts }}"]

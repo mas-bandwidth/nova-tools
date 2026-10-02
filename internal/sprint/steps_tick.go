@@ -2,6 +2,8 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -221,8 +223,25 @@ var TickTables = []TableUpdate{
 	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {"deal", TickDeal}, {"accept", TickAccept}}},
 	{Readers, []TickPartDef{{"ask", TickAsk}}},
 	{Merge, []TickPartDef{{"resume", TickResume}}},
-	{Fleet, []TickPartDef{{"presence", TickPresence}, {"level", TickLevel}}},
+	{Fleet, []TickPartDef{{"presence", TickPresence}}},
 }
+
+// PartLevel and PartLevelReads are the tick start's parts: the fleet's and the
+// readers' rebalance.
+const (
+	PartLevel      = "level"
+	PartLevelReads = "level reads"
+)
+
+// TickStart is the tick's start, once, before any table's update (the owner,
+// 2026-10-01: "both for readers and fleet, there needs to be a rebalance step
+// done at the start of each tick. it's simple. just once before tick,
+// rebalance each table."): the fleet's level (ready cards from a member that
+// cannot start them to one with free lanes, never past DealAhead times a
+// width) and the readers' (asked reads from a reader with a backlog to one
+// idle), each one batch. It runs once a tick: a table written again later in
+// the tick is updated by its update, never levelled again.
+var TickStart = []TickPartDef{{PartLevel, TickLevel}, {PartLevelReads, TickLevelReads}}
 
 // TickEnd is the tick's end, once the tables are settled: what is always
 // true held, the deadlines and the overdue judgments, and the done part last.
@@ -235,9 +254,9 @@ var TickEnd = []TickPartDef{
 }
 
 // TickParts is every part with a planner in the order a tick first runs them:
-// the four tables' updates, then the end.
+// the start, the four tables' updates, then the end.
 var TickParts = func() []TickPartDef {
-	var out []TickPartDef
+	out := append([]TickPartDef(nil), TickStart...)
 	for _, u := range TickTables {
 		for _, p := range u.Parts {
 			if p.Fn != nil {
@@ -320,7 +339,9 @@ func TickAccept(s *Snapshot, r TickReq) (Plan, int) {
 	for _, st := range streams {
 		n := happened(NReadyToMerge, st, s.Now, by[st]...)
 		n.Who, n.To = r.who(), s.Coordinator
-		n.What = fmt.Sprintf("%d accepted and queued to merge: %s; run: nova-sprint merge --stream %s", len(by[st]), Preview(by[st], " "), st)
+		// the thing to run is land (git merges and pushes, then the merge step); merge alone
+		// records a landing without touching git; nova-sprint run --land lands by itself
+		n.What = fmt.Sprintf("%d accepted and queued to merge: %s; run: nova-sprint land --stream %s (a nova-sprint run started with --land lands them itself)", len(by[st]), Preview(by[st], " "), st)
 		p.Notes = append(p.Notes, n)
 	}
 	return p, 0
@@ -530,7 +551,24 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		ready = append(ready, c)
 	}
-	for _, tier := range sortedKeys(unserved) {
+	// the reads too: a primary in review waiting for reads while no enabled route
+	// serves its tier is held by the same judgment of that tier, the deal's,
+	// at once, not at the unreported deadline (route.go, readRouteMissing); one
+	// owner of the judgment, so it is written once and closed once
+	if s.Readers != nil {
+		for _, c := range s.Work.Column(Review) {
+			if c.F("result") == "failed" || !readsWithoutRoute(s, c) {
+				continue
+			}
+			if tier, why := s.readRouteMissing(c); why != "" {
+				unserved[tier] = append(unserved[tier], c.ID)
+				if whyOf[tier] == "" {
+					whyOf[tier] = why
+				}
+			}
+		}
+	}
+	for _, tier := range slices.Sorted(maps.Keys(unserved)) {
 		conds = append(conds, cond{typ: NNoRoute, stream: TierSubject(tier), streamLevel: true, primaries: unserved[tier],
 			what: fmt.Sprintf("%d primaries of tier %s wait: %s", len(unserved[tier]), tier, whyOf[tier])})
 	}
@@ -559,6 +597,22 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	}
 	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute}, r)
 	return p, due
+}
+
+// readsWithoutRoute says a primary in review waits for reads, or holds a read
+// asked or begun with no route (asked while no route served its tier): what
+// that tier's no-route judgment holds (TickDeal).
+func readsWithoutRoute(s *Snapshot, pr *Card) bool {
+	live := liveReadsAt(s, pr, pr.Int("attempt"))
+	if len(live) < 2 {
+		return true
+	}
+	for _, rc := range live {
+		if (rc.Col == Asked || rc.Col == Reading) && rc.F(FieldRoute) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // beatingHeld says some fleet member beats and every member that beats is
@@ -653,9 +707,11 @@ func redealBound(wc *Card) bool {
 	return wc.F(FieldTakeEnded) != "" && wc.Int("redeals") >= MaxRedeals
 }
 
-// T4. TickLevel evens the up members' ready queues when two differ by more
-// than one: the newest cards of the longest queue go round the fleet from the
-// deal's index (level, round.levelTo).
+// T4. TickLevel is the fleet's rebalance, once at the start of every tick
+// (TickStart): the up members' backlogs evened when two differ by more than
+// one, the newest ready cards of the largest going round the fleet from the
+// deal's index to a member below DealAhead times its width (level,
+// round.levelTo).
 func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 	return bound(FleetStep(s, FleetReq{Op: "level", Who: r.who()}))
 }
@@ -793,10 +849,7 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		if state != StreamMerging && !(state == StreamWaiting && s.Merge.Count(st, Queued) > 0) {
 			continue
 		}
-		last := ctl.F("since")
-		if ctl.F("moved") > last {
-			last = ctl.F("moved")
-		}
+		last := max(ctl.F("since"), ctl.F("moved"))
 		if d, ok := r.running(s.Now, last); ok && d > DeadlineMergeIdle {
 			conds = append(conds, cond{typ: NMergeLate, stream: st, streamLevel: true,
 				what:      fmt.Sprintf("state %s, no merge step since %s", state, last),

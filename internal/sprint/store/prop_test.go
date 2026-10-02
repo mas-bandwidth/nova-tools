@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
 )
 
 // propConfig is one random sprint's shape.
@@ -931,6 +933,11 @@ func (r *propRun) check(i int, a pAct) *propFail {
 		fs = sprint.WithQueue(fs, q)
 		req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween}
 		for _, part := range sprint.TickParts {
+			if slices.ContainsFunc(sprint.TickStart, func(x sprint.TickPartDef) bool { return x.Name == part.Name }) {
+				// the start's rebalance runs once, before the deal: what the deal
+				// and the ask place after it is the next tick's start's to level
+				continue
+			}
 			p, due := part.Fn(fs, req)
 			// what the store applies of the plan: a judgment of a cause already
 			// open is not written again (sprint.Applied), as the tick's step sees it
@@ -1227,7 +1234,7 @@ func propSeeds(t *testing.T, from, to uint64, shrinkBudget int) {
 		t.Logf("  %s: %d", name, stats[name])
 	}
 	for _, s := range sigs {
-		t.Errorf("%d seeds fail with %s; the first:\n%s", classes[s], s, first[s])
+		assert.Fail(t, fmt.Sprintf("%d seeds fail with %s; the first:\n%s", classes[s], s, first[s]))
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
 
@@ -27,9 +29,7 @@ func secretOff(t *testing.T) (dir, path string) {
 	t.Helper()
 	dir = t.TempDir()
 	path = filepath.Join(dir, "id_ed25519")
-	if err := os.WriteFile(path, []byte("PRIVATE KEY"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("PRIVATE KEY"), 0o600))
 	return dir, path
 }
 
@@ -57,9 +57,8 @@ func noSecretIn(t *testing.T, out string) {
 	t.Helper()
 	_ = filepath.WalkDir(out, func(p string, d os.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
-			if b, _ := os.ReadFile(p); strings.Contains(string(b), "PRIVATE KEY") {
-				t.Errorf("the off-volume file reached --out at %s", p)
-			}
+			b, _ := os.ReadFile(p)
+			assert.NotContains(t, string(b), "PRIVATE KEY", "the off-volume file reached --out at %s", p)
 		}
 		return nil
 	})
@@ -77,17 +76,12 @@ func TestHandoffRefusesAFileSwappedToASymlinkBeforeTheCopy(t *testing.T) {
 	_, secret := secretOff(t)
 	hooks := swapOnOpen("RESULT.md", 2, func() {
 		_ = os.Remove(filepath.Join(work, "RESULT.md"))
-		if err := os.Symlink(secret, filepath.Join(work, "RESULT.md")); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, os.Symlink(secret, filepath.Join(work, "RESULT.md")))
 	})
 	_, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1", hooks: hooks})
-	if err == nil {
-		t.Fatal("a RESULT.md swapped to a symlink off the volume was copied, not refused")
-	}
-	if !strings.Contains(err.Error(), "symlink") || !strings.Contains(err.Error(), "RESULT.md") {
-		t.Errorf("the refusal does not name the file and the link: %v", err)
-	}
+	require.Error(t, err, "a RESULT.md swapped to a symlink off the volume was copied, not refused")
+	assert.Contains(t, err.Error(), "symlink", "the refusal does not name the file and the link: %v", err)
+	assert.Contains(t, err.Error(), "RESULT.md", "the refusal does not name the file and the link: %v", err)
 	noSecretIn(t, out)
 }
 
@@ -101,23 +95,15 @@ func TestHandoffRefusesAParentDirectorySwappedToASymlink(t *testing.T) {
 	work, out := handoffDirs(t)
 	writeOn(t, work, "art/deep/two.txt", "22")
 	elsewhere, _ := secretOff(t)
-	if err := os.WriteFile(filepath.Join(elsewhere, "two.txt"), []byte("PRIVATE KEY"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(elsewhere, "two.txt"), []byte("PRIVATE KEY"), 0o600))
 	hooks := swapOnOpen("deep", 2, func() {
 		_ = os.RemoveAll(filepath.Join(work, "art", "deep"))
-		if err := os.Symlink(elsewhere, filepath.Join(work, "art", "deep")); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, os.Symlink(elsewhere, filepath.Join(work, "art", "deep")))
 	})
 	_, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1",
 		Artifacts: []string{"art"}, Named: true, hooks: hooks})
-	if err == nil {
-		t.Fatal("a parent directory swapped to a symlink off the volume carried the copy off it")
-	}
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Errorf("the refusal does not say a link was refused: %v", err)
-	}
+	require.Error(t, err, "a parent directory swapped to a symlink off the volume carried the copy off it")
+	assert.Contains(t, err.Error(), "symlink", "the refusal does not say a link was refused: %v", err)
 	noSecretIn(t, out)
 }
 
@@ -128,16 +114,10 @@ func TestHandoffRefusesAWorkDirectoryThatIsASymlink(t *testing.T) {
 
 	mount, out := handoffDirs(t)
 	elsewhere, _ := secretOff(t)
-	if err := os.WriteFile(filepath.Join(elsewhere, "RESULT.md"), []byte("PRIVATE KEY"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(elsewhere, filepath.Join(mount, "work")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(elsewhere, "RESULT.md"), []byte("PRIVATE KEY"), 0o600))
+	require.NoError(t, os.Symlink(elsewhere, filepath.Join(mount, "work")))
 	_, err := copyOut(handoffInput{Mount: mount, Work: filepath.Join(mount, "work"), Out: out, Name: "card1"})
-	if err == nil {
-		t.Fatal("a work/ that is a symlink off the volume was read")
-	}
+	require.Error(t, err, "a work/ that is a symlink off the volume was read")
 	noSecretIn(t, out)
 }
 
@@ -151,19 +131,13 @@ func TestHandoffRefusesAFIFOSwappedInWithoutBlocking(t *testing.T) {
 	writeOn(t, work, "RESULT.md", "RESULT card1\n")
 	hooks := swapOnOpen("RESULT.md", 2, func() {
 		_ = os.Remove(filepath.Join(work, "RESULT.md"))
-		if err := syscall.Mkfifo(filepath.Join(work, "RESULT.md"), 0o644); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, syscall.Mkfifo(filepath.Join(work, "RESULT.md"), 0o644))
 	})
 	// Called directly: an open that waited on the FIFO would hang here, and the
 	// test binary's own -timeout is what reports it.
 	_, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1", hooks: hooks})
-	if err == nil {
-		t.Fatal("a FIFO in place of RESULT.md was not refused")
-	}
-	if !strings.Contains(err.Error(), "neither a regular file nor a directory") {
-		t.Errorf("the refusal does not name the type: %v", err)
-	}
+	require.Error(t, err, "a FIFO in place of RESULT.md was not refused")
+	assert.Contains(t, err.Error(), "neither a regular file nor a directory", "the refusal does not name the type: %v", err)
 }
 
 // 5. A regular file whose descriptor reports a device that is not the volume's
@@ -201,15 +175,10 @@ func TestHandoffRefusesARegularFileOnAnotherDevice(t *testing.T) {
 		},
 	}
 	_, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1", hooks: hooks})
-	if err == nil {
-		t.Fatal("a regular file on another device was copied")
-	}
-	if !strings.Contains(err.Error(), "not on the volume") {
-		t.Errorf("the refusal does not say the file is off the volume: %v", err)
-	}
-	if _, statErr := os.Stat(filepath.Join(out, "card1", "RESULT.md")); statErr == nil {
-		t.Errorf("a refused file was written to --out")
-	}
+	require.Error(t, err, "a regular file on another device was copied")
+	assert.Contains(t, err.Error(), "not on the volume", "the refusal does not say the file is off the volume: %v", err)
+	_, statErr := os.Stat(filepath.Join(out, "card1", "RESULT.md"))
+	assert.Error(t, statErr, "a refused file was written to --out")
 }
 
 // 6. The copy reads what it checked, and no more than the cap: a file that grew
@@ -220,19 +189,15 @@ func TestHandoffRefusesAFileThatGrewPastTheCapAfterItWasMeasured(t *testing.T) {
 	work, out := handoffDirs(t)
 	writeOn(t, work, "RESULT.md", "small\n")
 	hooks := swapOnOpen("RESULT.md", 2, func() {
-		if err := os.WriteFile(filepath.Join(work, "RESULT.md"), []byte(strings.Repeat("x", 4096)), 0o644); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, os.WriteFile(filepath.Join(work, "RESULT.md"), []byte(strings.Repeat("x", 4096)), 0o644))
 	})
 	_, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1", MaxBytes: 1024, hooks: hooks})
-	if err == nil || !strings.Contains(err.Error(), "--out-max-bytes") {
-		t.Fatalf("a file that grew past the cap after the measure was not refused by the cap: %v", err)
-	}
+	require.Error(t, err, "a file that grew past the cap after the measure was not refused by the cap: %v", err)
+	require.Contains(t, err.Error(), "--out-max-bytes", "a file that grew past the cap after the measure was not refused by the cap: %v", err)
 	// The partial copy is removed: nothing past the cap, and no truncated
 	// artifact, is left in --out.
-	if _, statErr := os.Stat(filepath.Join(out, "card1", "RESULT.md")); statErr == nil {
-		t.Errorf("the refused file's partial copy was left in --out")
-	}
+	_, statErr := os.Stat(filepath.Join(out, "card1", "RESULT.md"))
+	assert.Error(t, statErr, "the refused file's partial copy was left in --out")
 }
 
 // 7. The mount must hold the working directory: a Work outside Mount is refused
@@ -243,9 +208,8 @@ func TestHandoffRefusesAWorkDirectoryOffTheMount(t *testing.T) {
 	mount, out := handoffDirs(t)
 	work, _ := handoffDirs(t)
 	writeOn(t, work, "RESULT.md", "x\n")
-	if _, err := copyOut(handoffInput{Mount: mount, Work: work, Out: out, Name: "card1"}); err == nil {
-		t.Fatal("a working directory that is not under the mount was read")
-	}
+	_, err := copyOut(handoffInput{Mount: mount, Work: work, Out: out, Name: "card1"})
+	require.Error(t, err, "a working directory that is not under the mount was read")
 }
 
 // 8. A symlink inside a walked directory is skipped, as a handoff copies bytes,
@@ -256,18 +220,13 @@ func TestHandoffSkipsLinksInADirectoryAndRefusesANamedLink(t *testing.T) {
 	work, out := handoffDirs(t)
 	writeOn(t, work, "art/one.txt", "1")
 	_, secret := secretOff(t)
-	if err := os.Symlink(secret, filepath.Join(work, "art", "key")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(work, "art", "one.txt"), filepath.Join(work, "inner.txt")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Symlink(secret, filepath.Join(work, "art", "key")))
+	require.NoError(t, os.Symlink(filepath.Join(work, "art", "one.txt"), filepath.Join(work, "inner.txt")))
 	res, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1", Artifacts: []string{"art"}, Named: true})
-	if err != nil || res.Files != 1 || res.Bytes != 1 {
-		t.Fatalf("files=%d bytes=%d err=%v, want the one regular file", res.Files, res.Bytes, err)
-	}
+	require.NoError(t, err, "files=%d bytes=%d err=%v, want the one regular file", res.Files, res.Bytes, err)
+	require.Equal(t, 1, res.Files, "files=%d bytes=%d err=%v, want the one regular file", res.Files, res.Bytes, err)
+	require.Equal(t, int64(1), res.Bytes, "files=%d bytes=%d err=%v, want the one regular file", res.Files, res.Bytes, err)
 	noSecretIn(t, out)
-	if _, err := copyOut(handoffInput{Work: work, Out: out, Name: "card2", Artifacts: []string{"inner.txt"}, Named: true}); err == nil {
-		t.Fatal("an artifact that is a symlink, even to a file on the volume, was followed")
-	}
+	_, err = copyOut(handoffInput{Work: work, Out: out, Name: "card2", Artifacts: []string{"inner.txt"}, Named: true})
+	require.Error(t, err, "an artifact that is a symlink, even to a file on the volume, was followed")
 }

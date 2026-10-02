@@ -1,11 +1,11 @@
 package cardhdr_test
 
 import (
-	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // TestParseTestIsTheOneGrammar is nova-tools#4313's TEST line: build tags
@@ -27,9 +27,8 @@ func TestParseTestIsTheOneGrammar(t *testing.T) {
 		"none - a fixture line": {None: true, Why: "a fixture line"},
 	} {
 		got, why := cardhdr.ParseTest(v)
-		if why != "" || got != want {
-			t.Errorf("ParseTest(%q) = %+v %q, want %+v", v, got, why, want)
-		}
+		assert.Empty(t, why, "ParseTest(%q) = %+v %q, want %+v", v, got, why, want)
+		assert.Equal(t, want, got, "ParseTest(%q) = %+v %q, want %+v", v, got, why, want)
 	}
 	for v, wantWhy := range map[string]string{
 		"":                     "no TEST line",
@@ -47,20 +46,10 @@ func TestParseTestIsTheOneGrammar(t *testing.T) {
 		"./x TestY; echo":      "is not",
 	} {
 		got, why := cardhdr.ParseTest(v)
-		if got != (cardhdr.TestLine{}) || !strings.Contains(why, wantWhy) || !strings.Contains(why, "TEST: none <why") {
-			t.Errorf("ParseTest(%q) = %+v %q, want a refusal with %q and the remedy", v, got, why, wantWhy)
-		}
+		assert.Empty(t, got, "ParseTest(%q) = %+v %q, want a refusal with %q and the remedy", v, got, why, wantWhy)
+		assert.Contains(t, why, wantWhy, "ParseTest(%q) = %+v %q, want a refusal with %q and the remedy", v, got, why, wantWhy)
+		assert.Contains(t, why, "TEST: none <why", "ParseTest(%q) = %+v %q, want a refusal with %q and the remedy", v, got, why, wantWhy)
 	}
-	s := (cardhdr.TestLine{Package: "./x", Name: "TestY"}).String()
-	assert.Equal(t, "./x TestY", s, "String() = %q", s)
-	s = (cardhdr.TestLine{Package: "./x", Name: "TestY", Tags: "functional"}).String()
-	assert.Equal(t, "-tags functional ./x TestY", s, "String() = %q", s)
-	for pkg, want := range map[string]string{"internal/x": "./internal/x", "./x": "./x", ".": "."} {
-		got := (cardhdr.TestLine{Package: pkg}).GoPackage()
-		assert.Equal(t, want, got, "GoPackage(%q) = %q, want %q", pkg, got, want)
-	}
-	s = (cardhdr.TestLine{None: true, Why: "why"}).String()
-	assert.Equal(t, "none why", s, "String() = %q", s)
 }
 
 // TestParseTestRefusesAPackagePattern is the nova-tools#4401 read's item 2:
@@ -72,11 +61,12 @@ func TestParseTestRefusesAPackagePattern(t *testing.T) {
 	t.Parallel()
 	for _, v := range []string{"./... TestAdd", "./internal/... TestAdd", "internal/x/... TestAdd", "-tags functional ./... TestAdd", "... TestAdd", "./x... TestAdd"} {
 		got, why := cardhdr.ParseTest(v)
-		if got != (cardhdr.TestLine{}) || !strings.Contains(why, "not one package") || !strings.Contains(why, "TEST: none <why") || strings.Contains(why, "\n") {
-			t.Errorf("ParseTest(%q) = %+v %q, want a one-line refusal naming the pattern", v, got, why)
-		}
+		assert.Empty(t, got, "ParseTest(%q) = %+v %q, want a one-line refusal naming the pattern", v, got, why)
+		assert.Contains(t, why, "not one package", "ParseTest(%q) = %+v %q, want a one-line refusal naming the pattern", v, got, why)
+		assert.Contains(t, why, "TEST: none <why", "ParseTest(%q) = %+v %q, want a one-line refusal naming the pattern", v, got, why)
+		assert.NotContains(t, why, "\n", "ParseTest(%q) = %+v %q, want a one-line refusal naming the pattern", v, got, why)
 	}
-	if got, why := cardhdr.ParseTest("./x TestAdd"); why != "" || got.Package != "./x" {
-		t.Errorf("one package: %+v %q", got, why)
-	}
+	got, why := cardhdr.ParseTest("./x TestAdd")
+	assert.Empty(t, why, "one package: %+v %q", got, why)
+	assert.Equal(t, "./x", got.Package, "one package: %+v %q", got, why)
 }

@@ -517,27 +517,6 @@ func RecoverWaitFastForward(dir, remote, branch string, owned []string, now time
 	return rec, nil
 }
 
-// BehindRemote reports whether HEAD is a strict ancestor of the remote-tracking ref.
-//
-// A beat commit on a checkout that is still behind is not a repair and not a push: it is
-// a new local commit on a stale base, and the next tick is diverged instead of behind.
-// wait asks this before it lands a beat, and skips the commit when the answer is yes.
-func BehindRemote(dir, remote, branch string) (bool, error) {
-	ref := trackingRef(dir, remote, branch)
-	target, err := ResolveCommit(dir, ref)
-	if err != nil {
-		return false, err
-	}
-	head, err := HeadCommit(dir)
-	if err != nil {
-		return false, err
-	}
-	if head == target {
-		return false, nil
-	}
-	return isAncestorOf(dir, head, target)
-}
-
 // foreignDirtyError is a behind checkout whose fast-forward would have to discard a file
 // wait does not own. The path is named and left untouched.
 type foreignDirtyError struct {

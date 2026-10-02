@@ -3,6 +3,7 @@ package swarm
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -66,6 +67,7 @@ type Handback struct {
 	Wall  time.Duration // the wall at which the provider failed the card
 	Route string        // the failed route; the re-deal avoids it
 	Next  string        // the route after it in list order, "" when there is none
+	Cause ProviderCause // what failed, from the harness's words; native sets a better record's when it has one
 }
 
 // ProviderHandback classes one harness exit. ok is true when the harness exited non-zero,
@@ -94,20 +96,30 @@ func ProviderHandback(e ProviderExit) (Handback, bool) {
 		}
 	}
 	h.Next = NextRoute(e.Routes, h.Route)
+	h.Cause = CauseFromText(errorTail(last))
 	return h, true
+}
+
+// errorTail is the harness's last words up to the line that opens the error: one that says
+// `Error`, or one with the provider's server-error words that is not a field inside the
+// error's JSON envelope. last holds the lines newest first; the lines before the error
+// (the card's own output, its paths) are not the provider's and are never classified.
+func errorTail(last string) string {
+	lines := strings.Split(last, "\n")
+	for i, l := range lines {
+		field := strings.HasPrefix(strings.TrimSpace(l), `"`)
+		if strings.Contains(l, "Error") || (!field && providerAnyWallRE.MatchString(l)) {
+			return strings.Join(lines[:i+1], "\n")
+		}
+	}
+	return last
 }
 
 // NextRoute is the route after failed in list order, wrapping at the end, never failed
 // itself; a failed route not on the list hands back to the list's first other route. ""
 // when the list has nowhere else to go.
 func NextRoute(routes []string, failed string) string {
-	at := -1
-	for i, r := range routes {
-		if r == failed {
-			at = i
-			break
-		}
-	}
+	at := slices.Index(routes, failed)
 	for k := 1; k <= len(routes); k++ {
 		r := routes[(at+k+len(routes))%len(routes)]
 		if r != "" && r != failed {
@@ -117,13 +129,14 @@ func NextRoute(routes []string, failed string) string {
 	return ""
 }
 
-// Line is the one line the launcher reads:
+// Line is the one line the launcher reads; reason is last and carries the rest of the line
+// (ProviderCause.Reason):
 //
-//	NATIVE PROVIDER-5XX label=<l> ref=<ref|-> wall=<s>s route=<failed> next=<route|-> avoid=<failed>
+//	NATIVE PROVIDER-5XX label=<l> ref=<ref|-> wall=<s>s route=<failed> next=<route|-> avoid=<failed> reason=provider: class=<c> status=<n|-> msg=<m>
 func (h Handback) Line(label string) string {
-	return fmt.Sprintf("NATIVE %s label=%s ref=%s wall=%.2fs route=%s next=%s avoid=%s",
+	return fmt.Sprintf("NATIVE %s label=%s ref=%s wall=%.2fs route=%s next=%s avoid=%s reason=%s",
 		h.Class, oneline.Field(label), oneline.Field(dashIfEmpty(h.Ref)), h.Wall.Seconds(),
-		oneline.Field(dashIfEmpty(h.Route)), oneline.Field(dashIfEmpty(h.Next)), oneline.Field(dashIfEmpty(h.Route)))
+		oneline.Field(dashIfEmpty(h.Route)), oneline.Field(dashIfEmpty(h.Next)), oneline.Field(dashIfEmpty(h.Route)), h.Cause.Reason())
 }
 
 // ParseRouteList reads RoutesEnv's value: routes separated by commas or white space, empty

@@ -41,8 +41,8 @@ lockdown (every untrusted read stops) and one quarantine per surface, a surface
 being any name you give a source; each carries its time and reason. check reads
 the box and exits 0 only when nothing blocks the surface; no box, or a broken
 one, reads as blown. The tool enforces nothing: your harness runs check first.
-first run: init --box ./fuse-box.json makes the box once; then run the lines
-under example: in order.
+first run: run the lines under example: in order, starting with init at a
+path where no box exists.
 
 usage:
   nova-fuse version    print this build identity (--version also accepted)
@@ -63,7 +63,12 @@ clear), bad invocation, or a lift this tool refuses by design.
 
 -h or --help after a verb is refused at exit 2, never answered with help:
 exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
-it. The help is nova-fuse help.
+it. Read a verb's help with nova-fuse help <verb> (for example, help check).
+
+box JSON example (a quarantine with no lockdown):
+  {"lockdown": null, "quarantine": {"a-forum": {"at": "2026-01-01T00:00:00Z", "reason": "an attack is pervasive"}}}
+Each blown fuse is an object with at (RFC3339 UTC) and reason; null means
+no lockdown. init creates {"lockdown": null, "quarantine": {}}.
 
 status lists at most --max quarantines (default 20, and 0 means all) after its
 count line, then one STATUS MORE kind=quarantine shown=<n> total=<t> line
@@ -78,15 +83,16 @@ it an argument beginning with - is a surface or a reason, never a flag, so a
 caller passing an untrusted surface puts -- before it.
 
 example:
+  nova-fuse init --box ./fuse-box.json
   nova-fuse status --box ./fuse-box.json
   nova-fuse check --box ./fuse-box.json a-public-issue-tracker
   nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
   nova-fuse check --box ./fuse-box.json a-forum
   nova-fuse lift quarantine --box ./fuse-box.json a-forum
 
-Those five are one sitting, in order: look, ask, blow the soft fuse, watch the
-answer change, rescind it. ./fuse-box.json is a box of yours, made once with
-nova-fuse init --box ./fuse-box.json. Every verb except init, lockdown, and path
+Those six are one sitting, in order: create, look, ask, blow the soft fuse,
+watch the answer change, rescind it. init never replaces an existing box.
+Every verb except init, lockdown, and path
 refuses a path with no box, never read as CLEAR; init makes an empty box
 there and refuses if anything is already there.
 `
@@ -138,8 +144,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 	switch cmd {
 	case "help", "-h", "--help":
-		fmt.Fprint(stdout, usage)
-		return 0
+		return cmdHelp(rest, stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
@@ -166,7 +171,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case "init":
 		return cmdInit(rest, stdout, stderr)
 	}
-	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
+	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q; verbs: init, status, check, lockdown, quarantine, lift, path, version, help", cmd))
 }
 
 // parseBox runs a verb's flag set and enforces the no-guessing rule: the box path must
@@ -232,6 +237,16 @@ func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag
 		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
 		// invocation: exit 2, never 0. `check` answers PERMISSION with 0, and a surface
 		// named "-h" must not be able to reach that answer.
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintf(stderr, "nova-fuse %s: -h is refused here so it can never read as CLEAR; run: nova-fuse help %s\n", oneline.Escape(name), oneline.Escape(name))
+			return "", nil, false, false
+		}
+		if bad, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: -"); ok {
+			var names []string
+			fs.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
+			fmt.Fprintf(stderr, "nova-fuse %s: unknown flag --%s; flags: %s; run: nova-fuse help %s\n", oneline.Escape(name), oneline.Escape(bad), oneline.Escape(strings.Join(names, ", ")), oneline.Escape(name))
+			return "", nil, false, false
+		}
 		refuse(stderr, " "+name, oneline.Cap(err.Error(), oneline.TailBytes))
 		return "", nil, false, false
 	}

@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // C4: a tick in flight at a clear, wherever the clear lands in it, writes
@@ -26,23 +28,18 @@ func TestATickInFlightAtAClearWritesNothing(t *testing.T) {
 			loop.Actor = sprint.MachineActor
 			loop.B = &clearOnCall{Backend: h.m, kv: h.m, kind: at.kind, n: at.n, clear: func() {
 				var err error
-				if cleared, err = h.st.Clear(h.ctx); err != nil {
-					t.Errorf("clear: %v", err)
-				}
+				cleared, err = h.st.Clear(h.ctx)
+				assert.NoError(t, err, "clear: %v", err)
 				img = withoutMachine(h.image())
 			}}
 			res, err := loop.Tick(h.ctx)
-			if img == "" {
-				t.Fatalf("the clear never landed in the tick: %+v %v", res, err)
-			}
-			if err != nil || res.Stale == "" {
-				t.Fatalf("the tick at a clear: stale %q parts %+v err %v", res.Stale, res.Parts, err)
-			}
-			if got := withoutMachine(h.image()); got != img {
-				t.Fatalf("the tick wrote after the clear:\n%s\nwas\n%s", got, img)
-			}
+			require.NotEmpty(t, img, "the clear never landed in the tick: %+v %v", res, err)
+			require.NoError(t, err, "the tick at a clear: stale %q parts %+v err %v", res.Stale, res.Parts, err)
+			require.NotEmpty(t, res.Stale, "the tick at a clear: stale %q parts %+v err %v", res.Stale, res.Parts, err)
+			got := withoutMachine(h.image())
+			require.Equal(t, img, got, "the tick wrote after the clear:\n%s\nwas\n%s", got, img)
 			if m, _, _ := h.st.Machine(h.ctx); m.Running() || cleared.To != 1 {
-				t.Fatalf("after the clear: machine %s, %+v", m.StateWord(), cleared)
+				require.Failf(t, "", "after the clear: machine %s, %+v", m.StateWord(), cleared)
 			}
 			h.clean("after the tick")
 		})

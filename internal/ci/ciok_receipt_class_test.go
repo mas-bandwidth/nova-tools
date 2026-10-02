@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -86,16 +87,10 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 
 	raw := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	var wf ciokWorkflow
-	if err := yaml.Unmarshal([]byte(raw), &wf); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, yaml.Unmarshal([]byte(raw), &wf))
 	job, ok := wf.Jobs["ci-ok"]
-	if !ok {
-		t.Fatal("ci.yml has no ci-ok job")
-	}
-	if strings.TrimSpace(job.If) != ciokIf {
-		t.Errorf("the ci-ok job's if is\n  %s\nwant\n  %s\n(no head-repo guard on the job: a skipped ci-ok counts as a passing required check, so a fork PR could enter the merge queue with no PR-stage CI; the guard belongs on the receipt step)", job.If, ciokIf)
-	}
+	require.True(t, ok, "ci.yml has no ci-ok job")
+	assert.Equal(t, ciokIf, strings.TrimSpace(job.If), "the ci-ok job's if is\n  %s\nwant\n  %s\n(no head-repo guard on the job: a skipped ci-ok counts as a passing required check, so a fork PR could enter the merge queue with no PR-stage CI; the guard belongs on the receipt step)", job.If, ciokIf)
 	var run, cond string
 	found := 0
 	for _, s := range job.Steps {
@@ -104,30 +99,21 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 		}
 		found++
 		run, cond = s.Run, s.If
-		if s.ContinueOnError {
-			t.Errorf("step %q tolerates its own failure; a receipt that did not happen must redden ci-ok", s.Name)
-		}
+		assert.False(t, s.ContinueOnError, "step %q tolerates its own failure; a receipt that did not happen must redden ci-ok", s.Name)
 	}
-	if found != 1 {
-		t.Fatalf("ci-ok has %d steps calling %q, want exactly one", found, runnerReceiptVerb)
-	}
-	if strings.TrimSpace(cond) != receiptStepIf {
-		t.Errorf("the receipt step's if is\n  %s\nwant\n  %s\n(always(): a red run is reported as red; the head-repo guard: a fork's pull_request must not run this tree's receipt writer with the bench password)", cond, receiptStepIf)
-	}
-	if strings.Contains(run, "|| true") {
-		t.Errorf("the receipt step must fail loudly (no `|| true`):\n%s", run)
-	}
+	require.Equal(t, 1, found, "ci-ok has %d steps calling %q, want exactly one", found, runnerReceiptVerb)
+	assert.Equal(t, receiptStepIf, strings.TrimSpace(cond), "the receipt step's if is\n  %s\nwant\n  %s\n(always(): a red run is reported as red; the head-repo guard: a fork's pull_request must not run this tree's receipt writer with the bench password)", cond, receiptStepIf)
+	assert.NotContains(t, run, "|| true", "the receipt step must fail loudly (no `|| true`):\n%s", run)
 
 	// The whole run block, exactly, with each line's indentation taken off.
-	if got, want := strings.Join(runLines(run), "\n"), strings.Join(runLines(receiptRun), "\n"); got != want {
-		t.Errorf("the receipt step's run block is not one call into the built tools/ci report-run with the run's own context:\n got:\n%s\nwant:\n%s", got, want)
-	}
-	if strings.Count(run, "--job") != 0 || strings.Contains(run, "--event") || strings.Contains(run, "-branch") {
-		t.Errorf("the receipt step passes a flag the row does not carry (--job, --event, --head-branch, --base-branch):\n%s", run)
-	}
-	if strings.Contains(run, "curl") || strings.Contains(run, "gh api") || strings.Contains(run, "api.github.com") {
-		t.Errorf("the receipt step calls GitHub; the run's own context has every field:\n%s", run)
-	}
+	got, want := strings.Join(runLines(run), "\n"), strings.Join(runLines(receiptRun), "\n")
+	assert.Equal(t, want, got, "the receipt step's run block is not one call into the built tools/ci report-run with the run's own context:\n got:\n%s\nwant:\n%s", got, want)
+	assert.Zero(t, strings.Count(run, "--job"), "the receipt step passes a flag the row does not carry (--job, --event, --head-branch, --base-branch):\n%s", run)
+	assert.NotContains(t, run, "--event", "the receipt step passes a flag the row does not carry (--job, --event, --head-branch, --base-branch):\n%s", run)
+	assert.NotContains(t, run, "-branch", "the receipt step passes a flag the row does not carry (--job, --event, --head-branch, --base-branch):\n%s", run)
+	assert.NotContains(t, run, "curl", "the receipt step calls GitHub; the run's own context has every field:\n%s", run)
+	assert.NotContains(t, run, "gh api", "the receipt step calls GitHub; the run's own context has every field:\n%s", run)
+	assert.NotContains(t, run, "api.github.com", "the receipt step calls GitHub; the run's own context has every field:\n%s", run)
 	assert.False(t, strings.Contains(run, "secrets.NOVA_REDIS") || strings.Contains(run, "--password"), "the receipt step carries the password some other way:\n%s", run)
 
 	// What the step used to carry inline is the verb's now. The writer is this

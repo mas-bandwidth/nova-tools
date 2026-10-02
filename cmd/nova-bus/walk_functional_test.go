@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/stretchr/testify/require"
 )
 
 // TestInboxSinceWalkReportsProgressAndHonoursMaxCommits is card 9376.
@@ -77,8 +78,9 @@ func fastImport(t *testing.T, dir, from string, n int) {
 	b.WriteString("done\n")
 	cmd := exec.Command("git", "-C", dir, "fast-import", "--quiet")
 	cmd.Stdin = strings.NewReader(b.String())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git fast-import %d commits: %v\n%s", n, err, out)
+	{
+		out, err := cmd.CombinedOutput()
+		require.NoErrorf(t, err, "git fast-import %d commits: %v\n%s", n, err, out)
 	}
 }
 
@@ -123,17 +125,14 @@ func TestABoundedWalkDoesNotAdvanceAndWritesNothingAtTheRoot(t *testing.T) {
 	r := invoke(t, "", advance(checkout, "Ada")...).
 		mustCode(t, 0).
 		mustContain(t, "stderr", `INBOX WALK bounded commits=500`)
-	if strings.Contains(r.stderr, "/CURSOR") || strings.Contains(r.stderr, "/OPEN") {
-		t.Fatalf("a bounded --advance named a root path; the lane is empty on this path:\n%s", r.stderr)
-	}
-	if strings.Contains(r.stdout, "INBOX CURSOR") {
-		t.Fatalf("a bounded walk read nothing and still moved the cursor:\n%s", r.stdout)
-	}
+	require.Falsef(t, strings.Contains(r.stderr, "/CURSOR") || strings.Contains(r.stderr, "/OPEN"), "a bounded --advance named a root path; the lane is empty on this path:\n%s", r.stderr)
+	require.NotContainsf(t, r.stdout, "INBOX CURSOR", "a bounded walk read nothing and still moved the cursor:\n%s", r.stdout)
 	// Nothing at the root, and the stale cursor is exactly where it was: the run that
 	// could not read is the run that must not claim to have read.
 	mustNoRootState(t, checkout)
-	if got := read(t, checkout, "from-ada/CURSOR"); got != before {
-		t.Fatalf("the bounded run moved the cursor to %q, want it left at %q", got, before)
+	{
+		got := read(t, checkout, "from-ada/CURSOR")
+		require.Falsef(t, got != before, "the bounded run moved the cursor to %q, want it left at %q", got, before)
 	}
 
 	// AND THE ADVANCE THAT DOES RUN STILL LANDS IN THE LANE. Raise the bound, the walk
@@ -142,11 +141,13 @@ func TestABoundedWalkDoesNotAdvanceAndWritesNothingAtTheRoot(t *testing.T) {
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX CURSOR commit=")
 	mustNoRootState(t, checkout)
-	if got := read(t, checkout, "from-ada/CURSOR"); got == before {
-		t.Fatalf("an allowed walk with --advance left the cursor at %q", got)
+	{
+		got := read(t, checkout, "from-ada/CURSOR")
+		require.Falsef(t, got == before, "an allowed walk with --advance left the cursor at %q", got)
 	}
-	if named := gitIn(t, checkout, "show", "--name-only", "--format=", "HEAD"); !strings.Contains(named, "from-ada/CURSOR") {
-		t.Fatalf("the cursor commit names %q, want a path under from-ada/", strings.TrimSpace(named))
+	{
+		named := gitIn(t, checkout, "show", "--name-only", "--format=", "HEAD")
+		require.Containsf(t, named, "from-ada/CURSOR", "the cursor commit names %q, want a path under from-ada/", strings.TrimSpace(named))
 	}
 }
 
@@ -166,17 +167,14 @@ func TestAnAdvanceWithNoLaneWritesNothing(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := advanceCursorTo(checkout, bus.Participant{Name: "Dana"}, nil, "", strings.Repeat("a", 40),
 		"origin", "main", 3, true, false, now(), &out, &errOut)
-	if code != 1 {
-		t.Fatalf("an advance with no lane exited %d, want 1\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
-	}
-	if !strings.Contains(errOut.String(), "has no lane on this bus") {
-		t.Fatalf("the refusal does not say what is wrong:\n%s", errOut.String())
-	}
+	require.Equalf(t, 1, code, "an advance with no lane exited %d, want 1\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
+	require.Containsf(t, errOut.String(), "has no lane on this bus", "the refusal does not say what is wrong:\n%s", errOut.String())
 	// THE PROPERTY THAT MATTERS: the checkout is as clean as it was found. A failed advance
 	// that leaves a file behind is a bus nobody can read until somebody deletes it by hand.
 	mustNoRootState(t, checkout)
-	if got := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain")); got != "" {
-		t.Fatalf("a refused advance left the checkout dirty:\n%s", got)
+	{
+		got := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain"))
+		require.Emptyf(t, got, "a refused advance left the checkout dirty:\n%s", got)
 	}
 }
 
@@ -186,11 +184,13 @@ func TestAnAdvanceWithNoLaneWritesNothing(t *testing.T) {
 func mustNoRootState(t *testing.T, checkout string) {
 	t.Helper()
 	for _, name := range []string{bus.CursorName, bus.OpenName, bus.IndexName} {
-		if _, err := os.Stat(filepath.Join(checkout, name)); err == nil {
-			t.Fatalf("%s is at the checkout root; state files live in the reader's lane", name)
+		{
+			_, err := os.Stat(filepath.Join(checkout, name))
+			require.Errorf(t, err, "%s is at the checkout root; state files live in the reader's lane", name)
 		}
 	}
-	if got := gitIn(t, checkout, "status", "--porcelain"); strings.Contains(got, "?? "+bus.CursorName+"\n") {
-		t.Fatalf("git sees an untracked root state file:\n%s", got)
+	{
+		got := gitIn(t, checkout, "status", "--porcelain")
+		require.NotContainsf(t, got, "?? "+bus.CursorName+"\n", "git sees an untracked root state file:\n%s", got)
 	}
 }

@@ -6,10 +6,11 @@
 package seattest
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -44,13 +45,8 @@ func Home(t *testing.T, seat string, values map[string]string) string {
 	write(t, filepath.Join(store, "recovery.pub"), recPub+"\n")
 	write(t, filepath.Join(store, ".sops.yaml"), "creation_rules:\n  - path_regex: ^"+seat+"\\.yaml$\n    age: "+seatPub+","+recPub+"\n")
 
-	names := make([]string, 0, len(values))
-	for k := range values {
-		names = append(names, k)
-	}
-	sort.Strings(names)
 	var plain strings.Builder
-	for _, k := range names {
+	for _, k := range slices.Sorted(maps.Keys(values)) {
 		plain.WriteString(k + ": " + values[k] + "\n")
 	}
 	file := filepath.Join(store, seat+".yaml")
@@ -67,21 +63,6 @@ func Home(t *testing.T, seat string, values map[string]string) string {
 	run(t, store, "git", "commit", "-q", "-m", "seat")
 	run(t, store, "git", "push", "-q", "-u", "origin", "main")
 	return home
-}
-
-// Env points every variable seatcred reads at home and clears the ones that
-// would otherwise steer a resolution (store, key, sops, user, seat) for the
-// rest of the test. The discovered sops path is then pinned for decryption.
-func Env(t *testing.T, home string) {
-	t.Helper()
-	t.Setenv("HOME", home)
-	for _, k := range []string{seatcred.SeatEnv, seatcred.StoreEnv, seatcred.KeyEnv, seatcred.SopsEnv, seatcred.UserEnv} {
-		t.Setenv(k, "")
-	}
-	// Home may find sops outside PATH (for example the macOS runner).
-	// Read the fixture with the same discovery rule used to encrypt it.
-	t.Setenv(seatcred.SopsEnv, Sops(t))
-	t.Cleanup(func() { seatcred.Select("") })
 }
 
 // Sops is the sops Home seals with: the one on PATH, else Homebrew's, else the

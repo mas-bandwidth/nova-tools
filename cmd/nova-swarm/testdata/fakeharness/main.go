@@ -8,6 +8,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,16 @@ import (
 )
 
 func main() {
+	// THE NICE CHILD (FAKE-NICE below): prints its own nice and nothing else.
+	if os.Getenv("FAKE_NICE_CHILD") == "1" {
+		n, err := ownNice()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: nice:", err)
+			os.Exit(2)
+		}
+		fmt.Println(n)
+		return
+	}
 	// THE BACKGROUND CHILD, and nothing else: rule 11's violation is a process that OUTLIVES
 	// its parent, so this one does no work, reads no prompt, writes nothing but its own pid
 	// and sleeps. Before 2026-09-11 it fell through into the harness's own path, read
@@ -311,6 +322,29 @@ func main() {
 		publish(job, prompt, 0, notesRead(job, prompt))
 		os.Exit(0)
 	}
+	// FAKE-START-FAIL <k> is a harness whose first k starts die at start the way opencode's
+	// did when its catalog lacked the model (2026-10-01, verbatim shape): its printed ERROR
+	// line, then the UnknownError envelope, exit 1, no tokens. Later starts run on. k is
+	// counted from FAKE-LAUNCHES, which the card must also carry.
+	if n, ok := number(prompt, "FAKE-START-FAIL"); ok && launchCount(job) <= n {
+		fmt.Fprintln(os.Stderr, `timestamp=2026-10-01T20:02:53.818Z level=ERROR run=5c22c68d message=failed ref=err_1ad647ee error="ProviderModelNotFoundError: Model not found: openrouter/x-ai/grok-4.7. Did you mean: x-ai/grok-4.20, x-ai/grok-4.3?"`)
+		fmt.Fprintln(os.Stderr, `Error: {"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_1ad647ee"}}`)
+		os.Exit(1)
+	}
+	// FAKE-CATALOG records the catalog this start was handed: OPENCODE_MODELS_PATH, the
+	// fetch switch, and the sha256 of the file the path names, into RESULT.md.
+	if _, ok := directive(prompt, "FAKE-CATALOG"); ok {
+		path := os.Getenv("OPENCODE_MODELS_PATH")
+		raw, err := os.ReadFile(path)
+		sum := "unreadable"
+		if err == nil {
+			sum = fmt.Sprintf("%x", sha256.Sum256(raw))
+		}
+		if job != "" {
+			writeRecorded(filepath.Join(job, "RESULT.md"), []byte("models_path="+path+"\nfetch_disabled="+os.Getenv("OPENCODE_DISABLE_MODELS_FETCH")+"\nsha256="+sum+"\nprint_logs="+os.Getenv("OPENCODE_PRINT_LOGS")+"\n"), 0o644)
+		}
+		os.Exit(0)
+	}
 	if _, ok := directive(prompt, "FAKE-5XX-FIRST"); ok {
 		if launchCount(job) <= 1 {
 			fmt.Fprintln(os.Stderr, "Unexpected server error: the provider answered 503; ref=err_fake_first")
@@ -499,7 +533,41 @@ func main() {
 	if _, ok := directive(prompt, "FAKE-ENDS-ON-FINAL"); ok {
 		writeSession(data, "stop")
 	}
+	// FAKE-SESSION-ERROR writes a session whose last assistant message carries the error the
+	// harness records for a provider's API answer: an out-of-credit 402, in the provider's
+	// documented shape, with a key-shaped value in its words.
+	if _, ok := directive(prompt, "FAKE-SESSION-ERROR"); ok {
+		writeSessionError(data)
+	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
+		os.Exit(0)
+	}
+	// FAKE-NICE writes the nice of the harness and of a process a shell under the harness
+	// starts into RESULT.md (`harness=<n>`, `grandchild=<n>`) and exits clean: it is how a
+	// card's launch proves the harness and what it runs inherit the step behind CI. Both
+	// are read with getpriority, by this binary (the wall denies /bin/ps on darwin).
+	if _, ok := directive(prompt, "FAKE-NICE"); ok {
+		own, err := ownNice()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: nice:", err)
+			os.Exit(2)
+		}
+		self, err := os.Executable()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: own executable:", err)
+			os.Exit(2)
+		}
+		sub := exec.Command("sh", "-c", `"$0"; true`, self) // the shell forks it: a grandchild
+		sub.Env = append(os.Environ(), "FAKE_NICE_CHILD=1")
+		out, err := sub.Output()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: nice child:", err)
+			os.Exit(2)
+		}
+		if job != "" {
+			body := "harness=" + strconv.Itoa(own) + "\ngrandchild=" + strings.TrimSpace(string(out)) + "\n"
+			writeRecorded(filepath.Join(job, "RESULT.md"), []byte(body), 0o644)
+		}
 		os.Exit(0)
 	}
 	// FAKE-PWD writes the child's own working directory into RESULT.md and exits clean: it
@@ -739,7 +807,7 @@ func writeProviderLog(data string) {
 	}
 	defer f.Close()
 	for i := 0; i < 2; i++ {
-		fmt.Fprintf(f, "timestamp=2030-01-02T03:04:0%d.000Z level=ERROR run=ab12cd34 message=\"stream error\" providerID=fake modelID=fake-model session.id=ses_x error.error.type=server_error \"Streaming response failed: [internal_error] Stream error: h2 protocol error\"\n", i)
+		fmt.Fprintf(f, "timestamp=2030-01-02T03:04:0%d.000Z level=ERROR run=ab12cd34 message=\"stream error\" providerID=fake modelID=fake-model session.id=ses_x error.error.message=\"Streaming response failed: [internal_error] Stream error: h2 protocol error\" error.error.type=server_error\n", i)
 	}
 }
 
@@ -754,6 +822,23 @@ func writeSession(data, finish string) {
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', %d);\n", now) +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"assistant\",\"finish\":\"tool-calls\"}', %d);\n", now+1) +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"assistant\",\"finish\":\"%s\"}', %d);\n", finish, now+2)
+	runSQLite(path, sql)
+}
+
+// writeSessionError writes a session whose last assistant message carries an API error and
+// no finish, as the harness records a provider that refused the request.
+func writeSessionError(data string) {
+	path := openCodeDB(data)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	now := time.Now().UnixMilli()
+	envelope := `{"role":"assistant","error":{"name":"APIError","data":{"message":"Insufficient credits. key sk-or-v1-abcdefghijklmnopqrstuvwxyz0123 has none left","statusCode":402,"isRetryable":false,"responseBody":"{\"error\":{\"code\":402,\"message\":\"Insufficient credits\"}}"}}}`
+	sql := "CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n" +
+		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', %d);\n", now) +
+		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('%s', %d);\n", envelope, now+1)
+	runSQLite(path, sql)
+}
+
+func runSQLite(path, sql string) {
 	cmd := exec.Command("sqlite3", path)
 	cmd.Stdin = strings.NewReader(sql)
 	if out, err := cmd.CombinedOutput(); err != nil {

@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // hostseam_class_test.go is the class rule bought on 2026-09-18: a unit test in
@@ -128,9 +130,7 @@ func TestNoTestReachesAHostThroughAnUnfakedSeam(t *testing.T) {
 			}
 			return nil
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 	}
 	// Both directions: an entry whose function is gone (or no longer a seam) is
 	// a red run, so a row parks nothing and the list only shrinks.
@@ -150,7 +150,7 @@ func TestNoTestReachesAHostThroughAnUnfakedSeam(t *testing.T) {
 
 	sort.Strings(violations)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 
@@ -317,15 +317,13 @@ func TestNoHostSeamIsFoundByASubstring(t *testing.T) {
 	t.Parallel()
 	seams := []string{"fleetSSH", "sshRun", "sshOutput", "scpFile", "ExecSSH", "publishOverSSH", "SSHRunner", "powerWaitSSH", "rsyncTree", "ssh"}
 	for _, name := range seams {
-		if _, ok := sshFamilyWord(name); !ok {
-			t.Errorf("%s names an ssh-family word and must be read as a host seam (words: %q)", name, identWords(name))
-		}
+		_, ok := sshFamilyWord(name)
+		assert.True(t, ok, "%s names an ssh-family word and must be read as a host seam (words: %q)", name, identWords(name))
 	}
 	innocent := []string{"IsSHA", "HarnessSHA256", "hasShebang", "ShardSHA", "flush", "crossesTheWire"}
 	for _, name := range innocent {
-		if p, ok := sshFamilyWord(name); ok {
-			t.Errorf("%s is not a host seam; the rule read %q in it (words: %q)", name, p, identWords(name))
-		}
+		p, ok := sshFamilyWord(name)
+		assert.False(t, ok, "%s is not a host seam; the rule read %q in it (words: %q)", name, p, identWords(name))
 	}
 }
 
@@ -336,9 +334,7 @@ func readHostSeamAllowlist(t *testing.T) *allowlist.List {
 		// `file:function  # reason`: the reason is required, because an
 		// exception nobody explained is one nobody can ever remove.
 		i := strings.Index(row.Text, "#")
-		if i < 0 || strings.TrimSpace(row.Text[i+1:]) == "" {
-			t.Errorf("%s: %q carries no reason; every exception says why, or nobody can ever delete it", hostSeamAllowlistPath, row.Text)
-		}
+		assert.False(t, i < 0 || strings.TrimSpace(row.Text[i+1:]) == "", "%s: %q carries no reason; every exception says why, or nobody can ever delete it", hostSeamAllowlistPath, row.Text)
 	}
 	return allow
 }

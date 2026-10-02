@@ -44,9 +44,7 @@ func TestEnsureMergeAttributes(t *testing.T) {
 	first, err := os.ReadFile(filepath.Join(root, AttributesName))
 	require.NoError(t, err)
 	for _, want := range []string{"from-*/INDEX merge=union", "from-*/RECEIPTS merge=union"} {
-		if !strings.Contains(string(first), want) {
-			t.Fatalf("%s does not carry %q:\n%s", AttributesName, want, first)
-		}
+		require.Contains(t, string(first), want, "%s does not carry %q:\n%s", AttributesName, want, first)
 	}
 	// The second call is a no-op: no write, and not a second copy of the rules.
 	wrote, err = EnsureMergeAttributes(root)
@@ -54,22 +52,19 @@ func TestEnsureMergeAttributes(t *testing.T) {
 	require.False(t, wrote, "the rules were written twice; every send after the first would touch a shared file for nothing")
 	again, err := os.ReadFile(filepath.Join(root, AttributesName))
 	require.NoError(t, err)
-	if string(again) != string(first) {
-		t.Fatalf("the second call changed the file:\n%s\n---\n%s", first, again)
-	}
+	require.False(t, string(again) != string(first), "the second call changed the file:\n%s\n---\n%s", first, again)
 
 	// A bus that already has a .gitattributes of its own keeps it, and gains the rules.
 	other := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(other, AttributesName), []byte("*.md text\n"), 0o644))
-	if wrote, err := EnsureMergeAttributes(other); err != nil || !wrote {
-		t.Fatalf("EnsureMergeAttributes over an existing file = %v %v", wrote, err)
+	{
+		wrote, err := EnsureMergeAttributes(other)
+		require.False(t, err != nil || !wrote, "EnsureMergeAttributes over an existing file = %v %v", wrote, err)
 	}
 	got, err := os.ReadFile(filepath.Join(other, AttributesName))
 	require.NoError(t, err)
 	for _, want := range []string{"*.md text", "from-*/INDEX merge=union", "from-*/RECEIPTS merge=union"} {
-		if !strings.Contains(string(got), want) {
-			t.Fatalf("the bus's own rule or the tool's is missing:\n%s", got)
-		}
+		require.Contains(t, string(got), want, "the bus's own rule or the tool's is missing:\n%s", got)
 	}
 }
 
@@ -90,12 +85,10 @@ func TestAnAbortThatFailsIsRefusedWithTheRecovery(t *testing.T) {
 	err := abortRebase(dir)
 	require.Error(t, err, "an abort that failed reported success; the checkout is still in a rebase and every later verb will refuse for the wrong reason")
 	for _, want := range []string{"could not be aborted", "STILL in a rebase", where, "git rebase --abort", "git reset --hard ORIG_HEAD"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("the refusal does not say %q: %v", want, err)
-		}
+		require.Contains(t, err.Error(), want, "the refusal does not say %q: %v", want, err)
 	}
 	if strings.Contains(err.Error(), "\n") {
-		t.Fatalf("the refusal is more than one line: %q", err.Error())
+		require.NotContains(t, err.Error(), "\n", "the refusal is more than one line: %q", err.Error())
 	}
 
 	// The other way, and on a fixture of its own: an abort with nothing in its way works
@@ -111,11 +104,13 @@ func TestAnAbortThatFailsIsRefusedWithTheRecovery(t *testing.T) {
 	// --abort` will touch. Making the second half depend on the wreckage of the first tests
 	// the wreckage; a conflicted rebase of its own tests the abort.
 	clean, _ := conflictedRebase(t)
-	if err := abortRebase(clean); err != nil {
-		t.Fatalf("an abort that worked was reported as a failure: %v", err)
+	{
+		err := abortRebase(clean)
+		require.NoError(t, err, "an abort that worked was reported as a failure: %v", err)
 	}
-	if _, still := inRebase(clean); still {
-		t.Fatal("the checkout is still in a rebase after a successful abort")
+	{
+		_, still := inRebase(clean)
+		require.False(t, still, "the checkout is still in a rebase after a successful abort")
 	}
 	if _, err := CurrentBranch(clean); err != nil {
 		require.NoError(t, err, "the checkout is not on a branch after the abort: %v", err)
@@ -127,36 +122,40 @@ func TestAnAbortThatFailsIsRefusedWithTheRecovery(t *testing.T) {
 func conflictedRebase(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
-	if out, err := git(dir, "init", "--quiet", "-b", "main"); err != nil {
-		t.Fatalf("init: %v %s", err, out)
+	{
+		out, err := git(dir, "init", "--quiet", "-b", "main")
+		require.NoError(t, err, "init: %v %s", err, out)
 	}
 	commit := func(content, message string) {
 		t.Helper()
 		write(t, dir, "x.txt", content)
-		if out, err := git(dir, "add", "-A"); err != nil {
-			t.Fatalf("add: %v %s", err, out)
+		{
+			out, err := git(dir, "add", "-A")
+			require.NoError(t, err, "add: %v %s", err, out)
 		}
-		if out, err := git(dir, append(identityArgs(testIdentity["Ada"]), "commit", "-q", "-m", message)...); err != nil {
-			t.Fatalf("commit: %v %s", err, out)
+		{
+			out, err := git(dir, append(identityArgs(testIdentity["Ada"]), "commit", "-q", "-m", message)...)
+			require.NoError(t, err, "commit: %v %s", err, out)
 		}
 	}
 	commit("base\n", "base")
-	if out, err := git(dir, "checkout", "-q", "-b", "other"); err != nil {
-		t.Fatalf("checkout: %v %s", err, out)
+	{
+		out, err := git(dir, "checkout", "-q", "-b", "other")
+		require.NoError(t, err, "checkout: %v %s", err, out)
 	}
 	commit("theirs\n", "theirs")
-	if out, err := git(dir, "checkout", "-q", "main"); err != nil {
-		t.Fatalf("checkout: %v %s", err, out)
+	{
+		out, err := git(dir, "checkout", "-q", "main")
+		require.NoError(t, err, "checkout: %v %s", err, out)
 	}
 	commit("mine\n", "mine")
 	// A rebase that conflicts, so the checkout is genuinely mid-rebase.
-	if _, err := git(dir, append(identityArgs(testIdentity["Ada"]), "rebase", "other")...); err == nil {
-		t.Fatal("the fixture did not conflict")
+	{
+		_, err := git(dir, append(identityArgs(testIdentity["Ada"]), "rebase", "other")...)
+		require.Error(t, err, "the fixture did not conflict")
 	}
 	where, still := inRebase(dir)
-	if !still {
-		t.Fatal("the fixture is not in a rebase")
-	}
+	require.True(t, still, "the fixture is not in a rebase")
 	return dir, where
 }
 
@@ -165,12 +164,8 @@ func conflictedRebase(t *testing.T) (string, string) {
 // of a remote which has moved, and that is exactly the state these refusals are about.
 func TestNoRefusalRecommendsABarePush(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(pullRebaseAdvice, "git pull --rebase && git push") {
-		t.Fatalf("the shared advice is %q, which is not the two commands that land a branch that is behind", pullRebaseAdvice)
-	}
+	require.False(t, !strings.Contains(pullRebaseAdvice, "git pull --rebase && git push"), "the shared advice is %q, which is not the two commands that land a branch that is behind", pullRebaseAdvice)
 	for _, bad := range []string{"push or drop them first", "run git push"} {
-		if strings.Contains(pullRebaseAdvice, bad) {
-			t.Fatalf("the advice still says %q, which does not work against a remote that has moved", bad)
-		}
+		require.NotContains(t, pullRebaseAdvice, bad, "the advice still says %q, which does not work against a remote that has moved", bad)
 	}
 }

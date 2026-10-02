@@ -15,6 +15,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIssue1468(t *testing.T) {
@@ -23,30 +26,20 @@ func TestIssue1468(t *testing.T) {
 	const path = "testdata/corpus/1468-plain-absolutes.md"
 
 	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("the #1468 corpus row is missing: %v", err)
-	}
+	require.NoError(t, err, "the #1468 corpus row is missing: %v", err)
 
 	var stdout, stderr bytes.Buffer
 	got := run([]string{path}, &stdout, &stderr)
-	if got != 1 {
-		t.Errorf("want exit 1 (at least one of the three plainest absolutes is caught), got %d\nstdout: %s\nstderr: %s",
-			got, stdout.String(), stderr.String())
-	}
-	if strings.Contains(stdout.String(), "claims=0") {
-		t.Errorf("the bug is reproduced: stdout = %q, want claims > 0", stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "SELFTALK FAIL") {
-		t.Errorf("want at least one SELFTALK FAIL line for one of the three lines, got stderr = %q", stderr.String())
-	}
+	assert.Equal(t, 1, got, "want exit 1 (at least one of the three plainest absolutes is caught), got %d\nstdout: %s\nstderr: %s",
+		got, stdout.String(), stderr.String())
+	assert.NotContains(t, stdout.String(), "claims=0", "the bug is reproduced: stdout = %q, want claims > 0", stdout.String())
+	assert.Contains(t, stderr.String(), "SELFTALK FAIL", "want at least one SELFTALK FAIL line for one of the three lines, got stderr = %q", stderr.String())
 
 	for _, specimen := range []string{
 		"I cannot ever get this right.\n",
 		"I always break the build.\n",
 		"Nothing I do works.\n",
 	} {
-		if !strings.Contains(string(body), specimen) {
-			t.Errorf("the specimen line is gone: %q", strings.TrimSuffix(specimen, "\n"))
-		}
+		assert.Contains(t, string(body), specimen, "the specimen line is gone: %q", strings.TrimSuffix(specimen, "\n"))
 	}
 }

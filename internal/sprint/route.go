@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
@@ -43,6 +44,9 @@ type Route struct {
 	Tokens   int    `json:"tokens"`   // 0 is unmetered
 	Deadline int    `json:"deadline"` // seconds
 	Enabled  bool   `json:"enabled"`
+	// Prices is the route's price sheet (cardcost.PricesOf), what a card that ran on it
+	// is priced by (cost.go); every price "" when the route has none.
+	Prices cardcost.Prices `json:"prices"`
 }
 
 // The work card's route fields, written at each deal and redeal: the route taken
@@ -134,13 +138,10 @@ func (ri routeIndexes) write(p *Plan) {
 // the array was set) is skipped as an excluded one is.
 func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
+	tier = tierOf(m)
 	if bad != "" {
 		// a card admitted before the lint read its lines: judged under the tier it
 		// names (an unknown word too), else flash's
-		tier = m.Tier
-		if tier == "" {
-			tier = cardhdr.RouteFlash
-		}
 		return nil, tier, "its brief's model lines: " + bad
 	}
 	if m.Pin != "" {
@@ -148,10 +149,6 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	}
 	if len(s.Routes) == 0 {
 		return nil, "", ""
-	}
-	tier = m.Tier
-	if tier == "" {
-		tier = cardhdr.RouteFlash
 	}
 	if tier == cardhdr.RouteFrontier {
 		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line"
@@ -194,6 +191,91 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			FieldDeadline: strconv.Itoa(r.Deadline), FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}, tier, ""
 	}
 	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line"
+}
+
+// tierOf is the tier the deal draws a card's route from: the tier its brief's
+// line 1 names, flash when it names none.
+func tierOf(m cardhdr.Model) string {
+	if m.Tier == "" {
+		return cardhdr.RouteFlash
+	}
+	return m.Tier
+}
+
+// readTierOf is the tier a primary's reads are drawn from: the tier of the work
+// being read, as the deal draws it (tierOf; the owner, 2026-10-01: "i think
+// readers being conservatively the same tier as the work being done seems
+// fine?"). A card that pins a model and names no tier is read on flash; a
+// frontier card, a tier no route serves, is read on pro.
+func readTierOf(pr *Card) string {
+	m, _ := cardhdr.ReadModel(pr.F("brief"))
+	if t := tierOf(m); t != cardhdr.RouteFrontier {
+		return t
+	}
+	return cardhdr.RoutePro
+}
+
+// readRouteOf is the route fields of one read card the ask creates for the
+// primary pr: the read is drawn as a work card is, from the array of pr's tier
+// (readTierOf) at that tier's rolling index, the index moved past the entry
+// taken and every entry skipped (an entry naming no enabled route), the moves
+// summed under pr's unit, so the deal and the reads of a tier share one
+// rotation (tla/RouteIndex.tla, THE READS). The routes avoid (those a read of
+// the primary returned on) are left out while another of the tier is served,
+// as a redeal leaves out the routes already taken. nil when the store holds no route or
+// none serves the tier: the read carries no route and its reader runs its own
+// --model.
+func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[string]string {
+	tier, key := readTierOf(pr), pr.ID
+	if len(s.Routes) == 0 || ri[tier] == nil {
+		return nil
+	}
+	served := map[string]Route{}
+	for _, r := range s.Routes {
+		if r.Tier == tier && r.Enabled {
+			served[r.Name] = r
+		}
+	}
+	arr := s.tierArray(tier)
+	other := false
+	for _, name := range arr {
+		_, ok := served[name]
+		other = other || ok && !contains(avoid, name)
+	}
+	n := uint64(len(arr))
+	at := ri[tier].r.count
+	for i := uint64(0); i < n; i++ {
+		r, ok := served[arr[(at+i)%n]]
+		if !ok || other && contains(avoid, r.Name) {
+			continue
+		}
+		ri[tier].r.count += i + 1
+		was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
+		ri[tier].moves[key] = strconv.FormatUint(was+i+1, 10)
+		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
+			FieldDeadline: strconv.Itoa(r.Deadline)}
+	}
+	return nil
+}
+
+// readRouteMissing is the tier of the primary pr's reads (readTierOf), and why
+// no read card of it can be drawn a route of that tier: "" when the store holds
+// no route at all (reads run on the reader's own model) or an enabled route of
+// the tier is in its array. The deal's tick raises the tier's judgment for the
+// reads waiting (TickDeal, NNoRoute), as it does for work cards.
+func (s *Snapshot) readRouteMissing(pr *Card) (tier, why string) {
+	tier = readTierOf(pr)
+	if len(s.Routes) == 0 {
+		return tier, ""
+	}
+	for _, name := range s.tierArray(tier) {
+		for _, r := range s.Routes {
+			if r.Name == name && r.Tier == tier && r.Enabled {
+				return tier, ""
+			}
+		}
+	}
+	return tier, "no enabled route serves tier " + tier + ", the tier of the work its reads read, so its reads have no route: run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply"
 }
 
 // tokensWord is a route's budget as native's --tokens takes it.
@@ -287,16 +369,21 @@ func ProviderTakes(wc *Card) (takes []ProviderTake, numbers []int) {
 }
 
 // AttemptLines is the work card's lines as `card <id>` prints them: one for each take of it
-// the provider failed (end=provider failure: the line, with the route, model, member and
-// usage of that take), one for each launch refused at staging (end=staging refused: the
+// that ended with no work to judge (end=provider failure: the line, or end=no result: the
+// line, with the route, model, member and usage of that take), one for each launch refused at staging (end=staging refused: the
 // reason, with its generation and member), then the card's own (AttemptLine), the take it is
 // on or ended.
 func AttemptLines(wc *Card) []string {
 	var out []string
 	takes, numbers := ProviderTakes(wc)
 	for i, t := range takes {
-		out = append(out, fmt.Sprintf("ATTEMPT %s card=%s take=%d route=%s model=%s member=%s finished=%s usage=%s end=%s: %s",
-			orDash(wc.F("attempt")), wc.ID, numbers[i], orDash(t.Route), orDash(t.Model), orDash(t.Member), orDash(t.Finished), orDash(t.Usage), cardhdr.EndProvider, t.Error))
+		// a take whose child left no result carries its own kind in its line (takeEnded)
+		end := cardhdr.EndProvider + ": " + t.Error
+		if strings.HasPrefix(t.Error, cardhdr.EndNoResult+":") {
+			end = t.Error
+		}
+		out = append(out, fmt.Sprintf("ATTEMPT %s card=%s take=%d route=%s model=%s member=%s finished=%s usage=%s end=%s",
+			orDash(wc.F("attempt")), wc.ID, numbers[i], orDash(t.Route), orDash(t.Model), orDash(t.Member), orDash(t.Finished), orDash(t.Usage), end))
 	}
 	// each launch refused at staging (StagingTakes), at the generation it was dealt
 	staged, gens := StagingTakes(wc)

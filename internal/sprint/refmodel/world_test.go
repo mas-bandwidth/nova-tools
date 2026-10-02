@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -34,12 +36,8 @@ func newWorld(readers ...string) *world {
 // must applies a plan and fails the test on a refusal or a broken guard.
 func (w *world) must(t *testing.T, p sprint.Plan) {
 	t.Helper()
-	if len(p.Refused) > 0 {
-		t.Fatalf("refused: %v", p.Refused)
-	}
-	if err := w.apply(p); err != nil {
-		t.Fatal(err)
-	}
+	require.Empty(t, p.Refused, "refused: %v", p.Refused)
+	require.NoError(t, w.apply(p))
 }
 
 // apply carries out a plan: its rows, then each unit's changes, bumps, closes

@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"path"
@@ -10,6 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE CLASS RULE: THE FUNCTIONAL-TIER IMAGE STAYS HONEST.
@@ -237,9 +241,8 @@ func TestFunctionalImageDownloadCheckSeesEveryWayAroundIt(t *testing.T) {
 	t.Parallel()
 	arg := "ARG X_SHA256=" + strings.Repeat("0", 64)
 	ok := `RUN curl -fsSL -o /tmp/x https://example.invalid/x && printf '%s  %s\n' "${X_SHA256}" /tmp/x | sha256sum -c -`
-	if got := downloadProblems([]string{arg, ok}); len(got) != 0 {
-		t.Fatalf("a checked download is refused: %v", got)
-	}
+	got := downloadProblems([]string{arg, ok})
+	require.Empty(t, got, "a checked download is refused: %v", got)
 	cases := []struct{ name, run, want string }{
 		{"a sum computed from the download", `RUN curl -fsSL -o /tmp/x https://example.invalid/x && sha256sum /tmp/x > /tmp/x.sum && sha256sum -c /tmp/x.sum && echo "${X_SHA256}"`, "sha256sum -c -"},
 		{"curl piped into sh", `RUN curl -fsSL https://example.invalid/i.sh | sh`, "pipes"},
@@ -262,13 +265,10 @@ func TestFunctionalImageDownloadCheckSeesEveryWayAroundIt(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := strings.Join(downloadProblems([]string{arg, c.run}), "\n")
-		if !strings.Contains(got, c.want) {
-			t.Errorf("%s: the download check does not say %q: %q", c.name, c.want, got)
-		}
+		assert.Contains(t, got, c.want, "%s: the download check does not say %q: %q", c.name, c.want, got)
 	}
-	if got := downloadProblems([]string{arg, "ARG UNUSED_SHA256=" + strings.Repeat("0", 64), ok}); len(got) != 1 || !strings.Contains(got[0], "UNUSED_SHA256") {
-		t.Errorf("a pinned ARG no RUN reads is not named: %v", got)
-	}
+	unusedGot := downloadProblems([]string{arg, "ARG UNUSED_SHA256=" + strings.Repeat("0", 64), ok})
+	assert.True(t, len(unusedGot) == 1 && strings.Contains(unusedGot[0], "UNUSED_SHA256"), "a pinned ARG no RUN reads is not named: %v", unusedGot)
 }
 
 // TestFunctionalImageBaseIsPinnedByDigest: the base image is named by its
@@ -278,21 +278,17 @@ func TestFunctionalImageBaseIsPinnedByDigest(t *testing.T) {
 	src := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(functionalImageFile)))
 	args := containerArgs(src)
 	base := args["BASE"]
-	if !imageDigestRe.MatchString(base) {
-		t.Fatalf("%s: ARG BASE=%q is not an image pinned by @sha256:<digest>; a tag moves, a digest does not", functionalImageFile, base)
-	}
+	require.True(t, imageDigestRe.MatchString(base), "%s: ARG BASE=%q is not an image pinned by @sha256:<digest>; a tag moves, a digest does not", functionalImageFile, base)
 	stages := map[string]bool{}
 	froms := containerFromRe.FindAllStringSubmatch(src, -1)
-	if len(froms) == 0 {
-		t.Fatalf("%s has no FROM", functionalImageFile)
-	}
+	require.NotEmpty(t, froms, "%s has no FROM", functionalImageFile)
 	for _, m := range froms {
 		ref := m[1]
 		switch {
 		case ref == "${BASE}":
 		case stages[ref]:
 		default:
-			t.Errorf("%s: FROM %s is neither ${BASE} (pinned by digest) nor an earlier stage", functionalImageFile, ref)
+			assert.Fail(t, fmt.Sprintf("%s: FROM %s is neither ${BASE} (pinned by digest) nor an earlier stage", functionalImageFile, ref))
 		}
 		if m[2] != "" {
 			stages[m[2]] = true
@@ -313,14 +309,11 @@ func TestFunctionalImageGoIsTheModulesPin(t *testing.T) {
 	} else if m := goModGoLineRe.FindStringSubmatch(mod); m != nil {
 		want = m[1]
 	}
-	if strings.Count(want, ".") != 2 {
-		t.Fatalf("go.mod pins Go %q; the image needs an exact three-part version to install", want)
-	}
+	require.Equal(t, 2, strings.Count(want, "."), "go.mod pins Go %q; the image needs an exact three-part version to install", want)
 	src := readFile(t, filepath.Join(root, filepath.FromSlash(functionalImageFile)))
 	args := containerArgs(src)
-	if got := args["GO_VERSION"]; got != want {
-		t.Errorf("%s: GO_VERSION=%s but go.mod pins %s; change the version and both GO_SHA256 lines together", functionalImageFile, got, want)
-	}
+	got := args["GO_VERSION"]
+	assert.Equal(t, want, got, "%s: GO_VERSION=%s but go.mod pins %s; change the version and both GO_SHA256 lines together", functionalImageFile, got, want)
 }
 
 // TestFunctionalImageInputsArePinned: every input has a fixed value and every
@@ -329,40 +322,28 @@ func TestFunctionalImageInputsArePinned(t *testing.T) {
 	t.Parallel()
 	src := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(functionalImageFile)))
 	args := containerArgs(src)
-	if !snapshotStampRe.MatchString(args["APT_SNAPSHOT"]) {
-		t.Errorf("%s: ARG APT_SNAPSHOT=%q is not a snapshot instant like 20260101T000000Z; an unpinned archive moves the package versions", functionalImageFile, args["APT_SNAPSHOT"])
-	}
+	assert.True(t, snapshotStampRe.MatchString(args["APT_SNAPSHOT"]), "%s: ARG APT_SNAPSHOT=%q is not a snapshot instant like 20260101T000000Z; an unpinned archive moves the package versions", functionalImageFile, args["APT_SNAPSHOT"])
 	sums := 0
 	for name, val := range args {
 		if !strings.Contains(name, "SHA256") {
 			continue
 		}
 		sums++
-		if !sha256Re.MatchString(val) {
-			t.Errorf("%s: ARG %s=%q is not a lowercase hex sha256", functionalImageFile, name, val)
-		}
+		assert.True(t, sha256Re.MatchString(val), "%s: ARG %s=%q is not a lowercase hex sha256", functionalImageFile, name, val)
 	}
-	if sums == 0 {
-		t.Errorf("%s carries no ARG *_SHA256 at all", functionalImageFile)
-	}
-	if args["REDIS_VERSION"] == "" || args["SOPS_VERSION"] == "" || args["AGE_VERSION"] == "" {
-		t.Errorf("%s: REDIS_VERSION, SOPS_VERSION and AGE_VERSION are all pinned ARGs; one is missing", functionalImageFile)
-	}
+	assert.NotZero(t, sums, "%s carries no ARG *_SHA256 at all", functionalImageFile)
+	assert.True(t, args["REDIS_VERSION"] != "" && args["SOPS_VERSION"] != "" && args["AGE_VERSION"] != "", "%s: REDIS_VERSION, SOPS_VERSION and AGE_VERSION are all pinned ARGs; one is missing", functionalImageFile)
 	ins := containerInstructions(src)
 	for _, problem := range downloadProblems(ins) {
-		t.Errorf("%s: %s", functionalImageFile, problem)
+		assert.Fail(t, fmt.Sprintf("%s: %s", functionalImageFile, problem))
 	}
 	for _, in := range ins {
 		if !strings.HasPrefix(in, "RUN ") {
 			continue
 		}
 		if strings.Contains(in, "apt-get install") {
-			if !strings.Contains(in, "--no-install-recommends") {
-				t.Errorf("%s: an apt-get install without --no-install-recommends: %.120s", functionalImageFile, in)
-			}
-			if !strings.Contains(in, "rm -rf /var/lib/apt/lists") {
-				t.Errorf("%s: an apt-get install that leaves /var/lib/apt/lists in the layer: %.120s", functionalImageFile, in)
-			}
+			assert.Contains(t, in, "--no-install-recommends", "%s: an apt-get install without --no-install-recommends: %.120s", functionalImageFile, in)
+			assert.Contains(t, in, "rm -rf /var/lib/apt/lists", "%s: an apt-get install that leaves /var/lib/apt/lists in the layer: %.120s", functionalImageFile, in)
 		}
 	}
 }
@@ -383,14 +364,10 @@ func isRootUser(user string) bool {
 func TestFunctionalImageRootUserSpellings(t *testing.T) {
 	t.Parallel()
 	for _, u := range []string{"", "root", "0", "00", "000", "root:root", "0:0", "00:0", " root "} {
-		if !isRootUser(u) {
-			t.Errorf("USER %q is root and the test does not see it", u)
-		}
+		assert.True(t, isRootUser(u), "USER %q is root and the test does not see it", u)
 	}
 	for _, u := range []string{"bench", "10001", "bench:bench", "10001:10001"} {
-		if isRootUser(u) {
-			t.Errorf("USER %q is not root", u)
-		}
+		assert.False(t, isRootUser(u), "USER %q is not root", u)
 	}
 }
 
@@ -411,17 +388,11 @@ func TestFunctionalImageRunsAsTheTierExpects(t *testing.T) {
 			env.WriteString(" ")
 		}
 	}
-	if isRootUser(user) {
-		t.Errorf("%s ends as user %q; postgres refuses root and the tier runs as a non-root user", functionalImageFile, user)
-	}
+	assert.False(t, isRootUser(user), "%s ends as user %q; postgres refuses root and the tier runs as a non-root user", functionalImageFile, user)
 	for _, want := range []string{"GOTOOLCHAIN=local", "GOPROXY=off", "NOVA_CI=1", "NOVA_FUNCTIONAL_RUN=container"} {
-		if !strings.Contains(env.String(), want) {
-			t.Errorf("%s: ENV lacks %s", functionalImageFile, want)
-		}
+		assert.Contains(t, env.String(), want, "%s: ENV lacks %s", functionalImageFile, want)
 	}
-	if !strings.Contains(src, "/image-manifest.txt") {
-		t.Errorf("%s writes no /image-manifest.txt; the manifest is how two builds are compared", functionalImageFile)
-	}
+	assert.Contains(t, src, "/image-manifest.txt", "%s writes no /image-manifest.txt; the manifest is how two builds are compared", functionalImageFile)
 }
 
 // execNames is every program name a Go file under cmd, internal or tools gives
@@ -518,9 +489,9 @@ func execNames(t *testing.T) map[string][]string {
 }
 
 type imageRow struct {
-	name, how, provider, note string
-	unscanned                 bool
-	line                      int
+	name, how, provider string
+	unscanned           bool
+	line                int
 }
 
 // imageRows parses binaries.txt: `<name> <TAB> <how> <TAB> <provider or reason>`
@@ -540,14 +511,13 @@ func imageRows(t *testing.T, text string) []imageRow {
 			continue
 		}
 		f := strings.Split(line, "\t")
-		if len(f) != 3 || f[0] == "" || f[2] == "" {
-			t.Errorf("%s:%d: %q is not `<name>\\t<how>\\t<provider or reason>`", functionalImageList, i+1, line)
+		if !assert.True(t, len(f) == 3 && f[0] != "" && f[2] != "", "%s:%d: %q is not `<name>\\t<how>\\t<provider or reason>`", functionalImageList, i+1, line) {
 			continue
 		}
 		switch f[1] {
 		case "apt", "source", "base", "tree", "absent":
 		default:
-			t.Errorf("%s:%d: how %q is not apt, source, base, tree or absent", functionalImageList, i+1, f[1])
+			assert.Fail(t, fmt.Sprintf("%s:%d: how %q is not apt, source, base, tree or absent", functionalImageList, i+1, f[1]))
 			continue
 		}
 		rows = append(rows, imageRow{name: f[0], how: f[1], provider: f[2], unscanned: unscanned, line: i + 1})
@@ -567,7 +537,7 @@ func TestFunctionalImageCarriesEveryBinaryTheTierExecs(t *testing.T) {
 	listed := map[string]imageRow{}
 	for _, r := range rows {
 		if prev, dup := listed[r.name]; dup {
-			t.Errorf("%s:%d: %s is listed twice (first at line %d)", functionalImageList, r.line, r.name, prev.line)
+			assert.False(t, dup, "%s:%d: %s is listed twice (first at line %d)", functionalImageList, r.line, r.name, prev.line)
 		}
 		listed[r.name] = r
 	}
@@ -584,30 +554,26 @@ func TestFunctionalImageCarriesEveryBinaryTheTierExecs(t *testing.T) {
 			if len(sites) > 3 {
 				sites = sites[:3]
 			}
-			t.Errorf("%s is run by name (%s) and is not a row of %s: add `%s<TAB>apt|source|base|tree<TAB><what carries it>` and install it in %s, or `%s<TAB>absent<TAB><why the functional tier can do without it>`",
-				n, strings.Join(sites, ", "), functionalImageList, n, functionalImageFile, n)
+			assert.Fail(t, fmt.Sprintf("%s is run by name (%s) and is not a row of %s: add `%s<TAB>apt|source|base|tree<TAB><what carries it>` and install it in %s, or `%s<TAB>absent<TAB><why the functional tier can do without it>`",
+				n, strings.Join(sites, ", "), functionalImageList, n, functionalImageFile, n))
 		}
 	}
 	for _, r := range rows {
 		if !r.unscanned && found[r.name] == nil {
-			t.Errorf("%s:%d: %s is no longer run by name anywhere under cmd, internal or tools; delete the row (the list follows the tree)", functionalImageList, r.line, r.name)
+			assert.Fail(t, fmt.Sprintf("%s:%d: %s is no longer run by name anywhere under cmd, internal or tools; delete the row (the list follows the tree)", functionalImageList, r.line, r.name))
 		}
 		if r.unscanned && found[r.name] != nil {
-			t.Errorf("%s:%d: %s is [unscanned] but the scan sees it now; move it above the section", functionalImageList, r.line, r.name)
+			assert.Fail(t, fmt.Sprintf("%s:%d: %s is [unscanned] but the scan sees it now; move it above the section", functionalImageList, r.line, r.name))
 		}
 		switch r.how {
 		case "apt":
-			if !aptInstalls(containerfile, r.provider) {
-				t.Errorf("%s:%d: %s says apt package %q carries it, and no apt-get install in %s names that package", functionalImageList, r.line, r.name, r.provider, functionalImageFile)
-			}
+			assert.True(t, aptInstalls(containerfile, r.provider), "%s:%d: %s says apt package %q carries it, and no apt-get install in %s names that package", functionalImageList, r.line, r.name, r.provider, functionalImageFile)
 		case "source":
 			if problem := sourceProblem(containerfile, r.name, r.provider); problem != "" {
-				t.Errorf("%s:%d: %s says %q carries it, and %s: %s", functionalImageList, r.line, r.name, r.provider, functionalImageFile, problem)
+				assert.Fail(t, fmt.Sprintf("%s:%d: %s says %q carries it, and %s: %s", functionalImageList, r.line, r.name, r.provider, functionalImageFile, problem))
 			}
 		case "absent":
-			if len(strings.Fields(r.provider)) < 3 {
-				t.Errorf("%s:%d: %s is absent from the image and the reason %q is not a sentence", functionalImageList, r.line, r.name, r.provider)
-			}
+			assert.True(t, len(strings.Fields(r.provider)) >= 3, "%s:%d: %s is absent from the image and the reason %q is not a sentence", functionalImageList, r.line, r.name, r.provider)
 		}
 	}
 }
@@ -702,21 +668,16 @@ func TestFunctionalImageSourceCheckSeesADeletedInstall(t *testing.T) {
 		{"age-keygen", "age", "age"},
 		{"go", "fetch", "COPY --from=fetch /usr/local/go"},
 	} {
-		if p := sourceProblem(containerfile, c.name, c.provider); p != "" {
-			t.Errorf("%s: the real Containerfile is refused: %s", c.name, p)
-		}
+		p := sourceProblem(containerfile, c.name, c.provider)
+		assert.Empty(t, p, "%s: the real Containerfile is refused: %s", c.name, p)
 		mutated := drop(c.cut)
-		if mutated == containerfile {
-			t.Fatalf("%s: nothing to delete for %q", c.name, c.cut)
-		}
-		if p := sourceProblem(mutated, c.name, c.provider); p == "" {
-			t.Errorf("%s: deleting every line with %q stays green", c.name, c.cut)
-		}
+		require.NotEqual(t, containerfile, mutated, "%s: nothing to delete for %q", c.name, c.cut)
+		pMutated := sourceProblem(mutated, c.name, c.provider)
+		assert.NotEmpty(t, pMutated, "%s: deleting every line with %q stays green", c.name, c.cut)
 	}
 	// A comment alone does not carry a program.
-	if p := sourceProblem("FROM x\n# sops is installed elsewhere\n", "sops", "sops"); p == "" {
-		t.Errorf("a comment that names sops carries it")
-	}
+	p := sourceProblem("FROM x\n# sops is installed elsewhere\n", "sops", "sops")
+	assert.NotEmpty(t, p, "a comment that names sops carries it")
 }
 
 // aptInstalls reports whether some apt-get install in the Containerfile lists
@@ -744,21 +705,15 @@ func TestFunctionalImageReadmeNamesEveryWritablePlace(t *testing.T) {
 	t.Parallel()
 	readme := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(functionalImageReadme)))
 	i := strings.Index(readme, "### Where a run can write")
-	if i < 0 {
-		t.Fatalf("%s has no \"Where a run can write\" section", functionalImageReadme)
-	}
+	require.GreaterOrEqual(t, i, 0, "%s has no \"Where a run can write\" section", functionalImageReadme)
 	section := readme[i:]
 	if j := strings.Index(section[3:], "\n### "); j >= 0 {
 		section = section[:j+3]
 	}
 	for _, want := range []string{"`/tmp`", "`/home/bench`", "`/gocache`", "`/var/tmp`", "`/dev/shm`", "`/run`", "Postgres"} {
-		if !strings.Contains(section, want) {
-			t.Errorf("%s: the writable places do not name %s", functionalImageReadme, want)
-		}
+		assert.Contains(t, section, want, "%s: the writable places do not name %s", functionalImageReadme, want)
 	}
-	if strings.Contains(readme, "only the tmpfs mounts and the named cache volume are") {
-		t.Errorf("%s still says only the tmpfs mounts and the cache volume are writable", functionalImageReadme)
-	}
+	assert.NotContains(t, readme, "only the tmpfs mounts and the named cache volume are", "%s still says only the tmpfs mounts and the cache volume are writable", functionalImageReadme)
 }
 
 // TestFunctionalImageRuntimeAndReadmeAgree: the runtime role probes with the
@@ -770,9 +725,7 @@ func TestFunctionalImageRuntimeAndReadmeAgree(t *testing.T) {
 	containerfile := readFile(t, filepath.Join(root, filepath.FromSlash(functionalImageFile)))
 	base := containerArgs(containerfile)["BASE"]
 	defaults := readFile(t, filepath.Join(root, filepath.FromSlash(containerRuntimeRole+"/defaults/main.yml")))
-	if !strings.Contains(defaults, `container_runtime_probe_image: "`+base+`"`) {
-		t.Errorf("%s/defaults/main.yml: container_runtime_probe_image is not the Containerfile's BASE (%s)", containerRuntimeRole, base)
-	}
+	assert.Contains(t, defaults, `container_runtime_probe_image: "`+base+`"`, "%s/defaults/main.yml: container_runtime_probe_image is not the Containerfile's BASE (%s)", containerRuntimeRole, base)
 	_, argv, _ := probeTask(t)
 	have := map[string]bool{}
 	for _, a := range argv {
@@ -781,14 +734,8 @@ func TestFunctionalImageRuntimeAndReadmeAgree(t *testing.T) {
 	readme := readFile(t, filepath.Join(root, filepath.FromSlash(functionalImageReadme)))
 	cmd := readmeRunCommand(t)
 	for _, flag := range []string{"--network", "--pids-limit", "--memory", "--memory-swap", "--cpus", "--read-only", "--tmpfs", "--timeout", "--ipc", "--security-opt", "--cap-drop"} {
-		if !have[flag] {
-			t.Errorf("%s/tasks/main.yml: the probe does not run with %s", containerRuntimeRole, flag)
-		}
-		if !strings.Contains(cmd+" ", flag+" ") {
-			t.Errorf("%s: the run command does not carry %s, which the runtime probe proves", functionalImageReadme, flag)
-		}
+		assert.True(t, have[flag], "%s/tasks/main.yml: the probe does not run with %s", containerRuntimeRole, flag)
+		assert.Contains(t, cmd+" ", flag+" ", "%s: the run command does not carry %s, which the runtime probe proves", functionalImageReadme, flag)
 	}
-	if !strings.Contains(readme, "cat /image-manifest.txt") {
-		t.Errorf("%s: no one-line command prints /image-manifest.txt", functionalImageReadme)
-	}
+	assert.Contains(t, readme, "cat /image-manifest.txt", "%s: no one-line command prints /image-manifest.txt", functionalImageReadme)
 }

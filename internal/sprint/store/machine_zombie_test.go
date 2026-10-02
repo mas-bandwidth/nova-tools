@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -143,7 +145,7 @@ func TestCRZombieWriter(t *testing.T) {
 				tail = tail[len(tail)-40:]
 			}
 			t.Logf("log:\n%s", strings.Join(tail, "\n"))
-			t.FailNow()
+			require.NoError(t, bad)
 		}
 	}
 }

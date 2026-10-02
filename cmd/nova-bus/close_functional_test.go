@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The INBOX OPEN line used to be two lines: one carrying the counts, and, past a size, a
@@ -29,12 +31,11 @@ func TestInboxOpenIsOneLine(t *testing.T) {
 
 	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0 large=true remedy=reply or receipt each note, or close --before <instant> as an explicit bulk cutoff")
-	if n := strings.Count(r.stdout, "INBOX OPEN carrying=62 heard="); n != 1 {
-		t.Fatalf("the backlog counts were not on exactly one line:\n%s", r.stdout)
+	{
+		n := strings.Count(r.stdout, "INBOX OPEN carrying=62 heard=")
+		require.Equalf(t, 1, n, "the backlog counts were not on exactly one line:\n%s", r.stdout)
 	}
-	if strings.Contains(r.stdout, "is large") {
-		t.Fatalf("the large-list sentence still sits on its own line:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "is large", "the large-list sentence still sits on its own line:\n%s", r.stdout)
 }
 
 // A large carrying set names reply/receipt as the normal path, not `--advance` alone: plain
@@ -55,9 +56,7 @@ func TestInboxLargeRemedyNamesReplyOrReceiptNotAdvance(t *testing.T) {
 
 	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0 large=true")
-	if strings.Contains(r.stdout, "remedy=inbox --advance") {
-		t.Fatalf("a large carrying set names '--advance' alone as its remedy, which loops without resolving:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "remedy=inbox --advance", "a large carrying set names '--advance' alone as its remedy, which loops without resolving:\n%s", r.stdout)
 	r.mustContain(t, "stdout", "reply or receipt each note").
 		mustContain(t, "stdout", "close --before <instant>").
 		mustContain(t, "stdout", "explicit bulk cutoff")
@@ -90,8 +89,9 @@ func TestCloseBeforeReceiptsOldNotesOnly(t *testing.T) {
 		"--before", "2026-09-08T00:00:00Z", "--dry-run").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "CLOSE OK closed=2 kept=1 commit=-")
-	if entries := mdFiles(t, checkout, "from-ada"); len(entries) != 0 {
-		t.Fatalf("--dry-run wrote %d receipt notes, want 0", len(entries))
+	{
+		entries := mdFiles(t, checkout, "from-ada")
+		require.Emptyf(t, len(entries), "--dry-run wrote %d receipt notes, want 0", len(entries))
 	}
 
 	r := invoke(t, "", "close", "--bus", checkout, "--as", "Ada",
@@ -99,9 +99,7 @@ func TestCloseBeforeReceiptsOldNotesOnly(t *testing.T) {
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "CLOSE OK closed=2 kept=1")
-	if !strings.Contains(r.stdout, "commit=") || strings.Contains(r.stdout, "commit=-") {
-		t.Fatalf("a writing close printed no commit:\n%s", r.stdout)
-	}
+	require.Falsef(t, !strings.Contains(r.stdout, "commit=") || strings.Contains(r.stdout, "commit=-"), "a writing close printed no commit:\n%s", r.stdout)
 
 	got := ""
 	for _, name := range mdFiles(t, checkout, "from-ada") {
@@ -112,17 +110,14 @@ func TestCloseBeforeReceiptsOldNotesOnly(t *testing.T) {
 		"Re: bo-111111111111",
 		"closed: unanswered before 2026-09-08T00:00:00Z",
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("receipt notes do not carry %q:\n%s", want, got)
-		}
+		require.Containsf(t, got, want, "receipt notes do not carry %q:\n%s", want, got)
 	}
-	if strings.Contains(got, "bo-333333333333") {
-		t.Fatalf("the note after the stamp was receipted:\n%s", got)
-	}
+	require.NotContainsf(t, got, "bo-333333333333", "the note after the stamp was receipted:\n%s", got)
 	// Both old notes are Bo's, so they are closed by ONE receipt naming both -- and
 	// closed= still counts the NOTES, which is what the person asked to close.
-	if names := mdFiles(t, checkout, "from-ada"); len(names) != 1 {
-		t.Fatalf("one receipt per sender lane, want 1 file, got %d: %v", len(names), names)
+	{
+		names := mdFiles(t, checkout, "from-ada")
+		require.Equalf(t, 1, len(names), "one receipt per sender lane, want 1 file, got %d: %v", len(names), names)
 	}
 	r.mustContain(t, "stdout", "CLOSE OK closed=2 kept=1 receipts=1 commit=")
 }

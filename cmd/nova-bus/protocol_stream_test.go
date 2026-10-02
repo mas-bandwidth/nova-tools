@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestTheProgressRegistryMatchesTheLineThisProgramWrites keeps the registry in
@@ -16,12 +17,8 @@ func TestTheProgressRegistryMatchesTheLineThisProgramWrites(t *testing.T) {
 		"INBOX WALK commits=1/1 notes=0 elapsed=3ms",
 		`INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"`,
 	} {
-		if !bus.IsProgress(line) {
-			t.Errorf("internal/bus does not know this is progress, so no consumer does:\n%s", line)
-		}
-		if bus.IsProtocol(line) {
-			t.Errorf("a progress line is also claimed as protocol, which is the two halves of the rule contradicting each other:\n%s", line)
-		}
+		assert.Truef(t, bus.IsProgress(line), "internal/bus does not know this is progress, so no consumer does:\n%s", line)
+		assert.Falsef(t, bus.IsProtocol(line), "a progress line is also claimed as protocol, which is the two halves of the rule contradicting each other:\n%s", line)
 	}
 	// The complement: the lines consumers DO parse are protocol and are never
 	// dropped as progress.
@@ -31,16 +28,10 @@ func TestTheProgressRegistryMatchesTheLineThisProgramWrites(t *testing.T) {
 		"INBOX OK as=Ada carrying=2 open=0 notes=1 receipts=0 heard=1 unaddressed=0 unreadable=0",
 		"INBOX HEARD id=bo-111111111111 from=Bo addr=to at=2026-09-07T00:02:00Z path=from-bo/y.md: Heard",
 	} {
-		if bus.IsProgress(line) {
-			t.Errorf("a protocol line is dropped as progress, which is the false quiet arriving by the other road:\n%s", line)
-		}
-		if !bus.IsProtocol(line) {
-			t.Errorf("a documented protocol line is not in internal/bus.ProtocolPrefixes:\n%s", line)
-		}
+		assert.Falsef(t, bus.IsProgress(line), "a protocol line is dropped as progress, which is the false quiet arriving by the other road:\n%s", line)
+		assert.Truef(t, bus.IsProtocol(line), "a documented protocol line is not in internal/bus.ProtocolPrefixes:\n%s", line)
 	}
 	// A prefix match on token boundaries and not on substrings: a future
 	// `INBOX WALKER` is not this progress line.
-	if bus.IsProgress("INBOX WALKER id=x") {
-		t.Error("the progress match is a substring match, so a future token that merely starts with one would be dropped unread")
-	}
+	assert.False(t, bus.IsProgress("INBOX WALKER id=x"), "the progress match is a substring match, so a future token that merely starts with one would be dropped unread")
 }

@@ -2,39 +2,21 @@ package swarm
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 )
 
-// USAGE OUTLIVES THE JOB (rule 12).
-//
-// DeepSeek's usage for two batches on 2026-09-11 lived in per-worker data directories that
-// were reclaimed with the jobs, and nothing survived. So the usage file is written OUTSIDE
-// the reclaimable subtree, by finalize, BEFORE anything else happens to the job, and
-// reclaim refuses without it.
-//
 // A field the provider did not report is the literal "-", never 0: a zero is a
 // measurement and a dash is an absence, and nova-tokens reads this file and reads "-" as
 // unknown (SPEC-TOKENS rule 14).
 
-// UsageColumns are the sixteen columns, in this order. The order is the contract.
-var UsageColumns = []string{
-	"job", "attempt", "from", "started", "ended", "end", "rc", "provider", "model", "repo",
-	"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd",
-}
-
 // The ways a job ends, as the `end` column spells them.
 const (
 	EndDone         = "done"
-	EndKilled       = "killed"
 	EndBudget       = "budget"
 	EndUnverifiable = "budget-unverifiable"
-	EndViolation    = "violation"
 	EndFailed       = "failed"
 	EndUnknown      = "unknown"
-	EndLaunchFailed = "launch-failed"
-	EndInputLimit   = "input-limit"
 	// EndProvider is a launch that did not take: the harness died inside the launch
 	// grace with a provider server error in its tail. It is retried with backoff and,
 	// after the third fast failure, is filed with the provider's own ref (issue #900).
@@ -51,33 +33,6 @@ const Dash = "-"
 
 // UsageRow is one job's row.
 type UsageRow map[string]string
-
-// UsagePath is <pool>/usage/<job>.tsv, one per job id, outside everything reclaim removes.
-func (p *Pool) UsagePath(id string) string { return p.Path(Usage, id+".tsv") }
-
-// WriteUsage writes a job's usage file, once and never again: a job's second attempt is a
-// new job id with its own file, so cost sums each attempt once and a retry never
-// double-counts. It reports whether the file already existed.
-func (p *Pool) WriteUsage(id string, row UsageRow) (string, bool, error) {
-	path := p.UsagePath(id)
-	if _, err := os.Stat(path); err == nil {
-		return path, true, nil
-	}
-	var head, values []string
-	for _, c := range UsageColumns {
-		v := strings.TrimSpace(row[c])
-		if v == "" {
-			v = Dash
-		}
-		// A tab or a newline in a value would make one row read as two fields or two rows;
-		// the file is tab-separated and this is where that is kept true.
-		v = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(v)
-		head = append(head, c)
-		values = append(values, v)
-	}
-	body := strings.Join(head, "\t") + "\n" + strings.Join(values, "\t") + "\n"
-	return path, false, writeAtomic(path, []byte(body), 0o644)
-}
 
 // Int reads a numeric column, reporting whether it is a number at all -- a dash is not.
 func (r UsageRow) Int(name string) (int, bool) {

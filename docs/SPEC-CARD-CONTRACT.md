@@ -22,6 +22,11 @@ and opens the pull request). The model is `tla/CardContract.tla`.
 | 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule`, `TestJudgeNamesTheProviderForARunItFailed` and the push tests of `internal/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
 | 5. end to end | a scripted child (clone, branch, commit, push, `gh pr create`) runs under the real member and native on the mem twin with a local bare origin, once per profile | `TestTheScriptedChildEndToEnd` (functional tier) |
 
+`STAGE OK` reports total staging `secs` and cumulative Git command seconds for `clone`
+(including its initial checkout), `fetch` (excluding probes and retry waits), and `checkout`;
+`FRAME OK secs` reports the whole successful frame installation separately, including recipes,
+shims and the read base refresh.
+
 ## 2. The frame and JOB.md
 
 `JOB.md` is the first thing the child reads: the harness prompt begins `Read <job>/JOB.md
@@ -40,7 +45,35 @@ ended); then `Do that first; a finish with no new commit is refused.` The three 
 packet's `why`, `finding` and `fix`, which the rework wrote on the attempt's work card
 (`TestReworkCarriesTheFixTheFindingAndWhyInTheNextPacket`; the lines:
 `TestJobTextOfAReworkSaysWhyAndWhatToDoFirst`). A read's `JOB.md` says to review the
-change on the branch against its base as a pull request is reviewed. JOB.md repeats no rules:
+change on the branch against its base as a pull request is reviewed, and states the work's change
+exactly: the commit the work started from, a full sha, the two commands that show it
+(`git diff <start>..HEAD`, `git diff --stat <start>..HEAD`), and that the base branch may have
+moved since and is not what to compare against: a diff against the tip of `<base>` or
+`origin/<base>` shows every change landed since as a deletion, never the work's and never a
+finding. Its first line is `# JOB: read <card>, attempt <n>` in every profile
+(`cardcontract.ReadTitle`) and a work card's never is, so a brief that speaks to its readers
+names that line (`TestQuackBriefTellsAReadByJobMdsFirstLine`). The packet carries the base's name, never the
+commit the work was staged on, so native finds the start when it stages the read: the merge base
+of the read's head and the base in the staged checkout; the gh shim's `pr diff` and `pr view`
+read from it too. The base is a full sha, else a branch when the checkout holds
+`origin/<base>`, else a tag when it holds `refs/tags/<base>`, else a branch. A sha or a tag never
+moves and is used as it is. A branch is fetched from origin into `origin/<base>` first, and a
+fetch that fails refuses the read at staging: native prints a STAGE FAIL line naming the base
+and the fetch error, writes no JOB.md, and the sprint deals the read again; the checkout's own
+branch is never trusted in its place
+(`TestAReadWhoseBaseCannotBeFetchedIsRefusedAtStaging`, `TestAReadAgainstATagOrAShaNeedsNoFetch`).
+A missing base object or an operational failure while finding the merge base also refuses the
+read before writing its frame. Valid unrelated histories have no common ancestor; their frame
+names no exact start (`TestReviewAMissingImmutableBaseRefusesTheReadBeforeWritingItsFrame`,
+`TestReviewUnrelatedHistoriesKeepTheUnknownStartPolicy`). On the
+1000-card load test of 2026-10-01 cards landed on the base every few seconds, and a reader that
+ran `git diff origin/dev` saw every file landed since the work began as a deletion and sent a
+correct work card back (`TestAReadIsToldTheWorksChangeWhenTheBaseMoved`). The fetch is because
+the checkout is cloned from the bench mirror, whose base can be older than the work's start: the
+merge base against it was that older tip, and readers judged correct work broken because the diff
+held every card landed in between ("diff has 22 files not exactly one"). origin's base holds the
+work's start and not the work, so the merge base against it is the start however far the base
+has moved (`TestAReadsDiffIsExactlyTheWorkWhereverTheBaseIs`). JOB.md repeats no rules:
 the card's own RULES paragraph is in the brief, where the add lint holds it, and the child
 reads it once.
 
@@ -123,14 +156,21 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
 - **ok** only when the result has the shape, its verdict is `ok`, its head has a commit the
   staged commit does not (the child committed), and the member's push of it to the card's
   branch succeeded;
-- **failed** otherwise, with the reason: `no RESULT.md shape`, `nothing to do: <why>`,
+- **no result**, a failed finish of its own kind, when the child ended by itself, within its
+  budget and its deadline, having written no result at all and its push was not refused; its
+  reason is `no result: no RESULT.md shape`, and the sprint treats it as an ended take
+  (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure: no work came
+  back, so there is nothing to judge (the owner, 2026-10-01: "that's fine with me."). A run
+  its budget or its deadline ended with no result is failed work, the end said first
+  (`budget: no RESULT.md shape`);
+- **failed** otherwise, with the reason: `<end>: no RESULT.md shape`, `nothing to do: <why>`,
   `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`; a failed finish passes
   `--failed` and opens the failed-work judgment, never review, and passes `--head` and
   `--branch` only when a push landed;
 - **provider failure**, a failed finish of its own kind, when the run ended with no result and
   the harness's own record says the provider failed it (below), and its push was not
-  refused; its reason is `provider failure: provider: <why>` (for the 5xx hand-back,
-  `provider failure: provider: PROVIDER-5XX label=... ref=...`), and the sprint treats it as an ended
+  refused; its reason is `provider failure: provider: class=<class> status=<status|-> msg=<words>`
+  (the cause, below; the 5xx hand-back's too), and the sprint treats it as an ended
   take (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure. A refused
   push, and a result with the shape (nothing to do, not done) whatever the run's end, are
   failed work with their own reasons and no provider kind;
@@ -162,13 +202,25 @@ harness's own record in the job's data home, at the places the harness profile n
 with no result, by no end of the machinery's (the deadline, a TERM, the watch, the wall, the
 budget, a lost response, a question), is a provider failure when either holds: the log carries
 a provider error written by this run, an `ERROR` line that says a stream error, `server_error`,
-a rate limit, an overload or an HTTP 5xx status, and the reason is `provider: <the first such
-line from its message on, one line, cut to 200 bytes>`; or the run exited 0 and the session's
+a rate limit, an overload or an HTTP 5xx status; or the run exited 0 and the session's
 last message is not a final assistant message (the last assistant message finished
-`tool-calls`, or none finished), and the reason is `provider: ended without a final message`.
-Native prints it as `NATIVE PROVIDER-FAIL label=<l> wall=<s>s route=<model> reason=<why>`, and
-the member reads the line (`member.Result`'s `Provider`) and judges the finish. A run with no
-result and no provider error that ends with a final assistant message stays `no-result`.
+`tool-calls`, or none finished). The reason is the cause (`internal/swarm` providercause.go):
+`provider: class=<class> status=<status|-> msg=<words>`. The class is one of `unknown-model`
+(the provider does not know or serve the model id: a config error), `auth`, `out-of-credit`,
+`rate-limited`, `provider-5xx`, `timeout` and `other` (none of these, or the harness recorded
+no cause, as its own `UnknownError` does); the status is the provider's HTTP status, `-` when
+the record names none; the words are the provider's own message, one line, everything
+after a `key:` or `key ` dropped and every other secret-shaped value removed, cut to 120 bytes with the cut said. They come from the session's
+record of the failed message when it has one (an API error keeps the provider's status and
+body there), else the log's error line, else (a run that ended on a tool) `ended without a
+final message`, class `other`. Native prints it as `NATIVE PROVIDER-FAIL label=<l> wall=<s>s
+route=<model> reason=<cause>`, and the 5xx hand-back ends its own line with the same
+`reason=<cause>`, read from the session and the log first and from the harness's own last
+words else. The member reads either line's reason (`member.Result`'s `Provider`) and judges the
+finish (`TestCauseFromTheHarnessLogAndOutput`, `TestCauseFromTheSessionsRecord`,
+`TestTheSessionsRecordOfTheFailedMessageIsTheCause`). The class is a record: it changes no
+judgment. A run with no result and no provider error that ends with a final assistant message
+stays `no-result`.
 
 The head the member pushes is the result's `head`, else the last head the git shim recorded in
 `<job>/.sprint/pushed.tsv`. The member pushes from its own bare repository, fetching every
@@ -177,7 +229,16 @@ from an interrupted push, so a commit on any branch the child made, in the
 checkout or in a clone the shim linked to it, is found. The head must be on one of those
 fetched refs (the push repository keeps every launch's objects, so a commit being there is no
 evidence it is this launch's) and must descend from the staged commit, else the push is
-refused. Whether the child committed is counted
+refused. A result head on none of those refs is replaced by the checkout's own head when the
+child made exactly one line of work: exactly one fetched tip descends from the staged commit
+with a commit of its own; it is pushed, never forced, and the member's output says
+`NOTE push <card> head: the result named <claimed>, which is no commit of the checkout; the
+checkout's own head <sha> was pushed`. With no such tip, or more than one, the refusal stands
+(on the 1000-card load test of 2026-10-01, five of the first twelve failures were a model
+writing a sha whose first characters were right and whose tail was invented, from one route,
+the commit on the checkout's branch: `TestAWrongTailHeadPushesTheCheckoutsOwnCommit`,
+`TestAnAbsentHeadWithTwoCandidateBranchesIsStillRefused`, `TestARightHeadIsPushedAsBefore`).
+Whether the child committed is counted
 there, `rev-list <head> ^<staged>`, from the commit native recorded in `<slot>/staged` when it
 staged the checkout: never from the checkout's own refs, which a stale bench mirror leaves
 behind and the child can edit (`git remote remove`).
@@ -187,7 +248,11 @@ behind and the child can edit (`git remote remove`).
 data home), `TMPDIR`, `LANG`, `LC_*`, `TERM`, `USER`, `LOGNAME`, the `GO*`, `NOVA_SWARM_*`,
 `NOVA_TEST_*`, `XDG_*` and `OPENCODE_*` families, `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`,
 and the secrets `--pass` names (the loop record's nova-secrets keys) with the worker
-description's secret; everything else is dropped. A name matching
+description's secret; everything else is dropped. Native puts the bench's Go first on the
+child's `PATH` after its shell wrappers: the directory the bench's `go` really lives in
+(`swarm.BenchGoBin`: the first `go` in `~/sdk/bin`, `~/go/bin`, then the member's own `PATH`,
+resolved through its links), so a card's bare `go` and `gofmt` resolve whatever `PATH` the loop
+unit started the member with. A name matching
 `TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH` is dropped unless `--pass` names it, even in
 an allowed family. The member keeps the forge credentials for its own push and pull request. A loop record whose harness reads its provider key from the environment carries `--pass <KEY>`; without it the children start with no provider key and fail at the provider, and a member started with no `--pass`, no worker secret and no `--auth` file for a model that is not a local one (`ollama`, `lmstudio`, `llamacpp`, `local`) says so in one `NOTE` line. When the result carries a `title`, the member opens the pull
 request after the push, as itself, from the card's branch into the base ref, with the title and

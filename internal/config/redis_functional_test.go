@@ -67,7 +67,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 	// The machine: the ceiling ns_capacity_machine writes (slots alone:
 	// cores and memory are never declared, so the ceiling carries none and
 	// no budget is derived) and the registry hash nova-config owns, exactly
-	// the four declared fields with the revision and time.
+	// the five declared fields with the revision and time.
 	{
 		got := c.HGetAll(ctx, "machine:studio:ceiling").Val()
 		assertionMsg76 := []any{"machine:studio:ceiling %v", got}
@@ -87,7 +87,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 	assert.Equal(t, int64(0), c.Exists(ctx, "machine:studio:budget").Val(), "a budget was derived from cores nobody declared")
 	{
 		got := c.HGetAll(ctx, "machine:studio").Val()
-		assertionMsg81 := []any{"machine:studio %v: want user, seat, slots, runners, rev, at and nothing else", got}
+		assertionMsg81 := []any{"machine:studio %v: want user, seat, slots, runners, width, rev, at and nothing else", got}
 		func() {
 			if !assert.Equal(t, "glenn", got["user"], assertionMsg81...) {
 				return
@@ -107,7 +107,10 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 			if !assert.NotEqual(t, "", got["at"], assertionMsg81...) {
 				return
 			}
-			assert.Len(t, got, 6, assertionMsg81...)
+			if !assert.Equal(t, "0", got["width"], assertionMsg81...) {
+				return
+			}
+			assert.Len(t, got, 7, assertionMsg81...)
 		}()
 	}
 	{
@@ -341,7 +344,7 @@ func TestApplyRefusesAFriendNobodyCanCharge(t *testing.T) {
 }
 
 // TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat: the fleet row is
-// two plain keys of nova-config's own, set or deleted as the row says; a
+// plain keys of nova-config's own, set or deleted as the row says; a
 // machine's measured facts are read from its beat and never written.
 func TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat(t *testing.T) {
 	t.Parallel()
@@ -361,6 +364,8 @@ func TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat(t *testing.T) {
 	assert.Equal(t, "hulk", scopedGot382, "fleet:store %q", scopedGot382)
 	scopedGot386 := c.Get(ctx, FleetKey("coordinator")).Val()
 	assert.Equal(t, "studio", scopedGot386, "fleet:coordinator %q", scopedGot386)
+	assert.Equal(t, "6380", c.Get(ctx, FleetKey("redis_port")).Val())
+	assert.Equal(t, "postgres://nova_config@localhost:5432/nova", c.Get(ctx, FleetKey("pg_dsn")).Val())
 	scopedGot390 := c.HGet(ctx, DeclKey, "rev:fleet").Val()
 	assert.Equal(t, "7", scopedGot390, "rev:fleet %s", scopedGot390)
 	// Clearing a field deletes its key.

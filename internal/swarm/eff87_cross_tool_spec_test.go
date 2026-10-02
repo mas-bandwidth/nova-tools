@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // CARD #87, cross-tool: efficiency card, 2026-09-12. The card is a measurement
@@ -18,9 +21,7 @@ func TestCrossToolEfficiencyCardNamesItsRules(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
-	if err != nil {
-		t.Fatalf("the cross-tool efficiency card's contract is the spec's: %s", err)
-	}
+	require.NoError(t, err, "the cross-tool efficiency card's contract is the spec's: %s", err)
 	spec := string(raw)
 	section := crossToolEfficiencySection(t, spec)
 	// The contract is prose, so its line wrapping is the spec's; collapse runs
@@ -49,9 +50,7 @@ func TestCrossToolEfficiencyCardNamesItsRules(t *testing.T) {
 		"a per-job clone built with `--reference` and `--dissociate` shares the reference checkout's object graph",
 		"the worker prompt carries the named template's conditions from the tool, with no shell script in the path",
 	} {
-		if !strings.Contains(section, want) {
-			t.Errorf("SPEC-SWARM.md cross-tool efficiency card names %q; the section holds:\n%s", want, section)
-		}
+		assert.Contains(t, section, want, "SPEC-SWARM.md cross-tool efficiency card names %q; the section holds:\n%s", want, section)
 	}
 }
 
@@ -62,10 +61,7 @@ func crossToolEfficiencySection(t *testing.T, spec string) string {
 	t.Helper()
 	const header = "## The efficiency card (#87), cross-tool"
 	start := strings.Index(spec, header)
-	if start < 0 {
-		t.Fatalf("the spec has no %q section", header)
-		return ""
-	}
+	require.GreaterOrEqual(t, start, 0, "the spec has no %q section", header)
 	rest := spec[start+len(header):]
 	end := strings.Index(rest, "\n## ")
 	if end < 0 {

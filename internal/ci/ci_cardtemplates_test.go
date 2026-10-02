@@ -9,6 +9,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ci_cardtemplates_test.go is the red-test contract of the card-template
@@ -36,12 +38,8 @@ func cardTree(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	root := t.TempDir()
 	full := filepath.Join(root, filepath.FromSlash(dir))
-	if err := os.MkdirAll(full, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(full, name), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(full, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(full, name), []byte(body), 0o644))
 	return root
 }
 
@@ -49,9 +47,7 @@ func cardTree(t *testing.T, dir, name, body string) string {
 func checkTree(t *testing.T, root, dir string) CardTemplatesResult {
 	t.Helper()
 	res, err := CheckCardTemplates(root, []string{dir}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return res
 }
 
@@ -81,22 +77,12 @@ func TestCardTemplateRefusesTheFourSpellingsTheDogfoodMeasured(t *testing.T) {
 
 	want := []string{"gnu_time", "go_version", "java_version", "nproc"}
 	got := spells(res)
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("spells = %v, want %v", got, want)
-	}
-	if res.Templates != 1 {
-		t.Errorf("templates = %d, want 1", res.Templates)
-	}
-	if res.ExitCode() != 2 {
-		t.Errorf("exit = %d, want 2", res.ExitCode())
-	}
+	require.Equal(t, strings.Join(want, ","), strings.Join(got, ","), "spells = %v, want %v", got, want)
+	assert.Equal(t, 1, res.Templates, "templates = %d, want 1", res.Templates)
+	assert.Equal(t, 2, res.ExitCode(), "exit = %d, want 2", res.ExitCode())
 	for _, f := range res.Findings {
-		if f.Remedy == "" {
-			t.Errorf("%s carries no remedy", f.Spell)
-		}
-		if f.Line < 1 {
-			t.Errorf("%s has line %d", f.Spell, f.Line)
-		}
+		assert.NotEmpty(t, f.Remedy, "%s carries no remedy", f.Spell)
+		assert.GreaterOrEqual(t, f.Line, 1, "%s has line %d", f.Spell, f.Line)
 	}
 }
 
@@ -113,12 +99,8 @@ func TestCardTemplateAcceptsThePortableSpellings(t *testing.T) {
 		"STEP 5. shasum -a 256 RESULT.md\n"
 	root := cardTree(t, "templates", "portable.md", body)
 	res := checkTree(t, root, "templates")
-	if res.Refused() != 0 {
-		t.Fatalf("refused = %d, want 0: %v", res.Refused(), spells(res))
-	}
-	if res.OKLine() != "CI-CARDTEMPLATES OK templates=1 allowlisted=0 refused=0" {
-		t.Errorf("OK line = %q", res.OKLine())
-	}
+	require.Zero(t, res.Refused(), "refused = %d, want 0: %v", res.Refused(), spells(res))
+	assert.Equal(t, "CI-CARDTEMPLATES OK templates=1 allowlisted=0 refused=0", res.OKLine(), "OK line = %q", res.OKLine())
 }
 
 // 2b. The `readlink -f` exception is a fallback attached to THAT invocation.
@@ -152,9 +134,8 @@ func TestCardTemplateReadlinkFallbackMustBeAttached(t *testing.T) {
 	for _, line := range refused {
 		root := cardTree(t, "templates", "rl.md", "STEP 1. "+line+"\n")
 		res := checkTree(t, root, "templates")
-		if got := spells(res); strings.Join(got, ",") != "readlink_f" {
-			t.Errorf("%q: spells = %v, want [readlink_f]", line, got)
-		}
+		got := spells(res)
+		assert.Equal(t, "readlink_f", strings.Join(got, ","), "%q: spells = %v, want [readlink_f]", line, got)
 	}
 	accepted := []string{
 		"p=$(readlink -f \"$f\" || printf '%s' \"$f\")",
@@ -168,9 +149,7 @@ func TestCardTemplateReadlinkFallbackMustBeAttached(t *testing.T) {
 	for _, line := range accepted {
 		root := cardTree(t, "templates", "rl.md", "STEP 1. "+line+"\n")
 		res := checkTree(t, root, "templates")
-		if res.Refused() != 0 {
-			t.Errorf("%q: refused %v, want none", line, spells(res))
-		}
+		assert.Zero(t, res.Refused(), "%q: refused %v, want none", line, spells(res))
 	}
 }
 
@@ -182,12 +161,8 @@ func TestCardTemplateRefusesADarwinOnlyCommand(t *testing.T) {
 
 	root := cardTree(t, "templates", "mac.md", "STEP 1. sw_vers -productVersion && diskutil list\n")
 	res := checkTree(t, root, "templates")
-	if len(res.Findings) != 1 || res.Findings[0].Spell != "mac_only" {
-		t.Fatalf("findings = %v, want one mac_only", spells(res))
-	}
-	if res.Findings[0].Only != "darwin" {
-		t.Errorf("only = %q, want darwin", res.Findings[0].Only)
-	}
+	require.False(t, len(res.Findings) != 1 || res.Findings[0].Spell != "mac_only", "findings = %v, want one mac_only", spells(res))
+	assert.Equal(t, "darwin", res.Findings[0].Only, "only = %q, want darwin", res.Findings[0].Only)
 }
 
 // 4. A .card is read and so is a .md; a .tsv beside them is a table and is not.
@@ -196,25 +171,17 @@ func TestCardTemplateReadsMdAndCardAndNothingElse(t *testing.T) {
 
 	root := t.TempDir()
 	dir := filepath.Join(root, "templates")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	for name, body := range map[string]string{
 		"a.md":        "STEP 1. nproc\n",
 		"b.card":      "STEP 1. nproc\n",
 		"benches.tsv": "model\tnproc\n",
 	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
 	}
 	res := checkTree(t, root, "templates")
-	if res.Templates != 2 {
-		t.Errorf("templates = %d, want 2 (the .tsv is a table)", res.Templates)
-	}
-	if len(res.Findings) != 2 {
-		t.Errorf("findings = %d, want 2", len(res.Findings))
-	}
+	assert.Equal(t, 2, res.Templates, "templates = %d, want 2 (the .tsv is a table)", res.Templates)
+	assert.Len(t, res.Findings, 2, "findings = %d, want 2", len(res.Findings))
 }
 
 // 5. An allowlist row honours exactly its own file and spelling -- never a line
@@ -225,35 +192,19 @@ func TestCardTemplateAllowlistIsCheckedInBothDirections(t *testing.T) {
 
 	root := cardTree(t, "templates", "one.md", "STEP 1. cat /proc/loadavg\n")
 	allow := filepath.Join(t.TempDir(), "allow.txt")
-	if err := os.WriteFile(allow, []byte("# reason column is for a reader\ntemplates/one.md proc 2026-09-18 the linux bench's own load, read nowhere else\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(allow, []byte("# reason column is for a reader\ntemplates/one.md proc 2026-09-18 the linux bench's own load, read nowhere else\n"), 0o644))
 	res, err := CheckCardTemplates(root, []string{"templates"}, allow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 0 || res.Allowlisted != 1 {
-		t.Fatalf("refused=%d allowlisted=%d, want 0 and 1", res.Refused(), res.Allowlisted)
-	}
+	require.NoError(t, err)
+	require.False(t, res.Refused() != 0 || res.Allowlisted != 1, "refused=%d allowlisted=%d, want 0 and 1", res.Refused(), res.Allowlisted)
 
 	// The same row against a tree with nothing in it is stale, and stale is red.
 	empty := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(empty, "templates"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(empty, "templates"), 0o755))
 	res, err = CheckCardTemplates(empty, []string{"templates"}, allow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Stale) != 1 {
-		t.Fatalf("stale = %d, want 1", len(res.Stale))
-	}
-	if res.ExitCode() != 2 {
-		t.Errorf("exit = %d, want 2 for a stale row", res.ExitCode())
-	}
-	if !strings.Contains(res.Stale[0].Remedy, "only shrinks") {
-		t.Errorf("stale remedy = %q", res.Stale[0].Remedy)
-	}
+	require.NoError(t, err)
+	require.Len(t, res.Stale, 1, "stale = %d, want 1", len(res.Stale))
+	assert.Equal(t, 2, res.ExitCode(), "exit = %d, want 2 for a stale row", res.ExitCode())
+	assert.Contains(t, res.Stale[0].Remedy, "only shrinks", "stale remedy = %q", res.Stale[0].Remedy)
 }
 
 // 6. A directory the repository does not have yet is skipped, not an error: the
@@ -262,12 +213,8 @@ func TestCardTemplateSkipsADirectoryThatIsNotThere(t *testing.T) {
 	t.Parallel()
 
 	res, err := CheckCardTemplates(t.TempDir(), CardTemplateDirs, "")
-	if err != nil {
-		t.Fatalf("a tree with none of the directories is not an error: %v", err)
-	}
-	if res.Templates != 0 || res.Refused() != 0 {
-		t.Errorf("templates=%d refused=%d, want 0 and 0", res.Templates, res.Refused())
-	}
+	require.NoError(t, err, "a tree with none of the directories is not an error: %v", err)
+	assert.False(t, res.Templates != 0 || res.Refused() != 0, "templates=%d refused=%d, want 0 and 0", res.Templates, res.Refused())
 }
 
 // 7. The refusal line names the file, the line, the spelling and the remedy, so
@@ -277,18 +224,12 @@ func TestCardTemplateRefusalLineNamesEverythingAFixNeeds(t *testing.T) {
 
 	root := cardTree(t, "templates", "t.md", "STEP 1. df -BG $HOME\n")
 	res := checkTree(t, root, "templates")
-	if len(res.Findings) != 1 {
-		t.Fatalf("findings = %v", spells(res))
-	}
+	require.Len(t, res.Findings, 1, "findings = %v", spells(res))
 	line := res.Findings[0].Render()
 	for _, want := range []string{"templates/t.md", "line=1", "spell=df_blocksize", "only=linux", "df -k"} {
-		if !strings.Contains(line, want) {
-			t.Errorf("refusal %q does not name %q", line, want)
-		}
+		assert.Contains(t, line, want, "refusal %q does not name %q", line, want)
 	}
-	if !strings.Contains(res.FailLine(), "refused=1") {
-		t.Errorf("fail line = %q", res.FailLine())
-	}
+	assert.Contains(t, res.FailLine(), "refused=1", "fail line = %q", res.FailLine())
 }
 
 // TestNoCardTemplateCarriesAnOSSpecificCommand is the class rule. It reads
@@ -302,9 +243,7 @@ func TestNoCardTemplateCarriesAnOSSpecificCommand(t *testing.T) {
 
 	root := repoRoot(t)
 	res, err := CheckCardTemplates(root, CardTemplateDirs, cardTemplateAllowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// The cards nova-swarm `template` prints are shipped card templates too; since
 	// the templates directory went with cmd/nova-pulse (#3801) they are the ones
 	// the estate cuts from, so they are read here as text under the same rule.
@@ -313,15 +252,11 @@ func TestNoCardTemplateCarriesAnOSSpecificCommand(t *testing.T) {
 			continue
 		}
 		text, err := swarm.Template(name)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		res.Templates++
 		res.Findings = append(res.Findings, scanCardTemplate("internal/swarm/templates.go#"+name, text)...)
 	}
-	if res.Templates == 0 {
-		t.Fatalf("no card template was read under %v or from nova-swarm template; the list has gone stale", CardTemplateDirs)
-	}
+	require.NotZero(t, res.Templates, "no card template was read under %v or from nova-swarm template; the list has gone stale", CardTemplateDirs)
 	for _, f := range res.Findings {
 		t.Errorf("%s", f.Render())
 		res.Measured[f.Key()] = true // the swarm templates' findings too
@@ -330,9 +265,7 @@ func TestNoCardTemplateCarriesAnOSSpecificCommand(t *testing.T) {
 	for _, row := range allowlist.Check(t, list, res.Measured).Stale {
 		t.Errorf("%s:%d: %q names no offender on the tree; delete the stale row; this list only shrinks", cardTemplateAllowlistPath, row.Line, row.Text)
 	}
-	if res.Refused() > 0 {
-		t.Fatalf("%s", res.FailLine())
-	}
+	require.Zero(t, res.Refused(), "%s", res.FailLine())
 	t.Logf("%s", res.OKLine())
 }
 
@@ -358,9 +291,8 @@ func TestAttachedOrFallbackReadsTheTextToItsEnd(t *testing.T) {
 		{" ; true || true", false},
 	} {
 		t.Run(c.rest, func(t *testing.T) {
-			if got := attachedOrFallback(c.rest); got != c.want {
-				t.Errorf("attachedOrFallback(%q) = %v, want %v", c.rest, got, c.want)
-			}
+			got := attachedOrFallback(c.rest)
+			assert.Equal(t, c.want, got, "attachedOrFallback(%q) = %v, want %v", c.rest, got, c.want)
 		})
 	}
 }

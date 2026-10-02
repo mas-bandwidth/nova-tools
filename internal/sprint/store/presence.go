@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"time"
 
@@ -290,6 +292,7 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 		}
 	}
 	now := st.now()
+	status := map[string]string{}
 	diffs := map[string]map[string]string{}
 	for _, row := range shape.Rows {
 		m, _ := rs.Member(pinned.sid(sprint.CtlID(row.Key)))
@@ -299,11 +302,16 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 			b := beats[row.Key]
 			want[sprint.Status], want[sprint.Load] = sprint.MemberStatus(ctl, b, now), sprint.LoadText(b, now)
 		}
+		status[row.Key] = want[sprint.Status]
 		if d := rowDiff(row, want); len(d) > 0 {
 			diffs[row.Key] = d
 		}
 	}
-	return len(diffs) > 0, pinned.setRows(ctx, shape.Name, diffs)
+	if err := pinned.setRows(ctx, shape.Name, diffs); err != nil {
+		return false, err
+	}
+	ordered, err := st.orderFleet(ctx, shape, status)
+	return len(diffs) > 0 || ordered, err
 }
 
 // fleetBeats is the fleet's shape, from the shapes a tick read or else read
@@ -351,7 +359,7 @@ func freshOf(shape ntable.Table, beats map[string]sprint.Beat, now time.Time) []
 // held: a hold is set and released only by a verb, whose step brings every
 // cell up to date (SyncFleet). It says whether it wrote.
 func (st *Store) showFleet(ctx context.Context, shape ntable.Table, beats map[string]sprint.Beat, now time.Time) (bool, error) {
-	diffs := map[string]map[string]string{}
+	diffs, status := map[string]map[string]string{}, map[string]string{}
 	for _, row := range shape.Rows {
 		b := beats[row.Key]
 		want := map[string]string{sprint.Load: sprint.LoadText(b, now)}
@@ -361,18 +369,25 @@ func (st *Store) showFleet(ctx context.Context, shape ntable.Table, beats map[st
 				want[sprint.Status] = sprint.Up
 			}
 		}
+		status[row.Key] = row.Texts[sprint.Status]
+		if s, ok := want[sprint.Status]; ok {
+			status[row.Key] = s
+		}
 		if d := rowDiff(row, want); len(d) > 0 {
 			diffs[row.Key] = d
 		}
 	}
-	if len(diffs) == 0 {
-		return false, nil
+	if len(diffs) > 0 {
+		pinned, err := st.pin(ctx)
+		if err != nil {
+			return false, err
+		}
+		if err := pinned.setRows(ctx, shape.Name, diffs); err != nil {
+			return false, err
+		}
 	}
-	pinned, err := st.pin(ctx)
-	if err != nil {
-		return false, err
-	}
-	return true, pinned.setRows(ctx, shape.Name, diffs)
+	ordered, err := st.orderFleet(ctx, shape, status)
+	return len(diffs) > 0 || ordered, err
 }
 
 // rowDiff is the display cells of a row that differ from want.
@@ -401,15 +416,68 @@ func (st *Store) setRows(ctx context.Context, table string, rows map[string]map[
 	if rs, ok := st.B.(RowsSetter); ok {
 		return rs.RowsSet(ctx, table, rows)
 	}
-	keys := make([]string, 0, len(rows))
-	for k := range rows {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(rows)) {
 		if err := st.B.RowSet(ctx, table, k, rows[k]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// RowsOrderer is a store that puts a table's rows in an order (the table
+// layer's row order: the named rows first, in that order).
+type RowsOrderer interface {
+	RowsOrder(ctx context.Context, table string, rows []string) error
+}
+
+// statusRank is a fleet row's place by its status cell: up first, then held,
+// then down (the owner, 2026-10-01: "Please sort the fleet table such that we
+// sort first alphabetically by machine name (as is current), then stable sort
+// by status, such that "up" is first, then "held" then "down"").
+func statusRank(status string) int {
+	switch status {
+	case sprint.Up:
+		return 0
+	case sprint.Held:
+		return 1
+	case sprint.Down:
+		return 2
+	}
+	return 3
+}
+
+// FleetOrder is the fleet's rows by name, then stably by status: up, held,
+// down, anything else last. status is each row's status cell. The friends
+// table is ordered by it too (FriendRows): one order for both.
+func FleetOrder(rows []string, status map[string]string) []string {
+	out := slices.Clone(rows)
+	slices.Sort(out)
+	slices.SortStableFunc(out, func(a, b string) int { return statusRank(status[a]) - statusRank(status[b]) })
+	return out
+}
+
+// orderFleet puts the fleet's rows in FleetOrder when they are not, where the
+// store can order rows; status is each row's status cell as it now stands. It
+// says whether it wrote.
+func (st *Store) orderFleet(ctx context.Context, shape ntable.Table, status map[string]string) (bool, error) {
+	if _, ok := st.B.(RowsOrderer); !ok {
+		return false, nil
+	}
+	var rows []string
+	for _, r := range shape.Rows {
+		rows = append(rows, r.Key)
+	}
+	want := FleetOrder(rows, status)
+	if slices.Equal(rows, want) {
+		return false, nil
+	}
+	pinned, err := st.pin(ctx)
+	if err != nil {
+		return false, err
+	}
+	ro, ok := pinned.B.(RowsOrderer)
+	if !ok {
+		return false, nil
+	}
+	return true, ro.RowsOrder(ctx, shape.Name, want)
 }

@@ -16,8 +16,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+var helperTiming func([]string) bool
 
 func TestHelperProcess(t *testing.T) {
 	t.Parallel()
@@ -48,8 +54,6 @@ func TestHelperProcess(t *testing.T) {
 	case "fail":
 		fmt.Print("v9.9.9\n")
 		os.Exit(3)
-	case "hang":
-		time.Sleep(30 * time.Second)
 	case "huge":
 		fmt.Println("v1.2.3")
 		for i := 0; i < 2048; i++ {
@@ -80,27 +84,6 @@ func TestHelperProcess(t *testing.T) {
 		if c.Start() != nil {
 			os.Exit(5)
 		}
-	case "hold":
-		if len(a) > 2 && a[2] != "" {
-			_ = os.WriteFile(a[2], []byte(strconv.Itoa(os.Getpid())), 0600)
-		}
-		d, err := time.ParseDuration(a[1])
-		if err != nil {
-			os.Exit(6)
-		}
-		time.Sleep(d)
-	case "escaped":
-		// Leave a grandchild holding stdout open in its OWN process group, then
-		// hang, so the grandchild survives this process's group kill: the
-		// escaped-pipe case a deadline must still close.
-		readyFile := ""
-		if len(a) > 2 {
-			readyFile = a[2]
-		}
-		if err := spawnEscapedHolder(a[1], readyFile); err != nil {
-			os.Exit(5)
-		}
-		time.Sleep(30 * time.Second)
 	case "flood":
 		// Print a version, then a bounded but substantial stream, and exit at
 		// once. This is the healthy child a deadline must still drain in full.
@@ -114,7 +97,9 @@ func TestHelperProcess(t *testing.T) {
 			fmt.Print(chunk)
 		}
 	default:
-		os.Exit(20)
+		if helperTiming == nil || !helperTiming(a) {
+			os.Exit(20)
+		}
 	}
 	os.Exit(0)
 }
@@ -131,7 +116,7 @@ func manifest(t *testing.T, rows ...string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "versions.tsv")
 	if e := os.WriteFile(p, []byte(Header+"\n"+strings.Join(rows, "\n")+"\n"), 0600); e != nil {
-		t.Fatal(e)
+		require.NoError(t, e, e)
 	}
 	return p
 }
@@ -148,7 +133,7 @@ func need(t *testing.T, s string, want ...string) {
 	t.Helper()
 	for _, w := range want {
 		if !strings.Contains(s, w) {
-			t.Fatalf("missing %q in:\n%s", w, s)
+			require.Containsf(t, s, w, "missing %q in:\n%s", w, s)
 		}
 	}
 }
@@ -158,12 +143,12 @@ func TestManifestRefusesBeforeAnyProcess(t *testing.T) {
 	good := row("x", "tool", "example version", "github:o/r", "none")
 	for _, s := range []string{"", good + "\n", Header + "\nx\n", Header + "\n" + strings.Replace(good, "example version", "example  version", 1), Header + "\n" + strings.Replace(good, "tool", "weights", 1), Header + "\n" + good + "\n" + good, Header + "\n" + strings.Replace(good, "example version", "\"space path\" version", 1)} {
 		if _, e := Load(strings.NewReader(s)); e == nil {
-			t.Fatalf("accepted %q", s)
+			require.Errorf(t, e, "accepted %q", s)
 		}
 	}
 	es, e := Load(strings.NewReader(Header + "\n# comment\n" + good + "\n"))
 	if e != nil || len(es) != 1 {
-		t.Fatalf("%v %v", es, e)
+		require.Failf(t, "", "%v %v", es, e)
 	}
 }
 func TestWholeVersionAndVerifiedOrder(t *testing.T) {
@@ -173,22 +158,22 @@ func TestWholeVersionAndVerifiedOrder(t *testing.T) {
 	for line, want := range examples {
 		r := identity(Entry{Kind: "tool"}, line+"\nsecond 900.0.0", true)
 		if r.Version != want || r.Raw != line || !r.Known() {
-			t.Fatalf("%q: %+v", line, r)
+			require.Failf(t, "", "%q: %+v", line, r)
 		}
 	}
 	for _, line := range []string{"nova-wake devel darwin/arm64 go1.27.1", "nova-merge 0459069"} {
 		r := identity(Entry{Kind: "tool"}, line, true)
 		if !r.Known() || r.Version != "" {
-			t.Fatal(r)
+			require.Fail(t, fmt.Sprintln(r))
 		}
 		r = identity(Entry{Kind: "tool"}, line, false)
 		if r.Reason != "no_release_identity" {
-			t.Fatal(r)
+			require.EqualValues(t, "no_release_identity", r.Reason, r)
 		}
 	}
 	for _, c := range [][3]string{{"1.9.0", "1.10.0", "OLDER"}, {"1.10.0", "1.9.0", "NEWER"}, {"1.9", "1.9.0", "DIFFERENT"}, {"1.09.0", "1.9.0", "DIFFERENT"}, {"1.0.0-rc1", "1.0.0", "DIFFERENT"}, {"0.12.0", "0.12.1-0.1-abc", "DIFFERENT"}, {"999999999999999999999999.0", "1000000000000000000000000.0", "OLDER"}} {
 		if got := Compare(c[0], c[1]); got != c[2] {
-			t.Fatalf("%v got %s", c, got)
+			require.EqualValuesf(t, c[2], got, "%v got %s", c, got)
 		}
 	}
 }
@@ -197,55 +182,16 @@ func TestModelDigestAndPinIdentity(t *testing.T) {
 
 	r := identity(Entry{Name: "model:tag", Kind: "model"}, "NAME ID SIZE\nmodel:other ffffffffffff 4GB\nmodel:tag 07d35212591f 4GB\n", true)
 	if r.Version != "07d35212591f" || r.Raw != "model:tag 07d35212591f 4GB" {
-		t.Fatal(r)
+		require.Fail(t, fmt.Sprintln(r))
 	}
 	if identity(Entry{Name: "model", Kind: "model"}, "model:tag 07d35212591f 4GB", true).Known() {
-		t.Fatal("untagged match")
+		require.Fail(t, fmt.Sprintln("untagged match"))
 	}
 	for _, s := range []string{"v0.12.0", "devel", "v0.12.1-0.foo"} {
 		r := entryRead{Entry: Entry{Kind: "pin"}, Installed: identity(Entry{Kind: "pin"}, "nova-wake "+s, false), Latest: identity(Entry{Kind: "pin"}, "nova-bus "+s, false)}
 		if v, _ := verdict(r); v != "EQUAL" {
-			t.Fatal(r)
+			require.EqualValues(t, "EQUAL", v, r)
 		}
-	}
-}
-func TestProcessesAreBoundedAndRawSurvivesFailure(t *testing.T) {
-	// Each case carries its own timeout because they measure two different
-	// things. The hang needs a timeout SHORT enough to fire; the others need one
-	// long enough that starting a race-instrumented child on a loaded box is not
-	// mistaken for a hang -- at 100ms for all four, the exit-3 case read
-	// "timeout" on a busy machine and the assertion it was making was lost.
-	for _, tc := range []struct {
-		cmd, want string
-		timeout   time.Duration
-		bound     time.Duration
-	}{
-		{command(t, "fail"), "exit 3", 5 * time.Second, 6 * time.Second},
-		{command(t, "huge"), "output", 5 * time.Second, 6 * time.Second},
-		{command(t, "hang"), "timeout", 20 * time.Millisecond, time.Second + killGrace},
-		{"nova-version-no-such-binary", "not_found", 5 * time.Second, time.Second},
-	} {
-		a, _ := argv(tc.cmd)
-		start := time.Now()
-		r := Installed(context.Background(), Entry{Kind: "tool", Installed: a}, tc.timeout, true)
-		if r.Reason != tc.want {
-			t.Fatalf("%s: %+v", tc.want, r)
-		}
-		if took := time.Since(start); took > tc.bound {
-			t.Fatalf("%s: %s is past the %s bound", tc.want, took, tc.bound)
-		}
-		if tc.want == "exit 3" && r.Raw != "v9.9.9" {
-			t.Fatal(r)
-		}
-	}
-	a, _ := argv(command(t, "stderr", base64.StdEncoding.EncodeToString([]byte("v1.2.3\n"))))
-	if r := Installed(context.Background(), Entry{Kind: "tool", Installed: a}, time.Second, true); r.Version != "1.2.3" {
-		t.Fatal(r)
-	}
-	a, _ = argv(command(t, "args", ";", "&&", "|", "$(x)", "`x`", "*"))
-	p := process(context.Background(), a, nil, ChildCap)
-	if p.Stdout != ";|&&|||$(x)|`x`|*" {
-		t.Fatalf("shell interpretation: %+v", p)
 	}
 }
 
@@ -288,15 +234,15 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 	for _, tc := range [][3]string{{"github:o/r", "tool", "0.11.0"}, {"npm:package", "tool", "1.2.3"}, {"brew:formula", "tool", "2.3.4"}} {
 		r := Latest(context.Background(), Entry{Kind: tc[1], Latest: tc[0]}, time.Second, client)
 		if !r.Known() || r.Version != tc[2] {
-			t.Fatal(r)
+			require.Fail(t, fmt.Sprintln(r))
 		}
 	}
 	if len(calls) != 4 || calls[1] != "/repos/o/r/tags?per_page=1" {
-		t.Fatal(calls)
+		require.Fail(t, fmt.Sprintln(calls))
 	}
 	r := Latest(context.Background(), Entry{Kind: "model", Latest: "ollama:model:tag"}, time.Second, client)
 	if r.Version != shaText(`{"schemaVersion":2,"layers":[]}`)[:12] {
-		t.Fatal(r)
+		require.Fail(t, fmt.Sprintln(r))
 	}
 	for _, tc := range []struct {
 		status     int
@@ -310,7 +256,7 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 		r := Latest(context.Background(), Entry{Kind: "model", Latest: "ollama:model:tag"}, time.Second, c)
 		done()
 		if r.Reason != tc.want {
-			t.Fatalf("%s: %+v", tc.want, r)
+			require.EqualValuesf(t, tc.want, r.Reason, "%s: %+v", tc.want, r)
 		}
 		if tc.status == 429 {
 			need(t, r.Remedy, "123")
@@ -320,24 +266,24 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 	r = Latest(context.Background(), Entry{Kind: "tool", Latest: "npm:pkg"}, time.Second, c)
 	done()
 	if r.Known() {
-		t.Fatal("redirect loop accepted")
+		require.Fail(t, fmt.Sprintln("redirect loop accepted"))
 	}
 }
 func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 	p := manifest(t, row("good", "tool", printer(t, "tool v1.2.3-rc1+dirty\n"), "github:o/r", "none"), row("bad", "tool", "nova-version-no-such-binary", "npm:unused", "none"))
 	env := Environment{Client: &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
-		t.Error("report used HTTP")
+		assert.Fail(t, fmt.Sprintln("report used HTTP"))
 		return nil, fmt.Errorf("forbidden")
 	})}}
 	code, out, errs := run(t, env, "report", "--file", p, "--host", "air")
 	if code != 1 {
-		t.Fatal(code)
+		require.EqualValues(t, 1, code, code)
 	}
-	need(t, out, "host=air", "REPORT TOOL name=good", "version=1.2.3-rc1+dirty", "REPORT UNKNOWN name=bad", "not_found")
+	need(t, errs, "host=air", "REPORT TOOL name=good", "version=1.2.3-rc1+dirty", "REPORT UNKNOWN name=bad", "not_found")
 	need(t, errs, "REPORT FAIL checked=2 known=1 unknown=1")
 	code, out, errs = run(t, env, "report", "--file", p, "--draft", "--as", "fixture", "--to", "integrator")
 	if code != 1 || !strings.HasPrefix(out, "From: fixture\nTo: integrator\nSubject: versions on - at ") {
-		t.Fatalf("%d %s %s", code, out, errs)
+		require.Failf(t, "", "%d %s %s", code, out, errs)
 	}
 }
 func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
@@ -350,56 +296,59 @@ func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 	for _, a := range [][]string{{"apply", "--file", p}, {"apply", "--file", p, "wrong"}, {"apply", "--file", p, "model:tag"}, {"apply", "--file", p, "--all"}} {
 		c, _, _ := run(t, Environment{}, a...)
 		if c != 2 {
-			t.Fatal(a, c)
+			require.EqualValues(t, 2, c, fmt.Sprintln(a, c))
 		}
 	}
 	c, out, err := run(t, Environment{}, "apply", "--file", p, "x", "--version", "1.2.0")
 	if c != 0 {
-		t.Fatalf("%d %s %s", c, out, err)
+		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, err)
 	}
 	need(t, out, "APPLY BEFORE", "installed=1.0.0", "APPLY AFTER", "installed=1.2.0", "APPLY OK")
 	p = manifest(t, row("x", "tool", read, "local:"+printer(t, "1.3.0"), command(t, "write", state, "1.1.1")))
 	c, _, err = run(t, Environment{}, "apply", "--file", p, "x")
 	if c != 1 {
-		t.Fatal(c)
+		require.EqualValues(t, 1, c, c)
 	}
 	need(t, err, "installed 1.1.1, asked 1.3.0")
 	calls := filepath.Join(dir, "calls")
 	t.Setenv("NOVA_UPDATE_CALLS", calls)
 	c, _, _ = run(t, Environment{}, "apply", "--file", p, "--version", "9.0.0", "x")
 	if c != 2 {
-		t.Fatal(c)
+		require.EqualValues(t, 2, c, c)
 	}
 	if _, e := os.Stat(calls); !os.IsNotExist(e) {
-		t.Fatal("refusal ran a process")
+		require.Fail(t, fmt.Sprintln("refusal ran a process"))
 	}
 }
 func TestFourReadLimitAndOverallBudget(t *testing.T) {
-	hang := transportFunc(func(r *http.Request) (*http.Response, error) {
-		<-r.Context().Done()
-		return nil, r.Context().Err()
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		hang := transportFunc(func(r *http.Request) (*http.Response, error) {
+			deadline, ok := r.Context().Deadline()
+			assert.True(t, ok)
+			assert.Equal(t, start.Add(30*time.Second), deadline, "the whole budget bounds every transport request")
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		})
+		client := &http.Client{Transport: hang}
+
+		entries := make([]Entry, 40)
+		for i := range entries {
+			entries[i] = Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: []string{"1.0.0"}, Latest: "npm:pkg"}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		r := readEntries(ctx, entries, options{timeout: time.Minute}, Environment{Client: client}, false)
+		if len(r) != 40 {
+			require.Lenf(t, r, 40, "expected 40 results, got %d", len(r))
+		}
+		if r[39].Installed.Reason != "budget" && r[39].Latest.Reason != "budget" {
+			require.Failf(t, "", "expected budget reason on unread entry, got: %+v", r[39])
+		}
 	})
-	client := &http.Client{Transport: hang}
-
-	entries := make([]Entry, 40)
-	for i := range entries {
-		entries[i] = Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: []string{"1.0.0"}, Latest: "npm:pkg"}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-
-	started := time.Now()
-	r := readEntries(ctx, entries, options{timeout: time.Second}, Environment{Client: client}, false)
-	if took := time.Since(started); took > 30*time.Second {
-		t.Fatalf("budget exceeded: took %s", took)
-	}
-	if len(r) != 40 {
-		t.Fatalf("expected 40 results, got %d", len(r))
-	}
-	if r[39].Installed.Reason != "budget" && r[39].Latest.Reason != "budget" {
-		t.Fatalf("expected budget reason on unread entry, got: %+v", r[39])
-	}
 }
 
 func TestFourReadConcurrencyLimit(t *testing.T) {
@@ -470,20 +419,20 @@ func TestFourReadConcurrencyLimit(t *testing.T) {
 	<-fifthAttempted
 
 	if n := workersStarted.Load(); n != 4 {
-		t.Fatalf("expected 4 workers launched, got %d", n)
+		require.EqualValuesf(t, 4, n, "expected 4 workers launched, got %d", n)
 	}
 	if cur := active.Load(); cur != 4 {
-		t.Fatalf("expected active == 4 at barrier, got %d", cur)
+		require.EqualValuesf(t, 4, cur, "expected active == 4 at barrier, got %d", cur)
 	}
 	if fifthAttempt.Load() {
-		t.Fatal("a 5th active read was attempted")
+		require.Fail(t, fmt.Sprintln("a 5th active read was attempted"))
 	}
 
 	close(release)
 	<-done
 
 	if max.Load() != 4 {
-		t.Fatalf("expected max active == 4, got %d", max.Load())
+		require.Failf(t, "", "expected max active == 4, got %d", max.Load())
 	}
 }
 func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
@@ -491,33 +440,32 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, o, e := run(t, Environment{}, "report", "--file", p, "--snapshot", s)
 	if c != 0 {
-		t.Fatalf("%d %s %s", c, o, e)
+		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
 	need(t, o, "changed=yes")
 	c, o, e = run(t, Environment{}, "report", "--file", p, "--snapshot", s)
 	if c != 0 {
-		t.Fatalf("%d %s %s", c, o, e)
+		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
 	need(t, o, "changed=no")
 	state, err := readSnapshot(s)
 	if err != nil || len(state.Delivered) != 0 || len(state.Pending) != 0 {
-		t.Fatal(state, err)
+		require.Fail(t, fmt.Sprintln(state, err))
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	unlock, err := lockSnapshot(ctx, s)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
-	blocked, cancel2 := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel2()
+	blocked, cancel2 := context.WithCancel(context.Background())
+	cancel2()
 	if release, err := lockSnapshot(blocked, s); err == nil {
 		release()
-		t.Fatal("two snapshot writers acquired lock")
+		require.Fail(t, fmt.Sprintln("two snapshot writers acquired lock"))
 	}
 	unlock()
 	if release, err := lockSnapshot(ctx, s); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	} else {
 		release()
 	}
@@ -538,12 +486,11 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 	})}}
 	c, o, e := run(t, env, "check", "--file", p, "--kind", "tool", "--max", "2")
 	if c != 1 {
-		t.Fatal(c)
+		require.EqualValues(t, 1, c, c)
 	}
-	need(t, o, "entries=27", "UPDATE MORE kind=stale shown=2 total=26")
-	need(t, e, "checked=26", "stale=26")
-	if strings.Contains(o, "excluded") {
-		t.Fatal(o)
+	need(t, e, "entries=27", "CHECK MORE kind=stale shown=2 total=26", "checked=26", "stale=26")
+	if strings.Contains(o+e, "excluded") {
+		require.Fail(t, fmt.Sprintln(o+e))
 	}
 }
 
@@ -551,32 +498,24 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 // cleanly, its output is complete, and only the copy of that output is still
 // finishing. A ten millisecond grace lost that race under load and reported a
 // healthy tool as UNKNOWN. The grace has to outlast an ordinary handoff.
-func TestHealthyCommandWithLingeringGrandchildStillReads(t *testing.T) {
-	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte("x 1.2.3\n")), "100ms"))}
-	r := Installed(context.Background(), e, 5*time.Second, false)
-	if !r.Known() || r.Version != "1.2.3" {
-		t.Fatalf("healthy read refused: reason=%q version=%q raw=%q", r.Reason, r.Version, r.Raw)
-	}
-}
-
 // The three process failures a person acts on differently must stay
 // distinguishable in the reason, which one collapsed "execution failed" did not.
 func TestProcessFailuresAreDistinguishable(t *testing.T) {
 	if r := process(context.Background(), nil, nil, ChildCap); r.Reason != "empty argv" {
-		t.Fatal(r.Reason)
+		require.EqualValues(t, "empty argv", r.Reason, r.Reason)
 	}
 	if r := process(context.Background(), []string{"nova-no-such-tool-exists"}, nil, ChildCap); r.Reason != "not_found" {
-		t.Fatal(r.Reason)
+		require.EqualValues(t, "not_found", r.Reason, r.Reason)
 	}
 	if r := process(context.Background(), mustArgv(t, command(t, "fail")), nil, ChildCap); r.Reason != "exit 3" {
-		t.Fatal(r.Reason)
+		require.EqualValues(t, "exit 3", r.Reason, r.Reason)
 	}
 }
 func mustArgv(t *testing.T, s string) []string {
 	t.Helper()
 	a, err := argv(s)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return a
 }
@@ -591,11 +530,11 @@ func TestReportLocalLocatorWithVersionStringInstalled(t *testing.T) {
 	p := manifest(t, row("mytool", "tool", "v1.2.3", "local:"+binCmd, "none"))
 	code, out, errs := run(t, Environment{}, "report", "--file", p, "--host", "air")
 	if code != 0 {
-		t.Fatalf("want exit 0, got %d: out=%s errs=%s", code, out, errs)
+		require.EqualValuesf(t, 0, code, "want exit 0, got %d: out=%s errs=%s", code, out, errs)
 	}
 	need(t, out, "REPORT TOOL name=mytool", "version=1.2.3")
 	need(t, out, "REPORT OK checked=1 known=1 unknown=0")
 	if strings.Contains(out, "not_found") || strings.Contains(errs, "not_found") {
-		t.Fatalf("unexpected not_found in output: out=%s errs=%s", out, errs)
+		require.Failf(t, "", "unexpected not_found in output: out=%s errs=%s", out, errs)
 	}
 }

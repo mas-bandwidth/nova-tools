@@ -268,11 +268,16 @@ func (st *Store) Machine(ctx context.Context) (Machine, Heartbeat, error) {
 }
 
 // MachineLine reads the machine and says its line at the clock's reading;
-// "" when the store keeps no machine records.
+// "" when the store keeps no machine records. A store ticked by hand (ByHand)
+// has no silence: nothing ticks between its commands, so a RUNNING machine
+// is running however long since its last tick.
 func (st *Store) MachineLine(ctx context.Context) string {
 	m, hb, err := st.Machine(ctx)
 	if err != nil {
 		return ""
+	}
+	if st.ByHand && m.Running() {
+		return "machine: running"
 	}
 	return MachineLine(st.now(), m, hb)
 }
@@ -568,12 +573,7 @@ func changesRow(e ntable.BatchMemberEntry) bool {
 // staleRefusal says a step holding epoch at was refused because the sprint
 // left it.
 func staleRefusal(refused []sprint.Refusal, at uint64) bool {
-	for _, r := range refused {
-		if r.Key == "epoch "+strconv.FormatUint(at, 10) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(refused, func(r sprint.Refusal) bool { return r.Key == "epoch "+strconv.FormatUint(at, 10) })
 }
 
 // Tick runs one tick when the machine is RUNNING, and records it on the
@@ -890,6 +890,14 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	for _, u := range updates {
 		byTable[u.Table] = u
 	}
+	// 0. The start: the fleet's and the readers' rebalance, once, before any
+	// table's update (sprint.TickStart; the owner, 2026-10-01: "just once
+	// before tick, rebalance each table."). What it writes is in the tables
+	// the first pass updates next.
+	t.res.Order = append(t.res.Order, "start")
+	if out := t.parts("", sprint.TickStart); out != tickOn {
+		return t.end(out, last, unfinished, seen)
+	}
 	// 1-2. The first pass: every table's update once, in the owner's order
 	// ("1. work streams, 2. readers, 3. merge, 4. fleet"); the work table's is
 	// the pump, and it runs only here.
@@ -949,6 +957,10 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	// sprint again, so nothing that happens during a tick is missed.
 	return seen, nil
 }
+
+// routesPart says a tick part plans with the routes: the deal and the ask draw
+// from them, and the check asks what the next deal does.
+func routesPart(name string) bool { return name == "deal" || name == "ask" || name == "check" }
 
 // MaxSettle bounds the updates a tick makes past its first pass while the
 // readers', merge's and fleet's updates write each other's tables: a tick
@@ -1021,6 +1033,20 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			v.ReaderStates = t.readers
 			view = &v
 		}
+		if view != nil && view.Routes == nil && routesPart(part.Name) {
+			// a part that plans with the routes asks what it would do with them: the
+			// deal's judgment of reads whose tier no route serves (route.go,
+			// readRouteMissing) has nothing else to show it; read once a tick, the
+			// cache the parts share
+			set, err := t.st.cached(t.ctx, &t.routes)
+			if err != nil {
+				t.err = fmt.Errorf("tick %s: %w", part.Name, err)
+				return tickFailed
+			}
+			v := *view
+			set.into(&v)
+			view = &v
+		}
 		if view != nil {
 			if drain && view.QueueLen == 0 {
 				continue
@@ -1056,10 +1082,11 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
 		step.Pump, step.Drain, step.Twin = table == sprint.Work, drain, t.twin
-		// the deal draws from the routes, and the check asks what the next deal does
-		step.Routes, step.RouteCache = part.Name == "deal" || part.Name == "check", &t.routes
+		// the deal and the ask draw from the routes (a read card's route,
+		// route.go readRouteOf), and the check asks what the next deal does
+		step.Routes, step.RouteCache = routesPart(part.Name), &t.routes
 		// the ask, and the parts that ask what the ask does, plan with the readers' states
-		step.Readers = part.Name == "ask" || part.Name == "check"
+		step.Readers = part.Name == "ask" || part.Name == "check" || part.Name == sprint.PartLevelReads
 		step.ReaderStates = t.readers
 		// the machine's state is read with the step's fence: STOPPED halts the
 		// tick before the part begins

@@ -209,12 +209,12 @@ func (r *round) next(up []string, q, room map[string]int, avoid string) string {
 
 // levelTo is where the level moves the newest card of the longest queue, and
 // moves the index past it (errata 3 amendment 5): the next member round the
-// fleet from the index that is below its width (held, the work cards it
-// holds, under widths: a member at its width takes no more, errata 3
-// amendment 9) and whose queue (n) is below the up members' mean rounded
+// fleet from the index that is below its room (held, the work cards it
+// holds, under widths: DealAhead times its width, width.go) and whose backlog
+// (n, which may be below zero: level) is below the up members' mean rounded
 // down, or, when none such is below it, at it. A member that receives is
-// never the longest while two queues differ by more than one, so no card is
-// moved twice, and every move takes a card from a queue at least two longer
+// never the longest while two backlogs differ by more than one, so no card is
+// moved twice, and every move takes a card from a backlog at least two longer
 // than the one it joins. A member of avoid (the card's StagingRefusers) is never the
 // target. "" when none.
 func (r *round) levelTo(up []string, n, held, widths map[string]int, avoid []string) string {
@@ -226,6 +226,9 @@ func (r *round) levelTo(up []string, n, held, widths map[string]int, avoid []str
 		total += n[m]
 	}
 	mean := total / len(up)
+	if total < 0 && total%len(up) != 0 {
+		mean-- // rounded down, below zero too
+	}
 	isUp := make(map[string]bool, len(up))
 	for _, x := range up {
 		isUp[x] = true

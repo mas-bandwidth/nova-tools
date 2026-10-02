@@ -790,6 +790,22 @@ example:
   nova-table batch manifest.json
   nova-table batch - < manifest.json
 
+manifest: one JSON object; required keys are schema (1), table, epoch,
+expected_table_revision, operation_id and members. Epoch and revisions are
+unsigned decimal strings. Optional keys: actor, props, prop_expect, prop_absent.
+Each member names id and expect, with create, move, remove, set or unset for a
+change; a member with only expect is a guard. A create expects absent=true.
+Example manifest (demo has row build and column ready; revision 2 was observed):
+{
+  "schema":1,"table":"demo","epoch":"0","expected_table_revision":"2","operation_id":"create-b1",
+  "members":[{"id":"b1","expect":{"absent":true},"create":{"row":"build","col":"ready","score":0}}]}
+Read the current epoch/revision with nova-table show demo and existing members
+with nova-table member read demo b1 before choosing expectations.
+Use the same --redis or --seat for these reads and the batch.
+Retry the same manifest with the same operation_id to replay its recorded
+result; changing the manifest under that id is refused. --idem on individual
+write verbs records receipt metadata only and does not deduplicate retries.
+
 flags:
   --json  print the receipt as one JSON object instead of the lines
 

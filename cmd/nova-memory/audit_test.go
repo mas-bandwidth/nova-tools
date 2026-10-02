@@ -36,10 +36,12 @@ var memoryAudit = audit.Config{
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
-	Escapers: []string{"hitLine", "scoreFields", "chanNames", "hintFor", "commandLine", "buildinfo.Line"},
+	Escapers: []string{"oneline.Quote", "hitLine", "scoreFields", "chanNames", "hintFor", "commandLine", "buildinfo.Line"},
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
+		"main.go|cmdSearch|problems.String()":     "buffer of refusals already rendered through refuse and fixed hint literals",
+		"main.go|cmdCheck|problems.String()":      "buffer of refusals already rendered through refuse and fixed hint literals",
 		"main.go|parse|name":                      "a required flag's name, a literal at every call site in this file",
 		"main.go|channelNames|verb":               "the verb's own name, a literal at every call site in this file; one direct print site (the other two go through refuse)",
 		"main.go|stepFailed|verb":                 "the name of the quickstart step, a literal at all three call sites in this file",
@@ -52,6 +54,7 @@ var memoryAudit = audit.Config{
 		"main.go|cmdVerify|*links":                "validated above the site to be exactly gate or info",
 	},
 	Imports: []string{
+		`"github.com/mas-bandwidth/nova-tools/internal/tool"`, // shared JSON renderer marshals the result as one escaped JSON record
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
@@ -64,7 +67,7 @@ var memoryAudit = audit.Config{
 		// runtime is read for GOOS alone, in commandLine: which shell the echoed
 		// quickstart line has to paste into is a property of the machine printing it.
 		// It writes to no stream.
-		`"bufio"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path"`, `"runtime"`, `"sort"`, `"strings"`, `"time"`,
+		`"bufio"`, `"flag"`, `"fmt"`, `"io"`, `"math"`, `"os"`, `"path"`, `"runtime"`, `"sort"`, `"strings"`, `"time"`,
 		// boot resolves pinned memory paths under --root through the platform
 		// path separator (filepath.Join/FromSlash) after validating them with
 		// path's slash rules; it writes to no stream.

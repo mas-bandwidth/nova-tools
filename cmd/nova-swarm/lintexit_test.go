@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // THE HELP PROMISES TWO DIFFERENT EXITS AND THE LINT KEEPS BOTH. Exit 1 is "the verb ran and
@@ -17,18 +19,15 @@ func TestLintFindingsExitOneAndAnUnreadableCardExitsTwo(t *testing.T) {
 
 	bad := writeLintCard(t, "bad.card", strings.Replace(lintGoodCard(), "STEP 2. Read docs/SPEC-SWARM.md first.", "STEP 2. cd ../elsewhere", 1))
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", bad)
-	if exit != 1 || !strings.Contains(stdout, "LINT DRIFT card=bad.card ") {
-		t.Fatalf("a card with findings exits 1 with a LINT DRIFT line, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	if stderr != "" {
-		t.Fatalf("a finding is a verdict on stdout, nothing on stderr: %q", stderr)
-	}
+	require.Equal(t, 1, exit, "a card with findings exits 1 with a LINT DRIFT line, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "LINT DRIFT card=bad.card ", "a card with findings exits 1 with a LINT DRIFT line, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Empty(t, stderr, "a finding is a verdict on stdout, nothing on stderr: %q", stderr)
 
 	missing := filepath.Join(t.TempDir(), "absent.card")
 	exit, stdout, stderr = runSwarm(t, "lint", "--card", missing)
-	if exit != 2 || stdout != "" || !strings.Contains(stderr, "--card wants a readable file") {
-		t.Fatalf("a card that cannot be read exits 2 with the reason on stderr, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
+	require.Equal(t, 2, exit, "a card that cannot be read exits 2 with the reason on stderr, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Empty(t, stdout, "a card that cannot be read exits 2 with the reason on stderr, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stderr, "--card wants a readable file", "a card that cannot be read exits 2 with the reason on stderr, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 }
 
 // The launcher script lint keeps the same two exits.
@@ -38,14 +37,12 @@ func TestLintFleetFindingsExitOneAndAnUnreadableScriptExitsTwo(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "launch.sh")
 	write(t, script, "#!/bin/bash\nmapfile -t lines < input\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--fleet", script)
-	if exit != 1 || !strings.Contains(stdout, "LINT DRIFT script=launch.sh ") {
-		t.Fatalf("a launcher with findings exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
+	require.Equal(t, 1, exit, "a launcher with findings exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "LINT DRIFT script=launch.sh ", "a launcher with findings exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 
 	exit, _, stderr = runSwarm(t, "lint", "--fleet", filepath.Join(t.TempDir(), "absent.sh"))
-	if exit != 2 || !strings.Contains(stderr, "--fleet wants a readable launcher script") {
-		t.Fatalf("a launcher that cannot be read exits 2, got %d\nstderr: %s", exit, stderr)
-	}
+	require.Equal(t, 2, exit, "a launcher that cannot be read exits 2, got %d\nstderr: %s", exit, stderr)
+	require.Contains(t, stderr, "--fleet wants a readable launcher script", "a launcher that cannot be read exits 2, got %d\nstderr: %s", exit, stderr)
 }
 
 // The banner belongs to the tool, not the card: the exit-codes sentence of another tool is
@@ -55,17 +52,12 @@ func TestTheCardTemplateCarriesNoExitCodesLineAndLintsClean(t *testing.T) {
 	t.Parallel()
 
 	exit, tmpl, stderr := runSwarm(t, "template", "--name", "card")
-	if exit != 0 {
-		t.Fatalf("template --name card exits 0, got %d\nstderr: %s", exit, stderr)
-	}
+	require.Equal(t, 0, exit, "template --name card exits 0, got %d\nstderr: %s", exit, stderr)
 	for _, line := range strings.Split(tmpl, "\n") {
-		if strings.HasPrefix(strings.ToLower(line), "exit codes") {
-			t.Fatalf("the card template carries a banner line inside its RULES: %q", line)
-		}
+		require.False(t, strings.HasPrefix(strings.ToLower(line), "exit codes"), "the card template carries a banner line inside its RULES: %q", line)
 	}
 	card := writeLintCard(t, "template.card", filledLibraries(tmpl))
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--child-rules")
-	if exit != 0 || !strings.Contains(stdout, "LINT OK card=template.card ") {
-		t.Fatalf("the card template lints clean under --child-rules, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
+	require.Equal(t, 0, exit, "the card template lints clean under --child-rules, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "LINT OK card=template.card ", "the card template lints clean under --child-rules, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 }

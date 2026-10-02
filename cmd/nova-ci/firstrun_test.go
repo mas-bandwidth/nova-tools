@@ -39,8 +39,7 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	for _, ex := range examples {
 		args := strings.Fields(ex)[1:]
 		exit, out, errs := runCIIn(t, "", args...)
-		if exit == 2 {
-			t.Errorf("the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, errs)
+		if !assert.NotEqual(t, 2, exit, "the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, errs) {
 			continue
 		}
 		assert.Equal(t, 0, exit, "the usage example %q ran but said NO (exit %d)\nstderr: %s", ex, exit, errs)
@@ -60,7 +59,7 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	exit, _, stderr = runCIIn(t, "not json\n", "slowtests")
 	assert.Equal(t, 2, exit, "a malformed stdin exit = %d, want 2", exit)
 	assert.Contains(t, stderr, "line 1", "a malformed stdin stderr = %q, want it to name line 1", stderr)
-	assert.Contains(t, stderr, "run: nova-ci help", "a refusal stderr = %q, want it to name the door", stderr)
+	assert.Contains(t, stderr, "run: go test -json <packages> | nova-ci slowtests --budget 60", "a refusal stderr = %q, want the command that makes the input", stderr)
 }
 
 // (c) The `### First run` block of docs/TESTS.md is EXECUTED: every command in
@@ -99,6 +98,18 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	// reader sees the refusal and the green. A transcript that has lost one of
 	// them still matches line for line and is still short of a first run.
 	assert.Len(t, steps, 2, "the `### First run` block runs %d commands, want 2: one budget the fixture exceeds and one it does not", len(steps))
+	// The banner's example block is this sitting, after `nova-ci help`, so the
+	// lines a reader pastes from the binary alone are the ones compared here.
+	_, banner, _ := runCIIn(t, "", "help")
+	examples, err := onboarding.ExampleLines(banner, "nova-ci")
+	require.NoError(t, err)
+	var documented []string
+	for _, s := range steps {
+		line := strings.TrimPrefix(s.Line, "$ ")
+		require.True(t, strings.HasPrefix(line, "nova-ci slowtests "), "the first run is slowtests only: %q", s.Line)
+		documented = append(documented, line)
+	}
+	assert.Equal(t, append([]string{"nova-ci help"}, documented...), examples, "the banner's example: block is not the documented first run")
 	// The sitting: every documented command, in order, in one temp-free run.
 	// A command that could not be invoked at all stops the sitting, because
 	// every line after it would be compared against a state that never happened.
@@ -106,9 +117,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	got := make([]onboarding.Result, 0, len(steps))
 	for _, s := range steps {
 		res, err := run(s)
-		if err != nil {
-			t.Fatalf("the documented command\n  %s\ncould not be run: %v", s.Line, err)
-		}
+		require.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err)
 		got = append(got, res)
 	}
 	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
@@ -143,8 +152,7 @@ func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
-	if _, err := os.Stat(filepath.Join(root, "docs", "TESTS.md")); err != nil {
-		t.Fatalf("docs/TESTS.md is not under %s: %v", root, err)
-	}
+	_, err = os.Stat(filepath.Join(root, "docs", "TESTS.md"))
+	require.NoError(t, err, "docs/TESTS.md is not under %s: %v", root, err)
 	return root
 }

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestCardPromptIsTheTwoLineContract is nova-tools#3689 (it replaces #3651's
@@ -22,28 +24,22 @@ func TestCardPromptIsTheTwoLineContract(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			card := "RESULT: c1 sha=0123456789ab nova-tools " + kind + ": a card\nKIND: " + kind + "\nBASE: dev\n"
 			prompt := CardPrompt([]byte(card))
-			if !strings.HasPrefix(prompt, card) {
-				t.Fatalf("the prompt does not start with the card text byte for byte:\n%s", prompt)
-			}
+			require.True(t, strings.HasPrefix(prompt, card), "the prompt does not start with the card text byte for byte:\n%s", prompt)
 			brief := prompt[len(card):]
-			if !strings.Contains(brief, "RESULT-FORMAT") || !strings.Contains(brief, "line 1: this card's line 1, verbatim") || !strings.Contains(brief, "`DONE`, `ABSTAIN <why>` or `BLOCKED <why>`") {
-				t.Fatalf("no two-line contract for KIND %s:\n%s", kind, brief)
-			}
+			require.Contains(t, brief, "RESULT-FORMAT", "no two-line contract for KIND %s:\n%s", kind, brief)
+			require.Contains(t, brief, "line 1: this card's line 1, verbatim", "no two-line contract for KIND %s:\n%s", kind, brief)
+			require.Contains(t, brief, "`DONE`, `ABSTAIN <why>` or `BLOCKED <why>`", "no two-line contract for KIND %s:\n%s", kind, brief)
 			for _, owned := range typedrec.WrapperOwned {
-				if strings.Contains(brief, "`"+owned+":") || strings.Contains(brief, "- "+owned+": ") {
-					t.Errorf("KIND %s: the brief asks the model for %s, which the wrapper writes:\n%s", kind, owned, brief)
-				}
+				assert.NotContains(t, brief, "`"+owned+":", "KIND %s: the brief asks the model for %s, which the wrapper writes:\n%s", kind, owned, brief)
+				assert.NotContains(t, brief, "- "+owned+": ", "KIND %s: the brief asks the model for %s, which the wrapper writes:\n%s", kind, owned, brief)
 			}
-			if n := strings.Count(brief, "\n"); n > 8 {
-				t.Errorf("KIND %s: the brief is %d lines, want the short contract:\n%s", kind, n, brief)
-			}
+			n := strings.Count(brief, "\n")
+			assert.LessOrEqual(t, n, 8, "KIND %s: the brief is %d lines, want the short contract:\n%s", kind, n, brief)
 		})
 	}
 	brief := CardPrompt([]byte("RESULT: c1\nKIND: fix\n"))
 	for _, gone := range []string{"SCHEMA: v2", "## Gates", "## Left owed", "Fill in this template"} {
-		if strings.Contains(brief, gone) {
-			t.Errorf("the fix brief still asks for %q", gone)
-		}
+		assert.NotContains(t, brief, gone, "the fix brief still asks for %q", gone)
 	}
 }
 
@@ -58,8 +54,7 @@ func TestCardPromptLeavesUntypedCardsAlone(t *testing.T) {
 		"RESULT: c1\nKIND: go-verb\n",
 		"RESULT: c1\nKIND: fix-red\n",
 	} {
-		if got := CardPrompt([]byte(card)); got != card {
-			t.Errorf("CardPrompt(%q) = %q, want the card unchanged", card, got)
-		}
+		got := CardPrompt([]byte(card))
+		assert.Equal(t, card, got, "CardPrompt(%q) = %q, want the card unchanged", card, got)
 	}
 }

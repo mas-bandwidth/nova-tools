@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -43,13 +46,9 @@ func localize(t *testing.T, pool string, args []string) []string {
 func examples(t *testing.T) []string {
 	t.Helper()
 	exit, stdout, stderr := runSwarm(t, "help")
-	if exit != 0 {
-		t.Fatalf("`nova-swarm help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)
-	}
+	require.Equal(t, 0, exit, "`nova-swarm help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)
 	lines, err := onboarding.ExampleLines(stdout, "nova-swarm")
-	if err != nil {
-		t.Fatalf("%s\n\n%s", err, stdout)
-	}
+	require.NoError(t, err, "\n%s", stdout)
 	return lines
 }
 
@@ -62,16 +61,11 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	pool := filepath.Join(t.TempDir(), "pool")
 	for _, ex := range examples(t) {
 		exit, stdout, stderr := runSwarm(t, localize(t, pool, strings.Fields(ex)[1:])...)
-		if exit == 2 {
-			t.Errorf("the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, stderr)
+		if !assert.NotEqual(t, 2, exit, "the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, stderr) {
 			continue
 		}
-		if exit != 0 {
-			t.Errorf("the usage example %q ran but said NO (exit %d)\nstderr: %s", ex, exit, stderr)
-		}
-		if stdout == "" {
-			t.Errorf("the usage example %q printed nothing on stdout", ex)
-		}
+		assert.Equal(t, 0, exit, "the usage example %q ran but said NO (exit %d)\nstderr: %s", ex, exit, stderr)
+		assert.NotEmpty(t, stdout, "the usage example %q printed nothing on stdout", ex)
 	}
 }
 
@@ -88,9 +82,8 @@ func TestUsageBannerExamplesMakeThePoolBeforeReadingIt(t *testing.T) {
 			if a != "./pool" {
 				continue
 			}
-			if len(f) < 2 || f[1] != "quickstart" {
-				t.Fatalf("the usage example %q reads ./pool before any example makes it; put `nova-swarm quickstart --pool ./pool` above it", ex)
-			}
+			require.GreaterOrEqual(t, len(f), 2, "the usage example %q reads ./pool before any example makes it; put `nova-swarm quickstart --pool ./pool` above it", ex)
+			require.Equal(t, "quickstart", f[1], "the usage example %q reads ./pool before any example makes it; put `nova-swarm quickstart --pool ./pool` above it", ex)
 			return
 		}
 	}
@@ -102,18 +95,11 @@ func TestABareInvocationCostsOneLineAndNamesTheDoor(t *testing.T) {
 	t.Parallel()
 
 	exit, stdout, stderr := runSwarm(t)
-	if exit != 2 {
-		t.Errorf("a bare nova-swarm exits %d, want 2", exit)
-	}
-	if stdout != "" {
-		t.Errorf("a refusal belongs on stderr, got stdout: %q", stdout)
-	}
-	if lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n"); len(lines) != 1 {
-		t.Errorf("a bare nova-swarm printed %d lines, want 1:\n%s", len(lines), stderr)
-	}
-	if !strings.Contains(stderr, "run: nova-swarm help") {
-		t.Errorf("a bare nova-swarm names no door:\n%s", stderr)
-	}
+	assert.Equal(t, 2, exit, "a bare nova-swarm exits %d, want 2", exit)
+	assert.Empty(t, stdout, "a refusal belongs on stderr, got stdout: %q", stdout)
+	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+	assert.Len(t, lines, 1, "a bare nova-swarm printed %d lines, want 1:\n%s", len(lines), stderr)
+	assert.Contains(t, stderr, "run: nova-swarm help", "a bare nova-swarm names no door:\n%s", stderr)
 }
 
 // (c) The README transcript is compared against what the tool prints -- the event prefixes
@@ -123,13 +109,9 @@ func TestTheReadmeTranscriptIsWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-swarm")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	pool := filepath.Join(t.TempDir(), "pool")
 	var want []string
 	var printed []string
@@ -138,9 +120,7 @@ func TestTheReadmeTranscriptIsWhatTheToolPrints(t *testing.T) {
 		case strings.HasPrefix(line, "$ "):
 			args := localize(t, pool, strings.Fields(strings.TrimPrefix(line, "$ "))[1:])
 			exit, stdout, stderr := runSwarm(t, args...)
-			if exit != 0 {
-				t.Fatalf("the transcript's `%s` exited %d: %s", line, exit, stderr)
-			}
+			require.Equal(t, 0, exit, "the transcript's `%s` exited %d: %s", line, exit, stderr)
 			for _, out := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
 				if shape := onboarding.Shape(out); shape != "" {
 					printed = append(printed, shape)
@@ -152,13 +132,9 @@ func TestTheReadmeTranscriptIsWhatTheToolPrints(t *testing.T) {
 			}
 		}
 	}
-	if len(want) == 0 {
-		t.Fatal("the transcript holds no event line")
-	}
-	if strings.Join(want, "\n") != strings.Join(printed, "\n") {
-		t.Errorf("the README transcript and the tool disagree.\ntranscript:\n%s\n\nprinted:\n%s",
-			strings.Join(want, "\n"), strings.Join(printed, "\n"))
-	}
+	require.NotEmpty(t, want, "the transcript holds no event line")
+	assert.Equal(t, strings.Join(want, "\n"), strings.Join(printed, "\n"), "the README transcript and the tool disagree.\ntranscript:\n%s\n\nprinted:\n%s",
+		strings.Join(want, "\n"), strings.Join(printed, "\n"))
 }
 
 // (d) The `### First run` block of docs/TESTS.md is EXECUTED: every command in
@@ -180,26 +156,16 @@ func TestTheReadmeTranscriptIsWhatTheToolPrints(t *testing.T) {
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	root := repoRoot(t)
 	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-swarm")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-swarm", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) == 0 {
-		t.Fatal("the `### First run` block holds no nova-swarm command; this test would pass by running nothing")
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, steps, "the `### First run` block holds no nova-swarm command; this test would pass by running nothing")
 	// Both commands are the point of the section: quickstart makes the pool and
 	// names the next moves, status reports it empty. A transcript that has lost
 	// one of them still matches line for line and is still short of a first run.
-	if len(steps) != 1 {
-		t.Errorf("the `### First run` block runs %d commands, want 1: template", len(steps))
-	}
+	assert.Len(t, steps, 1, "the `### First run` block runs %d commands, want 1: template", len(steps))
 	t.Chdir(t.TempDir())
 	for _, p := range onboarding.Execute(steps, runDocumentedSwarm(t)) {
 		t.Error(p)
@@ -235,20 +201,12 @@ func TestTheCommandReferenceFirstRunIsWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "CLI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-swarm")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-swarm", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) != 1 {
-		t.Fatalf("the `### First run` block of docs/CLI.md runs %d commands, want 1: template", len(steps))
-	}
+	require.NoError(t, err)
+	require.Len(t, steps, 1, "the `### First run` block of docs/CLI.md runs %d commands, want 1: template", len(steps))
 	pool := filepath.Join(t.TempDir(), "pool")
 	for i := range steps {
 		steps[i].Args = localize(t, pool, steps[i].Args)
@@ -266,17 +224,11 @@ func TestUsageBannerExamplesRunThroughTheComparator(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "CLI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-swarm")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-swarm", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	documented := make(map[string]onboarding.Step, len(steps))
 	for _, s := range steps {
 		documented[strings.TrimPrefix(s.Line, "$ ")] = s
@@ -289,10 +241,8 @@ func TestUsageBannerExamplesRunThroughTheComparator(t *testing.T) {
 		"nova-swarm lint --rules",
 	}
 	got := examples(t)
-	if strings.Join(got, "\n") != strings.Join(linesOfTheBanner, "\n") {
-		t.Fatalf("the banner's example block is not the sitting this test runs\nbanner:\n  %s\nwant:\n  %s",
-			strings.Join(got, "\n  "), strings.Join(linesOfTheBanner, "\n  "))
-	}
+	require.Equal(t, strings.Join(linesOfTheBanner, "\n"), strings.Join(got, "\n"), "the banner's example block is not the sitting this test runs\nbanner:\n  %s\nwant:\n  %s",
+		strings.Join(got, "\n  "), strings.Join(linesOfTheBanner, "\n  "))
 	pool := filepath.Join(t.TempDir(), "pool")
 	norms := []onboarding.Norm{onboarding.Path("./pool", pool)}
 	run := runDocumentedSwarm(t)
@@ -306,9 +256,7 @@ func TestUsageBannerExamplesRunThroughTheComparator(t *testing.T) {
 			switch name, isTemplate := strings.CutPrefix(ex, "nova-swarm template --name "); {
 			case isTemplate:
 				body, err := swarm.Template(name)
-				if err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, err)
 				want = strings.Split(strings.TrimSuffix(body, "\n"), "\n")
 			case ex == "nova-swarm lint --rules":
 				for _, rule := range cardLintRuleNames() {
@@ -321,9 +269,7 @@ func TestUsageBannerExamplesRunThroughTheComparator(t *testing.T) {
 		}
 		step.Args = localize(t, pool, step.Args)
 		res, err := run(step)
-		if err != nil {
-			t.Fatalf("the banner example\n  %s\ncould not be run: %v", ex, err)
-		}
+		require.NoError(t, err, "the banner example\n  %s\ncould not be run", ex)
 		for _, p := range onboarding.Compare(step, res, norms) {
 			t.Error(p)
 		}

@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ci_goenv_test.go is the red-test contract of the goenv checker, and then the
@@ -26,16 +28,10 @@ func goEnvFixtureTree(t *testing.T, name string) string {
 	t.Helper()
 	root := t.TempDir()
 	src, err := os.ReadFile(filepath.Join("testdata", "goenv", name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	dir := filepath.Join(root, "internal", "fixture")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "fixture.go"), src, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "fixture.go"), src, 0o644))
 	return root
 }
 
@@ -45,13 +41,9 @@ func goEnvFixtureTree(t *testing.T, name string) string {
 func goEnvLineAt(t *testing.T, root, rel string, line int) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines := strings.Split(string(raw), "\n")
-	if line < 1 || line > len(lines) {
-		t.Fatalf("%s:%d is outside the file (%d lines)", rel, line, len(lines))
-	}
+	require.False(t, line < 1 || line > len(lines), "%s:%d is outside the file (%d lines)", rel, line, len(lines))
 	return strings.TrimSpace(lines[line-1])
 }
 
@@ -63,31 +55,16 @@ func TestGoEnvRefusesThePreFixMutate(t *testing.T) {
 
 	root := goEnvFixtureTree(t, "mutate_prefix.go.txt")
 	res, err := CheckGoEnv(root, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 1 || len(res.Findings) != 1 {
-		t.Fatalf("the pre-fix mutate is one refusal, got %d: %+v", res.Refused(), res.Findings)
-	}
+	require.NoError(t, err)
+	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "the pre-fix mutate is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
-	if f.Kind != "inherit" {
-		t.Errorf("kind = %q, want inherit", f.Kind)
-	}
-	if f.Func != "runUnits" {
-		t.Errorf("func = %q, want runUnits", f.Func)
-	}
-	if f.Remedy != GoEnvRemedy {
-		t.Errorf("remedy = %q, want %q", f.Remedy, GoEnvRemedy)
-	}
-	if got := goEnvLineAt(t, root, f.File, f.Line); !strings.Contains(got, `exec.CommandContext(ctx, "go", args...)`) {
-		t.Errorf("finding names %s:%d = %q, want the inner go test line", f.File, f.Line, got)
-	}
-	if !strings.Contains(f.Render(), "CI-GOENV file=internal/fixture/fixture.go") {
-		t.Errorf("the refusal line does not carry the file: %s", f.Render())
-	}
-	if res.ExitCode() != 2 {
-		t.Errorf("exit = %d, want 2", res.ExitCode())
-	}
+	assert.Equal(t, "inherit", f.Kind, "kind = %q, want inherit", f.Kind)
+	assert.Equal(t, "runUnits", f.Func, "func = %q, want runUnits", f.Func)
+	assert.Equal(t, GoEnvRemedy, f.Remedy, "remedy = %q, want %q", f.Remedy, GoEnvRemedy)
+	got := goEnvLineAt(t, root, f.File, f.Line)
+	assert.Contains(t, got, `exec.CommandContext(ctx, "go", args...)`, "finding names %s:%d = %q, want the inner go test line", f.File, f.Line, got)
+	assert.Contains(t, f.Render(), "CI-GOENV file=internal/fixture/fixture.go", "the refusal line does not carry the file: %s", f.Render())
+	assert.Equal(t, 2, res.ExitCode(), "exit = %d, want 2", res.ExitCode())
 }
 
 // 2. The fixed shape passes, both spellings: the plain Clean and an append
@@ -97,18 +74,10 @@ func TestGoEnvAllowsCleanEnvironment(t *testing.T) {
 
 	root := goEnvFixtureTree(t, "mutate_fixed.go.txt")
 	res, err := CheckGoEnv(root, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 0 {
-		t.Fatalf("goenv.Clean is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
-	}
-	if res.Files != 1 {
-		t.Errorf("files = %d, want 1", res.Files)
-	}
-	if !strings.HasSuffix(res.OKLine(), "refused=0") {
-		t.Errorf("OK line = %q", res.OKLine())
-	}
+	require.NoError(t, err)
+	require.Zero(t, res.Refused(), "goenv.Clean is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
+	assert.Equal(t, 1, res.Files, "files = %d, want 1", res.Files)
+	assert.True(t, strings.HasSuffix(res.OKLine(), "refused=0"), "OK line = %q", res.OKLine())
 }
 
 // 3. The near miss: an environment is set, but it is the caller's own, so
@@ -119,15 +88,9 @@ func TestGoEnvRefusesTheCallersOwnEnviron(t *testing.T) {
 
 	root := goEnvFixtureTree(t, "rawenviron.go.txt")
 	res, err := CheckGoEnv(root, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Findings) != 1 {
-		t.Fatalf("append(os.Environ(), ...) is one refusal and git is none, got %d: %+v", len(res.Findings), res.Findings)
-	}
-	if res.Findings[0].Func != "buildTool" {
-		t.Errorf("func = %q, want buildTool", res.Findings[0].Func)
-	}
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1, "append(os.Environ(), ...) is one refusal and git is none, got %d: %+v", len(res.Findings), res.Findings)
+	assert.Equal(t, "buildTool", res.Findings[0].Func, "func = %q, want buildTool", res.Findings[0].Func)
 }
 
 // 4. A row that names no offender is refused, so the list can only shrink.
@@ -136,19 +99,11 @@ func TestGoEnvRefusesAStaleAllowlistRow(t *testing.T) {
 
 	root := goEnvFixtureTree(t, "mutate_fixed.go.txt")
 	list := filepath.Join(t.TempDir(), "allow.txt")
-	if err := os.WriteFile(list, []byte("internal/fixture/fixture.go:20 inherit 2026-09-18 fixed since\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(list, []byte("internal/fixture/fixture.go:20 inherit 2026-09-18 fixed since\n"), 0o644))
 	res, err := CheckGoEnv(root, list)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Stale) != 1 {
-		t.Fatalf("a row naming no offender is one refusal, got %d: %+v", len(res.Stale), res.Stale)
-	}
-	if res.Stale[0].Remedy != GoEnvRemedyAllow {
-		t.Errorf("remedy = %q, want %q", res.Stale[0].Remedy, GoEnvRemedyAllow)
-	}
+	require.NoError(t, err)
+	require.Len(t, res.Stale, 1, "a row naming no offender is one refusal, got %d: %+v", len(res.Stale), res.Stale)
+	assert.Equal(t, GoEnvRemedyAllow, res.Stale[0].Remedy, "remedy = %q, want %q", res.Stale[0].Remedy, GoEnvRemedyAllow)
 }
 
 // 5. A row holds an offender still, and the run stays green with it counted.
@@ -157,16 +112,10 @@ func TestGoEnvAllowlistHoldsOneOffender(t *testing.T) {
 
 	root := goEnvFixtureTree(t, "mutate_prefix.go.txt")
 	list := filepath.Join(t.TempDir(), "allow.txt")
-	if err := os.WriteFile(list, []byte("internal/fixture/fixture.go:1 inherit 2026-09-18 predates the checker\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(list, []byte("internal/fixture/fixture.go:1 inherit 2026-09-18 predates the checker\n"), 0o644))
 	res, err := CheckGoEnv(root, list)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 0 || res.Allowlisted != 1 {
-		t.Fatalf("the row holds the offender: refused=%d allowlisted=%d %+v", res.Refused(), res.Allowlisted, res.Findings)
-	}
+	require.NoError(t, err)
+	require.False(t, res.Refused() != 0 || res.Allowlisted != 1, "the row holds the offender: refused=%d allowlisted=%d %+v", res.Refused(), res.Allowlisted, res.Findings)
 }
 
 // 6. The help line the class test is entered under, word for word as
@@ -175,12 +124,8 @@ func TestGoEnvVerbLineMatchesTheSpec(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "SPEC-CI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), GoEnvVerbLine) {
-		t.Errorf("the goenv verb line is not in docs/SPEC-CI.md:\n%s", GoEnvVerbLine)
-	}
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), GoEnvVerbLine, "the goenv verb line is not in docs/SPEC-CI.md:\n%s", GoEnvVerbLine)
 }
 
 // 7. The class test itself. Every .go file under cmd/ and internal/ -- tests
@@ -194,9 +139,7 @@ func TestGoEnvClassRuleHoldsOverTheRepository(t *testing.T) {
 	t.Parallel()
 
 	res, err := CheckGoEnv(repoRoot(t), goEnvAllowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, f := range res.Findings {
 		t.Errorf("%s", f.Render())
 	}
@@ -205,12 +148,8 @@ func TestGoEnvClassRuleHoldsOverTheRepository(t *testing.T) {
 		t.Errorf("%s:%d lists %s, but nothing there inherits the environment any more; %s",
 			goEnvAllowlistPath, row.Line, row.Key, GoEnvRemedyAllow)
 	}
-	if res.Files == 0 {
-		t.Fatal("the walk read no files; the repository root is wrong")
-	}
-	if res.Refused() != 0 {
-		t.Fatalf("%s", res.FailLine())
-	}
+	require.NotZero(t, res.Files, "the walk read no files; the repository root is wrong")
+	require.Zero(t, res.Refused(), "%s", res.FailLine())
 }
 
 // A child `go` started through internal/subproc with no environment of its own is refused
@@ -220,13 +159,8 @@ func TestGoEnvRefusesAChildGoStartedThroughSubproc(t *testing.T) {
 
 	root := goEnvFixtureTree(t, "subproc_inherit.go.txt")
 	res, err := CheckGoEnv(root, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Refused() != 1 || len(res.Findings) != 1 {
-		t.Fatalf("a subproc go with no Env is one refusal, got %d: %+v", res.Refused(), res.Findings)
-	}
-	if f := res.Findings[0]; f.Kind != "inherit" || f.Func != "listDeps" {
-		t.Fatalf("finding %+v", f)
-	}
+	require.NoError(t, err)
+	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "a subproc go with no Env is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	f := res.Findings[0]
+	require.False(t, f.Kind != "inherit" || f.Func != "listDeps", "finding %+v", f)
 }

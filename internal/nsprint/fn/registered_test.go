@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -35,11 +38,11 @@ func TestEveryGoFunctionNameIsRegistered(t *testing.T) {
 	t.Parallel()
 	src, err := Source()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	registered := luaFunctionRegistrations(src)
 	if !registered["ns_table_apply"] || !registered["ns_table_read"] {
-		t.Fatalf("the library registers %d functions, not ns_table_apply and ns_table_read", len(registered))
+		require.Failf(t, "assertion failed", "the library registers %d functions, not ns_table_apply and ns_table_read", len(registered))
 	}
 	root := filepath.Join("..", "..", "..")
 	named := 0
@@ -55,17 +58,17 @@ func TestEveryGoFunctionNameIsRegistered(t *testing.T) {
 			for _, m := range goFunctionNameRx.FindAllStringSubmatch(string(b), -1) {
 				named++
 				if !registered[m[1]] {
-					t.Errorf("%s names %s; no Lua file registers it", path, m[1])
+					assert.True(t, registered[m[1]], "%s names %s; no Lua file registers it", path, m[1])
 				}
 			}
 			return nil
 		})
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	if named == 0 {
-		t.Fatal("no Go source names an ns_* function: the walk read nothing")
+		require.NotEqual(t, 0, named, "no Go source names an ns_* function: the walk read nothing")
 	}
 }
 
@@ -77,7 +80,7 @@ func TestRegistrationInventoryDetectsAMissingRegistration(t *testing.T) {
 
 	source, err := Source()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var readDeclaration string
 	for _, match := range luaTableRegisterRx.FindAllStringSubmatch(source, -1) {
@@ -87,15 +90,15 @@ func TestRegistrationInventoryDetectsAMissingRegistration(t *testing.T) {
 		}
 	}
 	if readDeclaration == "" {
-		t.Fatal("the library has no table-form ns_table_read registration to guard")
+		require.NotEqual(t, "", readDeclaration, "the library has no table-form ns_table_read registration to guard")
 	}
 	withoutRead := strings.Replace(source, readDeclaration,
 		strings.Replace(readDeclaration, "redis.register_function", "redis.not_register_function", 1), 1)
 	registered := luaFunctionRegistrations(withoutRead)
 	if registered["ns_table_read"] {
-		t.Fatal("registration inventory accepted a library with ns_table_read removed")
+		require.False(t, registered["ns_table_read"], "registration inventory accepted a library with ns_table_read removed")
 	}
 	if !registered["ns_table_apply"] {
-		t.Fatal("removing ns_table_read also hid the string-form ns_table_apply registration")
+		require.True(t, registered["ns_table_apply"], "removing ns_table_read also hid the string-form ns_table_apply registration")
 	}
 }

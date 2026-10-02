@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/stretchr/testify/require"
 )
 
 // SLOW: 5.3 s on hetzner at dev 64b9bec48, over the five-second line.
@@ -33,8 +34,8 @@ import (
 // walks every commit between the two ends before it can answer, so the one run that reads
 // nothing was still paying for the whole distance in order to be told not to read it.
 //
-// So the numbers here are COUNTS and never a clock -- bus.CommitsWalked, taken where the
-// commits are enumerated, and bus.NoteParses, taken where a note is opened. A wall-clock
+// So the numbers here are COUNTS and never a clock -- bus.CommitsWalkedIn, taken where the
+// commits are enumerated, and bus.NoteParsesIn, taken where a note is opened. A wall-clock
 // assertion over a fixture this size is a flake on a shared runner and proves nothing on a
 // fast enough machine; a count of work not done is the only honest proof there is.
 //
@@ -62,13 +63,9 @@ func TestAStaleCursorCostsTheBoundAndNotTheDistance(t *testing.T) {
 	// commits for a read that then did nothing.
 	mark := bus.CommitsWalkedIn(checkout)
 	distance, err := bus.CommitsBetween(checkout, base, "HEAD")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	unbounded := bus.CommitsWalkedIn(checkout) - mark
-	if distance != commits || unbounded != int64(commits) {
-		t.Fatalf("the unbounded count answered %d after walking %d commits, want %d and %d; the fixture is not what this test thinks it is", distance, unbounded, commits, commits)
-	}
+	require.Falsef(t, distance != commits || unbounded != int64(commits), "the unbounded count answered %d after walking %d commits, want %d and %d; the fixture is not what this test thinks it is", distance, unbounded, commits, commits)
 
 	// AFTER: the same stale cursor, read by the verb. The default bound is 500, so git stops
 	// one commit past it -- 501 and not 1000 -- and the run opens NO note at all: the bound
@@ -78,11 +75,13 @@ func TestAStaleCursorCostsTheBoundAndNotTheDistance(t *testing.T) {
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).
 		mustContain(t, "stderr", `INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"`)
-	if got := bus.CommitsWalkedIn(checkout) - mark; got != defaultMaxCommits+1 {
-		t.Fatalf("a bounded read walked %d commits over a cursor %d behind, want %d: the count is not asked with its bound", got, commits, defaultMaxCommits+1)
+	{
+		got := bus.CommitsWalkedIn(checkout) - mark
+		require.Falsef(t, got != defaultMaxCommits+1, "a bounded read walked %d commits over a cursor %d behind, want %d: the count is not asked with its bound", got, commits, defaultMaxCommits+1)
 	}
-	if got := bus.NoteParsesIn(checkout) - parses; got != 0 {
-		t.Fatalf("a bounded read parsed %d notes, want 0: nothing is read past the bound", got)
+	{
+		got := bus.NoteParsesIn(checkout) - parses
+		require.Falsef(t, got != 0, "a bounded read parsed %d notes, want 0: nothing is read past the bound", got)
 	}
 
 	// The read the caller asks for by raising the bound: the thousand commits, once, and
@@ -91,11 +90,13 @@ func TestAStaleCursorCostsTheBoundAndNotTheDistance(t *testing.T) {
 	mark = bus.CommitsWalkedIn(checkout)
 	invoke(t, "", advance(checkout, "Ada", "--max-commits", "2000")...).mustCode(t, 0).
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d", notes))
-	if got := bus.CommitsWalkedIn(checkout) - mark; got != commits {
-		t.Fatalf("the allowed walk crossed %d commits, want the %d since the cursor", got, commits)
+	{
+		got := bus.CommitsWalkedIn(checkout) - mark
+		require.Falsef(t, got != commits, "the allowed walk crossed %d commits, want the %d since the cursor", got, commits)
 	}
-	if got := bus.NoteParsesIn(checkout) - parses; got != notes {
-		t.Fatalf("the allowed walk parsed %d notes, want the %d it was handed", got, notes)
+	{
+		got := bus.NoteParsesIn(checkout) - parses
+		require.Falsef(t, got != notes, "the allowed walk parsed %d notes, want the %d it was handed", got, notes)
 	}
 
 	// AND THE CARRYING SET IS NEVER RE-READ. The reader now carries two thousand notes; the
@@ -108,11 +109,13 @@ func TestAStaleCursorCostsTheBoundAndNotTheDistance(t *testing.T) {
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d", notes))
-	if got := bus.CommitsWalkedIn(checkout) - mark; got != 1 {
-		t.Fatalf("a read at the head walked %d commits, want the 1 the advance's own cursor commit is", got)
+	{
+		got := bus.CommitsWalkedIn(checkout) - mark
+		require.Falsef(t, got != 1, "a read at the head walked %d commits, want the 1 the advance's own cursor commit is", got)
 	}
-	if got := bus.NoteParsesIn(checkout) - parses; got != 0 {
-		t.Fatalf("a read carrying %d notes parsed %d of them, want 0: the carrying set is re-read only on --full", notes, got)
+	{
+		got := bus.NoteParsesIn(checkout) - parses
+		require.Falsef(t, got != 0, "a read carrying %d notes parsed %d of them, want 0: the carrying set is re-read only on --full", notes, got)
 	}
 }
 
@@ -169,8 +172,9 @@ func TestWaitIdleExitGivesATimeoutItsOwnCode(t *testing.T) {
 		mustContain(t, "stdout", "WAIT DONE reason=timeout")
 	// ONE line to grep, and the code is on it.
 	line := r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):]
-	if got := field(t, line, "idle-exit="); got != "3" {
-		t.Fatalf("WAIT TIMEOUT says idle-exit=%q, want 3:\n%s", got, r.stdout)
+	{
+		got := field(t, line, "idle-exit=")
+		require.Equalf(t, "3", got, "WAIT TIMEOUT says idle-exit=%q, want 3:\n%s", got, r.stdout)
 	}
 }
 
@@ -196,14 +200,10 @@ func TestWaitUntilIsAnAbsoluteDeadlineAndTheEarlierOneWins(t *testing.T) {
 	r.mustContain(t, "stdout", "until="+until).
 		mustContain(t, "stdout", "WAIT TIMEOUT after=")
 	after := afterOf(t, r.stdout)
-	if after < time.Second {
-		t.Fatalf("the wait returned after %s, before the --until it was given:\n%s", after, r.stdout)
-	}
+	require.Falsef(t, after < time.Second, "the wait returned after %s, before the --until it was given:\n%s", after, r.stdout)
 	// Well under the --timeout it was also given: the two are not added and the longer one
 	// does not win.
-	if after > 15*time.Second {
-		t.Fatalf("the wait ran %s against --until %s and --timeout 30s; the instant did not bound it:\n%s", after, until, r.stdout)
-	}
+	require.Falsef(t, after > 15*time.Second, "the wait ran %s against --until %s and --timeout 30s; the instant did not bound it:\n%s", after, until, r.stdout)
 }
 
 // SLOW: 5.4 s on hetzner at dev 64b9bec48, over the five-second line.
@@ -239,40 +239,41 @@ func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
 		}
 		wg.Wait()
 		for i, r := range results {
-			if r.code != 0 {
-				t.Fatalf("round %d, bench %d: exit %d\nstdout: %s\nstderr: %s", round, i, r.code, r.stdout, r.stderr)
-			}
+			require.Equalf(t, 0, r.code, "round %d, bench %d: exit %d\nstdout: %s\nstderr: %s", round, i, r.code, r.stdout, r.stderr)
 		}
 	}
 
 	// 20/20 on the bus.
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	if n := strings.Count(files, "from-ada/2026-09-09T1234Z-round-"); n != rounds*2 {
-		t.Fatalf("%d of %d notes reached the bus:\n%s", n, rounds*2, files)
+	{
+		n := strings.Count(files, "from-ada/2026-09-09T1234Z-round-")
+		require.Equalf(t, rounds*2, n, "%d of %d notes reached the bus:\n%s", n, rounds*2, files)
 	}
 	// And the catalogue names every one of them: the union kept both sides' lines every
 	// time, rather than one bench's replacing the other's.
 	index := gitIn(t, bare, "show", "main:from-ada/INDEX")
-	if n := strings.Count(index, "from-ada/2026-09-09T1234Z-round-"); n != rounds*2 {
-		t.Fatalf("the catalogue holds %d of %d lines:\n%s", n, rounds*2, index)
+	{
+		n := strings.Count(index, "from-ada/2026-09-09T1234Z-round-")
+		require.Equalf(t, rounds*2, n, "the catalogue holds %d of %d lines:\n%s", n, rounds*2, index)
 	}
-	if strings.Contains(index, "<<<") {
-		t.Fatalf("conflict markers reached the catalogue:\n%s", index)
-	}
+	require.NotContainsf(t, index, "<<<", "conflict markers reached the catalogue:\n%s", index)
 
 	// BOTH TREES ARE CLEAN AND NEITHER IS MID-REBASE, which is the whole of "no conflict
 	// wedges a line": a bench a person has to rescue is a bench that lost.
 	for i, dir := range benches {
-		if branch := strings.TrimSpace(gitIn(t, dir, "rev-parse", "--abbrev-ref", "HEAD")); branch != "main" {
-			t.Fatalf("bench %d is on %q, not a branch a person can work from", i, branch)
+		{
+			branch := strings.TrimSpace(gitIn(t, dir, "rev-parse", "--abbrev-ref", "HEAD"))
+			require.Equalf(t, "main", branch, "bench %d is on %q, not a branch a person can work from", i, branch)
 		}
-		if out := gitIn(t, dir, "status", "--porcelain"); strings.TrimSpace(out) != "" {
-			t.Fatalf("bench %d was left dirty:\n%s", i, out)
+		{
+			out := gitIn(t, dir, "status", "--porcelain")
+			require.Emptyf(t, strings.TrimSpace(out), "bench %d was left dirty:\n%s", i, out)
 		}
 		gd := strings.TrimSpace(gitIn(t, dir, "rev-parse", "--absolute-git-dir"))
 		for _, name := range []string{"rebase-merge", "rebase-apply"} {
-			if _, err := os.Stat(filepath.Join(gd, name)); !os.IsNotExist(err) {
-				t.Fatalf("bench %d was left in a rebase (%s)", i, name)
+			{
+				_, err := os.Stat(filepath.Join(gd, name))
+				require.Truef(t, os.IsNotExist(err), "bench %d was left in a rebase (%s)", i, name)
 			}
 		}
 	}
@@ -282,9 +283,7 @@ func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
 	// same settlement this tool gave itself.
 	attrs := gitIn(t, bare, "show", "main:"+bus.AttributesName)
 	for _, want := range []string{"from-*/INDEX merge=union", "from-*/RECEIPTS merge=union"} {
-		if !strings.Contains(attrs, want) {
-			t.Fatalf("%s does not carry %q:\n%s", bus.AttributesName, want, attrs)
-		}
+		require.Containsf(t, attrs, want, "%s does not carry %q:\n%s", bus.AttributesName, want, attrs)
 	}
 }
 
@@ -307,24 +306,27 @@ func TestWaitNeverCommitsABeat(t *testing.T) {
 	r := invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "150ms", "--beat-lease", "10m")...).mustCode(t, 0)
 
 	polls, err := strconv.Atoi(field(t, r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):], "polls="))
-	if err != nil || polls < 2 {
-		t.Fatalf("polls=%d, want several so a beat had every chance to land:\n%s", polls, r.stdout)
-	}
-	if n := strings.Count(r.stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored"); n != 1 {
-		t.Fatalf("the retirement note printed %d times, want once:\n%s", n, r.stderr)
+	require.Falsef(t, err != nil || polls < 2, "polls=%d, want several so a beat had every chance to land:\n%s", polls, r.stdout)
+	{
+		n := strings.Count(r.stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored")
+		require.Equalf(t, 1, n, "the retirement note printed %d times, want once:\n%s", n, r.stderr)
 	}
 	for _, where := range []string{checkout, bare} {
-		if log := gitIn(t, where, "log", "--format=%s", "main"); strings.Contains(log, "beat ada") {
-			t.Fatalf("a wait committed a beat in %s:\n%s", where, log)
+		{
+			log := gitIn(t, where, "log", "--format=%s", "main")
+			require.NotContainsf(t, log, "beat ada", "a wait committed a beat in %s:\n%s", where, log)
 		}
 	}
-	if after := strings.TrimSpace(gitIn(t, bare, "rev-parse", "main")); after != before {
-		t.Fatalf("the bus moved from %s to %s under a wait that found nothing", before, after)
+	{
+		after := strings.TrimSpace(gitIn(t, bare, "rev-parse", "main"))
+		require.Falsef(t, after != before, "the bus moved from %s to %s under a wait that found nothing", before, after)
 	}
-	if _, err := os.Stat(filepath.Join(checkout, "from-ada", "BEAT")); !os.IsNotExist(err) {
-		t.Fatalf("the wait wrote from-ada/BEAT: %v", err)
+	{
+		_, err := os.Stat(filepath.Join(checkout, "from-ada", "BEAT"))
+		require.Truef(t, os.IsNotExist(err), "the wait wrote from-ada/BEAT: %v", err)
 	}
-	if out := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain", "--untracked-files=all")); out != "" {
-		t.Fatalf("the wait left the checkout dirty:\n%s", out)
+	{
+		out := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain", "--untracked-files=all"))
+		require.Emptyf(t, out, "the wait left the checkout dirty:\n%s", out)
 	}
 }

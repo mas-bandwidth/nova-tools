@@ -28,15 +28,16 @@ func TestRedisTheDealReadsTheRoutesApplyWrites(t *testing.T) {
 	require.NoError(t, c.HSet(ctx, config.RouteKey("flash-a"), "tier", "flash", "provider", "deepseek", "model", "v4-flash",
 		"tokens", "0", "deadline", "900", "enabled", "true").Err())
 	require.NoError(t, c.HSet(ctx, config.TierKey("flash"), "name", "flash", "routes", "flash-a,flash-a", "rev", "8", "at", "0").Err())
-	rs, tiers, trips, err := st.B.(RouteReader).Routes(ctx)
+	set, trips, err := st.B.(RouteReader).Routes(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), trips, "the arrays ride in the routes' second trip")
-	assert.Equal(t, map[string][]string{"flash": {"flash-a", "flash-a"}}, tiers, "pro has no array: it takes its routes in name order")
-	rs, _, err = st.Routes(ctx)
+	assert.Equal(t, map[string][]string{"flash": {"flash-a", "flash-a"}}, set.Tiers, "pro has no array: it takes its routes in name order")
+	rs, _, err := st.Routes(ctx)
 	require.NoError(t, err)
 	require.Len(t, rs, 2)
 	want := sprint.Route{Name: "flash-a", Tier: "flash", Provider: "deepseek", Model: "v4-flash", Enabled: true}
-	want.Deadline = 900 // seconds, as the route row holds it
+	want.Deadline = 900                  // seconds, as the route row holds it
+	want.Prices.ReasoningAsOutput = true // an absent price flag uses PricesOf's default
 	assert.Equal(t, want, rs[0])
 	assert.Equal(t, "x-ai/grok-4", rs[1].Model)
 

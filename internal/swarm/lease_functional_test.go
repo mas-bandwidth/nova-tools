@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -31,21 +33,13 @@ func TestADeadHoldersLeaseIsTakenOver(t *testing.T) {
 	// answer is the test's fact and not an assumption about which numbers are never alive.
 	body := fmt.Sprintf("pid=%d\nhost=%s\nlabel=dead-card\nnonce=deadbeef\nstarted=%s\n",
 		deadPID(t), host, time.Now().UTC().Format(time.RFC3339))
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	release, err := StartJobLease(job, "card-1")
-	if err != nil {
-		t.Fatalf("a lease whose launcher is dead was treated as live: %v", err)
-	}
+	require.NoError(t, err, "a lease whose launcher is dead was treated as live: %v", err)
 	defer release()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "label=card-1\n") {
-		t.Errorf("the dead holder's lease is still on disk:\n%s", raw)
-	}
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "label=card-1\n", "the dead holder's lease is still on disk:\n%s", raw)
 }
 
 // COMPETING STALE TAKERS (Stella, #1585, after the atomic publication landed). Publication
@@ -92,17 +86,11 @@ func TestACompetingStaleTakerNeverRemovesTheWinnersLiveLease(t *testing.T) {
 
 			// A wins the path, from the same abandoned record, and is now the live holder.
 			releaseA, err := StartJobLease(job, "A")
-			if err != nil {
-				t.Fatalf("A could not reclaim the abandoned record: %v", err)
-			}
+			require.NoError(t, err, "A could not reclaim the abandoned record: %v", err)
 			defer releaseA()
 			mine, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(mine), "label=A\n") {
-				t.Fatalf("A did not win the path:\n%s", mine)
-			}
+			require.NoError(t, err)
+			require.Contains(t, string(mine), "label=A\n", "A did not win the path:\n%s", mine)
 
 			// B is let go, and clears the record it judged -- which is not there any more.
 			close(holdReclaim)
@@ -114,22 +102,15 @@ func TestACompetingStaleTakerNeverRemovesTheWinnersLiveLease(t *testing.T) {
 				}
 			}()
 			got := <-bDone
-			if got.err == nil {
-				t.Fatal("the losing reclaimer took the job directory from the run that won it: two launchers, one job directory (#1585, competing stale takers)")
-			}
-			if _, ok := HeldJobLease(got.err); !ok {
-				t.Errorf("the loser's refusal is %v; the winner is a live holder and has to be named as one", got.err)
-			}
+			require.Error(t, got.err, "the losing reclaimer took the job directory from the run that won it: two launchers, one job directory (#1585, competing stale takers)")
+			_, ok := HeldJobLease(got.err)
+			assert.True(t, ok, "the loser's refusal is %v; the winner is a live holder and has to be named as one", got.err)
 
 			// AND A'S LEASE IS STILL ON DISK, BYTE FOR BYTE. This is the assertion the
 			// whole test exists for: a reclaimer removed a live lease it had never read.
 			after, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("the losing reclaimer removed the winner's live lease: %v (#1585)", err)
-			}
-			if string(after) != string(mine) {
-				t.Errorf("the losing reclaimer rewrote the winner's lease:\nA published:\n%s\nnow:\n%s", mine, after)
-			}
+			require.NoError(t, err, "the losing reclaimer removed the winner's live lease: %v (#1585)", err)
+			assert.Equal(t, string(mine), string(after), "the losing reclaimer rewrote the winner's lease:\nA published:\n%s\nnow:\n%s", mine, after)
 		})
 	}
 }
@@ -151,27 +132,20 @@ func TestACompetingReclamationLeavesNoTombstoneBehind(t *testing.T) {
 	}()
 	<-atReclaim
 	releaseA, err := StartJobLease(job, "A")
-	if err != nil {
-		t.Fatalf("A could not reclaim the abandoned record: %v", err)
-	}
+	require.NoError(t, err, "A could not reclaim the abandoned record: %v", err)
 	defer releaseA()
 	close(holdReclaim)
 	go func() {
 		for range atReclaim {
 		}
 	}()
-	if err := <-done; err == nil {
-		t.Fatal("the loser was told it holds the directory")
-	}
+	err = <-done
+	require.Error(t, err, "the loser was told it holds the directory")
 
 	entries, err := os.ReadDir(job)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, e := range entries {
-		if e.Name() != JobLeaseName {
-			t.Errorf("the job directory holds %q beside the lease", e.Name())
-		}
+		assert.Equal(t, JobLeaseName, e.Name(), "the job directory holds %q beside the lease", e.Name())
 	}
 }
 
@@ -186,17 +160,11 @@ func staleRecord(t *testing.T, job, how string) {
 		host, _ := os.Hostname()
 		body := fmt.Sprintf("pid=%d\nhost=%s\nlabel=gone\nnonce=abandoned\nstarted=%s\n",
 			deadPID(t), host, time.Now().UTC().Format(time.RFC3339))
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	case "unknown-and-stale":
-		if err := os.WriteFile(path, []byte("half a li"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(path, []byte("half a li"), 0o644))
 		old := time.Now().Add(-2 * JobLeaseStale)
-		if err := os.Chtimes(path, old, old); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Chtimes(path, old, old))
 	default:
 		t.Fatalf("no such abandoned record: %s", how)
 	}
@@ -209,8 +177,7 @@ func deadPID(t *testing.T) int {
 	t.Helper()
 	bin := runnerDoing(t, t.TempDir(), "throwaway", runnerStep{Op: "exit", N: 0})
 	cmd := exec.Command(bin, "throwaway", "1", "model", filepath.Join(t.TempDir(), "no.card"), t.TempDir(), "unmetered")
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("starting a throwaway child: %v", err)
-	}
+	err := cmd.Run()
+	require.NoError(t, err, "starting a throwaway child: %v", err)
 	return cmd.Process.Pid
 }

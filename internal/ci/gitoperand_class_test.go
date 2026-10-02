@@ -262,7 +262,7 @@ func TestCardDerivedGitOperandsFollowTheSeparator(t *testing.T) {
 		}
 		checked++
 		for _, finding := range gitOperandFindings(f.Rel, f.Src) {
-			t.Error(finding)
+			assert.Fail(t, finding)
 		}
 	}
 	assert.Positive(t, checked, "the class test read no file under %v", gitOperandDirs)

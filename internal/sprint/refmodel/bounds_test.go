@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
@@ -48,18 +50,16 @@ func TestResolveMovesTwoThousandAndLeavesTheRestDue(t *testing.T) {
 		moved, due := countKinds(got, refmodel.KindMove)
 		switch {
 		case moved != want.moved:
-			t.Errorf("%d waiters: %d moved, want %d", waiters, moved, want.moved)
+			assert.Failf(t, "assertion failed", "%d waiters: %d moved, want %d", waiters, moved, want.moved)
 		case want.due == "" && len(due) != 0:
-			t.Errorf("%d waiters: something is due:%s", waiters, show(due))
+			assert.Failf(t, "assertion failed", "%d waiters: something is due:%s", waiters, show(due))
 		case want.due != "" && (len(due) != 1 || !slices.Equal(due[0].Attrs, []string{want.due})):
-			t.Errorf("%d waiters: the due move is %s, want %s", waiters, show(due), want.due)
+			assert.Failf(t, "assertion failed", "%d waiters: the due move is %s, want %s", waiters, show(due), want.due)
 		}
 		// the oldest are the ones moved: the last waiter is left for the next tick
 		last := fmt.Sprintf("s2-%d", waiters)
 		left := !slices.ContainsFunc(got, func(m refmodel.Move) bool { return m.Card == last })
-		if left != (waiters > 2000) {
-			t.Errorf("%d waiters: %s left for the next tick is %v", waiters, last, left)
-		}
+		assert.Equal(t, waiters > 2000, left, "%d waiters: %s left for the next tick is %v", waiters, last, left)
 	}
 }
 
@@ -85,11 +85,11 @@ func TestDeadlinesWriteEveryJudgmentTheyFindInTheTick(t *testing.T) {
 		opened, due := countKinds(got, refmodel.KindOpen)
 		switch {
 		case opened != want.opened:
-			t.Errorf("%d late cards: %d judgments written, want %d", late, opened, want.opened)
+			assert.Failf(t, "assertion failed", "%d late cards: %d judgments written, want %d", late, opened, want.opened)
 		case want.due == "" && len(due) != 0:
-			t.Errorf("%d late cards: something is due:%s", late, show(due))
+			assert.Failf(t, "assertion failed", "%d late cards: something is due:%s", late, show(due))
 		case want.due != "" && (len(due) != 1 || !slices.Equal(due[0].Attrs, []string{want.due})):
-			t.Errorf("%d late cards: the due move is %s, want %s", late, show(due), want.due)
+			assert.Failf(t, "assertion failed", "%d late cards: the due move is %s, want %s", late, show(due), want.due)
 		}
 	}
 }

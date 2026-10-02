@@ -1,8 +1,9 @@
 package store
 
 import (
-	"slices"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -24,8 +25,8 @@ func TestTheDecidedLineTheStoreWritesForAnAckNamesItsSubjects(t *testing.T) {
 			h.must(ResolveStep(sprint.ResolveReq{}))
 		}
 		open := h.nOpenOf(typ, "waiter")
-		if len(open) != 1 {
-			t.Fatalf("%s: %d open judgments on the waiter", typ, len(open))
+		if !assert.Len(t, open, 1, "%s: %d open judgments on the waiter", typ, len(open)) {
+			continue
 		}
 		before := len(h.lines())
 		h.must(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "unneeded", Who: "tester"}))
@@ -35,8 +36,9 @@ func TestTheDecidedLineTheStoreWritesForAnAckNamesItsSubjects(t *testing.T) {
 				closing = append(closing, l.Note)
 			}
 		}
-		if len(closing) != 1 || closing[0].Type != typ || !slices.Equal(closing[0].Subjects(), []string{"waiter"}) {
-			t.Fatalf("%s: the ack closed with %+v", typ, closing)
+		if assert.Len(t, closing, 1, "%s: the ack closed with %+v", typ, closing) {
+			assert.Equal(t, typ, closing[0].Type)
+			assert.Equal(t, []string{"waiter"}, closing[0].Subjects())
 		}
 	}
 }

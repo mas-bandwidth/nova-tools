@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The functional tier of OnlyFCALL: the list it judges by, held to the command
@@ -36,12 +38,12 @@ func readCommandTable(t *testing.T, addr string) commandTable {
 	defer client.Close()
 	rows, err := client.Do(context.Background(), "COMMAND").Slice()
 	if err != nil {
-		t.Fatalf("COMMAND: %v", err)
+		require.NoError(t, err, "COMMAND: %v", err)
 	}
 	table := commandTable{}
 	for _, row := range rows {
 		if err := table.add(row); err != nil {
-			t.Fatalf("COMMAND: %v", err)
+			require.NoError(t, err, "COMMAND: %v", err)
 		}
 	}
 	return table
@@ -92,10 +94,10 @@ func TestWriteListIsTheWriteFlagOfTheServer(t *testing.T) {
 	// The table is not empty, and it says what everyone knows: SET writes and
 	// GET does not.
 	if write, present := table["SET"]; !present || !write {
-		t.Fatalf("the server's table has SET as present %v and write %v; want a write", present, write)
+		require.Failf(t, "", "the server's table has SET as present %v and write %v; want a write", present, write)
 	}
 	if write, present := table["GET"]; !present || write {
-		t.Fatalf("the server's table has GET as present %v and write %v; want a command that is not a write", present, write)
+		require.Failf(t, "", "the server's table has GET as present %v and write %v; want a command that is not a write", present, write)
 	}
 
 	var holes, wrongFlagged, wrongScripted, wrongBundled []string
@@ -134,7 +136,7 @@ func TestWriteListIsTheWriteFlagOfTheServer(t *testing.T) {
 	} {
 		if len(problem.names) > 0 {
 			slices.Sort(problem.names)
-			t.Errorf("%s:\n  %s", problem.what, strings.Join(problem.names, "\n  "))
+			assert.Failf(t, "", "%s:\n  %s", problem.what, strings.Join(problem.names, "\n  "))
 		}
 	}
 }

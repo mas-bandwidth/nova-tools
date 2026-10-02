@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
@@ -26,6 +27,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -53,10 +55,16 @@ type app struct {
 	cached  map[string]store.Backend
 	twins   map[string]*twin // the open `--redis mem:<file>` twins (twin.go)
 	meter   hostload.Source  // how fleet beat measures this machine
+	etaMu   sync.Mutex
+	etas    []etaSample // the view's estimates of the last etaHold (heldETA)
+
 	// inventory reads the machines of nova-config and their widths (fleet
 	// sync): tests give it the config's in-memory store.
 	inventory inventoryFn
-	loc       *time.Location // the zone times print in: nil is the machine's local zone
+	// friends reads the names of nova-config's friend rows (friend sync):
+	// tests give it the config's in-memory store.
+	friends friendsFn
+	loc     *time.Location // the zone times print in: nil is the machine's local zone
 	// notify is how an interrupt reaches a command that runs until it is
 	// interrupted (where --watch): the context it returns is done at one.
 	notify func(ctx context.Context) (context.Context, context.CancelFunc)
@@ -80,12 +88,44 @@ type app struct {
 	// its verbs last read, so a verb after the first reads only what changed
 	// (store/twin.go). It is not the mem twin above, which is a store.
 	readTwins map[string]*store.Twin
+	// landRoot is the directory land keeps its clones under when it is given
+	// no --repo-dir (land.go): os.UserCacheDir's nova-sprint/land.
+	landRoot func() (string, error)
+	// gitEnv is the environment land's git and check run in: nil is the
+	// caller's, untouched (a test gives git an identity and no global config).
+	gitEnv []string
+	// beforePush, when set (a test), runs before each push land makes, with
+	// the attempt (1, then 2 after the base moved).
+	beforePush func(attempt int)
+	// serial is the server's one line of control (serve.go): a worker's batch
+	// and a tick of the run loop each hold it, so neither runs during the other.
+	// serveAddr is the store the server runs the workers' verbs on.
+	serial    sync.Mutex
+	serveAddr string
+	// serving says the verb running is one a worker sent to the server (set and
+	// cleared under serial): its step names the epoch its worker holds, or is
+	// refused (runStep).
+	serving bool
+	// forward sends verbs to the sprint's server named by NOVA_SPRINT_SERVER (the
+	// coordinator's verbs, forward.go): nil is sprintwire.Client's Do, a test gives the
+	// server's own step.
+	forward func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error)
+	// landFailed is what the land loop's last round printed when it failed, "" after a
+	// round that did not (landloop.go): the same failure again prints nothing.
+	landFailed string
+	// prune is the landed cards' branches waiting for the cleanup (landprune.go), and
+	// landLazy says the land running is the land loop's, which cleans up between its
+	// rounds: land itself then leaves the queue as it is.
+	prune    pruneQueue
+	landLazy bool
 }
 
 func newApp(getenv func(string) string) *app {
 	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
 	a.backend = a.redisBackend
 	a.inventory = a.readInventory
+	a.friends = a.readFriends
+	a.landRoot = defaultLandRoot
 	return a
 }
 
@@ -177,6 +217,12 @@ type common struct {
 	// card's packet), read after the step and printed with its report.
 	packets func(ctx context.Context, st *store.Store, res store.Result) []sprint.Packet
 	handed  []sprint.Packet
+	// says is what the verb tells its reader about what it did that the moves
+	// do not say (a card's id from its file, a card with no brief, a take cut
+	// short and why), printed as NOTE lines under its summary line; after, when
+	// set, adds to it from the step's result.
+	says  []string
+	after func(ctx context.Context, st *store.Store, res store.Result) []string
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {
@@ -211,7 +257,8 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 		return nil, errors.New("NOVA_SPRINT_PREFIX is set: " + noPrefix + "; unset it")
 	}
 	if strings.TrimSpace(c.redis) == "" {
-		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
+		// the twin is named here too, so a first run with no Redis is one turn away (tool ledger P9)
+		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR); with no Redis, --redis mem:<file> runs it on the in-memory twin kept in that file (nova-sprint help, trying it without a Redis)")
 	}
 	if why := needsActor(c); why != "" {
 		return nil, errors.New(why)
@@ -221,7 +268,8 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep, CheckTwin: a.checkTwin}
+	// a twin is ticked by hand: no machine runs between its commands (twin.go)
+	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep, CheckTwin: a.checkTwin, ByHand: a.twinOpen(c.redis)}
 	// every verb this process runs on the store reads through one twin: a
 	// verb after the first reads only what changed (store/twin.go)
 	if a.readTwins == nil {
@@ -255,7 +303,7 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 // run is the one entry point: the command line, and the driver, which runs
 // every verb it plays through it with an argument list.
 func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
-	defer verbflag.RecoverWith(stdout, prog, banner(), &code, verbExample)
+	defer recoverHelp(stdout, &code)
 	defer func() {
 		// a twin is saved after every verb (twin.go); a verb that could not
 		// save it has not finished, whatever it printed
@@ -274,19 +322,32 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 		fmt.Fprintln(stdout, versionLine())
 		return 0
 	}
+	if code, sent := a.forwarded(args, stdout, stderr); sent {
+		return code
+	}
 	for _, v := range verbs {
 		words := strings.Fields(v.name)
 		if len(args) >= len(words) && strings.Join(args[:len(words)], " ") == v.name {
 			return v.run(a, args[len(words):], stdout, stderr)
 		}
 	}
-	if args[0] == "fleet" || args[0] == "reader" || args[0] == "goal" {
+	if members := groupVerbs(args[0]); len(members) > 0 {
+		// a verb group: its -h is its help at exit 0 (help is never a refusal); a bare
+		// group, or a word that is none of its verbs, is refused naming its verbs
+		// (tool ledger P7, X11)
+		if len(args) > 1 && verbflag.IsHelp(args[1]) {
+			return helpCommand(args[:1], stdout, stderr)
+		}
 		for _, w := range args[1:] {
 			if w == "--prefix" || w == "-prefix" || strings.HasPrefix(w, "--prefix=") || strings.HasPrefix(w, "-prefix=") {
 				return refuse(stderr, args[0], noPrefix)
 			}
 		}
-		return refuse(stderr, args[0], "unknown or missing subverb; run: nova-sprint help "+args[0])
+		why := args[0] + " wants one of its verbs"
+		if len(args) > 1 {
+			why = "unknown verb " + oneline.Escape(args[0]+" "+args[1])
+		}
+		return refuse(stderr, args[0], why+"; its verbs are "+strings.Join(members, ", ")+"; run: nova-sprint help "+args[0])
 	}
 	return refuse(stderr, "", "unknown verb "+oneline.Escape(args[0])+"; available: "+strings.Join(verbNames(), ", ")+"; run: nova-sprint help")
 }
@@ -303,14 +364,24 @@ var errNoPrefix = errors.New(noPrefix)
 // argErr is what a verb refuses its arguments with: the words, then the error;
 // a --prefix flag is the one line errNoPrefix, alone, and a flag refusal (flagError)
 // is its own line.
-func argErr(words string, err error) string {
+func argErr(words string, err error, found ...string) string {
 	var fe *flagError
-	if errors.Is(err, errNoPrefix) || errors.As(err, &fe) {
+	switch {
+	case err == nil && len(found) == 0:
+		// a verb that refuses its words with no parse error refuses them by
+		// what it found, never `<nil>` (tool ledger P4)
+		return strings.TrimSpace(words) + ", found none"
+	case err == nil:
+		return strings.TrimSpace(words) + ", found " + strings.Join(found, " ")
+	case errors.Is(err, errNoPrefix), errors.As(err, &fe):
 		return err.Error()
 	}
 	return fmt.Sprint(words, err)
 }
 
+// refuse prints the one refusal line, `nova-sprint[ <verb>] REFUSED: <what>;
+// run: <remedy>` (docs/STANDARD.md section 3, point 1), and is a usage refusal:
+// exit 2.
 func refuse(stderr io.Writer, verb, what string) int {
 	where := prog
 	if verb != "" {
@@ -319,7 +390,7 @@ func refuse(stderr io.Writer, verb, what string) int {
 	if !strings.Contains(what, "; run: ") {
 		what += "; run: nova-sprint " + strings.TrimSpace(verb+" -h")
 	}
-	fmt.Fprintf(stderr, "%s: %s\n", where, oneline.Escape(what))
+	fmt.Fprintf(stderr, "%s REFUSED: %s\n", where, oneline.Escape(what))
 	return 2
 }
 

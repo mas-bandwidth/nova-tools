@@ -22,8 +22,9 @@ package main
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -74,12 +75,7 @@ func register(v verb) {
 }
 
 func names() []string {
-	out := make([]string, 0, len(registry))
-	for n := range registry {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(registry))
 }
 
 func main() {
