@@ -32,16 +32,15 @@ type Worker struct {
 	BaseURL  string `json:"base_url,omitempty"`
 	EnvVar   string `json:"env_var"`
 	KeyFile  string `json:"key_file"`
-	// SECRET: the NAME of the environment variable that holds the key in this
-	// process's own environment, delivered by `nova-secrets exec` around the run
-	// (docs/SPEC-SECRETS.md, the second caller). It replaces `key_file`
+	// SECRET: the NAME of the environment variable that holds the key. The
+	// variable is delivered by `nova-secrets exec` around the run. It replaces `key_file`
 	// when the key is sealed once and delivered at use, never written to disk. Exactly one
 	// of `key_file` and `secret` is set; run and supervise require the variable to be
 	// present and non-empty, and the value is never written to a file, never printed,
 	// and never surfaces in a RUN or SUPERVISE line.
 	Secret string `json:"secret,omitempty"`
 	Usage  string `json:"usage"`
-	// CLASS (CARD-8390): `public` means this worker never sees private source
+	// CLASS: `public` means this worker never sees private source
 	// (the public-class gate); `paid` is the default. Empty decodes as paid so
 	// no description written before the gate changes meaning by being re-read.
 	//
@@ -58,7 +57,7 @@ type Worker struct {
 	// READ ROOTS: the one field the wall added (docs/SPEC-SANDBOX.md, "there is no --root
 	// flag"). Every job runs inside nova-sandbox, whose read set is the OS and toolchain
 	// roots plus what the caller names; a toolchain installed into a USER directory -- Go
-	// under ~/go, node under ~/.nvm, a development toolchain under /Users/<user> -- is
+	// under ~/go, node under ~/.nvm, or a development toolchain under /Users/<user> is
 	// under no system root, so a harness that needs one dies inside the wall and runs
 	// outside it.
 	// It is OPTIONAL, it is a list of absolute existing directories, and it is READ-ONLY:
@@ -66,7 +65,7 @@ type Worker struct {
 	// needs nothing beyond the system roots names nothing here.
 	ReadRoots []string `json:"read_roots,omitempty"`
 
-	// CARD BUDGET (CARD-8317): the optional per-card stop. A runaway card is a
+	// CARD BUDGET: the optional per-card stop. A runaway card is a
 	// prompt defect, not a model one: max_turns caps the harness output log's
 	// assistant turns and max_cache_read caps the observed cache_read, and run
 	// stops the card at either with end=budget and a PROMPT-DEFECT line. Zero
@@ -74,7 +73,7 @@ type Worker struct {
 	MaxTurns     int `json:"max_turns,omitempty"`
 	MaxCacheRead int `json:"max_cache_read,omitempty"`
 
-	// PROVIDER PHRASES: the second optional field, and it is the TRIAGE LINE'S. It
+	// PROVIDER PHRASES: the second optional field. It
 	// captures the error sentences that providers print when a request
 	// does not fit their limits. Each provider uses its own wording; the tool carries a
 	// lookup table of known phrases and a description may add entries for its provider. It
@@ -188,7 +187,7 @@ func LoadWorker(path string) (Worker, []error) {
 	default:
 		problems = append(problems, fmt.Errorf("%s: usage wants `opencode` (the job's own %s, read with `%s -readonly`) or `none` (it reports nothing, and only `--tokens unmetered` tasks may run under it), got %q", path, OpenCodeDB, SQLiteBinary, w.Usage))
 	}
-	// CLASS (CARD-8390): `public` confines the worker to listed public source,
+	// CLASS: `public` confines the worker to listed public source,
 	// `paid` (and empty, the default) confines nothing. Anything else is a
 	// misspelled confinement and is refused here, where it can still be fixed.
 	switch w.Class {
@@ -219,10 +218,10 @@ func LoadWorker(path string) (Worker, []error) {
 				path, i, strconv.Quote(phrase), why))
 		}
 	}
-	// Rule 5 of the wall is "paths are resolved, absolute and existing", and a read root
+	// The wall requires paths to be resolved, absolute and existing, and a read root
 	// that is not there is refused BY THE WALL at every launch, one job at a time. It is
 	// worth one sentence here instead, at the one moment the caller can still fix it.
-	// (SPEC-SANDBOX rule 5.)
+	// (SPEC-SANDBOX.)
 	for i, root := range w.ReadRoots {
 		switch fi, err := os.Stat(root); {
 		case strings.TrimSpace(root) == "":
@@ -237,7 +236,7 @@ func LoadWorker(path string) (Worker, []error) {
 	}
 	// THE KEY FILE IS IN NEITHER LIST, AND THE TOOL MUST NOT PUT IT IN ONE. The wall's
 	// caller section says "the key FILE is in neither list, so the job cannot read it even
-	// if it is told to" (SPEC-SANDBOX rule 6), and it is this CALLER that keeps it out:
+	// if it is told to" (SPEC-SANDBOX), and it is this CALLER that keeps it out:
 	// the job's read set is the SLOT directory -- which `RefreshSlot` fills by copying
 	// every regular file of `worker_dir` into it. A `key_file` under `worker_dir` is
 	// therefore COPIED INSIDE THE WALL by this tool, at every refresh, and the job reads
@@ -337,7 +336,7 @@ func resolvePath(path string) string {
 // spellings is the distinct ways one path can be written for a check: as typed (cleaned)
 // and as resolved. A check that asks only one of them is a check the other walks around --
 // which side matters depends on what the wall does with the path, so a check that cannot
-// choose asks both (SPEC-SANDBOX rule 5). An empty path has no spellings.
+// choose asks both (SPEC-SANDBOX). An empty path has no spellings.
 func spellings(path string) []string {
 	if strings.TrimSpace(path) == "" {
 		return nil
@@ -447,7 +446,7 @@ func validEnvName(name string) bool {
 // that is really there: with `worker_dir` `<dir>/worker`, a `key_file` at
 // `<dir>/Worker-1/.key` is in the directory `RefreshSlot` opens and hands to `--read`,
 // while a case-SENSITIVE comparison says no, and the job reads the key inside the wall
-// under a green `SANDBOX OK` (SPEC-SANDBOX rule 6). Lowercasing is not the repair either:
+// under a green `SANDBOX OK` (SPEC-SANDBOX). Lowercasing is not the repair either:
 // on a case-SENSITIVE filesystem `<dir>/Worker-1` and `<dir>/worker-1` are two directories
 // and folding them refuses a sound placement.
 //
