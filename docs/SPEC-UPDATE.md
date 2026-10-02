@@ -279,14 +279,14 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     digest changes the retained observation; the unchanged table header cannot hide it.
     Both are on the line because they differ in what they can say: an opaque commit or a
     `devel` build is an identity this bench honestly runs though no order is known for it
-    (rule 17), so it is reported, never dropped for lacking a dotted number. A first line
+    , so it is reported, never dropped for lacking a dotted number. A first line
     whose second token is `devel` or a bare commit, `^[0-9a-f]{7,40}$`, has no key,
     `version=-`, and the raw line is the fact: `nova-bus devel darwin/arm64 go1.27.1` never
-    keys the toolchain's `1.27.1` as the tool's version (the same clause in rule 4 keeps
+    keys the toolchain's `1.27.1` as the tool's version (the same clause of the installed read keeps
     `check` from comparing it). The line is one observation, never a comparison with a
     latest: `report` says what is here, `check` says what is current.
 22. **A tool that is missing, refuses or times out is UNKNOWN, never a version nor zero.**
-    `REPORT UNKNOWN` names the reason and the remedy: rule 4's `not_found`; a non-zero exit
+    `REPORT UNKNOWN` names the reason and the remedy: `not_found`; a non-zero exit
     named by code, `raw=` kept when a line was printed; a timeout; an empty first line. The
     count line still prints, `unknown=` counts them and `known=` does not, and the run exits
     1: a partial inventory is a report with an explicit non-success, not a shorter list that
@@ -294,7 +294,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     inventory is whole or that anybody adopted anything.
 23. **Each subprocess is bounded in time and output.** `--timeout <d>` per argv, default
     `5s`; `--budget <d>` for the run, default `60s`, an entry not reached being UNKNOWN
-    reason `budget` (rule 8); at most four children at once. A child's stdout and stderr go
+    reason `budget`; at most four children at once. A child's stdout and stderr go
     through `internal/bounded`, 64 KB each; a child reaching the cap is UNKNOWN reason
     `output`, wrap-it remedy — a tool that prints a banner is wrapped, not trusted to stop.
 24. **`--draft` and `--send` are explicit; delivery is nova-bus's.** Absent both, nothing
@@ -304,7 +304,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     run's `at=`; no flag names a Subject — a blank line, since nova-bus reads every line
     before the first blank one as a header, then the same lines the report printed, `--max`
     included: past `--max` tools the body carries the `MORE` line, a partial inventory that
-    says so (rule 22), never a bug; `--max 0` sends them all. `--send` takes the draft's
+    says so, never a bug; `--max 0` sends them all. `--send` takes the draft's
     flags plus `--bus <path> --remote <r> --branch <b>`. Delivery uses the prepared
     artifact protocol in [SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md): `nova-bus prepare`
     validates and assigns identity without sending, then `nova-bus send --prepared-stdin`
@@ -317,7 +317,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     explicit send is a new intention with in-process retry only. Help states that
     cross-process recovery needs the caller-named snapshot.
 25. **Unchanged state is the caller's to suppress, through a snapshot file the caller
-    names.** Absent `--snapshot <path>`, no file is read or written (rule 9: nothing under
+    names.** Absent `--snapshot <path>`, no file is read or written (nothing under
     `$HOME`, no state file of this tool's own). Present, the run reads the previous
     snapshot if any, compares per `name` the `raw` identity and the status, writes the new
     one atomically (a temp file beside it, then rename) and prints `changed=<yes|no>` on the
@@ -363,14 +363,14 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
 27. **Adoption is a mechanical step of the upgrade cycle, run by the coordinator itself.**
     `nova-update watch --adopt <checks.tsv>` runs the coordinator's own adoption pass after
     every rebuild: it reads the three-column checks file (`check`, `command`, `owner`, one
-    argv per check under rule 3), runs each check, and writes one `ADOPT OK` or `ADOPT
+    argv per check), runs each check, and writes one `ADOPT OK` or `ADOPT
     REFUSED` line per check plus one `ADOPT DONE sha= ok= refused=` line. The pass covers
     the standing adoption checks — versions agree, a bus inbox round trip with the bus
     defaults, a known-answer run per route, snapshot then report, tokens sum from jobs —
     each as a row of the checks file. With `--bus --remote --branch --as --to` the
     pass posts the receipt to the bus as the coordinator's own through the prepared
-    artifact protocol (rule 24) and prints `ADOPT SENT`; without them it prints and sends
-    nothing (rule 26). Every REFUSED check is handed to the duty tier on an `ADOPT
+    artifact protocol and prints `ADOPT SENT`; without them it prints and sends
+    nothing. Every REFUSED check is handed to the duty tier on an `ADOPT
     ESCALATE` line naming its owner, and the duty tier files an issue in the dogfood shape. Exit is 0 when every check passes, 1 when any check refuses or the
     receipt is unconfirmed, 2 on a refusal.
 28. **Voluntary adoption matrix, owned by each friend.** `adoption` reads one
@@ -393,10 +393,10 @@ One header line, then one entry per line, tabs between fields; `#` opens a comme
 
 ```
 name	kind	installed	latest	apply	owner
-gh	tool	gh --version	github:cli/cli	brew upgrade gh	rowan
-sops	tool	sops --version --disable-version-check	github:getsops/sops	brew upgrade sops	rowan
-opencode	harness	opencode --version	npm:opencode-ai	npm install -g opencode-ai@{version}	freddy
-qwen3-coder:30b	model	ollama list	ollama:qwen3-coder:30b	none	stella
+gh	tool	gh --version	github:cli/cli	brew upgrade gh	caller
+sops	tool	sops --version --disable-version-check	github:getsops/sops	brew upgrade sops	caller
+opencode	harness	opencode --version	npm:opencode-ai	npm install -g opencode-ai@{version}	caller
+qwen3-coder:30b	model	ollama list	ollama:qwen3-coder:30b	none	caller
 ```
 
 `owner` is the line who answers when that entry is not current, on every STALE, NEWER or
@@ -425,16 +425,16 @@ line there, so a reader of the manifest verbs is not handed it: its five usage l
 verb's `-h` prints its line, its flags with what each wants, and its exit codes. `report --store <host:port>` is the fleet's view: it reads every registered bench's
 beat (`bench:<b>:beat`, field `build`, the version line the bench stamps each
 beat) in two pipelined round trips and prints one `REPORT DRIFT` line per beating bench not on
-the newest build, then one receipt; no ssh, no bus note, exit 1 on drift. `--kind <k>` is rule 19. No
+the newest build, then one receipt; no ssh, no bus note, exit 1 on drift. `--kind <k>` restricts the run, not the output. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version snapshot …` reads the adopted manifest and reports its count on one line,
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
-name, `send` implying `--send` (rule 20), and `nova-version snapshot --file <manifest>`
+name, `send` implying `--send`, and `nova-version snapshot --file <manifest>`
 counts the adopted tools the manifest names (the opening paragraph), while snapshot's
 `--bin/--out` shape inventories a directory and `diff` compares two inventories: its
 `help` prints those lines the same way, snapshot's `--file` reading the adopted manifest
 where report's `--snapshot <path>` option is the recovery state file.
-`nova-version report --as x --to y` prints the inventory and composes nothing (rule 26);
+`nova-version report --as x --to y` prints the inventory and composes nothing;
 the ready-to-send draft is `nova-version report --draft …`, the flag typed.
 
 ## The release verb
@@ -455,7 +455,7 @@ carries, and what `pull` deletes.
   green either. It then reads the highest existing version tag, compares it to the head,
   **classifies the range against the sensitive path list** (SPEC-RELEASE §1: a range that
   touches one of those prefixes, or that is too big for the forge to list, refuses until
-  `--security-read` names Johnny's read, and then says so on a
+  `--security-read` names the security reader's read, and then says so on a
   `RELEASE CUT SENSITIVE paths=… read=…` line), writes a new `--changelog` section from the
   pull requests merged since (their numbers, their titles, and for an integration batch the
   members named in its own body, so a batch does not hide ten pieces of work behind one
@@ -493,7 +493,7 @@ carries, and what `pull` deletes.
 
 **`adopt` runs FROM the host that has ssh to every machine, and fans out from there.** It
 never needs the machines to reach one another. This is not a preference, it is the shape of
-the fleet: the first dogfood pass (receipt `20260918T144929Z`, rowan-child) ran `adopt` on
+the fleet: a dogfood pass ran `adopt` on
 hulk, the build host, and 3 of 3 machines refused — short names did not resolve, and
 Tailscale addresses gave `Permission denied (publickey)`, because **no bench in this fleet
 has ssh trust to any other bench**. Only the Studio does. The fleet was brought current by
