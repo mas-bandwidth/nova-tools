@@ -74,19 +74,24 @@ func (m Main) NoStdin() func(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-// WriteFile writes body to path with mode 0o644, making the parent
-// directories first, and fails the test on any error.
-func WriteFile(t testing.TB, path, body string) {
+// WriteFile writes body to path with mode 0o644, or with mode when one is
+// given (0o600 for a fixture standing in for a secret), making the parent
+// directories first, and fails the test on any error naming the path.
+func WriteFile(t testing.TB, path, body string, mode ...os.FileMode) {
 	t.Helper()
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	perm := os.FileMode(0o644)
+	if len(mode) > 0 {
+		perm = mode[0]
+	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755), "write %s", path)
+	require.NoError(t, os.WriteFile(path, []byte(body), perm), "write %s", path)
 }
 
 // ReadFile returns the file's contents, failing the test when it cannot be read.
 func ReadFile(t testing.TB, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	require.NoError(t, err)
+	require.NoError(t, err, "read %s", path)
 	return string(raw)
 }
 

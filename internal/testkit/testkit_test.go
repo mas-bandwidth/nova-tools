@@ -3,6 +3,7 @@ package testkit_test
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -81,6 +82,24 @@ func TestWriteFileFailsTheTestWhenItCannotWrite(t *testing.T) {
 	rec := &recorder{TB: t}
 	runs(rec, func() { testkit.WriteFile(rec, filepath.Join(blocker, "under", "it"), "y") })
 	assert.True(t, rec.failed, "WriteFile passed a path whose parent is a file")
+	assert.Contains(t, rec.msg, "write "+filepath.Join(blocker, "under", "it"))
+}
+
+func TestWriteFileTakesTheModeItIsGiven(t *testing.T) {
+	t.Parallel()
+	testkit.SkipOn(t, "windows", "file modes are not unix permission bits there")
+	dir := t.TempDir()
+	for name, mode := range map[string]os.FileMode{"default": 0o644, "secret": 0o600} {
+		path := filepath.Join(dir, name)
+		if name == "default" {
+			testkit.WriteFile(t, path, "x")
+		} else {
+			testkit.WriteFile(t, path, "x", mode)
+		}
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, mode, info.Mode().Perm(), name)
+	}
 }
 
 // recorder is the test's own testing.TB with the failure calls replaced: it
