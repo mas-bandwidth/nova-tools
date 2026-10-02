@@ -180,6 +180,9 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 		}
 	}
 
+	if out, ok := stdout.(*jsonOutput); ok && *out.enabled {
+		return renderFailures(stdout, "nocode", findings, failMax, "dir", dir, "staged", classified, "deny-list", source)
+	}
 	if len(findings) > 0 {
 		list := bounded.Capped(stderr, failMax, "NOCODE", "path", failMaxRemedy)
 		for _, f := range findings {
