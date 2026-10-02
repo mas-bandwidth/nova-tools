@@ -5,7 +5,7 @@
 // It exists because we have an obligation to report token spend, and the first thing that
 // shape was built as — three scripts of Python under zsh — produced nine day files and
 // every way it could fail at once: five paths defaulted inside the script, so a run on
-// another bench folded the wrong bench; the old month files were REMOVED on every real
+// each run keeps day files as the source of truth and does not remove existing month data;
 // run; nine unreadable files were one line at the bottom of a summary and the run exited
 // 0; a day could shrink silently the moment a source went quiet; two repo-attribution
 // tables in two scripts disagreed about three repos; five different caps, none a flag,
@@ -177,7 +177,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) 
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
 func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read or written (the CLI style's rule (b), #4505).
+	// before anything is read or written, so help has no side effects.
 	defer verbflag.Recover(stdout, "nova-tokens", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; `sources` is the one that only looks")
@@ -623,7 +623,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 	conflictDays := map[string]bool{}
 	// The labels this run declared: exactly what lands in a row's sources column, and so
-	// exactly the rows this fold is entitled to recompute (rule 10, #268).
+	// exactly the rows this fold is entitled to recompute.
 	declared := make([]string, 0, len(sources))
 	for _, s := range sources {
 		declared = append(declared, s.Label)
@@ -712,9 +712,8 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 				// Merge by source BEFORE anything else touches the file: a row no
 				// declared source wrote is carried over, a row they all wrote is
 				// replaced, and a row this fold can neither keep nor recompute refuses
-				// the day. Rule 10 then compares the file with the MERGED file, which is
-				// like with like -- the old comparison hid an erased row whenever this
-				// run's own numbers were bigger. (#268)
+				// the day. The comparison uses the merged file, so it compares like with
+				// like and cannot hide an erased row when this run's numbers are bigger.
 				merged, retained, partials := tokens.MergeDay(old.Rows, file.Rows, declared)
 				for _, pt := range partials {
 					partial = true
@@ -787,7 +786,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// A FOLD THAT DROPPED EVERY MESSAGE FOLDED NOTHING, AND A GATE READING THE EXIT CODE MUST
 	// SEE IT. Some messages dropped is a TOKENS NOTE (the day is short and the note says
 	// so); every message dropped, with none folded, is a fold that did not do its job:
-	// exit 1 with the counts (the third cold rating of the tools, 2026-09-30).
+	// exit 1 with the counts so the caller sees that no work was done.
 	dropped, of, allDropped := allMessagesDropped(sources)
 	bad := unreadable.Total() > 0 || unparsed.Total() > 0 || mixedList.Total() > 0 ||
 		conflicts.Total() > 0 || (shrankList.Total() > 0 && !*allowShrink) || partialList.Total() > 0 || allDropped
@@ -937,7 +936,7 @@ func firstUnreadableLabel(sources []*tokens.Source) string {
 // firstUnparsed names the kind of the first source with an unparsed line and what it was
 // reading, so that the one remedy line is the remedy for the thing that failed.
 // noidAndDup is the sentence for spend that was read and then dropped: a message with no
-// id is not folded (rule 4) and a repeated id is counted once. Both are numbers on a green
+// id is not folded and a repeated id is counted once. Both are numbers on a green
 // TOKENS SOURCE line and nowhere else, and 100% of a file's usage can be a message with no
 // id (lesson 95: a number is not a sentence).
 func noidAndDup(sources []*tokens.Source) string {
@@ -961,7 +960,7 @@ func noidAndDup(sources []*tokens.Source) string {
 const allDroppedWhy = "no message had an id, so none was folded (a message is counted by its id: a transcript's message.id, an opencode message id, a swarm row's job); run: nova-tokens sources <the same source flags> --day <d> to see noid= per source"
 
 // allMessagesDropped says whether the sources read at least one message and dropped every
-// one of them for having no id (rule 4): the count dropped, the count read (dropped, plus
+// one of them for having no id: the count dropped, the count read (dropped, plus
 // the messages folded), and whether that is the whole of it. Some dropped and some folded
 // is false: the TOKENS NOTE names that one.
 func allMessagesDropped(sources []*tokens.Source) (dropped, of int, all bool) {
@@ -1171,12 +1170,12 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			folder.Add(s.Label, m)
 		}
 	}
-	// Rule 20: report "folds that machine's own sources for one day, the same sources and
+	// Report folds that the caller's own sources produce for one day, with the same sources and
 	// the same attribution as fold". That has to include what the fold SAYS about them.
 	// This verb counted only the unreadables, so a transcript line whose stamp does not
 	// parse and a message with no id -- both counted by the reader, both dropped before
 	// the body -- left no trace at all, and the friend pasted a short day onto the bus
-	// under REPORT OK (rule 3: counted and printed, never skipped silently).
+	// under REPORT OK, so every counted input is printed rather than skipped silently.
 	unreadable, unparsed := 0, 0
 	for _, s := range sources {
 		for _, u := range s.Unreadables {
@@ -1301,7 +1300,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
 		oneline.Field(buildVersion()),
 		oneline.Escape(tokens.Subject(*day, stamp(now), buildVersion(), sorted)))
-	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
+	// The exit table makes an unreadable declared source exit 1,
 	// and a line that did not parse is the same wall under fold (main.go's counts). The
 	// body still printed and --note still landed -- exit 1 still writes -- but a friend
 	// about to paste this onto the bus is told it does not cover what it claims.
