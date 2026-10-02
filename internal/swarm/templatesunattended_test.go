@@ -3,6 +3,9 @@ package swarm
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // unattendedSentence is the one line every pulse card must carry (issue #2548): a card
@@ -30,8 +33,7 @@ func TestEveryPulseTemplateSaysUnattended(t *testing.T) {
 			continue
 		}
 		body, err := Template(name)
-		if err != nil {
-			t.Errorf("Template(%q): %v", name, err)
+		if !assert.NoError(t, err, "Template(%q): %v", name, err) {
 			continue
 		}
 		checked++
@@ -43,7 +45,5 @@ func TestEveryPulseTemplateSaysUnattended(t *testing.T) {
 			t.Errorf("pulse template %q says the unattended sentence %d times; the card preamble states it once", name, n)
 		}
 	}
-	if checked == 0 {
-		t.Fatalf("no pulse template was checked: IsPulseTemplate accepted none of the %d names Template answers to; an empty set is not a pass", len(TemplateNames()))
-	}
+	require.NotZero(t, checked, "no pulse template was checked: IsPulseTemplate accepted none of the %d names Template answers to; an empty set is not a pass", len(TemplateNames()))
 }
