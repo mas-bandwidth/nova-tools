@@ -93,6 +93,13 @@ const LibrariesConsideredName = "libraries-considered"
 // LibrariesConsideredRule is the token of the line a card that builds code carries.
 const LibrariesConsideredRule = "rule-" + LibrariesConsideredName
 
+// EmptyCardCheck is the one finding an empty card draws (only blanks in it): a card is a
+// child's whole brief, so an empty one is said once, never as every rule it does not quote.
+const EmptyCardCheck = "empty"
+
+// EmptyCardRemedy is what that token wants, in the remedies' table shape.
+const EmptyCardRemedy = "the card is empty, and a card is a child's whole brief: `nova-swarm template --name card` prints one that passes; put it in the file and fill in its <...> lines"
+
 // LibrariesConsideredRemedy is what that token wants, in the remedies' table shape.
 const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>` (docs/STANDARD.md section 7), filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
 
@@ -166,7 +173,7 @@ var childScans = []childScan{
 		Allow:  childRmInsideJob},
 	{Check: "step-force-push",
 		RE:     childCmd(gitCmd + `push\b[^\n;&|]*?(?:[ \t]--force[A-Za-z-]*|[ \t]-[A-Za-z]*f[A-Za-z]*|[ \t]\+\S)`),
-		Remedy: "no line force-pushes (`--force`, `--force-with-lease`, `-f`, a `+` refspec): a child pushes its own branch with a plain `git push`, and a rewrite of a shared branch is the coordinator's act alone"},
+		Remedy: "no line force-pushes (`--force`, `--force-with-lease`, `-f`, a `+` refspec): a card's push carries one commit to its own branch, and a rewrite of a shared branch is the coordinator's act alone"},
 	{Check: "step-rebase",
 		RE:     childCmd(gitCmd + `rebase\b`),
 		Remedy: "no line rebases: merge the base forward with `git merge --no-edit`; a rebase rewrites the history another worktree shares"},
@@ -265,6 +272,7 @@ func init() {
 		CardChildRemedies[s.Check] = s.Remedy
 	}
 	CardChildRemedies[LibrariesConsideredRule] = LibrariesConsideredRemedy
+	CardChildRemedies[EmptyCardCheck] = EmptyCardRemedy
 }
 
 // ruleRemedy is what a missing rule wants: its sentence, verbatim, and where it came from.
@@ -287,8 +295,11 @@ func ChildRemedy(rules []ChildRule, check string) string {
 			return ruleRemedy(r)
 		}
 	}
-	if check == LibrariesConsideredRule {
+	switch check {
+	case LibrariesConsideredRule:
 		return LibrariesConsideredRemedy
+	case EmptyCardCheck:
+		return EmptyCardRemedy
 	}
 	return ""
 }
@@ -392,8 +403,12 @@ func LintCardChild(raw []byte) []CardHeaderFinding { return LintCardChildWith(ra
 // LintCardChildWith returns the child-rule findings for one card under a rule set: a
 // `rule-<name>` for every required sentence the card does not quote, then a `step-<what>`
 // for every line that runs a forbidden command, each with its line and text. Line 1
-// carries the missing sentences: the card lacks them everywhere.
+// carries the missing sentences: the card lacks them everywhere. An empty card is one
+// finding, EmptyCardCheck.
 func LintCardChildWith(raw []byte, rules []ChildRule) []CardHeaderFinding {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return []CardHeaderFinding{{Check: EmptyCardCheck, Line: 1, Excerpt: "the card is empty"}}
+	}
 	var out []CardHeaderFinding
 	text := foldBlanks(string(raw))
 	have := map[string]bool{}

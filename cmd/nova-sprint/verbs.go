@@ -115,7 +115,8 @@ stream, and puts every judgment it cannot make in the coordinator's inbox.
 first run, no Redis (the store is the file sprint.twin):
   export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
 then the card's flow under "trying it without a Redis", ticking by hand; the
-example: block is the coordinator's day on a real store.`
+example: block is the coordinator's day on a real store, and "A real fleet"
+below connects the machines (run --listen, NOVA_SPRINT_SERVER, nova-swarm member).`
 
 func banner() string {
 	var b strings.Builder
@@ -163,12 +164,14 @@ and prints each one's generation.
 
 ` + inboxExample + `
 ` + machineWords() + `
+` + serverWords() + `
 ` + fleetWords() + `
 ` + readerWords() + `
 ` + streamWords() + `
 ` + goalWords() + `
 ` + twinWords() + `
 ` + landWords() + `
+` + wordsSection() + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config, or run: its binary was replaced (its supervisor starts the new one)
 
 the coordinator's day, in five lines (NOVA_SPRINT_REDIS and NOVA_SPRINT_ACTOR set; brief.txt is a card that passes the lint, from nova-swarm template --name card):
