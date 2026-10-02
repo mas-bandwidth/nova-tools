@@ -32,13 +32,12 @@ type Worker struct {
 	BaseURL  string `json:"base_url,omitempty"`
 	EnvVar   string `json:"env_var"`
 	KeyFile  string `json:"key_file"`
-	// SECRET (issue #881): the NAME of the environment variable that holds the key in
-	// THIS process's own environment, delivered by `nova-secrets exec` around the run
-	// (docs/SPEC-SECRETS.md, the second caller). It is the replacement for `key_file`
-	// when the key is sealed once and delivered at use and NEVER a file on disk. Exactly
-	// one of `key_file` and `secret` is set; run and supervise require that variable to
-	// be present and non-empty, and the value is never written to a file, never printed,
-	// and never in a RUN or SUPERVISE line.
+	// SECRET: the name of the environment variable that holds the secret value in this
+	// process's own environment, delivered by `nova-secrets exec`. It replaces `key_file`
+	// when the key is sealed once and delivered at use, never written to disk. Exactly one
+	// of `key_file` and `secret` is set; run and supervise require the variable to be
+	// present and non-empty, and the value is never written to a file, never printed,
+	// and never surfaces in a RUN or SUPERVISE line.
 	Secret string `json:"secret,omitempty"`
 	Usage  string `json:"usage"`
 	// CLASS (CARD-8390): `public` means this worker never sees private source
@@ -55,14 +54,13 @@ type Worker struct {
 	WorkerDir   string   `json:"worker_dir"`
 	Deadline    string   `json:"deadline"`
 	Board       string   `json:"board,omitempty"`
-	// READ ROOTS: the one field the wall added (docs/SPEC-SANDBOX.md, "there is no --root
-	// flag"). Every job runs inside nova-sandbox, whose read set is the OS and toolchain
-	// roots plus what the caller names; a toolchain installed into a USER directory -- Go
-	// under ~/go, node under ~/.nvm, the Studio's /Users/<user>/toolchains -- is under no
-	// system root, so a harness that needs one dies inside the wall and runs outside it.
-	// It is OPTIONAL, it is a list of absolute existing directories, and it is READ-ONLY:
-	// the write set is the job's own and is never configurable from a file. A worker that
-	// needs nothing beyond the system roots names nothing here.
+	// READ ROOTS: an optional field, and it names directories the sandbox may grant
+	// read access to beyond the OS and toolchain roots. A toolchain installed in a
+	// user directory -- Go under ~/go, node under ~/.nvm, etc. -- sits outside those
+	// roots, so without this list a harness that needs it dies inside the sandbox.
+	// It is OPTIONAL, it is a list of absolute existing directories, and it is
+	// READ-ONLY: the write set belongs to the job alone and is not configurable from
+	// a description file. A worker needing nothing beyond standard roots declares none.
 	ReadRoots []string `json:"read_roots,omitempty"`
 
 	// CARD BUDGET (CARD-8317): the optional per-card stop. A runaway card is a
@@ -73,40 +71,31 @@ type Worker struct {
 	MaxTurns     int `json:"max_turns,omitempty"`
 	MaxCacheRead int `json:"max_cache_read,omitempty"`
 
-	// PROVIDER PHRASES: the second optional field, and it is the TRIAGE LINE'S (#103). A
-	// job that dies because the request did not fit is its own failure class, and the only
-	// evidence of it is a sentence the provider printed -- in the provider's own words.
-	// OpenCode says `Rate limit reached: input token limit exceeded`; the tool carries a
-	// table of the sentences it has met (InputLimitPhrases), and a description may ADD the
-	// one its provider uses. It never SUBSTITUTES: a caller teaching the tool their
-	// provider's words cannot silently un-teach it another's.
+	// PROVIDER PHRASES: captures the error sentences that providers print when a request
+	// does not fit their limits. Each provider uses its own wording; the tool carries a
+	// lookup table of known phrases and a description may add entries for its provider. It
+	// never replaces an existing entry: teaching the tool one provider's words is additive
+	// and cannot silently un-teach another's.
 	InputLimitPhrases []string `json:"input_limit_phrases,omitempty"`
 
-	// LAUNCH GRACE (issue #900): how long a harness may run before its exit stops
-	// counting as a LAUNCH failure. Nine of forty Muse requests died in under two
-	// seconds with a provider 5xx and wasted the slot they held; a death inside this
-	// window whose tail names a provider server error is a launch that did not take,
-	// and the dispatcher retries it instead of filing it. OPTIONAL: the default is
-	// DefaultLaunchGrace (15s). A slow failure -- one that takes longer than this -- is
-	// a real run that failed and is never retried.
+	// LAUNCH GRACE: how long a harness may run before its exit stops counting as a launch
+	// failure. A death inside this window whose log tail names a provider server error is
+	// retried by the dispatcher rather than filed; a slow failure takes longer and is a
+	// real run that failed, so it is never retried. OPTIONAL: the default is
+	// DefaultLaunchGrace (15s).
 	LaunchGrace string `json:"launch_grace,omitempty"`
 
-	// KEEP DATA (issue #1048): a worker description that sets keep_data=true asks `run` not
-	// to reap the finished slots' data/ and tmp/ at task end. It is a person's debugging
-	// switch: the default is false, and the shared per-bench caches under <root>/cache are
-	// never touched either way.
+	// KEEP DATA: when true, asks `run` to preserve the finished slots' data/ and tmp/
+	// directories at task end. It is a debugging toggle: the default is false, and the
+	// shared per-bench caches are never touched by it either way.
 	KeepData bool `json:"keep_data,omitempty"`
 }
 
 // The usage sources a description may declare (rule 13). There are two.
 //
-// A SOURCE IS NAMED FOR WHAT IT IS. `opencode` promised that OpenCode's own accounting is
-// read, and did not read it: on 2026-09-11 two real jobs burned 61,875 and 85,308 tokens
-// against `--tokens 20000` and both reported `budget=-/20000`, because OpenCode writes
-// `opencode.db` and this tool read a tab-separated file instead. The name is true now --
-// `opencode` reads that database through `sqlite3`, read-only, in the data home this tool
-// exported for the job -- and the tab-separated file is not a name a description may carry:
-// a caller names a SOURCE, never a file some harness might write.
+// `opencode` reads the job's own SQLite database read-only through `sqlite3 -readonly`,
+// which is what it actually does now -- five token types, a dash for absence. A caller
+// names the SOURCE, never the underlying file that a harness might write.
 const (
 	UsageOpenCode = "opencode"
 	UsageNone     = "none"
@@ -134,11 +123,8 @@ func LoadWorker(path string) (Worker, []error) {
 	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
 	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
 	// file, the job directory the prompt calls the only place it writes -- are built from
-	// the description. A relative `worker_dir`, the style the README teaches, made every
-	// one of them a path that does not exist from where the child stands: two jobs, rc=0,
-	// `result=no-result dest=failed`, under a RUN OK byte-identical to a good pass (the
-	// new-user audit, F3, 2026-09-11). The tests could not see it because they all used an
-	// absolute t.TempDir().
+	// the description. Relative worker_dir is rejected at load, so every path resolves
+	// correctly from where the child process stands.
 	for _, field := range []*string{&w.WorkerDir, &w.KeyFile} {
 		if *field == "" || filepath.IsAbs(*field) {
 			continue
@@ -151,11 +137,10 @@ func LoadWorker(path string) (Worker, []error) {
 	}
 
 	var problems []error
-	// SECRET IMPLIES ENV_VAR (issue #881): a description that names `secret` but no
+	// SECRET IMPLIES ENV_VAR: a description that names `secret` but no
 	// `env_var` loads with env_var defaulting to the secret NAME -- the key is delivered
-	// by `nova-secrets exec` under that NAME, and the harness config carries the
-	// variable's NAME, so the NAME is the same string in both fields. An explicit
-	// `env_var` beside `secret` is kept as typed.
+	// by `nova-secrets exec` under that NAME, so the variable name matches in both fields.
+	// An explicit `env_var` beside `secret` is kept as typed.
 	if w.Secret != "" && w.EnvVar == "" {
 		w.EnvVar = w.Secret
 	}
@@ -168,13 +153,11 @@ func LoadWorker(path string) (Worker, []error) {
 	want(w.Provider, "provider", "the provider id the harness config declares, such as deepseek")
 	want(w.Model, "model", "the model id, such as deepseek-chat")
 	want(w.EnvVar, "env_var", "the NAME of the environment variable the provider reads, such as DEEPSEEK_API_KEY; never its value")
-	// THE KEY IS NAMED TWO WAYS, AND A DESCRIPTION CARRIES EXACTLY ONE (issue #881). A
-	// `key_file` is the old shape: a file the person wrote, read as data. A `secret` is
-	// the name of the variable `nova-secrets exec` delivers into this process's own
-	// environment -- the key is sealed once and delivered at use, never a file on disk.
-	// Neither is a description with no key at all, and both is a description with two
-	// contradicting answers; each is refused here, at the one moment a person can still
-	// fix it.
+	// THE KEY IS NAMED TWO WAYS, AND A DESCRIPTION CARRIES EXACTLY ONE. A
+	// `key_file` names a path on disk that the harness reads as data. A `secret` names
+	// the environment variable through which nova-secrets exec delivers the key at runtime.
+	// Exactly one must be present; neither or both is refused here, where it can still be
+	// corrected.
 	switch {
 	case w.Secret == "" && w.KeyFile == "":
 		problems = append(problems, fmt.Errorf("%s: a description names its key either by key_file (a path, the old shape) or by secret (the NAME of the variable nova-secrets exec delivers, such as DEEPSEEK_API_KEY); this description has neither", path))
@@ -202,10 +185,10 @@ func LoadWorker(path string) (Worker, []error) {
 	default:
 		problems = append(problems, fmt.Errorf("%s: class wants `public` (this worker never sees a card that clones an unlisted repo) or `paid` (the default), got %q", path, w.Class))
 	}
-	// D1, 2026-09-11: the model must REACH THE CHILD. A description that names a model and
-	// never places it in the harness's argv launches a harness that was told nothing, and
-	// the jobs die under a green RUN OK. harness_args is the invocation, and `{model}` is
-	// where the model goes.
+	// THE MODEL MUST REACH THE CHILD: a description that names a model but never places
+	// it in harness_args launches a harness that receives no model argument at all, so the
+	// job fails silently under a green RUN OK. harness_args is the invocation line, and
+	// {model} marks where the model goes.
 	placed := false
 	for _, a := range w.HarnessArgs {
 		if strings.Contains(a, ModelPlaceholder) {
@@ -216,19 +199,18 @@ func LoadWorker(path string) (Worker, []error) {
 		problems = append(problems, fmt.Errorf("%s: harness_args is required and must place %s, so the model this description names reaches the harness; for OpenCode it is [\"run\", \"--model\", \"{model}\", \"--\", \"{prompt}\"] -- %s is the prompt FILE, and is appended last where harness_args does not name it", path, ModelPlaceholder, PromptPlaceholder))
 	}
 	// A PHRASE IS A KNIFE, AND IT HAS A FLOOR. A job classed `input-limit` is a job that is
-	// never retried, and the only floor on a description's phrase was that it not be empty:
-	// `input_limit_phrases: ["limit"]` would class every failed job whose log carries the
-	// word (Fable's read of #150, finding 4). It is refused HERE, at the one moment a person
-	// can still type the sentence, and the refusal QUOTES what they typed.
+	// never retried, and short phrases like a bare word would class too broadly by matching
+	// noise in any log. This validation runs at description load, where the caller can still
+	// correct what they typed, and the refusal QUOTES their exact input.
 	for i, phrase := range w.InputLimitPhrases {
 		if why, ok := TooShortForAPhrase(phrase); !ok {
 			problems = append(problems, fmt.Errorf("%s: input_limit_phrases[%d] %s: %s; it wants the provider's own sentence for a request that did not fit, such as `input token limit exceeded`",
 				path, i, strconv.Quote(phrase), why))
 		}
 	}
-	// Rule 5 of the wall is "paths are resolved, absolute and existing", and a read root
-	// that is not there is refused BY THE WALL at every launch, one job at a time. It is
-	// worth one sentence here instead, at the one moment the caller can still fix it.
+	// The wall resolves every path before granting access, and a read root that is not there
+	// would be discovered by the sandbox at every launch. One validation sentence here is
+	// better, at the moment the caller can still fix it.
 	for i, root := range w.ReadRoots {
 		switch fi, err := os.Stat(root); {
 		case strings.TrimSpace(root) == "":
@@ -241,16 +223,15 @@ func LoadWorker(path string) (Worker, []error) {
 			problems = append(problems, fmt.Errorf("%s: read_roots[%d] %s is not a directory; a read root is a directory and everything beneath it", path, i, root))
 		}
 	}
-	// THE KEY FILE IS IN NEITHER LIST, AND THE TOOL MUST NOT PUT IT IN ONE. The wall's
-	// caller section says "the key FILE is in neither list, so the job cannot read it even
-	// if it is told to" (SPEC-SANDBOX rule 6), and the job's read set is the SLOT
-	// directory -- which `RefreshSlot` fills by copying every regular file of `worker_dir`
-	// into it (copyTree). A `key_file` under `worker_dir` is therefore COPIED INSIDE THE
-	// WALL by this tool, at every refresh, and the job reads the copy under a green
-	// `SANDBOX OK` and a probe that passed: the probe's own `secret_inside_allow` check is
-	// made against the PROBE's lists, never against a job's (Rowan's Fable read of #88 at
-	// d0c1841, M1). A `read_roots` entry holding the key is the same hole without the copy.
-	// Both are refused HERE, at the one moment a person can still move the file.
+	// THE KEY FILE IS IN NEITHER LIST, AND THE TOOL MUST NOT PUT IT IN ONE. The sandbox
+	// ensures the key file itself is never in either list, so the job cannot read it even
+	// if told to. The job's read set is the SLOT directory -- which RefreshSlot fills by
+	// copying every regular file of worker_dir into it. A key_file under worker_dir is
+	// therefore copied inside the sandbox at every refresh, and the job reads it under a
+	// green SANDBOX OK through a probe that passed: the probe's own allow check validates
+	// against its own lists, not the job's. A read_roots entry holding the key creates the
+	// same vulnerability without the copy step. Both are refused here, at the moment the
+	// caller can still move the file.
 	if key := resolvePath(w.KeyFile); key != "" {
 		// AND THE REFUSAL NAMES THE KEY AS THE DESCRIPTION SPELLED IT. Every check below
 		// MATCHES on the resolved spelling, because that is the file the wall opens (rule
@@ -275,24 +256,20 @@ func LoadWorker(path string) (Worker, []error) {
 			}
 		}
 		// AND THE SLOT DIRECTORIES, WHICH ARE SIBLINGS OF worker_dir, NOT UNDER IT. A job's
-		// `--read` is its slot, `<worker_dir>-<n>` (SlotDir), so a key file placed directly in a
-		// slot -- `<worker_dir>-1/.key`, or anything beneath it such as under its `jobs/` -- is
-		// READ INSIDE THE WALL under a probe that passed, and neither check above sees it:
-		// `insideDir` treats `worker-1` as a sibling of `worker` by design, and no `read_roots`
-		// entry names it (Rowan's Fable read 2 of #88 at fc400ce, L1). It is refused HERE rather
-		// than in `Run` beside the gate so that it holds for EVERY slot number, not only the ones
-		// one run happens to use, and so that `run` and `supervise` say it too.
+		// --read is its slot, <worker_dir>-<n> (SlotDir), so a key file placed directly in a
+		// slot -- <worker_dir>-1/.key or anything beneath it such as under jobs/ -- is READ
+		// INSIDE THE WALL under a probe that passed. The sibling check above does not see it:
+		// insideDir treats the slot as a sibling of the base worker_dir by design. It is refused
+		// HERE rather than at runtime so that the guard applies to every slot number, not only
+		// the ones a particular run creates, and so that both run and supervise report it.
 		//
 		// BOTH SPELLINGS OF worker_dir, TYPED AND RESOLVED. The check above resolves because what
-		// the wall COPIES is the target's contents; this one is different in kind. `SlotDir` is
-		// `fmt.Sprintf("%s-%d", w.WorkerDir, slot)` on the TYPED spelling, and `worker_dir` is only
-		// made absolute at load, never symlink-resolved -- so with `worker_dir` a symlink
-		// `/typed/worker -> /real/worker` the slot the tool creates and hands to `--read` is
-		// `/typed/worker-1`, while the resolved sibling `/real/worker-1` is a directory nobody
-		// builds. Asking only the resolved one let a key at `/typed/worker-1/.key` pass (Rowan's
-		// Fable read 3 of #88 at 56c7dcc, L1). The typed spelling is the one the slot is built
-		// from; the resolved one stays as defence in depth. Deduped, so the ordinary case where
-		// the two coincide refuses once.
+		// the sandbox copies is the target's contents; this one is different in kind. SlotDir
+		// builds from the TYPED spelling, so with worker_dir a symlink the slot created is based
+		// on the typed path while the resolved sibling directory may not exist. Asking only the
+		// resolved one lets a key behind the typed name slip through. The typed spelling is the
+		// one the slot is built from; the resolved one stays as defence in depth. Deduped, so the
+		// ordinary case where the two coincide refuses once.
 		for _, dir := range spellings(w.WorkerDir) {
 			slot, hit := "", ""
 			for _, k := range spellings(w.KeyFile) {
@@ -380,23 +357,20 @@ func resolvedTail(typedShowsIt bool, key, dir string) string {
 // insideDir says whether a path lies under a directory. The directory itself is not inside
 // itself, and a sibling whose name merely starts the same way is not either.
 //
-// AND THE ANSWER IS NOT A STRING COMPARISON, BECAUSE A FILESYSTEM IS NOT A STRING.
-// `strings.HasPrefix` over cleaned, resolved paths is case-SENSITIVE and APFS is
-// case-INsensitive by default, so a `key_file` typed `/x/Worker/.key` under a `worker_dir` of
-// `/x/worker` is THE SAME FILE the slot copy picks up and the prefix said no: the load passed
-// and `RefreshSlot` put the key inside the wall under a green `SANDBOX OK` (both cold readers
-// of #88 at fc400ce; issue #100). `filepath.EvalSymlinks` does not fold case on darwin, so
-// resolving the path does not close it either -- nor would lowercasing, which is wrong on a
-// case-sensitive filesystem where `/x/Worker` and `/x/worker` are two directories.
+// String comparison over cleaned paths is case-SENSITIVE but APFS is case-INsensitive by
+// default: a key_file typed `/x/Worker/.key` under a worker_dir of `/x/worker` could be
+// THE SAME FILE that slot copy picks up while the prefix check says no. Evaluating
+// symlinks does not fold case on darwin, so resolving does not close this gap -- nor would
+// lowercasing, which is wrong on a case-sensitive filesystem where two spellings differ in
+// capitalization.
 //
-// So the string prefix stays as the CHEAP answer, and it is the only answer available for a
-// path that does not exist yet -- `resolvePath` answers as typed for one, and a refusal is
-// worth more than a silence. Where it says no, each EXISTING ancestor of the path is asked
-// `os.SameFile` against the directory: device and inode is the question the filesystem itself
-// answers, so it holds for a case fold, for a mount of the same directory at two names, and
-// for a hard-linked directory where one exists. The walk starts at the path's parent, so a
-// path that IS the directory under another spelling is still not inside it, which is what the
-// first line of this function says. This runs at load, once per description, never per job.
+// The string prefix stays as the fast answer, and it is the only option available for paths
+// that do not exist yet -- resolvePath answers as typed for one, and a refusal is worth more
+// than silence. Where the prefix says no, each EXISTING ancestor of the path is asked
+// os.SameFile against the directory: device and inode is the question the filesystem itself
+// answers, so it holds for case folds, bind mounts at two names, and hard-linked directories.
+// The walk starts at the path's parent, so a path identical to the directory under another
+// spelling is still not inside it. This runs at load, once per description, never per job.
 func insideDir(path, dir string) bool {
 	if path == dir {
 		return false
@@ -455,27 +429,21 @@ func validEnvName(name string) bool {
 // workerDir spelled <base>-<digits>, which is what SlotDir builds -- or "" when path is
 // under no slot. A path that IS a slot directory is not held by it, which matches insideDir.
 //
-// AND THE SLOT'S NAME IS JUDGED UNDER THE FILESYSTEM'S OWN EQUALITY, NOT AS TEXT (#145). The
-// previous revision cut `<base>-` off the first path component with `strings.CutPrefix`, a
-// case-SENSITIVE comparison, while APFS is case-INsensitive by default: with `worker_dir`
-// `<dir>/worker`, a `key_file` at `<dir>/Worker-1/.key` is in the directory `RefreshSlot`
-// opens and hands to `--read`, `CutPrefix("Worker-1", "worker-")` said no, and the job read
-// the key inside the wall under a green `SANDBOX OK` (SPEC-SANDBOX rule 6; #100 one directory
-// over). Lowercasing is not the repair either: on a case-SENSITIVE filesystem `<dir>/Worker-1`
-// and `<dir>/worker-1` are two directories and folding them refuses a sound placement.
+// The candidate name is checked against the filesystem's own equality rather than text:
+// case-insensitive volumes could let a mismatched capitalization slip through while a
+// simple text comparison says no. Lowercasing is not the repair either -- on a
+// case-sensitive filesystem two differently-cased names are distinct directories.
 //
-// THE CANDIDATE COMES FROM THE PATH, NOT FROM workerDir, WHICH IS WHY THIS REPAIR IS A
-// DIFFERENT SHAPE FROM insideDir's. insideDir can ask `os.SameFile` of the two directories
-// because both exist at load; a slot directory need not -- slots are created at run -- so
-// there may be no `<parent>/<base>-<n>` inode to compare, while the directory holding the key
-// is right there in the path. So the ancestors of the path are walked toward
-// `filepath.Dir(workerDir)`, and the ancestor that is a direct child of that parent has its
-// name judged: `<digits>` as digits, and `<base>` under the filesystem's own equality
-// (namesOneFile, which measures the fold rather than reading runtime.GOOS).
+// The candidate comes from the path, not from workerDir, which is why this works
+// differently from insideDir's approach. A slot directory need not exist at load since
+// slots are created at run time, so there may be no inode to compare against. The
+// ancestors of the path are walked toward filepath.Dir(workerDir), and each direct child
+// has its name judged as digits for the number and the base compared under the filesystem's
+// own equality via namesOneFile, which measures the fold rather than checking runtime.GOOS.
 //
-// The walk starts at the path's PARENT, so a path that IS a slot directory is still not held
-// by it. Both spellings of workerDir are still asked by the caller, for the reason read 3 of
-// #88 gave: `SlotDir` builds the slot from the TYPED spelling.
+// The walk starts at the path's parent, so a path identical to a slot directory is still
+// not held by it. Both spellings of workerDir are still asked by the caller: SlotDir
+// builds the slot from the typed spelling.
 func slotDirHolding(path, workerDir string) string {
 	parent, base := filepath.Dir(workerDir), filepath.Base(workerDir)
 	for dir := filepath.Dir(path); ; {
@@ -493,9 +461,9 @@ func slotDirHolding(path, workerDir string) string {
 			if digits == "" || strings.TrimLeft(digits, "0123456789") != "" {
 				return ""
 			}
-			// The FULL spellings, the candidate against the slot `SlotDir` would build for
-			// that number: where both are there the two directories answer for themselves
-			// and no fold is guessed (Stella's read of #159, comment 5648066751).
+			// The full spellings: the candidate against what SlotDir would build for that number.
+			// Where both directories exist, their inodes answer for themselves and no case fold
+			// is guessed.
 			if !namesOneFile(up, name, base+"-"+digits) {
 				return "" // another worker's slot, or a neighbour that merely reads alike
 			}
@@ -599,10 +567,11 @@ func (w Worker) HarnessConfig() []byte {
 				"models":  map[string]any{w.Model: map[string]any{}},
 			},
 		},
-		// THE SUBAGENT REFUSAL HOOK (issue #2533). A card that tries to spawn a
-		// subagent has the spawn refused by this hook and logged once. A spawned
-		// agent multiplies exploration tokens, hides its work from the log, and on
-		// a darwin bench goes silent under the wall and the card is killed as idle.
+		// THE SUBAGENT REFUSAL HOOK. A card that tries to spawn a subagent has the spawn
+		// refused by this hook and logged once. A spawned agent multiplies exploration tokens,
+		// hides its work from the log, and on a darwin bench goes silent under the wall where
+		// the card is killed as idle. Preventing subagent spawns protects resources, preserves
+		// observability, and avoids hangs in sandboxed environments.
 		"hooks": map[string]any{
 			"before_tool_use": []map[string]any{
 				{
@@ -626,10 +595,10 @@ func (w Worker) WriteHarnessConfig(slot int) (string, error) {
 	return path, writeAtomic(path, w.HarnessConfig(), 0o644)
 }
 
-// HarnessTail is the LAST thing the harness said, bounded: the one diagnosis of a failed
-// job, which lived in <job>/harness.log, was printed by no verb, and was then deleted with
-// the job directory by `reclaim`. A line whose key is wrong had no printed route to the
-// word `unauthorized` (the new-user audit, F5, 2026-09-11).
+// HarnessTail returns the last bytes of the harness log, bounded by oneline.TailBytes.
+// It is the primary diagnostic for a failed job, read from <job>/harness.log before the
+// reclaim verb deletes the entire job directory. A malformed line key could prevent matching
+// an unauthorized access error in the log.
 func HarnessTail(jobDir string) string {
 	kept, dropped := tailBytes(filepath.Join(jobDir, "harness.log"), oneline.TailBytes)
 	if kept == "" {
