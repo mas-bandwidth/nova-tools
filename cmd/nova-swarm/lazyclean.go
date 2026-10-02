@@ -190,7 +190,7 @@ func launchEntry(root string, d fs.DirEntry, inResults bool) (oldEntry, bool) {
 
 // cleanOld removes up to lazyRound entries of the slots and the results whose launch is of
 // an epoch older than the current one minus one (keepEpochs), oldest epoch first, and
-// counts what it removed, the bytes freed and the old entries left. Nothing is removed
+// counts what it removed, the bytes freed and the entries left eligible for cleanup. Nothing is removed
 // before a pass has read the epoch, while a tagged launch waits, or of a launch that is
 // running, claimed, or active in the last leftoverIdle (removeOld).
 func (r *nativeRunner) cleanOld(now time.Time) (c lazyCount) {

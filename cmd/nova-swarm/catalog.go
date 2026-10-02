@@ -12,7 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
-// THE ONE CATALOG (the owner, 2026-10-01: "Fix the racing"). Every job runs the harness in
+// One catalog serves every launch, so each job runs the harness in
 // a fresh data home, so opencode fetched its model catalog (models.dev, 5.3 MB) at every
 // start, and a fetch that was slow or lost the race fell back to the snapshot built into
 // the binary, which predates the fleet's newer models: the same route then ran with the

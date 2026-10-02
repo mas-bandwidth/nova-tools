@@ -4,13 +4,13 @@ import "os"
 
 // AUTH FILE MODES ARE ASKED OF THE PLATFORM, NOT OF THE UNIX BITS.
 //
-// The legacy --auth native path refuses an auth source looser than 0600 and a copy that does
+// The current --auth native path requires an owner-only auth source and an owner-only copy that does
 // not end 0600 (copyAuth). On a machine that carries unix permission bits a file written 0600
 // reads back 0600, and each rule does what it says. NTFS carries no such bits: os.Stat reports
 // 0666 for every readable file there (0444 when it is read-only), so a source written 0600
 // read 0666 and BOTH checks refused the very file the caller had chmod'ed. On windows-latest
-// every legacy --auth native run died "the auth copy would not be 0600 ... ended mode 0666",
-// exit 2 (issue #915) -- the same class as the execute bit (executable.go) and the key file
+// the native --auth path treats a readable file as platform-valid when Windows cannot expose
+// Unix permission bits, instead of rejecting a copy it cannot verify.
 // mode (internal/swarm/key.go, which already answers nothing on windows).
 //
 // The platform answer is written where every platform compiles and tests it, so darwin and
@@ -19,7 +19,7 @@ import "os"
 
 // authModeWiderThanOwner is the SOURCE rule. It reports whether an auth file's own mode lets
 // anybody but its owner read it: on a platform that can express the bits, any group or other
-// bit is the leak the legacy path refuses. Windows has no such bits to read, so no file is a
+// bit is the leak the native path refuses. Windows has no such bits to read, so no file is a
 // refusal there.
 func authModeWiderThanOwner(goos string, mode os.FileMode) bool {
 	if goos == "windows" {
