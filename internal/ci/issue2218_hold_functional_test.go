@@ -3,6 +3,7 @@
 package ci
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,8 @@ func TestIssue2218ChangeBaseReadsTheBasesList(t *testing.T) {
 		"the default base":   {},
 	} {
 		got, err := ChangeBase(root, func(k string) string { return env[k] })
-		if !assert.NoError(t, err, "%s: ChangeBase", name) || !assert.Equal(t, base, got, "%s: ChangeBase = %q, %v; want %s", name, got, err, base) {
+		if err != nil || got != base {
+			assert.Fail(t, fmt.Sprintf("%s: ChangeBase = %q, %v; want %s", name, got, err, base))
 			continue
 		}
 		baseList, present, err := ListAtCommit(root, got, UnexecutedListPath)

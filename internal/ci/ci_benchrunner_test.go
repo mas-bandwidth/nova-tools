@@ -144,6 +144,7 @@ func notSSH(ctx context.Context) {
 			keys = append(keys, s.Func)
 		}
 		want := "literal argv0 setIdent flagDefault param runner.Run ExecSSH.Go"
-		require.Equal(t, want, strings.Join(keys, " "), "fixture sites %q, want %q", strings.Join(keys, " "), want)
+		gotKeys := strings.Join(keys, " ")
+		require.Equal(t, want, gotKeys, "fixture sites %q, want %q", gotKeys, want)
 	})
 }

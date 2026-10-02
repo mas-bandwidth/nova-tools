@@ -121,7 +121,8 @@ func rest(raw string) []string {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			require.Empty(t, fieldsIndexFindings(t, c.body), "%s must be clean, got: %v", c.name, fieldsIndexFindings(t, c.body))
+			got := fieldsIndexFindings(t, c.body)
+			require.Empty(t, got, "%s must be clean, got: %v", c.name, got)
 		})
 	}
 }

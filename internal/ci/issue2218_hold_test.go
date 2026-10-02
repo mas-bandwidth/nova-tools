@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -54,7 +55,7 @@ func TestIssue2218PlatformGOOSIsAWholeWord(t *testing.T) {
 	}
 	for line, want := range cases {
 		got := goosValues(line)
-		assert.Equal(t, want, got, "goosValues(%q) = %v; want %v", line, got, want)
+		assert.True(t, slices.Equal(got, want), "goosValues(%q) = %v; want %v", line, got, want)
 	}
 }
 
@@ -236,7 +237,7 @@ func TestIssue2218PlatformGOOSIsCaseNormalized(t *testing.T) {
 	}
 	for line, want := range cases {
 		got := goosValues(line)
-		assert.Equal(t, want, got, "goosValues(%q) = %v; want %v", line, got, want)
+		assert.True(t, slices.Equal(got, want), "goosValues(%q) = %v; want %v", line, got, want)
 	}
 }
 
@@ -253,8 +254,9 @@ func TestIssue2218PlatformLineWithNoGOOSFails(t *testing.T) {
 
 	ok := "## nova-foo\n\nPlatform: recorded on macOS (darwin); a Linux bench differs\n"
 	got, err = PlatformLinesFromTESTSmd(ok)
-	require.NoError(t, err, "PlatformLinesFromTESTSmd(%q) = %v, %v; want [linux darwin], nil", ok, got, err)
-	assert.Equal(t, []string{"linux", "darwin"}, got, "PlatformLinesFromTESTSmd(%q) = %v, %v; want [linux darwin], nil", ok, got, err)
+	if err != nil || !slices.Equal(got, []string{"linux", "darwin"}) {
+		assert.Fail(t, fmt.Sprintf("PlatformLinesFromTESTSmd(%q) = %v, %v; want [linux darwin], nil", ok, got, err))
+	}
 }
 
 // The old section walker skipped every other `## nova-*` section (it cut the

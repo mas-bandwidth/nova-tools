@@ -1318,7 +1318,8 @@ func TestDevRunReadsTheEventRefAndBranch(t *testing.T) {
 		{"a ref with no event", "", "refs/heads/dev", "dev", false},
 		{"an event with no ref", "push", "", "dev", false},
 	} {
-		assert.Equal(t, tc.want, devRun(tc.event, tc.ref, tc.branch), "%s: devRun(%q, %q, %q)", tc.name, tc.event, tc.ref, tc.branch)
+		got := devRun(tc.event, tc.ref, tc.branch)
+		assert.Equal(t, tc.want, got, "%s: devRun(%q, %q, %q) = %v, want %v", tc.name, tc.event, tc.ref, tc.branch, got, tc.want)
 	}
 }
 
@@ -1468,7 +1469,8 @@ func TestGuardedByMergeRuleReadsThePath(t *testing.T) {
 		"cmd/nova-sprint/silent.go":                   false,
 		"docs/SPEC-CI.md":                             false,
 	} {
-		assert.Equal(t, want, guardedByMergeRule(rel), "guardedByMergeRule(%q)", rel)
+		got := guardedByMergeRule(rel)
+		assert.Equal(t, want, got, "guardedByMergeRule(%q) = %v, want %v", rel, got, want)
 	}
 }
 

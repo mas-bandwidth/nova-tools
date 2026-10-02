@@ -742,8 +742,8 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 					require.NoError(t, err, "removing enough rows should repair the list: %v", err)
 				}
 				raw, err := os.ReadFile(p)
-				require.NoError(t, err)
-				assert.Equal(t, want, string(raw), "ledger=%q (%v), want %q", raw, err, want)
+				require.NoError(t, err, "ledger=%q (%v), want %q", raw, err, want)
+				require.Equal(t, want, string(raw), "ledger=%q (%v), want %q", raw, err, want)
 			})
 		}
 	})
@@ -759,7 +759,7 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 		// Ledger on disk must remain untouched
 		raw, err := os.ReadFile(p)
 		require.NoError(t, err)
-		assert.Equal(t, old, string(raw), "ledger was modified despite refusal: got %q, want %q", string(raw), old)
+		require.Equal(t, old, string(raw), "ledger was modified despite refusal: got %q, want %q", string(raw), old)
 	})
 
 	t.Run("refuses-growth-increased-count", func(t *testing.T) {
@@ -773,7 +773,7 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 		// Ledger on disk must remain untouched
 		raw, err := os.ReadFile(p)
 		require.NoError(t, err)
-		assert.Equal(t, old, string(raw), "ledger was modified despite refusal: got %q, want %q", string(raw), old)
+		require.Equal(t, old, string(raw), "ledger was modified despite refusal: got %q, want %q", string(raw), old)
 	})
 
 	t.Run("clean-write-on-shrinking", func(t *testing.T) {
@@ -798,7 +798,7 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 		require.True(t, parsed.Has("fixture.go:emma") && parsed.Has("fixture.go:glenn"), "expected emma and glenn in rows, got: %v", parsed.Rows())
 		require.False(t, parsed.Has("fixture.go:rowan"), "expected rowan to be dropped from rows, got: %v", parsed.Rows())
 		expected := "# comment\n# ceiling: 2\nfixture.go:emma 1\nfixture.go:glenn 3\n"
-		assert.Equal(t, expected, string(raw), "unexpected content:\ngot:\n%s\nwant:\n%s", string(raw), expected)
+		require.Equal(t, expected, string(raw), "unexpected content:\ngot:\n%s\nwant:\n%s", string(raw), expected)
 	})
 
 	t.Run("reason-and-comments-survive-count-lowering", func(t *testing.T) {
