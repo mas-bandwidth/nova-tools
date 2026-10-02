@@ -1,9 +1,10 @@
 # nova-check convergence — specification
 
-**Convergence is the health metric**: the contraction ratio per stream, every
-tick. Answered by hand, *are we converging?* is six windows read out of six
-different places, an hour of it, and a paragraph nobody can diff against the next
-one. This verb is that hour, mechanised.
+`nova-check convergence` reads whether a body of work is converging: per stream,
+a number now against the same number at `--since`, with the ratio and a trend.
+Read by hand, the same answer is six windows read out of six different places and
+a paragraph nobody can diff against the next one; this verb prints it as one line
+per stream.
 
 `docs/SPEC.md`'s **Conventions** govern — exit codes, the one-line grammar, the field
 law, no guessed paths — and [SPEC.md's `## nova-check`](SPEC.md) holds the record-layer
@@ -20,7 +21,7 @@ now and measured at `--since`. Its **ratio** is always `now / before`, whichever
 stream is meant to move; its **trend** is `contracting` when the number moved the way
 that stream converges, `widening` when it moved the other way, `flat` when it did not
 move. Seven streams, each read from a real source through a seam, so every test here is
-fake-driven and none of them reaches a network, a clock or a bench.
+fake-driven and none of them reaches a network or a clock.
 
 | stream | measure | converging |
 | --- | --- | --- |
@@ -31,6 +32,10 @@ fake-driven and none of them reaches a network, a clock or a bench.
 | `EDGES` | dogfood edges with no issue filed | fewer |
 | `FLEET` | machines off the one build | fewer |
 | `LEDGER` | pit-stop ledger rows not yet PASS | fewer |
+
+A **pit-stop ledger** is a markdown table of checks whose last cell says `PASS`,
+`FAIL`, `PARTIAL` or `TODO`; a **receipt** is one dogfood run recorded by
+`nova-check dogfood record`, and an **edge** a problem a receipt names.
 
 1. **Every path comes from a flag, and the verb takes no positional argument.**
    `--repo <owner/name>` is the forge repository, `--ledger <md>` the pit-stop ledger,
@@ -63,7 +68,7 @@ fake-driven and none of them reaches a network, a clock or a bench.
    count in `git show <sha>:docs/SPEC-CI.md`, `<sha>` the last commit in `--repo-dir` at
    or before `--since`. It is the one stream that converges UPWARDS: a class made
    mechanical is a class that cannot come back, so more entries is `contracting`.
-6. **`SCRIPTS` is the finish line the sprint named.** `now` is the scripts left in
+6. **`SCRIPTS` is what is left to replace.** `now` is the scripts left in
    `--bin` — a regular file whose name ends `.sh`, `.py`, `.pl`, `.rb`, `.zsh`, `.bash`,
    or whose first two bytes are `#!`, with `--bin`'s own subdirectories unread;
    `before` is `now` plus the rows of `--retired` dated inside the window. A retired
@@ -86,7 +91,7 @@ fake-driven and none of them reaches a network, a clock or a bench.
    header `name<TAB>status`, adds `certified=<k/n>`. `before` comes from `--state`'s last
    tick and from nowhere else, because a snapshot is a photograph of one instant.
    Extras: `units=`, `stamps=`, `certified=`.
-10. **`LEDGER` is what the pit stop still owes.** `now` is the `--ledger` table rows
+10. **`LEDGER` is what the ledger still owes.** `now` is the `--ledger` table rows
     whose result cell is not closed; a cell is closed when it holds `PASS` and holds none
     of `TODO`, `PARTIAL` or `NEEDS WORK`, so `FAIL then PASS` is closed and
     `PARTIAL: …` is not. `before` comes from `--state`'s last tick. Extras: `rows=`,
@@ -100,8 +105,8 @@ fake-driven and none of them reaches a network, a clock or a bench.
     `--state` nothing is remembered, no streak can be two, and the verb exits 0 with
     every widening stream still named on the line. **A tick at or before the remembered
     instant is that tick read again, not a second one**, and never advances the streak:
-    the first real run of this verb found it, and without the rule two invocations of
-    one command over one window would have gone red on a reading nobody took. The
+    without the rule two invocations of one command over one window would go red on
+    a reading nobody took. The
     streak is therefore about a window that MOVES: a stream whose `before` is anchored
     to a fixed `--since` reports the same trend on every tick and trips the streak on
     the second one, which is what the rolling `--since 24h` spelling is for.
@@ -124,8 +129,8 @@ fake-driven and none of them reaches a network, a clock or a bench.
 
 ### Red tests this section demands
 
-Numbered, one sentence each, every fake standing where the real thing is a forge, a git,
-a bench or a clock; nothing below reaches a network.
+Numbered, one sentence each, every fake standing where the real thing is a forge, a git
+or a clock; nothing below reaches a network.
 
 1. `TestConvergencePrintsOneLinePerStream`: a fake forge, a fake git, a fixture ledger, receipts, retired README and bin yield exactly seven `CONVERGENCE <stream>` lines and one verdict line, in the fixed stream order.
 2. `TestATrendIsTheDirectionTheStreamConverges`: a stream with fewer open edges than at `--since` is `contracting`, one with more is `widening`, an unchanged one is `flat`, and `CLASSES` inverts all three because it converges upwards.
@@ -136,7 +141,7 @@ a bench or a clock; nothing below reaches a network.
 7. `TestScriptsCountsWhatIsLeftAndWhatTheWindowRetired`: a fake bin of two `.sh` files, one shebang file with no extension, one binary and one subdirectory counts three, and a retired README with two rows dated in the window and one outside gives `before=5`.
 8. `TestRetiredRowsInheritTheNearestDateAbove`: rows under a dated heading take that date, a row under no date at all is counted in `undated=` and in neither window.
 9. `TestPRsCountsWhatWasOpenAtSince`: an open pull request created inside the window is in `now` and not in `before`, and one created before `--since` and closed inside it is in `before` and not in `now`.
-10. `TestEdgesIsTheGateAndTheRounds`: receipts with `Edges:` in the notes and no issue count as open, one with an issue does not, `before` reads only receipts written before `--since`, and `--by` narrows the rounds to the named friends.
+10. `TestEdgesIsTheGateAndTheRounds`: receipts with `Edges:` in the notes and no issue count as open, one with an issue does not, `before` reads only receipts written before `--since`, and `--by` narrows the rounds to the named authors.
 11. `TestFleetIsTheUnitsOffTheMajorityStamp`: a snapshot of five rows at one stamp is `now=0`, one row at a second stamp is `now=1`, and both headers — `name/stamp/revision/platform` and `machine/stamp` — read the same.
 12. `TestFleetAndLedgerTakeTheirBeforeFromTheState`: with no state file both are `before=-` and `trend=flat`, and with a state file holding the last tick they compare against it.
 13. `TestLedgerCountsTheRowsNotYetPass`: `FAIL then PASS` is closed, `PARTIAL: …`, `TODO` and `NEEDS WORK` are open, and a non-table line is neither.

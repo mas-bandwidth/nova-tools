@@ -27,7 +27,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-bus", "coordination bus inbox, send, and wait CLI", "go test ./cmd/nova-bus", "go test ./cmd/nova-bus"),
 	E("cmd/nova-cairn", "session checkpoints: a session's exact words kept as plain files, with an index and receipts", "go test ./cmd/nova-cairn", "go test ./cmd/nova-cairn"),
 	E("cmd/nova-config", "permanent configuration store (Postgres), friends and machines, applied into Redis", "go test ./cmd/nova-config", "go test ./cmd/nova-config"),
-	E("cmd/nova-check", "checks over markdown records and repositories: links, kernel budget, no-code, floors, corpus, hygiene, dogfood, spelling", "go test ./cmd/nova-check", "go test ./cmd/nova-check"),
+	E("cmd/nova-check", "checks markdown records and git repositories: links, kernel budget, no-code, floors, corpus, hygiene, dogfood, convergence, spelling", "go test ./cmd/nova-check", "go test ./cmd/nova-check"),
 	E("cmd/nova-ci", "CI slowtests budget and check CLI, and ci-ok's run receipt", "go test ./cmd/nova-ci", "go test ./cmd/nova-ci"),
 	E("cmd/nova-fuse", "the ingestion fuse: a recorded decision to stop reading an untrusted source, checked before each read", "go test ./cmd/nova-fuse", "go test ./cmd/nova-fuse"),
 	E("cmd/nova-memory", "memory indexing and search CLI", "go test ./cmd/nova-memory", "go test ./cmd/nova-memory"),
