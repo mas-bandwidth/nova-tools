@@ -115,11 +115,8 @@ func RunGate(in GateInput) (string, int) {
 		for i := range cfg.CreationRules {
 			rule := cfg.CreationRules[i]
 			ruleNum := i + 1
-			if len(rule.Recipients) != 2 {
-				return gateRefuse(ruleNum, ".sops.yaml", fmt.Sprintf("rule has %d age recipients; expected exactly two", len(rule.Recipients))), 2
-			}
-			if !slices.Contains(rule.Recipients, recoveryKey) {
-				return gateRefuse(ruleNum, ".sops.yaml", "rule recipients do not include the key recovery.pub declares"), 2
+			if problem := ruleRecipientsProblem(rule.Recipients, recoveryKey); problem != "" {
+				return gateRefuse(ruleNum, ".sops.yaml", "rule "+problem), 2
 			}
 			re, err := regexp.Compile(rule.PathRegex)
 			if err != nil {
