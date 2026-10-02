@@ -735,6 +735,9 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 		status = "FAIL"
 	}
 	fields := fmt.Sprintf("moved=%d refused=%d notes=%d", len(res.Moved), len(res.Refused), res.Notes)
+	if verbName == "add" {
+		fields = fmt.Sprintf("stream=%s cards=%d before=%s %s", oneline.Field(c.addStream), len(res.Moved), oneline.Field(dashed(c.addBefore)), fields)
+	}
 	if res.Op != "" {
 		fields += " op=" + oneline.Escape(res.Op)
 	}
@@ -953,7 +956,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	var briefFiles stringList
 	fs.Var(&briefFiles, "brief-file", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; given once, the brief of the cards the ids, --count or --sentinel name; given again, one card per file in the order given, each card's id its file's name without .md (a1.md is a1); not with --brief or --brief-dir")
 	briefDir := fs.String("brief-dir", "", "one card per *.md file in this directory, in byte order of file name, each card's id its file's name without .md (a1.md is a1); not with --brief-file")
-	rules := fs.String("rules", "", "the child rules file this add holds the brief to: one required sentence per line, `[name] sentence` to name its token (default: the file init --rules recorded, else the built-in general rules)")
+	rules := fs.String("rules", "", "the child rules `file`, read at add time (not recorded, unlike init --rules): one required sentence per line, [name] sentence names its token (default: the file init --rules recorded, else the built-in general rules); e.g. --rules rules/card.txt")
 	score := fs.String("score", "", "the first primary's score; the rest follow it (default: after every primary)")
 	sentinel := fs.String("sentinel", "", "admit a sentinel with this id: a stop the coordinator releases; what sorts after it waits for it")
 	before := fs.String("before", "", "place the cards in line in front of this primary of the stream")
@@ -1058,6 +1061,8 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if *brief == "" && *sentinel == "" {
 		c.says = append(c.says, "the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>")
 	}
+	c.addStream = *stream
+	c.addBefore = *before
 	if len(rs) == 1 {
 		return a.runStep("add", *c, st, store.AddStep(rs[0]), stdout, stderr)
 	}
@@ -1132,6 +1137,8 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	for _, cd := range cards {
 		c.says = append(c.says, unfilledSays("the brief of "+cd.ID, cd.Brief)...)
 	}
+	c.addStream = stream
+	c.addBefore = before
 	return a.runStep("add", *c, st, store.AddStep(r), stdout, stderr)
 }
 
@@ -1265,7 +1272,11 @@ func lintBriefFiles(cards []sprint.CardAdd, rules []swarm.ChildRule, max int, st
 // rule set is a usage refusal naming it.
 func (a *app) briefRules(verbName, file string, c *common, st **store.Store, stderr io.Writer) ([]swarm.ChildRule, int) {
 	if file != "" {
-		rs, err := swarm.ReadChildRules(file)
+		abs, err := filepath.Abs(file)
+		if err != nil {
+			return nil, refuse(stderr, verbName, "--rules: "+err.Error())
+		}
+		rs, err := swarm.ReadChildRules(abs)
 		if err != nil {
 			return nil, refuse(stderr, verbName, "--rules: "+err.Error())
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
@@ -53,7 +54,7 @@ var kindExamples = []struct{ kind, verb, line string }{
 	{"loop", "show", "nova-config loop show reader-1 --file try.json"},
 	{"loop", "history", "nova-config loop history reader-1 --file try.json"},
 	{"route", "add", "nova-config route add flash-a --tier flash --provider p1 --model small-1 --deadline 900 --tokens 200000 --as a1 --file try.json"},
-	{"route", "set", "nova-config route set flash-a --price_input 0.30 --price_output 1.20 --as a1 --file try.json"},
+	{"route", "set", "nova-config route set flash-a --price_input 0.30 --price_output 1.20 --note 'prices from the provider page' --as a1 --file try.json"},
 	{"route", "list", "nova-config route list --file try.json"},
 	{"route", "show", "nova-config route show flash-a --file try.json"},
 	{"route", "history", "nova-config route history flash-a --file try.json"},
@@ -115,6 +116,12 @@ func verbExtra(verb string) string {
 		if k, ok := config.Lookup(words[0]); ok && words[1] == "add" {
 			more = requiredLine(k)
 		}
+		if words[0] == config.KindRoute && (words[1] == "add" || words[1] == "set") {
+			more += noteMore(words[0])
+		}
+		if words[0] == config.KindMachine && (words[1] == "add" || words[1] == "set") {
+			more += noteMore(words[0])
+		}
 		if words[0] == config.KindTier && words[1] == "remove" {
 			more = "a tier row is made by migrate and never removed: set its --routes instead\n"
 		}
@@ -136,6 +143,17 @@ func verbExtra(verb string) string {
 		out += "example: " + example + "\n"
 	}
 	return out
+}
+
+// noteMore is what a route's and a machine's add and set -h say of the note:
+// where it is written, how it is cleared and read, and the rule on a disabled
+// route.
+func noteMore(kind string) string {
+	line := "the note is why a choice was made, and its history says who wrote it and when: show prints it whole, list cuts it to " + strconv.Itoa(config.ListNoteRunes) + " characters\n"
+	if kind == config.KindRoute {
+		line += "a disabled route carries its reason: --enabled false is refused without --note '<the measured reason>' (--enabled true needs none)\n"
+	}
+	return line
 }
 
 // requiredLine names the fields add refuses a row without.

@@ -22,7 +22,7 @@ func TestAVerbSaysWhatTheMovesDoNot(t *testing.T) {
 	ta.ok("fleet down m2")
 
 	add := ta.ok("add --stream s1 --count 5")
-	assert.Contains(t, add, "ADD OK moved=5 refused=0 notes=0 op=")
+	assert.Contains(t, add, "ADD OK stream=s1 cards=5 before=- moved=5 refused=0 notes=0 op=")
 	assert.Contains(t, add, "\nNOTE the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>\n")
 	assert.NotContains(t, ta.ok("add --stream s2 --count 1 --brief-file "+writeBrief(t, "Fix it.")), "NOTE the cards have no brief")
 	assert.NotContains(t, ta.ok("add --stream s1 --sentinel s1-gate"), "NOTE the cards have no brief", "a sentinel has no brief by design")

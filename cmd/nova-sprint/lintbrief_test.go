@@ -106,6 +106,32 @@ func writeRules(t *testing.T, text string) string {
 	return path
 }
 
+// help add says the rules file is read at add time, with an example path.
+func TestHelpAddSaysTheRulesFileIsReadAtAddTime(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	out := ta.ok("help add")
+	require.Contains(t, out, "read at add time", "help add says when the rules file is read:\n%s", out)
+	require.Contains(t, out, "rules/card.txt", "help add shows an example path:\n%s", out)
+}
+
+// add --rules refuses naming the absolute path it tried, even when the caller
+// named a relative one (init --rules records its absolute path the same way).
+func TestAddRulesRefusalNamesTheAbsolutePath(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	missing := filepath.Join("docs", "no-such-rules-file.txt")
+	abs := filepath.Join(cwd, missing)
+	code, out, errs := ta.do("add --stream s1 --count 1 --rules " + missing + " --brief 'Keep it short.'")
+	require.Equal(t, 2, code, "out %q err %q", out, errs)
+	require.Contains(t, errs, "--rules: ", "the refusal names --rules: %q", errs)
+	require.Contains(t, errs, abs, "the refusal names the absolute path it tried: %q", errs)
+	require.NotContains(t, out, "MOVED", "nothing moved: %q", out)
+}
+
 // ourRulesFile is this repository's own rules file, read relative to this package.
 const ourRulesFile = "../../fleet/child-rules.txt"
 

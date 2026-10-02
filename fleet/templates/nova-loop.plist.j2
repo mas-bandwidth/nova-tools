@@ -43,6 +43,11 @@
 <key>StartInterval</key>
 <integer>{{ l.every }}</integer>
 {% endif %}
+{# A member (nova-swarm member) drains on SIGTERM: a bootout waits for it, nova_member_stop_timeout. #}
+{% if loop_member %}
+<key>ExitTimeOut</key>
+<integer>{{ nova_member_stop_timeout }}</integer>
+{% endif %}
 <key>AbandonProcessGroup</key>
 <true/>
 <key>StandardOutPath</key>

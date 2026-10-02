@@ -234,7 +234,7 @@ func TestInboxJSONCarriesTheJudgmentsToActOn(t *testing.T) {
 		}
 	}
 	require.Len(t, drop2, 1, "the s2 drop answers: %+v", j2.Answers)
-	require.True(t, strings.HasPrefix(drop2[0], "nova-sprint drop --group "+j2.ID+" --expect 1 --reason '<why>' --answers "), "the s2 drop answers: %+v", j2.Answers)
+	require.True(t, strings.HasPrefix(drop2[0], "nova-sprint drop s2-1 --reason '<why>'"), "the s2 drop answers: %+v", j2.Answers)
 	var h inboxHappened
 	for _, x := range in.Happened {
 		if x.Type == sprint.NWorkOK {
