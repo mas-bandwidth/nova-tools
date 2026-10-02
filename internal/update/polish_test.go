@@ -2,6 +2,7 @@ package update
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,7 +96,7 @@ func TestEveryUpdateRefusalEndsInACommandToRun(t *testing.T) {
 		{"unknown verb", []string{"bogus"}, []string{`UPDATE REFUSED: unknown verb "bogus"; ` + verbs + "; run: nova-update help"}},
 		{"help of an unknown verb", []string{"help", "bogus"}, []string{`unknown verb "bogus"`}},
 		{"version with an argument", []string{"version", "x"}, []string{"; run: nova-update version"}},
-		{"misspelled flag", []string{"check", "--fiel", "x"}, []string{"UPDATE REFUSED: unknown flag --fiel; the flags are --budget, --file, --kind, --max, --timeout; run: nova-update check -h"}},
+		{"misspelled flag", []string{"check", "--fiel", "x"}, []string{"CHECK REFUSED: unknown flag --fiel; the flags are --budget, --file, --json, --kind, --max, --timeout; run: nova-update check -h"}},
 		{"bad duration", []string{"status", "--file", dash, "--timeout", "abc"}, []string{`--timeout wants a duration (5s, 2m), got "abc"`, "; run: nova-update status -h"}},
 		{"bad kind", []string{"check", "--file", dash, "--kind", "bogus"}, []string{"unknown kind bogus (use harness,engine,model,tool,pin)", "; run: nova-update check -h"}},
 		{"missing file", []string{"report"}, []string{"missing --file", "; run: nova-update report -h"}},
@@ -164,6 +165,63 @@ func TestSnapshotOfAManifestNamesTheToolsThatDidNotAnswer(t *testing.T) {
 	assert.Contains(t, errs, "SNAPSHOT FAIL checked=2 known=1 unknown=1")
 	assert.Contains(t, errs, "SNAPSHOT UNKNOWN name=ghost")
 	assert.NotContains(t, errs, "name=known")
+}
+
+// Every nova-update verb on a manifest builds one value and takes --json for it
+// (STANDARD §2; ledger U14, X1, X4): the JSON is one object on stdout, refusals
+// included; the line form opens with the verb and its status word; and kinds=
+// names the kinds the run read, never a kind the file does not hold (U13).
+func TestUpdateVerbsTakeJSONAndLeadWithTheirStatus(t *testing.T) {
+	t.Parallel()
+	m := writeFile(t, "m.tsv", Header+"\nfoo\ttool\tv1.0.0\t-\tinstall-foo {version}\tme\n")
+	adoption := writeFile(t, "a.tsv", "tool\tfriend\tstate\tversion\tdetail\nfoo\tme\tadopted\t1.0.0\ttried it first\n")
+	for _, c := range []struct {
+		name   string
+		args   []string
+		exit   int
+		status string
+		item   string
+	}{
+		{"check", []string{"check", "--file", m}, 1, "failed", "unknown"},
+		{"status", []string{"status", "--file", m}, 1, "failed", "unknown"},
+		{"report", []string{"report", "--file", m}, 0, "ok", "tool"},
+		{"apply dry run", []string{"apply", "--file", m, "foo", "--version", "1.2.0", "--dry-run"}, 0, "ok", "plan"},
+		{"adoption", []string{"adoption", "--file", adoption}, 0, "ok", "choice"},
+		{"refusal", []string{"check"}, 2, "refused", ""},
+		{"unknown verb", []string{"bogus"}, 2, "refused", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			code, out, errs := runTool(t, "nova-update", append(c.args, "--json")...)
+			assert.Equal(t, c.exit, code)
+			assert.Empty(t, errs)
+			var got struct {
+				Result struct {
+					Verb, Status, Remedy string
+				}
+				Facts map[string]any
+				Items []struct{ Kind string }
+			}
+			require.NoError(t, json.Unmarshal([]byte(out), &got), out)
+			assert.Equal(t, c.status, got.Result.Status)
+			if c.item != "" {
+				require.NotEmpty(t, got.Items)
+				assert.Equal(t, c.item, got.Items[len(got.Items)-1].Kind)
+			} else {
+				assert.Contains(t, got.Result.Remedy, "nova-update ")
+			}
+			if c.name == "check" {
+				assert.Equal(t, "tool", got.Facts["kinds"])
+			}
+		})
+	}
+	t.Run("lines open with the verb and its status", func(t *testing.T) {
+		_, _, errs := runTool(t, "nova-update", "check", "--file", m)
+		assert.True(t, strings.HasPrefix(errs, "CHECK FAIL checked=1 "), errs)
+		assert.Contains(t, errs, " kinds=tool ")
+		_, out, _ := runTool(t, "nova-update", "apply", "--file", m, "foo", "--version", "1.2.0", "--dry-run")
+		assert.True(t, strings.HasPrefix(out, "APPLY OK name=foo dry_run=true from=1.0.0 to=1.2.0 "), out)
+		assert.Contains(t, out, "APPLY PLAN name=foo argv=2 version=1.2.0: install-foo 1.2.0")
+	})
 }
 
 // moved reads the usage lines of every tool's help, indented or not: a tool on

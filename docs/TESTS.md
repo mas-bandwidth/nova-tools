@@ -652,9 +652,8 @@ local stdout only and performs no update or bus action.
 
 ```text
 $ nova-update report --file cmd/nova-update/testdata/example.tsv
-REPORT at=2026-09-12T17:29:33Z file=cmd/nova-update/testdata/example.tsv host=- as=- entries=1 kinds=engine,harness,model,pin,tool timeout=5s budget=1m0s max=20 snapshot=-
+REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=20ms file=cmd/nova-update/testdata/example.tsv host=- as=- entries=1 kinds=tool at=2026-10-02T02:43:13Z timeout=5s budget=1m0s max=20 snapshot=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
-REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-update/testdata/example.tsv
 ```
 
 
@@ -667,9 +666,8 @@ local stdout only and performs no update or bus action.
 
 ```text
 $ nova-version report --file cmd/nova-version/testdata/example.tsv
-REPORT at=2026-09-12T17:29:33Z file=cmd/nova-version/testdata/example.tsv host=- as=- entries=1 kinds=engine,harness,model,pin,tool timeout=5s budget=1m0s max=20 snapshot=-
+REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=21ms file=cmd/nova-version/testdata/example.tsv host=- as=- entries=1 kinds=tool at=2026-10-02T02:43:13Z timeout=5s budget=1m0s max=20 snapshot=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
-REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-version/testdata/example.tsv
 ```
 
 

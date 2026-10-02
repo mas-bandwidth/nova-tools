@@ -9,9 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 const adoptionHeader = "tool\tfriend\tstate\tversion\tdetail"
@@ -63,19 +62,23 @@ func loadAdoption(r io.Reader) ([]adoption, error) {
 	return out, nil
 }
 
-func adoptionVerb(name string, args []string, stamp string, out, errs io.Writer) int {
+// adoptionVerb reads the adoption ledger and lists each choice: its one value is
+// the count on the first line and an item per choice, the choice's detail its prose.
+func adoptionVerb(name string, args []string, out, errs io.Writer) int {
 	o := struct {
 		file, as string
 		max      int
+		json     bool
 	}{max: 20}
 	f := flag.NewFlagSet("adoption", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
-	f.StringVar(&o.file, "file", "", "adoption file")
-	f.StringVar(&o.as, "as", "", "friend filter")
-	f.IntVar(&o.max, "max", 20, "output cap")
+	f.StringVar(&o.file, "file", "", "the adoption ledger (required): "+adoptionShape)
+	f.StringVar(&o.as, "as", "", "list only this friend's choices")
+	f.IntVar(&o.max, "max", 20, "choices listed before one MORE line stands for the rest; 0 lists all")
+	f.BoolVar(&o.json, "json", false, "print the result as one JSON object instead of lines")
 	help := name + " adoption -h"
 	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
-		return refusal(errs, "ADOPTION", help, flagProblem(f, err))
+		return emit(refused("adoption", help, flagProblem(f, err).Error()), verbflag.BoolAsked(args, "json"), 0, out, errs)
 	}
 	// Every problem of the invocation in one refusal (STANDARD §2).
 	var problems []string
@@ -89,16 +92,16 @@ func adoptionVerb(name string, args []string, stamp string, out, errs io.Writer)
 		problems = append(problems, fmt.Sprintf("adoption takes no positional arguments, got %q", f.Arg(0)))
 	}
 	if len(problems) > 0 {
-		return refusal(errs, "ADOPTION", help, fmt.Errorf("%s", strings.Join(problems, "; ")))
+		return emit(refused("adoption", help, strings.Join(problems, "; ")), o.json, 0, out, errs)
 	}
 	file, err := os.Open(o.file)
 	if err != nil {
-		return refusal(errs, "ADOPTION", help, fmt.Errorf("cannot open %s (supply a readable --file: one line per tool choice, five tab-separated fields tool friend state version detail, written by hand)", o.file))
+		return emit(refused("adoption", help, fmt.Sprintf("cannot open %s (supply a readable --file: %s)", o.file, adoptionShape)), o.json, 0, out, errs)
 	}
 	rows, err := loadAdoption(file)
 	file.Close()
 	if err != nil {
-		return refusal(errs, "ADOPTION", help, fmt.Errorf("%s: %w", o.file, err))
+		return emit(refused("adoption", help, fmt.Sprintf("%s: %s", o.file, err)), o.json, 0, out, errs)
 	}
 	selected := []adoption{}
 	for _, r := range rows {
@@ -112,16 +115,15 @@ func adoptionVerb(name string, args []string, stamp string, out, errs io.Writer)
 		}
 		return selected[i].Tool < selected[j].Tool
 	})
-	fmt.Fprintf(out, "ADOPTION at=%s file=%s entries=%d max=%d\n", field(stamp), field(o.file), len(selected), o.max)
-	group := bounded.Grouped(out, o.max, "ADOPTION", "use --max 0 to show all")
-	for _, r := range selected {
-		group.Line("choice", fmt.Sprintf("ADOPTION tool=%s friend=%s state=%s version=%s detail=%s", field(r.Tool), field(r.Friend), field(r.State), field(r.Version), oneline.Escape(r.Detail)))
-	}
-	group.More()
+	res := &tool.Out{Verb: "adoption", Status: tool.OK}
 	friends := map[string]bool{}
 	for _, r := range selected {
 		friends[r.Friend] = true
+		res.Item("choice", "tool", r.Tool, "friend", r.Friend, "state", r.State, "version", r.Version, "detail", r.Detail)
 	}
-	fmt.Fprintf(out, "ADOPTION OK entries=%d friends=%d file=%s\n", len(selected), len(friends), field(o.file))
-	return 0
+	res.Fact("entries", len(selected)).Fact("friends", len(friends)).Fact("file", o.file).Fact("max", o.max)
+	return emit(res, o.json, o.max, out, errs)
 }
+
+// adoptionShape is what the file adoption --file names holds.
+const adoptionShape = "one line per tool choice, five tab-separated fields tool friend state version detail, written by hand"

@@ -72,16 +72,8 @@ func TestMissingIndependentFlagsAreNamedTogether(t *testing.T) {
 	}
 }
 
-// REPORT has a dynamic timestamp as its second token, unlike two-word events.
-// Remove only that value; keep the field and every other output shape check.
-func firstRunShape(line string) string {
-	if strings.HasPrefix(line, "REPORT at=") {
-		fields := strings.Fields(line)
-		fields[1] = "at="
-		line = strings.Join(fields, " ")
-	}
-	return onboarding.Shape(line)
-}
+// firstRunShape is a line's event and field names, its values dropped.
+func firstRunShape(line string) string { return onboarding.Shape(line) }
 
 // TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine executes the
 // `### First run` block of docs/TESTS.md for nova-version -- every command, in

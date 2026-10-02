@@ -14,7 +14,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // fleetRegistry is the set of registered benches (ns_bench_register).
@@ -125,18 +125,20 @@ func newer(a, b string) bool {
 // fleetReport is the verb body: one DRIFT line per stale bench, one receipt.
 // Exit 0 when every beating bench is on the newest build, 1 on drift, 2 when
 // the store cannot be read.
-func fleetReport(addr, help string, timeout time.Duration, started time.Time, out, errs io.Writer) int {
+func fleetReport(addr, help string, timeout time.Duration, now func() time.Time) *tool.Out {
+	started := now()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	st, err := store.Open(ctx, addr)
 	if err != nil {
-		return refusal(errs, "REPORT", help, fmt.Errorf("%w (supply a reachable --store host:port)", err))
+		return refused("report", help, fmt.Sprintf("%s (supply a reachable --store host:port)", err))
 	}
 	defer st.Close()
 	fleet, err := readFleetBuilds(ctx, st.Client())
 	if err != nil {
-		return refusal(errs, "REPORT", help, fmt.Errorf("fleet beats at %s: %w", addr, err))
+		return refused("report", help, fmt.Sprintf("fleet beats at %s: %s", addr, err))
 	}
+	res := &tool.Out{Verb: "report", Status: tool.OK}
 	var stamped []string
 	beating, unknown := 0, 0
 	for _, b := range fleet {
@@ -161,12 +163,11 @@ func fleetReport(addr, help string, timeout time.Duration, started time.Time, ou
 			continue
 		}
 		drift++
-		fmt.Fprintf(out, "REPORT DRIFT bench=%s tool=nova-sprint build=%s want=%s\n", field(b.Bench), field(b.Build), field(want))
+		res.Item("drift", "bench", b.Bench, "tool", "nova-sprint", "build", b.Build, "want", want)
 	}
-	result, code, w := "OK", 0, out
 	if drift > 0 {
-		result, code, w = "FAIL", 1, errs
+		res.Status, res.Exit = tool.Failed, 1
 	}
-	fmt.Fprintf(w, "REPORT %s benches=%d beating=%d current=%d drift=%d unknown=%d want=%s took=%s store=%s\n", result, len(fleet), beating, current, drift, unknown, field(want), time.Since(started).Round(time.Millisecond), field(addr))
-	return code
+	return res.Fact("benches", len(fleet)).Fact("beating", beating).Fact("current", current).Fact("drift", drift).Fact("unknown", unknown).
+		Fact("want", want).Fact("took", now().Sub(started).Round(time.Millisecond).String()).Fact("store", addr)
 }

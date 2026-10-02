@@ -1278,8 +1278,11 @@ participation and updates remain voluntary.
 
 `status` is `check` with every entry's line shown, the current ones too, exit 0 when
 every entry is equal and 1 when any differs; it writes nothing. `apply --dry-run`
-prints the plan and writes nothing: the entry's line against the target, `would
-install <name> <version> from <source>` and the command the real run would start.
+prints the plan and writes nothing: `APPLY OK ... dry_run=true from=<installed>
+to=<target>`, the entry's line against the target, and `APPLY PLAN` with the command
+the real run would start. Every verb but `watch` and `release` takes `--json`: the same
+result as one JSON object on stdout, refusals included. The first line of every result
+is the verb, its status word (`OK`, `FAIL`, `REFUSED`) and the run's counts.
 
 ```sh
 nova-update status --file cmd/nova-update/testdata/example.tsv

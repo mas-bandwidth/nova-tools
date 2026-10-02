@@ -3,7 +3,6 @@ package update
 import (
 	"bytes"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -240,9 +238,9 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before any manifest, bus or store is read (the CLI style's rule (b), #4505).
 	defer verbflag.Recover(out, name, helpText(name), &rc)
-	tool, door := "UPDATE", name+" help"
+	door, asked := name+" help", verbflag.BoolAsked(args, "json")
 	if len(args) == 0 {
-		return refusal(errs, tool, door, fmt.Errorf("no verb given; the verbs are %s", updateVerbNames))
+		return emit(refused("update", door, "no verb given; the verbs are "+updateVerbNames), asked, 0, out, errs)
 	}
 	verb := args[0]
 	args = args[1:]
@@ -256,7 +254,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if verb == "version" || verb == "--version" {
 		verbflag.HelpIfAsked(args, "version")
 		if len(args) != 0 {
-			return refusal(errs, tool, name+" version", fmt.Errorf("version takes no arguments"))
+			return emit(refused("update", name+" version", "version takes no arguments"), asked, 0, out, errs)
 		}
 		fmt.Fprintln(out, buildinfo.Line(name, stamp))
 		return 0
@@ -272,73 +270,77 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		return release.Main(name, args, stamp, out, errs)
 	}
 	if verb == "adoption" {
-		return adoptionVerb(name, args, stamp, out, errs)
+		return adoptionVerb(name, args, out, errs)
 	}
 	if verb != "report" && verb != "check" && verb != "status" && verb != "apply" && verb != "watch" {
-		return refusal(errs, tool, door, fmt.Errorf("unknown verb %q; the verbs are %s", verb, updateVerbNames))
+		return emit(refused("update", door, fmt.Sprintf("unknown verb %q; the verbs are %s", verb, updateVerbNames)), asked, 0, out, errs)
 	}
 	if verb == "watch" {
 		return watchMain(name, args, out, errs, env)
 	}
-	token := strings.ToUpper(verb)
-	if verb == "check" {
-		token = "UPDATE"
-	}
 	o := options{max: 20, timeout: 5 * time.Second, budget: 60 * time.Second}
+	asJSON := false
 	f := flag.NewFlagSet(verb, flag.ContinueOnError)
 	f.SetOutput(io.Discard)
-	f.StringVar(&o.file, "file", "", "manifest")
-	f.DurationVar(&o.timeout, "timeout", o.timeout, "one read deadline")
+	f.StringVar(&o.file, "file", "", "the manifest (required): "+manifestShape)
+	f.DurationVar(&o.timeout, "timeout", o.timeout, "one read's deadline, such as 5s")
+	f.BoolVar(&asJSON, "json", false, "print the result as one JSON object instead of lines")
 	if verb == "apply" {
-		f.StringVar(&o.target, "version", "", "target")
-		f.BoolVar(&o.dryRun, "dry-run", false, "prints the plan and writes nothing")
+		f.StringVar(&o.target, "version", "", "the version to install, when the entry's apply argv holds {version}; default: the latest its source reports")
+		f.BoolVar(&o.dryRun, "dry-run", false, "print the plan and install nothing: no process starts")
 	} else {
-		f.DurationVar(&o.budget, "budget", o.budget, "whole run deadline")
-		f.IntVar(&o.max, "max", 20, "per-kind output cap")
-		f.Var(&o.kinds, "kind", "kind filter")
+		f.DurationVar(&o.budget, "budget", o.budget, "the whole run's deadline, such as 60s")
+		f.IntVar(&o.max, "max", 20, "lines listed per kind before one MORE line stands for the rest; 0 lists all")
+		f.Var(&o.kinds, "kind", "check only this kind (harness, engine, model, tool or pin); repeat for several")
 	}
 	if verb == "report" {
-		f.StringVar(&o.host, "host", "", "execution bench label")
-		f.StringVar(&o.snapshot, "snapshot", "", "explicit state file")
-		f.BoolVar(&o.draft, "draft", false, "print note only")
-		f.BoolVar(&o.send, "send", false, "explicit delivery")
-		for flagName, p := range map[string]*string{"as": &o.as, "to": &o.to, "bus": &o.bus, "remote": &o.remote, "branch": &o.branch} {
-			f.StringVar(p, flagName, "", flagName)
-		}
-		f.StringVar(&o.store, "store", "", "fleet Redis host:port: read the bench beats")
+		reportDeliveryFlags(f, &o)
+		f.BoolVar(&o.send, "send", false, "deliver the note through nova-bus (needs --as, --to, --bus, --remote, --branch)")
+		f.StringVar(&o.store, "store", "", "a fleet Redis host:port: report every bench's nova-sprint build from its beat, instead of --file")
 	}
 	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
 		// `<tool> <verb> --help` never lands here: verbflag.Parse raises that
 		// verb's help, which Run prints on stdout at exit 0 (asking is not an
 		// error; darwin dogfood, 2026-09-18).
-		return refusal(errs, token, name+" "+verb+" -h", flagProblem(f, err))
+		return emit(refused(verb, name+" "+verb+" -h", flagProblem(f, err).Error()), verbflag.BoolAsked(args, "json"), 0, out, errs)
 	}
-	return checked(name, verb, token, o, f.Args(), out, errs, env)
+	if o.store != "" {
+		return emit(storeReport(name, o, f.Args(), env), asJSON, 0, out, errs)
+	}
+	return emit(checked(name, verb, o, f.Args(), env), asJSON, o.max, out, errs)
+}
+
+// reportDeliveryFlags are report's flags for a note, the same under both tools:
+// a draft to read, or (with --send, or nova-version's send) a delivery.
+func reportDeliveryFlags(f *flag.FlagSet, o *options) {
+	f.StringVar(&o.host, "host", "", "a label for the machine the report ran on, carried in the note's subject")
+	f.StringVar(&o.snapshot, "snapshot", "", "a state file that carries a prepared note across processes: retry the saved note, never prepare again while one is pending")
+	f.BoolVar(&o.draft, "draft", false, "print the note that --send would deliver, and deliver nothing (needs --as, --to)")
+	f.StringVar(&o.as, "as", "", "the sender the note is from")
+	f.StringVar(&o.to, "to", "", "the recipients, comma-separated")
+	f.StringVar(&o.bus, "bus", "", "the bus checkout that delivers the note")
+	f.StringVar(&o.remote, "remote", "", "the bus remote")
+	f.StringVar(&o.branch, "branch", "", "the bus branch")
+}
+
+// storeReport is `report --store` (#3880): every bench's nova-sprint build from
+// its beat, so it takes no manifest, snapshot or note and never runs ssh.
+func storeReport(name string, o options, positional []string, env Environment) *tool.Out {
+	help := name + " report -h"
+	if o.file != "" || o.snapshot != "" || o.draft || o.send || o.host != "" || len(positional) != 0 {
+		return refused("report", help, "--store reads the bench beats and takes no --file, --snapshot, --host, --draft or --send (drop --store and give --file to report this machine)")
+	}
+	if o.timeout <= 0 {
+		return refused("report", help, "--timeout wants a positive duration")
+	}
+	return fleetReport(o.store, help, o.timeout, env.Now)
 }
 
 // checked is a parsed check, apply or report: the flags' own rules, the
 // manifest read, and the verb run. nova-version's report and send reach it
 // through their verbs in versiontool.go with the flags already parsed.
-func checked(name, verb, token string, o options, positional []string, out, errs io.Writer, env Environment) int {
-	// status is check's read with every entry's line shown, current ones included
-	// (SPEC-UPDATE rule 9): the same reads, the same exit, its own first token so a
-	// caller scanning for UPDATE never mistakes one for the other.
-	pfx := "UPDATE"
-	if verb == "status" {
-		pfx = "STATUS"
-	}
+func checked(name, verb string, o options, positional []string, env Environment) *tool.Out {
 	help := name + " " + verb + " -h"
-	// --store is the fleet read (#3880): every bench's nova-sprint build from
-	// its beat, so it takes no manifest, snapshot or note and never runs ssh.
-	if o.store != "" {
-		if o.file != "" || o.snapshot != "" || o.draft || o.send || o.host != "" || len(positional) != 0 {
-			return refusal(errs, token, help, fmt.Errorf("--store reads the bench beats and takes no --file, --snapshot, --host, --draft or --send (drop --store and give --file to report this machine)"))
-		}
-		if o.timeout <= 0 {
-			return refusal(errs, token, help, fmt.Errorf("--timeout wants a positive duration"))
-		}
-		return fleetReport(o.store, help, o.timeout, env.Now(), out, errs)
-	}
 	// Every problem of the invocation is named in one refusal (STANDARD §2), so a
 	// reader fixes the call once.
 	var problems []string
@@ -381,29 +383,33 @@ func checked(name, verb, token string, o options, positional []string, out, errs
 		problems = append(problems, "note header contains a newline (use a single-line --as, --to and --host)")
 	}
 	if len(problems) > 0 {
-		return refusal(errs, token, help, errors.New(strings.Join(problems, "; ")))
+		return refused(verb, help, strings.Join(problems, "; "))
 	}
 	file, err := os.Open(o.file)
 	if err != nil {
-		return refusal(errs, token, help, fmt.Errorf("cannot open %s (supply a readable --file: %s)", o.file, manifestShape))
+		return refused(verb, help, fmt.Sprintf("cannot open %s (supply a readable --file: %s)", o.file, manifestShape))
 	}
 	entries, err := Load(file)
 	file.Close()
 	if err != nil {
-		return refusal(errs, token, help, fmt.Errorf("%s: %w", o.file, err))
+		return refused(verb, help, fmt.Sprintf("%s: %s", o.file, err))
 	}
 	if verb == "apply" {
-		return apply(entries, positional[0], help, o, out, errs, env)
+		return apply(entries, positional[0], help, o, env)
 	}
+	// kinds= names the kinds the run read: those of the selected entries, never
+	// a kind the file does not hold (ledger U13).
 	selected := []Entry{}
+	present := map[string]bool{}
 	for _, e := range entries {
 		if len(o.kinds) == 0 || contains(o.kinds, e.Kind) {
 			selected = append(selected, e)
+			present[e.Kind] = true
 		}
 	}
-	kinds := []string(o.kinds)
-	if len(kinds) == 0 {
-		kinds = append([]string(nil), Kinds...)
+	var kinds []string
+	for k := range present {
+		kinds = append(kinds, k)
 	}
 	sort.Strings(kinds)
 	started := env.Now()
@@ -416,14 +422,15 @@ func checked(name, verb, token string, o options, positional []string, out, errs
 	}
 	ctx, cancel := context.WithTimeout(baseCtx, o.budget)
 	defer cancel()
-	if verb == "report" {
-		return report(ctx, entries, selected, o, strings.Join(kinds, ","), help, started, out, errs, env)
+	if verb == "report" || verb == "send" {
+		return report(ctx, verb, entries, selected, o, strings.Join(kinds, ","), help, started, env)
 	}
-	fmt.Fprintf(out, pfx+" at=%s file=%s entries=%d kinds=%s timeout=%s budget=%s max=%d\n", field(started.UTC().Format(time.RFC3339)), field(o.file), len(entries), field(strings.Join(kinds, ",")), o.timeout, o.budget, o.max)
+	// status is check's read with every entry's item shown, current ones included
+	// (SPEC-UPDATE rule 9): the same reads, the same exit, its own first token.
 	results := readEntries(ctx, selected, o, env, false)
 	counts := map[string]int{}
 	pins := 0
-	group := bounded.Grouped(out, o.max, pfx, "use --max 0 to show all")
+	res := &tool.Out{Verb: verb, Status: tool.OK}
 	for _, r := range results {
 		status, ahead := verdict(r)
 		counts[status]++
@@ -433,29 +440,28 @@ func checked(name, verb, token string, o options, positional []string, out, errs
 		if status == "EQUAL" && verb != "status" {
 			continue
 		}
-		if status == "UNKNOWN" {
+		e := r.Entry
+		switch status {
+		case "UNKNOWN":
 			x := r.Installed
 			if x.Known() {
 				x = r.Latest
 			}
-			group.Line("unknown", fmt.Sprintf(pfx+" UNKNOWN name=%s kind=%s installed=%s path=%s source=%s: %s (%s)", field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Installed.Path), field(r.Latest.Source), oneline.Escape(x.Reason), oneline.Escape(x.Remedy)))
-		} else if status == "AHEAD" {
-			group.Line("ahead", fmt.Sprintf(pfx+" AHEAD name=%s kind=%s installed=%s latest=%s ahead=%s path=%s source=%s owner=%s", field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Latest.Version), field(ahead), field(r.Installed.Path), field(r.Latest.Source), field(r.Entry.Owner)))
-		} else {
-			group.Line(strings.ToLower(status), fmt.Sprintf(pfx+" %s name=%s kind=%s installed=%s latest=%s path=%s source=%s owner=%s", status, field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Latest.Version), field(r.Installed.Path), field(r.Latest.Source), field(r.Entry.Owner)))
+			res.Item("unknown", "name", e.Name, "kind", e.Kind, "installed", r.Installed.Version, "path", r.Installed.Path, "source", r.Latest.Source, "reason", x.Reason, "remedy", x.Remedy)
+		case "AHEAD":
+			res.Item("ahead", "name", e.Name, "kind", e.Kind, "installed", r.Installed.Version, "latest", r.Latest.Version, "ahead", ahead, "path", r.Installed.Path, "source", r.Latest.Source, "owner", e.Owner)
+		default:
+			res.Item(strings.ToLower(status), "name", e.Name, "kind", e.Kind, "installed", r.Installed.Version, "latest", r.Latest.Version, "path", r.Installed.Path, "source", r.Latest.Source, "owner", e.Owner)
 		}
 	}
-	group.More()
-	code := 0
-	result := "OK"
-	w := out
 	if counts["EQUAL"] != len(selected) {
-		code = 1
-		result = "FAIL"
-		w = errs
+		res.Status, res.Exit = tool.Failed, 1
 	}
-	fmt.Fprintf(w, pfx+" %s checked=%d current=%d stale=%d newer=%d ahead=%d differ=%d unknown=%d pins=%d took=%s file=%s\n", result, len(selected), counts["EQUAL"], counts["STALE"], counts["NEWER"], counts["AHEAD"], counts["DIFFERENT"], counts["UNKNOWN"], pins, time.Since(started).Round(time.Millisecond), field(o.file))
-	return code
+	return res.Fact("checked", len(selected)).Fact("current", counts["EQUAL"]).Fact("stale", counts["STALE"]).Fact("newer", counts["NEWER"]).
+		Fact("ahead", counts["AHEAD"]).Fact("differ", counts["DIFFERENT"]).Fact("unknown", counts["UNKNOWN"]).Fact("pins", pins).
+		Fact("took", env.Now().Sub(started).Round(time.Millisecond).String()).Fact("file", o.file).Fact("entries", len(entries)).
+		Fact("kinds", strings.Join(kinds, ",")).Fact("at", started.UTC().Format(time.RFC3339)).
+		Fact("timeout", o.timeout.String()).Fact("budget", o.budget.String()).Fact("max", o.max)
 }
 func contains(xs []string, s string) bool {
 	for _, x := range xs {
@@ -534,7 +540,7 @@ func verdict(r entryRead) (string, string) {
 	}
 	return v, ""
 }
-func apply(entries []Entry, name, help string, o options, out, errs io.Writer, env Environment) int {
+func apply(entries []Entry, name, help string, o options, env Environment) *tool.Out {
 	var e *Entry
 	var names []string
 	for i := range entries {
@@ -548,30 +554,30 @@ func apply(entries []Entry, name, help string, o options, out, errs io.Writer, e
 		if len(names) > manifestProblemCap {
 			names = append(names[:manifestProblemCap], fmt.Sprintf("and %d more", len(names)-manifestProblemCap))
 		}
-		return refusal(errs, "APPLY", help, fmt.Errorf("name %s absent from %s; its %d entries are %s", name, o.file, len(entries), strings.Join(names, ", ")))
+		return refused("apply", help, fmt.Sprintf("name %s absent from %s; its %d entries are %s", name, o.file, len(entries), strings.Join(names, ", ")))
 	}
 	if e.Kind == "model" {
-		return refusal(errs, "APPLY", help, fmt.Errorf("model %s is not installed by this tool (its owner %s pulls it: ollama pull %s)", name, e.Owner, name))
+		return refused("apply", help, fmt.Sprintf("model %s is not installed by this tool (its owner %s pulls it: ollama pull %s)", name, e.Owner, name))
 	}
 	if len(e.Apply) == 0 {
-		return refusal(errs, "APPLY", help, fmt.Errorf("%s is installed by hand: its apply column is none (its owner %s installs it, or write the install argv in that column)", name, e.Owner))
+		return refused("apply", help, fmt.Sprintf("%s is installed by hand: its apply column is none (its owner %s installs it, or write the install argv in that column)", name, e.Owner))
 	}
 	if o.target != "" && !strings.Contains(strings.Join(e.Apply, " "), "{version}") {
-		return refusal(errs, "APPLY", help, fmt.Errorf("this entry's apply does not take a version (remove --version or declare {version} in the manifest)"))
+		return refused("apply", help, "this entry's apply does not take a version (remove --version or declare {version} in the manifest)")
 	}
 	started := env.Now()
 	target := o.target
 	if target == "" {
 		r := Latest(context.Background(), *e, o.timeout, env.Client)
 		if !r.Known() {
-			return refusal(errs, "APPLY", help, fmt.Errorf("latest unknown for %s (pass --version <v>, or ask again when the source answers)", name))
+			return refused("apply", help, fmt.Sprintf("latest unknown for %s (pass --version <v>, or ask again when the source answers)", name))
 		}
 		target = r.Version
 	} else {
 		var err error
 		target, err = versionKey(target)
 		if err != nil {
-			return refusal(errs, "APPLY", help, fmt.Errorf("invalid target %q (pass a complete version with --version, such as 1.2.3)", o.target))
+			return refused("apply", help, fmt.Sprintf("invalid target %q (pass a complete version with --version, such as 1.2.3)", o.target))
 		}
 	}
 	before := Installed(context.Background(), *e, o.timeout, false)
@@ -583,15 +589,16 @@ func apply(entries []Entry, name, help string, o options, out, errs io.Writer, e
 	// (SPEC-UPDATE rule 13): every refusal above has passed, the target and the argv
 	// are the ones below, and no process starts.
 	if o.dryRun {
-		return applyDryRun(*e, before, target, args, out)
+		return applyDryRun(*e, before, target, args)
 	}
-	fmt.Fprintf(out, "APPLY BEFORE name=%s kind=%s installed=%s path=%s latest=%s source=%s\n", field(name), field(e.Kind), field(before.Version), field(before.Path), field(target), field(e.Latest))
-	fmt.Fprintf(out, "APPLY RUN name=%s argv=%d version=%s: %s\n", field(name), len(args), field(target), oneline.Escape(strings.Join(args, " ")))
+	res := &tool.Out{Verb: "apply", Status: tool.OK}
+	res.Item("before", "name", name, "kind", e.Kind, "installed", before.Version, "path", before.Path, "latest", target, "source", e.Latest)
+	res.Item("run", "name", name, "argv", len(args), "version", target, "command", strings.Join(args, " "))
 	ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
 	p := process(ctx, args, nil, ChildCap)
 	cancel()
 	after := Installed(context.Background(), *e, o.timeout, false)
-	fmt.Fprintf(out, "APPLY AFTER name=%s installed=%s was=%s\n", field(name), field(after.Version), field(before.Version))
+	res.Item("after", "name", name, "installed", after.Version, "was", before.Version)
 	reason := p.Reason
 	if reason == "" && !after.Known() {
 		reason = after.Reason
@@ -600,30 +607,28 @@ func apply(entries []Entry, name, help string, o options, out, errs io.Writer, e
 		reason = "installed " + after.Version + ", asked " + target
 	}
 	if reason != "" {
-		fmt.Fprintf(errs, "APPLY FAIL name=%s from=%s to=%s took=%s: %s\n", field(name), field(before.Version), field(after.Version), time.Since(started).Round(time.Millisecond), oneline.Escape(reason))
-		return 1
+		res.Status, res.Exit, res.Why = tool.Failed, 1, []string{reason}
 	}
-	fmt.Fprintf(out, "APPLY OK name=%s from=%s to=%s took=%s\n", field(name), field(before.Version), field(after.Version), time.Since(started).Round(time.Millisecond))
-	return 0
+	return res.Fact("name", name).Fact("from", before.Version).Fact("to", after.Version).Fact("took", env.Now().Sub(started).Round(time.Millisecond).String())
 }
 
-// applyDryRun prints what `apply` would do to one entry and does none of it: the
-// entry's line as `status` prints it (installed against the target the real run would
-// install), what would be installed and from where, and the argv the real run's APPLY
-// RUN line carries. No process starts and nothing is written; it exits 0, the plan
-// having been made (SPEC-UPDATE rule 13, `--dry-run`).
-func applyDryRun(e Entry, before Read, target string, argv []string, out io.Writer) int {
+// applyDryRun is what `apply` would do to one entry, done to none of it: the entry's
+// item as `status` shows it (installed against the target the real run would
+// install), and the plan, the argv the real run's RUN item carries. No process starts
+// and nothing is written; it exits 0, the plan having been made (SPEC-UPDATE rule 13,
+// `--dry-run`).
+func applyDryRun(e Entry, before Read, target string, argv []string) *tool.Out {
 	r := entryRead{Entry: e, Installed: before, Latest: Read{Version: target, Source: e.Latest}}
 	state, _ := verdict(r)
+	res := &tool.Out{Verb: "apply", Status: tool.OK}
+	res.Fact("name", e.Name).Fact("dry_run", true).Fact("from", before.Version).Fact("to", target).Fact("source", e.Latest)
 	if before.Known() {
-		fmt.Fprintf(out, "STATUS %s name=%s kind=%s installed=%s latest=%s path=%s source=%s owner=%s\n", state, field(e.Name), field(e.Kind), field(before.Version), field(target), field(before.Path), field(e.Latest), field(e.Owner))
+		res.Item(strings.ToLower(state), "name", e.Name, "kind", e.Kind, "installed", before.Version, "latest", target, "path", before.Path, "source", e.Latest, "owner", e.Owner)
 	} else {
-		fmt.Fprintf(out, "STATUS UNKNOWN name=%s kind=%s installed=- path=%s source=%s: %s (%s)\n", field(e.Name), field(e.Kind), field(before.Path), field(e.Latest), oneline.Escape(before.Reason), oneline.Escape(before.Remedy))
+		res.Item("unknown", "name", e.Name, "kind", e.Kind, "installed", "", "path", before.Path, "source", e.Latest, "reason", before.Reason, "remedy", before.Remedy)
 	}
-	fmt.Fprintf(out, "APPLY DRY-RUN would install %s %s from %s\n", field(e.Name), field(target), field(e.Latest))
-	fmt.Fprintf(out, "APPLY DRY-RUN would run argv=%d version=%s: %s\n", len(argv), field(target), oneline.Escape(strings.Join(argv, " ")))
-	fmt.Fprintf(out, "APPLY DRY-RUN OK name=%s nothing installed, nothing written\n", field(e.Name))
-	return 0
+	res.Item("plan", "name", e.Name, "argv", len(argv), "version", target, "command", strings.Join(argv, " "))
+	return res.Note("dry run: nothing installed, nothing written")
 }
 
 // movedChildTimeout is the default deadline one child of `moved` gets, and

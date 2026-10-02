@@ -148,5 +148,9 @@ func reportVerb(c *tool.Call, send bool, env Environment) *tool.Out {
 		max: c.Int("max"), timeout: c.Dur("timeout"), budget: c.Dur("budget"),
 		kinds: *c.Get("kind").(*kindFlags), draft: c.Bool("draft"), send: send || (c.Given("send") && c.Bool("send")),
 	}
-	return tool.Exit(checked("nova-version", "report", "REPORT", o, nil, c.Stdout, c.Stderr, env))
+	verb := "report"
+	if send {
+		verb = "send"
+	}
+	return tool.Exit(emit(checked("nova-version", verb, o, nil, env), false, o.max, c.Stdout, c.Stderr))
 }
