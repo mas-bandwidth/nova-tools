@@ -281,8 +281,8 @@ near the end, and the sections below say how each is met.
     written under the export's own date with the `day_basis` column set to
     the zone the export declares (`America/Los_Angeles`, `+02:00`, as it
     stands), never `utc`. Every other row is `day_basis=utc`. A bus line
-    for such a row carries the zone as its seventh field, `day_basis=<zone>`
-    , a six-field line is a UTC day, and `report` writes the seventh
+    for such a row carries the zone as its seventh field, `day_basis=<zone>`,
+    a six-field line is a UTC day, and `report` writes the seventh
     field on exactly the lines whose row it would write under a zone, so
     the basis survives the trip through a user's note. An export
     that declares no zone and no timestamps is `TOKENS UNREADABLE`, never
