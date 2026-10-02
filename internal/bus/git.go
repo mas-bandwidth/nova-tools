@@ -180,9 +180,9 @@ type gitError struct {
 // onto a single line -- but ONE LINE IS NOT ONE BOUNDED LINE. git is a tool that can be
 // verbose on failure: a rebase that touched many files, a push refused with a paragraph
 // of advice, a fetch that listed every ref. All of it arrives through CombinedOutput and
-// all of it used to reach the caller's stream as one arbitrarily long line, which in a
+// all of it reaches the caller's stream as one arbitrarily long line, which in a
 // harness is a line nobody can page past. A kilobyte is git's first several lines, which
-// is where the reason always is; the rest is marked and dropped, so a reader knows there
+// is where the reason is; the rest is marked and dropped, so a reader knows there
 // was more and can run the same git themselves.
 const gitOutputCap = 1024
 

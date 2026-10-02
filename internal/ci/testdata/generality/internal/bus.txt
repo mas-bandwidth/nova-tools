@@ -2,12 +2,9 @@
 # ceiling: 15
 internal/bus/address.go:space 2
 internal/bus/bus.go:space 1
-internal/bus/cursor.go:freddy 1
 internal/bus/cursor.go:space 1
 internal/bus/git.go:space 1
-internal/bus/note.go:rowan 1
 internal/bus/note.go:space 1
-internal/bus/note.go:studio 1
 internal/bus/ops.go:hulk 1
 internal/bus/ops.go:rowan 1
 internal/bus/ops.go:space 2

@@ -75,8 +75,7 @@ var laneStateFiles = []string{ReceiptsName, CursorName, OpenName, IndexName, Bea
 // `.md`, it sits in a lane, so the lane walk parsed it, it had no `From:` line, and every
 // reader on the bus was told `INBOX UNREADABLE` about it forever while `check` failed the
 // whole bus over it. On a real bus it was the single file that failed at every
-// date -- the one finding the legacy tolerance could not forgive, because a README genuinely
-// cannot say when it was written and genuinely is not a note.
+// The README cannot say when it was written and is not a note.
 //
 // So a lane may hold exactly one non-note, non-state file: `README.md`, the file a person
 // opening the lane in a browser reads first. It is stepped over by the lane walk, by the
@@ -202,17 +201,15 @@ func ReadCursor(root, lane string) (Cursor, error) {
 		if i > 0 {
 			return Cursor{}, fmt.Errorf("%s: line %d: a cursor is one line", CursorPath(lane), r.line)
 		}
-		// Fields and not Cut, because the line is now up to four tokens and none of them
-		// holds a space: the commit, the RFC 3339 stamp, `open=<n>` and `legacy=<date>`. A
-		// fifth token is a refusal rather than a guess, on the same rule as an INDEX line's
+		// Fields and not Cut, because the line is up to four tokens and none holds a space.
+		// A fifth token is a refusal rather than a guess, on the same rule as an INDEX line's
 		// field count.
 		//
 		// The two trailing tokens are read BY THEIR PREFIX and not by their position, which
 		// is what makes a new one addable without every older cursor becoming unreadable:
 		// a cursor written before `open=` existed has two tokens and is trusted, and one
 		// written before `legacy=` has three. An unknown token is still a refusal -- the
-		// tolerance is for tokens this reader knows and the writer did not, never the other
-		// way round.
+		// tolerance is for tokens this reader knows and the writer did not.
 		fields := strings.Fields(r.text)
 		if len(fields) > cursorFields {
 			return Cursor{}, fmt.Errorf("%s: line %d: a cursor is <commit> [<stamp>] [%s<n>] [%s<date>], got %d tokens", CursorPath(lane), r.line, cursorOpenPrefix, cursorLegacyPrefix, len(fields))
@@ -284,16 +281,14 @@ const (
 	cursorLegacyPrefix = "legacy="
 )
 
-// LegacyDateLayout and LegacyInstantLayout are the two shapes a legacy line takes, in a
-// cursor and in the two flags that write one: a UTC calendar date, which means midnight at
-// its start, or an RFC 3339 UTC instant.
+// LegacyDateLayout and LegacyInstantLayout are the two shapes a legacy line takes: a UTC
+// calendar date (midnight at its start) or an RFC 3339 UTC instant.
 //
 // WHY THE INSTANT EXISTS, measured on the hour a family of five switched to this tool. They
 // drew the line at TOMORROW's date, reasonably: nothing written before tomorrow was written
 // under the tool, so the open list would start at zero. It did — and it stayed at zero. A
 // date is midnight at its START, so every note any of them sent that same afternoon was
-// dated before tomorrow's midnight and was therefore legacy: five lines writing to each
-// other all day, and not one note on anybody's open list, not even under `--full`. A date
+// dated before tomorrow's midnight and was therefore legacy. A date
 // can only ever name a boundary between days, and the boundary they needed was a MOMENT --
 // the moment they switched, which they knew to the second and could not say.
 //
@@ -331,8 +326,8 @@ func ParseLegacyBefore(value string) (time.Time, error) {
 // THE FAILURE, from a friend's first week. A line drew its switch at a DATE -- the shape
 // v0.10.0's own first-advance guard handed out, tomorrow's -- and a date is midnight at its
 // START, so the line stood in front of everything anybody had written that day. His cursor
-// read `open=0 legacy=2026-09-10` and his inbox listed nothing, run after run, on a bus
-// that was busy. Nothing was broken and nothing was lost: every note was still on the bus,
+// read `open=0 legacy=<date>` and listed nothing, run after run, on a bus that was busy.
+// Nothing was broken and nothing was lost: every note was still on the bus,
 // behind a line he had drawn himself and had no way to see. What was missing was a
 // SENTENCE. The tool knew the line was a date, knew the date was still to come, and knew
 // the one command that would fix it, and it said none of the three.
@@ -412,8 +407,8 @@ func laneFilePresent(root, path string) bool {
 // how many notes this run was carrying; see Cursor.Open for why a count of another file's
 // contents lives here.
 // The fourth field is the switch-day line this reader read under, written only when there
-// is one: a cursor with no legacy line is three tokens, which is exactly what every cursor
-// written before the line existed already is.
+// is one: a cursor with no legacy line is three tokens, which every cursor without the line
+// already is.
 func WriteCursor(root, lane, commit string, open int, legacy string, now time.Time) error {
 	if err := ValidCommitHex(commit); err != nil {
 		return err
@@ -573,9 +568,8 @@ const openHeardToken = "heard"
 // ValidOpenID checks an id appearing in an OPEN entry.
 //
 // Modern notes carry <sender>-<12 hex>, generated by AssignID. Historical notes written
-// under earlier tools or conventions carry legacy IDs (such as "freddy-pr827-001",
-// "bo-legacy-001", or "Bo-Legacy-001"), which are accepted here so that carry-history does
-// not publish an OPEN state that subsequent incremental reads refuse.
+// under earlier tools or conventions carry legacy IDs, which are accepted here so that
+// carry-history does not publish an OPEN state that subsequent incremental reads refuse.
 func ValidOpenID(id string) error {
 	if err := ValidID(id); err == nil {
 		return nil
@@ -860,8 +854,8 @@ func (i *Index) ByID(id string) (*IndexEntry, bool) { e, ok := i.byID[id]; retur
 // CLEAN -- the note paths differed and nothing else was touched -- so the catalogue widened
 // the conflict surface.
 //
-// It used to be documented and left there, and the scenario run showed what that cost: the
-// tool aborted cleanly and said so, and the bench was then WEDGED, because the person's own
+// It was documented and left there, and the scenario run showed what that cost: the
+// tool aborted cleanly and said so, and the bench was then WEDGED, because the checkout
 // `git pull --rebase` landed in a half-done rebase with `UU from-<lane>/INDEX` and nothing
 // on the bus saying what to do next. So the conflict is settled instead, by union, in two
 // places -- the `merge=union` attribute this tool writes at the bus root (attributes.go)
@@ -898,7 +892,7 @@ func AppendIndexLine(root string, e IndexEntry) error {
 // which is a thing a person asks for and watches: it rewrites a file rather than adding to
 // one, and a rewrite of shared state is not something a report should do on its own.
 //
-// A note with no id contributes no line. A legacy note is addressed by path, everywhere,
+// A note with no id contributes no line. A legacy note is addressed by path,
 // and putting it in a catalogue keyed on ids would be inventing an id for it.
 func RebuildLaneIndex(root string, c *Config, t *Bus, lane string) (int, error) {
 	var entries []IndexEntry
@@ -933,7 +927,7 @@ func RebuildLaneIndex(root string, c *Config, t *Bus, lane string) (int, error) 
 // write in place makes all three reachable by killing the tool in the microsecond between
 // truncate and write -- a laptop lid, a CI timeout, a ctrl-C -- and the file it leaves is
 // not the old one and not the new one. A rename is atomic on every filesystem this runs
-// on, so a kill leaves the OLD file, entire, which is a state every reader here already
+// on, so a kill leaves the OLD file, entire, which is a state every reader handles.
 // handles. The temporary is in the SAME DIRECTORY, because a rename across filesystems is
 // not a rename, and atomicfile names it `.<file>.tmp-<8 hex>`, exclusive and unpredictable,
 // so a planted link is never written through and a stranded one is a name the lane walk

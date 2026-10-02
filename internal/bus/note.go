@@ -76,7 +76,7 @@ type Header struct {
 	// Host is the machine that posted the note, and it is OPTIONAL: an absent Host line is
 	// the shape every note on every bus had before this line existed, and it stays that
 	// shape byte for byte. It exists because one name can post from two places -- the
-	// keeper on the Studio and the bud on the Air both post as Rowan -- and the subject
+	// The same name can post from two places -- and the subject
 	// convention that told them apart, `[bud air]`, spent the subject line on routing.
 	//
 	// It is NOT in the id's preimage (see canonical): the id says a note is the same note
@@ -486,7 +486,7 @@ func (h Header) LineOf(key string) int { return h.lines[key] }
 var ErrNoFrom = fmt.Errorf("no %s line", KeyFrom)
 
 // Validate holds the rules every note obeys, whether it is being sent now or was written
-// by hand a week ago. It does NOT check the Id line: a note without one is legacy and is
+// It does NOT check the Id line: a note without one is legacy and is
 // addressed by path, which is the whole of the compatibility promise.
 func (h Header) Validate(c *Config) error {
 	if problems := h.Problems(c); len(problems) > 0 {

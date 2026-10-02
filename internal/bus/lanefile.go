@@ -9,7 +9,7 @@ import (
 )
 
 // A LANE'S STATE FILES ARE REGULAR FILES, AND THIS TOOL NEVER WRITES THROUGH A LINK
-// (security#30, finding 1).
+// This prevents writing through links to escape the bus directory.
 //
 // insideRoot answers a different question and answers it well: it refuses a path that
 // LEXICALLY leaves the bus. It resolves nothing, because it is asked of a path this tool
@@ -30,8 +30,7 @@ import (
 // Save (ops.go) and replaceLaneFile's rename were already immune and are left alone; this
 // is the same rule they keep, written down once for the writes that did not.
 //
-// EVERY COMPONENT FROM THE BUS ROOT DOWN, and not the last one only (Fable's cold read of
-// #226). A lane is a DIRECTORY in the bus, and a commit can make `from-x` itself a symlink
+// EVERY COMPONENT FROM THE BUS ROOT DOWN, and not the last one only. A lane is a DIRECTORY in the bus, and a commit can make `from-x` itself a symlink
 // as easily as it can make `from-x/INDEX` one; a check of the final component only let the
 // whole lane -- INDEX, RECEIPTS, CURSOR, OPEN and every note -- be written outside the bus
 // with nothing raised. The walk starts AT THE ROOT and not above it, because the bus's own
