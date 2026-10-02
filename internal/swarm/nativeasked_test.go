@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // THE DOGFOOD'S OWN TRANSCRIPT TAIL, 2026-09-22 (rowan-new reports/dogfood-runtime-2026-09-22.md,
@@ -123,17 +125,11 @@ func TestAskedSeparatesTheCardThatAskedFromTheThreeItIsNot(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, asked := Asked(tc.run)
 			if tc.want == "" {
-				if asked {
-					t.Fatalf("this run did not end by asking, and the test claimed the question %q", got)
-				}
+				require.False(t, asked, "this run did not end by asking, and the test claimed the question %q", got)
 				return
 			}
-			if !asked {
-				t.Fatalf("a card that ended on %q was not read as asking", tc.want)
-			}
-			if got != tc.want {
-				t.Fatalf("the question carried is %q, want %q", got, tc.want)
-			}
+			require.True(t, asked, "a card that ended on %q was not read as asking", tc.want)
+			require.Equal(t, tc.want, got, "the question carried is %q, want %q", got, tc.want)
 		})
 	}
 }
@@ -148,29 +144,18 @@ func TestWriteAskedResultNamesTheQuestionAndItsAuthor(t *testing.T) {
 	question := "Step 2: May I write RESULT.md?"
 
 	path, wrote, err := WriteAskedResult(job, "dogfood-question", question)
-	if err != nil || !wrote {
-		t.Fatalf("the asked report was not written: wrote=%v err=%v", wrote, err)
-	}
+	require.NoError(t, err, "the asked report was not written: wrote=%v err=%v", wrote, err)
+	require.True(t, wrote, "the asked report was not written: wrote=%v err=%v", wrote, err)
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
-	if want := "RESULT: ASKED " + question; lines[0] != want {
-		t.Fatalf("line 1 is %q, want %q", lines[0], want)
-	}
-	if !strings.Contains(string(raw), AskedWrittenBy) {
-		t.Fatalf("the report does not say who wrote it:\n%s", raw)
-	}
-	if !strings.Contains(string(raw), "dogfood-question") {
-		t.Fatalf("the report does not name the card:\n%s", raw)
-	}
-	if r := ParseReport(raw); r.Class != ClassPlanOnly {
-		t.Fatalf("a report the machinery wrote classed %q; it must be %q, never counted as work done", r.Class, ClassPlanOnly)
-	}
-	if !AskedReport(path) {
-		t.Fatal("the report this file wrote is not recognised as one the machinery wrote")
-	}
+	want := "RESULT: ASKED " + question
+	require.Equal(t, want, lines[0], "line 1 is %q, want %q", lines[0], want)
+	require.Contains(t, string(raw), AskedWrittenBy, "the report does not say who wrote it:\n%s", raw)
+	require.Contains(t, string(raw), "dogfood-question", "the report does not name the card:\n%s", raw)
+	r := ParseReport(raw)
+	require.Equal(t, ClassPlanOnly, r.Class, "a report the machinery wrote classed %q; it must be %q, never counted as work done", r.Class, ClassPlanOnly)
+	require.True(t, AskedReport(path), "the report this file wrote is not recognised as one the machinery wrote")
 }
 
 // A CARD THAT PUBLISHED OWNS ITS REPORT. The write refuses rather than overwriting it, on
@@ -180,25 +165,14 @@ func TestWriteAskedResultNeverOverwritesACardsOwnReport(t *testing.T) {
 
 	job := t.TempDir()
 	own := []byte("RESULT: dogfood-question sha=abc123def456\n\n## Head\nfindings: 0\n")
-	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), own, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(job, "RESULT.md"), own, 0o644))
 
 	path, wrote, err := WriteAskedResult(job, "dogfood-question", "May I write RESULT.md?")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if wrote || path != "" {
-		t.Fatalf("a card's own report was overwritten (path=%q)", path)
-	}
+	require.NoError(t, err)
+	require.False(t, wrote, "a card's own report was overwritten (path=%q)", path)
+	require.Empty(t, path, "a card's own report was overwritten (path=%q)", path)
 	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != string(own) {
-		t.Fatalf("the card's own report was changed:\n%s", raw)
-	}
-	if AskedReport(filepath.Join(job, "RESULT.md")) {
-		t.Fatal("a card's own report was read as one the machinery wrote")
-	}
+	require.NoError(t, err)
+	require.Equal(t, string(own), string(raw), "the card's own report was changed:\n%s", raw)
+	require.False(t, AskedReport(filepath.Join(job, "RESULT.md")), "a card's own report was read as one the machinery wrote")
 }
