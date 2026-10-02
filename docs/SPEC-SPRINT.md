@@ -496,7 +496,7 @@ and member. It is 1 when the card is cut and changes on every redeal, drain,
 level move and withdrawal. A take by id and every finish name the generation
 the worker holds (`<card>@<gen>`); one that names none is refused, and one
 whose generation is not the live one is refused as stale and changes nothing.
-A take by selection (`--as` and `--limit`) takes the live generation; a finish
+A take by selection (`--as` and `--max`) takes the live generation; a finish
 by selection without `--as` is refused. A finish that arrives first moves the card to
 the member's `ok` or `failed` cell (counted in done), which no redistribution touches. A retried finish with the same operation
 id (`--op`) returns the original result, with no second counter or notification.
@@ -861,7 +861,7 @@ refuses the whole step, which writes nothing (a verb refused has written
 nothing). A verb that names its cards or notes (ids, `--group`, an ack's
 notes) applies all or none: when one is refused the step writes nothing and
 names every one, the refused with why and the rest as not written; a verb
-given a selection instead (`--stream`, `--col`, `--limit`, `--read-ok`) moves
+given a selection instead (`--stream`, `--col`, `--max`, `--read-ok`) moves
 what is eligible. Each answer is
 recorded as a `decided` notification; a stopped stream's judgment stays open
 while it is stopped. `wait <notification>`
@@ -1007,7 +1007,7 @@ layer retires this section.
 
 ## 11. Verbs
 
-Each takes a set and is one step. A set is ids, a stream, a column, `--limit n`,
+Each takes a set and is one step. A set is ids, a stream, a column, `--max n`,
 or an inbox group (`--group <id>`; a group number is refused, naming the ids).
 Every verb taking `--group` takes `--expect <n>`: when the group's members now
 number otherwise the verb is refused, changes nothing, and names the size now
@@ -1017,7 +1017,8 @@ and the summary line. Every judgment verb takes `--answers <notification>`.
 Every store verb takes `--redis`, `--actor`,
 `--op <id>` (the same id again, for the same verb with the same arguments, returns the recorded
 result; recorded for another verb or other arguments it is a conflict and is
-refused), `--json` and `--max`. `--actor` has no default: it is `--actor`, else
+refused), `--json` and `--max` (`--limit` is `--max` for one release). `--actor` has no
+default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, fleet
