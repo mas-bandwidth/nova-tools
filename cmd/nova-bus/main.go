@@ -1844,12 +1844,10 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			// instant, everything on the bus at that moment is history and everything after
 			// it is news, which is the sentence this message actually makes.
 			//
-			// It hands over --legacy-now rather than the timestamp it would print, a contrast that
-			// is a second fix on top of the first. A pasted timestamp is a line drawn at the
-			// moment of the REFUSAL, which may be an hour before the reader gets round to
-			// running it; --legacy-now draws the line at the moment of the READ so the pasted command is the read moment itself, not one the reader has to type or could mistype against any printed instant.
-			// nobody has to retype correctly is a command nobody mistypes into a date, which
-			// is exactly what the reader this was written for did.
+			// This flag passes --legacy-now instead of a timestamp. A pasted timestamp fixes a
+			// line at the moment of refusal, which may be before the reader runs the command.
+			// --legacy-now draws the line at the moment of read so the pasted command matches the
+			// read moment itself, avoiding mistyped timestamps.
 			fmt.Fprintf(stderr, "INBOX REFUSED: this is the first advance on %s and %d of the %d notes it would carry are dated before now, so every run after it would print all %d again; draw the switch-day line at this instant with `nova-bus inbox --bus %s --as %s --receipt-max-words %d --full --legacy-now --advance --remote %s --branch %s`, which takes everything already on the bus as read and leaves you what arrives after that moment, or pass --carry-history to carry all %d\n",
 				oneline.Field(bus.CursorPath(me.Lane)), old, len(res.Open), len(res.Open),
 				oneline.Quote(o.busDir), oneline.Quote(me.Name), o.maxWords,
@@ -2657,11 +2655,10 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
 	quietBeats := f.fs.Bool("quiet-beats", false, "accepted for callers that pass it and changes nothing: a change that is only beats and cursors never wakes a wait, with or without this flag; it is not news")
 	onNote := f.fs.Bool("on-note", false, "wait only for a note addressed to the caller: on arrival exit 0 with the note, and on an empty tick exit 0 with WAIT TIMEOUT and the rearm line; requires --timeout, --bus, --as, --remote and --branch; incompatible with --open and --full")
-	// --max-commits IS HERE BECAUSE THE REMEDY HAS TO BE TYPEABLE AT THE VERB THAT NEEDS IT
-	// is the same bound the verb carries. Inside inboxListing, which `wait` polls through, the since-walk is bounded so a
-	// wait is bounded already; the verb has no flag that widens the bound, so a
-	// loop ran for days behind a cursor the bus had left far behind, printing the bounded
-	// line's `remedy="raise --max-commits"` at a verb that refused the flag.
+	// This is the same bound the verb carries. Inside inboxListing, which `wait` polls through,
+	// the since-walk is bounded, so a wait is bounded already. The flag widens the bound
+	// so a loop does not run for days behind a cursor the bus has left far behind, printing
+	// the bounded line's `remedy="raise --max-commits"` at a verb that refused the flag.
 	maxCommits := f.fs.Int("max-commits", defaultMaxCommits, "how many commits a since-walk may cross before it stops and names the remedy; raise it to read a staler cursor")
 	// --remote and --branch are required here and conditional on inbox, because a wait
 	// FETCHES: that is the difference between waiting and sleeping. A wait that read only
