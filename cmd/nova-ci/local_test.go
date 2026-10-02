@@ -210,21 +210,34 @@ func TestLocalBuildFailureIsRed(t *testing.T) {
 	}
 }
 
-// A SLEEPS skip off the ledger fails make test with no red test: the
-// CI-SLEEPS line is printed and the verb exits 2, as slowtests does on every
-// leg. (A CI-SLOW line alone exits make 0 now: it is a measurement.)
-func TestLocalSleepsOffTheLedgerExitsTwo(t *testing.T) {
+// make test failing with no red test is one of two things. A SLEEPS skip off
+// the ledger is a CI-SLEEPS line: the check said no, exit 1, as slowtests says
+// it on every leg. With no CI-SLEEPS line a step could not run: exit 2. (A
+// CI-SLOW line alone exits make 0: it is a measurement.)
+func TestLocalMakeFailureWithNoRedTest(t *testing.T) {
 	t.Parallel()
-	stream := `{"Action":"output","Package":"example.com/m/cmd/a","Test":"TestSleeps","Output":"SLEEPS: waits\n"}
+	sleeps := `{"Action":"output","Package":"example.com/m/cmd/a","Test":"TestSleeps","Output":"SLEEPS: waits\n"}
 {"Action":"skip","Package":"example.com/m/cmd/a","Test":"TestSleeps","Elapsed":0}
 {"Action":"pass","Package":"example.com/m/cmd/a","Elapsed":0.2}
 CI-SLEEPS test=TestSleeps package=example.com/m/cmd/a: skipped for a wall-clock wait and not on internal/ci/sleeps-skips_allowlist.txt; inject a clock or tag it //go:build functional
 `
-	f := localFixture(t, "./cmd/a\n", localReply{prefix: "nice -n 15 make test ", stdout: stream, code: 2})
-	code, stdout, _ := runLocal(t, f)
-	require.Equal(t, 2, code, "exit = %d, want 2\n%s", code, stdout)
-	for _, want := range []string{"CI-SLEEPS test=TestSleeps", "red=0 make-exit=2", "a SLEEPS skip off the ledger"} {
-		assert.Contains(t, stdout, want, "stdout lacks %q:\n%s", want, stdout)
+	for _, c := range []struct {
+		name, stream string
+		want         int
+		says         []string
+	}{
+		{"a CI-SLEEPS line is a no", sleeps, 1, []string{"CI-SLEEPS test=TestSleeps", "red=0 make-exit=2", "failed on 1 CI-SLEEPS line(s) above: a SLEEPS skip off the ledger"}},
+		{"no CI-SLEEPS line is a step that could not run", "make: *** [test] Error 2\n", 2, []string{"red=0 make-exit=2", "no CI-SLEEPS line: a step could not run"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			f := localFixture(t, "./cmd/a\n", localReply{prefix: "nice -n 15 make test ", stdout: c.stream, code: 2})
+			code, stdout, _ := runLocal(t, f)
+			assert.Equal(t, c.want, code, "exit = %d, want %d\n%s", code, c.want, stdout)
+			for _, want := range c.says {
+				assert.Contains(t, stdout, want, "stdout lacks %q:\n%s", want, stdout)
+			}
+		})
 	}
 }
 

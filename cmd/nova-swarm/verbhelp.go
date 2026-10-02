@@ -31,6 +31,19 @@ var verbExit = map[string]string{
 	"slots release": "exit codes: 0 the leases named are freed; 2 a lease's holder still runs (SLOTS KEPT; --force frees it), a missing flag or a store that cannot be read",
 }
 
+// verbEffect is what running a verb does beyond printing, the last line of its -h, in the
+// skeleton's words (internal/tool Effect: inspection, local write or delivery; docs/
+// STANDARD.md section 2, "Its effects are explicit").
+var verbEffect = map[string]string{
+	"version":      "inspection: reads, writes nothing",
+	"doctor":       "inspection: reads, writes nothing",
+	"lint":         "inspection: reads, writes nothing",
+	"template":     "inspection: prints a template, writes nothing",
+	"worker check": "inspection: reads, writes nothing",
+	"native":       "delivery: runs the card's harness, which calls the model's provider, and writes the job directory under --root",
+	"member":       "delivery: joins a sprint's fleet through --server, runs its cards as native children, pushes their commits and opens their pull requests",
+}
+
 // commonExit is the codes of every other verb.
 const commonExit = "exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation"
 
@@ -60,6 +73,9 @@ func recoverHelp(out io.Writer, code *int) {
 	verbflag.Print(&b, "nova-swarm", strings.Replace(usage, exitParagraph, verbExits(name), 1), h.FS)
 	*code = 0
 	help := verbflag.Insert(b.String(), verbHelpLines(name))
+	if e, ok := verbEffect[name]; ok {
+		help += "effect: " + e + "\n"
+	}
 	if _, err := fmt.Fprint(out, help); err != nil {
 		// the help did not reach its reader (a closed stdout): the exit code says so
 		*code = 1

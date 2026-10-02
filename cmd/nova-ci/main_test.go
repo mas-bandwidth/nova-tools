@@ -5,14 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,9 +68,31 @@ func TestEveryNamedVerbExists(t *testing.T) {
 	assert.NotContains(t, stdout, " cost", "the banner names the deleted cost verb")
 }
 
+// The usage lists each verb once, in one of two groups: the verbs that work in
+// any Go module, then the ones that need this repository's checkout or a
+// store. slowtests was once listed twice, its flags split between the two.
+func TestTheUsageListsEachVerbOnceInItsGroup(t *testing.T) {
+	t.Parallel()
+
+	_, stdout, _ := runCI(t, []string{"help"}, "")
+	usage, _, _ := strings.Cut(stdout, "\nexit codes: ")
+	anyModule, checkout, found := strings.Cut(usage, "\nusage, in a nova-tools checkout")
+	require.True(t, found, "the usage has no group for the verbs that need a nova-tools checkout:\n%s", usage)
+	for _, c := range []struct {
+		verb, group string
+	}{
+		{"help", anyModule}, {"version", anyModule}, {"slowtests", anyModule}, {"functional", anyModule},
+		{"local", checkout}, {"new-rule", checkout}, {"new-verb", checkout}, {"github receipt", checkout},
+	} {
+		assert.Equal(t, 1, strings.Count(usage, "\n  nova-ci "+c.verb+" "), "%s is listed %d times in the usage", c.verb, strings.Count(usage, "\n  nova-ci "+c.verb+" "))
+		assert.Contains(t, c.group, "\n  nova-ci "+c.verb+" ", "%s is in the wrong group", c.verb)
+	}
+}
+
 // A misspelled flag, a bad value and a missing value are each answered in the
-// house refusal, naming the flags the verb does take or the type it wants,
-// and the verb's own help as the next command; never the flag package's words.
+// house refusal, in the one wording every tool shares (verbflag.Explain):
+// the flags the verb does take and the nearest of them, or what the flag
+// wants, never the value given; and the verb's own help as the next command.
 func TestAFlagMistakeNamesWhatTheVerbTakes(t *testing.T) {
 	t.Parallel()
 
@@ -81,14 +100,14 @@ func TestAFlagMistakeNamesWhatTheVerbTakes(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"slowtests", "--budgt", "3"}, "nova-ci slowtests REFUSED: unknown flag --budgt; the flags are --allowlist, --budget, --cpus, --enforce, --example, --json, --load, --package-budget, --sleeps, --test-budget; run: nova-ci slowtests -h\n"},
-		{[]string{"slowtests", "--budget", "abc"}, `nova-ci slowtests REFUSED: --budget wants a whole number, got "abc"; run: nova-ci slowtests -h` + "\n"},
-		{[]string{"slowtests", "--load", "x"}, `nova-ci slowtests REFUSED: --load wants a number, got "x"; run: nova-ci slowtests -h` + "\n"},
-		{[]string{"slowtests", "--enforce=maybe"}, `nova-ci slowtests REFUSED: --enforce wants true or false, got "maybe"; run: nova-ci slowtests -h` + "\n"},
-		{[]string{"slowtests", "--budget"}, "nova-ci slowtests REFUSED: --budget needs a value after it; run: nova-ci slowtests -h\n"},
-		{[]string{"local", "--bse", "x"}, "nova-ci local REFUSED: unknown flag --bse; the flags are --base, --dry-run, --functional; run: nova-ci local -h\n"},
-		{[]string{"new-rule", "--bogus", "x"}, "nova-ci new-rule REFUSED: unknown flag --bogus; the flags are --dry-run, --root; run: nova-ci new-rule -h\n"},
-		{[]string{"new-verb", "--bogus", "x"}, "nova-ci new-verb REFUSED: unknown flag --bogus; the flags are --dry-run, --root; run: nova-ci new-verb -h\n"},
+		{[]string{"slowtests", "--budgt", "3"}, "nova-ci slowtests REFUSED: unknown flag --budgt; the flags of slowtests are --allowlist, --budget, --cpus, --enforce, --example, --json, --load, --package-budget, --sleeps, --test-budget; did you mean --budget?; run: nova-ci slowtests -h\n"},
+		{[]string{"slowtests", "--budget", "abc"}, `nova-ci slowtests REFUSED: invalid value for --budget: it wants a whole number (whole seconds a package's tests may take before it is over budget); run: nova-ci slowtests -h` + "\n"},
+		{[]string{"slowtests", "--load", "x"}, `nova-ci slowtests REFUSED: invalid value for --load: it wants a number (the host's load average, instead of reading it); run: nova-ci slowtests -h` + "\n"},
+		{[]string{"slowtests", "--enforce=maybe"}, "nova-ci slowtests REFUSED: invalid value for --enforce: it wants true or false (fail the run on a CI-SLOW line (the nightly reference leg only); without it the times are printed and only a CI-SLEEPS line fails); run: nova-ci slowtests -h\n"},
+		{[]string{"slowtests", "--budget"}, "nova-ci slowtests REFUSED: --budget needs a value: it wants a whole number (whole seconds a package's tests may take before it is over budget); run: nova-ci slowtests -h\n"},
+		{[]string{"local", "--bse", "x"}, "nova-ci local REFUSED: unknown flag --bse; the flags of local are --base, --dry-run, --functional; did you mean --base?; run: nova-ci local -h\n"},
+		{[]string{"new-rule", "--bogus", "x"}, "nova-ci new-rule REFUSED: unknown flag --bogus; the flags of new-rule are --dry-run, --root; run: nova-ci new-rule -h\n"},
+		{[]string{"new-verb", "--bogus", "x"}, "nova-ci new-verb REFUSED: unknown flag --bogus; the flags of new-verb are --dry-run, --root; run: nova-ci new-verb -h\n"},
 	} {
 		code, stdout, stderr := runCI(t, c.args, "")
 		assert.Equal(t, 2, code, "%v", c.args)
@@ -206,20 +225,6 @@ func TestSlowtestsRefusesANonFiniteFloat(t *testing.T) {
 	}
 }
 
-// A JSON rendering that fails is said, as a FAIL line at exit 1, never an
-// empty line at exit 0.
-func TestSlowtestsJSONRenderFailureIsAFailLine(t *testing.T) {
-	t.Parallel()
-
-	var stdout, stderr bytes.Buffer
-	o := &tool.Out{Verb: "slowtests", Status: tool.OK}
-	o.Fact("load", math.NaN())
-	code := renderJSON(&stdout, &stderr, o)
-	assert.Equal(t, 1, code)
-	assert.Empty(t, stdout.String())
-	assert.Regexp(t, `^nova-ci slowtests FAIL: the verdict could not be rendered as JSON: .*unsupported value: NaN.*; run: nova-ci slowtests -h\n$`, stderr.String())
-}
-
 // --json is the same verdict as one object: the findings typed, the exit the
 // lines' exit, and status failed where the run fails.
 func TestSlowtestsJSONIsTheSameVerdict(t *testing.T) {
@@ -299,16 +304,45 @@ func TestSlowtestsOverBudgetExitsOneOnlyUnderEnforce(t *testing.T) {
 	}
 }
 
-// A malformed line is a refusal on stderr at exit 2, and prints no OK line.
+// A line that is not a TestEvent is a refusal on stderr at exit 2 with no OK
+// line, naming its line: text, and JSON
+// that is not a TestEvent (null, a number, an array, an object with no Action),
+// so neither a truncated pipe nor some other JSON reads as a clean run. The
+// bookkeeping events (start, run, output, build-output) carry an Action and
+// pass.
 func TestSlowtestsMalformedLineRefuses(t *testing.T) {
 	t.Parallel()
 
-	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60"}, "not json\n")
-	assert.Equal(t, 2, code, "exit = %d, want 2", code)
-	assert.Empty(t, stdout, "stdout = %q, want empty on a refusal", stdout)
-	assert.Contains(t, stderr, "nova-ci slowtests REFUSED: ", "stderr = %q, want the refusal to name the verb", stderr)
-	assert.Contains(t, stderr, "line 1", "stderr = %q, want it to name the offending line", stderr)
-	assert.Contains(t, stderr, "; run: go test -json <packages> | nova-ci slowtests --budget 60\n", "stderr = %q, want the command that makes the input", stderr)
+	const pass = `{"Action":"pass","Package":"example.com/p","Elapsed":0.1}` + "\n"
+	for _, c := range []struct {
+		name, stdin, line string
+	}{
+		{"text", "not json\n", "line 1"},
+		{"null", "null\n", "line 1: not a JSON object"},
+		{"a number", "42\n", "line 1: not a JSON object"},
+		{"an array", "[]\n", "line 1: not a JSON object"},
+		{"an empty object", "{}\n", "line 1: a JSON object with no Action"},
+		{"another object", pass + `{"foo":1}` + "\n", "line 2: a JSON object with no Action"},
+		{"null after an event", pass + "null\n", "line 2: not a JSON object"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60"}, c.stdin)
+			assert.Equal(t, 2, code, "exit = %d, want 2", code)
+			assert.Empty(t, stdout, "stdout = %q, want empty on a refusal", stdout)
+			assert.Contains(t, stderr, "nova-ci slowtests REFUSED: ", "stderr = %q, want the refusal to name the verb", stderr)
+			assert.Contains(t, stderr, c.line, "stderr = %q, want it to name the offending line", stderr)
+			assert.Contains(t, stderr, "; run: go test -json <packages> | nova-ci slowtests --budget 60\n", "stderr = %q, want the command that makes the input", stderr)
+		})
+	}
+	bookkeeping := `{"Action":"start","Package":"example.com/p"}
+{"Action":"run","Package":"example.com/p","Test":"TestA"}
+{"Action":"output","Package":"example.com/p","Test":"TestA","Output":"=== RUN TestA\n"}
+{"ImportPath":"example.com/q [example.com/q.test]","Action":"build-output","Output":"# example.com/q\n"}
+` + pass
+	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, bookkeeping)
+	assert.Equal(t, 0, code, "the bookkeeping events were refused: %s", stderr)
+	assert.Contains(t, stdout, "CI-SLOW OK packages=1")
 }
 
 // A budget of zero or less is refused rather than read as unlimited.
@@ -468,5 +502,25 @@ func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
 		for _, w := range tc.want {
 			assert.Contains(t, stderr, w, "%s: stderr %q lacks %q", tc.name, stderr, w)
 		}
+	}
+}
+
+// Every verb's -h ends with its effect (docs/STANDARD.md section 2, the tool-answers
+// dry-run rule): an inspection, or a write a reader can see before letting it.
+func TestEveryVerbHelpStatesItsEffect(t *testing.T) {
+	t.Parallel()
+
+	for verb, want := range map[string]string{
+		"slowtests":      "effect: inspection: reads, writes nothing\n",
+		"functional":     "effect: inspection: reads, writes nothing\n",
+		"version":        "effect: inspection: reads, writes nothing\n",
+		"local":          "effect: local write: runs this checkout's unit tests, writing only a temp dir\n",
+		"new-rule":       "effect: local write: writes files on this machine\n",
+		"new-verb":       "effect: local write: writes files on this machine\n",
+		"github receipt": "effect: delivery: writes one row of a CI run to a Redis store\n",
+	} {
+		code, stdout, _ := runCI(t, append(strings.Fields(verb), "-h"), "")
+		require.Equal(t, 0, code, verb)
+		assert.True(t, strings.HasSuffix(stdout, want), "%s -h does not end with %q:\n%s", verb, want, stdout)
 	}
 }

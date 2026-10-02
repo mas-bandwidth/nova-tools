@@ -43,3 +43,15 @@ func TestLintHelpExplainsEveryFlag(t *testing.T) {
 		assert.Contains(t, stdout, want, "lint -h does not quote %q", want)
 	}
 }
+
+// `lint -h` says what a bare `lint --card` holds the card to: nova-swarm's own card
+// contract, the same for every adopter, with the place an adopter's own rules go. A cold
+// reader took the bare lint for one repository's private rule set (tool ledger W6).
+func TestLintHelpSaysWhatABareCardIsHeldTo(t *testing.T) {
+	t.Parallel()
+	exit, stdout, _ := runSwarm(t, "lint", "-h")
+	require.Equal(t, 0, exit, "lint -h: exit %d", exit)
+	for _, want := range []string{"a bare --card holds the card to nova-swarm's own card contract", "the same for every adopter", "--rules lists every check", "an adopter's own rules go in --child-rules-file"} {
+		assert.Contains(t, stdout, want, "lint -h does not say %q", want)
+	}
+}

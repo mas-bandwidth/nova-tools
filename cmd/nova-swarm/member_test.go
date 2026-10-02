@@ -571,3 +571,24 @@ func TestAMemberWithNoPassSaysSo(t *testing.T) {
 	assert.Empty(t, passNote("anthropic/claude-x", nil, "/auth.json"))
 	assert.Empty(t, passNote("ollama/qwen3", nil, ""))
 }
+
+// A pid file that cannot be written does not stop the child, and is not silent: the
+// member names the card, its pid and the file on one NOTE line, since a restart finds a
+// running child only by that file.
+func TestAPidFileThatCannotBeWrittenIsNamed(t *testing.T) {
+	t.Parallel()
+	r, slots, marker := markerRunner(t)
+	p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+	pidPath := filepath.Join(slots, launchName(p)+".pid")
+	// a directory where the pid file goes: the write fails, and livePID reads no pid
+	require.NoError(t, os.MkdirAll(filepath.Join(pidPath, "in-the-way"), 0o755))
+	ch, err := r.Start(p)
+	require.NoError(t, err)
+	<-ch.(*nativeChild).done
+	_, err = os.Stat(marker)
+	require.NoError(t, err, "the child did not run")
+	said := r.stderr.(*bytes.Buffer).String()
+	assert.Contains(t, said, "nova-swarm member: NOTE card c1 runs as pid ")
+	assert.Contains(t, said, "could not be written")
+	assert.Equal(t, 1, strings.Count(said, "\n"), "one line: %q", said)
+}

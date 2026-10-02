@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,4 +80,18 @@ func TestNativeLaunchCarriesTheResultFormat(t *testing.T) {
 	require.Contains(t, prompt, "RESULT-FORMAT", "the launch prompt does not carry the RESULT-FORMAT paragraph after the card:\n%s", prompt)
 	require.Contains(t, prompt, "`BLOCKED <why>`", "the launch prompt does not carry the RESULT-FORMAT paragraph after the card:\n%s", prompt)
 	require.NotContains(t, prompt, "BRANCH:", "the launch prompt does not carry the RESULT-FORMAT paragraph after the card:\n%s", prompt)
+}
+
+// The argv log is written whole, a secret's value redacted, and a log that cannot be
+// written is an error the run names (NATIVE NOTE argv log), never a silent return.
+func TestTheArgvLogIsWrittenOrItsErrorReturned(t *testing.T) {
+	t.Parallel()
+	slot := t.TempDir()
+	require.NoError(t, writeNativeArgvLog(slot, "/bin/harness", []string{"run", "a b"}, []string{"PATH=/bin", "API_KEY=sk-never"}))
+	raw, err := os.ReadFile(filepath.Join(slot, "native-argv.log"))
+	require.NoError(t, err)
+	assert.Equal(t, "argv: /bin/harness run a b\nenv: PATH=/bin\nenv: API_KEY=<redacted>\n", string(raw))
+
+	err = writeNativeArgvLog(filepath.Join(slot, "no-such-slot"), "/bin/harness", nil, nil)
+	assert.ErrorIs(t, err, fs.ErrNotExist, "a log that cannot be written answered %v", err)
 }

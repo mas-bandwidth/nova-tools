@@ -6,8 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -80,18 +80,15 @@ func TestReadRegularHugeSparseFileRefusedWithoutHugeAllocation(t *testing.T) {
 	}
 	f.Close()
 
-	start := time.Now()
 	got, err := readRegular(p)
-	elapsed := time.Since(start)
 
 	require.Error(t, err, "readRegular on 100 GiB sparse file unexpectedly succeeded with %d bytes", len(got))
 	require.Nil(t, got, "expected nil slice on oversized error, got %d bytes", len(got))
 	require.ErrorIs(t, err, fs.ErrInvalid, "expected fs.ErrInvalid wrapper, got %v", err)
 	require.Contains(t, err.Error(), "passes ceiling", "expected error mentioning passes ceiling, got %v", err)
-	// Verify it refused instantaneously (at stat time) without reading or allocating.
-	if elapsed > 30*time.Second {
-		t.Fatalf("readRegular took %v on sparse file; stat-time refusal should be near instantaneous", elapsed)
-	}
+	// It refused at stat time, without reading or allocating: only the stat-time refusal
+	// names the size it read (a refusal after reading names only the ceiling).
+	require.Contains(t, err.Error(), "record size "+strconv.FormatInt(hugeSize, 10)+" passes ceiling", "the refusal is not the stat-time one: %v", err)
 }
 
 func TestReadRegularMaxRecordBoundary(t *testing.T) {

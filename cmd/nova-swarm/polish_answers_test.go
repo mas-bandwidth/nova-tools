@@ -118,13 +118,19 @@ func TestTheReadPRTemplateAsksForOneQuotingRule(t *testing.T) {
 	assert.NotContains(t, body, "the\nrule in twelve words", "the bound no longer reads as a paraphrase")
 }
 
-// A verb's -h carries its own exit codes; nova-swarm help keeps them all at once.
+// A verb's -h carries its own exit codes (the line before its effect); nova-swarm help keeps
+// them all at once.
 func TestAVerbsHelpCarriesItsOwnExitCodes(t *testing.T) {
 	t.Parallel()
 	assert.Contains(t, usage, "\n"+exitParagraph+"\n", "the banner's paragraph is the one a verb's -h replaces")
 	last := func(args ...string) string {
 		lines := strings.Split(strings.TrimSpace(swarmHelp(t, args...)), "\n")
-		return lines[len(lines)-1]
+		for i := len(lines) - 1; i >= 0; i-- {
+			if strings.HasPrefix(lines[i], "exit codes:") {
+				return lines[i]
+			}
+		}
+		return ""
 	}
 	assert.Equal(t, verbExit["lint"], last("lint", "-h"))
 	assert.Equal(t, verbExit["worker check"], last("worker", "check", "-h"))
@@ -141,4 +147,16 @@ func TestTheHelpNamesTheLiveVerbsAndTheCardsRepoAndBase(t *testing.T) {
 	tmpl := swarmHelp(t, "template", "-h")
 	assert.Contains(t, tmpl, "  REPO:      <owner>/<name>")
 	assert.Contains(t, tmpl, "  BASE:      <branch>")
+}
+
+// The banner's containment sentence is true: every job runs inside nova-sandbox UNLESS the
+// caller types --no-wall, and it says so, with the name the NATIVE line carries for such a
+// run, so a reader never takes a no-wall run for a walled one.
+func TestTheBannerNamesTheOneWayOutOfTheWall(t *testing.T) {
+	t.Parallel()
+	_, stdout, _ := runSwarm(t, "help")
+	claim := stdout[strings.Index(stdout, "EVERY JOB RUNS INSIDE nova-sandbox"):]
+	claim, _, _ = strings.Cut(claim, "\n\n")
+	assert.Contains(t, claim, "unless the caller types\n--no-wall", "the banner says every job is walled and does not name --no-wall:\n%s", claim)
+	assert.Contains(t, claim, "sandbox="+swarm.SandboxNoneByFlag, "the banner does not name what the NATIVE line says of a no-wall run:\n%s", claim)
 }
