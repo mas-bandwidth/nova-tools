@@ -3,7 +3,6 @@ package swarm
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
@@ -175,9 +174,8 @@ func TestShellDenialReasonAttributesNothingToAWallThatWasNotThere(t *testing.T) 
 	assert.Contains(t, got, "no sandbox", "an unwalled run says so in the reason:\n%s", got)
 	// A walled one may offer the read set, and must call it a candidate.
 	walled := ShellDenialReason("a-card", "/jobs/a-card", "landlock", 0, d)
-	if !strings.Contains(walled, "read_roots") || !strings.Contains(walled, "/opt/sdk tool/bin") {
-		t.Errorf("a walled run offers the complete candidate root:\n%s", walled)
-	}
+	assert.Contains(t, walled, "read_roots", "a walled run offers the complete candidate root:\n%s", walled)
+	assert.Contains(t, walled, "/opt/sdk tool/bin", "a walled run offers the complete candidate root:\n%s", walled)
 	assert.Contains(t, walled, "candidate and not the diagnosis", "the candidate is named as a candidate:\n%s", walled)
 }
 
@@ -241,9 +239,8 @@ func TestShellDenialReaderAnswersAsShellDenied(t *testing.T) {
 				require.Equal(t, end-i, n, "Write(%q) = %d, %v", c[i:end], n, err)
 			}
 			got, ok := r.Denied()
-			if ok != wantOK || got != want {
-				t.Errorf("capture %q in chunks of %d: reader said %+v %v, ShellDenied said %+v %v", c, chunk, got, ok, want, wantOK)
-			}
+			assert.Equal(t, wantOK, ok, "capture %q in chunks of %d: reader said %+v %v, ShellDenied said %+v %v", c, chunk, got, ok, want, wantOK)
+			assert.Equal(t, want, got, "capture %q in chunks of %d: reader said %+v %v, ShellDenied said %+v %v", c, chunk, got, ok, want, wantOK)
 		}
 	}
 }

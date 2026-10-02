@@ -30,9 +30,8 @@ func TestCardPromptIsTheTwoLineContract(t *testing.T) {
 			require.Contains(t, brief, "line 1: this card's line 1, verbatim", "no two-line contract for KIND %s:\n%s", kind, brief)
 			require.Contains(t, brief, "`DONE`, `ABSTAIN <why>` or `BLOCKED <why>`", "no two-line contract for KIND %s:\n%s", kind, brief)
 			for _, owned := range typedrec.WrapperOwned {
-				if strings.Contains(brief, "`"+owned+":") || strings.Contains(brief, "- "+owned+": ") {
-					t.Errorf("KIND %s: the brief asks the model for %s, which the wrapper writes:\n%s", kind, owned, brief)
-				}
+				assert.NotContains(t, brief, "`"+owned+":", "KIND %s: the brief asks the model for %s, which the wrapper writes:\n%s", kind, owned, brief)
+				assert.NotContains(t, brief, "- "+owned+": ", "KIND %s: the brief asks the model for %s, which the wrapper writes:\n%s", kind, owned, brief)
 			}
 			n := strings.Count(brief, "\n")
 			assert.LessOrEqual(t, n, 8, "KIND %s: the brief is %d lines, want the short contract:\n%s", kind, n, brief)

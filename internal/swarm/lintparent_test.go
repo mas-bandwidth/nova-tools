@@ -31,8 +31,8 @@ func TestAWalkedParentPathIsAFinding(t *testing.T) {
 		"run `cd ../..` to get out of the job", // a backtick span does not excuse a walk
 	} {
 		got := CardParentPaths(lines("RESULT: c sha=0", l))
-		if len(got) != 1 || got[0] != 2 {
-			t.Errorf("a walked parent path is a finding on its own line: %q -> %v", l, got)
+		if assert.Len(t, got, 1, "a walked parent path is a finding on its own line: %q -> %v", l, got) {
+			assert.Equal(t, 2, got[0], "a walked parent path is a finding on its own line: %q -> %v", l, got)
 		}
 	}
 }
