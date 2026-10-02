@@ -1136,7 +1136,7 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 	listed(stderr, "VIOLATION", lines, c.max, "check")
 	status := "OK"
 	if code != 0 {
-		status = "FAIL"
+		status = "FAILED"
 	}
 	out := stdout
 	if code != 0 {

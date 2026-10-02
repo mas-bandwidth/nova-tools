@@ -100,7 +100,7 @@ func TestAGroupOfAnotherSizeThanPrintedIsRefused(t *testing.T) {
 	require.Contains(t, errs, "REFUSED group "+g.ID+": it has 2 now, not 1 as printed; nothing changed", "a grown group: %d\n%s%s", code, out, errs)
 	require.Contains(t, errs, "ADDED s1-2", "a grown group: %d\n%s%s", code, out, errs)
 	require.NotContains(t, errs, "ADDED s1-1", "a grown group: %d\n%s%s", code, out, errs)
-	require.Contains(t, errs, "DROP FAIL moved=0", "a grown group: %d\n%s%s", code, out, errs)
+	require.Contains(t, errs, "DROP FAILED moved=0", "a grown group: %d\n%s%s", code, out, errs)
 	require.NotContains(t, out, "MOVED", "a grown group: %d\n%s%s", code, out, errs)
 	code, _, errs = ta.do("drop --group " + g.ID + " --expect 1 --reason obsolete")
 	require.Equal(t, 1, code, "a grown group, no --answers: %d %s", code, errs)
