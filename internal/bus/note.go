@@ -486,7 +486,7 @@ func (h Header) LineOf(key string) int { return h.lines[key] }
 var ErrNoFrom = fmt.Errorf("no %s line", KeyFrom)
 
 // Validate holds the rules every note obeys, whether it is being sent now or was written
-// It does NOT check the Id line: a note without one is legacy and is
+// It does NOT check the Id line: a note without one is a supported format and is
 // addressed by path, which is the whole of the compatibility promise.
 func (h Header) Validate(c *Config) error {
 	if problems := h.Problems(c); len(problems) > 0 {
