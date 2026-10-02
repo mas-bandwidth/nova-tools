@@ -112,3 +112,16 @@ func TestAnUnresolvedReSaysWhyAndNamesTheId(t *testing.T) {
 		})
 	}
 }
+
+// The newest note with a subject is the newest by date, across lanes: a newer note in
+// from-ada/ is named over an older one in from-bo/, though from-bo/ sorts after it.
+func TestAnUnresolvedReNamesTheNewestNoteAcrossLanes(t *testing.T) {
+	t.Parallel()
+	root := writeBus(t, map[string]string{
+		"from-bo/2026-09-07T0001Z-hello-bbbbbbbbbbbb.md":  "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-bbbbbbbbbbbb\nSubject: hello\n\nolder, in the later lane\n",
+		"from-ada/2026-09-09T0001Z-hello-aaaaaaaaaaaa.md": "From: Ada\nTo: Bo\nDate: Wed Sep  9 00:01:00 UTC 2026\nId: ada-aaaaaaaaaaaa\nSubject: hello\n\nnewer, in the earlier lane\n",
+	})
+	err := UnresolvedRe(loadBus(t, root), "Re:", "hello")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the bus holds 2 note(s) with that subject, the newest ada-aaaaaaaaaaaa; name it by id: Re: ada-aaaaaaaaaaaa")
+}

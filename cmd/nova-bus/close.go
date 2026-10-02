@@ -75,17 +75,24 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// closed= COUNTS NOTES, not receipts. One receipt closes every note one
 	// sender left before the stamp, so len(plan.Prepared) is the number of lanes answered
 	// and would be a different, smaller and quite surprising number here.
+	if len(plan.Prepared) == 0 {
+		fmt.Fprintf(stdout, "CLOSE OK closed=0 kept=%d commit=-%s\n", plan.Kept, oneline.Escape(dryField(*dryRun)))
+		return 0
+	}
+	// The checkout guards are the real run's, in its order, for the dry run too; a dry run
+	// given no --branch (it needs none) holds the tree to clean and names no branch.
+	ready := checkoutReady(*busDir, *branch, nil)
+	if *dryRun && strings.TrimSpace(*branch) == "" {
+		ready = bus.EnsureClean(*busDir, nil)
+	}
+	if ready != nil {
+		fmt.Fprintf(stderr, "CLOSE FAIL: %s\n", oneline.Err(ready))
+		return 1
+	}
+	// Everything above is read-only and the dry run's; everything below writes.
 	if *dryRun {
 		fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=- dry_run=true\n", plan.Closed, plan.Kept)
 		return 0
-	}
-	if len(plan.Prepared) == 0 {
-		fmt.Fprintf(stdout, "CLOSE OK closed=0 kept=%d commit=-\n", plan.Kept)
-		return 0
-	}
-	if err := checkoutReady(*busDir, *branch, nil); err != nil {
-		fmt.Fprintf(stderr, "CLOSE FAIL: %s\n", oneline.Err(err))
-		return 1
 	}
 	if err := levelWithRemote(*busDir, *remote, *branch, *noPush); err != nil {
 		fmt.Fprintf(stderr, "CLOSE REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus close -h"))

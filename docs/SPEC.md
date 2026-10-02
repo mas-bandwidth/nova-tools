@@ -3541,10 +3541,12 @@ reported here rather than re-specified:
   `state=published` or `state=already-published` without ever writing a second
   note — is [docs/SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md).
 
-Everything below is the fourth half: **bounded full checks, with cap, count
-and continuation, and repeated diagnostic remedies aggregated, run on the shared
-collector rather than another fetch clock.** It is proposed and not
-implemented: nothing it describes changes a byte of what `check` prints.
+Everything below is the fourth half: **bounded full checks**. What ships is the
+cap and the count ("The bound — check"): at most `--max` findings of each class,
+a `BUS MORE` line per capped class and a `BUS CHECK` count by class. What was
+proposed beside it and is withdrawn, not built: repeated remedies aggregated
+into `BUS FINDING` lines, a `BUS SUMMARY` line, and `--after` continuation on a
+shared collector. `check` prints none of those.
 
 #### The transaction, stated as a flow
 
@@ -3586,20 +3588,21 @@ path — and nothing was written. The two are one delivery, not two.
 
 #### The bound — check
 
-`check` prints at most `--max <n>` findings (default 20, `0` for all), in the
-order the walk met them, then one `BUS MORE` line saying how many it held back
-and the flag that lifts the cap, then one `BUS CHECK` count line. The cap is
-one cap over every kind of finding, and it governs what is PRINTED and nothing
-else: the walk still reads every note, and the exit code and the counts come
-from the whole walk, exactly as an uncapped run would say them. `BUS CHECK`
-counts every finding by class (`header`, `lane`, `id`, `re`, `receipt`,
-`index` and the rest, sorted by name), so the class the cap held back is still
-on the line. A run with no findings prints neither line.
+`check` holds the common cap rule ("The cap is per KIND", above): it prints at
+most `--max <n>` findings of each class (default 20, `0` for all), in the order
+the walk met them, then one `BUS MORE` line for each class the cap held back,
+saying how many it printed and how many there are, then one `BUS CHECK` count
+line. A class is the kind of check that found it (`header`, `lane`, `id`, `re`,
+`receipt`, `index` and the rest), so a hundred header findings cannot hide the
+one lane finding behind them. The cap governs what is PRINTED and nothing else:
+the walk still reads every note, and the exit code and the counts come from the
+whole walk, exactly as an uncapped run would say them. A run with no findings
+prints neither line.
 
 ```
 BUS FAIL <path>: <reason>                       (a gating finding, stderr)
 BUS WARN <path>: <reason>                       (a tolerated finding, stdout)
-BUS MORE shown=<n> total=<t> remedy="--max 0"   (stderr, only when the cap held some back)
+BUS MORE kind=<class> shown=<n> total=<t> remedy="--max 0"   (stderr, one per class the cap held some of back)
 BUS CHECK findings=<t> fail=<x> warn=<w> <class>=<n> ...   (stderr, whenever there is a finding)
 ```
 
@@ -3633,20 +3636,22 @@ SEND OK id=ada-3f9a1c2b8d40 path=from-ada/2026-09-15T0910Z-re-3f9a1c2b8d40.md \
 ```
 
 A full check over a bus whose findings outnumber the cap, run on a scratch bus
-of four notes, three with no `Subject:` and one addressed to a name the roster
-does not hold:
+of five notes in from-ada, three with no `Subject:` and one addressed to a name
+the roster does not hold, and a lane no participant owns:
 
 ```
 $ nova-bus check --bus ./bus --full --max 2
 BUS SCOPE mode=full cursor=- changed=0
 BUS FAIL from-ada/2026-09-01T1000Z-note-1.md: no Subject line, or an empty one
 BUS FAIL from-ada/2026-09-02T1000Z-note-2.md: no Subject line, or an empty one
-BUS MORE shown=2 total=4 remedy="--max 0"
-BUS CHECK findings=4 fail=4 warn=0 header=4
+BUS FAIL from-zed: no participant in participants.json owns this lane
+BUS MORE kind=header shown=2 total=5 remedy="--max 0"
+BUS CHECK findings=6 fail=6 warn=0 header=5 lane=1
 ```
 
-`findings=4` is what an uncapped run counts too, and the exit is 1 because the
-walk failed, not because the listing was cut.
+The lane finding, last in the walk, prints because the header class's cap is
+not its cap. `findings=6` is what an uncapped run counts too, and the exit is 1
+because the walk failed, not because the listing was cut.
 
 #### Measurement
 
@@ -5080,7 +5085,7 @@ The `check --full` row is a historical measurement, taken before `check` had
 `--max`: 342 of 342 lines printed, 340 of them `BUS WARN` about one class of
 missing `INDEX` entry, each carrying the same 220-byte remedy sentence. `check`
 now takes `--max <n>` (default 20, `0` for all) and prints at most that many
-findings, then one `BUS MORE` line and one `BUS CHECK` count line by class
+findings of each class, then one `BUS MORE` line per capped class and one `BUS CHECK` count line by class
 ("The bound — check" above), so the same bus prints about 23 lines.
 
 ### WAITS ON: its own clock, and a quiet poll prints nothing
@@ -5100,7 +5105,7 @@ trusted.
 
 - `inbox` at the largest carried state returns the SCOPE, LEGACY, OPEN, remedy and OK lines and not the carried list, so the coordinator read is bounded by the state's counts and not its length;
 - a wait's poll is one git fetch and a quiet poll prints nothing, so an idle tick costs zero tokens;
-- `check` prints at most `--max` findings (default 20, `0` for all), then one `BUS MORE` and one `BUS CHECK` line, and its exit and counts come from the whole walk (`TestBusCheckFullIsCapped`).
+- `check` prints at most `--max` findings of each class (default 20, `0` for all), then one `BUS MORE` line per capped class and one `BUS CHECK` line, and its exit and counts come from the whole walk (`TestBusCheckFullIsCapped`).
 
 ## Tests this spec demands
 
@@ -5457,11 +5462,11 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 349. `TestANoteWithAnIDIsStillAnswerableByPath` — a note without an `Id:` is addressed by path everywhere, and a note WITH an id is still answerable by its path.
 350. `TestSendRefusesAWrongBranchOrADirtyCheckout` — `send` refuses a wrong branch or a dirty checkout (write drafts elsewhere); the `.nova-bus/` per-clone state is not such a change.
 351. `TestADivergedCheckoutIsRefusedAndLosesNothing` — a diverged checkout (for `wait`/`reply`) is a refusal naming the recovery, never a merge or rebase.
-352. `TestBusCheckFullIsCapped` — `check` prints at most `--max <n>` findings (default 20, `0` means all), then one `BUS MORE shown=<n> total=<t>` line naming the flag that lifts the cap, then one `BUS CHECK` line counting every finding by class; the exit and the counts come from the whole walk.
-353. (withdrawn: per-kind caps, `BUS FINDING` aggregation, `BUS SUMMARY` and `--after` paging on `check` are not built; `check` has the one flat `--max` cap of 352.)
-354. (withdrawn: per-kind caps, `BUS FINDING` aggregation, `BUS SUMMARY` and `--after` paging on `check` are not built; `check` has the one flat `--max` cap of 352.)
-355. (withdrawn: per-kind caps, `BUS FINDING` aggregation, `BUS SUMMARY` and `--after` paging on `check` are not built; `check` has the one flat `--max` cap of 352.)
-356. (withdrawn: per-kind caps, `BUS FINDING` aggregation, `BUS SUMMARY` and `--after` paging on `check` are not built; `check` has the one flat `--max` cap of 352.)
+352. `TestBusCheckFullIsCapped` — `check` prints at most `--max <n>` findings of each class (default 20, `0` means all), so a loud class cannot hide a quiet one, then one `BUS MORE kind=<class> shown=<n> total=<t>` line per capped class naming the flag that lifts the cap, then one `BUS CHECK` line counting every finding by class; the exit and the counts come from the whole walk.
+353. (withdrawn: `BUS FINDING` aggregation, `BUS SUMMARY` and `--after` paging on `check` are not built; the per-class cap of 352 is.)
+354. (withdrawn: `BUS FINDING` aggregation, `BUS SUMMARY` and `--after` paging on `check` are not built; the per-class cap of 352 is.)
+355. (withdrawn: `BUS FINDING` aggregation, `BUS SUMMARY` and `--after` paging on `check` are not built; the per-class cap of 352 is.)
+356. (withdrawn: `BUS FINDING` aggregation, `BUS SUMMARY` and `--after` paging on `check` are not built; the per-class cap of 352 is.)
 357. `TestQuickstartWalksTheRootOnceAndSharesThePathList` — a `quickstart` of one tree walks the root once and hands the same path list to `links` and `nocode` (docs/SPEC.md:5041).
 358. `TestEachVerbKeepsItsOwnWalkWhenRunAlone` — `links`, `nocode`, `attest`, `floors` and `corpus` each keep their own walk when run as their own verb (docs/SPEC.md:5000).
 359. `TestLinksCapsFindingsAndAlwaysPrintsTheCount` / `TestNoCodeCapsFindingsAndAlwaysPrintsTheCount` — a first run prints 20 finding lines per kind, one MORE line and one FAIL/count line (docs/SPEC.md:5005).
@@ -5478,7 +5483,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 370. `TestInboxParsesOnlyWhatIsNewSinceTheCursor` — `check --full` re-walks the whole history; `check --as` reads from the cursor and pays only for what changed (docs/SPEC.md:5067).
 371. `TestInboxParsesOnlyWhatIsNewSinceTheCursor` / `TestInboxOpenIsOneLine` — `inbox` at the largest carried state returns the SCOPE, LEGACY, OPEN, remedy and OK lines, not the carried list (docs/SPEC.md:5125).
 372. `TestInboxParsesOnlyWhatIsNewSinceTheCursor` — the carried list prints only behind `--open`, capped at `--open-max`, never on the default read (docs/SPEC.md:5091).
-373. `TestBusCheckFullIsCapped` — the bound on `check` (docs/SPEC.md, "The bound — check"): the listing is capped at `--max`, the counting never is.
+373. `TestBusCheckFullIsCapped` — the bound on `check` (docs/SPEC.md, "The bound — check"): the listing is capped per class at `--max`, the counting never is.
 374. `TestTheDefaultWaitIntervalIsTenSeconds` — `waitLoop` polls immediately then every `--interval`, default 10 s (docs/SPEC.md:5111).
 375. `TestWaitRefusesATimeoutLongerThanAToolCall` — the wait ceiling is `maxWaitTimeout = 60 * time.Minute`: a longer timeout is refused (docs/SPEC.md:5111).
 376. `TestWaitRefusesAnIntervalBelowTheFloor` — the wait floor is 100 ms: an `--interval` shorter than that is refused (docs/SPEC.md:5111).

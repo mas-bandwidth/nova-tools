@@ -73,19 +73,20 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stdout, "RECEIPT OK recorded=0 already=%d commit=- pushed=false attempts=0%s\n", len(plan.Already), oneline.Escape(dryField(*dryRun)))
 		return 0
 	}
-	if *dryRun {
-		for _, id := range plan.Record {
-			fmt.Fprintf(stdout, "RECEIPT RECORD note=%s lane=%s\n", oneline.Field(id), oneline.Field(plan.Lane))
-		}
-		fmt.Fprintf(stdout, "RECEIPT OK recorded=%d already=%d commit=- pushed=false attempts=0 dry_run=true\n", len(plan.Record), len(plan.Already))
-		return 0
-	}
 	// The reader's own BEAT, as in send: `wait` wrote it, so it is this run's own
 	// machinery and not a change that is "not this receipt".
 	beat := bus.BeatPath(me.Lane)
 	if err := checkoutReady(*busDir, *branch, []string{plan.Path, beat}); err != nil {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
+	}
+	// Everything above is read-only and the dry run's; everything below writes.
+	if *dryRun {
+		for _, id := range plan.Record {
+			fmt.Fprintf(stdout, "RECEIPT RECORD note=%s lane=%s\n", oneline.Field(id), oneline.Field(plan.Lane))
+		}
+		fmt.Fprintf(stdout, "RECEIPT OK recorded=%d already=%d commit=- pushed=false attempts=0 dry_run=true\n", len(plan.Record), len(plan.Already))
+		return 0
 	}
 	if err := levelWithRemote(*busDir, *remote, *branch, *noPush); err != nil {
 		fmt.Fprintf(stderr, "RECEIPT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus receipt -h"))

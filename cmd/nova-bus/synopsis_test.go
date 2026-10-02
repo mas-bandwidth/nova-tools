@@ -144,7 +144,7 @@ func TestEveryVerbInTheSynopsisIsDispatchable(t *testing.T) {
 func TestTheSpecStatesTheCheckBoundTheCodeHas(t *testing.T) {
 	t.Parallel()
 	help := invoke(t, "", "check", "-h").mustCode(t, 0).stdout
-	require.Contains(t, help, "--max <int>  findings to print before one BUS MORE line naming the rest (default 20, 0 = all)")
+	require.Contains(t, help, "--max <int>  findings of each class to print before one BUS MORE line per class names the rest of it (default 20, 0 = all)")
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC.md"))
 	require.NoError(t, err)
 	spec := string(raw)
@@ -154,7 +154,7 @@ func TestTheSpecStatesTheCheckBoundTheCodeHas(t *testing.T) {
 	_, section, ok := strings.Cut(spec, "#### The bound — check\n")
 	require.True(t, ok, "docs/SPEC.md has no `#### The bound — check` section")
 	section, _, _ = strings.Cut(section, "\n#### ")
-	for _, want := range []string{"`--max <n>` findings (default 20, `0` for all)", `BUS MORE shown=<n> total=<t> remedy="--max 0"`, "BUS CHECK findings=<t> fail=<x> warn=<w>"} {
+	for _, want := range []string{"`--max <n>` findings of each class (default 20, `0` for all)", `BUS MORE kind=<class> shown=<n> total=<t> remedy="--max 0"`, "holds the common cap rule", "BUS CHECK findings=<t> fail=<x> warn=<w>"} {
 		assert.Contains(t, section, want)
 	}
 }

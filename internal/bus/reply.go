@@ -185,7 +185,7 @@ func UnresolvedRe(t *Bus, what, re string) error {
 			continue
 		}
 		count++
-		if newest == nil || n.Path > newest.Path { // a note's path opens with its timestamp
+		if newest == nil || newerNote(n, newest) {
 			newest = n
 		}
 	}
@@ -198,6 +198,16 @@ func UnresolvedRe(t *Bus, what, re string) error {
 		id = newest.Path
 	}
 	return fmt.Errorf("%s; the bus holds %d note(s) with that subject, the newest %s; name it by id: %s %s", why, count, id, what, id)
+}
+
+// newerNote orders notes by when they were written (Note.When: the Date line, else the
+// filename's minute), across lanes, and by path where two share a moment, so the order is
+// one order. A path alone sorts by its lane first: from-bo/ after from-ada/, whatever the dates.
+func newerNote(a, b *Note) bool {
+	if wa, wb := a.When(), b.When(); !wa.Equal(wb) {
+		return wa.After(wb)
+	}
+	return a.Path > b.Path
 }
 
 // answersNothingNotice is the sentence a draft with no Re line gets when it looks like a
