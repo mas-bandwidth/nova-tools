@@ -14,6 +14,9 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeBin writes one executable fake and returns its path. Fakes are shell
@@ -25,9 +28,7 @@ func fakeBin(t *testing.T, dir, name, body string) string {
 		t.Skip("the forge and git fakes are shell scripts; internal/converge covers the same paths with Go fakes")
 	}
 	path := filepath.Join(dir, name)
-	if err := testbin.WriteExecutable(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(path, []byte("#!/bin/sh\n"+body), 0o755))
 	return path
 }
 
@@ -45,12 +46,8 @@ func newConvFixture(t *testing.T) *convFixture {
 	dir := t.TempDir()
 	write := func(name, body string) string {
 		path := filepath.Join(dir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 		return path
 	}
 
@@ -117,31 +114,19 @@ func TestConvergenceRefusesAMissingFlag(t *testing.T) {
 			args = append(args, f.args[i])
 		}
 		exit, stdout, stderr := runCheck(t, args...)
-		if exit != 2 {
-			t.Errorf("--%s omitted exited %d, want 2", missing, exit)
-		}
-		if stdout != "" {
-			t.Errorf("--%s omitted printed a reading: %q", missing, stdout)
-		}
-		if !strings.Contains(stderr, "--"+missing+" is required; refusing to guess") {
-			t.Errorf("--%s omitted said: %q", missing, stderr)
-		}
+		assert.EqualValues(t, 2, exit, "--%s omitted exited %d, want 2", missing, exit)
+		assert.EqualValues(t, "", stdout, "--%s omitted printed a reading: %q", missing, stdout)
+		assert.Contains(t, stderr, "--"+missing+" is required; refusing to guess", "--%s omitted said: %q", missing, stderr)
 	}
 
 	exit, _, stderr := runCheck(t, "convergence")
-	if exit != 2 {
-		t.Fatalf("a bare convergence exited %d, want 2", exit)
-	}
+	require.EqualValues(t, 2, exit, "a bare convergence exited %d, want 2", exit)
 	for _, missing := range required {
-		if !strings.Contains(stderr, "--"+missing+" is required") {
-			t.Errorf("one run must name every missing flag; %s was not named:\n%s", missing, stderr)
-		}
+		assert.Contains(t, stderr, "--"+missing+" is required", "one run must name every missing flag; %s was not named:\n%s", missing, stderr)
 	}
 	// The --ledger hint is this verb's own: the pit-stop ledger, not the corpus
 	// ledger the same flag names on `corpus`.
-	if !strings.Contains(stderr, "pit-stop ledger") {
-		t.Errorf("the --ledger hint names the wrong document:\n%s", stderr)
-	}
+	assert.Contains(t, stderr, "pit-stop ledger", "the --ledger hint names the wrong document:\n%s", stderr)
 }
 
 // 18
@@ -157,15 +142,9 @@ func TestConvergenceRefusesASinceItCannotRead(t *testing.T) {
 			}
 		}
 		exit, stdout, stderr := runCheck(t, args...)
-		if exit != 2 {
-			t.Errorf("--since %s exited %d, want 2", bad, exit)
-		}
-		if strings.Contains(stdout, "CONVERGENCE") {
-			t.Errorf("--since %s printed a stream line: %q", bad, stdout)
-		}
-		if !strings.Contains(stderr, "--since") {
-			t.Errorf("--since %s said: %q", bad, stderr)
-		}
+		assert.EqualValues(t, 2, exit, "--since %s exited %d, want 2", bad, exit)
+		assert.NotContains(t, stdout, "CONVERGENCE", "--since %s printed a stream line: %q", bad, stdout)
+		assert.Contains(t, stderr, "--since", "--since %s said: %q", bad, stderr)
 	}
 }
 
@@ -175,30 +154,18 @@ func TestConvergencePrintsATickAtTheCommandLine(t *testing.T) {
 
 	f := newConvFixture(t)
 	exit, stdout, stderr := f.run(t)
-	if exit != 0 {
-		t.Fatalf("exit %d\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
-	}
+	require.EqualValues(t, 0, exit, "exit %d\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	if len(lines) != 8 {
-		t.Fatalf("want seven stream lines and one verdict, got %d:\n%s", len(lines), stdout)
-	}
+	require.EqualValues(t, 8, len(lines), "want seven stream lines and one verdict, got %d:\n%s", len(lines), stdout)
 	for _, want := range []string{"CONVERGENCE LANDING ", "CONVERGENCE SCRIPTS ", "CONVERGENCE PRS ",
 		"CONVERGENCE EDGES ", "CONVERGENCE LEDGER "} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("no %q in:\n%s", want, stdout)
-		}
+		assert.Contains(t, stdout, want, "no %q in:\n%s", want, stdout)
 	}
 	// CLASSES and FLEET were given no source, so they are absent and named.
-	if !strings.Contains(stdout, "trend=absent measure=class-test-index-entries source=--repo-dir") {
-		t.Errorf("CLASSES was not absent:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "absent=CLASSES,FLEET") {
-		t.Errorf("the verdict does not name the absent streams:\n%s", stdout)
-	}
+	assert.Contains(t, stdout, "trend=absent measure=class-test-index-entries source=--repo-dir", "CLASSES was not absent:\n%s", stdout)
+	assert.Contains(t, stdout, "absent=CLASSES,FLEET", "the verdict does not name the absent streams:\n%s", stdout)
 	// One batch at two rounds now, one at five before --since.
-	if !strings.Contains(stdout, "CONVERGENCE LANDING now=2 before=5 ratio=0.40 trend=contracting") {
-		t.Errorf("the LANDING line is not the reading of the fixture:\n%s", stdout)
-	}
+	assert.Contains(t, stdout, "CONVERGENCE LANDING now=2 before=5 ratio=0.40 trend=contracting", "the LANDING line is not the reading of the fixture:\n%s", stdout)
 }
 
 // --json is the same reading, and only the object.
@@ -207,12 +174,8 @@ func TestConvergenceJSONIsTheWholeReading(t *testing.T) {
 
 	f := newConvFixture(t)
 	exit, stdout, stderr := f.run(t, "--json")
-	if exit != 0 {
-		t.Fatalf("exit %d: %s", exit, stderr)
-	}
-	if strings.Contains(stdout, "CONVERGENCE") {
-		t.Fatalf("--json printed a line as well as the object:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, exit, "exit %d: %s", exit, stderr)
+	require.NotContains(t, stdout, "CONVERGENCE", "--json printed a line as well as the object:\n%s", stdout)
 	var back struct {
 		Streams []struct {
 			Name  string   `json:"stream"`
@@ -222,15 +185,12 @@ func TestConvergenceJSONIsTheWholeReading(t *testing.T) {
 		Verdict string   `json:"verdict"`
 		Absent  []string `json:"absent"`
 	}
-	if err := json.Unmarshal([]byte(stdout), &back); err != nil {
-		t.Fatalf("--json did not print one JSON object: %v\n%s", err, stdout)
+	{
+		err := json.Unmarshal([]byte(stdout), &back)
+		require.NoError(t, err, "--json did not print one JSON object: %v\n%s", err, stdout)
 	}
-	if len(back.Streams) != 7 {
-		t.Errorf("the object holds %d streams, want 7", len(back.Streams))
-	}
-	if len(back.Absent) != 2 {
-		t.Errorf("absent=%v, want the two streams with no source", back.Absent)
-	}
+	assert.EqualValues(t, 7, len(back.Streams), "the object holds %d streams, want 7", len(back.Streams))
+	assert.EqualValues(t, 2, len(back.Absent), "absent=%v, want the two streams with no source", back.Absent)
 }
 
 // 15, at the command line: the streak is the only exit 1, and it lives in --state.
@@ -241,48 +201,39 @@ func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
 	state := filepath.Join(f.dir, "state.json")
 
 	// Tick one remembers the reading.
-	if exit, _, stderr := f.run(t, "--state", state); exit != 0 {
-		t.Fatalf("the first tick exited %d: %s", exit, stderr)
+	{
+		exit, _, stderr := f.run(t, "--state", state)
+		require.EqualValues(t, 0, exit, "the first tick exited %d: %s", exit, stderr)
 	}
 	// A row is added to the ledger and nobody has closed it: LEDGER, whose
 	// before comes from the remembered tick, widens once -- a WARN, not a red.
 	owe := func(row string) {
 		t.Helper()
 		fh, err := os.OpenFile(filepath.Join(f.dir, "ledger.md"), os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			t.Fatal(err)
+		require.NoError(t, err)
+		{
+			_, err := fh.WriteString(row)
+			require.NoError(t, err)
 		}
-		if _, err := fh.WriteString(row); err != nil {
-			t.Fatal(err)
-		}
-		if err := fh.Close(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, fh.Close())
 	}
 	// Each tick is a tick of the clock: the same instant read twice is one tick,
 	// so the ticks below are an hour apart.
 	owe("| c | three | TODO |\n")
 	exit, stdout, _ := f.run(t, "--state", state, "--now", "2026-09-18T13:00:00Z")
-	if exit != 0 {
-		t.Fatalf("one widening tick exited %d, want 0 with a WARN:\n%s", exit, stdout)
-	}
-	if !strings.Contains(stdout, "CONVERGENCE WARN") || !strings.Contains(stdout, "widening=LEDGER") {
-		t.Fatalf("one widening tick did not warn:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, exit, "one widening tick exited %d, want 0 with a WARN:\n%s", exit, stdout)
+	require.False(t, !strings.Contains(stdout, "CONVERGENCE WARN") || !strings.Contains(stdout, "widening=LEDGER"), "one widening tick did not warn:\n%s", stdout)
 	// And another: the same stream widening twice running is the red.
 	owe("| d | four | TODO |\n")
 	exit, stdout, _ = f.run(t, "--state", state, "--now", "2026-09-18T14:00:00Z")
-	if exit != 1 {
-		t.Fatalf("two consecutive widening ticks exited %d, want 1:\n%s", exit, stdout)
-	}
-	if !strings.Contains(stdout, "widening=LEDGER") {
-		t.Errorf("the red does not name the stream:\n%s", stdout)
-	}
+	require.EqualValues(t, 1, exit, "two consecutive widening ticks exited %d, want 1:\n%s", exit, stdout)
+	assert.Contains(t, stdout, "widening=LEDGER", "the red does not name the stream:\n%s", stdout)
 
 	// With no --state nothing is remembered, so the same two ticks are both 0.
 	for i, when := range []string{"2026-09-18T15:00:00Z", "2026-09-18T16:00:00Z"} {
-		if exit, _, _ := f.run(t, "--now", when); exit != 0 {
-			t.Errorf("tick %d with no --state exited %d", i, exit)
+		{
+			exit, _, _ := f.run(t, "--now", when)
+			assert.EqualValues(t, 0, exit, "tick %d with no --state exited %d", i, exit)
 		}
 	}
 
@@ -291,9 +242,7 @@ func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
 	same := filepath.Join(f.dir, "same.json")
 	for i := 0; i < 3; i++ {
 		exit, stdout, _ := f.run(t, "--state", same, "--now", "2026-09-18T17:00:00Z")
-		if exit != 0 {
-			t.Fatalf("reading one tick %d times went red:\n%s", i+1, stdout)
-		}
+		require.EqualValues(t, 0, exit, "reading one tick %d times went red:\n%s", i+1, stdout)
 	}
 }
 
@@ -311,16 +260,10 @@ func TestConvergenceReadsClassesThroughAFakeGit(t *testing.T) {
 		}
 		return b.String()
 	}
-	if err := os.MkdirAll(filepath.Join(repoDir, "docs"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repoDir, "docs", "SPEC-CI.md"), []byte(spec(4)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(repoDir, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "docs", "SPEC-CI.md"), []byte(spec(4)), 0o644))
 	older := filepath.Join(f.dir, "older-spec.md")
-	if err := os.WriteFile(older, []byte(spec(2)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(older, []byte(spec(2)), 0o644))
 	git := fakeBin(t, f.dir, "git", `
 case "$*" in
   *rev-list*) echo abc123456789 ;;
@@ -328,15 +271,9 @@ case "$*" in
 esac
 `)
 	exit, stdout, stderr := f.run(t, "--repo-dir", repoDir, "--git", git)
-	if exit != 0 {
-		t.Fatalf("exit %d: %s", exit, stderr)
-	}
-	if !strings.Contains(stdout, "CONVERGENCE CLASSES now=4 before=2 ratio=2 trend=contracting") {
-		t.Errorf("the CLASSES line is not the reading of the fixture:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "rev=abc123456789") {
-		t.Errorf("the CLASSES line does not name the revision it read:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, exit, "exit %d: %s", exit, stderr)
+	assert.Contains(t, stdout, "CONVERGENCE CLASSES now=4 before=2 ratio=2 trend=contracting", "the CLASSES line is not the reading of the fixture:\n%s", stdout)
+	assert.Contains(t, stdout, "rev=abc123456789", "the CLASSES line does not name the revision it read:\n%s", stdout)
 }
 
 // A forge that will not answer is exit 2 and prints no reading.
@@ -346,15 +283,9 @@ func TestConvergenceRefusesAForgeThatWillNotAnswer(t *testing.T) {
 	f := newConvFixture(t)
 	bad := fakeBin(t, f.dir, "gh-broken", "echo 'gh: could not resolve to a Repository' 1>&2\nexit 1\n")
 	exit, stdout, stderr := f.run(t, "--gh", bad)
-	if exit != 2 {
-		t.Fatalf("a forge that refused exited %d, want 2", exit)
-	}
-	if strings.Contains(stdout, "CONVERGENCE") {
-		t.Errorf("a partial reading was printed:\n%s", stdout)
-	}
-	if !strings.Contains(stderr, "nova-check convergence:") || !strings.Contains(stderr, "gh pr list") {
-		t.Errorf("the refusal does not name the child: %q", stderr)
-	}
+	require.EqualValues(t, 2, exit, "a forge that refused exited %d, want 2", exit)
+	assert.NotContains(t, stdout, "CONVERGENCE", "a partial reading was printed:\n%s", stdout)
+	assert.False(t, !strings.Contains(stderr, "nova-check convergence:") || !strings.Contains(stderr, "gh pr list"), "the refusal does not name the child: %q", stderr)
 }
 
 // A --timeout of zero or less is a wait with no end.
@@ -364,8 +295,6 @@ func TestConvergenceRefusesATimeoutThatIsNotOne(t *testing.T) {
 	f := newConvFixture(t)
 	for _, bad := range []string{"0", "-5"} {
 		exit, _, stderr := f.run(t, "--timeout", bad)
-		if exit != 2 || !strings.Contains(stderr, "--timeout") {
-			t.Errorf("--timeout %s exited %d saying %q", bad, exit, stderr)
-		}
+		assert.False(t, exit != 2 || !strings.Contains(stderr, "--timeout"), "--timeout %s exited %d saying %q", bad, exit, stderr)
 	}
 }

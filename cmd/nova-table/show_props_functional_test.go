@@ -3,13 +3,14 @@
 package main
 
 import (
+	"github.com/redis/go-redis/v9"
 	"strconv"
-	"strings"
+
 	"testing"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // show prints the table's properties, one TABLE PROP line each, in name order
@@ -20,20 +21,15 @@ func TestShowPrintsTheTablesProperties(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
 	tb, err := ntable.Read(t.Context(), c, "demo")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, "%v", err)
 	m := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: strconv.FormatUint(tb.Revision, 10), OperationID: "props",
 		Members: []ntable.BatchMemberEntry{}, Props: map[string]string{"z_index": "2", "deal_index": "m1"}}
-	if _, err := ntable.ApplyBatch(t.Context(), c, m); err != nil {
-		t.Fatal(err)
+	{
+		_, err := ntable.ApplyBatch(t.Context(), c, m)
+		require.NoError(t, err, "%v", err)
 	}
 	code, stdout, stderr := runTable("show", "--redis", addr, "demo")
-	if code != 0 {
-		t.Fatalf("exit %d\n%s%s", code, stdout, stderr)
-	}
+	require.EqualValues(t, 0, code, "exit %d\n%s%s", code, stdout, stderr)
 	want := "TABLE PROP table=demo deal_index=m1\nTABLE PROP table=demo z_index=2\n"
-	if !strings.Contains(stdout, want) {
-		t.Errorf("show:\n%s\nwant the lines\n%s", stdout, want)
-	}
+	assert.Contains(t, stdout, want, "show:\n%s\nwant the lines\n%s", stdout, want)
 }

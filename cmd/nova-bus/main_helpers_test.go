@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 const rosterJSON = `{
@@ -122,9 +124,7 @@ func hermetic(t *testing.T) {
 	// config, its ~/.gitconfig and its credential prompt out of these tests, and an
 	// assertion on one of four would pass over a TestMain that set one of four.
 	for _, key := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"} {
-		if os.Getenv(key) == "" {
-			t.Fatalf("%s is not set: the hermetic git environment is TestMain's, in this package, and it sets four", key)
-		}
+		require.NotEmptyf(t, os.Getenv(key), "%s is not set: the hermetic git environment is TestMain's, in this package, and it sets four", key)
 	}
 }
 
@@ -132,21 +132,15 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
+	require.NoErrorf(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
 	return string(out)
 }
 
 func writeFile(t *testing.T, root, path, content string) {
 	t.Helper()
 	full := filepath.Join(root, filepath.FromSlash(path))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+	require.NoError(t, os.WriteFile(full, []byte(content), 0o644))
 }
 
 // busDir hands a test its own bare remote and checkout of it, with a roster and two
@@ -164,12 +158,11 @@ func writeFile(t *testing.T, root, path, content string) {
 func busDir(t *testing.T) (checkout, bare string) {
 	t.Helper()
 	busFixtureOnce.Do(func() { busFixtureDir, busFixtureErr = buildBusFixture() })
-	if busFixtureErr != nil {
-		t.Fatalf("the bus fixture: %v", busFixtureErr)
-	}
+	require.NoErrorf(t, busFixtureErr, "the bus fixture: %v", busFixtureErr)
 	root := t.TempDir()
-	if err := os.CopyFS(root, os.DirFS(busFixtureDir)); err != nil {
-		t.Fatalf("copying the bus fixture: %v", err)
+	{
+		err := os.CopyFS(root, os.DirFS(busFixtureDir))
+		require.NoErrorf(t, err, "copying the bus fixture: %v", err)
 	}
 	bare = filepath.Join(root, "bus.git")
 	checkout = filepath.Join(root, "checkout")

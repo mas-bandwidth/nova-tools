@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,16 +19,12 @@ func TestTheHelpReportExampleIsWhatItPrints(t *testing.T) {
 
 	line := "nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts"
 	examples, err := onboarding.ExampleLines(usage, "nova-tokens")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.False(t, err != nil, err)
 	found := false
 	for _, ex := range examples {
 		found = found || ex == line
 	}
-	if !found {
-		t.Fatalf("the help's example block does not hold %q:\n  %s", line, strings.Join(examples, "\n  "))
-	}
+	require.False(t, !found, "the help's example block does not hold %q:\n  %s", line, strings.Join(examples, "\n  "))
 	bench := t.TempDir()
 	copyExampleTree(t, filepath.Join("testdata", "example-bench"), bench)
 	args := strings.Fields(strings.ReplaceAll(strings.TrimPrefix(line, "nova-tokens "), "./", bench+"/"))
@@ -45,6 +43,6 @@ func TestTheHelpReportExampleIsWhatItPrints(t *testing.T) {
 		"! REPORT OK who=ada day=2026-09-11 rows=7 at=2026-09-11T23:55:02Z build=devel subject=tokens 2026-09-11 at=2026-09-11T23:55:02Z build=devel",
 	}}
 	for _, p := range onboarding.Compare(step, onboarding.Result{Code: r.exit, Stdout: r.stdout, Stderr: r.stderr}, []onboarding.Norm{onboarding.Version()}) {
-		t.Error(p)
+		assert.Fail(t, "onboarding example comparison failed", "%v", p)
 	}
 }

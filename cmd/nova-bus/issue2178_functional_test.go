@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // nova-tools #2178: `wait --on-note` empty-tick, rearm and refusal behaviour.
@@ -28,29 +31,17 @@ func TestIssue2178(t *testing.T) {
 		// --on-note without --timeout: refused
 		r := invoke(t, "", "wait", "--on-note", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 			"--remote", "origin", "--branch", "main")
-		if r.code != 2 {
-			t.Errorf("exit = %d, want 2", r.code)
-		}
-		if !strings.Contains(r.stderr, "nova-bus wait: --on-note needs --timeout") {
-			t.Errorf("stderr does not name the missing flag:\n%s", r.stderr)
-		}
-		if r.stdout != "" {
-			t.Errorf("a refusal printed to stdout:\n%s", r.stdout)
-		}
+		assert.Equalf(t, 2, r.code, "exit = %d, want 2", r.code)
+		assert.Containsf(t, r.stderr, "nova-bus wait: --on-note needs --timeout", "stderr does not name the missing flag:\n%s", r.stderr)
+		assert.Emptyf(t, r.stdout, "a refusal printed to stdout:\n%s", r.stdout)
 	})
 
 	t.Run("refuses on-note with --open", func(t *testing.T) {
 		r := invoke(t, "", "wait", "--on-note", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 			"--timeout", "1s", "--remote", "origin", "--branch", "main", "--open")
-		if r.code != 2 {
-			t.Errorf("exit = %d, want 2", r.code)
-		}
-		if !strings.Contains(r.stderr, "nova-bus wait: --on-note prints no open frame") {
-			t.Errorf("stderr does not refuse --open with --on-note:\n%s", r.stderr)
-		}
-		if r.stdout != "" {
-			t.Errorf("a refusal printed to stdout:\n%s", r.stdout)
-		}
+		assert.Equalf(t, 2, r.code, "exit = %d, want 2", r.code)
+		assert.Containsf(t, r.stderr, "nova-bus wait: --on-note prints no open frame", "stderr does not refuse --open with --on-note:\n%s", r.stderr)
+		assert.Emptyf(t, r.stdout, "a refusal printed to stdout:\n%s", r.stdout)
 	})
 }
 
@@ -94,21 +85,18 @@ func TestWaitOnNoteEmptyTickPrintsNothingAndDoesNotReturn(t *testing.T) {
 
 	other := bench(t, bare)
 	ccNote(t, other, "bo-cc0000000001", "copied only")
-	if err := push(other); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, push(other))
 
 	const timeout = 400 * time.Millisecond
 	r := invoke(t, "", onNoteFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0)
 	r.mustContain(t, "stdout", "WAIT TIMEOUT after=").
 		mustContain(t, "stdout", "WAIT DONE reason=timeout rearm=required next=")
-	if after := afterOf(t, r.stdout); after < timeout {
-		t.Fatalf("wait --on-note returned after %s, before its %s deadline, on a note that only copies the waiter:\n%s", after, timeout, r.stdout)
+	{
+		after := afterOf(t, r.stdout)
+		require.Falsef(t, after < timeout, "wait --on-note returned after %s, before its %s deadline, on a note that only copies the waiter:\n%s", after, timeout, r.stdout)
 	}
 	for _, line := range strings.Split(strings.TrimRight(r.stdout, "\n"), "\n") {
-		if !strings.HasPrefix(line, "WAIT as=") && !strings.HasPrefix(line, "WAIT TIMEOUT ") && !strings.HasPrefix(line, "WAIT DONE ") {
-			t.Fatalf("an empty --on-note tick printed %q; it prints nothing:\n%s", line, r.stdout)
-		}
+		require.Falsef(t, !strings.HasPrefix(line, "WAIT as=") && !strings.HasPrefix(line, "WAIT TIMEOUT ") && !strings.HasPrefix(line, "WAIT DONE "), "an empty --on-note tick printed %q; it prints nothing:\n%s", line, r.stdout)
 	}
 }
 
@@ -126,9 +114,7 @@ func TestWaitOnNoteReturnsTheArrivingNoteWithoutTheOpenFrame(t *testing.T) {
 	pushed := pushAtSyncPoint(t, checkout, other)
 
 	r := invoke(t, "", onNoteFlags(checkout, "Ada", "20s")...).mustCode(t, 0)
-	if err := <-pushed; err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, <-pushed)
 	path := "from-bo/2026-09-09T1300Z-for-Ada-0e0000000002.md"
 	r.mustContain(t, "stdout", "WAIT OK id=bo-0e0000000002 from=Bo path="+path+" bytes=").
 		mustContain(t, "stdout", "INBOX NOTE id=bo-0e0000000002 from=Bo addr=to ").
@@ -136,8 +122,6 @@ func TestWaitOnNoteReturnsTheArrivingNoteWithoutTheOpenFrame(t *testing.T) {
 		mustContain(t, "stdout", "Is the gate on the merge queue?").
 		mustContain(t, "stdout", "INBOX BODY END id=bo-0e0000000002")
 	for _, frame := range []string{"INBOX SCOPE", "INBOX OPEN", "INBOX OK", "carrying=", "WAIT OK new=", "WAIT TIMEOUT"} {
-		if strings.Contains(r.stdout, frame) {
-			t.Fatalf("wait --on-note printed %q; it returns the note and no inbox/open frame:\n%s", frame, r.stdout)
-		}
+		require.NotContainsf(t, r.stdout, frame, "wait --on-note printed %q; it returns the note and no inbox/open frame:\n%s", frame, r.stdout)
 	}
 }

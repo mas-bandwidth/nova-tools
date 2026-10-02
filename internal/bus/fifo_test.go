@@ -34,6 +34,6 @@ func TestReadLaneIndexDoesNotBlockOnAPlantedFIFO(t *testing.T) {
 		require.Error(t, err, "a FIFO read as a lane INDEX")
 		require.Contains(t, err.Error(), "fifo", "the read refusal does not name the kind fifo: %v", err)
 	case <-time.After(30 * time.Second):
-		t.Fatal("STILL BLOCKED after 30s reading a FIFO at INDEX: the lane reader is wedged")
+		require.FailNow(t, "STILL BLOCKED after 30s reading a FIFO at INDEX: the lane reader is wedged")
 	}
 }

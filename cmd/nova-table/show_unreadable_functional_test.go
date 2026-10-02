@@ -3,10 +3,10 @@
 package main
 
 import (
-	"strings"
-	"testing"
-
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"testing"
 )
 
 // show is the record of the table: a cell that cannot be read prints as ?, and
@@ -17,29 +17,22 @@ func TestShowNamesAnUnreadableCellAndExitsNonZero(t *testing.T) {
 	addr, _ := batchFixture(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
-	if err := c.Set(t.Context(), "table:demo:cell:build:working", "s", 0).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.Set(t.Context(), "table:demo:cell:build:working", "s", 0).Err())
 	code, stdout, stderr := runTable("show", "--redis", addr, "demo")
-	if code != 1 {
-		t.Fatalf("exit %d, want 1\n%s%s", code, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "TABLE ROW table=demo row=build ready=1 working=? done=0") {
-		t.Errorf("show does not draw the unread cell as ?:\n%s", stdout)
-	}
+	require.EqualValues(t, 1, code, "exit %d, want 1\n%s%s", code, stdout, stderr)
+	assert.Contains(t, stdout, "TABLE ROW table=demo row=build ready=1 working=? done=0", "show does not draw the unread cell as ?:\n%s", stdout)
 	for _, w := range []string{`table "demo" row "build" column "working" cannot be read: key table:demo:cell:build:working is string, expected zset`, "1 cell(s) printed as ?", "; run: nova-table check 'demo'"} {
-		if !strings.Contains(stderr, w) {
-			t.Errorf("stderr lacks %q:\n%s", w, stderr)
-		}
+		assert.Contains(t, stderr, w, "stderr lacks %q:\n%s", w, stderr)
 	}
-	if code, _, _ := runTable("render", "--redis", addr, "demo"); code != 0 {
-		t.Errorf("render exits %d; it draws the ? and exits 0", code)
+	{
+		code, _, _ := runTable("render", "--redis", addr, "demo")
+		assert.EqualValues(t, 0, code, "render exits %d; it draws the ? and exits 0", code)
 	}
 	// a sound table is untouched
-	if err := c.Del(t.Context(), "table:demo:cell:build:working").Err(); err != nil {
-		t.Fatal(err)
-	}
-	if code, _, stderr := runTable("show", "--redis", addr, "demo"); code != 0 || stderr != "" {
-		t.Errorf("show of a sound table: exit %d %s", code, stderr)
+	require.NoError(t, c.Del(t.Context(), "table:demo:cell:build:working").Err())
+	{
+		code, _, stderr := runTable("show", "--redis", addr, "demo")
+		assert.EqualValues(t, 0, code, "show of a sound table: exit %d %s", code, stderr)
+		assert.Empty(t, stderr, "show of a sound table: exit %d %s", code, stderr)
 	}
 }
