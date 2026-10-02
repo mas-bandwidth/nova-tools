@@ -21,8 +21,8 @@ import (
 //   - `gather` compares line 1 to line 1 and imposes no prefix of its own, so it follows
 //     whichever the other two settle on (internal/pulse/harvest.go, classifyResult).
 //
-// The cost of the disagreement: every card `cut` writes drew a `result-first` drift, and
-// a hand-written card in the other form draws one, for a colon.
+// The cost of the disagreement: every card `cut` writes draws a `result-first` drift, and
+// a hand-written card in the colon-less form draws one, for a missing colon.
 //
 // THE COLON FORM WINS. It is SPEC-SWARM's own law and it is what the majority
 // of writers already write -- `cut --kind` (internal/pulse/cutkind.go),

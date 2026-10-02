@@ -20,9 +20,8 @@ import (
 
 // THE BASE CHECKS: FIVE RULES A CODING CARD IS HELD TO BEFORE IT IS DEALT.
 //
-// The first four each describe a way a dealt card fails, and each needs evidence
-// the card text alone
-// does not hold, so they run only under `nova-swarm lint --base-check`:
+// The first four each close a failure a dealt card shows, and each needs evidence
+// the card text alone does not hold, so they run only under `nova-swarm lint --base-check`:
 //
 //	paths-at-base  every PATHS entry resolves at the card's base-sha, or is a new
 //	               `_test` file, or (on a repair card) at its PR-HEAD. Class 9: card-nx-f19 named internal/decide/entry.go,
