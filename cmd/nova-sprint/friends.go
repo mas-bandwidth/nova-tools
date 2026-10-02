@@ -135,13 +135,21 @@ func reportOK(report string) bool {
 		if !ok {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(key)) {
+		// The key's markdown marks wrap it, not only start the line: key-only
+		// bold **Verdict** leaves a trailing mark that a left trim misses.
+		switch strings.ToLower(strings.Trim(strings.TrimSpace(key), "#*-_ \t")) {
 		case "verdict", "status":
 		default:
 			continue
 		}
-		word, _, _ := strings.Cut(strings.TrimSpace(strings.TrimLeft(rest, "*_ \t")), " ")
-		switch strings.ToUpper(strings.Trim(word, "*_.,;:!")) {
+		// The first whitespace-delimited token of the value, not the first
+		// space-delimited one: a tab-separated value such as HOLD\tblocked is
+		// still one verdict word.
+		fields := strings.Fields(strings.TrimLeft(rest, "*_ \t"))
+		if len(fields) == 0 {
+			return true
+		}
+		switch strings.ToUpper(strings.Trim(fields[0], "*_.,;:!")) {
 		case "HOLD", "FAIL", "FAILED", "BROKEN":
 			return false
 		}

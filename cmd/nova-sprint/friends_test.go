@@ -119,6 +119,15 @@ func TestTheFriendsTableCountsTheJobCardsFriendSyncReads(t *testing.T) {
 	jobs(t, root, "amy", nil, []string{"j1"}, map[string]string{"j2": "# j2\n\nAll green.\n"})
 	assert.Contains(t, ta.ok("friend sync --root "+root), "FRIEND-SYNC OK added=- removed=- updated=amy friends=3 jobs=4")
 	assert.Equal(t, "amy     |     0 |       1 |     1 |    3 | 66.7% | up", strings.Split(tableOf(ta.frame(), sprint.Friends), "\n")[2])
+
+	// amy finishes j1 with a tab-separated HOLD: failed, so the failed count
+	// and ok% move together
+	jobs(t, root, "amy", nil, nil, map[string]string{"j1": "Verdict: HOLD\tblocked\n"})
+	assert.Contains(t, ta.ok("friend sync --root "+root), "FRIEND-SYNC OK added=- removed=- updated=amy friends=3 jobs=4")
+	var w2 whereView
+	ta.json("where", &w2)
+	assert.Equal(t, "2", w2.Tables[sprint.Friends]["amy"]["failed"])
+	assert.Equal(t, "50.0%", w2.Tables[sprint.Friends]["amy"]["okpct"])
 }
 
 // The one rule of a report's verdict: the first line of REPORT.md whose key is
@@ -128,13 +137,16 @@ func TestTheFriendsTableCountsTheJobCardsFriendSyncReads(t *testing.T) {
 func TestAReportsVerdictIsItsFirstVerdictOrStatusLine(t *testing.T) {
 	t.Parallel()
 	for report, ok := range map[string]bool{
-		"":                                     true,
-		"# done\n\nAll green.\n":               true,
-		"Verdict: OK\n":                        true,
-		"Verdict: PASS\nStatus: FAIL\n":        true,
-		"verdict: fail\n":                      false,
-		"Status: HOLD, a question for Glenn\n": false,
-		"- **Verdict:** BROKEN\n":              false,
+		"":                                         true,
+		"# done\n\nAll green.\n":                   true,
+		"Verdict: OK\n":                            true,
+		"Verdict: PASS\nStatus: FAIL\n":            true,
+		"verdict: fail\n":                          false,
+		"Status: HOLD, a question for Glenn\n":     false,
+		"- **Verdict:** BROKEN\n":                  false,
+		"**Verdict**: FAIL\n":                      false,
+		"Verdict: HOLD\tblocked\n":                 false,
+		"Status: FAIL\tchecks\n":                   false,
 		"## Status\n\nVerdict: FAILED (2 tests)\n": false,
 		"Not a verdict: FAIL\nVerdict: OK\n":       true,
 	} {
