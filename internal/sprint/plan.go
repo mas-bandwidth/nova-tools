@@ -436,7 +436,7 @@ func NotCoordinator(coordinator, who, verb string) string {
 // PlanRows is the rows of each table a plan changes: the row a card is moved
 // from and the row it goes to, the row a card is created in, and the row of a
 // card whose fields it sets, unsets or removes; a guard that changes nothing
-// names no row. The tick's log names them by table (errata 3 amendment 10:
+// names no row. The tick's log names them by table:
 // every row of every table moves every tick).
 func PlanRows(p Plan) map[string][]string {
 	out := map[string][]string{}

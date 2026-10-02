@@ -10,7 +10,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
-// The work table's queue (the owner's tick, 2026-09-30, errata 3 amendment
+// The work table's queue (the owner's tick, errata 3 amendment
 // 12): "nothing advances the work stream table EXCEPT on the next tick", and
 // "the previous tick does queue up all the changes for the work stream table,
 // to process start of next tick". While the machine runs, a step other than

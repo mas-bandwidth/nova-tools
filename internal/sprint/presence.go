@@ -126,7 +126,7 @@ func LoadText(b Beat, now time.Time) string {
 // TickPresence applies the changes of the members' derived status (T0), every
 // member whose status changes in the one plan (the design's R1 and R2, v2.1
 // section 2.3: each member seen or down is its own key, none waits behind
-// another's; the owner's rule, errata 3 amendment 10: every row of every table
+// another's; the owner's rule: every row of every table
 // moves every tick, never a row at a time). Every member that should be down
 // and is up goes down, its unfinished work cards dealt round the members up
 // after the plan (downPlan: the loads and the rolling index shared across
@@ -171,7 +171,7 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 	// the members the first up levels over
 	all := append(append([]string(nil), live...), ups[:n]...)
 	// every placement goes round the fleet from the deal's index and moves it
-	// (round.go, errata 3 amendment 5), written with the plan
+	// (round.go), written with the plan
 	rr := dealRoundWith(s, all...)
 	moves := roundMoves{}
 	var p Plan

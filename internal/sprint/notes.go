@@ -179,7 +179,7 @@ type Note struct {
 	Hint string `json:"hint,omitempty"`
 }
 
-// NTickEnd is the tick's end note (errata 3 amendment 8): written once at the
+// NTickEnd is the tick's end note: written once at the
 // end of a tick that addressed the coordinator something, "judgments=N";
 // inbox --wait wakes on it, and the inbox does not list it.
 const NTickEnd = "tick end"
