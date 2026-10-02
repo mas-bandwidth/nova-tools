@@ -34,3 +34,13 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	})
 	testverbhelp.HelpVerb(t, inProcess, "nova-secrets", "names", "seat add", "version")
 }
+
+// `help <verb>` is that verb's help whatever follows the verb, for every verb the
+// tool's help names, `seat add` and `seat inject` included. It drives run in
+// process and opens no store, key or helper program.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+	testverbhelp.HelpWhateverFollows(t, func(args []string, stdout, stderr io.Writer) int {
+		return run(args, strings.NewReader(""), stdout, stderr)
+	}, usage, "nova-secrets")
+}

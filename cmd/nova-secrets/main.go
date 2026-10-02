@@ -340,7 +340,7 @@ func dispatch(args []string, s streams) int {
 	switch verb {
 	case "help", "--help", "-h":
 		if verb == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return dispatch(append(slices.Clone(args[1:]), "--help"), s)
+			return dispatch(verbflag.HelpArgs(args[1:], usage, "nova-secrets"), s)
 		}
 		fmt.Fprint(s.stdout, usage)
 		return 0
