@@ -446,6 +446,58 @@ func TestParseRun(t *testing.T) {
 	}
 }
 
+func TestSourceVolumeResolvesASymlink(t *testing.T) {
+	t.Parallel()
+	real := t.TempDir()
+	if err := os.WriteFile(filepath.Join(real, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	holder := t.TempDir()
+	link := filepath.Join(holder, "src")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := parseRun([]string{"--src", link, "--image", "localhost/x:y", "./a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Unix(1_800_000_000, 0)
+	for _, args := range [][]string{
+		testArgs(c, "sha256:abc", "run1", start),
+		prefillArgs(c, "sha256:abc", "run1", "stamp", "https://proxy.example", start),
+	} {
+		vol := flagValue(t, args, "-v")
+		if !strings.Contains(vol, resolved) || !strings.HasSuffix(vol, ":/src:ro") {
+			t.Errorf("volume %q, want the resolved path %q ending :/src:ro", vol, resolved)
+		}
+		if strings.HasPrefix(vol, link+":") {
+			t.Errorf("volume still mounts the symlink path %q", vol)
+		}
+	}
+	if _, err := parseRun([]string{"--src", filepath.Join(holder, "missing"), "--image", "localhost/x:y", "./a"}); err == nil {
+		t.Error("a source EvalSymlinks cannot stat was accepted")
+	}
+}
+
+func TestMountedSrcKeepsARelativeNonSymlink(t *testing.T) {
+	name := "functionalrun-rel-src"
+	if err := os.Mkdir(name, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(name) })
+	got, err := mountedSrc(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != name || filepath.IsAbs(got) {
+		t.Errorf("mountedSrc(%q) = %q, want the relative path itself", name, got)
+	}
+}
+
 func TestContextHashFollowsEveryFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
