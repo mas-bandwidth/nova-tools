@@ -86,3 +86,57 @@ func TestInventoryFixtureChecksEndpointsWithoutConnections(t *testing.T) {
 		})
 	}
 }
+
+// Known endpoint problems refuse before opening the authoritative store;
+// malformed query errors never print the URI or its values (docs/SPEC-CONFIG.md,
+// "fleet"), and the file's bytes and history stay unchanged.
+func TestFleetEndpointProblemsRefuseBeforePersistenceOrConnections(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		field string
+		value string
+		want  string
+	}{
+		{"semicolon query", "pg_dsn", dsn + "?password=synthetic;sslmode=disable", "valid URI query"},
+		{"invalid escape", "pg_dsn", dsn + "?password=%zz", "valid URI query"},
+		{"invalid escape after secret", "pg_dsn", dsn + "?password=synthetic%zz", "valid URI query"},
+		{"invalid key escape", "pg_dsn", dsn + "?pass%zzword=synthetic", "valid URI query"},
+		{"encoded mixed-case password", "pg_dsn", dsn + "?%70aSsWoRd=synthetic", "carries a password"},
+		{"zero Redis port", "redis_port", "0", "1 through 65535"},
+		{"large Redis port", "redis_port", "65536", "1 through 65535"},
+		{"zero Postgres port", "pg_dsn", "postgres://user@localhost:0/nova", "TCP port from 1 through 65535"},
+		{"large Postgres port", "pg_dsn", "postgres://user@localhost:65536/nova", "TCP port from 1 through 65535"},
+		{"empty Postgres port", "pg_dsn", "postgres://user@localhost:/nova", "TCP port from 1 through 65535"},
+		{"nonnumeric Postgres port", "pg_dsn", "postgres://user@localhost:synthetic/nova", "password-free postgres://"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness()
+			h.dir = t.TempDir()
+			code, _, errs := h.run(t, "migrate", "--file", "try.json")
+			require.Zero(t, code, errs)
+			path := filepath.Join(h.dir, "try.json")
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			h.opens = 0
+			for _, store := range [][]string{{"--file", "try.json"}, {"--pg", dsn}} {
+				args := []string{"fleet", "set", "--" + tc.field, tc.value, "--as", "operator"}
+				code, out, errs := h.run(t, append(args, store...)...)
+				require.Equal(t, 2, code, errs)
+				assert.Empty(t, out)
+				assert.Contains(t, errs, tc.want)
+				assert.Contains(t, errs, "run: nova-config fleet set -h")
+				assert.NotContains(t, errs, "synthetic")
+				assert.NotContains(t, errs, "%zz")
+				if tc.field == "pg_dsn" {
+					assert.NotContains(t, errs, tc.value)
+				}
+				assert.Zero(t, h.opens+h.redis.opens)
+			}
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
+	}
+}

@@ -243,7 +243,7 @@ func TestToolsPlayRefusesAnEmptyFleetDSN(t *testing.T) {
 	r := newFleetPlayRig(t, "deployer-fixture.yml")
 	out, err := r.playResult(t, "tools.yml", "--check", "--limit", "store_deployer", "-e", "nova_pg_dsn=")
 	require.Error(t, err)
-	assert.Contains(t, out, "the applied fleet row has no pg_dsn")
+	assert.Contains(t, out, "the applied fleet row needs redis_port and pg_dsn")
 	assert.Contains(t, out, "nova-config migrate")
 	assert.Contains(t, out, "nova-config fleet set --redis_port <port> --pg_dsn")
 	assert.Contains(t, out, "nova-config apply --kind fleet")

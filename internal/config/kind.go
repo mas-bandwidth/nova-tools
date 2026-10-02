@@ -343,7 +343,17 @@ func checkFleet(r Row) error {
 	if _, has := u.User.Password(); has {
 		return fmt.Errorf("--pg_dsn carries a password; leave it out and deliver the password through NOVA_PG_PASSWORD_ENV")
 	}
-	for key := range u.Query() {
+	if port := u.Port(); port != "" || strings.HasSuffix(u.Host, ":") {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("--pg_dsn wants a TCP port from 1 through 65535 when a port is supplied")
+		}
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return fmt.Errorf("--pg_dsn wants a valid URI query with percent-encoded values and & between parameters; leave passwords out and deliver them through NOVA_PG_PASSWORD_ENV")
+	}
+	for key := range query {
 		if strings.EqualFold(key, "password") {
 			return fmt.Errorf("--pg_dsn carries a password; leave it out and deliver the password through NOVA_PG_PASSWORD_ENV")
 		}

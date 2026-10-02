@@ -121,8 +121,8 @@ CONFIG ADD kind=machine name=m2 rev=1
 nova-config machine add m1 --user nova --seat m1 --slots 64 --runners 1 --width 16 --as f1
 CONFIG ADD kind=machine name=m1 rev=2
 nova-config machine list
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32
 MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16
+MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -141,8 +141,8 @@ beat does not carry yet and `beat=none` for a machine that has never beaten:
 
 ```
 nova-config machine list --redis db1:6380
-MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
 MACHINE name=m1 user=nova seat=m1 slots=64 runners=1 width=16 beat=none
+MACHINE name=m2 user=gaffer seat=swarm-m2 slots=40 runners=0 width=32 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
 CONFIG LIST kind=machine rows=2
 ```
 
@@ -375,8 +375,8 @@ repeats the `--pg` or `--file` the run was given, so it pastes.
 
 ```
 nova-config apply --check
-CHECK ADD kind=machine name=m2
 CHECK ADD kind=machine name=m1
+CHECK ADD kind=machine name=m2
 CONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0
 CHECK SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn
 CONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=3 applied=0
@@ -387,8 +387,8 @@ CONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0
 CONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0
 CONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0
 nova-config apply --as f1
-APPLY ADD kind=machine name=m2
 APPLY ADD kind=machine name=m1
+APPLY ADD kind=machine name=m2
 CONFIG APPLY kind=machine add=2 set=0 remove=0 rev=2 ms=4
 APPLY SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn
 CONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=3 ms=1

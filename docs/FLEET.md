@@ -125,7 +125,7 @@ an explicit localhost; it is never derived from the Redis store machine.
 | `nova_release_out`, `nova_release_gocache` | `~/nova-bench/release-build`, `~/nova-bench/release-gocache` on the machine running the play | where the build is written and its Go cache |
 | `nova_version`, `nova_source` | none: `-e` | the build to install and the checkout it is built from |
 
-An existing schema has neither endpoint before migration 0011 adds their
+An existing schema has neither endpoint before migration 0014 adds their
 columns. Bootstrap once with `nova-config migrate --pg
 postgres://user@localhost:5432/db`, then run `nova-config fleet set --redis_port
 <port> --pg_dsn postgres://user@localhost:5432/db --as <actor>` and

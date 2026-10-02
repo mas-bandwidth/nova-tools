@@ -236,6 +236,9 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		for _, changes := range []map[string]string{
 			{"redis_port": "65536"},
 			{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova"},
+			{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print;sslmode=disable"},
+			{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print%zz"},
+			{"pg_dsn": "postgres://user@localhost:5432/nova?%70aSsWoRd=do-not-print"},
 		} {
 			_, _, err = st.Update(ctx, KindFleet, KindFleet, changes, "rowan")
 			require.Error(t, err)

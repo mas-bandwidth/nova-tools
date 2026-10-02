@@ -201,6 +201,13 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 		{"malformed dsn", map[string]string{"pg_dsn": "not a URI"}, "password-free postgres://"},
 		{"password in userinfo", map[string]string{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova"}, "carries a password"},
 		{"password in query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print"}, "carries a password"},
+		{"encoded mixed-case password key", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?%70aSsWoRd=do-not-print"}, "carries a password"},
+		{"semicolon query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print;sslmode=disable"}, "valid URI query"},
+		{"invalid query escape", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print%zz"}, "valid URI query"},
+		{"zero Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:0/nova"}, "TCP port from 1 through 65535"},
+		{"large Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:65536/nova"}, "TCP port from 1 through 65535"},
+		{"empty Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:/nova"}, "TCP port from 1 through 65535"},
+		{"nonnumeric Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:do-not-print/nova"}, "password-free postgres://"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -213,6 +220,8 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "6380", row.Fields["redis_port"])
 	assert.Equal(t, "postgres://user@localhost:5432/nova", row.Fields["pg_dsn"])
+	_, err = fleet.NewRow(KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost/nova?sslmode=require&application_name=nova%3Bconfig"})
+	assert.NoError(t, err, "an omitted port and a percent-encoded query value are valid")
 }
 
 func TestCanonicalValidatesEveryType(t *testing.T) {
