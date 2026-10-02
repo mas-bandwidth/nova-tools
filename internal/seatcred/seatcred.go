@@ -283,23 +283,3 @@ func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]strin
 	}
 	return rest, nil
 }
-
-// ChildEnv is environ with the password variables a Redis child could confuse
-// for its own removed and REDISCLI_AUTH set to c's password: the environment of
-// the one child that is handed the password, never this process's.
-func ChildEnv(environ []string, c Cred) []string {
-	out := make([]string, 0, len(environ)+1)
-	for _, kv := range environ {
-		name, _, _ := strings.Cut(kv, "=")
-		if name == "REDISCLI_AUTH" || name == c.Key || (strings.HasPrefix(name, "NOVA_REDIS_") && strings.HasSuffix(name, "_PASSWORD")) {
-			continue
-		}
-		out = append(out, kv)
-	}
-	// ignored: Use fails only when its function is nil or fails, and this one does neither
-	_ = c.Password.Use(func(pw string) error {
-		out = append(out, "REDISCLI_AUTH="+pw)
-		return nil
-	})
-	return out
-}
