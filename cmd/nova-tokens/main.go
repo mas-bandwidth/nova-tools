@@ -1264,17 +1264,20 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time, newPrivat
 	s.fact("who", *who)
 	s.fact("day", *day)
 	s.fact("rows", lines)
-	if lines == 0 || len(mixed) > 0 {
-		// A friend with nothing to show says so, and never sends zeros. A REPORT FAIL
-		// writes nothing: an existing --note file is left byte-unchanged. A mixed key is a
-		// FAIL for the day, and the rest of the body is still printed: the spec's sentence
-		// is "no line for that key", not no line for any key.
+	if lines == 0 || len(mixed) > 0 || unreadable > 0 || unparsed > 0 {
+		// A friend with nothing to show says so, and never sends zeros. A day that is
+		// short -- a declared source not read whole (rule 3), a mixed key -- is a FAIL
+		// too: the closing word, the exit code and the counts on it agree with the lines
+		// above it. A REPORT FAIL writes nothing: an existing --note file is left
+		// byte-unchanged. The body still prints, so the friend sees what the other keys
+		// came to: the spec's sentence for a mixed key is "no line for that key".
 		if lines > 0 {
 			fmt.Fprint(s.out(), body)
 		}
-		fmt.Fprintf(s.err(), "REPORT FAIL who=%s day=%s rows=%d unreadable=%d\n",
-			oneline.Field(*who), oneline.Field(*day), lines, unreadable)
+		fmt.Fprintf(s.err(), "REPORT FAIL who=%s day=%s rows=%d unreadable=%d unparsed=%d\n",
+			oneline.Field(*who), oneline.Field(*day), lines, unreadable, unparsed)
 		s.fact("unreadable", unreadable)
+		s.fact("unparsed", unparsed)
 		return s.done(1, *max)
 	}
 	fmt.Fprint(s.out(), body)
@@ -1345,10 +1348,8 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time, newPrivat
 	fmt.Fprintln(s.err(), s.line("TOKENS", "AVG-ALL", "", "day", *day, "tokens", allTokens,
 		"usd", usdCell(allUsd, allPriced), "usd_per_mtok", usdPerMtokCell(allUsd, allPricedTokens, allPriced),
 		"unpriced", allTokens-allPricedTokens))
-	// The OK line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE section):
-	// what says the day is short is the TOKENS UNREADABLE / TOKENS UNPARSED lines above it,
-	// the TOKENS NOTE, and exit 1. Under --dry-run --note was not written, and the line
-	// says so.
+	// The OK line is the grammar's, field for field: every source was read whole. Under
+	// --dry-run --note was not written, and the line says so.
 	subject := tokens.Subject(*day, stamp(now), buildVersion(), sorted)
 	fmt.Fprintf(s.err(), "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
 		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
@@ -1356,13 +1357,6 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time, newPrivat
 	s.fact("at", stamp(now))
 	s.fact("build", buildVersion())
 	s.fact("subject", tool.Text(subject))
-	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
-	// and a line that did not parse is the same wall under fold. The body still printed and
-	// --note still landed -- exit 1 still writes -- but a friend about to paste this onto
-	// the bus is told it does not cover what it claims.
-	if unreadable > 0 || unparsed > 0 {
-		return s.done(1, *max)
-	}
 	return s.done(0, *max)
 }
 

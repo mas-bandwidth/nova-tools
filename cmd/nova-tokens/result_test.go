@@ -282,3 +282,32 @@ func TestAMixedPricedAndUnpricedModelRatesOnlyItsPricedTokens(t *testing.T) {
 	r = invoke(t, "report", "--who", "ada", "--day", "2026-09-14", "--repos", reposFile(t, dir), "--claude", "g="+tr)
 	assert.Contains(t, r.stderr, "TOKENS AVG day=2026-09-14 model=mercury-2.5 tokens=3000 usd=- usd_per_mtok=- unpriced=3000\n")
 }
+
+// The closing word of a report, its exit code and its counts agree with every line above
+// them: a declared source that was not read whole is REPORT FAIL and exit 1, and a FAIL
+// writes no --note (SPEC-TOKENS rule 20: --note is written only on REPORT OK).
+func TestAReportThatIsShortClosesFailAndWritesNoNote(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 3}, "/x/schema/a.go")+"\n")
+	write(t, filepath.Join(tr, "b.jsonl"), "not json\n")
+	note := filepath.Join(dir, "note.txt")
+	for _, dry := range []bool{false, true} {
+		args := []string{"report", "--who", "ada", "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g=" + tr, "--note", note}
+		if dry {
+			args = append(args, "--dry-run")
+		}
+		r := invoke(t, args...)
+		wantExit(t, r, 1)
+		assert.Contains(t, r.stderr, "TOKENS UNREADABLE label=claude:g ")
+		assert.Contains(t, r.stderr, "REPORT FAIL who=ada day=2026-09-11 rows=1 unreadable=1 unparsed=0\n")
+		assert.NotContains(t, r.stderr, "REPORT OK")
+		assert.Contains(t, r.stdout, "2026-09-11\tada\tf\tschema\tinput\t3")
+		assert.NoFileExists(t, note, "a REPORT FAIL wrote --note")
+		_, j := asJSON(t, append(args, "--json")...)
+		assert.Equal(t, "failed", j.Result.Status)
+		assert.Equal(t, 1.0, j.Facts["unreadable"])
+	}
+}
