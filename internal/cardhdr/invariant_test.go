@@ -127,8 +127,8 @@ func TestLintOneInvariantExemptsPlanNotStitch(t *testing.T) {
 	for _, build := range []string{"BUILD: the children, later.", ""} {
 		noKids := strings.Replace(plan, "BUILD:\n1. the child card-lint-a\n2. the child card-lint-b", build, 1)
 		got := LintOneInvariant(Card{Text: noKids})
-		assert.Equal(t, RulePlanChildren, got.Rules(), "KIND: plan with BUILD %q", build)
-		if assert.NotEmpty(t, got, "KIND: plan with BUILD %q", build) {
+		assert.Equal(t, RulePlanChildren, got.Rules(), "KIND: plan with BUILD %q: refusals %v, want plan-children on the KIND line", build, got)
+		if assert.NotEmpty(t, got, "KIND: plan with BUILD %q: refusals %v, want plan-children on the KIND line", build, got) {
 			assert.Equal(t, "KIND: plan", got[0].Line, "KIND: plan with BUILD %q: refusals %v, want plan-children on the KIND line", build, got)
 		}
 	}
@@ -298,10 +298,10 @@ func TestParseTypedLines(t *testing.T) {
 		"darwin,darwin": false, "darwin,windows": false, "darwin linux": false} {
 		_, err := ParsePlatforms(v)
 		if ok {
-			assert.NoError(t, err, "ParsePlatforms(%q)", v)
+			assert.NoError(t, err, "ParsePlatforms(%q) = %v, want ok=%v naming PLATFORMS:", v, err, ok)
 		} else {
-			assert.Error(t, err, "ParsePlatforms(%q)", v)
-			assert.ErrorContains(t, err, "PLATFORMS:", "ParsePlatforms(%q)", v)
+			assert.Error(t, err, "ParsePlatforms(%q) = %v, want ok=%v naming PLATFORMS:", v, err, ok)
+			assert.ErrorContains(t, err, "PLATFORMS:", "ParsePlatforms(%q) = %v, want ok=%v naming PLATFORMS:", v, err, ok)
 		}
 	}
 	_, err = ParseInvariant("one. two.")

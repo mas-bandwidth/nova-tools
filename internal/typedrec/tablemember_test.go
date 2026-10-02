@@ -11,11 +11,11 @@ func TestTableMemberValidatesTheCompleteReply(t *testing.T) {
 	t.Parallel()
 	valid := []any{"MEMBER", "18446744073709551615", "9007199254740993", "placed", "stream: build", "done"}
 	got, err := ParseTableMember(valid)
-	require.NoError(t, err, "valid: %+v", got)
-	require.Equal(t, uint64(18446744073709551615), got.Epoch, "valid: %+v", got)
-	require.Equal(t, uint64(9007199254740993), got.Revision, "valid: %+v", got)
-	require.Equal(t, "stream: build", got.Row, "valid: %+v", got)
-	require.Equal(t, "done", got.Column, "valid: %+v", got)
+	require.NoError(t, err, "valid: %+v %v", got, err)
+	require.Equal(t, uint64(18446744073709551615), got.Epoch, "valid: %+v %v", got, err)
+	require.Equal(t, uint64(9007199254740993), got.Revision, "valid: %+v %v", got, err)
+	require.Equal(t, "stream: build", got.Row, "valid: %+v %v", got, err)
+	require.Equal(t, "done", got.Column, "valid: %+v %v", got, err)
 
 	for _, bad := range [][]any{
 		nil, {"MEMBER", "0"}, {"MEMBER", "00", "1", "missing", "", ""},

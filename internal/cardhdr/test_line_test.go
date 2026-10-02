@@ -27,8 +27,8 @@ func TestParseTestIsTheOneGrammar(t *testing.T) {
 		"none - a fixture line": {None: true, Why: "a fixture line"},
 	} {
 		got, why := cardhdr.ParseTest(v)
-		assert.Empty(t, why, "ParseTest(%q) unexpected why", v)
-		assert.Equal(t, want, got, "ParseTest(%q)", v)
+		assert.Empty(t, why, "ParseTest(%q) = %+v %q, want %+v", v, got, why, want)
+		assert.Equal(t, want, got, "ParseTest(%q) = %+v %q, want %+v", v, got, why, want)
 	}
 	for v, wantWhy := range map[string]string{
 		"":                     "no TEST line",
@@ -46,9 +46,9 @@ func TestParseTestIsTheOneGrammar(t *testing.T) {
 		"./x TestY; echo":      "is not",
 	} {
 		got, why := cardhdr.ParseTest(v)
-		assert.Empty(t, got, "ParseTest(%q) unexpected got", v)
-		assert.Contains(t, why, wantWhy, "ParseTest(%q)", v)
-		assert.Contains(t, why, "TEST: none <why", "ParseTest(%q)", v)
+		assert.Empty(t, got, "ParseTest(%q) = %+v %q, want a refusal with %q and the remedy", v, got, why, wantWhy)
+		assert.Contains(t, why, wantWhy, "ParseTest(%q) = %+v %q, want a refusal with %q and the remedy", v, got, why, wantWhy)
+		assert.Contains(t, why, "TEST: none <why", "ParseTest(%q) = %+v %q, want a refusal with %q and the remedy", v, got, why, wantWhy)
 	}
 }
 
@@ -61,12 +61,12 @@ func TestParseTestRefusesAPackagePattern(t *testing.T) {
 	t.Parallel()
 	for _, v := range []string{"./... TestAdd", "./internal/... TestAdd", "internal/x/... TestAdd", "-tags functional ./... TestAdd", "... TestAdd", "./x... TestAdd"} {
 		got, why := cardhdr.ParseTest(v)
-		assert.Empty(t, got, "ParseTest(%q) unexpected got", v)
-		assert.Contains(t, why, "not one package", "ParseTest(%q)", v)
-		assert.Contains(t, why, "TEST: none <why", "ParseTest(%q)", v)
-		assert.NotContains(t, why, "\n", "ParseTest(%q)", v)
+		assert.Empty(t, got, "ParseTest(%q) = %+v %q, want a one-line refusal naming the pattern", v, got, why)
+		assert.Contains(t, why, "not one package", "ParseTest(%q) = %+v %q, want a one-line refusal naming the pattern", v, got, why)
+		assert.Contains(t, why, "TEST: none <why", "ParseTest(%q) = %+v %q, want a one-line refusal naming the pattern", v, got, why)
+		assert.NotContains(t, why, "\n", "ParseTest(%q) = %+v %q, want a one-line refusal naming the pattern", v, got, why)
 	}
 	got, why := cardhdr.ParseTest("./x TestAdd")
-	assert.Empty(t, why, "one package unexpected why")
-	assert.Equal(t, "./x", got.Package)
+	assert.Empty(t, why, "one package: %+v %q", got, why)
+	assert.Equal(t, "./x", got.Package, "one package: %+v %q", got, why)
 }

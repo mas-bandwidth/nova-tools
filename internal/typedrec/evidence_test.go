@@ -32,7 +32,7 @@ func TestSpecSwarmContractMatches(t *testing.T) {
 	root := findRoot(t)
 	specPath := filepath.Join(root, "docs", "SPEC-SWARM.md")
 	data, err := os.ReadFile(specPath)
-	require.NoError(t, err, "read SPEC-SWARM.md")
+	require.NoError(t, err, "read SPEC-SWARM.md: %v", err)
 	s := string(data)
 	const beginMarker = "<!-- typedrec:begin -->\n"
 	const endMarker = "<!-- typedrec:end -->"

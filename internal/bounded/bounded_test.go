@@ -216,11 +216,12 @@ func TestTallyCountsLikeTheListing(t *testing.T) {
 					got += "-"
 				}
 			}
-			assert.Equal(t, tc.listed, got, "listed")
-			assert.Equal(t, tc.shownA, tl.Shown("a"), "shown 'a'")
-			assert.Equal(t, tc.allA, tl.Total("a"), "total 'a'")
-			require.NotEmpty(t, tl.Kinds())
-			assert.Equal(t, "a", tl.Kinds()[0])
+			assert.Equal(t, tc.listed, got, "listed %s shown %d total %d kinds %v; want %s %d %d", got, tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
+			assert.Equal(t, tc.shownA, tl.Shown("a"), "listed %s shown %d total %d kinds %v; want %s %d %d", got, tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
+			assert.Equal(t, tc.allA, tl.Total("a"), "listed %s shown %d total %d kinds %v; want %s %d %d", got, tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
+			if assert.NotEmpty(t, tl.Kinds(), "listed %s shown %d total %d kinds %v; want %s %d %d", got, tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA) {
+				assert.Equal(t, "a", tl.Kinds()[0], "listed %s shown %d total %d kinds %v; want %s %d %d", got, tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
+			}
 		})
 	}
 }

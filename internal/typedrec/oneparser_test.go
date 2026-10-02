@@ -11,6 +11,7 @@ package typedrec_test
 
 import (
 	"context"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -504,51 +505,59 @@ func TestOneTypedParser(t *testing.T) {
 
 		// 1. omitted-field
 		hits1, err := pc.scanFile(filepath.Join(fixDir, "omitted-field.go"), "omitted-field.go")
-		if assert.NoError(t, err, "fixture 1 omitted-field: unexpected error") && assert.Len(t, hits1, 1, "fixture 1 omitted-field: tokens length") {
-			assert.Equal(t, "FINDINGS", hits1[0].tok)
+		if assert.NoError(t, err, "fixture 1 omitted-field: got %v, err %v", hits1, err) &&
+			assert.Len(t, hits1, 1, "fixture 1 omitted-field: got %v, err %v", hits1, err) {
+			assert.Equal(t, "FINDINGS", hits1[0].tok, "fixture 1 omitted-field: got %v, err %v", hits1, err)
 		}
 
 		// 2. split-shadow
 		hits2, err := pc.scanFile(filepath.Join(fixDir, "split-shadow.go"), "split-shadow.go")
-		if assert.NoError(t, err, "fixture 2 split-shadow: unexpected error") && assert.Len(t, hits2, 1, "fixture 2 split-shadow: tokens length") {
-			assert.Equal(t, "PROBES", hits2[0].tok)
+		if assert.NoError(t, err, "fixture 2 split-shadow: got %v, err %v", hits2, err) &&
+			assert.Len(t, hits2, 1, "fixture 2 split-shadow: got %v, err %v", hits2, err) {
+			assert.Equal(t, "PROBES", hits2[0].tok, "fixture 2 split-shadow: got %v, err %v", hits2, err)
 		}
 
 		// 3. scanner-shadow
 		hits3, err := pc.scanFile(filepath.Join(fixDir, "scanner-shadow.go"), "scanner-shadow.go")
-		if assert.NoError(t, err, "fixture 3 scanner-shadow: unexpected error") && assert.Len(t, hits3, 1, "fixture 3 scanner-shadow: tokens length") {
-			assert.Equal(t, "SUGGEST", hits3[0].tok)
+		if assert.NoError(t, err, "fixture 3 scanner-shadow: got %v, err %v", hits3, err) &&
+			assert.Len(t, hits3, 1, "fixture 3 scanner-shadow: got %v, err %v", hits3, err) {
+			assert.Equal(t, "SUGGEST", hits3[0].tok, "fixture 3 scanner-shadow: got %v, err %v", hits3, err)
 		}
 
 		// 4. byte-shadow
 		hits4, err := pc.scanFile(filepath.Join(fixDir, "byte-shadow.go"), "byte-shadow.go")
-		if assert.NoError(t, err, "fixture 4 byte-shadow: unexpected error") && assert.Len(t, hits4, 1, "fixture 4 byte-shadow: tokens length") {
-			assert.Equal(t, "HEAD", hits4[0].tok)
+		if assert.NoError(t, err, "fixture 4 byte-shadow: got %v, err %v", hits4, err) &&
+			assert.Len(t, hits4, 1, "fixture 4 byte-shadow: got %v, err %v", hits4, err) {
+			assert.Equal(t, "HEAD", hits4[0].tok, "fixture 4 byte-shadow: got %v, err %v", hits4, err)
 		}
 
 		// 5. const-concat
 		hits5, err := pc.scanFile(filepath.Join(fixDir, "const-concat.go"), "const-concat.go")
-		if assert.NoError(t, err, "fixture 5 const-concat: unexpected error") && assert.Len(t, hits5, 1, "fixture 5 const-concat: tokens length") {
-			assert.Equal(t, "FLOOR", hits5[0].tok)
+		if assert.NoError(t, err, "fixture 5 const-concat: got %v, err %v", hits5, err) &&
+			assert.Len(t, hits5, 1, "fixture 5 const-concat: got %v, err %v", hits5, err) {
+			assert.Equal(t, "FLOOR", hits5[0].tok, "fixture 5 const-concat: got %v, err %v", hits5, err)
 		}
 
 		// 6. prefix-table
 		hits6, err := pc.scanFile(filepath.Join(fixDir, "prefix-table.go"), "prefix-table.go")
-		if assert.NoError(t, err, "fixture 6 prefix-table: unexpected error") && assert.Len(t, hits6, 2, "fixture 6 prefix-table: tokens length") {
-			assert.Equal(t, "RED", hits6[0].tok)
+		if assert.NoError(t, err, "fixture 6 prefix-table: got %v, err %v", hits6, err) &&
+			assert.Len(t, hits6, 2, "fixture 6 prefix-table: got %v, err %v", hits6, err) {
+			assert.Equal(t, "RED", hits6[0].tok, "fixture 6 prefix-table: got %v, err %v", hits6, err)
 		}
 
 		// 8. var-shadow: a never-assigned package var holding "HEAD:" folds like a const.
 		hits8, err := pc.scanFile(filepath.Join(fixDir, "var-shadow.go"), "var-shadow.go")
-		if assert.NoError(t, err, "fixture 8 var-shadow: unexpected error") && assert.Len(t, hits8, 1, "fixture 8 var-shadow: tokens length") {
-			assert.Equal(t, "HEAD", hits8[0].tok)
+		if assert.NoError(t, err, "fixture 8 var-shadow: got %v, err %v", hits8, err) &&
+			assert.Len(t, hits8, 1, "fixture 8 var-shadow: got %v, err %v", hits8, err) {
+			assert.Equal(t, "HEAD", hits8[0].tok, "fixture 8 var-shadow: got %v, err %v", hits8, err)
 		}
 
 		// 9. typed-shadow: a string the typed parser returned, compared raw.
 		hits9, err := pc.scanFile(filepath.Join(fixDir, "typed-shadow.go"), "typed-shadow.go")
-		if assert.NoError(t, err, "fixture 9 typed-shadow: unexpected error") && assert.Len(t, hits9, 1, "fixture 9 typed-shadow: tokens length") {
-			assert.Equal(t, "DONE", hits9[0].tok)
-			assert.Equal(t, "bare", hits9[0].form)
+		if assert.NoError(t, err, "fixture 9 typed-shadow: got %v, err %v", hits9, err) &&
+			assert.Len(t, hits9, 1, "fixture 9 typed-shadow: got %v, err %v", hits9, err) {
+			assert.Equal(t, "DONE", hits9[0].tok, "fixture 9 typed-shadow: got %v, err %v", hits9, err)
+			assert.Equal(t, "bare", hits9[0].form, "fixture 9 typed-shadow: got %v, err %v", hits9, err)
 		}
 
 		// 10. brief-lines: labels spliced with runtime values in a list of
@@ -573,9 +582,8 @@ func TestOneTypedParser(t *testing.T) {
 
 		// 7. clean
 		hits7, err := pc.scanFile(filepath.Join(fixDir, "clean.go"), "clean.go")
-		if assert.NoError(t, err, "fixture 7 clean: unexpected error") {
-			assert.Empty(t, hits7, "fixture 7 clean: expected 0 hits")
-		}
+		assert.NoError(t, err, "fixture 7 clean: expected 0 hits, got %d: %v", len(hits7), hits7)
+		assert.Empty(t, hits7, "fixture 7 clean: expected 0 hits, got %d: %v", len(hits7), hits7)
 	})
 
 	t.Run("rev2-rule-red", func(t *testing.T) {
@@ -641,8 +649,9 @@ func TestOneTypedParser(t *testing.T) {
 
 		// Synthetic contract: 1 hit on ZZTEST
 		hitsSynth, _ := pcSynthetic.scanFile(tmpFile, "synthetic.go")
-		require.Len(t, hitsSynth, 1, "expected 1 hit for ZZTEST with synthetic contract")
-		assert.Equal(t, "ZZTEST", hitsSynth[0].tok)
+		if assert.Len(t, hitsSynth, 1, "expected 1 hit for ZZTEST with synthetic contract, got %v", hitsSynth) {
+			assert.Equal(t, "ZZTEST", hitsSynth[0].tok, "expected 1 hit for ZZTEST with synthetic contract, got %v", hitsSynth)
+		}
 	})
 
 	t.Run("tree", func(t *testing.T) {
@@ -695,8 +704,10 @@ func TestOneTypedParser(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		for _, h := range unexpectedHits {
-			assert.Failf(t, "unexpected RESULT parser hit", "%s:%d %s() %s %s %s", h.file, h.line, h.fn, h.form, h.tok, h.shape)
+		if !assert.Empty(t, unexpectedHits, "found %d unexpected RESULT parser hit(s):", len(unexpectedHits)) {
+			for _, h := range unexpectedHits {
+				assert.Fail(t, fmt.Sprintf("  %s:%d %s() %s %s %s", h.file, h.line, h.fn, h.form, h.tok, h.shape))
+			}
 		}
 
 		// Ensure every allowlist entry has at least 1 hit
@@ -712,13 +723,13 @@ func TestOneTypedParser(t *testing.T) {
 				partB++
 			}
 		}
-		assert.Len(t, specAllowlist, 3, "spec allowlist entries")
-		assert.Zero(t, partB, "spec allowlist part=B entries")
+		assert.Len(t, specAllowlist, 3, "spec allowlist: %d entries, %d part=B; want 3 and 0", len(specAllowlist), partB)
+		assert.Zero(t, partB, "spec allowlist: %d entries, %d part=B; want 3 and 0", len(specAllowlist), partB)
 		// Every drift entry names the commit that added it and why it stays.
 		for _, a := range driftAllowlist {
-			assert.NotEmpty(t, a.since, "drift allowlist entry %s %s needs since", a.file, a.fn)
-			assert.NotEmpty(t, a.reason, "drift allowlist entry %s %s needs reason", a.file, a.fn)
-			assert.False(t, a.partB, "drift allowlist entry %s %s must have no part=B", a.file, a.fn)
+			assert.NotEmpty(t, a.since, "drift allowlist entry %s %s needs since and reason and no part=B", a.file, a.fn)
+			assert.NotEmpty(t, a.reason, "drift allowlist entry %s %s needs since and reason and no part=B", a.file, a.fn)
+			assert.False(t, a.partB, "drift allowlist entry %s %s needs since and reason and no part=B", a.file, a.fn)
 		}
 		// Every drift entry's since is a commit in this history, so a row whose
 		// commit is gone (a typo, a rewritten branch) is caught. A shallow

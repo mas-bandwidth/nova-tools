@@ -30,7 +30,7 @@ func TestRemoveUnderRefusesUnsafePaths(t *testing.T) {
 	require.NoError(t, os.MkdirAll(escaped, 0o755))
 
 	home, err := os.UserHomeDir()
-	require.NoError(t, err, "this machine has no home directory to test the refusal against")
+	require.NoError(t, err, "this machine has no home directory to test the refusal against: %v", err)
 
 	cases := []struct {
 		name string
@@ -53,7 +53,7 @@ func TestRemoveUnderRefusesUnsafePaths(t *testing.T) {
 			// still be there: a refusal is not a partial removal.
 			for _, p := range []string{inside, link, outside} {
 				_, err := os.Lstat(p)
-				assert.NoError(t, err, "the refusal removed %s", p)
+				assert.NoError(t, err, "the refusal removed %s: %v", p, err)
 			}
 		})
 	}
@@ -67,9 +67,10 @@ func TestRemoveUnderRemovesBelowRoot(t *testing.T) {
 	sub := filepath.Join(root, "sub")
 	require.NoError(t, os.MkdirAll(filepath.Join(sub, "deep", "deeper"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(sub, "file"), []byte("x"), 0o644))
-	require.NoError(t, RemoveUnder(root, sub), "RemoveUnder removed nothing")
-	_, err := os.Lstat(sub)
+	err := RemoveUnder(root, sub)
+	require.NoError(t, err, "RemoveUnder removed nothing: %v", err)
+	_, err = os.Lstat(sub)
 	require.True(t, os.IsNotExist(err), "the directory below the root is still there: %v", err)
 	_, err = os.Lstat(root)
-	require.NoError(t, err, "the root itself was removed")
+	require.NoError(t, err, "the root itself was removed: %v", err)
 }
