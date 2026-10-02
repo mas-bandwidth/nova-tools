@@ -20,7 +20,6 @@ var DefaultCatalog = []Entry{
 	Page("internal", "packages and libraries", "nova-ci local", "make test"),
 	E("tla", "the TLA+ models of the state machines and their runners", "go test ./internal/tlc", "make tlc-test"),
 	E("profiles", "the darwin sandbox profile template internal/sandbox embeds, and the check that measures it (tools/sandboxcheck)", "go test ./internal/sandbox", "go test ./internal/sandbox"),
-	E("deprecated", "tools and modules not in use, kept for reference only; never built, tested or maintained", "none", "none"),
 	E("testdata", "shared test fixtures and data", "go test ./internal/ci", "make test"),
 	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
 
@@ -65,8 +64,7 @@ var DefaultCatalog = []Entry{
 	E("internal/dogfood", "dogfood self-test gates", "go test ./internal/dogfood", "go test ./internal/dogfood"),
 	E("internal/fleet", "runner fleet discovery and status", "go test ./internal/fleet", "go test ./internal/fleet"),
 	E("internal/fuse", "workspace isolation boundaries", "go test ./internal/fuse", "go test ./internal/fuse"),
-	Page("internal/ghevent", "GitHub webhook to Redis stream", "go test ./internal/ghevent", "go test ./internal/ghevent"),
-	E("internal/ghevent/testdata", "GitHub delivery fixtures for the decoder", "go test ./internal/ghevent", "go test ./internal/ghevent"),
+	Page("internal/ghevent", "the GitHub event Redis stream: append and read", "go test ./internal/ghevent", "go test ./internal/ghevent"),
 	E("internal/ghevent/wire", "shared GitHub event stream identity without ingestion dependencies", "go test ./internal/ci", "go test ./internal/ci"),
 	E("internal/gitrun", "the one runner for a one-shot git child: a deadline, WaitDelay and the caller's environment choice", "go test ./internal/gitrun", "go test ./internal/gitrun"),
 	E("internal/goenv", "Go environment scrubber for child processes", "go test ./internal/goenv", "go test ./internal/goenv"),

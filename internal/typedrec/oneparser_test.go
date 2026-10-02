@@ -81,6 +81,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists"},
 	{file: "tools/ci/revertonred.go", fn: "land", record: "git-refspec", since: "a1f1f62c1",
 		reason: "the git push refspec HEAD:main, not a RESULT parser"},
+	{file: "cmd/nova-sprint/landprune.go", fn: "tidyRefs", record: "git-HEAD", since: "c6e85c5e",
+		reason: "skips origin/HEAD, the clone's symbolic ref, in a for-each-ref listing; not a RESULT parser"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
@@ -158,8 +160,45 @@ func (pc *parserChecker) scanFile(p, rel string) ([]hit, error) {
 			return v, ok
 		case *ast.ParenExpr:
 			return fold(x.X)
+		case *ast.CallExpr:
+			// fmt.Sprintf("REPO: %s", x) and fmt.Sprint("REPO: ", x) fold to
+			// their constant lead, as "REPO: " + x does: building the label
+			// by format must not hide it in parser position.
+			if sel, ok := x.Fun.(*ast.SelectorExpr); ok && len(x.Args) > 0 {
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "fmt" && (sel.Sel.Name == "Sprintf" || sel.Sel.Name == "Sprint") {
+					if s, ok := fold(x.Args[0]); ok {
+						if sel.Sel.Name == "Sprintf" {
+							s, _, _ = strings.Cut(s, "%")
+						}
+						return s, true
+					}
+				}
+			}
 		}
 		return "", false
+	}
+
+	// whole is true when e folds with nothing left over: a literal, a folded
+	// const or var, or a + of such. A composite-literal element that is whole
+	// is a token table's entry; one that splices a runtime value into the
+	// label ("REPO: " + repo, fmt.Sprintf("REPO: %s", repo)) is a produced
+	// line, output and not a parser. The same expression in parser position
+	// (a strings call's argument, ==, a case) is still reported by fold's
+	// lead, so the rule opens no hole there.
+	var whole func(e ast.Expr) bool
+	whole = func(e ast.Expr) bool {
+		switch x := e.(type) {
+		case *ast.BasicLit:
+			return x.Kind == token.STRING
+		case *ast.Ident:
+			_, ok := consts[x.Name]
+			return ok
+		case *ast.ParenExpr:
+			return whole(x.X)
+		case *ast.BinaryExpr:
+			return x.Op == token.ADD && whole(x.X) && whole(x.Y)
+		}
+		return false
 	}
 
 	ast.Inspect(f, func(n ast.Node) bool {
@@ -277,7 +316,7 @@ func (pc *parserChecker) scanFile(p, rel string) ([]hit, error) {
 							for _, e := range x.Elts {
 								if kv, ok := e.(*ast.KeyValueExpr); ok {
 									report(kv.Key, varName, "pkg-complit-key")
-								} else {
+								} else if whole(e) {
 									report(e, varName, "pkg-complit")
 								}
 							}
@@ -427,7 +466,7 @@ func (pc *parserChecker) scanFile(p, rel string) ([]hit, error) {
 					for _, e := range x.Elts {
 						if kv, ok := e.(*ast.KeyValueExpr); ok {
 							report(kv.Key, fnName, "complit-key")
-						} else {
+						} else if whole(e) {
 							report(e, fnName, "complit")
 						}
 					}
@@ -514,6 +553,26 @@ func TestOneTypedParser(t *testing.T) {
 		if err != nil || len(hits9) != 1 || hits9[0].tok != "DONE" || hits9[0].form != "bare" {
 			t.Errorf("fixture 9 typed-shadow: got %v, err %v", hits9, err)
 		}
+
+		// 10. brief-lines: labels spliced with runtime values in a list of
+		// lines that is joined and written out are output, not a token table.
+		toks := func(name string) []string {
+			hs, err := pc.scanFile(filepath.Join(fixDir, name), name)
+			require.NoError(t, err, name)
+			var out []string
+			for _, h := range hs {
+				out = append(out, h.tok)
+			}
+			return out
+		}
+		assert.Empty(t, toks("brief-lines.go"), "fixture 10 brief-lines")
+
+		// 11. label-prefix: the same REPO: label matched against input is a parser.
+		assert.Equal(t, []string{"REPO"}, toks("label-prefix.go"), "fixture 11 label-prefix")
+
+		// 12. sprintf-label: a label built by fmt.Sprintf or fmt.Sprint and
+		// compared to input is caught at both sites.
+		assert.Equal(t, []string{"REPO", "REPO"}, toks("sprintf-label.go"), "fixture 12 sprintf-label")
 
 		// 7. clean
 		hits7, err := pc.scanFile(filepath.Join(fixDir, "clean.go"), "clean.go")
@@ -611,10 +670,6 @@ func TestOneTypedParser(t *testing.T) {
 			}
 			if info.IsDir() {
 				if info.Name() == "testdata" || info.Name() == ".git" || strings.HasSuffix(p, "internal/typedrec") {
-					return filepath.SkipDir
-				}
-				// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-				if p == filepath.Join(root, "deprecated") {
 					return filepath.SkipDir
 				}
 				return nil

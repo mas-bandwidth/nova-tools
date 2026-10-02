@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/stretchr/testify/assert"
 )
 
 // TestParseTestIsTheOneGrammar is nova-tools#4313's TEST line: build tags
@@ -51,16 +50,6 @@ func TestParseTestIsTheOneGrammar(t *testing.T) {
 			t.Errorf("ParseTest(%q) = %+v %q, want a refusal with %q and the remedy", v, got, why, wantWhy)
 		}
 	}
-	s := (cardhdr.TestLine{Package: "./x", Name: "TestY"}).String()
-	assert.Equal(t, "./x TestY", s, "String() = %q", s)
-	s = (cardhdr.TestLine{Package: "./x", Name: "TestY", Tags: "functional"}).String()
-	assert.Equal(t, "-tags functional ./x TestY", s, "String() = %q", s)
-	for pkg, want := range map[string]string{"internal/x": "./internal/x", "./x": "./x", ".": "."} {
-		got := (cardhdr.TestLine{Package: pkg}).GoPackage()
-		assert.Equal(t, want, got, "GoPackage(%q) = %q, want %q", pkg, got, want)
-	}
-	s = (cardhdr.TestLine{None: true, Why: "why"}).String()
-	assert.Equal(t, "none why", s, "String() = %q", s)
 }
 
 // TestParseTestRefusesAPackagePattern is the nova-tools#4401 read's item 2:

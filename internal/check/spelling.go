@@ -627,32 +627,6 @@ func CheckSpellingText(filename, text string, opts SpellingOptions) ([]SpellingF
 	return findings, updated, nil
 }
 
-// CheckSpellingFile checks a single file for misspellings, optionally rewriting it if opts.Write is true.
-func CheckSpellingFile(path string, opts SpellingOptions) ([]SpellingFinding, error) {
-	checker := NewSpellingChecker(opts.Ignore)
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, fmt.Errorf("file %q: %w", path, err)
-	}
-	if info.IsDir() {
-		return nil, fmt.Errorf("file %q is a directory", path)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading %q: %w", path, err)
-	}
-	text := string(data)
-	isMD := opts.Markdown || IsMarkdown(path)
-	findings, updated := checker.CheckText(path, text, isMD)
-	if opts.Write && updated != text {
-		cleanPath := filepath.Clean(path)
-		if writeErr := atomicfile.WriteFile(cleanPath, []byte(updated), info.Mode().Perm()); writeErr != nil {
-			return findings, fmt.Errorf("writing %q: %w", path, writeErr)
-		}
-	}
-	return findings, nil
-}
-
 // CheckSpellingDir checks all markdown files in dir (and its subdirectories), skipping .git
 // and paths matching opts.Exclude.
 func CheckSpellingDir(dir string, opts SpellingOptions) (res SpellingResult, err error) {

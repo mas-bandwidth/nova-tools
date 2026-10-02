@@ -1,11 +1,10 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 9
+# ceiling: 8
 internal/ci/ci_cardtemplates.go:hulk 2
 internal/ci/ci_cardtemplates.go:mini 1
 internal/ci/ci_cardtemplates.go:space 1
 internal/ci/ci_cardtemplates.go:studio 1
 internal/ci/ci_cardtemplates.go:vision 1
 internal/ci/ci_net.go:glenn 2
-internal/ci/ci_templates.go:glenn 1
 internal/ci/ci_testbins.go:stella 1
 internal/ci/source.go:glenn 1

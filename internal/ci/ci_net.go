@@ -174,14 +174,10 @@ func matchNetAllow(entries []waitAllow, used []bool, f NetFinding) int {
 	return loose
 }
 
-// scanNetFile parses one _test.go and returns its real-host findings. The
+// scanNetFileWith parses one _test.go and returns its real-host findings. The
 // second result is false when the file does not parse: a file that is not Go
 // cannot carry the shapes this check reads. A file whose header carries a
 // nightly or soak build constraint is skipped whole.
-func scanNetFile(rel string, src []byte) ([]NetFinding, bool) {
-	return scanNetFileWith(rel, src, defaultSourceSeams())
-}
-
 func scanNetFileWith(rel string, src []byte, seams SourceSeams) ([]NetFinding, bool) {
 	fset, file, err := seams.parseFile(rel, src, parser.ParseComments)
 	if err != nil {

@@ -14,7 +14,7 @@ import (
 // does.
 type Options struct {
 	// Root is the repository root: the directory every command runs in and
-	// where deprecated/PACKAGES and the tracked files are read.
+	// where DeprecatedFile and the tracked files are read.
 	Root string
 	// All selects the whole tree. Otherwise Base is the commit the change is
 	// diffed against (the event's own base: pull_request.base.sha or

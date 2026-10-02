@@ -8,26 +8,7 @@ import (
 	"time"
 )
 
-// TWO KERNEL LOCKS, AND EACH DIES WITH ITS HOLDER (rule 17).
-//
-//	run.lock    excludes dispatchers only, and is held by `run` for its whole life.
-//	slots.lock  protects each brief slot-state transition -- reserve, identify, orphan,
-//	            release -- for the read, the compare and the rename of ONE slot file and
-//	            nothing longer, and is NEVER held while waiting for a process, a handshake
-//	            or a timeout.
-//
-// The second lock exists because the first cannot be both: a supervisor identifying itself
-// takes slots.lock while its parent still holds run.lock for the whole run, and a lock the
-// child had to take from its parent would deadlock the handshake against itself (Stella's
-// final read, 2026-09-11).
-
-// TakeLock takes the named lock inside the pool, waiting up to wait for it, and returns the
-// release. The release is safe to call more than once.
-func (p *Pool) TakeLock(name string, wait time.Duration) (func(), error) {
-	return takeFileLock(p.Path(name), wait)
-}
-
-// takeFileLock is the body both kernel locks and the bench slot store share: an flock on a
+// takeFileLock is the body of the bench slot store's lock: an flock on a
 // named file, polled until wait runs out, released by a function that is safe to call twice.
 // It is a file lock rather than a file whose existence means "held" for rule 17's reason --
 // the kernel drops it when the holder dies however it dies.
@@ -113,10 +94,5 @@ func (t *lockTurn) acquire(wait time.Duration) bool {
 }
 
 func (t *lockTurn) release() { <-t.ch }
-
-// SlotsWait is how long a slot transition waits for the lock. It is short because every
-// holder of it does one read, one compare and one rename and then releases: a wait longer
-// than this is a holder that is waiting on something, which this lock forbids.
-const SlotsWait = 10 * time.Second
 
 const lockPoll = 15 * time.Millisecond

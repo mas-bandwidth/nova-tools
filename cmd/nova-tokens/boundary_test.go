@@ -517,14 +517,6 @@ func diffTrees(before, after treeSnapshot) string {
 	return strings.Join(diffs, ", ")
 }
 
-// treeDigest is one hash over every file under root: its relative path, its size and its
-// bytes. A changed, added or removed file all move it, so one comparison says whether
-// anything under a directory was touched.
-func treeDigest(t *testing.T, root string) string {
-	t.Helper()
-	return readTree(t, root).digest
-}
-
 func TestDiffTreesReportsDifferences(t *testing.T) {
 	t.Parallel()
 

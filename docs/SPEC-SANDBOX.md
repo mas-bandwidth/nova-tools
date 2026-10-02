@@ -1707,20 +1707,11 @@ closes it without reading and reports `got=allow`.
 A bounded local model trial on Apple Silicon runs MLX GPU arithmetic normally
 outside the wall but fails at import inside it with `[metal::load_device] No
 Metal device available`, under the narrowed mach-lookup profile with no IOKit
-clauses. The cheap answer is a tiny engine/device probe run under the proposed
-child policy — real GPU arithmetic, never an unconfined parent probe — and the
-bounded taxonomy it reports is `gpu_ok`, `missing_runtime`,
-`package_discovery`, `device_unavailable`, or `policy_refusal`
-(`internal/sandbox.ClassifyGPUProbe`, fakes only, no provider calls). The
-virtualenv half is explicit first: the wrapper resolves the venv Python
-symlink to its base executable and loses the venv's packages, so
-`VenvSitePackages` reads the link's own `<venv>/lib/python*/site-packages`
-and the caller names it with `--read` before Metal itself is tested. The only
+clauses. The only
 opt-in is `--gpu none|metal` (default `none`, printed as `gpu=` on every OK
 line); it records intent and never widens mach-lookup nor grants blanket
 device access, whose minimum mechanisms are still unmeasured — the generated
-profile stays closed and a metal run that reaches no device reports
-`device_unavailable`. The compared option is a separately supervised inference
+profile stays closed. The compared option is a separately supervised inference
 service: sandboxing its client does not sandbox the service, and that trust
 and resource boundary stays visible. Dedicated child HOME/cache/output roots,
 deadlines, process ownership, and measured receipts are unchanged.

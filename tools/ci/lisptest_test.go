@@ -26,7 +26,7 @@ func TestLispTestWithNoLispTreeHasNothingToTest(t *testing.T) {
 	if code := lispTest(e, r, 1, nil); code != 0 {
 		t.Fatalf("exit %d, want 0", code)
 	}
-	if want := "lisp-test: nothing to test (lisp/ holds no system; nova-work is parked under deprecated/lisp/nova-work)\n"; out.String() != want {
+	if want := "lisp-test: nothing to test (lisp/ holds no system; the old nova-work kernel lives in the nova-work-old repository)\n"; out.String() != want {
 		t.Fatalf("stdout %q, want %q", out.String(), want)
 	}
 	if len(r.calls) != 0 {

@@ -154,7 +154,7 @@ func (app *application) run(args []string, stdout, stderr io.Writer) (code int) 
 }
 
 // selectSeat is the seat resolution nova-sprint defined
-// (deprecated/cmd/nova-sprint/seat.go, nova-tools#4330), carried here:
+// (the old nova-sprint's seat.go, nova-tools#4330), carried here:
 // --seat <name> (or NOVA_SPRINT_SEAT, then NOVA_SEAT) is taken off the line,
 // its row in nova-sprint's seats.tsv names its Redis address (the --redis
 // default) and login, and a seat with no row is the nova-secrets seat of that
