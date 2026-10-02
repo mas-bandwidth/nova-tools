@@ -5,6 +5,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
 )
 
@@ -34,4 +35,24 @@ func configRun(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "opened postgres %d and redis %d time(s)\n", h.opens, h.redis.opens)
 	}
 	return code
+}
+
+// `help <verb>` is that verb's help whatever follows the verb, for every verb the
+// tool's help names and for every verb a kind answers to: `machine add`, `fleet set`.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+	var kindVerbs []string
+	for _, k := range config.Kinds {
+		verbs := []string{"add", "set", "remove", "list", "show", "history"}
+		switch {
+		case k.Singleton:
+			verbs = []string{"set", "show", "history"}
+		case k.Name == config.KindMachine:
+			verbs = append(verbs, "width", "self")
+		}
+		for _, v := range verbs {
+			kindVerbs = append(kindVerbs, k.Name+" "+v)
+		}
+	}
+	testverbhelp.HelpWhateverFollows(t, configRun, banner(), toolName, kindVerbs...)
 }

@@ -229,7 +229,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	switch args[0] {
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return run(append(args[1:], "--help"), stdout, stderr, d)
+			return run(verbflag.HelpArgs(args[1:], banner(), toolName, kindVerbs()...), stdout, stderr, d)
 		}
 		fmt.Fprint(stdout, banner())
 		return 0
@@ -498,6 +498,18 @@ func runKinds(args []string, stdout, stderr io.Writer) int {
 }
 
 // --- the kind verbs ---------------------------------------------------------
+
+// kindVerbs is every `<kind> <verb>` a kind can be asked, so `help machine add`
+// is the help of machine add and never of machine: the help text names only some.
+func kindVerbs() []string {
+	var names []string
+	for _, k := range config.Kinds {
+		for _, v := range []string{"add", "set", "remove", "list", "show", "history", "width", "self"} {
+			names = append(names, k.Name+" "+v)
+		}
+	}
+	return names
+}
 
 func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
 	if len(args) > 0 {
