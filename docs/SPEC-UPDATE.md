@@ -503,7 +503,7 @@ stop anybody having to do.
 A jump host (`ssh -J`) does not fix it and was not chosen: `-J` forwards the *connection*
 but still authenticates to the target with the **calling** host's key, so fanning out from
 hulk would still need hulk's key on every bench. That is new trust between benches, and the
-trust that would make it unnecessary belongs to the Studio, which is Glenn's. So the verb
+trust that would make it unnecessary belongs to the Studio. So the verb
 goes to the trust rather than the trust going to the verb, and the only thing that had to
 be added is a way to *read* the release from wherever it was built:
 
