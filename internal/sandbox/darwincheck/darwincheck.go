@@ -249,8 +249,8 @@ func (c *checker) makeScratch(o Options) (err error) {
 	c.ref = filepath.Join(scratch, "ref")              // the read set: a local repo to clone --shared
 	c.secret = filepath.Join(scratch, "secret", "env") // a named secret, in NEITHER list
 	c.outside = filepath.Join(scratch, "outside")      // the write-outside target, in NEITHER list
-	c.home = filepath.Join(c.w, "home")                // HOME inside the write set
-	c.ntmp = filepath.Join(c.w, ".nova-sandbox-tmp")   // TMPDIR inside the write set
+	c.home = filepath.Join(c.w, "home")                // HOME lives inside the write set, where the child writes its config
+	c.ntmp = filepath.Join(c.w, ".nova-sandbox-tmp")   // TMPDIR lives inside the write set, so temp files stay writable
 	for _, d := range []string{c.w, c.ref, c.home, c.ntmp, filepath.Dir(c.secret), c.outside} {
 		if err = os.MkdirAll(d, 0o755); err != nil {
 			return err
@@ -353,7 +353,7 @@ func (c *checker) sandboxArgs(profile, command string) []string {
 
 // walled runs a shell command inside the wall, from the write set: a
 // working directory outside every named path is denied to getcwd(3), and every
-// git command dies with "shell-init: error retrieving current directory").
+// git command dies with "shell-init: error retrieving current directory".
 func (c *checker) walled(command string) Result {
 	env := []string{
 		"HOME=" + c.home, "PATH=" + wallPath,
@@ -459,7 +459,7 @@ func (c *checker) suite(o Options) {
 		c.controlOK("cxx_compile_control", "/usr/bin/c++", "-o", filepath.Join(c.outside, "probe-ctl"), filepath.Join(w, "probe.cpp"))
 	}
 
-	// stdout to a pipe the caller drains
+	// stdout goes to a pipe the caller drains
 	if piped := c.walled("echo nova-pipe"); piped.exitCode() == 0 && strings.TrimRight(piped.Stdout, "\n") == "nova-pipe" {
 		c.ok("stdout_to_pipe")
 	} else {
