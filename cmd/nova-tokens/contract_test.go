@@ -76,12 +76,11 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 	// out here BY FILE, with the reason -- each one a file THIS RUN makes, never a file the
 	// tool was given.
 	allowed := map[string][]string{
-		// The fold's own lock file, taken through internal/filelock: its body is the
-		// holder stamp, which the take truncates to write this run's own and the
-		// release truncates to clear it. The file itself is never removed.
-		"internal/filelock/filelock.go":         {".Truncate("},
-		"internal/filelock/filelock_unix.go":    {".Truncate("},
-		"internal/filelock/filelock_windows.go": {".Truncate("},
+		// The platform with no flock: the lock is an exclusive create and its release
+		// removes the sentinel this run made.
+		"internal/tokens/lock_other.go": {"os.Remove"},
+		// The fold's own lock file, whose whole body this run wrote.
+		"internal/tokens/lock.go": {".Truncate("},
 		// The copy under --scratch, made from the live database this run and read there;
 		// the live file is never opened for writing.
 		"internal/tokens/opencode.go": {"os.Create("},
