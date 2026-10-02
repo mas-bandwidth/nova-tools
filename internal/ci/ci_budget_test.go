@@ -259,14 +259,12 @@ func TestPositiveTimeoutUnderJobCapWitnesses(t *testing.T) {
 // the verb that deals the legs.
 var macOSGroupFlagRe = regexp.MustCompile(`--macos-group (\S+)`)
 
-// TestMacOSShardsRunOnTheStudioForNow pins the 2026-09-25 decision (Glenn: "let's
-// have the darwin tests run on studio, so we can move forward"; "running tests
-// in under 2 minutes will require modern machines"): the darwin legs select the
-// Studio's ARM64 runners until the Mac minis (~2026-10-10) take them. #3634's
-// rule (no CI on the Studio) is suspended for the darwin legs only. The group is
-// the label the workflow passes (--macos-group); the arch and OS are what the
-// fan-out (pkgselect.Fanout) writes into every macOS leg.
-func TestMacOSShardsRunOnTheStudioForNow(t *testing.T) {
+// TestDarwinTestShardsSelectStudioARM64Group pins the 2026-09-25 decision: the
+// darwin test shards select the studio runner group on ARM64 until the Mac minis
+// take them. The group is the label the workflow passes (--macos-group); the
+// arch and OS are what the fan-out (pkgselect.Fanout) writes into every macOS
+// leg. The merge group uses sharded test legs on own benches, not hosted runners.
+func TestDarwinTestShardsSelectStudioARM64Group(t *testing.T) {
 	t.Parallel()
 
 	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
