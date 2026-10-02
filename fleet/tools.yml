@@ -38,10 +38,10 @@
   vars:
     tools_platforms: "{{ groups['all'] | map('extract', hostvars, 'nova_platform') | select('defined') | unique | sort | list }}"
   tasks:
-    - name: the version and the checkout are named
+    - name: the version, the checkout and the dogfood receipts are named
       ansible.builtin.assert:
-        that: [nova_version is defined, nova_source is defined]
-        fail_msg: "name the build: -e nova_version=<v> -e nova_source=<a nova-tools checkout at the commit to install>"
+        that: [nova_version is defined, nova_source is defined, "nova_dogfood_receipts is defined or nova_release_gate_args[0] == '--no-dogfood-gate'"]
+        fail_msg: "name the build: -e nova_version=<v> -e nova_source=<a nova-tools checkout at the commit to install> -e nova_dogfood_receipts=<the dogfood receipts directory>"
         quiet: true
 
     - name: the platforms already built at this version (a SHA256SUMS each)
