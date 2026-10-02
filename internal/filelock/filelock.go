@@ -1,7 +1,11 @@
 // Package filelock is the one lock on a file across processes: the kernel's lock
 // (flock on unix, LockFileEx on Windows), released by the kernel when its holder
-// dies, with the holder's stamp written inside the file for a refusal to name and
-// a probe that asks without taking. Its design and invariants are tla/FileLock.tla.
+// dies, with the holder's stamp written inside the file for a refusal to name. Its
+// design and invariants are tla/FileLock.tla. Two things left the package on
+// 2026-10-02 because no caller used them, and each can return with one: a probe
+// that asked without taking, and the take telling its caller whether the last
+// holder released (Previous). Release still clears the note, so a free lock
+// names nobody; the note is what a refusal reports, and nothing decides on it.
 //
 // Its callers, on unix, each the same flock on the same file its earlier binary took, so
 // an old and a new binary exclude each other across an upgrade (each package's
@@ -26,22 +30,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
-
-// State is the observation of a lock file path.
-type State string
-
-const (
-	// StateAbsent means the lock file does not exist.
-	StateAbsent State = "absent"
-	// StateFree means the lock file exists and is not held by any process.
-	StateFree State = "free"
-	// StateHeld means the lock file exists and is held by an exclusive holder.
-	StateHeld State = "held"
-)
-
-func (s State) String() string {
-	return string(s)
-}
 
 var (
 	// ErrHeld indicates the lock is currently held by an exclusive holder.
@@ -362,32 +350,8 @@ func (o options) getSync() func(*os.File) error {
 
 // FileLock represents an acquired, open file lock.
 type FileLock struct {
-	path     string
-	file     *os.File
-	stamp    Stamp
-	previous *Stamp
-	mu       sync.Mutex
-}
-
-// Path returns the path of the locked file.
-func (l *FileLock) Path() string {
-	return l.path
-}
-
-// Stamp returns the stamp written by this holder when taking the lock.
-func (l *FileLock) Stamp() Stamp {
-	return l.stamp
-}
-
-// Previous returns the stamp of the previous unreleased holder (e.g. killed/crashed), or nil.
-func (l *FileLock) Previous() *Stamp {
-	return l.previous
-}
-
-// String returns a description of the held lock.
-func (l *FileLock) String() string {
-	cleanPath := oneline.Escape(oneline.Cap(l.path, 1024))
-	return fmt.Sprintf("filelock %q held by %s", cleanPath, l.stamp)
+	file *os.File
+	mu   sync.Mutex
 }
 
 // Unlock releases the file lock by truncating the file to zero bytes, syncing,
@@ -486,9 +450,4 @@ func TryLock(path string, label string) (*FileLock, error) {
 // and is never removed.
 func Lock(path string, label string, timeout time.Duration) (*FileLock, error) {
 	return lockWithOptions(path, label, timeout, options{})
-}
-
-// Probe inspects path without taking an exclusive lock and without creating the file if absent.
-func Probe(path string) (State, Stamp, error) {
-	return probeWithOptions(path, options{})
 }

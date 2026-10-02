@@ -3,11 +3,8 @@
 package filelock
 
 import (
-	"errors"
 	"fmt"
 	"math/rand"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -93,33 +90,6 @@ func TestProperty_JitterBounds(t *testing.T) {
 		max := d + d/2 + 1
 		if jittered < min || jittered > max {
 			require.Fail(t, fmt.Sprintf("iteration %d: defaultJitter(%v) = %v; want [%v, %v]", i, d, jittered, min, max))
-		}
-	}
-}
-
-func TestProperty_ProbeAbsentNeverCreates(t *testing.T) {
-	t.Parallel()
-
-	rng := rand.New(rand.NewSource(45))
-	dir := t.TempDir()
-
-	const iterations = 200
-	for i := 0; i < iterations; i++ {
-		name := fmt.Sprintf("random_%d_%d.lock", rng.Int63(), i)
-		path := filepath.Join(dir, name)
-
-		state, stamp, err := Probe(path)
-		if err != nil {
-			require.NoError(t, err, "iteration %d: Probe(%s) err = %v", i, path, err)
-		}
-		if state != StateAbsent {
-			require.Equal(t, StateAbsent, state, "iteration %d: Probe(%s) state = %s, want %s", i, path, state, StateAbsent)
-		}
-		if !stamp.IsZero() {
-			require.Fail(t, fmt.Sprintf("iteration %d: stamp = %+v, want zero", i, stamp))
-		}
-		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-			require.ErrorIs(t, err, os.ErrNotExist, "iteration %d: Probe created file at %s: %v", i, path, err)
 		}
 	}
 }

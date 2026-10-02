@@ -62,7 +62,7 @@ var DefaultCatalog = []Entry{
 	E("internal/delayproxy", "a TCP proxy that holds each write of its clients back by a fixed delay: a store at a distance, made on the loopback, for testredis.Far and tools/fardelay", "go test ./internal/delayproxy", "go test ./internal/delayproxy"),
 	E("internal/docs", "documentation guards and map generator", "go test ./internal/docs", "go test ./internal/docs"),
 	E("internal/dogfood", "dogfood self-test gates", "go test ./internal/dogfood", "go test ./internal/dogfood"),
-	E("internal/filelock", "process-exclusive file locks with holder stamps and state probing", "go test ./internal/filelock", "go test ./internal/filelock"),
+	E("internal/filelock", "process-exclusive file locks whose holder is named in the file", "go test ./internal/filelock", "go test ./internal/filelock"),
 	E("internal/fleet", "runner fleet discovery and status", "go test ./internal/fleet", "go test ./internal/fleet"),
 	E("internal/fuse", "workspace isolation boundaries", "go test ./internal/fuse", "go test ./internal/fuse"),
 	Page("internal/ghevent", "the GitHub event Redis stream: append and read", "go test ./internal/ghevent", "go test ./internal/ghevent"),
