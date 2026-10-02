@@ -700,7 +700,8 @@ func TestIndexLockRevalidatedBeforeRemove(t *testing.T) {
 		cleared, err := clearStaleIndexLockAs(dir, time.Now(), scan, lockOwner, self)
 		require.False(t, cleared || !errors.Is(err, ErrIndexLockChanged) || err.Error() != want, "%s: cleared=%v err=%v, want %q", name, cleared, err, want)
 		got, readErr := os.ReadFile(lock)
-		require.False(t, readErr != nil || string(got) != string(keep), "%s: lock at the path lost: %v %q", name, readErr, got)
+		require.NoError(t, readErr, "%s: lock at the path lost: %v %q", name, readErr, got)
+		require.Equal(t, string(keep), string(got), "%s: lock at the path lost: %v %q", name, readErr, got)
 	}
 
 	dir, lock := oldIndexLock(t)
@@ -724,13 +725,15 @@ func TestIndexLockRevalidatedBeforeRemove(t *testing.T) {
 	cleared, err := clearStaleIndexLockAs(dir, time.Now(), func() ([]gitProc, error) {
 		return nil, os.Remove(lock)
 	}, lockFileOwner, self)
-	require.False(t, cleared || err != nil, "(4) gone during the scan: cleared=%v err=%v, want not cleared and no error", cleared, err)
+	require.NoError(t, err, "(4) gone during the scan: cleared=%v err=%v, want not cleared and no error", cleared, err)
+	require.False(t, cleared, "(4) gone during the scan: cleared=%v err=%v, want not cleared and no error", cleared, err)
 
 	dir, lock = oldIndexLock(t)
 	cleared, err = clearStaleIndexLockAs(dir, time.Now(), func() ([]gitProc, error) { return nil, nil }, lockFileOwner, self)
-	require.False(t, err != nil || !cleared, "(5) unchanged: cleared=%v err=%v, want removed", cleared, err)
+	require.NoError(t, err, "(5) unchanged: cleared=%v err=%v, want removed", cleared, err)
+	require.True(t, cleared, "(5) unchanged: cleared=%v err=%v, want removed", cleared, err)
 	{
 		_, statErr := os.Lstat(lock)
-		require.False(t, !os.IsNotExist(statErr), "(5) lock still present: %v", statErr)
+		require.True(t, os.IsNotExist(statErr), "(5) lock still present: %v", statErr)
 	}
 }
