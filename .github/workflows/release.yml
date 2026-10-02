@@ -139,9 +139,9 @@ jobs:
             release-${{ matrix.goos }}-${{ matrix.goarch }}-
 
       - name: every shipped tool for ${{ matrix.goos }}/${{ matrix.goarch }}
-        # `ghrelease build` refuses a tag that is not v-prefixed and composes the ldflags, which
-        # refuse an empty or malformed stamp before anything compiles (#118), and names every
-        # artifact <tool>_<tag>_<goos>_<goarch>[.exe].
+        # `ghrelease build` with --require-v-tag refuses a stamp that is not v-prefixed,
+        # composes the ldflags that refuse an empty or malformed stamp before anything
+        # compiles, and names every artifact <tool>_<stamp>_<goos>_<goarch>[.exe].
         shell: bash
         run: go run ./tools/ghrelease build --require-v-tag "$TAG" "${{ matrix.goos }}" "${{ matrix.goarch }}" dist
 
