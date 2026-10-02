@@ -52,101 +52,86 @@ const fakeDenialLog = `Timestamp                       (process)[PID]
 // The parser reads the OS's lines and nothing else: the operation, the path and the pid.
 func TestDenialsAreReadOffTheOSsOwnViolationLines(t *testing.T) {
 	t.Parallel()
-
-	got := parseDenials(fakeDenialLog, 0)
-	want := []deniedPath{
-		{Path: "/opt", Op: "read", PID: 4210},
-		{Path: "/Users/me/go/pkg/mod/github.com/x@v1.2.3/a.go", Op: "read", PID: 4211},
-		{Path: "/Users/me/notes/out.txt", Op: "write", PID: 4212},
-		{Path: "/Users/someone-else/thing", Op: "read", PID: 4099},
-		{Path: "/Volumes/nova-j1/work/inside.txt", Op: "read", PID: 4212},
-	}
-	require.Len(t, got, len(want), "parsed %d denials, want %d: %v", len(got), len(want), got)
-	for i := range want {
-		assert.Equal(t, want[i], got[i], "denial %d is %+v, want %+v", i, got[i], want[i])
-	}
-	// mach-lookup is not a path and has no --read that answers it, so it is not a denial
-	// this line can carry a remedy for.
-	for _, d := range got {
-		assert.NotContains(t, d.Path, "com.apple", "a mach-lookup denial was read as a path: %+v", d)
-	}
+	t.Run("the OS's own violation lines", func(t *testing.T) {
+		got := parseDenials(fakeDenialLog, 0)
+		require.Equal(t, []deniedPath{
+			{Path: "/opt", Op: "read", PID: 4210},
+			{Path: "/Users/me/go/pkg/mod/github.com/x@v1.2.3/a.go", Op: "read", PID: 4211},
+			{Path: "/Users/me/notes/out.txt", Op: "write", PID: 4212},
+			{Path: "/Users/someone-else/thing", Op: "read", PID: 4099},
+			{Path: "/Volumes/nova-j1/work/inside.txt", Op: "read", PID: 4212},
+		}, got)
+		// mach-lookup is not a path and has no --read that answers it, so it is not a denial
+		// this line can carry a remedy for.
+		for _, d := range got {
+			assert.NotContains(t, d.Path, "com.apple", "a mach-lookup denial was read as a path")
+		}
+	})
+	// A run is told about ITS OWN denials. The machine this tool runs on has eight CI runners
+	// on it, so a window of the log holds other people's violations too; the pid floor is the
+	// narrowing that keeps a card from being handed a neighbour's problem.
+	t.Run("below the pid floor are not this run's", func(t *testing.T) {
+		got := parseDenials(fakeDenialLog, 4210)
+		for _, d := range got {
+			assert.GreaterOrEqual(t, d.PID, 4210, "a denial below this run's leader was kept: %+v", d)
+		}
+		require.Len(t, got, 4)
+	})
+	// A denial INSIDE the wall's own allowed set is not a missing --read: it is some other
+	// operation on a path the caller already named, and printing a remedy that is already in
+	// the argv would send a reader to fix what is not broken.
+	t.Run("inside the allowed set are not reported", func(t *testing.T) {
+		got := outsideTheWall(parseDenials(fakeDenialLog, 0), []string{"/Volumes/nova-j1"})
+		for _, d := range got {
+			assert.False(t, strings.HasPrefix(d.Path, "/Volumes/nova-j1"), "a denial inside the write set was reported: %+v", d)
+		}
+		require.Len(t, got, 4)
+	})
 }
 
-// A run is told about ITS OWN denials. The machine this tool runs on has eight CI runners
-// on it, so a window of the log holds other people's violations too; the pid floor is the
-// narrowing that keeps a card from being handed a neighbour's problem.
-func TestDenialsBelowThePidFloorAreNotThisRuns(t *testing.T) {
-	t.Parallel()
-
-	got := parseDenials(fakeDenialLog, 4210)
-	for _, d := range got {
-		assert.GreaterOrEqual(t, d.PID, 4210, "a denial from pid %d was kept although this run's leader is 4210: %+v", d.PID, d)
-	}
-	require.Len(t, got, 4, "the pid floor kept %d denials, want 4: %v", len(got), got)
-}
-
-// A denial INSIDE the wall's own allowed set is not a missing --read: it is some other
-// operation on a path the caller already named, and printing a remedy that is already in
-// the argv would send a reader to fix what is not broken.
-func TestDenialsInsideTheAllowedSetAreNotReported(t *testing.T) {
-	t.Parallel()
-
-	got := outsideTheWall(parseDenials(fakeDenialLog, 0), []string{"/Volumes/nova-j1"})
-	for _, d := range got {
-		assert.False(t, strings.HasPrefix(d.Path, "/Volumes/nova-j1"), "a denial inside the write set was reported as one to fix: %+v", d)
-	}
-	require.Len(t, got, 4, "%d denials outside the allowed set, want 4: %v", len(got), got)
-}
-
-// The line is the contract, and the remedy on it is a line to RUN, not a thing to work out.
 func TestTheDeniedLineNamesThePathTheOpAndTheRemedy(t *testing.T) {
-	posixDirs(t, "/opt")
-	var errb bytes.Buffer
-	printDenied(&errb, []deniedPath{
-		{Path: "/opt", Op: "read", PID: 10},
-		{Path: "/Users/me/notes/out.txt", Op: "write", PID: 11},
-	}, 10)
-	out := errb.String()
-	assert.Contains(t, out, `SANDBOX DENIED path=/opt op=read remedy="--read /opt"`, "the denied line for a directory does not name the directory as the remedy:\n%s", out)
-	// A FILE's remedy names the directory to pass, because --read takes a directory.
-	assert.Contains(t, out, `SANDBOX DENIED path=/Users/me/notes/out.txt op=write remedy="--write /Users/me/notes"`, "the denied line for a file does not name its directory as the remedy:\n%s", out)
-}
-
-// Every path this file handles is a POSIX path, because every one of them came out of
-// macOS's log — and this file is compiled and run on windows too, where `path/filepath`
-// means `\`. Both halves are asserted here directly, with no fixture and no machine: the
-// windows leg went red on exactly these two (run 35367602664).
-func TestTheDenialReaderUsesPosixPathsOnEveryPlatform(t *testing.T) {
-	posixDirs(t) // nothing is a directory: every answer below is path arithmetic
-	got := remedyDir("/Users/me/notes/out.txt")
-	assert.Equal(t, "/Users/me/notes", got, "remedyDir gave %q; a seatbelt log path is separated by / on every platform, so this is `path` and never `path/filepath`", got)
-	assert.True(t, insidePosix("/Volumes/nova-j1/work/inside.txt", "/Volumes/nova-j1"), "a path under the write set was called outside it; the containment test joins with / and not with os.PathSeparator")
-	assert.False(t, insidePosix("/Volumes/nova-j1x/work", "/Volumes/nova-j1"), "a sibling whose name merely starts the same was called inside the write set")
-	assert.True(t, insidePosix("/Volumes/nova-j1", "/Volumes/nova-j1/"), "a directory is inside itself however it is spelled")
+	posixDirs(t, "/opt") // nothing else is a directory: remedyDir below is path arithmetic
+	// The line is the contract, and the remedy on it is a line to RUN, not a thing to work out.
+	t.Run("names the path the op and the remedy", func(t *testing.T) {
+		var errb bytes.Buffer
+		printDenied(&errb, []deniedPath{
+			{Path: "/opt", Op: "read", PID: 10},
+			{Path: "/Users/me/notes/out.txt", Op: "write", PID: 11},
+		}, 10)
+		assert.Contains(t, errb.String(), `SANDBOX DENIED path=/opt op=read remedy="--read /opt"`)
+		// A FILE's remedy names the directory to pass, because --read takes a directory.
+		assert.Contains(t, errb.String(), `SANDBOX DENIED path=/Users/me/notes/out.txt op=write remedy="--write /Users/me/notes"`)
+	})
+	// Every path this file handles is a POSIX path, because every one came out of macOS's
+	// log, and this file is compiled and run on windows too, where `path/filepath` means `\`.
+	// Asserted directly, with no fixture: the windows leg went red on exactly these two (run
+	// 35367602664).
+	t.Run("posix paths on every platform", func(t *testing.T) {
+		assert.Equal(t, "/Users/me/notes", remedyDir("/Users/me/notes/out.txt"), "a seatbelt log path is separated by / on every platform, so this is `path` and never `path/filepath`")
+		assert.True(t, insidePosix("/Volumes/nova-j1/work/inside.txt", "/Volumes/nova-j1"), "a path under the write set was called outside it; the containment test joins with / and not with os.PathSeparator")
+		assert.False(t, insidePosix("/Volumes/nova-j1x/work", "/Volumes/nova-j1"), "a sibling whose name merely starts the same was called inside the write set")
+		assert.True(t, insidePosix("/Volumes/nova-j1", "/Volumes/nova-j1/"), "a directory is inside itself however it is spelled")
+	})
 }
 
 // Rule 16's shape for a list: a cap, and one line standing for the rest. A command that
 // died early can trip hundreds of denials and a wall of them is not a remedy.
 func TestTheDeniedLinesAreCapped(t *testing.T) {
 	t.Parallel()
-
-	var many []deniedPath
-	for i := 0; i < 25; i++ {
-		many = append(many, deniedPath{Path: "/x/" + string(rune('a'+i)), Op: "read", PID: 1})
-	}
-	var errb bytes.Buffer
-	printDenied(&errb, many, 3)
-	out := errb.String()
-	got := strings.Count(out, "SANDBOX DENIED")
-	assert.Equal(t, 3, got, "the cap printed %d denied lines, want 3:\n%s", got, out)
-	assert.Contains(t, out, "22 more", "the cap does not say how many denials it stood for:\n%s", out)
-}
-
-// Nothing denied is nothing printed: a clean run says nothing about denials at all.
-func TestNoDenialsPrintsNothing(t *testing.T) {
-	t.Parallel()
-
-	var errb bytes.Buffer
-	printDenied(&errb, nil, 10)
-	assert.Zero(t, errb.Len(), "a run with no denials printed %q", errb.String())
+	t.Run("capped", func(t *testing.T) {
+		var many []deniedPath
+		for i := 0; i < 25; i++ {
+			many = append(many, deniedPath{Path: "/x/" + string(rune('a'+i)), Op: "read", PID: 1})
+		}
+		var errb bytes.Buffer
+		printDenied(&errb, many, 3)
+		assert.Equal(t, 3, strings.Count(errb.String(), "SANDBOX DENIED"), errb.String())
+		assert.Contains(t, errb.String(), "22 more", "the cap does not say how many denials it stood for")
+	})
+	// Nothing denied is nothing printed: a clean run says nothing about denials at all.
+	t.Run("no denials prints nothing", func(t *testing.T) {
+		var errb bytes.Buffer
+		printDenied(&errb, nil, 10)
+		assert.Zero(t, errb.Len(), errb.String())
+	})
 }

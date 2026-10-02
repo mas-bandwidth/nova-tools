@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,14 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// The tests here hold what a cold reader of this tool, an AI with only the help, acts on:
-// each verb's -h lists the flags it takes and its own exit codes, the inspection verbs
-// answer --json, the bare wrap's last line says the status was the command's, and every
-// refusal names the command that answers it.
+// What a cold reader of this tool, an AI with only the help, acts on.
 
 // Every verb that parses its own flags lists each one with what it wants, and quotes its
 // own exit codes, never the wrapped command's paragraph (ledger D2, X7, X9).
@@ -25,9 +22,7 @@ func TestEachVerbsHelpListsItsFlagsAndItsOwnExitCodes(t *testing.T) {
 	for verb, doc := range verbDocs {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
-			r := novaSandbox.Do(t, append(strings.Fields(verb), "-h")...)
-			require.Equal(t, 0, r.Code, r.Stderr)
-			help := r.Stdout
+			help := novaSandbox.Do(t, append(strings.Fields(verb), "-h")...).Exit(0).Stdout
 			assert.Contains(t, help, "\n"+exitsLabel+"\n"+verb+": "+doc.exits+"\n")
 			assert.NotContains(t, help, "passed through", "a verb that wraps nothing quotes the wrapped command's codes")
 			for _, f := range doc.flags {
@@ -42,15 +37,13 @@ func TestEachVerbsHelpListsItsFlagsAndItsOwnExitCodes(t *testing.T) {
 func TestEveryListedFlagIsOneTheVerbParses(t *testing.T) {
 	t.Parallel()
 	parsers := map[string]func(args []string) []string{
-		"policy": func(a []string) []string { return badTexts(parseVerb("policy", a)) },
-		"probe":  func(a []string) []string { return badTexts(parseVerb("probe", a)) },
-		"worktree": func(a []string) []string {
-			return parseWorktree(a).unknown
-		},
-		"egress plan":  func(a []string) []string { return egressBad(parseEgress(a)) },
-		"egress apply": func(a []string) []string { return egressBad(parseEgress(a)) },
-		"egress check": func(a []string) []string { return egressBad(parseEgress(a)) },
-		"egress drop":  func(a []string) []string { return egressBad(parseEgress(a)) },
+		"policy":       func(a []string) []string { return texts(parseVerb("policy", a).bad) },
+		"probe":        func(a []string) []string { return texts(parseVerb("probe", a).bad) },
+		"worktree":     func(a []string) []string { return parseWorktree(a).unknown },
+		"egress plan":  func(a []string) []string { return texts(parseEgress(a).bad) },
+		"egress apply": func(a []string) []string { return texts(parseEgress(a).bad) },
+		"egress check": func(a []string) []string { return texts(parseEgress(a).bad) },
+		"egress drop":  func(a []string) []string { return texts(parseEgress(a).bad) },
 	}
 	for verb, parse := range parsers {
 		for _, f := range verbDocs[verb].flags {
@@ -81,7 +74,7 @@ func TestTheInspectionVerbsAnswerJSON(t *testing.T) {
 		Notes   []string
 		Payload string
 	}
-	cases := []struct {
+	for _, c := range []struct {
 		name, verb, status string
 		args               []string
 		exit               int
@@ -91,15 +84,13 @@ func TestTheInspectionVerbsAnswerJSON(t *testing.T) {
 		{"policy", "policy", "ok", []string{"policy", "--json", "--write", j.write, "--secret", j.secret}, 0},
 		{"policy refused", "policy", "refused", []string{"policy", "--json", "--write", filepath.Join(j.base, "absent")}, 2},
 		{"probe refused", "probe", "refused", []string{"probe", "--json"}, 2},
-	}
-	for _, c := range cases {
+	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			res := j.run(t, c.args...)
 			assert.Equal(t, c.exit, res.Code)
 			assert.Empty(t, res.Stderr, "--json says everything on stdout")
-			var r result
-			require.NoError(t, json.Unmarshal([]byte(res.Stdout), &r), res.Stdout)
+			r := testkit.JSON[result](t, res.Stdout)
 			assert.Equal(t, c.verb, r.Result.Verb)
 			assert.Equal(t, c.status, r.Result.Status)
 			assert.Equal(t, c.exit, r.Result.Exit)
@@ -113,9 +104,7 @@ func TestTheInspectionVerbsAnswerJSON(t *testing.T) {
 			}
 		})
 	}
-	res := j.run(t, "--write", j.write, "--json", "--", "/bin/sh", "-c", "true")
-	assert.Equal(t, 125, res.Code)
-	assert.Contains(t, res.Stderr, "--json is not a flag of the bare form")
+	j.run(t, "--write", j.write, "--json", "--", "/bin/sh", "-c", "true").Exit(125).Err("--json is not a flag of the bare form")
 }
 
 // A probe that would build its wall without a flag it was given refuses that flag: a
@@ -123,23 +112,17 @@ func TestTheInspectionVerbsAnswerJSON(t *testing.T) {
 func TestProbeRefusesAFlagItsWallWouldNotCarry(t *testing.T) {
 	t.Parallel()
 	j := newJob(t)
-	r := j.run(t, "probe", "--write", j.write, "--cwd", j.write, "--net-allow", "127.0.0.1:1")
-	assert.Equal(t, 2, r.Code)
-	assert.Contains(t, r.Stderr, "--cwd is not a flag of probe")
-	assert.Contains(t, r.Stderr, "--net-allow is not a flag of probe")
-	r = j.run(t, "policy", "--write", j.write, "--max", "3")
-	assert.Equal(t, 0, r.Code)
-	assert.Contains(t, r.Stderr, "POLICY NOTE --max is probe's flag and is ignored here")
+	j.run(t, "probe", "--write", j.write, "--cwd", j.write, "--net-allow", "127.0.0.1:1").Exit(2).
+		Err("--cwd is not a flag of probe", "--net-allow is not a flag of probe")
+	j.run(t, "policy", "--write", j.write, "--max", "3").Exit(0).Err("POLICY NOTE --max is probe's flag and is ignored here")
 }
 
 // The bare command is a refusal in the tool's own grammar (ledger X4).
 func TestTheBareCommandRefusesInTheToolsGrammar(t *testing.T) {
 	t.Parallel()
-	r := novaSandbox.Do(t)
-	assert.Equal(t, 2, r.Code)
-	assert.Empty(t, r.Stdout)
-	assert.True(t, strings.HasPrefix(r.Stderr, "SANDBOX REFUSED reason=no_command: no arguments;"), r.Stderr)
-	assert.Contains(t, r.Stderr, "; run: nova-sandbox help\n")
+	r := novaSandbox.Do(t).Exit(2).Err("; run: nova-sandbox help\n")
+	assert.Empty(t, r.Stdout, r)
+	assert.True(t, strings.HasPrefix(r.Stderr, "SANDBOX REFUSED reason=no_command: no arguments;"), r)
 }
 
 // SANDBOX OK says the wall is up and the command is starting; the last stderr line says
@@ -156,9 +139,8 @@ func TestTheBareWrapEndsWithTheCommandsOwnStatus(t *testing.T) {
 		lines := strings.Split(strings.TrimSuffix(r.Stderr, "\n"), "\n")
 		assert.Equal(t, "SANDBOX DONE exit="+status+" cmd=sh", lines[len(lines)-1])
 	}
-	r := j.run(t, "--write", filepath.Join(j.base, "absent"), "--", "/bin/sh", "-c", "true")
-	assert.Equal(t, 125, r.Code)
-	assert.NotContains(t, r.Stderr, "SANDBOX DONE", "a refusal is the tool's, and no command ran to be done")
+	// A refusal is the tool's, and no command ran to be done.
+	j.run(t, "--write", filepath.Join(j.base, "absent"), "--", "/bin/sh", "-c", "true").Exit(125).NotErr("SANDBOX DONE")
 }
 
 // A HOME outside every --write is refused (rule 9: never defaulted), and the refusal names
@@ -187,8 +169,7 @@ func TestAHomeOutsideRefusalNamesTheCommandThatAnswersIt(t *testing.T) {
 	}
 	// the command it names runs: policy with that HOME is accepted
 	require.NoError(t, os.MkdirAll(filepath.Join(w, "home"), 0o755))
-	r := j.runEnv(t, []string{"HOME=" + filepath.Join(w, "home"), "PATH=/usr/bin:/bin"}, "policy", "--write", w)
-	assert.Equal(t, 0, r.Code, r.Stderr)
+	j.runEnv(t, []string{"HOME=" + filepath.Join(w, "home"), "PATH=/usr/bin:/bin"}, "policy", "--write", w).Exit(0)
 	assert.Equal(t, `'it'\''s'`, shellWord("it's"))
 	assert.Equal(t, "/a/b", shellWord("/a/b"))
 }
@@ -198,34 +179,25 @@ func TestAHomeOutsideRefusalNamesTheCommandThatAnswersIt(t *testing.T) {
 // resolution starts (the resolve step's line never prints), so no resolver is waited on.
 func TestEgressPlanNamesItsFlagProblemsBeforeResolving(t *testing.T) {
 	t.Parallel()
-	r := novaSandbox.Do(t, "egress", "plan", "--policy", filepath.Join("..", "..", "infra", "image", "egress.txt"),
-		"--resolver", "10.9.0.53", "--out", filepath.Join(t.TempDir(), "plan.nft"))
-	assert.Equal(t, 2, r.Code)
-	for _, want := range []string{"reason=no_name", "reason=no_selector", "reason=bad_model_host"} {
-		assert.Contains(t, r.Stderr, "EGRESS REFUSED "+want)
-	}
-	assert.NotContains(t, r.Stderr, "EGRESS STEP name=resolve")
-	assert.NotContains(t, r.Stderr, "resolve_failed")
+	novaSandbox.Do(t, "egress", "plan", "--policy", filepath.Join("..", "..", "infra", "image", "egress.txt"),
+		"--resolver", "10.9.0.53", "--out", filepath.Join(t.TempDir(), "plan.nft")).Exit(2).
+		Err("EGRESS REFUSED reason=no_name", "EGRESS REFUSED reason=no_selector", "EGRESS REFUSED reason=bad_model_host").
+		NotErr("EGRESS STEP name=resolve", "resolve_failed")
 }
 
 // run's refusal of a missing -- names its remedy once, on the remedy line, not again
 // inside the refusal.
 func TestRunNamesItsRemedyOnce(t *testing.T) {
 	t.Parallel()
-	r := withEnv(runVerb, []string{"PATH=/usr/bin:/bin"}).Do(t, "--name", "x", "--size", "1g")
-	assert.Equal(t, 125, r.Code)
-	assert.Contains(t, r.Stderr, "reason=no_command: no --")
-	assert.Equal(t, 1, strings.Count(r.Stderr, remedyFor(runtime.GOOS)), r.Stderr)
+	r := withEnv(runVerb, []string{"PATH=/usr/bin:/bin"}).Do(t, "--name", "x", "--size", "1g").Exit(125).Err("reason=no_command: no --")
+	assert.Equal(t, 1, strings.Count(r.Stderr, remedyFor(runtime.GOOS)), r)
 }
 
 // worktree names every problem in one run, an unknown flag among them, and never ignores
 // a flag it does not have.
 func TestWorktreeNamesEveryProblemInOneRun(t *testing.T) {
 	t.Parallel()
-	r := novaSandbox.Do(t, "worktree", "--repoo", "x")
-	assert.Equal(t, 2, r.Code)
-	for _, want := range []string{"reason=bad_flag: unknown flag --repoo", "reason=bad_pr", "reason=bad_repo", "reason=bad_scratch"} {
-		assert.Contains(t, r.Stderr, "WORKTREE REFUSED "+want)
-	}
-	assert.True(t, strings.HasSuffix(r.Stderr, worktreeRemedy+"\n"))
+	r := novaSandbox.Do(t, "worktree", "--repoo", "x").Exit(2).Err("WORKTREE REFUSED reason=bad_flag: unknown flag --repoo",
+		"WORKTREE REFUSED reason=bad_pr", "WORKTREE REFUSED reason=bad_repo", "WORKTREE REFUSED reason=bad_scratch")
+	assert.True(t, strings.HasSuffix(r.Stderr, worktreeRemedy+"\n"), r)
 }

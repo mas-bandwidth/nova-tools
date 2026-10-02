@@ -35,8 +35,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 // wrap of a command called <anything else>.
 func TestHelpNeverReachesTheBareWrap(t *testing.T) {
 	t.Parallel()
-	r := novaSandbox.Do(t, "help", "sh", "-c", "exit 7")
-	require.Equal(t, 0, r.Code, "help sh: exit %d stdout %.60q stderr %q", r.Code, r.Stdout, r.Stderr)
-	require.True(t, strings.HasPrefix(r.Stdout, "nova-sandbox:"), "help sh: exit %d stdout %.60q stderr %q", r.Code, r.Stdout, r.Stderr)
-	require.Zero(t, len(r.Stderr), "help sh: exit %d stdout %.60q stderr %q", r.Code, r.Stdout, r.Stderr)
+	r := novaSandbox.Do(t, "help", "sh", "-c", "exit 7").Exit(0)
+	require.True(t, strings.HasPrefix(r.Stdout, "nova-sandbox:"), r)
+	require.Empty(t, r.Stderr, r)
 }
