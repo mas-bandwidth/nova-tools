@@ -14,12 +14,13 @@ import (
 // the fleet from the inventory; sprint/fleet_sync.go). The sync's step takes such
 // a member's control card off the fleet table, under the fence, once no card stays
 // on it; a row is the table layer's, outside any batch, so its delete is a write of
-// its own. It is decided and made under the fence (fenceLocked): the rows are read
-// at a generation, the fence is taken at that generation, and only then are they
-// deleted, so no step (a fleet up's release, a tick's deal) and no rejoin can come
-// between the reading and the delete. A machine row that comes back places the same
-// control card again before the sync's step reads the table, under the fence too: a
-// batch never places a removed member, the table layer's cell add does.
+// its own, and it is conditional at its commit: the row goes only while its control
+// card is still on no cell at the revision the delete read (RowsDelIf, one atomic
+// change), so a fleet up that placed the card again in between, and anything dealt
+// to the member after it, keep the row, whenever they ran. A machine row that comes
+// back places the same control card again before the sync's step reads the table,
+// under the fence (fenceLocked): a batch never places a removed member, the table
+// layer's cell add does.
 
 // fenceLocked reads the fleet and work tables (and extras) at a generation, takes
 // the fence at that generation as a lock (lock.go), runs fn on what it read, and
@@ -50,35 +51,54 @@ func (st *Store) fenceLocked(ctx context.Context, verb string, extras func(*spri
 	return fmt.Errorf("%s: the sprint kept changing under it (%d tries); nothing was changed; run it again", verb, r.tries)
 }
 
-// DropMembers deletes, under the fence, the fleet row of every member whose
-// control card is off the table (a sync's step took it off) and that keep does
-// not name, with its beat record: a machine still beating is then a stranger the
-// tick names, and teardown finds no key of a row it can no longer read. It is the
+// DropMembers deletes the fleet row of every member whose control card is off
+// the table (a sync's step took it off) and that keep does not name, each only
+// while its control card is still on no cell at the revision read here
+// (RowsDelIf). The beat records go first and the rows last: a cleanup cut short
+// leaves its rows, which the next sync reads as drift and finishes; a member
+// placed again in between keeps its row, and its next beat writes its record
+// again. A machine still beating after its row is gone is a stranger the tick
+// names, and teardown finds no key of a row it can no longer read. It is the
 // members whose rows it deleted.
 func (st *Store) DropMembers(ctx context.Context, keep []string) ([]string, error) {
-	var gone []string
-	err := st.fenceLocked(ctx, "fleet rows drop", nil, func(pinned *Store, s *sprint.Snapshot) error {
-		gone = nil
+	pinned, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	off := func(s *sprint.Snapshot) []string {
+		var out []string
 		for _, m := range s.Fleet.Rows() {
 			if s.MemberCtl(m) == nil && !slices.Contains(keep, m) {
-				gone = append(gone, m)
+				out = append(out, m)
 			}
 		}
-		if len(gone) == 0 {
-			return nil
+		return out
+	}
+	// the control cards' records, on no cell, read with the rows
+	extras := func(s *sprint.Snapshot) map[string][]string {
+		return map[string][]string{sprint.Fleet: ctlIDs(off(s))}
+	}
+	s, err := pinned.Load(ctx, []string{sprint.Fleet, sprint.Work}, extras)
+	if err != nil {
+		return nil, err
+	}
+	var guards []RowGuard
+	var keys []string
+	for _, m := range off(s) {
+		rec := s.Fleet.Card(sprint.CtlID(m))
+		if rec == nil {
+			continue // a row with no control card record at all is no member the sync removed
 		}
-		// the keys first and the row last: a cleanup cut short leaves the row,
-		// which the next sync reads as drift (DriftRemove) and finishes
-		keys := make([]string, len(gone))
-		for i, m := range gone {
-			keys[i] = pinned.Names.Key(beatKey(m))
-		}
-		if _, err := pinned.B.DeleteKeys(ctx, keys); err != nil {
-			return err
-		}
-		return pinned.B.RowsDel(ctx, pinned.Names.Table(sprint.Fleet), gone)
-	})
-	return gone, err
+		guards = append(guards, RowGuard{Row: m, ID: pinned.sid(sprint.CtlID(m)), Rev: rec.Rev})
+		keys = append(keys, pinned.Names.Key(beatKey(m)))
+	}
+	if len(guards) == 0 {
+		return nil, nil
+	}
+	if _, err := pinned.B.DeleteKeys(ctx, keys); err != nil {
+		return nil, err
+	}
+	return pinned.B.RowsDelIf(ctx, pinned.Names.Table(sprint.Fleet), guards)
 }
 
 // RejoinMembers places again, under the fence, the control card of each named

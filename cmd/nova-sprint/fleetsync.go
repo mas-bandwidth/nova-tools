@@ -253,8 +253,9 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 
 // afterSync deletes the row of every member that is not a member of the
 // inventory whose control card is off the table (the members the sync's step
-// removed, and a row a sync before left when its delete failed), deciding and
-// deleting under the fence (store.DropMembers), so a member placed again in
+// removed, and a row a sync before left when its delete failed), each delete
+// conditional at its commit on the control card still off the table at the
+// revision read (store.DropMembers, RowsDelIf), so a member placed again in
 // between (fleet up) keeps its row and its cards. holding is the members with
 // no machine row that cards keep on the fleet, held (sprint.GoneHolding), as
 // read after the delete.

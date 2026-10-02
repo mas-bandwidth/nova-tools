@@ -651,6 +651,37 @@ func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
 	if err := m.writeEpoch(t); err != nil {
 		return err
 	}
+	m.rowsDel(t, rows)
+	return nil
+}
+
+// RowsDelIf removes each guard's row only while its record is on no cell at
+// the guard's revision, checked and removed under the one lock, as RowsDel does.
+func (m *Mem) RowsDelIf(_ context.Context, table string, guards []RowGuard) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["rowsdelif"]++
+	t, err := m.table(table)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.writeEpoch(t); err != nil {
+		return nil, err
+	}
+	var rows []string
+	for _, g := range guards {
+		if mm := t.members[g.ID]; mm != nil && !mm.placed && mm.rev == g.Rev {
+			rows = append(rows, g.Row)
+		}
+	}
+	if len(rows) > 0 {
+		m.rowsDel(t, rows)
+	}
+	return rows, nil
+}
+
+// rowsDel is the row delete itself, under m.mu and the epoch check.
+func (m *Mem) rowsDel(t *memTable, rows []string) {
 	ep := t.at(m.active(t))
 	// unplaced is the members the delete took off the table: the change names
 	// them, as the table layer's change stream does (a twin catching up reads
@@ -675,7 +706,6 @@ func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
 	t.rev++
 	t.wrote[m.active(t)] = true
 	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_del", ids: unplaced})
-	return nil
 }
 
 // writeEpoch refuses a write pinned to an epoch that is not the table's

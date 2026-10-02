@@ -160,3 +160,41 @@ func TestRedisClear(t *testing.T) {
 	require.NoError(t, err, "keys left: %v %v", keys, err)
 	require.Empty(t, keys, "keys left: %v %v", keys, err)
 }
+
+// The conditional row delete on the real table layer (RowsDelIf, the fleet sync's
+// cleanup): a guard read before the member's control card was placed again
+// deletes nothing, the row and the card stay; a guard read at the card's
+// revision now, on no cell, deletes the row.
+func TestRedisRowsDelIfKeepsARowWhoseRecordChanged(t *testing.T) {
+	t.Parallel()
+	st, _ := liveStore(t)
+	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now(), live: []string{"m1", "m2"}}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
+	removeM2 := func() RowGuard {
+		h.must(FleetStep(sprint.FleetReq{Op: "sync", Who: "functional", Sync: []sprint.SyncMember{{Name: "m1", Width: 4}}, Machines: []string{"m1"}}))
+		pinned, err := st.pin(h.ctx)
+		require.NoError(t, err)
+		s, err := pinned.Load(h.ctx, []string{sprint.Fleet, sprint.Work}, sprint.NamedExtras(sprint.Fleet, []string{sprint.CtlID("m2")}))
+		require.NoError(t, err)
+		require.Nil(t, s.MemberCtl("m2"), "the sync took m2's control card off")
+		rec := s.Fleet.Card(sprint.CtlID("m2"))
+		require.NotNil(t, rec)
+		return RowGuard{Row: "m2", ID: pinned.sid(sprint.CtlID("m2")), Rev: rec.Rev}
+	}
+	stale := removeM2()
+	got, err := st.RejoinMembers(h.ctx, []string{"m2"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"m2"}, got)
+	pinned, err := st.pin(h.ctx)
+	require.NoError(t, err)
+	deleted, err := pinned.B.RowsDelIf(h.ctx, pinned.Names.Table(sprint.Fleet), []RowGuard{stale})
+	require.NoError(t, err)
+	require.Empty(t, deleted, "the card was placed again after the guard's read: the row stays")
+	require.NotNil(t, h.snap().MemberCtl("m2"))
+	fresh := removeM2()
+	deleted, err = pinned.B.RowsDelIf(h.ctx, pinned.Names.Table(sprint.Fleet), []RowGuard{fresh})
+	require.NoError(t, err)
+	require.Equal(t, []string{"m2"}, deleted)
+	require.False(t, h.snap().Fleet.HasRow("m2"), "the row is deleted")
+}

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 
@@ -15,11 +14,10 @@ import (
 )
 
 // seamed is the test's store with a seam between the sync's reading of the
-// fleet rows and their delete: the lock the delete takes on the fence after its
-// read or, with no lock, the first row delete of the fleet table, runs between
-// first; the seam's own writes go to the store underneath, never through the
-// seam. failKeys fails that many key deletes first, as a store that did not
-// answer.
+// fleet rows and their delete: the first row delete of the fleet table,
+// conditional or not, runs between first; the seam's own writes go to the
+// store underneath, never through the seam. failKeys fails that many key
+// deletes first, as a store that did not answer.
 type seamed struct {
 	*store.Mem
 	once     sync.Once
@@ -27,11 +25,11 @@ type seamed struct {
 	failKeys int
 }
 
-func (s *seamed) Acquire(ctx context.Context, gen uint64, op store.OpRecord) (bool, error) {
-	if op.Lock && strings.HasPrefix(op.Verb, "fleet rows drop") && s.between != nil {
+func (s *seamed) RowsDelIf(ctx context.Context, table string, guards []store.RowGuard) ([]string, error) {
+	if s.between != nil {
 		s.once.Do(s.between)
 	}
-	return s.Mem.Acquire(ctx, gen, op)
+	return s.Mem.RowsDelIf(ctx, table, guards)
 }
 
 func (s *seamed) DeleteKeys(ctx context.Context, keys []string) (int, error) {
@@ -52,9 +50,9 @@ func (s *seamed) RowsDel(ctx context.Context, table string, rows []string) error
 // TestARemovedMemberRejoinedBeforeTheDeleteKeepsItsRowAndCards: the sync takes
 // m2's control card off and reads the fleet's rows to delete; between that read
 // and the delete, fleet up places m2's control card again and releases it, and a
-// deal gives m2 a card. The delete is decided under the fence, so it reads the
-// rejoin and deletes nothing: m2's row and its card stay. Deciding on the read
-// made before the rejoin would delete the row and take the card off the table.
+// deal gives m2 a card. The delete is conditional at its commit on the control
+// card still on no cell at the revision read, so it deletes nothing: m2's row and
+// its card stay. A delete of the row as read would take the card off the table.
 func TestARemovedMemberRejoinedBeforeTheDeleteKeepsItsRowAndCards(t *testing.T) {
 	t.Parallel()
 	ta, inv := syncApp(t)

@@ -39,6 +39,12 @@ type Backend interface {
 	// which first refuses a stream that holds one, its control card going with
 	// its merge row (sprint.StreamRemove).
 	RowsDel(ctx context.Context, table string, rows []string) error
+	// RowsDelIf removes each guard's row, with the cards placed in it, only
+	// while the guard's record (the row's control card) is still on no cell
+	// at the revision the guard names, checked and deleted as one atomic
+	// change: a record placed again or changed since the caller read it keeps
+	// its row. It is the rows it removed (sprint.FleetDrift, the removal).
+	RowsDelIf(ctx context.Context, table string, guards []RowGuard) ([]string, error)
 	// Place puts a record that is on no cell back into a cell at the score, as
 	// the table layer's cell add does (a batch never places a removed member):
 	// a fleet member whose control card a sync took off rejoins (RejoinMembers).
@@ -114,6 +120,14 @@ type Backend interface {
 	RecordIDs(ctx context.Context, table string) ([]string, error)
 	// DeleteKeys deletes exactly the keys named, and counts those it deleted.
 	DeleteKeys(ctx context.Context, keys []string) (int, error)
+}
+
+// RowGuard is one row a conditional delete removes (RowsDelIf) and the record
+// it is conditional on: its stored id and the revision it was read at, on no
+// cell.
+type RowGuard struct {
+	Row, ID string
+	Rev     uint64
 }
 
 // EpochState is the sprint's epoch as read.
