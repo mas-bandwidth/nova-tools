@@ -76,3 +76,17 @@ func TestStageCardRefusesWithNoIdentity(t *testing.T) {
 		})
 	}
 }
+
+// The pool identity remedy names only what any adopter has: the flag, and the file with the
+// shape it holds. One fleet's own tooling is no remedy for anybody else's.
+func TestPoolIdentityRemedyNamesWhatAnyAdopterHas(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{"--identity <owner>,<name>,<email>", "<root>/identity.tsv", "owner, name and email"} {
+		assert.Contains(t, PoolIdentityRemedy, want)
+	}
+	for _, not := range []string{"rowan-tools", "make -C fleet converge"} {
+		assert.NotContains(t, PoolIdentityRemedy, not)
+	}
+	_, err := LoadPoolIdentity(t.TempDir())
+	require.ErrorContains(t, err, PoolIdentityRemedy)
+}

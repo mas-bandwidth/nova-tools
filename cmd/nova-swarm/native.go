@@ -2732,7 +2732,7 @@ func nativePoolIdentity(cfg nativeRunConfig) (swarm.StagingIdentity, string) {
 	}
 	id, err := swarm.LoadPoolIdentity(cfg.root)
 	if err != nil {
-		return swarm.StagingIdentity{}, err.Error() + "; or give the loop --identity <owner>,<name>,<email> in its nova-config argv"
+		return swarm.StagingIdentity{}, err.Error()
 	}
 	return id, ""
 }

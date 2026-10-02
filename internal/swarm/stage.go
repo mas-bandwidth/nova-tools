@@ -289,7 +289,7 @@ func stageTimedOut(ctx context.Context, err error) bool {
 
 // NoStageIdentity is StageCard's refusal of a stage given no commit identity: the setting
 // it wants and where a native run takes it from.
-const NoStageIdentity = "staging refused: no commit identity: the staged checkout commits under the pool identity, and none was given; give nova-swarm native (or the member loop's nova-config argv) --identity <owner>,<name>,<email>, or write the pool's <root>/identity.tsv"
+const NoStageIdentity = "staging refused: no commit identity: the staged checkout commits under the pool identity, and none was given; " + PoolIdentityRemedy
 
 // StageOptions describes a card staging request.
 type StageOptions struct {

@@ -32,13 +32,10 @@ type StagingIdentity struct {
 	Email string
 }
 
-// PoolIdentityRemedy is the one remedy every pool identity refusal names
-// (nova-tools #3193). The pool identity is bench configuration: the fleet
-// converge in rowan-tools writes <pool>/identity.tsv (its pool_identity task),
-// so a bench refusing for it is an unconverged bench, never a hand-written
-// file. The card wrapper carries the refusal line, this remedy included, onto
-// the card record as its why.
-const PoolIdentityRemedy = "remedy: make -C fleet converge (rowan-tools) writes the pool identity.tsv"
+// PoolIdentityRemedy is the one remedy every pool identity refusal names (nova-tools
+// #3193): what any adopter can do, give the identity on the command line (a member loop's
+// argv carries it) or write the pool's file, whose shape it says.
+const PoolIdentityRemedy = "remedy: give --identity <owner>,<name>,<email>, or write <root>/identity.tsv: a header line and one row, each of owner, name and email tab-separated"
 
 // LoadPoolIdentity reads the pool's identity.tsv: a header
 // `owner\tname\temail` plus the pool's identity row. A pool with no identity
