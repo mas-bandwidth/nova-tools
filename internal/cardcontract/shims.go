@@ -250,6 +250,7 @@ func (claude) JobText(f Frame, s Staged) string {
 		fmt.Fprintf(&b, "You are in a checkout of %s on branch %s at %s: the change under review, against %s. The checkout is %s.\n\n", f.Repo, f.Branch, s.Head, orDash(f.ReviewBase), s.Repo)
 		fmt.Fprintf(&b, "Review the change on this branch against %s as you would a pull request: `gh pr diff`, `gh pr view` and `gh pr checks` show it. Run the card's gate. Change nothing and commit nothing.\n\n", orDash(f.ReviewBase))
 		writeReadDiff(&b, f, s)
+		writeReadChecks(&b)
 		b.WriteString("Approve or request changes with gh pr review; that ends the read:\n\n")
 		b.WriteString("    gh pr review --approve --body \"<what you checked>\"\n")
 		b.WriteString("    gh pr review --request-changes --body \"<findings, each with file:line>\"\n\n")
@@ -285,6 +286,7 @@ func (plain) JobText(f Frame, s Staged) string {
 		}
 		fmt.Fprintf(&b, "The checkout %s holds %s on branch %s at %s: the change under review, against %s. Review it (%s), run the card's gate, change nothing and commit nothing.\n\n", s.Repo, f.Repo, f.Branch, s.Head, orDash(f.ReviewBase), review)
 		writeReadDiff(&b, f, s)
+		writeReadChecks(&b)
 		b.WriteString("End by writing " + s.Job + "/RESULT.md in this shape (verdict ok, or broken with your findings):\n\n")
 		b.WriteString(ShapeText("read") + "\n")
 	} else {
@@ -312,6 +314,18 @@ func writeReadDiff(b *strings.Builder, f Frame, s Staged) {
 	fmt.Fprintf(b, "The work's change is exactly %s..HEAD: %s is the commit the work started from (the merge base of this head and %s when this checkout was staged). See it with:\n\n", s.Start, s.Start, base)
 	fmt.Fprintf(b, "    git diff %s..HEAD\n    git diff --stat %s..HEAD\n\n", s.Start, s.Start)
 	fmt.Fprintf(b, "%s may have moved since the work began (other cards land on it); it is not what to compare against: a diff against the tip of %s or origin/%s shows every change landed since as a deletion. Those deletions are never the work's and never a finding: judge the work by the diff above alone.\n\n", base, base, base)
+}
+
+// writeReadChecks is what every read's JOB.md says to verify before approving:
+// the four checks readers miss when they only review the diff and run the gate
+// (truth of a stated reason against the code, sentence completeness, edits inside
+// PATHS, and references after a rename).
+func writeReadChecks(b *strings.Builder) {
+	b.WriteString("Four checks every read makes before an approval:\n\n" +
+		"1. Truth of a stated reason against the code: for every reconstructed reason or changed rationale, verify the line of code that shows it (reject invented reasons and comments that contradict the code they sit on). For any assertion rewrite, verify truth-table equality.\n" +
+		"2. Sentence completeness: read every changed comment or doc as a whole paragraph, from capital to full stop, never as an isolated line diff. Reject sentence fragments, severed clauses, and orphaned punctuation.\n" +
+		"3. Edits inside PATHS: verify that every edited file is named in the card's PATHS. Any edit outside PATHS is broken.\n" +
+		"4. References after a rename: run `ls` or `git ls-files` for every file a changed comment or doc names. Reject references to files not present in the package, and stale names left after a rename.\n\n")
 }
 
 // writeCommon is what every JOB.md ends with: the files staged for the child, the test
