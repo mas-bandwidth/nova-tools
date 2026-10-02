@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -114,6 +115,45 @@ func TestNewVerbYieldsABuildingTestingSkeleton(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tree, "cmd", "ghost")); err == nil {
 		t.Errorf("new-verb into a tool with no func main wrote cmd/ghost")
+	}
+}
+
+// In process, on a temp tree: --dry-run lists exactly the files the real run
+// writes and writes none; a second run, a bad name, no checkout and a tool
+// with no func main are each one refusal at exit 2 that names the verb's help.
+func TestScaffoldVerbsDryRunAndRefuse(t *testing.T) {
+	t.Parallel()
+	tree := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module example.com/m\n"), 0o644))
+
+	code, dry, stderr := runCI(t, []string{"new-rule", "--root", tree, "--dry-run", "demo"}, "")
+	require.Equal(t, 0, code, stderr)
+	entries, err := os.ReadDir(tree)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "--dry-run wrote into the tree")
+	assert.Contains(t, dry, "nova-ci new-rule NOTE --dry-run wrote nothing")
+
+	code, wrote, stderr := runCI(t, []string{"new-rule", "--root", tree, "demo"}, "")
+	require.Equal(t, 0, code, stderr)
+	assert.Equal(t, strings.Count(dry, "would write "), strings.Count(wrote, "wrote "), "the dry run and the run name different files:\n%s\n%s", dry, wrote)
+	assert.Equal(t, strings.ReplaceAll(strings.Split(dry, "nova-ci new-rule NOTE")[0], "would write ", "wrote "), wrote)
+
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"new-rule", "--root", tree, "demo"}, "already exists"},
+		{[]string{"new-rule", "--root", tree, "--dry-run", "demo"}, "already exists"},
+		{[]string{"new-rule", "--root", tree, "Bad Name"}, "rule name"},
+		{[]string{"new-rule", "--root", t.TempDir(), "demo"}, "no go.mod"},
+		{[]string{"new-verb", "--root", tree, "ghost", "probe"}, "no func main"},
+		{[]string{"new-verb", "--root", tree, "ghost"}, "new-verb wants two arguments"},
+	} {
+		code, stdout, stderr := runCI(t, c.args, "")
+		assert.Equal(t, 2, code, "%v", c.args)
+		assert.Empty(t, stdout, "%v", c.args)
+		assert.Contains(t, stderr, c.want, "%v", c.args)
+		assert.Regexp(t, `^nova-ci new-(rule|verb) REFUSED: .*; run: nova-ci new-(rule|verb) -h\n$`, stderr, "%v", c.args)
 	}
 }
 

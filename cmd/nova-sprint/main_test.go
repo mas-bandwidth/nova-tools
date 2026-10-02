@@ -370,9 +370,9 @@ func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 		} else {
 			name = f[0]
 		}
-		want := "nova-sprint " + name + ": " + none + "; run: nova-sprint " + name + " -h\n"
+		want := "nova-sprint " + name + " REFUSED: " + none + "; run: nova-sprint " + name + " -h\n"
 		if name == "goal" {
-			want = "nova-sprint goal: " + none + "; run: nova-sprint goal -h\n"
+			want = "nova-sprint goal REFUSED: " + none + "; run: nova-sprint goal -h\n"
 		}
 		code, _, errs := ta.do(verb + " --prefix x")
 		require.Equal(t, 2, code, "%s --prefix x: exit %d, stderr %q, want %q", verb, code, errs, want)
@@ -387,12 +387,12 @@ func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 	}
 	code, _, errs := ta.do("where")
 	require.Equal(t, 2, code, "a set NOVA_SPRINT_PREFIX is refused: %d %q", code, errs)
-	require.Equal(t, "nova-sprint where: NOVA_SPRINT_PREFIX is set: "+none+"; unset it; run: nova-sprint where -h\n", errs, "a set NOVA_SPRINT_PREFIX is refused: %d %q", code, errs)
+	require.Equal(t, "nova-sprint where REFUSED: NOVA_SPRINT_PREFIX is set: "+none+"; unset it; run: nova-sprint where -h\n", errs, "a set NOVA_SPRINT_PREFIX is refused: %d %q", code, errs)
 	// before the --redis check: with no store named the refusal is still this one
 	ta.a.getenv = func(k string) string { return map[string]string{"NOVA_SPRINT_PREFIX": "dev-"}[k] }
 	code, _, errs = ta.do("where")
 	require.Equal(t, 2, code, "the prefix variable is checked before --redis: %d %q", code, errs)
-	require.True(t, strings.HasPrefix(errs, "nova-sprint where: NOVA_SPRINT_PREFIX is set: "), "the prefix variable is checked before --redis: %d %q", code, errs)
+	require.True(t, strings.HasPrefix(errs, "nova-sprint where REFUSED: NOVA_SPRINT_PREFIX is set: "), "the prefix variable is checked before --redis: %d %q", code, errs)
 }
 
 // A verb on a stopped machine ends with a line that starts with STOPPED and

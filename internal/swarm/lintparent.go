@@ -126,4 +126,4 @@ func blankCodeSpans(l string) string {
 
 // CardParentPathWanted is what `no-parent-path` wants, in one line, for the remedy and for
 // any tool that prints the rule rather than applies it.
-const CardParentPathWanted = "the wall refuses every path ABOVE THE JOB: keep the worktree, the scratch and the notes under the working directory rather than reaching through `../`. The rule is what the card WALKS -- a `cd`, a `mkdir`, a `cp`, a redirect, a `--root` -- so a `../` the card merely quotes (a fenced block, a backtick span, a markdown link target, a `go test` ellipsis) is not this drift (practice 25)"
+const CardParentPathWanted = "the wall refuses every path ABOVE THE JOB: keep the worktree, the scratch and the notes under the working directory rather than reaching through `../`. The rule is what the card WALKS -- a `cd`, a `mkdir`, a `cp`, a redirect, a `--root` -- so a `../` the card merely quotes (a fenced block, a backtick span, a markdown link target, a `go test` ellipsis) is not this drift"

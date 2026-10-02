@@ -557,9 +557,33 @@ func readEntry(store, session, id string) (entryFile, error) {
 	return ef, nil
 }
 
-// EntryText returns the friend's words byte-for-byte: the store never
-// rewrites, grades or consolidates what was appended.
+// EntryText returns the friend's words byte-for-byte for nested entries. A
+// flat bench record returns the section body in the form its reader indexes.
 func EntryText(store, session, id string) (string, error) {
+	if store == "" {
+		return "", errors.New("no store given; refusing to guess")
+	}
+	if !validID(id) {
+		return "", fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
+	}
+	path, bench, err := recordForRead(store, session)
+	if err != nil {
+		return "", err
+	}
+	if bench {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("cannot read session %q: %w", session, err)
+		}
+		if _, err := benchReceiptsFrom(raw, session); err != nil {
+			return "", err
+		}
+		body, _, found := benchSection(raw, id)
+		if !found {
+			return "", &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
+		}
+		return body, nil
+	}
 	ef, err := readEntry(store, session, id)
 	if err != nil {
 		return "", err

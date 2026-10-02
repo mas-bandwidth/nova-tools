@@ -229,7 +229,7 @@ and `slowest=` the single slowest package overall (or `slowest=none` when the
 stream is empty). On a refusal it prints one line per offending package, `CI-SLOW
 package=<pkg> seconds=<seconds> budget=<b> slowest=<TestA:3.2s,TestB:2.9s>`, the
 slowest tests in that package, comma-separated, worst first and capped at three,
-and exits 2 under `--enforce`, 0 without it; the lines go to stdout, so one `CI-SLOW` grep reads the whole run.
+and exits 1 under `--enforce` (the check ran and said no; 2 is input it could not read), 0 without it; the lines go to stdout, so one `CI-SLOW` grep reads the whole run.
 The stream is one `go test -json` line per event, parsed by `encoding/json`; a
 line that is not a TestEvent is a refusal naming its line number, never a silent
 skip, so a truncated pipe cannot read as a clean run.
@@ -237,8 +237,10 @@ skip, so a truncated pipe cannot read as a clean run.
 **Its refusals (exit 2, one remedy line each).** A malformed line —
 `remedy="stdin is not newline-delimited go test -json"`. A `--budget` of zero or
 less — `remedy="--budget must be a whole number of seconds greater than zero"`. A
-missing or unreadable invocation is the tool’s own one-line refusal ending `run:
-nova-ci help`.
+missing or unreadable invocation is the tool’s own one-line refusal,
+`nova-ci slowtests REFUSED: <every problem>; run: nova-ci slowtests -h`; a line
+that is not a TestEvent ends `run: go test -json <packages> | nova-ci
+slowtests --budget 60`, and a terminal on stdin is refused at once rather than waited on.
 
 **The budget is in one place.** The verb judges a LIVE run against the budgets
 it is handed; there is no second budget and no recorded table a change is judged
@@ -286,7 +288,7 @@ budgets makes the verdict depend on the load instead. So:
   `test` job runs on `schedule` too, test-packages deals that tree onto the
   space shards only, and `ci unit-test` on the nightly leg runs `make test
   GOTEST_COUNT_FLAG=-count=1 SLOWTESTS_ENFORCE=1`, which passes `--enforce`: a
-  CI-SLOW line is exit 2 there and nowhere else. A red schedule run blocks
+  CI-SLOW line fails the run there (slowtests exits 1) and nowhere else. A red schedule run blocks
   nothing (ci-ok does not run on schedule); it is evidence, and its raw times
   are what a row is measured from. test-hosted's ubuntu leg was the other
   candidate (a fresh VM, idle by construction) and was not used: it runs `make
@@ -2780,6 +2782,24 @@ the original failed measurement.
 **Its allowlist.** None.
 **Its remedy line.** `remedy="a worker is a client: ask the sprint's server (internal/sprintwire) and never open the store from a worker's machine (docs/SPEC-CI.md, onewriter)"`.
 **Its narrowings.** It reads imports, so a worker that reaches the store by running a binary that opens it would not be seen (the member has no such path: `--server` is required); test files are not read.
+
+### `flag-usage` — every flag a tool registers says what it wants
+
+**The rule.** A flag is registered with a description that says what it wants (its unit, its role, an example value): `<tool> <verb> -h` is all an AI reads before it calls the verb. On `internal/tool`, `Problems()` names every flag without one, so `tool-standard` holds it there by construction.
+**The mistake it prevents.** `-h` listing `--repo <string>` and nothing else: 31 flags of one tool, 8 of another, read cold by raters who could not tell what the flag wanted (tool ledger X7).
+**The test.** `TestEveryFlagSaysWhatItWants` (`internal/ci/flagusage_class_test.go`), with `TestFlagUsageRuleReadsEveryShape`: every non-test `.go` file under `cmd/` and `internal/` is read for a call shaped like a registration of package flag (`String`, `StringVar`, `Var`, `Func` and the rest, by arity) whose usage is an empty string literal.
+**Its allowlist.** the `flagusage` package ledger, `file:function <sites> <why>`, counted and shrink-only like `remedy`.
+**Its remedy line.** `a flag registered with no description; give it a usage string that says what it wants ...`.
+**Its narrowings.** A usage built at run time (a variable, a concatenation) is not read; `testdata/` is not read.
+
+### `tool-answers` — every tool answers a mistake with the way forward
+
+**The rule.** Run as an AI would run it wrongly, every tool answers with the next step: a bare command prints the `REFUSED` word; an unknown verb is refused at exit 2 in one line naming the tool's verbs; an unknown flag is refused naming the verb's flags (never the flag package's `flag provided but not defined`); a verb group's `-h` lists its verbs on stdout at exit 0; every verb's `-h` states its effect, and a verb that writes takes `--dry-run`. On `internal/tool` each holds by construction (`tool.FlagRefusal` is the unknown-flag answer for a tool not on it).
+**The mistake it prevents.** Fourteen tools answered a misspelled flag with Go's stock line and the tool-wide help, eleven answered an unknown verb without the verbs, fourteen bare commands printed no status word, two groups refused `-h`, and seven tools wrote with no dry run (tool ledger X2, X3, X4, X11, X12).
+**The test.** The functional walk `TestEveryCommandMeetsTheOnboardingStandard` measures it on the binaries it builds (`internal/ci/toolanswers_functional_test.go`); the judges are proved in the unit tier by `TestToolAnswersJudges` (`internal/ci/toolanswers_class_test.go`). The ledger is checked only when every tool ran.
+**Its allowlist.** the `toolanswers` package ledger, one shard per tool, `cmd/<tool>:<kind> <count> <why>`, kind `bare`, `unknown-verb`, `unknown-flag`, `group-help` or `dry-run`; the count is the verbs or groups short of the rule. Counted and shrink-only.
+**Its remedy line.** Each site names its kind's remedy after `to clear it:`; moving the tool onto `internal/tool` clears every kind but `dry-run`, which clears verb by verb with `Verb.DryRun` and `Call.DryRun`.
+**Its narrowings.** The unknown flag is tried on one verb per tool (the first whose `-h` lists a flag): a tool parses every verb through one seam. A verb's effect is read from its `-h`, so a tool not on `internal/tool` meets `dry-run` only where a verb lists `--dry-run`.
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

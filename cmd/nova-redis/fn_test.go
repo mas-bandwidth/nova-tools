@@ -354,12 +354,12 @@ func TestFnRefusesBeforeTheDial(t *testing.T) {
 		args []string
 		line string
 	}{
-		{[]string{"fn"}, "nova-redis fn: no subverb given; load puts this binary's function library on the store, check compares the store's with it; run: nova-redis help\n"},
-		{[]string{"fn", "deploy", "--addr", "127.0.0.1:6379"}, "nova-redis fn: unknown subverb \"deploy\"; want load or check; run: nova-redis help\n"},
-		{[]string{"fn", "load"}, "nova-redis fn load: --addr is required; refusing to guess; run: nova-redis help\n"},
-		{[]string{"fn", "check", "--addr", "127.0.0.1"}, "nova-redis fn check: --addr \"127.0.0.1\" is not <host:port>; refusing to guess; run: nova-redis help\n"},
-		{[]string{"fn", "check", "--addr", ":6379"}, "nova-redis fn check: --addr \":6379\" names no host; refusing to guess localhost; run: nova-redis help\n"},
-		{[]string{"fn", "load", "--addr", "127.0.0.1:6379", "extra"}, "nova-redis fn load: unexpected argument \"extra\"; run: nova-redis help\n"},
+		{[]string{"fn"}, "nova-redis fn REFUSED: no subverb given; load puts this binary's function library on the store, check compares the store's with it; run: nova-redis help fn\n"},
+		{[]string{"fn", "deploy", "--addr", "127.0.0.1:6379"}, "nova-redis fn REFUSED: unknown subverb \"deploy\"; want load or check; run: nova-redis help fn\n"},
+		{[]string{"fn", "load"}, "nova-redis fn load REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help fn load\n"},
+		{[]string{"fn", "check", "--addr", "127.0.0.1"}, "nova-redis fn check REFUSED: --addr \"127.0.0.1\" is not <host:port>; refusing to guess; run: nova-redis help fn check\n"},
+		{[]string{"fn", "check", "--addr", ":6379"}, "nova-redis fn check REFUSED: --addr \":6379\" names no host; refusing to guess localhost; run: nova-redis help fn check\n"},
+		{[]string{"fn", "load", "--addr", "127.0.0.1:6379", "extra"}, "nova-redis fn load REFUSED: unexpected argument \"extra\"; every input is a flag; run: nova-redis help fn load\n"},
 	}
 	for _, c := range cases {
 		h := newFnHarness(t)
@@ -375,7 +375,8 @@ func TestFnRefusesBeforeTheDial(t *testing.T) {
 
 // loginCase is one login a verb is given: the flags after --addr, the
 // environment, and either the user/password the login is made with or the
-// refusal (without the "nova-redis <verb>: " prefix) made before any dial.
+// refusal's reason (what stands between "nova-redis <verb> REFUSED: " and
+// "; run: nova-redis help <verb>") made before any dial.
 type loginCase struct {
 	name    string
 	flag    []string
@@ -407,17 +408,17 @@ func loginCases() []loginCase {
 		{"the flag's password variable", []string{"--user", "coordinator", "--password-env", "SEAT_PW"}, map[string]string{PasswordEnv: "pw", "SEAT_PW": "seat"}, "coordinator/seat", ""},
 		{"the environment's password variable", nil, map[string]string{UserEnv: "coordinator", PasswordEnvEnv: "SEAT_PW", "SEAT_PW": "seat"}, "coordinator/seat", ""},
 		{"a user without a password", []string{"--user", "fnuser"}, map[string]string{}, "",
-			"user fnuser (from --user) but NOVA_REDIS_PASSWORD is empty; run under nova-secrets exec --only NOVA_REDIS_PASSWORD, refusing to log in without a password; run: nova-redis help\n"},
+			"user fnuser (from --user) but NOVA_REDIS_PASSWORD is empty; run under nova-secrets exec --only NOVA_REDIS_PASSWORD, refusing to log in without a password"},
 		{"a user whose named password variable is empty", nil, map[string]string{UserEnv: "coordinator", PasswordEnvEnv: "SEAT_PW", PasswordEnv: "pw"}, "",
-			"user coordinator (from NOVA_REDIS_USER) but SEAT_PW is empty; run under nova-secrets exec --only SEAT_PW, refusing to log in without a password; run: nova-redis help\n"},
+			"user coordinator (from NOVA_REDIS_USER) but SEAT_PW is empty; run under nova-secrets exec --only SEAT_PW, refusing to log in without a password"},
 		{"a user name with a space, from the environment", nil, map[string]string{PasswordEnv: "pw", UserEnv: "fn user"}, "",
-			"NOVA_REDIS_USER \"fn user\" holds whitespace; give the ACL user's name; run: nova-redis help\n"},
+			"NOVA_REDIS_USER \"fn user\" holds whitespace; give the ACL user's name"},
 		{"a user name with a space, from the flag", []string{"--user", "fn user"}, map[string]string{PasswordEnv: "pw"}, "",
-			"--user \"fn user\" holds whitespace; give the ACL user's name; run: nova-redis help\n"},
+			"--user \"fn user\" holds whitespace; give the ACL user's name"},
 		{"a password variable that is not a name", []string{"--password-env", "1-bad"}, map[string]string{PasswordEnv: "pw"}, "",
-			"--password-env \"1-bad\" is not a variable name; name the variable that holds the password (default NOVA_REDIS_PASSWORD); run: nova-redis help\n"},
+			"--password-env \"1-bad\" is not a variable name; name the variable that holds the password (default NOVA_REDIS_PASSWORD)"},
 		{"a password variable from the environment that is not a name", nil, map[string]string{PasswordEnvEnv: "SEAT PW"}, "",
-			"NOVA_REDIS_PASSWORD_ENV \"SEAT PW\" is not a variable name; name the variable that holds the password (default NOVA_REDIS_PASSWORD); run: nova-redis help\n"},
+			"NOVA_REDIS_PASSWORD_ENV \"SEAT PW\" is not a variable name; name the variable that holds the password (default NOVA_REDIS_PASSWORD)"},
 	}
 }
 
@@ -447,7 +448,7 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 		}
 		err := l.check(d)
 		if c.refusal != "" {
-			if err == nil || err.Error()+"; run: nova-redis help\n" != c.refusal {
+			if err == nil || err.Error() != c.refusal {
 				t.Errorf("%s: check %v; want the refusal %q", c.name, err, c.refusal)
 			}
 		} else {
@@ -480,7 +481,7 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 				if verb[0] == "fn" {
 					verbName = "fn " + verb[1]
 				}
-				if want := "nova-redis " + verbName + ": " + c.refusal; code != 2 || errb.String() != want || len(got) != 0 {
+				if want := "nova-redis " + verbName + " REFUSED: " + c.refusal + "; run: nova-redis help " + verbName + "\n"; code != 2 || errb.String() != want || len(got) != 0 {
 					t.Errorf("%s, %q: exit %d stderr %q opens %q; want exit 2, %q and no open", c.name, args, code, errb.String(), got, want)
 				}
 				continue

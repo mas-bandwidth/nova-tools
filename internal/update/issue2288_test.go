@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // The red tests nova-tools #2288 demands (docs/SPEC-VERSION.md, "nova-version
@@ -29,7 +31,8 @@ type movedBench struct {
 	fx, fakeDir, repo string
 }
 
-// movedFakeGit answers the six subcommands `moved` runs and nothing else; any
+// movedFakeGit answers the subcommands `moved` runs (rev-parse --git-dir among
+// them, as a checkout does) and nothing else; any
 // other subcommand -- a `git fetch`, say -- is recorded in git-unexpected so a
 // test can prove the verb never reached for the network itself.
 const movedFakeGit = `FX='@FX@'
@@ -37,6 +40,7 @@ if [ "$1" = "-C" ]; then shift 2; fi
 cmd="$1"; shift
 case "$cmd" in
 rev-parse)
+	if [ "$1" = "--git-dir" ]; then echo .git; exit 0; fi
 	rev=${2%%\^*}
 	if [ -f "$FX/revs/$rev/tools" ]; then
 		echo "$rev"
@@ -256,6 +260,15 @@ func TestMovedReadsTheBuildNeverAList(t *testing.T) {
 	if strings.Contains(note+stdout, "--pin") {
 		t.Errorf("a flag neither help prints was announced:\nstdout:\n%s\nnote:\n%s", stdout, note)
 	}
+	// --dry-run takes the same builds and reads and prints that note, writing no
+	// --out (STANDARD §2, "a verb that writes has a dry run").
+	dry := filepath.Join(t.TempDir(), "dry.txt")
+	code, stdout, _ = b.run(t, Environment{}, "moved", "--from", "aaaa1", "--to", "bbbb2", "--repo", b.repo, "--out", dry, "--dry-run")
+	assert.Equal(t, 0, code)
+	assert.Equal(t, 1, strings.Count(stdout, "dry_run=true"), "the skeleton says it once")
+	assert.Contains(t, stdout, "MOVED from=aaaa1 to=bbbb2 at=")
+	assert.Contains(t, stdout, "\nadded=--decide tool=nova-secrets verb=seat\n")
+	assert.NoFileExists(t, dry)
 }
 
 // 5. TestMovedNeverInfersARename: help text alone never makes a rename.

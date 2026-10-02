@@ -330,7 +330,7 @@ func TestWaitRefusesAnotherAccountsStaleLock(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	other := uint32(os.Geteuid() + 1)
-	want := fmt.Sprintf("WAIT REFUSED: index.lock is owned by uid %d, not this account; ask its owner or the bench admin\n", other)
+	want := fmt.Sprintf("WAIT REFUSED: index.lock is owned by uid %d, not this account; ask its owner or the bench admin; run: nova-bus wait -h\n", other)
 
 	checkout, bare := busDir(t)
 	pushAhead(t, bare, "from-bo/arrived.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:03:00 UTC 2026\nId: bo-222222222222\nSubject: Arrived\n\nA note on the bus.\n")

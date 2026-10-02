@@ -48,7 +48,11 @@ packet's `why`, `finding` and `fix`, which the rework wrote on the attempt's wor
 change on the branch against its base as a pull request is reviewed, and states the work's change
 exactly: the commit the work started from, a full sha, the two commands that show it
 (`git diff <start>..HEAD`, `git diff --stat <start>..HEAD`), and that the base branch may have
-moved since and is not what to compare against. The packet carries the base's name, never the
+moved since and is not what to compare against: a diff against the tip of `<base>` or
+`origin/<base>` shows every change landed since as a deletion, never the work's and never a
+finding. Its first line is `# JOB: read <card>, attempt <n>` in every profile
+(`cardcontract.ReadTitle`) and a work card's never is, so a brief that speaks to its readers
+names that line (`TestQuackBriefTellsAReadByJobMdsFirstLine`). The packet carries the base's name, never the
 commit the work was staged on, so native finds the start when it stages the read: the merge base
 of the read's head and the base in the staged checkout; the gh shim's `pr diff` and `pr view`
 read from it too. The base is a full sha, else a branch when the checkout holds

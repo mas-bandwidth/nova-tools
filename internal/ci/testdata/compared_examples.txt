@@ -32,6 +32,8 @@ cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config migrate --print
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine add -h
 cmd/nova-secrets/seat_inject_functional_test.go:TestTheHelpExampleIsWhatSeatInjectPrints example: nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr
+cmd/nova-ci/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-ci slowtests --example --budget 60 --load 4 --cpus 16
+cmd/nova-ci/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-ci slowtests --example --budget 120 --load 4 --cpus 16
 cmd/nova-ci/receipt_test.go:TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints $ nova-ci github receipt --from-runner --repo nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion success
 cmd/nova-ci/receipt_test.go:TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints $ nova-ci github receipt --from-runner --repo mas-bandwidth/nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion skipped
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox check --bogus
@@ -59,6 +61,7 @@ cmd/nova-secrets/dryrun_example_test.go:TestTheHelpExampleIsWhatSealDryRunPrints
 cmd/nova-secrets/dryrun_example_test.go:TestTheHelpExampleIsWhatSeatInjectDryRunPrints example: nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
 cmd/nova-secrets/dryrun_example_test.go:TestTheHelpExampleIsWhatPlaceDryRunPrints example: nova-secrets place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
 cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis version
+cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
 cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
 cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note
 cmd/nova-secrets/examples_test.go:TestTheHelpExampleIsWhatKeygenPrints example: nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen
@@ -69,3 +72,6 @@ cmd/nova-secrets/examples_test.go:TestTheHelpExamplesAreWhatTheSeatsVerbsPrint e
 cmd/nova-secrets/examples_test.go:TestTheHelpExamplesAreWhatTheSeatsVerbsPrint example: nova-secrets placed --machine bench-a
 cmd/nova-secrets/examples_test.go:TestTheHelpExamplesAreWhatTheSeatsVerbsPrint example: nova-secrets seat add --store ./secrets --as bo --pub $BO_PUB --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
 cmd/nova-tokens/report_example_test.go:TestTheHelpReportExampleIsWhatItPrints example: nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+cmd/nova-check/polish_test.go:TestPolishLinksBannerExampleMatchesOutput example: nova-check links --dir ./self
+cmd/nova-fuse/firstrun_test.go:TestInitBannerExampleThroughTheComparator example: nova-fuse init --box ./fuse-box.json
+cmd/nova-tokens/fold_example_test.go:TestHelpFoldExampleIsComparedToOutput example: nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts

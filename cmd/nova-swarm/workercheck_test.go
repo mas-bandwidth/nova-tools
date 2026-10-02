@@ -63,7 +63,7 @@ func TestWorkerCheckAGoodDescriptionPasses(t *testing.T) {
 	assert.Equal(t, want, got, "got %q, want %q", got, want)
 }
 
-// A harness that is not there is one drift naming the harness field, exit 2.
+// A harness that is not there is one drift naming the harness field, exit 1.
 func TestWorkerCheckAMissingHarnessNamesTheField(t *testing.T) {
 	t.Parallel()
 
@@ -71,7 +71,7 @@ func TestWorkerCheckAMissingHarnessNamesTheField(t *testing.T) {
 		d["harness"] = filepath.Join(t.TempDir(), "no-such-harness")
 	})
 	code, out, errb := runWorkerCheck(path)
-	require.Equal(t, 2, code, "exit %d, want 2\nstdout: %s\nstderr: %s", code, out, errb)
+	require.Equal(t, 1, code, "exit %d, want 1\nstdout: %s\nstderr: %s", code, out, errb)
 	assert.Contains(t, out+errb, "WORKER DRIFT harness", "the drift does not name the harness field:\nstdout: %s\nstderr: %s", out, errb)
 }
 
@@ -104,7 +104,7 @@ func TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue(t *testing.
 	})
 	code, out, errb := runWorkerCheck(path, "--env")
 	combined := out + errb
-	require.Equal(t, 2, code, "exit %d, want 2\nstdout: %s\nstderr: %s", code, out, errb)
+	require.Equal(t, 1, code, "exit %d, want 1\nstdout: %s\nstderr: %s", code, out, errb)
 	assert.Contains(t, combined, "WORKER DRIFT secret", "the drift does not name the secret field:\n%s", combined)
 	assert.Contains(t, combined, name, "the drift does not name the absent variable %s:\n%s", name, combined)
 	assert.NotContains(t, combined, sentinel, "a value reached the output:\n%s", combined)
@@ -165,7 +165,7 @@ func TestWorkerCheckFlagTypes(t *testing.T) {
 	}
 	for _, c := range cases {
 		code, out, errb := runWorkerCheck(c.args...)
-		if !assert.Equal(t, 2, code, "%s: exit %d, want 2\nstdout: %s\nstderr: %s", c.name, code, out, errb) {
+		if !assert.Equal(t, 1, code, "%s: exit %d, want 1\nstdout: %s\nstderr: %s", c.name, code, out, errb) {
 			continue
 		}
 		n, all := drifts(out)

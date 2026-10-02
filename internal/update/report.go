@@ -7,47 +7,49 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 func shaText(s string) string { sum := sha256.Sum256([]byte(s)); return hex.EncodeToString(sum[:]) }
-func report(ctx context.Context, all, entries []Entry, o options, kinds string, started time.Time, out, errs io.Writer, env Environment) int {
+
+// report is the report verb's one value: the run's facts on its first line, an
+// item per tool read (TOOL, or UNKNOWN with its reason), per tool changed since
+// --snapshot (CHANGED) and per delivery (SENT), and a note for what is true and
+// not a finding. Under --draft the value is the note itself, its payload: the
+// headers and this same value's lines, which is also what --send delivers.
+func report(ctx context.Context, verb string, all, entries []Entry, o options, kinds, help string, started time.Time, env Environment) *tool.Out {
 	state := emptySnapshot()
 	var err error
 	if o.snapshot != "" {
 		release, lockErr := lockSnapshot(ctx, o.snapshot)
 		if lockErr != nil {
-			return refusal(errs, "REPORT", lockErr)
+			return refused(verb, help, lockErr.Error())
 		}
 		defer release()
 		state, err = readSnapshot(o.snapshot)
 		if err != nil {
-			return refusal(errs, "REPORT", err)
+			return refused(verb, help, err.Error())
 		}
 	}
 	rs := readEntries(ctx, entries, o, env, true)
+	res := &tool.Out{Verb: verb, Status: tool.OK}
 	seen := map[string]observed{}
 	known := 0
 	at := started.UTC().Format(time.RFC3339)
-	var inventory bytes.Buffer
-	fmt.Fprintf(&inventory, "REPORT at=%s file=%s host=%s as=%s entries=%d kinds=%s timeout=%s budget=%s max=%d snapshot=%s\n", field(at), field(o.file), field(o.host), field(o.as), len(all), field(kinds), o.timeout, o.budget, o.max, field(o.snapshot))
-	group := bounded.Grouped(&inventory, o.max, "REPORT", "use --max 0 to show all")
 	for _, x := range rs {
 		r := x.Installed
 		status := "unknown"
 		if r.Known() {
 			status = "known"
 			known++
-			group.Line("tool", fmt.Sprintf("REPORT TOOL name=%s kind=%s version=%s raw=%s path=%s", field(x.Entry.Name), field(x.Entry.Kind), field(r.Version), field(r.Raw), field(r.Path)))
+			res.Item("tool", "name", x.Entry.Name, "kind", x.Entry.Kind, "version", r.Version, "raw", r.Raw, "path", r.Path)
 		} else {
-			group.Line("unknown", fmt.Sprintf("REPORT UNKNOWN name=%s kind=%s path=%s raw=%s: %s (%s)", field(x.Entry.Name), field(x.Entry.Kind), field(r.Path), field(r.Raw), oneline.Escape(r.Reason), oneline.Escape(r.Remedy)))
+			res.Item("unknown", "name", x.Entry.Name, "kind", x.Entry.Kind, "path", r.Path, "raw", r.Raw, "reason", r.Reason, "remedy", r.Remedy)
 		}
 		seen[x.Entry.Name] = observed{r.Raw, status, at}
 	}
@@ -72,53 +74,40 @@ func report(ctx context.Context, all, entries []Entry, o options, kinds string, 
 		for _, k := range order {
 			a, b := state.Observed[k], seen[k]
 			if a.Raw != b.Raw || a.Status != b.Status {
-				group.Line("changed", fmt.Sprintf("REPORT CHANGED name=%s was=%s now=%s", field(k), field(a.Raw), field(b.Raw)))
+				res.Item("changed", "name", k, "was", a.Raw, "now", b.Raw)
 			}
 		}
 		state.Observed = seen
 		if err = writeSnapshot(o.snapshot, state); err != nil {
-			return refusal(errs, "REPORT", err)
+			return refused(verb, help, err.Error())
 		}
 	}
-	group.More()
-	sent := "-"
-	code := 0
 	if known != len(entries) {
-		code = 1
+		res.Status, res.Exit = tool.Failed, 1
 	}
-	count := func(w io.Writer, delivery string, code int) {
-		result := "OK"
-		if code != 0 {
-			result = "FAIL"
-		}
-		fmt.Fprintf(w, "REPORT %s checked=%d known=%d unknown=%d changed=%s sent=%s took=%s file=%s\n", result, len(entries), known, len(entries)-known, changed, delivery, time.Since(started).Round(time.Millisecond), field(o.file))
+	facts := func(sent string) tool.Fields {
+		return tool.Fields{{K: "checked", V: len(entries)}, {K: "known", V: known}, {K: "unknown", V: len(entries) - known},
+			{K: "changed", V: changed}, {K: "sent", V: sent}, {K: "took", V: env.Now().Sub(started).Round(time.Millisecond).String()},
+			{K: "file", V: o.file}, {K: "host", V: o.host}, {K: "as", V: o.as}, {K: "entries", V: len(all)}, {K: "kinds", V: kinds},
+			{K: "at", V: at}, {K: "timeout", V: o.timeout.String()}, {K: "budget", V: o.budget.String()}, {K: "max", V: o.max},
+			{K: "snapshot", V: o.snapshot}}
 	}
+	res.Facts = facts("-")
 	var body bytes.Buffer
 	fmt.Fprintf(&body, "From: %s\nTo: %s\nSubject: versions on %s at %s\n\n", o.as, o.to, dash(o.host), at)
-	body.Write(inventory.Bytes())
-	count(&body, "-", code)
+	text(&body, capped(res, o.max))
 	if o.draft {
-		if _, err = out.Write(body.Bytes()); err != nil {
-			return 1
-		}
-		return code
-	}
-	if _, err = out.Write(inventory.Bytes()); err != nil {
-		return 1
+		return &tool.Out{Verb: verb, Status: res.Status, Exit: res.Exit, Payload: body.String()}
 	}
 	if o.send {
-		sent, err = deliver(ctx, o, state, seen, body.Bytes(), out, env)
+		sent, err := deliver(ctx, o, state, seen, body.Bytes(), res, env)
 		if err != nil {
-			fmt.Fprintf(errs, "REPORT NOTE %s\n", oneline.Err(err))
-			code = 1
+			res.Note(err.Error())
+			res.Status, res.Exit = tool.Failed, 1
 		}
+		res.Facts = facts(sent)
 	}
-	w := out
-	if code != 0 {
-		w = errs
-	}
-	count(w, sent, code)
-	return code
+	return res
 }
 func dash(s string) string {
 	if s == "" {
@@ -211,7 +200,7 @@ func deliveryAllowance(ctx context.Context, now time.Time) time.Duration {
 	}
 	return deadline.Sub(now)
 }
-func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observed, body []byte, out io.Writer, env Environment) (string, error) {
+func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observed, body []byte, res *tool.Out, env Environment) (string, error) {
 	scope := snapshotScope(o)
 	save := func() error {
 		if o.snapshot != "" {
@@ -245,7 +234,7 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 		if err := save(); err != nil {
 			return "uncertain", err
 		}
-		fmt.Fprintf(out, "REPORT SENT to=%s via=%s line=%s\n", field(o.to), field(strings.Join(args, " ")), field(line))
+		res.Item("sent", "to", o.to, "via", strings.Join(args, " "), "line", line)
 		return "yes", nil
 	}
 	sent := "no"
@@ -262,7 +251,7 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 	}
 	if d, ok := s.Delivered[scope]; ok && sameObserved(d.Observed, seen) {
 		if sent == "no" {
-			fmt.Fprintf(out, "REPORT NOTE unchanged since %s to %s; nothing sent\n", field(d.ID), field(o.to))
+			res.Note(fmt.Sprintf("unchanged since %s to %s; nothing sent", d.ID, o.to))
 		}
 		return sent, nil
 	}

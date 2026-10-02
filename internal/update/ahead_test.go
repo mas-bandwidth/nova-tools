@@ -15,8 +15,8 @@ func TestDevBuildAheadOfReleaseReportsAhead(t *testing.T) {
 	if c != 1 {
 		t.Fatalf("%d %s %s", c, out, errs)
 	}
-	need(t, out, "UPDATE AHEAD name=x kind=tool installed=0.15.3-0.20260912135226-f7cdb9c latest=0.15.2 ahead=f7cdb9c")
-	if strings.Contains(out, "UPDATE DIFFERENT") {
-		t.Fatalf("%q appeared in:\n%s", "UPDATE DIFFERENT", out)
+	need(t, errs, "CHECK AHEAD name=x kind=tool installed=0.15.3-0.20260912135226-f7cdb9c latest=0.15.2 ahead=f7cdb9c")
+	if strings.Contains(out+errs, "CHECK DIFFERENT") {
+		t.Fatalf("%q appeared in:\n%s", "CHECK DIFFERENT", out+errs)
 	}
 }

@@ -8,8 +8,8 @@ no guessed paths — and [SPEC-UPDATE.md](SPEC-UPDATE.md) holds the manifest ver
 `nova-version help` for the verbs this file specifies:
 
 ```
-nova-version moved --from <sha> --to <sha> --repo <dir> --out <path>
-nova-version snapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]
+nova-version moved --from <sha> --to <sha> --repo <dir> --out <path> [--timeout <d>] [--budget <d>] [--dry-run]
+nova-version snapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>] [--max <n>] [--dry-run]
 nova-version diff --from <a.tsv> --to <b.tsv>
 ```
 
@@ -30,10 +30,12 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    stdout naming every field: `MOVED OK from=<sha> to=<sha> added=<n> deleted=<n>
    renamed=<n> verbs=<n> file=<path>`; `renamed=` counts only the renames the commit
    message or a `MOVED` file states, and an empty diff is `added=0 deleted=0 renamed=0`,
-   exit 0, never a refusal.
+   exit 0, never a refusal. `--dry-run` takes the same builds and reads, adds `dry_run=true`
+   to that line and prints the note under it instead of writing `--out`.
 4. **`moved` refuses, exit 2, one remedy each.** A missing flag is *refusing to guess*,
-   naming it; a revision that is not a commit in `--repo` names the revision and the
-   `git fetch` that would bring it; a `cmd/*` that builds but answers no help names the
+   naming it; a `--repo` that is not a git checkout is named as such; a revision that is
+   not a commit in `--repo` names the revision and the `git fetch` that would bring it;
+   a `cmd/*` that builds but answers no help names the
    tool, the revision and the build to repair there.
 5. **The mistake `moved` prevents, in one sentence.** A hand-written adoption note can
    announce flags no merged binary has, and `moved` cannot, because every flag it
@@ -56,7 +58,9 @@ nova-version diff --from <a.tsv> --to <b.tsv>
 1. **Every path comes from a flag, and neither verb takes a positional argument.**
    `--bin` is the directory holding the binaries and `--out` the TSV `snapshot` writes;
    `--from` and `--to` are two such TSVs `diff` reads. A missing one is *refusing to
-   guess*, exit 2, naming the flag and `run: nova-version help`.
+   guess*, exit 2, naming the flag and `run: nova-version help`; a bare `snapshot` names
+   `--bin` and `--out` and the other shape, `--file <manifest>`, and the two shapes
+   together are refused.
 2. **`snapshot` reads each binary's own `version`, never the file's name.** It lists every
    `nova-*` regular file in `--bin`, runs each one's `version`, and parses the Conventions
    line with `internal/buildinfo`'s `Parse` — the package that also WRITES that line — so
@@ -69,7 +73,9 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    name; `stamp` is the build identity, `revision` the twelve-hex commit when the identity
    carries one and `-` otherwise, and `platform` the `goos/goarch`. Stdout carries `SNAPSHOT
    OK bin=<dir> out=<path> tools=<n> stamp=<stamp>`, `tools=` the row count and `stamp=` the
-   one identity every binary reported.
+   one identity every binary reported, then one `SNAPSHOT ROW name= stamp= revision=
+   platform=` per row written (capped by `--max`). `--dry-run` takes the same reads, prints
+   the same lines with `dry_run=true`, and writes no `--out`.
 4. **`snapshot` refuses a mixed set, naming the pair.** Two binaries reporting two different
    stamps are refused, exit 2, naming both binaries and both stamps, and no `--out` is
    written — so a friend's bin cannot be recorded as one set when it is four. The remedy is
@@ -92,7 +98,8 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    output; an unchanged binary prints no line.
 7. **`diff` refuses what it cannot read.** A file that is not a snapshot — a missing or
    wrong header, or a row of the wrong arity — names the file and the `snapshot` that writes
-   one, exit 2, and prints no changed line; the two files are read, never written.
+   one, exit 2, and prints no changed line; both files are read before either is refused,
+   so one run names both, and they are read, never written.
 8. **`version` and `--version` are one spelling.** Every binary answers both with the identical `<tool> <stamp> <goos>/<goarch> <go version>` line, exit
    0; a second argument, or a spelling that differs between the two flags, is a refusal at
    exit 2.
