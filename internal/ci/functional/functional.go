@@ -133,6 +133,11 @@ func RunPattern(pkgs []Package) string {
 // list reads them (testdata, vendor and names starting with . or _ are not
 // packages); any other argument is kept as given.
 func Expand(args []string) ([]string, error) {
+	return expandIn(".", args)
+}
+
+// expandIn is Expand with relative patterns read from the directory cwd.
+func expandIn(cwd string, args []string) ([]string, error) {
 	var out []string
 	for _, arg := range args {
 		root, ok := strings.CutSuffix(arg, "/...")
@@ -140,7 +145,11 @@ func Expand(args []string) ([]string, error) {
 			out = append(out, arg)
 			continue
 		}
-		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		base := root
+		if !filepath.IsAbs(root) {
+			base = filepath.Join(cwd, root)
+		}
+		err := filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -148,10 +157,17 @@ func Expand(args []string) ([]string, error) {
 				return nil
 			}
 			name := d.Name()
-			if path != root && (name == "testdata" || name == "vendor" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")) {
+			if path != base && (name == "testdata" || name == "vendor" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")) {
 				return filepath.SkipDir
 			}
-			if strings.HasPrefix(root, "./") && !strings.HasPrefix(path, "./") {
+			rel, err := filepath.Rel(base, path)
+			if err != nil {
+				return err
+			}
+			// The pattern's own ./ is kept: filepath.Join drops it, and go
+			// test reads a bare `func` as a standard-library path.
+			path = filepath.Join(root, rel)
+			if strings.HasPrefix(arg, "./") && path != "." && !strings.HasPrefix(path, "./") {
 				path = "./" + path
 			}
 			out = append(out, path)
