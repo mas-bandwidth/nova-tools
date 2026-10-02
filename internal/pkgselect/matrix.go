@@ -3,7 +3,8 @@ package pkgselect
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -61,12 +62,7 @@ func DarwinOn(event, target string) bool {
 		return true
 	}
 	target = strings.TrimPrefix(target, "refs/heads/")
-	for _, b := range DarwinBranches {
-		if target == b {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(DarwinBranches, target)
 }
 
 // DropDarwinOnly is pkgs without the packages that have no Linux leg: what a
@@ -83,12 +79,7 @@ func DropDarwinOnly(pkgs []string) []string {
 
 // IsDarwinOnly reports whether pkg has no Linux leg.
 func IsDarwinOnly(pkg string) bool {
-	for _, d := range DarwinOnly {
-		if pkg == d {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(DarwinOnly, pkg)
 }
 
 // Shards is how many legs each runner group deals over.
@@ -210,13 +201,8 @@ func (d DarwinSensitive) Needs(pkg string) bool { return d.All || d.Pkgs[pkg] }
 // Sorted is the set, sorted, as the line printed for it: each name followed by
 // one blank.
 func (d DarwinSensitive) Sorted() string {
-	var names []string
-	for p := range d.Pkgs {
-		names = append(names, p)
-	}
-	sort.Strings(names)
 	var b strings.Builder
-	for _, n := range names {
+	for _, n := range slices.Sorted(maps.Keys(d.Pkgs)) {
 		b.WriteString(n + " ")
 	}
 	return b.String()
