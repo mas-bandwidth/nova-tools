@@ -290,7 +290,7 @@ HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
 The `MORE` line is the same run with the cap lifted, quoted so it can be pasted
-back (#1804) — it is the command that prints the rest, and it carries the
+back — it is the command that prints the rest, and it carries the
 `--identity`, `--paths` and `--kind` without which it would not run at all:
 
 ```
@@ -311,7 +311,7 @@ nova-check hygiene: --identity "Ada <<ada@example.com>>": the email carries an a
 ```
 
 `--kind` is a card kind the toolchain declares, and there is no default one. One
-it does not hold is refused by name rather than left to unlock nothing (#1848):
+it does not hold is refused by name rather than left to unlock nothing:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
@@ -327,8 +327,8 @@ A line below opening `! ` is one this tool writes to standard ERROR: the
 findings go there and the protocol lines go to standard output, and the order a
 terminal interleaves the two in is not the same twice — the second block's last
 finding arrived after the `NOTE` line on one bench and before it on another.
-That is why the block cannot be read as one stream (#1549, and the marker is
-#1570's). `# Stderr: whole` on a command line says the marked lines are ALL it
+That is why the block cannot be read as one stream.
+`# Stderr: whole` on a command line says the marked lines are ALL it
 writes there: these are findings, not narration, and a transcript that quietly
 lost one would be hiding the thing the tool exists to say.
 
@@ -451,7 +451,7 @@ the examples below. The [quickstart guide](nova-swarm-quickstart.md) shows a
 ### The budget word on the native route
 
 Every `nova-swarm native` launch carries `--tokens <n>` or `--tokens unmetered`
-(SPEC-SWARM rule 13d, issue #1545). Recorded against the fake harness, with the paths
+(SPEC-SWARM). Recorded against the fake harness, with the paths
 abridged:
 
 ```
@@ -471,7 +471,7 @@ do not exist afterwards. `budget=` follows `harness=` on every `NATIVE OK` line.
 
 ### A budget nothing can observe, refused before anything is made
 
-A budget wants a source this tool can read (rule 13d). The source is the worker
+A budget wants a source this tool can read. The source is the worker
 description's `usage`, and `opencode` — read with `sqlite3` — when there is no `--worker`:
 
 ```
@@ -496,7 +496,7 @@ After every refusal above, `<slot>` is empty: nothing was made.
 ### What the line reports against the number
 
 The fake harness writes a **real sqlite database** in the harness's own shape
-(`FAKE-USAGE-DB`, the five token counts in rule 12's order then `usd`, with `-` for a type
+(`FAKE-USAGE-DB`, the five token counts in order then `usd`, with `-` for a type
 the provider did not report). Under `--tokens 50000`, the `NATIVE OK` line's `budget=`:
 
 ```
