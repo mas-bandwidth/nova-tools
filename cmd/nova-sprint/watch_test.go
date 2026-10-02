@@ -176,7 +176,7 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	lines := strings.Split(frame, "\n")
 	require.Equal(t, []string{"SPRINT TABLE", "", "STOPPED", ""}, lines[:4], "the head of the frame")
 	for _, l := range lines[4:] {
-		assert.False(t, l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-"), "a line that is not a table's: %q\n%s", l, frame)
+		assert.True(t, l == "" || strings.Contains(l, " | ") || strings.Contains(l, "-+-"), "a line that is not a table's: %q\n%s", l, frame)
 	}
 	for _, gone := range []string{"pending", "stalled", "REMINDERS", "friend-a", "coordinator", "since", "op-left"} {
 		assert.NotContains(t, frame, gone, "the frame shows %q", gone)
