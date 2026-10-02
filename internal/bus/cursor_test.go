@@ -943,13 +943,16 @@ func TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened(t *testing.T) {
 	res, err := InboxSince(root, c, me, []string{old, recent}, nil, 40, line)
 	require.NoError(t, err)
 	if res.LegacyUnreadable != 1 || res.Legacy != 0 {
-		require.False(t, res.LegacyUnreadable != 1 || res.Legacy != 0, "legacy counts are notes=%d unreadable=%d, want notes=0 unreadable=1", res.Legacy, res.LegacyUnreadable)
+		require.Equal(t, 1, res.LegacyUnreadable, "legacy counts are notes=%d unreadable=%d, want notes=0 unreadable=1", res.Legacy, res.LegacyUnreadable)
+		require.Equal(t, 0, res.Legacy, "legacy counts are notes=%d unreadable=%d, want notes=0 unreadable=1", res.Legacy, res.LegacyUnreadable)
 	}
 	if len(res.Unreadable) != 1 || res.Unreadable[0].Path != recent {
-		require.False(t, len(res.Unreadable) != 1 || res.Unreadable[0].Path != recent, "named %+v, want only %s", res.Unreadable, recent)
+		require.Equal(t, 1, len(res.Unreadable), "named %+v, want only %s", res.Unreadable, recent)
+		require.Equal(t, recent, res.Unreadable[0].Path, "named %+v, want only %s", res.Unreadable, recent)
 	}
 	if len(res.Open) != 1 || res.Open[0].Path != recent {
-		require.False(t, len(res.Open) != 1 || res.Open[0].Path != recent, "open = %+v, want only the file in front of the line", res.Open)
+		require.Equal(t, 1, len(res.Open), "open = %+v, want only the file in front of the line", res.Open)
+		require.Equal(t, recent, res.Open[0].Path, "open = %+v, want only the file in front of the line", res.Open)
 	}
 
 	// And CARRIED, which is the shape the live inbox was in: both already on the open list
@@ -965,7 +968,8 @@ func TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened(t *testing.T) {
 		require.Equal(t, 1, res.LegacyUnreadable, "a carried unreadable file behind the line was counted %d times, want 1", res.LegacyUnreadable)
 	}
 	if len(res.Open) != 1 || res.Open[0].Path != recent {
-		require.False(t, len(res.Open) != 1 || res.Open[0].Path != recent, "open = %+v, want only the file in front of the line", res.Open)
+		require.Equal(t, 1, len(res.Open), "open = %+v, want only the file in front of the line", res.Open)
+		require.Equal(t, recent, res.Open[0].Path, "open = %+v, want only the file in front of the line", res.Open)
 	}
 	{
 		got := NoteParsesIn(root) - before
@@ -992,7 +996,8 @@ func TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened(t *testing.T) {
 	res, err = InboxSince(root, c, me, []string{"from-bo/by-hand.md"}, nil, 40, line)
 	require.NoError(t, err)
 	if len(res.Unreadable) != 1 || res.LegacyUnreadable != 0 {
-		require.False(t, len(res.Unreadable) != 1 || res.LegacyUnreadable != 0, "an undated unreadable file was taken as history: named %d, counted %d", len(res.Unreadable), res.LegacyUnreadable)
+		require.Equal(t, 1, len(res.Unreadable), "an undated unreadable file was taken as history: named %d, counted %d", len(res.Unreadable), res.LegacyUnreadable)
+		require.Equal(t, 0, res.LegacyUnreadable, "an undated unreadable file was taken as history: named %d, counted %d", len(res.Unreadable), res.LegacyUnreadable)
 	}
 
 	// The full read draws the line over the same list through SplitLegacy, and the two
@@ -1001,7 +1006,8 @@ func TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened(t *testing.T) {
 	files["from-bo/2026-08-01T0001Z-before-the-line.md"] = "From: Bo\nTo: Ada\nDate: Sat Aug  1 00:01:00 UTC 2026\nId: bo-aaaaaaaaaaaa\nSubject: From the months before the tool\n\nThe body.\n"
 	tab := loadBus(t, writeBus(t, files))
 	_, notes, unreadable := SplitLegacy(OpenFromFull(tab.Inbox(me, 40), tab.Unreadable(me.Lane)), line)
-	require.False(t, notes != 1 || unreadable != 1, "the full walk left off notes=%d unreadable=%d, want 1 and 1", notes, unreadable)
+	require.Equal(t, 1, notes, "the full walk left off notes=%d unreadable=%d, want 1 and 1", notes, unreadable)
+	require.Equal(t, 1, unreadable, "the full walk left off notes=%d unreadable=%d, want 1 and 1", notes, unreadable)
 }
 
 // Which switch-day lines are worth saying something about, and which are not. The predicate
@@ -1028,7 +1034,7 @@ func TestLegacyDateAtOrAfterTodayNamesOnlyAForwardDrawnDate(t *testing.T) {
 	} {
 		drawn, hides, yes := LegacyDateAtOrAfterToday(tc.line, now)
 		if yes != (tc.drawn != "") {
-			require.False(t, yes != (tc.drawn != ""), "%q: reported %v", tc.line, yes)
+			require.Equal(t, tc.drawn != "", yes, "%q: reported %v", tc.line, yes)
 		}
 		if !yes {
 			continue
