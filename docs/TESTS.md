@@ -708,7 +708,7 @@ MIGRATION version=8 file=0008_tier.sql lines=18
 MIGRATION version=9 file=0009_route_prices.sql lines=23
 MIGRATION version=10 file=0010_sprint_reader_tier.sql lines=6
 MIGRATION version=11 file=0011_sprint_drop_reader_tier.sql lines=4
-MIGRATION version=12 file=0012_machine_width.sql lines=28
+MIGRATION version=12 file=0012_machine_width.sql lines=54
 MIGRATION version=13 file=0013_loop_width_from_argv.sql lines=23
 CONFIG MIGRATE print=13 pg=-
 
@@ -723,7 +723,7 @@ flags:
   --seat <string>  its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store
   --slots <string>  the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width
   --user <string>  the login the plays and seals use on it (ssh <user>@<name>)
-  --width <string>  the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; 0 (the default) is no member
+  --width <string>  the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; 0 (the default) is no member, dealt no work
 exit codes: 0 done, 1 refused, 2 usage
 ```
 

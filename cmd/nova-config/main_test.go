@@ -357,7 +357,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 		return out, errs
 	}
 	out, _ := step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
-	require.Equal(t, "CONFIG ADD kind=machine name=studio rev=1\n", out, "machine add: %q", out)
+	require.Equal(t, "CONFIG ADD kind=machine name=studio rev=1\nNOTE machine=studio width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: nova-config machine set studio --width <n> --as rowan\n", out, "machine add: %q", out)
 	_, errs := step(1, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
 	require.Equal(t, "nova-config machine add: machine studio exists; run: nova-config machine set studio --<field> <value>\n", errs, "duplicate: %q", errs)
 	out, _ = step(0, "friend", "add", "rowan", "--slots", "32", "--tiers", "pro,frontier", "--roles", "builder")
@@ -399,7 +399,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	// measured facts after them with one (from the beat; none for a
 	// machine that has not beaten).
 	out, _ = step(0, "machine", "add", "hulk", "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40", "--runners", "0")
-	require.Equal(t, "CONFIG ADD kind=machine name=hulk rev=7\n", out, "machine add hulk: %q", out)
+	require.True(t, strings.HasPrefix(out, "CONFIG ADD kind=machine name=hulk rev=7\nNOTE machine=hulk width=0: "), "machine add hulk: %q", out)
 	out, _ = step(0, "machine", "list")
 	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=0\nMACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0\nCONFIG LIST kind=machine rows=2\n", out, "machine list: %q", out)
 	require.Equal(t, 0, h.redis.opens, "a list with no --redis opened Redis")

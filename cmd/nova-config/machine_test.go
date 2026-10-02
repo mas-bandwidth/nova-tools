@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -148,4 +149,18 @@ func TestMachineSelfCheckIsThreeWhenTheRowCannotBeRead(t *testing.T) {
 	require.Equal(t, 3, code, "%d %q %q", code, out, errs)
 	require.Equal(t, "", out, "%d %q %q", code, out, errs)
 	require.Contains(t, errs, "the config cannot be read: postgres: connection reset", "%d %q %q", code, out, errs)
+}
+
+// TestAMachineAddedWithNoWidthIsToldItIsNoMember: width is set apart from
+// slots and defaults to 0, no sprint member; add says so in a NOTE with the
+// set line that makes it one, and says nothing when a width was given.
+func TestAMachineAddedWithNoWidthIsToldItIsNoMember(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	code, out, errs := h.run(t, "machine", "add", "m1", "--user", "u", "--seat", "s", "--slots", "8", "--pg", dsn, "--as", "a1")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\nNOTE machine=m1 width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: nova-config machine set m1 --width <n> --as a1\n", out)
+	code, out, errs = h.run(t, "machine", "add", "m2", "--user", "u", "--seat", "s", "--slots", "8", "--width", "4", "--pg", dsn, "--as", "a1")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, "CONFIG ADD kind=machine name=m2 rev=2\n", out)
 }

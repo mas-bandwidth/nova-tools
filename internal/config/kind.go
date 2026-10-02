@@ -198,7 +198,7 @@ var Kinds = []*Kind{
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
 			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
-			{Name: "width", Type: TypeInt, Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; 0 (the default) is no member"},
+			{Name: "width", Type: TypeInt, Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; 0 (the default) is no member, dealt no work"},
 		},
 	},
 	{

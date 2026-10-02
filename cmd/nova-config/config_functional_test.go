@@ -101,7 +101,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "migrate")
 	require.True(t, strings.HasSuffix(out, fmt.Sprintf(" from=%d to=%d applied=0\n", n, n)), "migrate twice: %q", out)
 	out, _ = r.run(t, 0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
-	require.Equal(t, "CONFIG ADD kind=machine name=studio rev=1\n", out, "machine add: %q", out)
+	require.True(t, strings.HasPrefix(out, "CONFIG ADD kind=machine name=studio rev=1\nNOTE machine=studio width=0: no sprint member"), "machine add: %q", out)
 	_, errs = r.run(t, 1, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
 	require.Equal(t, "nova-config machine add: machine studio exists; run: nova-config machine set studio --<field> <value>\n", errs, "duplicate machine: %q", errs)
 	out, _ = r.run(t, 0, "friend", "add", "rowan", "--slots", "32", "--tiers", "frontier,pro", "--roles", "builder")

@@ -182,6 +182,64 @@ func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 	}
 }
 
+// TestMigrationTwelveChecksAWidthColumnAlreadyThere: a width column that is
+// there before 0012 runs is kept, and its fill skipped, only when it is the
+// column 0012 makes; any other shape fails the migration naming every
+// difference, and 0012 is not recorded as applied.
+func TestMigrationTwelveChecksAWidthColumnAlreadyThere(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		column string
+		want   []string // the phrases the failure names; none when it passes
+	}{
+		{name: "the shape 0012 makes passes and keeps the widths", column: `integer NOT NULL DEFAULT 0 CHECK (width >= 0)`},
+		{name: "text, nullable, no default, no check", column: `text`, want: []string{"its type is text, want integer", "it is nullable, want NOT NULL", "its default is none, want 0", "it has no CHECK (width >= 0)"}},
+		{name: "a default of 1", column: `integer NOT NULL DEFAULT 1 CHECK (width >= 0)`, want: []string{"its default is 1, want 0"}},
+		{name: "no check", column: `integer NOT NULL DEFAULT 0`, want: []string{"it has no CHECK (width >= 0)"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			st, err := OpenPG(ctx, server.Database(t))
+			require.NoError(t, err)
+			defer st.Close()
+			all, err := Migrations()
+			require.NoError(t, err)
+			for _, m := range all[:11] {
+				require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+			}
+			_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('m1', 'u', 's', 144, 0)`)
+			require.NoError(t, err)
+			_, err = st.db.ExecContext(ctx, `ALTER TABLE config.machines ADD COLUMN width `+tc.column)
+			require.NoError(t, err)
+			if tc.want == nil {
+				_, err = st.db.ExecContext(ctx, `UPDATE config.machines SET width = 7`)
+				require.NoError(t, err)
+			}
+			err = st.applyOne(ctx, all[11])
+			v, verr := st.Version(ctx)
+			require.NoError(t, verr)
+			if tc.want == nil {
+				require.NoError(t, err)
+				assert.Equal(t, 12, v)
+				row, found, err := st.Get(ctx, KindMachine, "m1")
+				require.NoError(t, err)
+				require.True(t, found)
+				assert.Equal(t, "7", row.Fields["width"], "a width column already there is kept, not refilled")
+				return
+			}
+			require.Error(t, err)
+			for _, w := range tc.want {
+				assert.Contains(t, err.Error(), w)
+			}
+			assert.Contains(t, err.Error(), "already has a width column that is not the one 0012 makes")
+			assert.Equal(t, 11, v, "a failed 0012 is not recorded")
+		})
+	}
+}
+
 // TestMigrationThirteenKeepsEveryLoopsCommand: 0013 sets each loop's width
 // field to the value its argv's --width carries (0 when none), so the command
 // LoopCommand renders after it is the command the argv ran before it, row by

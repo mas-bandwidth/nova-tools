@@ -490,6 +490,10 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 			return storeErr(stderr, verb, err, tool+" "+k.Name+" set "+name+" --<field> <value>")
 		}
 		fmt.Fprintf(stdout, "CONFIG ADD kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id)
+		if k.Name == config.KindMachine && row.Int("width") == 0 {
+			// width is set apart from slots and defaults to no member: say so where a newcomer meets it
+			fmt.Fprintf(stdout, "NOTE machine=%s width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: %s machine set %s --width <n> --as %s\n", config.Value(name), tool, name, actor)
+		}
 		return 0
 	}
 	_, id, err := st.Update(ctx, k.Name, name, changes, actor)
