@@ -697,22 +697,19 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	}
 
 	// The probe's child is this binary, and nothing else. The verb opens, truncates,
-	// and reads paths it is handed.
+	// and reads paths it is handed, so a caller who types it by hand truncates a file
+	// with no wall around it.
 	//
-	// The first form of this guard put the one 128-bit value in the argv AND in the
-	// environment and had the child compare the two. Both halves are the CALLER'S to set,
-	// so the guard was a check that a caller had agreed with itself — measured on
-	// 29646c1: `NOVA_SANDBOX_PROBE_NONCE=<x> nova-sandbox probe-step <x> write_outside
-	// <file>` ran by hand, exit 0, the file truncated. The value now travels on an
-	// INHERITED PIPE (fd 3), which a caller cannot conjure by typing: the parent mints the
-	// value, writes the 16 raw bytes into the pipe, closes its end, and the child must read
-	// exactly those bytes from fd 3 and find them equal to the argv copy. The argv copy
-	// stays so that a mismatch still refuses; the environment copy stays as the guard's
-	// second factor — a third copy required to agree — and nothing else reads it
-	// (measured: no reader of NOVA_SANDBOX_PROBE_NONCE exists outside this guard;
-	// tools/sandboxcheck never mentions it and the step bodies take path and name from argv).
-	// The child then asks the OS who its parent is and refuses unless that process is this
-	// same binary.
+	// The one-time value travels on an inherited pipe (fd 3), which a caller cannot
+	// conjure by typing: the parent mints the value, writes the 16 raw bytes into the
+	// pipe, closes its end, and the child must read exactly those bytes from fd 3 and
+	// find them equal to the argv copy. A copy the caller can set cannot carry the
+	// guard, so the argv copy stays only to refuse a mismatch, and the environment
+	// copy stays as the guard's second factor — a third copy required to agree — and
+	// nothing else reads it, because no reader of NOVA_SANDBOX_PROBE_NONCE exists
+	// outside this guard, tools/sandboxcheck never mentions it, and the step bodies
+	// take path and name from argv. The child then asks the OS who its parent is and
+	// refuses unless that process is this same binary.
 	rawNonce, err := probeNonce()
 	if err != nil {
 		v.refuse(tool.Refused, "check", "this machine has no random source for the probe's one-time value: "+oneline.WithRemedy(oneline.Err(err), "nova-sandbox probe -h"))
