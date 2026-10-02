@@ -117,9 +117,8 @@ const (
 	MaxReadReasks = 2
 )
 
-// FieldLeveled marks a read card the level asked by moving a read: the level
-// moves it no more (the owner, 2026-10-01: "We can't get stuck on the last
-// card.").
+// FieldLeveled marks a read card with the requested level so that a move
+// never repeats the same level, preventing the card from staying put.
 const FieldLeveled = "leveled"
 
 // liveReadsAt is the primary's placed read cards at an attempt less the reads
@@ -134,10 +133,9 @@ func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
-// sweepReads is the readers' rebalance's safety (the owner, 2026-10-01: "and it's
-// a safety, if ever there are cards on a held or down machine, rebalance moves
-// them away."): every read asked or reading of a reader that is not up is taken
-// back, retired as the ask takes back a read asked of a reader away
+// sweepReads is the readers' rebalance safety: every read asked or reading of a
+// reader that is not up is taken back, retired as the ask takes back a read
+// asked of a reader away
 // (retired_by away: that reader keeps its card at the attempt, so it is not
 // asked that attempt again), and the tick's ask asks it of the readers up. A
 // read stays where it is when the ask could not place it (fewer than two
@@ -178,11 +176,8 @@ func sweepReads(s *Snapshot, p *Plan) {
 // read, asked and not begun, to another reader (levelReads).
 const RetiredByLevel = "level"
 
-// TickLevelReads is the readers' rebalance, once at the start of every tick,
-// before any other part (the owner, 2026-10-01: "both for readers and fleet,
-// there needs to be a rebalance step done at the start of each tick. it's
-// simple. just once before tick, rebalance each table."): levelReads, in one
-// plan.
+// TickLevelReads is the readers' rebalance, once at the start of every tick
+// before any other part levels reads across readers, in one plan.
 func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
 	var p Plan
 	levelReads(s, &p)
