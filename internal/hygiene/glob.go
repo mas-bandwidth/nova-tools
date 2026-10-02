@@ -21,8 +21,8 @@ var driveLetterRE = regexp.MustCompile(`^[A-Za-z]:`)
 const maxPaths = 8
 
 // ValidatePaths is the PATHS: line's own rule. It is checked at `cut`, before a card is
-// admitted, and again here before the line is used to judge a diff.
-// Path validation ensures that constraints are consistently enforced.
+// admitted, and again here before the line is used to judge a diff: a bound that is
+// validated only at the point it is written is a bound that any later edit removes.
 //
 // No `..`, because a glob that climbs out of the repository bounds nothing. No absolute
 // path, for the same reason and because a card's paths are repo-relative by definition.
