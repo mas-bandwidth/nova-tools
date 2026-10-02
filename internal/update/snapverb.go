@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -162,6 +163,11 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 		path := filepath.Join(bin, e.Name())
 		ctx, cancel := context.WithTimeout(run, timeout)
 		p := process(ctx, []string{path, "version"}, nil, ChildCap)
+		// A deadline spent before the child even started (a loaded machine) is the
+		// same timeout as one spent while it ran, whatever the start reported.
+		if p.Reason != "" && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			p.Reason = "timeout"
+		}
 		cancel()
 		if p.Reason != "" {
 			reason, remedy := p.Reason, "repair the build there: go build ./cmd/"+e.Name()
@@ -232,15 +238,22 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 			return tool.Refuse(fmt.Sprintf("mixed source: %s=%s %s=%s (rebuild the set under one source with nova-update release build --version <v> --out <dir> --source <checkout>, then nova-update release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", firstSrcName, sourceString(firstSrc), r.name, sourceString(r.src)))
 		}
 	}
+	// The rows are the result's items as well as the file's lines, so a reader sees
+	// what was recorded; --dry-run is the same reads with the write left out.
+	o := tool.Done().Fact("bin", bin).Fact("out", outPath).Fact("tools", len(rows)).Fact("stamp", rows[0].stamp)
 	var b strings.Builder
 	b.WriteString(snapshotHeader + "\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", r.name, r.stamp, r.revision, r.platform)
+		o.Item("row", "name", r.name, "stamp", r.stamp, "revision", r.revision, "platform", r.platform)
+	}
+	if c.Bool("dry-run") {
+		return o.Fact("dry_run", true).Note("dry run: " + outPath + " not written")
 	}
 	if err := os.WriteFile(outPath, []byte(b.String()), 0o644); err != nil {
 		return tool.Refuse(fmt.Sprintf("cannot write --out %s (supply a writable --out path)", outPath))
 	}
-	return tool.Done().Fact("bin", bin).Fact("out", outPath).Fact("tools", len(rows)).Fact("stamp", rows[0].stamp)
+	return o
 }
 
 // snapshotAdopted counts how many of the adopted manifest's tools answer, and is

@@ -8,8 +8,8 @@ no guessed paths — and [SPEC-UPDATE.md](SPEC-UPDATE.md) holds the manifest ver
 `nova-version help` for the verbs this file specifies:
 
 ```
-nova-version moved --from <sha> --to <sha> --repo <dir> --out <path>
-nova-version snapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]
+nova-version moved --from <sha> --to <sha> --repo <dir> --out <path> [--timeout <d>] [--budget <d>] [--dry-run]
+nova-version snapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>] [--max <n>] [--dry-run]
 nova-version diff --from <a.tsv> --to <b.tsv>
 ```
 
@@ -30,7 +30,8 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    stdout naming every field: `MOVED OK from=<sha> to=<sha> added=<n> deleted=<n>
    renamed=<n> verbs=<n> file=<path>`; `renamed=` counts only the renames the commit
    message or a `MOVED` file states, and an empty diff is `added=0 deleted=0 renamed=0`,
-   exit 0, never a refusal.
+   exit 0, never a refusal. `--dry-run` takes the same builds and reads, adds `dry_run=true`
+   to that line and prints the note under it instead of writing `--out`.
 4. **`moved` refuses, exit 2, one remedy each.** A missing flag is *refusing to guess*,
    naming it; a `--repo` that is not a git checkout is named as such; a revision that is
    not a commit in `--repo` names the revision and the `git fetch` that would bring it;
@@ -72,7 +73,9 @@ nova-version diff --from <a.tsv> --to <b.tsv>
    name; `stamp` is the build identity, `revision` the twelve-hex commit when the identity
    carries one and `-` otherwise, and `platform` the `goos/goarch`. Stdout carries `SNAPSHOT
    OK bin=<dir> out=<path> tools=<n> stamp=<stamp>`, `tools=` the row count and `stamp=` the
-   one identity every binary reported.
+   one identity every binary reported, then one `SNAPSHOT ROW name= stamp= revision=
+   platform=` per row written (capped by `--max`). `--dry-run` takes the same reads, prints
+   the same lines with `dry_run=true`, and writes no `--out`.
 4. **`snapshot` refuses a mixed set, naming the pair.** Two binaries reporting two different
    stamps are refused, exit 2, naming both binaries and both stamps, and no `--out` is
    written — so a friend's bin cannot be recorded as one set when it is four. The remedy is

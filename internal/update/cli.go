@@ -864,14 +864,20 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	for _, e := range entries {
 		fmt.Fprintln(&note, e)
 	}
-	if err := os.WriteFile(outPath, []byte(note.String()), 0o644); err != nil {
-		return tool.Refuse(fmt.Sprintf("cannot write --out %s (supply a writable --out path)", outPath))
-	}
 	// The one line, every field named (SPEC-VERSION rule 3): added, deleted
 	// and renamed count tools, and verbs counts the (tool, verb) pairs the
 	// --to build answers -- the size of the surface the note describes.
-	return tool.Done().Fact("from", fromSha).Fact("to", toSha).Fact("added", counts.added).Fact("deleted", counts.deleted).
+	o := tool.Done().Fact("from", fromSha).Fact("to", toSha).Fact("added", counts.added).Fact("deleted", counts.deleted).
 		Fact("renamed", counts.renamed).Fact("verbs", counts.verbs).Fact("file", outPath)
+	// --dry-run is the same builds and reads with the note printed, not written.
+	if c.Bool("dry-run") {
+		o.Payload = note.String()
+		return o.Fact("dry_run", true)
+	}
+	if err := os.WriteFile(outPath, []byte(note.String()), 0o644); err != nil {
+		return tool.Refuse(fmt.Sprintf("cannot write --out %s (supply a writable --out path)", outPath))
+	}
+	return o
 }
 
 // movedInv is one revision's inventory as its own builds reported it: every
