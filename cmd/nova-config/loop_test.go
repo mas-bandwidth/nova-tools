@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -192,4 +193,38 @@ func TestApplyKindLoopWritesTheViewAndStatusShowsParity(t *testing.T) {
 	code, out, errs = h.run(t, "status")
 	assert.Equal(t, 0, code, errs)
 	assert.Contains(t, out, " loop_applied=2 ")
+}
+
+// A reader loop's width is one value: loop set <name> --width <n> changes the
+// command loop show prints and the argv the inventory hands the plays, with
+// the argv as typed left alone (config.LoopCommand).
+func TestAReaderLoopsWidthIsSetAsOneValue(t *testing.T) {
+	t.Parallel()
+
+	h := loopHarness(t, "m1")
+	h.env["NOVA_MACHINE"] = "m1"
+	code, _, errs := h.run(t, "loop", "add", "reader-1", "--machine", "m1", "--argv", `["nova-swarm","member","--reader","--width","8"]`, "--keepalive", "true")
+	require.Equal(t, 0, code, errs)
+	code, out, errs := h.run(t, "loop", "show", "reader-1")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, ` width=0 `)
+	assert.Contains(t, out, ` command=["nova-swarm","member","--reader","--width","8"]`, "width 0 runs the argv as typed")
+
+	code, out, errs = h.run(t, "loop", "set", "reader-1", "--width", "16")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, "CONFIG SET kind=loop name=reader-1 rev=3 changed=width\n", out)
+	code, out, errs = h.run(t, "loop", "show", "reader-1")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, ` argv=["nova-swarm","member","--reader","--width","8"] `, "the argv as typed is kept")
+	assert.Contains(t, out, ` command=["nova-swarm","member","--reader","--width","16"]`, "the command runs the field")
+
+	for _, kind := range []string{"machine", "fleet", "loop"} {
+		code, out, errs = h.run(t, "apply", "--kind", kind)
+		require.Equal(t, 0, code, "%s\n%s", out, errs)
+	}
+	// the fake Redis writes a row's fields; apply's derived log field is the real applier's (redis.go)
+	h.redis.views["loop"]["reader-1"]["log"] = config.LoopLog("reader-1")
+	code, out, errs = h.run(t, "inventory", "--host", "m1")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, strings.Join(strings.Fields(out), ""), `"argv":["nova-swarm","member","--reader","--width","16"]`, "the plays render the field's width:\n%s", out)
 }

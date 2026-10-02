@@ -722,6 +722,14 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 			}
 			suffix = " loops=" + config.Value(strings.Join(loops, ","))
 		}
+		if k.Name == config.KindLoop {
+			// the words the unit runs: the argv with the width field as its --width
+			command, err := config.LoopCommandText(row)
+			if err != nil {
+				return refuse(stderr, verb, err.Error())
+			}
+			suffix = " command=" + config.Value(command)
+		}
 		if live(k) {
 			bs, err := beats(ctx, liveRedisAddress(*redisFlag, d.getenv), []string{name}, d)
 			if err != nil {

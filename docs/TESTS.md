@@ -708,8 +708,9 @@ MIGRATION version=8 file=0008_tier.sql lines=18
 MIGRATION version=9 file=0009_route_prices.sql lines=23
 MIGRATION version=10 file=0010_sprint_reader_tier.sql lines=6
 MIGRATION version=11 file=0011_sprint_drop_reader_tier.sql lines=4
-MIGRATION version=12 file=0012_machine_width.sql lines=17
-CONFIG MIGRATE print=12 pg=-
+MIGRATION version=12 file=0012_machine_width.sql lines=28
+MIGRATION version=13 file=0013_loop_width_from_argv.sql lines=23
+CONFIG MIGRATE print=13 pg=-
 
 $ nova-config machine add -h
 usage: nova-config machine add [flags]

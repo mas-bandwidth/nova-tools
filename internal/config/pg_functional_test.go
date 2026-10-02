@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -173,12 +174,66 @@ func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 			_, err = st.db.ExecContext(ctx, twelve.SQL)
 			require.NoError(t, err, "the file run again")
 			assert.Equal(t, "3", widths()["m2"], "the file run again overwrote a width set since")
-			from, to, applied, err := st.Migrate(ctx)
+			_, to, applied, err := st.Migrate(ctx)
 			require.NoError(t, err)
-			assert.Equal(t, len(all), from)
 			assert.Equal(t, len(all), to)
-			assert.Empty(t, applied, "migrate after the fill applied %v", applied)
+			assert.NotContains(t, applied, 12, "migrate after the fill applied 0012 again")
 		})
+	}
+}
+
+// TestMigrationThirteenKeepsEveryLoopsCommand: 0013 sets each loop's width
+// field to the value its argv's --width carries (0 when none), so the command
+// LoopCommand renders after it is the command the argv ran before it, row by
+// row.
+func TestMigrationThirteenKeepsEveryLoopsCommand(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st, err := OpenPG(ctx, server.Database(t))
+	require.NoError(t, err)
+	defer st.Close()
+	all, err := Migrations()
+	require.NoError(t, err)
+	var thirteen Migration
+	for _, m := range all {
+		if m.Version == 13 {
+			thirteen = m
+			break
+		}
+		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+	}
+	require.Equal(t, "0013_loop_width_from_argv.sql", thirteen.Name)
+	_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('m1', 'u', 's', 4, 0)`)
+	require.NoError(t, err)
+	loops := []struct {
+		name, argv  string
+		width, want int
+	}{
+		{"reader", `["nova-swarm","member","--reader","--width","8"]`, 0, 8},
+		{"member", `["nova-swarm","member","--as","m1"]`, 2, 0},
+		{"equals", `["p","--width=12"]`, 0, 12},
+		{"single-dash", `["p","-width","3"]`, 7, 3},
+		{"last-wins", `["p","--width","1","--width","5"]`, 0, 5},
+		{"after-terminator", `["p","--","--width","9"]`, 4, 0},
+		{"not-a-number", `["p","--width","many"]`, 0, 0},
+		{"program-word", `["--width","6"]`, 0, 0},
+	}
+	for _, l := range loops {
+		_, err = st.db.ExecContext(ctx, `INSERT INTO config.loops (name, machine, argv, keepalive, width) VALUES ($1, 'm1', $2, true, $3)`, l.name, l.argv, l.width)
+		require.NoError(t, err, l.name)
+	}
+	require.NoError(t, st.applyOne(ctx, thirteen))
+	rows, err := st.List(ctx, KindLoop)
+	require.NoError(t, err)
+	got := map[string]Row{}
+	for _, r := range rows {
+		got[r.Name] = r
+	}
+	for _, l := range loops {
+		r := got[l.name]
+		assert.Equal(t, strconv.Itoa(l.want), r.Fields["width"], "%s: the width field", l.name)
+		argv := Argv(r.Fields["argv"])
+		assert.Equal(t, argv, LoopCommand(argv, r.Int("width")), "%s: the command after 0013 is the argv as it ran", l.name)
 	}
 }
 

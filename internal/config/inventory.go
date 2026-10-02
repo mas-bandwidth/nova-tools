@@ -231,6 +231,8 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 	if l.Width, err = strconv.Atoi(orZero(v["width"])); err != nil || l.Width < 0 {
 		return bad("width", "is not a count")
 	}
+	// the unit runs the command with the row's width (LoopCommand)
+	l.Argv = LoopCommand(l.Argv, l.Width)
 	if l.Keepalive, err = strconv.ParseBool(orFalse(v["keepalive"])); err != nil {
 		return bad("keepalive", "is not true or false")
 	}
