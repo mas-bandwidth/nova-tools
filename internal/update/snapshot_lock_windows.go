@@ -11,7 +11,7 @@ import (
 
 // lockSnapshot on Windows takes the lock the unix build took before it moved
 // onto internal/filelock: LockFileEx on byte 0 of the sibling file (snapshot_windows.go),
-// polled until ctx ends. An old and a new binary on one machine still exclude each other
+// polled until ctx ends. An old and a new binary on one machine do NOT exclude each other
 // because filelock locks one byte at OffsetHigh
 // 0x80000000, a range this lock does not overlap.
 func lockSnapshot(ctx context.Context, path string) (func(), error) {
