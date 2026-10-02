@@ -21,7 +21,7 @@ import (
 // and it bounds a root at five versions whatever the day's build rate.
 const KeepBesides = 3
 
-// prune removes the version directories under root and reports what it did.
+// prune removes the version directories under root that keep does not name, and reports what it did.
 // It is the LAST step of a build or an install that has already succeeded, and
 // it never fails one: a directory that cannot be removed is said on errs and
 // counted, and the verb's exit code is the build's or the install's.

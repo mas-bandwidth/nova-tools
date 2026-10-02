@@ -236,8 +236,8 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		}
 	}
 	// LAST, and never a reason to fail: the install has succeeded and been
-	// verified, and the version directories under --from are removed by
-	// the rule in prune.go. The one being installed and every one the bin
+	// verified, and the version directories under --from that prune.go's rule does not
+	// keep are removed. The one being installed and every one the bin
 	// directory answered before it stay.
 	pruned, pruneFailed := pruneInstalled(o.from, o.bin, func(name string) bool {
 		if name == o.version {
