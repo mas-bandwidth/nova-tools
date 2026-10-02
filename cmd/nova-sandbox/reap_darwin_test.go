@@ -7,7 +7,6 @@
 package main
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -16,17 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/require"
 )
 
-// The wall's child stays in the CALLER's process group, and the caller owns pgid and
-// reaping. A swarm supervisor puts each job in its own group and reaps that group when
-// the job's deadline passes (SPEC-SWARM rule 11); if the tool put its child in a group of
-// its own, a command that forked a background child left that child outside the group the
-// supervisor kills — the reaper reported survivors=0 while a process was still running,
-// which is the silent failure the rule exists to prevent.
-//
-// The test models exactly that: the tool is started in a group of the TEST's making, the
+// The wall's child stays in the CALLER's process group: a swarm supervisor reaps each
+// job's group at its deadline (SPEC-SWARM rule 11), and a tool that gave its child a group
+// of its own left a forked background child outside it, the reaper reporting survivors=0
+// while a process still ran. The tool is started in a group of the TEST's making, the
 // wrapped command forks a background sleep and exits, and the test kills the group it
 // made. Red with Setpgid on the tool's child; green without it.
 func TestAForkedChildIsReapedWithTheCallersGroup(t *testing.T) {
@@ -43,19 +39,14 @@ func TestAForkedChildIsReapedWithTheCallersGroup(t *testing.T) {
 	cmd := exec.Command(bin, "--read", j.read, "--write", j.write, "--",
 		"/bin/sh", "-c", "sleep 300 & echo $! > '"+pidFile+"'; exit 0")
 	cmd.Env = j.env()
-	// The caller's own group, the way a supervisor starts a job.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	err := cmd.Run()
-	require.NoError(t, err, "the wrapped command did not run: %v", err)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // the caller's own group, the way a supervisor starts a job
+	require.NoError(t, cmd.Run(), "the wrapped command did not run")
 	pgid := cmd.Process.Pid
-	raw, err := os.ReadFile(pidFile)
-	require.NoError(t, err, "the wrapped command wrote no background pid: %v", err)
-	bg, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	require.NoError(t, err, "background pid %q: %v", raw, err)
-	require.Positive(t, bg, "background pid %q: %v", raw, err)
+	bg, err := strconv.Atoi(strings.TrimSpace(testkit.ReadFile(t, pidFile)))
+	require.NoError(t, err)
+	require.Positive(t, bg)
 	t.Cleanup(func() { _ = syscall.Kill(bg, syscall.SIGKILL) })
-	err = syscall.Kill(bg, 0)
-	require.NoError(t, err, "control: the background child was already gone before the reap: %v", err)
+	require.NoError(t, syscall.Kill(bg, 0), "control: the background child was already gone before the reap")
 	// The reap: the caller kills the group IT made, which is the only group it knows.
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	for i := 0; i < 50; i++ {
