@@ -21,9 +21,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // asMainEnv, set to 1 in a child's environment, makes the test binary run
@@ -42,9 +46,7 @@ func TestMain(m *testing.M) {
 func asMain(t *testing.T, env []string, args ...string) (int, string, string) {
 	t.Helper()
 	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	cmd := exec.Command(self, args...)
 	cmd.Env = append([]string{asMainEnv + "=1"}, env...)
 	var out, errb bytes.Buffer
@@ -56,7 +58,7 @@ func asMain(t *testing.T, env []string, args ...string) (int, string, string) {
 	case errors.As(err, &exit):
 		code = exit.ExitCode()
 	case err != nil:
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return code, out.String(), errb.String()
 }
@@ -69,9 +71,7 @@ func asMain(t *testing.T, env []string, args ...string) (int, string, string) {
 func refusingAddr(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	done := make(chan struct{})
 	t.Cleanup(func() { _ = l.Close(); <-done })
 	go func() {
@@ -110,26 +110,21 @@ func TestOpenFailureIsOneLineExitTwo(t *testing.T) {
 		for _, v := range verbs {
 			args := append([]string{v[0], "--addr", c.addr}, v[1:]...)
 			code, stdout, stderr := asMain(t, c.env, args...)
-			if code != 2 {
-				t.Errorf("%s %s exits %d, want 2; stdout=%q stderr=%q", c.label, v[0], code, stdout, stderr)
-			}
-			if stdout != "" {
-				t.Errorf("%s %s printed on stdout: %q", c.label, v[0], stdout)
-			}
-			if n := strings.Count(stderr, "\n"); n != 1 || !strings.HasSuffix(stderr, "\n") {
-				t.Errorf("%s %s stderr is %d lines, want exactly one: %q", c.label, v[0], n, stderr)
-			}
-			if strings.Contains(stderr, "pool.go") {
-				t.Errorf("%s %s let go-redis's pool log through: %q", c.label, v[0], stderr)
-			}
-			want := strings.ToUpper(v[0]) + " FAIL "
-			for _, part := range []string{want, c.class, c.next, c.addr} {
-				if !strings.Contains(stderr, part) {
-					t.Errorf("%s %s stderr lacks %q: %q", c.label, v[0], part, stderr)
+			assert.Equal(t, 2, code, "%s %s exits %d, want 2; stdout=%q stderr=%q", c.label, v[0], code, stdout, stderr)
+			assert.Empty(t, stdout, "%s %s printed on stdout: %q", c.label, v[0], stdout)
+			{
+				n := strings.Count(stderr, "\n")
+				if assert.Equal(t, 1, n, "%s %s stderr is %d lines, want exactly one: %q", c.label, v[0], n, stderr) {
+					assert.True(t, strings.HasSuffix(stderr, "\n"), "%s %s stderr is %d lines, want exactly one: %q", c.label, v[0], n, stderr)
 				}
 			}
-			if strings.Contains(stderr, right) || strings.Contains(stderr, wrong) {
-				t.Errorf("%s %s printed a password: %q", c.label, v[0], stderr)
+			assert.NotContains(t, stderr, "pool.go", "%s %s let go-redis's pool log through: %q", c.label, v[0], stderr)
+			want := strings.ToUpper(v[0]) + " FAIL "
+			for _, part := range []string{want, c.class, c.next, c.addr} {
+				assert.Contains(t, stderr, part, "%s %s stderr lacks %q: %q", c.label, v[0], part, stderr)
+			}
+			if assert.NotContains(t, stderr, right, "%s %s printed a password: %q", c.label, v[0], stderr) {
+				assert.NotContains(t, stderr, wrong, "%s %s printed a password: %q", c.label, v[0], stderr)
 			}
 		}
 	}
@@ -149,50 +144,43 @@ func TestSpillWhoseExecReplyIsLostIsUnconfirmed(t *testing.T) {
 	relay := execReplyDropper(t, store)
 	code, stdout, stderr := asMain(t, nil, "spill", "--addr", relay, "--owner", "rowan", "--name", "note", "--ttl", "10m", "--value", "hi")
 
-	if code != 1 {
-		t.Errorf("spill with its EXEC reply lost exits %d, want 1 (ran, unconfirmed); stdout=%q stderr=%q", code, stdout, stderr)
-	}
-	if stdout != "" {
-		t.Errorf("spill with its EXEC reply lost printed on stdout: %q", stdout)
-	}
-	if n := strings.Count(stderr, "\n"); n != 1 {
-		t.Errorf("stderr is %d lines, want one: %q", n, stderr)
+	assert.Equal(t, 1, code, "spill with its EXEC reply lost exits %d, want 1 (ran, unconfirmed); stdout=%q stderr=%q", code, stdout, stderr)
+	assert.Empty(t, stdout, "spill with its EXEC reply lost printed on stdout: %q", stdout)
+	{
+		n := strings.Count(stderr, "\n")
+		assert.Equal(t, 1, n, "stderr is %d lines, want one: %q", n, stderr)
 	}
 	for _, part := range []string{
 		"SPILL UNCONFIRMED key=rowan:note ",
 		"confirmation was lost after the transaction was sent, so the write may have committed",
 		"nova-redis recall --addr " + relay + " --owner rowan --name note",
 	} {
-		if !strings.Contains(stderr, part) {
-			t.Errorf("stderr lacks %q: %q", part, stderr)
-		}
+		assert.Contains(t, stderr, part, "stderr lacks %q: %q", part, stderr)
 	}
 	for _, wrong := range []string{"start the store", "class=unreachable", "pool.go"} {
-		if strings.Contains(stderr, wrong) {
-			t.Errorf("stderr holds %q, which misdirects a write that landed: %q", wrong, stderr)
-		}
+		assert.NotContains(t, stderr, wrong, "stderr holds %q, which misdirects a write that landed: %q", wrong, stderr)
 	}
 
 	// The store, read directly: exactly one transaction committed, the value
 	// is there and it carries its TTL.
 	ctx := context.Background()
 	conn, err := redisconn.Open(ctx, redisconn.Options{Addr: store}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	t.Cleanup(func() { _ = conn.Close() })
 	stats, err := conn.Client().Info(ctx, "commandstats").Result()
-	if err != nil {
-		t.Fatal(err)
+	require.NoError(t, err, err)
+	assert.Contains(t, stats, "cmdstat_exec:calls=1,", "the store ran EXEC other than exactly once: %q", stats)
+	{
+		v, err := conn.Client().HGet(ctx, "rowan:note", fieldValue).Result()
+		if assert.NoError(t, err, "rowan:note %s = %q, %v; want the committed hi", fieldValue, v, err) {
+			assert.Equal(t, "hi", v, "rowan:note %s = %q, %v; want the committed hi", fieldValue, v, err)
+		}
 	}
-	if !strings.Contains(stats, "cmdstat_exec:calls=1,") {
-		t.Errorf("the store ran EXEC other than exactly once: %q", stats)
-	}
-	if v, err := conn.Client().HGet(ctx, "rowan:note", fieldValue).Result(); err != nil || v != "hi" {
-		t.Errorf("rowan:note %s = %q, %v; want the committed hi", fieldValue, v, err)
-	}
-	if ttl, err := conn.Client().PTTL(ctx, "rowan:note").Result(); err != nil || ttl <= 0 {
-		t.Errorf("rowan:note PTTL = %v, %v; want a positive TTL", ttl, err)
+	{
+		ttl, err := conn.Client().PTTL(ctx, "rowan:note").Result()
+		if assert.NoError(t, err, "rowan:note PTTL = %v, %v; want a positive TTL", ttl, err) {
+			assert.Greater(t, ttl, time.Duration(0), "rowan:note PTTL = %v, %v; want a positive TTL", ttl, err)
+		}
 	}
 }
 
@@ -203,9 +191,7 @@ func TestSpillWhoseExecReplyIsLostIsUnconfirmed(t *testing.T) {
 func execReplyDropper(t *testing.T, target string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var open []net.Conn

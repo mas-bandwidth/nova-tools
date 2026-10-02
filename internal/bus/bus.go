@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -361,9 +362,9 @@ func (t *Bus) Inbox(me Participant, maxWords int) []InboxItem {
 		}
 		to, cc := n.Header.Recipients(t.Config)
 		addr := ""
-		if contains(to, me.Name) {
+		if slices.Contains(to, me.Name) {
 			addr = "to"
-		} else if contains(cc, me.Name) {
+		} else if slices.Contains(cc, me.Name) {
 			addr = "cc"
 		} else {
 			continue
@@ -392,15 +393,6 @@ func (t *Bus) Inbox(me Participant, maxWords int) []InboxItem {
 		return out[i].Note.Path > out[j].Note.Path
 	})
 	return out
-}
-
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // Problem is one check finding: a place, a reason, and whether it was tolerated.

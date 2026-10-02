@@ -60,11 +60,13 @@ func TestPausePointThreadDirected(t *testing.T) {
 	require.NoError(t, err, "build probe: %v\n%s", err, out)
 
 	for i := 0; i < 200; i++ {
-		if err := os.Remove(markPath); err != nil && !os.IsNotExist(err) {
-			t.Fatal(err)
+		err := os.Remove(markPath)
+		if !os.IsNotExist(err) {
+			require.NoError(t, err)
 		}
-		if err := os.Remove(afterPath); err != nil && !os.IsNotExist(err) {
-			t.Fatal(err)
+		err = os.Remove(afterPath)
+		if !os.IsNotExist(err) {
+			require.NoError(t, err)
 		}
 
 		child := exec.Command(binFile)
@@ -84,11 +86,12 @@ func TestPausePointThreadDirected(t *testing.T) {
 
 		time.Sleep(10 * time.Millisecond)
 
-		if _, err := os.Stat(afterPath); err == nil {
+		_, err = os.Stat(afterPath)
+		if err == nil {
 			child.Process.Kill()
 			child.Wait()
-			t.Fatalf("iteration %d: after.txt existed while child should be stopped (proof of process-directed SIGSTOP race)", i)
 		}
+		require.Error(t, err, "iteration %d: after.txt existed while child should be stopped (proof of process-directed SIGSTOP race)", i)
 
 		_ = child.Process.Signal(syscall.SIGCONT)
 		child.Wait()

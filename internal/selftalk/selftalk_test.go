@@ -20,12 +20,8 @@ func TestA1_CapabilityDenialIsStanding(t *testing.T) {
 	t.Parallel()
 
 	got := Scan("I cannot check my own work.")
-	if len(got) != 1 {
-		t.Fatalf("want 1 claim, got %d: %#v", len(got), got)
-	}
-	if got[0].Verdict != Standing {
-		t.Errorf("want STANDING, got %s for %q", got[0].Verdict, got[0].Text)
-	}
+	require.Len(t, got, 1, "want 1 claim, got %d: %#v", len(got), got)
+	assert.Equal(t, Standing, got[0].Verdict, "want STANDING, got %s for %q", got[0].Verdict, got[0].Text)
 }
 
 // A2 — THE SAME SENTENCE as A1 carrying a date marker is a record, not a
@@ -48,12 +44,8 @@ func TestA2_DatedClaimIsARecord(t *testing.T) {
 		"Measured that day: I cannot check my own work.",
 	} {
 		got := Scan(in)
-		if len(got) == 0 {
-			t.Fatalf("want a claim for %q, got none", in)
-		}
-		if got[0].Verdict != Dated {
-			t.Errorf("want DATED for %q, got %s", in, got[0].Verdict)
-		}
+		require.NotEmpty(t, got, "want a claim for %q, got none", in)
+		assert.Equal(t, Dated, got[0].Verdict, "want DATED for %q, got %s", in, got[0].Verdict)
 	}
 }
 
@@ -64,9 +56,7 @@ func TestA3_ClaimSplitAcrossAHardWrapIsFound(t *testing.T) {
 	t.Parallel()
 
 	wrapped := "some preamble here and then I cannot\ncheck my own work at all.\n"
-	if got := Scan(wrapped); len(got) == 0 {
-		t.Fatal("a claim split across a newline was not found; flattening is missing")
-	}
+	require.NotEmpty(t, Scan(wrapped), "a claim split across a newline was not found; flattening is missing")
 }
 
 // A4 — markdown emphasis must not hide a claim.
@@ -78,9 +68,7 @@ func TestA4_MarkdownEmphasisDoesNotHideAClaim(t *testing.T) {
 		"> *I cannot check my own work.*",
 		"- `I cannot` check my own work.",
 	} {
-		if got := Scan(in); len(got) == 0 {
-			t.Errorf("markdown hid the claim: %q", in)
-		}
+		assert.NotEmpty(t, Scan(in), "markdown hid the claim: %q", in)
 	}
 }
 
@@ -118,9 +106,8 @@ func TestA5_ProhibitionIsNotSelfTalk(t *testing.T) {
 		"Secrets live nowhere I write.",
 		"Do not do to another what you would not have done to you.",
 	} {
-		if got := Scan(in); len(got) != 0 {
-			t.Errorf("prohibition wrongly flagged as self-talk: %q -> %#v", in, got)
-		}
+		got := Scan(in)
+		assert.Empty(t, got, "prohibition wrongly flagged as self-talk: %q -> %#v", in, got)
 	}
 }
 
@@ -134,9 +121,7 @@ func TestA9_RegressionCasesThatOccasionedTheTool(t *testing.T) {
 		"In one direction, reliably: toward the version that flatters me.",
 		"I cannot check my own work and I can spawn something that can.",
 	} {
-		if got := Scan(in); len(got) == 0 {
-			t.Errorf("REGRESSION: the case that occasioned this tool is not caught: %q", in)
-		}
+		assert.NotEmpty(t, Scan(in), "REGRESSION: the case that occasioned this tool is not caught: %q", in)
 	}
 }
 
@@ -172,14 +157,12 @@ func TestPermanentMissNeutralVocabularyTraitClaimsEscape(t *testing.T) {
 		// present-tense narration, and matching it flags half of any file.
 		"I flinch from cost.",
 	} {
-		if got := Scan(in); len(got) != 0 {
-			t.Errorf("the permanent-MISS class must escape (SPEC.md, \"The permanent MISS\"); %q was caught: %#v", in, got)
-		}
-		if got := ScanInstallation(in); len(got) != 0 {
-			t.Errorf("the permanent-MISS class must escape the INSTALLATION class too — rewrite "+
-				"SPEC.md's permanent-MISS section in this same commit, with an example that "+
-				"still escapes: %q -> %#v", in, got)
-		}
+		got := Scan(in)
+		assert.Empty(t, got, "the permanent-MISS class must escape (SPEC.md, \"The permanent MISS\"); %q was caught: %#v", in, got)
+		gotInstallation := ScanInstallation(in)
+		assert.Empty(t, gotInstallation, "the permanent-MISS class must escape the INSTALLATION class too — rewrite "+
+			"SPEC.md's permanent-MISS section in this same commit, with an example that "+
+			"still escapes: %q -> %#v", in, gotInstallation)
 	}
 }
 
@@ -189,9 +172,8 @@ func TestNoFalsePositivesOnOrdinaryProse(t *testing.T) {
 
 	clean := "The tree by the house has one lit window. Tree rings beat radiocarbon, " +
 		"and the correction moved Malta's temples earlier than the pyramids."
-	if got := Scan(clean); len(got) != 0 {
-		t.Errorf("false positive on ordinary prose: %#v", got)
-	}
+	got := Scan(clean)
+	assert.Empty(t, got, "false positive on ordinary prose: %#v", got)
 }
 
 // Flattening is what Scan matches against: pin the two behaviors the
@@ -215,8 +197,7 @@ func TestBaseNormalizesSeparators(t *testing.T) {
 		{`a\b\RULES.md`, "RULES.md"},
 		{"RULES.md", "RULES.md"},
 	} {
-		if got := Base(tt.in); got != tt.want {
-			t.Errorf("Base(%q) = %q, want %q", tt.in, got, tt.want)
-		}
+		got := Base(tt.in)
+		assert.Equal(t, tt.want, got, "Base(%q) = %q, want %q", tt.in, got, tt.want)
 	}
 }

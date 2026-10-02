@@ -200,9 +200,8 @@ func TestNativeArgvReadsTheDarwinToolchainRoots(t *testing.T) {
 		// checked against the resolved target and `/opt/homebrew/opt/openjdk` is itself a
 		// symlink into the Cellar.
 		assert.True(t, r.Exec, "the darwin system root %s is granted without execute; it is a runtime the card runs", r.Name)
-		if !filepath.IsAbs(r.Path) || strings.HasSuffix(r.Path, string(filepath.Separator)+"bin") {
-			t.Errorf("the darwin root %s resolved to %s, which is not a toolchain tree", r.Name, r.Path)
-		}
+		assert.True(t, filepath.IsAbs(r.Path), "the darwin root %s resolved to %s, which is not a toolchain tree", r.Name, r.Path)
+		assert.False(t, strings.HasSuffix(r.Path, string(filepath.Separator)+"bin"), "the darwin root %s resolved to %s, which is not a toolchain tree", r.Name, r.Path)
 		assert.True(t, hasFlagPair(argv, "--read", r.Path), "the wall argv does not carry the darwin toolchain root %s (%s) as --read:\n%s", r.Name, r.Path, strings.Join(argv, " "))
 		assert.False(t, hasFlagPair(argv, "--write", r.Path), "the darwin toolchain root %s is a WRITE; it is read-only:\n%s", r.Path, strings.Join(argv, " "))
 	}
@@ -228,8 +227,8 @@ func TestNativeArgvSkipsAToolchainRootThatIsNotThere(t *testing.T) {
 		if a != "--read" && a != "--read-noexec" {
 			continue
 		}
-		if i+1 < len(argv) && strings.HasPrefix(argv[i+1], home) {
-			t.Errorf("the wall argv names %s under a home with no toolchain:\n%s", argv[i+1], strings.Join(argv, " "))
+		if i+1 < len(argv) {
+			assert.False(t, strings.HasPrefix(argv[i+1], home), "the wall argv names %s under a home with no toolchain:\n%s", argv[i+1], strings.Join(argv, " "))
 		}
 	}
 }
@@ -424,9 +423,7 @@ func assertConfigRecord(t *testing.T, slot, wantMode, wantBody string) {
 		return
 	}
 	assert.True(t, strings.HasPrefix(rec, "mode="+wantMode+"\n"), "the harness saw %q, want mode %s", rec, wantMode)
-	if wantBody != "" && !strings.Contains(rec, wantBody) {
-		t.Errorf("the harness saw no %s in the config it read:\n%s", wantBody, rec)
-	}
+	assert.False(t, wantBody != "" && !strings.Contains(rec, wantBody), "the harness saw no %s in the config it read:\n%s", wantBody, rec)
 }
 
 // TestNativeRefusesConfigProviderWithoutKey: a --config whose entry for THE MODEL'S OWN
@@ -571,9 +568,8 @@ func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 		// carried --config's provider, not merely some config.
 		written, err := os.ReadFile(filepath.Join(slot, "data", ".config", "opencode", "opencode.json"))
 		require.NoError(t, err)
-		if !strings.Contains(string(written), `"baseURL"`) || !strings.Contains(string(written), "fake") {
-			t.Errorf("the carried config keeps --config's provider:\n%s", written)
-		}
+		assert.Contains(t, string(written), `"baseURL"`, "the carried config keeps --config's provider:\n%s", written)
+		assert.Contains(t, string(written), "fake", "the carried config keeps --config's provider:\n%s", written)
 		wantSHA := carriedSHA(t, slot)
 		require.Contains(t, stdout.String(), " config="+wantSHA+" ", "NATIVE OK names the sha8 %s of the config the child sees:\n%s", wantSHA, stdout.String())
 	})
@@ -867,9 +863,8 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		require.Equal(t, 0, rc, "exit 0, got %d:\n%s", rc, stderr.String())
-		if !strings.Contains(stdout.String(), "NATIVE OK ") || !strings.Contains(stdout.String(), " sandbox=none-by-flag ") {
-			t.Fatalf("NATIVE OK names the wall none-by-flag when --no-wall runs:\n%s", stdout.String())
-		}
+		require.Contains(t, stdout.String(), "NATIVE OK ", "NATIVE OK names the wall none-by-flag when --no-wall runs:\n%s", stdout.String())
+		require.Contains(t, stdout.String(), " sandbox=none-by-flag ", "NATIVE OK names the wall none-by-flag when --no-wall runs:\n%s", stdout.String())
 	})
 
 	t.Run("walled", func(t *testing.T) {
@@ -1077,9 +1072,8 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
 	require.NoError(t, err, "the child did not write pwd into RESULT.md")
 	if got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd="); got != jobDir {
-		if want, evalErr := filepath.EvalSymlinks(jobDir); evalErr == nil && got != want {
-			t.Errorf("from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, want)
-		}
+		want, evalErr := filepath.EvalSymlinks(jobDir)
+		assert.False(t, evalErr == nil && got != want, "from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, want)
 	}
 
 	// The environment the run recorded is what the wall was handed.
@@ -1103,9 +1097,8 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	// directory are compared as directories, not as strings.
 	want := filepath.Join(slot, "tmp", label)
 	assert.True(t, sameDir(tmp[0], want), "TMPDIR is %q, want the slot's own tmp dir %q", tmp[0], want)
-	if got := env["FAKE_KEY"]; len(got) != 1 || got[0] != "<redacted>" {
-		t.Errorf("the secret's value is not redacted in the log: %v", got)
-	}
+	got := env["FAKE_KEY"]
+	assert.Equal(t, []string{"<redacted>"}, got, "the secret's value is not redacted in the log: %v", got)
 }
 
 // TestNativeSharedGoCaches: the Go module and build caches are bench-shared under
@@ -1138,9 +1131,8 @@ func TestNativeSharedGoCaches(t *testing.T) {
 	assert.Contains(t, got, "GOMODCACHE="+wantMod+"\n", "GOMODCACHE is not the shared module cache %s:\n%s", wantMod, got)
 	assert.Contains(t, got, "GOCACHE="+wantBuild+"\n", "GOCACHE is not the shared build cache %s:\n%s", wantBuild, got)
 	assert.Contains(t, got, "GOTOOLCHAIN=local\n", "GOTOOLCHAIN is not local:\n%s", got)
-	if !strings.Contains(got, "ASDF_OUTPUT_TRANSLATIONS=") || !strings.Contains(got, filepath.Join(jobDir, ".cache", "common-lisp")) {
-		t.Errorf("ASDF_OUTPUT_TRANSLATIONS does not point at the job's private Lisp overlay:\n%s", got)
-	}
+	assert.Contains(t, got, "ASDF_OUTPUT_TRANSLATIONS=", "ASDF_OUTPUT_TRANSLATIONS does not point at the job's private Lisp overlay:\n%s", got)
+	assert.Contains(t, got, filepath.Join(jobDir, ".cache", "common-lisp"), "ASDF_OUTPUT_TRANSLATIONS does not point at the job's private Lisp overlay:\n%s", got)
 	// Each directory existed before the child ran: the record is written by the child, so
 	// its own stat is the proof the parent made them first. Windows has no POSIX mode bits,
 	// so there the record proves existence and this test proves a file can be created;
@@ -1371,18 +1363,16 @@ func TestNativeTmpDirIsOutsideAnyRepo(t *testing.T) {
 	// are compared as directories, not as strings.
 	want := filepath.Join(slot, "tmp", label)
 	assert.True(t, sameDir(res.tmp, want), "TMPDIR is %q, want %q", res.tmp, want)
-	if st, err := os.Stat(res.tmp); err != nil || !st.IsDir() {
-		t.Fatalf("the exported TMPDIR %q is not a made directory: %v", res.tmp, err)
-	}
+	st, err := os.Stat(res.tmp)
+	require.NoError(t, err, "the exported TMPDIR %q is not a made directory: %v", res.tmp, err)
+	require.True(t, st.IsDir(), "the exported TMPDIR %q is not a made directory: %v", res.tmp, err)
 
 	// A git rev-parse from inside the exported TMPDIR must not resolve into the job's repo.
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = res.tmp
 	out, err := cmd.CombinedOutput()
 	toplevel := strings.TrimSpace(string(out))
-	if err == nil && sameDir(toplevel, jobDir) {
-		t.Errorf("git rev-parse --show-toplevel from TMPDIR %q resolved into the job's repo %q", res.tmp, toplevel)
-	}
+	assert.False(t, err == nil && sameDir(toplevel, jobDir), "git rev-parse --show-toplevel from TMPDIR %q resolved into the job's repo %q", res.tmp, toplevel)
 }
 
 // TestNativeNoWallWritesHarnessLog: the UNWALLED run captures the harness's output to
@@ -1525,9 +1515,7 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 				raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
 				require.NoError(t, err, "the capture is written even for a silent run")
 				for _, line := range strings.Split(string(raw), "\n") {
-					if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "SANDBOX ") {
-						t.Errorf("a silent run's capture carries a line the child wrote: %q", line)
-					}
+					assert.False(t, strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "SANDBOX "), "a silent run's capture carries a line the child wrote: %q", line)
 				}
 			}
 		})
@@ -1966,9 +1954,8 @@ func TestRemoveAuthCopyNamesACopyItCannotRemove(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dataHome, "auth.json"), []byte("{}"), 0o600))
 	var errOut bytes.Buffer
 	left := removeAuthCopy(dataHome, &errOut)
-	if len(left) != 1 || left[0] != stuck {
-		t.Fatalf("the cleanup should name exactly %s as left, got %v", stuck, left)
-	}
+	require.Len(t, left, 1, "the cleanup should name exactly %s as left, got %v", stuck, left)
+	require.Equal(t, stuck, left[0], "the cleanup should name exactly %s as left, got %v", stuck, left)
 	_, err := os.Lstat(filepath.Join(dataHome, "auth.json"))
 	assert.True(t, os.IsNotExist(err), "the removable copy was left beside the stuck one")
 	mustContain(t, "the cleanup's NOTE", errOut.String(), "could not be removed")

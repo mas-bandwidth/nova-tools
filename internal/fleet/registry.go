@@ -27,6 +27,7 @@ package fleet
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,12 +84,7 @@ type Machine struct {
 
 // HasRole says whether the machine carries one role.
 func (m Machine) HasRole(role string) bool {
-	for _, r := range m.Roles {
-		if r == role {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(m.Roles, role)
 }
 
 // RoleList is the roles as the file writes them: comma separated, sorted.

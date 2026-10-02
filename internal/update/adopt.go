@@ -86,9 +86,7 @@ func runAdoptChecks(ctx context.Context, checks []AdoptCheck, timeout time.Durat
 	jobs := make(chan int)
 	var wg sync.WaitGroup
 	for w := 0; w < 4; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range jobs {
 				c := checks[i]
 				if ctx.Err() != nil {
@@ -119,7 +117,7 @@ func runAdoptChecks(ctx context.Context, checks []AdoptCheck, timeout time.Durat
 				}
 				rs[i] = adoptResult{check: c, ok: true, detail: firstLine(raw), observedLine: firstLine(raw)}
 			}
-		}()
+		})
 	}
 	for i := range checks {
 		jobs <- i

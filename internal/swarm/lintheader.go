@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -84,12 +86,7 @@ var CardHeaderRemedies = map[string]string{
 
 // CardHeaderChecks is every token this file draws, in one byte-stable order.
 func CardHeaderChecks() []string {
-	out := make([]string, 0, len(CardHeaderRemedies))
-	for name := range CardHeaderRemedies {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(CardHeaderRemedies))
 }
 
 // TrustState is the coordinator's per-kind state, keyed by kind: `trial`, `trusted` or
@@ -257,14 +254,12 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	}
 	var out []CardHeaderFinding
 	add := func(check string, line int, excerpt string) {
-		if line < 1 {
-			line = 1
-		}
+		line = max(line, 1)
 		out = append(out, CardHeaderFinding{Check: check, Line: line, Excerpt: excerpt})
 	}
 	// The stranded lines first, in line order, because they are why the rest of this
 	// card's header reads the way it does.
-	for _, k := range sortedKeys(stranded) {
+	for _, k := range slices.Sorted(maps.Keys(stranded)) {
 		add(cardKeyCheck[k], stranded[k], fmt.Sprintf("%s: on line %d is below the header block and the gate will never read it: the typed header is the unbroken run of `KEY: value` lines directly under the contract line", k, stranded[k]))
 	}
 	// A repeated key next: a card with two of one line has no one value for it.
@@ -419,18 +414,8 @@ func ReadTrustFixture(path string) (TrustState, error) {
 	return out, nil
 }
 
-// sortedKeys is the keys of a line-number map, in one byte-stable order so two runs of
+// sortedHeaderKeys is the typed keys of the block, in one byte-stable order so two runs of
 // the lint over the same card print the same lines in the same order.
-func sortedKeys(m map[string]int) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// sortedHeaderKeys is the same, for the block itself.
 func sortedHeaderKeys(m map[string]headerField) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

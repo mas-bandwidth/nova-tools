@@ -1,5 +1,7 @@
 package refmodel
 
+import "maps"
+
 // The machine, the tick, sentinels' release and clear: from the spec
 // (sections 13, 14 and 16), not yet in the model. The model's Next lets any
 // enabled action happen at any time; the spec's machine runs the mechanical
@@ -299,9 +301,7 @@ func Release(s State, ids []string, who string) (State, error) {
 // the sprint's and is kept. From the spec, not yet in the model.
 func Clear(s State) (State, error) {
 	n := New(s.Readers, s.Order, s.Coordinator)
-	for m, st := range s.Members {
-		n.Members[m] = st
-	}
+	maps.Copy(n.Members, s.Members)
 	for st := range s.Streams {
 		n.Streams[st] = Stream{State: SWaiting}
 	}

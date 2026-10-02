@@ -1,8 +1,9 @@
 package darwincheck
 
 import (
+	"maps"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -143,13 +144,8 @@ func fillTemplate(tmpl string, in fillInput) string {
 			anc[a] = true
 		}
 	}
-	dirs := make([]string, 0, len(anc))
-	for a := range anc {
-		dirs = append(dirs, a)
-	}
-	sort.Strings(dirs)
 	var ancestors strings.Builder
-	for _, d := range dirs {
+	for _, d := range slices.Sorted(maps.Keys(anc)) {
 		ancestors.WriteString(`(allow file-read-metadata (literal "` + d + `"))` + "\n")
 	}
 

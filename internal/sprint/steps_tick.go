@@ -2,6 +2,8 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -552,7 +554,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			}
 		}
 	}
-	for _, tier := range sortedKeys(unserved) {
+	for _, tier := range slices.Sorted(maps.Keys(unserved)) {
 		conds = append(conds, cond{typ: NNoRoute, stream: TierSubject(tier), streamLevel: true, primaries: unserved[tier],
 			what: fmt.Sprintf("%d primaries of tier %s wait: %s", len(unserved[tier]), tier, whyOf[tier])})
 	}
@@ -833,10 +835,7 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		if state != StreamMerging && !(state == StreamWaiting && s.Merge.Count(st, Queued) > 0) {
 			continue
 		}
-		last := ctl.F("since")
-		if ctl.F("moved") > last {
-			last = ctl.F("moved")
-		}
+		last := max(ctl.F("since"), ctl.F("moved"))
 		if d, ok := r.running(s.Now, last); ok && d > DeadlineMergeIdle {
 			conds = append(conds, cond{typ: NMergeLate, stream: st, streamLevel: true,
 				what:      fmt.Sprintf("state %s, no merge step since %s", state, last),

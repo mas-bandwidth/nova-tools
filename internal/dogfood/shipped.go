@@ -2,8 +2,10 @@ package dogfood
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -85,12 +87,7 @@ func (s Shipped) Has(tool string) bool { return s.tools[strings.TrimSpace(tool)]
 
 // Tools is the set, sorted.
 func (s Shipped) Tools() []string {
-	out := make([]string, 0, len(s.tools))
-	for t := range s.tools {
-		out = append(out, t)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(s.tools))
 }
 
 // Scope keeps the verbs and receipts of shipped tools and returns the receipts

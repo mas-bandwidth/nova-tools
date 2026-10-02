@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // TestSpillAndRecallLogInAsTheUserItIsGiven: spill and recall open a store
@@ -44,16 +46,21 @@ func TestSpillAndRecallLogInAsTheUserItIsGiven(t *testing.T) {
 			code := run(args, &out, &errb, d)
 			switch {
 			case c.refusal != "":
-				if want := "nova-redis " + verb[0] + ": " + c.refusal; code != 2 || errb.String() != want || mr.TotalConnectionCount() != 0 {
-					t.Errorf("%s, %q: exit %d stderr %q connections %d; want exit 2, %q and none", c.name, args, code, errb.String(), mr.TotalConnectionCount(), want)
+				{
+					want := "nova-redis " + verb[0] + ": " + c.refusal
+					if assert.Equal(t, 2, code, "%s, %q: exit %d stderr %q connections %d; want exit 2, %q and none", c.name, args, code, errb.String(), mr.TotalConnectionCount(), want) {
+						if assert.Equal(t, want, errb.String(), "%s, %q: exit %d stderr %q connections %d; want exit 2, %q and none", c.name, args, code, errb.String(), mr.TotalConnectionCount(), want) {
+							assert.Zero(t, mr.TotalConnectionCount(), "%s, %q: exit %d stderr %q connections %d; want exit 2, %q and none", c.name, args, code, errb.String(), mr.TotalConnectionCount(), want)
+						}
+					}
 				}
 			case verb[0] == "spill":
-				if code != 0 || !strings.HasPrefix(out.String(), "SPILL OK ") {
-					t.Errorf("%s, %q: exit %d stdout %q stderr %q; want SPILL OK as %s", c.name, args, code, out.String(), errb.String(), c.want)
+				if assert.Zero(t, code, "%s, %q: exit %d stdout %q stderr %q; want SPILL OK as %s", c.name, args, code, out.String(), errb.String(), c.want) {
+					assert.True(t, strings.HasPrefix(out.String(), "SPILL OK "), "%s, %q: exit %d stdout %q stderr %q; want SPILL OK as %s", c.name, args, code, out.String(), errb.String(), c.want)
 				}
 			default:
-				if code != 1 || !strings.HasPrefix(out.String(), "RECALL MISSING ") {
-					t.Errorf("%s, %q: exit %d stdout %q stderr %q; want RECALL MISSING as %s", c.name, args, code, out.String(), errb.String(), c.want)
+				if assert.Equal(t, 1, code, "%s, %q: exit %d stdout %q stderr %q; want RECALL MISSING as %s", c.name, args, code, out.String(), errb.String(), c.want) {
+					assert.True(t, strings.HasPrefix(out.String(), "RECALL MISSING "), "%s, %q: exit %d stdout %q stderr %q; want RECALL MISSING as %s", c.name, args, code, out.String(), errb.String(), c.want)
 				}
 			}
 		}

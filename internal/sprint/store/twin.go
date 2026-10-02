@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -675,13 +676,9 @@ func (tw *Twin) apply(table string, man ntable.BatchManifest, rc ntable.Receipt)
 		}
 		c := &sprint.Card{ID: id, Fields: map[string]string{}}
 		if old != nil {
-			for k, v := range old.Fields {
-				c.Fields[k] = v
-			}
+			maps.Copy(c.Fields, old.Fields)
 		}
-		for k, v := range e.Set {
-			c.Fields[k] = v
-		}
+		maps.Copy(c.Fields, e.Set)
 		for _, k := range e.Unset {
 			delete(c.Fields, k)
 		}

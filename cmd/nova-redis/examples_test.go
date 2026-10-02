@@ -1,12 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestHelpExamplesRunThroughTheComparator: the help's `example:` block is a
@@ -24,16 +26,12 @@ func TestHelpExamplesRunThroughTheComparator(t *testing.T) {
 		{Line: "$ nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note", Want: []string{"RECALL OK key=ada:note bytes=2 value=hi"}},
 	}
 	examples, err := onboarding.ExampleLines(usage, "nova-redis")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	var want []string
 	for _, s := range sitting {
 		want = append(want, strings.TrimPrefix(s.Line, "$ "))
 	}
-	if strings.Join(examples, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("the banner's example block is not the sitting this test runs\nbanner:\n  %s\nwant:\n  %s", strings.Join(examples, "\n  "), strings.Join(want, "\n  "))
-	}
+	require.Equal(t, strings.Join(want, "\n"), strings.Join(examples, "\n"), "the banner's example block is not the sitting this test runs\nbanner:\n  %s\nwant:\n  %s", strings.Join(examples, "\n  "), strings.Join(want, "\n  "))
 	h := newHarness(t)
 	norms := []onboarding.Norm{onboarding.Version(), onboarding.GoBuild()}
 	for _, s := range sitting {
@@ -44,11 +42,9 @@ func TestHelpExamplesRunThroughTheComparator(t *testing.T) {
 		if strings.Contains(s.Line, "--dry-run") {
 			assert.Zero(t, h.mr.TotalConnectionCount(), "the example %s dialled the store; a dry run needs none", s.Line)
 		}
-		if code != 0 {
-			t.Errorf("the example %s exits %d; stderr: %s", s.Line, code, errs)
-		}
+		assert.Zero(t, code, "the example %s exits %d; stderr: %s", s.Line, code, errs)
 		for _, p := range onboarding.Compare(s, onboarding.Result{Code: code, Stdout: out, Stderr: errs}, norms) {
-			t.Error(p)
+			assert.Fail(t, fmt.Sprint(p))
 		}
 	}
 }

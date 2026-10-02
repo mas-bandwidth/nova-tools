@@ -33,6 +33,7 @@ package sandbox
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -501,12 +502,7 @@ func sortAddrs(in []netip.Addr) []netip.Addr {
 }
 
 func isBaseName(n string) bool {
-	for _, b := range EgressBaseNames {
-		if b == n {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(EgressBaseNames, n)
 }
 
 // OKEgressRun is the shape a --run may take. It is narrow because the value becomes an
