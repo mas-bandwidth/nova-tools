@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -139,8 +140,9 @@ func TestSeatInjectReSealsNamedValuesIntoAnExistingSeat(t *testing.T) {
 	for _, want := range []string{"checkout\n-b\nseal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000", "add\nair.yaml", "commit\n-m\ninject NOVA_REDIS_BENCH_PASSWORD into air.yaml from rowan", "checkout\n-f\nmain"} {
 		assert.Contains(t, git, want, "git calls missing %q:\n%s", want, git)
 	}
-	assert.NotContains(t, git, "push", "--no-pr pushed or called gh:\ngit:\n%s\ngh:\n%s", git, readMaybe(t, f.ghArgs))
-	assert.Empty(t, readMaybe(t, f.ghArgs), "--no-pr pushed or called gh:\ngit:\n%s\ngh:\n%s", git, readMaybe(t, f.ghArgs))
+	if strings.Contains(git, "push") || readMaybe(t, f.ghArgs) != "" {
+		assert.Fail(t, fmt.Sprintf("--no-pr pushed or called gh:\ngit:\n%s\ngh:\n%s", git, readMaybe(t, f.ghArgs)))
+	}
 	want := "SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000"
 	assert.Equal(t, want, line, "OK line:\n got %s\nwant %s", line, want)
 	assertNoValue(t, "the OK line", line)

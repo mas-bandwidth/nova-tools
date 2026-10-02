@@ -120,7 +120,8 @@ func TestPathsAreResolvedAbsoluteAndExisting(t *testing.T) {
 	_, bad = Build(in(t, missing, read, home, anExecutable(t)))
 	require.NotEmpty(t, bad, "an absent --write was not refused: %v", bad)
 	require.Contains(t, bad[0].Text, "does not exist", "an absent --write was not refused: %v", bad)
-	require.NoFileExists(t, missing, "the absent path was created; rule 5 refuses, it does not create")
+	_, err := os.Stat(missing)
+	require.ErrorIs(t, err, os.ErrNotExist, "the absent path was created; rule 5 refuses, it does not create")
 }
 
 // Rule 4: a path in both lists is a refusal naming both flags, never a silent merge.

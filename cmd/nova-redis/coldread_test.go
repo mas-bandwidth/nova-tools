@@ -208,7 +208,7 @@ func TestEveryVerbPrintsOneJSONObjectWithJSON(t *testing.T) {
 }
 
 // A serve that could not start says what to do next: with no redis-server on
-// PATH, install it; with one that would not run, read its own lines.
+// PATH, install it; with one that would not run, inspect the directory and launch inputs.
 func TestServeFailureNamesTheNextStep(t *testing.T) {
 	t.Parallel()
 	h := newServeHarness(t, "pw")
@@ -221,7 +221,10 @@ func TestServeFailureNamesTheNextStep(t *testing.T) {
 	h.onLaunch = func(launchSpec) error { return errors.New("exit status 1") }
 	code, _, errs = h.run("serve", "--bind", "127.0.0.1", "--port", "6379", "--dir", h.dir)
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, `remedy="redis-server's own lines above say why it stopped; fix that, then run nova-redis serve again"`)
+	assert.Contains(t, errs, "remedy=")
+	assert.Contains(t, errs, "run: ls -ld -- "+shellWord(h.dir))
+	assert.Contains(t, errs, "compare directory access and the explicit --bind/--port")
+	assert.Contains(t, errs, "with the launch error and any redis-server output")
 }
 
 // acl render prints what an operator reads, not the names of this repository's

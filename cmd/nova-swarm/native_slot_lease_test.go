@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/stretchr/testify/require"
 )
 
 // ONE SLOT LEDGER (nova-tools#3877). A bench's capacity is bench:<b>:desired in Redis and
@@ -34,18 +35,12 @@ func TestNativeRunsWithNoSlotsStore(t *testing.T) {
 		"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--no-wall"},
 		strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("a native launch with no slot store runs, got exit %d:\n%s%s", rc, stdout.String(), stderr.String())
-	}
-	if strings.Contains(stderr.String(), "SLOTS REFUSED") || strings.Contains(stderr.String(), "no_slots_store") {
-		t.Fatalf("native refused on a slot ledger it no longer keeps:\n%s", stderr.String())
-	}
-	if !strings.HasPrefix(stdout.String(), "NATIVE OK ") {
-		t.Fatalf("the card finishes NATIVE OK:\n%s%s", stdout.String(), stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(home, "nova-bench", "slots")); !os.IsNotExist(err) {
-		t.Fatalf("native made a slot store under the home: %v", err)
-	}
+	require.Equal(t, 0, rc, "a native launch with no slot store runs, got exit %d:\n%s%s", rc, stdout.String(), stderr.String())
+	require.NotContains(t, stderr.String(), "SLOTS REFUSED", "native refused on a slot ledger it no longer keeps:\n%s", stderr.String())
+	require.NotContains(t, stderr.String(), "no_slots_store", "native refused on a slot ledger it no longer keeps:\n%s", stderr.String())
+	require.True(t, strings.HasPrefix(stdout.String(), "NATIVE OK "), "the card finishes NATIVE OK:\n%s%s", stdout.String(), stderr.String())
+	_, err := os.Stat(filepath.Join(home, "nova-bench", "slots"))
+	require.True(t, os.IsNotExist(err), "native made a slot store under the home: %v", err)
 }
 
 // TestNativeIgnoresTheRetiredSlotsStore: the batman shape, a store whose one owner holds
@@ -61,9 +56,7 @@ func TestNativeIgnoresTheRetiredSlotsStore(t *testing.T) {
 	write(t, cardPath, "RESULT: schema-card sha=aaaaaaaaaaaa\nKIND: schema\na schema card\n")
 	store := slotShares(t, "capacity\t1\nreserve\t0\nswarm-batman\t1\n")
 	// The holder is ALIVE (this test's own pid), so the seat is held and never reaped.
-	if err := swarm.MakeSlotLease(store, "held-1", "swarm-batman", os.Getpid(), "held", time.Now().UTC().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, swarm.MakeSlotLease(store, "held-1", "swarm-batman", os.Getpid(), "held", time.Now().UTC().Add(time.Hour)))
 	before := slotLeaseCount(t, store)
 
 	var stdout, stderr bytes.Buffer
@@ -72,13 +65,8 @@ func TestNativeIgnoresTheRetiredSlotsStore(t *testing.T) {
 		"--deadline", "30s", "--no-wall",
 		"--slots-store", store, "--owner", "swarm-batman"},
 		strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("a dealt card is not refused by the retired file ledger, got exit %d:\n%s%s", rc, stdout.String(), stderr.String())
-	}
-	if strings.Contains(stderr.String(), "SLOTS REFUSED") {
-		t.Fatalf("native refused on the file ledger:\n%s", stderr.String())
-	}
-	if after := slotLeaseCount(t, store); after != before {
-		t.Fatalf("native wrote to the retired store: %d leases before, %d after", before, after)
-	}
+	require.Equal(t, 0, rc, "a dealt card is not refused by the retired file ledger, got exit %d:\n%s%s", rc, stdout.String(), stderr.String())
+	require.NotContains(t, stderr.String(), "SLOTS REFUSED", "native refused on the file ledger:\n%s", stderr.String())
+	after := slotLeaseCount(t, store)
+	require.Equal(t, before, after, "native wrote to the retired store: %d leases before, %d after", before, after)
 }

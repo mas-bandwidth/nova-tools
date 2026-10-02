@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,18 +95,31 @@ func TestDraftSubjectResolutionRepairsMalformedOrUnreadableOpen(t *testing.T) {
 			for _, want := range []string{
 				tc.wantContext,
 				tc.wantRepair,
-				"nova-bus inbox --bus " + shellQuote(root) + " --as 'Ada Vale' --receipt-max-words '<receipt-word-limit>' --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'",
-				"replace the receipt-word-limit, remote, and branch placeholders",
-				"positive word-count threshold for classifying short receipts",
+				"nova-bus inbox --bus " + shellQuote(root) + " --as 'Ada Vale' --receipt-max-words 23 --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'",
+				"replace the remote and branch placeholders",
+				"--receipt-max-words 23 is the resolved positive word-count threshold for classifying short receipts",
 				"--carry-history preserves existing history",
 				"--advance moves and pushes the cursor",
 				"; run: nova-bus inbox",
 			} {
 				assert.Containsf(t, r.stderr, want, "stderr %q does not contain %q", r.stderr, want)
 			}
+			if tc.name == "old format" {
+				assert.NotContains(t, r.stderr, "read once with --full --advance", "old OPEN error duplicated its legacy recovery remedy")
+			}
 			assert.NotContainsf(t, r.stderr, "not an id on this bus, not a note that exists, and not the subject", "malformed OPEN was mislabeled as an unmatched subject: %s", r.stderr)
 		})
 	}
+}
+
+func TestDraftOpenReadFailureWithoutThresholdUsesPlaceholder(t *testing.T) {
+	t.Parallel()
+
+	got := draftOpenReadFailure("/bus/path", bus.Participant{Name: "Ada Vale", Lane: "from-ada"}, 0, false, errors.New("bad OPEN"))
+	require.Error(t, got)
+	assert.ErrorContains(t, got, "<receipt-word-limit>")
+	assert.ErrorContains(t, got, "replace the receipt-word-limit placeholder with a positive word-count threshold for classifying short receipts")
+	assert.NotContains(t, got.Error(), "--receipt-max-words 0")
 }
 
 func TestDraftExplicitIDAndNewBypassCorruptOpen(t *testing.T) {
@@ -132,6 +146,7 @@ func draftOpenErrorBus(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "bus with space")
 	writeDraftOpenTestFile(t, root, "participants.json", `{"participants":[{"name":"Ada Vale","lane":"from-ada","git_name":"Ada Vale","git_email":"ada@example.com"},{"name":"Bo","lane":"from-bo","git_name":"Bo","git_email":"bo@example.com"}]}`)
+	writeDraftOpenTestFile(t, root, ".nova-bus/defaults", "receipt-max-words=23\n")
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "from-ada"), 0o755))
 	writeDraftOpenTestFile(t, root, "from-bo/question-abcdef012345.md", "From: Bo\nTo: Ada Vale\nDate: Wed Sep 9 12:34:56 UTC 2026\nId: bo-abcdef012345\nSubject: Question about the gate\n\nA question.\n")
 	return root

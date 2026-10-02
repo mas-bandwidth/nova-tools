@@ -180,7 +180,11 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			}
 			if openErr != nil {
 				if !openErrReported {
-					problems = append(problems, draftOpenReadFailure(*busDir, me, openErr))
+					// Resolve the actual inbox threshold for this bus and environment before
+					// suggesting a recovery command. If none is configured, the diagnostic
+					// keeps an explicit placeholder instead of guessing.
+					maxWords, haveMaxWords := f.receiptMaxWords(0, false, *busDir, io.Discard)
+					problems = append(problems, draftOpenReadFailure(*busDir, me, maxWords, haveMaxWords, openErr))
 					openErrReported = true
 				}
 				continue
@@ -217,15 +221,22 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return 0
 }
 
-func draftOpenReadFailure(busDir string, me bus.Participant, err error) error {
-	recovery := fmt.Sprintf("nova-bus inbox --bus %s --as %s --receipt-max-words '<receipt-word-limit>' --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'", oneline.Escape(shellQuote(busDir)), oneline.Escape(shellQuote(me.Name)))
+func draftOpenReadFailure(busDir string, me bus.Participant, maxWords int, haveMaxWords bool, err error) error {
+	wordLimit := "'<receipt-word-limit>'"
+	wordLimitNote := "replace the receipt-word-limit placeholder with a positive word-count threshold for classifying short receipts; configure it in <bus>/.nova-bus/defaults or NOVA_BUS_RECEIPT_MAX_WORDS"
+	if haveMaxWords {
+		wordLimit = fmt.Sprintf("%d", maxWords)
+		wordLimitNote = fmt.Sprintf("--receipt-max-words %d is the resolved positive word-count threshold for classifying short receipts", maxWords)
+	}
+	recovery := fmt.Sprintf("nova-bus inbox --bus %s --as %s --receipt-max-words %s --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'", oneline.Escape(shellQuote(busDir)), oneline.Escape(shellQuote(me.Name)), oneline.Escape(wordLimit))
 	recoveryNote := "--carry-history preserves existing history, avoids first-advance refusal or discarding prior notes, and --advance moves and pushes the cursor"
-	placeholders := "replace the receipt-word-limit, remote, and branch placeholders; receipt-word-limit is a positive word-count threshold for classifying short receipts"
+	placeholders := "replace the remote and branch placeholders; " + wordLimitNote
 	var pathErr *os.PathError
 	if errors.As(err, &pathErr) {
 		return fmt.Errorf("cannot read %s (%v); repair access to that OPEN path first, then rebuild it from the bus; %s; run: %s; %s", bus.OpenPath(me.Lane), err, recoveryNote, recovery, placeholders)
 	}
-	return fmt.Errorf("%s is invalid (%v); rebuild it from the bus; %s; run: %s; %s", bus.OpenPath(me.Lane), err, recoveryNote, recovery, placeholders)
+	detail := strings.TrimSuffix(err.Error(), "; read once with --full --advance, which writes the list again from the whole bus")
+	return fmt.Errorf("%s is invalid (%s); rebuild it from the bus; %s; run: %s; %s", bus.OpenPath(me.Lane), detail, recoveryNote, recovery, placeholders)
 }
 
 // planDraftOut is writeDraftOut's dry run: the same refusals for the path, and the OK line

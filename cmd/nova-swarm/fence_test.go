@@ -43,9 +43,8 @@ func TestNativeConfigNamesTheJobDirectory(t *testing.T) {
 		deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
 	require.Equal(t, 0, code, "the run exits 0, got %d:\n%s", code, errOut.String())
-	if res.configSHA == "" || res.configSHA == "-" {
-		t.Errorf("the NATIVE OK line names the sha8 of the config the child saw, got %q", res.configSHA)
-	}
+	assert.NotEqual(t, "", res.configSHA, "the NATIVE OK line names the sha8 of the config the child saw, got %q", res.configSHA)
+	assert.NotEqual(t, "-", res.configSHA, "the NATIVE OK line names the sha8 of the config the child saw, got %q", res.configSHA)
 
 	external := externalDirectoryRules(t, slot)
 	job := res.job

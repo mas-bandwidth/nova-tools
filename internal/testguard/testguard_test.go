@@ -24,7 +24,7 @@ func TestArmedGuardNamesTheCommandAndTheRemedy(t *testing.T) {
 	g := NewGuard(true)
 	defer func() {
 		r := recover()
-		require.NotNil(t, r, "an armed guard must refuse the seam")
+		require.True(t, r != nil, "an armed guard must refuse the seam")
 		msg, _ := r.(string)
 		for _, want := range []string{EnvNoHost, `"ssh"`, `"hulk"`, `"bash -s"`, "testguard.AllowHosts"} {
 			assert.Contains(t, msg, want, "the refusal must carry %s; got %q", want, msg)
@@ -68,7 +68,7 @@ func TestAllowHostsIsScopedAndNests(t *testing.T) {
 	g.RefuseHosts("ssh", "hulk")
 	outer()
 	defer func() {
-		require.NotNil(t, recover(), "the guard must be armed again once every scope has closed")
+		require.True(t, recover() != nil, "the guard must be armed again once every scope has closed")
 	}()
 	g.RefuseHosts("ssh", "hulk")
 }
