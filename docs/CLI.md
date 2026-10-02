@@ -1634,8 +1634,8 @@ binary alone. On your own module, pipe `go test -json` in and check that test
 run's exit status separately: `slowtests` checks timing, not whether the tests
 passed. The default budget is 60 seconds per package; a package over it is a
 `CI-SLOW` line, and exit 0 still means a measurement unless `--enforce` is given
-(then exit 2). A terminal on stdin or a line that is not a TestEvent is refused
-at exit 2. `--json` prints the same verdict as one JSON object
+(then exit 1: the check ran and said no). A terminal on stdin or a line that is
+not a TestEvent is refused at exit 2. `--json` prints the same verdict as one JSON object
 (`{"result":{...},"facts":{...},"items":[...]}`). CI exceptions belong in the
 dated project policy, not in an assumed higher tool default.
 
@@ -1664,7 +1664,7 @@ measured, not a verdict` line follows (`--load` and `--cpus` give the figures by
 hand). A CI-SLOW line exits 0 (a measurement) unless `--enforce` is given, which
 only the nightly space legs pass (`make test SLOWTESTS_ENFORCE=1`). A test skipped
 with `t.Skip("SLEEPS: ...")` that `--sleeps` does not name is a `CI-SLEEPS` line
-and exits 2 on every leg. A package `go test` served from its test cache reports a
+and exits 1 on every leg. A package `go test` served from its test cache reports a
 package elapsed near zero (`ok ... (cached)`, `"Elapsed":0`), so a cached run can
 never trip `--package-budget` (or `--budget`); its tests replay the times of the run
 that was cached, which `--test-budget` still reads. CI's unit legs run with the
