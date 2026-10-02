@@ -29,7 +29,7 @@ func TestReworkedWorkIsAskedRoundTheReaders(t *testing.T) {
 	first := ask("s1-1")
 	require.Len(t, first, 2)
 	h.must(ReadStep(sprint.ReadReq{As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
-	h.must(ReadStep(sprint.ReadReq{As: first[1].Row, Verdict: "broken", Finding: "f", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{As: first[1].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	pair := []string{first[0].Row, first[1].Row}
 	require.ElementsMatch(t, []string{"reader-a", "reader-b"}, pair)

@@ -212,7 +212,7 @@ func TestAudit2ClosedAckedReadsExhaustedIsSilentForEver(t *testing.T) {
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	rc := h.snap().Readers.Of("s1-1")
 	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
-	h.must(ReadStep(sprint.ReadReq{As: rc[1].Row, Verdict: "broken", Finding: "x", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{As: rc[1].Row, Verdict: "broken", Finding: "x:1", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
 	h.a2AckRefused(sprint.NReadBroken)
 	h.readInbox()
 	h.startMachine()

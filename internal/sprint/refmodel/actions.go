@@ -111,7 +111,7 @@ func Add(s State, a AddArgs, scores map[string]float64) (State, error) {
 		// Section 16: a sentinel whose needs have all landed or been
 		// waived is marked reached by the step in which that becomes
 		// true: for one admitted with nothing to wait for, the add.
-		if n.Primaries[id].Kind == KindSentinel && n.NeedsMet(id) {
+		if n.Primaries[id].Kind == KindSentinel && n.NeedsMet(id) && n.Reachable(id) {
 			n.setPrimary(id, func(p *Primary) { p.Reached = true })
 			n.open(JReached, id)
 		}
@@ -830,7 +830,7 @@ func (n *State) resolveAll() {
 			continue
 		}
 		if pr.Kind == KindSentinel {
-			if !pr.Reached {
+			if !pr.Reached && n.Reachable(p) {
 				pr.Reached = true
 				n.Primaries[p] = pr
 				n.open(JReached, p)
