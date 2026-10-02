@@ -702,7 +702,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// on bash 4 or on zsh's word-splitting differences takes every launch down with it.
 	// The same verb, the same one-file contract, the same drift lines and remedies.
 	fleet := f.fs.String("fleet", "", "a launcher script to lint instead of a card")
-	rules := f.fs.Bool("rules", false, "print every rule token with what it wants, and lint nothing")
+	rules := f.fs.Bool("rules", false, "print every rule token with what it wants, and lint nothing; nova-sprint add holds a brief to the rule-<name> and step-<what> tokens of its rule set (and rule-libraries-considered when the set carries it) and to no other")
 	// THE TYPED HEADER IS CHECKED WHEN THE CARD HAS ONE, AND ON DEMAND WHEN IT DOES NOT.
 	// A card cut under SPEC-TOOLWORK §5 carries five typed lines; every card written before
 	// it carries none, and those are still linted by the twelve older rules. So the header
@@ -807,6 +807,12 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	name := filepath.Base(*card)
+	// AN EMPTY CARD IS SAID ONCE (swarm.EmptyCardCheck): every rule it fails is the one fact
+	// that there is nothing in it.
+	if strings.TrimSpace(string(raw)) == "" {
+		fmt.Fprintf(stdout, "LINT DRIFT card=%s %s: 1: the card is empty remedy=%s\n", oneline.Field(name), oneline.Field(swarm.EmptyCardCheck), oneline.Escape(swarm.EmptyCardRemedy))
+		return 1
+	}
 	// A template is printed verbatim and is not itself a card: `nova-swarm template --name
 	// <t>` piped into `lint --card` used to report result-first drift on the template's first
 	// line (issue #1471). The card templates pass, and a template that is not a card answers

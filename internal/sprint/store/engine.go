@@ -87,11 +87,16 @@ type Store struct {
 	// harness whose other writers write from inside a part's plan (a writer
 	// that would wait on the lock its own caller holds) leaves it off.
 	LockAfterLoss bool
-	root          Backend   // the backend before pinning
-	epoch         uint64    // the epoch the store is pinned to
-	cleared       time.Time // when the pinned epoch began
-	pinned        bool
-	old           bool // pinned to an earlier epoch, for reading
+	// ByHand says no machine runs between commands (a twin, mem:<file>): a
+	// RUNNING machine that has not ticked waits for the next tick by hand and
+	// is not stopped, so its line stays running and the inbox's not-ticking
+	// judgment names nova-sprint tick (docs/SPEC-SPRINT.md section 14).
+	ByHand  bool
+	root    Backend   // the backend before pinning
+	epoch   uint64    // the epoch the store is pinned to
+	cleared time.Time // when the pinned epoch began
+	pinned  bool
+	old     bool // pinned to an earlier epoch, for reading
 }
 
 // Step is one verb's step: the tables its plan reads, any records it reads

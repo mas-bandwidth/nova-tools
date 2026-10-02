@@ -96,6 +96,9 @@ func TestStageCardFetchesAHeadTheMirrorLacks(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, res.Staged)
 	assert.Equal(t, g.c2, res.BaseSha)
+	assert.Positive(t, res.Clone, "the clone time reaches the staging result")
+	assert.Positive(t, res.Fetch, "the missing head's fetch time reaches the staging result")
+	assert.Positive(t, res.Checkout, "the pinned checkout time reaches the staging result")
 	g.assertStaged(t)
 }
 

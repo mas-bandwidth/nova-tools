@@ -49,18 +49,45 @@ type BriefReq struct {
 func Brief(s *Snapshot, r BriefReq) Plan {
 	var p Plan
 	p.on(s)
+	// a card dealt is refused with what changes it instead, before the machine's
+	// state: stopping the machine would not let its brief be replaced
 	why := unstarted(s, r.ID, "its brief")
-	if s.Running {
+	c := s.Work.Placed(r.ID)
+	if why != "" && c != nil && !IsSentinel(c) {
+		why += "; " + briefStarted(c)
+	}
+	if why == "" && s.Running {
 		why = stoppedOnly("a brief is replaced")
 	}
 	if why != "" {
 		p.refuse(r.ID, why)
 		return p
 	}
-	c := s.Work.Placed(r.ID)
 	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, map[string]string{"brief": r.Brief}))},
 		Moved: fmt.Sprintf("%s brief replaced (%d bytes) stream=%s %s", c.ID, len(r.Brief), c.Row, c.Col)})
 	return p
+}
+
+// briefStarted is the remedy of a brief refused for a card dealt: what changes
+// its work instead, by the lifecycle's moves (lifecycle.go, Moves). A rework's
+// --fix is the next attempt's change, carried beside the brief, and rework
+// takes a card in review only; drop takes any open card off the table, and the
+// new brief is then a new card.
+func briefStarted(c *Card) string {
+	readd := "nova-sprint add --stream " + c.Row + " <new id> --brief-file <path>"
+	drop := "nova-sprint drop " + c.ID + " --reason '<why>', then " + readd
+	rework := "nova-sprint rework " + c.ID + " --fix '<what changes>'"
+	switch c.Col {
+	case Review:
+		return "run: " + rework + " (the next attempt's fix), or " + drop
+	case Merging:
+		return "run: nova-sprint return " + c.ID + " --reason '<why>', then " + rework + " (the next attempt's fix), or " + drop
+	case Landed:
+		return "run: " + readd + " for the change"
+	case Working:
+		return "run: " + drop + ", or once it finishes (review), " + rework + " (the next attempt's fix)"
+	}
+	return "run: " + drop
 }
 
 // MoveReq moves primaries that have not started to another stream, placed as

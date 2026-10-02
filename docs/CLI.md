@@ -725,7 +725,7 @@ usage:
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--identity <owner>,<name>,<email>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--identity <owner>,<name>,<email>]
                        (the width is the member's fleet row's, read every tick; each card runs on the route its packet names, the entry at its tier's
                         route index in the tier's array (nova-config tier) or its model: pin; --width, --model, --tokens, --deadline are a twin's override)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
@@ -747,10 +747,11 @@ native requires --card; lint takes --card, or
 --fleet or --rules instead; verify takes --card as an option and reads it only
 when given (because a card this tool chose would be a guess about somebody
 else's task); the remaining verbs take no card flag. --tokens is required on
-native and member because a budget this tool supplied would be a guess about
-somebody else's task, and --tokens unmetered is a caller's statement that this
+native because a budget this tool supplied would be a guess about somebody
+else's task, and --tokens unmetered is a caller's statement that this
 provider has no live accounting and the deadline is the only stop. Zero is
-refused for tokens.
+refused for tokens. member takes each card's budget from the route its packet
+names, and --tokens (with --model and --deadline) only for a card with none.
 
 THE KEY IS READ AS DATA AND NEVER SOURCED. It lives in one file the worker
 description names -- one line, the bare key or NAME=<key>, mode 0600 -- and it is
@@ -1339,7 +1340,15 @@ nova-update release build --version v0.17.0 --out ./release --source . --platfor
 comma-separated — writes and verifies a `SHA256SUMS` per platform, and writes that file's own sha256
 to `SUMS.digest` beside it. An unsupported `goos-goarch` refuses before the first compile, so no
 half-made directory is left behind. One `RELEASE BUILT` line per platform, then one
-`RELEASE BUILD OK … platforms=<a,b,c> sums=<sha256,…>`.
+`RELEASE BUILD OK … platforms=<a,b,c> sums=<sha256,…> pruned=<n> prune-failed=<n>`.
+
+Retention, after a successful `build` (in `--out`) and a successful `install` (in `--from`): a
+directory directly under that root whose name is a version (`release.ValidVersion`) is removed unless
+it is the version just built or installed, the version the machine had installed before it (`build`:
+the running nova-update's stamp; `install`: every version the bin directory's binaries answered
+before the install), or one of the 3 newest of the rest by modification time
+(`release.KeepBesides`). Anything else in the root is left alone, and a removal that fails is said
+on stderr and counted in `prune-failed=`; it never fails the build or the install.
 
 ```sh
 nova-update release install --from ./release --version v0.17.0 --bin ~/.local/bin --retire ~/go/bin

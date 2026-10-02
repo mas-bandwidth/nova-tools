@@ -323,7 +323,9 @@ func TickAccept(s *Snapshot, r TickReq) (Plan, int) {
 	for _, st := range streams {
 		n := happened(NReadyToMerge, st, s.Now, by[st]...)
 		n.Who, n.To = r.who(), s.Coordinator
-		n.What = fmt.Sprintf("%d accepted and queued to merge: %s; run: nova-sprint merge --stream %s", len(by[st]), Preview(by[st], " "), st)
+		// the thing to run is land (git merges and pushes, then the merge step); merge alone
+		// records a landing without touching git; nova-sprint run --land lands by itself
+		n.What = fmt.Sprintf("%d accepted and queued to merge: %s; run: nova-sprint land --stream %s (a nova-sprint run started with --land lands them itself)", len(by[st]), Preview(by[st], " "), st)
 		p.Notes = append(p.Notes, n)
 	}
 	return p, 0

@@ -196,6 +196,10 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		versionOf = ExecVersion
 	}
 	installed, skipped := 0, 0
+	// What the bin directory answered BEFORE this install: the versions its
+	// binaries came from, which the prune below never removes, so a bad build
+	// can be put back by re-installing the one it replaced.
+	var before []string
 	for _, a := range arts {
 		// a.Name is the file name the BUILD chose for the target platform --
 		// ToolFile, so `nova-bus.exe` in a windows release -- read back out of
@@ -209,7 +213,11 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		// not of a marker file: a marker says what somebody meant to install,
 		// and the whole point of the version verbs is to say what is actually
 		// there.
-		if line, err := versionOf(ctx, target); err == nil && hasToken(line, o.version) {
+		line, err := versionOf(ctx, target)
+		if err == nil {
+			before = append(before, line)
+		}
+		if err == nil && hasToken(line, o.version) {
 			skipped++
 			continue
 		}
@@ -227,9 +235,74 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 			return refusal(errs, "INSTALL", err)
 		}
 	}
-	fmt.Fprintf(out, "RELEASE INSTALLED version=%s tools=%d skipped=%d retired=%d bin=%s platform=%s\n",
-		field(o.version), installed, skipped, retired, field(o.bin), field(goos+"-"+goarch))
+	// LAST, and never a reason to fail: the install has succeeded and been
+	// verified, and the old version directories under --from are removed by
+	// the rule in prune.go. The one being installed and every one the bin
+	// directory answered before it stay.
+	pruned, pruneFailed := pruneInstalled(o.from, o.bin, func(name string) bool {
+		if name == o.version {
+			return true
+		}
+		for _, line := range before {
+			if hasToken(line, name) {
+				return true
+			}
+		}
+		return false
+	}, errs)
+	fmt.Fprintf(out, "RELEASE INSTALLED version=%s tools=%d skipped=%d retired=%d bin=%s platform=%s pruned=%d prune-failed=%d\n",
+		field(o.version), installed, skipped, retired, field(o.bin), field(goos+"-"+goarch), pruned, pruneFailed)
 	return 0
+}
+
+// pruneInstalled also protects the installed binaries' directory, including a
+// bin symlink's target: a version stamp alone does not protect an empty bin
+// installed into an older release directory (SPEC-RELEASE, retention).
+func pruneInstalled(root, bin string, keep func(string) bool, errs io.Writer) (int, int) {
+	binAbs, err := filepath.Abs(bin)
+	if err != nil {
+		progress(errs, "cannot resolve installed bin %s for pruning: %v (nothing removed)", bin, err)
+		return 0, 1
+	}
+	binReal, err := filepath.EvalSymlinks(binAbs)
+	if err != nil {
+		progress(errs, "cannot resolve installed bin %s for pruning: %v (nothing removed)", bin, err)
+		return 0, 1
+	}
+	// Preserve both the route to a bin symlink and its actual target. Identity
+	// handles case and normalization aliases without guessing volume policy.
+	var ancestors []os.FileInfo
+	for _, path := range []string{binAbs, binReal} {
+		for {
+			info, err := os.Stat(path)
+			if err != nil {
+				progress(errs, "cannot identify installed bin ancestor %s: %v (nothing removed)", path, err)
+				return 0, 1
+			}
+			ancestors = append(ancestors, info)
+			parent := filepath.Dir(path)
+			if parent == path {
+				break
+			}
+			path = parent
+		}
+	}
+	return pruneDefault(root, func(name string) bool {
+		if keep(name) {
+			return true
+		}
+		info, err := os.Stat(filepath.Join(root, name))
+		if err != nil {
+			progress(errs, "leaving release %s alone: %v", name, err)
+			return true
+		}
+		for _, ancestor := range ancestors {
+			if os.SameFile(info, ancestor) {
+				return true
+			}
+		}
+		return false
+	}, errs)
 }
 
 // hasToken is the same whole-token match tools/ghrelease's stamp verb

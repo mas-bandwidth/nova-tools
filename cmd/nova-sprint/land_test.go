@@ -22,6 +22,9 @@ type landRig struct {
 	*testApp
 	dir, remote, worker, clone string
 	env                        []string
+	// branch, when set, is the branch each card's finish records (--branch), as a
+	// member's does; nil records none
+	branch func(id string) string
 }
 
 func newLandRig(t *testing.T) *landRig {
@@ -84,7 +87,11 @@ func (r *landRig) queued(heads map[string]string, order ...string) {
 	r.deal(len(order))
 	r.ok("take --as m1 --limit 100")
 	for _, id := range order {
-		r.ok("finish --as m1 " + id + ".w1@1 --head " + heads[id])
+		finish := "finish --as m1 " + id + ".w1@1 --head " + heads[id]
+		if r.branch != nil {
+			finish += " --branch " + r.branch(id)
+		}
+		r.ok(finish)
 	}
 	r.ok("ask")
 	r.ok("read --as reader-a --ok --limit 100")
