@@ -293,8 +293,8 @@ func Waive(s State, p string, qs []string) (State, error) {
 // card of the attempt is dealt to m, which must be the next member round the
 // fleet (NextMember; the rolling index moved past it): a new work card is
 // cut at generation 1, or, when the card was withdrawn by a member going
-// down or a levelling, the same card is dealt again at a new generation
-// (G1, D3). limit, when above zero, is the tick's Width: only members
+// down or a levelling, the same card is dealt again at a new generation.
+// limit, when above zero, is the tick's Width: only members
 // holding fewer work cards, ready and working, are dealt to.
 func Start(s State, p, m string, limit int) (State, error) {
 	if err := free(s); err != nil {
@@ -1068,7 +1068,7 @@ func floorDiv(a, b int) int {
 }
 
 // levelRound levels, once at the start of every tick, rebalancing each
-// table before the tick plans its rows (spec section 14, T4; the levelling
+// table before the tick plans its rows (spec section 14; the levelling
 // goes round the fleet and moves the rolling deal index): while the
 // largest backlog of an up member with a ready card and the
 // smallest of the up members below their Room differ by more than one, the
