@@ -60,7 +60,7 @@ func TestTemplatesRefusesRawFilepathJoin(t *testing.T) {
 	root := fixtureTree(t, "join.go.txt")
 	res, err := CheckTemplates(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "a raw filepath.Join in a JSON literal is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 1 && len(res.Findings) == 1, "a raw filepath.Join in a JSON literal is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	assert.Equal(t, "join", f.Kind, "kind = %q, want join", f.Kind)
 	assert.Equal(t, TemplateRemedyJoin, f.Remedy, "remedy = %q, want %q", f.Remedy, TemplateRemedyJoin)
@@ -76,7 +76,7 @@ func TestTemplatesRefusesUnquotedOSPathLiteral(t *testing.T) {
 	root := fixtureTree(t, "literal.go.txt")
 	res, err := CheckTemplates(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "an unquoted C:\\ path in a JSON literal is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 1 && len(res.Findings) == 1, "an unquoted C:\\ path in a JSON literal is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	assert.Equal(t, "literal", f.Kind, "kind = %q, want literal", f.Kind)
 	assert.Equal(t, TemplateRemedyLiteral, f.Remedy, "remedy = %q, want %q", f.Remedy, TemplateRemedyLiteral)
@@ -92,7 +92,7 @@ func TestTemplatesRefusesUnquotedPathInTemplate(t *testing.T) {
 	root := fixtureTree(t, "template.go.txt")
 	res, err := CheckTemplates(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "an unquoted path in a template literal is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 1 && len(res.Findings) == 1, "an unquoted path in a template literal is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	assert.Equal(t, "literal", f.Kind, "kind = %q, want literal", f.Kind)
 	assert.Equal(t, TemplateRemedyLiteral, f.Remedy, "remedy = %q, want %q", f.Remedy, TemplateRemedyLiteral)
@@ -108,7 +108,7 @@ func TestTemplatesAllowsStrconvQuote(t *testing.T) {
 	root := fixtureTree(t, "quoted.go.txt")
 	res, err := CheckTemplates(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 0 || len(res.Findings) != 0, "strconv.Quote is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 0 && len(res.Findings) == 0, "strconv.Quote is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
 	assert.Equal(t, 1, res.Tests, "tests = %d, want 1", res.Tests)
 }
 
@@ -120,7 +120,7 @@ func TestTemplatesAllowsOnelineQuote(t *testing.T) {
 	root := fixtureTree(t, "oneline_quoted.go.txt")
 	res, err := CheckTemplates(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 0 || len(res.Findings) != 0, "oneline.Quote is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 0 && len(res.Findings) == 0, "oneline.Quote is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
 }
 
 // 6. Adding an entry to the allowlist is refused; removing one is allowed. An
@@ -140,7 +140,7 @@ func TestTemplatesAllowlistGrowsRefused(t *testing.T) {
 	require.NoError(t, os.WriteFile(allow, []byte("internal/x/x_test.go:1 join 2026-09-17 parked here\n"), 0o644))
 	res, err = CheckTemplates(root, allow)
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Stale) != 1, "adding an allowlist entry that names no offender must be refused, got %d refusals %+v", res.Refused(), res.Stale)
+	require.True(t, res.Refused() == 1 && len(res.Stale) == 1, "adding an allowlist entry that names no offender must be refused, got %d refusals %+v", res.Refused(), res.Stale)
 	assert.Equal(t, TemplateRemedyAllow, res.Stale[0].Remedy, "allowlist remedy = %q, want %q", res.Stale[0].Remedy, TemplateRemedyAllow)
 
 	require.NoError(t, os.WriteFile(allow, []byte(""), 0o644))
