@@ -65,7 +65,14 @@ the people and no coordinator (`where --json` carries them; `check`, `inbox` and
 `goal show` say the same in their own words). The merge table has no `since`
 column. Every table is shown, with its header and footer, empty or not, and every
 stream row is shown in the work and merge tables, at zero when it has no cards.
-A row's first cell is its identity. `where --watch` redraws the frame in
+A row's first cell is its identity. The readers table is one row, `all`, whose
+four cells are the sums over every reader (readers away or down counted too), and
+it has no footer, which would say the same thing twice (the owner, 2026-10-01:
+"If you raise reader widths, I would like you to change the table to just be one
+row, sum of all"; "i don't reallllly need to see all readers, i just need to see
+reader *progress* overall got it?"). It is the text of `where` and `where --watch`
+only: the readers table keeps a row per reader, `where --json` lists each, and the
+stored view `sprint` drawn by `nova-table watch --view sprint` shows each. `where --watch` redraws the frame in
 place once a second (`--every`, any duration above 0): the cursor is hidden
 while it watches and restored when it ends or is interrupted (SIGINT or
 SIGTERM: exit 0); each frame is built whole and written with one write, however

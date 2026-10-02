@@ -7,13 +7,17 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -198,8 +202,9 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 			t.Errorf("the frame shows %q:\n%s", gone, frame)
 		}
 	}
-	// the identity of a row is its first cell
-	for name, want := range map[string]string{"work": "s1,s2", "readers": "reader-a,reader-b", "merge": "s1,s2", "fleet": "m1,m2"} {
+	// the identity of a row is its first cell; the readers table is one row,
+	// the sum of all readers (the owner, 2026-10-01)
+	for name, want := range map[string]string{"work": "s1,s2", "readers": readersAllRow, "merge": "s1,s2", "fleet": "m1,m2"} {
 		if got := strings.Join(rowsOf(tableOf(frame, name)), ","); got != want {
 			t.Errorf("table %s: rows %q, want %q:\n%s", name, got, want, frame)
 		}
@@ -210,6 +215,7 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	if w.Pending != "op-left" || len(w.Stalled) == 0 || len(w.Goals) != 1 || w.Coordinator == "" {
 		t.Errorf("where --json: pending=%q stalled=%v goals=%v coordinator=%q", w.Pending, w.Stalled, w.Goals, w.Coordinator)
 	}
+	assert.ElementsMatch(t, []string{"reader-a", "reader-b"}, slices.Collect(maps.Keys(w.Tables[sprint.Readers])), "where --json keeps each reader's row")
 }
 
 // Every table is in the frame, with no rows when it has none, and a stream with
@@ -228,8 +234,9 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 			t.Errorf("table %s is not in the frame:\n%s", name, frame)
 		}
 	}
-	if got := rowsOf(tableOf(frame, "readers")); len(got) != 0 {
-		t.Errorf("readers rows %q, want none:\n%s", got, frame)
+	// the readers table is one row, the sum of all readers, at zero with none
+	if got := rowsOf(tableOf(frame, "readers")); strings.Join(got, ",") != readersAllRow {
+		t.Errorf("readers rows %q, want %s alone:\n%s", got, readersAllRow, frame)
 	}
 	for _, name := range []string{"work", "merge"} {
 		if got := rowsOf(tableOf(frame, name)); strings.Join(got, ",") != "s1,s2" {
@@ -241,9 +248,10 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 	ta.ok("reader add reader-a reader-b")
 	ta.ok("add --stream s2 s2-2")
 	frame = ta.ok("where")
-	if got := rowsOf(tableOf(frame, "readers")); strings.Join(got, ",") != "reader-a,reader-b" {
-		t.Errorf("readers rows %q:\n%s", got, frame)
+	if got := rowsOf(tableOf(frame, "readers")); strings.Join(got, ",") != readersAllRow {
+		t.Errorf("readers rows %q, want %s alone:\n%s", got, readersAllRow, frame)
 	}
+	assert.ElementsMatch(t, []string{"reader-a", "reader-b"}, ta.readerRows(), "where --json keeps each reader's row")
 	if got := rowsOf(tableOf(frame, "work")); strings.Join(got, ",") != "s1,s2" {
 		t.Errorf("work rows %q:\n%s", got, frame)
 	}
