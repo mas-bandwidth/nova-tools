@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// DEPENDS-ON IS A HEADER KEY, CHECKED ONLY WHEN THE CARD IS TYPED (#2636).
+// DEPENDS-ON IS A HEADER KEY, CHECKED ONLY WHEN THE CARD IS TYPED.
 //
 // The cutter and the dealer are not this check. `lint --card --typed` is. A card
 // written before the key existed still lints by the older rules, and by the typed
@@ -27,9 +27,9 @@ import (
 // is paused when no trust file was handed over.
 //
 // A reference is `<owner>/<repo>#<n>`: one slash, then `#` and digits
-// (`mas-bandwidth/nova-tools#2550`). The lint checks that shape and does not look
+// (for example `acme/widget#12`). The lint checks that shape and does not look
 // it up in the lineup; the cutter resolves whether the issue or PR exists.
-// A space (`nova-tools #2550`) is not that shape and is refused by name. A word
+// A space (`widget #12`) is not that shape and is refused by name. A word
 // the lineup does not hold (`dogfood`) is refused by name as an unknown card id.
 //
 // The lineup file is the sprint's ORDER.tsv shape, or one id per line. A header
@@ -146,8 +146,8 @@ func firstLine(raw []byte) string {
 }
 
 // dependsReferenceRE is `<owner>/<repo>#<n>`: exactly one slash, then `#` and digits.
-// `mas-bandwidth/nova-tools#2550` matches. `nova-tools #2550` does not (a space).
-// `nova-tools#2550` does not (no slash). `a/b/c#1` does not (two slashes).
+// `acme/widget#12` matches. `widget #12` does not (a space).
+// `widget#12` does not (no slash). `a/b/c#1` does not (two slashes).
 var dependsReferenceRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*#[0-9]+$`)
 
 // oneCardID is one dependency token. `-` is the whole-line declaration, never an

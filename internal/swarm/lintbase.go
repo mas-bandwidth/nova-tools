@@ -18,10 +18,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
-// THE BASE CHECKS: FIVE RULES A CODING CARD IS HELD TO BEFORE IT IS DEALT (#2636, #3083).
+// THE BASE CHECKS: FIVE RULES A CODING CARD IS HELD TO BEFORE IT IS DEALT.
 //
-// The first four are each one class of the 2026-09-22 sprint's failed cards (rowan-new
-// reports/failed-cards-2026-09-22.md), and each needs evidence the card text alone
+// The first four each describe a way a dealt card fails, and each needs evidence
+// the card text alone
 // does not hold, so they run only under `nova-swarm lint --base-check`:
 //
 //	paths-at-base  every PATHS entry resolves at the card's base-sha, or is a new
@@ -36,8 +36,8 @@ import (
 //	deadline-p95   DEADLINE is at or above the measured p95 wall of the card's KIND.
 //	               Class 11: 27 cards died at 1526 s against a 1500 s DEADLINE.
 //	donewhen-test-name  DONE-WHEN names a test runner and a literal test that is
-//	               absent at base-sha, so it can be red there (#3083, Jev's insertion
-//	               2). 321 of 543 post-tune ledger rows read `donewhen missing`: the
+//	               absent at base-sha, so it can be red there. 321 of 543 post-tune
+//	               ledger rows read `donewhen missing`: the
 //	               card never named a control a test could fail. "applied cleanly" and
 //	               "make preflight" are English outcomes, not controls.
 //

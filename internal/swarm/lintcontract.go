@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// THE CONTRACT LINE HAS ONE FORM, AND THIS IS THE ONE PLACE THAT SAYS SO (issue #1741,
-// SPEC-TOOLWORK.md §5 rule 7).
+// THE CONTRACT LINE HAS ONE FORM, AND THIS IS THE ONE PLACE THAT SAYS SO: the
+// prefix list below is what every writer of a card and every reader of one uses.
 //
 // Line 1 of a card is its contract: the swarm hashes everything below it, records the
 // line at admission, and `gather` refuses a `RESULT.md` whose line 1 differs
@@ -17,22 +17,22 @@ import (
 //     (internal/pulse/cut.go, and the example at
 //     that page, line 4);
 //   - `lint --card`'s `result-first` wanted `RESULT: ` -- with one
-//     (WORKER-CARDS.md practice 1, now in the nova-work-old repository, and docs/SPEC-SWARM.md:969,976);
+//     (docs/SPEC-SWARM.md holds the contract line as the law a report must meet);
 //   - `gather` compares line 1 to line 1 and imposes no prefix of its own, so it follows
 //     whichever the other two settle on (internal/pulse/harvest.go, classifyResult).
 //
 // The cost of the disagreement: every card `cut` writes drew a `result-first` drift, and
-// six cards written by hand on 2026-09-19 each drew one for a colon.
+// six hand-written cards drew one each, for a colon.
 //
-// RULED: THE COLON FORM WINS (Rowan, 2026-09-19, on the cold read of PR #1759;
-// docs/SPEC-TOOLWORK.md §5 rule 7). It is SPEC-SWARM's own law and it is what the
+// RULED: THE COLON FORM WINS, on the cold read of the change that made the
+// disagreement visible. It is SPEC-SWARM's own law and it is what the
 // majority of writers already write -- `cut --kind` (internal/pulse/cutkind.go),
 // `internal/pulse/manager.go`. `RESULT: <label>
 // sha=<sha12>` is the form to WRITE.
 //
 // THE NO-COLON FORM IS ACCEPTED AS A STOPGAP, NOT AS A SECOND RULE. The one renderer
 // still on it is the plain `cut` template path (`internal/pulse/cut.go`), and the
-// follow-up card named in rule 7 rewrites it and adds the class test
+// follow-up card that closes this stopgap rewrites it and adds the class test
 // `every-writer-and-reader-agrees-on-the-result-line`. Until that card lands, refusing
 // the no-colon form would refuse cards a tool on dev writes today, so both are read --
 // and it is that class test, never a judgement here, that retires the second entry
