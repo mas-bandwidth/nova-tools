@@ -35,7 +35,7 @@ internal/swarm	TestOSProcessTreeCPUAccrual	#4221 calls time.Sleep
 internal/swarm	TestPausePointThreadDirected	#4221 calls time.Sleep
 internal/update	TestMovedIsBoundedByTheClock	#4221 waits on the wall clock, failed on a 2026-09-25 run
 internal/update	TestRemoveStaleGitTransactionLocksNamesOnly	#4221 calls time.Sleep
-internal/update	TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp	#4221 calls time.Sleep
+internal/update	TestTwoSnapshotsOneDirectoryPreservesKilledWritersTemp	#4221 calls time.Sleep
 cmd/nova-sandbox	TestTheAgentSocketIsUnreachable	seed #4413: time.After at main_test.go:332
 internal/sandbox	TestAncestorsTerminatesOnAWindowsPath	seed #4413: time.After at winpath_test.go:77
 internal/swarm	TestFriendSequencePlantedResultIsRefused	seed #4413: time.After at planted_gather_test.go:81

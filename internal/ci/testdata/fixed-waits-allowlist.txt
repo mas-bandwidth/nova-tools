@@ -14,7 +14,7 @@ cmd/nova-tokens/slow_test.go:38 elapsed 2026-09-17 a wall-clock measurement the 
 internal/update/delivery_test.go:70 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 internal/update/rules_test.go:208 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/update/slow_test.go:135 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/update/stella_deadline_unix_test.go:21 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
+internal/update/drain_escaped_pipe_unix_test.go:21 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/update/update_test.go:48 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 internal/update/update_test.go:92 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 internal/update/update_test.go:217 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
