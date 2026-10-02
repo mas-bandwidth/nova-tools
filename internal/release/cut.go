@@ -274,7 +274,7 @@ func classify(files []string, complete bool, rangeName, securityRead string, out
 		return nil
 	}
 	if securityRead == "" {
-		return refuse("get Johnny's read of these paths and name it: --security-read <note id or the url of his comment>",
+		return refuse("name a security read: --security-read <note id or url>",
 			"this range touches %s on the sensitive list: %s", plural(len(hits), "path"), namedPaths(hits, 10))
 	}
 	// ON STDOUT, above the cut line: it is a receipt, not progress. A release
