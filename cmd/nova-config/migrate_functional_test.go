@@ -97,7 +97,7 @@ func TestMigrateRefusesMixedOwnershipUntilTheAlterLinesAreRun(t *testing.T) {
 	applyAs(t, cfgDSN, 13, 13)
 	all, err := config.Migrations()
 	require.NoError(t, err)
-	require.Len(t, all, 14, "the measured case is the ledger at 13 and 0014 pending")
+	require.Len(t, all, 15, "the measured case is the ledger at 13, with 0014 and 0015 pending")
 
 	r := &real{env: map[string]string{"NOVA_PG_DSN": cfgDSN}}
 	_, errs := r.run(t, 1, "migrate")
@@ -107,7 +107,7 @@ func TestMigrateRefusesMixedOwnershipUntilTheAlterLinesAreRun(t *testing.T) {
 	for _, tb := range []string{"loops", "routes", "tiers"} {
 		require.NotContains(t, errs, "config."+tb, "refusal: %q", errs)
 	}
-	require.Contains(t, errs, "nova-config migrate REFUSED: role "+cfg+" cannot apply migration 14 and applied none", "refusal: %q", errs)
+	require.Contains(t, errs, "nova-config migrate REFUSED: role "+cfg+" cannot apply migrations 14 to 15 and applied none", "refusal: %q", errs)
 	require.Contains(t, errs, admin+" owns ", "refusal: %q", errs)
 	require.Equal(t, 13, ledger(t, super), "the refusal applied a migration")
 
@@ -121,6 +121,6 @@ func TestMigrateRefusesMixedOwnershipUntilTheAlterLinesAreRun(t *testing.T) {
 	out, _ = r.run(t, 0, "migrate", "--dry-run")
 	require.Contains(t, out, " ready=yes\n", "dry-run after the remedy: %q", out)
 	out, _ = r.run(t, 0, "migrate")
-	require.True(t, strings.HasSuffix(out, " from=13 to=14 applied=1\n"), "migrate after the remedy: %q", out)
+	require.True(t, strings.HasSuffix(out, " from=13 to=15 applied=2\n"), "migrate after the remedy: %q", out)
 	require.Equal(t, len(all), ledger(t, super))
 }

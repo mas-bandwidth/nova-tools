@@ -103,3 +103,14 @@ func TestWidthDefaultsToTheDefaultWidth(t *testing.T) {
 	require.True(t, got["m1"].Member())
 	require.Equal(t, "CONFIG WIDTH machine=m1 width=default member=true", got["m1"].Line())
 }
+
+// TestAnUnsetWidthIsUnsetInTheAppliedView: apply writes an unset width as an
+// empty field, and reads it back unset, so a steady apply finds no difference
+// and writes nothing (machineView; a "0" there would rewrite every machine on
+// every apply).
+func TestAnUnsetWidthIsUnsetInTheAppliedView(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, "", machineView(map[string]string{"width": ""}, "8")["width"])
+	require.Equal(t, "0", machineView(map[string]string{"width": "0"}, "8")["width"])
+	require.Equal(t, "16", machineView(map[string]string{"width": "16"}, "8")["width"])
+}
