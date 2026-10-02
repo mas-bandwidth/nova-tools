@@ -70,7 +70,7 @@ func cmdVersion(args []string, stdout, stderr io.Writer) int {
 func cmdVersionWith(args []string, stdout, stderr io.Writer, ver string) int {
 	verbflag.HelpIfAsked(args, "version")
 	if len(args) > 0 {
-		fmt.Fprintf(stderr, "VERSION REFUSED: takes no flags and no arguments, got %d; run: nova-bus version -h\n", len(args))
+		fmt.Fprintf(stderr, "nova-bus version: takes no flags and no arguments, got %d; run: nova-bus version -h\n", len(args))
 		return 2
 	}
 	fmt.Fprintf(stdout, "nova-bus %s %s/%s %s\n",
