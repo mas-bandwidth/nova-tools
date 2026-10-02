@@ -792,18 +792,18 @@ Six fields, tab separated, with an optional seventh. `date` is `YYYY-MM-DD`.
 The seventh field, when present, is exactly `day_basis=<zone>`, the zone as
 rule 13 accepts it in the day file (no whitespace) and never `utc`: it puts
 the line's row under the line's date with that `day_basis`, which is how a
-provider's local-day total (rule 17) crosses the bus without being called
+provider's local-day total crosses the bus without being called
 UTC. A line without it is a UTC day. `day_basis=utc` spelled out is
 `TOKENS UNPARSED` (the six-field line already says UTC, and two spellings of
 one fact would be two grammars), as is any seventh field that is not
 `day_basis=` or any eighth field. Lines for one `(date, model, repo)` with
-two bases are `TOKENS MIXED` for that row (rule 17). `who` is kept for the
+two bases are `TOKENS MIXED` for that row. `who` is kept for the
 friend's own reading and is not in the key. `model` and `repo` are non-empty
 and are written as given; a friend's repo name goes through the same
 attribution function as a path, so `schema` is `schema` if the rules file
 says so and `other` if it does not. `type` is one of the five. `count` is
 `~?[0-9]+`. Several lines for one `(date, model, repo, type)` sum. A type no
-line named for a `(date, model, repo)` is `-` in the row (rule 15). A blank
+line named for a `(date, model, repo)` is `-` in the row. A blank
 line is skipped. A `#` line is a comment, skipped and counted; the one
 comment shape `# repos: <name>[, <name>]…` (the prefix exact, names
 `[a-z0-9._-]+` separated by a comma and optional spaces) yields
@@ -840,7 +840,7 @@ tips replaces that one and leaves the conflict, because the other tip still
 stands, and the printed remedy names **every** tip. The append-only
 reconciliation is a **replacement snapshot**: one fully validated note whose
 predecessor set names all current tips becomes their single successor and the
-lane-day's single tip, the old records untouched and each `SUPERSEDED` by
+lane-day's single tip, the predecessors untouched and each `SUPERSEDED` by
 name. A predecessor set with a duplicate, an unsorted order, an id that names
 a note in another lane or for another day, a missing or unparsed target, or a
 cycle (at any length, through any member) refuses the whole successor as
@@ -864,7 +864,7 @@ tips whatever is sent next, and no correction could resolve the conflict.
 
 Reading the bus, the tool never pulls, fetches, pushes, runs `git`, or talks to a
 network (only `ledger` and `report --redis` dial a network, and only the Redis
-they are named). It reads the checkout it is given as files (rule 16). A caller who wants today's
+they are named). It reads the checkout it is given as files. A caller who wants today's
 notes runs `nova-bus inbox` first. A fold that fetched would be a fold whose
 numbers depend on a network call, and the `TOKENS SOURCE` line for the bus
 prints the newest note's mtime so a reader can see how fresh the checkout
@@ -933,7 +933,7 @@ pairs by total descending (ties by name), capped, then models the same way,
 capped separately, then `SUM TOTAL`, then `SUM OK`. `missing=<n>` counts the
 days between `first` and `last` with no file. A month with no day files is
 `SUM OK month=<m> days=0 missing=0 pairs=0 models=0`, and it is a different
-line from a month with files and no rows, which cannot exist (rule 9).
+line from a month with files and no rows, which cannot exist.
 
 Counts are integers, summed as integers, printed without separators, because
 the line is for a scanner and a person can read `sum --max 0 | column -t`.
@@ -1006,7 +1006,7 @@ There is no clock in this tool. `--timeout` (default **120 s**) is how long it
 waits on one source and not a deadline on the run. What a fold or a check
 actually waits on is a person running it, and on the measured bench it was not
 being run: `check` printed
-`CHECK FAIL files=9 rows=0 first=2026-07-29 last=2026-09-11 bad=9 missing=36 stray=2`,
+`CHECK FAIL files=9 rows=0 first=<d> last=<d> bad=9 missing=36 stray=2`,
 and `sum --month 2026-09` refused because the first line of a day file was not
 the version line, with `fold --day <d>` as the repair. Nine of nine day files
 were bad. A stale ledger is repaired by `fold --day <d>` before `check` is
@@ -1077,10 +1077,10 @@ seen red before it is trusted.
    paths and nothing before it is `unknown`; `TOKENS DAY` prints
    `unknown=` and `other=` shares that add to the right percentage of the
    day's total; a fold with no `--repos` is exit 2.
-6. A bus note whose subject is `Tokens 2026-09-11 (rough)` is not a tokens
-   note, and neither is `tokens 2026-09-11 at=x`; one whose subject is
-   exactly `tokens 2026-09-11 at=2026-09-11T23:55:02Z build=abc123` is; one
-   whose subject is exactly `tokens 2026-09-11` with three good lines, two
+6. A bus note whose subject is `Tokens <d> (rough)` is not a tokens
+   note, and neither is `tokens <d> at=x`; one whose subject is
+   exactly `tokens <d> at=<stamp> build=abc123` is; one
+   whose subject is exactly `tokens <d>` with three good lines, two
    blank lines, one `# folded by hand` line, one `# repos: schema, serialize`
    line, one prose line, one five-field line and one line with an empty
    repo: three rows fold, `comments=2`, `TOKENS TOUCHED … repos=schema,serialize`
@@ -1125,15 +1125,15 @@ seen red before it is trusted.
    second rough line on the same row makes `rough=2`, `TOKENS DAY rough=2`,
    and `sum` carries `rough=2` on the pair, the model and the total.
 8. A fold killed with SIGKILL between the temp write and the rename leaves
-   the old day file entire and a temporary file beside it; the next fold
+   the existing day file entire and a temporary file beside it; the next fold
    writes the day file atomically through internal/atomicfile and preserves
    the stranded temporary; `check` does not name a valid day-file temporary
    as a stray; a second concurrent fold on one `--out` waits and exits 2 naming
    the holder's pid; a source test finds no `os.Remove` and no `os.RemoveAll` anywhere in
    the package (except internal/atomicfile's own-run temporary cleanup).
-   This tripwire is rule 9's: it reads rule 9's list of calls that can empty a
+   This tripwire is the removes-nothing rule's: it reads the list of calls that can empty a
    file and fails on any call it cannot match to a carved-out file. The
-   carve-outs are the tripwire's own list (rule 9); a removal of anything
+   carve-outs are the tripwire's own list; a removal of anything
    else, including any file the tool was given, is the failure this test
    exists for.
 9. A fold over sources that name three days writes three files and no
@@ -1169,7 +1169,7 @@ seen red before it is trusted.
     line lacks `turns=`, and a run of days
     `09-07, 09-08, 09-10`: every finding prints one line, the count line
     prints `bad=8 gap=1 missing=0`, exit 1; the same run with `--strict`
-    prints `CHECK MISSING date=2026-09-09` and `missing=1`, and so does a
+    prints `CHECK MISSING date=<d>` and `missing=1`, and so does a
     `--no-spend` list that does not name that day; a `--no-spend` list that
     names it is `missing=0`; `--strict` and `--no-spend` together is exit 2;
     a file whose type cells are `-` and whose `day_basis` is
@@ -1210,9 +1210,9 @@ seen red before it is trusted.
     original database's bytes and mtime are unchanged after the fold; a
     fake `git` on `PATH` records that it was never invoked, over a fixture
     bus holding competing notes; a source test finds no `net` import.
-17. A transcript line stamped `2026-09-11T23:59:59Z` and one stamped
-    `2026-09-12T00:00:01Z` land in two files; a bus note with subject
-    `tokens 2026-09-11` and a line dated `2026-09-10` folds into the
+17. A transcript line stamped just before a UTC midnight and one
+    stamped just after it land in two files; a bus note whose subject
+    names one day but holds a line dated the previous day folds into the
     `09-10` file, `redated=1` on the source line; a provider export with
     per-row timestamps `2026-09-11T20:30:00-07:00` and
     `2026-09-11T17:30:00-07:00` lands one row in `09-12` and one in `09-11`,
