@@ -37,7 +37,7 @@ func TestLineCarriesTheSpecFieldsAndNoMore(t *testing.T) {
 	err := l.Write(&buf)
 	require.NoError(t, err, "Write: %v", err)
 	raw := buf.String()
-	require.False(t, strings.Count(raw, "\n") != 1 || !strings.HasSuffix(raw, "\n"), "one JSON object per line, got %q", raw)
+	require.True(t, strings.Count(raw, "\n") == 1 && strings.HasSuffix(raw, "\n"), "one JSON object per line, got %q", raw)
 	var got map[string]any
 	err = json.Unmarshal([]byte(raw), &got)
 	require.NoError(t, err, "not one JSON object: %v\n%s", err, raw)
@@ -95,7 +95,7 @@ func TestLineEscapesMsgThroughOnelineField(t *testing.T) {
 	err := l.Write(&buf)
 	require.NoError(t, err, "Write: %v", err)
 	raw := buf.String()
-	require.False(t, strings.Count(raw, "\n") != 1 || !strings.HasSuffix(raw, "\n"), "a newline in msg split the JSON line: %q", raw)
+	require.True(t, strings.Count(raw, "\n") == 1 && strings.HasSuffix(raw, "\n"), "a newline in msg split the JSON line: %q", raw)
 	var got struct {
 		Msg string `json:"msg"`
 	}
@@ -117,7 +117,7 @@ func TestLineEscapesErr(t *testing.T) {
 	err := l.Write(&buf)
 	require.NoError(t, err, "Write: %v", err)
 	raw := buf.String()
-	require.False(t, strings.Count(raw, "\n") != 1 || !strings.HasSuffix(raw, "\n"), "a newline in err split the JSON line: %q", raw)
+	require.True(t, strings.Count(raw, "\n") == 1 && strings.HasSuffix(raw, "\n"), "a newline in err split the JSON line: %q", raw)
 	var got struct {
 		Err string `json:"err"`
 	}
