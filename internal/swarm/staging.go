@@ -1,7 +1,7 @@
 package swarm
 
 // Staging: what the launcher puts in a job directory before the worker starts
-// (docs/SPEC-TOOLWORK.md).
+// (docs/SPEC-TOOLWORK.md §3 rules 1-2).
 //
 //  1. Staging sets the identity; the worker never does. The launcher reads the
 //     pool's identity.tsv (owner, name, email), writes the job clone's LOCAL
@@ -99,8 +99,10 @@ func ParseIdentity(s string) (StagingIdentity, error) {
 // StagingGitEnv is the environment the launcher exports with every job: the
 // bench's own git config cannot leak into what the worker commits or what the
 // machinery reads, and the pool's identity row is exported as author and
-// committer so a worker cloning after launch commits under the pool's name
-// (docs/SPEC-TOOLWORK.md).
+//
+//	committer so a worker cloning after launch commits under the pool's name
+//
+// (SPEC-TOOLWORK §3 rule 1).
 func StagingGitEnv(id StagingIdentity) []string {
 	var env []string
 	if id.Name != "" {
