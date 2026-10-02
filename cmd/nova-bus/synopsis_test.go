@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -133,5 +135,26 @@ func TestEveryVerbInTheSynopsisIsDispatchable(t *testing.T) {
 	for _, v := range readSynopsis(t) {
 		r := invoke(t, "", v.verb)
 		assert.NotContainsf(t, r.stderr, "unknown subcommand", "`nova-bus help` names the verb %q and the dispatch does not: %s", v.verb, strings.TrimSpace(r.stderr))
+	}
+}
+
+// The spec states the bound `check` has, the one its -h lists: `--max <n>`, default 20, 0
+// for all, then one BUS MORE line and one BUS CHECK count line. It said `check` had no
+// --max, and described per-kind caps, BUS FINDING and BUS SUMMARY lines no build prints.
+func TestTheSpecStatesTheCheckBoundTheCodeHas(t *testing.T) {
+	t.Parallel()
+	help := invoke(t, "", "check", "-h").mustCode(t, 0).stdout
+	require.Contains(t, help, "--max <int>  findings to print before one BUS MORE line naming the rest (default 20, 0 = all)")
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC.md"))
+	require.NoError(t, err)
+	spec := string(raw)
+	for _, gone := range []string{"`check` has no `--max`", "BUS FINDING kind=", "BUS SUMMARY mode=", "check --bus ~/bus --full --fail-max"} {
+		assert.NotContains(t, spec, gone, "docs/SPEC.md describes a check the code does not have")
+	}
+	_, section, ok := strings.Cut(spec, "#### The bound — check\n")
+	require.True(t, ok, "docs/SPEC.md has no `#### The bound — check` section")
+	section, _, _ = strings.Cut(section, "\n#### ")
+	for _, want := range []string{"`--max <n>` findings (default 20, `0` for all)", `BUS MORE shown=<n> total=<t> remedy="--max 0"`, "BUS CHECK findings=<t> fail=<x> warn=<w>"} {
+		assert.Contains(t, section, want)
 	}
 }
