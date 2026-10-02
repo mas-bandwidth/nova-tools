@@ -382,10 +382,6 @@ deprecated/nova-bus-decide/private_test.go deleted 2026-09-30 from deprecated/; 
 deprecated/tools/testdur/benches_test.go deleted 2026-09-30 from deprecated/; nova-test support tool, replaced by cmd/nova-ci slowtests
 internal/civerdict/civerdict_test.go dead: no living importer, the owner 2026-09-30
 internal/ctxindex/ctxindex_test.go dead: no living importer, the owner 2026-09-30
-internal/filelock/filelock_functional_test.go dead: no living importer, the owner 2026-09-30
-internal/filelock/filelock_test.go dead: no living importer, the owner 2026-09-30
-internal/filelock/filelock_unix_test.go dead: no living importer, the owner 2026-09-30
-internal/filelock/property_test.go dead: no living importer, the owner 2026-09-30
 internal/fleet/state/redis_test.go dead: no living importer, the owner 2026-09-30
 internal/fleet/state/state_test.go dead: no living importer, the owner 2026-09-30
 internal/gh/await_functional_test.go dead: no living importer, the owner 2026-09-30
