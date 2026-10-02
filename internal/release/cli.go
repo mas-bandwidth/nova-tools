@@ -16,8 +16,6 @@ import (
 // five lines docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
 // default path: SPEC-UPDATE rule 1 (no search of the cwd, no $HOME) is why a
 // release cut from a laptop and a release cut from a bench are the same release.
-// The one exception is --receipts, and internal/release/dogfoodgate.go says at
-// length why the gate in front of the definition of done is worth it.
 const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]

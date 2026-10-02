@@ -410,12 +410,11 @@ refuses, and so does a shipped tool's not-ok receipt on a verb the reference doe
 cannot be read refuses naming its path: an I/O error is not a tool outside the release.
 `nova-check dogfood gate --shipped <cmd dir>` is the same read.
 
-**The two inputs, and the one default in this package.** `--cli` names the command reference and
-defaults to `docs/CLI.md` beside the checkout the verb was already given (`--changelog` for `cut`,
-`--source` for `build`). `--receipts` names the receipts directory and defaults to
-`~/rowan-working/dogfood` **when that directory exists** — the single exception to SPEC-UPDATE rule 1,
-taken because the alternative fails in the direction that lets a tool ship. A run with neither is not a
-run that passed: it prints `RELEASE CUT NOTE dogfood-gate=skipped …` naming what was missing.
+**The two inputs.** `--cli` names the command reference and defaults to `docs/CLI.md` beside the
+checkout the verb was already given (`--changelog` for `cut`, `--source` for `build`): a path derived
+from one the verb was handed, never searched for. `--receipts` names the receipts directory and has
+no default (SPEC-UPDATE rule 1: no path is guessed). A run without both is not a run that passed: it
+prints `RELEASE CUT NOTE dogfood-gate=skipped …` naming what was missing.
 
 **The waiver is work, and it outlives the terminal.** `--no-dogfood-gate` without `--reason <why>`
 refuses. With one, the reason is printed as `RELEASE CUT DOGFOOD WAIVED reason=<why>`, the receipt line

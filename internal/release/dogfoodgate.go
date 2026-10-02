@@ -32,16 +32,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
 )
 
-// DefaultReceiptsDir is where this fleet keeps its receipts, relative to the
-// home directory of whoever is cutting. It is the ONLY path in this package
-// with a default, and it is one on purpose: SPEC-UPDATE rule 1 says no path is
-// guessed, and the reason the rule exists is that a guessed path makes two
-// runs mean different things. A receipts directory is the exception because
-// the alternative -- a release lane that silently skips the gate whenever
-// somebody forgets a flag -- fails in the direction that lets a tool ship. It
-// is used only when it EXISTS, and what was used is named on the line.
-var DefaultReceiptsDir = filepath.Join("rowan-working", "dogfood")
-
 // DogfoodWaiveFlag and DogfoodReasonFlag are the way past the gate, spelled in
 // one place so the remedy a person is handed is the flag they then type.
 const (
@@ -66,7 +56,7 @@ var DogfoodNote = "cut and build run the dogfood gate FIRST -- `nova-check dogfo
 	"a verb somebody ran, that did not do what they needed, and that nobody has run since and said it did. " +
 	"A tool is done when it is tested, dogfooded by a non-author on real work, and the feedback is APPLIED; feedback filed is not feedback applied. " +
 	"--cli names the command reference and defaults to docs/CLI.md beside the checkout the verb was already given (--changelog for cut, --source for build). " +
-	"--receipts names the receipts and defaults to ~/" + DefaultReceiptsDir + " when that directory exists. " +
+	"--receipts names the receipts directory and has no default (no path is guessed). " +
 	"A run with neither is NOT a run that passed: it prints `dogfood-gate=skipped` and names what was missing. " +
 	"The way past an open edge is to fix it, or " + DogfoodWaiveFlag + " " + DogfoodReasonFlag + " <why> -- and the waiver is printed on the line AND written into the CHANGELOG section, because a waiver nobody can find later is a gate nobody has."
 
@@ -75,7 +65,7 @@ var DogfoodNote = "cut and build run the dogfood gate FIRST -- `nova-check dogfo
 // apart in what they will accept.
 func addDogfoodFlags(f *flag.FlagSet, o *options, cliDefault string) {
 	f.StringVar(&o.cli, "cli", "", "the command reference the dogfood gate reads its verbs from (default: "+cliDefault+")")
-	f.StringVar(&o.receipts, "receipts", "", "the dogfood receipts directory (default: ~/"+DefaultReceiptsDir+" when it exists)")
+	f.StringVar(&o.receipts, "receipts", "", "the dogfood receipts directory; without it the gate is skipped and the line says so")
 	f.BoolVar(&o.noDogfood, "no-dogfood-gate", false, "release without the definition of done; "+DogfoodReasonFlag+" <why> is then required")
 	f.StringVar(&o.reason, "reason", "", "why the gate was waived; it goes on the line and into the changelog")
 }
@@ -169,9 +159,9 @@ func ReadDogfood(cli, receipts, cmd string) (DogfoodVerdict, error) {
 // `build` are already told a path inside the checkout -- the changelog, the
 // source tree -- so the reference beside it is derived rather than retyped;
 // but a derived path that is not there means this is not a nova-tools checkout
-// and there is nothing to gate against. Deciding that before the home
-// directory is consulted is also what keeps this package's own tests honest:
-// a test working in a temp directory can never reach a real fleet's receipts.
+// and there is nothing to gate against. The receipts are --receipts alone: no
+// path is guessed (SPEC-UPDATE rule 1), so two machines running one command
+// read the same receipts or say that none were named.
 func dogfoodPaths(o options, checkout string) (cli, receipts, cmd string) {
 	cli = o.cli
 	if derived := filepath.Join(checkout, "docs", "CLI.md"); cli == "" && checkout != "" && exists(derived) {
@@ -185,15 +175,7 @@ func dogfoodPaths(o options, checkout string) (cli, receipts, cmd string) {
 	if c := filepath.Join(checkout, "cmd"); checkout != "" && exists(c) {
 		cmd = c
 	}
-	receipts = o.receipts
-	if receipts == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			if d := filepath.Join(home, DefaultReceiptsDir); exists(d) {
-				receipts = d
-			}
-		}
-	}
-	return cli, receipts, cmd
+	return cli, o.receipts, cmd
 }
 
 func exists(path string) bool {
