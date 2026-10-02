@@ -97,10 +97,12 @@ func CheckInvariant1(storeDir string, sopsCfg *SopsConfig, recoveryKey string) [
 	return failures
 }
 
-// ruleRecipientsProblem is the one judgement of a creation rule's recipients, made by
-// check (CheckInvariant1) and the store's gate (RunGate) alike: exactly two, distinct,
-// one of them the declared recovery key, so the other is the seat's own key. It returns
-// why they are not, worded to follow "rule ...", or "" when they are. An empty
+// ruleRecipientsProblem is the one judgement of a seat's recipients: exactly two,
+// distinct, one of them the declared recovery key, so the other is the seat's own key.
+// check (CheckInvariant1) and the store's gate (RunGate) hold a creation rule's
+// recipients to it, seat inject (seatInjectTarget) the seat file's own, and seat add
+// (RunSeatAdd) the rule it is about to write. It returns why they are not, worded to
+// follow its subject ("rule ...", "seat file ..."), or "" when they are. An empty
 // recoveryKey is one check could not read (recovery.pub is reported on its own), and
 // the recovery key is then not looked for.
 func ruleRecipientsProblem(recipients []string, recoveryKey string) string {
@@ -108,10 +110,10 @@ func ruleRecipientsProblem(recipients []string, recoveryKey string) string {
 		return fmt.Sprintf("has %d recipients; expected exactly 2 (one seat key and declared recovery key)", len(recipients))
 	}
 	if recipients[0] == recipients[1] {
-		return fmt.Sprintf("has duplicate recipient %s; a rule names one seat key and the declared recovery key, distinct", recipients[0])
+		return fmt.Sprintf("has duplicate recipient %s; a seat is one seat key and the declared recovery key, distinct", recipients[0])
 	}
 	if recoveryKey != "" && !slices.Contains(recipients, recoveryKey) {
-		return fmt.Sprintf("does not contain declared recovery key %s", recoveryKey)
+		return fmt.Sprintf("does not contain declared recovery key %s (recovery.pub)", recoveryKey)
 	}
 	return ""
 }
@@ -141,28 +143,7 @@ func CheckInvariant2(storeDir string, sopsCfg *SopsConfig, files []string) []Che
 			continue
 		}
 
-		fileSet := make(map[string]bool)
-		for _, r := range fileRecipients {
-			fileSet[r] = true
-		}
-		ruleSet := make(map[string]bool)
-		for _, r := range rule.Recipients {
-			ruleSet[r] = true
-		}
-
-		differ := false
-		if len(fileSet) != len(ruleSet) {
-			differ = true
-		} else {
-			for r := range fileSet {
-				if !ruleSet[r] {
-					differ = true
-					break
-				}
-			}
-		}
-
-		if differ {
+		if !sameKeySet(fileRecipients, rule.Recipients) {
 			failures = append(failures, CheckFailure{
 				Kind:   "recipients-drift",
 				File:   file,
