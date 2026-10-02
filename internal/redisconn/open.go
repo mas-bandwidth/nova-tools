@@ -113,7 +113,7 @@ func open(ctx context.Context, o Options, getenv func(string) string, dial dialF
 		// client is made (go-redis does one to choose an endpoint type).
 		// go-redis v9.22.0 sends CLIENT MAINT_NOTIFICATIONS on every connect
 		// unless told not to: maintnotifications/config.go:138 makes ModeAuto
-		// the default, and with Protocol 3 the command goes out; the old
+		// the default, and with Protocol 3 the command goes out;
 		// store's options left it on, which was errorstat_ERR:count=1 on a
 		// Redis 8.10.2 that does not know the command.
 		DisableIdentity: true,
