@@ -3,6 +3,7 @@ package tablemodel
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	tassert "github.com/stretchr/testify/assert"
@@ -97,7 +98,7 @@ func TestContinuityWantsTheRevisionsToFollowOnAnother(t *testing.T) {
 	require.NoError(t, continuity(e, 4))
 	for _, before := range []int{3, 5} {
 		err := continuity(e, before)
-		tassert.ErrorContains(t, err, "GAP:", "store at %d: %v", before, err)
+		tassert.True(t, err != nil && strings.HasPrefix(err.Error(), "GAP:"), "store at %d: %v", before, err)
 	}
 	err := continuity(Event{"rev_before": "4", "rev_after": "6"}, 4)
 	tassert.Error(t, err, "a receipt that skips a revision was accepted")

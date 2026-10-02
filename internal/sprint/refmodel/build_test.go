@@ -184,7 +184,7 @@ func (w *world) land(t *testing.T, id string) {
 	t.Helper()
 	c := w.s.Work.Card(id)
 	require.NotNil(t, c, "land %s: it is not merging", id)
-	require.Equal(t, sprint.Merging, c.Col, "land %s: it is not merging", id)
+	require.Equal(t, string(sprint.Merging), c.Col, "land %s: it is not merging", id)
 	c.Col = sprint.Landed
 	c.Rev++
 	w.s.Work.Put(c)

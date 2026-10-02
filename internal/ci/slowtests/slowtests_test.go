@@ -284,8 +284,12 @@ func TestSlowTestsVerdictIsTheSameAtAnyLoad(t *testing.T) {
 			assert.Contains(t, strings.Join(lines, "\n"), sleepsLine, "%s, %s leg, a SLEEPS skip: exit %d lines\n%s\nwant exit 1 with %q", name, leg.name, code, strings.Join(lines, "\n"), sleepsLine)
 		}
 	}
-	assert.Equal(t, "CI-LOAD load=20.00 cpus=32 per-cpu=0.62: measured, not a verdict", loads["load 20"].LoadLine(), "LoadLine = %q, want %q", loads["load 20"].LoadLine(), "CI-LOAD load=20.00 cpus=32 per-cpu=0.62: measured, not a verdict")
-	assert.Equal(t, "CI-LOAD load=unknown cpus=32: measured, not a verdict (the load could not be read: sysctl -n vm.loadavg: executable file not found in $PATH)", loads["unread"].LoadLine(), "LoadLine = %q, want %q", loads["unread"].LoadLine(), "CI-LOAD load=unknown cpus=32: measured, not a verdict (the load could not be read: sysctl -n vm.loadavg: executable file not found in $PATH)")
+	got20 := loads["load 20"].LoadLine()
+	const want20 = "CI-LOAD load=20.00 cpus=32 per-cpu=0.62: measured, not a verdict"
+	assert.Equal(t, want20, got20, "LoadLine = %q, want %q", got20, want20)
+	gotUnread := loads["unread"].LoadLine()
+	const wantUnread = "CI-LOAD load=unknown cpus=32: measured, not a verdict (the load could not be read: sysctl -n vm.loadavg: executable file not found in $PATH)"
+	assert.Equal(t, wantUnread, gotUnread, "LoadLine = %q, want %q", gotUnread, wantUnread)
 }
 
 // A SLEEPS skip the ledger names is not a finding; a subtest's SLEEPS skip is

@@ -22,7 +22,7 @@ func TestGuardTurnsAFailedCheckIntoAnErrorAndNothingElse(t *testing.T) {
 	require.NoError(t, err, "a passing check gave %v", err)
 	defer func() {
 		r := recover()
-		if tassert.NotNil(t, r, "a panic that is not a failed check was swallowed: %v", r) {
+		if tassert.True(t, r != nil, "a panic that is not a failed check was swallowed: %v", r) {
 			tassert.Equal(t, "a programming error", r, "a panic that is not a failed check was swallowed: %v", r)
 		}
 	}()

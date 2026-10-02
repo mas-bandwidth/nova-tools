@@ -603,7 +603,7 @@ func TestASnapshotThatLacksATableIsRefusedInWords(t *testing.T) {
 		func() {
 			defer func() {
 				r := recover()
-				if assert.NotNil(t, r, "%s: deciding did not refuse in words: %v", name, r) {
+				if assert.True(t, r != nil, "%s: deciding did not refuse in words: %v", name, r) {
 					assert.Contains(t, fmt.Sprint(r), "refmodel:", "%s: deciding did not refuse in words: %v", name, r)
 				}
 			}()

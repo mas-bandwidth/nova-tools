@@ -527,11 +527,12 @@ func TestTLCRecordsAndCasesMustMatchOneToOne(t *testing.T) {
 			t.Parallel()
 			f := newTLCFixture(t)
 			tc.edit(f)
+			problems := tlcRecordProblems(f.root)
 			found := false
-			for _, problem := range tlcRecordProblems(f.root) {
+			for _, problem := range problems {
 				found = found || strings.Contains(problem, tc.want)
 			}
-			require.Truef(t, found, "no problem names %q: %v", tc.want, tlcRecordProblems(f.root))
+			require.Truef(t, found, "no problem names %q: %v", tc.want, problems)
 		})
 	}
 }
@@ -567,8 +568,9 @@ func TestTLCEveryFileACaseReadsStalesIt(t *testing.T) {
 		hand.WriteString(p + "\x00" + hex.EncodeToString(sum[:]) + "\n")
 	}
 	handSum := sha256.Sum256([]byte(hand.String()))
+	wantFP := hex.EncodeToString(handSum[:])
 	fp, n, _ := src.Fingerprint("MCA.cfg")
-	require.Truef(t, fp == hex.EncodeToString(handSum[:]) && n == len(want), "fingerprint %s over %d files, worked out by hand %s over %d", fp, n, hex.EncodeToString(handSum[:]), len(want))
+	require.Truef(t, fp == wantFP && n == len(want), "fingerprint %s over %d files, worked out by hand %s over %d", fp, n, wantFP, len(want))
 	for _, path := range want {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()

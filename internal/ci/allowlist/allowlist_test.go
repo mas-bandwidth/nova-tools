@@ -95,7 +95,8 @@ func TestUpdateDropsStaleRowsAndFailsOnce(t *testing.T) {
 	var r recorder
 	res := CheckMode(&r, load(t, path, Options{Ceiling: true}), set("a.go:f", "c.go:h"), true)
 	want := strings.Replace(three, "b.go:g  # reason b\n", "", 1)
-	require.Equal(t, want, readBack(t, path), "rewritten list:\n%s\nwant:\n%s", readBack(t, path), want)
+	got := readBack(t, path)
+	require.Equal(t, want, got, "rewritten list:\n%s\nwant:\n%s", got, want)
 	require.True(t, res.Updated, "an update must fail once with %q and return no stale rows: updated=%v stale=%v lines=%q", UpdatedRerun, res.Updated, res.Stale, r.lines)
 	require.Empty(t, res.Stale, "an update must fail once with %q and return no stale rows: updated=%v stale=%v lines=%q", UpdatedRerun, res.Updated, res.Stale, r.lines)
 	require.Len(t, r.lines, 1, "an update must fail once with %q and return no stale rows: updated=%v stale=%v lines=%q", UpdatedRerun, res.Updated, res.Stale, r.lines)
@@ -117,7 +118,8 @@ func TestCeilingListRefusesToGrowAndSaysSo(t *testing.T) {
 	path := writeList(t, three)
 	var r recorder
 	res := CheckMode(&r, load(t, path, Options{Ceiling: true}), set("a.go:f", "b.go:g", "c.go:h", "d.go:new", "e.go:new"), true)
-	require.Equal(t, three, readBack(t, path), "a ceiling list grew under an update:\n%s", readBack(t, path))
+	got := readBack(t, path)
+	require.Equal(t, three, got, "a ceiling list grew under an update:\n%s", got)
 	require.Equal(t, 2, r.count("refuses to grow"), "each refused key needs its own line: %q", r.lines)
 	require.Equal(t, 1, r.count("d.go:new"), "each refused key needs its own line: %q", r.lines)
 	require.Equal(t, 1, r.count("e.go:new"), "each refused key needs its own line: %q", r.lines)
@@ -133,7 +135,8 @@ func TestGrowableListTakesTheMeasuredSet(t *testing.T) {
 	opt := Options{NewRow: func(k string) string { return k + " # measured" }}
 	var r recorder
 	res := CheckMode(&r, load(t, path, opt), set("kept", "new"), true)
-	require.Equal(t, "# h\nkept # stays\nnew # measured\n", readBack(t, path), "rewritten list %q, want %q", readBack(t, path), "# h\nkept # stays\nnew # measured\n")
+	got := readBack(t, path)
+	require.Equal(t, "# h\nkept # stays\nnew # measured\n", got, "rewritten list %q, want %q", got, "# h\nkept # stays\nnew # measured\n")
 	require.True(t, res.Updated, "updated=%v unlisted=%v lines=%q", res.Updated, res.Unlisted, r.lines)
 	require.Empty(t, res.Unlisted, "updated=%v unlisted=%v lines=%q", res.Updated, res.Unlisted, r.lines)
 	require.Equal(t, 1, r.count(UpdatedRerun), "updated=%v unlisted=%v lines=%q", res.Updated, res.Unlisted, r.lines)
@@ -147,7 +150,8 @@ func TestCeilingLineIsLoweredNeverRaised(t *testing.T) {
 	path := writeList(t, "# h\n# ceiling: 3\na\nb\nc\n")
 	var r recorder
 	CheckMode(&r, load(t, path, Options{Ceiling: true}), set("a", "c"), true)
-	require.Equal(t, "# h\n# ceiling: 2\na\nc\n", readBack(t, path), "rewritten list %q, want %q", readBack(t, path), "# h\n# ceiling: 2\na\nc\n")
+	got := readBack(t, path)
+	require.Equal(t, "# h\n# ceiling: 2\na\nc\n", got, "rewritten list %q, want %q", got, "# h\n# ceiling: 2\na\nc\n")
 	n, ok := load(t, path, Options{}).Ceiling()
 	require.True(t, ok, "ceiling = %d, %v; want 2", n, ok)
 	require.Equal(t, 2, n, "ceiling = %d, %v; want 2", n, ok)
@@ -158,8 +162,9 @@ func TestCeilingLineIsLoweredNeverRaised(t *testing.T) {
 	require.Equal(t, 1, o.count("over its ceiling of 1"), "a list over its ceiling must be refused: %q", o.lines)
 	var u recorder
 	CheckMode(&u, load(t, over, Options{Ceiling: true}), set("a", "b"), true)
-	require.Equal(t, 1, u.count("never raises a ceiling"), "an update must not raise a ceiling: %q %q", u.lines, readBack(t, over))
-	require.Equal(t, "# ceiling: 1\na\nb\n", readBack(t, over), "an update must not raise a ceiling: %q %q", u.lines, readBack(t, over))
+	require.Equal(t, 1, u.count("never raises a ceiling"), "an update must not raise a ceiling: %q", u.lines)
+	gotOver := readBack(t, over)
+	require.Equal(t, "# ceiling: 1\na\nb\n", gotOver, "an update must not raise a ceiling: %q %q", u.lines, gotOver)
 
 	_, err := Parse("p", "# ceiling: many\n", Options{})
 	require.Error(t, err, "a ceiling that is not a number must be refused")
@@ -255,7 +260,9 @@ func TestCountedUpdateLowersCountsAndNeverRaisesThem(t *testing.T) {
 	res := CheckCountedMode(rec, l, map[string]int{"a:f": 2, "b:g": 2}, true)
 	require.True(t, res.Updated, "update did not report: %+v %v", res, rec.lines)
 	require.Equal(t, 1, rec.count(UpdatedRerun), "update did not report: %+v %v", res, rec.lines)
-	assert.Equal(t, "# ceiling: 2\na:f 2 why a\nb:g 2 why b\n", readBack(t, path), "after the update:\n%s\nwant:\n%s", readBack(t, path), "# ceiling: 2\na:f 2 why a\nb:g 2 why b\n")
+	got := readBack(t, path)
+	const want = "# ceiling: 2\na:f 2 why a\nb:g 2 why b\n"
+	assert.Equal(t, want, got, "after the update:\n%s\nwant:\n%s", got, want)
 
 	path = writeList(t, "# ceiling: 1\na:f 1 why a\n")
 	l = load(t, path, Options{Ceiling: true, Counted: true})
@@ -263,7 +270,8 @@ func TestCountedUpdateLowersCountsAndNeverRaisesThem(t *testing.T) {
 	CheckCountedMode(rec, l, map[string]int{"a:f": 2, "z:z": 1}, true)
 	assert.Equal(t, 1, rec.count("refuses to raise a count"), "the update did not refuse both raises: %v", rec.lines)
 	assert.Equal(t, 1, rec.count("refuses to grow"), "the update did not refuse both raises: %v", rec.lines)
-	assert.Equal(t, "# ceiling: 1\na:f 1 why a\n", readBack(t, path), "a refused update changed the file: %q", readBack(t, path))
+	gotRefused := readBack(t, path)
+	assert.Equal(t, "# ceiling: 1\na:f 1 why a\n", gotRefused, "a refused update changed the file: %q", gotRefused)
 }
 
 // TestParseRejectsDuplicateKeys verifies that Parse rejects repeated keys by default,

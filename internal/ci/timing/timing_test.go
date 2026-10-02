@@ -147,7 +147,8 @@ func TestTimingSelectAndRender(t *testing.T) {
 		require.Equal(t, 0, got[90], "Select(last=2) over PRs 100, 98, 90 kept %+v, want PR 100 and both jobs of PR 98", kept)
 	})
 	t.Run("last of zero or less keeps everything", func(t *testing.T) {
-		require.Len(t, Select(events, DefaultRepos, 0), 5, "Select with last=0 kept %d events, want 5 (the other repo dropped)", len(Select(events, DefaultRepos, 0)))
+		got := Select(events, DefaultRepos, 0)
+		require.Len(t, got, 5, "Select with last=0 kept %d events, want 5 (the other repo dropped)", len(got))
 	})
 	t.Run("the table's shape", func(t *testing.T) {
 		rows, err := Rows(Select(events, DefaultRepos, 0))
@@ -158,7 +159,8 @@ func TestTimingSelectAndRender(t *testing.T) {
 			"mas-bandwidth/schema\t699\tcheck\t2026-08-01T04:00:00Z\t60\t60\t600\t-\n" +
 			"mas-bandwidth/schema\t699\ttest\t2026-08-01T04:00:00Z\t60\t60\t2400\t-\n" +
 			"mas-bandwidth/schema\t700\ttest\t2026-08-01T05:00:00Z\t60\t60\t1200\t1380\n"
-		assert.Equal(t, want, Render(rows), "Render printed:\n%s\nwant:\n%s", Render(rows), want)
+		got := Render(rows)
+		assert.Equal(t, want, got, "Render printed:\n%s\nwant:\n%s", got, want)
 	})
 	t.Run("an event that does not say green", func(t *testing.T) {
 		bad := job("mas-bandwidth/nova-tools", 1, "test", "2026-08-01T06:00:00Z", "2026-08-01T06:01:00Z", "2026-08-01T06:02:00Z", "2026-08-01T06:04:00Z", "2026-08-01T06:24:00Z", true)

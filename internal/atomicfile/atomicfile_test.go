@@ -313,13 +313,13 @@ func TestSanitizedError(t *testing.T) {
 	rawErr := errors.New("raw message\nwith newline and \x1b[31mescape sequence")
 	wrapped := wrapErr("atomicfile: test operation", rawErr)
 
-	require.NotNil(t, wrapped, "wrapErr returned nil")
+	require.Error(t, wrapped, "wrapErr returned nil")
 	require.NotContains(t, wrapped.Error(), "\n", "wrapped Error() contains raw newline: %q", wrapped.Error())
 	require.NotContains(t, wrapped.Error(), "\x1b", "wrapped Error() contains raw ESC byte: %q", wrapped.Error())
 	require.ErrorIs(t, wrapped, rawErr, "wrapped error does not satisfy errors.Is for rawErr")
 
 	nilWrapped := wrapErr("prefix", nil)
-	require.Nil(t, nilWrapped, "wrapErr with nil err = %v, want nil", nilWrapped)
+	require.NoError(t, nilWrapped, "wrapErr with nil err = %v, want nil", nilWrapped)
 }
 
 func TestDefaultHooksSyncWithTeeth(t *testing.T) {
