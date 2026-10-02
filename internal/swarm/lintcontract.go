@@ -9,33 +9,27 @@ import (
 // prefix list below is what every writer of a card and every reader of one uses.
 //
 // Line 1 of a card is its contract: the swarm hashes everything below it, records the
-// line at admission, and `gather` refuses a `RESULT.md` whose line 1 differs
-// (the deleted spec-pulse page 10, the-card-as-cut-writes-it, lines 12-14). Three readers touch it and
-// two of them disagreed on one character:
+// line at admission, and `gather` refuses a `RESULT.md` whose line 1 differs.
+// Three readers touch it and two of them disagreed on one character:
 //
-//   - `cut` writes and accepts `RESULT <label> sha=<sha12>` -- no colon
-//     (internal/pulse/cut.go, and the example at
-//     that page, line 4);
-//   - `lint --card`'s `result-first` wanted `RESULT: ` -- with one
-//     colon;
+//   - `cut` writes and accepts `RESULT <label> sha=<sha12>` -- no colon;
+//   - `lint --card`'s `result-first` wanted `RESULT: ` -- with one colon;
 //   - `gather` compares line 1 to line 1 and imposes no prefix of its own, so it follows
-//     whichever the other two settle on (internal/pulse/harvest.go, classifyResult).
+//     whichever the other two settle on.
 //
 // The cost of the disagreement: every card `cut` writes draws a `result-first` drift, and
 // a hand-written card in the colon-less form draws one, for a missing colon.
 //
-// THE COLON FORM WINS. It is SPEC-SWARM's own law and it is what the majority
-// of writers already write -- `cut --kind` (internal/pulse/cutkind.go),
-// `internal/pulse/manager.go`. `RESULT: <label>
-// sha=<sha12>` is the form to WRITE.
+// THE COLON FORM WINS. It is the system's own law and it is what the majority
+// of writers already write -- `cut --kind` and the manager module.
+// `RESULT: <label> sha=<sha12>` is the form to WRITE.
 //
-// THE NO-COLON FORM IS ACCEPTED AS A STOPGAP, NOT AS A SECOND RULE. The one renderer
-// still on it is the plain `cut` template path (`internal/pulse/cut.go`), and the
-// follow-up card that closes this stopgap rewrites it and adds the class test
+// The stopgap handles the one renderer still on it, and a follow-up card rewrites
+// that path and adds the class test
 // `every-writer-and-reader-agrees-on-the-result-line`. Until that card lands, refusing
-// the no-colon form would refuse cards a tool on dev writes today, so both are read --
-// and it is that class test, never a judgement here, that retires the second entry
-// below. internal/swarm/lintcontract_test.go goes red the day any of the three readers
+// the no-colon form would refuse cards a tool writes today, so both are read --
+// and it is that class test, never a judgment here, that retires the second entry.
+// internal/swarm/lintcontract_test.go goes red the day any of the three readers
 // changes form.
 //
 // The colon form is FIRST in this slice, and it is the only form any message names as
