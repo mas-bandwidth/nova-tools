@@ -3,6 +3,9 @@ package swarm
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ISSUE #644. A card the harness's own fence stopped is NOT a card whose model published
@@ -40,9 +43,8 @@ func TestFenceRejectionReadsTheHarnesssOwnWords(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := FenceRejection([]byte(tc.in))
-			if ok != tc.ok || got != tc.want {
-				t.Fatalf("FenceRejection = %q,%v; want %q,%v", got, ok, tc.want, tc.ok)
-			}
+			require.Equal(t, tc.ok, ok, "FenceRejection = %q,%v; want %q,%v", got, ok, tc.want, tc.ok)
+			require.Equal(t, tc.want, got, "FenceRejection = %q,%v; want %q,%v", got, ok, tc.want, tc.ok)
 		})
 	}
 }
@@ -56,25 +58,18 @@ func TestFencePermissionNamesTheWholeJobAndNothingAboveIt(t *testing.T) {
 
 	block := FencePermission("/root/1/jobs/a", []string{"/sys/kernel/security/lsm"})
 	external, ok := block[FenceExternalDirectory].(map[string]any)
-	if !ok {
-		t.Fatalf("the block is keyed by the permission the harness asks under: %v", block)
-	}
+	require.True(t, ok, "the block is keyed by the permission the harness asks under: %v", block)
 	for _, want := range []string{
 		"/root/1/jobs/a/*", "/root/1/jobs/a/**",
 		"/sys/kernel/security/lsm", "/sys/kernel/security/*",
 	} {
-		if external[want] != FenceAllow {
-			t.Errorf("%s is allowed; the block holds %v", want, external)
-		}
+		assert.Equal(t, FenceAllow, external[want], "%s is allowed; the block holds %v", want, external)
 	}
 	for _, never := range []string{"/root/1/jobs/*", "/root/1/jobs/**", "/root/1/*", "/root/*"} {
-		if _, named := external[never]; named {
-			t.Errorf("%s is ABOVE the job and is never named: %v", never, external)
-		}
+		_, named := external[never]
+		assert.False(t, named, "%s is ABOVE the job and is never named: %v", never, external)
 	}
-	if external["*"] != FenceDeny {
-		t.Errorf("every other path is denied without prompting (a deny is a tool error the model routes around; an ask auto-rejects and ends the run): %v", external)
-	}
+	assert.Equal(t, FenceDeny, external["*"], "every other path is denied without prompting (a deny is a tool error the model routes around; an ask auto-rejects and ends the run): %v", external)
 }
 
 // TestFencePermissionDeniesExternalDirectory: the harness's own fence is DENY, never ASK. An
@@ -86,15 +81,9 @@ func TestFencePermissionDeniesExternalDirectory(t *testing.T) {
 
 	block := FencePermission("/root/1/jobs/a", nil)
 	external, ok := block[FenceExternalDirectory].(map[string]any)
-	if !ok {
-		t.Fatalf("the block is keyed by the permission the harness asks under: %v", block)
-	}
-	if external["*"] != FenceDeny {
-		t.Fatalf("a path outside the job is denied, never asked about: %v", external)
-	}
-	if block[FenceWebfetch] != FenceDeny {
-		t.Errorf("webfetch is denied too, so no permission is left to prompt: %v", block)
-	}
+	require.True(t, ok, "the block is keyed by the permission the harness asks under: %v", block)
+	require.Equal(t, FenceDeny, external["*"], "a path outside the job is denied, never asked about: %v", external)
+	assert.Equal(t, FenceDeny, block[FenceWebfetch], "webfetch is denied too, so no permission is left to prompt: %v", block)
 }
 
 // TestMergeFencePermissionKeepsTheCarriedConfig: a provider config a caller carried keeps
@@ -105,27 +94,18 @@ func TestMergeFencePermissionKeepsTheCarriedConfig(t *testing.T) {
 
 	carried := []byte(`{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}}},"permission":{"read":{"*":"allow"},"external_directory":{"/opt/toolchains/*":"allow"}}}`)
 	out, ok := MergeFencePermission(carried, "/root/1/jobs/a", nil)
-	if !ok {
-		t.Fatalf("a JSON object config merges: %s", out)
-	}
+	require.True(t, ok, "a JSON object config merges: %s", out)
 	var cfg map[string]any
-	if err := json.Unmarshal(out, &cfg); err != nil {
-		t.Fatalf("the merged config is JSON: %v\n%s", err, out)
-	}
-	if _, named := cfg["provider"].(map[string]any)["ollama"]; !named {
-		t.Errorf("the carried provider survives the merge:\n%s", out)
-	}
+	err := json.Unmarshal(out, &cfg)
+	require.NoError(t, err, "the merged config is JSON: %v\n%s", err, out)
+	_, named := cfg["provider"].(map[string]any)["ollama"]
+	assert.True(t, named, "the carried provider survives the merge:\n%s", out)
 	perm := cfg["permission"].(map[string]any)
-	if _, named := perm["read"]; !named {
-		t.Errorf("a person's own rules survive the merge:\n%s", out)
-	}
+	_, named = perm["read"]
+	assert.True(t, named, "a person's own rules survive the merge:\n%s", out)
 	external := perm[FenceExternalDirectory].(map[string]any)
-	if external["/opt/toolchains/*"] != FenceAllow {
-		t.Errorf("a pattern the caller allowed is still allowed:\n%s", out)
-	}
-	if external["/root/1/jobs/a/**"] != FenceAllow {
-		t.Errorf("the job's own directory is allowed:\n%s", out)
-	}
+	assert.Equal(t, FenceAllow, external["/opt/toolchains/*"], "a pattern the caller allowed is still allowed:\n%s", out)
+	assert.Equal(t, FenceAllow, external["/root/1/jobs/a/**"], "the job's own directory is allowed:\n%s", out)
 
 	if got, ok := MergeFencePermission([]byte("not json at all"), "/root/1/jobs/a", nil); ok || string(got) != "not json at all" {
 		t.Errorf("a config this side cannot read is carried verbatim and says so, got %q,%v", got, ok)
@@ -144,12 +124,8 @@ func TestCardReadPathsReadsTheCardsOwnLine(t *testing.T) {
 		"READ: /sys/kernel/security/lsm\n")
 	got := CardReadPaths(card)
 	want := []string{"/sys/kernel/security/lsm", "/proc/self/status", "/etc/os-release"}
-	if len(got) != len(want) {
-		t.Fatalf("CardReadPaths = %v, want %v", got, want)
-	}
+	require.Len(t, got, len(want), "CardReadPaths = %v, want %v", got, want)
 	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("CardReadPaths = %v, want %v", got, want)
-		}
+		require.Equal(t, want[i], got[i], "CardReadPaths = %v, want %v", got, want)
 	}
 }

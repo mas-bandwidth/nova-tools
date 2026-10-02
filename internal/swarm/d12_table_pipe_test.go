@@ -1,6 +1,11 @@
 package swarm
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 // DOGFOOD D12 (2026-09-11, HIGH): a COMPLETE report -- head, `findings: 5`, every item
 // with its evidence, gates, one line -- was `RUN MALFORMED line=66` and went to failed/.
@@ -26,12 +31,8 @@ func TestAPipeInsideAQuoteIsNotACellBoundary(t *testing.T) {
 
 	got := ParseReport([]byte(head +
 		"| `day_basis=` enumerates `<utc|zone>`, code prints `mixed` | red | SPEC-TOKENS.md:436 |\n"))
-	if got.Class != ClassOK {
-		t.Fatalf("a row quoting a grammar alternation is a row (rule 2): class=%s line=%d", got.Class, got.MalformedLine)
-	}
-	if len(got.Items) != 1 {
-		t.Fatalf("the row wants one item, got %d", len(got.Items))
-	}
+	require.Equal(t, ClassOK, got.Class, "a row quoting a grammar alternation is a row (rule 2): class=%s line=%d", got.Class, got.MalformedLine)
+	require.Len(t, got.Items, 1, "the row wants one item, got %d", len(got.Items))
 	if it := got.Items[0]; it.State != "red" || it.Evidence != "SPEC-TOKENS.md:436" {
 		t.Errorf("the state and the evidence are the cells beside the quote, got state=%q evidence=%q", it.State, it.Evidence)
 	}
@@ -50,7 +51,5 @@ func TestAPipeInsideAQuoteIsNotACellBoundary(t *testing.T) {
 		t.Errorf("a fourth state word is malformed at its line: class=%s line=%d", bad.Class, bad.MalformedLine)
 	}
 	open := ParseReport([]byte(head + "| an item with one ` backtick | maybe | evidence |\n"))
-	if open.Class != ClassMalformed {
-		t.Errorf("an unterminated quote does not turn a bad row good: class=%s", open.Class)
-	}
+	assert.Equal(t, ClassMalformed, open.Class, "an unterminated quote does not turn a bad row good: class=%s", open.Class)
 }

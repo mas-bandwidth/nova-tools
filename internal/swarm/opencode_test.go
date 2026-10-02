@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE USAGE SOURCE IS THE DATABASE THE HARNESS ACTUALLY WRITES (rule 12, rule 13).
@@ -30,12 +32,8 @@ const fakeFlushMarker = ".flush-on-refusal"
 func writeDB(t *testing.T, dataHome, body string) string {
 	t.Helper()
 	path := filepath.Join(dataHome, OpenCodeDB)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	return path
 }
 
@@ -46,11 +44,9 @@ func TestNoSQLiteOnPathIsAnError(t *testing.T) {
 	writeDB(t, dataHome, "deepseek\tdeepseek-chat\t1\t1\t\t\t\n")
 	t.Setenv("PATH", t.TempDir())
 
-	if _, err := ReadProviderUsage(UsageOpenCode, dataHome); err == nil {
-		t.Fatal("no sqlite3 on PATH is a usage source that cannot be read")
-	} else if !strings.Contains(err.Error(), SQLiteBinary) {
-		t.Errorf("the refusal names the program it needs: %v", err)
-	}
+	_, err := ReadProviderUsage(UsageOpenCode, dataHome)
+	require.Error(t, err, "no sqlite3 on PATH is a usage source that cannot be read")
+	assert.Contains(t, err.Error(), SQLiteBinary, "the refusal names the program it needs: %v", err)
 }
 
 // A SOURCE WITH NO READER IS A NAMED REFUSAL, NEVER A SILENT DASH (rule 13).
@@ -65,12 +61,8 @@ func TestOpenCodeSourceWithoutSQLiteIsANamedRefusal(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
 	_, err := ReadProviderUsage(UsageOpenCode, dataHome)
-	if err == nil {
-		t.Fatal("no sqlite3 on PATH is a usage source that cannot be read")
-	}
-	if !strings.Contains(err.Error(), "USAGE REFUSED reason=no_sqlite") {
-		t.Errorf("the refusal names the missing reader: %v", err)
-	}
+	require.Error(t, err, "no sqlite3 on PATH is a usage source that cannot be read")
+	assert.Contains(t, err.Error(), "USAGE REFUSED reason=no_sqlite", "the refusal names the missing reader: %v", err)
 }
 
 // `usage: none` reports nothing and is never an error: only `--tokens unmetered` tasks run
@@ -79,9 +71,7 @@ func TestTheNoneSourceReportsNothing(t *testing.T) {
 	t.Parallel()
 
 	usage, err := ReadProviderUsage(UsageNone, t.TempDir())
-	if err != nil {
-		t.Fatalf("`usage: none` is not an error: %v", err)
-	}
+	require.NoError(t, err, "`usage: none` is not an error: %v", err)
 	if usage.Observed || len(usage.Values) != 0 {
 		t.Errorf("`usage: none` observes nothing: %+v", usage)
 	}
@@ -93,13 +83,9 @@ func TestFakeSQLite3FlushMarkerMatchesTheFake(t *testing.T) {
 	t.Parallel()
 
 	src, err := os.ReadFile(filepath.Join("testdata", "fakesqlite", "main.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := "const FlushMarker = " + strconv.Quote(fakeFlushMarker)
-	if !strings.Contains(string(src), want) {
-		t.Errorf("testdata/fakesqlite/main.go does not declare %s", want)
-	}
+	assert.Contains(t, string(src), want, "testdata/fakesqlite/main.go does not declare %s", want)
 }
 
 // THE SETTLE WINDOW IS HOW LONG THE READ WAITS, NEVER HOW LONG THE FIRST READ TOOK.
@@ -122,13 +108,9 @@ func TestASlowFirstReadDoesNotSpendTheSettleWindow(t *testing.T) {
 	t.Parallel()
 
 	db := filepath.Join(t.TempDir(), "opencode.db")
-	if err := os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644))
 	// A write-ahead log beside the database is the file a retry waits on.
-	if err := os.WriteFile(db+"-wal", []byte("unflushed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(db+"-wal", []byte("unflushed\n"), 0o644))
 	clock := time.Unix(0, 0)
 	attempts := 0
 	w := walWait{
@@ -145,20 +127,14 @@ func TestASlowFirstReadDoesNotSpendTheSettleWindow(t *testing.T) {
 				return nil, errors.New("database is locked")
 			}
 			// The writer checkpointed while the reader waited.
-			if err := os.Remove(db + "-wal"); err != nil {
-				t.Error(err)
-			}
+			assert.NoError(t, os.Remove(db+"-wal"))
 			return [][]string{{"deepseek", "deepseek-chat", "100", "50", "", "", ""}}, nil
 		},
 	}
 
 	rows, err := w.read(db)
-	if err != nil {
-		t.Fatalf("a first read slower than the window still gets to wait out the flush: %v", err)
-	}
-	if attempts != 2 {
-		t.Errorf("the reader made %d attempts, want 2: the refusal that starts the waiting is not the end of it", attempts)
-	}
+	require.NoError(t, err, "a first read slower than the window still gets to wait out the flush: %v", err)
+	assert.Equal(t, 2, attempts, "the reader made %d attempts, want 2: the refusal that starts the waiting is not the end of it", attempts)
 	if len(rows) != 1 || rows[0][2] != "100" {
 		t.Errorf("the retry's rows are the reading: %v", rows)
 	}
@@ -171,12 +147,8 @@ func TestAWriteAheadLogThatOutlastsTheWindowIsStillARefusal(t *testing.T) {
 	t.Parallel()
 
 	db := filepath.Join(t.TempDir(), "opencode.db")
-	if err := os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(db+"-wal", []byte("unflushed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644))
+	require.NoError(t, os.WriteFile(db+"-wal", []byte("unflushed\n"), 0o644))
 	locked := errors.New("database is locked")
 	clock := time.Unix(0, 0)
 	attempts := 0
@@ -190,9 +162,7 @@ func TestAWriteAheadLogThatOutlastsTheWindowIsStillARefusal(t *testing.T) {
 	}
 
 	rows, err := w.read(db)
-	if !errors.Is(err, locked) {
-		t.Fatalf("the refusal the writer caused is the one the caller sees: %v (rows %v)", err, rows)
-	}
+	require.ErrorIs(t, err, locked, "the refusal the writer caused is the one the caller sees: %v (rows %v)", err, rows)
 	// Five seconds of waiting in fifty-millisecond pauses: the first read plus at most one
 	// attempt per pause, and never an endless loop.
 	most := 1 + int(5*time.Second/(50*time.Millisecond))
@@ -228,13 +198,9 @@ func TestEveryRetryIsBoundedByWhatIsLeftOfTheWindow(t *testing.T) {
 	t.Parallel()
 
 	db := filepath.Join(t.TempDir(), "opencode.db")
-	if err := os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644))
 	// The writer never checkpoints, so the reader waits out the whole window and refuses.
-	if err := os.WriteFile(db+"-wal", []byte("unflushed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(db+"-wal", []byte("unflushed\n"), 0o644))
 	const first, settle = 20 * time.Second, 5 * time.Second
 	locked := errors.New("database is locked")
 	start := time.Unix(0, 0)
@@ -256,25 +222,14 @@ func TestEveryRetryIsBoundedByWhatIsLeftOfTheWindow(t *testing.T) {
 	}
 
 	rows, err := w.read(db)
-	if !errors.Is(err, locked) {
-		t.Fatalf("the refusal the writer caused is the one the caller sees: %v (rows %v)", err, rows)
-	}
-	if len(limits) < 2 {
-		t.Fatalf("the reader made %d attempts, want at least 2: a slow first read still gets its retry", len(limits))
-	}
-	if limits[0] != first {
-		t.Errorf("the first read was allowed %s, want the tool's whole query timeout %s", limits[0], first)
-	}
+	require.ErrorIs(t, err, locked, "the refusal the writer caused is the one the caller sees: %v (rows %v)", err, rows)
+	require.GreaterOrEqual(t, len(limits), 2, "the reader made %d attempts, want at least 2: a slow first read still gets its retry", len(limits))
+	assert.Equal(t, first, limits[0], "the first read was allowed %s, want the tool's whole query timeout %s", limits[0], first)
 	// Every retry after the first is allowed only what the window still has.
 	for i, got := range limits[1:] {
-		if got > settle {
-			t.Errorf("retry %d was allowed %s, want at most the settle window %s: a retry must not be started with the whole query timeout", i+1, got, settle)
-		}
-		if got <= 0 {
-			t.Errorf("retry %d was started with %s left: a retry that cannot finish inside the window is not started", i+1, got)
-		}
+		assert.LessOrEqual(t, got, settle, "retry %d was allowed %s, want at most the settle window %s: a retry must not be started with the whole query timeout", i+1, got, settle)
+		assert.Positive(t, got, "retry %d was started with %s left: a retry that cannot finish inside the window is not started", i+1, got)
 	}
-	if spent := clock.Sub(start); spent > first+settle {
-		t.Errorf("one sample spent %s, want at most %s (first read %s + window %s); supervise calls this synchronously, so the overrun is the worker's deadline not running", spent, first+settle, first, settle)
-	}
+	spent := clock.Sub(start)
+	assert.LessOrEqual(t, spent, first+settle, "one sample spent %s, want at most %s (first read %s + window %s); supervise calls this synchronously, so the overrun is the worker's deadline not running", spent, first+settle, first, settle)
 }

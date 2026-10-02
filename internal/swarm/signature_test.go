@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE FAILURE-SIGNATURE TABLE IS ONE TABLE IN TWO PLACES, and the two agree: the slice in
@@ -15,13 +18,9 @@ func TestSignatureTableMatchesSpec(t *testing.T) {
 	t.Parallel()
 
 	spec := readSpecSignatureTable(t)
-	if len(spec) != len(failureSignatures) {
-		t.Fatalf("the spec table holds %d rows and the binary %d; they must agree", len(spec), len(failureSignatures))
-	}
+	require.Len(t, spec, len(failureSignatures), "the spec table holds %d rows and the binary %d; they must agree", len(spec), len(failureSignatures))
 	for i := range failureSignatures {
-		if spec[i] != failureSignatures[i] {
-			t.Errorf("row %d disagrees: spec %+v, binary %+v", i, spec[i], failureSignatures[i])
-		}
+		assert.Equal(t, failureSignatures[i], spec[i], "row %d disagrees: spec %+v, binary %+v", i, spec[i], failureSignatures[i])
 	}
 }
 
@@ -35,9 +34,7 @@ func TestEachSignatureIsDetected(t *testing.T) {
 		s := s
 		t.Run(s.signature, func(t *testing.T) {
 			sig, class, ok := findFailureSignature([]byte("a run's tail\n" + s.signature + "\nmore\n"))
-			if !ok {
-				t.Fatalf("the signature %q was not detected", s.signature)
-			}
+			require.True(t, ok, "the signature %q was not detected", s.signature)
 			if sig != s.signature || class != s.class {
 				t.Errorf("detected sig=%q class=%q; want sig=%q class=%q", sig, class, s.signature, s.class)
 			}
@@ -54,20 +51,12 @@ func TestVerifyScoresSignature(t *testing.T) {
 	dir := t.TempDir()
 	result := filepath.Join(dir, "RESULT.md")
 	writeResult(t, result, contractLine, "BRANCH: rowan/swarm-signatures at abc123")
-	if err := os.WriteFile(filepath.Join(dir, "harness-output.log"),
-		[]byte("go: download go1.26 for linux/amd64: toolchain not available\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "harness-output.log"),
+		[]byte("go: download go1.26 for linux/amd64: toolchain not available\n"), 0o644))
 	got, err := CheckResult(result, Contract{Label: "card-142", ContractLine: contractLine})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.OK {
-		t.Fatalf("a verdict whose run carries a failure signature is not OK: %s", got.Line)
-	}
-	if !strings.Contains(got.Line, `reason=signature sig="toolchain not available" class=toolchain`) {
-		t.Fatalf("the verify line names the signature and its class: %s", got.Line)
-	}
+	require.NoError(t, err)
+	require.False(t, got.OK, "a verdict whose run carries a failure signature is not OK: %s", got.Line)
+	require.Contains(t, got.Line, `reason=signature sig="toolchain not available" class=toolchain`, "the verify line names the signature and its class: %s", got.Line)
 }
 
 // readSpecSignatureTable reads the failure-signature table out of the spec: the one table of
@@ -75,9 +64,7 @@ func TestVerifyScoresSignature(t *testing.T) {
 func readSpecSignatureTable(t *testing.T) []failureSignature {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
-	if err != nil {
-		t.Fatalf("the table is the spec's: %v", err)
-	}
+	require.NoError(t, err, "the table is the spec's: %v", err)
 	lines := strings.Split(string(raw), "\n")
 	start := -1
 	for i, line := range lines {
@@ -86,9 +73,7 @@ func readSpecSignatureTable(t *testing.T) []failureSignature {
 			break
 		}
 	}
-	if start < 0 {
-		t.Fatal("the spec has no failure-signature table")
-	}
+	require.GreaterOrEqual(t, start, 0, "the spec has no failure-signature table")
 	var out []failureSignature
 	for _, line := range lines[start+1:] {
 		if !strings.HasPrefix(line, "|") {
@@ -103,9 +88,7 @@ func readSpecSignatureTable(t *testing.T) []failureSignature {
 		}
 		out = append(out, failureSignature{signature: cells[0], class: cells[1], remedy: cells[2]})
 	}
-	if len(out) == 0 {
-		t.Fatal("the failure-signature table is empty")
-	}
+	require.NotEmpty(t, out, "the failure-signature table is empty")
 	return out
 }
 

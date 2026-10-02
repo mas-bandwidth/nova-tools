@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // A card that stopped making progress used to cost its WHOLE deadline before anybody
@@ -17,9 +19,7 @@ import (
 func TestDefaultNativeIdleIsTheBatchWindowNotAProviderDeadline(t *testing.T) {
 	t.Parallel()
 
-	if DefaultNativeIdle != 300*time.Second {
-		t.Fatalf("native idle is %s, want the same 300s window as batch", DefaultNativeIdle)
-	}
+	require.Equal(t, 300*time.Second, DefaultNativeIdle, "native idle is %s, want the same 300s window as batch", DefaultNativeIdle)
 }
 
 // fakeSnap is one reading of a process tree, handed to the watch instead of the machine's
@@ -52,9 +52,7 @@ func newIdleBench(t *testing.T, idle time.Duration, reader *WallReader) *idleBen
 		snap:  &fakeSnap{},
 		stop:  make(chan struct{}),
 	}
-	if err := os.WriteFile(b.log, []byte("start\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(b.log, []byte("start\n"), 0o644))
 	w := IdleWatch{Log: b.log, Job: job, Pid: 4242, Idle: idle, Reader: reader}
 	w.now = func() time.Time { return time.Unix(0, 0) }
 	w.ticker = func(time.Duration) (<-chan time.Time, func()) { return b.ticks, func() {} }
@@ -96,19 +94,12 @@ func TestWatchIdleEndsAStillCardAtItsIdleWindowAndNotAtItsDeadline(t *testing.T)
 	t.Parallel()
 
 	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
-	if _, ended := b.tick(t, 9*time.Second); ended {
-		t.Fatal("a card still for less than the window is not idle yet")
-	}
+	_, ended := b.tick(t, 9*time.Second)
+	require.False(t, ended, "a card still for less than the window is not idle yet")
 	end, ended := b.tick(t, 11*time.Second)
-	if !ended {
-		t.Fatal("a card whose log and tree have both been still for the whole window is ended")
-	}
-	if end.Idle < 10*time.Second {
-		t.Fatalf("the end names how long the card was still, got %v", end.Idle)
-	}
-	if end.Refused {
-		t.Fatalf("a card that simply stopped talking hit no wall, got %+v", end)
-	}
+	require.True(t, ended, "a card whose log and tree have both been still for the whole window is ended")
+	require.GreaterOrEqual(t, end.Idle, 10*time.Second, "the end names how long the card was still, got %v", end.Idle)
+	require.False(t, end.Refused, "a card that simply stopped talking hit no wall, got %+v", end)
 }
 
 // TestWatchIdleCarriesTheRefusalTheCardNeverMovedPast: when the card's own output named a
@@ -120,12 +111,11 @@ func TestWatchIdleCarriesTheRefusalTheCardNeverMovedPast(t *testing.T) {
 	_, _ = r.Write([]byte("STEP 3\nsh: 1: cannot create /etc/hosts: Permission denied\n"))
 	b := newIdleBench(t, 10*time.Second, r)
 	end, ended := b.tick(t, 11*time.Second)
-	if !ended {
-		t.Fatal("the still card is ended")
-	}
-	if !end.Refused || end.Kind != "write" || end.Path != "/etc/hosts" || end.Step != "3" {
-		t.Fatalf("the end carries the refusal the card never moved past, got %+v", end)
-	}
+	require.True(t, ended, "the still card is ended")
+	require.True(t, end.Refused, "the end carries the refusal the card never moved past, got %+v", end)
+	require.Equal(t, "write", end.Kind, "the end carries the refusal the card never moved past, got %+v", end)
+	require.Equal(t, "/etc/hosts", end.Path, "the end carries the refusal the card never moved past, got %+v", end)
+	require.Equal(t, "3", end.Step, "the end carries the refusal the card never moved past, got %+v", end)
 }
 
 // TestWatchIdleDoesNotCallAWorkingSilenceIdle: issue #593's own case, and the reason the
@@ -138,9 +128,8 @@ func TestWatchIdleDoesNotCallAWorkingSilenceIdle(t *testing.T) {
 	b.snap.ok = true
 	for at := time.Second; at <= 40*time.Second; at += 3 * time.Second {
 		b.snap.cpu += uint64(3 * time.Second) // a tree spending the whole interval
-		if end, ended := b.tick(t, at); ended {
-			t.Fatalf("a card whose tree is spending CPU is working, not idle: %+v at %v", end, at)
-		}
+		end, ended := b.tick(t, at)
+		require.False(t, ended, "a card whose tree is spending CPU is working, not idle: %+v at %v", end, at)
 	}
 }
 
@@ -160,9 +149,8 @@ func TestWatchIdleKeepsACardWhoseLogIsGrowing(t *testing.T) {
 	page := strings.Repeat("a harness step, printed\n", 256) // ~6 KiB per poll
 	for at := time.Second; at <= 40*time.Second; at += 3 * time.Second {
 		appendTo(t, b.log, page)
-		if end, ended := b.tick(t, at); ended {
-			t.Fatalf("a card writing a page a poll is not idle: %+v at %v", end, at)
-		}
+		end, ended := b.tick(t, at)
+		require.False(t, ended, "a card writing a page a poll is not idle: %+v at %v", end, at)
 	}
 }
 
@@ -170,15 +158,10 @@ func TestWatchIdleKeepsACardWhoseLogIsGrowing(t *testing.T) {
 func appendTo(t *testing.T, path, body string) {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString(body); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	_, err = f.WriteString(body)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
 }
 
 // HOLD on #1831 (johnny-b9716b436e56): "The idle watch treats any log-size change as work
@@ -203,12 +186,8 @@ func TestWatchIdleEndsACardThatOnlyDribblesIntoItsLog(t *testing.T) {
 				break
 			}
 		}
-		if !ended {
-			t.Fatal("a card appending one byte a poll into a --write job directory is still a still card; the watch must end it")
-		}
-		if end.Idle < 10*time.Second {
-			t.Fatalf("the end names how long the card was still, got %v", end.Idle)
-		}
+		require.True(t, ended, "a card appending one byte a poll into a --write job directory is still a still card; the watch must end it")
+		require.GreaterOrEqual(t, end.Idle, 10*time.Second, "the end names how long the card was still, got %v", end.Idle)
 	})
 
 	t.Run("rewriting the log shorter", func(t *testing.T) {
@@ -218,16 +197,12 @@ func TestWatchIdleEndsACardThatOnlyDribblesIntoItsLog(t *testing.T) {
 		for at := time.Second; at <= 40*time.Second; at += time.Second {
 			// The card truncates its own capture a little further each poll: every read
 			// is a different size, and none of it is work.
-			if err := os.Truncate(b.log, int64(64*1024)-int64(at/time.Second)*512); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.Truncate(b.log, int64(64*1024)-int64(at/time.Second)*512))
 			if _, ended = b.tick(t, at); ended {
 				break
 			}
 		}
-		if !ended {
-			t.Fatal("a card truncating its own harness-output.log is not working; the watch must end it")
-		}
+		require.True(t, ended, "a card truncating its own harness-output.log is not working; the watch must end it")
 	})
 }
 
@@ -237,12 +212,9 @@ func TestWatchIdleLeavesACardThatAlreadyPublished(t *testing.T) {
 	t.Parallel()
 
 	b := newIdleBench(t, 10*time.Second, NewWallReader("c", nil))
-	if err := os.WriteFile(filepath.Join(b.job, "RESULT.md"), []byte("RESULT: done\nfindings: 0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if end, ended := b.tick(t, 11*time.Second); ended {
-		t.Fatalf("a card that published its report is finishing, not idle: %+v", end)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(b.job, "RESULT.md"), []byte("RESULT: done\nfindings: 0\n"), 0o644))
+	end, ended := b.tick(t, 11*time.Second)
+	require.False(t, ended, "a card that published its report is finishing, not idle: %+v", end)
 }
 
 // TestWatchIdleWithNoWindowWatchesNothing: --idle 0 is the behaviour every run had before
@@ -251,9 +223,7 @@ func TestWatchIdleWithNoWindowWatchesNothing(t *testing.T) {
 	t.Parallel()
 
 	out := WatchIdle(IdleWatch{Log: filepath.Join(t.TempDir(), "x"), Idle: NoIdleWindow}, make(chan struct{}))
-	if out != nil {
-		t.Fatal("a watch with no window hands back a nil channel, which a select waits on forever")
-	}
+	require.Nil(t, out, "a watch with no window hands back a nil channel, which a select waits on forever")
 	// AND IT IS NIL RATHER THAN CLOSED FOR A REASON: a closed channel is always ready, so
 	// a run selecting on one would take a zero end -- and kill a card that was fine -- the
 	// moment the watch decided there was nothing to report.
@@ -272,9 +242,7 @@ func TestCardIdleLineIsNotAWallLine(t *testing.T) {
 
 	line := CardIdleLine("js-under-20-bytes", IdleEnd{Idle: 300 * time.Second, Step: "16"})
 	want := "CARD IDLE task=js-under-20-bytes step=16 idle=300s"
-	if line != want {
-		t.Fatalf("want %q, got %q", want, line)
-	}
+	require.Equal(t, want, line, "want %q, got %q", want, line)
 }
 
 // TestWatchIdleEndsAHarnessSpendingOnlyItsOwnEventLoop: the measurement that set
@@ -295,12 +263,8 @@ func TestWatchIdleEndsAHarnessSpendingOnlyItsOwnEventLoop(t *testing.T) {
 		b.snap.cpu += uint64(3*time.Second) * 103 / 10000
 		end, ended = b.tick(t, at)
 	}
-	if !ended {
-		t.Fatal("a harness spending only its own event loop is still, however long it does it for")
-	}
-	if end.Idle < 10*time.Second {
-		t.Fatalf("the end names how long the card was still, got %v", end.Idle)
-	}
+	require.True(t, ended, "a harness spending only its own event loop is still, however long it does it for")
+	require.GreaterOrEqual(t, end.Idle, 10*time.Second, "the end names how long the card was still, got %v", end.Idle)
 }
 
 // TestWatchIdleKeepsACardSpendingARealShareOfACore: the other side of the same threshold,
@@ -313,8 +277,7 @@ func TestWatchIdleKeepsACardSpendingARealShareOfACore(t *testing.T) {
 	b.snap.ok = true
 	for at := time.Second; at <= 40*time.Second; at += 3 * time.Second {
 		b.snap.cpu += uint64(3 * time.Second) // one core, pinned
-		if end, ended := b.tick(t, at); ended {
-			t.Fatalf("a card pinning a core is working, not idle: %+v at %v", end, at)
-		}
+		end, ended := b.tick(t, at)
+		require.False(t, ended, "a card pinning a core is working, not idle: %+v at %v", end, at)
 	}
 }

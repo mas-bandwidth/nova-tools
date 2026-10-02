@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -39,25 +41,23 @@ func TestReleaseKeepsASeatWhoseHolderIsStillRunning(t *testing.T) {
 	}
 	defer func() { _ = holder.Process.Kill(); _, _ = holder.Process.Wait() }()
 
-	if _, _, _, _, _, ok, err := TakeSlotLeases(store, "alice", 1, time.Hour, "victim", time.Now().UTC(), holder.Process.Pid); err != nil || !ok {
-		t.Fatalf("the victim could not take its seat: ok=%v err=%v", ok, err)
-	}
+	_, _, _, _, _, ok, err := TakeSlotLeases(store, "alice", 1, time.Hour, "victim", time.Now().UTC(), holder.Process.Pid)
+	require.NoError(t, err, "the victim could not take its seat: ok=%v err=%v", ok, err)
+	require.True(t, ok, "the victim could not take its seat: ok=%v err=%v", ok, err)
 
 	released, held, live, err := ReleaseSlotLeasesForcing(store, "alice", "victim", false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if released != 0 || live != 1 || held != 1 {
-		t.Fatalf("release freed a live seat: released=%d held=%d live=%d, want 0/1/1", released, held, live)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 0, released, "release freed a live seat: released=%d held=%d live=%d, want 0/1/1", released, held, live)
+	require.Equal(t, 1, live, "release freed a live seat: released=%d held=%d live=%d, want 0/1/1", released, held, live)
+	require.Equal(t, 1, held, "release freed a live seat: released=%d held=%d live=%d, want 0/1/1", released, held, live)
 	// And the bench is still full: the thief cannot take what the victim is sitting in.
-	if _, _, _, _, _, ok, err := TakeSlotLeases(store, "alice", 1, time.Hour, "thief", time.Now().UTC(), os.Getpid()); err != nil || ok {
-		t.Fatalf("a second run took the victim's seat: ok=%v err=%v", ok, err)
-	}
+	_, _, _, _, _, ok, err = TakeSlotLeases(store, "alice", 1, time.Hour, "thief", time.Now().UTC(), os.Getpid())
+	require.NoError(t, err, "a second run took the victim's seat: ok=%v err=%v", ok, err)
+	require.False(t, ok, "a second run took the victim's seat: ok=%v err=%v", ok, err)
 
 	// --force is the loud override a person has when they know what the store cannot.
 	released, _, live, err = ReleaseSlotLeasesForcing(store, "alice", "victim", false, true)
-	if err != nil || released != 1 || live != 0 {
-		t.Fatalf("--force did not free the seat: released=%d live=%d err=%v", released, live, err)
-	}
+	require.NoError(t, err, "--force did not free the seat: released=%d live=%d err=%v", released, live, err)
+	require.Equal(t, 1, released, "--force did not free the seat: released=%d live=%d err=%v", released, live, err)
+	require.Equal(t, 0, live, "--force did not free the seat: released=%d live=%d err=%v", released, live, err)
 }

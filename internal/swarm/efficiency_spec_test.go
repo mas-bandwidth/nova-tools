@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // SPEC CARD #80 (docs/SPEC-SWARM.md, Efficiency: lessons absorbed):
@@ -18,9 +21,7 @@ func TestEfficiencyCardSectionNamesItsTwoMeasuredOperations(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
-	if err != nil {
-		t.Fatalf("the efficiency contract is the spec's: %s", err)
-	}
+	require.NoError(t, err, "the efficiency contract is the spec's: %s", err)
 	section := efficiencySection(t, string(raw))
 	for _, want := range []string{
 		// The two measured operations, named as the card names them.
@@ -34,9 +35,7 @@ func TestEfficiencyCardSectionNamesItsTwoMeasuredOperations(t *testing.T) {
 		"--deadline",
 		"--usage-interval",
 	} {
-		if !strings.Contains(section, want) {
-			t.Errorf("SPEC-SWARM.md Efficiency: lessons absorbed names %q; the section holds:\n%s", want, section)
-		}
+		assert.Contains(t, section, want, "SPEC-SWARM.md Efficiency: lessons absorbed names %q; the section holds:\n%s", want, section)
 	}
 }
 
