@@ -4,6 +4,8 @@ Four tables on nova-table, the mechanical moves between them, the machine that
 makes them as soon as a line comes on the log, the notifications that bring
 the coordinator its decisions, and the verbs. The coordinator decides; the
 system moves cards without mistakes and tells the coordinator what needs it.
+The coordinator's day, as a runbook for whoever holds the seat, is
+[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md).
 
 ## 1. The tables
 
