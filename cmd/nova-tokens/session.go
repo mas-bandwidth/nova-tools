@@ -93,7 +93,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		fresh := sum.Rows(d)
 		var old []tokens.DayRow
-		f, findings, err := tokens.ReadDayFile(tokens.Path(*out, d))
+		prior, findings, err := tokens.ReadDayFile(tokens.Path(*out, d))
 		if err != nil {
 			if !os.IsNotExist(err) {
 				fmt.Fprintf(stderr, "TOKENS REFUSED: cannot read %s: %s\n",
@@ -108,7 +108,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 				exit = 1
 				continue
 			}
-			old = f.Rows
+			old = prior.Rows
 		}
 		rows, retained, partials := tokens.MergeDay(old, fresh, []string{tokens.SessionLabel})
 		if len(partials) > 0 {
