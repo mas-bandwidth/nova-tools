@@ -73,12 +73,11 @@ type Summary struct {
 	Unfiled     int // of those, the ones with no issue anybody can act on
 
 	// Unmatched is the receipts naming a verb the list does not declare. It is
-	// a COUNT ON THE LINE, not a note beside it: a receipt that matched nothing
-	// leaves the arithmetic silently, so a lane that did not look at the
-	// receipts sitting in the directory it just read would let a bench pass
-	// when the only thing anybody found is unreadable. A count that silently
-	// leaves evidence out is worse than no count, so every read prints this
-	// one whether it is zero or not.
+	// a COUNT ON THE LINE, not a note beside it: a receipt that matches
+	// nothing falls out of every count, so the gate can report open-edges=0
+	// at exit 0 with not-ok receipts in the directory it just read. A count
+	// that silently leaves evidence out is worse than no count, so this one
+	// is printed on the line whether it is zero or not.
 	Unmatched int
 }
 
