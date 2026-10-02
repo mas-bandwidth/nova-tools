@@ -516,21 +516,27 @@ func machineView(reg map[string]string, ceiling string) View {
 
 // Snapshot reads the applied state the inventory is built from in two
 // round trips, whatever the fleet's size: the names (the machines and loops
-// sets), the fleet row and config:decl first, then every machine's hash,
+// sets), every declared fleet field and config:decl first, then every machine's hash,
 // ceiling and beat and every loop's hash in one pipeline. It writes nothing.
 func (a *RedisApplier) Snapshot(ctx context.Context) (*Snapshot, error) {
 	pipe := a.Client.Pipeline()
 	machines := pipe.SMembers(ctx, MachinesKey)
 	loops := pipe.SMembers(ctx, LoopsKey)
-	store := pipe.Get(ctx, FleetKey("store"))
-	coord := pipe.Get(ctx, FleetKey("coordinator"))
+	fleetKind, _ := Lookup(KindFleet)
+	fleetValues := make([]*redis.StringCmd, len(fleetKind.Fields))
+	for i, f := range fleetKind.Fields {
+		fleetValues[i] = pipe.Get(ctx, FleetKey(f.Name))
+	}
 	decl := pipe.HGetAll(ctx, DeclKey)
 	if err := redisconn.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("redis: read the applied names: %w", err)
 	}
 	snap := &Snapshot{
 		Machines: map[string]View{}, Beats: map[string]*Beat{}, Revs: map[string]int64{},
-		Fleet: View{"store": store.Val(), "coordinator": coord.Val()},
+		Fleet: View{},
+	}
+	for i, f := range fleetKind.Fields {
+		snap.Fleet[f.Name] = fleetValues[i].Val()
 	}
 	for f, v := range decl.Val() {
 		if kind, ok := strings.CutPrefix(f, "rev:"); ok {

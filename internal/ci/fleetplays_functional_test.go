@@ -62,6 +62,13 @@ func (r *fleetPlayRig) build(t *testing.T, out, version string, pkgs ...string) 
 
 func (r *fleetPlayRig) play(t *testing.T, name string, extra ...string) string {
 	t.Helper()
+	out, err := r.playResult(t, name, extra...)
+	require.NoError(t, err, "%s %v:\n%s", name, extra, out)
+	return out
+}
+
+func (r *fleetPlayRig) playResult(t *testing.T, name string, extra ...string) (string, error) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	args := append([]string{"-i", r.inventory, filepath.Join(r.root, "fleet", name)}, extra...)
@@ -74,8 +81,7 @@ func (r *fleetPlayRig) play(t *testing.T, name string, extra ...string) string {
 		"NOVA_MACHINE=localhost", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true", "ANSIBLE_NOCOLOR=1",
 		"ANSIBLE_HOME="+filepath.Join(r.dir, "ansible"), "ANSIBLE_LOCAL_TEMP="+filepath.Join(r.dir, "ansible", "tmp"))
 	b, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s %v:\n%s", name, extra, b)
-	return string(b)
+	return string(b), err
 }
 
 // TestFleetPlaysPassSyntaxAndCheckOnTheFixture runs the three plays with
@@ -124,7 +130,8 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	loops := play("loops.yml", append(check, "-e", "ansible_system=Linux")...)
 	for _, w := range []string{
 		`ExecStart="` + home + `/.local/bin/nova-secrets" "exec" "--store" "` + home + `/nova-bench/secrets" "--as" "seat-local"`,
-		`"--only" "API_KEY" "--require=API_KEY" "--" "` + home + `/.local/bin/nova-swarm" "member"`,
+		`Environment="NOVA_SPRINT_REDIS=localhost:6380"`,
+		`"--only" "API_KEY,NOVA_REDIS_BENCH_PASSWORD" "--require=API_KEY" "--require=NOVA_REDIS_BENCH_PASSWORD" "--" "/usr/bin/env" "NOVA_SPRINT_REDIS_USER=bench" "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD" "` + home + `/.local/bin/nova-swarm" "member"`,
 		`ExecStart="` + home + `/bin/tick" "--once" "50%%"`,
 		"Type=oneshot",
 		"OnUnitActiveSec=30",
@@ -145,11 +152,14 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		"<key>StartInterval</key>",
 		"<integer>30</integer>",
 		"<key>KeepAlive</key>",
+		"<key>NOVA_SPRINT_REDIS</key>",
+		"<string>localhost:6380</string>",
 		"<string>50%</string>",
 		"<key>Disabled</key>",
 	} {
 		assert.Contains(t, plist, w)
 	}
+	assert.NotContains(t, loops+plist, "NOVA_SPRINT_REDIS=old-store:6379")
 	_, err := os.Stat(filepath.Join(home, ".config", "nova"))
 	assert.True(t, os.IsNotExist(err), "--check wrote the build fact")
 	_, err = os.Stat(filepath.Join(units, "nova-loop-old.service"))
@@ -220,10 +230,21 @@ func TestDeployerPlaysCheckOnTheFixture(t *testing.T) {
 	seat := "FAKE-SECRETS exec --store " + filepath.Join(home, "nova-bench", "secrets") + " --as seat-local --key " + filepath.Join(home, ".config", "nova-secrets", "seat-local.key") + " --sops /usr/bin/sops-of-the-fixture"
 
 	redis := r.play(t, "redis.yml", vars...)
-	assert.Contains(t, redis, seat+" --only NOVA_REDIS_ADMIN_PASSWORD,NOVA_REDIS_COORDINATOR_PASSWORD,NOVA_REDIS_BENCH_PASSWORD --require=NOVA_REDIS_ADMIN_PASSWORD -- "+fake+"/nova-redis acl check --addr localhost:6379 --user admin --password-env NOVA_REDIS_ADMIN_PASSWORD")
+	assert.Contains(t, redis, seat+" --only NOVA_REDIS_ADMIN_PASSWORD,NOVA_REDIS_COORDINATOR_PASSWORD,NOVA_REDIS_BENCH_PASSWORD --require=NOVA_REDIS_ADMIN_PASSWORD -- "+fake+"/nova-redis acl check --addr localhost:6380 --user admin --password-env NOVA_REDIS_ADMIN_PASSWORD")
 	assert.NotContains(t, redis, "/nova-redis acl apply", "--check applied")
 
 	tools := r.play(t, "tools.yml", vars...)
 	assert.Contains(t, tools, "WOULD-MIGRATE postgres://nova_config@localhost:5432/nova")
-	assert.Contains(t, tools, seat+" --only NOVA_REDIS_COORDINATOR_PASSWORD --require=NOVA_REDIS_COORDINATOR_PASSWORD -- "+fake+"/nova-redis fn check --addr localhost:6379 --user coordinator --password-env NOVA_REDIS_COORDINATOR_PASSWORD")
+	assert.Contains(t, tools, seat+" --only NOVA_REDIS_COORDINATOR_PASSWORD --require=NOVA_REDIS_COORDINATOR_PASSWORD -- "+fake+"/nova-redis fn check --addr localhost:6380 --user coordinator --password-env NOVA_REDIS_COORDINATOR_PASSWORD")
+}
+
+func TestToolsPlayRefusesAnEmptyFleetDSN(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "deployer-fixture.yml")
+	out, err := r.playResult(t, "tools.yml", "--check", "--limit", "store_deployer", "-e", "nova_pg_dsn=")
+	require.Error(t, err)
+	assert.Contains(t, out, "the applied fleet row needs redis_port and pg_dsn")
+	assert.Contains(t, out, "nova-config migrate")
+	assert.Contains(t, out, "nova-config fleet set --redis_port <port> --pg_dsn")
+	assert.Contains(t, out, "nova-config apply --kind fleet")
 }

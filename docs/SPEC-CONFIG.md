@@ -33,7 +33,7 @@ Then it is a fleet field. Neither: it is invented and is not a field. The
 same test decides a friend's row: what someone decides for her is
 configuration; what she would just know is runtime data in Redis. And the
 person coordinating is sprint-global configuration: the
-fleet row holds machines only (the store, the coordinator machine); the
+fleet row holds the store endpoints and machines (the store, the coordinator machine); the
 sprint row holds who coordinates; a friend's roles are what the deal reads.
 A loop's row is a process someone decides runs on one machine: its command,
 the seat and secret names it opens, and how it runs. A route's row is one way
@@ -46,7 +46,7 @@ Where each field of this cut sits:
 | side | fields |
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width` |
-| fleet (one value for the whole fleet) | `store`, `coordinator` (both machines) |
+| fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | friend (decided for her) | `slots`, `tiers`, `roles` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend) |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
@@ -82,7 +82,7 @@ grammar has no `add`, `remove` or `list`, and its `set`, `show` and `history`
 take no name:
 
 ```
-nova-config fleet set --store <machine> --coordinator <machine> --as <friend>
+nova-config fleet set --store <machine> --coordinator <machine> --redis_port <port> --pg_dsn <uri> --as <friend>
 nova-config fleet show
 nova-config fleet history
 ```
@@ -182,8 +182,18 @@ row's.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `store` | ref machine | | the plays: the machine that runs Redis and Postgres | `fleet:store` |
+| `store` | ref machine | | the plays: the machine that runs Redis | `fleet:store` |
 | `coordinator` | ref machine | | the plays: where the coordinator's loops run; apply: the machine a friend with no beat is charged to | `fleet:coordinator` |
+| `redis_port` | nullable int (no default) | | the inventory and plays: explicit Redis TCP port, 1 through 65535; unset until declared | `fleet:redis_port` |
+| `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
+
+The kind's `Check` bounds `redis_port` and accepts only a password-free
+`postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`. A refusal
+never reproduces a password from the input.
+Fleet apply and inventory refuse either endpoint unset, naming one
+`nova-config fleet set --redis_port <port> --pg_dsn <dsn>` command. Migration 0014 (`0014_fleet_endpoints.sql`)
+leaves the port NULL and the DSN empty. Full apply checks both before writing
+any kind; applying another kind alone does not require these endpoints.
 
 **`friend`** (`config.friends`): what someone decides for a friend. Anything
 a friend would just know is runtime Redis data. Where she runs, her harness, her logins and her wake path are hers: her own
@@ -315,7 +325,8 @@ config.machines          (name PK, "user", seat, slots, runners,
                           filled with slots less the friends' slots on the
                           coordinator machine, slots elsewhere)
 config.fleet             (name PK = 'fleet', store -> machines.name,
-                          coordinator -> machines.name, created_at, updated_at;
+                          coordinator -> machines.name, redis_port, pg_dsn,
+                          created_at, updated_at;
                           the one row inserted by the migration)
 config.friends           (name PK, slots, tiers, roles, created_at, updated_at)
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
@@ -418,8 +429,8 @@ Remove: refused while any friend or bench desired hash names the machine;
 else `machine:<m>`, `machine:<m>:ceiling` and `machine:<m>:budget` are
 deleted and the name leaves `machines`.
 
-**fleet:** a plain `SET fleet:store <machine>` and `SET fleet:coordinator
-<machine>`, `DEL` for a field the row leaves empty. Never removed.
+**fleet:** one plain `SET fleet:<field> <value>` per declared field, `DEL` for
+a field the row leaves empty. Never removed.
 
 **friend:** `ns_capacity_desired(friend, f, slots, machine, ..., tiers)`
 (registers in `friends`, writes `friend:<f>:desired`, refuses `CEILING`).

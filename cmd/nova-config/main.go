@@ -97,6 +97,9 @@ unset), or --file <path>. --redis is host:port (NOVA_SPRINT_REDIS, then
 NOVA_REDIS_ADDR, then the seat's address). --as is the name a write is
 recorded under (NOVA_FRIEND). Lose Redis: run nova-config apply.
 
+Fleet apply and inventory require explicit redis_port and pg_dsn; set both
+with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --as <actor>.
+
 exit codes: 0 done, 1 refused (the verb ran and the store said no), 2 could not run (usage, or a store that did not answer); machine self: 2 not a row, 3 unreadable
 
 `
@@ -640,6 +643,11 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		}
 		row = config.Row{Name: name}
 	}
+	// Fleet endpoint checks need only the named fields, so malformed or
+	// password-bearing DSNs refuse before a connection (docs/SPEC-CONFIG.md, "fleet").
+	if err == nil && k.Name == config.KindFleet {
+		err = k.Check(config.Row{Name: name, Fields: changes})
+	}
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
@@ -1170,10 +1178,11 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, stdo
 }
 
 // laterKind is a kind whose table a later migration made (loops since
-// version 6, routes since 7, tiers since 8): each of its verbs refuses on a store older
+// version 6, routes since 7, tiers since 8, fleet endpoints since 14): each
+// of its verbs refuses on a store older
 // than this binary's migrations (behindSchema), which does not have it.
 func laterKind(k *config.Kind) bool {
-	return k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier
+	return k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier || k.Name == config.KindFleet
 }
 
 // behindSchema is the refusal for a store whose schema is older than this
@@ -1357,6 +1366,18 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 		return code
 	}
+	// The fleet lives in the authoritative store. Check its endpoints before
+	// connecting to Redis or applying any kind (docs/SPEC-CONFIG.md, "Apply").
+	if *kind == "" || *kind == config.KindFleet {
+		fleet, _, err := st.Get(ctx, config.KindFleet, config.KindFleet)
+		if err != nil {
+			return storeErr(stderr, verb, err, toolName+" apply --check")
+		}
+		if err := config.ValidateFleetEndpoints(config.View(fleet.Fields)); err != nil {
+			what, next, _ := strings.Cut(err.Error(), "; run: ")
+			return refused(stderr, verb, what, next)
+		}
+	}
 	rs, err := d.openRedis(ctx, addr)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -1511,6 +1532,9 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	self, explicit := localHost(d.getenv, d.hostname)
 	inv, err := config.BuildInventory(snap, self)
 	if err != nil {
+		if what, next, has := strings.Cut(err.Error(), "; run: "); has && strings.HasPrefix(what, "fleet:") {
+			return refused(stderr, verb, what, next)
+		}
 		return refused(stderr, verb, err.Error(), again())
 	}
 	if explicit && !inv.Has(self) {

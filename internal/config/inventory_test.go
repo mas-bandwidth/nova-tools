@@ -32,7 +32,7 @@ func snapshot(loops map[string]View) *Snapshot {
 			"bench-alpha": {"user": "user-a", "seat": "seat-a", "slots": "64", "runners": "1"},
 			"bench-beta":  {"user": "user-b", "seat": "seat-b", "slots": "40", "runners": "0"},
 		},
-		Fleet: View{"store": "bench-beta", "coordinator": "bench-alpha"},
+		Fleet: View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"},
 		Loops: loops,
 		Beats: map[string]*Beat{"bench-beta": {OS: "linux", Arch: "amd64"}},
 		Revs:  map[string]int64{KindMachine: 3, KindFleet: 2},
@@ -66,11 +66,13 @@ func TestBuildInventoryFromTheAppliedState(t *testing.T) {
 	alpha, beta := inv.Meta.Hostvars["bench-alpha"], inv.Meta.Hostvars["bench-beta"]
 	assert.Equal(t, map[string]any{
 		"ansible_host": "bench-alpha", "ansible_user": "user-a", "nova_seat": "seat-a", "slots": 64, "runners": 1,
-		"kind": "machine", "ansible_connection": "local",
+		"kind": "machine", "ansible_connection": "local", "nova_redis_port": 6380, "nova_redis_addr": "bench-beta:6380", "nova_pg_dsn": "postgres://nova_config@localhost:5432/nova",
 		"nova_loops": []InventoryLoop{{Name: "tick", Argv: []string{"nova-sprint", "run"}, Keys: []string{}, Every: 5, Log: "~/nova-bench/loops/tick.log"}},
 	}, alpha)
 	assert.Equal(t, "linux", beta["nova_os"])
 	assert.Equal(t, "amd64", beta["nova_arch"])
+	assert.Equal(t, "bench-beta:6380", beta["nova_redis_addr"])
+	assert.Equal(t, "postgres://nova_config@localhost:5432/nova", beta["nova_pg_dsn"], "the explicit localhost DSN is preserved")
 	assert.NotContains(t, beta, "ansible_connection")
 	assert.NotContains(t, alpha, "nova_os", "a machine with no beat carries no platform: the plays gather it")
 	assert.Equal(t, []InventoryLoop{{
@@ -78,6 +80,40 @@ func TestBuildInventoryFromTheAppliedState(t *testing.T) {
 		Keys: []string{"API_KEY", "BENCH_PASSWORD"}, Keepalive: true, Width: 2, Enabled: true,
 		Log: "~/nova-bench/loops/member-beta.log",
 	}}, beta["nova_loops"])
+}
+
+func TestMemberEndpointComesFromTheFleetAndNotItsPersistedArgv(t *testing.T) {
+	t.Parallel()
+	s := snapshot(map[string]View{
+		"member-beta": loopView("member-beta", "bench-beta", map[string]string{"argv": `["/usr/bin/env","NOVA_SPRINT_REDIS=old-store:6379","NOVA_SPRINT_REDIS_USER=bench","NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD","~/.local/bin/nova-swarm","member","--reader"]`}),
+		"other":       loopView("other", "bench-alpha", map[string]string{"argv": `["/usr/bin/env","NOVA_SPRINT_REDIS=keep-me:6379","~/bin/tick"]`}),
+	})
+	inv, err := BuildInventory(s, "")
+	require.NoError(t, err)
+	member := inv.Meta.Hostvars["bench-beta"]["nova_loops"].([]InventoryLoop)[0]
+	assert.Equal(t, []string{"/usr/bin/env", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", "~/.local/bin/nova-swarm", "member", "--reader", "--width", "2"}, member.Argv)
+	other := inv.Meta.Hostvars["bench-alpha"]["nova_loops"].([]InventoryLoop)[0]
+	assert.Contains(t, other.Argv, "NOVA_SPRINT_REDIS=keep-me:6379", "a non-member command stays word-for-word")
+	for _, host := range inv.All.Hosts {
+		assert.Equal(t, "bench-beta:6380", inv.Meta.Hostvars[host]["nova_redis_addr"], host)
+	}
+}
+
+func TestInventoryRefusesMissingEndpointsBeforeRewritingALegacyMember(t *testing.T) {
+	t.Parallel()
+	for _, field := range []string{"redis_port", "pg_dsn"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			const argv = `["/usr/bin/env","NOVA_SPRINT_REDIS=bench-beta:6380","nova-swarm","member"]`
+			s := snapshot(map[string]View{"member-beta": loopView("member-beta", "bench-beta", map[string]string{"argv": argv})})
+			delete(s.Fleet, field)
+			inv, err := BuildInventory(s, "")
+			require.ErrorContains(t, err, "endpoints are unset: "+field)
+			assert.Contains(t, err.Error(), "nova-config fleet set --redis_port <port> --pg_dsn <dsn>")
+			assert.Nil(t, inv)
+			assert.Equal(t, argv, s.Loops["member-beta"]["argv"])
+		})
+	}
 }
 
 // nova_loops' argv is the command the unit runs: a width field above 0 is the
@@ -170,10 +206,10 @@ func TestBuildInventoryOmitsEmptyValues(t *testing.T) {
 	assert.Equal(t, 2, hv["slots"])
 }
 
-// An empty store is an inventory with no hosts and every group present.
+// A fleet with declared endpoints and no machines has every group present.
 func TestBuildInventoryOfAnEmptyStore(t *testing.T) {
 	t.Parallel()
-	inv, err := BuildInventory(&Snapshot{Fleet: View{}}, "")
+	inv, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"}}, "")
 	require.NoError(t, err)
 	raw, err := inv.JSON()
 	require.NoError(t, err)
@@ -204,7 +240,7 @@ func TestLoadFixtureIsTheAppliedStateOfTheSameRows(t *testing.T) {
 machines:
   bench-alpha: {user: user-a, seat: seat-a, slots: 4, runners: 1, os: darwin, arch: arm64}
   bench-beta: {user: user-b, seat: seat-b, slots: 2}
-fleet: {store: bench-beta, coordinator: bench-alpha}
+fleet: {store: bench-beta, coordinator: bench-alpha, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova}
 loops:
   member-beta: {machine: bench-beta, argv: [nova-swarm, member], seat: seat-b, keys: [Z_KEY, A_KEY], keepalive: true, width: 2}
   tick: {machine: bench-alpha, argv: ["~/bin/tick", "--once"], every: 30, enabled: false}
@@ -214,6 +250,7 @@ loops:
 	assert.Equal(t, View{"user": "user-a", "seat": "seat-a", "slots": "4", "runners": "1"}, snap.Machines["bench-alpha"])
 	assert.Equal(t, &Beat{OS: "darwin", Arch: "arm64"}, snap.Beats["bench-alpha"])
 	assert.NotContains(t, snap.Beats, "bench-beta")
+	assert.Equal(t, View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, snap.Fleet)
 	assert.Equal(t, View{
 		"name": "member-beta", "machine": "bench-beta", "argv": `["nova-swarm","member"]`, "seat": "seat-b",
 		"keys": "A_KEY,Z_KEY", "every": "0", "keepalive": "true", "width": "2", "enabled": "true",
@@ -227,6 +264,9 @@ loops:
 	bare, err := LoadFixture(write("bare.yml", "machines:\n  bench-alpha: {user: u, seat: s, slots: 1}\n"))
 	require.NoError(t, err)
 	assert.Nil(t, bare.Loops)
+	assert.Empty(t, bare.Fleet["redis_port"], "a legacy fixture never guesses a port")
+	_, err = BuildInventory(bare, "")
+	assert.ErrorContains(t, err, "endpoints are unset: redis_port, pg_dsn")
 
 	for name, text := range map[string]string{
 		"unknown field": "machines:\n  bench-alpha: {user: u, seats: s}\n",

@@ -90,6 +90,7 @@ func verbExtra(verb string) string {
 		effect = effectStatus
 	case verb == "apply":
 		effect = effectApply
+		more = "full apply and --kind fleet require explicit redis_port and pg_dsn; set both with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --as <actor>\n"
 	case verb == "inventory":
 		effect = effectInventory
 		more = inventoryMore
@@ -149,7 +150,7 @@ func requiredLine(k *config.Kind) string {
 
 // inventoryMore is inventory's own help: what it prints and how ansible
 // reads it.
-const inventoryMore = `prints an Ansible dynamic JSON inventory of the applied state (the Redis view apply writes, never Postgres): groups all and benches are every machine; coordinator, store and store_deployer (the coordinator machine) come from the fleet row; runners is every machine with at least one runner; every host's variables are under _meta.hostvars: ansible_user, nova_seat, slots, runners, nova_os and nova_arch from the machine's beat when it has one, and nova_loops, its loop records (each argv with the loop's width as its --width), once the loop kind has been applied; all.vars holds nova_store and nova_config_rev
+const inventoryMore = `prints an Ansible dynamic JSON inventory of the applied state (the Redis view apply writes, never Postgres): groups all and benches are every machine; coordinator, store and store_deployer (the coordinator machine) come from the fleet row; runners is every machine with at least one runner; every host's variables are under _meta.hostvars: ansible_user, nova_seat, slots, runners, nova_redis_port, nova_redis_addr and the explicit nova_pg_dsn, nova_os and nova_arch from the machine's beat when it has one, and nova_loops, its loop records (each argv with the loop's width as its --width), once the loop kind has been applied; all.vars holds nova_store and nova_config_rev
 first run, with no store: nova-config inventory --fixture fleet/testdata/inventory-fixture.yml
 against the store: export NOVA_SPRINT_REDIS=127.0.0.1:6379; nova-config inventory
 ansible's -i wants an executable file whose first line is #!/bin/sh at column one; write it with these two commands, then run ansible with ANSIBLE_INVENTORY_UNPARSED_FAILED=true, because without it a failed inventory is an empty inventory and the play does nothing (ansible.cfg: [inventory] unparsed_is_failed = True):

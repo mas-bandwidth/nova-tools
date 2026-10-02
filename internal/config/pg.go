@@ -256,7 +256,7 @@ func scanRow(k *Kind, scan func(dest ...any) error) (Row, error) {
 	row := Row{Fields: map[string]string{}}
 	dest := []any{&row.Name}
 	texts := make([]sql.NullString, len(k.Fields))
-	ints := make([]int64, len(k.Fields))
+	ints := make([]sql.NullInt64, len(k.Fields))
 	bools := make([]bool, len(k.Fields))
 	for i, f := range k.Fields {
 		switch f.Type {
@@ -276,7 +276,11 @@ func scanRow(k *Kind, scan func(dest ...any) error) (Row, error) {
 	for i, f := range k.Fields {
 		switch f.Type {
 		case TypeInt:
-			row.Fields[f.Name] = strconv.FormatInt(ints[i], 10)
+			if ints[i].Valid {
+				row.Fields[f.Name] = strconv.FormatInt(ints[i].Int64, 10)
+			} else {
+				row.Fields[f.Name] = ""
+			}
 		case TypeBool:
 			row.Fields[f.Name] = strconv.FormatBool(bools[i])
 		default:
@@ -303,6 +307,8 @@ func values(k *Kind, row Row) []any {
 // key allows no ”), any other value as text.
 func fieldArg(f Field, v string) any {
 	switch {
+	case f.Nullable && v == "":
+		return nil
 	case f.Type == TypeInt:
 		n, _ := strconv.ParseInt(v, 10, 64)
 		return n
