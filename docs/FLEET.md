@@ -27,8 +27,8 @@ handles".
 ```
 nova-config machine add bench-a --user nova --seat bench-a --slots 2 --as ada
 nova-config fleet set --store bench-a --coordinator bench-a --as ada
-nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--server","bench-a:6390","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --width 2 --as ada
-nova-config loop add reader-1 --machine bench-a --argv '["nova-swarm","member","--as","reader-1","--server","bench-a:6390","--reader","--width","8","--harness","opencode","--root","nova-bench/reader-1","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --as ada
+nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--server","bench-a:6390","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --width 2 --as ada
+nova-config loop add reader-1 --machine bench-a --argv '["nova-swarm","member","--as","reader-1","--server","bench-a:6390","--reader","--width","8","--harness","opencode","--root","nova-bench/reader-1","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
 nova-config route add flash-a --tier flash --provider deepseek --model deepseek-v4-flash --tokens 200000 --deadline 900 --as ada
 nova-config route add pro-a --tier pro --provider openrouter --model x-ai/grok-4 --tokens 400000 --deadline 1800 --as ada
 nova-config apply --as ada

@@ -117,9 +117,9 @@ func TestChildRulesTableIsWellFormed(t *testing.T) {
 			}
 		}
 	}
-	// one per default rule, one per scan, and the libraries-considered line of the lint
-	if want := len(DefaultChildRules) + len(childScans) + 1; len(CardChildRemedies) != want {
-		t.Errorf("the remedy table holds %d tokens, want %d: one per default rule and one per scan, and the libraries-considered line", len(CardChildRemedies), want)
+	// one per default rule, one per scan, the libraries-considered line of the lint and the empty card
+	if want := len(DefaultChildRules) + len(childScans) + 2; len(CardChildRemedies) != want {
+		t.Errorf("the remedy table holds %d tokens, want %d: one per default rule and one per scan, the libraries-considered line and the empty card", len(CardChildRemedies), want)
 	}
 	if got := ChildRemedy(DefaultChildRules, "rule-nothing"); got != "" {
 		t.Errorf("a token that is no rule has the remedy %q", got)
