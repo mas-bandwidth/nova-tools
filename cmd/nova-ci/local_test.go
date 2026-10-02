@@ -165,6 +165,19 @@ func TestLocalGreenRunsTheUnitTierAsCIDoes(t *testing.T) {
 	assert.NotContains(t, stdout, `"Action"`, "stdout carries raw TestEvent JSON:\n%s", stdout)
 }
 
+// --dry-run prints the selection and the make line the real run would start,
+// from the same path, and starts no make.
+func TestLocalDryRunShowsTheSelectionAndRunsNothing(t *testing.T) {
+	t.Parallel()
+	f := localFixture(t, "./cmd/a\n./internal/ci\n")
+	code, stdout, stderr := runLocal(t, f, "--dry-run")
+	require.Equal(t, 0, code, "stderr:\n%s", stderr)
+	assert.Nil(t, f.call("nice -n 15 make"), "make ran under --dry-run")
+	assert.Contains(t, stdout, "packages=2 ./cmd/a ./internal/ci")
+	assert.Contains(t, stdout, `nova-ci local: would run nice -n 15 make test "PKGS=./cmd/a ./internal/ci" GOTEST_P=2`)
+	assert.Contains(t, stdout, "nova-ci local: NOTE --dry-run ran no test")
+}
+
 // A red test is named with the tail of its own output, and the verb exits 1.
 func TestLocalRedNamesTheTestWithItsOutput(t *testing.T) {
 	t.Parallel()
@@ -289,7 +302,7 @@ func TestLocalRefusalsPrint(t *testing.T) {
 			f := plain(t)
 			f.replies = append([]localReply{{prefix: "git merge-base", stderr: "fatal: Not a valid object name origin/dev", code: 128}}, f.replies...)
 			return f
-		}, nil, "no merge base between origin/dev and HEAD"},
+		}, nil, `no merge base between "origin/dev" and HEAD`},
 		{"selection fails", func(t *testing.T) *localFake {
 			f := plain(t)
 			f.selErr = errors.New("ERROR select-packages: go list failed\ngo: go.mod not found")
@@ -304,7 +317,7 @@ func TestLocalRefusalsPrint(t *testing.T) {
 			if code != 2 {
 				t.Fatalf("exit = %d, want 2\nstdout: %s\nstderr: %s", code, stdout, stderr)
 			}
-			if !strings.Contains(stderr, tc.want) || !strings.Contains(stderr, "run: nova-ci help") {
+			if !strings.Contains(stderr, tc.want) || !strings.Contains(stderr, "run: nova-ci local -h") {
 				t.Errorf("stderr = %q, want it to say %q and name the door", stderr, tc.want)
 			}
 			if f.call("nice -n 15 make") != nil {
