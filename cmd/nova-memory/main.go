@@ -401,11 +401,23 @@ func step(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return run(argv, stdin, stdout, stderr)
 }
 
-// jsonStep runs one step under --json and records it as an item of o: the command line,
-// its exit, and its own result object.
+// stepArgs is one step's argv, built in the order the parser reads it: the verb, its
+// flags, then -- when a positional starts with a dash (a lone - is stdin and stays a
+// positional), then the positionals. A flag is never added to a finished argv: after
+// -- it would be a query word or a file, not a flag.
+func stepArgs(verb string, flags []string, positionals ...string) []string {
+	argv := append([]string{verb}, flags...)
+	if slices.ContainsFunc(positionals, func(p string) bool { return p != "-" && strings.HasPrefix(p, "-") }) {
+		argv = append(argv, "--")
+	}
+	return append(argv, positionals...)
+}
+
+// jsonStep runs one step whose argv carries --json among its flags and records it as an
+// item of o: the command line, its exit, and its own result object.
 func jsonStep(o *tool.Out, argv []string, stdin io.Reader, stderr io.Writer) int {
 	var out bytes.Buffer
-	code := run(append(argv, "--json"), stdin, &out, stderr)
+	code := run(argv, stdin, &out, stderr)
 	o.Item("step", "command", tool.Text("nova-memory "+commandLine(argv)), "exit", code, "result", json.RawMessage(bytes.TrimSpace(out.Bytes())))
 	return code
 }
@@ -502,6 +514,9 @@ channel and the k on every line it prints, and says so again at the end.`,
 			for _, e := range rf.excludes {
 				common = append(common, "--exclude", e)
 			}
+			if asJSON { // each step answers in JSON too: --json is one of its flags (stepArgs)
+				common = append(common, "--json")
+			}
 			// The words are free text, quoted at the end of the line as typed: one field per word
 			// would split a word holding a blank, and a hex escape is no way to show a reader what
 			// was searched.
@@ -520,32 +535,24 @@ channel and the k on every line it prints, and says so again at the end.`,
 					oneline.Field(wordsSource), oneline.Field(candidate), oneline.Quote(strings.Join(words, " ")))
 			}
 
-			if code := runStep(append([]string{"stats"}, common...), strings.NewReader("")); code != 0 {
+			if code := runStep(stepArgs("stats", common), strings.NewReader("")); code != 0 {
 				return stepFailed("stats", code)
 			}
 
-			searchArgs := append(append([]string{"search"}, common...), "--channels", "bm25", "--k", quickstartSearchK)
-			for _, w := range words {
-				if strings.HasPrefix(w, "-") {
-					searchArgs = append(searchArgs, "--")
-					break
-				}
-			}
-			if code := runStep(append(searchArgs, words...), strings.NewReader("")); code != 0 {
+			searchFlags := append(slices.Clone(common), "--channels", "bm25", "--k", quickstartSearchK)
+			if code := runStep(stepArgs("search", searchFlags, words...), strings.NewReader("")); code != 0 {
 				return stepFailed("search", code)
 			}
 
-			checkArgs := append(append([]string{"check"}, common...), "--channels", "bm25", "--k", quickstartCheckK)
-			checkIn := strings.NewReader("")
-			if draft != "" {
-				checkArgs = append(checkArgs, draft)
-			} else {
+			checkFlags := append(slices.Clone(common), "--channels", "bm25", "--k", quickstartCheckK)
+			checkArgs, checkIn := stepArgs("check", checkFlags, draft), strings.NewReader("")
+			if draft == "" {
 				// The demonstration with the answer known: a paragraph the corpus
 				// certainly holds, so a first run sees what "you already know this"
 				// looks like when it is true, and can compare it against the
 				// calibration band on the same screen.
 				first := corpus.Chunks[0]
-				checkArgs = append(checkArgs, "-")
+				checkArgs = stepArgs("check", checkFlags, "-")
 				checkIn = strings.NewReader(first.Original)
 				if asJSON {
 					o.Fact("demo", first.File+":"+strconv.Itoa(first.Line))

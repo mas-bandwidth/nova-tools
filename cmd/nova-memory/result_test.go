@@ -205,3 +205,115 @@ func TestMemoryToolMeetsTheStandard(t *testing.T) {
 	t.Parallel()
 	assert.Empty(t, memoryTool().Problems())
 }
+
+// quickstart composes its three steps from argv it builds, and under --json each step's
+// own result must be a JSON object inside the one object quickstart prints. A word that
+// starts with a dash makes the search step's argv carry `--`, and a flag added after that
+// would be a query word, not a flag: the step would print lines, and the outer object
+// would not encode. Every case decodes the whole output and each step's result.
+func TestQuickstartJSONHoldsEachStepAsAnObjectWhateverTheWords(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		query string
+	}{
+		{"a word with one dash", []string{"--words", "-glazing"}, "-glazing"},
+		{"a word with two dashes", []string{"--words", "--glazing"}, "--glazing"},
+		{"a word that is exactly --", []string{"--words", "--"}, "--"},
+		{"a dash word beside a plain one", []string{"--words", "lantern", "--words", "-glazing"}, "lantern -glazing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			code, stdout, stderr := runCLI(t, "", append([]string{"quickstart", "--root", corpus, "--json"}, tc.args...)...)
+			require.Equal(t, 0, code, "stdout:\n%s\nstderr:\n%s", stdout, stderr)
+			assert.Empty(t, stderr)
+			var got struct {
+				Result struct{ Status string } `json:"result"`
+				Items  []struct {
+					Kind   string `json:"kind"`
+					Fields struct {
+						Exit   int             `json:"exit"`
+						Result json.RawMessage `json:"result"`
+					} `json:"fields"`
+				} `json:"items"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(stdout), &got), "quickstart --json is not one JSON object:\n%s", stdout)
+			assert.Equal(t, "ok", got.Result.Status)
+			require.Len(t, got.Items, 3)
+			for i, verb := range []string{"stats", "search", "check"} {
+				it := got.Items[i]
+				assert.Equal(t, "step", it.Kind)
+				assert.Equal(t, 0, it.Fields.Exit, "the %s step", verb)
+				var inner jsonResult
+				require.NoError(t, json.Unmarshal(it.Fields.Result, &inner), "the %s step's result is no JSON object: %s", verb, it.Fields.Result)
+				assert.Equal(t, verb, inner.Result.Verb)
+				assert.Equal(t, "ok", inner.Result.Status)
+				if verb == "search" {
+					assert.Equal(t, tc.query, inner.Facts["query"], "the search step searched for something else")
+				}
+			}
+		})
+	}
+}
+
+// A --draft whose name starts with a dash is the check step's file, never a flag: the
+// echoed step delimits it with --, and the step reads (here: fails to find) that file.
+func TestQuickstartDelimitsADraftNamedWithADash(t *testing.T) {
+	t.Parallel()
+
+	code, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--draft", "-no-such-draft.md")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, stdout, "$ nova-memory check --root "+corpus+" --channels bm25 --k 2 -- -no-such-draft.md\n")
+	assert.Contains(t, stderr, "MEMORY REFUSED: open -no-such-draft.md:")
+	assert.NotContains(t, stderr, "unknown flag")
+}
+
+// stepArgs is how quickstart builds a step: the verb, its flags, then -- when a
+// positional starts with a dash (a lone - is stdin and stays a positional), then the
+// positionals. A flag given to a step is one of its flags, never a word after them.
+func TestStepArgsPutFlagsBeforeTheDelimiterAndTheWords(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		flags, pos []string
+		want       []string
+	}{
+		{"plain words", []string{"--k", "3", "--json"}, []string{"lantern"}, []string{"search", "--k", "3", "--json", "lantern"}},
+		{"a dash word", []string{"--k", "3", "--json"}, []string{"lantern", "-glazing"}, []string{"search", "--k", "3", "--json", "--", "lantern", "-glazing"}},
+		{"a word that is --", []string{"--json"}, []string{"--"}, []string{"search", "--json", "--", "--"}},
+		{"stdin", []string{"--k", "2"}, []string{"-"}, []string{"search", "--k", "2", "-"}},
+		{"a draft named with a dash", []string{"--k", "2"}, []string{"-draft.md"}, []string{"search", "--k", "2", "--", "-draft.md"}},
+		{"no positional", []string{"--json"}, nil, []string{"stats", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			verb := "search"
+			if tc.pos == nil {
+				verb = "stats"
+			}
+			assert.Equal(t, tc.want, stepArgs(verb, tc.flags, tc.pos...))
+		})
+	}
+}
+
+// `help <verb>` is that verb's help whatever follows it: a word, a file, a -- or a flag
+// never turns the request for help into a run of the verb.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{
+		{"help", "search", "--", "lantern"},
+		{"help", "search", "lantern"},
+		{"help", "search", "--json"},
+		{"help", "check", "draft.md"},
+		{"help", "stats", "extra"},
+	} {
+		exit, stdout, stderr := runCLI(t, "", args...)
+		assert.Equal(t, 0, exit, "%v: stderr %s", args, stderr)
+		assert.True(t, strings.HasPrefix(stdout, "usage: nova-memory "+args[1]+" [flags]"), "%v: %s", args, stdout)
+		assert.Empty(t, stderr, "%v", args)
+	}
+}

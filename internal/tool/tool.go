@@ -125,21 +125,20 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 	switch args[0] {
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return t.Run(append(args[1:], "--help"), stdin, stdout, stderr)
+			// --help goes straight after the verb's words: after an argument or
+			// a `--` it would be an argument itself.
+			n := 1
+			if v := t.match(args[1:]); v != nil {
+				n = len(strings.Fields(v.Name))
+			}
+			return t.Run(append(append(slices.Clone(args[1:1+n]), "--help"), args[1+n:]...), stdin, stdout, stderr)
 		}
 		fmt.Fprint(stdout, t.Banner())
 		return 0
 	case "--version":
 		args = append([]string{"version"}, args[1:]...)
 	}
-	var match *Verb
-	for _, v := range t.verbs() { // the longest name the words begin with: "fn load" over "fn"
-		if words := strings.Fields(v.Name); len(args) >= len(words) && strings.Join(args[:len(words)], " ") == v.Name &&
-			(match == nil || len(v.Name) > len(match.Name)) {
-			match = &v
-		}
-	}
-	if match != nil {
+	if match := t.match(args); match != nil {
 		return t.call(*match, args[len(strings.Fields(match.Name)):], stdin, stdout, stderr)
 	}
 	asJSON := verbflag.BoolAsked(args, "json")
@@ -159,6 +158,18 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 			args[0], didYouMean(args[0], t.names()), verbflag.List(t.names()), args[0])
 	}
 	return t.emit(nil, Refuse(why), asJSON, stdout, stderr)
+}
+
+// match is the verb args begin with: the longest name, "fn load" over "fn"; nil for none.
+func (t *Tool) match(args []string) *Verb {
+	var match *Verb
+	for _, v := range t.verbs() {
+		if words := strings.Fields(v.Name); len(args) >= len(words) && strings.Join(args[:len(words)], " ") == v.Name &&
+			(match == nil || len(v.Name) > len(match.Name)) {
+			match = &v
+		}
+	}
+	return match
 }
 
 // exists reports whether a word names a file or directory that is there.
