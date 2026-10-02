@@ -30,15 +30,6 @@ type Prepared struct {
 	Notices []string
 }
 
-// Prepare validates a draft, assigns its id and date, and works out where it goes. It
-// writes nothing: every refusal here happens before the bus is touched.
-//
-// It is PrepareDraft with nobody named by --as, which is what a caller with a draft that
-// already carries its own From line has.
-func Prepare(t *Bus, text string, now time.Time, slugOverride string) (Prepared, error) {
-	return PrepareWith(t, text, now, SendOptions{Slug: slugOverride})
-}
-
 // SendOptions is what the command line adds to a draft. It is a struct rather than more
 // positional strings because the next one would be the sixth, and a call reading
 // `("", "", "air")` says nothing about which is which.

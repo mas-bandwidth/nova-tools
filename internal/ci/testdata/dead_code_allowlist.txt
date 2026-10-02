@@ -11,7 +11,7 @@ cmd/nova-swarm 3
 cmd/nova-table 3
 internal/bounded 1
 internal/buildinfo 1
-internal/bus 23
+internal/bus 17
 internal/cardhdr 10
 internal/check 2
 internal/ci/slowtests 2
@@ -36,7 +36,7 @@ internal/selftalk 1
 internal/sprint 6
 internal/sprint/store 4
 internal/subproc 1
-internal/swarm 43
+internal/swarm 42
 internal/testguard 5
 internal/tokens 2
 internal/tool 5
