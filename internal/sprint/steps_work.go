@@ -1556,7 +1556,7 @@ func level(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, held 
 		q := queues[long]
 		i, to := len(q)-1, ""
 		for ; i >= 0 && to == ""; i-- {
-			to = rr.levelTo(up, n, held, widths, append(StagingRefusers(q[i]), long))
+			to = rr.levelTo(up, n, held, widths, long, StagingRefusers(q[i]))
 		}
 		if to == "" {
 			return
