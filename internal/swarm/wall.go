@@ -14,12 +14,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// THE WALL DEATH (issue #918). A harness that DENIES a tool call returns a tool error the
+// THE WALL DEATH. A harness that DENIES a tool call returns a tool error the
 // model routes around and keeps working -- that is the configured fence (fence.go). But a
 // harness build that still auto-rejects stops the model there, and the run ends with no
-// RESULT.md while the card's commits sit in ./repo: eight of thirty cards died this way on
-// 2026-09-16 and the batch scored them `no-result`, a model that chose to publish nothing,
-// with the work stranded and unpushed.
+// RESULT.md while the card's commits sit in ./repo. The batch scores such a run `no-result`,
+// the token for a model that chose to publish nothing, leaving the work stranded and unpushed.
 //
 // WallDeath is what such a run is: the harness's own fence named a path it would not touch,
 // the job published nothing, and ./repo is left with commits. The report NAMES the path and
@@ -97,18 +96,15 @@ func repoBase(dir string) string {
 	return ""
 }
 
-// A WALL DEATH IS A NAMED END (issue #644 and its follow-up).
+// A WALL DEATH IS A NAMED END.
 //
-// Card 8311 committed its fix and then died on
-//
-//	permission requested: external_directory (/.../jobs/scratch/*); auto-rejecting
-//
-// with no RESULT.md, and the pool reported `no-result` -- the token for a MODEL that chose to
-// publish nothing. The model never got the chance: the harness's own fence, or the OS wall,
-// stopped it at a path, and the absence of a report is the machinery's doing. The fence half
-// of this landed first (fence.go, the `fence` token); this names the END itself, with the
-// refused path, the step the card reached, and the commits it left on its branch so the
-// harvester can still push the work the dead card had already committed.
+// A card that dies this way committed its work and then had no RESULT.md, and the pool
+// reported `no-result` -- the token for a MODEL that chose to publish nothing. The model never
+// got the chance: the harness's own fence, or the OS wall, stopped it at a path, and the
+// absence of a report is the machinery's doing. The harness's fence reports the `fence` token
+// (fence.go); this names the END itself, with the refused path, the step the card reached, and
+// the commits it left on its branch so the harvester can still push the work the dead card had
+// already committed.
 //
 // THREE THINGS ARE READ OUT OF THE CARD'S OWN LOG, and nothing is guessed: the harness's
 // permission auto-reject line (FenceRejection), the sandbox's own `SANDBOX REFUSED` line, and
@@ -157,10 +153,9 @@ func WallRefused(log []byte) (WallRefusal, bool) {
 			// something that is not a path -- a signal, a socket -- and is not the wall
 			// refusing a read or a write outside the write set. The same guard carries the
 			// LINUX spelling: landlock refuses with EACCES and the C library says
-			// `Permission denied`, measured inside the swarm's own wall on hulk, so before
-			// this mark existed no linux refusal was classified at all -- and `Permission
-			// denied` is a sentence a card's own test output is full of, which is exactly
-			// why it counts only when the line names a path.
+			// `Permission denied`. `Permission denied` is a sentence a card's own test
+			// output is full of, which is exactly why it counts only when the line names
+			// a path.
 			if p := wallPathToken(line); p != "" {
 				return WallRefusal{Path: p, Step: WallStep(log)}, true
 			}
@@ -300,36 +295,24 @@ func gitOut(dir string, args ...string) string {
 	return out
 }
 
-// A DENIAL IN THE CAPTURE IS NEVER AN OK, AND IT IS NEVER A DIAGNOSIS EITHER
-// (issue #1465, and Stella's HOLD on PR #1478, comment 5737662335).
+// A DENIAL IN THE CAPTURE IS NEVER AN OK, AND IT IS NEVER A DIAGNOSIS EITHER.
 //
-// THE RUN THIS CLOSES. A `native` Go card was handed GOMODCACHE, GOCACHE and
-// GOTOOLCHAIN=local for a toolchain under a user directory that the wall admitted no root
-// for. It wrote its test, could not compile it, said so in its own RESULT.md, and the tool
-// reported `NATIVE OK ... rc=0 sandbox=landlock harness=ok`. A commit nobody had compiled
-// read as green, because the only record of the failure was one line in a log:
+// A shell denial such as this one can be the only record of a failure:
 //
-//	/usr/bin/bash: line 1: /home/glenn/go/bin/go: Permission denied
+//	/usr/bin/bash: line 1: /opt/sdk/go/bin/go: Permission denied
 //
-// WHAT THAT LINE PROVES, AND WHAT IT DOES NOT. The first version of this reader called the
-// line an EXEC refusal, named the path a program, concluded that the gate never ran and that
-// nothing had been compiled, and prescribed `read_roots`. Stella measured that none of it
-// follows. An owned bash running `: > "$1"; printf "RECOVERED\n"` against a non-writable
-// directory prints
+// The line names a path and a refusal; it does not name the OPERATION. The same words stand
+// for a denied exec, a redirection to a path the card may not write, and a `cd` into a
+// directory it may not read, and a card can carry on from any of them. So the reader does not
+// conclude that a program failed to run, that nothing was compiled, or that the gate never
+// ran; that reasoning would prescribe a read set and a cause the line does not prove. This
+// reader also runs on `--no-wall` runs, where there is no wall to attribute anything to.
 //
-//	/bin/bash: <absolute output path>: Permission denied
-//
-// -- the identical shape -- attempts no program at all, and exits 0 having RECOVERED. A `cd`
-// into an unreadable directory is a third shape with the same words. The shell names a PATH
-// and a refusal; it does not name the OPERATION. And this reader runs on `--no-wall` runs
-// too, where there is no wall to attribute anything to.
-//
-// SO THE VERDICT IS A REFUSAL AND THE CAUSE IS UNVERIFIED. What is established is enough on
-// its own: the card's shell was denied something, nobody read it, and a disposition of OK
-// over an unread denial is what cost the card of #1465. The run is refused. The line is
-// quoted verbatim, the operation is labelled `unverified`, and the remedy is to re-run the
-// gate and read its stderr -- not a cause invented to fill the field. On a WALLED run the
-// read set is offered as ONE CANDIDATE, said to be a candidate.
+// SO THE VERDICT IS A REFUSAL AND THE CAUSE IS UNVERIFIED. The established fact is enough on
+// its own: the card's shell was denied something, and nobody read it. The line is quoted
+// verbatim, the operation is labelled `unverified`, and the remedy is to re-run the gate and
+// read its stderr -- not a cause invented to fill the field. On a WALLED run the read set is
+// offered as ONE CANDIDATE, said to be a candidate.
 //
 // WHAT THIS STILL CANNOT DO. It cannot bind the verdict to the card's own declared gate,
 // because `native` is handed a card as free text and no machine-readable declaration of what
@@ -378,12 +361,11 @@ func ShellDenied(log []byte) (ShellDenial, bool) {
 	return ShellDenial{}, false
 }
 
-// ShellDenialReader is ShellDenied asked of the bytes AS THE PARENT RECEIVES THEM (Johnny's
-// hold on #1478 at 29047871, the #1892 class). The run used to ask ShellDenied of
-// `<job>/harness-output.log` by path after the child was gone -- a file inside the card's
-// own --write directory, and the card's cwd. A card could replace that name after printing
-// the denial (unlink and write a clean file), and a read error left the denial empty: either
-// way the run said NATIVE OK. This writer sits in the capture chain beside the logs, so the
+// ShellDenialReader is ShellDenied asked of the bytes AS THE PARENT RECEIVES THEM. Reading
+// `<job>/harness-output.log` by path after the child is gone is unsafe: that file sits inside
+// the card's own --write directory and the card's cwd, so a card can replace it after printing
+// the denial (unlink and write a clean file), and a read error leaves the denial empty; either
+// way the run says NATIVE OK. This writer sits in the capture chain beside the logs, so the
 // verdict is taken from the parent's own copy of the child's output, and nothing the card
 // does to a file afterwards reaches it.
 //
@@ -466,20 +448,19 @@ func (r *ShellDenialReader) Denied() (ShellDenial, bool) {
 	return denial, true
 }
 
-// deniedPath is the grammar, and nothing outside it is this class. Five spellings are read,
-// each measured off a real log:
+// deniedPath is the grammar, and nothing outside it is this class. Five spellings are read:
 //
-//	/usr/bin/bash: line 1: /home/glenn/go/bin/go: Permission denied   bash, by path
-//	bash: /home/glenn/go/bin/go: Permission denied                    bash, by name
-//	sh: 1: /opt/sdk/go1.26.5/bin/go: Permission denied                dash, which numbers
-//	zsh: permission denied: /opt/sdk/go1.26.5/bin/go                  zsh, path last
-//	fork/exec /opt/sdk/go1.26.5/bin/go: permission denied             Go's own os/exec
+//	/usr/bin/bash: line 1: /opt/sdk/go/bin/go: Permission denied   bash, by path
+//	bash: /opt/sdk/go/bin/go: Permission denied                    bash, by name
+//	sh: 1: /opt/sdk/go1.26.5/bin/go: Permission denied             dash, which numbers
+//	zsh: permission denied: /opt/sdk/go1.26.5/bin/go               zsh, path last
+//	fork/exec /opt/sdk/go1.26.5/bin/go: permission denied          Go's own os/exec
 //
-// THE PATH IS THE WHOLE SEGMENT BETWEEN THE DELIMITERS (Stella's P1). A shell delimits its
-// fields with `: `, and everything between two delimiters is the path -- spaces, parentheses
-// and all, because those are ordinary pathname characters. The first version required a
-// token with no spaces in it, and `/opt/sdk tool/bin/go` therefore recreated the whole silent
-// green of #1465 through an ordinary absolute path. A whitespace-bearing path is not prose.
+// THE PATH IS THE WHOLE SEGMENT BETWEEN THE DELIMITERS. A shell delimits its fields with
+// `: `, and everything between two delimiters is the path -- spaces, parentheses and all,
+// because those are ordinary pathname characters. A token with no spaces in it misses an
+// ordinary absolute path like `/opt/sdk tool/bin/go`, so a real denial is read as prose.
+// A whitespace-bearing path is not prose.
 //
 // WHAT KEEPS IT FROM EATING PROSE is the shell at the head of the line, not the shape of the
 // path: `cat: /etc/shadow: Permission denied` is some other program's complaint, and a
