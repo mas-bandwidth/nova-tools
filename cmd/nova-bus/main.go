@@ -1844,10 +1844,10 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			// instant, everything on the bus at that moment is history and everything after
 			// it is news, which is the sentence this message actually makes.
 			//
-			// It hands over --legacy-now rather than the timestamp it would print, and that
+			// It hands over --legacy-now rather than the timestamp it would print, a contrast that
 			// is a second fix on top of the first. A pasted timestamp is a line drawn at the
 			// moment of the REFUSAL, which may be an hour before the reader gets round to
-			// running it; --legacy-now is drawn at the moment of the READ. And a command
+			// running it; --legacy-now draws the line at the moment of the READ so the pasted command is the read moment itself, not one the reader has to type or could mistype against any printed instant.
 			// nobody has to retype correctly is a command nobody mistypes into a date, which
 			// is exactly what the reader this was written for did.
 			fmt.Fprintf(stderr, "INBOX REFUSED: this is the first advance on %s and %d of the %d notes it would carry are dated before now, so every run after it would print all %d again; draw the switch-day line at this instant with `nova-bus inbox --bus %s --as %s --receipt-max-words %d --full --legacy-now --advance --remote %s --branch %s`, which takes everything already on the bus as read and leaves you what arrives after that moment, or pass --carry-history to carry all %d\n",
@@ -2004,7 +2004,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// THEN ONE LINE FOR THE BACKLOG, whichever way the run was asked. It was printed only on
 	// the runs that did NOT list, which meant the two shapes of return had no line in common
 	// and a reader parsing `--open` output could not find the count at all. One line, always,
-	// under one name. The large-list sentence used to be a SECOND line, past a size, with a
+	// under one name. The large-set case is the same OPEN line with `large=` and `remedy=` set, naming both the size and the action on one line, with no
 	// whole command pasted into it; a reader parsing OPEN could not tell small from large
 	// without knowing the threshold, and the command duplicated every run's own flags. One
 	// line carries both now: `large=` is the sentence, and `remedy=` names the one whole-
@@ -2172,13 +2172,13 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 	// NO LANE, NO WRITE, AND NOTHING TOUCHED. Every state path this function builds is
 	// lane + "/" + name, so a lane-less reader names "/CURSOR" and "/OPEN" -- absolute
 	// paths that land at the checkout ROOT and that git refuses to stage as outside the
-	// repository. That is how the 2026-09-19 break ended: the cursor was written at the
+	// repository. Without the early lane check below, a lane-less reader's cursor lands at the
 	// root, the staging failed, and the stray file refused every later run on the bus.
 	//
 	// A lane-less reader is a shape the roster can hold -- a participant with no lane of
 	// their own is listed so they can be addressed -- so this is a refusal and not a
 	// panic, and it comes FIRST, before the checkout is read or a byte is written. The
-	// cost of the old order was never the exit code; it was the file left behind.
+	// cost avoided here is the stray file at the checkout root that git would refuse to stage -- not the exit code, which the run still returns either way.
 	if me.Lane == "" {
 		// A reader who reached here with no name either is not on the roster at all or was
 		// never resolved against it, and "" has no lane on this bus is a line nobody can act
@@ -2192,7 +2192,7 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 		return 1
 	}
 	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane)}
-	// --no-beat (#1517): the cursor commit does not name the BEAT, so a read-only wait
+	// --no-beat readers leave the lane's BEAT out of the cursor commit, so a read-only wait
 	// that advances its cursor still writes nothing of the line's presence onto the bus.
 	if !noBeat {
 		paths = append(paths, bus.BeatPath(me.Lane))
@@ -2256,7 +2256,7 @@ const defaultOpenMax = 20
 
 // defaultCheckMax is how many findings `check` prints before one BUS MORE line names the
 // rest. It is the Conventions' cap: a check over a bus adopted onto an old history failed
-// 1,059 times (#2574), most of them one class of finding repeating, and a wall of red that
+// many times, mostly one class of finding repeating, and a wall of red that
 // large is a wall nobody reads -- the loud kind eats the quiet one and the one finding that
 // matters is somewhere in it. Twenty findings is a screen; the BUS CHECK line that follows
 // counts every finding by class, so the listing is capped and the counting never is.
@@ -2591,7 +2591,7 @@ func countListable(entries []bus.OpenEntry) int {
 //
 // rearmCommand rebuilds `wait`'s re-arm line from the caller's own argv, shell-quoting each
 // argument so that what is printed is what the caller pasted. The failure it closes: the
-// command used to join the raw argv with spaces, so a --bus path holding a space came back
+// command joins the raw argv with spaces (without these quotes), so a --bus path holding a space returns
 // split in two -- --bus received the prefix through the space, and the remainder landed as a
 // separate argument -- and pasting it named a bus that does not exist instead of the one it
 // was waiting on.
@@ -2658,8 +2658,8 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	quietBeats := f.fs.Bool("quiet-beats", false, "accepted for callers that pass it and changes nothing: a change that is only beats and cursors never wakes a wait, with or without this flag; it is not news")
 	onNote := f.fs.Bool("on-note", false, "wait only for a note addressed to the caller: on arrival exit 0 with the note, and on an empty tick exit 0 with WAIT TIMEOUT and the rearm line; requires --timeout, --bus, --as, --remote and --branch; incompatible with --open and --full")
 	// --max-commits IS HERE BECAUSE THE REMEDY HAS TO BE TYPEABLE AT THE VERB THAT NEEDS IT
-	// (#1518). The since-walk is bounded in inboxListing, which `wait` polls through, so a
-	// wait has always been bounded -- it simply had no way to say a bigger number. Johnny's
+	// is the same bound the verb carries. Inside inboxListing, which `wait` polls through, the since-walk is bounded so a
+	// wait is bounded already; the verb has no flag that widens the bound, so a
 	// loop ran for days behind a cursor the bus had left far behind, printing the bounded
 	// line's `remedy="raise --max-commits"` at a verb that refused the flag.
 	maxCommits := f.fs.Int("max-commits", defaultMaxCommits, "how many commits a since-walk may cross before it stops and names the remedy; raise it to read a staler cursor")
@@ -2676,7 +2676,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "remote": remote, "branch": branch}) {
 		return 2
 	}
-	// --on-note REFUSES WHEN ITS REQUIRED FLAGS ARE MISSING (#2178). Each missing flag
+	// --on-note REFUSES WHEN ITS REQUIRED FLAGS ARE MISSING. Each missing flag
 	// gets its own remedy line, because a unit restarted after a harness cap needs to know
 	// exactly which flag to add. The spec says: `--on-note needs <flag>; give it, refusing
 	// to guess`.
@@ -2701,13 +2701,13 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			fmt.Fprintf(stderr, "nova-bus wait: --on-note needs %s; give it, refusing to guess\n", oneline.Field(missing[0]))
 			return 2
 		}
-		// --on-note WITH --open IS REFUSED (#2178). --on-note prints no open frame.
+		// --on-note WITH --open IS REFUSED: --on-note prints no open frame and --open asks for one.
 		if *openList {
 			fmt.Fprint(stderr, "nova-bus wait: --on-note prints no open frame; drop --open\n")
 			return 2
 		}
 	}
-	// --no-beat AND --beat ARE ONE DECISION EACH AND THEY DISAGREE (#1517). --no-beat
+	// --no-beat AND --beat ARE ONE DECISION EACH AND THEY DISAGREE. --no-beat
 	// says this wait writes no BEAT and --beat/--beat-lease say when and how far to write
 	// one; a caller that gave both meant one of them, and guessing which would silently
 	// break either presence or the read-only promise. It is refused by name, and the door
@@ -2821,7 +2821,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stderr, "nova-bus wait: --beat-lease must be a positive duration like 10m; run: nova-bus wait -h\n")
 		return 2
 	}
-	// THE BUS CARRIES NOTES, NEVER BEATS (#3144). On 2026-09-23, 393 of 500 bus commits
+	// THE BUS CARRIES NOTES, NEVER BEATS. Of bus commits shaped this way, most
 	// were `beat <friend>`: every clone pulled them and every bus monitor woke on them.
 	// Presence is friend:<name> in Redis, written by the friend's runtime (nova-friend;
 	// `nova-wake beat` is gone too). --beat and
@@ -2865,12 +2865,12 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
 	// inbox already refuses it in.
 	held, _ := bus.ReadCursor(*busDir, me.Lane)
-	// A WAIT THAT CANNOT SEE THE BUS IS NOT A WAIT, AND IT SAYS SO BEFORE IT BLOCKS (#1518).
+	// A WAIT THAT CANNOT SEE THE BUS IS NOT A WAIT, AND IT SAYS SO BEFORE IT BLOCKS.
 	//
 	// The distance from a cursor to HEAD only GROWS while a wait runs -- the cursor moves
 	// on --advance, at the end, and never during -- so a walk that is over the bound now is
 	// over it on every poll this call will make. Every one of those polls reads nothing,
-	// and the call then prints the same WAIT TIMEOUT as a wait over a quiet bus. Johnny's
+	// and the call then prints the same WAIT TIMEOUT as a wait over a quiet bus. A polling
 	// loop did exactly that, once a minute, for hours, at exit 0:
 	//
 	//	INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"
@@ -2905,7 +2905,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)),
 			oneline.Field(dash(*until)), *idleExit)
 	}
-	// A KILLED TICK LEAVES THE NEXT ONE UNABLE TO START (#2627). An index.lock older than a
+	// A KILLED TICK LEAVES THE NEXT ONE UNABLE TO START. An index.lock older than a
 	// minute, with no git still owning the checkout, is the killed git's leftover, and a
 	// dirty BEAT is the generated file that same kill left half-written. Both are this
 	// tool's. A CURSOR, a hand edit, anything else is not, and is not touched here. The
@@ -2926,7 +2926,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	} else if rep.Cleared {
 		repairs.add("index.lock")
 	}
-	// A dirty BEAT is what a wait from before #3144, killed mid-tick, left behind. No wait
+	// A dirty BEAT is what a wait killed mid-tick left behind. No wait
 	// writes one now, so the repair is the discard alone: the file goes back to what the
 	// bus holds, and nothing is regenerated.
 	if !o.noBeat {
