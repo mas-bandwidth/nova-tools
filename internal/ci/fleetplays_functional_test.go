@@ -267,3 +267,67 @@ func TestToolsPlayNamesTheDogfoodReceipts(t *testing.T) {
 	out = r.play(t, "tools.yml", append(vars, "-e", `{"nova_release_gate_args": ["--no-dogfood-gate", "--reason", "the test"]}`)...)
 	assert.Contains(t, out, "WOULD-BUILD version=v0.0.0-check")
 }
+
+// TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks runs tools.yml for
+// real twice, the second time at a version an --incremental build would
+// leave: nova-update the first version's bytes (reused), nova-extra rebuilt.
+// The new version's directory is seeded on the machine from the installed
+// build's, only nova-extra and the checksum files are sent, and the install
+// leaves the identical nova-update in place (the same file), so the loop
+// running it is not restarted.
+func TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "check-fixture.yml")
+	platform := runtime.GOOS + "-" + runtime.GOARCH
+	out := filepath.Join(r.dir, "release")
+	stage := func(version, extra string, update []byte) {
+		dir := filepath.Join(out, version, platform)
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "nova-update"), update, 0o755))
+		script := []byte("#!/bin/sh\necho nova-extra " + extra + "\n")
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "nova-extra"), script, 0o755))
+		var sums strings.Builder
+		for _, f := range []struct {
+			name string
+			body []byte
+		}{{"nova-extra", script}, {"nova-update", update}} {
+			s := sha256.Sum256(f.body)
+			sums.WriteString(hex.EncodeToString(s[:]) + "  " + f.name + "\n")
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums.String()), 0o644))
+		d := sha256.Sum256([]byte(sums.String()))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "SUMS.digest"), []byte(hex.EncodeToString(d[:])+"\n"), 0o644))
+	}
+	built := filepath.Join(r.dir, "built")
+	r.build(t, filepath.Join(built, "nova-update"), "v0.0.0-one", "./cmd/nova-update")
+	update, err := os.ReadFile(filepath.Join(built, "nova-update"))
+	require.NoError(t, err)
+	stage("v0.0.0-one", "v0.0.0-one", update)
+	stage("v0.0.0-two", "v0.0.0-two", update)
+	vars := func(version string) []string {
+		return []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root,
+			"-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
+	}
+
+	first := r.play(t, "tools.yml", vars("v0.0.0-one")...)
+	assert.Contains(t, first, "RELEASE INSTALLED version=v0.0.0-one tools=2 skipped=0 ")
+	installed := filepath.Join(r.home, ".local", "bin", "nova-update")
+	before, err := os.Stat(installed)
+	require.NoError(t, err)
+
+	second := r.play(t, "tools.yml", vars("v0.0.0-two")...)
+	assert.Regexp(t, `TASK \[the stage seeded from the installed build's directory, on the machine\][^\n]*\n(?:[^\n]*\n)?changed: \[localhost\]`, second)
+	assert.Contains(t, second, "(item=nova-extra)")
+	assert.Contains(t, second, "(item=SHA256SUMS)")
+	assert.NotContains(t, second, "(item=nova-update)", "a file the machine already held was sent")
+	assert.Contains(t, second, "was=v0.0.0-one removed=0 INSTALLED RELEASE INSTALLED version=v0.0.0-two tools=1 skipped=1 ")
+	after, err := os.Stat(installed)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(before, after), "the identical nova-update was replaced")
+	extra, err := exec.Command(filepath.Join(r.home, ".local", "bin", "nova-extra")).Output()
+	require.NoError(t, err)
+	assert.Equal(t, "nova-extra v0.0.0-two\n", string(extra))
+
+	check := r.play(t, "tools.yml", append(vars("v0.0.0-two"), "--check")...)
+	assert.Contains(t, check, "was=v0.0.0-two removed=0 UP-TO-DATE", "a reused nova-update answers the earlier version; the build fact says the install is done")
+}

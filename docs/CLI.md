@@ -1337,7 +1337,7 @@ or a larger `--budget`; never remove a lock file to break a live lock.
 ### The release verb
 
 `nova-update release` is the last mile: a green commit becomes a version, a set of stamped binaries,
-and the same binaries answering for themselves on every bench in the fleet. Five verbs, each of which
+and the same binaries answering for themselves on every bench in the fleet. Six verbs, each of which
 can refuse. The gates are in [docs/SPEC-RELEASE.md](SPEC-RELEASE.md) and the verbs in
 [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
@@ -1384,6 +1384,14 @@ to `SUMS.digest` beside it. An unsupported `goos-goarch` refuses before the firs
 half-made directory is left behind. One `RELEASE BUILT` line per platform, then one
 `RELEASE BUILD OK … platforms=<a,b,c> sums=<sha256,…> pruned=<n> prune-failed=<n>`.
 
+`--incremental` compiles only the tools whose packages, or the packages they import, changed since
+the newest clean build recorded under `--out` (`<out>/<version>/<goos-goarch>.build`, written by every
+build beside its platform directory), and copies every other tool from that build, verified; it says
+`RELEASE BUILD INCREMENTAL … base=<v> rebuilt=<tools> reused=<n>`, or `RELEASE BUILD WHOLE …
+reason=<why>` when it cannot trust a base. `--gate report --reason <why>` runs the dogfood gate,
+prints its open edges and builds (`dogfood=report`); `cut` has no such flag. See
+[SPEC-RELEASE.md](SPEC-RELEASE.md) rule 13.
+
 Retention, after a successful `build` (in `--out`) and a successful `install` (in `--from`): a
 directory directly under that root whose name is a version (`release.ValidVersion`) is removed unless
 it is the version just built or installed, the version the machine had installed before it (`build`:
@@ -1396,7 +1404,8 @@ on stderr and counted in `prune-failed=`; it never fails the build or the instal
 nova-update release install --from ./release --version v0.17.0 --bin ~/.local/bin --retire ~/go/bin
 ```
 
-`install` verifies the checksums, puts the binaries in place by rename, skips what is already current
+`install` verifies the checksums, puts the binaries in place by rename, skips what is already current (answering the version, or
+holding the same bytes)
 and clears this release's own files out of `--retire`. Run it **on the coordinator before adopting**:
 `adopt` fans out with the nova-update this host is holding, and a coordinator behind the release
 refuses and says so.
@@ -1438,6 +1447,19 @@ nova-update release pull --version v0.17.0 --out ./release --changelog ./CHANGEL
 `pull` withdraws a release: the artifacts go here and on every machine, by name, from that release's
 own `SHA256SUMS` — never recursively — and the tag stays while the changelog section is marked with
 the date and `--reason`. `--dry-run` says what would be deleted and deletes nothing.
+
+```sh
+nova-update release cycle --version v1.1.0-dev.abcdef12 --source . --out ~/nova-bench/release-build --inventory ./nova-inventory --benches bench-a,bench-b --reason "the member fix, PR 5092" --ansible "$(command -v ansible-playbook)"
+```
+
+`cycle` is the fix-land-install cycle from the coordinator in one command: `fleet/tools.yml` with
+`--check`, then for real, limited to `--benches` and `localhost`, the build `--incremental --gate
+report --reason <why>`. Each machine's new version directory is seeded from its installed build's
+and only the files whose `SHA256SUMS` line differs are sent; `install` leaves a binary that already
+holds the same bytes in place, so only the loops of the tools that changed restart. One `CYCLE
+BENCH host=<h> … version=<v> state=<s> installed=<n>` line per bench, then `CYCLE OK … check=<d>
+apply=<d> total=<d>`; both plays' output is kept under `<out>/<version>/`. `--dry-run` is the check
+alone. It runs in the inventory's environment, as the play does.
 
 ## nova-version
 
