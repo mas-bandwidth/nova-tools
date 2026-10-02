@@ -8,6 +8,8 @@
 package cairn
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -118,4 +120,91 @@ func TestOpenConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 	require.Equal(t, 2, total, "want 2 across both concurrent records")
 	require.Len(t, rows, 2, "want 2 across both concurrent records")
 	require.Equal(t, Ledger{Sessions: 2, Entries: 2}, Coverage(store), "coverage ledger")
+}
+
+func TestUnreadableExistingEntryRefusedOnAppendAndRead(t *testing.T) {
+	t.Parallel()
+
+	store := t.TempDir()
+	now := time.Now().UTC()
+	require.NoError(t, Open(store, "s", "src", now, "manual"), "Open")
+	prose := "initial durable words"
+	res, err := Append(store, "s", "e1", prose, "src", now, "manual")
+	require.NoError(t, err, "initial Append")
+	require.True(t, res.Persisted)
+
+	entryFile := filepath.Join(store, "entries", "s", "e1.json")
+	require.NoError(t, os.Chmod(entryFile, 0o000), "chmod unreadable")
+	t.Cleanup(func() { _ = os.Chmod(entryFile, 0o644) })
+
+	// If running as root (e.g. in some container environments), chmod 0000 may still be readable.
+	if _, err := os.ReadFile(entryFile); err == nil {
+		t.Skip("skipping unreadable permission test: running as root / superuser")
+	}
+
+	// C1: Appending with different prose or same id must refuse due to unreadable existing state
+	// and MUST NOT overwrite or replace the file.
+	_, err = Append(store, "s", "e1", "conflicting prose", "src", now, "manual")
+	require.Error(t, err, "append against unreadable existing entry must fail")
+	require.True(t, os.IsPermission(err) || strings.Contains(err.Error(), "permission"), "must surface read permission error, got %v", err)
+
+	// Verify reading unreadable entry fails and surfaces read error, not NotFoundError.
+	_, err = EntryText(store, "s", "e1")
+	require.Error(t, err, "EntryText against unreadable entry must fail")
+	var notFound *NotFoundError
+	require.False(t, errors.As(err, &notFound), "unreadable entry must not report NotFoundError, got %v", err)
+
+	_, err = Receipt(store, "s", "e1")
+	require.Error(t, err, "Receipt against unreadable entry must fail")
+	require.False(t, errors.As(err, &notFound), "unreadable entry must not report NotFoundError, got %v", err)
+
+	// Restore permission and verify original entry was completely untouched.
+	require.NoError(t, os.Chmod(entryFile, 0o644))
+	got, err := EntryText(store, "s", "e1")
+	require.NoError(t, err)
+	require.Equal(t, prose, got, "original entry words must be preserved")
+}
+
+func TestCorruptStampRejectedByReaders(t *testing.T) {
+	t.Parallel()
+
+	store := t.TempDir()
+	now := time.Now().UTC()
+	require.NoError(t, Open(store, "s", "src", now, "manual"), "Open")
+
+	// Store an entry with valid JSON but an invalid RFC 3339 timestamp.
+	entryFile := filepath.Join(store, "entries", "s", "e-bad.json")
+	corruptContent := `{"session":"s","id":"e-bad","stamp":"2026-99-28T01:02:03Z","source":"src","publish":"manual","text":"some words"}`
+	require.NoError(t, os.WriteFile(entryFile, []byte(corruptContent), 0o644))
+
+	// Receipt must refuse with corruption error naming invalid stamp, never substitute zero time.
+	_, err := Receipt(store, "s", "e-bad")
+	require.Error(t, err, "Receipt must reject invalid stamp")
+	require.Contains(t, err.Error(), "is corrupt", "Receipt error must report corruption, got %v", err)
+	require.Contains(t, err.Error(), "invalid stamp", "Receipt error must mention invalid stamp, got %v", err)
+
+	// Index scoped to session must refuse with corruption error.
+	_, _, err = Index(store, "s", 0)
+	require.Error(t, err, "Index scoped to session must reject invalid stamp")
+	require.Contains(t, err.Error(), "is corrupt", "Index error must report corruption, got %v", err)
+	require.Contains(t, err.Error(), "invalid stamp", "Index error must mention invalid stamp, got %v", err)
+
+	// Index over all sessions must also refuse.
+	_, _, err = Index(store, "", 0)
+	require.Error(t, err, "Index over all sessions must reject invalid stamp")
+	require.Contains(t, err.Error(), "is corrupt", "Index error must report corruption, got %v", err)
+	require.Contains(t, err.Error(), "invalid stamp", "Index error must mention invalid stamp, got %v", err)
+
+	// EntryText must also reject corrupt entry stamp.
+	_, err = EntryText(store, "s", "e-bad")
+	require.Error(t, err, "EntryText must reject invalid stamp")
+	require.Contains(t, err.Error(), "is corrupt", "EntryText error must report corruption, got %v", err)
+	require.Contains(t, err.Error(), "invalid stamp", "EntryText error must mention invalid stamp, got %v", err)
+
+	// Malformed JSON must also be rejected by Receipt and Index.
+	entryBroken := filepath.Join(store, "entries", "s", "e-broken.json")
+	require.NoError(t, os.WriteFile(entryBroken, []byte(`{"session":"s",`), 0o644))
+	_, err = Receipt(store, "s", "e-broken")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "is corrupt")
 }
