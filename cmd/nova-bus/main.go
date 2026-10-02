@@ -348,6 +348,39 @@ func refuse(stderr io.Writer, verb, what, remedy string) int {
 	return 2
 }
 
+// effects is what each verb does to the world, stated in its -h (docs/STANDARD.md, "Its
+// effects are explicit"): an inspection, a local write or a delivery, the strongest a flag
+// makes it and which flag.
+var effects = map[string]string{
+	"draft":   "local write: with --out writes that one file, and with --reply-to fetches the bus and writes one draft into --draft-dir; without either it prints the skeleton and writes nothing (--dry-run with --out writes nothing)",
+	"prepare": "inspection: reads the bus and prints the prepared artifact on stdout; writes nothing",
+	"send":    "delivery: commits the note and pushes it to --remote (--no-push commits only; --dry-run prints the shaped note and writes nothing)",
+	"reply":   "delivery: commits the reply and pushes it to --remote (--dry-run writes nothing)",
+	"inbox":   "delivery: with --advance, commits your cursor and pushes it to --remote; without it, reads the checkout and writes nothing (--dry-run with --advance prints the cursor it would write and writes nothing)",
+	"receipt": "delivery: commits a receipt in your lane and pushes it to --remote (--no-push commits only; --dry-run prints what it would record and writes nothing)",
+	"close":   "delivery: commits receipts closing every open note dated before --before and pushes them (--dry-run writes nothing)",
+	"wait":    "delivery: every poll fetches --remote and fast-forwards the checkout; with --advance, commits your cursor and pushes it",
+	"check":   "local write: with --rebuild-index rewrites each lane's INDEX; without it, reads the bus and writes nothing (--dry-run with --rebuild-index prints each lane's count and writes nothing)",
+	"names":   "inspection: reads the roster, writes nothing",
+	"version": "inspection: prints the version line, reads nothing",
+}
+
+// verbEffect is the lines a verb's -h prints above its flags: its effect.
+func verbEffect(verb string) string {
+	if e, ok := effects[verb]; ok {
+		return "effect: " + e + "\n"
+	}
+	return ""
+}
+
+// dryField is the field a dry run's OK line ends in, and nothing for a real run.
+func dryField(dry bool) string {
+	if dry {
+		return " dry_run=true"
+	}
+	return ""
+}
+
 // verbHelp is the remedy for a malformed invocation of a verb: its own help.
 func verbHelp(verb string) string { return "nova-bus " + verb + " -h" }
 
@@ -359,7 +392,7 @@ func main() {
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before anything is read, dialed or written (the CLI style's rule (b), #4505).
-	defer verbflag.Recover(stdout, "nova-bus", usage, &code)
+	defer verbflag.RecoverWith(stdout, "nova-bus", usage, &code, verbEffect)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; the verbs are "+verbflag.List(verbs)+"; inbox only looks", "nova-bus help")
 	}
@@ -1208,6 +1241,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "commit but do not push; the receipt is NOT on the bus until it is pushed")
+	dryRun := f.fs.Bool("dry-run", false, "resolve the notes and print what would be recorded, and write nothing")
 	var notes stringList
 	f.fs.Var(&notes, "note", "a note to mark heard, by id or by path (required; repeatable)")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "remote": remote, "branch": branch}) {
@@ -1230,12 +1264,14 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "RECEIPT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus receipt -h"))
 		return 2
 	}
-	release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
-	if lockErr != nil {
-		fmt.Fprintf(stderr, "RECEIPT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(lockErr), "nova-bus receipt -h"))
-		return 1
+	if !*dryRun {
+		release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
+		if lockErr != nil {
+			fmt.Fprintf(stderr, "RECEIPT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(lockErr), "nova-bus receipt -h"))
+			return 1
+		}
+		defer release()
 	}
-	defer release()
 	t, ok := openBus("receipt", *busDir, stderr)
 	if !ok {
 		return 2
@@ -1254,7 +1290,14 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stdout, "RECEIPT ALREADY note=%s lane=%s\n", oneline.Field(already), oneline.Field(plan.Lane))
 	}
 	if len(plan.Record) == 0 {
-		fmt.Fprintf(stdout, "RECEIPT OK recorded=0 already=%d commit=- pushed=false attempts=0\n", len(plan.Already))
+		fmt.Fprintf(stdout, "RECEIPT OK recorded=0 already=%d commit=- pushed=false attempts=0%s\n", len(plan.Already), oneline.Escape(dryField(*dryRun)))
+		return 0
+	}
+	if *dryRun {
+		for _, id := range plan.Record {
+			fmt.Fprintf(stdout, "RECEIPT RECORD note=%s lane=%s\n", oneline.Field(id), oneline.Field(plan.Lane))
+		}
+		fmt.Fprintf(stdout, "RECEIPT OK recorded=%d already=%d commit=- pushed=false attempts=0 dry_run=true\n", len(plan.Record), len(plan.Already))
 		return 0
 	}
 	// The reader's own BEAT, as in send: `wait` wrote it, so it is this run's own
@@ -1440,6 +1483,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	maxCommits := f.fs.Int("max-commits", defaultMaxCommits, "how many commits a since-walk may cross before it stops and names the remedy; raise it to read a staler cursor")
 	after := f.fs.String("after", "", "continue a bounded --bodies snapshot")
 	advance := f.fs.Bool("advance", false, "move your cursor to HEAD and push it, the way a receipt is pushed")
+	dryRun := f.fs.Bool("dry-run", false, "with --advance, print the listing and the cursor the advance would write, and write nothing")
 	remote := f.fs.String("remote", "", "the git remote to push the cursor to (required with --advance)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required with --advance)")
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push the cursor before giving up")
@@ -1533,6 +1577,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	o := inboxOpts{
+		dryRun: *dryRun,
 		busDir: *busDir, as: *as, maxWords: maxWordsValue,
 		full: *full, openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
@@ -1565,9 +1610,9 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return code
 	}
 	if o.bodies {
-		return advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, stdout, stderr)
+		return advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, o.noBeat, o.dryRun, now, stdout, stderr)
 	}
-	return advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, stdout, stderr)
+	return advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, o.dryRun, now, stdout, stderr)
 }
 
 // inboxOpts is one listing's whole invocation, read from the flags and checked.
@@ -1584,9 +1629,11 @@ type inboxOpts struct {
 	// did not, and openWarn is how large the open list gets before every return says so.
 	// Both are on the struct rather than read at the print site because `wait` is `inbox`
 	// on a clock and a flag one verb honoured and the other did not is two inboxes.
-	openMax        int
-	openWarn       int
-	advance        bool
+	openMax  int
+	openWarn int
+	advance  bool
+	// dryRun is `inbox --dry-run`: an advance prints the cursor it would write and writes nothing.
+	dryRun         bool
 	remote, branch string
 	attempts       int
 	noPush         bool
@@ -2235,7 +2282,7 @@ func legacyToken(l bus.LegacyLine) string {
 // The cursor also records the SWITCH-DAY LINE this run read under, so the next run honours
 // it without the flag and everybody on the bus can see which notes this reader has taken
 // as read.
-func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, head, remote, branch string, attempts int, noPush bool, noBeat bool, now time.Time, stdout, stderr io.Writer) int {
+func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, head, remote, branch string, attempts int, noPush, noBeat, dryRun bool, now time.Time, stdout, stderr io.Writer) int {
 	// NO LANE, NO WRITE, AND NOTHING TOUCHED. Every state path this function builds is
 	// lane + "/" + name, so a lane-less reader names "/CURSOR" and "/OPEN" -- absolute
 	// paths that land at the checkout ROOT and that git refuses to stage as outside the
@@ -2267,6 +2314,10 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 	if err := checkoutReady(busDir, branch, paths); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
+	}
+	if dryRun { // every check above is the real run's; everything below writes
+		fmt.Fprintf(stdout, "INBOX CURSOR commit=%s carrying=%d pushed=false attempts=0 dry_run=true\n", oneline.Field(head), len(open))
+		return 0
 	}
 	if err := levelWithRemote(busDir, remote, branch, noPush); err != nil {
 		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus inbox -h"))
@@ -2304,13 +2355,13 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 
 // advanceCursor preserves the released full-head behaviour for listings without bodies.
 // Bodies mode calls advanceCursorTo with the paginator's whole-commit safe frontier.
-func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, remote, branch string, attempts int, noPush bool, noBeat bool, now time.Time, stdout, stderr io.Writer) int {
+func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, remote, branch string, attempts int, noPush, noBeat, dryRun bool, now time.Time, stdout, stderr io.Writer) int {
 	head, err := bus.HeadCommit(busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus inbox -h"))
 		return 1
 	}
-	return advanceCursorTo(busDir, me, open, legacy, head, remote, branch, attempts, noPush, noBeat, now, stdout, stderr)
+	return advanceCursorTo(busDir, me, open, legacy, head, remote, branch, attempts, noPush, noBeat, dryRun, now, stdout, stderr)
 }
 
 // defaultOpenMax is how many carried entries `--open` prints before it says how many it
@@ -3384,16 +3435,16 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 			return 1, r, "", false
 		}
 		var quiet bytes.Buffer
-		if code := advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, &quiet, stderr); code != 0 {
+		if code := advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, o.dryRun, now, &quiet, stderr); code != 0 {
 			return code, r, "", false
 		}
 		skip := fmt.Sprintf("WAIT ADVANCED from=%s to=%s heard=%d\n", oneline.Field(sha8(r.Cursor)), oneline.Field(sha8(head)), r.HeardNew)
 		return 0, r, skip, true
 	}
 	if o.advance && o.bodies && r.AdvanceTo != "" {
-		code = advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, &buf, stderr)
+		code = advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, o.noBeat, o.dryRun, now, &buf, stderr)
 	} else if o.advance && !o.bodies {
-		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, &buf, stderr)
+		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, o.dryRun, now, &buf, stderr)
 	}
 	if o.onNote && code == 0 {
 		frame, err := onNoteFrame(o, onNoteWakes(r))
@@ -3611,6 +3662,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	since := f.fs.String("since", "", "check what changed since this commit: a revision, a UTC date (YYYY-MM-DD, so the last commit written before that day), or an RFC 3339 UTC instant")
 	legacyBefore := f.fs.String("legacy-before", "", "a finding about the header of a note dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) warns instead of failing")
 	rebuildIndex := f.fs.Bool("rebuild-index", false, "with --full, rewrite each lane's INDEX from the notes on disk")
+	dryRun := f.fs.Bool("dry-run", false, "with --rebuild-index, print each lane's count and write nothing")
 	maxFindings := f.fs.Int("max", defaultCheckMax, "findings to print before one BUS MORE line naming the rest (default 20, 0 = all)")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir}) {
@@ -3647,7 +3699,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 	}
-	if *rebuildIndex {
+	if *rebuildIndex && !*dryRun {
 		release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
 		if lockErr != nil {
 			fmt.Fprintf(stderr, "BUS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(lockErr), "nova-bus check -h"))
@@ -3715,6 +3767,11 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		if *rebuildIndex {
 			for _, lane := range c.Lanes() {
+				if *dryRun {
+					n, _ := bus.PlanLaneIndex(c, t, lane)
+					fmt.Fprintf(stdout, "BUS INDEX lane=%s notes=%d dry_run=true\n", oneline.Field(lane), n)
+					continue
+				}
 				n, rerr := bus.RebuildLaneIndex(*busDir, c, t, lane)
 				if rerr != nil {
 					fmt.Fprintf(stderr, "BUS FAIL %s: %s\n", oneline.Escape(bus.IndexPath(lane)), oneline.Err(rerr))

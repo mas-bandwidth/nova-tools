@@ -1,3 +1,3 @@
 # tool-answers: the mistakes this tool does not yet answer with the way forward; each row's count only falls
 # ceiling: 1
-cmd/nova-bus:dry-run 7 verbs whose -h states no effect, or that write with no --dry-run (tool ledger X12)
+cmd/nova-bus:dry-run 1 wait: every poll fetches and fast-forwards the checkout, so a wait that wrote nothing could not see a note arrive (tool ledger X12)

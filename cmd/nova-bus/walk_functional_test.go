@@ -166,7 +166,7 @@ func TestAnAdvanceWithNoLaneWritesNothing(t *testing.T) {
 	checkout, _ := busDir(t)
 	var out, errOut bytes.Buffer
 	code := advanceCursorTo(checkout, bus.Participant{Name: "Dana"}, nil, "", strings.Repeat("a", 40),
-		"origin", "main", 3, true, false, now(), &out, &errOut)
+		"origin", "main", 3, true, false, false, now(), &out, &errOut)
 	require.Equalf(t, 1, code, "an advance with no lane exited %d, want 1\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
 	require.Containsf(t, errOut.String(), "has no lane on this bus", "the refusal does not say what is wrong:\n%s", errOut.String())
 	// THE PROPERTY THAT MATTERS: the checkout is as clean as it was found. A failed advance
