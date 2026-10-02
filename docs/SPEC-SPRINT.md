@@ -516,28 +516,14 @@ id (`--op`) returns the original result, with no second counter or notification.
   backlog. A moved read is retired (by `level`) and asked of the other reader
   at the same attempt and head, its route kept, as a fresh ask (not returned,
   reasked 0); a primary's two reads stay with two different readers, and no
-  reader is asked an attempt it already had. A read is moved at most once: a
-  read card the level asked (a card of its attempt retired by `level` at the
-  stamp it was asked) is not moved again, so a late read is not asked afresh
+  reader is asked an attempt it already had. A read is moved at most once: the
+  read card a level move asks carries `leveled`, and the level moves no card
+  that carries it, so a late read is not asked afresh
   on reader after reader (the owner, 2026-10-01: "This pesky one card that
   doesn't clear thing... this is a failure mode we must fix. We can't get
   stuck on the last card."). The sprint knows no reader's width
   (a reader loop's `--width` is its own), so readers are levelled by count and
   none is bounded at DealAhead times a width.
-- A late read gets one more reader, by the machine: the tick's ask asks one
-  more reader, as `ask --another` does, of a primary in review whose work did
-  not fail, with no read broken and fewer than two ok at its attempt, at least
-  two reads standing and fewer than four, a reader up with no card at the
-  attempt, and every read out (asked or reading) out longer than the late
-  bound in running time: twice the median time from asked to verdict of the
-  reads finished on the table, never under 60 seconds, and 120 seconds with
-  fewer than five. The newest read out is the one timed, so the tick right
-  after finds nothing late until the bound passes again. The reader is the
-  one the level would give a read (round the readers from the ask's index,
-  one whose load is below the mean, else at it), else the next free reader
-  round the readers. The first two ok reads accept the primary, and the reads
-  still out are retired as at any accept. A read still out at its deadline is
-  `a read card is past its deadline` as before.
 - ask deals every primary in review that lacks reads to TWO DIFFERENT readers
   UP, in work order, each the next reader round the readers from the readers'
   `ask_index` that has no read card at the attempt, placed or retired. One read
@@ -559,9 +545,10 @@ id (`--op`) returns the original result, with no second counter or notification.
   reason, no finding counts against the work and no bound of the primary is
   spent, and the next tick asks it of another reader up that has no read card
   at the attempt (the returned card retired, by `returned`), or, when none is
-  free, of the same reader again, in place, on a route drawn afresh as a new
-  read's is, leaving out the route it returned on while the tier has another,
-  so a reader whose launches failed
+  free, of the same reader again, in place; either way on a route drawn
+  afresh as a new read's is, leaving out the route it returned on while the
+  tier has another, and drawn only when the ask is not refused, so a reader
+  whose launches failed
   is not counted as having read the attempt (tla/DirtyTick.tla,
   JudgedOnlyAfterTheBound). Each return counts itself on the read card (its
   `reasked` field, moved by `read --return`, whatever the tick does and

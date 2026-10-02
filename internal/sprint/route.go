@@ -220,12 +220,12 @@ func readTierOf(pr *Card) string {
 // (readTierOf) at that tier's rolling index, the index moved past the entry
 // taken and every entry skipped (an entry naming no enabled route), the moves
 // summed under pr's unit, so the deal and the reads of a tier share one
-// rotation (tla/RouteIndex.tla, THE READS). The route avoid (the one a read
-// returned on) is left out while another of the tier is served, as a redeal
-// leaves out the routes already taken. nil when the store holds no route or
+// rotation (tla/RouteIndex.tla, THE READS). The routes avoid (those a read of
+// the primary returned on) are left out while another of the tier is served,
+// as a redeal leaves out the routes already taken. nil when the store holds no route or
 // none serves the tier: the read carries no route and its reader runs its own
 // --model.
-func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid string) map[string]string {
+func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[string]string {
 	tier, key := readTierOf(pr), pr.ID
 	if len(s.Routes) == 0 || ri[tier] == nil {
 		return nil
@@ -240,13 +240,13 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid string) map[stri
 	other := false
 	for _, name := range arr {
 		_, ok := served[name]
-		other = other || ok && name != avoid
+		other = other || ok && !contains(avoid, name)
 	}
 	n := uint64(len(arr))
 	at := ri[tier].r.count
 	for i := uint64(0); i < n; i++ {
 		r, ok := served[arr[(at+i)%n]]
-		if !ok || other && r.Name == avoid {
+		if !ok || other && contains(avoid, r.Name) {
 			continue
 		}
 		ri[tier].r.count += i + 1
