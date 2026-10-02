@@ -2,18 +2,18 @@
 # Held by TestDeadCode in internal/ci/dead_code_class_test.go (docs/SPEC-CI.md, "deadcode").
 # Run across GOOS linux, darwin, windows taking the union of dead functions.
 # Shrink-only: NOVA_CI_UPDATE=1 lowers counts and drops rows at zero; it never raises or adds rows.
-# ceiling: 46
+# ceiling: 44
 cmd/nova-bus 1
 cmd/nova-cairn 1
 cmd/nova-sandbox 5
 cmd/nova-swarm 4
 cmd/nova-table 3
-internal/bounded 9
+internal/bounded 1
 internal/buildinfo 1
 internal/bus 30
 internal/cairn 1
-internal/cardhdr 13
-internal/check 3
+internal/cardhdr 10
+internal/check 2
 internal/ci/slowtests 2
 internal/config 14
 internal/converge 1
@@ -24,7 +24,6 @@ internal/ghevent 18
 internal/hostload 2
 internal/hygiene 1
 internal/keyshape 7
-internal/log 2
 internal/nogh 1
 internal/nsprint/fn 7
 internal/nsprint/store 18
@@ -33,8 +32,7 @@ internal/pkgselect 22
 internal/redisconn 1
 internal/redisfn 9
 internal/release 1
-internal/safepath 7
-internal/sandbox 5
+internal/sandbox 1
 internal/seatcred 7
 internal/secrets 28
 internal/selftalk 1
@@ -44,8 +42,8 @@ internal/subproc 1
 internal/swarm 169
 internal/testguard 6
 internal/textbody 1
-internal/tokens 3
-internal/tool 7
-internal/typedrec 14
-internal/workfile 3
+internal/tokens 2
+internal/tool 5
+internal/typedrec 11
+internal/workfile 2
 internal/workgh 1
