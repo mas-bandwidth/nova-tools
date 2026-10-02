@@ -4,9 +4,9 @@ package swarm
 // ownership.
 //
 // The bench's hygiene pass has to decide, hourly, which job directories are finished work
-// and which are a card still doing its job. Silence is not the test -- no new bytes in
+// and which are a card still doing its job. It decides by SILENCE -- no new bytes in
 // harness-output.log for fifteen minutes -- and a card in one long model call or one long
-// compile is silent and working. A pass that guesses from silence deletes <slot>/data and
+// compile is silent and working. That heuristic deletes <slot>/data and
 // <slot>/tmp, a running card's HOME and TMPDIR, out from under two certify passes.
 //
 // A launcher knows what a heuristic can only guess, so it says so on disk: `nova-swarm
@@ -38,12 +38,12 @@ package swarm
 //  2. AN INCOMPLETE RECORD IS NEVER EVIDENCE OF A DEAD OWNER. A lease that cannot be parsed
 //     -- empty, truncated, half a line -- is HELD BY AN UNKNOWN OWNER, and stays held until
 //     its heartbeat is older than JobLeaseStale. Only then is it reclaimed.
-//  3. FAILING TO ESTABLISH OWNERSHIP IS A REFUSAL, NEVER A SILENT SUCCESS. A run may not
+//  3. FAILING TO ESTABLISH OWNERSHIP IS A REFUSAL, NEVER A SILENT SUCCESS. This file does not
 //     hand back a do-nothing release when it could not write, on the grounds that the
 //     reaper's other rules still protected the job. That was defensible while the lease was
 //     only advice to a reaper. It is not defensible now that the lease is what keeps two
 //     launchers out of one directory: `.lease` as a directory, an unwritable job directory
-//     or an unreadable record never ends with BOTH runs proceeding. Every one of them
+//     or an unreadable record all ended with BOTH runs proceeding. Every one of them
 //     is now an error, and `native` exits 2 on it with a remedy. See SPEC-SWARM, "One live
 //     run per job directory".
 //  4. THE RELEASE IS FENCED AND JOINED. A release removes the lease only while the file is
@@ -191,7 +191,7 @@ func HeldJobLease(err error) (JobLease, bool) {
 // ReadJobLease reads the lease in jobDir. A job directory with no lease answers an error
 // satisfying errors.Is(err, os.ErrNotExist). A path that is THERE but is not a regular file
 // -- a directory, a symlink, a socket -- is an error of its own: this process cannot tell
-// whether that job directory is held, and a run that cannot prove ownership must refuse.
+// whether that job directory is held, and rule 3 says it must not guess.
 func ReadJobLease(jobDir string) (JobLease, error) {
 	path := filepath.Join(jobDir, JobLeaseName)
 	st, err := os.Lstat(path)
@@ -209,7 +209,7 @@ func ReadJobLease(jobDir string) (JobLease, error) {
 }
 
 // parseJobLease reads the record. A pid line that is not a positive number leaves Known
-// false, and an unknown record is never read as a dead owner.
+// false, and an unknown record is never read as a dead owner (rule 2).
 func parseJobLease(path string, raw []byte, st os.FileInfo) JobLease {
 	lease := JobLease{Path: path, Beat: st.ModTime(), info: st}
 	for _, line := range strings.Split(string(raw), "\n") {
@@ -238,8 +238,8 @@ func parseJobLease(path string, raw []byte, st os.FileInfo) JobLease {
 // StartJobLease takes the lease on jobDir for the running child and returns the release.
 //
 // It REFUSES rather than returning a release that protects nothing. A *JobLeaseHeldError
-// says another run holds the directory -- the exclusion of two runs on one path -- and any
-// other error says this run could not establish ownership at all, which is the
+// says another run holds the directory -- the same-path exclusion -- and any
+// other error says this run could not establish ownership at all, which under rule 3 is the
 // same refusal with a different reason. The caller exits on either, before it has written
 // anything the holder owns.
 //
@@ -329,7 +329,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 					continue // file is there, just not time to renew
 				}
 				// THE REPAIR. Chtimes on a path that is not there does nothing and says
-				// nothing, leaving a live job unprotected once its file is gone. Publish
+				// nothing, which is how a live job lost its protection. Publish
 				// the same lease again: if somebody else now holds the path, this is
 				// refused and their lease is left exactly alone.
 				// ignored: a heartbeat repair retried every tick; a refusal means another owner holds the path, which is left alone by design
@@ -356,7 +356,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 
 // publishJobLease puts a COMPLETE lease at path and answers nil only when this call now owns
 // it. A *JobLeaseHeldError means somebody else does; any other error means this process
-// could not establish ownership and the caller must refuse, never report success.
+// could not establish ownership and the caller must refuse (rule 3).
 func publishJobLease(path, body string, hooks jobLeaseHooks) error {
 	dir := filepath.Dir(path)
 	for attempt := 0; attempt < jobLeaseAttempts; attempt++ {
@@ -366,7 +366,7 @@ func publishJobLease(path, body string, hooks jobLeaseHooks) error {
 		}
 		// THE PUBLICATION IS THE LINK. It fails if the name exists, which makes it the
 		// atomic claim, and what it puts there is a record that was already whole and
-		// already on the platform -- so no reader ever sees a partial lease.
+		// already on the platform -- so no reader ever sees a partial lease (rule 1).
 		linkErr := os.Link(tmp, path)
 		// ignored: the temp name is removed whether the link landed or not; the link error below is the one returned
 		_ = os.Remove(tmp)
@@ -487,7 +487,7 @@ const (
 // The one residual is a restore that cannot land because another run published in the
 // meantime: then the record this call lifted is genuinely superseded and dropping it is
 // right. If the restore fails for any other reason the owner's own heartbeat publishes its
-// lease again, which is what the heartbeat's repair is for.
+// lease again (rule 5), which is what that repair is for.
 func takeJobLeaseRecord(path string, judged JobLease, mode jobLeaseRemoval, hooks jobLeaseHooks) bool {
 	hooks.pause(hooks.atReclaim, hooks.holdReclaim)
 
@@ -516,7 +516,7 @@ func takeJobLeaseRecord(path string, judged JobLease, mode jobLeaseRemoval, hook
 	// PUT IT BACK. This is the case the rename exists for.
 	if err := os.Link(tomb, path); err != nil && !errors.Is(err, os.ErrExist) {
 		// The restore could not land and nobody has published: the owner's heartbeat
-		// republishes on its next beat. Nothing here may pretend the path is free.
+		// republishes (rule 5). Nothing here may pretend the path is free.
 		// ignored: the tomb is this take's own rename target; a leftover tomb holds no claim on the path
 		_ = os.Remove(tomb)
 		return false
@@ -586,7 +586,7 @@ func newLeaseNonce() string {
 // started against one `<slot>/data`, which is one HOME, one cache and one opencode.db.
 // SPEC-SWARM under **Slots** says a worker has "its own data home" and "a slot is held by
 // exactly one worker"; under **the races, taken out**, two workers on one data home IS the
-// the `database is locked` failure, closed on purpose.
+// `database is locked` failure, closed on purpose.
 //
 // The slot lease is the job lease pointed at the slot directory, and it is the same file
 // format, the same four rules and the same pid-and-nonce fence -- published whole, an
