@@ -10,9 +10,10 @@ import (
 	"strings"
 )
 
-// THE BENCH TOOLCHAIN ROOTS.
+// THE BENCH TOOLCHAIN ROOTS, measured by a schema dogfood loop.
 //
-// TWO CONTRACTS CONTRADICT EACH OTHER, and every Go card on the bench dies in the gap. The
+// TWO CONTRACTS CONTRADICT EACH OTHER, and every Go card dies in the gap on the bench where
+// they were first measured. The
 // bench provisioning standard puts the toolchain in a USER directory -- Go and sbcl under
 // `~/sdk`, the standard's own PATH entry `~/go/bin`, the module cache at `~/go/pkg/mod` --
 // while the native wall named NO toolchain root at all and pinned `GOTOOLCHAIN=local`. So
@@ -31,7 +32,7 @@ import (
 // `go` the card must run, and `--read-noexec`, which does not, for the tree the card only
 // reads.
 //
-// THE SAME HURT HAS A DARWIN FACE, measured on the Air. A Mac bench's
+// THE SAME HURT HAS A DARWIN FACE, measured on a Mac bench. A Mac bench's
 // toolchains are INSTALLED and on `PATH`, and three of them still died inside the bare wall,
 // because each resolves its own runtime FROM THE DIRECTORY OF THE LAUNCHER THAT RAN IT and
 // that launcher is a symlink OUT of any granted tree:
@@ -63,7 +64,7 @@ import (
 // a `--read` root CARRIES EXECUTE on both bodies (landlock's read subset is
 // EXECUTE|READ_FILE|READ_DIR, and the darwin profile grants process-exec* globally), so a
 // tree the bench user can write to must be named as the read-only kind or a card can run
-// whatever lands in it.
+// whatever lands in it (a security read of the wall).
 type ToolchainRoot struct {
 	// Name is the token BOTH lists carry, in slash form. A name that begins with "/" is a
 	// SYSTEM root and is that absolute directory -- or, when Tool is set, the versioned
@@ -133,7 +134,8 @@ func (r ToolchainRoot) Home() bool { return !strings.HasPrefix(r.Name, "/") }
 //	                           fails with an EMPTY one ("Failed to resolve full path of the
 //	                           current executable []") when the tree is denied.
 //
-// ONE ROOT IS DELIBERATELY NOT HERE UNDER EITHER KIND, ON EITHER OS:
+// ONE ROOT IS DELIBERATELY NOT HERE UNDER EITHER KIND, ON EITHER OS (a security read of the
+// wall):
 //
 //	go/bin      GOPATH/bin. Every `go install` on the bench lands there, including the
 //	            stale nova-* binaries being retired, and the bench user can write to it.
@@ -143,7 +145,7 @@ func (r ToolchainRoot) Home() bool { return !strings.HasPrefix(r.Name, "/") }
 //	            provisioned bench ~/go/bin/go is a SYMLINK into the sdk tree, and the kernel
 //	            checks the resolved target, so a card whose PATH finds ~/go/bin/go first
 //	            still runs the granted toolchain -- while a real binary sitting in that
-//	            directory is Permission denied. Measured on a linux bench.
+//	            directory is Permission denied. Measured on one linux bench.
 //
 // The same rule is why no bin directory appears on the darwin side either: every grant there
 // is on a toolchain TREE (`/opt/homebrew/Cellar/go/<ver>`) and never on `/opt/homebrew/bin`,
