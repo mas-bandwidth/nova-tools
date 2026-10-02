@@ -188,30 +188,31 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 	if !rosterChanged && len(writes) == 0 {
 		return nil, nil, nil, nil
 	}
+	// One batched write: the roster, the changed job records and the removed
+	// friends' beat and jobs records land together or not at all (SetKeys is
+	// one MULTI/EXEC on Redis). A failed removal leaves the friend in the
+	// roster, so the next sync finds its records and Teardown knows it.
+	puts := map[string]string{}
+	var dels []string
 	if rosterChanged {
-		if err := putRoster(ctx, kv, r); err != nil {
+		b, err := json.Marshal(r)
+		if err != nil {
 			return nil, nil, nil, err
 		}
+		puts[keyFriends] = string(b)
 	}
 	for _, w := range writes {
 		if w.val == "" {
-			if _, err := st.B.DeleteKeys(ctx, []string{st.Names.Key(w.key)}); err != nil {
-				return added, removed, updated, err
-			}
+			dels = append(dels, w.key)
 			continue
 		}
-		if err := kv.SetKey(ctx, w.key, w.val); err != nil {
-			return added, removed, updated, err
-		}
+		puts[w.key] = w.val
 	}
-	if len(removed) > 0 {
-		keys := make([]string, 0, 2*len(removed))
-		for _, n := range removed {
-			keys = append(keys, st.Names.Key(friendBeatKey(n)), st.Names.Key(friendJobsKey(n)))
-		}
-		if _, err := st.B.DeleteKeys(ctx, keys); err != nil {
-			return added, removed, updated, err
-		}
+	for _, n := range removed {
+		dels = append(dels, friendBeatKey(n), friendJobsKey(n))
+	}
+	if err := kv.SetKeys(ctx, puts, dels); err != nil {
+		return added, removed, updated, err
 	}
 	return added, removed, updated, nil
 }
