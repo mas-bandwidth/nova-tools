@@ -79,7 +79,13 @@ func TestEveryDryRunIsTheRealRunWithoutItsWrites(t *testing.T) {
 		cases = append(cases, tc{verb + "/clean", clean, args}, tc{verb + "/clean, a lock file there", lockSentinel, args})
 		cases = append(cases, tc{verb + "/a read-only lane", readOnlyLane("from-ada"), args})
 		if verb == "check --rebuild-index" {
-			cases = append(cases, tc{verb + "/a later read-only lane", readOnlyLane("from-bo"), args})
+			cases = append(cases, tc{verb + "/a later read-only lane", func(t *testing.T, root string) {
+				// This first lane has no notes, so rebuilding removes its stale INDEX.
+				// A per-lane guard would change it before refusing the later lane.
+				index := filepath.Join(root, "checkout", bus.IndexPath("from-ada"))
+				require.NoError(t, os.WriteFile(index, []byte("ada-222222222222\tfrom-ada/missing.md\t-\tBo\t-\n"), 0o644))
+				readOnlyLane("from-bo")(t, root)
+			}, args})
 		}
 		if verb != "check --rebuild-index" {
 			cases = append(cases, tc{verb + "/wrong branch", wrongBranch, args}, tc{verb + "/a stray file", dirty, args})
@@ -127,6 +133,7 @@ func TestEveryDryRunIsTheRealRunWithoutItsWrites(t *testing.T) {
 			prepare := func() string {
 				checkout, _ := busDir(t)
 				root := filepath.Dir(checkout)
+				require.NoError(t, os.MkdirAll(filepath.Join(checkout, "from-ada"), 0o755))
 				require.NoError(t, os.MkdirAll(scratch(root), 0o755))
 				require.NoError(t, os.WriteFile(filepath.Join(scratch(root), "d.md"), []byte("From: Ada\nTo: Bo\nSubject: the gate\n\nIt is green.\n"), 0o644))
 				require.NoError(t, os.WriteFile(filepath.Join(scratch(root), "r.md"), []byte("Yes, on the merge queue too.\n"), 0o644))
