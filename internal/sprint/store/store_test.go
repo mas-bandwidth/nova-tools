@@ -211,6 +211,36 @@ func (h *harness) allJudgments(typ string) []sprint.Note {
 	return h.nAllNotes(typ)
 }
 
+// hold puts one or more fleet members on hold.
+func (h *harness) hold(members ...string) {
+	h.t.Helper()
+	for _, m := range members {
+		h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: m}))
+	}
+}
+
+// queueLen returns the number of entries in the work table's queue.
+func (h *harness) queueLen() int {
+	h.t.Helper()
+	q, err := h.st.B.QueueRead(h.ctx)
+	require.NoError(h.t, err)
+	return len(q)
+}
+
+// notesOf returns how many active notifications of a type the inbox holds.
+func (h *harness) notesOf(typ string) int {
+	h.t.Helper()
+	notes, _, err := h.st.B.NotesSince(h.ctx, "", 100000)
+	require.NoError(h.t, err)
+	n := 0
+	for _, x := range notes {
+		if x.Type == typ && x.Kind != sprint.Decided && x.Kind != sprint.Acknowledged {
+			n++
+		}
+	}
+	return n
+}
+
 func TestTheLifeOfAStreamThroughTheStore(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)

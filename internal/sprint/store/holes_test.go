@@ -172,48 +172,11 @@ func workWrites(ws []holeWrite) map[string]int {
 	return out
 }
 
-// queueLen is the work table's queue.
-func (h *harness) queueLen() int {
-	h.t.Helper()
-	q, err := h.st.B.QueueRead(h.ctx)
-	require.NoError(h.t, err)
-	return len(q)
-}
-
-// notesOf is how many notifications of a type the inbox holds.
-func (h *harness) notesOf(typ string) int {
-	h.t.Helper()
-	notes, _, err := h.st.B.NotesSince(h.ctx, "", 100000)
-	require.NoError(h.t, err)
-	n := 0
-	for _, x := range notes {
-		if x.Type == typ && x.Kind != sprint.Decided && x.Kind != sprint.Acknowledged {
-			n++
-		}
-	}
-	return n
-}
-
-// tableRevs is the four tables' revisions as stored.
-func (h *harness) tableRevs() [4]uint64 {
-	h.t.Helper()
-	s := h.table()
-	return [4]uint64{s.Work.Revision, s.Readers.Revision, s.Merge.Revision, s.Fleet.Revision}
-}
-
-// play is one round of the outside world after a tick: the members' workers
-// take and finish every card, the readers report every read ok, the
-// coordinator accepts and the merger lands every stream, and the clock moves.
-func (h *harness) play(members []string, streams ...string) {
-	h.t.Helper()
-	for _, m := range members {
-		h.work(m)
-	}
-	h.readAll()
-	for _, st := range streams {
-		h.landAll(st)
-	}
-	h.tick(time.Second)
+// assertHeldOK asserts that no member exceeds DealAhead*width ready+working nor works more than width.
+func assertHeldOK(t *testing.T, s *sprint.Snapshot, when string) {
+	t.Helper()
+	why := heldOK(s)
+	require.Empty(t, why, "%s: %s", when, why)
 }
 
 // heldOK says no up member holds more work cards, ready and working, than
@@ -231,15 +194,9 @@ func heldOK(s *sprint.Snapshot) string {
 	return ""
 }
 
-// landed is the primaries landed in the three streams.
-func landed(s *sprint.Snapshot) int {
-	return s.Work.Count("s1", sprint.Landed) + s.Work.Count("s2", sprint.Landed) + s.Work.Count("s3", sprint.Landed)
-}
-
-// holesUp is two members of width 2 up and three streams of n primaries, the
-// machine running: the fleet of the holes' scenarios, small enough that its
-// room is used up at once.
-func holesUp(h *harness, n int) {
+// holesUp sets up two members of width 2 up and three streams of n primaries,
+// starts the machine, and attaches the hole tick watcher.
+func (h *harness) holesUp(n int) *holeTick {
 	h.t.Helper()
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 2}))
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2", Width: 2}))
@@ -247,23 +204,37 @@ func holesUp(h *harness, n int) {
 		h.must(AddStep(sprint.AddReq{Stream: st, Count: n}))
 	}
 	h.startMachine()
+	return newHoleTick(h)
 }
 
-// liveMembers is the machines that beat from now on.
-func (h *harness) liveMembers(m ...string) {
-	h.mu.Lock()
-	h.live = m
-	h.mu.Unlock()
-	h.beat()
+func holesUp(h *harness, n int) *holeTick {
+	h.t.Helper()
+	return h.holesUp(n)
 }
 
-// holesRun plays 3n primaries to landed, one tick and one round of the
+// startHole sets up n primaries, starts the machine, and attaches the hole tick watcher.
+func (h *harness) startHole(n int) *holeTick {
+	h.t.Helper()
+	h.setup(n)
+	h.startMachine()
+	return newHoleTick(h)
+}
+
+// workBoth ticks and has both m1 and m2 work all ready cards.
+func (x *holeTick) workBoth() {
+	x.h.t.Helper()
+	x.tick()
+	x.h.work("m1")
+	x.h.work("m2")
+}
+
+// run plays 3n primaries to landed, one tick and one round of the
 // outside world at a time. With lapse, m1's machine falls silent in the
 // second round with its cards dealt and untaken, while m2's worker finishes
 // its own; the clock passes the beat deadline, the next tick finds m1 down,
 // and m1 beats again in the fifth round. after is called after every tick with
 // the writes it applied.
-func holesRun(x *holeTick, n int, lapse bool, after func(round int, res TickResult, ws []holeWrite)) {
+func (x *holeTick) run(n int, lapse bool, after func(round int, res TickResult, ws []holeWrite)) {
 	h := x.h
 	t := h.t
 	t.Helper()
@@ -274,21 +245,40 @@ func holesRun(x *holeTick, n int, lapse bool, after func(round int, res TickResu
 			after(round, res, ws)
 		}
 		if lapse && round == 2 {
-			h.liveMembers("m2")
+			h.mu.Lock()
+			h.live = []string{"m2"}
+			h.mu.Unlock()
+			h.beat()
 			h.work("m2")
 			h.readAll()
 			h.tick(pastDown)
 			continue
 		}
 		if lapse && round == 5 {
-			h.liveMembers("m1", "m2")
+			h.mu.Lock()
+			h.live = []string{"m1", "m2"}
+			h.mu.Unlock()
+			h.beat()
 		}
-		h.play([]string{"m1", "m2"}, "s1", "s2", "s3")
-		if landed(h.snap()) == 3*n {
+		for _, m := range []string{"m1", "m2"} {
+			h.work(m)
+		}
+		h.readAll()
+		for _, st := range []string{"s1", "s2", "s3"} {
+			h.landAll(st)
+		}
+		h.tick(time.Second)
+		s := h.snap()
+		if s.Work.Count("s1", sprint.Landed)+s.Work.Count("s2", sprint.Landed)+s.Work.Count("s3", sprint.Landed) == 3*n {
 			return
 		}
 	}
-	t.Fatalf("not landed after 120 rounds")
+	require.FailNow(t, "not landed after 120 rounds")
+}
+
+func holesRun(x *holeTick, n int, lapse bool, after func(round int, res TickResult, ws []holeWrite)) {
+	x.h.t.Helper()
+	x.run(n, lapse, after)
 }
 
 // ---- G1 ----------------------------------------------------------------------
@@ -310,9 +300,7 @@ func TestG1AWorkPlacementReadsTheMembersStatusFromTheFleetTableInThePlan(t *test
 	} {
 		h := newHarness(t)
 		h.setup(6)
-		for _, m := range tc.held {
-			h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: m}))
-		}
+		h.hold(tc.held...)
 		h.startMachine()
 		x := newHoleTick(h)
 		res := x.tick()
@@ -388,12 +376,8 @@ func TestG1AWorkPlacementFollowsTheFleetTableBetweenPlans(t *testing.T) {
 func TestG1AReadsPlacementNeverDependsOnAFleetRow(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.setup(2)
-	h.startMachine()
-	x := newHoleTick(h)
-	x.tick()
-	h.work("m1")
-	h.work("m2")
+	x := h.startHole(2)
+	x.workBoth()
 	s := h.snap()
 	n := len(s.Work.Column(sprint.Review))
 	require.EqualValues(t, 2, n, "%d in review, want 2", n)
@@ -404,8 +388,7 @@ func TestG1AReadsPlacementNeverDependsOnAFleetRow(t *testing.T) {
 	got, _ := sprint.TickAsk(&empty, sprint.TickReq{})
 	require.Equal(t, want.Units, got.Units, "the ask's plan depends on the fleet table:\n got %+v\nwant %+v", got.Units, want.Units)
 	require.Equal(t, want.Notes, got.Notes, "the ask's plan depends on the fleet table:\n got %+v\nwant %+v", got.Units, want.Units)
-	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m1"}))
-	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m2"}))
+	h.hold("m1", "m2")
 	res := x.tick()
 	n = len(h.table().Readers.Column(sprint.Asked))
 	require.EqualValues(t, 4, n, "with no member up %d reads are asked, want 4, in %v", n, res.Order)
@@ -419,10 +402,9 @@ func TestG1AReadsPlacementNeverDependsOnAFleetRow(t *testing.T) {
 func TestG1ALapseMidTickEndsTheTickAndTheNextPlacesNothingOnTheMember(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	holesUp(h, 8)
-	x := newHoleTick(h)
+	x := h.holesUp(8)
 	placed := 0
-	holesRun(x, 8, true, func(round int, res TickResult, ws []holeWrite) {
+	x.run(8, true, func(round int, res TickResult, ws []holeWrite) {
 		require.LessOrEqual(t, len(res.Order), 12, "round %d: the tick took %d updates: %v", round, len(res.Order), res.Order)
 		if round == 3 {
 			st := h.table().MemberCtl("m1").F("status")
@@ -451,8 +433,7 @@ func TestG1ALapseMidTickEndsTheTickAndTheNextPlacesNothingOnTheMember(t *testing
 func TestG2TheDealWritesTheFleetInThePumpsOwnStep(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	holesUp(h, 8)
-	x := newHoleTick(h)
+	x := h.holesUp(8)
 	checked := 0
 	x.onPlan = func(part string, s *sprint.Snapshot) {
 		if strings.HasPrefix(part, "work/") {
@@ -467,7 +448,7 @@ func TestG2TheDealWritesTheFleetInThePumpsOwnStep(t *testing.T) {
 		checked++
 	}
 	created := 0
-	holesRun(x, 8, false, func(_ int, _ TickResult, ws []holeWrite) {
+	x.run(8, false, func(_ int, _ TickResult, ws []holeWrite) {
 		for _, w := range ws {
 			if w.Table != sprint.Fleet {
 				continue
@@ -494,17 +475,14 @@ func TestG2NoMachineIsOverDealAheadTimesItsWidthAtAnyStepOfATick(t *testing.T) {
 	h := newHarness(t)
 	// sixteen cards a stream: a deal of DealAhead times the width ends the sprint
 	// in fewer ticks, so more cards give the check as many steps as before
-	holesUp(h, 16)
-	x := newHoleTick(h)
+	x := h.holesUp(16)
 	steps := 0
 	x.onPlan = func(part string, s *sprint.Snapshot) {
 		steps++
-		why := heldOK(s)
-		require.Empty(t, why, "before %s: %s", part, why)
+		assertHeldOK(t, s, "before "+part)
 	}
-	holesRun(x, 16, false, func(round int, _ TickResult, _ []holeWrite) {
-		why := heldOK(h.table())
-		require.Empty(t, why, "round %d after the tick: %s", round, why)
+	x.run(16, false, func(round int, _ TickResult, _ []holeWrite) {
+		assertHeldOK(t, h.table(), fmt.Sprintf("round %d after the tick", round))
 	})
 	require.GreaterOrEqual(t, steps, 40, "%d steps checked", steps)
 }
@@ -517,12 +495,10 @@ func TestG2NoMachineIsOverDealAheadTimesItsWidthAtAnyStepOfATick(t *testing.T) {
 func TestG2ALapseNeverTakesAMachineOverDealAheadTimesItsWidth(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	holesUp(h, 8)
-	x := newHoleTick(h)
+	x := h.holesUp(8)
 	held := map[string]int{}
 	x.onPlan = func(part string, s *sprint.Snapshot) {
-		why := heldOK(s)
-		require.Empty(t, why, "before %s: %s", part, why)
+		assertHeldOK(t, s, "before "+part)
 		if part == "work/deal" {
 			for _, m := range s.UpMembers() {
 				held[m] = heldBy(s, m)
@@ -530,7 +506,7 @@ func TestG2ALapseNeverTakesAMachineOverDealAheadTimesItsWidth(t *testing.T) {
 		}
 	}
 	dealt, withdrawn := 0, 0
-	holesRun(x, 8, true, func(round int, res TickResult, ws []holeWrite) {
+	x.run(8, true, func(round int, res TickResult, ws []holeWrite) {
 		made := map[string]int{}
 		for _, w := range ws {
 			for _, e := range w.Members {
@@ -545,8 +521,7 @@ func TestG2ALapseNeverTakesAMachineOverDealAheadTimesItsWidth(t *testing.T) {
 			require.LessOrEqual(t, n, room, "round %d: the deal gave %s %d cards, its room was %d (it held %d of DealAhead times width 2)", round, m, n, room, held[m])
 		}
 		clear(held)
-		why := heldOK(h.table())
-		require.Empty(t, why, "round %d after the tick: %s", round, why)
+		assertHeldOK(t, h.table(), fmt.Sprintf("round %d after the tick", round))
 		withdrawn = max(withdrawn, len(h.table().Fleet.Column(sprint.Withdrawn)))
 	})
 	require.GreaterOrEqual(t, dealt, 24, "the watch saw %d cards dealt", dealt)
@@ -563,8 +538,7 @@ func TestG2ALapseNeverTakesAMachineOverDealAheadTimesItsWidth(t *testing.T) {
 func TestG3OnlyThePumpWritesTheWorkTableAndTheQueueHoldsTheRest(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	holesUp(h, 8)
-	x := newHoleTick(h)
+	x := h.holesUp(8)
 	// the stored work table's revision before the first step after the pump
 	// is what every step after it finds
 	var after uint64
@@ -581,7 +555,7 @@ func TestG3OnlyThePumpWritesTheWorkTableAndTheQueueHoldsTheRest(t *testing.T) {
 	}
 	planned := map[string]int{}
 	pumped := map[string]int{}
-	holesRun(x, 8, true, func(round int, res TickResult, ws []holeWrite) {
+	x.run(8, true, func(round int, res TickResult, ws []holeWrite) {
 		after = 0
 		for part, n := range workWrites(ws) {
 			require.True(t, slices.Contains(pumpParts, part), "round %d: %s wrote %d entries of the work table: only the pump does (%v)", round, part, n, pumpParts)
@@ -616,12 +590,8 @@ func TestG3OnlyThePumpWritesTheWorkTableAndTheQueueHoldsTheRest(t *testing.T) {
 func TestG3TheWalkNamesAStepThatWritesTheWorkTableAndIsNotThePump(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.setup(2)
-	h.startMachine()
-	x := newHoleTick(h)
-	x.tick()
-	h.work("m1")
-	h.work("m2")
+	x := h.startHole(2)
+	x.workBoth()
 	x.tick()
 	h.readAll()
 	x.tick()
@@ -653,8 +623,7 @@ func TestW13ATickWithNothingToDoEndsAfterTheFourFirstUpdates(t *testing.T) {
 		h := newHarness(t)
 		h.setup(3)
 		if hold {
-			h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m1"}))
-			h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m2"}))
+			h.hold("m1", "m2")
 		}
 		h.startMachine()
 		x := newHoleTick(h)
@@ -662,7 +631,11 @@ func TestW13ATickWithNothingToDoEndsAfterTheFourFirstUpdates(t *testing.T) {
 		want := map[bool]int{false: 0, true: 1}[hold]
 		require.Equal(t, want, first.TickEnd, "hold=%v: the first tick's note count %d, want %d", hold, first.TickEnd, want)
 		x.rec.take()
-		ends, revs := h.notesOf(sprint.NTickEnd), h.tableRevs()
+		tableRevs := func() [4]uint64 {
+			s := h.table()
+			return [4]uint64{s.Work.Revision, s.Readers.Revision, s.Merge.Revision, s.Fleet.Revision}
+		}
+		ends, revs := h.notesOf(sprint.NTickEnd), tableRevs()
 		for i := 0; i < 5; i++ {
 			h.tick(time.Duration(i+1) * time.Second)
 			res := x.tick()
@@ -680,7 +653,7 @@ func TestW13ATickWithNothingToDoEndsAfterTheFourFirstUpdates(t *testing.T) {
 		}
 		// the work, readers and merge tables are as they were (the fleet's
 		// cells follow the beats, which are not an update's writes)
-		got := h.tableRevs()
+		got := tableRevs()
 		require.Equal(t, revs[0], got[0], "hold=%v: the tables' revisions %v -> %v across five idle ticks", hold, revs, got)
 		require.Equal(t, revs[1], got[1], "hold=%v: the tables' revisions %v -> %v across five idle ticks", hold, revs, got)
 		require.Equal(t, revs[2], got[2], "hold=%v: the tables' revisions %v -> %v across five idle ticks", hold, revs, got)
@@ -746,12 +719,8 @@ func TestW13AnUpdateThatChangedNothingQueuesNothing(t *testing.T) {
 func TestW12TheTicksOwnEntriesToTheWorkQueueWakeTheNextTick(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.setup(2)
-	h.startMachine()
-	x := newHoleTick(h)
-	x.tick()
-	h.work("m1")
-	h.work("m2")
+	x := h.startHole(2)
+	x.workBoth()
 	x.tick()
 	h.readAll()
 	x.tick() // accepted: merging, queued to merge
@@ -800,9 +769,7 @@ func TestW12TheTicksOwnEntriesToTheWorkQueueWakeTheNextTick(t *testing.T) {
 func TestW12AQueueEntryIsALineOnTheLogThatWakesTheNextTick(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.setup(2)
-	h.startMachine()
-	x := newHoleTick(h)
+	x := h.startHole(2)
 	x.tick() // deals both; nothing queued
 	n := h.queueLen()
 	require.Zero(t, n, "the queue holds %d entries after a tick that only dealt", n)
@@ -843,12 +810,11 @@ func TestW12AQueueEntryIsALineOnTheLogThatWakesTheNextTick(t *testing.T) {
 func TestW12TheLoopIsWokenWhileTheWorkQueueHoldsAnything(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	holesUp(h, 4)
-	x := newHoleTick(h)
+	x := h.holesUp(4)
 	cursor, err := h.st.LogTail(h.ctx)
 	require.NoError(t, err)
 	woken := 0
-	holesRun(x, 4, true, func(round int, res TickResult, _ []holeWrite) {
+	x.run(4, true, func(round int, res TickResult, _ []holeWrite) {
 		tail, woke, err := h.st.WaitLog(h.ctx, res.Epoch, cursor, time.Millisecond)
 		require.NoError(t, err)
 		if q := h.queueLen(); q > 0 {
