@@ -20,8 +20,8 @@ func TestDryRunWritesNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name, box string // box "" is a path with no box at it
 		verb, pos []string
-		code     int
-		want     string
+		code      int
+		want      string
 	}{
 		{"init", "", []string{"init"}, []string{}, 0, "INIT OK box="},
 		{"init over a box", quarantined, []string{"init"}, []string{}, 1, "INIT FAIL box="},
