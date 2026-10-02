@@ -2765,6 +2765,15 @@ the original failed measurement.
 **Its remedy line.** each finding names the play or template, the task and what it reads or runs.
 **Its narrowings.** Variables are found by their prefixes (`nova_`, `loop_`, `ansible_`, `l.`) in the plays' uncommented text and the templates' Jinja blocks; a variable of another spelling is not read.
 
+### `member-units-drain` — a member loop's unit stops it by draining it
+
+**The rule.** The loop templates stop a member loop (a record whose argv runs `nova-swarm member`, `loop_member`) by signalling the member alone and waiting: systemd's `KillMode=mixed` with `TimeoutStopSec={{ nova_member_stop_timeout }}`, launchd's `ExitTimeOut` of the same; and `nova_member_stop_timeout` in `fleet/group_vars/all.yml` is `member.DrainMost` and a minute, so a member's drain (SIGTERM: it takes nothing new, its running cards finish and are reported) always ends before its supervisor kills anything.
+**The mistake it prevents.** A unit restart that killed a member's whole cgroup, every harness child with it (nova-tools#5096 item 26): a plain loops play over five drifted member units would have killed 52 working cards on 2026-10-02.
+**The test.** `TestMemberUnitsStopByDraining` (`internal/ci/fleetplays_drain_class_test.go`); the functional half is in `TestFleetPlaysPassSyntaxAndCheckOnTheFixture`, which asserts the member's rendered unit alone carries the settings.
+**Its allowlist.** None.
+**Its remedy line.** the assertion names the template line or the group_vars value that differs.
+**Its narrowings.** The templates' text is matched as written; a member found by another shape of argv than `nova-swarm member` after its env words is not marked.
+
 ### `sprint-tables-locked` — the four sprint tables change only with their lock file
 
 **The rule.** `internal/sprint/TABLES.lock` pins the work, readers, merge and fleet tables as `schema.go` defines them (one line per column: `table.column projection fold hidden`, with `label=` where the column has a header label, in table order) and the order the sprint view shows the tables in. A PR that changes any table's shape turns the test red until the lock file changes in the same PR, where a read sees it.

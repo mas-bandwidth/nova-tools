@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -224,7 +225,12 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		fmt.Fprintf(stdout, "NOTE sweep: removed %d ended launch directories under %s, kept the newest %d\n", removed, oneline.Field(*slots), kept)
 	}
 	rn.cleaner() // from here a launch the member ends is tagged, and removed apart from its pass
-	n, replaced := memberLoop(m, every.d, loopTicks(*once, ticksGiven, *ticks), func() string { return binstamp.Of(self) }, stdout, stderr)
+	// a unit restart or stop drains the member (memberLoop): SIGTERM only, so a terminal's
+	// interrupt, which reaches every child of the process group too, still ends it at once
+	term := make(chan os.Signal, 1)
+	signal.Notify(term, syscall.SIGTERM)
+	defer signal.Stop(term)
+	n, replaced := memberLoop(m, loopRun{every: every.d, limit: loopTicks(*once, ticksGiven, *ticks), stamp: func() string { return binstamp.Of(self) }, term: term, deadline: deadline.d}, stdout, stderr)
 	if replaced {
 		return exitReplaced
 	}
@@ -249,16 +255,49 @@ func loopTicks(once, ticksGiven bool, ticks int) int {
 	return 0
 }
 
-// memberLoop ticks m every `every` (limit > 0: at most limit ticks) and returns the
-// ticks it ran. A loop runs the code it was started with for as long as it runs: a
-// release installed under it would leave the fleet worked by the code before it
-// (2026-10-01: six members kept the binaries they began with until restarted by
-// hand). So before each tick it reads its binary's stamp, and when that changed
-// since it began: with no child running it stops at once, saying so; with children
-// running it drains, taking no new card (said once) and reporting each child as it
-// ends, and stops when the last is reported. replaced is true when it stopped so.
-func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() string, stdout, stderr io.Writer) (n int, replaced bool) {
-	began := stamp()
+// loopRun is how memberLoop runs: every pass's interval, the passes it stops at (limit > 0),
+// the stamp of the binary it runs, the supervisor's stop (term: SIGTERM), the member's own
+// --deadline (the deadline of a card whose packet names none), and its clock: now, and after,
+// the wait between passes (nil: the wall clock and time.After).
+type loopRun struct {
+	every    time.Duration
+	limit    int
+	stamp    func() string
+	term     <-chan os.Signal
+	deadline time.Duration
+	now      func() time.Time
+	after    func(time.Duration) <-chan time.Time
+}
+
+// memberLoop ticks m every lr.every (lr.limit > 0: at most limit ticks) and returns the
+// ticks it ran. It drains, taking no new card (said once) and reporting each child as it
+// ends, and stops when the last is reported, on two words:
+//
+//   - its binary was replaced. A loop runs the code it was started with for as long as it
+//     runs: a release installed under it would leave the fleet worked by the code before it
+//     (2026-10-01: six members kept the binaries they began with until restarted by hand).
+//     So before each tick it reads its binary's stamp, and when that changed since it began
+//     it drains; replaced is true when it stopped so (exit 3, its supervisor starts the new).
+//   - its supervisor stopped it (SIGTERM: a unit restart or stop, the loops play's restart
+//     of a changed unit; nova-tools#5096 item 26). A stop never kills a card: the drain is
+//     bounded by member.DrainBound of the longest deadline the running cards name, past which
+//     it stops with what is left running (its supervisor ends it; the sprint deals the
+//     cards again when the member goes down, and a member started again adopts a child
+//     still alive). It exits 0.
+//
+// With no child running either stops at once.
+func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, replaced bool) {
+	now, after := lr.now, lr.after
+	if now == nil {
+		now = time.Now
+	}
+	if after == nil {
+		after = time.After
+	}
+	began := ""
+	if lr.stamp != nil {
+		began = lr.stamp()
+	}
 	// the beat goes on its own clock, apart from the work pass (internal/member BeatLoop): one
 	// now, so the member is up before its first pass, then one every interval while the pass
 	// goes on, ending with this loop
@@ -266,46 +305,78 @@ func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() s
 		fmt.Fprintf(stderr, "nova-swarm member: %s\n", oneline.Escape(err.Error()))
 	}
 	beatCtx, stopBeats := context.WithCancel(context.Background())
-	beatTicker := time.NewTicker(every)
+	beatTicker := time.NewTicker(lr.every)
 	beatsEnded := make(chan struct{})
 	go func() { defer close(beatsEnded); m.BeatLoop(beatCtx, beatTicker.C, stderr) }()
 	// the beat ends before the loop does: nothing it writes comes after the member's last line
 	defer func() { stopBeats(); beatTicker.Stop(); <-beatsEnded }()
-	draining := false
+	draining := "" // why the member drains: "" while it takes
+	var termed bool
+	var bound time.Duration
+	var until time.Time // a SIGTERM's drain ends here at the latest
 	for {
-		if began != "" && stamp() != began {
+		select {
+		case <-lr.term:
+			termed = true
+		default:
+		}
+		if draining == "" && began != "" && lr.stamp() != began {
 			if m.Running() == 0 {
 				fmt.Fprintf(stdout, "MEMBER STOP the binary this member runs was replaced; its supervisor starts the new one\n")
 				return n, true
 			}
-			if !draining {
-				draining = true
-				m.Drain()
-				fmt.Fprintf(stdout, "MEMBER DRAIN the binary this member runs was replaced: taking no new card, %d running; it stops when the last child is reported\n", m.Running())
+			draining = "replaced"
+			m.Drain()
+			fmt.Fprintf(stdout, "MEMBER DRAIN the binary this member runs was replaced: taking no new card, %d running; it stops when the last child is reported\n", m.Running())
+		}
+		if termed && until.IsZero() {
+			if m.Running() == 0 {
+				fmt.Fprintf(stdout, "MEMBER STOP SIGTERM: nothing running\n")
+				return n, false
 			}
+			bound = member.DrainBound(m.LongestDeadline(lr.deadline))
+			until = now().Add(bound)
+			if draining == "" {
+				draining = "SIGTERM"
+				m.Drain()
+			}
+			fmt.Fprintf(stdout, "MEMBER DRAIN SIGTERM: taking no new card, %d running; it stops when the last child is reported, at most %s (by %s)\n", m.Running(), oneline.Field(bound.String()), oneline.Field(until.Format("15:04:05")))
+		}
+		if draining != "" && m.Running() == 0 {
+			if draining == "replaced" {
+				fmt.Fprintf(stdout, "MEMBER STOP the binary this member runs was replaced; its supervisor starts the new one\n")
+				return n, true
+			}
+			fmt.Fprintf(stdout, "MEMBER STOP SIGTERM: the last child is reported\n")
+			return n, false
+		}
+		if !until.IsZero() && !now().Before(until) {
+			fmt.Fprintf(stdout, "MEMBER STOP SIGTERM: the drain's bound %s passed with %d running; its supervisor ends them, and the sprint deals their cards again when this member is down\n", oneline.Field(bound.String()), m.Running())
+			return n, draining == "replaced"
 		}
 		n++
-		acted, err := m.Tick(time.Now())
+		acted, err := m.Tick(now())
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-swarm member: tick %d: %s\n", n, oneline.Escape(err.Error()))
 		}
 		if acted > 0 || err != nil {
 			// where the pass's time went, by part: a lane freed during a pass waits for the rest of it
 			spent := m.LastPass()
-			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s queue=%.1fs push=%.1fs report=%.1fs fill=%.1fs\n", n, acted, m.Running(), oneline.Field(time.Now().Format("15:04:05")),
+			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s queue=%.1fs push=%.1fs report=%.1fs fill=%.1fs\n", n, acted, m.Running(), oneline.Field(now().Format("15:04:05")),
 				spent.Queue.Seconds(), spent.Push.Seconds(), spent.Report.Seconds(), spent.Fill.Seconds())
 		}
-		if limit > 0 && n >= limit {
+		if lr.limit > 0 && n >= lr.limit {
 			m.WaitLong() // no start half made, no push cut off, when the process exits
 			return n, false
 		}
 
-		// the next pass at the interval, or at once when a push ended or a child exited
-		wait := time.NewTimer(every)
+		// the next pass at the interval, or at once when a push ended, a child exited or the
+		// supervisor said stop
 		select {
-		case <-wait.C:
+		case <-after(lr.every):
 		case <-m.Wake():
-			wait.Stop()
+		case <-lr.term:
+			termed = true
 		}
 	}
 }

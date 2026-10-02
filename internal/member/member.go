@@ -390,6 +390,32 @@ func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 // stops when Running is 0.
 func (m *Member) Drain() { m.drain = true }
 
+// DrainMost is the longest a draining member waits for its children: the stop timeout of
+// the loop units (fleet/templates: TimeoutStopSec, ExitTimeOut) is DrainMost and a minute,
+// so a member always stops by itself before its supervisor kills what is left.
+const DrainMost = 2 * time.Hour
+
+// DrainBound is how long a member stopped by its supervisor (SIGTERM) waits for the children
+// it runs: the longest deadline they run to, and LongStall for the push and the report after
+// it, at most DrainMost (nova-tools#5096 item 26).
+func DrainBound(longest time.Duration) time.Duration {
+	return min(longest+LongStall, DrainMost)
+}
+
+// LongestDeadline is the longest deadline of the cards the member runs: each packet's
+// route deadline, or override (the member's own --deadline) for one that names none, and
+// override whenever it is longer (a reader given --deadline runs every read to it).
+func (m *Member) LongestDeadline(override time.Duration) time.Duration {
+	longest := time.Duration(0)
+	for _, l := range m.running {
+		if l.spent {
+			continue
+		}
+		longest = max(longest, time.Duration(l.packet.Deadline)*time.Second, override)
+	}
+	return longest
+}
+
 // Running is how many lanes the member holds: one for every launch from its start until
 // its card is reported (a spent launch holds none). A child that has exited holds its lane
 // until the report, so the cards a member has working never pass its width (the owner,

@@ -143,6 +143,9 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		assert.Contains(t, loops, w)
 	}
 	assert.NotContains(t, loops, "WOULD-RETIRE member-local")
+	// the member's unit stops it by draining it; the periodic loop's is as it was
+	assert.Equal(t, 1, strings.Count(loops, "+KillMode=mixed"), "the member's unit alone")
+	assert.Equal(t, 1, strings.Count(loops, "+TimeoutStopSec=7260"))
 	assert.NotContains(t, loops, `\u0001`)
 	plist := play("loops.yml", append(check, "-e", "ansible_system=Darwin", "-e", "nova_launchd_domain=gui")...)
 	for _, w := range []string{
@@ -159,6 +162,8 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	} {
 		assert.Contains(t, plist, w)
 	}
+	assert.Equal(t, 1, strings.Count(plist, "+<key>ExitTimeOut</key>"), "the member's plist alone")
+	assert.Contains(t, plist, "+<integer>7260</integer>")
 	assert.NotContains(t, loops+plist, "NOVA_SPRINT_REDIS=old-store:6379")
 	_, err := os.Stat(filepath.Join(home, ".config", "nova"))
 	assert.True(t, os.IsNotExist(err), "--check wrote the build fact")
