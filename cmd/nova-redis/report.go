@@ -50,11 +50,20 @@ func newReport(verb string, fs *flag.FlagSet, args []string, stdout, stderr io.W
 	return &report{json: verbflag.BoolAsked(args, "json"), stdout: stdout, stderr: stderr, out: tool.Out{Verb: verb}}
 }
 
-// refuse is a refusal in lines only: before a verb is known (no verb, an
-// unknown one, a group with no subverb), and serve's, whose output is
-// redis-server's own and which takes no --json.
+// refuse says every problem with the invocation, in the one grammar
+// `nova-redis[ <verb>] REFUSED: <what was wrong>; run: nova-redis help[ <verb>]`
+// (STANDARD §3.1), one line each on stderr, and exits 2. Called alone it is a
+// refusal in lines only: before a verb is known (no verb, an unknown one, a
+// group with no subverb), and serve's, which takes no --json.
 func refuse(stderr io.Writer, verb string, problems ...string) int {
-	return (&report{stderr: stderr, out: tool.Out{Verb: verb}}).refuse(problems...)
+	where, help := "", "nova-redis help"
+	if verb != "" {
+		where, help = " "+verb, help+" "+verb
+	}
+	for _, p := range problems {
+		fmt.Fprintf(stderr, "nova-redis%s REFUSED: %s; run: %s\n", where, oneline.Escape(p), help)
+	}
+	return 2
 }
 
 // line says one typed line: its leading words, then key, value pairs. toErr
@@ -125,22 +134,14 @@ func (r *report) note(text string) {
 	fmt.Fprintln(r.stdout, "NOTE "+text)
 }
 
-// refuse says every problem with the invocation, in the one grammar
-// `nova-redis[ <verb>] REFUSED: <what was wrong>; run: nova-redis help[ <verb>]`
-// (STANDARD §3.1), one line each on stderr, and exits 2.
+// refuse is the verb's refusal: refuse's lines, or with --json the same
+// problems as the result's why and its help as the remedy.
 func (r *report) refuse(problems ...string) int {
-	where, help := "", "nova-redis help"
-	if r.out.Verb != "" {
-		where, help = " "+r.out.Verb, help+" "+r.out.Verb
+	if !r.json {
+		return refuse(r.stderr, r.out.Verb, problems...)
 	}
-	for _, p := range problems {
-		if r.json {
-			r.out.Why = append(r.out.Why, p)
-			continue
-		}
-		fmt.Fprintf(r.stderr, "nova-redis%s REFUSED: %s; run: %s\n", where, oneline.Escape(p), help)
-	}
-	r.out.Remedy = help
+	r.out.Why = append(r.out.Why, problems...)
+	r.out.Remedy = "nova-redis help " + r.out.Verb
 	return r.done(2)
 }
 

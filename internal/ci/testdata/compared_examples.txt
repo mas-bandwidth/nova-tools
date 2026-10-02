@@ -59,6 +59,7 @@ cmd/nova-secrets/dryrun_example_test.go:TestTheHelpExampleIsWhatSealDryRunPrints
 cmd/nova-secrets/dryrun_example_test.go:TestTheHelpExampleIsWhatSeatInjectDryRunPrints example: nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
 cmd/nova-secrets/dryrun_example_test.go:TestTheHelpExampleIsWhatPlaceDryRunPrints example: nova-secrets place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
 cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis version
+cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
 cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
 cmd/nova-redis/examples_test.go:TestHelpExamplesRunThroughTheComparator example: nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note
 cmd/nova-secrets/examples_test.go:TestTheHelpExampleIsWhatKeygenPrints example: nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen

@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
@@ -204,6 +205,23 @@ func TestEveryVerbPrintsOneJSONObjectWithJSON(t *testing.T) {
 	assert.True(t, strings.HasPrefix(decodeOne(t, out).Payload, "nova-redis "))
 	_, out, _ = h.runBare("spill", "--json")
 	assert.Equal(t, "nova-redis help spill", decodeOne(t, out).Result.Remedy)
+}
+
+// A serve that could not start says what to do next: with no redis-server on
+// PATH, install it; with one that would not run, read its own lines.
+func TestServeFailureNamesTheNextStep(t *testing.T) {
+	t.Parallel()
+	h := newServeHarness(t, "pw")
+	h.d.lookPath = func(string) (string, error) { return "", errors.New("executable file not found in $PATH") }
+	code, _, errs := h.run("serve", "--bind", "127.0.0.1", "--port", "6379", "--dir", h.dir)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, `remedy="install redis-server (Redis 7 or later) so it is on PATH, then run nova-redis serve again"`)
+
+	h = newServeHarness(t, "pw")
+	h.onLaunch = func(launchSpec) error { return errors.New("exit status 1") }
+	code, _, errs = h.run("serve", "--bind", "127.0.0.1", "--port", "6379", "--dir", h.dir)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, `remedy="redis-server's own lines above say why it stopped; fix that, then run nova-redis serve again"`)
 }
 
 // acl render prints what an operator reads, not the names of this repository's

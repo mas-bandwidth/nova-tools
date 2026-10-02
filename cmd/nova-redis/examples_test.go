@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
@@ -39,8 +41,8 @@ func TestHelpExamplesRunThroughTheComparator(t *testing.T) {
 		code, out, errs := h.runBare(args...)
 		// The fake stands at the address the line names; the line prints it.
 		out = strings.ReplaceAll(out, h.mr.Addr(), "127.0.0.1:6379")
-		if strings.Contains(s.Line, "--dry-run") && h.mr.TotalConnectionCount() != 0 {
-			t.Errorf("the example %s dialled the store; a dry run needs none", s.Line)
+		if strings.Contains(s.Line, "--dry-run") {
+			assert.Zero(t, h.mr.TotalConnectionCount(), "the example %s dialled the store; a dry run needs none", s.Line)
 		}
 		if code != 0 {
 			t.Errorf("the example %s exits %d; stderr: %s", s.Line, code, errs)
