@@ -25,7 +25,9 @@ package main
 // are looked for wherever they stand, so a card accepted or ranked ahead of them
 // since changes nothing);
 // a batch pushed and not reported is left in the base and recovered by running
-// land again (Recovers).
+// land again (Recovers). Only a batch pushed and reported has its cards' branches
+// tagged for the cleanup, which deletes them from origin outside every batch
+// (landprune.go).
 
 import (
 	"context"
@@ -107,6 +109,10 @@ type landBatch struct {
 	// Times is how long each of the batch's steps took; nil for a batch refused before
 	// its git ran, and for a dry run.
 	Times *landTimes `json:"times,omitempty"`
+	// Prune is the cards' branches on origin a landed batch put on the cleanup queue
+	// (landprune.go; a dry run: would put); nil for a batch that did not land, or
+	// whose cards recorded no branch.
+	Prune *landPrune `json:"prune,omitempty"`
 }
 
 // landTimes is a batch's steps, in seconds: the fetch, the merges (with any head
@@ -140,6 +146,17 @@ func (b landBatch) line() string {
 	}
 	if t := b.Times; t != nil {
 		l += fmt.Sprintf(" fetch=%.1fs merge=%.1fs check=%.1fs queue=%.1fs push=%.1fs report=%.1fs", t.Fetch, t.Merge, t.Check, t.Queue, t.Push, t.Report)
+	}
+	if p := b.Prune; p != nil {
+		switch {
+		case p.Why != "":
+			l += " branches_queued=-"
+		default:
+			l += " branches_queued=" + strconv.Itoa(p.Queued)
+		}
+		if len(p.Kept) > 0 {
+			l += " branches_kept=" + strconv.Itoa(len(p.Kept))
+		}
 	}
 	if b.Fact != "" {
 		l += " fact=" + b.Fact
@@ -262,12 +279,19 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 			failed = true
 		}
 	}
-	return l.report(failed, stdout, stderr)
+	// the cleanup, after every stream and outside every batch: the land loop's own
+	// (landRound) when the loop runs this land, else once here, as the command ends
+	var pruned []pruneResult
+	if !a.landLazy && !l.dry {
+		pruned = a.flushPrune(ctx, true)
+	}
+	return l.report(failed, pruned, stdout, stderr)
 }
 
-// report prints the batches and the summary: exit 0 when every batch
-// landed, 1 when one was refused, 2 when a push landed and its report did not.
-func (l *lander) report(failed bool, stdout, stderr io.Writer) int {
+// report prints the batches, the cleanup and the summary: exit 0 when every batch
+// landed, 1 when one was refused, 2 when a push landed and its report did not. A
+// cleanup that failed changes no exit: its batches landed.
+func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Writer) int {
 	batches, cards, refused := 0, 0, 0
 	for _, b := range l.out {
 		switch b.Status {
@@ -291,9 +315,12 @@ func (l *lander) report(failed bool, stdout, stderr io.Writer) int {
 		if out == nil {
 			out = []landBatch{}
 		}
+		if pruned == nil {
+			pruned = []pruneResult{}
+		}
 		// ignored: a map of strings, numbers and plain structs of strings always encodes
 		b, _ := json.Marshal(map[string]any{"verb": "land", "status": status, "exit": code, "batches": batches, "cards": cards,
-			"refused": refused, "dry_run": l.dry, "items": out})
+			"refused": refused, "dry_run": l.dry, "items": out, "prune": pruned})
 		fmt.Fprintln(stdout, string(b))
 		return code
 	}
@@ -311,6 +338,17 @@ func (l *lander) report(failed bool, stdout, stderr io.Writer) int {
 		case b.Status == "refused" && !l.dry:
 			fmt.Fprintf(w, "NOTE nothing was pushed or reported for stream %s; its cards stay queued\n", oneline.Field(b.Stream))
 		}
+		if p := b.Prune; p != nil {
+			if p.Why != "" {
+				fmt.Fprintf(w, "NOTE %s\n", oneline.Escape(p.Why))
+			}
+			for _, k := range p.Kept {
+				fmt.Fprintf(w, "NOTE no branch queued for deletion for %s\n", oneline.Escape(k))
+			}
+		}
+	}
+	for _, p := range pruned {
+		fmt.Fprintln(stdout, p.line(true))
 	}
 	dry := ""
 	if l.dry {
@@ -520,12 +558,14 @@ func (l *lander) dryBatch(b landBatch, cards []landCard) (landed, ok bool) {
 	cut := slices.IndexFunc(cards, func(c landCard) bool { return headNotCommit(c) != "" })
 	if cut < 0 {
 		b.Status = "ok"
+		l.tag(context.Background(), &b, cards)
 		l.out = append(l.out, b)
 		return true, true
 	}
 	if cut > 0 {
 		before := b
 		before.Status, before.Cards, before.IDs = "ok", cut, b.IDs[:cut]
+		l.tag(context.Background(), &before, cards[:cut])
 		l.out = append(l.out, before)
 	}
 	c := cards[cut]
@@ -602,6 +642,9 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 		return false
 	}
 	b.Status = "ok"
+	// pushed AND reported: only now are its cards' branches tagged for the cleanup (a
+	// batch pushed and not reported keeps them: land is run again and may need the heads)
+	l.tag(context.Background(), &b, pins)
 	l.out = append(l.out, b)
 	return true
 }
