@@ -1,10 +1,10 @@
 package cardhdr
 
-// ONE CARD, ONE INVARIANT (nova-tools#4396, Glenn 2026-09-26: "It is better
-// to cut high quality cards than to waste time building it then throwing it
-// away at 4/10"). Over sixteen cold reads every 4/10 or 5/10 was a card whose
-// body was a list of items or a pointer to an issue, and every 8 to 10 a card
-// of one invariant with a named test. LintOneInvariant is the one check every
+// ONE CARD, ONE INVARIANT: cutting a high quality card is better than
+// building one and throwing it away when it rates low. A card whose body is
+// a list of items or a pointer to an issue is the shape that rates low; a
+// card of one invariant with a named test is the shape that rates high.
+// LintOneInvariant is the one check every
 // push path runs (card push, card cut, card cut --from, task push): a card
 // carries an INVARIANT of one sentence, a DONE-WHEN of one sentence, a
 // CLASS-TEST naming one Go test, PATHS over at most three Go packages and, if
@@ -42,7 +42,7 @@ const (
 	keyKind      = "KIND"
 )
 
-// The hierarchy's KINDs (#4388; taskcard.KindPlan and taskcard.KindStitch
+// The hierarchy's KINDs (taskcard.KindPlan and taskcard.KindStitch
 // are these constants). A plan is a card cut as a parent with children: its
 // children carry the DONE-WHEN, the CLASS-TEST and the packages, and its
 // BUILD: lists them, so a plan is exempt from the done-when-*, class-test-*,
@@ -371,12 +371,12 @@ type rule struct {
 }
 
 var (
-	// buildIssueRE is a body that points at an issue: "Build issue #4352 as
-	// written.", "Build nova-tools#4352, as written." (any words, any
-	// punctuation, between).
+	// buildIssueRE is a body that points at an issue: "Build issue #N as
+	// written.", "Build repo#N, as written." (any words, any punctuation,
+	// between).
 	buildIssueRE = regexp.MustCompile(`(?i)\bbuild\b.*#\d+\b.*\bas written\b`)
 	// listItemRE is one list item: - * + markers; and a number, a letter
-	// (upper or lower case: the #4352 A-F shape, a. b.) or a roman numeral
+	// (upper or lower case: A. B., a. b.) or a roman numeral
 	// (i. ii., I. II.) written 1. or 1) or (1).
 	listItemRE = regexp.MustCompile(`^\s*(?:[-*+]|(?:\d+|[A-Za-z]|[ivx]+|[IVX]+)[.)]|\((?:\d+|[A-Za-z]|[ivx]+|[IVX]+)\))\s+\S`)
 	// inlineItemRE is one numbered item on a BUILD: line itself: 1. 1) (1).
