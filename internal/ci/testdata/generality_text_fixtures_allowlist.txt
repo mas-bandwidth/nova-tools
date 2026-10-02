@@ -46,7 +46,6 @@ internal/ci/testdata/generality/cmd/nova-check.txt the Go scan's ledger: each ro
 internal/ci/testdata/generality/cmd/nova-ci.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/cmd/nova-redis.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/cmd/nova-sandbox.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality/cmd/nova-secrets.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/cmd/nova-table.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/cmd/nova-tokens.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/bus.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts

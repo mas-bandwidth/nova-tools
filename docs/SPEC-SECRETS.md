@@ -110,7 +110,7 @@ opened what, or when, so nobody may build a belief on an audit trail that does n
 ```
 nova-secrets version
 nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
-nova-secrets names  --store <dir> --as <name> [--max <n>]
+nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
 nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
 nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
 nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
@@ -240,10 +240,14 @@ SECRETS EXEC OK as=<name> keys=<n> only=<all|n> required=<n> file=<path> head=<s
 ### `names`
 
 ```
-SECRETS NAME key=GH_TOKEN
-SECRETS NAMES OK as=<name> keys=<n> shown=<n> sealed=<n> clear=<n>
+SECRETS NAME key=GH_TOKEN clear=false
 SECRETS NAMES MORE kind=key shown=<n> total=<n> run: nova-secrets names ... --max 0
+SECRETS NAMES OK as=<name> keys=<n> shown=<n> sealed=<n> clear=<n>
 ```
+
+`--json` prints the same value as one JSON object on stdout: `result` (verb, status,
+exit, and on a refusal its reason and remedy), `facts` (as, keys, shown, sealed, clear),
+one `items` row per name shown (`key`, `clear`) and a `more` row when `--max` cut the list.
 
 **What it asserts.** That these are the key names in the sealed file — **read without
 decrypting it**. sops encrypts values and leaves field names in the clear (`GH_TOKEN:
@@ -338,7 +342,7 @@ secret, with no row in the credential table and no home in **The model** — to 
 which is not a trade this page makes.
 
 ```
-SECRETS CHECK OK  as=<name> recipients=<n> files=<n> sealed=<n> mine=<n> foreign=<n> clear=<n> head=<sha>
+SECRETS CHECK OK as=<name> recipients=<n> files=<n> sealed=<n> mine=<n> foreign=<n> clear=<n> head=<sha>
 SECRETS CHECK FAIL <file>: <reason>
 SECRETS CHECK FAIL as=<name> files=<n> failed=<n> shown=<n>
 ```
@@ -503,8 +507,8 @@ nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> \
   --machine <name> --secret <name> [--path <remote path>] \
   [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
 nova-secrets placed --machine <name> [--receipts <dir>]
-SECRETS PLACE  OK   machine=<name> secret=<name> path=<path> sha256=<hex> stamp=<stamp>
-SECRETS PLACED OK   machine=<name> count=<n>
+SECRETS PLACE OK machine=<name> secret=<name> path=<path> sha256=<hex> stamp=<stamp>
+SECRETS PLACED OK machine=<name> count=<n>
 SECRETS PLACED ITEM machine=<name> secret=<name> path=<path> sha256=<hex> stamp=<stamp>
 ```
 

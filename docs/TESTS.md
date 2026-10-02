@@ -226,7 +226,7 @@ Done. Your new key is at /path/to/home/.config/nova-secrets/example.key. Nothing
 Next: send this public key to whoever seals your seat: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
 
 $ nova-secrets check --store ./secrets --as reader --key /path/to/home/.config/nova-secrets/reader.key --sops /path/to/bin/sops
-SECRETS CHECK OK  as=reader recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=9750ba9
+SECRETS CHECK OK as=reader recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=9750ba9
 
 $ nova-secrets names --store ./secrets --as reader
 SECRETS NAME key=GH_TOKEN clear=false

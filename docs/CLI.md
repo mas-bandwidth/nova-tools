@@ -1547,7 +1547,8 @@ explicit `--stdin` accepts a value through standard input instead. Encryption
 uses the store's SOPS configuration. `--no-pr` creates a branch and commits the
 encrypted change locally, without pushing or opening a pull request. It then
 returns the working copy to the branch it started on; the seal commit stays on
-the `seal/...` branch and the OK line names it. A leftover seal branch has no
+the `seal/...` branch, the OK line names it, and a `SECRETS SEAL NOTE` line under
+it says `exec` does not read the value yet and gives the push that carries it. A leftover seal branch has no
 upstream, and `exec` would refuse every later card on that store. A dirty store
 (staged or unstaged tracked changes) is refused before any branch switch, so
 local edits are not discarded.
@@ -1566,8 +1567,8 @@ pending; it does not mean the replacement is active.
 ### Give a new seat its first values
 
 ```sh
-nova-secrets seat add --store ./secrets --as air --pub age1… --from rowan \
-  --only GH_TOKEN,DEEPSEEK_API_KEY --key /path/to/rowan.key --sops /path/to/sops
+nova-secrets seat add --store ./secrets --as worker --pub age1… --from lead \
+  --only GH_TOKEN,DEEPSEEK_API_KEY --key /path/to/lead.key --sops /path/to/sops
 ```
 
 `seal` cannot do this: it decrypts a seat file before it writes one, and only the
@@ -1586,8 +1587,8 @@ gate reads them in a pull request as it does every other recipient change.
 ### Re-seal values into an existing seat
 
 ```sh
-nova-secrets seat inject --store ./secrets --as air --from rowan \
-  --only NOVA_REDIS_BENCH_PASSWORD --key /path/to/rowan.key --sops /path/to/sops
+nova-secrets seat inject --store ./secrets --as worker --from lead \
+  --only NOVA_REDIS_BENCH_PASSWORD --key /path/to/lead.key --sops /path/to/sops
 ```
 
 `seal` runs only where the target seat's own key lives, and `seat add` refuses a
@@ -1598,7 +1599,7 @@ recovery key, held equal to its rule first), then walks `seal`'s road: a
 `seal/<seat>-<NAMES>-<stamp>` branch, one commit, a push, the pull request the
 store's gate approves, the squash merge, the pull and `check`. `--no-pr` stops
 after the commit, returns the store to its starting branch and names the branch
-on the OK line: `SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000`.
+on the OK line: `SECRETS SEAT INJECT OK seat=worker from=lead names=1 committed branch=seal/worker-NOVA_REDIS_BENCH_PASSWORD-20260927-013000`.
 
 This key cannot open the target, so every sealed value the target holds is
 re-sealed from the source's current value; a value the rule permits in the clear

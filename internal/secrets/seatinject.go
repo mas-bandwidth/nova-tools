@@ -85,17 +85,6 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 		return "", err
 	}
 
-	sFi, err := os.Stat(opts.StoreDir)
-	if err != nil || !sFi.IsDir() {
-		return "", fmt.Errorf("store %s is not a directory", opts.StoreDir)
-	}
-	gFi, err := os.Stat(filepath.Join(opts.StoreDir, ".git"))
-	if err != nil || !gFi.IsDir() {
-		return "", fmt.Errorf("store %s has no .git directory; clone it: git clone <url> %s", opts.StoreDir, opts.StoreDir)
-	}
-	if _, err := os.Stat(filepath.Join(opts.StoreDir, ".sops.yaml")); err != nil {
-		return "", fmt.Errorf("store %s carries no .sops.yaml", opts.StoreDir)
-	}
 	if err := CheckInvariant6(opts.KeyPath); err != nil {
 		return "", err
 	}
@@ -198,32 +187,16 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 // seatInjectValidate checks the invocation and answers the --only names, sorted and
 // de-duplicated so the branch name and the file do not depend on argument order.
 func seatInjectValidate(opts *SeatInjectOptions) ([]string, error) {
-	if opts.StoreDir == "" {
-		return nil, fmt.Errorf("missing --store <dir>")
-	}
-	if opts.AsName == "" {
-		return nil, fmt.Errorf("missing --as <seat>: the existing seat receiving the values")
-	}
-	if !IsValidAsName(opts.AsName) {
-		return nil, fmt.Errorf("invalid seat name %q for --as: must match [A-Za-z0-9_-]+", opts.AsName)
-	}
-	if opts.From == "" {
-		return nil, fmt.Errorf("missing --from <source-seat>: a seat this machine can open")
-	}
-	if !IsValidAsName(opts.From) {
-		return nil, fmt.Errorf("invalid seat name %q for --from: must match [A-Za-z0-9_-]+", opts.From)
+	if err := preflight(opts.StoreDir, need{opts.StoreDir, "--store <dir>", false},
+		need{opts.AsName, "--as <seat> (the existing seat receiving the values)", true},
+		need{opts.From, "--from <source-seat> (a seat this machine can open)", true},
+		need{opts.KeyPath, "--key <path> (this machine's key, the one that opens --from)", false},
+		need{opts.SopsPath, "--sops <path>", false},
+		need{strings.TrimSpace(opts.Only), "--only <NAME,…> (seat inject delivers the values it is told to deliver and no others)", false}); err != nil {
+		return nil, err
 	}
 	if opts.From == opts.AsName {
 		return nil, fmt.Errorf("--from names %s, the seat receiving the values; a seat that can open its own file uses seal, and the source is a DIFFERENT seat this machine can open", opts.AsName)
-	}
-	if opts.KeyPath == "" {
-		return nil, fmt.Errorf("missing --key <path>: this machine's key, the one that opens --from")
-	}
-	if opts.SopsPath == "" {
-		return nil, fmt.Errorf("missing --sops <path>")
-	}
-	if strings.TrimSpace(opts.Only) == "" {
-		return nil, fmt.Errorf("missing --only <NAME,…>: seat inject delivers the values it is told to deliver and no others")
 	}
 	if opts.GHPath == "" {
 		opts.GHPath = "gh"
