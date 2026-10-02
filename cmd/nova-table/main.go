@@ -10,12 +10,15 @@
 package main
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,6 +28,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -160,6 +164,20 @@ func (app *application) run(args []string, stdout, stderr io.Writer) (code int) 
 			return helpCommand(words, stdout, stderr)
 		}
 	}
+	if verb := jsonVerb(args); verb != "" && verbflag.BoolAsked(args, "json") {
+		// a verb that answers in JSON answers a refusal in JSON too
+		var refusal bytes.Buffer
+		if code = app.seated(args, stdout, &refusal); code == 0 {
+			_, err := stderr.Write(refusal.Bytes())
+			return exitOf(err)
+		}
+		return jsonRefusal(stdout, verb, code, refusal.String())
+	}
+	return app.seated(args, stdout, stderr)
+}
+
+// seated is the verb run as the seat the line or the environment selects.
+func (app *application) seated(args []string, stdout, stderr io.Writer) int {
 	var err error
 	if app.shared == nil {
 		args, err = selectSeat(seatcred.Process(), args, os.Getenv, os.Setenv)
@@ -168,6 +186,52 @@ func (app *application) run(args []string, stdout, stderr io.Writer) (code int) 
 		}
 	}
 	return app.dispatch(args, stdout, stderr)
+}
+
+// jsonVerb is the verb of args when it takes --json (batch, member read),
+// else "".
+func jsonVerb(args []string) string {
+	switch {
+	case len(args) > 0 && args[0] == "batch":
+		return "batch"
+	case len(args) > 1 && args[0] == "member" && args[1] == "read":
+		return "member read"
+	}
+	return ""
+}
+
+// refusalLine reads a refusal refuseWith printed: its reason and its remedy.
+var refusalLine = regexp.MustCompile(`^[A-Z][A-Z0-9-]* REFUSED: (.*?)(?:; run: (.*))?$`)
+
+// jsonRefusal prints, on stdout, the refusal of a verb asked for --json as the
+// one JSON object every nova tool's result is (internal/tool's Out, docs/
+// STANDARD.md section 2): {"result":{"verb","status":"refused","exit",
+// "remedy","why"}}, the exit the line carried (2 could not run, 1 the store
+// said no). A line that is no refusal (a warning) is a note.
+func jsonRefusal(stdout io.Writer, verb string, code int, lines string) int {
+	o := &tool.Out{Verb: verb, Status: tool.Refused, Exit: code}
+	for _, l := range strings.Split(strings.TrimSuffix(lines, "\n"), "\n") {
+		m := refusalLine.FindStringSubmatch(l)
+		switch {
+		case m != nil:
+			o.Why = append(o.Why, m[1])
+			o.Remedy = cmp.Or(m[2], o.Remedy)
+		case l != "":
+			o.Notes = append(o.Notes, l)
+		}
+	}
+	if o.Render(stdout, true) != code {
+		return 1
+	}
+	return code
+}
+
+// exitOf is 0, or 1 when what a verb printed did not reach its reader.
+func exitOf(err error) int {
+	if err != nil {
+		return 1
+	}
+	return 0
 }
 
 // selectSeat is the seat resolution nova-sprint defined

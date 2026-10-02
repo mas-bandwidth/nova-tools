@@ -127,7 +127,7 @@ func (app *application) cmdMemberRead(args []string, stdout, stderr io.Writer) i
 	var cells cellList
 	fs.Var(&cells, "cell", "read every member of the cell `row:col` (repeatable); the ids are then not given")
 	atEpoch := fs.String("at-epoch", "", "read a materialised epoch instead of the active one")
-	asJSON := fs.Bool("json", false, "print the reading as one JSON object instead of the lines")
+	asJSON := fs.Bool("json", false, "print the reading (or the refusal) as one JSON object instead of the lines")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())

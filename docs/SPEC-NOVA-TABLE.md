@@ -811,7 +811,7 @@ write verbs records receipt metadata only and does not deduplicate retries.
 
 flags:
   --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
-  --json  print the receipt (or the --dry-run plan) as one JSON object instead of the lines
+  --json  print the receipt (or the refusal, or the --dry-run plan) as one JSON object instead of the lines
 
 connection:
   --redis <string>  the Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, then the seat's)

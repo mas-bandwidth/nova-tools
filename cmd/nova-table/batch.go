@@ -42,7 +42,7 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	epoch := fs.Uint64("epoch", app.defaults.Epoch, "the epoch this write observed; it must equal the manifest's epoch")
 	actor := fs.String("actor", app.defaults.Actor, "actor recorded with the change; it must equal the manifest's actor when the manifest names one")
 	receipt := fs.Bool("receipt", app.receipts, "print the committed event ID, epoch and revision")
-	asJSON := fs.Bool("json", false, "print the receipt (or the --dry-run plan) as one JSON object instead of the lines")
+	asJSON := fs.Bool("json", false, "print the receipt (or the refusal, or the --dry-run plan) as one JSON object instead of the lines")
 	dryRunFlag(fs, app.dryRun)
 	// ignored: Set on a flag this function just defined, with a value its parser accepts
 	_ = fs.Set("receipt", "true")
