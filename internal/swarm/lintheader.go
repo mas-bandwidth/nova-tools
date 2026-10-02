@@ -84,11 +84,6 @@ var CardHeaderRemedies = map[string]string{
 	"paused":         "the coordinator paused this kind, so `cut` cuts no card of it and a card launched before the pause is `ACCEPT ABSTAIN reason=paused` at harvest; the remedy is not a rerun but `nova-pulse trust --set trial --queue <dir> --kind <kind> --who <name> --reason <text>`",
 }
 
-// CardHeaderChecks is every token this file draws, in one byte-stable order.
-func CardHeaderChecks() []string {
-	return slices.Sorted(maps.Keys(CardHeaderRemedies))
-}
-
 // TrustState is the coordinator's per-kind state, keyed by kind: `trial`, `trusted` or
 // `paused` (SPEC-TOOLWORK.md eligibility rule 1's TRUST listing).
 type TrustState map[string]string

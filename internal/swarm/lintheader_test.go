@@ -302,8 +302,8 @@ func TestCardHeaderUntypedCardIsCheckedOnlyWhenRequired(t *testing.T) {
 func TestCardHeaderEveryTokenHasARemedy(t *testing.T) {
 	t.Parallel()
 
-	for _, tok := range CardHeaderChecks() {
-		assert.NotEmpty(t, strings.TrimSpace(CardHeaderRemedies[tok]), "%s carries no remedy line", tok)
+	for tok, remedy := range CardHeaderRemedies {
+		assert.NotEmpty(t, strings.TrimSpace(remedy), "%s carries no remedy line", tok)
 	}
-	assert.Len(t, CardHeaderChecks(), 4, "§5 rule 1 names four tokens, this holds %v", CardHeaderChecks())
+	assert.Len(t, CardHeaderRemedies, 4, "§5 rule 1 names four tokens, this holds %v", CardHeaderRemedies)
 }

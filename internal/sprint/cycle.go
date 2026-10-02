@@ -2,8 +2,6 @@ package sprint
 
 import (
 	"fmt"
-	"maps"
-	"slices"
 	"sort"
 	"strings"
 )
@@ -291,16 +289,6 @@ func (g *needGraph) tellLoop(loop []string) string {
 		out += " (through sentinel " + strings.Join(gates, ", ") + ": a card behind a sentinel needs it, and a sentinel needs every card of its stream before it)"
 	}
 	return out
-}
-
-// NeedsCycle is a cycle the needs would make with the edges given (a primary
-// -> its needs, in place of its own), as the path around it from its first
-// primary back to it; nil when there is none. Only a cycle through a primary
-// the edges name is one they make: a cycle already on the table is check's to
-// report, not this call's.
-func NeedsCycle(s *Snapshot, edges map[string][]string) []string {
-	g := newNeedGraph(s, edges, nil, nil)
-	return g.closes(slices.Sorted(maps.Keys(edges)))
 }
 
 // closes is the loop through the first of ids that is on a cycle, nil when
