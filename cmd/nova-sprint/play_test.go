@@ -70,17 +70,14 @@ func TestPlayWithACoordinatorLandsEveryStream(t *testing.T) {
 		}
 		for _, bad := range []string{"nova-sprint accept", "nova-sprint rework", "nova-sprint resume", "nova-sprint drop", "nova-sprint rank",
 			"nova-sprint start", "nova-sprint resolve", "nova-sprint ask", "nova-sprint tick"} {
-			if strings.Contains(out, bad) {
-				t.Fatalf("the driver ran a coordinator verb:\n%s", out)
-			}
+			require.NotContains(t, out, bad, "the driver ran a coordinator verb")
 		}
 		ta.clean()
 		if strings.Contains(out, "every stream has landed") {
 			var w whereView
 			ta.json("where", &w)
-			if w.Landed != 45 || w.All != 45 {
-				t.Fatalf("landed %d of %d", w.Landed, w.All)
-			}
+			require.EqualValues(t, 45, w.Landed, "landed %d of %d", w.Landed, w.All)
+			require.EqualValues(t, 45, w.All, "landed %d of %d", w.Landed, w.All)
 			return
 		}
 		ta.coordinate()
@@ -94,18 +91,17 @@ func TestPlaySaysWhatWaitsForTheCoordinator(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 3")
-	if code, _, errs := ta.do("play --seed 1 --ticks 1"); code != 2 || !strings.Contains(errs, "no machine is running") {
-		t.Fatalf("play with the machine stopped: %d %s", code, errs)
-	}
+	code, _, errs := ta.do("play --seed 1 --ticks 1")
+	require.Equal(t, 2, code, "play with the machine stopped: %d %s", code, errs)
+	require.Contains(t, errs, "no machine is running", "play with the machine stopped: %d %s", code, errs)
 	ta.ok("start")
 	out := ""
 	for round := 1; round <= 3; round++ {
 		ta.ok("tick")
 		out = ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --fail 1 --every 1m", round))
 	}
-	if !strings.Contains(out, "waits for the coordinator: work came back failed s1 x3") || !strings.Contains(out, "PLAY OK stopped=ticks") {
-		t.Fatalf("play:\n%s", out)
-	}
+	require.Contains(t, out, "waits for the coordinator: work came back failed s1 x3", "play:\n%s", out)
+	require.Contains(t, out, "PLAY OK stopped=ticks", "play:\n%s", out)
 	var in struct{ Groups []sprint.Group }
 	failed := func() sprint.Group {
 		t.Helper()
@@ -118,11 +114,9 @@ func TestPlaySaysWhatWaitsForTheCoordinator(t *testing.T) {
 		t.Fatalf("inbox: %+v", in.Groups)
 		return sprint.Group{}
 	}
-	if b, _ := json.Marshal(failed()); strings.Contains(string(b), `"overdue":true`) {
-		t.Fatalf("overdue before its deadline: %s", b)
-	}
+	b, _ := json.Marshal(failed())
+	require.NotContains(t, string(b), `"overdue":true`, "overdue before its deadline")
 	ta.a.sleep(20 * time.Minute)
-	if b, _ := json.Marshal(failed()); !strings.Contains(string(b), `"overdue":true`) {
-		t.Fatalf("not overdue at read time past its deadline: %s", b)
-	}
+	b, _ = json.Marshal(failed())
+	require.Contains(t, string(b), `"overdue":true`, "not overdue at read time past its deadline")
 }
