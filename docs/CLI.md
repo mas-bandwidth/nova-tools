@@ -338,19 +338,20 @@ LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both di
 ## nova-memory
 
 ```
-nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
+nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]... [--json]
                                                                         the first run: stats, one search, one check, each with the line that ran it
-nova-memory stats  --root <dir>... [--exclude <glob>]...
+nova-memory stats  --root <dir>... [--exclude <glob>]... [--json]
                                                                         measure m: files, chunks, bytes, vocab, build time, classes
 nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <words>...
                                                                         one query, k receipted hits (for work retrieval)
 nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
                                                                         do I already know this? k receipts per candidate paragraph
-nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]... [--exempt <prefix>]... [--fail-max <n>] [--exclude <glob>]...
+nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]... [--exempt <prefix>]... [--fail-max <n>] [--exclude <glob>]... [--json]
                                                                         coverage, backlinks, wikilinks, frontmatter — it finds, you decide
-nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>
+nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] [--json] <gold.tsv>
                                                                         known-answer harness: recall@k and MRR, fails below the floor
-nova-memory boot   --root <dir> --pin <file>                            the session loads exactly the pinned memories, never walks the directory
+nova-memory boot   --root <dir> --pin <file> [--json]
+                                                                        the session loads exactly the pinned memories, never walks the directory
 ```
 
 ### First run
