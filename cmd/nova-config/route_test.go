@@ -46,15 +46,15 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "list prints every field in declaration order, a price not set as a dash",
 			args: []string{"route", "list"},
-			out: "ROUTE name=pro-deepseek-direct tier=pro provider=deepseek model=deepseek-v4 tokens=400000 deadline=1800 enabled=true" + noPrices + "\n" +
-				"ROUTE name=pro-deepseek-opencode tier=pro provider=opencode model=deepseek-v4 tokens=400000 deadline=1800 enabled=true" + noPrices + "\n" +
-				"ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 tokens=300000 deadline=1800 enabled=true" + noPrices + "\n" +
+			out: "ROUTE name=pro-deepseek-direct tier=pro provider=deepseek model=deepseek-v4 tokens=400000 usd=- deadline=1800 enabled=true" + noPrices + "\n" +
+				"ROUTE name=pro-deepseek-opencode tier=pro provider=opencode model=deepseek-v4 tokens=400000 usd=- deadline=1800 enabled=true" + noPrices + "\n" +
+				"ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 tokens=300000 usd=- deadline=1800 enabled=true" + noPrices + "\n" +
 				"CONFIG LIST kind=route rows=3\n",
 		},
 		{
 			name: "show carries the stamps",
 			args: []string{"route", "show", "pro-grok-openrouter"},
-			out:  "ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 tokens=300000 deadline=1800 enabled=true" + noPrices + " created=",
+			out:  "ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 tokens=300000 usd=- deadline=1800 enabled=true" + noPrices + " created=",
 			pre:  true,
 		},
 		{
@@ -67,7 +67,7 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "show prints the sheet",
 			args: []string{"route", "show", "pro-deepseek-opencode"},
-			out: "ROUTE name=pro-deepseek-opencode tier=pro provider=opencode model=deepseek-v4 tokens=400000 deadline=1800 enabled=true price_input=0.27 price_cache_read=0.07 " +
+			out: "ROUTE name=pro-deepseek-opencode tier=pro provider=opencode model=deepseek-v4 tokens=400000 usd=- deadline=1800 enabled=true price_input=0.27 price_cache_read=0.07 " +
 				"price_cache_write=- price_output=1.1 reasoning_as_output=true long_context=128000 price_input_long=0.54 price_output_long=2.2 price_request=- billing=metered " +
 				"gateway_percent=5 price_source=https://example.com/pricing price_as_of=2026-10-01 created=",
 			pre: true,

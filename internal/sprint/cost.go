@@ -3,7 +3,6 @@ package sprint
 import (
 	"cmp"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"math/big"
 	"sort"
 	"strconv"
@@ -326,5 +325,5 @@ func MoneyText(usd string) string {
 	if !ok {
 		return "-"
 	}
-	return ntable.Cents(r)
+	return cardcost.Cents(r)
 }

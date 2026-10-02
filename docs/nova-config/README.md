@@ -319,7 +319,10 @@ nova-config apply
 The harness is launched with `<provider>/<model>`: `--provider` is one word
 with no slash, and `--model` is the rest, which may hold slashes
 (`x-ai/grok-4`). `--tokens 0` (the default) is unmetered, the deadline the only
-stop; `--deadline` is required and above 0; `--enabled false` takes a route out
+stop; `--usd 0.50` is a dollar budget per card beside it, the harness's reported
+cost at which the card is stopped (a model that re-sends its whole context
+uncached spends tokens fast and cents slowly, so its token budget can be a
+generous ceiling and the dollars the bound); `--deadline` is required and above 0; `--enabled false` takes a route out
 of the deal. The deal takes `routes[index mod len]` of the card's tier's array
 for each card, the index a counter on the fleet table moved by one a card
 dealt, and a redeal moves past the routes already taken for that card when

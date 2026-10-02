@@ -286,6 +286,7 @@ var Kinds = []*Kind{
 			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
 			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
+			{Name: "usd", Type: TypeDecimal, Help: "the dollar budget per card, a decimal like 0.50: the harness's reported cost at which the card is stopped, beside the token budget; empty (the default) is none"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal; true (the default) keeps it in"},
 			// The price sheet: optional, so a card's predicted cost can be worked
@@ -385,6 +386,13 @@ func checkRoute(r Row) error {
 	}
 	if _, ok := r.Fields["deadline"]; ok && r.Int("deadline") <= 0 {
 		problems = append(problems, fmt.Sprintf("route %s has --deadline 0; want the seconds a card on it may run, above 0", r.Name))
+	}
+	// a dollar budget is above 0: empty is no cap, and a 0 would be dealt onto every card
+	// and refused by native at every launch (nova-tools #5094)
+	if v := r.Fields["usd"]; v != "" {
+		if d, err := cardcost.Decimal(v); err != nil || d.Sign() <= 0 {
+			problems = append(problems, fmt.Sprintf("route %s has --usd %s; want a dollar budget above 0, or --usd \"\" (empty) for no cap", r.Name, v))
+		}
 	}
 	// the long prices go with the threshold: one without the other prices nothing
 	if _, ok := r.Fields[cardcost.FieldLongContext]; ok {
