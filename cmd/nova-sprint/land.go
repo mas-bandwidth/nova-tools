@@ -610,6 +610,11 @@ func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) 
 // 2 landed, and one batch was pushed and could not be reported). A pinned card
 // gone from the queue, or reworked to another head, still refuses.
 func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
+	// a stream stopped since land read it (a red recorded while an earlier stream of the
+	// same run landed) is not pushed: a stopped stream moves only after resume
+	if ctl := s.StreamCtl(stream); ctl != nil && ctl.F("state") == sprint.StreamStopped {
+		return "stopped (" + ctl.F("cause") + ") since it was read; run: nova-sprint resume --stream " + stream
+	}
 	queued := map[string]bool{}
 	for _, c := range landQueue(s, stream) {
 		queued[c.ID] = true

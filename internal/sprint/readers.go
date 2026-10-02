@@ -229,6 +229,7 @@ func levelReads(s *Snapshot, p *Plan) {
 	}
 	rr := askRound(s)
 	moves := roundMoves{}
+	planned := map[string]bool{} // the read cards this plan already creates: none is created twice
 	for {
 		long, short := "", ""
 		for _, rd := range up {
@@ -247,7 +248,7 @@ func levelReads(s *Snapshot, p *Plan) {
 		for ; i >= 0 && to == ""; i-- {
 			avoid := []string{long}
 			for _, rd := range up {
-				if s.Readers.Card(ReadCardID(q[i].F("primary"), q[i].Int("attempt"), rd)) != nil {
+				if id := ReadCardID(q[i].F("primary"), q[i].Int("attempt"), rd); s.Readers.Card(id) != nil || planned[id] {
 					avoid = append(avoid, rd)
 				}
 			}
@@ -264,6 +265,7 @@ func levelReads(s *Snapshot, p *Plan) {
 		moves[c.ID] = to
 		fields := movedReadFields(c, to, s.Now)
 		id := ReadCardID(c.F("primary"), c.Int("attempt"), to)
+		planned[id] = true
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{
 			change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByLevel})),
 			change(Readers, createEntry(id, to, Asked, c.Score, fields)),
