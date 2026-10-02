@@ -23,6 +23,16 @@
 # its name takes it over. --check lists each retirement as WOULD-RETIRE with its
 # file and changes nothing. A loop logs to its record's log, under
 # ~/nova-bench/loops.
+#
+# A unit whose file (or timer) changed is restarted, said as RESTART (WOULD-RESTART
+# under --check) with why. A member's (a record that runs nova-swarm member, a
+# reader's too) is never killed mid-card: its restart is the drain signal, SIGTERM
+# to the member alone (systemd KillMode=mixed; launchd's bootout), and the
+# supervisor waits for it up to nova_member_stop_timeout while it takes nothing
+# new, lets its running cards finish and reports them, then starts the new unit;
+# an idle member stops at once (nova-tools#5096 items 25, 26). On darwin the
+# play waits until launchd no longer holds the drained member before it loads
+# the new unit.
 - name: loop units from the loop records
   hosts: all
   gather_facts: true
@@ -205,9 +215,22 @@
       become: "{{ loop_system }}"
       when: loop_darwin
 
+    - name: the units a run restarts, and why
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'WOULD-RESTART' if ansible_check_mode else 'RESTART' }} {{ item.name }} on {{ inventory_hostname }}: its unit file changed;
+          {{ ('a member: the restart drains it (SIGTERM: it takes no new card, lets its running cards finish and reports them), waiting up to '
+              ~ nova_member_stop_timeout ~ ' s, then the new unit starts') if item.name in loop_member_names else 'not a member: restarted at once' }}
+      loop: "{{ nova_loops | selectattr('enabled') | list }}"
+      loop_control: { label: "{{ item.name }}" }
+      when: >-
+        ((loop_units.results + (loop_timers.results | default([]))) | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list)
+        and (not loop_darwin or (loop_loaded.results | selectattr('item', 'equalto', item.name) | first).rc == 0)
+
     - name: unload the disabled and the changed (darwin)
       ansible.builtin.command: "launchctl bootout {{ loop_domain }}/com.nova.loop.{{ item.item }}"
       changed_when: true
+      register: loop_unloaded
       loop: "{{ loop_loaded.results | default([]) }}"
       loop_control: { label: "{{ item.item }}" }
       become: "{{ loop_system }}"
@@ -215,6 +238,20 @@
         loop_darwin and item.rc | default(1) == 0 and (
           not (nova_loops | selectattr('name', 'equalto', item.item) | first).enabled
           or (loop_units.results | selectattr('item.name', 'equalto', item.item) | first).changed)
+
+    # A member drains on the bootout's SIGTERM: launchd holds it until it has
+    # reported its last card (ExitTimeOut), and its new unit loads only after.
+    - name: a member unloaded has drained before its unit loads again (darwin)
+      ansible.builtin.command: "launchctl print {{ loop_domain }}/com.nova.loop.{{ item.item.item }}"
+      register: loop_drained
+      until: loop_drained.rc != 0
+      retries: "{{ (nova_member_stop_timeout | int / 5) | round(0, 'ceil') | int }}"
+      delay: 5
+      changed_when: false
+      loop: "{{ loop_unloaded.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | list }}"
+      loop_control: { label: "{{ item.item.item }}" }
+      become: "{{ loop_system }}"
+      when: loop_darwin and not ansible_check_mode and item.item.item in loop_member_names
 
     - name: load the enabled (darwin)
       ansible.builtin.command: "launchctl bootstrap {{ loop_domain }} {{ loop_dir }}/com.nova.loop.{{ item.name }}.plist"

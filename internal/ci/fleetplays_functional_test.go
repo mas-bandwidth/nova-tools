@@ -143,6 +143,10 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		assert.Contains(t, loops, w)
 	}
 	assert.NotContains(t, loops, "WOULD-RETIRE member-local")
+	// --check says which units a run restarts and why: a member's restart drains it
+	// (nova-tools#5096 item 25); a disabled loop is stopped, not restarted
+	assert.Contains(t, loops, "WOULD-RESTART member-local on localhost: its unit file changed; a member: the restart drains it (SIGTERM: it takes no new card, lets its running cards finish and reports them), waiting up to 7260 s, then the new unit starts")
+	assert.NotContains(t, loops, "WOULD-RESTART tick-local")
 	// the member's unit stops it by draining it; the periodic loop's is as it was
 	assert.Equal(t, 1, strings.Count(loops, "+KillMode=mixed"), "the member's unit alone")
 	assert.Equal(t, 1, strings.Count(loops, "+TimeoutStopSec=7260"))
