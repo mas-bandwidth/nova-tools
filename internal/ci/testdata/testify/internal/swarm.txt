@@ -1,4 +1,4 @@
 # Migrated counted package ledger; original row keys preserved.
 # ceiling: 2
-internal/swarm:assert 432 bare assertions to convert to testify
+internal/swarm:assert 402 bare assertions to convert to testify
 internal/swarm:env 9 t.Setenv and Chdir sites to inject through config
