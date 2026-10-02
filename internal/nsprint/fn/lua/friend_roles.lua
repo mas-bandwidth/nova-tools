@@ -1,6 +1,4 @@
--- Seat-owned routing roles.  These helpers are intentionally in a file that
--- sorts before redistribute*.lua, so every routing function reads the same
--- roster from Redis inside its FCALL.
+-- These helpers read and write seat-owned routing roles.
 
 local function fr_csv(s)
   local out = {}
