@@ -237,7 +237,7 @@ so symlinks and case aliases cannot cause newly installed binaries to be pruned.
 
 ## 7. No tag, still a digest: `SUMS.digest`
 
-The annotated tag gives `adopt` a digest that did not travel with the bits — from the annotation, or out of
+Section 2 gives `adopt` a digest that did not travel with the bits — off the annotated tag, or out of
 the CHANGELOG. Both belong to a **tagged** release. A dev build has no tag, and the only other place
 to get a digest would be the machine being adopted from, which is that machine vouching for its own
 bytes and is not evidence at all.
