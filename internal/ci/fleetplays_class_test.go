@@ -332,6 +332,9 @@ func TestFleetPlaysReadOnlyTheInventory(t *testing.T) {
 		assert.True(t, os.IsNotExist(err), "fleet/retired-tools.txt names %s, which cmd/ still ships", l)
 	}
 	assert.NotZero(t, n)
+	assert.Equal(t, []string{"bench-b"}, full.TLA.Hosts, "the tla group is the rows with tla: true")
+	assert.Equal(t, true, full.Meta.Hostvars["bench-b"]["nova_tla"])
+	assert.Equal(t, false, full.Meta.Hostvars["bench-a"]["nova_tla"])
 	check := invs["check-fixture.yml"]
 	assert.Equal(t, "local", check.Meta.Hostvars["localhost"]["ansible_connection"])
 	assert.Empty(t, check.StoreDeployer.Hosts, "the check fixture dials no store")

@@ -68,3 +68,15 @@ nova_pg_password_key: NOVA_PG_CONFIG_PASSWORD
 nova_release_out: "{{ lookup('env', 'HOME') }}/nova-bench/release-build"
 nova_release_gocache: "{{ lookup('env', 'HOME') }}/nova-bench/release-gocache"
 nova_release_gate_args: ["--cli", "{{ nova_source }}/docs/CLI.md", "--receipts", "{{ nova_dogfood_receipts }}"]
+
+# The TLC record machines (the inventory's tla group: the machine rows with
+# tla=true) hold the pinned TLC jar at nova_tla_jar, owned by the login. The
+# tools play's tla play checks its SHA-256 against the sum the repository
+# holds (nova_tla_sha256_file, read on the machine running the play) and
+# refuses a jar that differs or is missing; it downloads nothing, so the jar
+# is placed by hand (tla/README.md, "The record machines"). java is the first
+# of nova_tla_java_candidates that exists on the machine.
+nova_tla_dir: /opt/tla
+nova_tla_jar: "{{ nova_tla_dir }}/tla2tools.jar"
+nova_tla_sha256_file: "{{ playbook_dir }}/../tla/tla2tools.sha256"
+nova_tla_java_candidates: ["{{ nova_home }}/sdk/bin/java", /usr/bin/java, /usr/local/bin/java]

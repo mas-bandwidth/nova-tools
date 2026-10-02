@@ -11,6 +11,7 @@
 //	example:
 //	  tlacheck groups --root .
 //	  tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out --group tablefirstcontact
+//	  tlacheck run --root . --dir /tmp/tlc-bench --bench any
 package main
 
 import (
@@ -42,14 +43,15 @@ type env struct {
 	exec           tlc.Executor
 	goos           string
 	goarch         string
-	tmpDir         string // where a disposable store's directory goes; the system default when empty
+	tmpDir         string    // where a disposable store's directory goes; the system default when empty
+	bench          benchDeps // run --bench: the bench machines, the fleet's rows, the build
 }
 
 func main() {
 	os.Exit(run(os.Args[1:], env{
 		stdout: os.Stdout, stderr: os.Stderr,
 		getenv: os.Getenv, lookPath: tlc.LookPath, cpus: runtime.NumCPU, javaVersion: javaVersion,
-		exec: tlc.Execute, goos: hostOS, goarch: hostArch,
+		exec: tlc.Execute, goos: hostOS, goarch: hostArch, bench: realBench(),
 	}))
 }
 

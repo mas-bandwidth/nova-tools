@@ -166,6 +166,9 @@ func TestMigrationTwelveFillsTheOldWidth(t *testing.T) {
 				require.NoError(t, err, q)
 			}
 			require.NoError(t, st.applyOne(ctx, twelve))
+			for _, m := range all[12:] { // the rows are read with the kind as it is now
+				require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+			}
 			widths := func() map[string]string {
 				t.Helper()
 				rows, err := st.List(ctx, KindMachine)
@@ -232,6 +235,9 @@ func TestMigrationTwelveChecksAWidthColumnAlreadyThere(t *testing.T) {
 			if tc.want == nil {
 				require.NoError(t, err)
 				assert.Equal(t, 12, v)
+				for _, m := range all[12:] { // the row is read with the kind as it is now
+					require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
+				}
 				row, found, err := st.Get(ctx, KindMachine, "m1")
 				require.NoError(t, err)
 				require.True(t, found)

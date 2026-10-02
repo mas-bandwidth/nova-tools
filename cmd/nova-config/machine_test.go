@@ -15,7 +15,7 @@ import (
 // any width, so a width read from them would be seen.
 func (h *harness) machine(t *testing.T, name, width string) {
 	t.Helper()
-	row := config.Row{Name: name, Fields: map[string]string{"user": "u", "seat": "s", "slots": "160", "runners": "0", "width": width}}
+	row := config.Row{Name: name, Fields: map[string]string{"user": "u", "seat": "s", "slots": "160", "runners": "0", "width": width, "tla": "false"}}
 	_, err := h.store.Insert(context.Background(), config.KindMachine, row, "t")
 	require.NoError(t, err)
 }
@@ -163,4 +163,22 @@ func TestAMachineAddedWithNoWidthIsToldItIsNoMember(t *testing.T) {
 	code, out, errs = h.run(t, "machine", "add", "m2", "--user", "u", "--seat", "s", "--slots", "8", "--width", "4", "--pg", dsn, "--as", "a1")
 	require.Equal(t, 0, code, errs)
 	assert.Equal(t, "CONFIG ADD kind=machine name=m2 rev=2\n", out)
+}
+
+// TestMachineTLAIsTheRecordMachineFact: tla is a declared fact of the machine
+// row, false unless set: add takes it, set moves it, and list and show print
+// it (tlacheck run --bench reads it from the list; the tools play installs
+// the TLC jar where it is true).
+func TestMachineTLAIsTheRecordMachineFact(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	code, _, errs := h.run(t, "machine", "add", "m1", "--user", "u", "--seat", "s", "--slots", "8", "--width", "4", "--tla", "true", "--pg", dsn, "--as", "a1")
+	require.Equal(t, 0, code, errs)
+	h.machine(t, "m2", "4")
+	_, out, _ := h.run(t, "machine", "list", "--pg", dsn)
+	assert.Equal(t, "MACHINE name=m1 user=u seat=s slots=8 runners=0 width=4 tla=true\nMACHINE name=m2 user=u seat=s slots=160 runners=0 width=4 tla=false\nCONFIG LIST kind=machine rows=2\n", out)
+	code, _, errs = h.run(t, "machine", "set", "m1", "--tla", "false", "--pg", dsn, "--as", "a1")
+	require.Equal(t, 0, code, errs)
+	_, out, _ = h.run(t, "machine", "show", "m1", "--pg", dsn)
+	assert.Contains(t, out, " width=4 tla=false created=", "show: %q", out)
 }

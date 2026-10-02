@@ -45,7 +45,7 @@ Where each field of this cut sits:
 
 | side | fields |
 | --- | --- |
-| machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width` |
+| machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | friend (decided for her) | `slots`, `tiers`, `roles` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend) |
@@ -137,6 +137,7 @@ nothing invented.
 | `slots` | int | yes | apply: the machine ceiling the friends' desired slots must fit under (`ns_capacity_machine`, `ns_capacity_desired`); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (0) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; 0 is no member | `machine:<m>` |
+| `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are
 never typed and never columns: they come live from the machine's own
@@ -334,7 +335,8 @@ config.history           (id bigserial PK, kind, name, op add|set|remove,
 config.machines          (name PK, "user", seat, slots, runners,
                           created_at, updated_at; width added by 0012,
                           filled with slots less the friends' slots on the
-                          coordinator machine, slots elsewhere)
+                          coordinator machine, slots elsewhere; tla added
+                          by 0015, false)
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, redis_port, pg_dsn,
                           created_at, updated_at;
@@ -434,7 +436,7 @@ each machine running its ceiling check before its write transaction).
 `CEILING` when the friends and benches on it already desire more than
 `slots`; cores and memory are never declared, so the call carries none and
 derives no budget); the hash `machine:<m>` with user, seat, slots, runners,
-width, rev, at; the set `machines`. slots is read back from the ceiling, the key the
+width, tla, rev, at; the set `machines`. slots is read back from the ceiling, the key the
 runtime guards on, so a ceiling moved by hand is put back by the next apply.
 Remove: refused while any friend or bench desired hash names the machine;
 else `machine:<m>`, `machine:<m>:ceiling` and `machine:<m>:budget` are
