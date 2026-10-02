@@ -2176,6 +2176,10 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s wait: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
+	if _, stale := sprint.StaleStream(pos[0]); stale {
+		fmt.Fprintf(stdout, "WAIT OK note=%s quiet until=%s: the inbox shows the stream stale again then if it still has not moved\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
+		return 0
+	}
 	if held {
 		fmt.Fprintf(stdout, "WAIT OK note=%s held until=%s of running time: the tick raises it again then if it still holds\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
 		return 0

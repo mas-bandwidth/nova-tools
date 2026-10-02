@@ -351,7 +351,8 @@ func Add(s *Snapshot, r AddReq) Plan {
 					open = append(open, c.ID)
 				}
 			}
-			if len(open) == 0 {
+			// reached only after something: a stop with nothing before it is simply next
+			if len(open) == 0 && (len(a.needs) > 0 || anyBefore(s, r.Stream, a.id, a.score) || workInFlight(s, nil) == "") {
 				fields["reached"] = stamp(s.Now)
 				u.Notes = append(u.Notes, reachedNote(s, &Card{ID: a.id, Row: r.Stream}, nil, len(pulled), r.Who))
 				u.Moved += "; reached"
@@ -637,7 +638,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			continue
 		}
 		if IsSentinel(c) { // reached, never ready: the coordinator releases it
-			if c.F("reached") == "" {
+			if c.F("reached") == "" && Reachable(s, c, nil) {
 				p.Units = append(p.Units, reachUnit(s, c, nil, r.Who))
 			} else if len(r.IDs) > 0 {
 				p.refuse(c.ID, "a reached sentinel: the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
@@ -661,7 +662,7 @@ func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
 			continue
 		}
 		if IsSentinel(c) {
-			if c.F("reached") == "" {
+			if c.F("reached") == "" && Reachable(s, c, landing) {
 				out = append(out, reachUnit(s, c, landing, who))
 			}
 			continue

@@ -764,7 +764,7 @@ the tick would make, no other open judgment on it).
 | a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
 | an invariant is broken | card (look at the card), repair, wait | no |
 | a judgment has waited past its due time (overdue) | a decision of the judgment, wait | as the judgment |
-| a stream has made no progress past its deadline (stale) | where, queue (look) | no |
+| a stream has made no progress past its deadline (stale) | where, queue (look), wait | no |
 | stalled: nothing holds a card (rule 12) | the decisions its place allows and that would be accepted (ask --another for a primary asked already, never ask), else look at the card; drop; wait | no, while the stall stands |
 
 A condition the tick keeps (cannot ask, fewer than two readers up, no member up, a deadline passed, an
@@ -774,7 +774,9 @@ until that much running time has passed (STOPPED time does not count); when it
 has and the condition still holds, the tick raises it again, and when the
 condition clears first the hold is closed. `wait` on any other judgment sets
 its review time, which counts running time from when it was set, as every
-deadline does.
+deadline does. A judgment whose review time has not come is quiet: not overdue, and
+listed after every judgment that is not quiet, marked `quiet until=<time>`, for the
+whole period, so it does not sit at the top of every inbox read.
 
 The machine's tick writes its own judgments (section 14): cannot ask, fewer than two readers up, no fleet
 member is up, a work card or a read card past its deadline, a stream with no
@@ -831,7 +833,8 @@ red branch. Its printed commands read those fields, never a card's place in its
 set of primaries. Notifications of one type, stream and cause are
 grouped into one line with a count; a subject is listed and counted once.
 Each group has an id that does not move while it is open: the id of its oldest
-open notification (a stalled stream's is `stale:<stream>`); overdue marks a
+open notification (a stalled stream's is `stale:<stream>~<epoch>`, carrying the
+sprint's epoch as every judgment id does, so `wait` takes it); overdue marks a
 group and does not split it. `inbox` prints each group's id and size (the
 members a verb given the group acts on), and each judgment's decisions as the
 commands that make them, one per line, with the group id, `--expect` and
@@ -879,7 +882,8 @@ given a selection instead (`--stream`, `--col`, `--limit`, `--read-ok`) moves
 what is eligible. Each answer is
 recorded as a `decided` notification; a stopped stream's judgment stays open
 while it is stopped. `wait <notification>`
-records a next review time; it does not hide the notification. Reading the
+records a next review time; it does not hide the notification (it is listed quiet,
+after the others, until then). Reading the
 inbox or advancing the cursor resolves nothing.
 
 `inbox` always shows every open judgment, whatever the cursor; the cursor only
@@ -892,7 +896,11 @@ nothing overdue because of those hours. Each stream has `since` (the last change
 (the last change of its state or of any of its counts); a stream that has not
 landed and whose progress is older than its deadline is shown as stalled by
 inbox (and by `where --json`). A stream with nothing on the table (every primary dropped,
-or restored empty by a clear) is waiting with no `since` and is never stale.
+or restored empty by a clear) is waiting with no `since` and is never stale. A
+stream whose every card on the table and not landed waits (behind a sentinel, or on
+a need) is held by what it waits on, which the table shows, and is never stale.
+`wait stale:<stream>~<epoch> --for <duration>` writes the time on the stream's
+control card (`stale_review`), and the stream is not shown stale before it.
 This is pull visibility; nothing claims to detect a dead process.
 
 ## 9. What is always true
@@ -1462,8 +1470,15 @@ it. A rank that moves a card across a sentinel changes what it waits for, by
 the same reading. A sentinel is never dealt, read or merged. When what it
 waits for has landed, been dropped or been waived, the step that ended the
 last of it (or the tick, as the backstop) marks it reached and writes one
-judgment. Only `release <id> --reason <text>`, by the sprint's coordinator
-(`init --coordinator`; `where --json` carries it), lands it; the same step moves what
+judgment. A sentinel with nothing placed before it (no primary of its stream on the
+table before it, landed or not, and no need of its own) is not reached while other
+work of the sprint is in flight (ready, working, in review or merging): it is
+simply next, no judgment is written for it, and it is held by that work; it is
+reached when no other work is in flight, by the step that ends the last of it or
+the tick (`sprint.Reachable`). Cards placed before it later make it wait for them,
+and it is reached when they have landed. Only `release <id> --reason <text>`, by the sprint's coordinator
+(`init --coordinator`; `where --json` carries it), lands it, reached or with nothing
+before it; the same step moves what
 waited behind it, up to the next sentinel, to ready as one set, marks reached
 any sentinel now due, and always writes a notification that it landed. A need
 it names that is dropped blocks it like any waiting card; ack waives the need.

@@ -292,11 +292,13 @@ func TestD7InboxDueTimesAndStalledStreams(t *testing.T) {
 	require.Len(t, g, 3, "groups: %+v", g)
 	require.True(t, g[0].Overdue, "overdue judgment: %+v", g[0])
 	require.True(t, g[0].Due.Equal(t0.Add(10*time.Minute)), "overdue judgment: %+v", g[0])
-	require.False(t, g[1].Overdue, "a waited judgment is hidden or overdue: %+v", g[1])
-	require.True(t, g[1].Due.Equal(waited.Review), "a waited judgment is hidden or overdue: %+v", g[1])
-	require.Equal(t, NReadBroken, g[1].Type, "a waited judgment is hidden or overdue: %+v", g[1])
-	require.Equal(t, NStreamStale, g[2].Type, "stalled stream: %+v", g[2])
-	require.Equal(t, "s1", g[2].Stream, "stalled stream: %+v", g[2])
+	// a waited judgment is quiet for its period: listed after every judgment that is not
+	require.False(t, g[2].Overdue, "a waited judgment is hidden or overdue: %+v", g[2])
+	require.True(t, g[2].Quiet, "a waited judgment is quiet: %+v", g[2])
+	require.True(t, g[2].Due.Equal(waited.Review), "a waited judgment is hidden or overdue: %+v", g[2])
+	require.Equal(t, NReadBroken, g[2].Type, "a waited judgment is hidden or overdue: %+v", g[2])
+	require.Equal(t, NStreamStale, g[1].Type, "stalled stream: %+v", g[1])
+	require.Equal(t, "s1", g[1].Stream, "stalled stream: %+v", g[1])
 }
 
 // D8: ci records head, run, status and source on a primary in any state,

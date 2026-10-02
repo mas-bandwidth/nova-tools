@@ -919,6 +919,8 @@ func groupLine(g sprint.Group, now time.Time) string {
 		l += "  waited=" + now.Sub(g.Oldest).Round(time.Second).String()
 		if g.Overdue {
 			l += " OVERDUE"
+		} else if g.Quiet {
+			l += "  quiet until=" + g.Due.Local().Format("15:04:05") // wait set it
 		} else if !g.Due.IsZero() {
 			l += "  due=" + g.Due.Local().Format("15:04:05")
 		}
