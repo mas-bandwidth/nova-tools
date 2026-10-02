@@ -209,8 +209,8 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 	// the landings are queued for the next tick's pump, which drains them, and
 	// the tick's done part stops the machine of a sprint that is done
 	ta.ok("tick")
-	out = ta.ok("where")
-	for _, want := range []string{"SPRINT TABLE", "DONE", "work ", "merge ", "fleet "} {
+	out = ta.ok("where --all")
+	for _, want := range []string{"SPRINT TABLE", "DONE", "work ", "merge ", "friends ", "fleet "} {
 		assert.Contains(t, out, want, "where lacks %q", want)
 	}
 	var w whereView
@@ -343,7 +343,7 @@ func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 2")
-	out := ta.ok("where")
+	out := ta.ok("where --all")
 	require.Contains(t, out, "work | waiting", "where with no prefix: %s", out)
 	require.Contains(t, out, "readers ", "where with no prefix: %s", out)
 	require.Contains(t, out, "fleet |", "where with no prefix: %s", out)

@@ -85,7 +85,7 @@ func init() {
 		{"log", "[--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]", "log --card s1-4", (*app).cmdLog},
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
-		{"where", "[--watch] [--every <duration>]", "where", (*app).cmdWhere},
+		{"where", "[--watch] [--every <duration>] [--all]", "where", (*app).cmdWhere},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"stats", "", "stats", (*app).cmdStats},
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},

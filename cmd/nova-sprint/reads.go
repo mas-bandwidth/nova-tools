@@ -385,6 +385,7 @@ type whereView struct {
 type whereRun struct {
 	c       common
 	watch   bool
+	all     bool
 	every   time.Duration
 	stale   time.Duration
 	atEpoch int64
@@ -394,6 +395,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("where")
 	watch := fs.Bool("watch", false, "redraw in place every --every until interrupted")
 	every := fs.Duration("every", time.Second, "the redraw interval with --watch, above 0")
+	all := fs.Bool("all", false, "draw the readers and merge tables too, hidden from the default frame (--json always carries them)")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
@@ -416,7 +418,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 		ctx, stop = a.notify(ctx)
 		defer stop()
 	}
-	r := whereRun{c: *c, watch: *watch, every: *every, stale: *stale, atEpoch: *atEpoch}
+	r := whereRun{c: *c, watch: *watch, all: *all, every: *every, stale: *stale, atEpoch: *atEpoch}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
@@ -453,7 +455,7 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 			}
 			return "", refuse(stderr, "where", err.Error()), false
 		}
-		v, frame, err := a.where(ctx, st, r.stale)
+		v, frame, err := a.where(ctx, st, r.stale, r.all)
 		if err != nil {
 			if ctx.Err() != nil {
 				return "", 0, false // an interrupt cut the read short: the watch is over, not failed
@@ -497,7 +499,11 @@ func (a *app) drawLoop(ctx context.Context, r whereRun, stdout, stderr io.Writer
 	}
 }
 
-func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (whereView, string, error) {
+// where is the view and its frame. The frame draws the tables of sprint.ShownOrder,
+// or with all every table in sprint.AllOrder: the readers and merge tables are
+// hidden from the default frame (the owner, 2026-10-02: "please hide the reader
+// and merge tables"); the view for a program carries every table whichever is drawn.
+func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, all bool) (whereView, string, error) {
 	st, err := st.Pinned(ctx)
 	if err != nil {
 		return whereView{}, "", err
@@ -575,8 +581,12 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		v.Tables[sprint.Friends][f.Name] = map[string]string{sprint.Status: f.Status}
 	}
 	parts[sprint.Friends] = friendsText(friends)
+	order := sprint.ShownOrder
+	if all {
+		order = sprint.AllOrder
+	}
 	var shown []string
-	for _, t := range sprint.ShownOrder {
+	for _, t := range order {
 		shown = append(shown, parts[t])
 	}
 	b.WriteString(strings.Join(shown, "\n"))
