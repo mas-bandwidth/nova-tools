@@ -16,15 +16,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// prNumber matches the `(#123)` a squash merge puts at the end of the subject.
+// prNumber matches a parenthesized pull request number at the end of the subject.
 // It is anchored to the END of the subject on purpose: this repository's own
 // merges read `feat: nova-pulse hygiene, the path-safe bench cleanup verbs
-// (#1142) (#1253)`, where the first number is the ISSUE the work closes and the
+// A subject can contain an issue number before the pull request number, where the
 // last is the pull request that merged it. Taking the first would file every
 // such commit under a number that never existed as a pull request.
 var prNumber = regexp.MustCompile(`\(#(\d+)\)\s*$`)
 
-// memberNumber matches a `#123` anywhere in a commit body. An integration batch
+// memberNumber matches a pull request number anywhere in a commit body. An integration batch
 // lists its members there, and the list is the only place the individual pull
 // requests appear at all -- the batch is one merge commit.
 var memberNumber = regexp.MustCompile(`#(\d+)\b`)
@@ -152,7 +152,7 @@ func Section(version, sha, previous, sumsDigest, dogfoodWaiver string, when time
 	// that came with it -- anybody who could change one could change the other
 	// -- so it is given this digest instead, which reached the adopting host
 	// through the repository rather than through the machine being read
-	// (Johnny, 2026-09-18). It is written in the form the check wants, so
+	// It is written in the form the check wants, so
 	// nobody has to transcribe it.
 	if sumsDigest != "" {
 		fmt.Fprintf(&b, "%s%s\n\nAdopt this release with `--expect-sums %s`.\n\n", SumsDigestPrefix, sumsDigest, sumsDigest)
@@ -207,7 +207,7 @@ var annotationSums = regexp.MustCompile(`(?m)^` + AnnotationSumsPrefix + `([0-9a
 
 // Annotation is the message the TAG OBJECT carries, composed in one place
 // because it is written by `cut` and read by `adopt` and the two have to agree
-// about where the digest is (Johnny's decision 2, #1337). A tag is the one
+// about where the digest is, so the writer and reader agree. A tag is the one
 // thing in this repository that cannot be quietly amended, so what it says
 // about a release is the most durable record the release has.
 func Annotation(version, sha, sumsDigest string) string {
@@ -238,12 +238,12 @@ func SumsInAnnotation(message string) string {
 // reason a cut can refuse.
 var errTruncated = errors.New("compare-truncated")
 
-// classify is the gate Johnny's decision 1 puts in front of the tag: which of
+// classify is the gate in front of the tag: which of
 // the paths this range touched are on SensitivePaths, and may this cut proceed.
 // It is its own function, and pure apart from the writers, because the decision
 // is the thing worth reading -- the cut around it is bookkeeping.
 //
-// THE ORDER IS THE WHOLE LESSON OF THE FOURTH DOGFOOD (2026-09-18). That cut's
+// The compare is classified for completeness before sensitive paths. That cut's
 // compare answered with exactly 300 files -- the forge's ceiling -- and the
 // verb refused naming 24 sensitive paths out of the 58 the range really
 // touched. It looked like the gate working. It was the gate being lucky: the
@@ -252,7 +252,7 @@ var errTruncated = errors.New("compare-truncated")
 // cut clean. So the truncation is decided FIRST and named FIRST, before
 // anything is said about what was found inside a list that may be short.
 //
-// And --security-read does not get past it. Johnny's read is a read OF A LIST,
+// And --security-read does not get past it. A security read is a read OF A LIST,
 // and a read of a prefix of the truth vouches for a prefix of the truth. The
 // way past a truncated compare is a complete list, which is what --local-diff
 // and --paths-from are for.
@@ -478,7 +478,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	}
 	prs := PullRequests(commits)
 	// WHICH PATHS THE RANGE TOUCHED, and whether that needs a read before a
-	// tag exists (Johnny's decision 1, #1337). Asked BEFORE --dry-run branches
+	// tag exists. Asked BEFORE --dry-run branches
 	// and before anything is written: a dry run exists to find out what would
 	// happen, and what would happen is this refusal.
 	files, complete, err := paths(ctx, o, deps, previous, sha, out, errs)
