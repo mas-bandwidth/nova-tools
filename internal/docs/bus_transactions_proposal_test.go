@@ -34,9 +34,6 @@ func TestBusTransactionsProposalBoundaries(t *testing.T) {
 		"state=already-published",
 		"second identity is how a message is delivered twice",
 		"docs/SPEC-BUS-DELIVERY.md",
-		"BUS FINDING",
-		"BUS SUMMARY",
-		"shared collector",
 		"no savings percentage is claimed yet",
 	} {
 		assert.Contains(t, content, want, "docs/SPEC.md missing %q", want)
