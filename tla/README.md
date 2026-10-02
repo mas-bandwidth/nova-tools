@@ -259,21 +259,25 @@ directory under a 60 s cap:
         -deadlock -metadir /tmp/tlc-$c/meta -config $cfg MCFileLock.tla > $c.log 2>&1 &
     done; wait
 
-Measured on a Linux bench, 2026-09-27, load 10, all nine at once: 5 s wall.
-The module changed on 2026-10-02 (the probe and the telling left), so every
-row below waits for the bench run that refreshes `RUNS.tsv`; the counts and
-times shown are the 2026-09-27 measurements of the earlier module, and the
-rows marked "not yet measured" are new or changed.
+Measured on a Linux amd64 bench, 2026-10-02, with Java 21.0.12.1 and
+TLC jar SHA-256 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
+The seven current-input runs are recorded in `RUNS.tsv` (15:02:10–15:02:17
+UTC); the `tlc-filelock-contract.log` bench receipt identifies extracted
+source `ef5746abb0d484de8866bcb3b69292669c1e104d` and reports all seven cases
+PASS. A broken case passes by producing its expected invariant violation
+(exit 12); its count below is distinct explored states, not trace length.
+`MCFileLockCandidate` permits either named violation; the receipt does not
+identify which one. The 2026-09-27 counts describe the earlier module.
 
-| config | result | time |
-|---|---|---|
-| `MCFileLock` | expected no error, three processes, each pid reused twice: TypeOK, MutualExclusion, HolderHoldsThePath, HolderIsNamed, OneFileForEver, HeldIsTrue, NothingToClear; not yet measured since 2026-10-02 (37,611 distinct states with the probe and the telling) | - |
-| `MCFileLockFour` | expected no error, four processes, each pid reused once: the same seven; not yet measured since 2026-10-02 (160,832 distinct states before) | - |
-| `MCFileLockBrokenStale` | MutualExclusion violated in 21 states: a holder dies; two processes find the lock stale and both clear it; the first removes the file and takes a new one at the path; the second opens that new file, finds no name in it, and removes it; both then create a file and hold (d653eb53e filelock_unix.go: 167, 197, 206, 217, 221, then 57, 64, 70) | 2 s |
-| `MCFileLockBrokenSentinel` | NothingToClear violated in 4 states: the holder dies and the lock stays taken (`lock_other.go` of `internal/bus`, `tokens`, `swarm`; `internal/wake/lockprobe_other.go` says so of itself) | 2 s |
-| `MCFileLockCandidate` | the candidate's take and stale clear, its probe gone (2026-10-02): expected HeldIsTrue violated (a refusal by a process clearing the lock, which is no holder) or MutualExclusion as above; not yet measured | - |
-| `MCFileLockBrokenBusyIsHeld` | expected HeldIsTrue violated: a refused taker whose shared ask is granted, the holder gone, answers "held" where take.go tries again and then answers busy; not yet measured | - |
-| `MCFileLockBrokenUnlink` | MutualExclusion violated in 11 states: release removes the file under a taker that has it open | 2 s |
+| config | result | distinct states | time |
+|---|---|---|---|
+| `MCFileLock` | no error (exit 0), three processes, each pid reused twice: TypeOK, MutualExclusion, HolderHoldsThePath, HolderIsNamed, OneFileForEver, HeldIsTrue, NothingToClear | 16,335 | 1.422 s |
+| `MCFileLockFour` | no error (exit 0), four processes, each pid reused once: the same seven | 52,128 | 2.062 s |
+| `MCFileLockBrokenStale` | expected MutualExclusion violation (exit 12): a holder dies; two processes find the lock stale and both clear it; the first removes the file and takes a new one at the path; the second opens that new file, finds no name in it, and removes it; both then create a file and hold | 2,318 | 0.858 s |
+| `MCFileLockBrokenSentinel` | expected NothingToClear violation (exit 12): the holder dies and the lock stays taken | 15 | 0.697 s |
+| `MCFileLockCandidate` | expected HeldIsTrue or MutualExclusion violation (exit 12), the candidate's take and stale clear with its probe gone | 162 | 0.730 s |
+| `MCFileLockBrokenBusyIsHeld` | expected HeldIsTrue violation (exit 12): a refused taker whose shared ask is granted answers "held" after the holder leaves | 41 | 0.704 s |
+| `MCFileLockBrokenUnlink` | expected MutualExclusion violation (exit 12): release removes the file under a taker that has it open | 180 | 0.739 s |
 
 Stale and Sentinel are in code that exists or existed, each checked by hand
 against the lines named. The first Stale counterexample TLC gave did not
