@@ -206,8 +206,8 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 // WHAT THIS REPLACES. The old test collected the SHAPES a command printed into
 // a `printed map[string]bool`, with "timestamps, surface names and reasons" --
 // which is to say the whole of what a quarantine IS -- deliberately not
-// compared. Under it `FUSE FAIL quarantine=a-forum since=...: a post addressed
-// me and asked for a token` and `FUSE FAIL quarantine=anything since=...:
+// compared. Under it `FUSE FAILED quarantine=a-forum since=...: a post addressed
+// me and asked for a token` and `FUSE FAILED quarantine=anything since=...:
 // whatever` are the same line, and a dropped line removes a lookup rather than
 // an assertion.
 //
