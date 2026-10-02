@@ -1,34 +1,34 @@
-// Package cairn is the mechanical half of nova-cairn, the optional
-// checkpoint tool from nova-tools #248.
+// Package cairn is the store behind nova-cairn: session records holding a
+// caller's exact words, each with a clock stamp, a stable identifier and a
+// source pointer, and a bounded index and coverage count read back from them.
 //
-// It opens session records, appends the friend's exact words with a real
-// clock stamp, stable identifiers and source pointers, and builds a bounded
-// index and coverage ledger over them — and nothing else. There is no seal,
-// no consume, no delete, no grading, no consolidation and no liveness
-// inference here: those are separate explicit choices the caller never gets
-// by accident. The store is plain files under a caller-named directory, so a
-// note is durable (fsync) before success is reported, independently of Redis
-// and of any remote: local persistence is reported separately from remote
-// publication, and neither implies replicated durability.
+// It does nothing else. There is no seal, no consume, no delete, no grading,
+// no consolidation and no liveness inference: those are separate choices a
+// caller never gets by accident. The store is plain files under a directory
+// the caller names, and a write is synced to disk before success is reported,
+// with no Redis and no remote: local persistence is reported apart from remote
+// publication, and neither implies the other.
 //
-// Layout under the store directory:
+// A store holds a session in one of two shapes, and both are read as they
+// stand; a store is never converted to suit the tool.
 //
-//	sessions/<session>.md        the readable record; header by convention only
+// The nested shape is the one open creates:
+//
+//	sessions/<session>.md        the readable record; its header is convention only
 //	entries/<session>/<id>.json  one file per entry, the source of truth
-//	log.jsonl                    append-only event log feeding the ledger
+//	log.jsonl                    append-only event log: the open records and the appends
 //
-// A store that keeps ONE MARKDOWN FILE PER SESSION directly under it --
-// <session>.md, the shape a friend appending by hand already has -- is read as
-// it stands. `open` on such a record is a no-op and `append` lands a dated
-// `## <stamp> — <entry>` section at the end of the file, with no entries/
-// directory, no log and no index appearing beside it. The tool adapts to the
-// store; the store is never converted to suit the tool.
+// The flat shape is one markdown file per session directly under the store,
+// <store>/<session>.md, kept by hand or by another tool. The file is the
+// record: an append lands a dated `## <stamp> — <entry>` section at its end,
+// and no entries/ directory, log or index appears beside it. The nested record
+// wins when a store holds both for one session.
 //
-// Each entry file is written atomically via internal/atomicfile (exclusive
-// temporary file beside target, explicit mode, fsync to media, atomic rename),
-// so a retry after an interrupted append finishes the pointer without
-// duplicating the entry and without touching other writers' files. Stale
-// temporary files are never indexed.
+// Each entry file is written atomically through internal/atomicfile (an
+// exclusive temporary file beside the target, an explicit mode, fsync, then
+// rename), so a retry after an interrupted append finishes the pointer line
+// without duplicating the entry and without touching other writers' files. A
+// stale temporary file is never indexed.
 package cairn
 
 import (
@@ -38,7 +38,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -46,7 +46,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
-// Publish policies name who publishes a checkpoint and when. This slice
+// Publish policies name who publishes a checkpoint and when. This package
 // implements no transport: every append reports Published=false and the
 // policy travels with the entry, so a later explicit act can carry it.
 const (
@@ -54,33 +54,53 @@ const (
 	PublishManual    = "manual"
 	PublishDeferred  = "deferred"
 	PublishImmediate = "immediate"
+	// PublishUnknown is what a flat record reports: its format stores no policy.
+	PublishUnknown = "unknown"
 )
 
-// validPublish holds the caller-chosen publication policies.
-func validPublish(p string) bool {
-	switch p {
-	case PublishNever, PublishManual, PublishDeferred, PublishImmediate:
-		return true
+// Policies is the publication policies a caller may choose, in the order help names them.
+var Policies = []string{PublishNever, PublishManual, PublishDeferred, PublishImmediate}
+
+// ValidPublish reports whether p is one of Policies.
+func ValidPublish(p string) bool { return slices.Contains(Policies, p) }
+
+// IDRule is what ValidID asks of a session or entry id, for a refusal to quote.
+const IDRule = "nonempty, at most 128 bytes, no slashes, no whitespace, no `..`"
+
+// ValidID keeps identifiers stable and file-safe: nonempty, bounded, and free
+// of separators, escapes and whitespace, so an id is one token on every output
+// line and one file under entries/.
+func ValidID(s string) bool {
+	if s == "" || len(s) > 128 || strings.Contains(s, "..") {
+		return false
 	}
-	return false
+	for _, r := range s {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || r == '/' || r == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
-// ConflictError is a retry that must not silently win: the same entry id
-// carrying different prose. It is the caller's failure (exit 1), not a crash.
-type ConflictError struct{ Msg string }
+// ConflictError is a write that must not silently win: the same entry id
+// carrying different words, or a re-open naming another policy or source. It
+// is the caller's failure (exit 1), not a crash. Remedy is the command to run next.
+type ConflictError struct{ Msg, Remedy string }
 
 func (e *ConflictError) Error() string { return e.Msg }
 
-// NotFoundError is a use-before-open or a receipt for nothing stored.
-type NotFoundError struct{ Msg string }
+// NotFoundError is a use before open, or a read of an entry nothing stored.
+// Remedy is the command to run next.
+type NotFoundError struct{ Msg, Remedy string }
 
 func (e *NotFoundError) Error() string { return e.Msg }
 
-// AppendResult separates what this slice guarantees from what it does not:
-// Persisted is true once the note is fsync-durable on this machine;
-// Published names the remote, which this slice never touches.
+// AppendResult separates what this package guarantees from what it does not:
+// Persisted is true once the words are fsync-durable on this machine (false
+// only for a plan, PlanAppend, of words not yet stored); Published names the
+// remote, which this package never touches.
 type AppendResult struct {
-	Stamp     time.Time // the timestamp actually stored, including on a duplicate retry
+	Stamp     time.Time // the stamp actually stored, including on a duplicate retry
 	Persisted bool
 	Published bool
 	Policy    string
@@ -103,7 +123,7 @@ type ReceiptInfo struct {
 	Published bool
 }
 
-// IndexRow is one mechanical row of the section/entry index.
+// IndexRow is one row of the entry index.
 type IndexRow struct {
 	Session string
 	ID      string
@@ -119,7 +139,7 @@ type Ledger struct {
 	Entries  int
 }
 
-// entryFile is the on-disk form of one entry: the friend's exact words plus
+// entryFile is the on-disk form of one entry: the caller's exact words plus
 // the stamp, identifiers and pointers that make the receipt checkable.
 type entryFile struct {
 	Session string `json:"session"`
@@ -130,55 +150,28 @@ type entryFile struct {
 	Text    string `json:"text"`
 }
 
-// validID keeps identifiers stable and file-safe: nonempty, bounded, and
-// free of separators, escapes and whitespace, so an id is one token on every
-// output line and one file under entries/.
-func validID(s string) bool {
-	if s == "" || len(s) > 128 {
-		return false
-	}
-	if s == "." || s == ".." || strings.Contains(s, "..") {
-		return false
-	}
-	for _, r := range s {
-		if unicode.IsSpace(r) || unicode.IsControl(r) {
-			return false
-		}
-		if r == '/' || r == '\\' {
-			return false
-		}
-	}
-	return true
-}
-
 func sessionFile(store, session string) string {
 	return filepath.Join(store, "sessions", session+".md")
 }
 
-// benchFile is the other store shape this tool reads: one markdown file per
-// session directly under the store, kept and appended by hand. Rowan's bench
-// has kept its cairns that way since before the tool existed
-// (`cairns/<session>.md`), and on 2026-09-18 an append into it refused with
-// `no such session; open first` while the record sat right there. The refusal
-// was false, and its remedy was worse than the defect: `open` would have
-// written a second record under sessions/ and split one session in two.
-//
-// So the store's own shape is READ rather than imposed. Nothing is migrated,
-// nothing is renamed, and a bench file gets no sidecar: the file IS the
-// record, which is the same promise SPEC-CAIRN already makes about headers.
-func benchFile(store, session string) string {
+// flatFile is the flat shape's record: one markdown file per session directly
+// under the store. An append that looked only under sessions/ would refuse a
+// record that is there, and its remedy, open, would write a second record
+// beside it and split one session in two; so the store's own shape is read,
+// nothing is migrated or renamed, and the file gets no sidecar.
+func flatFile(store, session string) string {
 	return filepath.Join(store, session+".md")
 }
 
-// locateRecord returns the session record's path and whether it is a bench
+// locateRecord returns the session record's path and whether it is a flat
 // file. The nested record wins when both exist, so a store the tool opened
 // keeps its own shape and no caller is switched between two records by a file
 // appearing beside the store.
-func locateRecord(store, session string) (path string, bench, ok bool) {
+func locateRecord(store, session string) (path string, flat, ok bool) {
 	if name := sessionFile(store, session); fileExists(name) {
 		return name, false, true
 	}
-	if name := benchFile(store, session); fileExists(name) {
+	if name := flatFile(store, session); fileExists(name) {
 		return name, true, true
 	}
 	return "", false, false
@@ -189,92 +182,123 @@ func fileExists(name string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// noRecord is the refusal for a verb addressing a session nothing holds. It
-// names the remedy VERB whole, flags and all: the refusal that cost an hour
-// said `open first` and left the friend to rebuild the invocation from the
-// usage text -- on a store where running it would have been wrong.
+// noRecord is the refusal for an append to a session nothing holds. It names
+// the remedy verb whole, flags and all, so the reader runs it rather than
+// rebuilding it from the usage text.
 func noRecord(store, session, publish string) error {
-	if !validPublish(publish) {
+	if !ValidPublish(publish) {
 		publish = PublishManual
 	}
 	return &NotFoundError{Msg: fmt.Sprintf(
 		"no such session %q under store %q; open first: %s",
-		session, store, openRemedy(store, session, publish))}
+		session, store, command("open", "--store", store, "--session", session, "--publish", publish))}
 }
 
-// benchHeadingRe reads the one heading this tool writes into a bench file:
+// flatHeadingRe reads the one heading this tool writes into a flat record:
 // `## <rfc3339> — <entry>`. It is the section boundary too, which is why the
-// form is machine-tight -- a hand-written `## 21:55Z beat: …` heading in the
-// same file is NOT a boundary, so a friend's prose may carry its own `##`
-// headings without an append cutting the record in two.
-var benchHeadingRe = regexp.MustCompile(`^## ([0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+) — (\S+)$`)
+// form is machine-tight: a hand-written `## 21:55Z beat: …` heading in the same
+// file is not a boundary, so prose may carry its own `##` headings without an
+// append cutting the record in two.
+var flatHeadingRe = regexp.MustCompile(`^## ([0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+) — (\S+)$`)
 
-// benchHeading is the dated section heading for one entry.
-func benchHeading(id string, stamp time.Time) string {
+// flatHeading is the dated section heading for one entry.
+func flatHeading(id string, stamp time.Time) string {
 	return fmt.Sprintf("## %s — %s", stamp.UTC().Format(time.RFC3339), id)
 }
 
-// benchSection returns the prose already filed under this entry id in a bench
-// file, its stored timestamp, and whether it is there at all. The body runs
-// from the heading to the next heading of the same machine form, or EOF.
-func benchSection(raw []byte, id string) (body, stamp string, found bool) {
-	lines := strings.Split(string(raw), "\n")
-	for i, line := range lines {
-		m := benchHeadingRe.FindStringSubmatch(line)
-		if m == nil || m[2] != id {
-			continue
-		}
-		end := len(lines)
-		for j := i + 1; j < len(lines); j++ {
-			if benchHeadingRe.MatchString(lines[j]) {
-				end = j
-				break
-			}
-		}
-		return strings.TrimSpace(strings.Join(lines[i+1:end], "\n")), m[1], true
-	}
-	return "", "", false
+// flatSection is one dated section of a flat record: its heading's line
+// number (from 1), stamp and id as written, and its body, which runs from the
+// heading to the next heading of the machine form, or the end of the file,
+// trimmed of surrounding whitespace.
+type flatSection struct {
+	line            int
+	stamp, id, body string
 }
 
-// appendBench files one entry into a bench record: a dated section at the end
-// of the file, in the file's own shape (one blank line between sections), the
-// friend's words under it. A retry with the same id and the same words adds
-// nothing; the same id with different words is a conflict, as it is in the
-// nested store. No index is written and no directory appears beside the file:
-// this store is read, not converted.
-func appendBench(path, id, text string, now time.Time, publish string) (AppendResult, error) {
+// flatSections is the one parser of the flat format: every machine-form
+// section, in file order, as written. The readers (flatReceipts) hold the
+// sections to the format; an append (appendFlat) looks its id up in them.
+func flatSections(raw []byte) []flatSection {
+	lines := strings.Split(string(raw), "\n")
+	var out []flatSection
+	for i := 0; i < len(lines); {
+		m := flatHeadingRe.FindStringSubmatch(lines[i])
+		if m == nil {
+			i++
+			continue
+		}
+		end := i + 1
+		for end < len(lines) && !flatHeadingRe.MatchString(lines[end]) {
+			end++
+		}
+		out = append(out, flatSection{line: i + 1, stamp: m[1], id: m[2], body: strings.TrimSpace(strings.Join(lines[i+1:end], "\n"))})
+		i = end
+	}
+	return out
+}
+
+// findFlat is the first section filed under id, and whether there is one.
+func findFlat(raw []byte, id string) (flatSection, bool) {
+	for _, s := range flatSections(raw) {
+		if s.id == id {
+			return s, true
+		}
+	}
+	return flatSection{}, false
+}
+
+// conflict is the refusal for an entry id that already holds other words:
+// the remedy reads what it holds.
+func conflict(store, session, id string) error {
+	return &ConflictError{
+		Msg:    fmt.Sprintf("entry %q already holds different prose; append these words under a new --entry id, or read what it holds", id),
+		Remedy: command("receipt", "--store", store, "--session", session, "--entry", id, "--text"),
+	}
+}
+
+// appendFlat files one entry into a flat record: a dated section at the end of
+// the file, in the file's own shape (one blank line between sections), the
+// words under it. A retry with the same id and the same words adds nothing;
+// the same id with different words is a conflict, as it is in the nested
+// store. No index is written and no directory appears beside the file. The
+// flat format stores no policy, so publish "" reports PublishUnknown. With
+// write false nothing is written: the result is the plan.
+func appendFlat(store, session, path, id, text string, now time.Time, publish string, write bool) (AppendResult, error) {
 	var res AppendResult
+	if publish == "" {
+		publish = PublishUnknown
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return res, err
 	}
-	if prev, storedStamp, found := benchSection(raw, id); found {
-		if prev != strings.TrimSpace(text) {
-			return res, &ConflictError{Msg: fmt.Sprintf("entry %q already holds different prose; pick a new id", id)}
+	if prev, found := findFlat(raw, id); found {
+		if prev.body != strings.TrimSpace(text) {
+			return res, conflict(store, session, id)
 		}
-		stamp, err := time.Parse(time.RFC3339Nano, storedStamp)
+		stamp, err := time.Parse(time.RFC3339Nano, prev.stamp)
 		if err != nil {
 			return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
 		}
-		return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Duplicate: true}, nil
+		return AppendResult{Stamp: stamp, Persisted: true, Policy: publish, Duplicate: true}, nil
+	}
+	stamp := now.UTC().Truncate(time.Second)
+	if !write {
+		return AppendResult{Stamp: stamp, Policy: publish}, nil
 	}
 	var b strings.Builder
 	if len(raw) > 0 && !strings.HasSuffix(string(raw), "\n") {
 		b.WriteString("\n")
 	}
-	b.WriteString("\n")
-	b.WriteString(benchHeading(id, now))
-	b.WriteString("\n\n")
-	b.WriteString(strings.TrimRight(text, "\n"))
-	b.WriteString("\n")
+	b.WriteString("\n" + flatHeading(id, now) + "\n\n" + strings.TrimRight(text, "\n") + "\n")
 	if err := appendBytes(path, b.String()); err != nil {
 		return res, err
 	}
-	return AppendResult{Stamp: now.UTC().Truncate(time.Second), Persisted: true, Published: false, Policy: publish}, nil
+	return AppendResult{Stamp: stamp, Persisted: true, Policy: publish}, nil
 }
 
 // appendBytes adds content to an existing file and fsyncs before return, so a
-// bench append is as durable as a nested one before success is reported.
+// flat append is as durable as a nested one before success is reported.
 func appendBytes(name, content string) error {
 	f, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -342,30 +366,37 @@ func appendLog(store, event, session, id, stamp, policy, source string) error {
 	return appendLine(filepath.Join(store, "log.jsonl"), string(rec))
 }
 
-// SessionSource reads back the --source the session was opened with, from
-// the open record in log.jsonl. The session file's header is convention only
-// and is never parsed, so the log is where the pointer is read from.
+// OpenRecord is what a session's open recorded in log.jsonl: its source and
+// its publication policy. Found is false when the log holds no open record
+// for the session (a flat store, or no log at all).
+type OpenRecord struct {
+	Source, Publish string
+	Found           bool
+}
+
+// ReadOpen reads the session's open record from log.jsonl. The session file's
+// header is convention only and is never parsed, so the log is where the
+// pointer and the policy are read from.
 //
-// CORRUPT PROVENANCE NEVER READS AS NONE. An absent log is a store with no
-// open records in it (a bench store, or one opened before the log carried a
-// source) and answers "" with no error, as does an open record with no source
-// key. A log that exists and cannot be read is an error, and so is a line
-// that may be this session's open record and does not decode as one: a line
-// naming the session and the open event that is not valid JSON, or whose
-// fields are not strings. Answering "" for either would let an append file
-// source=- over a pointer that open recorded.
-func SessionSource(store, session string) (string, error) {
+// Corrupt provenance never reads as none. An absent log answers Found=false
+// with no error, as does a log with no open record for the session. A log that
+// exists and cannot be read is an error, and so is a line that may be this
+// session's open record and does not decode as one: a line naming the session
+// and the open event that is not valid JSON, or whose fields are not strings.
+// Answering "none" for either would let an append file source=- over a
+// pointer open recorded.
+func ReadOpen(store, session string) (OpenRecord, error) {
 	name := filepath.Join(store, "log.jsonl")
 	raw, err := os.ReadFile(name)
 	if os.IsNotExist(err) {
-		return "", nil
+		return OpenRecord{}, nil
 	}
 	if err != nil {
 		var pe *os.PathError
 		if errors.As(err, &pe) {
 			err = pe.Err
 		}
-		return "", fmt.Errorf("cannot read the session's source from %s: %v", name, err)
+		return OpenRecord{}, fmt.Errorf("cannot read the session's open record from %s: %v", name, err)
 	}
 	quotedSession, _ := json.Marshal(session)
 	for i, line := range strings.Split(string(raw), "\n") {
@@ -377,59 +408,97 @@ func SessionSource(store, session string) (string, error) {
 			// Not a record this reader can decode. It is only this
 			// session's business if it could be this session's open.
 			if strings.Contains(line, string(quotedSession)) && strings.Contains(line, `"open"`) {
-				return "", fmt.Errorf("%s:%d may be the open record of session %q and does not decode as one; refusing to read its source as none", name, i+1, session)
+				return OpenRecord{}, fmt.Errorf("%s:%d may be the open record of session %q and does not decode as one; refusing to read its source as none", name, i+1, session)
 			}
 			continue
 		}
 		if rec["event"] == "open" && rec["session"] == session {
-			return rec["source"], nil
+			return OpenRecord{Source: rec["source"], Publish: rec["publish"], Found: true}, nil
 		}
 	}
-	return "", nil
+	return OpenRecord{}, nil
 }
 
-// Open starts (or re-starts, idempotently) one session record. Concurrent
-// records coexist: opening a second session never touches the first.
+// Open starts one session record, or re-opens it: a re-open naming the
+// recorded policy (and the recorded source, when it names one) changes
+// nothing, and one naming another is a conflict. Concurrent records coexist:
+// opening a second session never touches the first.
 func Open(store, session, source string, now time.Time, publish string) error {
+	_, err := open(store, session, source, now, publish, true)
+	return err
+}
+
+// PlanOpen is Open with nothing written: every check Open makes and the same
+// error, so a dry run refuses what the real run would. It returns the open
+// record that would stand after the open (Found false for a flat record,
+// which records none).
+func PlanOpen(store, session, source string, now time.Time, publish string) (OpenRecord, error) {
+	return open(store, session, source, now, publish, false)
+}
+
+func open(store, session, source string, now time.Time, publish string, write bool) (OpenRecord, error) {
 	if store == "" {
-		return errors.New("no store given; refusing to guess")
+		return OpenRecord{}, errors.New("no store given; refusing to guess")
 	}
-	if !validID(session) {
-		return fmt.Errorf("bad session id %q: nonempty, no slashes, no whitespace", session)
+	if !ValidID(session) {
+		return OpenRecord{}, fmt.Errorf("bad session id %q: %s", session, IDRule)
 	}
-	if !validPublish(publish) {
-		return fmt.Errorf("bad publish policy %q: never|manual|deferred|immediate", publish)
+	if !ValidPublish(publish) {
+		return OpenRecord{}, fmt.Errorf("bad publish policy %q: %s", publish, strings.Join(Policies, "|"))
 	}
-	// The source a session was opened with must be readable before anything
-	// is written or reported: open prints it, and append inherits it.
-	if _, err := SessionSource(store, session); err != nil {
-		return err
+	// The open record must be readable before anything is written or
+	// reported: open prints its source, and append inherits it.
+	rec, err := ReadOpen(store, session)
+	if err != nil {
+		return OpenRecord{}, err
 	}
-	// Re-open is a no-op: the record already stands, in whichever shape the
-	// store keeps it. A bench file counts, or open would write a second
+	// A re-open writes nothing: the record already stands, in whichever shape
+	// the store keeps it. A flat file counts, or open would write a second
 	// record beside one already being appended to.
-	if _, _, ok := locateRecord(store, session); ok {
-		return nil
+	if _, flat, ok := locateRecord(store, session); ok {
+		if flat || !rec.Found {
+			return rec, nil
+		}
+		if rec.Publish != publish || (source != "" && source != rec.Source) {
+			again := []string{"--store", store, "--session", session}
+			if rec.Source != "" {
+				again = append(again, "--source", rec.Source)
+			}
+			return rec, &ConflictError{
+				Msg: fmt.Sprintf("session %q is already open with publish=%s source=%s; a re-open names the same, and another policy or source is a new session id",
+					session, rec.Publish, cmpOr(rec.Source, "-")),
+				Remedy: command("open", append(again, "--publish", rec.Publish)...),
+			}
+		}
+		return rec, nil
+	}
+	planned := OpenRecord{Source: source, Publish: publish, Found: true}
+	if !write {
+		return planned, nil
 	}
 	name := sessionFile(store, session)
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n",
 		session, stamp, source, publish)
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
-		return err
+		return OpenRecord{}, err
 	}
-	// Atomic write per internal/atomicfile model: temporary file created
-	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
-	// atomic rename over target path.
 	if err := atomicfile.WriteFile(name, []byte(header), 0o644); err != nil {
-		return err
+		return OpenRecord{}, err
 	}
-	return appendLog(store, "open", session, "", stamp, publish, source)
+	return planned, appendLog(store, "open", session, "", stamp, publish, source)
+}
+
+func cmpOr(s, empty string) string {
+	if s == "" {
+		return empty
+	}
+	return s
 }
 
 // pointerLine is the one machine-scannable line an append adds to the
 // readable record. The header above it is convention only and is never
-// parsed, so friends with different headings lose nothing.
+// parsed, so records with different headings lose nothing.
 func pointerLine(id string, stamp time.Time) string {
 	return fmt.Sprintf("ENTRY %s %s", id, stamp.UTC().Format(time.RFC3339Nano))
 }
@@ -441,7 +510,7 @@ func ensurePointer(store, session, id string, stamp time.Time) error {
 	name := sessionFile(store, session)
 	raw, err := os.ReadFile(name)
 	if err != nil {
-		return &NotFoundError{Msg: fmt.Sprintf("no such session %q; open first", session)}
+		return noRecord(store, session, "")
 	}
 	want := pointerLine(id, stamp)
 	for _, line := range strings.Split(string(raw), "\n") {
@@ -452,50 +521,69 @@ func ensurePointer(store, session, id string, stamp time.Time) error {
 	return appendLine(name, want)
 }
 
-// Append stores the friend's exact prose under a stable entry id with a real
-// clock stamp and source pointers. A retry of the same request succeeds with
-// Duplicate=true and no second entry; the same id with different prose is a
+// Append stores the caller's exact words under a stable entry id with a clock
+// stamp and a source pointer. A retry of the same request succeeds with
+// Duplicate=true and no second entry; the same id with other words is a
 // conflict, never an overwrite. Offline use succeeds: the result carries
-// persisted=true with published=false, because local durability never waited
-// for the remote.
+// Persisted=true with Published=false, because local durability never waits
+// for a remote.
+//
+// An empty source carries the session's, and an empty publish the session's
+// recorded policy: open named where the record points back to and who
+// publishes it, and an append that names neither came from the same place
+// under the same policy. Both are read before any write, so a log that cannot
+// be read refuses with nothing written.
 func Append(store, session, id, text, source string, now time.Time, publish string) (AppendResult, error) {
+	return appendEntry(store, session, id, text, source, now, publish, true)
+}
+
+// PlanAppend is Append with nothing written: every check Append makes, the
+// same error, and the result the write would report, with Persisted false
+// unless the words are already stored (a duplicate).
+func PlanAppend(store, session, id, text, source string, now time.Time, publish string) (AppendResult, error) {
+	return appendEntry(store, session, id, text, source, now, publish, false)
+}
+
+func appendEntry(store, session, id, text, source string, now time.Time, publish string, write bool) (AppendResult, error) {
 	var res AppendResult
 	if store == "" {
 		return res, errors.New("no store given; refusing to guess")
 	}
-	if !validID(session) {
-		return res, fmt.Errorf("bad session id %q: nonempty, no slashes, no whitespace", session)
+	if !ValidID(session) {
+		return res, fmt.Errorf("bad session id %q: %s", session, IDRule)
 	}
-	if !validID(id) {
-		return res, fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
+	if !ValidID(id) {
+		return res, fmt.Errorf("bad entry id %q: %s", id, IDRule)
 	}
-	if !validPublish(publish) {
-		return res, fmt.Errorf("bad publish policy %q: never|manual|deferred|immediate", publish)
+	if publish != "" && !ValidPublish(publish) {
+		return res, fmt.Errorf("bad publish policy %q: %s", publish, strings.Join(Policies, "|"))
 	}
 	if text == "" {
 		return res, errors.New("empty note stores nothing; refusing to file it")
 	}
-	path, bench, ok := locateRecord(store, session)
+	path, flat, ok := locateRecord(store, session)
 	if !ok {
 		return res, noRecord(store, session, publish)
 	}
 	stamp := now.UTC()
-	if bench {
-		return appendBench(path, id, text, stamp, publish)
+	if flat {
+		return appendFlat(store, session, path, id, text, stamp, publish, write)
 	}
-	// AN ENTRY WITH NO --source CARRIES THE SESSION'S. open --source names
-	// where the record points back to; an append that names nothing else came
-	// from the same place, so the entry records that pointer and index and
-	// receipt read it back. The dogfood finding (2026-09-18): open carried
-	// --source session:x, and every entry line then printed source= empty.
-	// The read comes BEFORE any entry or pointer write, so a log that cannot
-	// be read refuses with nothing written.
-	if source == "" {
-		inherited, err := SessionSource(store, session)
+	if source == "" || publish == "" {
+		rec, err := ReadOpen(store, session)
 		if err != nil {
 			return res, err
 		}
-		source = inherited
+		if source == "" {
+			source = rec.Source
+		}
+		if publish == "" {
+			if !ValidPublish(rec.Publish) {
+				return res, fmt.Errorf("--publish is required: session %q has no open record naming a policy in %s; name one (%s)",
+					session, filepath.Join(store, "log.jsonl"), strings.Join(Policies, "|"))
+			}
+			publish = rec.Publish
+		}
 	}
 	final := entryPath(store, session, id)
 	raw, err := os.ReadFile(final)
@@ -508,16 +596,21 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 			return res, fmt.Errorf("stored entry %q is corrupt: %v", id, err)
 		}
 		if prev.Text != text {
-			return res, &ConflictError{Msg: fmt.Sprintf("entry %q already holds different prose; pick a new id", id)}
+			return res, conflict(store, session, id)
 		}
 		prevStamp, err := time.Parse(time.RFC3339Nano, prev.Stamp)
 		if err != nil {
 			return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
 		}
-		if err := ensurePointer(store, session, id, prevStamp); err != nil {
-			return res, err
+		if write {
+			if err := ensurePointer(store, session, id, prevStamp); err != nil {
+				return res, err
+			}
 		}
-		return AppendResult{Stamp: prevStamp, Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
+		return AppendResult{Stamp: prevStamp, Persisted: true, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
+	}
+	if !write {
+		return AppendResult{Stamp: stamp, Policy: publish, Source: source}, nil
 	}
 	rec, _ := json.Marshal(entryFile{
 		Session: session,
@@ -530,9 +623,6 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return res, err
 	}
-	// Atomic write per internal/atomicfile model: temporary file created
-	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
-	// atomic rename over target path.
 	if err := atomicfile.WriteFile(final, rec, 0o644); err != nil {
 		return res, err
 	}
@@ -542,7 +632,16 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if err := appendLog(store, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
 		return res, err
 	}
-	return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Source: source}, nil
+	return AppendResult{Stamp: stamp, Persisted: true, Policy: publish, Source: source}, nil
+}
+
+// noEntry is the refusal for an entry id nothing stored: the remedy lists the
+// session's entries.
+func noEntry(store, session, id string) error {
+	return &NotFoundError{
+		Msg:    fmt.Sprintf("no such entry %q in session %q", id, session),
+		Remedy: command("index", "--store", store, "--session", session),
+	}
 }
 
 // readEntry loads one stored entry or explains its absence. It validates that
@@ -555,7 +654,7 @@ func readEntry(store, session, id string) (entryFile, time.Time, error) {
 	raw, err := os.ReadFile(entryPath(store, session, id))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return ef, time.Time{}, &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
+			return ef, time.Time{}, noEntry(store, session, id)
 		}
 		return ef, time.Time{}, err
 	}
@@ -569,32 +668,32 @@ func readEntry(store, session, id string) (entryFile, time.Time, error) {
 	return ef, stamp, nil
 }
 
-// EntryText returns the friend's words byte-for-byte for nested entries. A
-// flat bench record returns the section body in the form its reader indexes.
+// EntryText returns the stored words of a nested entry byte for byte. A flat
+// record returns the section body in the form its reader indexes.
 func EntryText(store, session, id string) (string, error) {
 	if store == "" {
 		return "", errors.New("no store given; refusing to guess")
 	}
-	if !validID(id) {
-		return "", fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
+	if !ValidID(id) {
+		return "", fmt.Errorf("bad entry id %q: %s", id, IDRule)
 	}
-	path, bench, err := recordForRead(store, session)
+	path, flat, err := recordForRead(store, session)
 	if err != nil {
 		return "", err
 	}
-	if bench {
+	if flat {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("cannot read session %q: %w", session, err)
 		}
-		if _, err := benchReceiptsFrom(raw, session); err != nil {
+		if _, err := flatReceipts(raw, session); err != nil {
 			return "", err
 		}
-		body, _, found := benchSection(raw, id)
+		s, found := findFlat(raw, id)
 		if !found {
-			return "", &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
+			return "", noEntry(store, session, id)
 		}
-		return body, nil
+		return s.body, nil
 	}
 	ef, _, err := readEntry(store, session, id)
 	if err != nil {
@@ -611,15 +710,19 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 	if err := existingStore(store); err != nil {
 		return rc, err
 	}
-	if !validID(id) {
-		return rc, fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
+	if !ValidID(id) {
+		return rc, fmt.Errorf("bad entry id %q: %s", id, IDRule)
 	}
-	path, bench, err := recordForRead(store, session)
+	path, flat, err := recordForRead(store, session)
 	if err != nil {
 		return rc, err
 	}
-	if bench {
-		rows, err := benchReceipts(path, session)
+	if flat {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return rc, err
+		}
+		rows, err := flatReceipts(raw, session)
 		if err != nil {
 			return rc, err
 		}
@@ -628,7 +731,7 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 				return row, nil
 			}
 		}
-		return rc, &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
+		return rc, noEntry(store, session, id)
 	}
 	ef, stamp, err := readEntry(store, session, id)
 	if err != nil {
@@ -642,15 +745,13 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 		Bytes:     len(ef.Text),
 		Policy:    ef.Publish,
 		Persisted: true,
-		Published: false,
 	}, nil
 }
 
-// Index builds the bounded section/entry index mechanically from the stored
-// entries: no narrative is recopied, work events are linked by
-// session/entry pointers, and a stale *.tmp from an interrupted append is
-// never a row. session "" indexes every record; max <= 0 lifts the ceiling
-// and returns everything with no MORE standing for the rest.
+// Index builds the entry index from the stored entries: no words are
+// recopied, entries are linked by session and entry id, and a stale *.tmp
+// from an interrupted append is never a row. session "" indexes every record;
+// max <= 0 lifts the ceiling. It returns the rows kept and the total.
 func Index(store, session string, max int) ([]IndexRow, int, error) {
 	if err := existingStore(store); err != nil {
 		return nil, 0, err
@@ -686,23 +787,17 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 			if err != nil {
 				return nil, 0, err
 			}
-			rows = append(rows, IndexRow{
-				Session: ef.Session,
-				ID:      ef.ID,
-				Stamp:   stamp,
-				Source:  ef.Source,
-				Bytes:   len(ef.Text),
-			})
+			rows = append(rows, IndexRow{Session: ef.Session, ID: ef.ID, Stamp: stamp, Source: ef.Source, Bytes: len(ef.Text)})
 		}
 	}
-	sort.Slice(rows, func(i, j int) bool {
-		if !rows[i].Stamp.Equal(rows[j].Stamp) {
-			return rows[i].Stamp.Before(rows[j].Stamp)
+	slices.SortFunc(rows, func(a, b IndexRow) int {
+		if c := a.Stamp.Compare(b.Stamp); c != 0 {
+			return c
 		}
-		if rows[i].Session != rows[j].Session {
-			return rows[i].Session < rows[j].Session
+		if c := strings.Compare(a.Session, b.Session); c != 0 {
+			return c
 		}
-		return rows[i].ID < rows[j].ID
+		return strings.Compare(a.ID, b.ID)
 	})
 	total := len(rows)
 	if max > 0 && len(rows) > max {
@@ -722,7 +817,7 @@ func Coverage(store string) Ledger {
 			for _, f := range files {
 				if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {
 					id := strings.TrimSuffix(f.Name(), ".md")
-					if validID(id) {
+					if ValidID(id) {
 						names[id] = true
 					}
 				}

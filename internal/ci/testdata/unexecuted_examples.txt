@@ -50,10 +50,6 @@ example: nova-bus check --bus ./bus --full
 example: nova-bus draft --bus ./bus --as Ada --to Bo --subject gate
 example: nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --open
 example: nova-bus names --bus ./bus
-example: nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --publish manual
-example: nova-cairn index --store ./cairns
-example: nova-cairn open --store ./cairns --session s1 --publish manual
-example: nova-cairn receipt --store ./cairns --session s1 --entry e1
 example: nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 example: nova-check quickstart --dir ./self
 example: nova-ci help
