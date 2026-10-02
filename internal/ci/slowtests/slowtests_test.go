@@ -162,9 +162,8 @@ func TestSlowTestsJudgesPackagesAndTestsAgainstTheirRows(t *testing.T) {
 		"CI-SLOW package=example.com/m/cmd/fast seconds=2.5s budget=2s slowest=TestA:0.4s",
 		"CI-SLOW test=TestSmall package=example.com/m/internal/ci seconds=1.2s budget=1s",
 	}
-	{
-		got := report.OverLines()
-		assert.Equal(t, strings.Join(want, "\n"), strings.Join(got, "\n"), "OverLines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	if got := report.OverLines(); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		assert.Failf(t, "assertion failed", "OverLines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 
