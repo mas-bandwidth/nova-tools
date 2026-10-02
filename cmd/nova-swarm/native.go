@@ -33,11 +33,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
 )
 
-// THE NATIVE OPENCODE EXECUTION PATH (issue #296, slice 2). A frozen run
+// THE NATIVE OPENCODE EXECUTION PATH. A frozen run
 // configuration is a set of fields the caller hands over complete; nothing in it
 // is derived on this side, and the run starts exactly one child bound to exactly
 // those fields. This is the path a native `opencode` binary executes on, not the
-// legacy runner, which passes a prompt FILE to a harness selected by a worker
+// runner that passes a prompt FILE to a harness selected by a worker
 // description. Here the model, the card text, the auth copy, the slot and the
 // deadline are all in the configuration, and the child is
 // `<binary> run --model <provider/model> --title <label> -- <card text>`, the shape the
@@ -72,7 +72,7 @@ type nativeRunConfig struct {
 	// case and means runtime.GOOS; a test names one, so the linux list is assertable from a
 	// Mac and the darwin list from a linux runner.
 	benchOS string
-	// WORKER (issue #881): the worker description `--worker <file>` names, when one is
+	// WORKER: the worker description `--worker <file>` names, when one is
 	// given. It is the source of the model -- a key is authorized for one model only, and
 	// the description pins it -- and when it carries "secret": "<NAME>" it is the source of
 	// the key, taken from the environment and passed through by name, with no auth file
@@ -82,8 +82,7 @@ type nativeRunConfig struct {
 	// loop record), the name and email every commit carries; nil reads the pool's
 	// <root>/identity.tsv (swarm.LoadPoolIdentity).
 	identity *swarm.StagingIdentity
-	// netAllow is the provider's loopback host:port, passed to the wall as --net-allow
-	// (issue #591).
+	// netAllow is the provider's loopback host:port, passed to the wall as --net-allow.
 	netAllow string
 	// bodySilence is the gap, after response headers, with no body bytes, that
 	// ends the attempt UNKNOWN. Zero means ProviderBodySilence (45s). Production
@@ -103,7 +102,7 @@ type nativeRunConfig struct {
 	// nil is the real wait (startSleep). A test records the schedule through it.
 	startSleep func(time.Duration)
 	// resultsRoot is where RESULT.md, usage.tsv and the report are published,
-	// outside the job directory a sweep deletes (issue #2632). Empty means the
+	// outside the job directory a sweep deletes. Empty means the
 	// caller did not ask: the direct tests keep the files in the job directory.
 	// The verb itself always names one, derived from --root when --results-root
 	// is absent, because that root was already given.
@@ -111,25 +110,26 @@ type nativeRunConfig struct {
 	// runID is this invocation's directory under <results-root>/<label>/. It is
 	// claimed once, shared by every attempt of this run, and never reused: a
 	// later invocation of the same label gets its own id, so attempt numbers
-	// that restart at 1 cannot overwrite the previous run (issue #2632).
+	// that restart at 1 cannot overwrite the previous run.
 	runID string
-	// THE BUDGET (SPEC-SWARM rule 13d, issue #1545). Every native launch carries the word:
+	// THE BUDGET (docs/SPEC-SWARM.md, the rule that the swarm's own tokens are
+	// budgeted per job). Every native launch carries the word:
 	// `tokens` is the number the caller named and `unmetered` is the caller's statement
 	// that this provider has no live accounting and the deadline is the only stop. There
 	// is no default and no third state -- cmdNative refuses a launch that named neither,
 	// before any directory is made -- so a zero `tokens` beside a false `unmetered` cannot
 	// reach this struct from the command line.
 	//
-	// THE TOOL INFERS NEITHER FROM THE PROVIDER. Rule 13d: "there is no test for a
-	// provider that costs money, because this document has no such predicate and cannot
-	// have one: a provider's name is whatever a config file says it is, a `baseURL` can
-	// point a local-looking name at a metered endpoint". Nor from usage: a reported `0` is
+	// THE TOOL INFERS NEITHER FROM THE PROVIDER. No test can tell a provider that
+	// costs money from one that does not: a provider's name is only what a config
+	// file calls it, and a `baseURL` can point a local-looking name at a metered
+	// endpoint. Nor from usage: a reported `0` is
 	// a measurement that adds nothing to the sum and is never a reason to print
 	// `unmetered`.
 	tokens    int
 	unmetered bool
 	// usageInterval is how often the live sampler (startLiveSampler) reads the harness's
-	// database while the launch runs (rule 13d). cmdNative has already refused one under a
+	// database while the launch runs (the budget rule). cmdNative has already refused one under a
 	// second and one not shorter than the deadline, so what reaches here is a usable interval.
 	usageInterval time.Duration
 	// benchName is the name of this bench; "" means resolve via os.Hostname.
@@ -157,18 +157,18 @@ type nativeRunResult struct {
 	tmp          string            // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
 	harness      string            // ok | silent: silent when the capture holds no words of the child's and no result was found
 	fence        string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
-	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
+	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing
 	reason       string            // harness-silent when the child exited 0 but wrote no report, "" otherwise
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
-	shellDenial  swarm.ShellDenial // a denial the card's own shell reported, zero when it reported none (issue #1465)
+	shellDenial  swarm.ShellDenial // a denial the card's own shell reported, zero when it reported none
 	end          string            // the end the usage row records: done, failed, wall, or unknown
 	lost         bool              // the provider read died after the request may have been accepted
 	unrecorded   bool              // the unknown could not be written anywhere the next reader looks
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
 	survivors    string            // what the harness left in its group when it exited on its own: "", <pgid>:reaped or <pgid>:alive
 	starts       int               // the harness starts tried when every one failed (harnessStartFailed), else 0
-	// THE JOB'S OWN FIGURE (rule 13d, "Two numbers, kept apart: the row is the launch's and
-	// the line is the job's"). These three are the JOB's -- the sum over every launch of
+	// THE JOB'S OWN FIGURE (the budget rule keeps two numbers apart: the row is the launch's and
+	// the line is the job's). These three are the JOB's -- the sum over every launch of
 	// this one invocation of `native` -- and they are what the NATIVE OK line's `budget=`
 	// renders. The per-launch usage ROW is written elsewhere (writeNativeUsage) and carries
 	// that launch's own figures, never these: a job's rows are disjoint, so that adding
@@ -186,7 +186,7 @@ type nativeRunResult struct {
 	// OWN (decision 17): `reason=terminated` stays what a TERM from outside prints, and the
 	// `reason=` inside the `usage=none` group stays the usage read's.
 	stopped string
-	// defect is the PROMPT-DEFECT line a card budget's stop owes. Rule 13d prints it on
+	// defect is the PROMPT-DEFECT line a card budget's stop owes. The budget rule prints it on
 	// native's own stdout AFTER the NATIVE OK line and writes it into NO file.
 	defect      string
 	idleEnd     swarm.IdleEnd // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
@@ -195,7 +195,7 @@ type nativeRunResult struct {
 	// usage is the LAST attempt's usage row, exactly as it was appended to usage.tsv. It
 	// is carried out of the run so the card-end event carries the numbers the row carries
 	// -- tokens_in, tokens_out, usd, provider, model -- rather than a second reading of
-	// the provider store that could disagree with the file (nova-tools #2563 item 1).
+	// the provider store that could disagree with the file.
 	usage swarm.UsageRow
 }
 
@@ -223,7 +223,7 @@ var (
 	nativeWatchIdle = swarm.WatchIdle
 	nativeReap      = swarm.Reap
 	nativeKillGroup = swarm.KillGroup
-	// nativeDeadline is the fourth event the wait can be told about (issue #2993). The
+	// nativeDeadline is the fourth event the wait can be told about. The
 	// deadline test arranged it with real time -- `--deadline 3s` and a 5 s bound on the
 	// WHOLE run, setup and teardown included -- and on hosted macOS that run took 6.08 s
 	// and 6.13 s at 2a43d771 (3.04 s on a local macOS bench) with the kill unchanged. The binary
@@ -236,7 +236,7 @@ var (
 )
 
 // nativeEndLeftovers ends what a harness that exited on its own left in its process
-// group (docs/SPEC-CARD-CONTRACT.md, the finish; docs/SPEC-SWARM.md, `native` and rule 9): a
+// group (docs/SPEC-CARD-CONTRACT.md, the finish; docs/SPEC-SWARM.md, `native`): a
 // grandchild that kept running (a language server, a watcher, a shell's `&`) holds the
 // harness's pipes and outlives the card. The harness leads its own group from its start
 // (ownChildGroup), so the group is signalled whole: a terminate, swarm.TerminateGrace, then
@@ -262,7 +262,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// admission so a relative spelling cannot reach the wall (which refuses `--read ./x` and
 	// `--write x/...`), and so the run's own paths cannot disagree with each other: on darwin
 	// `/var` is a symlink to `/private/var`, so an absolute spelling and a relative one of one
-	// directory came out as two different names (issue #578).
+	// directory came out as two different names.
 	abslot, err := swarm.AbsResolved(cfg.slotDir)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the slot directory %s could not be made absolute: %s", oneline.Field(cfg.slotDir), oneline.Escape(err.Error())))
@@ -327,7 +327,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		return nativeRunResult{}, 2
 	}
 
-	// (2a) THE ONE LAUNCHER (tools-48, #2646). The harness argv comes from the providers
+	// (2a) THE ONE LAUNCHER. The harness argv comes from the providers
 	// table, never a literal here: the route's provider row (or the table's default row)
 	// gives the shape, and this run's binary, model, label and card fill it. A table that
 	// cannot be read is refused before any directory is made.
