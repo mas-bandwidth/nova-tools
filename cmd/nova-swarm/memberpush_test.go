@@ -69,6 +69,16 @@ func (b *pushBench) commit(t *testing.T, text string) string {
 	return gitAs(t, b.checkout, "rev-parse", "HEAD")
 }
 
+// secondLine is a second line of work in the checkout: a branch from the staged commit with a
+// commit of its own; the checkout is left on rowan/c1. Its sha.
+func (b *pushBench) secondLine(t *testing.T) string {
+	t.Helper()
+	gitAs(t, b.checkout, "switch", "-q", "-c", "other", b.base)
+	other := b.commit(t, "another line\n")
+	gitAs(t, b.checkout, "switch", "-q", "rowan/c1")
+	return other
+}
+
 // originHas is the sha origin's branch holds, "" when it has none.
 func (b *pushBench) originHas(t *testing.T, branch string) string {
 	t.Helper()
@@ -272,10 +282,12 @@ func TestAPushTheRemoteRejectedIsSentAgain(t *testing.T) {
 
 // What is not pushed, each said: a head that is not a sha, a branch that is
 // not a branch name (a refspec in disguise), a card that names no repository,
-// a checkout that is not there, a head the checkout's branches do not hold.
+// a checkout that is not there, a head the checkout's branches do not hold (with two lines
+// of work on them, so the checkout has no one head of its own to push in its place).
 func TestWhatIsNotPushedIsSaid(t *testing.T) {
 	t.Parallel()
 	b := newPushBench(t)
+	b.secondLine(t)
 	head := b.commit(t, "the work\n")
 	g := b.pusher()
 	cases := []struct {
@@ -381,4 +393,69 @@ func TestAHeadThatDoesNotDescendFromTheStagedCommitIsRefused(t *testing.T) {
 	got := b.pusher().Push(b.p, member.Result{Head: orphan})
 	assert.Empty(t, got.Sha)
 	assert.Contains(t, got.Refused, "does not descend from the staged commit")
+}
+
+// wrongTail is a sha whose first twelve characters are head's and whose tail is invented, as
+// a cheap model wrote one on the 1000-card load test (2026-10-01).
+func wrongTail(head string) string {
+	tail := "0123456789abcdef0123456789ab"
+	if head[12:] == tail {
+		tail = "ba9876543210fedcba9876543210"
+	}
+	return head[:12] + tail
+}
+
+// A result whose head names no commit of the checkout (its tail invented), from a child that
+// made exactly one line of work, pushes the checkout's own head and says so: five of the first
+// twelve failures of the load test were this, the commit on the checkout's branch all along.
+func TestAWrongTailHeadPushesTheCheckoutsOwnCommit(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	head := b.commit(t, "the work\n")
+	claimed := wrongTail(head)
+	g := b.pusher()
+	var notes strings.Builder
+	g.notes = &notes
+
+	got := g.Push(b.p, member.Result{Ran: true, OK: true, Head: claimed})
+
+	assert.Equal(t, member.Push{Sha: head}, got)
+	assert.Equal(t, head, b.originHas(t, "sprint/c1"), "origin's branch holds the checkout's commit")
+	assert.Equal(t, "NOTE push c1 head: the result named "+claimed+", which is no commit of the checkout; the checkout's own head "+head+" was pushed\n", notes.String())
+}
+
+// A result head the checkout does not hold, with two lines of work on its branches, is refused
+// as before: the member does not choose between them. With no line of work it is refused too.
+func TestAnAbsentHeadWithTwoCandidateBranchesIsStillRefused(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	b.secondLine(t)
+	head := b.commit(t, "the work\n")
+	g := b.pusher()
+	var notes strings.Builder
+	g.notes = &notes
+	got := g.Push(b.p, member.Result{Head: wrongTail(head)})
+	assert.Equal(t, member.Push{Refused: "the result's head " + wrongTail(head) + " is not a commit on the checkout's branches"}, got)
+	assert.Empty(t, b.originHas(t, "sprint/c1"))
+	assert.Empty(t, notes.String())
+
+	none := newPushBench(t)
+	got = none.pusher().Push(none.p, member.Result{Head: wrongTail(none.base)})
+	assert.Equal(t, member.Push{Refused: "the result's head " + wrongTail(none.base) + " is not a commit on the checkout's branches"}, got, "no line of work: nothing to push in its place")
+	assert.Empty(t, none.originHas(t, "sprint/c1"))
+}
+
+// A result head the checkout holds is pushed exactly as before, and nothing is noted, even
+// when the checkout holds a second line of work beside it.
+func TestARightHeadIsPushedAsBefore(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	b.secondLine(t)
+	head := b.commit(t, "the work\n")
+	g := b.pusher()
+	var notes strings.Builder
+	g.notes = &notes
+	assert.Equal(t, member.Push{Sha: head}, g.Push(b.p, member.Result{Head: head}))
+	assert.Equal(t, head, b.originHas(t, "sprint/c1"))
+	assert.Empty(t, notes.String())
 }

@@ -181,6 +181,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if !*reader {
 		gp := newGitPusher(*root, *slots)
 		gp.gh = *ghBin
+		gp.notes = stdout
 		pu = gp
 	}
 	// the machine's CPU, a sample a second, for the beat's load (hostload.Sampler); a
