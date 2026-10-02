@@ -171,7 +171,7 @@ history and in `ps`.
 
 - **amd64 only.** Both the Go and SBCL URLs are `x86-64-linux`, and the harness
   binary is an x86-64 ELF. The image builds and runs on the Linux benches; it is
-  not for the Studio's arm64.
+  not for arm64 machines.
 - **`GOTOOLCHAIN=local`.** The image's Go is the Go a card gets. A `go.mod`
   asking for a newer toolchain fails loudly rather than silently downloading one
   mid-run.
