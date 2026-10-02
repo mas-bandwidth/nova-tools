@@ -151,33 +151,35 @@ func help(name string, w io.Writer) {
 	// and the help cannot drift apart. This is that string.
 	fmt.Fprintf(w, "%s\n\n", updateOpening)
 	fmt.Fprintln(w, updateVerbs)
-	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s; snapshot's --timeout is 30s, because the first run of a newly installed binary is assessed by the platform and that cost is charged to the deadline. Repeat --kind to select kinds.\n", name)
+	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.\n", name)
 	note := "Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
 	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
 	fmt.Fprintln(w, note)
 	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
-	fmt.Fprint(w, oneBinary(name))
+	fmt.Fprint(w, twoBinaries())
 	fmt.Fprint(w, manifestHelp(name))
 	fmt.Fprintf(w, "\n%s\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n", exitCodes(name), name, name)
 	fmt.Fprintf(w, "  %s status --file cmd/%s/testdata/example.tsv\n  %s apply --file cmd/%s/testdata/dry-run.tsv go --dry-run\n", name, name, name, name)
 	fmt.Fprintf(w, "  %s version\n", name)
 }
 
-// oneBinary says, in nova-update's banner, that nova-update and nova-version are one
-// binary and what nova-update's verbs are for, so a reader who finds both on a PATH knows
-// which to reach for; nova-version's banner says the same in its how text (versiontool.go).
-func oneBinary(name string) string {
+// twoBinaries says, in nova-update's banner, how nova-update and nova-version
+// divide the work, so a reader who finds both on a PATH knows which to reach for;
+// nova-version's banner says the same in its how text (versiontool.go). They are
+// two builds sharing this package: neither one's verbs are a subset of the other's.
+func twoBinaries() string {
 	// The line opens with "Both", not the tool's name: a banner line that opens
 	// with the name is read as a usage line naming a verb ("and").
-	const same = "Both nova-update and nova-version are ONE binary under two names: the same build, the same manifest reader and the same report (report prints the same thing under either name); only the verbs each name offers differ. "
-	return "\n" + same + "Use nova-update to ASK whether what you depend on is current and to CHANGE it: check and status (installed against latest, one line per finding; status shows the current ones too), apply (install the one entry you name, or print the plan with --dry-run), watch and adoption (the coordinator's adoption pass and its count) and release (cut, build, install and adopt a nova-tools release). nova-version's snapshot, diff, moved and send are the other name's; report is here too, and it reads only what is installed.\n"
+	return "\nBoth nova-update and nova-version are on a PATH as two binaries that share the manifest reader and report (report prints the same lines under either). " +
+		"Use nova-update to ASK whether what you depend on is current and to CHANGE it: check and status (installed against latest, one line per finding; status shows the current ones too), apply (install the one entry you name, or print the plan with --dry-run), watch and adoption (a pass of adoption checks and its count) and release (cut, build, install, adopt and pull a nova-tools release). " +
+		"Use nova-version to RECORD what is installed: snapshot, diff, moved and send are nova-version's.\n"
 }
 
 // manifestHelp is the manifest format in six lines, under the `report` example line so
 // `report -h` quotes it (verbflag.Excerpt reads a verb's lines with the lines indented
-// beneath them): the rule-2 file --file names, the same for both names.
+// beneath them): the rule-2 file --file names, the same for both tools.
 func manifestHelp(name string) string {
-	return "\nTHE MANIFEST is the file --file names, written by hand, the same for both names:\n" +
+	return "\nTHE MANIFEST is the file --file names, written by hand, the same for both tools:\n" +
 		"  " + name + " report --file versions.tsv     the six lines that say what versions.tsv holds:\n" +
 		"      1. line 1 is the header, byte for byte: " + tabbed(Header) + "; every other line is six fields, one tab between, none empty; a line starting # is a comment\n" +
 		"      2. kind is harness, engine, model, tool or pin; name is unique in the file; owner is who answers for it\n" +

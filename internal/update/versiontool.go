@@ -21,7 +21,7 @@ func VersionTool(stamp string, env Environment) *tool.Tool {
 		Stamp: stamp,
 		How: `report reads each tool's installed version; snapshot records a directory's binaries;
 diff compares two snapshots; moved writes the note of what two commits' binaries changed.
-It is ONE binary under two names; asking what is latest and installing are nova-update's.
+It is one of two binaries sharing the manifest and report; latest and installing are nova-update's.
 THE MANIFEST is the file --file names, written by hand; report -h states its six rules.
 first run: from a nova-tools checkout, the example lines read the included manifest.`,
 		ExitTable: "0 the verb ran and passed: a report whose every entry answered (under send, whose note nova-bus took), a snapshot whose tools all answer, a diff, a moved note written; 1 the tool said NO (a report or a snapshot with an UNKNOWN tool, a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).",
