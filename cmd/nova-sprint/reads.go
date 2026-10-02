@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"slices"
 
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1095,13 +1095,8 @@ func printCard(w io.Writer, kind string, c *sprint.Card) {
 	if c.Placed() {
 		place = c.Row + ":" + c.Col
 	}
-	keys := make([]string, 0, len(c.Fields))
-	for k := range c.Fields {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 	var fields []string
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(c.Fields)) {
 		fields = append(fields, k+"="+oneline.Field(c.Fields[k]))
 	}
 	fmt.Fprintf(w, "%s %s place=%s score=%s rev=%d %s\n", kind, oneline.Escape(c.ID), oneline.Escape(place),
