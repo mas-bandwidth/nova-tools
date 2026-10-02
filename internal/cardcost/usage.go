@@ -292,9 +292,7 @@ func (t Total) Add(u Usage) Total {
 	add(&t.Tokens.Output, u.Tokens.Output)
 	add(&t.Tokens.Reasoning, u.Tokens.Reasoning)
 	add(&t.Tokens.Requests, u.Tokens.Requests)
-	if u.Tokens.MaxPrompt > t.Tokens.MaxPrompt {
-		t.Tokens.MaxPrompt = u.Tokens.MaxPrompt
-	}
+	t.Tokens.MaxPrompt = max(t.Tokens.MaxPrompt, u.Tokens.MaxPrompt)
 	add(&t.Wait, u.Wait)
 	add(&t.Run, u.Run)
 	if u.Predicted != "" {
