@@ -1013,7 +1013,7 @@ internal/typedrec/kind_test.go typedrec's RESULT parser, legacy adapter, synth a
 internal/typedrec/pathsrefusal_test.go typedrec's RESULT parser, legacy adapter, synth and template are deleted: reached only by nova-swarm batch's gather
 internal/swarm/sparse_test.go its one test held SPEC-SWARM's sparse-checkout section, deleted with internal/swarm/sparse.go (reached only by nova-swarm batch)
 internal/typedrec/evidence_functional_test.go its one test drove ns_card_result, a function of the old card machine's Lua, which is deleted
-internal/check/issue2295_test.go it drove NoCode's index path (Stage: true), which no caller sets; the verb's staged check is cmd/nova-check/staged.go with its own tests (issue2296_test.go)
+internal/check/issue2295_test.go it drove NoCode's index path (Stage: true), which no caller sets; the verb's staged check is cmd/nova-check/staged.go with its own tests (nocode_staged_index_contract_test.go)
 internal/records/adversarial_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
 internal/records/canonical_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
 internal/records/codex_snapshot_contract_test.go internal/records is deleted: no binary reaches it (deadcode over cmd/ on darwin, linux, windows); its only importers were the dead internal/tokens decoders
