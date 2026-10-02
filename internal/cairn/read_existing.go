@@ -53,6 +53,10 @@ func benchReceipts(path, session string) ([]ReceiptInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	return benchReceiptsFrom(raw, session)
+}
+
+func benchReceiptsFrom(raw []byte, session string) ([]ReceiptInfo, error) {
 	lines := strings.Split(string(raw), "\n")
 	var rows []ReceiptInfo
 	seen := map[string]bool{}

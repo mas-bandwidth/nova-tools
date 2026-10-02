@@ -27,8 +27,10 @@ func TestFoldThatDroppedEveryMessageFails(t *testing.T) {
 	wantContains(t, fail, "run: nova-tokens sources")
 	wantContains(t, r.stderr, "TOKENS FAIL days=0 rows=0")
 	wantNotContains(t, r.stdout, "TOKENS OK")
-	// the note still names the source
-	wantContains(t, lineWith(r.stdout, "TOKENS NOTE"), "claude:g")
+	// the note still names the source and does not claim that nothing else says so.
+	note := lineWith(r.stdout, "TOKENS NOTE")
+	wantContains(t, note, "claude:g")
+	wantNotContains(t, note, "nothing else says so")
 }
 
 // Some messages dropped is the NOTE alone: the day is short and says so, and the fold did

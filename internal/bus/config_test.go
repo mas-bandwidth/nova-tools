@@ -102,3 +102,23 @@ func TestLoadConfigRefusalsCarryTheRosterShape(t *testing.T) {
 		}
 	}
 }
+
+// Onboarding point 2: malformed user input names the expected shape, without Go types.
+func TestRosterShapeErrorsNameJSONInputs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, raw, want string }{
+		{"array", `[1,2]`, "participants.json must be one JSON object"},
+		{"null", `null`, "participants.json must be one JSON object"},
+		{"field", `{"participants":"Ada"}`, `field "participants" has the wrong JSON value type`},
+		{"name", `{"participants":[{"name":1}]}`, `field "participants.0.name" has the wrong JSON value type`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := LoadConfig(writeBus(t, map[string]string{ConfigName: tc.raw}))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			assert.NotContains(t, err.Error(), "Go value")
+			assert.NotContains(t, err.Error(), "bus.Config")
+		})
+	}
+}
