@@ -25,10 +25,12 @@ func openFileSafe(path string, flag int, perm os.FileMode) (*os.File, error) {
 
 	fi, err := f.Stat()
 	if err != nil {
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 		_ = f.Close()
 		return nil, fmt.Errorf("filelock %q stat: %w", cleanPath, wrapPathError(err))
 	}
 	if !fi.Mode().IsRegular() {
+		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 		_ = f.Close()
 		if fi.IsDir() {
 			return nil, fmt.Errorf("filelock %q: is a directory", cleanPath)
@@ -72,6 +74,7 @@ func trySharedLock(f *os.File) (bool, error) {
 
 func unlockFile(f *os.File) {
 	if f != nil {
+		// ignored: unlock has no caller to report to; the kernel lock is released when the descriptor closes
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	}
 }
@@ -121,6 +124,7 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 
 		// Refused is not yet held: see takeExclusive (tla/FileLock.tla, Blocked).
 		if err := takeExclusive(f, path); err != nil {
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, err
 		}
@@ -130,12 +134,14 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 		match, err := verifyFn(f, path)
 		if err != nil {
 			unlockFile(f)
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, err
 		}
 		if !match {
 			// Inode changed under waiter: unlock, close, and retry opening path.
 			unlockFile(f)
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			continue
 		}
@@ -150,11 +156,13 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 		// Truncate file, write own note, fsync.
 		if err := f.Truncate(0); err != nil {
 			unlockFile(f)
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, fmt.Errorf("filelock %q truncate: %w", cleanPath, wrapPathError(err))
 		}
 		if _, err := f.Seek(0, 0); err != nil {
 			unlockFile(f)
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, fmt.Errorf("filelock %q seek: %w", cleanPath, wrapPathError(err))
 		}
@@ -167,11 +175,13 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 		}
 		if _, err := f.WriteString(stamp.Format() + "\n"); err != nil {
 			unlockFile(f)
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, fmt.Errorf("filelock %q write stamp: %w", cleanPath, wrapPathError(err))
 		}
 		if err := syncFn(f); err != nil {
 			unlockFile(f)
+			// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
 			_ = f.Close()
 			return nil, fmt.Errorf("filelock %q sync: %w", cleanPath, wrapPathError(err))
 		}

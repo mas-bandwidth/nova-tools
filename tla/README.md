@@ -263,7 +263,7 @@ directory under a 60 s cap:
         -deadlock -metadir /tmp/tlc-$c/meta -config $cfg MCFileLock.tla > $c.log 2>&1 &
     done; wait
 
-Measured on space, 2026-09-27, load 10, all nine at once: 5 s wall.
+Measured on a Linux bench, 2026-09-27, load 10, all nine at once: 5 s wall.
 
 | config | result | time |
 |---|---|---|

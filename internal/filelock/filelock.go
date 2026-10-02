@@ -477,8 +477,8 @@ func lockLoop(path string, label string, timeout time.Duration, opts options, tr
 // ranOut is the answer when the bound ran out: the last refusal, carrying the
 // bound as the wait. A holder's refusal stays the *HeldError naming the note
 // read on that last refusal, and answers ErrTimeout as well as ErrHeld, because
-// the callers name the holder on a run-out (internal/merge AsHeldError for exit
-// 2, internal/bus ErrLockHeld printing the pid, internal/tokens HolderPID). A
+// the callers name the holder on a run-out (internal/bus ErrLockHeld printing
+// the pid, internal/tokens HolderPID). A
 // refusal by askers alone (ErrBusy) names nobody and stays ErrBusy.
 func ranOut(path string, timeout time.Duration, last error) error {
 	if he, ok := AsHeldError(last); ok {
