@@ -24,7 +24,7 @@ func TestRouteThroughTheGrammarOnARealStore(t *testing.T) {
 	out, _ := r.run(t, 0, "route", "add", "pro-grok-openrouter", "--tier", "pro", "--provider", "openrouter", "--model", "x-ai/grok-4", "--tokens", "300000", "--deadline", "1800")
 	require.Equal(t, "CONFIG ADD kind=route name=pro-grok-openrouter rev=1\n", out)
 	_, errs := r.run(t, 1, "route", "set", "pro-grok-openrouter", "--deadline", "0")
-	assert.Equal(t, "nova-config route set: route pro-grok-openrouter has --deadline 0; want the seconds a card on it may run, above 0; run: nova-config route show pro-grok-openrouter\n", errs)
+	assert.Equal(t, "nova-config route set REFUSED: route pro-grok-openrouter has --deadline 0; want the seconds a card on it may run, above 0; run: nova-config route show pro-grok-openrouter\n", errs)
 	out, _ = r.run(t, 0, "route", "show", "pro-grok-openrouter")
 	assert.True(t, strings.HasPrefix(out, "ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 tokens=300000 deadline=1800 enabled=true"+noPrices+" created="), out)
 	// the price sheet through Postgres's columns (0009): each decimal kept exactly, as text
