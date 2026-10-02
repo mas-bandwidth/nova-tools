@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 )
 
@@ -698,6 +699,7 @@ func TestCardTextForAReadPacket(t *testing.T) {
 		"The worker's report:\n\nlanded it\n",
 		"    nova-sprint read --as rd (--ok | --broken) r1 --epoch 4 --finding '<your findings>'\n",
 		"at least one finding line names the file (file:line), the line, or the card's STEP or RULE the work breaks",
+		cardcontract.ReaderChecksText,
 	} {
 		require.Contains(t, got, want, "the read card lacks %q", want)
 	}

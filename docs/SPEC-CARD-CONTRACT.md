@@ -149,6 +149,8 @@ The rulings of 2026-09-30 on the shape:
 - **The report line is the pull request title**, and the body carries the whole RESULT.md,
   with the gate's output, so the readers see it.
 
+**Four checks before an approval.** Every profile's read JOB.md requires four checks before an approval (`cardcontract.ReaderChecksText`): (1) truth of a stated reason against the code: verify every reconstructed reason against the actual implementation; for every assertion rewrite verify truth-table equality; for every reconstructed reason cite the line of code that shows it; a comment that contradicts the code or invents a reason is broken; (2) sentence completeness: read every changed comment from its first line to its full stop as a whole paragraph, not as a diff; stranded fragments from editing only a listed line are broken; (3) edits strictly within PATHS: check that every edit is strictly within the card's declared paths, rename targets, or ledger rows; modifications outside declared paths are broken; (4) cross-references after a rename: verify with `ls` that any file named in a changed comment exists and belongs to the package, ensuring no cross-package breakage.
+
 **A broken read names its defect.** A read's `verdict: broken` tells the work what to do: at
 least one line of its report or body names the file (a path, or `file:line`), the line
 (`line <n>`), or the card's `STEP <n>` or RULE the work breaks, and says what to change

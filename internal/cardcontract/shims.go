@@ -253,6 +253,7 @@ func (claude) JobText(f Frame, s Staged) string {
 		fmt.Fprintf(&b, "You are in a checkout of %s on branch %s at %s: the change under review, against %s. The checkout is %s.\n\n", f.Repo, f.Branch, s.Head, orDash(f.ReviewBase), s.Repo)
 		fmt.Fprintf(&b, "Review the change on this branch against %s as you would a pull request: `gh pr diff`, `gh pr view` and `gh pr checks` show it. Run the card's gate. Change nothing and commit nothing.\n\n", orDash(f.ReviewBase))
 		writeReadDiff(&b, f, s)
+		b.WriteString(ReaderChecksText + "\n\n")
 		b.WriteString("Approve or request changes with gh pr review; that ends the read:\n\n")
 		b.WriteString("    gh pr review --approve --body \"<what you checked>\"\n")
 		b.WriteString("    gh pr review --request-changes --body \"<findings, each with file:line>\"\n\n")
@@ -289,6 +290,7 @@ func (plain) JobText(f Frame, s Staged) string {
 		}
 		fmt.Fprintf(&b, "The checkout %s holds %s on branch %s at %s: the change under review, against %s. Review it (%s), run the card's gate, change nothing and commit nothing.\n\n", s.Repo, f.Repo, f.Branch, s.Head, orDash(f.ReviewBase), review)
 		writeReadDiff(&b, f, s)
+		b.WriteString(ReaderChecksText + "\n\n")
 		b.WriteString("End by writing " + s.Job + "/RESULT.md in this shape (verdict ok, or broken with your findings):\n\n")
 		b.WriteString(BrokenFindingText + "\n\n")
 		b.WriteString(ShapeText("read") + "\n")
