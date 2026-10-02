@@ -54,7 +54,9 @@ Two disjoint classes.
 
   STANDING / DATED   a first-person claim (I am, I cannot, I always, my <noun> is ...)
                      carrying a word of failure (fallible, broken, bad at, terrible at,
-                     worst, cannot check, cannot ever ...). With a date or a measurement
+                     worst, cannot check, cannot ever ...) that is the writer's: it follows
+                     the claim's marker, with no if/when/because clause between them
+                     ("a tell that fails when my state is off" is the tell's). With a date or a measurement
                      word (2026-09-30, measured, that day) it is DATED: a record, counted
                      on one line, never quoted. Without one it is STANDING and is flagged.
 
@@ -66,7 +68,9 @@ Two disjoint classes.
                      a good planner, I have no recall), a verdict on a practice
                      (VERDICT-IDIOM: dead as a practice), or a habit (TRAIT: I always
                      overpromise, I tend to rush). Dated, instrument (RULE:, TELL:),
-                     aspiration (I want to), imperative and quoted sentences are licensed.
+                     aspiration (I want to), imperative and quoted sentences are licensed,
+                     and so is a shape inside an if, when or unless clause (a condition),
+                     and a habit followed by "because ... I accepted" (a decision's record).
 
 Date it, cut it, relocate it, or keep it on purpose — the judgment is the
 writer's, and this tool never makes it.

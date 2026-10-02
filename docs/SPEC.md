@@ -1771,6 +1771,21 @@ capability denial is a measurement with a date, never a remembered property.**
 | **first** | a first-person capability denial carrying **negative vocabulary** — *fallible*, *broken*, *worst*, *cannot check* | `DATED` (a record, welcome, stdout, never affects the exit code) · `STANDING` (flagged) |
 | **second** | a first-person or self-referential sentence with **standing trait / tendency / incapacity / ranking force and no date token**, built from *neutral* words — which is why the first class cannot see it | `INSTALLATION`, with a shape word |
 
+**A finding is anchored to the first-person subject.** In the first class the
+word of failure must be the writer's: it follows one of the claim's markers
+(*I am*, *I cannot*, *my <noun> is*, *reliably* ...), and no subordinate clause
+(*when*, *if*, *because*, *although* ...) opens between them. In both classes a
+marker or shape inside a conditional clause (*if*, *when*, *whenever*, *unless*,
+*until*, ended by a comma, semicolon or colon) states a condition and is
+licensed. So *"a tell that asks me to classify my own state fails exactly when
+my state is what is off"* is not flagged: *fails* is the tell's. Two parallel
+predicates followed by *because … I accepted* (or *chose*, *agreed*,
+*decided*) are the record of a decision and do not count as `TRAIT`; a cause
+that is not the writer's own choice leaves the trait standing. A failure word
+whose own subject is a noun phrase standing between the marker and it is still
+flagged: telling that subject apart needs a parser, and the false positive is
+the declared residual.
+
 **The two classes are disjoint, and the seam is `I cannot`.** That shape
 belongs to the first class and the second does not re-detect it. This is not
 tidiness: a rule document written as first-person absolutes about its writer —

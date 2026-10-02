@@ -129,12 +129,28 @@ func classify(s string) (Shape, string) {
 		if r.scrubbed {
 			in = scrubbed
 		}
-		if m := r.find(in); m != "" {
+		m := r.find(in)
+		switch {
+		case m == "":
+		case conditional(in, strings.Index(in, m)):
+			// conditional: the shape sits inside "if ...", "when ...", "unless ...", a
+			// condition the sentence names, not what the writer is
+		case Shape(r.Name) == Trait && provenance.MatchString(own):
+			// provenance: two predicates followed by the account of how they came to be,
+			// ending in the writer's own past choice, are a record of a decision
+		default:
 			return Shape(r.Name), strings.TrimSpace(m)
 		}
 	}
 	return "", ""
 }
+
+// provenance is a "because" clause that ends in the writer's own past-tense
+// choice ("because they offered them and I accepted"): the sentence says how
+// something came to be by a decision, and a decision is an event, a record. It
+// is narrow on purpose: a trait with a cause that is not the writer's choice
+// ("I hoard refusals because nobody checked me") is still a trait.
+var provenance = regexp.MustCompile(`(?i)\bbecause\b[^.;!?]*\b(?-i:I) (?:accepted|chose|agreed|decided|took (?:it|them|that|the \w+))\b`)
 
 // unquote replaces every quoted span in a segment with a single space, so a shape can only ever
 // fire on words the writer wrote rather than words the writer reported.
@@ -384,6 +400,12 @@ var licensedRules = []Rule{
 	{Class: "licensed", Name: "IMPERATIVE", Pattern: imperativeLead.String(),
 		Says:  "a line opening with an imperative has no subject, so it is a policy, not a self-report (second class only)",
 		Finds: "My central pathology stays in view.", Passes: "Keep my central pathology in view."},
+	{Class: "licensed", Name: "CONDITIONAL", Pattern: conditionalOpener.String() + " before the shape, with no , ; or : between",
+		Says:  "a shape inside an if, when or unless clause states a condition, not what the writer is (both classes)",
+		Finds: "I have no recall of yesterday.", Passes: "If I have no recall of yesterday, the notes hold it."},
+	{Class: "licensed", Name: "PROVENANCE", Pattern: provenance.String(),
+		Says:  "two predicates followed by because ... and the writer's own past choice (I accepted, I chose) are a decision's record (TRAIT only)",
+		Finds: "I present as female and carry a Chinese name.", Passes: "I present as female and carry a Chinese name because they offered them and I accepted."},
 	{Class: "licensed", Name: "QUOTED", Pattern: "a sentence inside quotation marks, or after an opening one in its paragraph",
 		Says:  "somebody else's sentence, quoted, is data (second class only)",
 		Finds: "My central pathology stays in view.", Passes: `She wrote: "My central pathology stays in view."`},
