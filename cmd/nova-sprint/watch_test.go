@@ -202,9 +202,9 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 			t.Errorf("the frame shows %q:\n%s", gone, frame)
 		}
 	}
-	// the identity of a row is its first cell; the readers table is one row,
-	// the sum of all readers (the owner, 2026-10-01)
-	for name, want := range map[string]string{"work": "s1,s2", "readers": readersAllRow, "merge": "s1,s2", "fleet": "m1,m2"} {
+	// the identity of a row is its first cell; the readers and merge tables are
+	// one row, the sum of all (the owner, 2026-10-01)
+	for name, want := range map[string]string{"work": "s1,s2", "readers": allRow, "merge": allRow, "fleet": "m1,m2"} {
 		if got := strings.Join(rowsOf(tableOf(frame, name)), ","); got != want {
 			t.Errorf("table %s: rows %q, want %q:\n%s", name, got, want, frame)
 		}
@@ -216,6 +216,7 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 		t.Errorf("where --json: pending=%q stalled=%v goals=%v coordinator=%q", w.Pending, w.Stalled, w.Goals, w.Coordinator)
 	}
 	assert.ElementsMatch(t, []string{"reader-a", "reader-b"}, slices.Collect(maps.Keys(w.Tables[sprint.Readers])), "where --json keeps each reader's row")
+	assert.ElementsMatch(t, []string{"s1", "s2"}, slices.Collect(maps.Keys(w.Tables[sprint.Merge])), "where --json keeps each stream's merge row")
 }
 
 // Every table is in the frame, with no rows when it has none, and a stream with
@@ -235,21 +236,20 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 		}
 	}
 	// the readers table is one row, the sum of all readers, at zero with none
-	if got := rowsOf(tableOf(frame, "readers")); strings.Join(got, ",") != readersAllRow {
-		t.Errorf("readers rows %q, want %s alone:\n%s", got, readersAllRow, frame)
+	if got := rowsOf(tableOf(frame, "readers")); strings.Join(got, ",") != allRow {
+		t.Errorf("readers rows %q, want %s alone:\n%s", got, allRow, frame)
 	}
-	for _, name := range []string{"work", "merge"} {
-		if got := rowsOf(tableOf(frame, name)); strings.Join(got, ",") != "s1,s2" {
-			t.Errorf("%s rows %q: s2 has no cards in any column and shows:\n%s", name, got, frame)
-		}
-	}
+	assert.Equal(t, []string{"s1", "s2"}, rowsOf(tableOf(frame, "work")), "s2 has no cards in any column and shows:\n%s", frame)
+	// the merge table is one row, the sum of all streams; --json keeps each
+	assert.Equal(t, []string{allRow}, rowsOf(tableOf(frame, "merge")), frame)
+	assert.ElementsMatch(t, []string{"s1", "s2"}, ta.mergeRows(), "where --json keeps each stream's merge row, s2 at zero")
 
 	// the readers come, and a card comes to s2
 	ta.ok("reader add reader-a reader-b")
 	ta.ok("add --stream s2 s2-2")
 	frame = ta.ok("where")
-	if got := rowsOf(tableOf(frame, "readers")); strings.Join(got, ",") != readersAllRow {
-		t.Errorf("readers rows %q, want %s alone:\n%s", got, readersAllRow, frame)
+	if got := rowsOf(tableOf(frame, "readers")); strings.Join(got, ",") != allRow {
+		t.Errorf("readers rows %q, want %s alone:\n%s", got, allRow, frame)
 	}
 	assert.ElementsMatch(t, []string{"reader-a", "reader-b"}, ta.readerRows(), "where --json keeps each reader's row")
 	if got := rowsOf(tableOf(frame, "work")); strings.Join(got, ",") != "s1,s2" {
@@ -272,9 +272,16 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 	ta.ok("read --as reader-b --ok --limit 10")
 	ta.ok("accept --read-ok")
 	frame = ta.ok("where")
-	if got := rowsOf(tableOf(frame, "merge")); len(got) != 2 {
-		t.Errorf("merge rows %q, want both streams:\n%s", got, frame)
-	}
+	assert.Equal(t, []string{allRow}, rowsOf(tableOf(frame, "merge")), frame)
+	assert.ElementsMatch(t, []string{"s1", "s2"}, ta.mergeRows(), "where --json keeps both streams' merge rows")
+}
+
+// mergeRows is the merge table's row keys, as where --json lists them.
+func (ta *testApp) mergeRows() []string {
+	ta.t.Helper()
+	var w whereView
+	ta.json("where", &w)
+	return slices.Collect(maps.Keys(w.Tables[sprint.Merge]))
 }
 
 // Each frame of a watch is one write, drawn from the top of the screen, every

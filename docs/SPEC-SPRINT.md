@@ -63,16 +63,25 @@ A frame of the view holds the words `SPRINT TABLE`, that line and the
 tables, and nothing else: no time, no pending operation, no stalled stream, no line about
 the people and no coordinator (`where --json` carries them; `check`, `inbox` and
 `goal show` say the same in their own words). The merge table has no `since`
-column. Every table is shown, with its header and footer, empty or not, and every
-stream row is shown in the work and merge tables, at zero when it has no cards.
-A row's first cell is its identity. The readers table is one row, `all`, whose
-four cells are the sums over every reader (readers away or down counted too), and
-it has no footer, which would say the same thing twice (the owner, 2026-10-01:
-"If you raise reader widths, I would like you to change the table to just be one
-row, sum of all"; "i don't reallllly need to see all readers, i just need to see
-reader *progress* overall got it?"). It is the text of `where` and `where --watch`
-only: the readers table keeps a row per reader, `where --json` lists each, and the
-stored view `sprint` drawn by `nova-table watch --view sprint` shows each. `where --watch` redraws the frame in
+column. Every table is shown, with its header, empty or not, and every
+stream row is shown in the work table, at zero when it has no cards, with its
+footer. A row's first cell is its identity. The readers table is one row, `all`,
+whose four cells are the sums over every reader (readers away or down counted
+too), and it has no footer, which would say the same thing twice (the owner,
+2026-10-01: "If you raise reader widths, I would like you to change the table to
+just be one row, sum of all"; "i don't reallllly need to see all readers, i just
+need to see reader *progress* overall got it?"). The merge table is one row, `all`,
+the same way (the owner, 2026-10-01, about 21:00 ET: "Can we please (for next
+sprint) do the same for merge"): queued, merged and stuck are the sums over every
+stream; ci and state, which do not add up, show the value across the streams that
+most needs the coordinator's eye: ci `red`, then `green`, then `-`; state
+`stopped`, then `merging`, then `waiting`, then `landed`, then `-` (a word the
+order does not name comes after `landed` and before `-`), and a stopped state the
+number of streams stopped beside it (`stopped 1`), so one stopped stream of four
+is not hidden. Both are the text of `where` and `where --watch` only: the readers
+and merge tables keep a row per reader and per stream, `where --json` lists each,
+and the stored view `sprint` drawn by `nova-table watch --view sprint` shows each.
+The fleet table shows each member, with its footer. `where --watch` redraws the frame in
 place once a second (`--every`, any duration above 0): the cursor is hidden
 while it watches and restored when it ends or is interrupted (SIGINT or
 SIGTERM: exit 0); each frame is built whole and written with one write, however
