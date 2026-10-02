@@ -16,35 +16,38 @@ import (
 // applies --only and --require filters, prints the OK line to stderr,
 // sets RLIMIT_CORE to 0, and replaces the current process with cmdArgs.
 func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []string, cmdArgs []string) (int, error) {
-	// 0. Set RLIMIT_CORE to 0 immediately (M5)
+	// No core file: a crash after the decrypt must not write the values to disk.
 	if err := setRlimitCoreZero(); err != nil {
 		return 125, fmt.Errorf("failed to set RLIMIT_CORE to 0: %w", err)
 	}
 
-	// Every flag and the command, named at once (ONBOARDING point 2): the command after
-	// '--' is one more required input, not a refusal of its own ahead of the flags.
-	command := ""
-	if len(cmdArgs) > 0 {
-		command = cmdArgs[0]
-	}
+	// Every missing flag and the missing command, named in one refusal (ONBOARDING point
+	// 2). The command is not a flag, so it is named after the flags, as what it is.
+	var problems []string
 	if err := preflight("", need{storeDir, "--store <dir>", false}, need{asName, "--as <name>", false}, need{keyPath, "--key <path>", false},
-		need{sopsPath, "--sops <path>", false}, need{onlyArg, "--only <names|all>", false}, need{command, "the command after '--' (-- <cmd> [args...])", false}); err != nil {
-		return 125, fmt.Errorf("%w; example: nova-secrets exec --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --only GH_TOKEN -- gh api user", err)
+		need{sopsPath, "--sops <path>", false}, need{onlyArg, "--only <names|all>", false}); err != nil {
+		problems = append(problems, err.Error())
+	}
+	if len(cmdArgs) == 0 {
+		problems = append(problems, "no command after '--': exec runs one, as -- <cmd> [args...]")
+	}
+	if len(problems) > 0 {
+		return 125, fmt.Errorf("%s; example: nova-secrets exec --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops \"$(command -v sops)\" --only GH_TOKEN -- gh api user", strings.Join(problems, "; "))
 	}
 
-	// Pre-validate command binary existence before printing OK (M4)
+	// The command must exist before the OK line says it will run.
 	if _, err := exec.LookPath(cmdArgs[0]); err != nil {
 		return 125, fmt.Errorf("command not found: %s; the command after '--' is a program on PATH or a path to one", cmdArgs[0])
 	}
-	// 1-7. The store, the seat's file and its key, checked and decrypted by the
-	// one path every in-process reader of a seat also takes (seatfile.go).
+	// The store, the seat's file and its key, checked and decrypted by the one path
+	// every in-process reader of a seat also takes (seatfile.go).
 	sf, err := OpenSeatFile(storeDir, asName, keyPath, sopsPath)
 	if err != nil {
 		return 125, err
 	}
 	targetFile, headSHA, secretsMap := sf.Path, sf.HeadSHA, sf.Secrets
 
-	// 8. Apply --only
+	// --only: the values the command is given.
 	selectedSecrets := make(map[string]Secret)
 	onlyWord := ""
 	if onlyArg == "all" {
@@ -72,7 +75,7 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		onlyWord = strconv.Itoa(len(selectedSecrets))
 	}
 
-	// 9. Verify --require
+	// --require: names that must be in the file and in --only.
 	var missingRequired []string
 	var excludedRequired []string
 	for _, req := range required {
@@ -98,13 +101,14 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		return 125, fmt.Errorf("--require %s is excluded by --only %q", strings.Join(excludedRequired, ", "), onlyArg)
 	}
 
-	// 10. Print OK line to stderr escaped via oneline.Field (H3)
+	// The OK line, on stderr, every field escaped: the command's own stdout stays its own.
 	fmt.Fprintf(os.Stderr, "SECRETS EXEC OK as=%s keys=%d only=%s required=%d file=%s head=%s cmd=%s\n",
 		oneline.Field(asName), len(selectedSecrets), oneline.Field(onlyWord), len(required),
 		oneline.Field(targetFile), oneline.Field(headSHA), oneline.Field(cmdArgs[0]))
 
-	// 11. Build environment dropping all store secrets (even if omitted by --only)
-	// and SOPS_AGE_KEY / SOPS_AGE_KEY_FILE (H1, N4)
+	// The command's environment: every name the seat file holds is dropped from the
+	// inherited one (an omitted value must not arrive by another route), as are
+	// SOPS_AGE_KEY and SOPS_AGE_KEY_FILE; then the --only values are added.
 	scrubKeys := make(map[string]bool)
 	for k := range secretsMap {
 		scrubKeys[k] = true
@@ -139,7 +143,7 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		})
 	}
 
-	// 12. Replace process
+	// Become the command.
 	if err := replaceProcess(cmdArgs, env); err != nil {
 		return 125, fmt.Errorf("exec failed: %w", err)
 	}

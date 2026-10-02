@@ -7,7 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIssue2378(t *testing.T) {
+// TestGateRefusesAStoreWithNoCommit: a store with no commit yet has no base and no head
+// to compare, and the gate refuses it on stderr at exit 2, never an approval.
+func TestGateRefusesAStoreWithNoCommit(t *testing.T) {
 	t.Parallel()
 	bin := buildNovaSecrets(t)
 

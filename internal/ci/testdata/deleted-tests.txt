@@ -1314,3 +1314,10 @@ deprecated/internal/workreconcile/reconcile_test.go deprecated/ removed 2026-10-
 deprecated/internal/workreconcile/sprint_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 deprecated/internal/workreconcile/types_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
 internal/ci/sizetable_test.go dead: its only helper readSizeTable had no caller; the size tables it read are checked nowhere else (dead-code pass 2026-10-01)
+cmd/nova-secrets/issue2378_test.go renamed gate_unborn_test.go, its test TestGateRefusesAStoreWithNoCommit: a test named for what it pins, not its ticket
+cmd/nova-secrets/issue2676_test.go renamed exec_width_write_test.go, its test TestExecRefusesAHandWriteOfTheSprintWidthKey: a test named for what it pins, not its ticket
+cmd/nova-secrets/issue3550_test.go renamed upstream_test.go, its tests unchanged: a file named for what it pins, not its ticket
+cmd/nova-secrets/demanded_part1_test.go renamed exec_contract_test.go, its tests unchanged (what exec hands the command and what it never prints)
+cmd/nova-secrets/demanded_part2_test.go renamed value_guards_test.go, its tests unchanged (the refusals before a value is handed over)
+cmd/nova-secrets/demanded_part3_test.go renamed store_guards_test.go, its tests unchanged (key names, check failing closed, keygen, the launcher order)
+cmd/nova-secrets/demanded_part4_test.go renamed output_integrity_test.go, its tests unchanged (no forged line, no value, no leftover plaintext)

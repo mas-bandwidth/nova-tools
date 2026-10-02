@@ -434,7 +434,7 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 		return "", nil, nil, "", 2, fmt.Errorf("--max %d is negative; expected non-negative integer", maxShown)
 	}
 
-	// 0. Set RLIMIT_CORE to 0 immediately (M5)
+	// No core file: a crash after a decrypt must not write a value to disk.
 	if err := setRlimitCoreZero(); err != nil {
 		return "", nil, nil, "", 2, fmt.Errorf("failed to set RLIMIT_CORE to 0: %w", err)
 	}

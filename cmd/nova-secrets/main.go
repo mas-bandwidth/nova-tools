@@ -1,3 +1,9 @@
+// Command nova-secrets keeps a team's secrets sops-encrypted in a git repository (the
+// store) and hands the values one command needs to that command alone, in its
+// environment; no verb prints a value. The verbs are thin: each parses its flags here and
+// calls internal/secrets, which holds every check and every refusal. run is the whole
+// tool on its arguments and three streams, so a test drives it in process; main only
+// hands it the process's own.
 package main
 
 import (
@@ -68,7 +74,10 @@ flags:
   --dry-run            prints the plan and writes nothing (place, seal, seat inject): the file, the
                        recipients, the machine and remote path, the branch and the pull request the
                        real run would take, as PLAN lines ending in DRY-RUN OK, exit 0; no ssh, no
-                       git write or push, no gh call, no sops encrypt, no value read or shown
+                       git write or push, no gh call, no sops encrypt, no value shown. It does
+                       decrypt the seat file the real run reads first (place: --as's, to find
+                       --secret; seal: the existing <as>.yaml, to say add or replace; seat inject:
+                       --from's, to find the names), so --key must open it; seal reads no new value
   --gh <path>          path to the gh executable (seal, seat inject; default: gh)
   --git <path>         path to the git executable (seal, seat inject; default: git)
 
@@ -122,11 +131,11 @@ var verbEffects = map[string]string{
 	"check":       "effect: inspection. Reads the store's files and git state and decrypts this seat's file with --key to prove it opens; writes nothing, prints no value.",
 	"gate":        "effect: inspection. Diffs --base..--head in the store with git and judges every seat rule change; writes nothing, calls no network.",
 	"keygen":      "effect: local write. Makes one age key file at --key (mode 0600) with --age-keygen, never over an existing file, and prints the .sops.yaml rule block for it.",
-	"place":       "effect: delivery. Copies one value over ssh to --machine (on ssh's stdin, never in an argument) and writes a receipt under --receipts naming the sealed bytes it decrypted (file, blob) and the store's HEAD (head), never a hash of the value; it reads the seat file once and decrypts a private copy; --dry-run writes nothing and runs no ssh.",
+	"place":       "effect: delivery. Copies one value over ssh to --machine (on ssh's stdin, never in an argument) and writes a receipt under --receipts naming the sealed bytes it decrypted (file, blob) and the store's HEAD (head), never a hash of the value; it reads the seat file once and decrypts a private copy; --dry-run still decrypts that file to find --secret, prints no value, writes nothing and runs no ssh.",
 	"placed":      "effect: inspection. Lists the receipts under --receipts for --machine, never a hash of a value: per secret its remote path, file (the seat file it was sealed in), blob (the git blob id of the sealed bytes place decrypted), head (the store's HEAD commit when place started, which need not hold that blob) and stamp; writes nothing.",
-	"seal":        "effect: store write. Reads one value at a hidden prompt (or --stdin), seals it into <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run writes nothing.",
+	"seal":        "effect: store write. Reads one value at a hidden prompt (or --stdin), seals it into <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run reads no new value, decrypts the existing <as>.yaml (when there is one) to say whether NAME is added or replaced, prints no value and writes nothing.",
 	"seat add":    "effect: local write. Writes the new seat's rule into .sops.yaml and its <as>.yaml, re-sealed from --from; commits nothing.",
-	"seat inject": "effect: store write. Re-seals the --only values from --from into the existing <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run writes nothing.",
+	"seat inject": "effect: store write. Re-seals the --only values from --from into the existing <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run decrypts the --from seat's file to find the names, prints no value and writes nothing.",
 	"version":     "effect: inspection. Prints this build's identity; opens no store, key or program.",
 }
 
@@ -162,35 +171,20 @@ const (
 	receipts = "`dir` the placed receipts live in (default ~/.config/nova-secrets/placed)"
 )
 
-// parseVerb is verbflag.Parse with a refusal a cold reader acts on in one turn: an
-// unknown flag is named with every flag the verb does take, and a value its flag cannot
-// take with what that flag wants (the value itself is not repeated back).
+// parseVerb is verbflag.Parse with the house wording of its errors (verbflag.Explain,
+// the one wording every tool on the skeleton prints): an unknown flag is named with the
+// flags the verb takes and the nearest of them, a value its flag cannot take with what
+// that flag wants, and the value itself is never repeated back.
 func parseVerb(fs *flag.FlagSet, args []string) error {
-	err := verbflag.Parse(fs, args)
-	if err == nil {
-		return nil
+	if err := verbflag.Parse(fs, args); err != nil {
+		return fmt.Errorf("%s", verbflag.Explain(fs, err))
 	}
-	msg := err.Error()
-	if name, ok := strings.CutPrefix(msg, "flag provided but not defined: "); ok {
-		var names []string
-		fs.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
-		return fmt.Errorf("unknown flag --%s; %s takes %s", strings.TrimLeft(name, "-"), fs.Name(), strings.Join(names, ", "))
-	}
-	// The flag package's "invalid value %q for flag -%s: %v": the flag's name follows
-	// the last " for flag -".
-	if i := strings.LastIndex(msg, " for flag -"); strings.HasPrefix(msg, "invalid ") && i >= 0 {
-		name, _, _ := strings.Cut(msg[i+len(" for flag -"):], ":")
-		if f := fs.Lookup(name); f != nil {
-			kind, usage := flag.UnquoteUsage(f)
-			return fmt.Errorf("--%s wants <%s>: %s; the value given is not one", f.Name, kind, usage)
-		}
-	}
-	return err
+	return nil
 }
 
-// parseFlags parses a verb that takes flags only, refusing in one line at exit 2 a flag
-// it does not take, a bad value or a stray argument; `<verb> help` is its help.
-func parseFlags(fs *flag.FlagSet, args []string) {
+// parseFlags parses a verb that takes flags only: a flag it does not take, a bad value
+// or a stray argument is the error; `<verb> help` is its help.
+func parseFlags(fs *flag.FlagSet, args []string) error {
 	if len(args) > 0 && args[0] == "help" {
 		panic(verbflag.Help{FS: fs})
 	}
@@ -198,10 +192,23 @@ func parseFlags(fs *flag.FlagSet, args []string) {
 	if err == nil && len(fs.Args()) > 0 {
 		err = fmt.Errorf("unexpected argument %s; %s takes flags only", oneline.Quote(fs.Args()[0]), fs.Name())
 	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets "+fs.Name()+" -h"))
-		os.Exit(2)
-	}
+	return err
+}
+
+// streams are what a verb reads and writes: the process's own from main, a test's
+// buffers when it drives run in process.
+type streams struct {
+	stdin          io.Reader
+	stdout, stderr io.Writer
+}
+
+// refuse prints a verb's refusal in the tool's one grammar, `SECRETS <VERB> REFUSED:
+// <why>; run: <remedy>` (the verb's help when the reason names no remedy of its own), on
+// stderr, and returns code: 2, or 125 for exec, whose refusals stand apart from the
+// statuses of the command it runs.
+func (s streams) refuse(verb string, code int, err error) int {
+	fmt.Fprintf(s.stderr, "SECRETS %s REFUSED: %s\n", strings.ToUpper(verb), oneline.WithRemedy(oneline.Err(err), "nova-secrets "+verb+" -h"))
+	return code
 }
 
 // version is empty in ordinary builds and is filled only by a release stamp.
@@ -302,75 +309,62 @@ func refusedWidthHandWrite(cmdArgs []string) error {
 	return fmt.Errorf("redis-cli writing friend:%s:width by hand through nova-secrets exec is refused; that count is the friend row's (friend:%s working), written only by the friend row loop from the friend's leased tasks, never a redis-cli line (nova-tools #3447)", name, name)
 }
 
-func main() {
-	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0, before
-	// any store, key or helper program is opened (the CLI style's rule (b), #4505). Every
-	// other path through secretsMain exits on its own; one that returns exits 0, as
-	// main did before.
-	code := 0
-	func() {
-		defer verbflag.RecoverWith(os.Stdout, "nova-secrets", usage, &code, verbHelp)
-		secretsMain(os.Args)
-	}()
-	os.Exit(code)
+func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+
+// run is nova-secrets on args, the words after its name, and returns its exit code.
+// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0, before any
+// store, key or helper program is opened (the CLI style's rule (b)): the parse raises
+// verbflag's Help, and the deferred RecoverWith prints it.
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	defer verbflag.RecoverWith(stdout, "nova-secrets", usage, &code, verbHelp)
+	return dispatch(args, streams{stdin: stdin, stdout: stdout, stderr: stderr})
 }
 
-func secretsMain(osArgs []string) {
-	if len(osArgs) < 2 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: no arguments is not an invocation; run: nova-secrets help\n")
-		os.Exit(2)
+func dispatch(args []string, s streams) int {
+	if len(args) == 0 {
+		fmt.Fprintf(s.stderr, "SECRETS REFUSED: no arguments is not an invocation; run: nova-secrets help\n")
+		return 2
 	}
 
-	verb := osArgs[1]
+	verb := args[0]
 	if verb == "version" || verb == "--version" {
-		os.Exit(cmdVersion(osArgs[2:], os.Stdout, os.Stderr))
+		return cmdVersion(args[1:], s.stdout, s.stderr)
 	}
 
 	// Check refusal table first
 	if msg, refused := disallowedVerbs[verb]; refused {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(msg, "nova-secrets help"))
-		os.Exit(2)
+		fmt.Fprintf(s.stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(msg, "nova-secrets help"))
+		return 2
 	}
 
 	switch verb {
 	case "help", "--help", "-h":
-		if verb == "help" && len(osArgs) > 2 && osArgs[2] != "help" && !verbflag.IsHelp(osArgs[2]) {
-			secretsMain(append(append([]string{osArgs[0]}, osArgs[2:]...), "--help"))
-			return
+		if verb == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+			return dispatch(append(slices.Clone(args[1:]), "--help"), s)
 		}
-		fmt.Print(usage)
-		os.Exit(0)
-
+		fmt.Fprint(s.stdout, usage)
+		return 0
 	case "exec":
-		runExecCLI(osArgs[2:])
-
+		return runExecCLI(args[1:], s)
 	case "names":
-		runNamesCLI(osArgs[2:])
-
+		return runNamesCLI(args[1:], s)
 	case "check":
-		runCheckCLI(osArgs[2:])
-
+		return runCheckCLI(args[1:], s)
 	case "gate":
-		runGateCLI(osArgs[2:])
-
+		return runGateCLI(args[1:], s)
 	case "keygen":
-		runKeygenCLI(osArgs[2:])
-
+		return runKeygenCLI(args[1:], s)
 	case "place":
-		runPlaceCLI(osArgs[2:])
-
+		return runPlaceCLI(args[1:], s)
 	case "placed":
-		runPlacedCLI(osArgs[2:])
-
+		return runPlacedCLI(args[1:], s)
 	case "seal":
-		runSealCLI(osArgs[2:])
-
+		return runSealCLI(args[1:], s)
 	case "seat":
-		runSeatCLI(osArgs[2:])
-
+		return runSeatCLI(args[1:], s)
 	default:
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unknown verb %s; the verbs are %s; run: nova-secrets help\n", oneline.Quote(verb), verbs)
-		os.Exit(2)
+		fmt.Fprintf(s.stderr, "SECRETS REFUSED: unknown verb %s; the verbs are %s; run: nova-secrets help\n", oneline.Quote(verb), verbs)
+		return 2
 	}
 }
 
@@ -379,14 +373,14 @@ func secretsMain(osArgs []string) {
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
 	verbflag.HelpIfAsked(args, "version")
 	if len(args) != 0 {
-		fmt.Fprintf(stderr, "SECRETS REFUSED: version takes no flags and no arguments, got %d; run: nova-secrets version\n", len(args))
+		fmt.Fprintf(stderr, "SECRETS VERSION REFUSED: version takes no flags and no arguments, got %d; run: nova-secrets version\n", len(args))
 		return 2
 	}
 	fmt.Fprintln(stdout, buildinfo.Line("nova-secrets", version))
 	return 0
 }
 
-func runExecCLI(args []string) {
+func runExecCLI(args []string, s streams) int {
 	// The flags stand before '--' and the command after it. With no '--' every argument
 	// is a flag, and the missing command is named with the missing flags, in one line.
 	flagArgs, cmdArgs := args, []string(nil)
@@ -410,34 +404,20 @@ func runExecCLI(args []string) {
 		panic(verbflag.Help{FS: fs})
 	}
 	if err := parseVerb(fs, flagArgs); err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL flags: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets exec -h"))
-		os.Exit(125)
+		return s.refuse("exec", 125, err)
 	}
 
-	// nova-tools#2676: the sprint table's working column is the friend's own
-	// tool's to write, never a redis-cli line through this exec; the
-	// hand-write of it went through because the store held REDISCLI_AUTH.
+	// The sprint table's working column is the friend's own tool's to write, never a
+	// redis-cli line through this exec; the hand-write of it went through because the
+	// store held REDISCLI_AUTH.
 	if len(cmdArgs) > 0 {
 		if err := refusedWidthHandWrite(cmdArgs); err != nil {
-			fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL %s\n", oneline.Err(err))
-			os.Exit(125)
+			return s.refuse("exec", 125, err)
 		}
 	}
 
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL flags: unexpected argument %s before '--'; the command goes after '--': nova-secrets exec <flags> -- <cmd> [args...]; run: nova-secrets exec -h\n", oneline.Quote(fs.Args()[0]))
-		os.Exit(125)
-	}
-
-	// A .git that is a FILE is a worktree or a submodule: its real repository lives
-	// elsewhere, so HEAD and the tracking ref read here would not be the store's. Refuse
-	// naming that fact, the sentence check prints, not "no .git directory" (SPEC-SECRETS
-	// test 20).
-	if *storeFlag != "" {
-		if fi, err := os.Lstat(*storeFlag + string(os.PathSeparator) + ".git"); err == nil && !fi.IsDir() {
-			fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL store %s: .git is a file (a worktree or submodule); expected a directory working copy\n", oneline.Escape(*storeFlag))
-			os.Exit(125)
-		}
+		return s.refuse("exec", 125, fmt.Errorf("unexpected argument %s before '--'; the command goes after '--': nova-secrets exec <flags> -- <cmd> [args...]", oneline.Quote(fs.Args()[0])))
 	}
 
 	// sops' identity lookup is defeated for the command as well as for the sops child:
@@ -452,12 +432,12 @@ func runExecCLI(args []string) {
 
 	code, err := secrets.RunExec(*storeFlag, *asFlag, *keyFlag, *sopsFlag, *onlyFlag, requireFlags, cmdArgs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL %s\n", oneline.Err(err))
-		os.Exit(code)
+		return s.refuse("exec", code, err)
 	}
+	return code
 }
 
-func runNamesCLI(args []string) {
+func runNamesCLI(args []string, s streams) int {
 	fs := flag.NewFlagSet("names", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -465,26 +445,32 @@ func runNamesCLI(args []string) {
 	asFlag := fs.String("as", "", asUse)
 	maxFlag := fs.Int("max", 20, maxUse)
 	jsonFlag := fs.Bool("json", false, "print the result as one JSON object on stdout, a refusal included: result, facts, items, more")
-	parseFlags(fs, args)
+	// A refusal asked for as --json is JSON, the flag refusals included: --json is read
+	// off the words as the parser reads them, so it holds when the parse stops early.
+	if err := parseFlags(fs, args); err != nil {
+		if verbflag.BoolGiven(fs, args, "json") {
+			return namesJSON(s.stdout, secrets.NamesReport{}, err)
+		}
+		return s.refuse("names", 2, err)
+	}
 
 	r, err := secrets.RunNames(*storeFlag, *asFlag, *maxFlag)
 	if *jsonFlag {
-		os.Exit(namesJSON(os.Stdout, r, err))
+		return namesJSON(s.stdout, r, err)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets names -h"))
-		os.Exit(2)
+		return s.refuse("names", 2, err)
 	}
 	okLine, names, more := r.Lines()
 
 	for _, n := range names {
-		fmt.Println(n)
+		fmt.Fprintln(s.stdout, n)
 	}
 	if more != "" {
-		fmt.Println(more)
+		fmt.Fprintln(s.stdout, more)
 	}
-	fmt.Println(okLine)
-	os.Exit(0)
+	fmt.Fprintln(s.stdout, okLine)
+	return 0
 }
 
 // namesJSON renders names' one value as JSON (STANDARD §2: one value, two renderings)
@@ -510,7 +496,7 @@ func namesJSON(w io.Writer, r secrets.NamesReport, err error) int {
 	return o.Exit
 }
 
-func runCheckCLI(args []string) {
+func runCheckCLI(args []string, s streams) int {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -519,31 +505,32 @@ func runCheckCLI(args []string) {
 	keyFlag := fs.String("key", "", keyUse)
 	sopsFlag := fs.String("sops", "", sopsUse)
 	maxFlag := fs.Int("max", 20, "`n` failures of each kind to list before a MORE line; 0 lists all (default 20)")
-	parseFlags(fs, args)
+	if err := parseFlags(fs, args); err != nil {
+		return s.refuse("check", 2, err)
+	}
 
 	okLine, failLines, moreLines, summaryLine, code, err := secrets.RunCheck(*storeFlag, *asFlag, *keyFlag, *sopsFlag, *maxFlag)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets check -h"))
-		os.Exit(code)
+		return s.refuse("check", code, err)
 	}
 
 	if code == 0 {
-		fmt.Println(okLine)
-		os.Exit(0)
+		fmt.Fprintln(s.stdout, okLine)
+		return 0
 	}
 
 	// Failure output
 	for _, l := range failLines {
-		fmt.Fprintln(os.Stderr, l)
+		fmt.Fprintln(s.stderr, l)
 	}
 	for _, m := range moreLines {
-		fmt.Fprintln(os.Stderr, m)
+		fmt.Fprintln(s.stderr, m)
 	}
-	fmt.Fprintln(os.Stderr, summaryLine)
-	os.Exit(code)
+	fmt.Fprintln(s.stderr, summaryLine)
+	return code
 }
 
-func runGateCLI(args []string) {
+func runGateCLI(args []string, s streams) int {
 	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -558,16 +545,13 @@ func runGateCLI(args []string) {
 	repeated := ""
 	if err := parseOnce(fs, args, &repeated); err != nil {
 		if repeated != "" {
-			fmt.Fprintf(os.Stderr, "SECRETS REFUSED: --%s is given more than once; every gate flag takes one value; run: nova-secrets gate -h\n", oneline.Field(repeated))
-			os.Exit(2)
+			err = fmt.Errorf("--%s is given more than once; every gate flag takes one value", repeated)
 		}
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets gate -h"))
-		os.Exit(2)
+		return s.refuse("gate", 2, err)
 	}
 
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %s; gate takes flags only; run: nova-secrets gate -h\n", oneline.Quote(fs.Args()[0]))
-		os.Exit(2)
+		return s.refuse("gate", 2, fmt.Errorf("unexpected argument %s; gate takes flags only", oneline.Quote(fs.Args()[0])))
 	}
 
 	line, code := secrets.RunGate(secrets.GateInput{
@@ -577,11 +561,11 @@ func runGateCLI(args []string) {
 		MachinesPath: *machinesFlag,
 	})
 	if code != 0 {
-		fmt.Fprintln(os.Stderr, line)
+		fmt.Fprintln(s.stderr, line)
 	} else {
-		fmt.Println(line)
+		fmt.Fprintln(s.stdout, line)
 	}
-	os.Exit(code)
+	return code
 }
 
 // parseOnce is verbflag.Parse with every flag of fs taking one value. Each value is
@@ -616,7 +600,7 @@ func (o *onceValue) Set(v string) error {
 	return o.Value.Set(v)
 }
 
-func runKeygenCLI(args []string) {
+func runKeygenCLI(args []string, s streams) int {
 	fs := flag.NewFlagSet("keygen", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -624,47 +608,45 @@ func runKeygenCLI(args []string) {
 	keyFlag := fs.String("key", "", "`path` to write the new private key to; its directory exists with mode 0700 and the file does not (required)")
 	ageKeygenFlag := fs.String("age-keygen", "", "`path` of the age-keygen program, as printed by: command -v age-keygen (required)")
 	storeFlag := fs.String("store", "", "`dir` of the store, whose recovery.pub fills the rule's recovery key; without it the rule carries <recovery key>")
-	parseFlags(fs, args)
+	if err := parseFlags(fs, args); err != nil {
+		return s.refuse("keygen", 2, err)
+	}
 
 	// The order is the package's, not this function's: the rule block, then the next
 	// step, then the OK line. A reader took a green keygen for a failure when the
-	// verdict was at the top and the homework at the bottom (nova-tools#1393).
+	// verdict was at the top and the homework at the bottom.
 	lines, err := secrets.RunKeygen(*asFlag, *keyFlag, *ageKeygenFlag, *storeFlag)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets keygen -h"))
-		os.Exit(2)
+		return s.refuse("keygen", 2, err)
 	}
 
 	for _, l := range lines {
-		fmt.Println(l)
+		fmt.Fprintln(s.stdout, l)
 	}
-	os.Exit(0)
+	return 0
 }
 
 // runSeatCLI dispatches the seat subverbs: `add` gives a new seat its first values,
 // `inject` re-seals named values into a seat that exists. Every other change to a seat
 // is a pull request against .sops.yaml that the store's gate reviews.
-func runSeatCLI(args []string) {
+func runSeatCLI(args []string, s streams) int {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: seat takes a subverb, add (a new seat's first values) or inject (values into a seat that exists); run: nova-secrets seat add -h\n")
-		os.Exit(2)
+		return s.refuse("seat", 2, fmt.Errorf("seat takes a subverb, add (a new seat's first values) or inject (values into a seat that exists); run: nova-secrets seat add -h"))
 	}
 	switch args[0] {
 	case "add":
-		runSeatAddCLI(args[1:])
+		return runSeatAddCLI(args[1:], s)
 	case "inject":
-		runSeatInjectCLI(args[1:])
+		return runSeatInjectCLI(args[1:], s)
 	case "help", "--help", "-h":
-		fmt.Print(usage)
-		os.Exit(0)
+		fmt.Fprint(s.stdout, usage)
+		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unknown seat subverb %s; the subverbs are add and inject; run: nova-secrets seat add -h\n", oneline.Quote(args[0]))
-		os.Exit(2)
+		return s.refuse("seat", 2, fmt.Errorf("unknown seat subverb %s; the subverbs are add and inject; run: nova-secrets seat add -h", oneline.Quote(args[0])))
 	}
 }
 
-func runSeatInjectCLI(args []string) {
-
+func runSeatInjectCLI(args []string, s streams) int {
 	fs := flag.NewFlagSet("seat inject", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -678,7 +660,9 @@ func runSeatInjectCLI(args []string) {
 	gitFlag := fs.String("git", "git", gitUse)
 	noPRFlag := fs.Bool("no-pr", false, noPRUse)
 	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
-	parseFlags(fs, args)
+	if err := parseFlags(fs, args); err != nil {
+		return s.refuse("seat inject", 2, err)
+	}
 
 	line, err := secrets.RunSeatInject(secrets.SeatInjectOptions{
 		StoreDir: *storeFlag,
@@ -691,18 +675,16 @@ func runSeatInjectCLI(args []string) {
 		GitPath:  *gitFlag,
 		NoPR:     *noPRFlag,
 		DryRun:   *dryRunFlag,
-		Progress: os.Stderr,
+		Progress: s.stderr,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS SEAT INJECT FAIL %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seat inject -h"))
-		os.Exit(2)
+		return s.refuse("seat inject", 2, err)
 	}
-	fmt.Println(line)
-	os.Exit(0)
+	fmt.Fprintln(s.stdout, line)
+	return 0
 }
 
-func runSeatAddCLI(args []string) {
-
+func runSeatAddCLI(args []string, s streams) int {
 	fs := flag.NewFlagSet("seat add", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -713,7 +695,9 @@ func runSeatAddCLI(args []string) {
 	onlyFlag := fs.String("only", "", onlyUse)
 	keyFlag := fs.String("key", "", seatKey)
 	sopsFlag := fs.String("sops", "", sopsUse)
-	parseFlags(fs, args)
+	if err := parseFlags(fs, args); err != nil {
+		return s.refuse("seat add", 2, err)
+	}
 
 	lines, err := secrets.RunSeatAdd(secrets.SeatAddOptions{
 		StoreDir: *storeFlag,
@@ -723,19 +707,18 @@ func runSeatAddCLI(args []string) {
 		Only:     *onlyFlag,
 		KeyPath:  *keyFlag,
 		SopsPath: *sopsFlag,
-		Progress: os.Stderr,
+		Progress: s.stderr,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS SEAT ADD FAIL %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seat add -h"))
-		os.Exit(2)
+		return s.refuse("seat add", 2, err)
 	}
 	for _, l := range lines {
-		fmt.Println(l)
+		fmt.Fprintln(s.stdout, l)
 	}
-	os.Exit(0)
+	return 0
 }
 
-func runPlaceCLI(args []string) {
+func runPlaceCLI(args []string, s streams) int {
 	fs := flag.NewFlagSet("place", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -750,7 +733,9 @@ func runPlaceCLI(args []string) {
 	receiptsFlag := fs.String("receipts", "", receipts)
 	sshFlag := fs.String("ssh", "ssh", "`path` of the ssh program (default ssh)")
 	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
-	parseFlags(fs, args)
+	if err := parseFlags(fs, args); err != nil {
+		return s.refuse("place", 2, err)
+	}
 
 	okLine, err := secrets.RunPlace(secrets.PlaceInput{
 		StoreDir:   *storeFlag,
@@ -766,37 +751,37 @@ func runPlaceCLI(args []string) {
 		DryRun:     *dryRunFlag,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets place -h"))
-		os.Exit(2)
+		return s.refuse("place", 2, err)
 	}
-	fmt.Println(okLine)
-	os.Exit(0)
+	fmt.Fprintln(s.stdout, okLine)
+	return 0
 }
 
-func runPlacedCLI(args []string) {
+func runPlacedCLI(args []string, s streams) int {
 	fs := flag.NewFlagSet("placed", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
 	machineFlag := fs.String("machine", "", "the fleet machine's `name` whose receipts are listed (required)")
 	receiptsFlag := fs.String("receipts", "", receipts)
-	parseFlags(fs, args)
+	if err := parseFlags(fs, args); err != nil {
+		return s.refuse("placed", 2, err)
+	}
 
 	okLine, itemLines, err := secrets.RunPlaced(secrets.PlacedInput{
 		Machine:  *machineFlag,
 		Receipts: *receiptsFlag,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets placed -h"))
-		os.Exit(2)
+		return s.refuse("placed", 2, err)
 	}
-	fmt.Println(okLine)
+	fmt.Fprintln(s.stdout, okLine)
 	for _, l := range itemLines {
-		fmt.Println(l)
+		fmt.Fprintln(s.stdout, l)
 	}
-	os.Exit(0)
+	return 0
 }
 
-func runSealCLI(args []string) {
+func runSealCLI(args []string, s streams) int {
 	fs := flag.NewFlagSet("seal", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -810,10 +795,16 @@ func runSealCLI(args []string) {
 	stdinFlag := fs.Bool("stdin", false, "read the value from standard input instead of a hidden terminal prompt; never put it in an argument")
 	noPRFlag := fs.Bool("no-pr", false, noPRUse)
 	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
-	parseFlags(fs, args)
+	if err := parseFlags(fs, args); err != nil {
+		return s.refuse("seal", 2, err)
+	}
 
-	fi, statErr := os.Stdin.Stat()
-	stdinIsTerminal := statErr == nil && fi.Mode()&os.ModeCharDevice != 0
+	// A hidden prompt needs a terminal: only the process's own stdin can be one.
+	stdinIsTerminal := false
+	if f, ok := s.stdin.(*os.File); ok {
+		fi, statErr := f.Stat()
+		stdinIsTerminal = statErr == nil && fi.Mode()&os.ModeCharDevice != 0
+	}
 
 	line, err := secrets.RunSeal(secrets.SealOptions{
 		StoreDir:        *storeFlag,
@@ -826,15 +817,14 @@ func runSealCLI(args []string) {
 		NoPR:            *noPRFlag,
 		DryRun:          *dryRunFlag,
 		UseStdin:        *stdinFlag,
-		Stdin:           os.Stdin,
+		Stdin:           s.stdin,
 		StdinIsTerminal: stdinIsTerminal,
-		Progress:        os.Stderr,
+		Progress:        s.stderr,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS SEAL FAIL %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seal -h"))
-		os.Exit(2)
+		return s.refuse("seal", 2, err)
 	}
 
-	fmt.Println(line)
-	os.Exit(0)
+	fmt.Fprintln(s.stdout, line)
+	return 0
 }

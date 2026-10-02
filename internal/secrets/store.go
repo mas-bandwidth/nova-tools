@@ -648,19 +648,6 @@ func ReadGitIndex(storeDir string) (*GitIndexData, error) {
 	return nil, fmt.Errorf("unsupported git index version %d", version)
 }
 
-// ReadGitIndexTrackedFiles reads .git/index directly to find all tracked files.
-func ReadGitIndexTrackedFiles(storeDir string) (map[string]bool, error) {
-	data, err := ReadGitIndex(storeDir)
-	if err != nil {
-		return nil, err
-	}
-	tracked := make(map[string]bool, len(data.Entries))
-	for k := range data.Entries {
-		tracked[k] = true
-	}
-	return tracked, nil
-}
-
 // GitBlobSHA1 computes the SHA1 hash of a git blob object for content.
 func GitBlobSHA1(content []byte) [20]byte {
 	h := sha1.New()
@@ -669,28 +656,6 @@ func GitBlobSHA1(content []byte) [20]byte {
 	var out [20]byte
 	copy(out[:], h.Sum(nil))
 	return out
-}
-
-// VerifyFileMatchesIndex checks that the file on disk matches its index blob SHA1.
-func VerifyFileMatchesIndex(storeDir, filePath string, index *GitIndexData) error {
-	rel, err := filepath.Rel(storeDir, filePath)
-	if err != nil {
-		rel = filePath
-	}
-	cleanRel := filepath.Clean(filepath.ToSlash(rel))
-	entry, ok := index.Entries[cleanRel]
-	if !ok {
-		return fmt.Errorf("%s is untracked in git", rel)
-	}
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("unable to read %s: %w", rel, err)
-	}
-	actual := GitBlobSHA1(data)
-	if actual != entry.BlobSHA1 {
-		return fmt.Errorf("%s has uncommitted modifications (working copy blob differs from git index)", rel)
-	}
-	return nil
 }
 
 // IsValidAsName checks if a seat name matches [A-Za-z0-9_-]+
