@@ -201,12 +201,14 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	h.nDo(AskStep(sprint.AskReq{}))
 	// s1-1: two oks, then a third reader broken
 	h.nReadAll("s1-1", "ok")
-	require.Len(t, h.nAllNotes(sprint.NReadyToAccept), 1, "after two oks: %d notes", len(h.nAllNotes(sprint.NReadyToAccept)))
-	require.Len(t, h.nOpenOf(sprint.NReadyToAccept, "s1-1"), 1, "after two oks: %d notes", len(h.nAllNotes(sprint.NReadyToAccept)))
+	if n := len(h.nAllNotes(sprint.NReadyToAccept)); n != 1 || len(h.nOpenOf(sprint.NReadyToAccept, "s1-1")) != 1 {
+		require.Fail(t, fmt.Sprintf("after two oks: %d notes", n))
+	}
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	h.nReadAll("s1-1", "broken")
-	require.Len(t, h.nAllNotes(sprint.NReadyToAccept), 1, "after a third broken: %d notes", len(h.nAllNotes(sprint.NReadyToAccept)))
-	require.Len(t, h.nOpenOf(sprint.NReadyToAccept, "s1-1"), 1, "after a third broken: %d notes", len(h.nAllNotes(sprint.NReadyToAccept)))
+	if n := len(h.nAllNotes(sprint.NReadyToAccept)); n != 1 || len(h.nOpenOf(sprint.NReadyToAccept, "s1-1")) != 1 {
+		require.Fail(t, fmt.Sprintf("after a third broken: %d notes", n))
+	}
 	t.Logf("s1-1 after a third reader's broken: open %v", h.judgmentsOn("s1-1"))
 	// accept closes it, then return: two oks at head, no judgment
 	h.nDo(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
@@ -221,7 +223,9 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	require.Empty(t, h.nOpenOf(sprint.NReadyToAccept, "s1-2"), "ready to accept on one ok")
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Another: true}))
 	h.nReadAll("s1-2", "ok")
-	require.Len(t, h.nOpenOf(sprint.NReadyToAccept, "s1-2"), 1, "ok, broken, another ok: %v", h.judgmentsOn("s1-2"))
+	if len(h.nOpenOf(sprint.NReadyToAccept, "s1-2")) != 1 {
+		require.Fail(t, fmt.Sprintf("ok, broken, another ok: %v", h.judgmentsOn("s1-2")))
+	}
 	h.nDo(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Fix: "again"}))
 	require.Empty(t, h.nOpenOf(sprint.NReadyToAccept, "s1-2"), "rework left ready to accept open")
 	s = h.snap()
@@ -291,8 +295,10 @@ func TestRefusedLandingSatisfiesNoNeed(t *testing.T) {
 	}}
 	res := h.run(step)
 	t.Logf("mutant: moved %v refused %v; s1-1 %s, b %s", res.Moved, res.Refused, h.state("s1-1"), h.state("b"))
-	rep, _, _ := h.st.Check(h.ctx, 3)
-	require.Equal(t, sprint.Waiting, h.state("b"), "b left waiting with s1-1 %s (landing refused): %v", h.state("s1-1"), rep.Violations)
+	if h.state("b") != sprint.Waiting {
+		rep, _, _ := h.st.Check(h.ctx, 3)
+		require.Fail(t, fmt.Sprintf("b left waiting with s1-1 %s (landing refused): %v", h.state("s1-1"), rep.Violations))
+	}
 }
 
 // A move with no place expectation is judged by neither unlawful nor unmet.
@@ -311,8 +317,10 @@ func TestMoveWithoutPlaceIsJudgedFromThePreState(t *testing.T) {
 	}}
 	res := h.run(step)
 	t.Logf("mutant: moved %v refused %v; b %s", res.Moved, res.Refused, h.state("b"))
-	rep, _, _ := h.st.Check(h.ctx, 3)
-	require.Equal(t, sprint.Waiting, h.state("b"), "b left waiting past s1-1 with an expectation of revision only: %v", rep.Violations)
+	if h.state("b") != sprint.Waiting {
+		rep, _, _ := h.st.Check(h.ctx, 3)
+		require.Fail(t, fmt.Sprintf("b left waiting past s1-1 with an expectation of revision only: %v", rep.Violations))
+	}
 }
 
 // A landing merge cut before its work manifest, the landed card changed by a
@@ -334,17 +342,20 @@ func TestRepairSkipsTheWaiterOfASkippedLanding(t *testing.T) {
 	require.NoError(t, err)
 	rep, _, _ := h.st.Check(h.ctx, 3)
 	t.Logf("repair %+v; s1-1 %s, b %s; violations %v", rr, h.state("s1-1"), h.state("b"), rep.Violations)
-	require.False(t, h.state("b") == sprint.Ready && h.state("s1-1") != sprint.Landed, "b is ready with s1-1 %s after a skipping repair (skip judgment names %v)", h.state("s1-1"), h.skipNotes()[0].Primaries)
+	if h.state("b") == sprint.Ready && h.state("s1-1") != sprint.Landed {
+		require.Fail(t, fmt.Sprintf("b is ready with s1-1 %s after a skipping repair (skip judgment names %v)", h.state("s1-1"), h.skipNotes()[0].Primaries))
+	}
 	// One skip judgment lists the landing and the waiter, with the reason.
 	sk := h.skipNotes()
-	require.Len(t, sk, 1, "skip judgments: %+v", sk)
-	require.Equal(t, "b,s1-1", strings.Join(sk[0].Primaries, ","), "skip judgments: %+v", sk)
-	require.Contains(t, sk[0].What, "the lifecycle", "skip judgments: %+v", sk)
-	require.Contains(t, sk[0].What, "b needs s1-1, not landed", "skip judgments: %+v", sk)
+	if len(sk) != 1 || strings.Join(sk[0].Primaries, ",") != "b,s1-1" || !strings.Contains(sk[0].What, "the lifecycle") || !strings.Contains(sk[0].What, "b needs s1-1, not landed") {
+		require.Fail(t, fmt.Sprintf("skip judgments: %+v", sk))
+	}
 	// The skipped landing leaves s1-1 merging and its merge card merged
 	// (rules 4 and 5, the skip judgment's to decide); b stays waiting.
 	for _, v := range rep.Violations {
-		require.NotEqual(t, 11, v.Rule, "b %s; %v", h.state("b"), v)
+		if v.Rule == 11 {
+			require.Fail(t, fmt.Sprintf("b %s; %v", h.state("b"), v))
+		}
 	}
 	require.Equal(t, sprint.Waiting, h.state("b"), "b %s", h.state("b"))
 }

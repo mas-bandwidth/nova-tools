@@ -21,20 +21,17 @@ func TestTheMemsTailsAreTheLastIDsOfTheLogAndTheInbox(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	m := NewMem()
-	lg, in, err := m.Tails(ctx)
-	require.NoError(t, err, "an empty store: log %q, inbox %q, %v", lg, in, err)
-	require.Empty(t, lg, "an empty store: log %q, inbox %q, %v", lg, in, err)
-	require.Empty(t, in, "an empty store: log %q, inbox %q, %v", lg, in, err)
+	if lg, in, err := m.Tails(ctx); err != nil || lg != "" || in != "" {
+		require.Fail(t, fmt.Sprintf("an empty store: log %q, inbox %q, %v", lg, in, err))
+	}
 	h := newHarness(t)
 	h.setup(1)
-	lg, in, err = h.m.Tails(ctx)
+	lg, in, err := h.m.Tails(ctx)
 	lines, ids, lerr := h.m.LogSince(ctx, "", 1000)
 	_, nids, nerr := h.m.NotesSince(ctx, "", 1000)
-	require.NoError(t, err, "a store with a step: %v %v %v, %d lines, %d notes", err, lerr, nerr, len(lines), len(nids))
-	require.NoError(t, lerr, "a store with a step: %v %v %v, %d lines, %d notes", err, lerr, nerr, len(lines), len(nids))
-	require.NoError(t, nerr, "a store with a step: %v %v %v, %d lines, %d notes", err, lerr, nerr, len(lines), len(nids))
-	require.NotEmpty(t, ids, "a store with a step: %v %v %v, %d lines, %d notes", err, lerr, nerr, len(lines), len(nids))
-	require.NotEmpty(t, nids, "a store with a step: %v %v %v, %d lines, %d notes", err, lerr, nerr, len(lines), len(nids))
+	if err != nil || lerr != nil || nerr != nil || len(ids) == 0 || len(nids) == 0 {
+		require.Fail(t, fmt.Sprintf("a store with a step: %v %v %v, %d lines, %d notes", err, lerr, nerr, len(lines), len(nids)))
+	}
 	require.Equal(t, ids[len(ids)-1], lg, "tails log %q inbox %q, want %q and %q", lg, in, ids[len(ids)-1], nids[len(nids)-1])
 	require.Equal(t, nids[len(nids)-1], in, "tails log %q inbox %q, want %q and %q", lg, in, ids[len(ids)-1], nids[len(nids)-1])
 }
@@ -56,9 +53,9 @@ func TestTheMemCountsTheCallsThatNameAnEpoch(t *testing.T) {
 	require.Equal(t, "EPOCHAHEAD", refusalCode(err), "a write at an epoch ahead of the active one: %v", err)
 	n := h.m.Touched(7)
 	assert.Equal(t, 1, n, "a refused write at epoch 7 touched it %d times, want 1", n)
-	_, ok, err := h.m.DoneBefore(ctx, "no-such-op", 3)
-	require.NoError(t, err, "an operation nobody ran: %v %v", ok, err)
-	require.False(t, ok, "an operation nobody ran: %v %v", ok, err)
+	if _, ok, err := h.m.DoneBefore(ctx, "no-such-op", 3); ok || err != nil {
+		require.Fail(t, fmt.Sprintf("an operation nobody ran: %v %v", ok, err))
+	}
 	for e, want := range map[uint64]int{3: 0, 2: 1, 1: 1} {
 		t.Run(fmt.Sprint("epoch ", e), func(t *testing.T) {
 			n := h.m.Touched(e)
@@ -78,9 +75,9 @@ func TestTheMemKeepsTheResidueOfADroppedTable(t *testing.T) {
 	require.NoError(t, err, "the table holds no record: %v %v", held, err)
 	require.NotEmpty(t, held, "the table holds no record: %v %v", held, err)
 	require.NoError(t, h.m.DropTable(ctx, "t-work"))
-	left, err := h.m.RecordIDs(ctx, "t-work")
-	assert.NoError(t, err, "after the drop the records are %v (%v), want the %v it held", left, err, held)
-	assert.Equal(t, held, left, "after the drop the records are %v (%v), want the %v it held", left, err, held)
+	if left, err := h.m.RecordIDs(ctx, "t-work"); err != nil || !slices.Equal(left, held) {
+		assert.Fail(t, fmt.Sprintf("after the drop the records are %v (%v), want the %v it held", left, err, held))
+	}
 	keys := h.m.Keys(h.st.Names)
 	assert.True(t, slices.Contains(keys, "table:t-work:definition"), "after the drop the keys are %v, want its definition kept", keys)
 }
@@ -96,7 +93,7 @@ func TestAddRowsKeepsEachTablesRowsSortedAndOnce(t *testing.T) {
 	for _, tb := range r.Tables {
 		got[tb.Table] = tb.Rows
 	}
-	require.Equal(t, []string{"s1", "s2", "s3"}, got[sprint.Work], "rows %v", got)
-	require.Equal(t, []string{"m1", "m2"}, got[sprint.Fleet], "rows %v", got)
-	require.Empty(t, got[sprint.Merge], "rows %v", got)
+	if !slices.Equal(got[sprint.Work], []string{"s1", "s2", "s3"}) || !slices.Equal(got[sprint.Fleet], []string{"m1", "m2"}) || len(got[sprint.Merge]) != 0 {
+		require.Fail(t, fmt.Sprintf("rows %v", got))
+	}
 }

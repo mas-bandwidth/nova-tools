@@ -57,7 +57,7 @@ func (h *harness) quiet(when string) {
 	res := h.machine()
 	for _, p := range res.Parts {
 		if p.Name != sprint.PartDrain && (len(p.Moved) > 0 || p.Notes > 0) {
-			h.t.Fatalf("%s: the tick after moved %v and wrote %d notes in %s", when, p.Moved, p.Notes, p.Name)
+			require.Fail(h.t, fmt.Sprintf("%s: the tick after moved %v and wrote %d notes in %s", when, p.Moved, p.Notes, p.Name))
 		}
 	}
 	res = h.machine()

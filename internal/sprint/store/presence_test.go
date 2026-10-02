@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func (h *harness) fleetRow(member string) map[string]string {
 			return r.Texts
 		}
 	}
-	h.t.Fatalf("no fleet row %s", member)
+	require.FailNow(h.t, fmt.Sprintf("no fleet row %s", member))
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,23 +53,21 @@ func TestADoneSprintStopsItsMachineAndSaysSoToTheCoordinator(t *testing.T) {
 	h.tick(2 * time.Hour)
 	h.landThrough("s1", "s1-1", "s1-2", "s1-3")
 	m := h.machineRecord()
-	require.True(t, m.Running(), "the merge step stopped the machine or said the sprint done: %+v, %d", m, h.written(sprint.NSprintDone))
-	require.Equal(t, 0, h.written(sprint.NSprintDone), "the merge step stopped the machine or said the sprint done: %+v, %d", m, h.written(sprint.NSprintDone))
+	if !m.Running() || h.written(sprint.NSprintDone) != 0 {
+		require.Fail(t, fmt.Sprintf("the merge step stopped the machine or said the sprint done: %+v, %d", m, h.written(sprint.NSprintDone)))
+	}
 	res := h.machine()
 	const what = "3 landed, 0 dropped, took 2h0m0s from the first start"
-	require.Equal(t, Stopped, res.State, "the done tick: %+v", res)
-	require.Equal(t, what, res.Done, "the done tick: %+v", res)
-	require.Equal(t, sprint.DoneHint, res.Hint, "the done tick: %+v", res)
+	if res.State != Stopped || res.Done != what || res.Hint != sprint.DoneHint {
+		require.Fail(t, fmt.Sprintf("the done tick: %+v", res))
+	}
 	m = h.machineRecord()
-	require.False(t, m.Running(), "the machine after done: %+v, view %q, line %q", m, h.viewState(), h.st.MachineLine(h.ctx))
-	require.Equal(t, sprint.DoneCause, m.Cause, "the machine after done: %+v, view %q, line %q", m, h.viewState(), h.st.MachineLine(h.ctx))
-	require.True(t, m.Done(), "the machine after done: %+v, view %q, line %q", m, h.viewState(), h.st.MachineLine(h.ctx))
-	require.Equal(t, DoneState, h.viewState(), "the machine after done: %+v, view %q, line %q", m, h.viewState(), h.st.MachineLine(h.ctx))
-	require.Equal(t, "machine: DONE", h.st.MachineLine(h.ctx), "the machine after done: %+v, view %q, line %q", m, h.viewState(), h.st.MachineLine(h.ctx))
-	n := len(m.Spans)
-	require.NotEqual(t, 0, n, "no STOPPED span opened at the done: %+v", m.Spans)
-	require.True(t, m.Spans[n-1].To.IsZero(), "no STOPPED span opened at the done: %+v", m.Spans)
-	require.True(t, m.Spans[n-1].From.Equal(h.now), "no STOPPED span opened at the done: %+v", m.Spans)
+	if m.Running() || m.Cause != sprint.DoneCause || !m.Done() || h.viewState() != DoneState || h.st.MachineLine(h.ctx) != "machine: DONE" {
+		require.Fail(t, fmt.Sprintf("the machine after done: %+v, view %q, line %q", m, h.viewState(), h.st.MachineLine(h.ctx)))
+	}
+	if n := len(m.Spans); n == 0 || !m.Spans[n-1].To.IsZero() || !m.Spans[n-1].From.Equal(h.now) {
+		require.Fail(t, fmt.Sprintf("no STOPPED span opened at the done: %+v", m.Spans))
+	}
 	notes, _, err := h.m.NotesSince(h.ctx, "", 100000)
 	require.NoError(t, err)
 	var done []sprint.Note
@@ -77,53 +76,46 @@ func TestADoneSprintStopsItsMachineAndSaysSoToTheCoordinator(t *testing.T) {
 			done = append(done, n)
 		}
 	}
-	require.Len(t, done, 1, "the notes stream: %+v", done)
-	require.Equal(t, sprint.Happened, done[0].Kind, "the notes stream: %+v", done)
-	require.Equal(t, h.st.Actor, done[0].To, "the notes stream: %+v", done)
-	require.Equal(t, what, done[0].What, "the notes stream: %+v", done)
-	require.Equal(t, sprint.DoneHint, done[0].Hint, "the notes stream: %+v", done)
+	if len(done) != 1 || done[0].Kind != sprint.Happened || done[0].To != h.st.Actor || done[0].What != what || done[0].Hint != sprint.DoneHint {
+		require.Fail(t, fmt.Sprintf("the notes stream: %+v", done))
+	}
 	open := h.openOf(sprint.NSprintDone)
 	require.Empty(t, open, "the sprint done opened a judgment: %+v", open)
 	v, err := h.st.Inbox(h.ctx, time.Minute, time.Hour, 10000)
 	require.NoError(t, err)
-	require.NotEmpty(t, v.Groups, "the inbox does not show the sprint done first: %+v", v.Groups)
-	require.Equal(t, sprint.NSprintDone, v.Groups[0].Type, "the inbox does not show the sprint done first: %+v", v.Groups)
-	require.Equal(t, h.st.Actor, v.Groups[0].To, "the inbox does not show the sprint done first: %+v", v.Groups)
-	require.Equal(t, what, v.Groups[0].What, "the inbox does not show the sprint done first: %+v", v.Groups)
+	if len(v.Groups) == 0 || v.Groups[0].Type != sprint.NSprintDone || v.Groups[0].To != h.st.Actor || v.Groups[0].What != what {
+		require.Fail(t, fmt.Sprintf("the inbox does not show the sprint done first: %+v", v.Groups))
+	}
 	b, err := os.ReadFile(route)
 	require.NoError(t, err, "the goal route: %q %v", b, err)
 	require.Contains(t, string(b), "the sprint is done: "+what+"\n"+sprint.DoneHint, "the goal route: %q %v", b, err)
 	// STOPPED: the next ticks say nothing more.
 	h.tick(time.Minute)
-	res = h.machine()
-	require.Empty(t, res.Done, "a tick after the done: %+v, written %d", res, h.written(sprint.NSprintDone))
-	require.Equal(t, 1, h.written(sprint.NSprintDone), "a tick after the done: %+v, written %d", res, h.written(sprint.NSprintDone))
+	if res := h.machine(); res.Done != "" || h.written(sprint.NSprintDone) != 1 {
+		require.Fail(t, fmt.Sprintf("a tick after the done: %+v, written %d", res, h.written(sprint.NSprintDone)))
+	}
 
 	// Work added: STOPPED still, and no longer done.
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
-	m = h.machineRecord()
-	require.False(t, m.Running(), "after an add: %+v, view %q", m, h.viewState())
-	require.Empty(t, m.Cause, "after an add: %+v, view %q", m, h.viewState())
-	require.Equal(t, Stopped, h.viewState(), "after an add: %+v, view %q", m, h.viewState())
-	require.Equal(t, "machine: STOPPED", h.st.MachineLine(h.ctx), "after an add: %+v, view %q", m, h.viewState())
-	res = h.machine()
-	require.Equal(t, Stopped, res.State, "a tick of the stopped machine moved: %+v", res)
-	require.Empty(t, res.Parts, "a tick of the stopped machine moved: %+v", res)
+	if m := h.machineRecord(); m.Running() || m.Cause != "" || h.viewState() != Stopped || h.st.MachineLine(h.ctx) != "machine: STOPPED" {
+		require.Fail(t, fmt.Sprintf("after an add: %+v, view %q", m, h.viewState()))
+	}
+	if res := h.machine(); res.State != Stopped || len(res.Parts) != 0 {
+		require.Fail(t, fmt.Sprintf("a tick of the stopped machine moved: %+v", res))
+	}
 	// Started: it lands the card and stops again.
 	h.startMachine()
 	h.tick(time.Hour)
 	h.landThrough("s1", "s1-4")
 	res = h.machine()
-	require.Equal(t, "4 landed, 0 dropped, took 3h1m0s from the first start", res.Done, "the second done: %+v, written %d", res, h.written(sprint.NSprintDone))
-	require.True(t, h.machineRecord().Done(), "the second done: %+v, written %d", res, h.written(sprint.NSprintDone))
-	require.Equal(t, 2, h.written(sprint.NSprintDone), "the second done: %+v, written %d", res, h.written(sprint.NSprintDone))
+	if res.Done != "4 landed, 0 dropped, took 3h1m0s from the first start" || !h.machineRecord().Done() || h.written(sprint.NSprintDone) != 2 {
+		require.Fail(t, fmt.Sprintf("the second done: %+v, written %d", res, h.written(sprint.NSprintDone)))
+	}
 	// A stop by hand of a done machine: STOPPED, not done, no note.
 	h.stopMachine()
-	m = h.machineRecord()
-	require.False(t, m.Running(), "a stop by hand after the done: %+v, view %q, stop notes %d", m, h.viewState(), h.written(sprint.NMachineStopped))
-	require.Empty(t, m.Cause, "a stop by hand after the done: %+v, view %q, stop notes %d", m, h.viewState(), h.written(sprint.NMachineStopped))
-	require.Equal(t, Stopped, h.viewState(), "a stop by hand after the done: %+v, view %q, stop notes %d", m, h.viewState(), h.written(sprint.NMachineStopped))
-	require.Equal(t, 0, h.written(sprint.NMachineStopped), "a stop by hand after the done: %+v, view %q, stop notes %d", m, h.viewState(), h.written(sprint.NMachineStopped))
+	if m := h.machineRecord(); m.Running() || m.Cause != "" || h.viewState() != Stopped || h.written(sprint.NMachineStopped) != 0 {
+		require.Fail(t, fmt.Sprintf("a stop by hand after the done: %+v, view %q, stop notes %d", m, h.viewState(), h.written(sprint.NMachineStopped)))
+	}
 	h.clean("done twice")
 }
 
@@ -140,9 +132,9 @@ func TestAStartOfADoneSprintStopsAgainAtTheFirstTick(t *testing.T) {
 	h.tick(time.Second)
 	h.startMachine()
 	require.True(t, h.machineRecord().Running(), "start did not start")
-	res = h.machine()
-	require.Equal(t, "1 landed, 0 dropped, took 1s from the first start", res.Done, "a start of a done sprint: %+v", res)
-	require.True(t, h.machineRecord().Done(), "a start of a done sprint: %+v", res)
+	if res := h.machine(); res.Done != "1 landed, 0 dropped, took 1s from the first start" || !h.machineRecord().Done() {
+		require.Fail(t, fmt.Sprintf("a start of a done sprint: %+v", res))
+	}
 }
 
 // FirstStart is the end of the first STOPPED span after the epoch began.

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func (h *harness) commandsOf(typ string) []sprint.Command {
 			return g.Commands
 		}
 	}
-	h.t.Fatalf("no %s group in the inbox", typ)
+	require.FailNow(h.t, fmt.Sprintf("no %s group in the inbox", typ))
 	return nil
 }
 

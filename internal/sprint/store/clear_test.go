@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -58,28 +60,28 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	res, err := h.st.Clear(h.ctx)
 	m, _, merr := h.st.Machine(h.ctx)
 	stopped := merr == nil && res.Machine == Running && m.State == Stopped
-	require.NoError(t, err)
-	require.True(t, stopped, "clear: stopped %v %+v", stopped, res)
-	require.Equal(t, uint64(0), res.From, "clear: stopped %v %+v", stopped, res)
-	require.Equal(t, uint64(1), res.To, "clear: stopped %v %+v", stopped, res)
-	require.Equal(t, 8, res.Held["primaries"], "clear: stopped %v %+v", stopped, res)
-	require.Equal(t, 3, res.Held["merge cards"], "clear: stopped %v %+v", stopped, res)
+	require.NoError(t, err, "clear: %v", err)
+	if !stopped || res.From != 0 || res.To != 1 || res.Held["primaries"] != 8 || res.Held["merge cards"] != 3 {
+		require.Fail(t, fmt.Sprintf("clear: stopped %v %+v", stopped, res))
+	}
 	after := h.snap()
 	require.Equal(t, uint64(1), after.Epoch, "epoch %d", after.Epoch)
 	for _, pair := range [][2]*sprint.Table{{before.Work, after.Work}, {before.Readers, after.Readers}, {before.Merge, after.Merge}, {before.Fleet, after.Fleet}} {
-		require.Equal(t, pair[0].Rows(), pair[1].Rows(), "%s rows %v, were %v", pair[1].Name, pair[1].Rows(), pair[0].Rows())
+		if !slices.Equal(pair[0].Rows(), pair[1].Rows()) {
+			require.Fail(t, fmt.Sprintf("%s rows %v, were %v", pair[1].Name, pair[1].Rows(), pair[0].Rows()))
+		}
 		for _, c := range pair[1].Cards() {
-			if c.Placed() {
-				require.Equal(t, sprint.Ctl, c.Col, "%s still holds %s at %s", pair[1].Name, c.ID, c.Col)
+			if c.Placed() && c.Col != sprint.Ctl {
+				require.Fail(t, fmt.Sprintf("%s still holds %s at %s", pair[1].Name, c.ID, c.Col))
 			}
 		}
 	}
-	require.Equal(t, sprint.StreamWaiting, after.StreamCtl("s1").F("state"), "control cards: %v %v", after.StreamCtl("s1").Fields, after.MemberCtl("m1").Fields)
-	require.Equal(t, sprint.Up, after.MemberCtl("m1").F("status"), "control cards: %v %v", after.StreamCtl("s1").Fields, after.MemberCtl("m1").Fields)
-	require.Equal(t, 0, after.Fleet.Count("m1", sprint.DoneOK), "control cards: %v %v", after.StreamCtl("s1").Fields, after.MemberCtl("m1").Fields)
-	open, _ := h.st.Inbox(h.ctx, 0, 0, 100)
-	require.Len(t, open.Groups, 1, "the new epoch's inbox is not the one line that the machine is STOPPED: %+v", open.Groups)
-	require.Equal(t, sprint.NMachineStopped, open.Groups[0].Type, "the new epoch's inbox is not the one line that the machine is STOPPED: %+v", open.Groups)
+	if after.StreamCtl("s1").F("state") != sprint.StreamWaiting || after.MemberCtl("m1").F("status") != sprint.Up || after.Fleet.Count("m1", sprint.DoneOK) != 0 {
+		require.Fail(t, fmt.Sprintf("control cards: %v %v", after.StreamCtl("s1").Fields, after.MemberCtl("m1").Fields))
+	}
+	if open, _ := h.st.Inbox(h.ctx, 0, 0, 100); len(open.Groups) != 1 || open.Groups[0].Type != sprint.NMachineStopped {
+		require.Fail(t, fmt.Sprintf("the new epoch's inbox is not the one line that the machine is STOPPED: %+v", open.Groups))
+	}
 	h.clean("cleared")
 
 	// Every writer holding the old epoch is refused, naming the clear.
@@ -175,8 +177,9 @@ func TestTeardownAfterClearsLeavesNoKey(t *testing.T) {
 	}
 	_, err := h.st.Teardown(h.ctx)
 	require.NoError(t, err)
-	after := m.Keys(h.st.Names)
-	require.Equal(t, before, after, "after teardown:\n%s\nbefore init:\n%s", strings.Join(after, "\n"), strings.Join(before, "\n"))
+	if after := m.Keys(h.st.Names); !slices.Equal(after, before) {
+		require.Fail(t, fmt.Sprintf("after teardown:\n%s\nbefore init:\n%s", strings.Join(after, "\n"), strings.Join(before, "\n")))
+	}
 }
 
 // clearAtTick is the store as a tick sees it when a clear lands between the

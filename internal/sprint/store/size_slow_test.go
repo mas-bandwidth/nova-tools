@@ -25,8 +25,9 @@ func TestSentinelsBySize(t *testing.T) {
 		h.setup(0)
 		timed(t, "add a,b,c --count 30000 --sentinel-every 1000", func() { h.sentinelsBy([]string{"a", "b", "c"}, 30000, 1000, false) })
 		s := h.snap()
-		require.Equal(t, 1000, s.Work.Count("a", sprint.Ready), "a ready %d, c waiting %d", s.Work.Count("a", sprint.Ready), s.Work.Count("c", sprint.Waiting))
-		require.Equal(t, 29029, s.Work.Count("c", sprint.Waiting), "a ready %d, c waiting %d", s.Work.Count("a", sprint.Ready), s.Work.Count("c", sprint.Waiting))
+		if s.Work.Count("a", sprint.Ready) != 1000 || s.Work.Count("c", sprint.Waiting) != 29029 {
+			require.Fail(t, fmt.Sprintf("a ready %d, c waiting %d", s.Work.Count("a", sprint.Ready), s.Work.Count("c", sprint.Waiting)))
+		}
 	})
 	for _, n := range []int{10000, 100000} {
 		t.Run("one stop at the end of a stream", func(t *testing.T) {
@@ -36,8 +37,10 @@ func TestSentinelsBySize(t *testing.T) {
 			timed(t, fmt.Sprintf("add --sentinel at the end of %d", n), func() {
 				h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"end"}, Sentinel: true}))
 			})
-			w := sprint.WaitsFor(h.snap(), h.snap().Work.Card("end"), nil)
-			require.Len(t, w, n, "the stop waits for %d", len(w))
+			sn := h.snap()
+			if w := sprint.WaitsFor(sn, sn.Work.Card("end"), nil); len(w) != n {
+				require.Fail(t, fmt.Sprintf("the stop waits for %d", len(w)))
+			}
 		})
 	}
 	t.Run("a stop into the middle of 10,000 ready cards", func(t *testing.T) {
@@ -47,6 +50,8 @@ func TestSentinelsBySize(t *testing.T) {
 		timed(t, "add --sentinel --after s1-5000 of 10,000 ready", func() {
 			h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"mid"}, Sentinel: true, After: "s1-5000"}))
 		})
-		require.Equal(t, 5001, h.snap().Work.Count("s1", sprint.Waiting), "waiting %d", h.snap().Work.Count("s1", sprint.Waiting))
+		if c := h.snap().Work.Count("s1", sprint.Waiting); c != 5001 {
+			require.Fail(t, fmt.Sprintf("waiting %d", c))
+		}
 	})
 }

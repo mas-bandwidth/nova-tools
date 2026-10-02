@@ -123,7 +123,7 @@ func (h *harness) a2AckRefused(typ string) {
 	require.NotEmpty(h.t, ids, "no open %q to acknowledge", typ)
 	res := h.run(AckStep(sprint.AckReq{Notes: ids, Reason: "looked", Who: "tester"}))
 	if len(res.Moved) != 0 || len(res.Refused) != len(ids) || !strings.Contains(res.Refused[0].Why, "ack does not answer") || !strings.Contains(res.Refused[0].Why, "nova-sprint ") {
-		h.t.Fatalf("ack of %q: %+v", typ, res)
+		require.Fail(h.t, fmt.Sprintf("ack of %q: %+v", typ, res))
 	}
 }
 
@@ -505,7 +505,7 @@ func TestAudit2ClosedReminderDecisionsHaveNoCommands(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("no reminder group")
+	require.FailNow(t, "no reminder group")
 }
 
 // DEFECT I. ask --another after accept retired a slow reader's card and the

@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type crWorld struct {
@@ -206,12 +207,12 @@ func (w *crWorld) round(r int) {
 		res2 := h.machine()
 		for _, p := range res2.Parts {
 			if p.Name != sprint.PartDrain && (len(p.Moved) > 0 || p.Notes > 0) {
-				h.t.Fatalf("round %d: second tick moved %v notes %d in %s", r, p.Moved, p.Notes, p.Name)
+				require.Fail(h.t, fmt.Sprintf("round %d: second tick moved %v notes %d in %s", r, p.Moved, p.Notes, p.Name))
 			}
 		}
 		_ = before
 	} else if len(res.Parts) > 0 || len(res.Repaired) > 0 {
-		h.t.Fatalf("round %d: a STOPPED tick did %+v", r, res)
+		require.Fail(h.t, fmt.Sprintf("round %d: a STOPPED tick did %+v", r, res))
 	}
 	h.clean(fmt.Sprintf("round %d after the second tick", r))
 	// workers
