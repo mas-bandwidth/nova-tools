@@ -86,7 +86,7 @@ func TestSwarmProfilesRoundTrip(t *testing.T) {
 
 	second := invoke(t, "profiles", "--swarm-root", root)
 	wantExit(t, second, 0)
-	assert.False(t, first.stdout != second.stdout, "a second run printed different lines; the verb is a pure fold:\nfirst:\n%s\nsecond:\n%s", first.stdout, second.stdout)
+	assert.Equal(t, second.stdout, first.stdout, "a second run printed different lines; the verb is a pure fold:\nfirst:\n%s\nsecond:\n%s", first.stdout, second.stdout)
 }
 
 func TestSwarmProfilesRefusesNonexistentRoot(t *testing.T) {

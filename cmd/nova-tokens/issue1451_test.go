@@ -54,7 +54,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 				if line == "" {
 					continue
 				}
-				assert.False(t, !strings.HasSuffix(line, "; run: nova-tokens help"), "%s refusal line %d has no door: %q", verb, i+1, line)
+				assert.True(t, strings.HasSuffix(line, "; run: nova-tokens help"), "%s refusal line %d has no door: %q", verb, i+1, line)
 			}
 		})
 	}
