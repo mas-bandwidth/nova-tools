@@ -21,17 +21,25 @@ import (
 
 // This fake checks the caller's persisted state machine only. Actual bare-Git
 // publication, content equality and crash recovery are separate integration gates.
+var joinMain func()
+var joinCleanup func()
+var fakeBusHang func()
+
 func TestMain(m *testing.M) {
 	if os.Getenv("NOVA_UPDATE_FAKE_BUS") == "1" && strings.HasPrefix(filepath.Base(os.Args[0]), "nova-bus") {
 		fakeBus()
 		return
 	}
 	if os.Getenv("NOVA_UPDATE_JOIN_REAL") != "" && strings.HasPrefix(filepath.Base(os.Args[0]), "nova-bus") {
-		joinWrapper()
+		if joinMain != nil {
+			joinMain()
+		}
 		return
 	}
 	code := m.Run()
-	removeJoinBinaries()
+	if joinCleanup != nil {
+		joinCleanup()
+	}
 	os.Exit(code)
 }
 func fakeBus() {
@@ -72,7 +80,10 @@ func fakeBus() {
 	var a map[string]string
 	json.Unmarshal(input, &a)
 	if mode == "hang" {
-		time.Sleep(30 * time.Second)
+		if fakeBusHang == nil {
+			os.Exit(20)
+		}
+		fakeBusHang()
 	}
 	if mode == "uncertain" {
 		os.Exit(1)
