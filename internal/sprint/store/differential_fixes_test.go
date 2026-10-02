@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
@@ -95,9 +98,10 @@ func TestASecondCIRedOnACardWritesNoSecondJudgment(t *testing.T) {
 	h.clean("acked")
 }
 
-// 5. ask --another's reader is for that attempt only: after rework the two
-// original readers are asked again, and no third.
-func TestAskAnotherDoesNotWidenTheReadersKept(t *testing.T) {
+// 5. ask --another's reader is for that attempt only: it leaves the primary's
+// asked field as the two of the attempt, and after rework attempt 2 is asked
+// of two different readers, and no third.
+func TestAskAnotherIsForItsAttemptOnly(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
@@ -108,21 +112,21 @@ func TestAskAnotherDoesNotWidenTheReadersKept(t *testing.T) {
 	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "broken", Finding: "f", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	if got := h.snap().Work.Card("s1-1").F("asked"); got != pair {
-		t.Fatalf("ask --another changed the readers kept: %s, was %s", got, pair)
+		t.Fatalf("ask --another changed the primary's asked field: %s, was %s", got, pair)
 	}
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	c := h.snap().Fleet.Card("s1-1.w2")
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
+	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}})) // the machine's ask: the finish asks no reader
 	var asked []string
 	for _, rc := range h.snap().Readers.Of("s1-1") {
 		if rc.Int("attempt") == 2 {
 			asked = append(asked, rc.F("reader"))
 		}
 	}
-	if len(asked) != 2 {
-		t.Fatalf("readers asked at attempt 2: %v (kept %s)", asked, pair)
-	}
+	require.Len(t, asked, 2, "readers asked at attempt 2: two, and no third")
+	assert.NotEqual(t, asked[0], asked[1], "asked twice of one reader at attempt 2")
 	h.clean("asked again")
 }
 

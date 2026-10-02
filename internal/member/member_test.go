@@ -26,23 +26,11 @@ type scriptSprint struct {
 	mu      sync.Mutex
 	calls   [][]string
 	answers map[string]answer
-	first   map[string]answer // the answer of a verb's next call only (failOnce)
 }
 
 type answer struct {
 	code int
 	out  string
-}
-
-// failOnce makes the verb's next call answer code and its calls after it
-// answer as set: a store that timed out once.
-func (s *scriptSprint) failOnce(verb string, code int, out string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.first == nil {
-		s.first = map[string]answer{}
-	}
-	s.first[verb] = answer{code, out}
 }
 
 func newScript() *scriptSprint { return &scriptSprint{answers: map[string]answer{}} }
@@ -66,10 +54,6 @@ func (s *scriptSprint) Run(args ...string) (int, []byte) {
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, slices.Clone(args))
 	a := s.answers[verbOf(args)]
-	if f, ok := s.first[verbOf(args)]; ok {
-		delete(s.first, verbOf(args))
-		a = f
-	}
 	return a.code, []byte(a.out)
 }
 
@@ -602,7 +586,7 @@ func TestAStoreThatDoesNotAnswerStopsTheTickActingOnNothing(t *testing.T) {
 		g.s.set("queue", 0, queueJSON(t, 7))
 		_, err = g.tick(t)
 		require.NoError(t, err, "the work pass sends no beat, so a beat that fails stops nothing")
-		assert.Len(t, g.s.lines("beat"), 2, "the beat was asked again once, and the pass sent none")
+		assert.Len(t, g.s.lines("beat"), 1, "the beat was sent once, and the pass sent none")
 	})
 	t.Run("finish keeps the child for the next pass", func(t *testing.T) {
 		t.Parallel()
@@ -745,7 +729,7 @@ func TestCardTextForAWorkPacket(t *testing.T) {
 		Brief: "Build the thing.\nsecond line\n\n", Fix: " Mind the edge. ", Notes: []string{"first note", "  ", "second note"},
 		Branch: "work/c1", Base: "sprint/base",
 	}
-	got := CardText(p, "nova-sprint")
+	got := CardText(p)
 	if !strings.HasPrefix(got, "Build the thing.\nsecond line\n\n## From the sprint\n\n") {
 		t.Fatalf("the brief is not verbatim and first:\n%s", got)
 	}
@@ -774,7 +758,7 @@ func TestCardTextForAWorkPacket(t *testing.T) {
 // branch, and the finish line names it too.
 func TestCardTextForAWorkPacketWithNoBaseNamesTheJob(t *testing.T) {
 	t.Parallel()
-	got := CardText(Packet{Card: "c2", Kind: "work", As: "m1", Primary: "p2", Stream: "b", Attempt: 1, Gen: 1, Epoch: 3, Branch: "work/c2"}, "nova-sprint")
+	got := CardText(Packet{Card: "c2", Kind: "work", As: "m1", Primary: "p2", Stream: "b", Attempt: 1, Gen: 1, Epoch: 3, Branch: "work/c2"})
 	if !strings.HasPrefix(got, "## From the sprint\n\n") {
 		t.Fatalf("a packet with no brief starts at the sprint's part:\n%s", got)
 	}
@@ -796,14 +780,14 @@ func TestCardTextForAReadPacket(t *testing.T) {
 		Card: "r1", Kind: "read", As: "rd", Primary: "p1", Attempt: 1, Epoch: 4, Worker: "m2", Brief: "Read it well.",
 		Head: "deadbeef", WorkBranch: "work/c1", WorkBase: "sprint/base", Report: " landed it ",
 	}
-	got := CardText(p, "/bin/nova-sprint")
+	got := CardText(p)
 	if !strings.HasPrefix(got, "Read it well.\n\n## From the sprint\n\n") {
 		t.Fatalf("the brief is not verbatim and first:\n%s", got)
 	}
 	for _, want := range []string{
 		"This is read r1: attempt 1 of p1, worked by m2, at head deadbeef on branch work/c1 (base sprint/base).",
 		"The worker's report:\n\nlanded it\n",
-		"    /bin/nova-sprint read --as rd (--ok | --broken) r1 --epoch 4 --finding '<one line>'\n",
+		"    nova-sprint read --as rd (--ok | --broken) r1 --epoch 4 --finding '<one line>'\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the read card lacks %q:\n%s", want, got)
@@ -1092,6 +1076,44 @@ func TestAReadItReturnedIsNotBegunAgainBeforeTheRetry(t *testing.T) {
 	_, err = g.m.Tick(time.Unix(0, 0).Add(ReadStageRetry))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"read --as r --begin r1 --epoch 7"}, g.s.lines("begin"), "begun once the retry has passed")
+}
+
+// TestAReaderHandsBackAReadItCannotStart pins the reader's side of a launch refused (commit
+// 255180e2; fleet pass 7, 2026-10-01): a read whose start fails is returned at once with the
+// reason, `read --as <reader> --return <card> --reason launch refused: ... --epoch <n>`, and
+// this reader does not begin it again before ReadStageRetry, however the queue lists it. Before,
+// it printed the error and began the read again every pass, for the read's whole deadline.
+func TestAReaderHandsBackAReadItCannotStart(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 2, Reader: true})
+	p1 := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	p2 := Packet{Card: "r2", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	g.r.failFor["r1"] = true
+	g.s.set("queue", 0, queueJSON(t, 7, asked("r1", &p1), asked("r2", &p2)))
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"r2"}, g.r.started(), "the read that can start is started")
+	assert.Equal(t, []string{"read --as r --return r1 --reason launch refused: no slot for r1 --epoch 7"}, g.s.lines("return"),
+		"returned once, at once, with the reason")
+	assert.Equal(t, 1, g.m.Running(), "the read returned holds no lane")
+
+	// the sprint asked it of this reader again, in place, in the same second
+	g.s.set("queue", 0, queueJSON(t, 7, asked("r1", &p1), reading("r2", &p2)))
+	g.s.reset()
+	_, err = g.tickAt(t, 0)
+	require.NoError(t, err)
+	assert.Empty(t, g.s.lines("begin"), "not begun again inside ReadStageRetry")
+	assert.Empty(t, g.s.lines("return"), "not returned again inside ReadStageRetry")
+	assert.Equal(t, []string{"r2"}, g.r.started())
+
+	// once ReadStageRetry has passed it may be begun again
+	g.r.failFor["r1"] = false
+	g.s.reset()
+	_, err = g.tickAt(t, int64(ReadStageRetry/time.Second))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"read --as r --begin r1 --epoch 7"}, g.s.lines("begin"), "begun once the retry has passed")
+	assert.Empty(t, g.s.lines("return"))
+	assert.Equal(t, []string{"r2", "r1"}, g.r.started())
 }
 
 // TestAReadReportsOnlyItsVerdict pins that the verdict flag is the reader's
@@ -1498,31 +1520,8 @@ func TestAReaderBeatsNothing(t *testing.T) {
 	require.Empty(t, g.s.lines("beat"))
 	require.NoError(t, g.m.Beat())
 	require.Empty(t, g.s.lines("beat"))
-	require.Equal(t, []string{"queue --as r --json", "queue --as r --json"}, g.s.lines("queue"), "the pass's queue, then the beat's")
-}
-
-// A store that times out once on the beat or the queue is asked again once
-// before the member reports a miss (docs/SPEC-SPRINT.md section 5; the model's
-// Lapse needs MissedBeatsDown misses): the tick succeeds, the verb was asked
-// twice, and nothing was reported. Asked twice and failing twice is the error
-// the member already reported.
-func TestAStoreThatTimesOutOnceIsAskedAgain(t *testing.T) {
-	t.Parallel()
-	for _, verb := range []string{"beat", "queue"} {
-		t.Run(verb, func(t *testing.T) {
-			t.Parallel()
-			g := newRig(Config{As: "m", Width: 2})
-			g.s.set("queue", 0, queueJSON(t, 7))
-			g.s.failOnce(verb, 2, "i/o timeout")
-			if verb == "beat" {
-				require.NoError(t, g.m.Beat())
-			} else {
-				_, err := g.tick(t)
-				require.NoError(t, err)
-			}
-			require.Len(t, g.s.lines(verb), 2, "the verb is asked again once")
-		})
-	}
+	require.Equal(t, []string{"queue --as r --json --packets 1", "queue --as r --json --packets 0"}, g.s.lines("queue"),
+		"the pass's queue, asking a packet for its free lane, then the beat's, asking none")
 }
 
 // TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch pins Ender: each launch the member is

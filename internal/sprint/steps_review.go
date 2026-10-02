@@ -33,12 +33,13 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 }
 
 // Ask deals every primary in review that lacks reads to TWO DIFFERENT readers
-// up (readers.go), in work order, the readers it names first and then the next readers round
-// the readers (round.go, errata 3 amendment 5: from the rolling index,
-// wrapping, each the first that has no read card at the attempt, the index
-// moved past it: the readers table's ask_index, written with the ask); a
-// primary reworked after a read is asked of the same readers again. A read its
-// reader handed back with no verdict is not a read: it is asked of a reader
+// up (readers.go), in work order, each the next reader round the readers
+// (round.go, errata 3 amendment 5: from the rolling index, wrapping, each the
+// first that has no read card at the attempt, the index moved past it: the
+// readers table's ask_index, written with the ask). Reworked work is asked by
+// the same rotation: a read is a fresh child on a freshly drawn route, so the
+// readers of an earlier attempt are not preferred (the owner, 2026-10-01:
+// "yes on the decision."). A read its reader handed back with no verdict is not a read: it is asked of a reader
 // free at the attempt, or of the same reader again when none is
 // (tla/DirtyTick.tla, JudgedOnlyAfterTheBound). With Another, a primary already asked is dealt to
 // one more reader, the next round the readers.
@@ -68,8 +69,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Review), eligible, srr), rowOf, eligible, s.primaryCard)
 	rr := askRound(s)
 	moves := roundMoves{}
-	// a read card's route is drawn as a work card's is, from the reader tier at
-	// its rolling index on the fleet table (route.go, readRouteOf;
+	// a read card's route is drawn as a work card's is, from its primary's tier
+	// at that tier's rolling index on the fleet table (route.go, readRouteOf;
 	// tla/RouteIndex.tla, THE READS); a step that read no fleet table or no
 	// route asks with none
 	var ri routeIndexes
@@ -110,27 +111,23 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		if r.Another {
 			want = 1
 		}
-		var chosenReaders []string
-		if !r.Another {
-			for _, rd := range Split(c.F("asked")) {
-				if contains(free, rd) && len(chosenReaders) < want {
-					chosenReaders = append(chosenReaders, rd)
-				}
-			}
-		}
-		rotated := rr.picks(want-len(chosenReaders), chosenReaders, func(x string) bool { return contains(free, x) })
-		chosenReaders = append(chosenReaders, rotated...)
+		chosenReaders := rr.picks(want, nil, func(x string) bool { return contains(free, x) })
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
 		// own reader is asked it again, in place, the round not moved and no
 		// bound of the primary spent (ReasksBounded: Read counts each return
 		// in reasked and retires the one past MaxReadReasks, and the refusal
-		// below is then the "cannot ask" judgment).
-		var again, retiredFrom []string
+		// below is then the "cannot ask" judgment). Every read the unit asks
+		// draws its route leaving out the routes the primary's returned reads
+		// ran on while the tier has another (the owner, 2026-10-01: "We can't
+		// get stuck on the last card."), and draws only once the unit is kept.
+		var again, retiredFrom, failed []string
+		var inPlace []*Card
 		for _, rc := range returned {
+			failed = append(failed, rc.F(FieldRoute))
 			if len(chosenReaders)+len(again) < want {
-				takenBack = append(takenBack, change(Readers, setEntry(rc, map[string]string{"asked": stamp(s.Now)}, FieldReturned)))
+				inPlace = append(inPlace, rc)
 				again = append(again, rc.F("reader"))
 				continue
 			}
@@ -141,23 +138,26 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s; a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, or nova-sprint reader up <name>", want, len(chosenReaders)+len(again), attempt, c.ID, readersText(s)))
 			continue
 		}
+		for _, rc := range inPlace {
+			set := map[string]string{"asked": stamp(s.Now)}
+			maps.Copy(set, s.readRouteOf(ri, c, failed))
+			takenBack = append(takenBack, change(Readers, setEntry(rc, set, FieldReturned)))
+		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: takenBack}
-		for _, rd := range rotated {
+		for _, rd := range chosenReaders {
 			rr.moved(rd)
 			moves[c.ID] = joinMoves(moves[c.ID], rd)
 		}
 		for _, rd := range chosenReaders {
 			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)}
-			for k, v := range s.readRouteOf(ri, c.ID) {
-				fields[k] = v
-			}
+			maps.Copy(fields, s.readRouteOf(ri, c, failed))
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
 		}
 		all = append(append(all, chosenReaders...), again...)
-		if !r.Another {
-			// the readers kept on the primary are the pair; --another's reader
-			// is for this attempt only
-			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": strings.Join(all, ",")})))
+		if pair := strings.Join(all, ","); !r.Another && pair != c.F("asked") {
+			// the primary's asked field names the readers of its attempt;
+			// --another's reader is one more, not one of the two
+			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": pair})))
 		}
 		named := append([]string{}, chosenReaders...)
 		for _, rd := range again {
@@ -739,9 +739,8 @@ var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, 
 // from the deal's rolling index, the first up with room other than the member
 // of the attempt's work card, that member only when no other has room; the
 // index moved past it and written with the step) and the primary moves
-// review -> working in the same step; its read cards are retired and the
-// readers' identities kept, so the fixed work is asked of them again when it
-// returns. With no member up, or none below its width (tla/DirtyTick.tla,
+// review -> working in the same step; its read cards are retired, and the
+// fixed work is asked round the readers when it returns. With no member up, or none below its width (tla/DirtyTick.tla,
 // WidthRespected), the primary moves review -> ready with the fix and the
 // tick's deal cuts its card when a member has room.
 func Rework(s *Snapshot, r ReworkReq) Plan {
@@ -785,36 +784,22 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 				continue
 			}
 		}
-		attempt := c.Int("attempt")
-		var asked []string
 		broken := 0
 		var retire []Change
 		if wc := AtRedealBound(s, c); wc != nil {
 			retire = append(retire, change(Fleet, removeEntry(wc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
 		}
 		for _, rc := range s.Readers.Of(c.ID) {
-			if rc.Int("attempt") == attempt && !contains(asked, rc.F("reader")) {
-				asked = append(asked, rc.F("reader"))
-			}
 			if rc.Col == Broken {
 				broken++
 			}
 			retire = append(retire, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
-		}
-		// the readers kept are the pair the primary was asked of: an extra
-		// reader of ask --another is for its attempt only
-		askedField := c.F("asked")
-		if askedField == "" && len(asked) > 0 {
-			askedField = strings.Join(orderLike(s.Readers.Rows(), asked, ""), ",")
 		}
 		// the finding and why ride on the primary too: a rework with no member up deals later
 		// (start), from the primary, and its child is told all the same
 		given := reworkGiven(s, c)
 		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"],
 			"reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
-		if askedField != "" {
-			set["asked"] = askedField
-		}
 		var u Unit
 		// the next member round the fleet with room (width.go; tla/DirtyTick.tla, WidthRespected):
 		// none up, or none below its width, and the primary waits ready for the tick's deal

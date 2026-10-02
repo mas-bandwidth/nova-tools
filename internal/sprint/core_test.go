@@ -114,7 +114,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	}
 	w.clean("accept")
 
-	// A broken read, rework with the finding; the fixed work is asked of the same readers again.
+	// A broken read, rework with the finding; the fixed work is asked of two different readers again.
 	second := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{As: second[0].F("reader"), Verdict: "broken", Finding: "off by one", Sel: Sel{IDs: []string{second[0].ID}}}))
 	if len(w.openOn("s1-2")) != 1 {
@@ -136,9 +136,10 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	member := w.s.Fleet.Card(card).Row
 	w.must(Take(w.s, TakeReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: gensOf(w.s, card)}))
 	w.must(Finish(w.s, FinishReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: gensOf(w.s, card)}))
+	w.must(Ask(w.s, AskReq{})) // the machine's ask: round the readers
 	again := readsAt(w.s, w.s.Work.Card("s1-2"), 2)
-	if len(again) != 2 || again[0].F("reader") != second[0].F("reader") && again[1].F("reader") != second[0].F("reader") {
-		t.Fatalf("fixed work not asked of the same readers: %v", again)
+	if len(again) != 2 || again[0].F("reader") == again[1].F("reader") {
+		t.Fatalf("fixed work not asked of two different readers: %v", again)
 	}
 	w.clean("fixed work returned")
 

@@ -127,6 +127,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 	if !ValidID(r.Stream) {
 		return refuseAll(fmt.Sprintf("stream %q wants letters, digits, _ and -", r.Stream))
 	}
+	if RemovedStream(s, r.Stream) {
+		return refuseAll(fmt.Sprintf("stream %s was removed in this epoch (stream remove), and the table layer never places its control card again; nothing was changed; add under another stream, or run: nova-sprint clear --confirm sprint, then add", r.Stream))
+	}
 	if r.Sentinel && len(ids) != 1 {
 		return refuseAll("a sentinel is admitted one at a time: add --stream <s> --sentinel <id>")
 	}
@@ -293,8 +296,8 @@ func Add(s *Snapshot, r AddReq) Plan {
 		roots = append(roots, a.id)
 	}
 	var changed []string
-	for id, m := range mods {
-		edges[id] = m.needs
+	for id := range mods {
+		edges[id] = Split(s.Work.Card(id).F("needs"))
 		changed = append(changed, id)
 	}
 	sort.Strings(changed)
@@ -928,6 +931,20 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		return p
 	}
 	byID := named(sel)
+	// THE WIDTH IS HARD: a member's working cards never pass its width, held here, at the
+	// sprint's one writer, whatever the member asks (the owner, 2026-10-01: "this
+	// \"squishiness\" of having > width in the working set has me concerned."). A take by
+	// count is cut to the room; a take by id past it is refused.
+	room := max(s.Width(r.As)-len(s.Fleet.Cell(r.As, Working)), 0)
+	if !byID {
+		if room == 0 {
+			return p
+		}
+		// a limit under zero asks for every ready card (pick): that too is the room
+		if sel.Limit < 0 || sel.Limit > room {
+			sel.Limit = room
+		}
+	}
 	// the member's ready cards in stream turns (takeTurns), as the deal dealt
 	// them: a member holding DealAhead times its width takes its width of them
 	// from every stream alike, never one stream's lowest scores first (errata 3
@@ -940,6 +957,12 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		}
 		if !c.Placed() || c.Row != r.As || c.Col != Ready {
 			return "not in " + r.As + " ready (it is " + placeWord(c) + ")"
+		}
+		if byID {
+			if room == 0 {
+				return fmt.Sprintf("member %s is at its width (%d working of %d): a card is taken when one is reported", r.As, len(s.Fleet.Cell(r.As, Working)), s.Width(r.As))
+			}
+			room--
 		}
 		return ""
 	}, s.Fleet.Card)
@@ -972,7 +995,8 @@ type FinishReq struct {
 }
 
 // Finish moves work cards working -> done and their primaries working ->
-// review. Fixed work that comes back ok is asked of the same readers again.
+// review. Fixed work that comes back ok is asked by the machine's ask, as
+// any work is.
 // A finish always names the generation it holds for every card it finishes:
 // a card without one is refused, naming the live generation, and a finish
 // by selection without --as is refused outright. As may name several
@@ -1077,22 +1101,13 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
+		// ONE PATH ASKS: the finish asks no reader. The machine's ask does, in the tick the
+		// finish wakes, the earlier pair first (Ask, the primary's asked field), each read
+		// with the route it draws. A read the finish created itself carried no route (a
+		// finish loads none) and no reader could start it (fleet pass 7, 2026-10-01: two
+		// such reads held a card twelve minutes)
 		asked := map[string]string{}
 		if !r.Failed {
-			var again []string
-			for _, reader := range Split(pr.F("asked")) {
-				id := ReadCardID(pr.ID, attempt, reader)
-				if !s.Readers.HasRow(reader) || s.Readers.Card(id) != nil {
-					continue
-				}
-				u.Changes = append(u.Changes, change(Readers, createEntry(id, reader, Asked, pr.Score,
-					map[string]string{"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": reader, "attempt": itoa(attempt), "head": head, "asked": stamp(s.Now)})))
-				again = append(again, reader)
-				asked[id] = Asked
-			}
-			if len(again) > 0 {
-				u.Moved += "; asked again of " + strings.Join(again, ", ")
-			}
 			n := happened(NWorkOK, pr.Row, s.Now, pr.ID)
 			n.Who, n.Attempt = who, attempt
 			u.Notes = append(u.Notes, n)

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -520,4 +521,43 @@ func TestClearByTheCommand(t *testing.T) {
 	ta.ok("take --as m1 --epoch 1 s1-1.w1@1")
 	ta.ok("clear --confirm sprint")
 	ta.clean()
+}
+
+// parse is every verb's one reading of its words: flags anywhere among them, and every
+// word after the first -- that is not a flag's value taken as it is, however it looks.
+func TestParseTakesEveryWordAfterTheTerminatorAsItIs(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name       string
+		args, pos  []string
+		file, text string
+		on         bool
+	}{
+		{"flags anywhere, no --", []string{"a", "--file", "f", "b", "--on", "--text=t", "c"}, []string{"a", "b", "c"}, "f", "t", true},
+		{"flags before --, words that look like flags after it", []string{"--file", "f", "a", "--", "--file", "g", "--on"}, []string{"a", "--file", "g", "--on"}, "f", "", false},
+		{"a word after -- that begins with a dash", []string{"--", "-x", "--text", "t"}, []string{"-x", "--text", "t"}, "", "", false},
+		{"-- after a word", []string{"a", "--", "--on"}, []string{"a", "--on"}, "", "", false},
+		{"-- as a flag's value", []string{"--text", "--", "a", "--on"}, []string{"a"}, "", "--", true},
+		{"-- as a flag's value, then the terminator", []string{"--text", "--", "--", "--on"}, []string{"--on"}, "", "--", false},
+		{"a second -- is a word", []string{"--", "--", "a"}, []string{"--", "a"}, "", "", false},
+		{"a boolean takes no word", []string{"--on", "--", "--file", "f"}, []string{"--file", "f"}, "", "", true},
+		{"one dash, and a lone dash is a word", []string{"-file=f", "-", "-on=true"}, []string{"-"}, "f", "", true},
+	} {
+		fs := verbflag.New("try")
+		file, text, on := fs.String("file", "", ""), fs.String("text", "", ""), fs.Bool("on", false, "")
+		pos, err := parse(fs, c.args)
+		require.NoError(t, err, c.name)
+		require.Equal(t, c.pos, pos, c.name)
+		require.Equal(t, []any{c.file, c.text, c.on}, []any{*file, *text, *on}, c.name)
+	}
+	fs := verbflag.New("try")
+	fs.String("text", "", "")
+	_, err := parse(fs, []string{"a", "--nope"})
+	require.ErrorContains(t, err, "unknown flag --nope", "an unknown flag after a word is refused")
+	_, err = parse(fs, []string{"a", "--text"})
+	require.ErrorContains(t, err, "--text wants a value", "a flag with no value is refused")
+	require.PanicsWithValue(t, verbflag.Help{FS: fs}, func() { _, _ = parse(fs, []string{"a", "--help"}) }, "help after a word is help")
+	pos, err := parse(fs, []string{"a", "--", "--help"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "--help"}, pos, "help after -- is a word")
 }

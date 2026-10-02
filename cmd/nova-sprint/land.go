@@ -191,7 +191,13 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if len(bad) > 0 {
 		return refuse(stderr, "land", strings.Join(bad, "; "))
 	}
+	// land's reads and its report are steps of the sprint: each takes the server's one
+	// line of control (a.serial) when this process is the server (run --land), so none
+	// runs during a tick or a worker's batch; its git runs outside it, for as long as
+	// git takes. A land by itself holds a lock nothing else wants.
+	a.serial.Lock()
 	st, err := a.store(*c)
+	a.serial.Unlock()
 	if err != nil {
 		return refuse(stderr, "land", err.Error())
 	}
@@ -208,7 +214,9 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	ctx := context.Background()
+	a.serial.Lock()
 	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
+	a.serial.Unlock()
 	if err != nil {
 		return a.readFailed("land", err, stderr)
 	}
@@ -561,6 +569,8 @@ func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) 
 	if l.c.op != "" {
 		step.CallerOp = l.c.op + "." + r.Stream + "." + step.Args
 	}
+	l.a.serial.Lock()
+	defer l.a.serial.Unlock()
 	return l.st.Run(context.Background(), step)
 }
 
@@ -582,7 +592,9 @@ func stepWhy(res store.Result, err error) string {
 // queueHead is why the stream's merge queue, read again at the epoch land
 // read, no longer holds the pinned cards at their heads; "" when it does.
 func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) string {
+	l.a.serial.Lock()
 	s, err := l.st.Load(ctx, []string{sprint.Merge, sprint.Work}, nil)
+	l.a.serial.Unlock()
 	if err != nil {
 		return "the merge queue could not be read again at epoch " + strconv.FormatUint(l.epoch, 10) + ": " + oneline.Err(err)
 	}
@@ -598,6 +610,11 @@ func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) 
 // 2 landed, and one batch was pushed and could not be reported). A pinned card
 // gone from the queue, or reworked to another head, still refuses.
 func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
+	// a stream stopped since land read it (a red recorded while an earlier stream of the
+	// same run landed) is not pushed: a stopped stream moves only after resume
+	if ctl := s.StreamCtl(stream); ctl != nil && ctl.F("state") == sprint.StreamStopped {
+		return "stopped (" + ctl.F("cause") + ") since it was read; run: nova-sprint resume --stream " + stream
+	}
 	queued := map[string]bool{}
 	for _, c := range landQueue(s, stream) {
 		queued[c.ID] = true
@@ -622,8 +639,25 @@ func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 // identity, a hook, the disk), nothing to report.
 func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard) (merged []string, failed conflictCard, why string) {
 	base := cards[0].base
-	if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin"); err != nil {
-		return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
+	// THE FETCH BRINGS WHAT THE BATCH NEEDS AND NOTHING ELSE: the base, and the cards'
+	// heads by their ids, in one exchange. A fetch of every branch of origin costs a
+	// negotiation over all of them, once a stream a round: on a repository with two
+	// thousand card branches it was 15 s a fetch and landing fell to a third of the
+	// fleet's rate (the fleet pass of 2026-10-01 20:18 ET, 1000 cards). A head origin
+	// does not hold fails the one fetch; then the base alone is fetched and each head at
+	// its merge (mergeHead), which names the card.
+	baseRef := "+refs/heads/" + base + ":refs/remotes/origin/" + base
+	fetch := []string{"fetch", "--no-tags", "origin", baseRef}
+	for _, c := range cards {
+		// a fetch by id wants the whole id; a short head is found at its merge
+		if shaRE.MatchString(c.head) && (len(c.head) == 40 || len(c.head) == 64) {
+			fetch = append(fetch, c.head)
+		}
+	}
+	if _, err := l.git(ctx, dir, fetch...); err != nil {
+		if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin", baseRef); err != nil {
+			return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
+		}
 	}
 	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {
 		return nil, failed, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
@@ -666,7 +700,15 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 		_, ferr := l.git(ctx, dir, "fetch", "--no-tags", "origin", c.head)
 		switch {
 		case ferr != nil && containsAny(ferr.Error(), notOnOrigin):
-			return "the head " + c.head + " of " + c.id + " is missing: origin holds no such commit (" + firstLine("", ferr) + ")", ""
+			// before the card is blamed, every branch is fetched once: a head given
+			// short (a fetch by id wants the whole id) or one behind its branch's tip on
+			// a remote that serves only advertised refs is on origin all the same
+			if _, all := l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/*:refs/remotes/origin/*"); all != nil {
+				return "", "the fetch of origin's branches for the head " + c.head + " of " + c.id + " failed: " + firstLine("", all)
+			}
+			if _, still := l.git(ctx, dir, "cat-file", "-e", c.head+"^{commit}"); still != nil {
+				return "the head " + c.head + " of " + c.id + " is missing: origin holds no such commit (" + firstLine("", ferr) + ")", ""
+			}
 		case ferr != nil:
 			return "", "the fetch of the head " + c.head + " of " + c.id + " failed: " + firstLine("", ferr)
 		}
@@ -754,7 +796,9 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 	if err := os.MkdirAll(l.root, 0o755); err != nil {
 		return "", "the land directory " + l.root + " could not be made: " + oneline.Err(err)
 	}
-	if _, err := l.git(ctx, "", "clone", "--no-tags", "--", repo, dir); err != nil {
+	// one branch, never every branch: the landing fetches the base and the heads it needs
+	// itself (build), and a clone of a card repository's thousands of branches was 80 s
+	if _, err := l.git(ctx, "", "clone", "--no-tags", "--single-branch", "--", repo, dir); err != nil {
 		return "", "the clone of " + repo + " into " + dir + " failed: " + firstLine("", err)
 	}
 	return dir, ""

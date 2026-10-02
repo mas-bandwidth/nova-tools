@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,5 +42,3 @@ func TestAnUnusableInvocationCostsOneLine(t *testing.T) {
 		}
 	}
 }
-
-func removeFile(path string) error { return os.Remove(path) }

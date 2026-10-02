@@ -143,9 +143,36 @@ func TestLandMergesAStreamInQueueOrderAsOneBatch(t *testing.T) {
 	r.clean()
 }
 
+// The landing fetches the base and the batch's heads, and no other branch of origin: a
+// repository a thousand cards have worked in holds thousands of card branches, and a fetch
+// of them all, once a stream a round, was 15 s a fetch (the fleet pass of 2026-10-01
+// 20:18 ET: landing at a third of the fleet's rate).
+func TestLandFetchesTheBaseAndTheBatchsHeadsAndNoOtherBranch(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 2")
+	heads := map[string]string{}
+	for _, id := range []string{"s1-1", "s1-2"} {
+		heads[id] = r.head(id, "main", id+".txt", id+"\n")
+	}
+	r.queued(heads, "s1-1", "s1-2")
+	// a branch that is no card of this batch, pushed after the clone was made
+	r.git(r.worker, "switch", "-q", "--no-track", "-c", "other", "refs/remotes/origin/main")
+	r.commit("other.txt", "other\n", "not of this batch")
+	r.git(r.worker, "push", "-q", "origin", "other")
+	out := r.ok("land --repo-dir " + r.clone + " --base main")
+	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
+	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
+	refs := r.git(r.clone, "for-each-ref", "--format=%(refname)", "refs/remotes/origin")
+	assert.NotContains(t, refs, "refs/remotes/origin/other", "a branch that is no card of the batch is not fetched")
+	assert.NotContains(t, refs, "refs/remotes/origin/sprint/", "the batch's heads are fetched by their ids, not as branches")
+	r.clean()
+}
+
 // A head that does not merge ends its batch: the cards before it land, it is
 // reported with the merge step's conflict fact carrying git's words, and the
 // card behind it stays queued.
+
 func TestLandStopsAtAHeadThatDoesNotMerge(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

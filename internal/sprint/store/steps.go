@@ -7,7 +7,9 @@ import "github.com/mas-bandwidth/nova-tools/internal/sprint"
 
 func tables(ts ...string) []string { return ts }
 
-// AddStep admits primaries; it reads the named needs as well, placed or not.
+// AddStep admits primaries; it reads the named needs as well, placed or not,
+// and the stream's control card, kept unplaced when the stream was removed in
+// this epoch (sprint.RemovedStream).
 func AddStep(r sprint.AddReq) Step {
 	return Step{Named: len(r.IDs) > 0 || len(r.Cards) > 0, Args: ArgsOf(r), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
@@ -16,7 +18,7 @@ func AddStep(r sprint.AddReq) Step {
 			for _, c := range r.Cards {
 				needs = append(needs, c.Needs...)
 			}
-			return map[string][]string{sprint.Work: append(ids, needs...)}
+			return map[string][]string{sprint.Work: append(ids, needs...), sprint.Merge: {sprint.CtlID(r.Stream)}}
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Add(s, r) }}
 }
@@ -30,11 +32,12 @@ func AddEachStep(rs []sprint.AddReq) Step {
 	}
 	return Step{Named: named, Args: ArgsOf(rs), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
-			var ids []string
+			var ids, ctls []string
 			for _, r := range rs {
 				ids = append(append(ids, sprint.AddIDs(s, r)...), r.Needs...)
+				ctls = append(ctls, sprint.CtlID(r.Stream))
 			}
-			return map[string][]string{sprint.Work: ids}
+			return map[string][]string{sprint.Work: ids, sprint.Merge: ctls}
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.AddEach(s, rs) }}
 }
@@ -116,6 +119,28 @@ func ReturnStep(r sprint.ReturnReq) Step {
 func DropStep(r sprint.DropReq) Step {
 	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "drop", Load: All, Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Drop(s, r) }}
+}
+
+// BriefStep is the coordinator replacing the brief of a primary that has not
+// started, on a STOPPED machine (sprint.Brief).
+func BriefStep(r sprint.BriefReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "brief", Load: tables(sprint.Work),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Brief(s, r) }}
+}
+
+// MoveStep is the coordinator moving unstarted primaries to another stream,
+// on a STOPPED machine (sprint.MoveCards): it reads what add reads, the moved
+// cards' needs, placed or not, and the destination's control card.
+func MoveStep(r sprint.MoveReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "move", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			ids := append([]string(nil), r.IDs...)
+			for _, id := range r.IDs {
+				ids = append(ids, sprint.Split(s.Work.Placed(id).F("needs"))...)
+			}
+			return map[string][]string{sprint.Work: ids, sprint.Merge: {sprint.CtlID(r.Stream)}}
+		},
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MoveCards(s, r) }}
 }
 
 // RankStep is the coordinator changing scores.

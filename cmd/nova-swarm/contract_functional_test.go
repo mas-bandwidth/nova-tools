@@ -155,15 +155,15 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 	root := filepath.Join(dir, "m1")
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "slots"), 0o755))
 	write(t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
-	sp := &execSprint{bin: bin, actor: "m1", env: []string{"NOVA_SPRINT_REDIS=" + d.addr}}
-	rn := &nativeRunner{self: builtTool, sprintBin: bin, harness: harness, model: familyModel[family], root: root,
+	sp := d.worker()
+	rn := &nativeRunner{self: builtTool, harness: harness, model: familyModel[family], root: root,
 		slots: filepath.Join(root, "slots"), resultsRoot: filepath.Join(root, "results"), deadline: time.Minute,
 		tokens: "unmetered", noWall: !walled, stderr: io.Discard}
 	if walled {
 		require.NotEmpty(t, builtSandbox, "TestMain builds the wall binary for the walled profile run")
 		rn.env = []string{"PATH=" + filepath.Dir(builtSandbox) + string(os.PathListSeparator) + os.Getenv("PATH")}
 	}
-	pu := newGitPusher(root, rn.slots, bin)
+	pu := newGitPusher(root, rn.slots)
 	pu.gh = gh
 	out := &lockedBuf{}
 	m := member.New(member.Config{As: "m1", Width: 1}, sp, rn, pu, out)

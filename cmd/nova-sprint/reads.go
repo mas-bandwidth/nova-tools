@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
+
 	"sort"
 	"strconv"
 	"strings"
@@ -21,13 +24,64 @@ import (
 // object for a program; the driver reads the sprint through them.
 
 // summary is the sprint's line: landed / all primaries on the table, percent,
-// ETA (the table layer's view line, which has no rate to give an ETA from).
-// Every primary landed, it has no ETA: it is done (errata 3 amendment 6).
-func summary(t ntable.Table) string {
-	if landed, all := counts(t); all > 0 && landed == all {
+// ETA. The ETA is an estimate once a card has landed: the cards left, each at
+// the average time a card has taken to land (since, the time from the machine's
+// first start, over the cards landed), in whole minutes rounded up, with no
+// seconds ("47m", "1h12m"); before that, or with no start known, the word
+// alone. Every primary landed, it has no ETA: it is done (errata 3 amendment 6).
+// eta is the minutes left (etaMinutes, or the view's held value), 0 when there
+// is no estimate.
+func summary(t ntable.Table, eta int64) string {
+	landed, all := counts(t)
+	switch {
+	case all > 0 && landed == all:
 		return progress(t) + " done"
+	case eta >= 60:
+		return fmt.Sprintf("%s -> ETA %dh%dm", progress(t), eta/60, eta%60)
+	case eta > 0:
+		return fmt.Sprintf("%s -> ETA %dm", progress(t), eta)
 	}
 	return progress(t) + " -> ETA"
+}
+
+// etaMinutes is the estimate of the minutes left, rounded up: the cards left,
+// each at since over the cards landed; 0 when there is none (nothing landed,
+// nothing left, or no first start known).
+func etaMinutes(t ntable.Table, since time.Duration, started bool) int64 {
+	landed, all := counts(t)
+	if !started || landed <= 0 || landed >= all {
+		return 0
+	}
+	return int64(math.Ceil(float64(since) * float64(all-landed) / float64(landed) / float64(time.Minute)))
+}
+
+// etaHold is how long the view holds an estimate: it shows the largest of the
+// last etaHold, so the value is stable while landings arrive in rounds.
+const etaHold = 10 * time.Second
+
+// etaSample is one estimate the view computed and when.
+type etaSample struct {
+	at time.Time
+	m  int64
+}
+
+// heldETA is the largest estimate of the last etaHold, m at now among them: a
+// stable value. No estimate (0) is shown as none and forgets what was held. One
+
+// process holds its own: a where run once shows its estimate, a watch and the
+// server hold theirs.
+func (a *app) heldETA(now time.Time, m int64) int64 {
+	a.etaMu.Lock()
+	defer a.etaMu.Unlock()
+	if m == 0 {
+		a.etas = nil
+		return 0
+	}
+	a.etas = append(slices.DeleteFunc(a.etas, func(s etaSample) bool { return now.Sub(s.at) >= etaHold }), etaSample{now, m})
+	for _, s := range a.etas {
+		m = max(m, s.m)
+	}
+	return m
 }
 
 // progress is landed / all primaries and the percent: "3/10 30.0%".
@@ -84,9 +138,18 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	as := fs.String("as", "", "a reader (its read cards, asked then reading) or a fleet member (its work cards, ready then working)")
 	stream := fs.String("stream", "", "a stream: its merge queue, then its stuck cards")
 	col := fs.String("col", "", "with --stream: waiting lists the stream's waiting primaries, each with what it still waits for")
+	packets := fs.String("packets", "", "with --as: the packets the worker wants, so the answer carries only those (every other card is listed with its id, column, attempt and gen, and the answer's epoch, with no packet): the first n cards it may start (asked, ready) and every in-flight card (reading, working), each not named by --have; without it every card carries its packet")
+	have := fs.String("have", "", "with --packets: the cards, comma separated, the worker wants no packet for (it runs them, or will not start them yet)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "queue", err.Error())
+	}
+	want, err := packetsWanted(*packets, *have)
+	if err != nil {
+		return refuse(stderr, "queue", err.Error())
+	}
+	if want.n >= 0 && *as == "" {
+		return refuse(stderr, "queue", "--packets is a worker's: it takes --as <reader|member>")
 	}
 	if len(pos) > 0 || (*as == "") == (*stream == "") {
 		return refuse(stderr, "queue", "wants one of --as <reader|member>, --stream <s>")
@@ -159,12 +222,17 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			add(t.table, own)
 			mine = append(mine, own...)
 		}
-		ps, err := st.Packets(ctx, mine)
+		at := want.of(mine)
+		need := make([]*sprint.Card, len(at))
+		for k, i := range at {
+			need[k] = mine[i]
+		}
+		ps, err := st.Packets(ctx, need)
 		if err != nil {
 			return a.readFailed("queue", err, stderr)
 		}
-		for i := range ps {
-			cards[i].Packet = &ps[i]
+		for k, i := range at {
+			cards[i].Packet = &ps[k]
 		}
 	}
 	if c.json {
@@ -199,15 +267,17 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		}
 		lines = append(lines, l)
 	}
-	if len(lines) > 0 && cards[0].Packet != nil {
-		// a member's or a reader's queue: each card with its packet
+	if *as != "" && len(lines) > 0 {
+		// a member's or a reader's queue: each card with its packet, when the answer carries it
 		for i, l := range lines {
 			if c.max > 0 && i >= c.max {
 				fmt.Fprintf(stdout, "CARD ... and %d more; --max 0 lists all\n", len(lines)-i)
 				break
 			}
 			fmt.Fprintln(stdout, "CARD "+oneline.Escape(l))
-			printPacket(stdout, *cards[i].Packet)
+			if cards[i].Packet != nil {
+				printPacket(stdout, *cards[i].Packet)
+			}
 		}
 		fmt.Fprintf(stdout, "QUEUE OK cards=%d epoch=%d\n", len(cards), epoch)
 		return 0
@@ -215,6 +285,75 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	listed(stdout, "CARD", lines, c.max, "queue")
 	fmt.Fprintf(stdout, "QUEUE OK cards=%d epoch=%d\n", len(cards), epoch)
 	return 0
+}
+
+// wanted is the packets a worker's queue asks for (--packets, --have): n < 0 is every
+// card's, the answer as it was before the flags.
+type wanted struct {
+	n    int
+	have map[string]bool
+}
+
+// maxPacketsAsked bounds --packets and the cards --have names: a worker's lanes are far
+// fewer, and a value past it is no worker's.
+const maxPacketsAsked = 1024
+
+// packetsWanted reads --packets and --have, refusing a value no worker sends: --packets a
+// count from 0 to maxPacketsAsked, --have card ids (dot-joined words, sprint.ValidCardID),
+// and --have only with --packets. The server's fleet listener holds a worker's queue to the
+// same (workerVerb).
+func packetsWanted(packets, have string) (wanted, error) {
+	w := wanted{n: -1}
+	if packets == "" {
+		if have != "" {
+			return w, errors.New("--have names the cards a --packets answer leaves without a packet: give --packets <n> with it")
+		}
+		return w, nil
+	}
+	n, err := strconv.Atoi(packets)
+	if err != nil || n < 0 || n > maxPacketsAsked {
+		return w, fmt.Errorf("--packets is a count of cards from 0 to %d, found %q", maxPacketsAsked, packets)
+	}
+	w.n, w.have = n, map[string]bool{}
+	if have == "" {
+		return w, nil
+	}
+	ids := strings.Split(have, ",")
+	if len(ids) > maxPacketsAsked {
+		return w, fmt.Errorf("--have names at most %d cards, found %d", maxPacketsAsked, len(ids))
+	}
+	for _, id := range ids {
+		if !sprint.ValidCardID(id) {
+			return w, fmt.Errorf("--have is card ids, comma separated, found %q", id)
+		}
+		w.have[id] = true
+	}
+	return w, nil
+}
+
+// of is which of a worker's cards, in queue order, get their packets: every one when no
+// --packets was given; else the first n it may start (asked, ready) and every one in flight
+// (reading, working), skipping the cards --have names. A worker starts a card from its
+// packet, or recovers an in-flight card it holds no launch for; a card it already runs, or
+// a read past its free lanes, needs none (the fleet load test of 2026-10-01: one reader's
+// answer, its 150 asked reads each with its brief, was 579,181 bytes every pass).
+func (w wanted) of(cards []*sprint.Card) []int {
+	var at []int
+	left := w.n
+	for i, x := range cards {
+		switch {
+		case w.n < 0:
+		case w.have[x.ID]:
+			continue
+		case x.Col == sprint.Asked || x.Col == sprint.Ready:
+			if left == 0 {
+				continue
+			}
+			left--
+		}
+		at = append(at, i)
+	}
+	return at
 }
 
 func (a *app) readFailed(verbName string, err error, stderr io.Writer) int {
@@ -360,7 +499,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		v.Cleared = es.Cleared
 	}
 	v.Landed, v.All = counts(shapes[0])
-	v.Summary = summary(shapes[0])
+	since, started := st.SinceFirstStart(ctx)
+	v.Summary = summary(shapes[0], a.heldETA(now, etaMinutes(shapes[0], since, started)))
+
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID
 	}
@@ -383,6 +524,12 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 			// the machine keeps a stream's since; the view does not show it
 			t.Hidden = append(append([]string(nil), t.Hidden...), sprint.Since)
 		}
+		switch logical { // the text only: v.Tables keeps every reader's and stream's row
+		case sprint.Readers:
+			t = readersAll(t)
+		case sprint.Merge:
+			t = mergeAll(t)
+		}
 		// every table shows, every stream row in it, empty or not
 		parts = append(parts, ntable.Render(t, ntable.RenderOpts{Title: logical}))
 	}
@@ -394,6 +541,87 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		}
 	}
 	return v, b.String(), nil
+}
+
+// allRow is the label of the one row the view draws for the readers and the
+// merge tables.
+const allRow = "all"
+
+// readersAll is the readers table as the view's text draws it: one row, all,
+// whose cells are the sums over every reader (hidden rows, readers away or down,
+// counted as the footer counted them), and no footer, which would say the same
+// thing twice (the owner, 2026-10-01: "change the table to just be one row, sum
+// of all"; "i just need to see reader *progress* overall"). A cell some reader's
+// set did not come back for prints "?", as the footer's sum did. Display only:
+// the stored table, its rows and where --json are as they were.
+func readersAll(t ntable.Table) ntable.Table { return allOf(t, nil) }
+
+// mergeAll is the merge table as the view's text draws it, the same way (the
+// owner, 2026-10-01: "Can we please (for next sprint) do the same for merge"):
+// queued, merged and stuck are the sums over every stream; ci and state, which
+// do not add up, show the value across the streams that most needs the
+// coordinator's eye (worst), and a stopped state the count of streams stopped,
+// so one stopped stream of four is not hidden ("stopped 1").
+func mergeAll(t ntable.Table) ntable.Table {
+	ci, _ := worst(t.Rows, sprint.CI, "red", "green")
+	state, n := worst(t.Rows, sprint.StateCol, sprint.StreamStopped, sprint.StreamMerging, sprint.StreamWaiting, sprint.StreamLanded)
+	if state == sprint.StreamStopped {
+		state += " " + strconv.Itoa(n)
+	}
+	return allOf(t, map[string]string{sprint.CI: ci, sprint.StateCol: state})
+}
+
+// worst is the value of a text column, over the rows, that comes first in
+// order (most attention first), and how many rows hold it. A value the order
+// does not name comes after every named one, and "-" or blank after that: the
+// cell shows "-" when no row has a value.
+func worst(rows []ntable.Row, col string, order ...string) (string, int) {
+	rank := func(v string) int {
+		if i := slices.Index(order, v); i >= 0 {
+			return i
+		}
+		if v == "" || v == "-" {
+			return len(order) + 1
+		}
+		return len(order)
+	}
+	w, n := "-", 0
+	for _, r := range rows {
+		v := r.Texts[col]
+		switch {
+		case n == 0 || rank(v) < rank(w):
+			w, n = v, 1
+		case v == w:
+			n++
+		}
+	}
+	if w == "" {
+		w = "-"
+	}
+	return w, n
+}
+
+// allOf is the table as one row, all, whose count cells are the sums over every
+// row (an unread set prints "?", as the footer's sum did) and whose text cells
+// are texts, with no footer: the stored table, its rows and where --json are as
+// they were.
+func allOf(t ntable.Table, texts map[string]string) ntable.Table {
+	all := ntable.Row{Key: allRow, Cells: make([]ntable.Cell, len(t.Columns)), Texts: texts}
+	for _, r := range t.Rows {
+		for j := range t.Columns {
+			if j >= len(r.Cells) || r.Cells[j].Unread {
+				all.Cells[j].Unread = true
+				continue
+			}
+			all.Cells[j].Count += r.Cells[j].Count
+		}
+	}
+	cols := slices.Clone(t.Columns)
+	for j := range cols {
+		cols[j].Fold = ntable.None
+	}
+	t.Columns, t.Rows = cols, []ntable.Row{all}
+	return t
 }
 
 // whereHeader is the one line under the title of the where view: STOPPED when
@@ -424,6 +652,10 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	}
 	if *read && *atEpoch >= 0 {
 		return refuse(stderr, "inbox", "--read moves the cursor of the sprint's epoch, and --at-epoch reads an earlier one as it was: give one of them")
+	}
+	if *read && *wait && a.getenv(ServerEnv) != "" {
+		// the cursor is the server's to move, and a wait never runs on the server (waits)
+		return refuse(stderr, "inbox", "--read moves the cursor, which the sprint's server (NOVA_SPRINT_SERVER) moves, and --wait waits where it is typed, never on the server: run nova-sprint inbox --wait, then nova-sprint inbox --read; nothing was changed")
 	}
 	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {

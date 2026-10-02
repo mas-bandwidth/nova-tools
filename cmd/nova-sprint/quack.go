@@ -79,7 +79,7 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "quack", strings.Join(problems, "; "))
 	}
 	var st *store.Store
-	rs, code := a.briefRules("", c, &st, stderr)
+	rs, code := a.briefRules("add", "", c, &st, stderr)
 	if code != 0 {
 		return code
 	}

@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
-
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,17 +52,4 @@ func TestTheCommandReferenceCarriesTheHarnessContract(t *testing.T) {
 			t.Errorf("docs/CLI.md's harness contract wants %q", want)
 		}
 	}
-}
-
-// jsonInner is a string as it appears INSIDE a JSON string literal: the marshalled form
-// with its own quotes removed. A test that substitutes a path into a JSON template writes
-// JSON or it writes nothing -- on Unix the difference never showed, because a path with no
-// backslash in it is its own escape.
-func jsonInner(t *testing.T, s string) string {
-	t.Helper()
-	raw, err := json.Marshal(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(raw[1 : len(raw)-1])
 }

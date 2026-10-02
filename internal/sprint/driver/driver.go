@@ -574,18 +574,16 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			return out
 		}
 		args := []string{"merge", "--stream", s, "--batch", strconv.Itoa(c.Batch)}
-		if len(batch) > 0 {
-			out := d.Facts.Merge(s, batch, others)
-			switch {
-			case out.Conflict != "":
-				args = append(args, "--conflict", out.Conflict)
-			case out.Cross != "":
-				args = append(args, "--cross", out.Cross)
-			case out.Red:
-				args = append(args, "--red")
-				for _, x := range out.Suspects {
-					args = append(args, "--suspect", x)
-				}
+		out := d.Facts.Merge(s, batch, others)
+		switch {
+		case out.Conflict != "":
+			args = append(args, "--conflict", out.Conflict)
+		case out.Cross != "":
+			args = append(args, "--cross", out.Cross)
+		case out.Red:
+			args = append(args, "--red")
+			for _, x := range out.Suspects {
+				args = append(args, "--suspect", x)
 			}
 		}
 		d.run(false, append(args, held...)...)

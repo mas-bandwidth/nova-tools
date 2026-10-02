@@ -319,3 +319,18 @@ func TestNativeIdleZeroWatchesNothing(t *testing.T) {
 		t.Fatalf("a refusal is announced whether or not anything acts on it:\n%s", stderr.String())
 	}
 }
+
+// waitForFile waits for a file this test owns to appear, and gives up on its own. It is a
+// wait on an OBSERVABLE (what the fixture harness writes when it reaches a point) and never
+// a sleep racing a process. The 30s bound is a safety net for a harness that never gets
+// there; the assertion is on the file, not the elapsed time.
+func waitForFile(t *testing.T, path, what string) {
+	t.Helper()
+	for waited := time.Duration(0); waited < 30*time.Second; waited += 5 * time.Millisecond {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s: %s never appeared", what, path)
+}

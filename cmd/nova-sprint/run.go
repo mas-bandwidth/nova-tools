@@ -222,8 +222,10 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	var profile, listen string
 	var profileTicks int
+	var land bool
 	st, c, code := a.machineVerb("run", args, stderr, func(fs flagSet) {
 		fs.StringVar(&listen, "listen", "", "also serve the workers' verbs on this address, host:port (this machine's address on the fleet's private network): a worker started with nova-swarm member --server sends its verbs here and never reads or writes the store itself")
+		fs.BoolVar(&land, "land", false, "also land what the readers passed, one landing at a time (land's defaults: each card's REPO: and BASE: lines)")
 		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
 		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
 	})
@@ -267,6 +269,9 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		if err := a.listen(listen, c.redis, stdout); err != nil {
 			return refuse(stderr, "run", err.Error())
 		}
+	}
+	if land {
+		go a.landLoop(context.Background(), c.redis, stdout)
 	}
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
 	if a.runLoop(context.Background(), st, c.max, 0, stdout, stderr) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,7 +51,9 @@ import (
 // text) is refused too, which is the safe side. The epoch a take, a finish and
 // a read must name is checked where the verb has parsed it (runStep, a.serving):
 // what counts is the epoch the verb runs at, not a word that looks like one. A beat's load is the worker's own measure: the server cannot measure
-// another machine, and would record its own.
+// another machine, and would record its own. A queue's --packets and --have (the packets
+// the worker wants) are held to their shapes here, before the verb runs: a count, and card
+// ids (packetsWanted).
 func workerVerb(argv []string) (as string, words int, why string) {
 	if len(argv) >= 2 && argv[0] == "fleet" && argv[1] == "beat" {
 		rest := argv[2:]
@@ -82,8 +85,53 @@ func workerVerb(argv []string) (as string, words int, why string) {
 			return "", 0, "--" + name + " is not a worker's to give the server"
 		}
 	}
+	if verb == "queue" {
+		packets, okP := flagWord(rest, "packets")
+		have, okH := flagWord(rest, "have")
+		if !okP || !okH {
+			return "", 0, "a queue's --packets and --have are each given at most once, each with its value"
+		}
+		if _, err := packetsWanted(packets, have); err != nil {
+			return "", 0, err.Error()
+		}
+	}
 	return as, 1, ""
 }
+
+// flagWord is the value the words give the flag name (--name v, --name=v, one dash or
+// two), "" when they give none; ok is false when they give it more than once or with no
+// value.
+func flagWord(words []string, name string) (value string, ok bool) {
+	seen := false
+	for i := 0; i < len(words); i++ {
+		w := words[i]
+		if !strings.HasPrefix(w, "-") {
+			continue
+		}
+		n, v, eq := strings.Cut(strings.TrimLeft(w, "-"), "=")
+		if n != name {
+			continue
+		}
+		if seen {
+			return "", false
+		}
+		seen = true
+		if !eq {
+			if i+1 >= len(words) {
+				return "", false
+			}
+			i++
+			v = words[i]
+		}
+		value = v
+	}
+	return value, true
+}
+
+// notServed are the verbs the server runs for nobody: itself (run, tick), the ones that
+// work for seconds or minutes outside the store (land's git, the driver), and fleet sync,
+// which reads the config store with its caller's own credentials.
+var notServed = []string{"run", "tick", "land", "play", "fleet sync"}
 
 // serve is the server's one step: the batch's verbs run in order, each through
 // the verb's own code with its worker as the actor, and each answered. The
@@ -93,14 +141,34 @@ func workerVerb(argv []string) (as string, words int, why string) {
 // One batch, and one tick, at a time (a.serial): the lock is taken here, after
 // the request is read whole, and released before any answer is written, so a
 // slow worker never holds the tick.
-func (a *app) serve(req sprintwire.Request) sprintwire.Response {
+func (a *app) serve(req sprintwire.Request) sprintwire.Response { return a.serveFrom(req, false) }
+
+// serveFrom is serve for a batch from this machine (local: the coordinator's, any verb
+// the server runs, verbArgs.unserved) or from the fleet (a worker's verbs only,
+// workerVerb).
+func (a *app) serveFrom(req sprintwire.Request, local bool) sprintwire.Response {
 	a.serial.Lock()
 	defer a.serial.Unlock()
-	a.serving = true
 	defer func() { a.serving = false }()
 	out := sprintwire.Response{Results: make([]sprintwire.Result, len(req.Verbs))}
 	for i, argv := range req.Verbs {
+		var args []string
 		as, words, why := workerVerb(argv)
+		switch {
+		case why == "":
+			// a worker's write names the epoch its worker holds, whoever sent it (runStep)
+			a.serving = true
+			args = slices.Concat(argv[:words], []string{"--redis", a.serveAddr, "--actor", as}, argv[words:])
+		case local:
+			v := readVerb(argv)
+			if why = v.unserved(); why == "" {
+				// a worker's verb is held to the epoch its worker holds whatever its words
+				// (runStep); who acts is the caller's --actor, and no one when it gave none,
+				// never whoever the server's own environment names
+				a.serving = verbClasses[v.name] == classWorker
+				args = slices.Concat(argv[:v.words], []string{"--redis", a.serveAddr, "--actor", ""}, argv[v.words:])
+			}
+		}
 		if why != "" {
 			verb := ""
 			if len(argv) > 0 {
@@ -109,7 +177,6 @@ func (a *app) serve(req sprintwire.Request) sprintwire.Response {
 			out.Results[i] = sprintwire.Result{Code: 2, Stderr: fmt.Sprintf("%s server: %s: %s; nothing was changed\n", prog, oneline.Escape(verb), oneline.Escape(why))}
 			continue
 		}
-		args := slices.Concat(argv[:words], []string{"--redis", a.serveAddr, "--actor", as}, argv[words:])
 		var stdout, stderr bytes.Buffer
 		code := a.run(args, &stdout, &stderr)
 		out.Results[i] = sprintwire.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}
@@ -119,7 +186,14 @@ func (a *app) serve(req sprintwire.Request) sprintwire.Response {
 
 // ServeHTTP is the listener's shell around serve: one endpoint, a batch in the
 // body, its results in the answer.
-func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) { a.serveHTTP(w, r, false) }
+
+// localHandler is the shell for the loopback listener: the coordinator's verbs.
+type localHandler struct{ a *app }
+
+func (h localHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.a.serveHTTP(w, r, true) }
+
+func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
 	if r.URL.Path != sprintwire.Path || r.Method != http.MethodPost {
 		http.Error(w, "the sprint server takes POST "+sprintwire.Path, http.StatusNotFound)
 		return
@@ -138,8 +212,37 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	// THE ANSWER IS COMPRESSED FOR A CLIENT THAT TAKES IT. A worker's queue carries each of
+	// its cards' briefs, every pass: 46 to 93 KB an answer on a sprint of 1000 cards, and a
+	// worker 300 ms away took 1.3 to 2.4 s to read one (the fleet pass of 2026-10-01
+	// 20:18 ET). The briefs are text and alike, and go to a twentieth. Go's client asks
+	// for gzip and reads it by itself.
+	var out io.Writer = w
+	if takesGzip(r.Header.Get("Accept-Encoding")) {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		// ignored: a worker that has gone reads no answer
+		defer func() { _ = gz.Close() }()
+		out = gz
+	}
 	// ignored: a worker that has gone reads no answer; what ran is in the sprint's log
-	_ = json.NewEncoder(w).Encode(a.serve(req))
+	_ = json.NewEncoder(out).Encode(a.serveFrom(req, local))
+}
+
+// takesGzip says a request's Accept-Encoding names gzip and does not refuse it (q=0).
+func takesGzip(accept string) bool {
+	for _, part := range strings.Split(accept, ",") {
+		name, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+		if strings.TrimSpace(name) != "gzip" {
+			continue
+		}
+		q := strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(params), " ", ""), "q=")
+		if f, err := strconv.ParseFloat(q, 64); params != "" && err == nil && f == 0 {
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // listen starts the server on the address for the store the run loop ticks,
@@ -155,17 +258,31 @@ func (a *app) listen(addr, store string, stdout io.Writer) error {
 	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
 		return errors.New("--listen wants one address of this machine (its address on the fleet's private network, or 127.0.0.1): the server checks no credential, so it does not listen on every network")
 	}
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("--listen %s: %w", addr, err)
+	// the fleet's listener takes the workers' verbs; the loopback one, on the same port,
+	// takes the coordinator's (any verb the server runs). An address that is loopback
+	// itself is the one listener, the coordinator's
+	_, port, _ := net.SplitHostPort(addr)
+	loop := net.JoinHostPort("127.0.0.1", port)
+	lns := map[string]http.Handler{loop: localHandler{a}}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		lns[addr] = a
 	}
 	a.serveAddr = store
-	srv := &http.Server{Handler: a, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute, WriteTimeout: 5 * time.Minute}
-	go func() {
-		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			fmt.Fprintf(stdout, "SERVER STOPPED %s: %s; the workers' verbs are not taken until run is started again\n", addr, oneline.Escape(err.Error()))
+	for at, h := range lns {
+		ln, err := net.Listen("tcp", at)
+		if err != nil {
+			return fmt.Errorf("--listen %s: %w", at, err)
 		}
-	}()
-	fmt.Fprintf(stdout, "SERVER listening on %s: the workers' verbs (take, finish, read, queue, fleet beat) run here, one at a time, beside the store\n", ln.Addr())
+		srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute, WriteTimeout: 5 * time.Minute}
+		go func() {
+			if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintf(stdout, "SERVER STOPPED %s: %s; its verbs are not taken until run is started again\n", at, oneline.Escape(err.Error()))
+			}
+		}()
+	}
+	if _, fleet := lns[addr]; fleet {
+		fmt.Fprintf(stdout, "SERVER listening on %s: the workers' verbs (take, finish, read, queue, fleet beat) run here, one at a time, beside the store\n", addr)
+	}
+	fmt.Fprintf(stdout, "SERVER listening on %s: the coordinator's verbs, from this machine (NOVA_SPRINT_SERVER=%s)\n", loop, loop)
 	return nil
 }

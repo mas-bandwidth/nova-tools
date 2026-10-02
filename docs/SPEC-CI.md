@@ -2779,7 +2779,7 @@ the original failed measurement.
 **The test.** `TestAWorkerDoesNotOpenTheStore` (`internal/ci/onewriter_class_test.go`), with `TestOneWriterFindsAChainToTheStore`: it walks the imports of the non-test files from each worker package through the module's own packages and is red on the first chain that reaches the store, printing the chain.
 **Its allowlist.** None.
 **Its remedy line.** `remedy="a worker is a client: ask the sprint's server (internal/sprintwire) and never open the store from a worker's machine (docs/SPEC-CI.md, onewriter)"`.
-**Its narrowings.** It reads imports, so a worker that reaches the store by running a binary that opens it (the member without `--server` runs `nova-sprint` itself, the path kept for comparison) is not seen; test files are not read.
+**Its narrowings.** It reads imports, so a worker that reaches the store by running a binary that opens it would not be seen (the member has no such path: `--server` is required); test files are not read.
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

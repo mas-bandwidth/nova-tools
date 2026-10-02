@@ -366,7 +366,8 @@ func Take(s State, m, c string, gen int) (State, error) {
 // FinishRefused (line 364) when the generation is not live: accepted only
 // for the live generation in its member's working cell (D3); the card to
 // done, its primary to review at the head the card produced; failed opens
-// the failed judgment; ok asks the readers kept on the primary again (G2).
+// the failed judgment. ok asks no reader: one path asks (the engine's commit 255180e2), the
+// machine's Ask, which asks round the readers.
 func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -394,14 +395,6 @@ func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 	n.Primaries[p] = pr
 	if !ok {
 		n.open(JFailed, p)
-		return n, nil
-	}
-	for _, r := range pr.Pair {
-		id := RC(p, w.Attempt, r)
-		if _, made := n.Reads[id]; made {
-			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
-		}
-		n.Reads[id] = ReadCard{Primary: p, Attempt: w.Attempt, Reader: r, Place: Asked}
 	}
 	return n, nil
 }
@@ -410,8 +403,10 @@ func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 
 // Ask is SprintTables.tla Ask(p) (line 375): a primary in review whose work
 // did not fail, with no read card on the table, is dealt to two different
-// readers: the two kept on it (D2), or the next two round the readers
-// (NextReaders, errata 3 amendment 5), the rolling index moved past them. It closes stranded in review (spec section 6).
+// readers: the next two round the readers (NextReaders, errata 3 amendment 5),
+// the rolling index moved past them; reworked work too, no reader of an earlier
+// attempt preferred (the owner, 2026-10-01: "yes on the decision."). It closes
+// stranded in review (spec section 6).
 func Ask(s State, p string, two []string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -427,22 +422,13 @@ func Ask(s State, p string, two []string) (State, error) {
 	}
 	pr := s.Primaries[p]
 	sorted := addSorted(nil, two...)
-	if len(pr.Pair) > 0 {
-		if Join(sorted) != Join(pr.Pair) {
-			return s, badChoice("%s asked of %v, not the readers kept on it %v", p, sorted, pr.Pair)
-		}
-	}
-	var next []string
-	if len(pr.Pair) == 0 {
-		if next = s.NextReaders(p, 2); Join(sorted) != Join(addSorted(nil, next...)) {
-			return s, badChoice("%s asked of %v, not the next two readers round the readers, %v (past %q)", p, two, next, s.AskLast)
-		}
+	next := s.NextReaders(p, 2)
+	if Join(sorted) != Join(addSorted(nil, next...)) {
+		return s, badChoice("%s asked of %v, not the next two readers round the readers, %v (past %q)", p, two, next, s.AskLast)
 	}
 	n := s.Clone()
-	if len(next) == 2 {
-		order := addSorted(nil, s.Readers...)
-		n.AskLast = roundPast(order, roundPast(order, s.AskLast, next[0]), next[1])
-	}
+	order := addSorted(nil, s.Readers...)
+	n.AskLast = roundPast(order, roundPast(order, s.AskLast, next[0]), next[1])
 	n.AskStreamLast = roundPast(s.streamOrder(pr.Stream), s.AskStreamLast, pr.Stream) // the ask's stream index moves past it (errata 3 amendment 10)
 	for _, r := range two {
 		id := RC(p, pr.Attempt, r)
@@ -610,8 +596,7 @@ func Accept(s State, set []string) (State, error) {
 // next member round the fleet (ReworkChoice: errata 3 amendment 5, the member
 // of the attempt's work card avoided unless no other has room; the index moved
 // past it), and the primary goes review -> working; with none up (m is "")
-// review -> ready. The readers are kept (D2);
-// its card judgments close.
+// review -> ready; its card judgments close.
 func Rework(s State, p, m string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err

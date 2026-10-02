@@ -19,11 +19,14 @@ func TestWorkerTakeRetryIdentityAndEmptyResultContract(t *testing.T) {
 		emptyFirst bool
 		retryID    string
 		working    int
+		moved      int
 		replay     bool
 	}{
-		{name: "committed take replays with its original identity", retryID: "wire-take", working: 2, replay: true},
-		{name: "new identity can take different ready cards", retryID: "wire-take-new", working: 4},
-		{name: "an empty take is reevaluated when cards become ready", emptyFirst: true, retryID: "wire-take", working: 2},
+		{name: "committed take replays with its original identity", retryID: "wire-take", working: 2, moved: 2, replay: true},
+		// the width is hard (sprint.takeOne): m1 has its two working, so a take under a new
+		// identity moves nothing, where it once took two more past the width
+		{name: "new identity at the width takes nothing more", retryID: "wire-take-new", working: 2},
+		{name: "an empty take is reevaluated when cards become ready", emptyFirst: true, retryID: "wire-take", working: 2, moved: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -47,7 +50,7 @@ func TestWorkerTakeRetryIdentityAndEmptyResultContract(t *testing.T) {
 			var result output
 			require.NoError(t, json.Unmarshal([]byte(ta.ok("take --as m1 --limit 2 --epoch 0 --op "+tc.retryID+" --json")), &result))
 			assert.Equal(t, tc.replay, result.Replay)
-			assert.Len(t, result.Moved, 2)
+			assert.Len(t, result.Moved, tc.moved)
 			var queue struct {
 				Cards []queueCard `json:"cards"`
 			}

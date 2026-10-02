@@ -217,7 +217,7 @@ func (n *State) tickAsk(choice map[string][]string) error {
 	for _, p := range review {
 		two := choice[p]
 		if two == nil {
-			two = n.defaultPair(p)
+			two = n.NextReaders(p, 2)
 		}
 		next, err := Ask(*n, p, two)
 		if err != nil {
@@ -255,13 +255,6 @@ func (n *State) tickAccept() error {
 	}
 	*n = next
 	return nil
-}
-
-func (s State) defaultPair(p string) []string {
-	if pair := s.Primaries[p].Pair; len(pair) > 0 {
-		return append([]string(nil), pair...)
-	}
-	return s.NextReaders(p, 2)
 }
 
 // Release is the spec's release (section 16): the coordinator alone lands
