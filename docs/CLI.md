@@ -1340,7 +1340,15 @@ nova-update release build --version v0.17.0 --out ./release --source . --platfor
 comma-separated — writes and verifies a `SHA256SUMS` per platform, and writes that file's own sha256
 to `SUMS.digest` beside it. An unsupported `goos-goarch` refuses before the first compile, so no
 half-made directory is left behind. One `RELEASE BUILT` line per platform, then one
-`RELEASE BUILD OK … platforms=<a,b,c> sums=<sha256,…>`.
+`RELEASE BUILD OK … platforms=<a,b,c> sums=<sha256,…> pruned=<n> prune-failed=<n>`.
+
+Retention, after a successful `build` (in `--out`) and a successful `install` (in `--from`): a
+directory directly under that root whose name is a version (`release.ValidVersion`) is removed unless
+it is the version just built or installed, the version the machine had installed before it (`build`:
+the running nova-update's stamp; `install`: every version the bin directory's binaries answered
+before the install), or one of the 3 newest of the rest by modification time
+(`release.KeepBesides`). Anything else in the root is left alone, and a removal that fails is said
+on stderr and counted in `prune-failed=`; it never fails the build or the install.
 
 ```sh
 nova-update release install --from ./release --version v0.17.0 --bin ~/.local/bin --retire ~/go/bin

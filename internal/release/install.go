@@ -196,6 +196,10 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		versionOf = ExecVersion
 	}
 	installed, skipped := 0, 0
+	// What the bin directory answered BEFORE this install: the versions its
+	// binaries came from, which the prune below never removes, so a bad build
+	// can be put back by re-installing the one it replaced.
+	var before []string
 	for _, a := range arts {
 		// a.Name is the file name the BUILD chose for the target platform --
 		// ToolFile, so `nova-bus.exe` in a windows release -- read back out of
@@ -209,7 +213,11 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		// not of a marker file: a marker says what somebody meant to install,
 		// and the whole point of the version verbs is to say what is actually
 		// there.
-		if line, err := versionOf(ctx, target); err == nil && hasToken(line, o.version) {
+		line, err := versionOf(ctx, target)
+		if err == nil {
+			before = append(before, line)
+		}
+		if err == nil && hasToken(line, o.version) {
 			skipped++
 			continue
 		}
@@ -227,8 +235,23 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 			return refusal(errs, "INSTALL", err)
 		}
 	}
-	fmt.Fprintf(out, "RELEASE INSTALLED version=%s tools=%d skipped=%d retired=%d bin=%s platform=%s\n",
-		field(o.version), installed, skipped, retired, field(o.bin), field(goos+"-"+goarch))
+	// LAST, and never a reason to fail: the install has succeeded and been
+	// verified, and the old version directories under --from are removed by
+	// the rule in prune.go. The one being installed and every one the bin
+	// directory answered before it stay.
+	pruned, pruneFailed := pruneDefault(o.from, func(name string) bool {
+		if name == o.version {
+			return true
+		}
+		for _, line := range before {
+			if hasToken(line, name) {
+				return true
+			}
+		}
+		return false
+	}, errs)
+	fmt.Fprintf(out, "RELEASE INSTALLED version=%s tools=%d skipped=%d retired=%d bin=%s platform=%s pruned=%d prune-failed=%d\n",
+		field(o.version), installed, skipped, retired, field(o.bin), field(goos+"-"+goarch), pruned, pruneFailed)
 	return 0
 }
 
