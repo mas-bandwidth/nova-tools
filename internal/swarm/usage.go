@@ -8,7 +8,7 @@ import (
 
 // A field the provider did not report is the literal "-", never 0: a zero is a
 // measurement and a dash is an absence, and nova-tokens reads this file and reads "-" as
-// unknown (SPEC-TOKENS rule 14).
+// unknown.
 
 // The ways a job ends, as the `end` column spells them.
 const (
@@ -19,12 +19,12 @@ const (
 	EndUnknown      = "unknown"
 	// EndProvider is a launch that did not take: the harness died inside the launch
 	// grace with a provider server error in its tail. It is retried with backoff and,
-	// after the third fast failure, is filed with the provider's own ref (issue #900).
+	// after the third fast failure, is filed with the provider's own ref.
 	EndProvider = "provider"
 	// EndWall is a job the harness's own fence stopped at a path outside it, with no
-	// RESULT.md: the death names the path and the commits ./repo kept (issue #918). It is
+	// RESULT.md: the death names the path and the commits ./repo kept. It is
 	// also a card the harness's own fence or the OS wall stopped before it could publish:
-	// the machinery ended the task, not the model (wall.go, issue #644's follow-up).
+	// the machinery ended the task, not the model (wall.go).
 	EndWall = "wall"
 )
 
@@ -57,18 +57,18 @@ type ProviderUsage struct {
 // TokenColumns are nova-tokens's five types, which are the five this tool sums.
 var TokenColumns = []string{"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning"}
 
-// BudgetColumns are the columns rule 13's budget counts: what the job SENT, what it
+// BudgetColumns are the columns the budget counts: what the job SENT, what it
 // GENERATED, and what it REASONED. Cache reads are the provider re-reading context it
 // already holds, and cache writes are that context being laid down once; neither is work
 // this job asked for, and counting them ended a real four-million-token job at 4.18M in
-// under three minutes with zero findings (dogfood D6, 2026-09-11). The usage ROW keeps all
+// under three minutes with zero findings. The usage ROW keeps all
 // five columns -- `cost` reads what it always read -- the BUDGET counts these three.
 var BudgetColumns = []string{"tokens_in", "tokens_out", "reasoning"}
 
-// Budget is rule 13's observed spend: the same arithmetic as Sum over BudgetColumns.
+// Budget is the observed spend: the same arithmetic as Sum over BudgetColumns.
 func (u ProviderUsage) Budget() (sum int, seen int, partial bool) { return u.add(BudgetColumns) }
 
-// BudgetWord is rule 13's ceiling and what was observed under it, in the four spellings
+// BudgetWord is the ceiling and what was observed under it, in the four spellings
 // the document names, and it is the ONE place either route renders them:
 //
 //	unmetered   the caller said this provider has no live accounting
@@ -78,8 +78,8 @@ func (u ProviderUsage) Budget() (sum int, seen int, partial bool) { return u.add
 //	<s>/<n>     a whole observation
 //
 // THE POOL'S `RUN DONE`/`RUN KILLED` AND `native`'s `NATIVE OK` BOTH COME THROUGH HERE
-// (rule 13d: "Everything rule 13 says about the word, the sum, the stop, the record and a
-// source that cannot be read holds for a native card"). Two renderings of one field is how
+// because everything about the word, the sum, the stop, the record and a source
+// that cannot be read holds for a native card too. Two renderings of one field is how
 // one of them drifts, and a reader who learned the field on one line would misread it on
 // the other.
 func BudgetWord(unmetered bool, tokens, spent int, observed, partial bool) string {
