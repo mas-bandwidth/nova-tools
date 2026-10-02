@@ -1,8 +1,8 @@
 # Prepared bus delivery — proposal for the version-report recovery gap
 
 Status: independently approved specification, not implemented. This is the bounded
-dependency of SPEC-UPDATE rules 24–25. Johnny approved the exact contract at
-5f73dc1 (johnny-2b82f17a9453), review only; the two requested clarifications follow. Existing ordinary send is
+dependency for version-report recovery. Its complete
+contract is stated here. Existing ordinary send is
 unchanged. No new timer, service, friend identity or update policy is introduced.
 
 ## Why
@@ -90,7 +90,7 @@ prepared artifact and the exact observed map it describes. Each later explicit
 `--send` resolves that pending artifact first, even when no installed version
 changed. Remote-confirmed success updates `delivered` and clears pending atomically.
 
-If today's observation differs while an older report is pending, finish the old
+If a new observation differs while a report is pending, finish the pending
 report first. If that cannot be confirmed within budget, retain it, report the
 pending gate and do not send a newer report. If confirmed, a newer observation can
 be prepared, atomically saved and sent using the remaining budget. Never discard
@@ -125,7 +125,7 @@ Use real disposable local bare Git remotes, not only fake SEND text:
 - A fully confirmed unchanged report makes zero bus invocations on the next run.
 
 Public fixtures are synthetic. Friends choose recipients; version statuses do not
-wake Johnny through To. New versions remain a choice, and working alternatives
+notify recipients through To. New versions remain a choice, and working alternatives
 remain welcome.
 
 ## Tests this spec demands
@@ -171,8 +171,8 @@ remain unproven by any test.
 31. `TestNewObservationCannotReplaceUnresolvedPending` — with `--snapshot`, store `pending` (scope + artifact + observed map) before sending.
 32. `TestPendingBeforeDispatchAndQuietRetry` — each later `--send` resolves the pending artifact first, even when no installed version changed.
 33. `TestNewObservationCannotReplaceUnresolvedPending` — remote-confirmed success updates `delivered` and clears pending atomically.
-34. `TestNewObservationCannotReplaceUnresolvedPending` — if today's observation differs while an older report is pending, finish the old report first.
-35. `TestNewObservationCannotReplaceUnresolvedPending` — if the old report cannot be confirmed within budget, retain it, report the pending gate, and do not send a newer report.
+34. `TestNewObservationCannotReplaceUnresolvedPending` — if a new observation differs while a report is pending, finish the pending report first.
+35. `TestNewObservationCannotReplaceUnresolvedPending` — if the pending report cannot be confirmed within budget, retain it, report the pending gate, and do not send a newer report.
 36. `TestNewObservationCannotReplaceUnresolvedPending` — if confirmed, a newer observation is prepared, atomically saved and sent with the remaining budget; never discard an old report merely because a newer observation exists.
 37. `TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked` — without `--snapshot` a plain report/draft writes nothing and each send is a new intention; the artifact is held in memory for bounded in-process retry only.
 38. `TestDeliveryScopeAndPreparedArtifactChecks` — recipient suppression compares confirmed delivery by scope; local observations and timestamps never suppress a first delivery.
