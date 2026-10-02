@@ -59,7 +59,7 @@ func TestATwinNotTickingIsRunningAndItsRemedyIsTheTick(t *testing.T) {
 
 	add := twinOK(t, file, later, "add --stream s1 --count 1")
 	assert.Contains(t, add, "-> ETA  machine: running\n", "a verb's sprint line")
-	assert.NotContains(t, add, "STOPPED")
+	assert.NotContains(t, add, "\nSTOPPED")
 
 	// a stop by hand is still STOPPED on a twin
 	twinOK(t, file, later, "stop")

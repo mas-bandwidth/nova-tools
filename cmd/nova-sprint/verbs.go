@@ -858,11 +858,21 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	fmt.Fprintf(stdout, "INIT OK tables=%s view=%s\n", strings.Join([]string{st.Names.Table(sprint.Work), st.Names.Table(sprint.Readers), st.Names.Table(sprint.Merge), st.Names.Table(sprint.Fleet)}, ","), st.Names.View())
+	readerRows, err := st.ReaderRows(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
+		return 1
+	}
+	fmt.Fprintf(stdout, "INIT OK tables=%s view=%s readers=%s\n", strings.Join([]string{st.Names.Table(sprint.Work), st.Names.Table(sprint.Readers), st.Names.Table(sprint.Merge), st.Names.Table(sprint.Fleet)}, ","), st.Names.View(), dashed(strings.Join(readerRows, ",")))
 	for _, m := range specs {
 		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m.Name, c.actor, m.Width), stdout, stderr); code != 0 {
 			return code
 		}
+	}
+	if len(specs) > 0 && a.twinOpen(c.redis) {
+		// a twin beats every member at every verb (beatTwin): a member added
+		// down beats at the next verb and is up from the next tick's presence
+		fmt.Fprintln(stdout, "NOTE a twin beats every member at every verb: each member added is up after the next nova-sprint tick")
 	}
 	return 0
 }
@@ -972,6 +982,9 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if st, err = a.store(*c); err != nil {
 			return refuse(stderr, "add", err.Error())
 		}
+	}
+	if *brief == "" && *sentinel == "" {
+		c.says = append(c.says, "the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>")
 	}
 	if len(rs) == 1 {
 		return a.runStep("add", *c, st, store.AddStep(rs[0]), stdout, stderr)
@@ -1429,7 +1442,52 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 		ps, _ := st.Packets(ctx, mine)
 		return ps
 	}
+	if len(ids) == 0 && *limit >= 0 {
+		c.after = func(ctx context.Context, st *store.Store, res store.Result) []string {
+			return takeShort(ctx, st, res, members, max(*limit, 1))
+		}
+	}
 	return a.runStep(name, *c, st, store.TakeStep(sprint.TakeReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Gens: gens, Who: *as}), stdout, stderr)
+}
+
+// takeShort is why a take by count took fewer than asked, one line per member
+// it names: the member is not up, it is at its width (the width is hard: it
+// takes another as one is finished, sprint.Take), or its ready queue is
+// empty. A member that took what it asked says nothing.
+func takeShort(ctx context.Context, st *store.Store, res store.Result, members []string, asked int) []string {
+	taken := map[string]bool{}
+	for _, m := range res.Moved {
+		if f := strings.Fields(m); len(f) > 0 {
+			taken[f[0]] = true
+		}
+	}
+	s, err := st.Load(ctx, []string{sprint.Fleet}, nil)
+	if err != nil {
+		return []string{"why the take took what it did is not known: the fleet table did not read: " + err.Error()}
+	}
+	var out []string
+	for _, m := range members {
+		working := s.Fleet.Cell(m, sprint.Working)
+		n := 0
+		for _, x := range working {
+			if taken[x.ID] {
+				n++
+			}
+		}
+		if n >= asked || !s.Fleet.HasRow(m) {
+			continue
+		}
+		head := fmt.Sprintf("%s took %d of the %d asked: ", m, n, asked)
+		switch status := s.MemberCtl(m).F("status"); {
+		case status != sprint.Up:
+			out = append(out, head+"it is "+orDashStr(status, "-")+", and only a member up takes")
+		case len(working) >= s.Width(m):
+			out = append(out, fmt.Sprintf("%sit is at its width, %d working of %d; it takes another as it finishes one", head, len(working), s.Width(m)))
+		case len(s.Fleet.Cell(m, sprint.Ready)) == 0:
+			out = append(out, head+"its ready queue is empty")
+		}
+	}
+	return out
 }
 
 func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
