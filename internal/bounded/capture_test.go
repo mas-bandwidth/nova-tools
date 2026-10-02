@@ -13,12 +13,16 @@ func TestCaptureCancelsAtExactLimitWithoutKeepingACompletePrefix(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	b := NewCapture(4, cancel)
-	if n, e := b.Write([]byte("abc")); n != 3 || e != nil || b.Hit() {
-		t.Fatal(n, e, b.Hit())
-	}
-	if n, e := b.Write([]byte("defgh")); n != 5 || e != nil || !b.Hit() {
-		t.Fatal(n, e, b.Hit())
-	}
+	n, err := b.Write([]byte("abc"))
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
+	require.False(t, b.Hit())
+
+	n, err = b.Write([]byte("defgh"))
+	require.NoError(t, err)
+	require.Equal(t, 5, n)
+	require.True(t, b.Hit())
+
 	require.Equal(t, "abcd", string(b.Bytes()), "capture not capped/cancelled")
 	require.Error(t, ctx.Err(), "capture not capped/cancelled")
 }
