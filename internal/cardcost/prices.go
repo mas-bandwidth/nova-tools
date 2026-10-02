@@ -66,20 +66,6 @@ func (p Prices) Copy() string {
 	return strings.Join(parts, ",")
 }
 
-// ParseCopy is the sheet a card's copy holds (Copy); a part it does not know is skipped.
-func ParseCopy(s string) Prices {
-	f := map[string]string{}
-	keys := map[string]string{"in": FieldInput, "cr": FieldCacheRead, "cw": FieldCacheWrite, "out": FieldOutput, "ro": FieldReasoningAsOutput,
-		"long": FieldLongContext, "inl": FieldInputLong, "outl": FieldOutputLong, "req": FieldRequest, "bill": FieldBilling, "gw": FieldGateway, "asof": FieldAsOf}
-	for _, part := range strings.Split(s, ",") {
-		k, v, ok := strings.Cut(part, ":")
-		if name, known := keys[k]; ok && known {
-			f[name] = v
-		}
-	}
-	return PricesOf(f)
-}
-
 // Sum is the exact sum of decimal strings, "" left out; ok is false when one is
 // not a decimal.
 func Sum(vals ...string) (sum string, ok bool) {

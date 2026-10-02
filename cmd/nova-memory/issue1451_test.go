@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // #1451: nova-memory's missing-flag and bad-value refusals bypassed refuse() and
@@ -19,9 +22,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 	const door = "; run: nova-memory help"
 
 	exit, banner, stderr := runCLI(t, "", "help")
-	if exit != 0 {
-		t.Fatalf("`nova-memory help` exited %d, want 0; stderr: %s", exit, stderr)
-	}
+	require.Equalf(t, 0, exit, "`nova-memory help` exited %d, want 0; stderr: %s", exit, stderr)
 	// The verbs come from the tool's own help output, not a list typed here, so a
 	// verb added to the banner later is covered the day its row appears.
 	var verbs []string
@@ -36,9 +37,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 			verbs = append(verbs, fields[1])
 		}
 	}
-	if len(verbs) == 0 {
-		t.Fatal("no verbs enumerated from the help banner; the test would check nothing")
-	}
+	require.NotEmpty(t, verbs, "no verbs enumerated from the help banner; the test would check nothing")
 
 	for _, verb := range verbs {
 		if verb == "version" {
@@ -48,25 +47,17 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 		}
 		t.Run(verb, func(t *testing.T) {
 			exit, stdout, stderr := runCLI(t, "", verb)
-			if exit != 2 {
-				t.Fatalf("`nova-memory %s` with no flags exited %d, want 2; stderr: %s", verb, exit, stderr)
-			}
-			if stdout != "" {
-				t.Errorf("`nova-memory %s` refused but wrote to stdout: %q", verb, stdout)
-			}
+			require.Equalf(t, 2, exit, "`nova-memory %s` with no flags exited %d, want 2; stderr: %s", verb, exit, stderr)
+			assert.Equalf(t, "", stdout, "`nova-memory %s` refused but wrote to stdout: %q", verb, stdout)
 			refusals := 0
 			for _, line := range strings.Split(strings.TrimSuffix(stderr, "\n"), "\n") {
 				if line == "" || strings.HasPrefix(line, "  ") {
 					continue // an indented hint is guidance on its own line, not the refusal
 				}
 				refusals++
-				if !strings.HasSuffix(line, door) {
-					t.Errorf("`nova-memory %s` refusal does not end at the door: %q", verb, line)
-				}
+				assert.Truef(t, strings.HasSuffix(line, door), "`nova-memory %s` refusal does not end at the door: %q", verb, line)
 			}
-			if refusals == 0 {
-				t.Errorf("`nova-memory %s` with no flags printed no refusal: %q", verb, stderr)
-			}
+			assert.NotEqualf(t, 0, refusals, "`nova-memory %s` with no flags printed no refusal: %q", verb, stderr)
 		})
 	}
 }

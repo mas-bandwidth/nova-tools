@@ -50,7 +50,7 @@ func TestBriefReplacesAnUnstartedPrimarysBriefOnAStoppedSprint(t *testing.T) {
 	assert.Equal(t, 2, code)
 	assert.NotContains(t, out, "MOVED")
 	assert.Contains(t, errs, "LINT DRIFT brief rule-worktree")
-	assert.Contains(t, errs, "nova-sprint brief: the brief fails the card lint")
+	assert.Contains(t, errs, "nova-sprint brief REFUSED: the brief fails the card lint")
 	assert.Equal(t, applies, ta.applies(), "a brief that fails the lint wrote")
 	assert.Equal(t, before.Fields["brief"], ta.primary("a-2").F("brief"))
 

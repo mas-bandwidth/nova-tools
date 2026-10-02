@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // longBusOfNotes hands a test a checkout standing `commits` commits above the fixture's
@@ -58,8 +60,9 @@ func longBusOfNotes(t *testing.T, commits, notes int) (checkout, base string) {
 	b.WriteString("done\n")
 	cmd := exec.Command("git", "-C", checkout, "fast-import", "--quiet")
 	cmd.Stdin = strings.NewReader(b.String())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git fast-import %d commits carrying %d notes: %v\n%s", commits, notes, err, out)
+	{
+		out, err := cmd.CombinedOutput()
+		require.NoErrorf(t, err, "git fast-import %d commits carrying %d notes: %v\n%s", commits, notes, err, out)
 	}
 	// fast-import moved the branch under the working tree; this is what puts the notes in
 	// it, and it leaves the checkout clean, which inbox --advance requires.

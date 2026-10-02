@@ -82,6 +82,9 @@ func LoadConfig(busDir string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w%s", ConfigName, err, RosterShape)
 	}
+	if trimmed := strings.TrimSpace(string(raw)); trimmed != "" && trimmed[0] != '{' {
+		return nil, fmt.Errorf("%s must be one JSON object%s", ConfigName, RosterShape)
+	}
 	// Duplicate keys inside one object are last-win in encoding/json. Refuse them the
 	// same way the prepared path does, with the same check.
 	dup := json.NewDecoder(strings.NewReader(string(raw)))
@@ -92,6 +95,10 @@ func LoadConfig(busDir string) (*Config, error) {
 	dec.DisallowUnknownFields()
 	var c Config
 	if err := dec.Decode(&c); err != nil {
+		var shape *json.UnmarshalTypeError
+		if errors.As(err, &shape) {
+			return nil, fmt.Errorf("%s: field %q has the wrong JSON value type%s", ConfigName, shape.Field, RosterShape)
+		}
 		return nil, fmt.Errorf("%s: %w%s", ConfigName, err, RosterShape)
 	}
 	// A second top-level value would otherwise be silently ignored, and a roster whose

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func now() time.Time {
@@ -30,9 +32,7 @@ func invoke(t *testing.T, stdin string, args ...string) result {
 
 func (r result) mustCode(t *testing.T, want int) result {
 	t.Helper()
-	if r.code != want {
-		t.Fatalf("exit %d, want %d\nstdout: %s\nstderr: %s", r.code, want, r.stdout, r.stderr)
-	}
+	require.Equalf(t, want, r.code, "exit %d, want %d\nstdout: %s\nstderr: %s", r.code, want, r.stdout, r.stderr)
 	return r
 }
 
@@ -43,9 +43,7 @@ func (r result) mustContain(t *testing.T, stream, want string) result {
 	if stream == "stderr" {
 		got, name = r.stderr, "stderr"
 	}
-	if !strings.Contains(got, want) {
-		t.Fatalf("%s does not contain %q:\n%s", name, want, got)
-	}
+	require.Containsf(t, got, want, "%s does not contain %q:\n%s", name, want, got)
 	return r
 }
 
@@ -62,12 +60,8 @@ func TestUsageAndUnknownVerb(t *testing.T) {
 func TestWaitUsageStatesUnadvancedCursorReturnsAtOnce(t *testing.T) {
 	t.Parallel()
 	banner := invoke(t, "", "help").mustCode(t, 0).stdout
-	if !strings.Contains(banner, "unadvanced cursor makes wait return AT ONCE") {
-		t.Fatalf("the usage text does not say plainly that an unadvanced cursor makes wait return at once:\n%s", banner)
-	}
-	if !strings.Contains(banner, "--advance --remote origin --branch main") {
-		t.Fatalf("the wait example loop does not show --advance:\n%s", banner)
-	}
+	require.Containsf(t, banner, "unadvanced cursor makes wait return AT ONCE", "the usage text does not say plainly that an unadvanced cursor makes wait return at once:\n%s", banner)
+	require.Containsf(t, banner, "--advance --remote origin --branch main", "the wait example loop does not show --advance:\n%s", banner)
 }
 
 func TestCheckRefusesABusWithNoRoster(t *testing.T) {

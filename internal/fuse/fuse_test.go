@@ -13,7 +13,6 @@ defect this package exists to prevent and is the one that fails OPEN.
 package fuse
 
 import (
-	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -21,6 +20,9 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func boxIn(t *testing.T) string {
@@ -30,8 +32,9 @@ func boxIn(t *testing.T) string {
 
 func write(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("fixture write: %v", err)
+	{
+		err := os.WriteFile(path, []byte(content), 0o644)
+		require.NoError(t, err, "fixture write: %v", err)
 	}
 }
 
@@ -44,8 +47,9 @@ func TestAnAbsentBoxIsErrNoBoxNeverClear(t *testing.T) {
 	t.Parallel()
 
 	for _, path := range []string{boxIn(t), filepath.Join(t.TempDir(), "no", "such", "dir", "fuses.json")} {
-		if _, err := ReadBox(path); !errors.Is(err, ErrNoBox) {
-			t.Errorf("ReadBox(%s) = %v, want ErrNoBox", path, err)
+		{
+			_, err := ReadBox(path)
+			assert.ErrorIs(t, err, ErrNoBox, "ReadBox(%s) = %v, want ErrNoBox", path, err)
 		}
 	}
 }
@@ -56,22 +60,27 @@ func TestCreateBoxIsEmptyExclusiveAndNeverReplaces(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "sub", "fuses.json")
-	if err := CreateBox(path); err != nil {
-		t.Fatal(err)
+	{
+		err := CreateBox(path)
+		require.NoError(t, err)
 	}
 	b, err := ReadBox(path)
-	if err != nil || b.Lockdown != nil || b.Quarantine == nil || len(b.Quarantine) != 0 {
-		t.Fatalf("a created box reads %+v, %v; want empty, non-nil Quarantine", b, err)
-	}
+	require.NoError(t, err, "a created box reads %+v, %v; want empty, non-nil Quarantine", b, err)
+	require.Nil(t, b.Lockdown, "a created box reads %+v; want empty", b)
+	require.NotNil(t, b.Quarantine, "a created box must have non-nil Quarantine")
+	require.Empty(t, b.Quarantine, "a created box reads %+v; want empty", b)
 	write(t, path, `{"lockdown":{"at":"t","reason":"r"}}`)
-	if err := CreateBox(path); !errors.Is(err, fs.ErrExist) {
-		t.Errorf("CreateBox over a box = %v, want fs.ErrExist", err)
+	{
+		err := CreateBox(path)
+		assert.ErrorIs(t, err, fs.ErrExist, "CreateBox over a box = %v, want fs.ErrExist", err)
 	}
-	if got, _ := os.ReadFile(path); string(got) != `{"lockdown":{"at":"t","reason":"r"}}` {
-		t.Errorf("CreateBox replaced a box: %q", got)
+	{
+		got, _ := os.ReadFile(path)
+		assert.Equal(t, `{"lockdown":{"at":"t","reason":"r"}}`, string(got), "CreateBox replaced a box: %q", got)
 	}
-	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
-		t.Errorf("CreateBox left litter: %v", entries)
+	{
+		entries, _ := os.ReadDir(filepath.Dir(path))
+		assert.Len(t, entries, 1, "CreateBox left litter: %v", entries)
 	}
 }
 
@@ -90,13 +99,15 @@ func TestUnreadableBoxIsAnErrorNotClear(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fuses.json")
 	write(t, path, `{"lockdown":null,"quarantine":{}}`)
-	if err := os.Chmod(path, 0o000); err != nil {
-		t.Fatalf("chmod: %v", err)
+	{
+		err := os.Chmod(path, 0o000)
+		require.NoError(t, err, "chmod: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
 
-	if _, err := ReadBox(path); err == nil {
-		t.Fatal("an unreadable box must be CANNOT TELL, never clear -- this is the fail-open")
+	{
+		_, err := ReadBox(path)
+		require.Error(t, err, "an unreadable box must be CANNOT TELL, never clear -- this is the fail-open")
 	}
 }
 
@@ -118,8 +129,9 @@ func TestMalformedIsUnreadable(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			path := boxIn(t)
 			write(t, path, content)
-			if _, err := ReadBox(path); err == nil {
-				t.Errorf("%s must be unreadable, but it parsed", name)
+			{
+				_, err := ReadBox(path)
+				assert.Error(t, err, "%s must be unreadable, but it parsed", name)
 			}
 		})
 	}
@@ -134,12 +146,8 @@ func TestNullQuarantineStillYieldsAUsableMap(t *testing.T) {
 	path := boxIn(t)
 	write(t, path, `{"lockdown":null,"quarantine":null}`)
 	b, err := ReadBox(path)
-	if err != nil {
-		t.Fatalf("a null quarantine is readable: %v", err)
-	}
-	if b.Quarantine == nil {
-		t.Fatal("Quarantine must be normalised to an empty map, not left nil")
-	}
+	require.NoError(t, err, "a null quarantine is readable: %v", err)
+	require.NotNil(t, b.Quarantine, "Quarantine must be normalised to an empty map, not left nil")
 	b.Quarantine["x"] = Fuse{} // must not panic
 }
 
@@ -152,8 +160,9 @@ func TestSurfaceMatchingIgnoresCaseAndSpace(t *testing.T) {
 
 	b := Box{Quarantine: map[string]Fuse{"discord": {At: "t", Reason: "many the same way"}}}
 	for _, probe := range []string{"discord", "Discord", "DISCORD", "  discord  ", "\tDiscord\n"} {
-		if _, _, ok := b.Quarantined(probe); !ok {
-			t.Errorf("%q must match the stored surface -- equivalent spellings are ONE surface", probe)
+		{
+			_, _, ok := b.Quarantined(probe)
+			assert.True(t, ok, "%q must match the stored surface -- equivalent spellings are ONE surface", probe)
 		}
 	}
 }
@@ -165,12 +174,8 @@ func TestQuarantinedReturnsTheStoredSpelling(t *testing.T) {
 
 	b := Box{Quarantine: map[string]Fuse{"Discord": {Reason: "r"}}}
 	name, _, ok := b.Quarantined("discord")
-	if !ok {
-		t.Fatal("expected a match")
-	}
-	if name != "Discord" {
-		t.Errorf("want the stored key %q, got %q", "Discord", name)
-	}
+	require.True(t, ok, "expected a match")
+	assert.Equal(t, "Discord", name, "want the stored key %q, got %q", "Discord", name)
 }
 
 // TestEmptySurfaceMatchesNothing. A check with no surface has verified only that there is
@@ -181,8 +186,9 @@ func TestEmptySurfaceMatchesNothing(t *testing.T) {
 
 	b := Box{Quarantine: map[string]Fuse{"discord": {Reason: "r"}, "": {Reason: "r"}}}
 	for _, probe := range []string{"", "   ", "\t"} {
-		if _, _, ok := b.Quarantined(probe); ok {
-			t.Errorf("empty surface %q must match nothing", probe)
+		{
+			_, _, ok := b.Quarantined(probe)
+			assert.False(t, ok, "empty surface %q must match nothing", probe)
 		}
 	}
 }
@@ -197,12 +203,11 @@ func TestQuarantinedIsDeterministicAcrossFoldEquivalentKeys(t *testing.T) {
 		"dis\tcord": {At: "t", Reason: "two"},
 	}}
 	first, _, ok := b.Quarantined("dis cord")
-	if !ok {
-		t.Fatal("want a match")
-	}
+	require.True(t, ok, "want a match")
 	for i := 0; i < 30; i++ {
-		if name, _, _ := b.Quarantined("dis cord"); name != first {
-			t.Fatalf("Quarantined answered %q then %q for the same box", first, name)
+		{
+			name, _, _ := b.Quarantined("dis cord")
+			require.Equal(t, first, name, "Quarantined answered %q then %q for the same box", first, name)
 		}
 	}
 }
@@ -215,9 +220,7 @@ func TestSurfacesAreSorted(t *testing.T) {
 
 	b := Box{Quarantine: map[string]Fuse{"zulip": {}, "discord": {}, "matrix": {}}}
 	got := strings.Join(b.Surfaces(), ",")
-	if got != "discord,matrix,zulip" {
-		t.Errorf("want sorted order, got %q", got)
-	}
+	assert.Equal(t, "discord,matrix,zulip", got, "want sorted order, got %q", got)
 }
 
 // ------------------------------------------------------------------- 3. THE WRITE IS SAFE
@@ -232,18 +235,19 @@ func TestWriteThenReadRoundTrips(t *testing.T) {
 		Lockdown:   &Fuse{At: "2026-08-03T00:00:00Z", Reason: "suspected compromise"},
 		Quarantine: map[string]Fuse{"discord": {At: "2026-08-03T00:01:00Z", Reason: "many the same way"}},
 	}
-	if err := WriteBox(path, in); err != nil {
-		t.Fatalf("write: %v", err)
+	{
+		err := WriteBox(path, in)
+		require.NoError(t, err, "write: %v", err)
 	}
 	out, err := ReadBox(path)
-	if err != nil {
-		t.Fatalf("read back: %v", err)
+	require.NoError(t, err, "read back: %v", err)
+	if assert.NotNil(t, out.Lockdown, "lockdown did not survive the round trip: %+v", out.Lockdown) {
+		assert.Equal(t, "suspected compromise", out.Lockdown.Reason, "lockdown did not survive the round trip: %+v", out.Lockdown)
 	}
-	if out.Lockdown == nil || out.Lockdown.Reason != "suspected compromise" {
-		t.Errorf("lockdown did not survive the round trip: %+v", out.Lockdown)
-	}
-	if f, ok := out.Quarantine["discord"]; !ok || f.Reason != "many the same way" {
-		t.Errorf("quarantine did not survive the round trip: %+v", out.Quarantine)
+	{
+		f, ok := out.Quarantine["discord"]
+		assert.True(t, ok, "quarantine did not survive the round trip: %+v", out.Quarantine)
+		assert.Equal(t, "many the same way", f.Reason, "quarantine did not survive the round trip: %+v", out.Quarantine)
 	}
 }
 
@@ -255,17 +259,14 @@ func TestWriteLeavesNoTempLitter(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fuses.json")
-	if err := WriteBox(path, Box{}); err != nil {
-		t.Fatalf("write: %v", err)
+	{
+		err := WriteBox(path, Box{})
+		require.NoError(t, err, "write: %v", err)
 	}
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("readdir: %v", err)
-	}
+	require.NoError(t, err, "readdir: %v", err)
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".fuses-") {
-			t.Errorf("temp file left behind: %s", e.Name())
-		}
+		assert.False(t, strings.HasPrefix(e.Name(), ".fuses-"), "temp file left behind: %s", e.Name())
 	}
 }
 
@@ -279,15 +280,15 @@ func TestWrittenBoxIsWorldReadable(t *testing.T) {
 		t.Skip("windows: unix permission bits are not faithfully reported here")
 	}
 	path := boxIn(t)
-	if err := WriteBox(path, Box{}); err != nil {
-		t.Fatalf("write: %v", err)
+	{
+		err := WriteBox(path, Box{})
+		require.NoError(t, err, "write: %v", err)
 	}
 	fi, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if perm := fi.Mode().Perm(); perm != 0o644 {
-		t.Errorf("want mode 0644, got %04o", perm)
+	require.NoError(t, err, "stat: %v", err)
+	{
+		perm := fi.Mode().Perm()
+		assert.Equal(t, os.FileMode(0o644), perm, "want mode 0644, got %04o", perm)
 	}
 }
 
@@ -302,17 +303,17 @@ func TestWriteBoxResolvesSymlink(t *testing.T) {
 
 	dir := t.TempDir()
 	target := filepath.Join(dir, "real.json")
-	if err := WriteBox(target, Box{}); err != nil {
-		t.Fatalf("WriteBox(target) failed: %v", err)
+	{
+		err := WriteBox(target, Box{})
+		require.NoError(t, err, "WriteBox(target) failed: %v", err)
 	}
 	before, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("ReadFile(target) failed: %v", err)
-	}
+	require.NoError(t, err, "ReadFile(target) failed: %v", err)
 
 	link := filepath.Join(dir, "link.json")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatalf("Symlink failed: %v", err)
+	{
+		err := os.Symlink(target, link)
+		require.NoError(t, err, "Symlink failed: %v", err)
 	}
 
 	b := Box{
@@ -320,27 +321,17 @@ func TestWriteBoxResolvesSymlink(t *testing.T) {
 			"discord": {At: "2026-09-28T00:00:00Z", Reason: "must not be written"},
 		},
 	}
-	if err := WriteBox(link, b); err == nil {
-		t.Fatal("WriteBox(link) succeeded; want refusal")
-	} else if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("WriteBox(link) error %q does not refuse a symlink", err)
-	}
+	err = WriteBox(link, b)
+	require.Error(t, err, "WriteBox(link) succeeded; want refusal")
+	require.Contains(t, err.Error(), "symlink", "WriteBox(link) error %q does not refuse a symlink", err)
 
 	lst, err := os.Lstat(link)
-	if err != nil {
-		t.Fatalf("Lstat(%q) failed: %v", link, err)
-	}
-	if lst.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("link %q is no longer a symlink", link)
-	}
+	require.NoError(t, err, "Lstat(%q) failed: %v", link, err)
+	require.NotZero(t, lst.Mode()&os.ModeSymlink, "link %q is no longer a symlink", link)
 
 	after, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("ReadFile(target) failed: %v", err)
-	}
-	if string(after) != string(before) {
-		t.Fatalf("target bytes changed:\nbefore: %s\nafter: %s", before, after)
-	}
+	require.NoError(t, err, "ReadFile(target) failed: %v", err)
+	require.Equal(t, string(before), string(after), "target bytes changed:\nbefore: %s\nafter: %s", before, after)
 }
 
 // TestWriteBoxRefusesParentSymlink asserts that WriteBox refuses writing when
@@ -355,24 +346,26 @@ func TestWriteBoxRefusesParentSymlink(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(root, "outside")
 	intended := filepath.Join(root, "intended")
-	if err := os.Mkdir(outside, 0o755); err != nil {
-		t.Fatal(err)
+	{
+		err := os.Mkdir(outside, 0o755)
+		require.NoError(t, err)
 	}
-	if err := os.Mkdir(intended, 0o755); err != nil {
-		t.Fatal(err)
+	{
+		err := os.Mkdir(intended, 0o755)
+		require.NoError(t, err)
 	}
 	target := filepath.Join(outside, "fuses.json")
-	if err := WriteBox(target, Box{}); err != nil {
-		t.Fatalf("WriteBox(target) failed: %v", err)
+	{
+		err := WriteBox(target, Box{})
+		require.NoError(t, err, "WriteBox(target) failed: %v", err)
 	}
 	before, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	linkdir := filepath.Join(intended, "linkdir")
-	if err := os.Symlink(outside, linkdir); err != nil {
-		t.Fatal(err)
+	{
+		err := os.Symlink(outside, linkdir)
+		require.NoError(t, err)
 	}
 
 	b := Box{
@@ -381,19 +374,13 @@ func TestWriteBoxRefusesParentSymlink(t *testing.T) {
 		},
 	}
 	linkBox := filepath.Join(linkdir, "fuses.json")
-	if err := WriteBox(linkBox, b); err == nil {
-		t.Fatal("WriteBox through parent symlink succeeded; want refusal")
-	} else if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("WriteBox error %q does not mention symlink", err)
-	}
+	err = WriteBox(linkBox, b)
+	require.Error(t, err, "WriteBox through parent symlink succeeded; want refusal")
+	require.Contains(t, err.Error(), "symlink", "WriteBox error %q does not mention symlink", err)
 
 	after, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
-		t.Fatalf("target bytes changed:\nbefore: %s\nafter: %s", before, after)
-	}
+	require.NoError(t, err)
+	require.Equal(t, string(before), string(after), "target bytes changed:\nbefore: %s\nafter: %s", before, after)
 }
 
 // TestWriteNormalisesNilQuarantine so a box written from a zero value reads back as an
@@ -402,16 +389,13 @@ func TestWriteNormalisesNilQuarantine(t *testing.T) {
 	t.Parallel()
 
 	path := boxIn(t)
-	if err := WriteBox(path, Box{}); err != nil {
-		t.Fatalf("write: %v", err)
+	{
+		err := WriteBox(path, Box{})
+		require.NoError(t, err, "write: %v", err)
 	}
 	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if strings.Contains(string(data), `"quarantine": null`) {
-		t.Errorf("nil quarantine must be written as {}, got:\n%s", data)
-	}
+	require.NoError(t, err, "read: %v", err)
+	assert.NotContains(t, string(data), `"quarantine": null`, "nil quarantine must be written as {}, got:\n%s", data)
 }
 
 // ------------------------------------------------- 3b. LIFTING A QUARANTINE IS SOFT
@@ -434,20 +418,23 @@ func TestLiftQuarantineRemovesEveryNormalizedMatch(t *testing.T) {
 		"bsky":      {At: "t3", Reason: "r3"},
 	}}
 	removed := b.LiftQuarantine("DISCORD")
-	if len(removed) != 2 {
-		t.Fatalf("want both spellings removed, got %v", removed)
+	require.Len(t, removed, 2, "want both spellings removed, got %v", removed)
+	{
+		f, ok := removed["Discord"]
+		assert.True(t, ok, "removed entries must come back with their reasons intact, got %v", removed)
+		assert.Equal(t, "r1", f.Reason, "removed entries must come back with their reasons intact, got %v", removed)
 	}
-	if f, ok := removed["Discord"]; !ok || f.Reason != "r1" {
-		t.Errorf("removed entries must come back with their reasons intact, got %v", removed)
+	{
+		_, ok := removed[" discord "]
+		assert.True(t, ok, "the second spelling must be removed too, got %v", removed)
 	}
-	if _, ok := removed[" discord "]; !ok {
-		t.Errorf("the second spelling must be removed too, got %v", removed)
+	{
+		_, _, ok := b.Quarantined("discord")
+		assert.False(t, ok, "a lifted surface must not still answer as quarantined")
 	}
-	if _, _, ok := b.Quarantined("discord"); ok {
-		t.Error("a lifted surface must not still answer as quarantined")
-	}
-	if _, _, ok := b.Quarantined("bsky"); !ok {
-		t.Error("lifting one surface must not lift another")
+	{
+		_, _, ok := b.Quarantined("bsky")
+		assert.True(t, ok, "lifting one surface must not lift another")
 	}
 }
 
@@ -457,12 +444,11 @@ func TestLiftQuarantineRemovesNothingWhenNothingMatches(t *testing.T) {
 	t.Parallel()
 
 	b := Box{Quarantine: map[string]Fuse{"bsky": {Reason: "r"}}}
-	if removed := b.LiftQuarantine("discord"); len(removed) != 0 {
-		t.Errorf("nothing matches, so nothing may be removed: %v", removed)
+	{
+		removed := b.LiftQuarantine("discord")
+		assert.Len(t, removed, 0, "nothing matches, so nothing may be removed: %v", removed)
 	}
-	if len(b.Quarantine) != 1 {
-		t.Errorf("a miss must leave the box alone, got %v", b.Quarantine)
-	}
+	assert.Len(t, b.Quarantine, 1, "a miss must leave the box alone, got %v", b.Quarantine)
 }
 
 // TestLiftQuarantineEmptySurfaceRemovesNothing mirrors Quarantined: an empty surface
@@ -473,13 +459,12 @@ func TestLiftQuarantineEmptySurfaceRemovesNothing(t *testing.T) {
 
 	b := Box{Quarantine: map[string]Fuse{"": {Reason: "r"}, "discord": {Reason: "r"}}}
 	for _, probe := range []string{"", "   ", "\t"} {
-		if removed := b.LiftQuarantine(probe); len(removed) != 0 {
-			t.Errorf("empty surface %q must lift nothing, got %v", probe, removed)
+		{
+			removed := b.LiftQuarantine(probe)
+			assert.Len(t, removed, 0, "empty surface %q must lift nothing, got %v", probe, removed)
 		}
 	}
-	if len(b.Quarantine) != 2 {
-		t.Errorf("the box must be untouched, got %v", b.Quarantine)
-	}
+	assert.Len(t, b.Quarantine, 2, "the box must be untouched, got %v", b.Quarantine)
 }
 
 // ----------------------------------------------------------- 4. EVIDENCE IS NOT DESTROYED
@@ -493,19 +478,11 @@ func TestPreserveUnreadableKeepsTheBytes(t *testing.T) {
 	path := boxIn(t)
 	write(t, path, `{"lockdown":{"at":`)
 	dst, err := PreserveUnreadable(path)
-	if err != nil {
-		t.Fatalf("preserve: %v", err)
-	}
-	if dst != path+UnreadableSuffix {
-		t.Errorf("want %q, got %q", path+UnreadableSuffix, dst)
-	}
+	require.NoError(t, err, "preserve: %v", err)
+	assert.Equal(t, path+UnreadableSuffix, dst, "want %q, got %q", path+UnreadableSuffix, dst)
 	got, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatalf("read preserved: %v", err)
-	}
-	if string(got) != `{"lockdown":{"at":` {
-		t.Errorf("the preserved bytes are not the original: %q", got)
-	}
+	require.NoError(t, err, "read preserved: %v", err)
+	assert.Equal(t, `{"lockdown":{"at":`, string(got), "the preserved bytes are not the original: %q", got)
 }
 
 // TestPreserveUnreadableNamesTheDestinationEvenWhenItFails. Reporting where the bytes went
@@ -516,12 +493,8 @@ func TestPreserveUnreadableNamesTheDestinationEvenWhenItFails(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "does-not-exist.json")
 	dst, err := PreserveUnreadable(path)
-	if err == nil {
-		t.Fatal("expected an error preserving a file that is not there")
-	}
-	if dst != path+UnreadableSuffix {
-		t.Errorf("the destination must be named even on failure, got %q", dst)
-	}
+	require.Error(t, err, "expected an error preserving a file that is not there")
+	assert.Equal(t, path+UnreadableSuffix, dst, "the destination must be named even on failure, got %q", dst)
 }
 
 // TestPreserveUnreadablePreservesExistingPermissions asserts that when the destination
@@ -539,23 +512,25 @@ func TestPreserveUnreadablePreservesExistingPermissions(t *testing.T) {
 	write(t, path, `{"corrupt":`)
 
 	dst := path + UnreadableSuffix
-	if err := os.WriteFile(dst, []byte("existing corrupt bytes\n"), 0o600); err != nil {
-		t.Fatalf("write dst: %v", err)
+	{
+		err := os.WriteFile(dst, []byte("existing corrupt bytes\n"), 0o600)
+		require.NoError(t, err, "write dst: %v", err)
 	}
-	if err := os.Chmod(dst, 0o600); err != nil {
-		t.Fatalf("chmod dst: %v", err)
+	{
+		err := os.Chmod(dst, 0o600)
+		require.NoError(t, err, "chmod dst: %v", err)
 	}
 
-	if _, err := PreserveUnreadable(path); err != nil {
-		t.Fatalf("PreserveUnreadable: %v", err)
+	{
+		_, err := PreserveUnreadable(path)
+		require.NoError(t, err, "PreserveUnreadable: %v", err)
 	}
 
 	fi, err := os.Stat(dst)
-	if err != nil {
-		t.Fatalf("stat dst: %v", err)
-	}
-	if perm := fi.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("preserved destination mode = %04o, want 0600 (existing permissions were widened)", perm)
+	require.NoError(t, err, "stat dst: %v", err)
+	{
+		perm := fi.Mode().Perm()
+		require.Equal(t, os.FileMode(0o600), perm, "preserved destination mode = %04o, want 0600 (existing permissions were widened)", perm)
 	}
 }
 
@@ -599,17 +574,12 @@ func TestOneLineEscapesEveryControlCharacter(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := OneLine(tc.in)
-			if got != tc.want {
-				t.Errorf("OneLine(%q) = %q, want %q", tc.in, got, tc.want)
-			}
-			if strings.ContainsFunc(got, unicode.IsControl) {
-				t.Errorf("OneLine(%q) = %q still holds a control character", tc.in, got)
-			}
-			if tc.in != "" && got == "" {
-				t.Errorf("OneLine(%q) emptied the text; a reason must never vanish", tc.in)
-			}
-			if again := OneLine(tc.in); again != got {
-				t.Errorf("OneLine(%q) is not deterministic: %q then %q", tc.in, got, again)
+			assert.Equal(t, tc.want, got, "OneLine(%q) = %q, want %q", tc.in, got, tc.want)
+			assert.False(t, strings.ContainsFunc(got, unicode.IsControl), "OneLine(%q) = %q still holds a control character", tc.in, got)
+			assert.False(t, tc.in != "" && got == "", "OneLine(%q) emptied the text; a reason must never vanish", tc.in)
+			{
+				again := OneLine(tc.in)
+				assert.Equal(t, got, again, "OneLine(%q) is not deterministic: %q then %q", tc.in, got, again)
 			}
 		})
 	}
@@ -631,8 +601,9 @@ func TestFoldCollapsesControlCharactersToSpaces(t *testing.T) {
 		{"", ""},
 		{"café — 日本語", "café — 日本語"},
 	} {
-		if got := Fold(tc.in); got != tc.want {
-			t.Errorf("Fold(%q) = %q, want %q", tc.in, got, tc.want)
+		{
+			got := Fold(tc.in)
+			assert.Equal(t, tc.want, got, "Fold(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
@@ -650,14 +621,17 @@ func TestSurfaceFoldsControlCharactersOutOfAName(t *testing.T) {
 		{"  BSKY\t", "bsky"},
 		{"\n\t", ""},
 	} {
-		if got := Surface(tc.in); got != tc.want {
-			t.Errorf("Surface(%q) = %q, want %q", tc.in, got, tc.want)
+		{
+			got := Surface(tc.in)
+			assert.Equal(t, tc.want, got, "Surface(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 
 	// And a folded name still matches the box entry it collapses onto.
 	b := Box{Quarantine: map[string]Fuse{"dis\ncord": {At: "t", Reason: "r"}}}
-	if name, _, ok := b.Quarantined("dis cord"); !ok || name != "dis\ncord" {
-		t.Errorf("Quarantined(%q) = %q, %v -- want the stored spelling", "dis cord", name, ok)
+	{
+		name, _, ok := b.Quarantined("dis cord")
+		assert.True(t, ok, "Quarantined(%q) = %q, %v -- want the stored spelling", "dis cord", name, ok)
+		assert.Equal(t, "dis\ncord", name, "Quarantined(%q) = %q, %v -- want the stored spelling", "dis cord", name, ok)
 	}
 }

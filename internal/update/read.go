@@ -85,7 +85,7 @@ func identity(e Entry, raw string, report bool) Read {
 			}
 		}
 		r.Reason = "model_not_found"
-		r.Remedy = "owner: ollama pull " + e.Name + "; nova-local status --list"
+		r.Remedy = "this weight is not on this box: its owner " + e.Owner + " pulls it, ollama pull " + e.Name
 		return r
 	}
 	if report && opaque(r.Raw) {

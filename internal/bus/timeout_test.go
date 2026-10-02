@@ -67,9 +67,7 @@ func checkGitTimeoutInChild(t *testing.T, fake string) {
 	// The refusal names the CALL, which is the one thing a person needs in order to know
 	// what was hanging.
 	for _, want := range []string{"fetch origin main", "did not finish within", "300ms", "--git-timeout"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("the refusal does not say %q: %v", want, err)
-		}
+		require.Contains(t, err.Error(), want, "the refusal does not say %q: %v", want, err)
 	}
 
 	// The other way: a budget that is not exceeded is not a refusal. A git that answers
@@ -86,11 +84,10 @@ func checkGitTimeoutInChild(t *testing.T, fake string) {
 	require.NoError(t, testbin.WriteExecutable(filepath.Join(fake, "git"), []byte(quick), 0o755))
 	out, err := git(t.TempDir(), "fetch", "origin", "main")
 	require.NoError(t, err, "a git well inside the budget was refused: %v", err)
-	if strings.TrimSpace(out) != "fine" {
-		t.Fatalf("git printed %q", out)
-	}
+	require.False(t, strings.TrimSpace(out) != "fine", "git printed %q", out)
 	// And a budget of nothing is a bad invocation rather than a call with no budget at all.
-	if err := SetGitTimeout(0); err == nil {
-		t.Fatal("a budget of zero was accepted; every call would be killed before it started")
+	{
+		err := SetGitTimeout(0)
+		require.Error(t, err, "a budget of zero was accepted; every call would be killed before it started")
 	}
 }

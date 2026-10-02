@@ -37,6 +37,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // THE GUARD AGAINST A REGRESSION IN THE THING THIS TOOL IS FOR, and it is deliberately the
@@ -106,13 +108,9 @@ func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
 		start := time.Now()
 		r := invoke(t, draftFrom("Ada", "Timing "+name, "One note, over ten thousand."), args...)
 		took := time.Since(start)
-		if r.code != 0 {
-			t.Fatalf("%s: exit %d\nstdout: %s\nstderr: %s", name, r.code, r.stdout, r.stderr)
-		}
-		if took > bound {
-			t.Fatalf("%s took %s over a bus of %d notes with %d open, past the %s bound; this verb should be the size of the CHANGE, so something now walks the record -- the parse counts in cursor_functional_test.go are where to look",
-				name, took, history, carried, bound)
-		}
+		require.Equalf(t, 0, r.code, "%s: exit %d\nstdout: %s\nstderr: %s", name, r.code, r.stdout, r.stderr)
+		require.Falsef(t, took > bound, "%s took %s over a bus of %d notes with %d open, past the %s bound; this verb should be the size of the CHANGE, so something now walks the record -- the parse counts in cursor_functional_test.go are where to look",
+			name, took, history, carried, bound)
 		t.Logf("%s: %s", name, took)
 	}
 
@@ -154,8 +152,6 @@ func TestAWaitPollsMoreThanOnceBeforeItsDeadline(t *testing.T) {
 	line := r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):]
 	polls := field(t, line, "polls=")
 	n, err := strconv.Atoi(polls)
-	if err != nil || n < 2 {
-		t.Fatalf("polls=%q, want at least 2 over %s at 100ms; a wait that looks once is a check\n%s", polls, timeout, r.stdout)
-	}
+	require.Falsef(t, err != nil || n < 2, "polls=%q, want at least 2 over %s at 100ms; a wait that looks once is a check\n%s", polls, timeout, r.stdout)
 	t.Logf("polls=%d over %s at 100ms", n, timeout)
 }

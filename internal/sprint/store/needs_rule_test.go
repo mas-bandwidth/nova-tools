@@ -6,7 +6,6 @@ package store
 // every step.
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // do runs a step that must not refuse, then checks every rule.
@@ -37,9 +37,7 @@ func (h *harness) nDoR(step Step) Result {
 func (h *harness) nAllNotes(typ string) []sprint.Note {
 	h.t.Helper()
 	all, _, err := h.m.NotesSince(h.ctx, "", 100000)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	var out []sprint.Note
 	for _, n := range all {
 		if n.Type == typ && n.Kind == sprint.Judgment {
@@ -52,9 +50,7 @@ func (h *harness) nAllNotes(typ string) []sprint.Note {
 func (h *harness) nOpenOf(typ, subject string) []sprint.Open {
 	h.t.Helper()
 	open, err := h.m.OpenNotes(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	var out []sprint.Open
 	for _, o := range open {
 		if o.Note.Type == typ && (subject == "" || o.Subject() == subject) {
@@ -112,15 +108,12 @@ func TestStampsOnEveryPath(t *testing.T) {
 	h.nDo(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	s := h.snap()
 	wc := s.Fleet.Card("s1-1.w1")
-	if wc.F("dealt") != nStamp(t0) || wc.F("taken") != "" {
-		t.Fatalf("deal: dealt=%q taken=%q", wc.F("dealt"), wc.F("taken"))
-	}
+	require.Equal(t, nStamp(t0), wc.F("dealt"), "deal: dealt=%q taken=%q", wc.F("dealt"), wc.F("taken"))
+	require.Empty(t, wc.F("taken"), "deal: dealt=%q taken=%q", wc.F("dealt"), wc.F("taken"))
 	h.nDo(TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: 1}}))
 	s = h.snap()
 	wc = s.Fleet.Card("s1-1.w1")
-	if wc.F("taken") == "" {
-		t.Fatalf("take: no taken")
-	}
+	require.NotEmpty(t, wc.F("taken"), "take: no taken")
 	takenAt := h.now
 	_ = takenAt
 	// the member holding it goes down: redealt, taken reset, dealt new
@@ -154,13 +147,10 @@ func TestStampsOnEveryPath(t *testing.T) {
 	moved := 0
 	for _, c := range after.Fleet.Cell("m2", sprint.Ready) {
 		moved++
-		if c.F("dealt") == before.Fleet.Card(c.ID).F("dealt") || c.F("dealt") == "" {
-			t.Fatalf("level moved %s without a new dealt: %q", c.ID, c.F("dealt"))
-		}
+		require.NotEqual(t, before.Fleet.Card(c.ID).F("dealt"), c.F("dealt"), "level moved %s without a new dealt: %q", c.ID, c.F("dealt"))
+		require.NotEmpty(t, c.F("dealt"), "level moved %s without a new dealt: %q", c.ID, c.F("dealt"))
 	}
-	if moved == 0 {
-		t.Fatalf("level moved nothing")
-	}
+	require.NotEqual(t, 0, moved, "level moved nothing")
 	// read cards: ask, ask --another, report from asked, rework re-ask
 	h.nDo(TakeStep(sprint.TakeReq{As: wc4.Row, Sel: sprint.Sel{IDs: []string{wc4.ID}}, Gens: map[string]int{wc4.ID: wc4.Int("gen")}}))
 	h.nDo(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{wc4.ID}}, Gens: map[string]int{wc4.ID: wc4.Int("gen")}}))
@@ -168,9 +158,7 @@ func TestStampsOnEveryPath(t *testing.T) {
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	s = h.snap()
 	rcs := s.Readers.Of("s1-1")
-	if len(rcs) != 3 {
-		t.Fatalf("%d read cards", len(rcs))
-	}
+	require.Len(t, rcs, 3, "%d read cards", len(rcs))
 	for _, rc := range rcs {
 		if rc.F("asked") == "" || rc.F("begun") != "" {
 			t.Fatalf("%s asked=%q begun=%q", rc.ID, rc.F("asked"), rc.F("begun"))
@@ -180,9 +168,7 @@ func TestStampsOnEveryPath(t *testing.T) {
 	h.nDo(ReadStep(sprint.ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "x", Sel: sprint.Sel{IDs: []string{rcs[1].ID}}}))
 	s = h.snap()
 	for _, id := range []string{rcs[0].ID, rcs[1].ID} {
-		if s.Readers.Card(id).F("begun") == "" {
-			t.Fatalf("%s: no begun", id)
-		}
+		require.NotEmpty(t, s.Readers.Card(id).F("begun"), "%s: no begun", id)
 	}
 	h.nDo(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	s = h.snap()
@@ -229,9 +215,7 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	t.Logf("s1-1 after a third reader's broken: open %v", h.judgmentsOn("s1-1"))
 	// accept closes it, then return: two oks at head, no judgment
 	h.nDo(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	if len(h.judgmentsOn("s1-1")) != 0 {
-		t.Fatalf("accept left open: %v", h.judgmentsOn("s1-1"))
-	}
+	require.Empty(t, h.judgmentsOn("s1-1"), "accept left open: %v", h.judgmentsOn("s1-1"))
 	h.nDo(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))
 	t.Logf("s1-1 returned to review, open judgments: %v (ready to accept notes total %d)", h.judgmentsOn("s1-1"), len(h.nAllNotes(sprint.NReadyToAccept)))
 	// s1-2: ok, broken, another, ok -> one; rework closes; new attempt: one more
@@ -239,18 +223,14 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	rcs := s.Readers.Of("s1-2")
 	h.nDo(ReadStep(sprint.ReadReq{As: rcs[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rcs[0].ID}}}))
 	h.nDo(ReadStep(sprint.ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "b", Sel: sprint.Sel{IDs: []string{rcs[1].ID}}}))
-	if len(h.nOpenOf(sprint.NReadyToAccept, "s1-2")) != 0 {
-		t.Fatalf("ready to accept on one ok")
-	}
+	require.Empty(t, h.nOpenOf(sprint.NReadyToAccept, "s1-2"), "ready to accept on one ok")
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Another: true}))
 	h.nReadAll("s1-2", "ok")
 	if len(h.nOpenOf(sprint.NReadyToAccept, "s1-2")) != 1 {
 		t.Fatalf("ok, broken, another ok: %v", h.judgmentsOn("s1-2"))
 	}
 	h.nDo(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Fix: "again"}))
-	if len(h.nOpenOf(sprint.NReadyToAccept, "s1-2")) != 0 {
-		t.Fatalf("rework left ready to accept open")
-	}
+	require.Empty(t, h.nOpenOf(sprint.NReadyToAccept, "s1-2"), "rework left ready to accept open")
 	s = h.snap()
 	w := s.Fleet.Card("s1-2.w2")
 	h.nDo(TakeStep(sprint.TakeReq{As: w.Row, Sel: sprint.Sel{IDs: []string{w.ID}}, Gens: map[string]int{w.ID: 1}}))
@@ -263,15 +243,12 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 			on2++
 		}
 	}
-	if on2 != 2 || len(h.nOpenOf(sprint.NReadyToAccept, "s1-2")) != 1 {
-		t.Fatalf("s1-2 over two attempts: %d notes, open %d", on2, len(h.nOpenOf(sprint.NReadyToAccept, "s1-2")))
-	}
+	require.Equal(t, 2, on2, "s1-2 over two attempts: %d notes, open %d", on2, len(h.nOpenOf(sprint.NReadyToAccept, "s1-2")))
+	require.Len(t, h.nOpenOf(sprint.NReadyToAccept, "s1-2"), 1, "s1-2 over two attempts: %d notes, open %d", on2, len(h.nOpenOf(sprint.NReadyToAccept, "s1-2")))
 	// s1-3: two oks, drop closes
 	h.nReadAll("s1-3", "ok")
 	h.nDo(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-3"}}, Reason: "gone"}))
-	if len(h.nOpenOf(sprint.NReadyToAccept, "s1-3")) != 0 {
-		t.Fatalf("drop left ready to accept open")
-	}
+	require.Empty(t, h.nOpenOf(sprint.NReadyToAccept, "s1-3"), "drop left ready to accept open")
 }
 
 // ---- H3 + waived ----------------------------------------------------------
@@ -283,26 +260,21 @@ func TestAddOnDroppedNeedAndWaive(t *testing.T) {
 	h.nDo(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "gone"}))
 	// a need dropped and one not landed
 	h.nDo(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1", "s1-2"}}))
-	if h.state("b") != sprint.Waiting || len(h.nOpenOf(sprint.NBlocked, "b")) != 1 {
-		t.Fatalf("b %s, blocked %d", h.state("b"), len(h.nOpenOf(sprint.NBlocked, "b")))
-	}
+	require.Equal(t, sprint.Waiting, h.state("b"), "b %s, blocked %d", h.state("b"), len(h.nOpenOf(sprint.NBlocked, "b")))
+	require.Len(t, h.nOpenOf(sprint.NBlocked, "b"), 1, "b %s, blocked %d", h.state("b"), len(h.nOpenOf(sprint.NBlocked, "b")))
 	id := h.nOpenOf(sprint.NBlocked, "b")[0].Note.ID
 	h.nDo(AckStep(sprint.AckReq{Notes: []string{id}, Reason: "fine", Who: "tester"}))
 	b := h.snap().Work.Card("b")
-	if b.Col != sprint.Waiting || b.F("waived") != "s1-1" {
-		t.Fatalf("ack with another need open: %s waived=%q", b.Col, b.F("waived"))
-	}
+	require.Equal(t, sprint.Waiting, b.Col, "ack with another need open: %s waived=%q", b.Col, b.F("waived"))
+	require.Equal(t, "s1-1", b.F("waived"), "ack with another need open: %s waived=%q", b.Col, b.F("waived"))
 	h.nToMerging("s1-2")
 	h.nLandStream("s1")
-	if h.state("b") != sprint.Ready {
-		t.Fatalf("b after s1-2 landed (s1-1 waived): %s", h.state("b"))
-	}
+	require.Equal(t, sprint.Ready, h.state("b"), "b after s1-2 landed (s1-1 waived): %s", h.state("b"))
 	// resolve on an add naming a dropped need: blocked only once
 	h.nDo(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"c"}, Needs: []string{"s1-1"}}))
 	h.nDoR(ResolveStep(sprint.ResolveReq{}))
-	if n := len(h.nOpenOf(sprint.NBlocked, "c")); n != 1 {
-		t.Fatalf("c blocked %d times after resolve", n)
-	}
+	n := len(h.nOpenOf(sprint.NBlocked, "c"))
+	require.Equal(t, 1, n, "c blocked %d times after resolve", n)
 }
 
 // A plan whose landing unit the lifecycle refuses still lends its landing to
@@ -367,14 +339,10 @@ func TestRepairSkipsTheWaiterOfASkippedLanding(t *testing.T) {
 	st.B = h.outsideWrite("s1-1")
 	_, err := st.Run(h.ctx, MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
 	var cut *CutError
-	if !errors.As(err, &cut) {
-		t.Fatalf("not cut: %v", err)
-	}
+	require.ErrorAs(t, err, &cut, "not cut: %v", err)
 	h.tick(time.Hour)
 	rr, err := h.st.Repair(h.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	rep, _, _ := h.st.Check(h.ctx, 3)
 	t.Logf("repair %+v; s1-1 %s, b %s; violations %v", rr, h.state("s1-1"), h.state("b"), rep.Violations)
 	if h.state("b") == sprint.Ready && h.state("s1-1") != sprint.Landed {
@@ -392,9 +360,7 @@ func TestRepairSkipsTheWaiterOfASkippedLanding(t *testing.T) {
 			t.Fatalf("b %s; %v", h.state("b"), v)
 		}
 	}
-	if h.state("b") != sprint.Waiting {
-		t.Fatalf("b %s", h.state("b"))
-	}
+	require.Equal(t, sprint.Waiting, h.state("b"), "b %s", h.state("b"))
 }
 
 func nStamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }
@@ -412,10 +378,6 @@ func TestReturnedAcceptablePrimaryIsNotSilent(t *testing.T) {
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	h.nReadAll("s1-1", "ok")
 	h.readInbox()
-	if h.state("s1-1") != sprint.Review {
-		t.Fatalf("s1-1 %s", h.state("s1-1"))
-	}
-	if len(h.judgmentsOn("s1-1")) == 0 {
-		t.Fatalf("s1-1 is in review, acceptable (three oks at its head), and the subject of no open judgment")
-	}
+	require.Equal(t, sprint.Review, h.state("s1-1"), "s1-1 %s", h.state("s1-1"))
+	require.NotEmpty(t, h.judgmentsOn("s1-1"), "s1-1 is in review, acceptable (three oks at its head), and the subject of no open judgment")
 }

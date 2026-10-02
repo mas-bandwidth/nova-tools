@@ -11,6 +11,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -31,30 +34,22 @@ func TestTwoPhaseReapLifecycle(t *testing.T) {
 	// This proves Phase 1 (SIGTERM) allows graceful flush within the 3s TerminateGrace window.
 	cmd := exec.Command("sleep", "60")
 	ownGroup(cmd)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("failed to start test process: %v", err)
-	}
+	err := cmd.Start()
+	require.NoError(t, err, "failed to start test process: %v", err)
 	exited := waitSignal(cmd)
 	pid := cmd.Process.Pid
 	started := StartStamp(pid)
 
-	if !Alive(pid, started) {
-		t.Fatalf("process %d was not alive after start", pid)
-	}
+	require.True(t, Alive(pid, started), "process %d was not alive after start", pid)
 
 	survived := Reap(pid, started, TerminateGrace)
 
-	if survived {
-		t.Fatalf("process %d survived TwoPhaseReap", pid)
-	}
+	require.False(t, survived, "process %d survived TwoPhaseReap", pid)
 	// The event, not the clock: a cooperative child dies of Phase 1's SIGTERM,
 	// so Phase 2's SIGKILL is never needed.
-	if sig := <-exited; sig != syscall.SIGTERM {
-		t.Errorf("cooperative child ended by %v, want SIGTERM (Phase 1)", sig)
-	}
-	if Alive(pid, started) {
-		t.Fatalf("process %d is still reported alive after reap", pid)
-	}
+	sig := <-exited
+	assert.Equal(t, syscall.SIGTERM, sig, "cooperative child ended by %v, want SIGTERM (Phase 1)", sig)
+	require.False(t, Alive(pid, started), "process %d is still reported alive after reap", pid)
 }
 
 // TestTwoPhaseReapUnresponsiveChildKilledBySIGKILL tests that a process ignoring SIGTERM
@@ -72,12 +67,9 @@ func TestTwoPhaseReapUnresponsiveChildKilledBySIGKILL(t *testing.T) {
 	cmd := exec.Command("python3", "-c", "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); time.sleep(30)")
 	ownGroup(cmd)
 	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatalf("stdout pipe: %v", err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("failed to start uncooperative process: %v", err)
-	}
+	require.NoError(t, err, "stdout pipe: %v", err)
+	err = cmd.Start()
+	require.NoError(t, err, "failed to start uncooperative process: %v", err)
 	defer func() { _ = cmd.Process.Kill() }()
 	ready := make(chan error, 1)
 	go func() {
@@ -89,9 +81,7 @@ func TestTwoPhaseReapUnresponsiveChildKilledBySIGKILL(t *testing.T) {
 	}()
 	select {
 	case err := <-ready:
-		if err != nil {
-			t.Fatalf("uncooperative process never became ready: %v", err)
-		}
+		require.NoError(t, err, "uncooperative process never became ready: %v", err)
 	case <-time.After(10 * time.Second):
 		t.Fatalf("uncooperative process not ready after 10s")
 	}
@@ -101,17 +91,12 @@ func TestTwoPhaseReapUnresponsiveChildKilledBySIGKILL(t *testing.T) {
 
 	survived := Reap(pid, started, 150*time.Millisecond)
 
-	if survived {
-		t.Fatalf("uncooperative process %d survived two-phase reap", pid)
-	}
+	require.False(t, survived, "uncooperative process %d survived two-phase reap", pid)
 	// The event, not the clock: the child ignored SIGTERM, so only Phase 2's
 	// SIGKILL can have ended it.
-	if sig := <-exited; sig != syscall.SIGKILL {
-		t.Errorf("uncooperative child ended by %v, want SIGKILL (Phase 2)", sig)
-	}
-	if Alive(pid, started) {
-		t.Fatalf("process %d still alive after two-phase SIGKILL reap", pid)
-	}
+	sig := <-exited
+	assert.Equal(t, syscall.SIGKILL, sig, "uncooperative child ended by %v, want SIGKILL (Phase 2)", sig)
+	require.False(t, Alive(pid, started), "process %d still alive after two-phase SIGKILL reap", pid)
 }
 
 // waitSignal reaps cmd in the background and reports the signal that ended

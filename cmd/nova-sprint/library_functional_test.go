@@ -5,12 +5,12 @@ package main
 import (
 	"bytes"
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // A store without this build's table functions is refused before any verb
@@ -22,17 +22,14 @@ func TestAStoreWithoutThisBuildsLibraryIsRefused(t *testing.T) {
 	var out, errb bytes.Buffer
 	a := newApp(func(k string) string { return env[k] })
 	defer a.close()
-	if code := a.run([]string{"init"}, &out, &errb); code != 2 || !strings.Contains(errb.String(), "nova-redis fn load --addr "+addr) {
-		t.Fatalf("init on a store with no library: %d %s", code, errb.String())
-	}
+	code := a.run([]string{"init"}, &out, &errb)
+	require.Equal(t, 2, code, "init on a store with no library: %d %s", code, errb.String())
+	require.Contains(t, errb.String(), "nova-redis fn load --addr "+addr, "init on a store with no library: %d %s", code, errb.String())
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
-	if err := fn.Load(context.Background(), c); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, fn.Load(context.Background(), c))
 	b := newApp(func(k string) string { return env[k] })
 	defer b.close()
-	if code := b.run([]string{"init"}, &out, &errb); code != 0 {
-		t.Fatalf("init with the library loaded: %s", errb.String())
-	}
+	code = b.run([]string{"init"}, &out, &errb)
+	require.Equal(t, 0, code, "init with the library loaded: %s", errb.String())
 }

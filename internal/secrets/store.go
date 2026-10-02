@@ -43,7 +43,7 @@ func ReadRecoveryPub(storeDir string) (string, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("recovery.pub is absent")
+			return "", fmt.Errorf("recovery.pub is absent: it holds the store's recovery key, the one age1… public key every seat file is also sealed to; a new store makes one: run: age-keygen -o <a key file kept off this machine>, then write the public key it prints into %s", path)
 		}
 		return "", fmt.Errorf("recovery.pub is unreadable: %w", err)
 	}

@@ -170,11 +170,6 @@ var Tiers = []string{"flash", "frontier", "pro"}
 // are never drawn from routes and escalate to the coordinator.
 var RouteTiers = []string{"flash", "pro"}
 
-// FieldReaderTier is the sprint row's field naming the tier a read card's route
-// is drawn from (internal/sprint/route.go, readRouteOf); apply writes it to
-// SprintKey(FieldReaderTier), which the sprint's routes read takes.
-const FieldReaderTier = "reader_tier"
-
 // CoordinatorRole is the Redis role ns_friend_roles and the deal read
 // (friend:<f>:roles), derived at apply from the sprint row.
 const CoordinatorRole = "coordinator"
@@ -197,12 +192,13 @@ var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
 		Table: "machines",
-		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, and how many cards and runners it takes",
+		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, and the sprint member's width on it",
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
-			{Name: "slots", Type: TypeInt, Required: true, Help: "how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none"},
+			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
+			{Name: "width", Type: TypeInt, Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; 0 (the default) is no member, dealt no work"},
 		},
 	},
 	{
@@ -225,7 +221,7 @@ var Kinds = []*Kind{
 		Table: "friends",
 		Doc:   "an AI friend: how wide she runs, which tiers she can do, and her roles",
 		Fields: []Field{
-			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports"},
+			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 		},
@@ -241,10 +237,9 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates, and the tier read cards are drawn from",
+		Doc:       "the one row of sprint-global facts: which friend coordinates",
 		Fields: []Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
-			{Name: FieldReaderTier, Type: TypeEnum, Enum: RouteTiers, Default: "pro", Help: "the model tier a read card's route is drawn from, at the tier's rolling index as a work card's is: one of " + strings.Join(RouteTiers, ", ") + "; pro (the default)"},
 		},
 	},
 	{
@@ -265,7 +260,7 @@ var Kinds = []*Kind{
 			{Name: "keys", Type: TypeKeys, Help: "comma list of the names of the secrets it needs from the seat (API_KEY,...), never a value; empty when none"},
 			{Name: "every", Type: TypeInt, Help: "seconds between runs of a periodic loop; 0 (the default) when it is kept alive"},
 			{Name: "keepalive", Type: TypeBool, Help: "true for a long-running unit restarted when it exits; false (the default) when it runs --every n"},
-			{Name: "width", Type: TypeInt, Help: "the child cap of a member loop; 0 (the default) for any other loop"},
+			{Name: "width", Type: TypeInt, Help: "the --width its command runs with: above 0 it replaces the argv's --width, or is appended when the argv has none; 0 (the default) runs the argv as written. A reader loop's width; a work member's is its machine row's (machine set <m> --width <n>), so leave it 0 there"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false writes the unit and does not start it; true (the default) runs it"},
 		},
 		Check: checkLoop,
@@ -297,7 +292,7 @@ var Kinds = []*Kind{
 			{Name: cardcost.FieldInputLong, Type: TypeDecimal, Help: "USD per million input tokens of a request above --" + cardcost.FieldLongContext},
 			{Name: cardcost.FieldOutputLong, Type: TypeDecimal, Help: "USD per million output tokens of a request above --" + cardcost.FieldLongContext},
 			{Name: cardcost.FieldRequest, Type: TypeDecimal, Help: "USD per request, on top of the tokens; empty when there is no fee"},
-			{Name: cardcost.FieldBilling, Type: TypeEnum, Enum: cardcost.Billings, Default: cardcost.BillingMetered, Help: "how it is paid: " + strings.Join(cardcost.Billings, " or ") + " (the default, metered: per token; plan: a subscription, so the predicted cost is the metered price of the same tokens)"},
+			{Name: cardcost.FieldBilling, Type: TypeEnum, Enum: cardcost.Billings, Default: cardcost.BillingMetered, Help: "how it is paid: metered (the default: per token) or plan (a subscription, so the predicted cost is the metered price of the same tokens)"},
 			{Name: cardcost.FieldGateway, Type: TypeDecimal, Help: "the percent a gateway adds on top of the prices, a decimal like 5.5; empty when none"},
 			{Name: cardcost.FieldSource, Type: TypeText, Help: "where the prices were read, free text (a URL)"},
 			{Name: cardcost.FieldAsOf, Type: TypeText, Help: "the date the prices were read, YYYY-MM-DD"},
@@ -372,6 +367,47 @@ func checkRoute(r Row) error {
 // from the name and never typed: ~/nova-bench/loops/<name>.log. apply writes
 // it into the loop's Redis hash beside the row's fields.
 func LoopLog(name string) string { return "~/nova-bench/loops/" + name + ".log" }
+
+// LoopCommand is the command a loop's unit runs: its argv, with the width
+// field as the value of its --width when the field is above 0, so a loop's
+// width is set as one value (loop set <name> --width <n>) and never by
+// editing the argv. The last spelling of the flag (--width n, -width n,
+// --width=n, -width=n) after the program word and before a --, the one a
+// flag parser keeps, takes the value; an argv with none gets --width n
+// before its -- or at its end. A
+// width of 0 leaves the argv as written, so a row whose argv carries --width
+// and whose field is 0 keeps its own (migration 0013 sets the field from
+// the argv). The inventory renders nova_loops' argv with it (parseLoop), and
+// loop show prints it as command=.
+func LoopCommand(argv []string, width int) []string {
+	out := append([]string{}, argv...)
+	if width <= 0 || len(out) == 0 {
+		return out
+	}
+	n := strconv.Itoa(width)
+	end := len(out)
+	for i := 1; i < len(out); i++ {
+		if out[i] == "--" {
+			end = i
+			break
+		}
+	}
+	last, prefix := -1, "" // the index of the last spelling's value, and what precedes the value there
+	for i := 1; i < end; i++ {
+		switch t := out[i]; {
+		case (t == "--width" || t == "-width") && i+1 < end:
+			last, prefix = i+1, ""
+			i++
+		case strings.HasPrefix(t, "--width=") || strings.HasPrefix(t, "-width="):
+			last, prefix = i, t[:strings.IndexByte(t, '=')+1]
+		}
+	}
+	if last < 0 {
+		return append(out[:end:end], append([]string{"--width", n}, out[end:]...)...)
+	}
+	out[last] = prefix + n
+	return out
+}
 
 // checkLoop is the loop kind's Check: exactly one of every and keepalive
 // says how it runs, and secret names need a seat to open them from.
@@ -646,6 +682,17 @@ func marshalArgv(words []string) ([]byte, error) {
 		return nil, err
 	}
 	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+}
+
+// LoopCommandText is a loop row's command (LoopCommand of its argv and
+// width) in the argv's own canonical JSON text: what loop show prints as
+// command=, the words the unit runs.
+func LoopCommandText(row Row) (string, error) {
+	raw, err := marshalArgv(LoopCommand(Argv(row.Fields["argv"]), row.Int("width")))
+	if err != nil {
+		return "", fmt.Errorf("loop %s: render its command: %w", row.Name, err)
+	}
+	return string(raw), nil
 }
 
 // Argv decodes a canonical TypeArgv value ("" is none).

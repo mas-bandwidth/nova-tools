@@ -96,11 +96,15 @@ prints one `MORE` line with its remedy; the count is never capped and the
 first line, `INDEX OK sessions=<n> entries=<n>`, carries the total whether
 or not entries were elided.
 
-**`receipt --store <dir> --session <id> --entry <id>` names what was
+**`receipt --store <dir> --session <id> --entry <id> [--text]` names what was
 preserved for one entry**: its stamp, source pointers, size and the same
 `persisted=true published=false publish=<policy>` split the append
 reported for nested entries, so a reader never infers the remote from the local.
 Flat records report `publish=unknown` because the policy was not stored.
+With `--text`, the result includes the stored words as a `text` fact. For a
+nested entry this is the exact stored text; for a flat record it is the
+whitespace-trimmed indexed section body, because the flat format does not retain
+the original append's trailing newlines. JSON carries the same text value.
 A missing store, session or entry refuses at exit 2, naming what is absent.
 
 ## Tests this spec demands

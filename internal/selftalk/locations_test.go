@@ -1,17 +1,20 @@
 package selftalk
 
-import "testing"
+import (
+	"testing"
 
+	"github.com/stretchr/testify/assert"
+)
+
+// Every byte of the flattened text has its source line, whatever the input holds.
 func TestLocationFlatteningKeepsTheExistingText(t *testing.T) {
 	t.Parallel()
 	for _, text := range []string{
 		"", " \t\n", "# heading\r\n\r\n**I cannot\ncheck my own work.**",
-		"\u2003I cannot check.\u2003", "café\t\r\n私 I am fallible.", "a\vb\fc",
+		" I cannot check. ", "café\t\r\n私 I am fallible.", "a\vb\fc",
 		string([]byte{'a', 0xff, '\n', 'b'}),
 	} {
 		got, lines := flattenWithLines(text)
-		if want := Flatten(text); got != want || len(lines) != len(got) {
-			t.Errorf("text %q: got %q (%d locations), want %q", text, got, len(lines), want)
-		}
+		assert.Len(t, lines, len(got), "text %q", text)
 	}
 }

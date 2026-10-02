@@ -2,8 +2,9 @@ package swarm
 
 import (
 	"os"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestIssue2579 verifies that a card ended for idleness (not wall refusal)
@@ -30,25 +31,18 @@ func TestIssue2579(t *testing.T) {
 		job, "task-idle", "", "", "-",
 		"the card's log and its process tree were both still for 300s; the run ended it rather than holding the slot to its deadline",
 	)
-	if err != nil || !wrote {
-		t.Fatalf("WriteBlockedResult for idle card failed: %v %v", wrote, err)
-	}
+	require.NoError(t, err, "WriteBlockedResult for idle card failed: %v %v", wrote, err)
+	require.True(t, wrote, "WriteBlockedResult for idle card failed: %v %v", wrote, err)
 
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	body := string(raw)
 
 	// The report should say CARD IDLE, not WALL REFUSED
-	if !strings.Contains(body, "CARD IDLE task=task-idle") {
-		t.Fatalf("idle card report should contain 'CARD IDLE task=task-idle':\n%s", body)
-	}
+	require.Contains(t, body, "CARD IDLE task=task-idle", "idle card report should contain 'CARD IDLE task=task-idle':\n%s", body)
 
 	// The report should NOT say WALL REFUSED when there was no refusal
-	if strings.Contains(body, "WALL REFUSED") {
-		t.Fatalf("idle card (not wall refused) should not contain 'WALL REFUSED' line:\n%s", body)
-	}
+	require.NotContains(t, body, "WALL REFUSED", "idle card (not wall refused) should not contain 'WALL REFUSED' line:\n%s", body)
 
 	// Case 2: Clean up and test a card that HIT a wall refusal
 	os.RemoveAll(job)
@@ -60,18 +54,13 @@ func TestIssue2579(t *testing.T) {
 		job, "task-wall", "write", "/etc/passwd", "2",
 		"the wall refused write /etc/passwd and the card wrote nothing for 300s after it",
 	)
-	if err != nil || !wrote2 {
-		t.Fatalf("WriteBlockedResult for wall-refused card failed: %v %v", wrote2, err)
-	}
+	require.NoError(t, err, "WriteBlockedResult for wall-refused card failed: %v %v", wrote2, err)
+	require.True(t, wrote2, "WriteBlockedResult for wall-refused card failed: %v %v", wrote2, err)
 
 	raw2, err := os.ReadFile(path2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	body2 := string(raw2)
 
 	// A card blocked by wall refusal SHOULD have WALL REFUSED
-	if !strings.Contains(body2, "WALL REFUSED write /etc/passwd") {
-		t.Fatalf("wall-refused card should contain 'WALL REFUSED write /etc/passwd':\n%s", body2)
-	}
+	require.Contains(t, body2, "WALL REFUSED write /etc/passwd", "wall-refused card should contain 'WALL REFUSED write /etc/passwd':\n%s", body2)
 }

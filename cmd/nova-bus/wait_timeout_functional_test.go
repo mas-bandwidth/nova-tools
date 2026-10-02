@@ -5,6 +5,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // wait_timeout_functional_test.go holds the wait tests that wait out a real
@@ -30,14 +32,10 @@ func TestWaitQuietBeatsSleepsThroughABeatCommit(t *testing.T) {
 	writeFile(t, other, "from-bo/BEAT", "2026-09-09T12:35:00Z - until=2026-09-09T12:45:00Z\n")
 	gitIn(t, other, "add", "from-bo/BEAT")
 	gitIn(t, other, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "beat bo")
-	if err := push(other); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, push(other))
 
 	r := invoke(t, "", waitFlags(checkout, "Ada", "2s", "--quiet-beats")...).mustCode(t, 0)
 
 	r.mustContain(t, "stdout", "WAIT DONE reason=timeout")
-	if strings.Contains(r.stdout, "WAIT OK") || strings.Contains(r.stdout, "reason=new") {
-		t.Fatalf("a beat-only change woke the wait; a beat is not news:\n%s", r.stdout)
-	}
+	require.Falsef(t, strings.Contains(r.stdout, "WAIT OK") || strings.Contains(r.stdout, "reason=new"), "a beat-only change woke the wait; a beat is not news:\n%s", r.stdout)
 }

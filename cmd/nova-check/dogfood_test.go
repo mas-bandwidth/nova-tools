@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The reference this verb reads in the tests: the shapes docs/CLI.md holds,
@@ -35,32 +37,22 @@ func dogfoodRun(t *testing.T, args ...string) (code int, stdout, stderr string) 
 func writeCLI(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "CLI.md")
-	if err := os.WriteFile(path, []byte(dogfoodCLI), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(dogfoodCLI), 0o644))
 	return path
 }
 
 func writeReceipt(t *testing.T, dir, name string, fields map[string]any) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	line, err := json.Marshal(fields)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, name), append(line, '\n'), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), append(line, '\n'), 0o644))
 }
 
 func writeAuthors(t *testing.T, dir, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, "authors.txt")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	return path
 }
 
@@ -76,9 +68,7 @@ func TestDogfoodLedgerPrintsOneRowPerVerbAndOneSummary(t *testing.T) {
 	})
 
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\n%s", code, stderr)
-	}
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
 	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
 	want := []string{
 		"DOGFOOD tool=nova-example verb=quickstart by=nobody at=- ok=- issue=- open=0",
@@ -86,9 +76,7 @@ func TestDogfoodLedgerPrintsOneRowPerVerbAndOneSummary(t *testing.T) {
 		"DOGFOOD tool=nova-example verb=nocode by=nobody at=- ok=- issue=- open=0",
 		"DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0",
 	}
-	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("ledger:\n got:\n%s\nwant:\n%s", stdout, strings.Join(want, "\n"))
-	}
+	require.EqualValues(t, strings.Join(want, "\n"), strings.Join(lines, "\n"), "ledger:\n got:\n%s\nwant:\n%s", stdout, strings.Join(want, "\n"))
 }
 
 func TestDogfoodLedgerDoesNotCountAnAuthorRunningTheirOwnVerb(t *testing.T) {
@@ -104,12 +92,8 @@ func TestDogfoodLedgerDoesNotCountAnAuthorRunningTheirOwnVerb(t *testing.T) {
 	authors := writeAuthors(t, dir, "nova-example links = Rowan\n")
 
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts, "--authors", authors)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\n%s", code, stderr)
-	}
-	if !strings.Contains(stdout, "DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=0 open-edges=0 unfiled=0 unmatched=0") {
-		t.Fatalf("the author's own run counted as a dogfood:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.Contains(t, stdout, "DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=0 open-edges=0 unfiled=0 unmatched=0", "the author's own run counted as a dogfood:\n%s", stdout)
 }
 
 func TestDogfoodLedgerCountsAnOpenEdge(t *testing.T) {
@@ -123,12 +107,8 @@ func TestDogfoodLedgerCountsAnOpenEdge(t *testing.T) {
 		"at": "2026-09-18T09:00:00Z", "ok": false, "notes": "refused a path it should have taken", "issue": 1301,
 	})
 	code, stdout, _ := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0: the ledger reports", code)
-	}
-	if !strings.Contains(stdout, "by-nonauthor=0 open-edges=1") {
-		t.Fatalf("an edge nobody has cleared is not open in the summary:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, code, "exit %d, want 0: the ledger reports", code)
+	require.Contains(t, stdout, "by-nonauthor=0 open-edges=1", "an edge nobody has cleared is not open in the summary:\n%s", stdout)
 }
 
 func TestDogfoodLedgerNamesAReceiptItCannotReadAndPrintsNoLedger(t *testing.T) {
@@ -137,22 +117,12 @@ func TestDogfoodLedgerNamesAReceiptItCannotReadAndPrintsNoLedger(t *testing.T) {
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
-	if err := os.MkdirAll(receipts, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(receipts, "broken.json"), []byte("{not json}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(receipts, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(receipts, "broken.json"), []byte("{not json}\n"), 0o644))
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
-	if code != 1 {
-		t.Fatalf("exit %d, want 1", code)
-	}
-	if strings.Contains(stdout, "DOGFOOD OK") {
-		t.Fatalf("a ledger was printed over records it could not read:\n%s", stdout)
-	}
-	if !strings.Contains(stderr, "DOGFOOD FAIL") || !strings.Contains(stderr, "broken.json") {
-		t.Fatalf("stderr does not name the bad record:\n%s", stderr)
-	}
+	require.EqualValues(t, 1, code, "exit %d, want 1", code)
+	require.NotContains(t, stdout, "DOGFOOD OK", "a ledger was printed over records it could not read:\n%s", stdout)
+	require.False(t, !strings.Contains(stderr, "DOGFOOD FAIL") || !strings.Contains(stderr, "broken.json"), "stderr does not name the bad record:\n%s", stderr)
 }
 
 func TestDogfoodLedgerNotesAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
@@ -166,15 +136,9 @@ func TestDogfoodLedgerNotesAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing
 		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "a verb that is not in the reference",
 	})
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\n%s", code, stderr)
-	}
-	if !strings.Contains(stdout, "verbs=3 dogfooded=0") {
-		t.Fatalf("an undeclared verb landed in the counts:\n%s", stdout)
-	}
-	if !strings.Contains(stderr, "DOGFOOD NOTE") {
-		t.Fatalf("the reference and the receipts disagree and nothing said so:\n%s", stderr)
-	}
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.Contains(t, stdout, "verbs=3 dogfooded=0", "an undeclared verb landed in the counts:\n%s", stdout)
+	require.Contains(t, stderr, "DOGFOOD NOTE", "the reference and the receipts disagree and nothing said so:\n%s", stderr)
 }
 
 func TestDogfoodRecordWritesAReceiptTheLedgerReadsBack(t *testing.T) {
@@ -188,25 +152,15 @@ func TestDogfoodRecordWritesAReceiptTheLedgerReadsBack(t *testing.T) {
 		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--ok",
 		"--notes", "ran it over the lane's own docs before the merge", "--issue", "1301",
 		"--receipts", receipts)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\n%s", code, stderr)
-	}
-	if !strings.HasPrefix(stdout, "DOGFOOD RECORD OK ") {
-		t.Fatalf("record said:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.True(t, strings.HasPrefix(stdout, "DOGFOOD RECORD OK "), "record said:\n%s", stdout)
 	for _, want := range []string{"tool=nova-example", "verb=links", "by=Stella", "ok=yes", "issue=1301"} {
-		if !strings.Contains(stdout, want) {
-			t.Fatalf("the record line is missing %q:\n%s", want, stdout)
-		}
+		require.Contains(t, stdout, want, "the record line is missing %q:\n%s", want, stdout)
 	}
 
 	code, stdout, stderr = dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
-	if code != 0 {
-		t.Fatalf("ledger exit %d\n%s", code, stderr)
-	}
-	if !strings.Contains(stdout, "verb=links by=Stella") || !strings.Contains(stdout, "dogfooded=1 by-nonauthor=1") {
-		t.Fatalf("the receipt record wrote did not reach the ledger:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, code, "ledger exit %d\n%s", code, stderr)
+	require.False(t, !strings.Contains(stdout, "verb=links by=Stella") || !strings.Contains(stdout, "dogfooded=1 by-nonauthor=1"), "the receipt record wrote did not reach the ledger:\n%s", stdout)
 }
 
 func TestDogfoodRecordRefusesEveryMissingFieldWithOneRemedyEach(t *testing.T) {
@@ -214,19 +168,14 @@ func TestDogfoodRecordRefusesEveryMissingFieldWithOneRemedyEach(t *testing.T) {
 
 	receipts := filepath.Join(t.TempDir(), "receipts")
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--receipts", receipts, "--ok")
-	if code != 2 {
-		t.Fatalf("exit %d, want 2", code)
-	}
-	if stdout != "" {
-		t.Fatalf("a refusal wrote to stdout:\n%s", stdout)
-	}
+	require.EqualValues(t, 2, code, "exit %d, want 2", code)
+	require.EqualValues(t, "", stdout, "a refusal wrote to stdout:\n%s", stdout)
 	for _, field := range []string{"--tool", "--verb", "--by", "--notes"} {
-		if !strings.Contains(stderr, field) {
-			t.Fatalf("the refusal does not name %s:\n%s", field, stderr)
-		}
+		require.Contains(t, stderr, field, "the refusal does not name %s:\n%s", field, stderr)
 	}
-	if entries, err := os.ReadDir(receipts); err == nil && len(entries) > 0 {
-		t.Fatalf("a refused record still wrote %d files", len(entries))
+	{
+		entries, err := os.ReadDir(receipts)
+		require.False(t, err == nil && len(entries) > 0, "a refused record still wrote %d files", len(entries))
 	}
 }
 
@@ -237,19 +186,11 @@ func TestDogfoodRecordRefusesAVerdictItWasNotGiven(t *testing.T) {
 	args := []string{"dogfood", "record", "--cli", writeCLI(t, t.TempDir()), "--tool", "nova-example", "--verb", "links",
 		"--by", "Stella", "--notes", "real work", "--receipts", receipts}
 	code, _, stderr := dogfoodRun(t, args...)
-	if code != 2 {
-		t.Fatalf("exit %d, want 2: a receipt with no verdict is not a receipt", code)
-	}
-	if !strings.Contains(stderr, "--ok") || !strings.Contains(stderr, "--not-ok") {
-		t.Fatalf("the refusal does not say how to state the verdict:\n%s", stderr)
-	}
+	require.EqualValues(t, 2, code, "exit %d, want 2: a receipt with no verdict is not a receipt", code)
+	require.False(t, !strings.Contains(stderr, "--ok") || !strings.Contains(stderr, "--not-ok"), "the refusal does not say how to state the verdict:\n%s", stderr)
 	code, _, stderr = dogfoodRun(t, append(args, "--ok", "--not-ok")...)
-	if code != 2 {
-		t.Fatalf("exit %d, want 2: both verdicts at once is a typo with two readings", code)
-	}
-	if !strings.Contains(stderr, "--ok") {
-		t.Fatalf("the refusal does not name the flags:\n%s", stderr)
-	}
+	require.EqualValues(t, 2, code, "exit %d, want 2: both verdicts at once is a typo with two readings", code)
+	require.Contains(t, stderr, "--ok", "the refusal does not name the flags:\n%s", stderr)
 }
 
 func TestDogfoodRecordKeepsTheReceiptOnOneLine(t *testing.T) {
@@ -262,12 +203,8 @@ func TestDogfoodRecordKeepsTheReceiptOnOneLine(t *testing.T) {
 		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--not-ok",
 		"--notes", "first line\nDOGFOOD OK verbs=99 dogfooded=99 by-nonauthor=99 open-edges=0",
 		"--receipts", receipts)
-	if code != 2 {
-		t.Fatalf("exit %d, want 2: a receipt is one line of record", code)
-	}
-	if strings.Count(strings.TrimSuffix(stderr, "\n"), "\n") != 0 {
-		t.Fatalf("the refusal itself spans more than one line:\n%q", stderr)
-	}
+	require.EqualValues(t, 2, code, "exit %d, want 2: a receipt is one line of record", code)
+	require.EqualValues(t, 0, strings.Count(strings.TrimSuffix(stderr, "\n"), "\n"), "the refusal itself spans more than one line:\n%q", stderr)
 }
 
 func TestDogfoodGateRequireAllNamesEveryVerbNoNonAuthorHasRun(t *testing.T) {
@@ -281,20 +218,12 @@ func TestDogfoodGateRequireAllNamesEveryVerbNoNonAuthorHasRun(t *testing.T) {
 		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "real work",
 	})
 	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all")
-	if code != 1 {
-		t.Fatalf("exit %d, want 1", code)
-	}
+	require.EqualValues(t, 1, code, "exit %d, want 1", code)
 	for _, want := range []string{"verb=quickstart", "verb=nocode"} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("the gate does not name %s:\n%s", want, stderr)
-		}
+		require.Contains(t, stderr, want, "the gate does not name %s:\n%s", want, stderr)
 	}
-	if strings.Contains(stderr, "verb=links") {
-		t.Fatalf("the gate named a verb a non-author had run:\n%s", stderr)
-	}
-	if !strings.Contains(stderr, "DOGFOOD GATE FAIL verbs=3") {
-		t.Fatalf("no count line:\n%s", stderr)
-	}
+	require.NotContains(t, stderr, "verb=links", "the gate named a verb a non-author had run:\n%s", stderr)
+	require.Contains(t, stderr, "DOGFOOD GATE FAIL verbs=3", "no count line:\n%s", stderr)
 }
 
 func TestDogfoodGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
@@ -310,12 +239,8 @@ func TestDogfoodGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
 		})
 	}
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all")
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\n%s", code, stderr)
-	}
-	if !strings.Contains(stdout, "DOGFOOD GATE OK verbs=3 by-nonauthor=3 open-edges=0 unfiled=0 unmatched=0 require-all=yes") {
-		t.Fatalf("gate line:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.Contains(t, stdout, "DOGFOOD GATE OK verbs=3 by-nonauthor=3 open-edges=0 unfiled=0 unmatched=0 require-all=yes", "gate line:\n%s", stdout)
 }
 
 // Without --require-all the gate still says no to an edge nobody has cleared:
@@ -331,12 +256,8 @@ func TestDogfoodGateSaysNoToAnOpenEdgeWithoutRequireAll(t *testing.T) {
 		"at": "2026-09-18T09:00:00Z", "ok": false, "notes": "refused a path it should have taken", "issue": 1301,
 	})
 	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
-	if code != 1 {
-		t.Fatalf("exit %d, want 1", code)
-	}
-	if !strings.Contains(stderr, "#1301") {
-		t.Fatalf("the finding does not name the issue:\n%s", stderr)
-	}
+	require.EqualValues(t, 1, code, "exit %d, want 1", code)
+	require.Contains(t, stderr, "#1301", "the finding does not name the issue:\n%s", stderr)
 }
 
 // With --shipped the gate judges the tools under that cmd/ only: a parked
@@ -348,12 +269,8 @@ func TestDogfoodGateShippedJudgesOnlyTheToolsUnderCmd(t *testing.T) {
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	cmd := filepath.Join(dir, "cmd", "nova-example")
-	if err := os.MkdirAll(cmd, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cmd, "main.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(cmd, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cmd, "main.go"), []byte("package main\n"), 0o644))
 	receipts := filepath.Join(dir, "receipts")
 	writeReceipt(t, receipts, "a.json", map[string]any{
 		"tool": "nova-example", "verb": "links", "by": "Stella",
@@ -365,23 +282,21 @@ func TestDogfoodGateShippedJudgesOnlyTheToolsUnderCmd(t *testing.T) {
 	})
 	shipped := filepath.Join(dir, "cmd")
 
-	if code, _, _ := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts); code != 1 {
-		t.Fatalf("without --shipped exit %d, want 1: the parked receipt is judged", code)
+	{
+		code, _, _ := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+		require.EqualValues(t, 1, code, "without --shipped exit %d, want 1: the parked receipt is judged", code)
 	}
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--shipped", shipped)
-	if code != 0 {
-		t.Fatalf("with --shipped exit %d, want 0\nstderr:%s", code, stderr)
-	}
-	if !strings.Contains(stderr, "DOGFOOD NOTE shipped=1 outside=1") || !strings.Contains(stdout, "DOGFOOD GATE OK") {
-		t.Fatalf("the scope is not said:\nstdout:%s\nstderr:%s", stdout, stderr)
-	}
+	require.EqualValues(t, 0, code, "with --shipped exit %d, want 0\nstderr:%s", code, stderr)
+	require.False(t, !strings.Contains(stderr, "DOGFOOD NOTE shipped=1 outside=1") || !strings.Contains(stdout, "DOGFOOD GATE OK"), "the scope is not said:\nstdout:%s\nstderr:%s", stdout, stderr)
 
 	writeReceipt(t, receipts, "c.json", map[string]any{
 		"tool": "nova-example", "verb": "corpus", "by": "Stella",
 		"at": "2026-09-18T09:02:00Z", "ok": false, "notes": "refused the corpus",
 	})
-	if code, _, _ := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--shipped", shipped); code != 1 {
-		t.Fatalf("exit %d, want 1: a shipped tool's open edge must still say no", code)
+	{
+		code, _, _ := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--shipped", shipped)
+		require.EqualValues(t, 1, code, "exit %d, want 1: a shipped tool's open edge must still say no", code)
 	}
 }
 
@@ -391,31 +306,17 @@ func TestDogfoodGateCapsItsFindingsAndSaysHowToSeeTheRest(t *testing.T) {
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
-	if err := os.MkdirAll(receipts, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(receipts, 0o755))
 	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all", "--fail-max", "1", "--allow-empty")
-	if code != 1 {
-		t.Fatalf("exit %d, want 1", code)
-	}
-	if strings.Count(stderr, "DOGFOOD GATE FAIL tool=") != 1 {
-		t.Fatalf("the cap did not hold:\n%s", stderr)
-	}
-	if !strings.Contains(stderr, "--fail-max") {
-		t.Fatalf("a cap with no remedy is censorship:\n%s", stderr)
-	}
-	if !strings.Contains(stderr, "shown=1") {
-		t.Fatalf("no count line:\n%s", stderr)
-	}
+	require.EqualValues(t, 1, code, "exit %d, want 1", code)
+	require.EqualValues(t, 1, strings.Count(stderr, "DOGFOOD GATE FAIL tool="), "the cap did not hold:\n%s", stderr)
+	require.Contains(t, stderr, "--fail-max", "a cap with no remedy is censorship:\n%s", stderr)
+	require.Contains(t, stderr, "shown=1", "no count line:\n%s", stderr)
 	// The first run of this verb against the repository's own reference printed
 	// `DOGFOOD\x20GATE MORE`: bounded escapes the token it is given, so the token
 	// is one word.
-	if !strings.Contains(stderr, "DOGFOOD MORE kind=verb") {
-		t.Fatalf("the MORE line is not readable:\n%s", stderr)
-	}
-	if strings.Contains(stderr, "\\x20") {
-		t.Fatalf("an escaped space reached a printed line:\n%s", stderr)
-	}
+	require.Contains(t, stderr, "DOGFOOD MORE kind=verb", "the MORE line is not readable:\n%s", stderr)
+	require.NotContains(t, stderr, "\\x20", "an escaped space reached a printed line:\n%s", stderr)
 }
 
 func TestDogfoodRefusesAMissingPath(t *testing.T) {
@@ -435,12 +336,8 @@ func TestDogfoodRefusesAMissingPath(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, _, stderr := dogfoodRun(t, tc.args...)
-			if code != 2 {
-				t.Fatalf("exit %d, want 2", code)
-			}
-			if !strings.Contains(stderr, tc.want) || !strings.Contains(stderr, "refusing to guess") {
-				t.Fatalf("refusal:\n%s", stderr)
-			}
+			require.EqualValues(t, 2, code, "exit %d, want 2", code)
+			require.False(t, !strings.Contains(stderr, tc.want) || !strings.Contains(stderr, "refusing to guess"), "refusal:\n%s", stderr)
 		})
 	}
 }
@@ -449,32 +346,20 @@ func TestDogfoodRefusesAnUnknownSubVerb(t *testing.T) {
 	t.Parallel()
 
 	code, _, stderr := dogfoodRun(t, "dogfood", "ledgre")
-	if code != 2 {
-		t.Fatalf("exit %d, want 2", code)
-	}
-	if !strings.Contains(stderr, "run: nova-check help") {
-		t.Fatalf("a typo was answered without the door:\n%s", stderr)
-	}
+	require.EqualValues(t, 2, code, "exit %d, want 2", code)
+	require.Contains(t, stderr, "run: nova-check help", "a typo was answered without the door:\n%s", stderr)
 	code, _, stderr = dogfoodRun(t, "dogfood")
-	if code != 2 {
-		t.Fatalf("exit %d, want 2", code)
-	}
-	if !strings.Contains(stderr, "ledger") {
-		t.Fatalf("the refusal does not name the sub-verbs:\n%s", stderr)
-	}
+	require.EqualValues(t, 2, code, "exit %d, want 2", code)
+	require.Contains(t, stderr, "ledger", "the refusal does not name the sub-verbs:\n%s", stderr)
 }
 
 func TestDogfoodIsInTheUsageBanner(t *testing.T) {
 	t.Parallel()
 
 	code, stdout, _ := dogfoodRun(t, "help")
-	if code != 0 {
-		t.Fatalf("exit %d", code)
-	}
+	require.EqualValues(t, 0, code, "exit %d", code)
 	for _, want := range []string{"dogfood ledger", "dogfood record", "dogfood gate"} {
-		if !strings.Contains(stdout, want) {
-			t.Fatalf("the banner does not carry %q", want)
-		}
+		require.Contains(t, stdout, want, "the banner does not carry %q", want)
 	}
 }
 
@@ -482,23 +367,17 @@ func TestDogfoodRecordUsageNamesTheVerbList(t *testing.T) {
 	t.Parallel()
 
 	code, stdout, _ := dogfoodRun(t, "help")
-	if code != 0 {
-		t.Fatalf("exit %d", code)
-	}
+	require.EqualValues(t, 0, code, "exit %d", code)
 	line := ""
 	for _, l := range strings.Split(stdout, "\n") {
-		if strings.Contains(l, "dogfood record") {
+		if strings.HasPrefix(strings.TrimSpace(l), "nova-check dogfood record ") {
 			line = l
 			break
 		}
 	}
-	if line == "" {
-		t.Fatal("the banner has no dogfood record line")
-	}
+	require.NotEqualValues(t, "", line, "the banner has no dogfood record line")
 	for _, want := range []string{"--cli", "--tools"} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("the dogfood record usage line does not name %s, so a reader pastes a line the verb refuses:\n%s", want, line)
-		}
+		require.Contains(t, line, want, "the dogfood record usage line does not name %s, so a reader pastes a line the verb refuses:\n%s", want, line)
 	}
 }
 
@@ -519,19 +398,19 @@ func TestDogfoodLedgerReadsAuthorshipFromGit(t *testing.T) {
 			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 			"GIT_AUTHOR_DATE=2026-09-18T09:00:00Z", "GIT_COMMITTER_DATE=2026-09-18T09:00:00Z",
 			"GIT_COMMITTER_NAME=Rowan Claude", "GIT_COMMITTER_EMAIL=rowan@mas-bandwidth.com")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
+		{
+			out, err := cmd.CombinedOutput()
+			require.NoError(t, err, "git %v: %v\n%s", args, err, out)
 		}
 	}
 	git("init", "-q", "-b", "main")
 	git("config", "user.name", "Rowan Claude")
 	git("config", "user.email", "rowan@mas-bandwidth.com")
-	if err := os.MkdirAll(filepath.Join(repo, "cmd", "nova-example"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, "cmd", "nova-example", "main.go"),
-		[]byte("package main\n\nvar verbs = []string{\"quickstart\", \"links\", \"nocode\"}\n"), 0o644); err != nil {
-		t.Fatal(err)
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "cmd", "nova-example"), 0o755))
+	{
+		err := os.WriteFile(filepath.Join(repo, "cmd", "nova-example", "main.go"),
+			[]byte("package main\n\nvar verbs = []string{\"quickstart\", \"links\", \"nocode\"}\n"), 0o644)
+		require.NoError(t, err)
 	}
 	git("add", "-A")
 	git("commit", "-q", "-m", "the verbs arrive")
@@ -544,12 +423,8 @@ func TestDogfoodLedgerReadsAuthorshipFromGit(t *testing.T) {
 		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "my own verb",
 	})
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts, "--repo", repo)
-	if code != 0 {
-		t.Fatalf("exit %d\n%s", code, stderr)
-	}
-	if !strings.Contains(stdout, "dogfooded=1 by-nonauthor=0") {
-		t.Fatalf("git said Rowan Claude wrote the verb and the ledger counted his own run:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, code, "exit %d\n%s", code, stderr)
+	require.Contains(t, stdout, "dogfooded=1 by-nonauthor=0", "git said Rowan Claude wrote the verb and the ledger counted his own run:\n%s", stdout)
 }
 
 // The 2026-09-18 dogfood pass, edge 3: the ledger said nine receipts named a
@@ -567,18 +442,10 @@ func TestDogfoodLedgerNamesEveryStrandedReceiptAndTheNearestVerb(t *testing.T) {
 		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "real work",
 	})
 	code, _, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\n%s", code, stderr)
-	}
-	if !strings.Contains(stderr, "stranded") || !strings.Contains(stderr, "stranded.json") {
-		t.Fatalf("the stranded receipt is not named:\n%s", stderr)
-	}
-	if !strings.Contains(stderr, "verb=lnks") {
-		t.Fatalf("the note does not say what the receipt claimed:\n%s", stderr)
-	}
-	if !strings.Contains(stderr, "nova-example links") {
-		t.Fatalf("the note does not say what it was probably meant to be:\n%s", stderr)
-	}
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.False(t, !strings.Contains(stderr, "stranded") || !strings.Contains(stderr, "stranded.json"), "the stranded receipt is not named:\n%s", stderr)
+	require.Contains(t, stderr, "verb=lnks", "the note does not say what the receipt claimed:\n%s", stderr)
+	require.Contains(t, stderr, "nova-example links", "the note does not say what it was probably meant to be:\n%s", stderr)
 }
 
 // Edge 4: the gate — the line the release lane actually calls — dropped the
@@ -595,19 +462,11 @@ func TestDogfoodGateAlsoNamesTheStrandedReceipts(t *testing.T) {
 		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "real work",
 	})
 	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all")
-	if code != 1 {
-		t.Fatalf("exit %d, want 1", code)
-	}
-	if !strings.Contains(stderr, "stranded.json") || !strings.Contains(stderr, "nova-example links") {
-		t.Fatalf("the gate discarded a receipt and did not say so:\n%s", stderr)
-	}
+	require.EqualValues(t, 1, code, "exit %d, want 1", code)
+	require.False(t, !strings.Contains(stderr, "stranded.json") || !strings.Contains(stderr, "nova-example links"), "the gate discarded a receipt and did not say so:\n%s", stderr)
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0 without --require-all\n%s", code, stderr)
-	}
-	if !strings.Contains(stderr, "stranded.json") {
-		t.Fatalf("a green gate said nothing about the receipt it discarded:\n%s\n%s", stdout, stderr)
-	}
+	require.EqualValues(t, 0, code, "exit %d, want 0 without --require-all\n%s", code, stderr)
+	require.Contains(t, stderr, "stranded.json", "a green gate said nothing about the receipt it discarded:\n%s\n%s", stdout, stderr)
 }
 
 // Edge 5: every receipt of the pass was written with --ok, because the verbs
@@ -624,19 +483,11 @@ func TestDogfoodLedgerCountsAnEdgeNamedInTheNotes(t *testing.T) {
 		"notes": "Did the job. Edges: (1) the refusal names no remedy; (2) it reads only --dir.",
 	})
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
-	if code != 0 {
-		t.Fatalf("exit %d\n%s", code, stderr)
-	}
-	if !strings.Contains(stdout, "open-edges=1 unfiled=1") {
-		t.Fatalf("the notes name an edge and the summary says none:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, code, "exit %d\n%s", code, stderr)
+	require.Contains(t, stdout, "open-edges=1 unfiled=1", "the notes name an edge and the summary says none:\n%s", stdout)
 	code, _, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
-	if code != 1 {
-		t.Fatalf("gate exit %d, want 1: an edge nobody filed is open\n%s", code, stderr)
-	}
-	if !strings.Contains(stderr, "no issue filed") {
-		t.Fatalf("the gate does not say the edge was never filed:\n%s", stderr)
-	}
+	require.EqualValues(t, 1, code, "gate exit %d, want 1: an edge nobody filed is open\n%s", code, stderr)
+	require.Contains(t, stderr, "no issue filed", "the gate does not say the edge was never filed:\n%s", stderr)
 }
 
 // Edge 2 at the CLI: `record` had --cli available and checked nothing, so a
@@ -651,17 +502,12 @@ func TestDogfoodRecordRefusesAVerbTheReferenceDoesNotDeclare(t *testing.T) {
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
 		"--tool", "nova-example", "--verb", "lnks", "--by", "Stella", "--ok",
 		"--notes", "real work", "--receipts", receipts)
-	if code != 2 {
-		t.Fatalf("exit %d, want 2", code)
-	}
-	if stdout != "" {
-		t.Fatalf("a refusal wrote to stdout:\n%s", stdout)
-	}
-	if !strings.Contains(stderr, "nova-example links") {
-		t.Fatalf("the refusal does not name the nearest declared verb:\n%s", stderr)
-	}
-	if entries, err := os.ReadDir(receipts); err == nil && len(entries) > 0 {
-		t.Fatal("a refused record still wrote a receipt")
+	require.EqualValues(t, 2, code, "exit %d, want 2", code)
+	require.EqualValues(t, "", stdout, "a refusal wrote to stdout:\n%s", stdout)
+	require.Contains(t, stderr, "nova-example links", "the refusal does not name the nearest declared verb:\n%s", stderr)
+	{
+		entries, err := os.ReadDir(receipts)
+		require.False(t, err == nil && len(entries) > 0, "a refused record still wrote a receipt")
 	}
 }
 
@@ -674,12 +520,8 @@ func TestDogfoodRecordAcceptsADeclaredVerb(t *testing.T) {
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
 		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--ok",
 		"--notes", "real work", "--receipts", receipts)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\n%s", code, stderr)
-	}
-	if !strings.HasPrefix(stdout, "DOGFOOD RECORD OK ") {
-		t.Fatalf("record said:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.True(t, strings.HasPrefix(stdout, "DOGFOOD RECORD OK "), "record said:\n%s", stdout)
 }
 
 func TestDogfoodRecordRefusesWithNothingToCheckAgainst(t *testing.T) {
@@ -689,12 +531,8 @@ func TestDogfoodRecordRefusesWithNothingToCheckAgainst(t *testing.T) {
 	code, _, stderr := dogfoodRun(t, "dogfood", "record",
 		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--ok",
 		"--notes", "real work", "--receipts", receipts)
-	if code != 2 {
-		t.Fatalf("exit %d, want 2: a receipt checked against nothing is how nine of them were stranded", code)
-	}
-	if !strings.Contains(stderr, "--cli") || !strings.Contains(stderr, "--tools") {
-		t.Fatalf("the refusal does not name either source:\n%s", stderr)
-	}
+	require.EqualValues(t, 2, code, "exit %d, want 2: a receipt checked against nothing is how nine of them were stranded", code)
+	require.False(t, !strings.Contains(stderr, "--cli") || !strings.Contains(stderr, "--tools"), "the refusal does not name either source:\n%s", stderr)
 }
 
 // The binaries are the authoritative list when they are to hand: a reference
@@ -707,9 +545,7 @@ func TestDogfoodReadsTheVerbsFromTheBinariesWhenToldTo(t *testing.T) {
 	}
 	tools := t.TempDir()
 	script := "#!/bin/sh\ncat <<'EOF'\nnova-example: a fixture\n\nusage:\n  nova-example links --dir <dir>\n  nova-example ask   delivers ONE unit to the FRIEND who owns it\nEOF\n"
-	if err := testbin.WriteExecutable(filepath.Join(tools, "nova-example"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(tools, "nova-example"), []byte(script), 0o755))
 	dir := t.TempDir()
 	cli := writeCLI(t, dir) // declares quickstart, links, nocode — and no `ask`
 	receipts := filepath.Join(dir, "receipts")
@@ -718,22 +554,14 @@ func TestDogfoodReadsTheVerbsFromTheBinariesWhenToldTo(t *testing.T) {
 		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "one real ask sent",
 	})
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--tools", tools, "--receipts", receipts)
-	if code != 0 {
-		t.Fatalf("exit %d\n%s", code, stderr)
-	}
-	if !strings.Contains(stdout, "verb=ask by=Stella") {
-		t.Fatalf("the binary declares `ask` and the ledger stranded the receipt:\n%s\n%s", stdout, stderr)
-	}
-	if !strings.Contains(stdout, "verbs=2") {
-		t.Fatalf("the binary answered for itself and the stale reference still filled in:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, code, "exit %d\n%s", code, stderr)
+	require.Contains(t, stdout, "verb=ask by=Stella", "the binary declares `ask` and the ledger stranded the receipt:\n%s\n%s", stdout, stderr)
+	require.Contains(t, stdout, "verbs=2", "the binary answered for itself and the stale reference still filled in:\n%s", stdout)
 	// And `record` checks against the same list.
 	code, _, stderr = dogfoodRun(t, "dogfood", "record", "--tools", tools,
 		"--tool", "nova-example", "--verb", "ask", "--by", "Emma", "--ok",
 		"--notes", "another real ask", "--receipts", receipts)
-	if code != 0 {
-		t.Fatalf("record exit %d against the binaries' own list\n%s", code, stderr)
-	}
+	require.EqualValues(t, 0, code, "record exit %d against the binaries' own list\n%s", code, stderr)
 }
 
 // DOGFOOD ROUND 5, EDGE 2, THROUGH THE VERB A PERSON ACTUALLY RUNS. Stella finds
@@ -750,9 +578,7 @@ func TestDogfoodRecordClosesTheFindingItNames(t *testing.T) {
 		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--not-ok",
 		"--notes", "ran it over the lane's own docs; it refused a relative path",
 		"--receipts", receipts)
-	if code != 0 {
-		t.Fatalf("record exit %d\n%s", code, stderr)
-	}
+	require.EqualValues(t, 0, code, "record exit %d\n%s", code, stderr)
 	// The id is the eight characters ending the file the record line names, which is
 	// how a reader gets one to type into --closes.
 	file := fieldOf(t, stdout, "file=")
@@ -760,40 +586,41 @@ func TestDogfoodRecordClosesTheFindingItNames(t *testing.T) {
 	id = id[len(id)-8:]
 
 	// Somebody else runs it later and it works for them. That is not an answer.
-	if code, _, stderr = dogfoodRun(t, "dogfood", "record", "--cli", cli,
-		"--tool", "nova-example", "--verb", "links", "--by", "Johnny", "--ok",
-		"--notes", "ran it over my own tree; nothing to report",
-		"--receipts", receipts); code != 0 {
-		t.Fatalf("record exit %d\n%s", code, stderr)
+	{
+		code, _, stderr = dogfoodRun(t, "dogfood", "record", "--cli", cli,
+			"--tool", "nova-example", "--verb", "links", "--by", "Johnny", "--ok",
+			"--notes", "ran it over my own tree; nothing to report",
+			"--receipts", receipts)
+		require.EqualValues(t, 0, code, "record exit %d\n%s", code, stderr)
 	}
 	code, stdout, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
-	if code != 1 {
-		t.Fatalf("the gate passed over Stella's open finding: exit %d\n%s\n%s", code, stdout, stderr)
-	}
-	if !strings.Contains(stderr, "receipt="+id) {
-		t.Fatalf("the gate never named the id a closer must use (%s):\n%s", id, stderr)
-	}
+	require.EqualValues(t, 1, code, "the gate passed over Stella's open finding: exit %d\n%s\n%s", code, stdout, stderr)
+	require.Contains(t, stderr, "receipt="+id, "the gate never named the id a closer must use (%s):\n%s", id, stderr)
 
 	// An id that names nothing closes nothing.
-	if code, _, stderr = dogfoodRun(t, "dogfood", "record", "--cli", cli,
-		"--tool", "nova-example", "--verb", "links", "--by", "Rowan", "--ok",
-		"--closes", "deadbeef", "--notes", "fixed it, or so I thought",
-		"--receipts", receipts); code != 0 {
-		t.Fatalf("record exit %d\n%s", code, stderr)
+	{
+		code, _, stderr = dogfoodRun(t, "dogfood", "record", "--cli", cli,
+			"--tool", "nova-example", "--verb", "links", "--by", "Rowan", "--ok",
+			"--closes", "deadbeef", "--notes", "fixed it, or so I thought",
+			"--receipts", receipts)
+		require.EqualValues(t, 0, code, "record exit %d\n%s", code, stderr)
 	}
-	if code, stdout, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts); code != 1 {
-		t.Fatalf("a --closes naming nothing closed a real finding: exit %d\n%s\n%s", code, stdout, stderr)
+	{
+		code, stdout, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+		require.EqualValues(t, 1, code, "a --closes naming nothing closed a real finding: exit %d\n%s\n%s", code, stdout, stderr)
 	}
 
 	// Naming it closes it.
-	if code, _, stderr = dogfoodRun(t, "dogfood", "record", "--cli", cli,
-		"--tool", "nova-example", "--verb", "links", "--by", "Rowan", "--ok",
-		"--closes", id, "--notes", "relative paths now taken; ran it on the same tree",
-		"--receipts", receipts); code != 0 {
-		t.Fatalf("record exit %d\n%s", code, stderr)
+	{
+		code, _, stderr = dogfoodRun(t, "dogfood", "record", "--cli", cli,
+			"--tool", "nova-example", "--verb", "links", "--by", "Rowan", "--ok",
+			"--closes", id, "--notes", "relative paths now taken; ran it on the same tree",
+			"--receipts", receipts)
+		require.EqualValues(t, 0, code, "record exit %d\n%s", code, stderr)
 	}
-	if code, stdout, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts); code != 0 {
-		t.Fatalf("the gate still says no over an answered finding: exit %d\n%s\n%s", code, stdout, stderr)
+	{
+		code, stdout, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+		require.EqualValues(t, 0, code, "the gate still says no over an answered finding: exit %d\n%s\n%s", code, stdout, stderr)
 	}
 }
 
@@ -808,21 +635,15 @@ func TestDogfoodRecordRefusesAClosesThatIsNotAnID(t *testing.T) {
 		"--tool", "nova-example", "--verb", "links", "--by", "Rowan", "--ok",
 		"--closes", "stella's one", "--notes", "fixed it",
 		"--receipts", filepath.Join(dir, "receipts"))
-	if code != 2 {
-		t.Fatalf("exit %d, want 2\n%s\n%s", code, stdout, stderr)
-	}
-	if !strings.Contains(stderr, "--closes") {
-		t.Fatalf("the refusal never names the flag:\n%s", stderr)
-	}
+	require.EqualValues(t, 2, code, "exit %d, want 2\n%s\n%s", code, stdout, stderr)
+	require.Contains(t, stderr, "--closes", "the refusal never names the flag:\n%s", stderr)
 }
 
 // fieldOf pulls one `name=value` off a one-line record, to the end of the line.
 func fieldOf(t *testing.T, line, name string) string {
 	t.Helper()
 	_, rest, ok := strings.Cut(line, name)
-	if !ok {
-		t.Fatalf("no %s in:\n%s", name, line)
-	}
+	require.True(t, ok, "no %s in:\n%s", name, line)
 	value, _, _ := strings.Cut(strings.TrimSpace(rest), "\n")
 	return strings.TrimSpace(value)
 }

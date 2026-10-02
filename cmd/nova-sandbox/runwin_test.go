@@ -25,6 +25,7 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -34,6 +35,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeWinPlace is the Windows seam. It records the calls IN ORDER, because the order is the
@@ -292,19 +295,13 @@ func TestWindowsRunCreatesJobAndScratchRunsAndAlwaysDeletes(t *testing.T) {
 	for _, code := range []int{0, 7, 1} {
 		b := newWinBench(t, code)
 		got, errOut := b.exec(t, b.args(t)...)
-		if got != code {
-			t.Fatalf("the windows run verb returned %d for a command that exited %d; the status belongs to the wrapped command\n%s", got, code, errOut)
-		}
+		require.Equal(t, code, got, "the windows run verb returned %d for a command that exited %d; the status belongs to the wrapped command\n%s", got, code, errOut)
 		want := "exists:nova-j1 scratch:nova-j1 job:mem=0,cpu=0 start:job-1 close:job-1 used remove:nova-j1"
-		if b.order() != want {
-			t.Fatalf("the windows call order is not look-create-job-run-kill-delete:\n got: %s\nwant: %s", b.order(), want)
-		}
-		if !strings.Contains(errOut, "SANDBOX DONE name=j1 exit="+strconv.Itoa(code)) || !strings.Contains(errOut, "freed=4096") {
-			t.Errorf("the receipt is not the contract's SANDBOX DONE line:\n%s", errOut)
-		}
-		if _, err := os.Stat(filepath.Join(b.scratch, "nova-j1")); !os.IsNotExist(err) {
-			t.Errorf("the scratch is still on the disk after the run; the whole verb is that it is not")
-		}
+		require.Equal(t, want, b.order(), "the windows call order is not look-create-job-run-kill-delete:\n got: %s\nwant: %s", b.order(), want)
+		assert.Contains(t, errOut, "SANDBOX DONE name=j1 exit="+strconv.Itoa(code), "the receipt is not the contract's SANDBOX DONE line:\n%s", errOut)
+		assert.Contains(t, errOut, "freed=4096", "the receipt is not the contract's SANDBOX DONE line:\n%s", errOut)
+		_, err := os.Stat(filepath.Join(b.scratch, "nova-j1"))
+		assert.ErrorIs(t, err, fs.ErrNotExist, "the scratch is still on the disk after the run; the whole verb is that it is not")
 	}
 }
 
@@ -324,15 +321,11 @@ func TestWindowsTheJobIsClosedBeforeTheScratchIsRemoved(t *testing.T) {
 			removed = i
 		}
 	}
-	if closed < 0 || removed < 0 {
-		t.Fatalf("the run neither closed the job nor removed the scratch: %s", b.order())
-	}
-	if closed > removed {
-		t.Fatalf("the scratch was removed before the job was closed: %s. A directory holding a running .exe cannot be removed, and a rename over a running image raises ERROR_SHARING_VIOLATION -- there is no unix replace-the-inode trick on NTFS", b.order())
-	}
-	if open := b.place.openJobs(); open != 0 {
-		t.Errorf("%d job handle(s) are still open after the verb returned; the kill IS the close, and a job this tool still holds is a tree still running", open)
-	}
+	require.GreaterOrEqual(t, closed, 0, "the run neither closed the job nor removed the scratch: %s", b.order())
+	require.GreaterOrEqual(t, removed, 0, "the run neither closed the job nor removed the scratch: %s", b.order())
+	require.LessOrEqual(t, closed, removed, "the scratch was removed before the job was closed: %s. A directory holding a running .exe cannot be removed, and a rename over a running image raises ERROR_SHARING_VIOLATION -- there is no unix replace-the-inode trick on NTFS", b.order())
+	open := b.place.openJobs()
+	assert.Equal(t, 0, open, "%d job handle(s) are still open after the verb returned; the kill IS the close, and a job this tool still holds is a tree still running", open)
 }
 
 // W1's red test, by name: `a-windows-run-creates-both-the-job-and-the-scratch-or-neither`.
@@ -343,21 +336,12 @@ func TestWindowsAJobThatFailsUnmakesTheScratchBesideIt(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.place.jobErr = errors.New("CreateJobObjectW: access denied")
 	code, errOut := b.exec(t, b.args(t)...)
-	if code != 125 {
-		t.Fatalf("a job that could not be made must refuse at 125, got %d\n%s", code, errOut)
-	}
-	if strings.Contains(b.order(), "start:") {
-		t.Fatalf("the command was started with no job to hold it: %s", b.order())
-	}
-	if !strings.Contains(b.order(), "remove:nova-j1") {
-		t.Fatalf("the scratch made beside the failed job was not removed: %s", b.order())
-	}
-	if _, err := os.Stat(filepath.Join(b.scratch, "nova-j1")); !os.IsNotExist(err) {
-		t.Errorf("the scratch survived a failed job: both or neither is the rule")
-	}
-	if !strings.Contains(errOut, "reason=volume_failed") {
-		t.Errorf("the refusal does not name the reason:\n%s", errOut)
-	}
+	require.Equal(t, 125, code, "a job that could not be made must refuse at 125, got %d\n%s", code, errOut)
+	require.NotContains(t, b.order(), "start:", "the command was started with no job to hold it: %s", b.order())
+	require.Contains(t, b.order(), "remove:nova-j1", "the scratch made beside the failed job was not removed: %s", b.order())
+	_, err := os.Stat(filepath.Join(b.scratch, "nova-j1"))
+	assert.ErrorIs(t, err, fs.ErrNotExist, "the scratch survived a failed job: both or neither is the rule")
+	assert.Contains(t, errOut, "reason=volume_failed", "the refusal does not name the reason:\n%s", errOut)
 }
 
 // W5: <scratch>/nova-<n> is the run's ONLY --write, and the working directory and HOME are
@@ -367,30 +351,18 @@ func TestWindowsTheScratchIsTheOnlyWrite(t *testing.T) {
 	reads := t.TempDir()
 	b.exec(t, b.args(t, "--read", reads)...)
 	p := b.place.startSpec().Policy
-	if p == nil {
-		t.Fatal("the command was never started, so there is no policy to read")
-	}
-	if len(p.Writes) != 1 {
-		t.Fatalf("the run has %d writable roots, want exactly 1 -- the scratch: %v", len(p.Writes), p.Writes)
-	}
+	require.NotNil(t, p, "the command was never started, so there is no policy to read")
+	require.Len(t, p.Writes, 1, "the run has %d writable roots, want exactly 1 -- the scratch: %v", len(p.Writes), p.Writes)
 	dir := filepath.Join(b.scratch, "nova-j1")
-	if !strings.HasPrefix(p.Writes[0], dir) {
-		t.Errorf("the one writable root is %q and not the scratch %q", p.Writes[0], dir)
-	}
-	if !strings.HasPrefix(p.Cwd, dir) || filepath.Base(p.Cwd) != "work" {
-		t.Errorf("the working directory is %q, want <scratch>/work", p.Cwd)
-	}
-	if !strings.HasPrefix(p.Home, dir) || filepath.Base(p.Home) != "home" {
-		t.Errorf("HOME is %q, want <scratch>/home", p.Home)
-	}
-	if !strings.HasPrefix(p.Tmp, dir) {
-		t.Errorf("the temp directory is %q, which is off the scratch: TEMP and TMP must be on the place that is deleted", p.Tmp)
-	}
+	assert.True(t, strings.HasPrefix(p.Writes[0], dir), "the one writable root is %q and not the scratch %q", p.Writes[0], dir)
+	assert.True(t, strings.HasPrefix(p.Cwd, dir), "the working directory is %q, want <scratch>/work", p.Cwd)
+	assert.Equal(t, "work", filepath.Base(p.Cwd), "the working directory is %q, want <scratch>/work", p.Cwd)
+	assert.True(t, strings.HasPrefix(p.Home, dir), "HOME is %q, want <scratch>/home", p.Home)
+	assert.Equal(t, "home", filepath.Base(p.Home), "HOME is %q, want <scratch>/home", p.Home)
+	assert.True(t, strings.HasPrefix(p.Tmp, dir), "the temp directory is %q, which is off the scratch: TEMP and TMP must be on the place that is deleted", p.Tmp)
 	// --read passes through UNCHANGED: a shared toolchain or reference checkout is read in
 	// place and never copied into the disposable place.
-	if len(p.Reads) == 0 {
-		t.Errorf("--read did not reach the policy; a shared toolchain is read in place, never copied")
-	}
+	assert.NotEmpty(t, p.Reads, "--read did not reach the policy; a shared toolchain is read in place, never copied")
 }
 
 // W5 again, the other way: a run never joins a place it did not make.
@@ -398,12 +370,10 @@ func TestWindowsAnExistingScratchIsRefusedNotJoined(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.place.exists = true
 	code, errOut := b.exec(t, b.args(t)...)
-	if code != 125 || !strings.Contains(errOut, "reason=volume_exists") {
-		t.Fatalf("an existing <scratch>/nova-<n> must refuse with volume_exists at 125; got %d\n%s", code, errOut)
-	}
-	if strings.Contains(b.order(), "scratch:") || strings.Contains(b.order(), "job:") {
-		t.Errorf("something was made before the refusal: %s", b.order())
-	}
+	require.Equal(t, 125, code, "an existing <scratch>/nova-<n> must refuse with volume_exists at 125; got %d\n%s", code, errOut)
+	require.Contains(t, errOut, "reason=volume_exists", "an existing <scratch>/nova-<n> must refuse with volume_exists at 125; got %d\n%s", code, errOut)
+	assert.NotContains(t, b.order(), "scratch:", "something was made before the refusal: %s", b.order())
+	assert.NotContains(t, b.order(), "job:", "something was made before the refusal: %s", b.order())
 }
 
 // ---------------------------------------------------------------------------------------
@@ -415,17 +385,13 @@ func TestWindowsAnExistingScratchIsRefusedNotJoined(t *testing.T) {
 func TestWindowsMemoryAndCPUReachTheJob(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.exec(t, b.args(t, "--memory", "4g", "--cpu", "50")...)
-	if got, want := b.place.jobLimits().MemoryBytes, int64(4)<<30; got != want {
-		t.Errorf("--memory 4g reached the job as %d bytes, want %d", got, want)
-	}
-	if got := b.place.jobLimits().CPUPercent; got != 50 {
-		t.Errorf("--cpu 50 reached the job as %d, want 50", got)
-	}
+	gotMem, wantMem := b.place.jobLimits().MemoryBytes, int64(4)<<30
+	assert.Equal(t, wantMem, gotMem, "--memory 4g reached the job as %d bytes, want %d", gotMem, wantMem)
+	gotCPU := b.place.jobLimits().CPUPercent
+	assert.Equal(t, 50, gotCPU, "--cpu 50 reached the job as %d, want 50", gotCPU)
 	// The job is made with the caps already on it: the fake records them at CreateJob, so a
 	// body that created the job bare and set the limits afterwards would show mem=0 here.
-	if !strings.Contains(b.order(), "job:mem="+strconv.FormatInt(int64(4)<<30, 10)+",cpu=50") {
-		t.Errorf("the caps were not on the job at creation: %s. A limit applied to a job that already holds a running tree has been escaped once already", b.order())
-	}
+	assert.Contains(t, b.order(), "job:mem="+strconv.FormatInt(int64(4)<<30, 10)+",cpu=50", "the caps were not on the job at creation: %s. A limit applied to a job that already holds a running tree has been escaped once already", b.order())
 }
 
 // W4's second half: accepted and IGNORED off windows, the way --name already is, so one
@@ -437,9 +403,8 @@ func TestWindowsMemoryAndCPUAreAcceptedAndIgnoredOffWindows(t *testing.T) {
 		f := parseRun([]string{"--name", "j1", "--size", "8g", "--memory", "4g", "--cpu", "50", "--", "/bin/sh"})
 		_, bad := validateRun(&f, goos)
 		for _, r := range bad {
-			if r.Reason == "bad_memory" || r.Reason == "bad_cpu" {
-				t.Errorf("--memory and --cpu are refused on %s: %s. They are accepted and ignored off windows, so one caller writes one argv for three platforms", goos, r.Text)
-			}
+			assert.NotEqual(t, "bad_memory", r.Reason, "--memory and --cpu are refused on %s: %s. They are accepted and ignored off windows, so one caller writes one argv for three platforms", goos, r.Text)
+			assert.NotEqual(t, "bad_cpu", r.Reason, "--memory and --cpu are refused on %s: %s. They are accepted and ignored off windows, so one caller writes one argv for three platforms", goos, r.Text)
 		}
 	}
 	// Their SHAPES are still checked everywhere: a typo silently ignored on a Mac and
@@ -453,9 +418,7 @@ func TestWindowsMemoryAndCPUAreAcceptedAndIgnoredOffWindows(t *testing.T) {
 	} {
 		f := parseRun([]string{"--name", "j1", "--size", "8g", tc.flag, tc.value, "--", "/bin/sh"})
 		_, bad := validateRun(&f, "darwin")
-		if !hasReason(bad, tc.reason) {
-			t.Errorf("%s %s is not refused with %s on darwin: %v", tc.flag, tc.value, tc.reason, reasonsOf(bad))
-		}
+		assert.True(t, hasReason(bad, tc.reason), "%s %s is not refused with %s on darwin: %v", tc.flag, tc.value, tc.reason, reasonsOf(bad))
 	}
 }
 
@@ -469,25 +432,16 @@ func TestWindowsMemoryAndCPUAreAcceptedAndIgnoredOffWindows(t *testing.T) {
 func TestWindowsSizeIsRefusedNotApproximated(t *testing.T) {
 	b := newWinBench(t, 0)
 	code, errOut := b.verb(t, "--size", "8g")
-	if code != 125 {
-		t.Fatalf("--size on windows must refuse at 125, got %d\n%s", code, errOut)
-	}
-	if !strings.Contains(errOut, "reason=size_unenforceable") {
-		t.Fatalf("--size on windows does not refuse with reason=size_unenforceable:\n%s", errOut)
-	}
+	require.Equal(t, 125, code, "--size on windows must refuse at 125, got %d\n%s", code, errOut)
+	require.Contains(t, errOut, "reason=size_unenforceable", "--size on windows does not refuse with reason=size_unenforceable:\n%s", errOut)
 	// Two remedies on the line, both of them real.
-	if !strings.Contains(errOut, "--place wsb") || !strings.Contains(errOut, "--scratch") {
-		t.Errorf("the refusal does not carry both remedies -- --place wsb, whose whole disk is discarded, and a --scratch on a volume already sized:\n%s", errOut)
-	}
-	if strings.Contains(b.order(), "scratch:") {
-		t.Errorf("the refusal came after something was made: %s", b.order())
-	}
+	assert.Contains(t, errOut, "--place wsb", "the refusal does not carry both remedies -- --place wsb, whose whole disk is discarded, and a --scratch on a volume already sized:\n%s", errOut)
+	assert.Contains(t, errOut, "--scratch", "the refusal does not carry both remedies -- --place wsb, whose whole disk is discarded, and a --scratch on a volume already sized:\n%s", errOut)
+	assert.NotContains(t, b.order(), "scratch:", "the refusal came after something was made: %s", b.order())
 	// And on darwin the flag stays REQUIRED, because there the APFS volume quota is real.
 	f := parseRun([]string{"--name", "j1", "--", "/bin/sh"})
 	_, bad := validateRun(&f, "darwin")
-	if !hasReason(bad, "bad_size") {
-		t.Errorf("--size is no longer required on darwin: %v. There the volume quota is real and the ceiling holds", reasonsOf(bad))
-	}
+	assert.True(t, hasReason(bad, "bad_size"), "--size is no longer required on darwin: %v. There the volume quota is real and the ceiling holds", reasonsOf(bad))
 }
 
 // W5's flag half, both directions: --scratch is required on windows, absolute, and is not a
@@ -519,9 +473,8 @@ func TestWindowsScratchIsRequiredAndAbsolute(t *testing.T) {
 
 		f := parseRun(args)
 		_, bad := validateRun(&f, tc.goos)
-		if got := hasReason(bad, "bad_scratch"); got != tc.refused {
-			t.Errorf("--scratch %q on %s: bad_scratch=%v, want %v (all: %v)", tc.scratch, tc.goos, got, tc.refused, reasonsOf(bad))
-		}
+		got := hasReason(bad, "bad_scratch")
+		assert.Equal(t, tc.refused, got, "--scratch %q on %s: bad_scratch=%v, want %v (all: %v)", tc.scratch, tc.goos, got, tc.refused, reasonsOf(bad))
 	}
 }
 
@@ -546,9 +499,8 @@ func TestAbsolutePathForNamesThePlatform(t *testing.T) {
 		{"darwin", `C:\nova`, false},
 		{"darwin", "nova", false},
 	} {
-		if got := absolutePathFor(tc.goos, tc.path); got != tc.abs {
-			t.Errorf("absolutePathFor(%q, %q) = %v, want %v", tc.goos, tc.path, got, tc.abs)
-		}
+		got := absolutePathFor(tc.goos, tc.path)
+		assert.Equal(t, tc.abs, got, "absolutePathFor(%q, %q) = %v, want %v", tc.goos, tc.path, got, tc.abs)
 	}
 }
 
@@ -562,23 +514,14 @@ func TestWindowsALeakExitsThreeAndNamesTheOneCommand(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.place.removeErr = errors.New("ERROR_SHARING_VIOLATION")
 	code, errOut := b.exec(t, b.args(t)...)
-	if code != exitLeak {
-		t.Fatalf("a scratch that could not be removed must exit %d whatever the command did, got %d\n%s", exitLeak, code, errOut)
-	}
+	require.Equal(t, exitLeak, code, "a scratch that could not be removed must exit %d whatever the command did, got %d\n%s", exitLeak, code, errOut)
 	dir := filepath.Join(b.scratch, "nova-j1")
-	if !strings.Contains(errOut, "SANDBOX LEAK name=j1") || !strings.Contains(errOut, "volume="+dir) {
-		t.Errorf("the leak line does not name the run and the directory:\n%s", errOut)
-	}
-	if !strings.Contains(errOut, `remedy="rmdir /s /q `+dir+`"`) {
-		t.Errorf("the leak line does not carry the ONE command that removes it -- rmdir /s /q, not `rm -rf`, and not a sentence:\n%s", errOut)
-	}
-	if !strings.Contains(errOut, "SANDBOX DONE name=j1 exit=0") {
-		t.Errorf("the receipt is missing: a leak still reports what the command did:\n%s", errOut)
-	}
+	assert.Contains(t, errOut, "SANDBOX LEAK name=j1", "the leak line does not name the run and the directory:\n%s", errOut)
+	assert.Contains(t, errOut, "volume="+dir, "the leak line does not name the run and the directory:\n%s", errOut)
+	assert.Contains(t, errOut, `remedy="rmdir /s /q `+dir+`"`, "the leak line does not carry the ONE command that removes it -- rmdir /s /q, not `rm -rf`, and not a sentence:\n%s", errOut)
+	assert.Contains(t, errOut, "SANDBOX DONE name=j1 exit=0", "the receipt is missing: a leak still reports what the command did:\n%s", errOut)
 	// The note names the one windows fact that explains it.
-	if !strings.Contains(errOut, "running .exe") {
-		t.Errorf("the leak note does not say why a windows scratch resists removal -- a running image cannot be removed and cannot be replaced in place:\n%s", errOut)
-	}
+	assert.Contains(t, errOut, "running .exe", "the leak note does not say why a windows scratch resists removal -- a running image cannot be removed and cannot be replaced in place:\n%s", errOut)
 }
 
 // `a-held-handle-is-retried-before-it-is-a-leak`. The retry is inside the placer, and what
@@ -593,15 +536,10 @@ func TestWindowsTheRemovalIsGivenARetryWindow(t *testing.T) {
 	runWinPlace = &windowRecordingPlace{winPlacer: b.place, window: &got}
 	t.Cleanup(func() { runWinPlace = old })
 
-	if code, errOut := b.exec(t, b.args(t)...); code != 0 {
-		t.Fatalf("a clean run returned %d\n%s", code, errOut)
-	}
-	if got <= 0 {
-		t.Fatalf("the removal was given no retry window; a leak declared on the first sharing violation names a machine dirty that a second's patience would have left clean")
-	}
-	if got != winRemoveWindow {
-		t.Errorf("the removal window is %s, want the constant %s", got, winRemoveWindow)
-	}
+	code, errOut := b.exec(t, b.args(t)...)
+	require.Equal(t, 0, code, "a clean run returned %d\n%s", code, errOut)
+	require.Positive(t, got, "the removal was given no retry window; a leak declared on the first sharing violation names a machine dirty that a second's patience would have left clean")
+	assert.Equal(t, winRemoveWindow, got, "the removal window is %s, want the constant %s", got, winRemoveWindow)
 }
 
 // windowRecordingPlace forwards everything and remembers the one argument under test.
@@ -630,18 +568,10 @@ func TestWindowsATimeoutClosesTheJobAndExits124(t *testing.T) {
 	t.Cleanup(func() { runWinPlace = old })
 
 	code, errOut := b.exec(t, b.args(t, "--timeout", "20ms")...)
-	if code != exitTimeout {
-		t.Fatalf("a command that outlived --timeout must exit %d, got %d\n%s", exitTimeout, code, errOut)
-	}
-	if !strings.Contains(b.order(), "close:job-1") {
-		t.Fatalf("the job was not closed on the deadline: %s. The close IS the kill, and it is what reaches a grandchild the harness abandoned", b.order())
-	}
-	if !strings.Contains(errOut, "SANDBOX DONE name=j1 exit=124") {
-		t.Errorf("the receipt does not carry 124:\n%s", errOut)
-	}
-	if !strings.Contains(errOut, "the whole tree") {
-		t.Errorf("the timeout note does not say the tree went with the job:\n%s", errOut)
-	}
+	require.Equal(t, exitTimeout, code, "a command that outlived --timeout must exit %d, got %d\n%s", exitTimeout, code, errOut)
+	require.Contains(t, b.order(), "close:job-1", "the job was not closed on the deadline: %s. The close IS the kill, and it is what reaches a grandchild the harness abandoned", b.order())
+	assert.Contains(t, errOut, "SANDBOX DONE name=j1 exit=124", "the receipt does not carry 124:\n%s", errOut)
+	assert.Contains(t, errOut, "the whole tree", "the timeout note does not say the tree went with the job:\n%s", errOut)
 }
 
 // hangingPlace starts a command whose status never arrives until the job is closed, which
@@ -705,15 +635,9 @@ func TestWindowsHasNo128PlusN(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the verb did not return after the tool was asked to stop; a wait without an end is the thing this verb never does")
 	}
-	if code > 128 {
-		t.Errorf("the windows verb returned %d, which reads as 128+N; windows has no signals and there is no such status to give", code)
-	}
-	if !strings.Contains(errOut, "windows has none") {
-		t.Errorf("the note does not say that the status is TerminateProcess's and not a signal's:\n%s", errOut)
-	}
-	if !strings.Contains(b.order(), "close:job-1") && !strings.Contains(b.order(), "remove:nova-j1") {
-		t.Errorf("an interrupted run left the place behind: %s", b.order())
-	}
+	assert.LessOrEqual(t, code, 128, "the windows verb returned %d, which reads as 128+N; windows has no signals and there is no such status to give", code)
+	assert.Contains(t, errOut, "windows has none", "the note does not say that the status is TerminateProcess's and not a signal's:\n%s", errOut)
+	assert.True(t, strings.Contains(b.order(), "close:job-1") || strings.Contains(b.order(), "remove:nova-j1"), "an interrupted run left the place behind: %s", b.order())
 }
 
 // ---------------------------------------------------------------------------------------
@@ -727,18 +651,11 @@ func TestWSBRefusesOnAnEditionThatHasNoWindowsSandbox(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.place.wsbOK, b.place.wsbEd = false, "Home"
 	code, errOut := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30m")...)
-	if code != 125 || !strings.Contains(errOut, "reason=no_wsb") {
-		t.Fatalf("--place wsb on an edition without it must refuse with no_wsb at 125; got %d\n%s", code, errOut)
-	}
-	if !strings.Contains(errOut, "Home") {
-		t.Errorf("the refusal does not name the edition:\n%s", errOut)
-	}
-	if !strings.Contains(errOut, "Containers-DisposableClientVM") {
-		t.Errorf("the refusal does not name the optional feature, so a reader cannot act on it:\n%s", errOut)
-	}
-	if strings.Contains(b.order(), "scratch:") {
-		t.Errorf("a mapped folder was made before the refusal: %s", b.order())
-	}
+	require.Equal(t, 125, code, "--place wsb on an edition without it must refuse with no_wsb at 125; got %d\n%s", code, errOut)
+	require.Contains(t, errOut, "reason=no_wsb", "--place wsb on an edition without it must refuse with no_wsb at 125; got %d\n%s", code, errOut)
+	assert.Contains(t, errOut, "Home", "the refusal does not name the edition:\n%s", errOut)
+	assert.Contains(t, errOut, "Containers-DisposableClientVM", "the refusal does not name the optional feature, so a reader cannot act on it:\n%s", errOut)
+	assert.NotContains(t, b.order(), "scratch:", "a mapped folder was made before the refusal: %s", b.order())
 }
 
 // `a-second-wsb-run-refuses-rather-than-queues`. Windows Sandbox permits ONE running
@@ -748,12 +665,9 @@ func TestASecondWSBRunRefusesRatherThanQueues(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.place.wsbRun, b.place.wsbBusy = true, "windowssandbox.exe pid=904"
 	code, errOut := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30m")...)
-	if code != 125 || !strings.Contains(errOut, "reason=wsb_busy") {
-		t.Fatalf("a second --place wsb must refuse with wsb_busy at 125, never wait; got %d\n%s", code, errOut)
-	}
-	if !strings.Contains(errOut, "pid=904") {
-		t.Errorf("the refusal does not name the running instance:\n%s", errOut)
-	}
+	require.Equal(t, 125, code, "a second --place wsb must refuse with wsb_busy at 125, never wait; got %d\n%s", code, errOut)
+	require.Contains(t, errOut, "reason=wsb_busy", "a second --place wsb must refuse with wsb_busy at 125, never wait; got %d\n%s", code, errOut)
+	assert.Contains(t, errOut, "pid=904", "the refusal does not name the running instance:\n%s", errOut)
 }
 
 // W9's other half: the DEFAULT on windows is --place job, because a single-instance resource
@@ -762,12 +676,9 @@ func TestTheWindowsDefaultPlaceIsTheJob(t *testing.T) {
 	t.Parallel()
 
 	f := parseRun([]string{"--name", "j1", "--scratch", `C:\nova`, "--", "cmd.exe"})
-	if _, bad := validateRun(&f, "windows"); hasReason(bad, "bad_place") {
-		t.Fatalf("a run with no --place is refused: %v", reasonsOf(bad))
-	}
-	if f.place != placeJob {
-		t.Fatalf("the windows default --place is %q, want %q: Windows Sandbox is one instance per machine and a pool of workers each wanting one is a queue of one", f.place, placeJob)
-	}
+	_, bad := validateRun(&f, "windows")
+	require.False(t, hasReason(bad, "bad_place"), "a run with no --place is refused: %v", reasonsOf(bad))
+	require.Equal(t, placeJob, f.place, "the windows default --place is %q, want %q: Windows Sandbox is one instance per machine and a pool of workers each wanting one is a queue of one", f.place, placeJob)
 }
 
 // `wsb-refuses-a-run-with-no-timeout`. Without a deadline a guest that never writes the
@@ -775,12 +686,9 @@ func TestTheWindowsDefaultPlaceIsTheJob(t *testing.T) {
 func TestWSBRefusesARunWithNoTimeout(t *testing.T) {
 	b := newWinBench(t, 0)
 	code, errOut := b.verb(t, "--place", "wsb")
-	if code != 125 || !strings.Contains(errOut, "reason=bad_timeout") {
-		t.Fatalf("--place wsb with no --timeout must refuse with bad_timeout at 125; got %d\n%s", code, errOut)
-	}
-	if strings.Contains(b.order(), "wsb-start") {
-		t.Errorf("a VM was started for a run with no deadline: %s", b.order())
-	}
+	require.Equal(t, 125, code, "--place wsb with no --timeout must refuse with bad_timeout at 125; got %d\n%s", code, errOut)
+	require.Contains(t, errOut, "reason=bad_timeout", "--place wsb with no --timeout must refuse with bad_timeout at 125; got %d\n%s", code, errOut)
+	assert.NotContains(t, b.order(), "wsb-start", "a VM was started for a run with no deadline: %s", b.order())
 }
 
 // `a-wsb-run-with-no-status-file-times-out-at-124`. This is the one place the contract
@@ -793,15 +701,9 @@ func TestAWSBRunWithNoStatusFileTimesOutAt124(t *testing.T) {
 	t.Cleanup(func() { runWinPoll = oldPoll })
 
 	code, errOut := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30ms")...)
-	if code != exitTimeout {
-		t.Fatalf("a wsb run whose guest wrote no status file must exit %d, got %d\n%s", exitTimeout, code, errOut)
-	}
-	if !strings.Contains(errOut, wsbExitFile) {
-		t.Errorf("the note does not name the status file the host waited for:\n%s", errOut)
-	}
-	if !strings.Contains(b.order(), "remove:nova-j1") {
-		t.Errorf("the mapped folder was not removed after the VM closed: %s", b.order())
-	}
+	require.Equal(t, exitTimeout, code, "a wsb run whose guest wrote no status file must exit %d, got %d\n%s", exitTimeout, code, errOut)
+	assert.Contains(t, errOut, wsbExitFile, "the note does not name the status file the host waited for:\n%s", errOut)
+	assert.Contains(t, b.order(), "remove:nova-j1", "the mapped folder was not removed after the VM closed: %s", b.order())
 }
 
 // And the status that DOES come back through the file is the command's own.
@@ -809,21 +711,15 @@ func TestAWSBRunReadsTheGuestsStatusOutOfTheScratch(t *testing.T) {
 	b := newWinBench(t, 0)
 	oldRead := runWinReadExit
 	runWinReadExit = func(path string) (int, bool) {
-		if filepath.Base(path) != wsbExitFile {
-			t.Errorf("the host waited on %q, want the status file in the mapped writable folder", path)
-		}
+		assert.Equal(t, wsbExitFile, filepath.Base(path), "the host waited on %q, want the status file in the mapped writable folder", path)
 		return 7, true
 	}
 	t.Cleanup(func() { runWinReadExit = oldRead })
 
 	code, errOut := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30m")...)
-	if code != 7 {
-		t.Fatalf("the guest's own status did not come back: got %d, want 7\n%s", code, errOut)
-	}
+	require.Equal(t, 7, code, "the guest's own status did not come back: got %d, want 7\n%s", code, errOut)
 	want := "exists:nova-j1 wsb-available wsb-running scratch:nova-j1 wsb-start:run.wsb used remove:nova-j1"
-	if b.order() != want {
-		t.Errorf("the wsb sequence is wrong:\n got: %s\nwant: %s", b.order(), want)
-	}
+	assert.Equal(t, want, b.order(), "the wsb sequence is wrong:\n got: %s\nwant: %s", b.order(), want)
 }
 
 // W8's document. It is a pure function of its input, so it is asserted line by line here and
@@ -847,32 +743,22 @@ func TestTheWSBDocumentIsW8sFile(t *testing.T) {
 		"<LogonCommand>",
 		wsbExitFile,
 	} {
-		if !strings.Contains(xml, want) {
-			t.Errorf("the .wsb document has no %q:\n%s", want, xml)
-		}
+		assert.Contains(t, xml, want, "the .wsb document has no %q:\n%s", want, xml)
 	}
 	// One read-only mapping PER --read, plus exactly one writable one.
-	if got := strings.Count(xml, "<ReadOnly>true</ReadOnly>"); got != 2 {
-		t.Errorf("the document has %d read-only mappings for 2 --read paths", got)
-	}
-	if got := strings.Count(xml, "<ReadOnly>false</ReadOnly>"); got != 1 {
-		t.Errorf("the document has %d writable mappings, want exactly 1 -- the scratch", got)
-	}
+	got := strings.Count(xml, "<ReadOnly>true</ReadOnly>")
+	assert.Equal(t, 2, got, "the document has %d read-only mappings for 2 --read paths", got)
+	got = strings.Count(xml, "<ReadOnly>false</ReadOnly>")
+	assert.Equal(t, 1, got, "the document has %d writable mappings, want exactly 1 -- the scratch", got)
 	// A host path carrying an ampersand is an ordinary NTFS path and must not make the
 	// document malformed.
-	if !strings.Contains(xml, "C:\\src &amp; co") {
-		t.Errorf("an & in a host path was not escaped, so the document is not XML:\n%s", xml)
-	}
+	assert.Contains(t, xml, "C:\\src &amp; co", "an & in a host path was not escaped, so the document is not XML:\n%s", xml)
 	// Networking is Disable UNLESS the run allows it, and the allowing is explicit.
 	on := wsbDocument(wsbInput{Scratch: `C:\nova\nova-j1`, Argv: []string{"cmd.exe"}, Net: true})
-	if !strings.Contains(on, "<Networking>Default</Networking>") {
-		t.Errorf("a run that allows the network still gets Disable:\n%s", on)
-	}
+	assert.Contains(t, on, "<Networking>Default</Networking>", "a run that allows the network still gets Disable:\n%s", on)
 	// <MemoryInMB>0</MemoryInMB> is a document Windows Sandbox refuses, so an unset --memory
 	// leaves the element out rather than writing a zero.
-	if strings.Contains(on, "<MemoryInMB>") {
-		t.Errorf("an unset --memory wrote a <MemoryInMB> element:\n%s", on)
-	}
+	assert.NotContains(t, on, "<MemoryInMB>", "an unset --memory wrote a <MemoryInMB> element:\n%s", on)
 }
 
 // W10's mechanism, in the one line that carries it: the <LogonCommand> ENDS by writing the
@@ -882,15 +768,9 @@ func TestTheWSBLogonCommandWritesTheStatusWhateverHappened(t *testing.T) {
 	t.Parallel()
 
 	cmd := wsbLogonCommand(wsbInput{Scratch: `C:\nova\nova-j1`, Argv: []string{"cmd.exe", "/c", "exit 3"}})
-	if !strings.Contains(cmd, "%ERRORLEVEL%") {
-		t.Fatalf("the logon command does not write the command's own status: %s", cmd)
-	}
-	if !strings.Contains(cmd, wsbExitFile) {
-		t.Fatalf("the logon command does not name the status file: %s", cmd)
-	}
-	if strings.Contains(cmd, "&& echo") {
-		t.Errorf("the status is written only when the command SUCCEEDS: %s. An absent file is 124 and a failing command is not a timeout", cmd)
-	}
+	require.Contains(t, cmd, "%ERRORLEVEL%", "the logon command does not write the command's own status: %s", cmd)
+	require.Contains(t, cmd, wsbExitFile, "the logon command does not name the status file: %s", cmd)
+	assert.NotContains(t, cmd, "&& echo", "the status is written only when the command SUCCEEDS: %s. An absent file is 124 and a failing command is not a timeout", cmd)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -909,18 +789,16 @@ func TestNoWindowsPathReachesWSL(t *testing.T) {
 		{`\\wsl$\Ubuntu\home\me\build.sh`},
 		{`\\wsl.localhost\Ubuntu\bin\sh`},
 	} {
-		if _, found := wslInArgv(argv); !found {
-			t.Errorf("%v is not caught by the WSL tripwire; containment that only holds inside WSL is containment on another machine, and it is never the answer", argv)
-		}
+		_, found := wslInArgv(argv)
+		assert.True(t, found, "%v is not caught by the WSL tripwire; containment that only holds inside WSL is containment on another machine, and it is never the answer", argv)
 	}
 	for _, argv := range [][]string{
 		{"cmd.exe", "/c", "build"},
 		{`C:\Go\bin\go.exe`, "build", "./..."},
 		{"newsletter.exe"}, // holds "wsl" as a substring and is not WSL
 	} {
-		if bad, found := wslInArgv(argv); found {
-			t.Errorf("%v was refused as WSL on the strength of %q; the tripwire matches the PROGRAM, not a substring", argv, bad)
-		}
+		bad, found := wslInArgv(argv)
+		assert.False(t, found, "%v was refused as WSL on the strength of %q; the tripwire matches the PROGRAM, not a substring", argv, bad)
 	}
 }
 
@@ -931,9 +809,7 @@ func TestNoExecSiteInThisToolSpellsWSL(t *testing.T) {
 	t.Parallel()
 
 	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("this package has to be readable for the tripwire to read it: %s", err)
-	}
+	require.NoError(t, err, "this package has to be readable for the tripwire to read it: %s", err)
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") {
@@ -946,8 +822,8 @@ func TestNoExecSiteInThisToolSpellsWSL(t *testing.T) {
 		}
 		for i, line := range strings.Split(goCodeOnly(t, name), "\n") {
 			low := strings.ToLower(line)
-			if strings.Contains(low, `"wsl`) || strings.Contains(low, `wsl.exe`) || strings.Contains(low, `\\wsl$`) {
-				t.Errorf("%s:%d names WSL: %s\nW11: a build that reaches for WSL when AppContainer, the Job Object or Windows Sandbox is unavailable must REFUSE instead", name, i+1, strings.TrimSpace(line))
+			for _, spelling := range []string{`"wsl`, `wsl.exe`, `\\wsl$`} {
+				assert.NotContains(t, low, spelling, "%s:%d names WSL: %s\nW11: a build that reaches for WSL when AppContainer, the Job Object or Windows Sandbox is unavailable must REFUSE instead", name, i+1, strings.TrimSpace(line))
 			}
 		}
 	}
@@ -969,13 +845,10 @@ func goCodeOnly(t *testing.T, path string) string {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-	if err != nil {
-		t.Fatalf("%s has to parse for a tripwire to read it: %s", path, err)
-	}
+	require.NoError(t, err, "%s has to parse for a tripwire to read it: %s", path, err)
 	var b strings.Builder
-	if err := printer.Fprint(&b, fset, f); err != nil {
-		t.Fatalf("%s could not be printed back: %s", path, err)
-	}
+	err = printer.Fprint(&b, fset, f)
+	require.NoError(t, err, "%s could not be printed back: %s", path, err)
 	return b.String()
 }
 
@@ -990,15 +863,10 @@ func TestWindowsRefusesWhileTheWallIsNotBuilt(t *testing.T) {
 	b := newWinBench(t, 0)
 	runWinWall = func() (string, bool) { return "appcontainer", false }
 	code, errOut := b.exec(t, b.args(t)...)
-	if code != 125 || !strings.Contains(errOut, "reason=no_sandbox") {
-		t.Fatalf("a windows run with no wall must refuse with no_sandbox at 125; got %d\n%s", code, errOut)
-	}
-	if !strings.Contains(errOut, "appcontainer") {
-		t.Errorf("the refusal does not name the missing half, so a reader learns only that `the sandbox failed`:\n%s", errOut)
-	}
-	if b.order() != "" {
-		t.Errorf("a machine with no wall had something made on it: %s", b.order())
-	}
+	require.Equal(t, 125, code, "a windows run with no wall must refuse with no_sandbox at 125; got %d\n%s", code, errOut)
+	require.Contains(t, errOut, "reason=no_sandbox", "a windows run with no wall must refuse with no_sandbox at 125; got %d\n%s", code, errOut)
+	assert.Contains(t, errOut, "appcontainer", "the refusal does not name the missing half, so a reader learns only that `the sandbox failed`:\n%s", errOut)
+	assert.Empty(t, b.order(), "a machine with no wall had something made on it: %s", b.order())
 }
 
 // W2's second red test, `the-job-never-permits-breakaway`, read off the Win32 body's SOURCE
@@ -1010,26 +878,17 @@ func TestTheWin32BodyNeverPermitsBreakaway(t *testing.T) {
 	src := goCodeOnly(t, "runwin_windows.go")
 	for _, flag := range []string{"jobObjectLimitBreakawayOK", "jobObjectLimitSilentBreakawayOK"} {
 		// Named once in the const block, and never used. A second mention is an assignment.
-		if n := strings.Count(src, flag); n != 1 {
-			t.Errorf("%s is named %d times in runwin_windows.go, want exactly 1 (its declaration). JOB_OBJECT_LIMIT_BREAKAWAY_OK and JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK are how a tree escapes the kill, and this tool never sets either", flag, n)
-		}
+		n := strings.Count(src, flag)
+		assert.Equal(t, 1, n, "%s is named %d times in runwin_windows.go, want exactly 1 (its declaration). JOB_OBJECT_LIMIT_BREAKAWAY_OK and JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK are how a tree escapes the kill, and this tool never sets either", flag, n)
 	}
 	// And the flag that MUST be set is set.
-	if !strings.Contains(src, "LimitFlags = jobObjectLimitKillOnJobClose") {
-		t.Errorf("runwin_windows.go does not set JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE as the job's base limit; without it, closing the handle leaves the tree running and the scratch cannot be removed")
-	}
+	assert.Contains(t, src, "LimitFlags = jobObjectLimitKillOnJobClose", "runwin_windows.go does not set JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE as the job's base limit; without it, closing the handle leaves the tree running and the scratch cannot be removed")
 	// W3: one CreateProcessW with the job on the attribute list, never an
 	// AssignProcessToJobObject afterwards.
-	if strings.Contains(src, "AssignProcessToJobObject") {
-		t.Errorf("runwin_windows.go calls AssignProcessToJobObject; W3 puts the child in the job AT CREATION, because CreateProcess-then-assign leaves a window in which the child is alive and outside the job, and a child that spawns inside that window is a survivor the kill never reaches")
-	}
-	if !strings.Contains(src, "procThreadAttributeJobList") {
-		t.Errorf("runwin_windows.go does not use PROC_THREAD_ATTRIBUTE_JOB_LIST; that attribute is the whole of W3")
-	}
+	assert.NotContains(t, src, "AssignProcessToJobObject", "runwin_windows.go calls AssignProcessToJobObject; W3 puts the child in the job AT CREATION, because CreateProcess-then-assign leaves a window in which the child is alive and outside the job, and a child that spawns inside that window is a survivor the kill never reaches")
+	assert.Contains(t, src, "procThreadAttributeJobList", "runwin_windows.go does not use PROC_THREAD_ATTRIBUTE_JOB_LIST; that attribute is the whole of W3")
 	// No new dependency: go.mod carries the standard library and nothing else.
-	if strings.Contains(src, "golang.org/x/sys") {
-		t.Errorf("runwin_windows.go imports golang.org/x/sys; go.mod carries the standard library and nothing else, and three class tests in internal/ci read the tree on that premise")
-	}
+	assert.NotContains(t, src, "golang.org/x/sys", "runwin_windows.go imports golang.org/x/sys; go.mod carries the standard library and nothing else, and three class tests in internal/ci read the tree on that premise")
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1051,9 +910,8 @@ func TestWinLongPathPrefixesOnlyWhatItShould(t *testing.T) {
 		`C:nova`:              `C:nova`,
 		``:                    ``,
 	} {
-		if got := winLongPath(in); got != want {
-			t.Errorf("winLongPath(%q) = %q, want %q", in, got, want)
-		}
+		got := winLongPath(in)
+		assert.Equal(t, want, got, "winLongPath(%q) = %q, want %q", in, got, want)
 	}
 }
 
@@ -1075,9 +933,8 @@ func TestWinCommandLineQuotesTheWayCommandLineToArgvWUnquotes(t *testing.T) {
 		{[]string{`C:\dir with space\`, "next"}, `"C:\dir with space\\" next`},
 		{[]string{""}, `""`},
 	} {
-		if got := winCommandLine(tc.in); got != tc.want {
-			t.Errorf("winCommandLine(%q) = %s, want %s", tc.in, got, tc.want)
-		}
+		got := winCommandLine(tc.in)
+		assert.Equal(t, tc.want, got, "winCommandLine(%q) = %s, want %s", tc.in, got, tc.want)
 	}
 }
 
@@ -1096,14 +953,12 @@ func TestParseBytesTakesTheSizeSpellings(t *testing.T) {
 		"2t":   2 << 40,
 	} {
 		got, ok := parseBytes(in)
-		if !ok || got != want {
-			t.Errorf("parseBytes(%q) = %d,%v; want %d,true", in, got, ok, want)
-		}
+		assert.True(t, ok, "parseBytes(%q) = %d,%v; want %d,true", in, got, ok, want)
+		assert.Equal(t, want, got, "parseBytes(%q) = %d,%v; want %d,true", in, got, ok, want)
 	}
 	for _, bad := range []string{"", "0", "-1", "lots", "50%", "g"} {
-		if got, ok := parseBytes(bad); ok {
-			t.Errorf("parseBytes(%q) = %d,true; a cap this tool cannot read is a cap it must refuse", bad, got)
-		}
+		got, ok := parseBytes(bad)
+		assert.False(t, ok, "parseBytes(%q) = %d,true; a cap this tool cannot read is a cap it must refuse", bad, got)
 	}
 }
 
@@ -1113,21 +968,16 @@ func TestReadWSBExit(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, wsbExitFile)
-	if _, ok := readWSBExit(path); ok {
-		t.Errorf("a status file that is not there yet answered; absent is `not yet`, not an error")
-	}
-	if err := os.WriteFile(path, []byte(" 7 \r\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got, ok := readWSBExit(path); !ok || got != 7 {
-		t.Errorf("readWSBExit = %d,%v; the guest wrote 7", got, ok)
-	}
-	if err := os.WriteFile(path, []byte("ECHO is off."), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got, ok := readWSBExit(path); !ok || got != 126 {
-		t.Errorf("readWSBExit = %d,%v; a guest that wrote something that is not a status ran something this host cannot account for, and that is 126", got, ok)
-	}
+	_, ok := readWSBExit(path)
+	assert.False(t, ok, "a status file that is not there yet answered; absent is `not yet`, not an error")
+	require.NoError(t, os.WriteFile(path, []byte(" 7 \r\n"), 0o600))
+	got, ok := readWSBExit(path)
+	assert.True(t, ok, "readWSBExit = %d,%v; the guest wrote 7", got, ok)
+	assert.Equal(t, 7, got, "readWSBExit = %d,%v; the guest wrote 7", got, ok)
+	require.NoError(t, os.WriteFile(path, []byte("ECHO is off."), 0o600))
+	got, ok = readWSBExit(path)
+	assert.True(t, ok, "readWSBExit = %d,%v; a guest that wrote something that is not a status ran something this host cannot account for, and that is 126", got, ok)
+	assert.Equal(t, 126, got, "readWSBExit = %d,%v; a guest that wrote something that is not a status ran something this host cannot account for, and that is 126", got, ok)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1140,18 +990,15 @@ func TestTheWindowsReceiptIsTheSameGrammarAsDarwins(t *testing.T) {
 	b := newWinBench(t, 3)
 	_, errOut := b.exec(t, b.args(t)...)
 	for _, want := range []string{"SANDBOX OK ", "SANDBOX STEP ", "SANDBOX DONE name=j1 exit=3 wall=", " freed="} {
-		if !strings.Contains(errOut, want) {
-			t.Errorf("the windows run does not print %q; the grammar is one grammar for three platforms:\n%s", want, errOut)
-		}
+		assert.Contains(t, errOut, want, "the windows run does not print %q; the grammar is one grammar for three platforms:\n%s", want, errOut)
 	}
 	// And the remedy a windows refusal carries is the WINDOWS argv: a reader handed the
 	// darwin one would type --size, which the next line refuses.
-	if got := remedyFor("windows"); !strings.Contains(got, "--scratch") || strings.Contains(got, "--size") {
-		t.Errorf("the windows remedy line is %q; it must name --scratch and must not name --size", got)
-	}
-	if got := remedyFor("darwin"); !strings.Contains(got, "--size") {
-		t.Errorf("the darwin remedy line lost --size: %q", got)
-	}
+	got := remedyFor("windows")
+	assert.Contains(t, got, "--scratch", "the windows remedy line is %q; it must name --scratch and must not name --size", got)
+	assert.NotContains(t, got, "--size", "the windows remedy line is %q; it must name --scratch and must not name --size", got)
+	got = remedyFor("darwin")
+	assert.Contains(t, got, "--size", "the darwin remedy line lost --size: %q", got)
 }
 
 // The help, on windows, answers the question rather than complaining about the argv that did
@@ -1161,13 +1008,10 @@ func TestTheWindowsHelpNamesTheWindowsFlags(t *testing.T) {
 	t.Parallel()
 
 	var out, errb bytes.Buffer
-	if code := runVerb([]string{"help"}, nil, &out, &errb, nil); code != 0 {
-		t.Fatalf("`run help` exited %d", code)
-	}
+	code := runVerb([]string{"help"}, nil, &out, &errb, nil)
+	require.Equal(t, 0, code, "`run help` exited %d", code)
 	for _, want := range []string{"--scratch", "--memory", "--cpu", "--place", "REFUSED on windows"} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("the run banner does not mention %q:\n%s", want, out.String())
-		}
+		assert.Contains(t, out.String(), want, "the run banner does not mention %q:\n%s", want, out.String())
 	}
 }
 

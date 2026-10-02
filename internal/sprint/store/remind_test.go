@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // goalFile is a route in the test's own directory, and the path it names.
@@ -19,17 +21,15 @@ func goalFile(t *testing.T, name string) (route, path string) {
 
 func (h *harness) setGoal(name, text, route string) {
 	h.t.Helper()
-	if _, _, err := h.st.SetGoal(h.ctx, name, &text, route); err != nil {
-		h.t.Fatalf("goal set %s: %v", name, err)
-	}
+	_, _, err := h.st.SetGoal(h.ctx, name, &text, route)
+	require.NoError(h.t, err, "goal set %s: %v", name, err)
 }
 
 func (h *harness) goal(name string) sprint.Goal {
 	h.t.Helper()
 	g, err := h.st.Goals(h.ctx)
-	if err != nil || g.Find(name) < 0 {
-		h.t.Fatalf("goal %s: %v", name, err)
-	}
+	require.NoError(h.t, err, "goal %s: %v", name, err)
+	require.GreaterOrEqual(h.t, g.Find(name), 0, "goal %s: %v", name, err)
 	return g.People[g.Find(name)]
 }
 
@@ -47,9 +47,7 @@ func reminded(res TickResult) []string {
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(b)
 }
 
@@ -64,9 +62,8 @@ func TestReminderPushesAtStartAndEveryFiveMinutesOfRunning(t *testing.T) {
 		t.Fatalf("the first tick after start: %v", got)
 	}
 	want := "REMINDER 1 to friend-a at " + t0.Format(time.RFC3339) + ", epoch 0\nkeep the queue full\nand say what you did\n"
-	if got := readFile(t, path); got != want {
-		t.Fatalf("file:\n%q\nwant\n%q", got, want)
-	}
+	got := readFile(t, path)
+	require.Equal(t, want, got, "file:\n%q\nwant\n%q", got, want)
 	h.tick(RemindEveryMinusASecond)
 	if got := reminded(h.machine()); len(got) != 0 {
 		t.Fatalf("before five minutes of running: %v", got)
@@ -83,9 +80,7 @@ func TestReminderPushesAtStartAndEveryFiveMinutesOfRunning(t *testing.T) {
 		t.Fatalf("record: %+v", g)
 	}
 	entries, _ := os.ReadDir(filepath.Dir(path))
-	if len(entries) != 1 {
-		t.Fatalf("a temporary file was left beside it: %v", entries)
-	}
+	require.Len(t, entries, 1, "a temporary file was left beside it: %v", entries)
 }
 
 // RemindEveryMinusASecond is one second short of the interval.
@@ -135,9 +130,8 @@ func TestReminderNothingWhileStoppedAndStoppedTimeDoesNotCount(t *testing.T) {
 	}
 	// The three hours did not bring the next push forward, nor push it back.
 	h.tick(RemindEveryMinusASecond)
-	if got := reminded(h.machine()); len(got) != 0 {
-		t.Fatalf("early after a restart: %v", got)
-	}
+	got := reminded(h.machine())
+	require.Empty(t, got, "early after a restart: %v", got)
 	h.tick(time.Second)
 	if got := reminded(h.machine()); len(got) != 1 || !strings.HasPrefix(got[0], "REMINDER 3 ") {
 		t.Fatalf("five minutes after the restart: %v", got)
@@ -152,9 +146,8 @@ func TestReminderTwoPeopleDifferentTexts(t *testing.T) {
 	h.setGoal("friend-a", "text for a", ra)
 	h.setGoal("friend-b", "text for b", rb)
 	h.startMachine()
-	if got := reminded(h.machine()); len(got) != 2 {
-		t.Fatalf("at start: %v", got)
-	}
+	got := reminded(h.machine())
+	require.Len(t, got, 2, "at start: %v", got)
 	if a, b := readFile(t, pa), readFile(t, pb); !strings.HasSuffix(a, "\ntext for a\n") || !strings.Contains(a, " to friend-a ") ||
 		!strings.HasSuffix(b, "\ntext for b\n") || !strings.Contains(b, " to friend-b ") {
 		t.Fatalf("a: %q b: %q", a, b)
@@ -167,9 +160,8 @@ func TestReminderTwoPeopleDifferentTexts(t *testing.T) {
 		t.Fatalf("a person set while running: %v", got)
 	}
 	h.tick(3 * time.Minute)
-	if got := reminded(h.machine()); len(got) != 2 {
-		t.Fatalf("the first two are due, the third is not: %v", got)
-	}
+	got = reminded(h.machine())
+	require.Len(t, got, 2, "the first two are due, the third is not: %v", got)
 }
 
 func TestReminderFailingRouteWritesOneJudgmentAndSuccessCloses(t *testing.T) {
@@ -178,9 +170,7 @@ func TestReminderFailingRouteWritesOneJudgmentAndSuccessCloses(t *testing.T) {
 	// A route whose directory cannot be made: a path under a regular file.
 	dir := t.TempDir()
 	blocker := filepath.Join(dir, "blocker")
-	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
 	h.setGoal("friend-a", "goal", "file:"+filepath.Join(blocker, "sub", "a.txt"))
 	h.startMachine()
 	res := h.machine()
@@ -205,39 +195,33 @@ func TestReminderFailingRouteWritesOneJudgmentAndSuccessCloses(t *testing.T) {
 			t.Fatalf("a second judgment: written %d", n)
 		}
 	}
-	if open := h.openOf(sprint.NRemindFailed); len(open) != 1 {
-		t.Fatalf("open judgments: %d", len(open))
-	}
+	open = h.openOf(sprint.NRemindFailed)
+	require.Len(t, open, 1, "open judgments: %d", len(open))
 	if g := h.goal("friend-a"); g.Fail == "" || g.Count != 0 || !g.Last.IsZero() {
 		t.Fatalf("record while failing: %+v", g)
 	}
 	// A route that works: the next attempt arrives and closes the judgment.
 	route, path := goalFile(t, "a")
-	if _, _, err := h.st.SetGoal(h.ctx, "friend-a", nil, route); err != nil {
-		t.Fatal(err)
-	}
-	if got := reminded(h.machine()); len(got) != 1 {
-		t.Fatalf("after the route was changed: %v", got)
-	}
-	if open := h.openOf(sprint.NRemindFailed); len(open) != 0 {
-		t.Fatalf("the judgment stayed open after a delivery: %d", len(open))
-	}
+	_, _, err := h.st.SetGoal(h.ctx, "friend-a", nil, route)
+	require.NoError(t, err)
+	got := reminded(h.machine())
+	require.Len(t, got, 1, "after the route was changed: %v", got)
+	open = h.openOf(sprint.NRemindFailed)
+	require.Empty(t, open, "the judgment stayed open after a delivery: %d", len(open))
 	if g := h.goal("friend-a"); g.Fail != "" || g.Count != 1 || !strings.HasPrefix(readFile(t, path), "REMINDER 1 ") {
 		t.Fatalf("record after success: %+v", g)
 	}
 	// A failure again is judged again, and dropping the person closes it.
 	h.setGoal("friend-a", "goal", "file:"+filepath.Join(blocker, "again.txt"))
 	h.machine()
-	if open := h.openOf(sprint.NRemindFailed); len(open) != 1 {
-		t.Fatalf("a new failure: %d", len(open))
-	}
+	open = h.openOf(sprint.NRemindFailed)
+	require.Len(t, open, 1, "a new failure: %d", len(open))
 	if ok, err := h.st.DropGoal(h.ctx, "friend-a"); err != nil || !ok {
 		t.Fatalf("drop: %v %v", ok, err)
 	}
 	h.machine()
-	if open := h.openOf(sprint.NRemindFailed); len(open) != 0 {
-		t.Fatalf("a dropped person's judgment stayed open: %d", len(open))
-	}
+	open = h.openOf(sprint.NRemindFailed)
+	require.Empty(t, open, "a dropped person's judgment stayed open: %d", len(open))
 }
 
 func TestReminderTextBoundAndRefusals(t *testing.T) {
@@ -245,12 +229,10 @@ func TestReminderTextBoundAndRefusals(t *testing.T) {
 	h := newHarness(t)
 	route, _ := goalFile(t, "a")
 	at := func(n int) *string { s := strings.Repeat("x", n); return &s }
-	if _, _, err := h.st.SetGoal(h.ctx, "friend-a", at(MaxCardTextBytes), route); err != nil {
-		t.Fatalf("text at the bound: %v", err)
-	}
-	if _, _, err := h.st.SetGoal(h.ctx, "friend-a", at(MaxCardTextBytes+1), route); err == nil || !strings.Contains(err.Error(), "bound") {
-		t.Fatalf("text over the bound: %v", err)
-	}
+	_, _, err := h.st.SetGoal(h.ctx, "friend-a", at(MaxCardTextBytes), route)
+	require.NoError(t, err, "text at the bound: %v", err)
+	_, _, err = h.st.SetGoal(h.ctx, "friend-a", at(MaxCardTextBytes+1), route)
+	require.ErrorContains(t, err, "bound", "text over the bound: %v", err)
 	blank := "  \n"
 	for name, c := range map[string]struct {
 		name  string
@@ -265,13 +247,11 @@ func TestReminderTextBoundAndRefusals(t *testing.T) {
 		"bus":          {"friend-b", at(3), "bus:/some/bus"},
 		"unknown kind": {"friend-b", at(3), "mail:someone"},
 	} {
-		if _, _, err := h.st.SetGoal(h.ctx, c.name, c.text, c.route); err == nil {
-			t.Errorf("%s: not refused", name)
-		}
+		_, _, err := h.st.SetGoal(h.ctx, c.name, c.text, c.route)
+		assert.Error(t, err, "%s: not refused", name)
 	}
-	if g, _ := h.st.Goals(h.ctx); len(g.People) != 1 {
-		t.Fatalf("a refused set stored someone: %+v", g)
-	}
+	g, _ := h.st.Goals(h.ctx)
+	require.Len(t, g.People, 1, "a refused set stored someone: %+v", g)
 }
 
 func TestReminderClearKeepsPeopleAndForgetsPushes(t *testing.T) {
@@ -282,18 +262,14 @@ func TestReminderClearKeepsPeopleAndForgetsPushes(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	h.tick(time.Minute)
-	if err := h.st.ResetGoalPushes(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.ResetGoalPushes(h.ctx))
 	if g := h.goal("friend-a"); g.Text != "goal" || g.Route != route || g.Count != 0 || !g.Last.IsZero() {
 		t.Fatalf("after a reset: %+v", g)
 	}
 	if got := reminded(h.machine()); len(got) != 1 || !strings.HasPrefix(got[0], "REMINDER 1 ") {
 		t.Fatalf("the first tick after a clear: %v", got)
 	}
-	if !strings.HasPrefix(readFile(t, path), "REMINDER 1 to friend-a at "+t0.Add(time.Minute).Format(time.RFC3339)) {
-		t.Fatal("file not replaced")
-	}
+	require.True(t, strings.HasPrefix(readFile(t, path), "REMINDER 1 to friend-a at "+t0.Add(time.Minute).Format(time.RFC3339)), "file not replaced")
 }
 
 func TestReminderRunsOnAnIdleTickToo(t *testing.T) {
@@ -307,9 +283,8 @@ func TestReminderRunsOnAnIdleTickToo(t *testing.T) {
 	h.machine() // every tick reads and plans every table (errata 3 amendment 10)
 	h.tick(30 * time.Second)
 	res := h.machine()
-	if !res.Idle || len(reminded(res)) != 1 {
-		t.Fatalf("an idle tick that is due: idle=%v %v", res.Idle, reminded(res))
-	}
+	require.True(t, res.Idle, "an idle tick that is due: idle=%v %v", res.Idle, reminded(res))
+	require.Len(t, reminded(res), 1, "an idle tick that is due: idle=%v %v", res.Idle, reminded(res))
 }
 
 // clear keeps the people and their goals and resets their pushes, so the
@@ -326,9 +301,8 @@ func TestClearKeepsTheGoalsAndResetsThePushes(t *testing.T) {
 	if err != nil || len(g.People) != 1 || g.People[0].Count != 1 {
 		t.Fatalf("before the clear: %+v %v", g, err)
 	}
-	if _, err := h.st.Clear(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err = h.st.Clear(h.ctx)
+	require.NoError(t, err)
 	g, err = h.st.Goals(h.ctx)
 	if err != nil || len(g.People) != 1 || g.People[0].Text != "land the sprint" || g.People[0].Count != 0 || !g.People[0].Last.IsZero() {
 		t.Fatalf("after the clear: %+v %v", g, err)

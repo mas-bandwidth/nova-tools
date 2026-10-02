@@ -246,7 +246,7 @@ func (claude) Shims(f Frame, s Staged) []Shim {
 func (claude) JobText(f Frame, s Staged) string {
 	var b strings.Builder
 	if f.Kind == "read" {
-		fmt.Fprintf(&b, "# JOB: read %s, attempt %d\n\n", f.Card, f.Attempt)
+		fmt.Fprintf(&b, "%s %s, attempt %d\n\n", ReadTitle, f.Card, f.Attempt)
 		fmt.Fprintf(&b, "You are in a checkout of %s on branch %s at %s: the change under review, against %s. The checkout is %s.\n\n", f.Repo, f.Branch, s.Head, orDash(f.ReviewBase), s.Repo)
 		fmt.Fprintf(&b, "Review the change on this branch against %s as you would a pull request: `gh pr diff`, `gh pr view` and `gh pr checks` show it. Run the card's gate. Change nothing and commit nothing.\n\n", orDash(f.ReviewBase))
 		writeReadDiff(&b, f, s)
@@ -278,7 +278,7 @@ func (p plain) Shims(f Frame, s Staged) []Shim {
 func (plain) JobText(f Frame, s Staged) string {
 	var b strings.Builder
 	if f.Kind == "read" {
-		fmt.Fprintf(&b, "# JOB: read %s, attempt %d\n\n", f.Card, f.Attempt)
+		fmt.Fprintf(&b, "%s %s, attempt %d\n\n", ReadTitle, f.Card, f.Attempt)
 		review := fmt.Sprintf("`git diff %s...HEAD`", orDash(f.ReviewBase))
 		if s.Start != "" {
 			review = "the commands below"
@@ -301,8 +301,9 @@ func (plain) JobText(f Frame, s Staged) string {
 // JOB.md): the commit the work started from and the one command that shows its change, and
 // that the base branch is not what to compare against. On a 1000-card load test (2026-10-01)
 // a reader ran `git diff origin/dev` while cards landed on dev every few seconds, saw every
-// file landed since as a deletion, and sent a correct work card back. Nothing when the
-// start is unknown.
+// file landed since as a deletion, and sent a correct work card back; on the 5000-card one
+// readers still did ("numerous deletions and one rename"), so it names origin/<base> too and
+// says such deletions are never a finding. Nothing when the start is unknown.
 func writeReadDiff(b *strings.Builder, f Frame, s Staged) {
 	if s.Start == "" {
 		return
@@ -310,7 +311,7 @@ func writeReadDiff(b *strings.Builder, f Frame, s Staged) {
 	base := orDash(f.ReviewBase)
 	fmt.Fprintf(b, "The work's change is exactly %s..HEAD: %s is the commit the work started from (the merge base of this head and %s when this checkout was staged). See it with:\n\n", s.Start, s.Start, base)
 	fmt.Fprintf(b, "    git diff %s..HEAD\n    git diff --stat %s..HEAD\n\n", s.Start, s.Start)
-	fmt.Fprintf(b, "%s may have moved since the work began (other cards land on it); it is not what to compare against: a diff against %s shows every change landed since as a deletion.\n\n", base, base)
+	fmt.Fprintf(b, "%s may have moved since the work began (other cards land on it); it is not what to compare against: a diff against the tip of %s or origin/%s shows every change landed since as a deletion. Those deletions are never the work's and never a finding: judge the work by the diff above alone.\n\n", base, base, base)
 }
 
 // writeCommon is what every JOB.md ends with: the files staged for the child, the test

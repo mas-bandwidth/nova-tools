@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const sha = "0123456789abcdef0123456789abcdef01234567"
@@ -83,6 +85,19 @@ func TestReceiptRefusesEachFieldWithWhatItWants(t *testing.T) {
 			t.Errorf("want %q, got %v", c.want, err)
 		}
 	}
+}
+
+// One call names every field a receipt cannot be written from, so a caller
+// fixes the invocation once (STANDARD §2: every problem at once).
+func TestReceiptRefusesEveryFieldInOneError(t *testing.T) {
+	t.Parallel()
+	r := Receipt{Repo: "nova-tools", SHA: "abc", RunID: "x", Conclusion: "maybe", PR: "#1", At: "yesterday"}
+	err := r.Validate()
+	require.Error(t, err)
+	for _, want := range []string{"--repo wants", "--sha wants", "--run-id wants", "--workflow wants", "--conclusion wants", "--pr wants", "--at wants"} {
+		assert.Contains(t, err.Error(), want)
+	}
+	assert.NotContains(t, err.Error(), "\n", "the problems are one line, joined with ; ")
 }
 
 func TestWriteWithNoClientWritesNothing(t *testing.T) {

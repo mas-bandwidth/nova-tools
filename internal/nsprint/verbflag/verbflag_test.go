@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // run parses args on a flag set the way a dispatcher does: Recover deferred,
@@ -151,6 +155,10 @@ func TestRecoverWithNoPanicChangesNothing(t *testing.T) {
 	}
 }
 
+// pushHelp is a hand-read verb's help: each flag says what it wants.
+const pushHelp = "usage: nova-demo task push [flags]\nflags:\n  --as <string>  who pushes\n  --force  push over a newer card\n" +
+	"  --id <id>  the card's id\nexit codes: 0 done, 1 refused, 2 usage\n"
+
 func TestHelpIfAskedRaisesHelpForAHandReadVerb(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -160,16 +168,17 @@ func TestHelpIfAskedRaisesHelpForAHandReadVerb(t *testing.T) {
 		{[]string{"a", "b"}, ""},
 		{nil, ""},
 		{[]string{"a", "--", "--help"}, ""},
-		{[]string{"a", "-h"}, "usage: nova-demo task push [flags]\nflags:\n  --as <string>\n  --id <string>\nexit codes: 0 done, 1 refused, 2 usage\n"},
-		{[]string{"--help"}, "usage: nova-demo task push [flags]\nflags:\n  --as <string>\n  --id <string>\nexit codes: 0 done, 1 refused, 2 usage\n"},
-		{[]string{"-help", "--", "x"}, "usage: nova-demo task push [flags]\nflags:\n  --as <string>\n  --id <string>\nexit codes: 0 done, 1 refused, 2 usage\n"},
-		{[]string{"--h"}, "usage: nova-demo task push [flags]\nflags:\n  --as <string>\n  --id <string>\nexit codes: 0 done, 1 refused, 2 usage\n"},
+		{[]string{"a", "-h"}, pushHelp},
+		{[]string{"--help"}, pushHelp},
+		{[]string{"-help", "--", "x"}, pushHelp},
+		{[]string{"--h"}, pushHelp},
 	} {
 		var b bytes.Buffer
 		code := 7
 		func() {
 			defer Recover(&b, "nova-demo", "", &code)
-			HelpIfAsked(c.args, "task push", "id", "as")
+			HelpIfAsked(c.args, "task push", Flag{Name: "id", Wants: "the card's `id`"}, Flag{Name: "as", Wants: "who pushes"},
+				Flag{Name: "force", Wants: "push over a newer card", Bool: true})
 		}()
 		wantCode := 7
 		if c.want != "" {
@@ -383,4 +392,154 @@ func TestRecoverWithShowsTheToolsLinesAboveTheFlags(t *testing.T) {
 	if got := Insert("usage: t\n", ""); got != "usage: t\n" {
 		t.Errorf("Insert of nothing: %q", got)
 	}
+}
+
+// TestExplainWordsEveryParseError pins the one wording of a flag-parse error:
+// an unknown flag with the verb's flags and the nearest, a missing value and a
+// bad one with what the flag wants, the value given never repeated back.
+func TestExplainWordsEveryParseError(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"unknown, with the nearest", []string{"--lable", "x"}, "unknown flag --lable; the flags of row add are --force, --label, --wait, --width; did you mean --label?"},
+		{"unknown, nothing near", []string{"-zzzz"}, "unknown flag --zzzz; the flags of row add are --force, --label, --wait, --width"},
+		{"a bad whole number", []string{"--width", "SECRET"}, "invalid value for --width: it wants a whole number"},
+		{"a bad duration, with its description", []string{"--wait", "soon"}, "invalid value for --wait: it wants a duration such as 30s or 5m (how long to wait)"},
+		{"a bad bool", []string{"-force=maybe"}, "invalid value for --force: it wants true or false (write even when the row is there)"},
+		{"a missing value", []string{"--label"}, "--label needs a value: it wants the row's label"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fs, _, _ := demo()
+			fs.Duration("wait", 0, "how long to wait")
+			err := Parse(fs, tc.args)
+			require.Error(t, err)
+			assert.Equal(t, tc.want, Explain(fs, err))
+			assert.NotContains(t, Explain(fs, err), "SECRET")
+		})
+	}
+	none := New("list")
+	err := Parse(none, []string{"--x"})
+	require.Error(t, err)
+	assert.Equal(t, "unknown flag --x; list takes no flags", Explain(none, err))
+	assert.Equal(t, "something else", Explain(none, errors.New("something else")))
+}
+
+// TestBoolGivenReadsTheArgumentsAsTheFlagSetDoes pins the JSON question of a
+// refusal: a value is never read as a flag, a flag after an unknown one still
+// counts, and nothing after the terminator or a first argument is a flag.
+func TestBoolGivenReadsTheArgumentsAsTheFlagSetDoes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"asked", []string{"--json"}, true},
+		{"single dash", []string{"-json"}, true},
+		{"explicit true", []string{"--json=true"}, true},
+		{"explicit false", []string{"--json", "--json=false"}, false},
+		{"the value of a flag that takes one", []string{"--store", "--json", "--nope"}, false},
+		{"an inline value", []string{"--store=--json"}, false},
+		{"after the terminator it is an argument", []string{"--", "--json"}, false},
+		{"after the first argument it is an argument", []string{"pos", "--json"}, false},
+		{"after an unknown flag it is still a flag", []string{"--bogus", "--json"}, true},
+		{"after a bool flag", []string{"--force", "--json"}, true},
+		{"after a flag's value", []string{"--store", "s", "--json"}, true},
+		{"after an unknown flag and a word, it is unsure", []string{"--bogus", "x", "--json"}, false},
+		{"an unknown flag's inline value takes no word", []string{"--bogus=x", "--json"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fs := New("put")
+			fs.String("store", "", "the store")
+			fs.Bool("force", false, "write over")
+			fs.Bool("json", false, "as JSON")
+			assert.Equal(t, tc.want, BoolGiven(fs, tc.args, "json"))
+		})
+	}
+}
+
+// TestNamesInARefusal pins the two helpers every unknown name is answered
+// with: the nearest name within its edit bound, and a list cut to one line.
+func TestNamesInARefusal(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ got, want string }{
+		{"--sesion", "--session"},
+		{"--sessoin", "--session"},
+		{"--zzzz", ""},
+		{"opne", "open"},
+		{"seal", ""},
+	} {
+		assert.Equal(t, tc.want, Nearest(tc.got, []string{"--session", "--store", "--key", "open", "put", "deny"}), tc.got)
+	}
+	var many []string
+	for i := range ListMax + 4 {
+		many = append(many, "v"+strconv.Itoa(i))
+	}
+	assert.True(t, strings.HasSuffix(List(many), ", v15 and 4 more"), List(many))
+	assert.Equal(t, "a, b", List([]string{"a", "b"}))
+}
+
+// TestAGroupsHelpNamesItsVerbs pins the group form: a verb with no flags whose
+// every usage line goes on with a verb word is a group, and its help's usage
+// line names its verbs; a verb with flags, or a line going on with an
+// argument, is no group, and an example line is not read.
+func TestAGroupsHelpNamesItsVerbs(t *testing.T) {
+	t.Parallel()
+	banner := demoBanner + "  nova-demo row zap\n"
+	for _, tc := range []struct{ name, verb, want string }{
+		{"a group", "row", "usage: nova-demo row <add|addendum|del> [flags]\n"},
+		{"a verb going on with an argument", "row del", "usage: nova-demo row del [flags]\n"},
+		{"a word the banner does not name", "col", "usage: nova-demo col [flags]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var b bytes.Buffer
+			Print(&b, "nova-demo", banner, New(tc.verb))
+			assert.True(t, strings.HasPrefix(b.String(), tc.want), b.String())
+		})
+	}
+	var b bytes.Buffer
+	withFlags := New("row")
+	withFlags.Bool("all", false, "every row")
+	Print(&b, "nova-demo", banner, withFlags)
+	assert.True(t, strings.HasPrefix(b.String(), "usage: nova-demo row [flags]\n"), b.String())
+	assert.Equal(t, []string{"list", "show", "add"}, Subverbs("usage:\n  t m list|show <n>\n  t m add -h\n", "t", "m"))
+	pasted := "usage:\n  t fleet set --x <v>\n  t fleet|sprint show\n  t version     print this build\n  t worker\tcheck <f>\n"
+	assert.Equal(t, []string{"set", "show"}, Subverbs(pasted, "t", "fleet"))
+	assert.Nil(t, Subverbs(pasted, "t", "version"), "a pasted description is no verb")
+	assert.Nil(t, Subverbs(pasted, "t", "worker"), "a pasted description is no verb")
+	assert.Nil(t, Subverbs(pasted+"  t <kind> list\n", "t", "fleet"), "a placeholder leaves the group's verbs unnamed")
+	assert.Equal(t, []string{"set", "show"}, Subverbs(pasted+"t <verb> REFUSED: why\n", "t", "fleet"), "a sentence about every verb is no usage")
+}
+
+// TestAVerbsOwnExitCodesStandForTheTools pins the per-verb exit table: given
+// to Print, or as an `exit codes:` line from RecoverWith's extra, it stands
+// where the banner's paragraph would, and the extra's other lines stay above
+// the flags.
+func TestAVerbsOwnExitCodesStandForTheTools(t *testing.T) {
+	t.Parallel()
+	fs := New("row add")
+	fs.String("label", "", "the row's label")
+	var b bytes.Buffer
+	Print(&b, "nova-demo", demoBanner, fs, "exit codes: 0 added, 2 could not run")
+	assert.True(t, strings.HasSuffix(b.String(), "\nexit codes: 0 added, 2 could not run\n"), b.String())
+	assert.NotContains(t, b.String(), "said NO")
+
+	var out bytes.Buffer
+	code := 9
+	func() {
+		defer RecoverWith(&out, "nova-demo", demoBanner, &code, func(string) string {
+			return "effect: a local write\nexit codes: 0 added; 1 the row is there,\n  2 could not run\n"
+		})
+		_ = Parse(fs, []string{"-h"})
+	}()
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out.String(), "effect: a local write\nflags:\n")
+	assert.True(t, strings.HasSuffix(out.String(), "\nexit codes: 0 added; 1 the row is there,\n  2 could not run\n"), out.String())
+	assert.NotContains(t, out.String(), "said NO")
 }

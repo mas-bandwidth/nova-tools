@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -35,7 +36,7 @@ func LoadAdopt(r io.Reader) ([]AdoptCheck, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 4096), 1024*1024)
 	if !sc.Scan() || sc.Text() != AdoptHeader {
-		return nil, fmt.Errorf("line 1: invalid header (put the header back exactly: %s)", AdoptHeader)
+		return nil, fmt.Errorf("line 1: invalid header (put the header back exactly: %s)", tabbed(AdoptHeader))
 	}
 	var out []AdoptCheck
 	seen := map[string]bool{}
@@ -244,43 +245,50 @@ func watchMain(name string, args []string, out, errs io.Writer, env Environment)
 	o := options{timeout: 5 * time.Second, budget: 60 * time.Second}
 	f := flag.NewFlagSet("watch", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
-	f.StringVar(&o.adopt, "adopt", "", "checks file")
-	f.StringVar(&o.bus, "bus", "", "bus dir")
-	f.StringVar(&o.remote, "remote", "", "remote")
-	f.StringVar(&o.branch, "branch", "", "branch")
-	f.StringVar(&o.as, "as", "", "coordinator name")
-	f.StringVar(&o.to, "to", "", "duty tier")
-	f.StringVar(&o.host, "host", "", "bench label")
-	f.DurationVar(&o.timeout, "timeout", o.timeout, "one check deadline")
-	f.DurationVar(&o.budget, "budget", o.budget, "whole pass deadline")
+	f.StringVar(&o.adopt, "adopt", "", "the checks file (required): a header line check<TAB>command<TAB>owner, then one check per line, its command run as written")
+	f.StringVar(&o.bus, "bus", "", "the bus checkout that delivers the receipt; with it, --remote, --branch, --as and --to are required")
+	f.StringVar(&o.remote, "remote", "", "the bus remote")
+	f.StringVar(&o.branch, "branch", "", "the bus branch")
+	f.StringVar(&o.as, "as", "", "the sender the receipt is from")
+	f.StringVar(&o.to, "to", "", "the receipt's recipients, comma-separated (those who answer a refused check)")
+	f.StringVar(&o.host, "host", "", "a label for the machine the pass ran on, carried in the receipt's subject")
+	f.DurationVar(&o.timeout, "timeout", o.timeout, "one check's deadline, such as 5s")
+	f.DurationVar(&o.budget, "budget", o.budget, "the whole pass's deadline, such as 60s")
+	help := name + " watch -h"
 	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
-		return refusal(errs, "ADOPT", fmt.Errorf("%s (run %s help)", err, name))
+		return refusal(errs, "ADOPT", help, flagProblem(f, err))
 	}
+	// Every problem of the invocation in one refusal (STANDARD §2).
+	var problems, missing []string
 	if o.adopt == "" {
-		return refusal(errs, "ADOPT", fmt.Errorf("missing --adopt; refusing to guess (supply the checks file: run %s help)", name))
+		missing = append(missing, "--adopt")
 	}
-	if len(f.Args()) != 0 {
-		return refusal(errs, "ADOPT", fmt.Errorf("watch takes no positional arguments (run %s help)", name))
-	}
-	if o.timeout <= 0 || o.budget <= 0 {
-		return refusal(errs, "ADOPT", fmt.Errorf("invalid bound (use positive --timeout/--budget)"))
-	}
-	withBus := o.bus != "" || o.remote != "" || o.branch != "" || o.as != "" || o.to != ""
-	if withBus {
+	// The bus flags go together: one names a delivery, and a delivery needs all five.
+	if o.bus != "" || o.remote != "" || o.branch != "" || o.as != "" || o.to != "" {
 		for _, x := range []struct{ n, v string }{{"bus", o.bus}, {"remote", o.remote}, {"branch", o.branch}, {"as", o.as}, {"to", o.to}} {
 			if x.v == "" {
-				return refusal(errs, "ADOPT", fmt.Errorf("missing --%s; refusing to guess (supply each named flag; run: %s help)", x.n, name))
+				missing = append(missing, "--"+x.n)
 			}
 		}
-		for _, s := range []string{o.as, o.to, o.host} {
-			if strings.ContainsAny(s, "\r\n") {
-				return refusal(errs, "ADOPT", fmt.Errorf("note header contains a newline (use a single-line --as, --to and --host)"))
-			}
+		if strings.ContainsAny(o.as+o.to+o.host, "\r\n") {
+			problems = append(problems, "note header contains a newline (use a single-line --as, --to and --host)")
 		}
+	}
+	if len(missing) > 0 {
+		problems = append([]string{"missing " + strings.Join(missing, ", ") + "; refusing to guess"}, problems...)
+	}
+	if len(f.Args()) != 0 {
+		problems = append(problems, fmt.Sprintf("watch takes no positional arguments, got %q", f.Arg(0)))
+	}
+	if o.timeout <= 0 || o.budget <= 0 {
+		problems = append(problems, "--timeout and --budget want positive durations")
+	}
+	if len(problems) > 0 {
+		return refusal(errs, "ADOPT", help, errors.New(strings.Join(problems, "; ")))
 	}
 	checks, err := loadAdoptFile(o.adopt)
 	if err != nil {
-		return refusal(errs, "ADOPT", fmt.Errorf("cannot adopt %s (supply a readable --adopt checks file: %v)", o.adopt, err))
+		return refusal(errs, "ADOPT", help, fmt.Errorf("cannot adopt %s (supply a readable --adopt checks file: %v)", o.adopt, err))
 	}
 	started := env.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), o.budget)

@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // THE ONLY THING THE bounded-output CHANGE TOUCHES IN THIS BINARY: three refusal sites.
@@ -17,18 +19,13 @@ func TestARefusalIsOneLineAndNamesTheDoor(t *testing.T) {
 		{"inbox", "--azz", "Ada"},
 	} {
 		r := invoke(t, "", args...)
-		if r.code != 2 {
-			t.Errorf("%v: exit = %d, want 2", args, r.code)
+		assert.Equalf(t, 2, r.code, "%v: exit = %d, want 2", args, r.code)
+		{
+			n := strings.Count(r.stderr, "\n")
+			assert.Equalf(t, 1, n, "%v: the refusal is %d lines, want 1:\n%s", args, n, r.stderr)
 		}
-		if n := strings.Count(r.stderr, "\n"); n != 1 {
-			t.Errorf("%v: the refusal is %d lines, want 1:\n%s", args, n, r.stderr)
-		}
-		if !strings.Contains(r.stderr, "run: nova-bus help") {
-			t.Errorf("%v: the refusal names no door: %q", args, r.stderr)
-		}
-		if r.stdout != "" {
-			t.Errorf("%v: a refusal wrote to stdout: %q", args, r.stdout)
-		}
+		assert.Containsf(t, r.stderr, "run: nova-bus help", "%v: the refusal names no door: %q", args, r.stderr)
+		assert.Emptyf(t, r.stdout, "%v: a refusal wrote to stdout: %q", args, r.stdout)
 	}
 	// And the door opens.
 	invoke(t, "", "help").mustCode(t, 0).mustContain(t, "stdout", "usage:")

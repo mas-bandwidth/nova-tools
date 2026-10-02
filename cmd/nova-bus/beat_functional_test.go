@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // THE BEAT NEVER BLOCKS SEND (#488, #459).
@@ -31,8 +33,9 @@ import (
 // verb whatever its own output said.
 func mustBeClean(t *testing.T, checkout, after string) {
 	t.Helper()
-	if out := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain", "--untracked-files=all")); out != "" {
-		t.Fatalf("%s left the checkout dirty, so the next verb refuses over a file the friend never touched:\n%s", after, out)
+	{
+		out := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain", "--untracked-files=all"))
+		require.Emptyf(t, out, "%s left the checkout dirty, so the next verb refuses over a file the friend never touched:\n%s", after, out)
 	}
 }
 
@@ -55,11 +58,13 @@ func TestWaitLeavesCheckoutClean(t *testing.T) {
 	mustBeClean(t, checkout, "wait")
 	// And clean WITHOUT a beat commit: the last commit is not `beat ada`, and no BEAT file
 	// exists in the tree.
-	if out := gitIn(t, checkout, "log", "--format=%s", "-1"); strings.Contains(out, "beat ada") {
-		t.Fatalf("the wait committed a beat; the last commit is %q", strings.TrimSpace(out))
+	{
+		out := gitIn(t, checkout, "log", "--format=%s", "-1")
+		require.NotContainsf(t, out, "beat ada", "the wait committed a beat; the last commit is %q", strings.TrimSpace(out))
 	}
-	if _, err := os.Stat(filepath.Join(checkout, "from-ada", "BEAT")); !os.IsNotExist(err) {
-		t.Fatalf("the wait wrote from-ada/BEAT: %v", err)
+	{
+		_, err := os.Stat(filepath.Join(checkout, "from-ada", "BEAT"))
+		require.Truef(t, os.IsNotExist(err), "the wait wrote from-ada/BEAT: %v", err)
 	}
 }
 
@@ -86,9 +91,7 @@ func TestSendAfterWaitBeatSucceeds(t *testing.T) {
 
 	mustBeClean(t, checkout, "send")
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	if !strings.Contains(files, "from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-") {
-		t.Fatalf("the note is not on the remote:\n%s", files)
-	}
+	require.Containsf(t, files, "from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-", "the note is not on the remote:\n%s", files)
 }
 
 // A local commit touching only from-<me>/BEAT leaves the branch ahead of the remote. That
@@ -108,8 +111,9 @@ func TestSendFoldsUnpushedOwnBeatCommit(t *testing.T) {
 	gitIn(t, checkout, "add", "--", "from-ada/BEAT")
 	gitIn(t, checkout, "-c", "user.name=Ada", "-c", "user.email=ada@example.com",
 		"commit", "-q", "-m", "beat ada\n\nNova-Bus: beat\n")
-	if ahead := strings.TrimSpace(gitIn(t, checkout, "rev-list", "--count", "origin/main..HEAD")); ahead != "1" {
-		t.Fatalf("the fixture is not one commit ahead of the remote, it is %s", ahead)
+	{
+		ahead := strings.TrimSpace(gitIn(t, checkout, "rev-list", "--count", "origin/main..HEAD"))
+		require.Equalf(t, "1", ahead, "the fixture is not one commit ahead of the remote, it is %s", ahead)
 	}
 
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
@@ -120,13 +124,10 @@ func TestSendFoldsUnpushedOwnBeatCommit(t *testing.T) {
 	mustBeClean(t, checkout, "send")
 	// Both landed: the note the caller wrote, and the beat that was waiting behind it.
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	if !strings.Contains(files, "from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-") {
-		t.Fatalf("the note is not on the remote:\n%s", files)
-	}
-	if !strings.Contains(files, "from-ada/BEAT") {
-		t.Fatalf("the beat commit was not carried out with the note:\n%s", files)
-	}
-	if ahead := strings.TrimSpace(gitIn(t, checkout, "rev-list", "--count", "origin/main..HEAD")); ahead != "0" {
-		t.Fatalf("the checkout is still %s commits ahead of the remote after a pushed send", ahead)
+	require.Containsf(t, files, "from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-", "the note is not on the remote:\n%s", files)
+	require.Containsf(t, files, "from-ada/BEAT", "the beat commit was not carried out with the note:\n%s", files)
+	{
+		ahead := strings.TrimSpace(gitIn(t, checkout, "rev-list", "--count", "origin/main..HEAD"))
+		require.Equalf(t, "0", ahead, "the checkout is still %s commits ahead of the remote after a pushed send", ahead)
 	}
 }

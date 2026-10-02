@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // pushedHeader is the header every card `nova-sprint card push` pushes today, verbatim from
@@ -24,38 +26,24 @@ func TestParseCardBaseReadsThePushedHeader(t *testing.T) {
 
 	const sha = "ac1dfd2ea24f90af179121f26d71a2f8bfb85df6"
 	repo, gotSha, ok := ParseCardBase(pushedHeader(sha))
-	if !ok {
-		t.Fatal("ParseCardBase: ok=false on the REPO:/BASE:/base-sha: header every pushed card carries")
-	}
-	if want := defaultProbeBase + "/mas-bandwidth/nova-tools.git"; repo != want {
-		t.Fatalf("repo = %q, want %q", repo, want)
-	}
-	if gotSha != sha {
-		t.Fatalf("sha = %q, want %q", gotSha, sha)
-	}
+	require.True(t, ok, "ParseCardBase: ok=false on the REPO:/BASE:/base-sha: header every pushed card carries")
+	want := defaultProbeBase + "/mas-bandwidth/nova-tools.git"
+	require.Equal(t, want, repo, "repo = %q, want %q", repo, want)
+	require.Equal(t, sha, gotSha, "sha = %q, want %q", gotSha, sha)
 	cb := ReadCardBase(pushedHeader(sha))
-	if cb.Ref != "dev" || cb.Named != "mas-bandwidth/nova-tools" {
-		t.Fatalf("ReadCardBase = %+v, want Ref=dev Named=mas-bandwidth/nova-tools", cb)
-	}
-	if !CardNamesRepo(pushedHeader(sha)) {
-		t.Fatal("CardNamesRepo = false on a card with a REPO: line")
-	}
-	if got := CardStageBranch(pushedHeader(sha)); got != "rowan/s00-0302-quack-hulk-flash" {
-		t.Fatalf("CardStageBranch = %q", got)
-	}
+	require.Equal(t, "dev", cb.Ref, "ReadCardBase = %+v, want Ref=dev Named=mas-bandwidth/nova-tools", cb)
+	require.Equal(t, "mas-bandwidth/nova-tools", cb.Named, "ReadCardBase = %+v, want Ref=dev Named=mas-bandwidth/nova-tools", cb)
+	require.True(t, CardNamesRepo(pushedHeader(sha)), "CardNamesRepo = false on a card with a REPO: line")
+	got := CardStageBranch(pushedHeader(sha))
+	require.Equal(t, "rowan/s00-0302-quack-hulk-flash", got, "CardStageBranch = %q", got)
 
 	// The owner/name resolves through the bench mirror exactly as a base-repo URL does.
 	home := t.TempDir()
 	mirror := filepath.Join(home, "nova-bench", "mirror", "nova-tools.git")
-	if err := os.MkdirAll(mirror, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(mirror, "HEAD"), []byte("ref: refs/heads/dev\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := FindBenchMirror(home, repo); got != mirror {
-		t.Fatalf("FindBenchMirror(%q) = %q, want %q", repo, got, mirror)
-	}
+	require.NoError(t, os.MkdirAll(mirror, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(mirror, "HEAD"), []byte("ref: refs/heads/dev\n"), 0o644))
+	got = FindBenchMirror(home, repo)
+	require.Equal(t, mirror, got, "FindBenchMirror(%q) = %q, want %q", repo, got, mirror)
 }
 
 func TestParseCardBasePrecedenceAndAbsence(t *testing.T) {
@@ -66,30 +54,23 @@ func TestParseCardBasePrecedenceAndAbsence(t *testing.T) {
 	// base-repo: wins over REPO: (unchanged behaviour for base-repo cards).
 	both := []byte("RESULT: c1 sha=09fbedc90521\nREPO: mas-bandwidth/other\nbase-repo: https://example.com/mas-bandwidth/nova-tools.git\nbase-sha: " + sha + "\n")
 	repo, gotSha, ok := ParseCardBase(both)
-	if !ok || repo != "https://example.com/mas-bandwidth/nova-tools.git" || gotSha != sha {
-		t.Fatalf("base-repo card: repo=%q sha=%q ok=%v", repo, gotSha, ok)
-	}
+	require.True(t, ok, "base-repo card: repo=%q sha=%q ok=%v", repo, gotSha, ok)
+	require.Equal(t, "https://example.com/mas-bandwidth/nova-tools.git", repo, "base-repo card: repo=%q sha=%q ok=%v", repo, gotSha, ok)
+	require.Equal(t, sha, gotSha, "base-repo card: repo=%q sha=%q ok=%v", repo, gotSha, ok)
 
 	// A card with neither names nothing: nothing to stage, and not a staging failure.
 	neither := []byte("RESULT: c2 sha=09fbedc90521\nKIND: read\nBASE: dev\nbase-sha: " + sha + "\n")
-	if repo, _, ok := ParseCardBase(neither); ok || repo != "" {
-		t.Fatalf("card with no repo: repo=%q ok=%v, want \"\" false", repo, ok)
-	}
-	if CardNamesRepo(neither) {
-		t.Fatal("CardNamesRepo = true on a card with no repo line")
-	}
+	repo, _, ok = ParseCardBase(neither)
+	require.False(t, ok, "card with no repo: repo=%q ok=%v, want \"\" false", repo, ok)
+	require.Empty(t, repo, "card with no repo: repo=%q ok=%v, want \"\" false", repo, ok)
+	require.False(t, CardNamesRepo(neither), "CardNamesRepo = true on a card with no repo line")
 	none := []byte("RESULT: c3 sha=09fbedc90521\nREPO: -\n")
-	if CardNamesRepo(none) {
-		t.Fatal("CardNamesRepo = true on REPO: -")
-	}
+	require.False(t, CardNamesRepo(none), "CardNamesRepo = true on REPO: -")
 
 	// A REPO: line no reader can resolve still names a repo: ok=false, CardNamesRepo true,
 	// so native refuses it (STAGE FAIL reason=no-repo-staged) instead of launching.
 	bad := []byte("RESULT: c4 sha=09fbedc90521\nREPO: nova-tools\nbase-sha: " + sha + "\n")
-	if _, _, ok := ParseCardBase(bad); ok {
-		t.Fatal("ParseCardBase: ok=true on REPO: nova-tools (no owner)")
-	}
-	if !CardNamesRepo(bad) {
-		t.Fatal("CardNamesRepo = false on REPO: nova-tools")
-	}
+	_, _, ok = ParseCardBase(bad)
+	require.False(t, ok, "ParseCardBase: ok=true on REPO: nova-tools (no owner)")
+	require.True(t, CardNamesRepo(bad), "CardNamesRepo = false on REPO: nova-tools")
 }

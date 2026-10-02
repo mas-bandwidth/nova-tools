@@ -5,13 +5,15 @@ package main
 import (
 	"context"
 	"fmt"
-	"reflect"
+	"github.com/redis/go-redis/v9"
+
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // storeDump is every key of a store, dumped, to compare before and after.
@@ -30,7 +32,7 @@ func nextWrites(t *testing.T, c *redis.Client, addr, name, refusal string) {
 	t.Helper()
 	_, cmd, ok := strings.Cut(refusal, "; run: ")
 	if !ok {
-		t.Errorf("%s: no next command in %q", name, refusal)
+		assert.True(t, ok, "%s: no next command in %q", name, refusal)
 		return
 	}
 	args := shellSplit(strings.TrimSpace(cmd))[1:]
@@ -39,11 +41,10 @@ func nextWrites(t *testing.T, c *redis.Client, addr, name, refusal string) {
 	}
 	before := storeDump(c)
 	code, _, stderr := runTable(args...)
-	if code != 0 {
-		t.Errorf("%s: %q exits %d: %s", name, cmd, code, stderr)
-	}
-	if after := storeDump(c); !reflect.DeepEqual(before, after) {
-		t.Errorf("%s: the next command %q wrote", name, cmd)
+	assert.EqualValues(t, 0, code, "%s: %q exits %d: %s", name, cmd, code, stderr)
+	{
+		after := storeDump(c)
+		assert.Equal(t, before, after, "%s: the next command %q wrote", name, cmd)
 	}
 }
 
@@ -57,12 +58,11 @@ func TestRefusalsEndInACommandThatRunsAndWritesNothing(t *testing.T) {
 	defer c.Close()
 	ctx := context.Background()
 	cols, _ := ntable.ParseColumns("ready,working,done")
-	if err := ntable.Create(ctx, c, ntable.Table{Name: "demo", Columns: cols}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ntable.Create(ctx, c, ntable.Table{Name: "demo", Columns: cols}, time.Now()))
 	for _, r := range []string{"build", "test"} {
-		if _, err := ntable.RowAdd(ctx, c, "demo", r, ntable.RowSpec{}); err != nil {
-			t.Fatal(err)
+		{
+			_, err := ntable.RowAdd(ctx, c, "demo", r, ntable.RowSpec{})
+			require.NoError(t, err, "%v", err)
 		}
 	}
 	rev := func() string { return c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val() }
@@ -75,8 +75,9 @@ func TestRefusalsEndInACommandThatRunsAndWritesNothing(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		creates = append(creates, fmt.Sprintf(`{"id":"m%d","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`, i))
 	}
-	if code, _, stderr := runTable("batch", "--redis", addr, man("seed", strings.Join(creates, ","))); code != 0 {
-		t.Fatal(stderr)
+	{
+		code, _, stderr := runTable("batch", "--redis", addr, man("seed", strings.Join(creates, ",")))
+		require.EqualValues(t, 0, code, "%v", stderr)
 	}
 	for j := 0; j < 1000; j++ {
 		names = append(names, fmt.Sprintf(`"f%d"`, j))
@@ -91,9 +92,10 @@ func TestRefusalsEndInACommandThatRunsAndWritesNothing(t *testing.T) {
 	}
 	before := storeDump(c)
 	code, stdout, stderr := runTable("batch", "--redis", addr, man("big", strings.Join(ents, ",")))
-	if code != 1 || stdout != "" || !strings.Contains(stderr, "receipt bytes") || !reflect.DeepEqual(before, storeDump(c)) {
-		t.Fatalf("receipt over its bound: exit %d stdout %q stderr %q", code, stdout, stderr)
-	}
+	require.EqualValues(t, 1, code, "receipt over its bound: exit %d stdout %q stderr %q", code, stdout, stderr)
+	require.Empty(t, stdout, "receipt over its bound: exit %d stdout %q stderr %q", code, stdout, stderr)
+	require.Contains(t, stderr, "receipt bytes", "receipt over its bound: exit %d stdout %q stderr %q", code, stdout, stderr)
+	require.Equal(t, storeDump(c), before, "receipt over its bound: exit %d stdout %q stderr %q", code, stdout, stderr)
 	nextWrites(t, c, addr, "receipt bytes", stderr)
 
 	// create and set --columns past the column bound
@@ -102,19 +104,15 @@ func TestRefusalsEndInACommandThatRunsAndWritesNothing(t *testing.T) {
 		many = append(many, fmt.Sprintf("c%d", i))
 	}
 	code, _, stderr = runTable("create", "wide", "--columns", strings.Join(many, ","), "--redis", addr)
-	if code != 1 {
-		t.Errorf("create 1001 columns: exit %d", code)
-	}
+	assert.EqualValues(t, 1, code, "create 1001 columns: exit %d", code)
 	nextWrites(t, c, addr, "create columns", stderr)
 	code, _, stderr = runTable("set", "demo", "--columns", strings.Join(many, ","), "--redis", addr)
-	if code != 1 {
-		t.Errorf("set --columns 1001: exit %d", code)
-	}
+	assert.EqualValues(t, 1, code, "set --columns 1001: exit %d", code)
 	nextWrites(t, c, addr, "set columns", stderr)
 
 	// an ordinary write with an epoch ahead
 	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "x", 1, ntable.WriteOptions{Epoch: 5}); err == nil {
-		t.Error("an ordinary write with an epoch ahead was accepted")
+		assert.Error(t, err, "an ordinary write with an epoch ahead was accepted")
 	} else {
 		nextWrites(t, c, addr, "epoch ahead", err.Error())
 	}
@@ -125,9 +123,8 @@ func TestRefusalsEndInACommandThatRunsAndWritesNothing(t *testing.T) {
 		rows[i] = ntable.Row{Key: fmt.Sprintf("r%d", i), Cells: make([]ntable.Cell, 3)}
 	}
 	err := ntable.Bind(ctx, c, ntable.Table{Name: "demo", Columns: cols, Rows: rows}, time.Now())
-	if err == nil || !strings.Contains(err.Error(), "changed=no") {
-		t.Fatalf("bind past the row bound: %v; want a refusal saying changed=no", err)
-	}
+	require.Error(t, err, "bind past the row bound: %v; want a refusal saying changed=no", err)
+	require.Contains(t, err.Error(), "changed=no", "bind past the row bound: %v; want a refusal saying changed=no", err)
 	nextWrites(t, c, addr, "bind rows", err.Error())
 
 	// a pre-send refusal through the command
@@ -136,9 +133,8 @@ func TestRefusalsEndInACommandThatRunsAndWritesNothing(t *testing.T) {
 		fs = append(fs, fmt.Sprintf(`"k%d":"v"`, i))
 	}
 	code, _, stderr = runTable("batch", "--redis", addr, man("pre", `{"id":"m0","expect":{},"set":{`+strings.Join(fs, ",")+`}}`))
-	if code != 1 || !strings.Contains(stderr, ntable.CheckedBeforeSending) {
-		t.Errorf("pre-send: exit %d %q", code, stderr)
-	}
+	assert.EqualValues(t, 1, code, "pre-send: exit %d %q", code, stderr)
+	assert.Contains(t, stderr, ntable.CheckedBeforeSending, "pre-send: exit %d %q", code, stderr)
 	nextWrites(t, c, addr, "pre-send limit", stderr)
 
 	// row add past the bound
@@ -146,12 +142,11 @@ func TestRefusalsEndInACommandThatRunsAndWritesNothing(t *testing.T) {
 	for i := 0; i < ntable.LimitRows-2; i++ {
 		pipe.ZAdd(ctx, ntable.DefKey("demo")+":rows", redis.Z{Score: float64(i + 10), Member: fmt.Sprintf("h%d", i)})
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		t.Fatal(err)
+	{
+		_, err := pipe.Exec(ctx)
+		require.NoError(t, err, "%v", err)
 	}
 	code, _, stderr = runTable("row", "add", "demo", "one-more", "--redis", addr)
-	if code != 1 {
-		t.Errorf("row add past the bound: exit %d", code)
-	}
+	assert.EqualValues(t, 1, code, "row add past the bound: exit %d", code)
 	nextWrites(t, c, addr, "row add past the bound", stderr)
 }

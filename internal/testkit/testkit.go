@@ -1,14 +1,21 @@
 // Package testkit holds the test rigs that were copied from package to package:
-// running a tool's entry point in process with both streams captured, and
-// writing and reading the files a test sets up. Each helper fails the test
-// through testify's require, so a caller's setup is one line.
+// running a tool's entry point in process with both streams captured and
+// checked (verb.go), writing and reading the files a test sets up (here and
+// tree.go), a recording wait for code a synctest bubble cannot hold
+// (waits.go) and a skip by platform (skip.go). Each helper fails the test
+// through testify's require, so a caller's setup is one line. Time in a test
+// is testing/synctest's first, a clockwork.FakeClock where code does real
+// I/O, and never a clock of the kit's own.
 //
 // A tool's tests keep one adapter of their own, the entry point as a Main, and
-// call its methods:
+// call its methods. A tool whose entry point takes a clock, an environment or
+// an app closes over it in that one line:
 //
 //	var cairn = testkit.Main(run)
+//	var bus = testkit.Main(func(a []string, in io.Reader, o, e io.Writer) int { return run(a, in, o, e, now) })
 //	out := cairn.OK(t, "open", "--store", dir).Stdout
 //	r := cairn.Run("open") // r.Code, r.Stdout, r.Stderr
+//	cairn.Do(t, "open").Exit(2).Refused("--store is required")
 package testkit
 
 import (

@@ -136,7 +136,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	// appends to it, and a fresh directory per line would unmake that.
 	t.Chdir(t.TempDir())
 	for _, p := range onboarding.Execute(steps, runDocumented) {
-		t.Error(p)
+		assert.Fail(t, p.Error())
 	}
 }
 

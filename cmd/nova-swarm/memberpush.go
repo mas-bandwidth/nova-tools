@@ -50,8 +50,9 @@ type gitPusher struct {
 	// git runs one git; gitrun.Run, or a test's fake.
 	git func(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error)
 	mu  sync.Mutex // the push repository's creation and its alternates
-	// sleep waits between two tries of a push origin rejected on its own side
-	// (pushWaits); nil is time.Sleep, a test gives its own.
+	// sleep waits between two tries of a push origin rejected on its own side, or of
+	// a fetch from the checkout that failed (pushWaits); nil is time.Sleep, a test
+	// gives its own.
 	sleep func(time.Duration)
 	// notes is where the pusher says what it pushed that the result did not name (the
 	// member's own output); nil says nothing.
@@ -106,8 +107,22 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	// every branch and the HEAD of the checkout: the child's commit is on whichever branch
 	// it made, in the checkout or in a clone the git shim linked to it (docs/SPEC-CARD-CONTRACT.md)
 	fetch := []string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", checkout, "+HEAD:" + ns + "/HEAD", "+refs/heads/*:" + ns + "/heads/*"}
-	if res, err := g.run(ctx, repo, nil, fetch...); err != nil {
-		return member.Push{Refused: "fetch from the checkout: " + gitLine(res, err)}
+	for try := 0; ; try++ {
+		res, err := g.run(ctx, repo, nil, fetch...)
+		if err == nil {
+			break
+		}
+		// the push repository is shared by every launch of this member and borrows the bench
+		// mirror's objects, which the mirror's own repack can move: a fetch's check of every ref
+		// can find another launch's ref unreadable for a moment ("fatal: bad object
+		// refs/member/<another launch>/HEAD", the 5000-card load test of 2026-10-01). It is
+		// the member's moment, never the card's: this launch's refs are dropped and the fetch
+		// is made again after a wait, and only a fetch that fails every time is the refusal
+		if try == len(pushWaits) {
+			return member.Push{Refused: "fetch from the checkout into the member's push repository, " + strconv.Itoa(try+1) + " tries: " + gitLine(res, err)}
+		}
+		g.drop(ctx, repo, ns)
+		g.wait(pushWaits[try])
 	}
 	verify := []string{"rev-parse", "--verify", "-q", "--end-of-options", head + "^{commit}"}
 	res, err := g.run(ctx, repo, nil, verify...)
@@ -152,6 +167,10 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	if n, _ := strconv.Atoi(strings.TrimSpace(string(res.Stdout))); n == 0 {
 		return member.Push{None: "the child committed nothing: head " + full + " is the staged commit or behind it"}
 	}
+	// the launch's refs have done their work (the head is known and counted, and the push
+	// names it by sha): gone before the push to origin and the pull request, which take
+	// seconds, so another launch's fetch meets them only for the moment this one's took
+	g.drop(ctx, repo, ns)
 	push := []string{"push", "-q", "--porcelain", "--no-verify", "--", url, full + ":refs/heads/" + p.Branch}
 	for try := 0; ; try++ {
 		res, err := g.run(ctx, repo, nil, push...)
@@ -162,11 +181,7 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 		if try == len(pushWaits) || !strings.Contains(line, "[remote rejected]") {
 			return member.Push{Refused: line}
 		}
-		wait := g.sleep
-		if wait == nil {
-			wait = time.Sleep
-		}
-		wait(pushWaits[try])
+		g.wait(pushWaits[try])
 	}
 	if claimed != "" && g.notes != nil {
 		// said only once the push has landed: a push refused after this point is a failure
@@ -339,6 +354,15 @@ func addAlternate(repo, objects string) error {
 		held = append(held, '\n')
 	}
 	return atomicfile.Write(path, append(held, []byte(objects+"\n")...), 0o644)
+}
+
+// wait is the pause before a fetch or a push is made again: sleep, else time.Sleep.
+func (g *gitPusher) wait(d time.Duration) {
+	if g.sleep != nil {
+		g.sleep(d)
+		return
+	}
+	time.Sleep(d)
 }
 
 // drop deletes a launch's refs from the push repository once its push is

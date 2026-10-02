@@ -32,6 +32,9 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeDiskutil stands in for /usr/sbin/diskutil. It answers the three commands Create
@@ -200,9 +203,7 @@ func fakeApfsList(t *testing.T) {
 func mustList(t *testing.T) []diskVolume {
 	t.Helper()
 	got, err := diskutilVolumes{}.List()
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
+	require.NoError(t, err, "List: %v", err)
 	return got
 }
 
@@ -217,13 +218,9 @@ func TestListReadsTheRealDiskutilTree(t *testing.T) {
 		// volume is still one to delete, so it is still listed.
 		{Name: "nova-old", Disk: "disk5s1", Mount: ""},
 	}
-	if len(got) != len(want) {
-		t.Fatalf("List found %d volumes in the real tree, want %d: %+v", len(got), len(want), got)
-	}
+	require.Len(t, got, len(want), "List found %d volumes in the real tree, want %d: %+v", len(got), len(want), got)
 	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("volume %d is %+v, want %+v", i, got[i], want[i])
-		}
+		assert.Equal(t, want[i], got[i], "volume %d is %+v, want %+v", i, got[i], want[i])
 	}
 }
 
@@ -233,9 +230,7 @@ func TestListReadsTheRealDiskutilTree(t *testing.T) {
 func TestListNeverReturnsAVolumeThisToolDidNotName(t *testing.T) {
 	fakeApfsList(t)
 	for _, v := range mustList(t) {
-		if !strings.HasPrefix(v.Name, volumePrefix) {
-			t.Errorf("List returned %+v, which this tool did not make and may not touch", v)
-		}
+		assert.True(t, strings.HasPrefix(v.Name, volumePrefix), "List returned %+v, which this tool did not make and may not touch", v)
 	}
 }
 
@@ -257,20 +252,12 @@ func TestCreateRemakesAVolumeWhoseRootIsNotTheCallers(t *testing.T) {
 	})
 
 	vol, err := diskutilVolumes{}.Create("disk3", "nova-x", "64m")
-	if err != nil {
-		t.Fatalf("Create gave up on a volume that was writable on the second attempt: %v", err)
-	}
-	if vol.Disk != "disk3s2" {
-		t.Errorf("Create returned %s; the volume it returns is the one whose root it could write, which is the second", vol.Disk)
-	}
+	require.NoError(t, err, "Create gave up on a volume that was writable on the second attempt: %v", err)
+	assert.Equal(t, "disk3s2", vol.Disk, "Create returned %s; the volume it returns is the one whose root it could write, which is the second", vol.Disk)
 	got := strings.Join(f.argv(), " | ")
-	if strings.Count(got, "apfs addVolume") != 2 {
-		t.Errorf("Create made %d volumes; the first root was not the caller's, so it makes one more:\n%s",
-			strings.Count(got, "apfs addVolume"), got)
-	}
-	if !strings.Contains(got, "apfs deleteVolume disk3s1") {
-		t.Errorf("the volume whose root was not the caller's was not deleted before the retry; that is the leak this verb exists to prevent:\n%s", got)
-	}
+	assert.Equal(t, 2, strings.Count(got, "apfs addVolume"), "Create made %d volumes; the first root was not the caller's, so it makes one more:\n%s",
+		strings.Count(got, "apfs addVolume"), got)
+	assert.Contains(t, got, "apfs deleteVolume disk3s1", "the volume whose root was not the caller's was not deleted before the retry; that is the leak this verb exists to prevent:\n%s", got)
 }
 
 // And when it never becomes the caller's, the tool REFUSES and names it. A run that went
@@ -280,17 +267,12 @@ func TestCreateRefusesAVolumeThatNeverBecomesWritable(t *testing.T) {
 	f := benchDiskutil(t, func(string) error { return errors.New("owned by uid 0") })
 
 	_, err := diskutilVolumes{}.Create("disk3", "nova-x", "64m")
-	if err == nil {
-		t.Fatal("Create returned a volume the caller cannot write; the run would then fail at mkdir with `permission denied` and no cause")
-	}
+	require.Error(t, err, "Create returned a volume the caller cannot write; the run would then fail at mkdir with `permission denied` and no cause")
 	for _, want := range []string{"nova-x", "writable", fmt.Sprintf("%d", volumeCreateAttempts)} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not carry %q, so a reader cannot tell a busy machine from a broken one:\n%s", want, err)
-		}
+		assert.Contains(t, err.Error(), want, "the refusal does not carry %q, so a reader cannot tell a busy machine from a broken one:\n%s", want, err)
 	}
-	if n := strings.Count(strings.Join(f.argv(), " "), "apfs deleteVolume"); n != volumeCreateAttempts {
-		t.Errorf("%d of %d unusable volumes were deleted; every one that was made and refused goes", n, volumeCreateAttempts)
-	}
+	n := strings.Count(strings.Join(f.argv(), " "), "apfs deleteVolume")
+	assert.Equal(t, volumeCreateAttempts, n, "%d of %d unusable volumes were deleted; every one that was made and refused goes", n, volumeCreateAttempts)
 }
 
 // A volume that comes up with no mount point was CREATED, and what failed is the mount.
@@ -303,26 +285,16 @@ func TestCreateSaysTheVolumeWasMadeAndTheMountDenied(t *testing.T) {
 	f.mountDenied = true
 
 	_, err := diskutilVolumes{}.Create("disk3", "nova-x", "64m")
-	if err == nil {
-		t.Fatal("Create returned a volume with no mount point; there is nowhere to work and the run would fail at mkdir with no cause")
-	}
+	require.Error(t, err, "Create returned a volume with no mount point; there is nowhere to work and the run would fail at mkdir with no cause")
 	got := err.Error()
 	for _, want := range []string{"disk3s1", "was created", "no mount point", volumesRoot, "OS sandbox", "--write"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the refusal does not carry %q, so it does not say what happened or what to do:\n%s", want, got)
-		}
+		assert.Contains(t, got, want, "the refusal does not carry %q, so it does not say what happened or what to do:\n%s", want, got)
 	}
-	if strings.Contains(got, "could not be created") {
-		t.Errorf("the refusal says the volume could not be created; it WAS created, and the mount is what was denied:\n%s", got)
-	}
-	if !errors.Is(err, errVolumeNotMounted) {
-		t.Errorf("the mount-denied error is not the sentinel the run verb reads, so the verb cannot tell it from a create that failed:\n%s", got)
-	}
+	assert.NotContains(t, got, "could not be created", "the refusal says the volume could not be created; it WAS created, and the mount is what was denied:\n%s", got)
+	assert.ErrorIs(t, err, errVolumeNotMounted, "the mount-denied error is not the sentinel the run verb reads, so the verb cannot tell it from a create that failed:\n%s", got)
 	// And the volume that was made goes, whatever the mount did: the leak is the one
 	// thing this path may not leave behind.
-	if !strings.Contains(strings.Join(f.argv(), " "), "apfs deleteVolume disk3s1") {
-		t.Errorf("the unmounted volume was not deleted again:\n%s", strings.Join(f.argv(), " | "))
-	}
+	assert.Contains(t, strings.Join(f.argv(), " "), "apfs deleteVolume disk3s1", "the unmounted volume was not deleted again:\n%s", strings.Join(f.argv(), " | "))
 }
 
 // The second face of the same cause, one step earlier than an unmounted volume: under a
@@ -355,30 +327,22 @@ func TestRunSaysWhoDeniedTheDiskServiceInsteadOfNamingTheContainerFlag(t *testin
 	withDeniedDiskService(t)
 
 	code, errOut := refuseRun(t, runFlagsFor(t)...)
-	if code != 125 || !strings.Contains(errOut, "reason=no_container") {
-		t.Fatalf("a diskutil that cannot reach the disk service is not refused with reason=no_container: exit %d\n%s", code, errOut)
-	}
+	require.Equal(t, 125, code, "a diskutil that cannot reach the disk service is not refused with reason=no_container: exit %d\n%s", code, errOut)
+	require.Contains(t, errOut, "reason=no_container", "a diskutil that cannot reach the disk service is not refused with reason=no_container: exit %d\n%s", code, errOut)
 	for _, want := range []string{"OS sandbox", "--write", diskutilFrameworkLine} {
-		if !strings.Contains(errOut, want) {
-			t.Errorf("the refusal does not carry %q, so a reader is left with single-user mode:\n%s", want, errOut)
-		}
+		assert.Contains(t, errOut, want, "the refusal does not carry %q, so a reader is left with single-user mode:\n%s", want, errOut)
 	}
-	if strings.Contains(errOut, "--container disk3") {
-		t.Errorf("the refusal still advises --container, which cannot help when diskutil reaches nothing:\n%s", errOut)
-	}
+	assert.NotContains(t, errOut, "--container disk3", "the refusal still advises --container, which cannot help when diskutil reaches nothing:\n%s", errOut)
 }
 
 func TestRunSaysWhoDeniedTheDiskServiceWhenTheListingFails(t *testing.T) {
 	withDeniedDiskService(t)
 
 	code, errOut := refuseRun(t, runFlagsFor(t, "--container", "disk3")...)
-	if code != 125 || !strings.Contains(errOut, "reason=volume_failed") {
-		t.Fatalf("a listing that cannot reach the disk service is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
-	}
+	require.Equal(t, 125, code, "a listing that cannot reach the disk service is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
+	require.Contains(t, errOut, "reason=volume_failed", "a listing that cannot reach the disk service is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
 	for _, want := range []string{"could not be listed", "OS sandbox", "--write", diskutilFrameworkLine} {
-		if !strings.Contains(errOut, want) {
-			t.Errorf("the refusal does not carry %q:\n%s", want, errOut)
-		}
+		assert.Contains(t, errOut, want, "the refusal does not carry %q:\n%s", want, errOut)
 	}
 }
 
@@ -389,18 +353,12 @@ func TestTheSandboxedCallerSentenceIsWrittenOnce(t *testing.T) {
 	f := benchDiskutil(t, alwaysUsable)
 	f.mountDenied = true
 	_, mountErr := diskutilVolumes{}.Create("disk3", "nova-x", "64m")
-	if mountErr == nil {
-		t.Fatal("Create returned a volume with no mount point")
-	}
-	if !strings.Contains(mountErr.Error(), sandboxedCallerRemedy) {
-		t.Errorf("the mount-denied refusal does not carry the shared sentence:\n%s", mountErr)
-	}
+	require.Error(t, mountErr, "Create returned a volume with no mount point")
+	assert.Contains(t, mountErr.Error(), sandboxedCallerRemedy, "the mount-denied refusal does not carry the shared sentence:\n%s", mountErr)
 
 	withDeniedDiskService(t)
 	_, errOut := refuseRun(t, runFlagsFor(t)...)
-	if !strings.Contains(errOut, sandboxedCallerRemedy) {
-		t.Errorf("the denied-disk-service refusal does not carry the shared sentence:\n%s", errOut)
-	}
+	assert.Contains(t, errOut, sandboxedCallerRemedy, "the denied-disk-service refusal does not carry the shared sentence:\n%s", errOut)
 }
 
 // Edge 1, the lock. Eight callers at once, and diskutil sees ONE of them at a time. The
@@ -424,19 +382,14 @@ func TestConcurrentCreatesAreSerialized(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range errs {
-		if err != nil {
-			t.Errorf("caller %d could not create its volume: %v", i, err)
-		}
+		assert.NoError(t, err, "caller %d could not create its volume: %v", i, err)
 	}
 	f.mu.Lock()
 	most := f.maxAdd
 	f.mu.Unlock()
-	if most != 1 {
-		t.Fatalf("%d callers were inside `diskutil apfs addVolume` at once; concurrent addVolume is what leaves a new volume root owned by root:wheel, so Create takes a lock and exactly one caller is ever in there", most)
-	}
-	if n := strings.Count(strings.Join(f.argv(), " "), "apfs addVolume"); n != callers {
-		t.Errorf("%d volumes were made for %d callers; the lock serializes them and drops none", n, callers)
-	}
+	require.Equal(t, 1, most, "%d callers were inside `diskutil apfs addVolume` at once; concurrent addVolume is what leaves a new volume root owned by root:wheel, so Create takes a lock and exactly one caller is ever in there", most)
+	n := strings.Count(strings.Join(f.argv(), " "), "apfs addVolume")
+	assert.Equal(t, callers, n, "%d volumes were made for %d callers; the lock serializes them and drops none", n, callers)
 }
 
 // The lock is a real one, and this is the half a fake cannot show: a SECOND PROCESS
@@ -450,23 +403,17 @@ func TestTheCreateLockIsAnExclusiveFlock(t *testing.T) {
 	volumeLockPath = func() (string, error) { return path, nil }
 
 	unlock, err := lockVolumeCreate()
-	if err != nil {
-		t.Fatalf("the create lock could not be taken: %v", err)
-	}
+	require.NoError(t, err, "the create lock could not be taken: %v", err)
 
 	other, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		t.Fatalf("open the lock file a second time: %v", err)
-	}
+	require.NoError(t, err, "open the lock file a second time: %v", err)
 	defer other.Close()
-	if err := syscall.Flock(int(other.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
-		t.Fatal("a second holder took the create lock while the first held it; then two diskutil runs can overlap and the lock is decoration")
-	}
+	err = syscall.Flock(int(other.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	require.Error(t, err, "a second holder took the create lock while the first held it; then two diskutil runs can overlap and the lock is decoration")
 
 	unlock()
-	if err := syscall.Flock(int(other.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		t.Fatalf("the create lock was not released: %v", err)
-	}
+	err = syscall.Flock(int(other.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	require.NoError(t, err, "the create lock was not released: %v", err)
 	_ = syscall.Flock(int(other.Fd()), syscall.LOCK_UN)
 }
 
@@ -477,17 +424,12 @@ func TestTheCreateLockLivesUnderTheCallersCacheDirectory(t *testing.T) {
 	t.Parallel()
 
 	path, err := defaultVolumeLockPath()
-	if err != nil {
-		t.Fatalf("the default lock path: %v", err)
-	}
+	require.NoError(t, err, "the default lock path: %v", err)
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		t.Skipf("this machine has no user cache directory: %v", err)
 	}
-	if !strings.HasPrefix(path, cache+string(os.PathSeparator)) {
-		t.Errorf("the create lock is at %s, which is not under the caller's cache directory %s; a world-writable lock path is one a contained command can take", path, cache)
-	}
-	if strings.HasPrefix(path, "/tmp/") || strings.HasPrefix(path, "/var/tmp/") {
-		t.Errorf("the create lock is at %s, a path any process on this machine can write", path)
-	}
+	assert.True(t, strings.HasPrefix(path, cache+string(os.PathSeparator)), "the create lock is at %s, which is not under the caller's cache directory %s; a world-writable lock path is one a contained command can take", path, cache)
+	assert.False(t, strings.HasPrefix(path, "/tmp/"), "the create lock is at %s, a path any process on this machine can write", path)
+	assert.False(t, strings.HasPrefix(path, "/var/tmp/"), "the create lock is at %s, a path any process on this machine can write", path)
 }
