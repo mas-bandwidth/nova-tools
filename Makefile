@@ -222,7 +222,7 @@ lint: fmt vet vet-functional vet-slow vet-laws
 # the ones the caller sees.
 # No `preflight: PKGS ?= ...` line: under GNU make 3.81 (macOS /usr/bin/make) a
 # target-specific `?=` on PKGS made `test: PKGS :=` beat the command line, so
-# every shard ran the whole tree instead of
+# every shard of dev push run 35999520176 ran the whole tree instead of
 # its PKGS; with PKGS ?= ./... above, that line was a no-op everywhere else.
 preflight:
 	$(GO) build -o bin/preflight ./tools/preflight && exec ./bin/preflight $(if $(RUN),-run "$(RUN)",) $(PKGS)
