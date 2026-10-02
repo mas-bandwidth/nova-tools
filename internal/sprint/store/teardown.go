@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,12 +62,7 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 			keys = append(keys, names.MemberPrefix(t)+id)
 		}
 	}
-	var old []uint64
-	for e := range epochs.Old {
-		old = append(old, e)
-	}
-	sort.Slice(old, func(i, j int) bool { return old[i] < old[j] })
-	for _, e := range old {
+	for _, e := range slices.Sorted(maps.Keys(epochs.Old)) {
 		for _, shape := range epochs.Old[e] {
 			keys = append(keys, ntable.RowsKeyAt(shape.Name, e), ntable.PropsKeyAt(shape.Name, e))
 			for _, row := range shape.Rows {
@@ -161,14 +158,8 @@ func (st *Store) Teardown(ctx context.Context) (int, error) {
 			beating[m] = true
 		}
 	}
-	for m := range beating {
-		epochs.Beating = append(epochs.Beating, m)
-	}
-	sort.Strings(epochs.Beating)
-	for r := range reading {
-		epochs.Readers = append(epochs.Readers, r)
-	}
-	sort.Strings(epochs.Readers)
+	epochs.Beating = slices.Sorted(maps.Keys(beating))
+	epochs.Readers = slices.Sorted(maps.Keys(reading))
 	_ = st.B.ViewDelete(ctx, st.Names.View())
 	for _, t := range All {
 		if err := st.B.AtEpoch(es.N, false).DropTable(ctx, st.Names.Table(t)); err != nil && refusalCode(err) != "NOTABLE" {
@@ -299,12 +290,7 @@ func (m *Mem) RecordIDs(_ context.Context, table string) ([]string, error) {
 	} else if r := m.dropped[table]; r != nil {
 		members = r.table.members
 	}
-	var out []string
-	for id := range members {
-		out = append(out, id)
-	}
-	sort.Strings(out)
-	return out, nil
+	return slices.Sorted(maps.Keys(members)), nil
 }
 
 // DeleteKeys deletes the keys named, as Keys names them. A key it does not
@@ -488,20 +474,14 @@ func (m *Mem) Keys(names sprint.Names) []string {
 		if len(t.ops) > 0 {
 			keys = append(keys, def+":ops")
 		}
-		for k := range m.tableKeys(name, t) {
-			keys = append(keys, k)
-		}
+		keys = slices.AppendSeq(keys, maps.Keys(m.tableKeys(name, t)))
 	}
 	if len(m.tables) > 0 {
 		keys = append(keys, "tables")
 	}
 	for name, r := range m.dropped {
-		for k := range r.keys {
-			keys = append(keys, k)
-		}
-		for k := range m.tableKeys(name, r.table) {
-			keys = append(keys, k)
-		}
+		keys = slices.AppendSeq(keys, maps.Keys(r.keys))
+		keys = slices.AppendSeq(keys, maps.Keys(m.tableKeys(name, r.table)))
 	}
 	for v := range m.views {
 		keys = append(keys, "view:"+v)
