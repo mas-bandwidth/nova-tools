@@ -197,9 +197,9 @@ func (s *Source) unreadable(path, why string) {
 
 // DayOfStamp is the UTC day of an RFC 3339 stamp. The stamp is PARSED and converted,
 // never sliced: its first ten characters are the day in whatever zone it was printed
-// in, so a stamp like 2026-09-11T20:30:00-07:00 belongs to 2026-09-12 UTC. A stamp this
-// tool cannot read is not a day, is not dated by a guess, and is not dropped: every
-// caller counts and prints it.
+// in, so a stamp offset from UTC can belong to a different UTC day. A stamp this tool
+// cannot read is not a day, is not dated by a guess, and is not dropped: every caller
+// counts and prints it.
 func DayOfStamp(stamp string) (string, bool) {
 	t, err := time.Parse(time.RFC3339, strings.TrimSpace(stamp))
 	if err != nil {
