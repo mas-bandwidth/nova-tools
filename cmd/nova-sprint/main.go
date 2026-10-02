@@ -61,7 +61,10 @@ type app struct {
 	// inventory reads the machines of nova-config and their widths (fleet
 	// sync): tests give it the config's in-memory store.
 	inventory inventoryFn
-	loc       *time.Location // the zone times print in: nil is the machine's local zone
+	// friends reads the names of nova-config's friend rows (friend sync):
+	// tests give it the config's in-memory store.
+	friends friendsFn
+	loc     *time.Location // the zone times print in: nil is the machine's local zone
 	// notify is how an interrupt reaches a command that runs until it is
 	// interrupted (where --watch): the context it returns is done at one.
 	notify func(ctx context.Context) (context.Context, context.CancelFunc)
@@ -121,6 +124,7 @@ func newApp(getenv func(string) string) *app {
 	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
 	a.backend = a.redisBackend
 	a.inventory = a.readInventory
+	a.friends = a.readFriends
 	a.landRoot = defaultLandRoot
 	return a
 }

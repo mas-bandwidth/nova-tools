@@ -14,7 +14,7 @@ func TestIssue2328(t *testing.T) {
 	const name = "OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER"
 	t.Setenv(name, "1")
 
-	env := nativeChildEnv("data", "job", "tmp", "", "", "", "")
+	env := nativeChildEnv("data", "job", "tmp", "", "", "", "", "")
 	for _, kv := range env {
 		if strings.HasPrefix(kv, name+"=") {
 			return

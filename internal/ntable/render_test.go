@@ -27,13 +27,15 @@ func counts(cols []string, rows map[string][]int64, order []string) ntable.Table
 
 // TestRenderEmptyTableShowsItsHeaderAndFooter: a table with no row, and a
 // table whose rows are all zero, render with their header and footer (the
-// owner's ruling, 2026-09-30: tables and rows always show, empty or not).
+// owner's ruling, 2026-09-30: tables and rows always show, empty or not); a
+// table with no row draws the footer under the header's one rule (the owner,
+// 2026-10-02: "when the work stream table is empty, please just show the
+// summary row").
 func TestRenderEmptyTableShowsItsHeaderAndFooter(t *testing.T) {
 	t.Parallel()
 
 	empty := counts([]string{"a"}, nil, nil)
 	want := "row | a\n" +
-		"----+--\n" +
 		"----+--\n" +
 		"    | 0\n"
 	got := ntable.Render(empty, ntable.RenderOpts{})
