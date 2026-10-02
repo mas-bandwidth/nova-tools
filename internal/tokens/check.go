@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// `check` is the GATE. It verifies rule 13 and nothing else: it does not ask
+// `check` is the GATE. It verifies the ledger and nothing else: it does not ask
 // whether a day's numbers are plausible, or whether a source was declared that day. A
 // missing day is NAMED and never filled.
 //
@@ -21,8 +21,8 @@ import (
 // anybody worked that day.
 //
 // A NON-DAY ENTRY A PERSON PUT THERE IS A NOTE, NOT A STRAY. A `*.md`, a `*.log` and a
-// `pre-*` archive directory are counted as notes=<n> and left alone. --strict restores
-// the previous behavior, where every entry that is not a day file is named.
+// `pre-*` archive directory are counted as notes=<n> and left alone. --strict names
+// every entry that is not a day file.
 //
 // Neither door removes anything and neither invents a number: both counts stay on the
 // CHECK line, so --strict restores the full listing.
