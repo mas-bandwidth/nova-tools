@@ -13,7 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// THE CARD'S SHELL NEVER SEES A SECRET (issue #1814).
+// THE CARD'S SHELL NEVER SEES A SECRET.
 //
 // The harness needs the provider key: `opencode.json` declares the provider as
 // `{env:DEEPSEEK_API_KEY}` and the harness reads it from its own environment to make the
@@ -21,8 +21,8 @@ import (
 // spawns its bash tool with its own environment, so a card whose STEP ran a shell could
 // print the key into its tool output, its RESULT.md, the job's harness-output.log and --
 // through harvest's openPR, which copies RESULT.md into a PR body -- onto the forge.
-// Measured inside the real wall on a bench, 2026-09-19: a card printing
-// only `${#DEEPSEEK_API_KEY}` and a name count got back `envlen=35 envnames=1`.
+// A probe inside the real wall shows: a card printing
+// only `${#DEEPSEEK_API_KEY}` and a name count gets back `envlen=35 envnames=1`.
 //
 // THE SEAM, MEASURED. The same probe reported `shpath=/usr/bin/sh`,
 // `bashpath=/usr/bin/bash`, `path1=<the first PATH entry the child was handed>` and
@@ -45,7 +45,7 @@ import (
 // WHAT IT IS NOT. It is not the whole fix. A card that calls `/usr/bin/bash` by its
 // absolute path skips the wrapper, and a harness that spawns a shell some third way skips
 // it too. The layer that closes those is handing the key to the harness by file descriptor
-// instead of by environment, which is a design question in issue #1814 layer 2,
+// instead of by environment, which is a design question for a later layer,
 // not this file. This is the cheap layer that closes the channel a card actually has, and
 // the harvest's key-shape scan (internal/keyshape) is the backstop behind it.
 //
@@ -104,7 +104,7 @@ func shellShimScript(real string) string {
 // writeNativeShellShims writes one wrapper per shell name the bench actually has into
 // <slot>/shim and returns the directory and the wrapper SHELL should name. An error is a
 // refusal for the caller: a native run whose shell still carries the key is the defect
-// this closes, not a degraded mode (SPEC-SANDBOX rule 1's shape -- never silently
+// this closes, not a degraded mode (the sandbox spec's shape -- never silently
 // degraded).
 //
 // It returns "", "", nil -- no shim, no refusal -- on windows, and when the child's PATH
@@ -150,8 +150,8 @@ func writeNativeShellShims(slotDir string) (dir, shell string, err error) {
 		}
 		written[name] = path
 	}
-	// The refusing gh sits beside the shells (nova-tools #3600): a card's shell that
-	// reaches for the GitHub CLI by name gets exit 2 and #3594, never a GitHub call.
+	// The refusing gh sits beside the shells: a card's shell that
+	// reaches for the GitHub CLI by name gets exit 2 and a refusal, never a GitHub call.
 	if _, ghErr := nogh.Install(dir); ghErr != nil {
 		return "", "", ghErr
 	}

@@ -30,7 +30,7 @@ func (d workerDrift) String() string {
 // workerHelpFlag reports whether an argument is one of the spellings package flag answers
 // as a help request. Every other verb here hands such an argument to flag's ErrHelp; `worker`
 // parses its own flags, so it recognizes the same spellings and answers the same sentinel
-// rather than calling `--help` an unknown flag (#3525).
+// rather than calling `--help` an unknown flag.
 func workerHelpFlag(arg string) bool {
 	switch arg {
 	case "-h", "--h", "-help", "--help":
