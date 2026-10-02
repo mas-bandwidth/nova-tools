@@ -3020,7 +3020,7 @@ func waitOwnedPaths(o inboxOpts) []string {
 
 // waitWalkOverBound answers whether this lane's cursor is further behind HEAD than the
 // walk's bound, which is the one condition under which a wait can see nothing whatever
-// happens (#1518).
+// happens.
 //
 // IT FAILS OPEN, in both directions that matter. A lane with no cursor at all is not over
 // any bound -- it reads from the beginning of the switch-day line, which is what a first
@@ -3047,14 +3047,14 @@ const maxIdleExit = 125
 // interval. It is a default, unlike --timeout, on the same test the tool's other two
 // defaults pass: it is not a fact about a bus that only its owner can supply. Ten seconds
 // is under the time it takes to read a note and well over the cost of a fetch, and it is
-// the number Glenn asked for after watching the family's lines wait on each other: "the
-// polling should be 10 sec". A shorter interval is a shorter round trip between two lines
+// chosen for the round trip between two lines that answer each other, not for the fetch: a
+// shorter interval is a shorter round trip between two lines
 // that are answering each other, and a git fetch of a bus this size is cheap enough that
 // the round trip is what the number should be chosen for.
 const defaultWaitInterval = 10 * time.Second
 
 // defaultBeatInterval and defaultBeatLease are the defaults of the retired --beat and
-// --beat-lease (#3144): a wait no longer writes or pushes a BEAT, and the flags are parsed
+// --beat-lease: a wait neither writes nor pushes a BEAT, and the flags are parsed
 // only so a caller's argv keeps working.
 const (
 	defaultBeatInterval = 60 * time.Second
@@ -3072,7 +3072,7 @@ const minWaitInterval = 100 * time.Millisecond
 // is called with the bus directory at the exact boundary a wait becomes blocked:
 // it has polled, found nothing new, and is about to sleep until its next poll.
 // Tests point it at a channel close so a note can be pushed at that boundary
-// instead of after a sleep that races the poll (#370). It is an atomic because it
+// instead of after a sleep that races the poll. It is an atomic because it
 // is read from whichever goroutine runs waitLoop and written once by a test, and
 // parallel tests may run waitLoop while a sibling's hook is installed.
 type waitBlockedHook func(busDir string)
@@ -3128,26 +3128,25 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 	if held, err := bus.ReadCursor(o.busDir, o.me.Lane); err == nil {
 		cursor = held.Commit
 	}
-	// NO BEAT IS WRITTEN OR PUSHED HERE (#3144). Until 2026-09-24 every tick rewrote
-	// from-<lane>/BEAT and every --beat pushed it as its own `beat <name>` commit: 79% of
-	// the bus's commits, pulled by every clone. Presence is friend:<name> in Redis, written
+	// NO BEAT IS WRITTEN OR PUSHED HERE. A BEAT written and pushed per tick would be most
+	// of the bus's commits, pulled by every clone. Presence is friend:<name> in Redis, written
 	// by the friend's runtime (nova-friend); a wait leaves the checkout exactly as its polls left it.
 	for {
 		polls++
 		elapsed := clock.Now().Sub(start).Round(time.Millisecond)
 		pollNow := now.Add(elapsed)
-		// Issue #328, re-landed: a wait returns the moment it sees news, an unadvanced
+		// A wait returns the moment it sees news, an unadvanced
 		// cursor's backlog included, printing exactly what inbox prints for that state;
 		// it blocks only while there is nothing new at all, until a note arrives or the
-		// deadline. #352 blocked over the backlog instead and broke byte-identity with
-		// inbox, which is why it was reverted.
+		// deadline. Blocking over the backlog instead would break byte-identity with
+		// inbox.
 		//
-		// #328 (2026-09-17): a beat or a cursor is never news. A wait that woke on every
+		// A beat or a cursor is never news. A wait that woke on every
 		// line's presence beat (one a minute, six lines) was a poll with extra steps and cost the
-		// window a turn per beat; --quiet-beats is accepted and changes nothing (Johnny's read).
+		// window a turn per beat; --quiet-beats is accepted and changes nothing.
 		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) }
-		// --on-note WAKES ON A NOTE ADDRESSED TO: THE CALLER AND ON NOTHING ELSE (#2178,
-		// Stella's hold 6 on #3368). A Cc: note, a receipt or a heard note is data, not a
+		// --on-note WAKES ON A NOTE ADDRESSED TO: THE CALLER AND ON NOTHING ELSE. A Cc:
+		// note, a receipt or a heard note is data, not a
 		// wake: the tick that brings only those is empty, prints nothing and keeps waiting.
 		if o.onNote {
 			keep = func(r inboxReading) bool { return len(onNoteWakes(r)) > 0 }
@@ -3266,7 +3265,7 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	if rec.LockCleared {
 		repairs.add("index.lock")
 	}
-	// A BEAT the fast-forward had to discard is an older wait's leftover (#3144): the
+	// A BEAT the fast-forward had to discard is an older wait's leftover: the
 	// discard is the whole repair, and nothing is written back.
 	for _, p := range rec.Discarded {
 		repairs.add(p)
@@ -3294,7 +3293,7 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	}
 	// A poll whose since-walk hit the bound read nothing, so it has neither news to return
 	// on nor a read to advance over. `wait` refuses a cursor already past the bound before
-	// it blocks (WAIT BLIND, #1518); this is the same state arriving mid-wait, when the bus
+	// it blocks (WAIT BLIND); this is the same state arriving mid-wait, when the bus
 	// moves past the bound while the wait is standing there.
 	if r.Bounded {
 		return 0, r, "", false
@@ -3302,7 +3301,7 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	if !keep(r) {
 		return 0, r, "", false
 	}
-	// Issue #328: `wait --advance` skips notes already heard before it blocks. A reader who
+	// `wait --advance` skips notes already heard before it blocks. A reader who
 	// receipted a note and then waits has already taken that note -- heard is not answered,
 	// so the note is still news to the open list -- and a wait that returns on it pays a
 	// turn for nothing. When every new note is already heard, the cursor is moved to the
@@ -3468,14 +3467,11 @@ func sha8(s string) string {
 // printSwitchDayNote prints the ONE line this whole change exists to print, and prints
 // nothing at all when there is nothing to say.
 //
-// THE SILENCE IT ENDS. A friend's cursor read `... open=0 legacy=2026-09-10` and his inbox
-// listed nothing, day after day, on a bus that was busy. Every note was there; his own
-// switch-day line stood in front of all of them, because a date is midnight at its START
-// and that date was tomorrow's. v0.10.1 made the line an instant and wrote the recovery
-// down, and a recovery written down is a recovery for whoever goes looking. He had no
-// reason to go looking: from where he sat the tool was working and nobody was writing to
-// him. THAT is the bug -- not the date, which he was entitled to draw, but a tool that knew
-// exactly what was wrong and exactly what to run, and said neither.
+// THE SILENCE IT ENDS. A switch-day line drawn as a date is midnight at its START, so it
+// stands in front of every note the bus already holds, and an inbox behind it lists
+// nothing, day after day, on a bus that is busy. The date is the reader's to draw; the
+// bug is a tool that knows exactly what is wrong and exactly what to run, and says
+// neither -- from where the reader sits the tool is working, and nothing invites a look.
 //
 // So the line is printed on EVERY run whose cursor carries a forward-drawn date line,
 // incremental or full, busy or empty, and it carries the whole command with this run's own
@@ -3688,9 +3684,9 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// it wherever it was met. The values `check` was never given are the placeholders they
 	// are; see printSwitchDayNote.
 	printSwitchDayNote(stdout, noteLegacy, *busDir, noteName, "<n>", "", "", now)
-	// THE CAP, AND THE COUNT THAT IS NEVER CAPPED. A check that fails 1,059 times (#2574)
-	// printed all 1,059 lines, most of them one class repeating, and a reader holding the
-	// wall could not tell the loud kind from the one finding that mattered. So the report
+	// THE CAP, AND THE COUNT THAT IS NEVER CAPPED. An uncapped failing check prints a wall
+	// of lines, most of them one class repeating, and a reader holding it cannot tell the
+	// loud kind from the one finding that mattered. So the report
 	// is capped at --max findings, one BUS MORE line says what the cap held back and names
 	// the flag that lifts it, and one BUS CHECK line counts every finding by class before
 	// the exit -- the listing is capped, the counting never is, and the class the cap ate
