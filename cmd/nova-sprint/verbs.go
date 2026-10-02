@@ -137,7 +137,12 @@ ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
 inbox prints, which does not move, with --expect <n>, the size it printed,
 which refuses a group that has changed. Each verb prints what moved (MOVED),
 what did not and why (REFUSED, on stderr), its summary line, and the sprint's
-line: landed/all percent -> ETA (a stopped machine has no ETA: STOPPED, then
+line: landed/all percent -> ETA <estimate> (the cards left, each at the average
+time a card has taken to land, in minutes rounded up; where shows the largest
+of the last 10 s; the word alone until one has landed; a stopped
+
+machine has no ETA: STOPPED, then
+
 landed/all and the percent when there are cards; every card landed, no ETA:
 done in <time from the first start> while it runs, and STOPPED ... done once
 the machine has stopped itself).
@@ -766,7 +771,8 @@ func sprintLine(ctx context.Context, st *store.Store) string {
 	case full:
 		return strings.TrimSpace(progress(shapes[0]) + " done" + tookSince(ctx, st) + "  " + machine)
 	}
-	return strings.TrimSpace(summary(shapes[0]) + "  " + machine)
+	since, started := st.SinceFirstStart(ctx)
+	return strings.TrimSpace(summary(shapes[0], etaMinutes(shapes[0], since, started)) + "  " + machine)
 }
 
 // tookSince is " in <duration>": the wall time from the machine's first start

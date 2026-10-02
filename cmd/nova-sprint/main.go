@@ -55,6 +55,9 @@ type app struct {
 	cached  map[string]store.Backend
 	twins   map[string]*twin // the open `--redis mem:<file>` twins (twin.go)
 	meter   hostload.Source  // how fleet beat measures this machine
+	etaMu   sync.Mutex
+	etas    []etaSample // the view's estimates of the last etaHold (heldETA)
+
 	// inventory reads the machines of nova-config and their widths (fleet
 	// sync): tests give it the config's in-memory store.
 	inventory inventoryFn
