@@ -63,6 +63,18 @@ func (a *app) cmdLog(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	for _, l := range out {
+		if *card == "" {
+			// the timeline: a cost record is one short line, its record behind
+			// --card <id> and --json (docs/SPEC-SPRINT.md section 17)
+			short, costs := sprint.SplitCost(l)
+			for _, w := range costs {
+				fmt.Fprintln(stdout, l.At.In(a.zone()).Format("15:04:05")+"  "+oneline.Escape(w))
+			}
+			if len(costs) > 0 && len(short.Set) == 0 && short.From == short.To && !short.Removed {
+				continue // the change was its cost records alone
+			}
+			l = short
+		}
 		fmt.Fprintln(stdout, a.logLine(l, *card == ""))
 		// a brief is a child's whole brief: the line says it was given and where
 		// it is shown, never the brief itself (--json carries it whole)

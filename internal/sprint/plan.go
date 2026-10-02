@@ -67,6 +67,9 @@ type Plan struct {
 	// Requeue is the queued changes a drain leaves for the next one (Drain):
 	// its commit puts them back at the queue's tail.
 	Requeue []QueuedChange
+	// Seat is the seat's change (MoveSeat): the step's commit writes the
+	// coordinator and the seat's record with its note.
+	Seat *SeatChange
 	// pre is the pre-state the plan was built on, set only by the steps of
 	// this package that may admit or move a primary into ready (on): the
 	// lifecycle judges a primary's needs against it, and a plan without one

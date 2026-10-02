@@ -65,15 +65,16 @@ func TestSentinelsByPositionStoreNothing(t *testing.T) {
 	n := len(h.lines()) - before
 	require.LessOrEqual(t, n, 12, "the add of 900 cards and 9 stops wrote %d log lines", n)
 	h.clean("three streams in stops")
-	// dropping the cards before a stop frees it: reached, released, and what
-	// is behind it goes to ready as one set, up to the next stop
+	// dropping the cards before a stop frees it: with nothing left before it and
+	// other streams' work in flight it is simply next, not reached (no judgment), and
+	// release lands it; what is behind it goes to ready as one set, up to the next stop
 	var first []string
 	for i := 1; i <= 100; i++ {
 		first = append(first, fmt.Sprintf("a-%d", i))
 	}
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: first}, Reason: "done elsewhere"}))
 	h.must(SentinelsDueStep("tester"))
-	require.NotEmpty(t, h.snap().Work.Card("a-gate-1").F("reached"), "a-gate-1 not reached with the cards before it dropped")
+	require.Empty(t, h.snap().Work.Card("a-gate-1").F("reached"), "a-gate-1 reached with nothing before it while b and c are in flight")
 	mark := len(h.lines())
 	res := h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"a-gate-1"}, Reason: "go", Coordinator: "tester", Who: "tester"}))
 	s = h.snap()

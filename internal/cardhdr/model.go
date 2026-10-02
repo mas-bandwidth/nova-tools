@@ -118,3 +118,12 @@ func IsModelID(id string) bool {
 // failure, never the card's; the sprint deals the card to another member
 // (tla/CardContract.tla, StageRefused).
 const EndStaging = "staging refused"
+
+// EndNothing and EndNoCommit are how a member's failed finish begins when its child found
+// nothing to do (verdict nothing) or committed nothing: no new work. The sprint returns
+// such a rework to review at the head an earlier attempt pushed when a reader passed that
+// head (docs/SPEC-SPRINT.md section 6), else it is failed work for the coordinator.
+const (
+	EndNothing  = "nothing to do"
+	EndNoCommit = "no commit"
+)

@@ -29,7 +29,7 @@ func (s *Seeded) Work(card string) (bool, string) {
 
 func (s *Seeded) Read(card string) (bool, string) {
 	if s.rng.Float64() < s.Broken {
-		return false, "an edge case is not handled"
+		return false, "line 1: an edge case is not handled"
 	}
 	return true, ""
 }
