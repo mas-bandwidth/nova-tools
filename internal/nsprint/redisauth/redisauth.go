@@ -20,7 +20,7 @@ const (
 )
 
 // Auth is the one fleet Redis seat every tool dials with (nova-sprint, nova-tokens
-// credential management. The user is the ACL user, else
+// ledger/report through --user and --password-env). The user is the ACL user, else
 // UserEnv; passwordEnv names the variable holding its password, else PasswordEnvEnv, else
 // DefaultPasswordEnv. With no user the connection is the default user's: a password is read
 // only when passwordEnv names its variable, so a throwaway test Redis needs nothing. A user
@@ -50,9 +50,9 @@ func Auth(user, passwordEnv string) (string, string, error) {
 	return user, password, nil
 }
 
-// NoUserHint is the refusal the fleet Redis needs when the default user is off
-// : the password is already in the environment but the ACL user is
-// unset, so the verb connected as the default user and was refused NOAUTH. The
+// NoUserHint is the refusal the fleet Redis needs when the default user is off:
+// the password is already in the environment but the ACL user is
+// unset, so a verb reaches the default user and NOAUTH refuses it. The
 // line names the missing variable and the pair (user + password) in one line.
 func NoUserHint() string {
 	return UserEnv + " is unset but " + DefaultPasswordEnv + " is set; set the pair " +
