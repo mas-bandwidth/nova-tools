@@ -2,8 +2,9 @@ package sprint
 
 import (
 	"fmt"
-	"slices"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Every placement of a card on a member goes round the fleet (errata 3,
@@ -62,9 +63,9 @@ func reworksGoRound(t *testing.T, w *world, first map[string]string, rework rewo
 		firstN[m]++
 	}
 	evenly(t, "first attempts", firstN, members, false)
-	if last, _ := w.s.Fleet.Prop(PropDealIndex); indexPast(members, last) != "m6" || first["s1-7"] != "m7" {
-		t.Fatalf("the index is past %q and s1-7 was on %s: want m6 and m7", last, first["s1-7"])
-	}
+	last, _ := w.s.Fleet.Prop(PropDealIndex)
+	require.Equal(t, "m6", indexPast(members, last), "the index is past %q and s1-7 was on %s: want m6 and m7", last, first["s1-7"])
+	require.Equal(t, "m7", first["s1-7"], "the index is past %q and s1-7 was on %s: want m6 and m7", last, first["s1-7"])
 	order := []string{"s1-7"}
 	for i := 1; i <= 30; i++ {
 		if id := fmt.Sprintf("s1-%d", i); id != "s1-7" {
@@ -76,22 +77,16 @@ func reworksGoRound(t *testing.T, w *world, first map[string]string, rework rewo
 	for k, id := range order {
 		rework(w, id)
 		wc := w.s.Fleet.Card(WorkCardID(id, 2))
-		if wc == nil || wc.Col != Ready {
-			t.Fatalf("rework %d of %s: its second attempt is %+v, want dealt", k+1, id, wc)
-		}
-		if wc.Row == first[id] {
-			t.Fatalf("rework %d: %s went back to %s, the member its first attempt was on", k+1, id, wc.Row)
-		}
-		if last, _ := w.s.Fleet.Prop(PropDealIndex); indexPast(members, last) != wc.Row {
-			t.Fatalf("rework %d: the index is past %q, want past %s, the member dealt to", k+1, last, wc.Row)
-		}
+		require.NotNil(t, wc, "rework %d of %s: its second attempt is %+v, want dealt", k+1, id, wc)
+		require.Equal(t, Ready, wc.Col, "rework %d of %s: its second attempt is %+v, want dealt", k+1, id, wc)
+		require.NotEqual(t, first[id], wc.Row, "rework %d: %s went back to %s, the member its first attempt was on", k+1, id, wc.Row)
+		last, _ = w.s.Fleet.Prop(PropDealIndex)
+		require.Equal(t, wc.Row, indexPast(members, last), "rework %d: the index is past %q, want past %s, the member dealt to", k+1, last, wc.Row)
 		got = append(got, wc.Row)
 		again[wc.Row]++
 		workIt(w, wc)
 	}
-	if got[0] != "m8" {
-		t.Fatalf("s1-7 went to %s, want m8: m7 is the member it failed on and is skipped", got[0])
-	}
+	require.Equal(t, "m8", got[0], "s1-7 went to %s, want m8: m7 is the member it failed on and is skipped", got[0])
 	t.Logf("second attempts: %v", again)
 	evenly(t, "second attempts", again, members, false)
 }
@@ -125,13 +120,11 @@ func TestTheReworkAvoidsTheMemberThatFailedItWhileAnotherHasRoom(t *testing.T) {
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-2"}}}))
 		w.s.Fleet.SetProps(map[string]string{PropDealIndex: "m1"})
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-3"}}}))
-		if w.s.Fleet.Count("m2", Ready) != 2 {
-			t.Fatalf("m2 has %d ready, want 2", w.s.Fleet.Count("m2", Ready))
-		}
+		require.Equal(t, 2, w.s.Fleet.Count("m2", Ready), "m2 has %d ready, want 2", w.s.Fleet.Count("m2", Ready))
 		rework(w, "s1-1")
-		if wc := w.s.Fleet.Card("s1-1.w2"); wc == nil || wc.Row != "m1" {
-			t.Fatalf("s1-1's second attempt is %+v, want on m1: no other member has room", wc)
-		}
+		wc := w.s.Fleet.Card("s1-1.w2")
+		require.NotNil(t, wc, "s1-1's second attempt is %+v, want on m1: no other member has room", wc)
+		require.Equal(t, "m1", wc.Row, "s1-1's second attempt is %+v, want on m1: no other member has room", wc)
 	}
 }
 
@@ -148,12 +141,9 @@ func TestADownMembersCardsGoRoundTheFleet(t *testing.T) {
 		for i := 1; i <= 6; i++ {
 			got = append(got, s.Fleet.Card(WorkCardID(fmt.Sprintf("s1-%d", i), 1)).Row)
 		}
-		if !slices.Equal(got, want) {
-			t.Fatalf("%s: m1's cards went to %v, want %v: round the fleet from past m4", what, got, want)
-		}
-		if last, _ := s.Fleet.Prop(PropDealIndex); indexPast(s.Fleet.Rows(), last) != "m3" {
-			t.Fatalf("%s: the index is past %q, want m3", what, last)
-		}
+		require.Equal(t, want, got, "%s: m1's cards went to %v, want %v: round the fleet from past m4", what, got, want)
+		last, _ := s.Fleet.Prop(PropDealIndex)
+		require.Equal(t, "m3", indexPast(s.Fleet.Rows(), last), "%s: the index is past %q, want m3", what, last)
 	}
 
 	// fleet down (the verb, and presence's down)
@@ -206,12 +196,9 @@ func TestTheLevelGoesRoundTheFleet(t *testing.T) {
 		for _, m := range members {
 			got[m] = s.Fleet.Count(m, Ready)
 		}
-		if !mapsEqual(got, want) {
-			t.Fatalf("%s: the queues are %v, want %v: round the fleet from past m5", what, got, want)
-		}
-		if last, _ := s.Fleet.Prop(PropDealIndex); indexPast(s.Fleet.Rows(), last) != "m8" {
-			t.Fatalf("%s: the index is past %q, want m8", what, last)
-		}
+		require.Equal(t, want, got, "%s: the queues are %v, want %v: round the fleet from past m5", what, got, want)
+		last, _ := s.Fleet.Prop(PropDealIndex)
+		require.Equal(t, "m8", indexPast(s.Fleet.Rows(), last), "%s: the index is past %q, want m8", what, last)
 	}
 	upAll := func(s *Snapshot) {
 		for _, m := range members[1:] {
@@ -244,16 +231,4 @@ func TestTheLevelGoesRoundTheFleet(t *testing.T) {
 	upAll(w.s)
 	w.part(TickLevel, TickReq{})
 	check(t, w.s, "the tick's level")
-}
-
-func mapsEqual(a, b map[string]int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
 }
