@@ -266,7 +266,11 @@ near the end, and the sections below say how each is met.
 16. **Sources are read-only.** No verb writes into a source. The OpenCode
     database is copied to `--scratch <dir>` with its `-wal` and `-shm`
     siblings and queried there with `sqlite3 -readonly` under `--timeout`;
-    the live file is never opened for writing. The bus checkout is read as
+    the live file is never opened for writing. A fold or a report copies
+    into `--scratch/opencode-<label>/`, replacing the copy there, and leaves
+    it; a run that writes nothing (`sources`, every `--dry-run`) copies into
+    a new directory of its own under `--scratch` (`.nova-tokens-dry-run-*`)
+    and removes it before it exits, so `--scratch` is left as it was. The bus checkout is read as
     files; the tool never runs `git`. A transcript is opened for reading.
 17. **A day is a UTC day, from the message's own stamp, and a row that is
     not says so.** A transcript line's `timestamp`, a database row's

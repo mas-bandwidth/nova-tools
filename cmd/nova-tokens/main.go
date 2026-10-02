@@ -77,9 +77,13 @@ usage:
   nova-tokens version
 
 Every verb but version takes --json: the same result as one JSON object on stdout, a
-refusal included. A verb that writes takes --dry-run: it reads what the real run reads,
-prints what it would write with dry_run=true on its last line, and writes nothing (ledger
---dry-run dials no store). ` + "`<verb> -h`" + ` lists a verb's flags and states its effect.
+refusal included. A verb that writes takes --dry-run: it is the real run's own plan --
+it reads what the real run reads and refuses what the real run refuses -- prints what it
+would write with dry_run=true on its last line, and writes nothing (ledger --dry-run dials
+no store). The one difference: a dry fold takes no fold.lock, so it neither waits for nor
+refuses on a fold holding one. --opencode under --dry-run (and under sources) still reads a
+copy of the database, made in a new directory of the run's own under --scratch
+(.nova-tokens-dry-run-*) and removed before it exits: --scratch is left as it was. ` + "`<verb> -h`" + ` lists a verb's flags and states its effect.
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
 source, an unparsed bus line or note, a row of two day bases, a lane-day with competing
@@ -108,7 +112,9 @@ A source is declared by flag and every row names its sources, so every number in
 file is traceable to the flags of the run that wrote it. A label is [a-z0-9-]+, at most
 32 characters, and unique across the run. --scratch is required with --opencode and
 refused without it, because a scratch directory with nothing to put in it is a flag that
-does nothing.
+does nothing. A fold or a report copies the database, with its -wal and -shm, into
+--scratch/opencode-<label>/, replacing the copy there, and leaves it; the live file is
+never opened, because sqlite3 keeps a WAL index beside the file it reads.
 
 The five types -- input, output, cache_write, cache_read, reasoning -- are kept apart, and
 a type the source did not report is written a dash, NEVER 0. A provider that does not expose
@@ -140,8 +146,9 @@ write the same day at once; the second waits, then refuses naming the holder. Th
 file is empty and stays in --out after the run (it is never data); check counts it as
 neither a day file nor a stray.
 
-This tool removes nothing. There is no month file, sum writes nothing, check names a
-stray and leaves it, and no verb deletes, truncates or trims any file.
+This tool removes nothing it was given. There is no month file, sum writes nothing, check
+names a stray and leaves it, and no verb deletes, truncates or trims a file it did not make:
+the one removal is the private database copy a dry run or sources made under --scratch.
 
 check counts what it does not name. A calendar day between the first and the last with no
 file is gap=<n>, and it is MISSING only when something says there was spend on it:
@@ -185,12 +192,12 @@ note: none of them is an instruction.
 // verbs are the verbs in the order the usage names them, each with its effect: what
 // running it does to the world, the last line of its -h (docs/STANDARD.md section 2).
 var verbs = []struct{ name, effect string }{
-	{"fold", "local write: writes the day files in --out, holding --out/fold.lock while it writes; --dry-run reads the same sources and writes nothing, the lock included"},
-	{"report", "local write: --note writes the note body to that file (--dry-run names it and writes nothing); without --note it writes nothing; --redis reads the ledger store over the network"},
+	{"fold", "local write: writes the day files in --out, holding --out/fold.lock while it writes, and with --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run reads the same sources, refuses what the real run refuses, and writes nothing (its database copy is made in a new directory under --scratch and removed before it exits)"},
+	{"report", "local write: --note writes the note body to that file, and --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run names the note, copies the database only into a new directory under --scratch removed before it exits, and writes nothing; --redis reads the ledger store over the network, with or without --dry-run"},
 	{"ledger", "delivery: writes each day file's rows to the Redis store at --redis (tokens:ledger:<day>); --dry-run reads the day files, prints what it would write, and dials no store"},
 	{"sum", string(tool.Inspection)},
 	{"check", string(tool.Inspection)},
-	{"sources", string(tool.Inspection)},
+	{"sources", string(tool.Inspection) + " (--opencode reads a copy made in a new directory under --scratch and removed before it exits)"},
 	{"profiles", string(tool.Inspection)},
 	{"session", "local write: with --out it writes the session's days into the day files there, holding --out/fold.lock; without --out, or with --dry-run, it writes nothing"},
 	{"version", string(tool.Inspection)},
@@ -339,7 +346,7 @@ func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
 		fs.Var(&s.swarm, "swarm", "labeled swarm pool directory; repeatable")
 		fs.StringVar(&s.bus, "bus", "", "nova-bus directory with token notes")
 	}
-	fs.StringVar(&s.scratch, "scratch", "", "directory for the temporary OpenCode database copy")
+	fs.StringVar(&s.scratch, "scratch", "", "directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources")
 	fs.StringVar(&s.repos, "repos", "", "tab-separated repo names and path regular expressions")
 	fs.IntVar(&s.timeout, "timeout", int(tokens.DefaultTimeout/time.Second), "seconds to wait for the OpenCode sqlite3 reader")
 }
@@ -446,13 +453,44 @@ func (s *sourceFlags) check(r *refusals) {
 }
 
 // read reads every declared source, in declaration order, through the one reader per kind.
-func (s *sourceFlags) read(rules *tokens.Rules, now time.Time) []*tokens.Source {
-	var out []*tokens.Source
+//
+// An OpenCode database is read from a COPY, never in place: the live file is the one
+// OpenCode is writing, and sqlite3 even read-only keeps a WAL index (-shm) beside the file
+// it opens, while reading it as immutable would skip rows still in the WAL and count a
+// different day. A run that writes copies into --scratch/opencode-<label>/, replacing what
+// is there, and leaves the copy (rule 16). A run that writes nothing (private: sources, and
+// every --dry-run) copies into a directory of its own made under --scratch
+// (.nova-tokens-dry-run-*, new and private to the run, so no file there is ever truncated)
+// and removes it before returning, so --scratch is as it was. A copy it could not remove
+// is named in the returned notes.
+func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
 	for _, it := range s.claude.items {
 		out = append(out, tokens.ReadClaude(it.label, it.value, rules))
 	}
+	scratch := s.scratch
+	if private && len(s.opencode.items) > 0 {
+		dir, err := os.MkdirTemp(s.scratch, ".nova-tokens-dry-run-")
+		if err != nil {
+			for _, it := range s.opencode.items {
+				src := &tokens.Source{Label: tokens.Label(tokens.KindOpenCode, it.label), Kind: tokens.KindOpenCode, Path: it.value, Basis: tokens.UTC}
+				src.Unreadables = append(src.Unreadables, tokens.Unreadable{Label: src.Label, Path: it.value, Why: "a private copy directory under --scratch: " + err.Error()})
+				out = append(out, src)
+			}
+			scratch = ""
+		} else {
+			scratch = dir
+			defer func() {
+				if err := removePrivateCopy(dir); err != nil {
+					notes = append(notes, "the private copy "+dir+" could not be removed: "+err.Error()+"; remove it by hand")
+				}
+			}()
+		}
+	}
 	for _, it := range s.opencode.items {
-		out = append(out, tokens.ReadOpenCode(it.label, it.value, s.scratch, time.Duration(s.timeout)*time.Second, rules))
+		if scratch == "" {
+			break
+		}
+		out = append(out, tokens.ReadOpenCode(it.label, it.value, scratch, time.Duration(s.timeout)*time.Second, rules))
 	}
 	for _, it := range s.swarm.items {
 		out = append(out, tokens.ReadSwarm(it.label, it.value, rules))
@@ -471,7 +509,7 @@ func (s *sourceFlags) read(rules *tokens.Rules, now time.Time) []*tokens.Source 
 		}
 		src.Stat.Rows = len(keys)
 	}
-	return out
+	return out, notes
 }
 
 // newFlagSet builds a flag set with package flag's two mouths closed: its error text
@@ -594,7 +632,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		defer release()
 	}
 
-	sources := sf.read(rules, now)
+	sources, copyNotes := sf.read(rules, now, *dryRun)
 	folder := tokens.NewFolder()
 	for _, src := range sources {
 		for _, m := range src.Stream {
@@ -792,6 +830,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		*allowShrink, *out, mixedLabels, firstPartial, firstQuiet)
 	fmt.Fprintf(s.out(), "TOKENS NOTE %s\n", oneline.Escape(note))
 	s.note(note)
+	copyNote(s, "TOKENS", copyNotes)
 	if bad {
 		return s.done(1, *max)
 	}
@@ -1025,7 +1064,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 			rules.FilterDay(*day)
 		}
 	}
-	sources := sf.read(rules, now)
+	sources, copyNotes := sf.read(rules, now, true)
 	if !*all {
 		// When --day is specified (without --all), message counts, row keys, and unattributed
 		// path tallies are scoped to the selected day. Source-wide inventory and error metadata
@@ -1086,6 +1125,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	counts := []any{"sources", len(sources), "files", files, "messages", messages, "unreadable", unreadable.Total(),
 		"unparsed", unparsed.Total(), "rows", rows, "unattributed", unattributedField}
 	fmt.Fprintf(s.out(), "SOURCES OK%s\n", s.factFields(counts...))
+	copyNote(s, "SOURCES", copyNotes)
 	return s.done(0, *max)
 }
 
@@ -1156,7 +1196,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	sorted := slices.Sorted(slices.Values(supersedes))
 
-	sources := sf.read(rules, now)
+	sources, copyNotes := sf.read(rules, now, *dryRun)
 	folder := tokens.NewFolder()
 	for _, src := range sources {
 		for _, m := range src.Stream {
@@ -1187,6 +1227,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(s.err(), "TOKENS NOTE %s\n", oneline.Escape(dropped))
 		s.note(dropped)
 	}
+	copyNote(s, "TOKENS", copyNotes)
 	rows, mixed := folder.DayRows(*day)
 	for _, m := range mixed {
 		fmt.Fprintln(s.err(), s.line("TOKENS", "MIXED", "two day bases on one row; declare one export for that day",
