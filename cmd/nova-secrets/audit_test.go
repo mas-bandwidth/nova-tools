@@ -34,6 +34,12 @@ var secretsAudit = audit.Config{
 		"main.go|runPlacedCLI|l":          "formatted ITEM line from internal/secrets.RunPlaced",
 		"main.go|runSealCLI|line":         "formatted SEAL OK line from internal/secrets.RunSeal",
 		"main.go|runSeatInjectCLI|line":   "formatted SEAT INJECT OK line from internal/secrets.RunSeatInject, which never renders a value",
+		// A caller's word in a refusal is free text, printed plain in quotes (oneline.Quote is
+		// strconv.Quote: one line, every control, separator and bidi rune escaped, injective).
+		"main.go|secretsMain|oneline.Quote(verb)":        "the unknown verb, quoted on one line",
+		"main.go|runExecCLI|oneline.Quote(fs.Args()[0])": "the stray argument before '--', quoted on one line",
+		"main.go|runGateCLI|oneline.Quote(fs.Args()[0])": "the stray argument, quoted on one line",
+		"main.go|runSeatCLI|oneline.Quote(args[0])":      "the unknown seat subverb, quoted on one line",
 	},
 	Imports: []string{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
@@ -41,6 +47,8 @@ var secretsAudit = audit.Config{
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
 		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strings"`,
+		// slices.Index finds exec's '--' delimiter; it writes nothing.
+		`"slices"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/secrets"`,

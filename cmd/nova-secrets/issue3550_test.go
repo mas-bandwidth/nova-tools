@@ -34,7 +34,8 @@ func TestCheckAndExecHelpNameTheUpstreamPrerequisite(t *testing.T) {
 			continue
 		}
 		for _, want := range []string{
-			"nova-secrets " + args[0] + " --store <dir>",
+			"usage: nova-secrets " + args[0] + " [flags]",
+			"--store <dir>",
 			"named branch",
 			"upstream tracking ref",
 			"branch.<name>.remote",
