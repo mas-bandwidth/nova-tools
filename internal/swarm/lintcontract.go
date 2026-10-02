@@ -17,7 +17,7 @@ import (
 //     (internal/pulse/cut.go, and the example at
 //     that page, line 4);
 //   - `lint --card`'s `result-first` wanted `RESULT: ` -- with one
-//     (docs/SPEC-SWARM.md holds the contract line as the law a report must meet);
+//     colon;
 //   - `gather` compares line 1 to line 1 and imposes no prefix of its own, so it follows
 //     whichever the other two settle on (internal/pulse/harvest.go, classifyResult).
 //
