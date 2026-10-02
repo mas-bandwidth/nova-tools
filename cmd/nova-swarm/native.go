@@ -657,10 +657,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	bench := cfg.benchName
 	if bench == "" {
 		if h, err := os.Hostname(); err == nil {
-			if idx := strings.Index(h, "."); idx != -1 {
-				h = h[:idx]
-			}
-			bench = h
+			bench, _, _ = strings.Cut(h, ".")
 		}
 	}
 	if bench == "" {
@@ -2399,12 +2396,8 @@ func workStart(git, checkout, base string) (string, error) {
 // has a believable provider prefix: both sides nonempty, no slash inside the
 // provider.
 func providerOf(model string) (string, bool) {
-	i := strings.Index(model, "/")
-	if i <= 0 || i >= len(model)-1 {
-		return "", false
-	}
-	provider := model[:i]
-	if strings.Contains(provider, "/") {
+	provider, rest, ok := strings.Cut(model, "/")
+	if !ok || provider == "" || rest == "" {
 		return "", false
 	}
 	return provider, true

@@ -188,12 +188,12 @@ func checkWorkerDescription(path string, requireEnv bool, env func(string) strin
 func driftOf(err error) workerDrift {
 	msg := err.Error()
 	rest := msg
-	if i := strings.Index(msg, ": "); i >= 0 {
-		rest = msg[i+2:]
+	if _, after, ok := strings.Cut(msg, ": "); ok {
+		rest = after
 	}
 	field, why := rest, rest
-	if j := strings.IndexByte(rest, ' '); j >= 0 {
-		field, why = rest[:j], rest[j+1:]
+	if f, w, ok := strings.Cut(rest, " "); ok {
+		field, why = f, w
 	}
 	field = strings.TrimRight(field, ",:;")
 	switch {

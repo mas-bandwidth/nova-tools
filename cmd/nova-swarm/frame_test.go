@@ -70,6 +70,7 @@ func TestThePullRequestRepositoryIsGhsName(t *testing.T) {
 		"git@" + githubHost + ":o/n.git":     "o/n",
 		"ssh://git@" + githubHost + "/o/n":   "o/n",
 		"https://example.com/o/n/":           "example.com/o/n",
+		"https://example.com/o/a@b.git":      "example.com/o/a@b", // an @ in the path is no user
 		"/srv/origin.git":                    "/srv/origin.git",
 	} {
 		assert.Equal(t, want, prRepo(url), url)
