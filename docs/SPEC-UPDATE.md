@@ -141,7 +141,7 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
 7. **A source that does not answer is UNKNOWN, and UNKNOWN is not OK.** A timeout, a 5xx, a
    rate limit, a malformed body, a missing field, an empty tag — each is one `UPDATE
    UNKNOWN` line naming the source and the reason, and the run exits 1. **The status is read
-   before the body**: any status but 200 is UNKNOWN naming it, the `github:` 404 tags retry the
+   before the body**: any status but 200 is UNKNOWN naming it, the `github:` 404 tags retry above the
    one exception, so a registry 404 — measured, valid JSON with no `schemaVersion` — is
    `tag_not_found`, never `shape` and never the fixed version read's `not_found`: two misses, two remedies,
    this one *check `https://ollama.com/library/<model>/tags`*. A 403 or a 429 quotes its
@@ -493,17 +493,16 @@ carries, and what `pull` deletes.
 
 **`adopt` runs FROM the host that has ssh to every machine, and fans out from there.** It
 never needs the machines to reach one another. This is not a preference, it is the shape of
-the fleet: the first dogfood pass (receipt `20260918T144929Z`, rowan-child) ran `adopt` on
-the build host, and every machine refuses — short names do not resolve, and
-Tailscale addresses gave `Permission denied (publickey)`, because **no bench in this fleet
-has ssh trust to any other bench**. The fleet is brought current by
-running `release install` on each bench by hand, which is the thing this verb exists to
-stop anybody having to do.
+the fleet: the first dogfood pass ran `adopt` on the build host, and 3 of 3 machines
+refused — short names did not resolve, and Tailscale addresses gave `Permission denied
+(publickey)`, because **no bench in this fleet has ssh trust to any other bench**; only the
+coordinator's host does. That pass brought the fleet current by running `release install`
+on each bench by hand, which is the thing this verb exists to stop anybody having to do.
 
 A jump host (`ssh -J`) does not fix it and was not chosen: `-J` forwards the *connection*
 but still authenticates to the target with the **calling** host's key, so fanning out from
 the build host would still need its key on every bench. That is new trust between benches, and the
-trust that would make it unnecessary belongs to one host. So the verb
+trust that would make it unnecessary belongs to the coordinator's host. So the verb
 goes to the trust rather than the trust going to the verb, and the only thing that had to
 be added is a way to *read* the release from wherever it was built:
 
