@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestReaderNeverSeesPartialFile(t *testing.T) {
@@ -32,9 +34,8 @@ func TestReaderNeverSeesPartialFile(t *testing.T) {
 	}
 
 	// Write initial version 0
-	if err := Write(target, makeVersionPayload(0), 0o644); err != nil {
-		t.Fatalf("initial write failed: %v", err)
-	}
+	err := Write(target, makeVersionPayload(0), 0o644)
+	require.NoError(t, err, "initial write failed: %v", err)
 
 	const totalWrites = 1000
 	done := make(chan struct{})
@@ -98,28 +99,25 @@ func TestReaderNeverSeesPartialFile(t *testing.T) {
 
 	// Writer writes 1,000 versions sequentially
 	for v := 1; v <= totalWrites; v++ {
-		if err := Write(target, makeVersionPayload(v), 0o644); err != nil {
-			t.Fatalf("Write version %d failed: %v", v, err)
-		}
+		err := Write(target, makeVersionPayload(v), 0o644)
+		require.NoError(t, err, "Write version %d failed: %v", v, err)
 	}
 
 	stopReader()
 	wg.Wait()
 
+	firstErr := ""
 	if len(readErrors) > 0 {
-		t.Fatalf("reader saw %d partial/corrupt files; first error: %s", len(readErrors), readErrors[0])
+		firstErr = readErrors[0]
 	}
+	require.Empty(t, readErrors, "reader saw %d partial/corrupt files; first error: %s", len(readErrors), firstErr)
 
 	t.Logf("Reader completed %d verified reads during %d atomic writes with 0 partial reads", readCount.Load(), totalWrites)
 
 	// Final verification
 	finalData, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("ReadFile final failed: %v", err)
-	}
-	if !bytes.Equal(finalData, makeVersionPayload(totalWrites)) {
-		t.Fatalf("final version not %d", totalWrites)
-	}
+	require.NoError(t, err, "ReadFile final failed: %v", err)
+	require.Equal(t, makeVersionPayload(totalWrites), finalData, "final version not %d", totalWrites)
 }
 
 func TestConcurrentWriters(t *testing.T) {
@@ -154,30 +152,22 @@ func TestConcurrentWriters(t *testing.T) {
 		close(errs)
 
 		for err := range errs {
-			t.Fatalf("concurrent writer error: %v", err)
+			require.NoError(t, err, "concurrent writer error: %v", err)
 		}
 
 		got, err := os.ReadFile(target)
-		if err != nil {
-			t.Fatalf("ReadFile failed: %v", err)
-		}
+		require.NoError(t, err, "ReadFile failed: %v", err)
 
 		isA := bytes.Equal(got, payloadA)
 		isB := bytes.Equal(got, payloadB)
-		if !isA && !isB {
-			t.Fatalf("round %d: target holds corrupted mixed bytes (len=%d)", round, len(got))
-		}
+		require.True(t, isA || isB, "round %d: target holds corrupted mixed bytes (len=%d)", round, len(got))
 	}
 
 	// Verify no temporary files leaked
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("ReadDir failed: %v", err)
-	}
+	require.NoError(t, err, "ReadDir failed: %v", err)
 	for _, e := range entries {
-		if e.Name() != "concurrent_target.txt" {
-			t.Fatalf("leaked file %q in dir", e.Name())
-		}
+		require.Equal(t, "concurrent_target.txt", e.Name(), "leaked file %q in dir", e.Name())
 	}
 }
 
@@ -193,26 +183,17 @@ func TestFunctionalPropertyContentAndPermRoundTrip(t *testing.T) {
 		data := propertyBytes(r)
 		perm := propertyPerms[r.IntN(len(propertyPerms))]
 
-		if err := Write(target, data, perm); err != nil {
-			t.Fatalf("seed %d case %d: Write failed: %v", seed, i, err)
-		}
+		err := Write(target, data, perm)
+		require.NoError(t, err, "seed %d case %d: Write failed: %v", seed, i, err)
 
 		got, err := os.ReadFile(target)
-		if err != nil {
-			t.Fatalf("seed %d case %d: ReadFile failed: %v", seed, i, err)
-		}
-		if !bytes.Equal(got, data) {
-			t.Fatalf("seed %d case %d: read content does not match written (len got=%d, want=%d)", seed, i, len(got), len(data))
-		}
+		require.NoError(t, err, "seed %d case %d: ReadFile failed: %v", seed, i, err)
+		require.Equal(t, data, got, "seed %d case %d: read content does not match written (len got=%d, want=%d)", seed, i, len(got), len(data))
 
 		info, err := os.Stat(target)
-		if err != nil {
-			t.Fatalf("seed %d case %d: Stat failed: %v", seed, i, err)
-		}
+		require.NoError(t, err, "seed %d case %d: Stat failed: %v", seed, i, err)
 		wantPerm := referencePerm(dir, fmt.Sprintf("func_prop_roundtrip_%d", i), perm)
-		if gotPerm := info.Mode().Perm(); gotPerm != wantPerm {
-			t.Fatalf("seed %d case %d: perm mismatch: got %04o, want %04o", seed, i, gotPerm, wantPerm)
-		}
+		require.Equal(t, wantPerm, info.Mode().Perm(), "seed %d case %d: perm mismatch: got %04o, want %04o", seed, i, info.Mode().Perm(), wantPerm)
 	}
 }
 
@@ -229,17 +210,12 @@ func TestFunctionalPropertyArbitraryOverwrite(t *testing.T) {
 		next := propertyBytes(r)
 		perm := propertyPerms[r.IntN(len(propertyPerms))]
 
-		if err := Write(target, next, perm); err != nil {
-			t.Fatalf("seed %d case %d: Write failed: %v", seed, i, err)
-		}
+		err := Write(target, next, perm)
+		require.NoError(t, err, "seed %d case %d: Write failed: %v", seed, i, err)
 
 		got, err := os.ReadFile(target)
-		if err != nil {
-			t.Fatalf("seed %d case %d: ReadFile failed: %v", seed, i, err)
-		}
-		if !bytes.Equal(got, next) {
-			t.Fatalf("seed %d case %d: read mismatch after overwrite (len got=%d, want=%d)", seed, i, len(got), len(next))
-		}
+		require.NoError(t, err, "seed %d case %d: ReadFile failed: %v", seed, i, err)
+		require.Equal(t, next, got, "seed %d case %d: read mismatch after overwrite (len got=%d, want=%d)", seed, i, len(got), len(next))
 
 		current = next
 	}
@@ -258,9 +234,8 @@ func TestFunctionalPropertyFailureIsolationOverArbitraryData(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		target := filepath.Join(dir, fmt.Sprintf("func_prop_fail_%d.dat", i))
 		initialData := propertyBytes(r)
-		if err := Write(target, initialData, 0o644); err != nil {
-			t.Fatalf("seed %d case %d: initial Write failed: %v", seed, i, err)
-		}
+		err := Write(target, initialData, 0o644)
+		require.NoError(t, err, "seed %d case %d: initial Write failed: %v", seed, i, err)
 
 		badData := propertyBytes(r)
 		step := failureSteps[r.IntN(len(failureSteps))]
@@ -280,17 +255,11 @@ func TestFunctionalPropertyFailureIsolationOverArbitraryData(t *testing.T) {
 			h.rename = func(oldpath, newpath string) error { return injectedErr }
 		}
 
-		err := writeWithHooks(target, badData, 0o644, h)
-		if err == nil {
-			t.Fatalf("seed %d case %d: writeWithHooks succeeded at step %s; want error", seed, i, step)
-		}
+		err = writeWithHooks(target, badData, 0o644, h)
+		require.Error(t, err, "seed %d case %d: writeWithHooks succeeded at step %s; want error", seed, i, step)
 
 		got, err := os.ReadFile(target)
-		if err != nil {
-			t.Fatalf("seed %d case %d: ReadFile failed after failure: %v", seed, i, err)
-		}
-		if !bytes.Equal(got, initialData) {
-			t.Fatalf("seed %d case %d: target content modified on %s failure!", seed, i, step)
-		}
+		require.NoError(t, err, "seed %d case %d: ReadFile failed after failure: %v", seed, i, err)
+		require.Equal(t, initialData, got, "seed %d case %d: target content modified on %s failure!", seed, i, step)
 	}
 }
