@@ -648,7 +648,7 @@ date	model	repo	input	output	cache_write	cache_read	reasoning	rough	day_basis	so
 | `date` | the day; equals the file name; `check` refuses a mismatch; a UTC day unless `day_basis` says otherwise |
 | `model` | the model id as the source reports it, unchanged |
 | `repo` | the repo name from the rules file, or `other`, or `unknown`, or `unattributed` for a provider export |
-| `input` `output` `cache_write` `cache_read` `reasoning` | the five types, each as the source reports it; `-` where no source that fed the row reported that type, never `0` (rule 15) |
+| `input` `output` `cache_write` `cache_read` `reasoning` | the five types as the source reports them; `-` where no source feeding the row reported that type, never `0` (rule 15) |
 | `rough` | how many `~` bus lines fed this row |
 | `day_basis` | `utc` for a row dated from stamps; the export's own zone for a provider row that is a local-day total (rule 17) |
 | `sources` | sorted, comma-joined labels that fed this row |
@@ -666,13 +666,14 @@ row they make. A fold writes eleven, so the day after a fold the file is
 eleven wide. The version line stays `nova-tokens v1`: the eleven columns mean
 what they always did. Anything that is neither header is refused.
 
-The first line is the **version and stamp line** (rule 12; lesson 45), and
-`turns=` on it is the day's message count across the sources that count
-messages, `-` when none did, summed by `sum` onto `SUM MONTH` and `SUM TOTAL`
-as `turns=`. A file
-whose first line is not `nova-tokens v1 …` is refused by `sum` and named by
-`check`, and the repair is `fold --day <d>`. Rows are sorted by
-`(model, repo)` and are unique by it. The write lands atomically through internal/atomicfile via a unique random-sibling temporary file `.<day>.tsv.tmp-%08x` and rename (rule 8).
+The first line is the **version and stamp line** (rule 12), identifying the
+tool version and carrying a timestamp; `turns=` holds the message count across
+sources that track messages, `-` when none do, aggregated by `sum` onto
+`SUM MONTH` and `SUM TOTAL` as `turns=`. A file whose first line does not
+start with `nova-tokens v1` is refused by `sum` and named by `check`, fixed
+with `fold --day <d>`. Rows sort by `(model, repo)` and stay unique by it.
+The write goes out atomically through an atomic-file helper using a uniquely
+named temporary file and rename (rule 8).
 
 **Absent and empty are one state.** A day with no rows has no file. A fold
 never writes an empty day file and `check` names one as malformed.
@@ -699,8 +700,7 @@ carries no such count (`reports=input,output,cache_write,cache_read`).
 `paths` are every string under every `tool_use` content block's `input`. The
 day is `timestamp[:10]`, UTC.
 
-A file the tool cannot open is one `TOKENS UNREADABLE` line with the OS
-reason (rule 3).
+When a file cannot be opened, the tool emits one `TOKENS UNREADABLE` line with the underlying reason (rule 3).
 
 ### `--opencode <label>=<file>`: OpenCode's SQLite database
 
