@@ -59,7 +59,7 @@ func TestIssue1458OneApprovalNoSecondPrompt(t *testing.T) {
 	const mandatory = "[Parameter(Mandatory = $true)]"
 	param := issue1458Index(t, code, mandatory)
 	key := issue1458Index(t, code, "[string]$AuthKey")
-	assert.False(t, key < param || strings.TrimSpace(code[param+len(mandatory):key]) != "", "tools/bench-wsl2.ps1: $AuthKey is not the mandatory parameter; the key must arrive with the one approval, not later")
+	assert.True(t, key >= param && strings.TrimSpace(code[param+len(mandatory):key]) == "", "tools/bench-wsl2.ps1: $AuthKey is not the mandatory parameter; the key must arrive with the one approval, not later")
 
 	guard := issue1458Index(t, code, "WindowsBuiltInRole]::Administrator")
 	refuse := issue1458Index(t, code[guard:], "Refuse ")
