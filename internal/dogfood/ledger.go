@@ -73,7 +73,7 @@ type Summary struct {
 	Unfiled     int // of those, the ones with no issue anybody can act on
 
 	// Unmatched is the receipts naming a verb the list does not declare. It is
-	// a COUNT ON THE LINE, not a note beside it: on 2026-09-18 the gate
+	// a COUNT ON THE LINE, not a note beside it: every receipt contributes to the
 	// reported open-edges=0 at exit 0 with not-ok receipts sitting in the
 	// directory it had just read, and findings=1 while three more sat
 	// unmatched, because a receipt that matched nothing simply left the
@@ -187,7 +187,7 @@ func yesNo(ok bool) string {
 // number is one nobody else can act on at all, which the summary counts
 // separately.
 //
-// DOGFOOD ROUND 5, EDGE 2: AN EDGE IS ANSWERED, NOT OUTLIVED. It used to be
+// An edge is answered by an explicit response, not merely outlived. It is
 // cleared by "somebody runs the verb again, later, and records neither" —
 // ANYBODY. So a second dogfooder who ran the same verb an hour after the first
 // one found something, and for whom it worked, silently closed a finding nobody
@@ -239,7 +239,7 @@ func openEdges(got []Receipt) []Receipt {
 
 // Strand is one receipt that named a verb the reference does not declare: the
 // file it is in, what it said, and the declared verb it was probably meant to
-// be. The 2026-09-18 dogfood pass was told "receipts=9 name a verb docs/CLI.md
+// be. The output names each stranded receipt so the reader can identify and
 // does not declare" and nothing else, so nine real runs were invisible and
 // nobody could tell which nine or how to spell them.
 type Strand struct {
@@ -302,7 +302,7 @@ func Nearest(verbs []Verb, tool, verb string) string {
 	// A verb that is written down INSIDE a declared one is not a near miss, it
 	// is the sub-verb somebody dropped a word from: `--verb ledger` for
 	// `dogfood ledger`, which is exactly what stranded the receipts on
-	// 2026-09-18. The shortest declared verb of the same tool that carries
+	// The shortest declared verb of the same tool that carries
 	// these words wins, ahead of any edit distance.
 	if words := strings.Fields(verb); len(words) > 0 {
 		best := ""
@@ -410,7 +410,7 @@ func (f GateFinding) Line() string {
 //
 //   - an UNMATCHED not-ok receipt: somebody ran something, it did not do what
 //     they needed, and the verb they named is not one the list declares. The
-//     gate used to drop it entirely — `open-edges=0` at exit 0 with not-ok
+//     the gate includes it — an unmatched not-ok receipt contributes to failure
 //     receipts sitting in the very directory it had just read, and `findings=1`
 //     while three more sat unmatched beside it. A lane must not be able to pass
 //     on a bench where the only thing anybody found is unreadable. An unmatched
@@ -421,7 +421,7 @@ func (f GateFinding) Line() string {
 //     nobody has run it since and said it did. Feedback filed is not feedback
 //     applied.
 //   - with requireAll, a verb no non-author has run and passed. This is the
-//     definition of done as Glenn wrote it on 2026-09-18, made mechanical:
+//     definition of done made mechanical:
 //     the author's own pass is not evidence the tool works for anybody else.
 //
 // The unmatched findings come FIRST — a lane reads what was thrown away before

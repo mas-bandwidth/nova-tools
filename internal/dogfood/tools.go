@@ -74,8 +74,8 @@ func RunHelp(ctx context.Context, bin string) (string, error) {
 
 // VerbsFromTools asks the binaries themselves what verbs they have.
 //
-// docs/CLI.md is a document somebody keeps up to date; a binary's `help` is
-// what the binary does. The 2026-09-18 dogfood pass ran `nova-work ask` and
+// docs/CLI.md is a maintained reference; a binary's `help` is
+// what the binary does. The discovered help output can therefore contain
 // `nova-work asks` — two verbs the reference's pasted help block does not
 // carry — and both receipts were stranded against a reference that had gone
 // stale. So when `--tools` names a directory of built binaries, they are the
