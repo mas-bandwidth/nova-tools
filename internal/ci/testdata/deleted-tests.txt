@@ -1226,3 +1226,4 @@ internal/fleet/parallel_test.go its four tests tested only RunBenchesConcurrentl
 internal/nsprint/store/census_test.go the census read (CensusSet, CensusKeys, RunCensus) has no verb left (the old nova-sprint census went with deprecated/); no command calls it, so it and its tests go
 internal/nsprint/store/census_cards_test.go RefuseCardCensus and CardCensusRequest have no verb left; no command calls them, so they and their tests go
 internal/nsprint/store/census_functional_test.go the census read it drove has no verb left; no command calls it, so it and its tests go
+internal/nsprint/store/reach_test.go its one test drove OpenProbe, Reach and Unreachable, which no command calls (nova-sprint doctor no longer opens through them); they go with it, and TestOpenSendsNoCommand3277 still holds that Open sends nothing

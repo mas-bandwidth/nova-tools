@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
@@ -106,25 +105,6 @@ func isNoAuth(err error) bool {
 
 func Open(ctx context.Context, addr string) (*Store, error) {
 	return open(ctx, addr, 0, seatcred.Process())
-}
-
-// OpenSingle is Open with a pool of exactly one connection, for a long-lived
-// loop such as `nova-sprint bench beat` (#3372): every tick rides the one
-// authenticated connection, and a broken one is redialed by the same client
-// on the next command.
-func OpenSingle(ctx context.Context, addr string) (*Store, error) {
-	return open(ctx, addr, 1, seatcred.Process())
-}
-
-// OpenProbe is Open as sel's seat for a one-shot health read (`nova-sprint doctor`):
-// one connection, one dial attempt bounded by a second, and no command
-// retries, so a store that is down or refuses the login answers on the first
-// pipeline in well under a second instead of after go-redis's five dials and
-// three retries.
-func OpenProbe(ctx context.Context, addr string, sel *seatcred.Selection) (*Store, error) {
-	return openWith(ctx, addr, sel, func(o *redis.Options) {
-		o.PoolSize, o.MaxRetries, o.DialerRetries, o.DialTimeout = 1, -1, 1, time.Second
-	})
 }
 
 // open dials as sel's seat, else the environment's. With no addr it dials the

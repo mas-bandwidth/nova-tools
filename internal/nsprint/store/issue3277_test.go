@@ -8,12 +8,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 )
 
-// #3277: Open and OpenSingle send nothing; the caller's first batch is the
+// #3277: Open sends nothing; the caller's first batch is the
 // probe, so a one-operation verb pays one round trip, not two.
 func TestOpenSendsNoCommand3277(t *testing.T) {
 	t.Setenv(store.UserEnv, "")
 	addr, count := testutil.CommandCounter(t)
-	for name, open := range map[string]func(context.Context, string) (*store.Store, error){"Open": store.Open, "OpenSingle": store.OpenSingle} {
+	for name, open := range map[string]func(context.Context, string) (*store.Store, error){"Open": store.Open} {
 		s, err := open(context.Background(), addr)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
