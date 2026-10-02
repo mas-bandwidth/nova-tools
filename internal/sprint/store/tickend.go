@@ -12,12 +12,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// The tick-end note and the coordinator's one wake (errata 3 amendment 8, the
-// owner's rule: "the coordinator is woken at the end of the tick, ONCE";
-// "no wake, if nothing in the inbox"). A tick that finds notes for the
-// coordinator (sprint.TickEndCounts) after the last note a tick-end covered
-// writes one tick-end note, "judgments=N", in a notes-only step of its own;
-// inbox --wait blocks until the next one.
+// The tick-end note and the coordinator's one wake: the coordinator is woken
+// once, at the end of the tick, and not at all when the inbox holds nothing
+// for it. A tick that finds notes for the coordinator (sprint.TickEndCounts)
+// after the last note a tick-end covered writes one tick-end note,
+// "judgments=N", in a notes-only step of its own; inbox --wait blocks until
+// the next one.
 
 // keyTickEnd holds "<epoch> <stream id>": the epoch the mark is of and the
 // last note a tick-end scanned. A mark of another epoch (a clear since) is
