@@ -69,6 +69,7 @@ func init() {
 		{"reader away", "<reader>...", "reader away reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(true, args, o, e) }},
 		{"reader up", "<reader>...", "reader up reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(false, args, o, e) }},
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
+		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
 		{"ack", "<note>... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
@@ -156,6 +157,7 @@ and prints each one's generation.
 ` + machineWords() + `
 ` + fleetWords() + `
 ` + readerWords() + `
+` + streamWords() + `
 ` + goalWords() + `
 ` + twinWords() + `
 ` + landWords() + `
@@ -276,7 +278,7 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	name := strings.Join(path, " ")
-	if name == "fleet" || name == "reader" || name == "goal" {
+	if name == "fleet" || name == "reader" || name == "stream" || name == "goal" {
 		fmt.Fprintln(stdout, "usage:")
 		for _, v := range verbs {
 			if strings.HasPrefix(v.name, name+" ") {
@@ -291,6 +293,9 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 		}
 		if name == "reader" {
 			fmt.Fprint(stdout, "\n"+readerWords())
+		}
+		if name == "stream" {
+			fmt.Fprint(stdout, "\n"+streamWords())
 		}
 		return 0
 	}
@@ -1773,6 +1778,66 @@ func (a *app) cmdReaderRemove(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "READER-REMOVE OK readers=%s\n", strings.Join(names, ","))
+	return 0
+}
+
+// streamWords is what a stream is to the coordinator's verbs, in nova-sprint
+// help and nova-sprint help stream.
+func streamWords() string {
+	return strings.TrimSpace(`
+The streams: add --stream <s> opens a stream, its row of the work and merge
+tables, and a clear keeps it. stream remove takes streams off both tables, on
+a STOPPED machine only (nova-sprint stop first), refused while a stream holds a
+card (a primary or a sentinel in any column of its work row, a merge card in
+its merge row: nova-sprint clear --confirm sprint, or drop) and all or none
+for the streams named. A clear does not bring a removed stream back, and its
+name is added again only after the next clear.`) + "\n"
+}
+
+// cmdStreamRemove takes the named streams off the work and merge tables (the
+// owner, 2026-10-01: "you should have a verb to remove work streams" / "they
+// should only succeed on a STOPPED sprint machine"): each stream's row of both
+// tables, with the stream's control card the merge row holds, the one card add
+// made for it. Refused, exit 1 and nothing written, on a RUNNING machine, for
+// a stream that is no row, or for one that holds a card (sprint.StreamRemove),
+// all or none for the streams named.
+func (a *app) cmdStreamRemove(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("stream remove")
+	names, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "stream remove", err.Error())
+	}
+	if len(names) == 0 {
+		return refuse(stderr, "stream remove", "wants at least one stream")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "stream remove", err.Error())
+	}
+	ctx := context.Background()
+	m, _, err := st.Machine(ctx)
+	if err != nil {
+		return a.readFailed("stream remove", err, stderr)
+	}
+	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
+	if err != nil {
+		return a.readFailed("stream remove", err, stderr)
+	}
+	if refused := sprint.StreamRemove(s, m.Running(), names); len(refused) > 0 {
+		var whys []string
+		for _, r := range refused {
+			whys = append(whys, r.Key+": "+r.Why)
+		}
+		fmt.Fprintf(stderr, "%s stream remove: %s; run: nova-sprint help stream\n", prog, oneline.Escape(strings.Join(whys, "; ")))
+		return 1
+	}
+	for _, t := range []string{sprint.Work, sprint.Merge} {
+		if err := st.B.RowsDel(ctx, st.Names.Table(t), names); err != nil {
+			fmt.Fprintf(stderr, "%s stream remove: %s; run it again to finish\n", prog, oneline.Escape(err.Error()))
+			return 1
+		}
+	}
+	fmt.Fprintf(stdout, "STREAM-REMOVE OK streams=%s\n", strings.Join(names, ","))
 	return 0
 }
 

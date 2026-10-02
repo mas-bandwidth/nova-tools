@@ -669,6 +669,10 @@ func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
 		return err
 	}
 	ep := t.at(m.active(t))
+	// unplaced is the members the delete took off the table: the change names
+	// them, as the table layer's change stream does (a twin catching up reads
+	// them again)
+	var unplaced []string
 	for _, r := range rows {
 		i := slices.Index(ep.rows, r)
 		if i < 0 {
@@ -676,16 +680,18 @@ func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
 		}
 		ep.rows = slices.Delete(ep.rows, i, i+1)
 		delete(ep.texts, r)
-		for _, mm := range t.members {
+		for id, mm := range t.members {
 			if mm.placed && mm.epoch == m.active(t) && mm.row == r {
 				mm.placed, mm.row, mm.col = false, "", ""
 				mm.rev++
+				unplaced = append(unplaced, id)
 			}
 		}
 	}
+	slices.Sort(unplaced)
 	t.rev++
 	t.wrote[m.active(t)] = true
-	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_del"})
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_del", ids: unplaced})
 	return nil
 }
 

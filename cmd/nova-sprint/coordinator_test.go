@@ -100,6 +100,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"reader away":   "reader away reader-a",
 		"reader up":     "reader up reader-a",
 		"reader remove": "reader remove reader-c",
+		"stream remove": "stream remove s1",
 		"wait":          "wait x --for 1m",
 		"ack":           "ack x --reason r",
 		"clear":         "clear --confirm sprint",

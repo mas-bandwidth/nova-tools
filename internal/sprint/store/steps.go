@@ -7,7 +7,9 @@ import "github.com/mas-bandwidth/nova-tools/internal/sprint"
 
 func tables(ts ...string) []string { return ts }
 
-// AddStep admits primaries; it reads the named needs as well, placed or not.
+// AddStep admits primaries; it reads the named needs as well, placed or not,
+// and the stream's control card, kept unplaced when the stream was removed in
+// this epoch (sprint.RemovedStream).
 func AddStep(r sprint.AddReq) Step {
 	return Step{Named: len(r.IDs) > 0 || len(r.Cards) > 0, Args: ArgsOf(r), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
@@ -16,7 +18,7 @@ func AddStep(r sprint.AddReq) Step {
 			for _, c := range r.Cards {
 				needs = append(needs, c.Needs...)
 			}
-			return map[string][]string{sprint.Work: append(ids, needs...)}
+			return map[string][]string{sprint.Work: append(ids, needs...), sprint.Merge: {sprint.CtlID(r.Stream)}}
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Add(s, r) }}
 }
@@ -30,11 +32,12 @@ func AddEachStep(rs []sprint.AddReq) Step {
 	}
 	return Step{Named: named, Args: ArgsOf(rs), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
-			var ids []string
+			var ids, ctls []string
 			for _, r := range rs {
 				ids = append(append(ids, sprint.AddIDs(s, r)...), r.Needs...)
+				ctls = append(ctls, sprint.CtlID(r.Stream))
 			}
-			return map[string][]string{sprint.Work: ids}
+			return map[string][]string{sprint.Work: ids, sprint.Merge: ctls}
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.AddEach(s, rs) }}
 }

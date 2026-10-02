@@ -35,7 +35,9 @@ type Backend interface {
 	RowsAdd(ctx context.Context, table string, rows []string) error
 	// RowsDel removes rows, with the cards placed in them (a row absent is
 	// skipped): the readers table's reader remove, which first refuses a row
-	// that holds a card (docs/SPEC-SPRINT.md section 6).
+	// that holds a card (docs/SPEC-SPRINT.md section 6), and stream remove,
+	// which first refuses a stream that holds one, its control card going with
+	// its merge row (sprint.StreamRemove).
 	RowsDel(ctx context.Context, table string, rows []string) error
 	RowSet(ctx context.Context, table, row string, texts map[string]string) error
 	ViewSet(ctx context.Context, v ntable.View) error
