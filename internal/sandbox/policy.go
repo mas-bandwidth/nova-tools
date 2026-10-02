@@ -718,7 +718,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	// not a caller switch. The linux backend's linuxReadRoots is the one policy, applied
 	// by addRules (rule 3): a harness that cannot resolve a name inside the sandbox is a
 	// sandbox bug, not a network one.
-	// rule 8, and the one directory this tool creates: everything above passed.
+	// After all policy checks pass, the tool creates only the child temporary directory.
 	if makeTmp {
 		tmp := filepath.Join(first, tmpDirName)
 		if err := os.MkdirAll(tmp, 0o700); err != nil {
@@ -744,7 +744,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 // given homes.
 // On darwin, these directories receive file-read-metadata so that commands installed
 // on PATH (e.g. ~/.local/bin) can be resolved and executed by name, while keeping
-// their file contents uninspectable (issue #3501).
+// their file contents unreadable.
 func PathDirectoriesWith(lookIn string, reads, writes, optRoots, homes []string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -854,8 +854,8 @@ func lookPathIn(name, path string) (string, error) {
 	return "", fmt.Errorf("%s: not found in %s", name, path)
 }
 
-// ChildEnv is rule 9's environment: the caller's, unchanged, minus the temp
-// variables the tool sets to rule 8's directory — and minus the agent sockets. TMPPREFIX
+// ChildEnv keeps the caller's environment unchanged except for the temporary-directory
+// variables it sets to the sandbox path and the agent socket variables it removes. TMPPREFIX
 // is zsh's independent temporary-file prefix on macOS, so it must be inside the same wall
 // even though other shells ignore it. It is not
 // a secrets tool: the credential the caller deliberately passed by environment must
@@ -888,11 +888,11 @@ func ChildEnv(env []string, tmp string) []string {
 	return append(out, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp, "TMPPREFIX="+path.Join(tmp, "zsh"))
 }
 
-// isAgentVar is rule 9's scrub, and it is by EXCLUSION on the name. Revision 7 states the
+// isAgentVar excludes agent-related variables by exact name, so unrelated variables pass; it uses the
 // set exactly: SSH_AUTH_SOCK, SSH_AGENT_*, GPG_AGENT_INFO and any *_AGENT_PID/INFO/SOCK. The wall denies the agent's
 // socket and the scrub removes its address; a command that would otherwise sign a push
 // with a key it cannot read has neither half. Everything else passes through untouched,
-// because rule 6's credential must still arrive.
+// because the caller's credential still needs to reach the child.
 //
 // The previous "name contains AGENT" width dropped AI_AGENT and CLAUDE_AGENT_SDK_VERSION,
 // which are names that say what is RUNNING the job and address nothing. Under the set
