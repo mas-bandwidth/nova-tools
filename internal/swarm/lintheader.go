@@ -15,7 +15,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
-// THE TYPED CARD HEADER, CHECKED BEFORE ANY SPEND (SPEC-TOOLWORK.md §5 rule 1, #1651).
+// THE TYPED CARD HEADER, CHECKED BEFORE ANY SPEND.
 //
 // `cut` writes five lines under the contract line and inside its hash:
 //
@@ -25,12 +25,12 @@ import (
 //	LEGS: <leg>[,<leg>...]
 //	SOURCE: <owner>/<repo>#<n> | <file:line at the pinned head>
 //
-// Rule 1 ends: *"`lint --card` gains the tokens `kind-declared`, `paths-declared`,
+// `lint --card` checks the tokens `kind-declared`, `paths-declared`,
 // `paused` (the coordinator paused this kind; the remedy is the `trust --set trial`
-// command) and `test-named`"*. That is what this file is.
+// command) and `test-named`. That is what this file is.
 //
 // THREE READERS, ONE GRAMMAR. `cut` renders the lines, `internal/pulse/cardheader.go`
-// reads them at the gate (T03, PR #1721 at f927bccc), and the lint checks them on the
+// reads them at the gate, and the lint checks them on the
 // bench before a token is spent. A lint that accepted a line the gate refuses would
 // send a card out to die at `accept`; a lint that refused a line the gate reads would
 // stop a card that was fine. So the rules below are the parser's rules, restated with
@@ -39,29 +39,29 @@ import (
 //   - the block starts at line 2 and ends at the first non-empty line that is not
 //     `KEY: value`, blank lines skipped, unknown keys read past (cardheader.go:63-76);
 //   - the key is one word and a colon at column 0 and nowhere else:
-//     `^[A-Za-z][A-Za-z0-9-]*:`, any case (#2605, and see THE BLOCK IS EVERY KEY LINE
-//     below for why the case-sensitive `^[A-Z][A-Z-]*:` this used to be was a defect);
+//     `^[A-Za-z][A-Za-z0-9-]*:`, any case (see THE BLOCK IS EVERY KEY LINE
+//     below for why the case-sensitive `^[A-Z][A-Z-]*:` form is a defect);
 //   - `PATHS: none` declares no paths; otherwise the value is comma-separated
 //     (cardheader.go:82-88);
 //   - TEST is read by cardhdr.ParseTest, the one TEST grammar the copy wrapper's gate
-//     runs (nova-tools#4313): `none <why>` is a declaration where the kind allows it (a
+//     runs: `none <why>` is a declaration where the kind allows it (a
 //     bare `none` is refused: the reader must see why); otherwise `[-tags <tags>]
 //     <package> <TestName>`, the name matching `^Test[A-Za-z0-9_]*$` (cardheader.go:89-108);
 //   - KIND, PATHS and TEST are the three a gated card must carry (cardheader.go:138-150).
 //
 // THE PARSER IS CITED; THE VALIDATOR IS CALLED. `internal/pulse` still does not carry
-// `cardheader.go` on `dev` -- T03/#1721 is open -- so the block's SHAPE above is the
+// `cardheader.go`, so the block's SHAPE above is the
 // parser's rules written out, cited line by line. But `hygiene.ValidatePaths` (T02) HAS
 // landed, and `validGlobs` below is now a call to it rather than a second copy of the
-// PATHS: rule. The copy it replaces had drifted in both directions inside a day (#1853,
-// Emma's item-4 dogfood), which is the whole argument for calling a validator instead of
+// PATHS: rule. A restated copy drifts from the validator, which is the whole
+// argument for calling a validator instead of
 // restating one. When `cardheader.go` lands, the shape rules above should go the same
 // way, with the class test that the two agree in the lane that owns `internal/pulse`.
 //
-// KIND: IS THE NAME SET, NOT A SECOND TABLE (#1853). `hygiene.KindDeclared` reads
+// KIND: IS THE NAME SET, NOT A SECOND TABLE. `hygiene.KindDeclared` reads
 // internal/hygiene/kinds.txt, which is the names `cut` and `nova-check hygiene`
 // already refuse. The gate TABLE -- steps, control, reject tokens -- is still
-// internal/pulse/kinds.go (SPEC-TOOLWORK.md §5 rule 3) and is not on `dev`; refusing
+// internal/pulse/kinds.go; refusing
 // `TEST: none` on a gated kind needs that table, so that half still waits. Writing
 // a second name list here would be the same mistake `validGlobs` just undid.
 
@@ -76,7 +76,7 @@ type CardHeaderFinding struct {
 
 // CardHeaderRemedies is what each of the four tokens wants, in one line, in the same
 // table shape the twelve older tokens use: a check without a remedy costs a card writer
-// a guess per drift (#1464), and `nova-swarm lint --rules` prints these beside them.
+// a guess per drift, and `nova-swarm lint --rules` prints these beside them.
 var CardHeaderRemedies = map[string]string{
 	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one the pool's kinds list names; the cutter writes it from the pool row and a model never does",
 	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none`",
@@ -90,18 +90,18 @@ func CardHeaderChecks() []string {
 }
 
 // TrustState is the coordinator's per-kind state, keyed by kind: `trial`, `trusted` or
-// `paused` (SPEC-TOOLWORK.md eligibility rule 1's TRUST listing).
+// `paused`, from the eligibility rule's TRUST listing.
 type TrustState map[string]string
 
 // headerKeyRE is what makes a line a `KEY: value` line: one word, starting with a
-// letter, then letters, digits and hyphens, then a colon, at column 0. ANY CASE (#2605).
+// letter, then letters, digits and hyphens, then a colon, at column 0, ANY CASE.
 //
 // THE BLOCK IS EVERY KEY LINE, NOT EVERY UPPER-CASE KEY LINE. This was
 // `^([A-Z][A-Z-]*):`, and the two lines every card the darwin launchers stage MUST carry
-// are lower case: `~/rowan-working/rowan-tools/bin/launchers/*-native-darwin.sh:30-31`
+// are lower case: the launcher scripts
 // read `base-repo:` and `base-sha:` out of the card's first 40 lines with a
 // case-sensitive `sed`, and refuse to launch without both. So on every one of the 59
-// cards of the 2026-09-22 sprint set those two lines ENDED the header block, and
+// cards, those two lower-case lines ENDED the header block, and
 // `PATHS:`, `FILES:`, `TEST:`, `RUN:`, `SYMBOL:`, `RED-WHEN:`, `DONE-WHEN:`,
 // `NO-SUBAGENTS:` and `SOURCE:` -- every key under them -- were outside the header the
 // gate reads. `bin/sprint-stage:37` refuses the whole stage on one such card, so the set
@@ -115,7 +115,7 @@ type TrustState map[string]string
 // that does.
 //
 // THE KEY NAMES STAY UPPER CASE. Widening what CONTINUES the block is not the same as
-// widening what a typed key IS: docs/SPEC-TOOLWORK.md:700-713 (§5 rule 1) and
+// widening what a typed key IS: SPEC-TOOLWORK.md and
 // WORKER-CARDS.md:38-51 (now in the nova-work-old repository) write `KIND:`, `PATHS:`, `TEST:`, `LEGS:` and `SOURCE:` in
 // upper case and say nothing anywhere about case, so `paths:` is not `PATHS:` here and
 // the card that writes it still draws `paths-declared`. cardTypedKeys is the exact
@@ -138,8 +138,8 @@ type headerField struct {
 // cardHeaderBlock reads the typed header the way the gate's parser reads it, stops where
 // it stops (cardheader.go:63-76), and returns what it had to ignore.
 //
-// THE BLOCK'S END STAYS THE GATE'S; WHAT IT SWALLOWED DOES NOT (#1854, Emma's item-4
-// dogfood). The block ending at the first line that is not `KEY: value` is the parser's
+// THE BLOCK'S END STAYS THE GATE'S; WHAT IT SWALLOWED DOES NOT. The block
+// ending at the first line that is not `KEY: value` is the parser's
 // own rule and moving it here would be worse than the defect: a lint that read a header
 // the gate will not read passes a card that dies at `accept`. What was wrong is that a
 // card with one sentence above its `KIND:` line got NO typed checks at all and was
