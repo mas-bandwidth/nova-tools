@@ -114,12 +114,12 @@ func (u ProviderUsage) add(columns []string) (sum int, seen int, partial bool) {
 }
 
 // ReadProviderUsage reads the provider's own accounting for one job, from the source the
-// worker description names (rule 13). There are two: `opencode`, the job's own database in
+// worker description names. There are two: `opencode`, the job's own database in
 // the data home this tool exported for it, and `none`, which reports nothing and under
 // which only `--tokens unmetered` tasks may run.
 //
 // A SOURCE THAT REPORTS NOTHING AND A SOURCE THAT FAILS TO READ ARE NOT THE SAME THING,
-// and rule 13 rests on the difference: the first leaves the budget unable to fire and the
+// and the budget rests on the difference: the first leaves the budget unable to fire and the
 // deadline to end the job, and the second, three samples running, ends the job RUN
 // BUDGET-UNVERIFIABLE, because a numeric budget the tool has stopped being able to see is a
 // budget the caller believes is enforced and is not.
