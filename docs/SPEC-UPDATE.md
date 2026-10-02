@@ -894,7 +894,7 @@ bare invocation or a flag typo costs one line, never a banner.
 
 ## Open questions — each with a default, and the default stands
 
-1. **Ollama publishes no JSON API, but its registry speaks registry-v2.** Default: rule 4a's
+1. **Ollama publishes no JSON API, but its registry speaks registry-v2.** Default:
 one manifest GET, digest as text; the rejected alternative, scraping
 `ollama.com/library/<model>/tags`, is 50 KB of HTML, no documented shape, no dotted number.
 A registry that stops answering registry-v2 JSON is UNKNOWN, never OK.
