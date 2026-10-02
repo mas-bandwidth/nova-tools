@@ -361,8 +361,8 @@ near the end, and the sections below say how each is met.
     summed over every model.
 
 21. **A harness that shows nothing is counted from the provider's side, and
-    never apportioned.** A harness records no token counts anywhere a tool can read.
-    Its source is `--provider
+    never apportioned.** The Antigravity and Gemini harnesses and Grok
+    record no token counts anywhere a tool can read. For these the source is `--provider
     <label>=<file>`: a billing export the account holder downloads (Google
     Cloud, xAI), one row per (day, model, type, count) after the tool's
     parser for that provider's shape, with the parser's name in the
@@ -381,7 +381,7 @@ near the end, and the sections below say how each is met.
     prints `TOKENS UNREADABLE` per source and exits 1, and that
     line plus the daily `# repos:` note is the harness's whole duty. The
     harness (Codex) is the third of these: it exposes no token usage, this
-    spec has no Codex adapter, and her spend is counted provider-side from
+    spec has no Codex adapter, and its spend is counted provider-side from
     the account holder's OpenAI export under the same rule.
 
 ## The verbs
