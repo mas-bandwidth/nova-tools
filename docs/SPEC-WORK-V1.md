@@ -126,6 +126,7 @@ its parts in verify's lines. Walking up is the path's prefix: an issue's reposit
 ```text
 nova-work import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
 nova-work verify --tree <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>] [--max-bytes <n>]
+nova-work verify --tree <tree.lisp> --against <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-bytes <n>]
 ```
 
 **import** is non-destructive: it only reads. It lists the organization's repositories (or reads
@@ -164,6 +165,10 @@ rest) and never the count. Zero differences
 prints `VERIFY OK ... differences=0` with the tree's SHA-256: that line is the receipt the
 destructive mode requires. An issue edited on GitHub after the import is DRIFT on `updated` and
 the fields that changed; that is the check working, and the remedy is to import again.
+`--against <tree.lisp>` puts a second tree where GitHub stands (want is its value) and reads no
+network: the same lines, no gh, so the comparison can be tried and two imports compared offline;
+a flag of the GitHub read beside it (`--gh`, `--max-calls`, `--page-size`, `--timeout`) is
+refused. `verify -h` prints the tree's grammar and a minimal tree to try it on.
 
 **Exits**, as every nova tool's: 0 done, or no difference; 1 verify found differences, or
 import's own round trip did; 2 could not run (a missing flag, an unreadable or refused tree, a
@@ -249,7 +254,10 @@ The whole of an organization of 96 repositories, one run each way from a working
 16. `TestACouldNotRunIsRefusedInPlainWords`: a run that cannot go on (gh without a login, a file
     that is no tree, no file) is `REFUSED`, its reason keeps its spaces, and its remedy is the
     next command for that failure.
-17. `TestGhQueryRunsTheProgramWithTheBodyOnStdin` (`internal/workgh`, functional): the gh adapter
+17. `TestVerifyHelpShowsATreeTheReaderAccepts`: the minimal tree `verify -h` prints reads back.
+18. `TestVerifyAgainstASecondTreeReadsNoNetwork`: `verify --against` gives the same lines with
+    no gh and no network, and the worked example of `verify -h` runs as written.
+19. `TestGhQueryRunsTheProgramWithTheBodyOnStdin` (`internal/workgh`, functional): the gh adapter
     itself, against a stand-in program; every other test answers from the recording through
     `workgh.Replay` and starts no process.
 

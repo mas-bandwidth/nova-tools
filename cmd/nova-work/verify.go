@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/mas-bandwidth/nova-tools/internal/workfile"
@@ -30,7 +32,11 @@ func (g github) verifyTree(c *tool.Call) *tool.Out {
 		}
 	}
 	if o := c.Refused(); o != nil {
+		o.Remedy = "nova-work verify -h"
 		return o
+	}
+	if against := c.Str("against"); against != "" {
+		return verifyAgainst(c, path, tree, data, against, start, g)
 	}
 	q, ghPath, refused := g.open(c, "verify")
 	if refused != nil {
@@ -71,6 +77,32 @@ func (g github) verifyTree(c *tool.Call) *tool.Out {
 		Fact("comments", cnt.Comments).Fact("calls", f.Calls).Fact("points", f.Points).Fact("rest", 0).
 		Fact("seconds", fmt.Sprintf("%.1f", g.now().Sub(start).Seconds()))
 	return differences(o, diffs).Fact("gh", ghPath)
+}
+
+// verifyAgainst is verify with a second tree where GitHub stands: the same
+// comparison, no gh, no network.
+func verifyAgainst(c *tool.Call, path string, tree *workfile.Tree, data []byte, against string, start time.Time, g github) *tool.Out {
+	other, otherData, refused := readTree(against, c.Int("max-bytes"))
+	if refused != nil {
+		return refused.Fact("against", against)
+	}
+	scope := repos(c)
+	fresh := &workfile.Tree{Source: other.Source, Org: other.Org}
+	for _, r := range other.Repos {
+		if len(scope) == 0 || slices.Contains(scope, r.Name) {
+			fresh.Repos = append(fresh.Repos, r)
+		}
+	}
+	diffs := workfile.Diff(tree, fresh, scope)
+	cnt := fresh.Count()
+	o := tool.Done()
+	if len(diffs) > 0 {
+		o = tool.Fail()
+	}
+	o.Fact("tree", path).Fact("sha256", sum(data)).Fact("against", against).Fact("against_sha256", sum(otherData)).
+		Fact("repos", cnt.Repos).Fact("issues", cnt.Issues).Fact("comments", cnt.Comments).
+		Fact("seconds", fmt.Sprintf("%.1f", g.now().Sub(start).Seconds()))
+	return differences(o, diffs)
 }
 
 // differences adds the count of each kind and one item per difference: the

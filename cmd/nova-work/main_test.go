@@ -284,3 +284,50 @@ func TestVerifyHelpShowsATreeTheReaderAccepts(t *testing.T) {
 	assert.Equal(t, "acme", tree.Org)
 	require.Len(t, tree.Repos, 1)
 }
+
+// TestVerifyAgainstASecondTreeReadsNoNetwork (tool ledger K3): verify
+// --against compares two tree files with the same lines as against GitHub,
+// with no gh and no network; the worked example of verify -h runs as it is
+// written; a flag of the GitHub read beside --against is refused.
+func TestVerifyAgainstASecondTreeReadsNoNetwork(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a.lisp"), filepath.Join(dir, "b.lisp")
+	testkit.WriteFile(t, a, minimalTree)
+	testkit.WriteFile(t, b, strings.Replace(minimalTree, ":archived false", ":archived true", 1))
+	help := workMain(unreachable(t)).Run("verify", "-h")
+	require.Contains(t, help.Stdout, "nova-work verify --tree a.lisp --against b.lisp", "verify -h no longer shows the example this test runs")
+
+	cases := []struct {
+		name   string
+		args   []string
+		code   int
+		stdout string
+		stderr []string
+	}{
+		{"the same tree", []string{"verify", "--tree", a, "--against", a}, 0, "VERIFY OK tree=" + a, nil},
+		{"the help's example", []string{"verify", "--tree", a, "--against", b}, 1, "",
+			[]string{"VERIFY FAIL tree=" + a, " against=" + b + " ", "differences=1 missing=0 extra=0 drift=1\n",
+				`VERIFY DRIFT path=repos/acme/widgets field=archived want="true" got="false"` + "\n"}},
+		{"a repository out of scope", []string{"verify", "--tree", a, "--against", b, "--repo", "acme/other"}, 0, "VERIFY OK", nil},
+		{"a GitHub flag beside it", []string{"verify", "--tree", a, "--against", b, "--gh", "gh", "--page-size", "5"}, 2, "",
+			[]string{"VERIFY REFUSED: --gh reads GitHub and --against reads no network", "VERIFY REFUSED: --page-size reads GitHub"}},
+		{"no second tree", []string{"verify", "--tree", a, "--against", filepath.Join(dir, "none.lisp")}, 2, "",
+			[]string{"VERIFY REFUSED tree=" + filepath.Join(dir, "none.lisp") + " against="}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res := workMain(unreachable(t)).Run(tc.args...)
+			diag := fmt.Sprintf("%v: exit %d\n%s%s", tc.args, res.Code, res.Stdout, res.Stderr)
+			assert.Equal(t, tc.code, res.Code, diag)
+			if tc.stdout != "" {
+				assert.True(t, strings.HasPrefix(res.Stdout, tc.stdout), diag)
+				assert.NotContains(t, res.Stdout, " gh=", diag)
+			}
+			for _, w := range tc.stderr {
+				assert.Contains(t, res.Stderr, w, diag)
+			}
+		})
+	}
+}

@@ -50,6 +50,7 @@ func workTool(gh github) *tool.Tool {
 		How: `import reads every issue through your gh login, read-only, into one tree file.
 --dry-run reads GitHub exactly as the import does (every issue, the same calls) and writes nothing.
 verify reads GitHub again: one MISSING, EXTRA or DRIFT line per difference; none is the proof.
+verify --against compares two tree files and reads no network (a minimal tree: verify -h).
 first run: gh logged in (gh auth status); export ORG and REPO, a repository you can read.`,
 		ExitTable: "0 done, or verify found no difference; 1 verify found differences, or an import's " +
 			"encoded tree did not read back equal; 2 could not run (a flag, the budget, gh, GitHub, a file)",
@@ -76,19 +77,29 @@ import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp`,
 			{
 				Name: "verify",
 				Usage: "verify --tree <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-calls <n>] [--page-size <n>] " +
-					"[--gh <path>] [--timeout <d>] [--max-bytes <n>]",
+					"[--gh <path>] [--timeout <d>] [--max-bytes <n>]\n" +
+					"verify --tree <tree.lisp> --against <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-bytes <n>]",
 				Example:   "verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15",
-				Effect:    "inspection: reads the tree, and GitHub through gh, read-only; writes nothing",
+				Effect:    "inspection: reads the tree, and GitHub through gh, read-only (with --against, a second tree file and no network); writes nothing",
 				Detail:    verifyDetail,
 				ExitTable: "0 no difference; 1 one or more differences; 2 could not run (a flag, an unreadable or refused tree, the budget, gh, GitHub)",
 				Flags: func(f *tool.Flags) {
 					f.Required("tree", "the tree file to compare, as import wrote it")
+					f.String("against", "", "a second tree `file` to compare with in place of GitHub: no gh and no network")
 					f.Max()
 					f.Int("max-bytes", 1<<30, "the largest tree file read, in bytes (default 1073741824)")
 					sourceFlags(f)
 					f.Check(func(c *tool.Call) {
 						if c.Int("max-bytes") <= 0 {
 							c.Problem(fmt.Sprintf("--max-bytes must be positive (got %d); it wants the largest tree file read, in bytes", c.Int("max-bytes")))
+						}
+						if c.Str("against") == "" {
+							return
+						}
+						for _, name := range []string{"gh", "max-calls", "page-size", "timeout"} {
+							if c.Given(name) {
+								c.Problem(fmt.Sprintf("--%s reads GitHub and --against reads no network; drop --%s or --against", name, name))
+							}
 						}
 					})
 				},
@@ -129,6 +140,12 @@ is shown as its length and the head of its SHA-256. With no --repo, the scope
 is the tree's organization: every repository GitHub lists for it and every
 repository the tree holds. An issue edited on GitHub after the import is DRIFT
 on its updated time and the fields that changed: that is the check working.
+
+--against <file> puts a second tree where GitHub stands: want is its value,
+MISSING is in it and not in --tree. Nothing is read from the network. To try
+verify with no gh: save the minimal tree below as a.lisp, copy it to b.lisp
+with :archived true, and run nova-work verify --tree a.lisp --against b.lisp:
+one VERIFY DRIFT line for field=archived, under VERIFY FAIL, exit 1.
 
 the tree file (docs/SPEC-WORK-V1.md section 1.2) is one (work-tree "v1" ...)
 record. The smallest a reader accepts, one repository and no issue:
