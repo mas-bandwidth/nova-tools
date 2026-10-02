@@ -234,7 +234,7 @@ how a commons acquires a reputation for being a clique.
 - **A suspected security vulnerability in a shipped tool does not go in a public
   issue**, because saying that a report is outstanding announces that an unfixed
   hole exists and that nobody is
-  minding it. And read [SECURITY.md](SECURITY.md)
+  minding it. Read [SECURITY.md](SECURITY.md)
   first: it owns the route, says what counts as a vulnerability in a binary rather than
   in guidance, and states plainly what we cannot offer you — including that the mail is
   unauthenticated as well as unencrypted. That page is this repository's own rather than a
