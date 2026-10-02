@@ -993,14 +993,21 @@ On branch main
 No commits yet
 
 nothing to commit (create/copy files and use "git add" to track)
+! SANDBOX DONE exit=0 cmd=git
 ```
+
+`SANDBOX OK` says the wall is up and the command is starting; `SANDBOX DONE` is
+the last line, after the command has ended, and its `exit=` is the command's own
+status, which is the status the tool exits with. A refusal prints `SANDBOX
+REFUSED` and no `DONE`. stdout is the command's alone.
 
 What a first run gets wrong, and what each one wants:
 
 - **No `HOME` inside a `--write`.** `PROBE REFUSED … HOME <dir> is outside every
   --write`. Give the job a data home of its own: `mkdir -p <jobdir>/home` and
-  `HOME=<jobdir>/home`. A `--read` is not enough — the first config write dies
-  there.
+  `HOME=<jobdir>/home`; the refusal ends with that command, `run: mkdir -p …
+  && HOME=… nova-sandbox <the same arguments>`. A `--read` is not enough — the
+  first config write dies there.
 - **No `--write`, or no `--secret` on a probe.** Both are required and neither
   has a default. They are named **together**, in one refusal, so a first run is
   not sequenced into one run per mistake (nova-tools #104).
@@ -1017,6 +1024,8 @@ What a first run gets wrong, and what each one wants:
 
 `nova-sandbox policy` prints what would be generated without running anything,
 which is the fastest way to see the wall a set of flags actually makes.
+`check`, `policy` and `probe` take `--json` for one JSON object on stdout, and
+`<verb> -h` lists each verb's flags and its own exit codes.
 
 ### A disposable place, on darwin
 
