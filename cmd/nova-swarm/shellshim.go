@@ -206,6 +206,10 @@ func nativeNicesChild(goos string, walled bool) bool {
 	return goos == "darwin" && walled
 }
 
+// childNice is the priority a walled child runs at where the wall forbids it to lower its
+// own: the `nice -n 19` every card's gate line asks for.
+const childNice = 19
+
 // niceShimScript is the `nice` for a child already at nice 19: the adjustment (`-n N`,
 // `-nN`, `-N`, `--adjustment=N`, `--adjustment N`) and a `--` are read and dropped, and the
 // command is exec'd; with no command it prints the group's niceness, as nice does.

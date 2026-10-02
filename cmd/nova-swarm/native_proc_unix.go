@@ -28,10 +28,6 @@ func stopNativeTerm(ch chan os.Signal) {
 	signal.Stop(ch)
 }
 
-// childNice is the priority a walled child runs at where the wall forbids it to lower its
-// own: the `nice -n 19` every card's gate line asks for.
-const childNice = 19
-
 // lowerChildPriority puts the child's whole process group at childNice, from outside the
 // wall (nativeNicesChild). It is called right after the start, before the harness has run
 // a step, and a process the group forks after it inherits the priority.
