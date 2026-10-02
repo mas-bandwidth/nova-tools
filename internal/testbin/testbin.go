@@ -65,8 +65,8 @@ func PlaceCopy(src, dst string) error {
 // reading while the file is open for writing, so no other goroutine can fork
 // in that window. Without it, a parallel test's fork inherits the write
 // descriptor for the instant before its exec, and this test's exec of the file
-// Holding the read lock prevents a parallel fork from inheriting the write descriptor and making exec fail with ETXTBSY.
-// internal/secrets' seat test hit the first time its package ran in parallel.
+// fails with ETXTBSY, "text file busy": the inherited write descriptor keeps
+// the file busy.
 func WriteExecutable(path string, data []byte, perm os.FileMode) error {
 	syscall.ForkLock.RLock()
 	defer syscall.ForkLock.RUnlock()
