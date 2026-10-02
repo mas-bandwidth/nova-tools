@@ -44,9 +44,6 @@ func (s Secret) Loaded() bool { return s.loaded }
 // a credential.
 func (s Secret) Empty() bool { return s.v == "" }
 
-// Len is the byte length of the value.
-func (s Secret) Len() int { return len(s.v) }
-
 // Use is the ONLY route from a Secret back to a string, and it does not return one.
 func (s Secret) Use(fn func(string) error) error {
 	if fn == nil {
