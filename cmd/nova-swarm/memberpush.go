@@ -119,7 +119,7 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 		// the member's moment, never the card's: this launch's refs are dropped and the fetch
 		// is made again after a wait, and only a fetch that fails every time is the refusal
 		if try == len(pushWaits) {
-			return member.Push{Refused: fmt.Sprintf("fetch from the checkout into the member's push repository, %d tries: %s", try+1, gitLine(res, err))}
+			return member.Push{Refused: "fetch from the checkout into the member's push repository, " + strconv.Itoa(try+1) + " tries: " + gitLine(res, err)}
 		}
 		g.drop(ctx, repo, ns)
 		g.wait(pushWaits[try])
