@@ -3,6 +3,7 @@ package secrets
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -106,6 +107,24 @@ func TestABadSeatNameAndABadStoreAreOneRefusal(t *testing.T) {
 	got = errText(err)
 	assert.Contains(t, got, "missing --pub")
 	assert.Contains(t, got, `invalid seat name "a/b" for --from`)
+}
+
+// TestASealNotYetInTheStoreSaysSoAndWhatIsNext: a --no-pr seal, whose value is not on
+// the store's own branch, prints a NOTE saying exec does not read it yet, with the next
+// command, and the value is on no line.
+func TestASealNotYetInTheStoreSaysSoAndWhatIsNext(t *testing.T) {
+	t.Parallel()
+	skipPOSIXFakesOnWindows(t)
+	const value = "placeholder-value-0123456789"
+	f := newSealFixture(t, "TARGET: old\n")
+	out, err := RunSeal(f.options(t, "TARGET", value+"\n", true))
+	require.NoError(t, err)
+	lines := strings.Split(out, "\n")
+	require.Len(t, lines, 2, "the OK line, then its NOTE: %q", out)
+	assert.True(t, strings.HasPrefix(lines[0], "SECRETS SEAL OK name=TARGET seat=rowan committed branch=seal/rowan-TARGET-20260917-120000"))
+	assert.Equal(t, "SECRETS SEAL NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C "+
+		f.storeDir+" push -u origin seal/rowan-TARGET-20260917-120000, then open and merge its pull request", lines[1])
+	assert.False(t, Leaks(out, NewSecret(value)), "a seal's receipt carries no value")
 }
 
 // TestAnAbsentSeatNamesTheSeatsAndTheVerbThatStartsOne: the refusal for a seat with no

@@ -174,9 +174,12 @@ func RunSeal(opts SealOptions) (line string, err error) {
 		return "", err
 	}
 	switch {
+	// A --no-pr value is not on the store's own branch, so it is not what exec reads: the
+	// NOTE says so, with the next command, so nobody takes the OK for a delivered value.
 	case opts.NoPR:
-		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s committed branch=%s",
-			oneline.Field(opts.Name), oneline.Field(opts.AsName), oneline.Field(branch)), nil
+		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s committed branch=%s\n"+
+			"SECRETS SEAL NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C %s push -u origin %s, then open and merge its pull request",
+			oneline.Field(opts.Name), oneline.Field(opts.AsName), oneline.Field(branch), oneline.Field(opts.StoreDir), oneline.Field(branch)), nil
 	case !merged:
 		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s pr=#%s open (gate not yet approved)",
 			oneline.Field(opts.Name), oneline.Field(opts.AsName), prNum), nil
