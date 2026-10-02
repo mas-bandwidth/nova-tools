@@ -27,7 +27,7 @@ import (
 var prose = []string{"reason", "command", "detail"}
 
 // statusWord is the word a status line opens with, as internal/tool spells it.
-var statusWord = map[tool.Status]string{tool.OK: "OK", tool.Failed: "FAIL", tool.Refused: "REFUSED"}
+var statusWord = map[tool.Status]string{tool.OK: "OK", tool.Failed: "FAILED", tool.Refused: "REFUSED"}
 
 // emit renders o, capped at max items of each kind (0 keeps all): as one JSON
 // object on stdout with --json, else as typed lines, on stdout when it is OK and
