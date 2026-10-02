@@ -29,7 +29,7 @@ func TestASecondFoldWaitsAndThenRefusesNamingTheHolder(t *testing.T) {
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 1}, "/x/schema/a.go")+"\n")
 	release, err := tokens.TakeFoldLock(out, tokens.LockWait)
-	require.False(t, err != nil, err)
+	require.NoError(t, err, err)
 	defer release()
 	// The second one waits its bounded time and refuses rather than writing beside the
 	// first: two folds on one --out write one fixed temp name.
@@ -64,7 +64,7 @@ func TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn(t *testing.
 	wantContains(t, r.stderr, "timeout after 1s")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
-		assert.False(t, err != nil, "the fold did not continue over the other sources")
+		assert.NoError(t, err, "the fold did not continue over the other sources")
 	}
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--timeout", "0"), 2)
 }

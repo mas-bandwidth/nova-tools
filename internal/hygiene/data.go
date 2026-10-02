@@ -131,9 +131,7 @@ func Kinds() []string {
 }
 
 // KindDeclared says whether the KIND: line names a shape of work the tool declares.
-// SPEC-TOOLWORK.md hygiene rule 6: there is no default kind, and a kind the table does not hold
-// is refused. It was accepted silently and unlocked nothing, so a card carrying a kind
-// nobody had ever implemented came back clean.
+// There is no default kind, and a kind not present in the table is refused.
 func KindDeclared(name string) bool {
 	_, set := loadKinds()
 	return set[name]
@@ -141,7 +139,7 @@ func KindDeclared(name string) bool {
 
 // StrayKinds is every kind named in the stray list's exception column, so a test can
 // hold the two files to each other: an exception granted to a kind that does not exist
-// is an exception granted to nobody, and nothing used to notice.
+// is an exception granted to nobody, and the test is what notices.
 func StrayKinds() []string {
 	rules, _, err := load()
 	if err != nil {

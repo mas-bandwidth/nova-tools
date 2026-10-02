@@ -170,7 +170,7 @@ func TestCommitAndPushLandsANote(t *testing.T) {
 	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
 	res, err := CommitAndPush(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one", "origin", "main", 3)
 	require.NoError(t, err)
-	require.False(t, !res.Pushed || res.Attempts != 1, "res = %+v, want pushed on the first attempt", res)
+	require.True(t, res.Pushed && res.Attempts == 1, "res = %+v, want pushed on the first attempt", res)
 	out, err := git(bare, "show", "main:from-ada/a.md")
 	require.NoError(t, err, "the note is not on the remote: %v", err)
 	require.Contains(t, out, "Subject: one", "the remote holds %q", out)
@@ -179,7 +179,7 @@ func TestCommitAndPushLandsANote(t *testing.T) {
 	who, err := git(bare, "log", "-1", "--format=%an <%ae>", "main")
 	require.NoError(t, err)
 	if strings.TrimSpace(who) != "Ada <ada@example.com>" {
-		require.False(t, strings.TrimSpace(who) != "Ada <ada@example.com>", "the commit is authored by %q", strings.TrimSpace(who))
+		require.Equal(t, "Ada <ada@example.com>", strings.TrimSpace(who), "the commit is authored by %q", strings.TrimSpace(who))
 	}
 }
 
@@ -223,7 +223,7 @@ func TestTwoSendersPushingAtOnceBothLand(t *testing.T) {
 			require.NoError(t, err, "%s: %v", senders[i].who, err)
 		}
 		if !results[i].Pushed {
-			require.False(t, !results[i].Pushed, "%s: %+v, want pushed", senders[i].who, results[i])
+			require.True(t, results[i].Pushed, "%s: %+v, want pushed", senders[i].who, results[i])
 		}
 	}
 	// Both notes are on the remote. Neither lost.
@@ -238,7 +238,7 @@ func TestTwoSendersPushingAtOnceBothLand(t *testing.T) {
 	// And the loser retried rather than forcing: the winner's commit is still an ancestor.
 	log, err := git(bare, "log", "--format=%s", "main")
 	require.NoError(t, err)
-	require.False(t, strings.Count(log, ": a note") != 2, "the remote log holds:\n%s\nwant both notes", log)
+	require.Equal(t, 2, strings.Count(log, ": a note"), "the remote log holds:\n%s\nwant both notes", log)
 }
 
 func TestPushGivesUpInsideTheBudgetAndSaysTheNoteIsNotOnTheBus(t *testing.T) {
@@ -435,7 +435,7 @@ func assertSettled(t *testing.T, dir string) {
 	for _, name := range []string{"rebase-merge", "rebase-apply"} {
 		{
 			_, statErr := os.Stat(filepath.Join(gd, name))
-			require.False(t, !os.IsNotExist(statErr), "a rebase is still in progress (%s)", name)
+			require.True(t, os.IsNotExist(statErr), "a rebase is still in progress (%s)", name)
 		}
 	}
 	{
@@ -503,7 +503,7 @@ func TestIsRepoRootAndCurrentBranch(t *testing.T) {
 	require.NoError(t, IsRepoRoot(clone))
 	{
 		b, err := CurrentBranch(clone)
-		require.False(t, err != nil || b != "main", "CurrentBranch = %q %v", b, err)
+		require.True(t, err == nil && b == "main", "CurrentBranch = %q %v", b, err)
 	}
 	{
 		err := IsRepoRoot(t.TempDir())
@@ -583,7 +583,7 @@ func TestARejectedPushRecoversOnTheSecondAttempt(t *testing.T) {
 	{
 		want := "Ada <ada@example.com>|Ada <ada@example.com>"
 		if strings.TrimSpace(who) != want {
-			require.False(t, strings.TrimSpace(who) != want, "the replayed commit is author|committer %q, want %q: the identity comes from the roster on every invocation that records one", strings.TrimSpace(who), want)
+			require.Equal(t, want, strings.TrimSpace(who), "the replayed commit is author|committer %q, want %q: the identity comes from the roster on every invocation that records one", strings.TrimSpace(who), want)
 		}
 	}
 }
@@ -660,7 +660,7 @@ func TestAnUnpushedCommitOfOurOwnIsCarriedRatherThanRefused(t *testing.T) {
 	lost, err := CommitAndPush(mine, testIdentity["Ada"], []string{"from-ada/a.md"},
 		WithTrailer("ada: mine", TrailerSend+" ada-aaaaaaaaaaaa"), "origin", "main", 1)
 	require.Error(t, err, "the fixture did not lose its push")
-	require.False(t, !strings.Contains(err.Error(), "git pull --rebase && git push"), "the refusal offers no recovery that works: %v", err)
+	require.True(t, strings.Contains(err.Error(), "git pull --rebase && git push"), "the refusal offers no recovery that works: %v", err)
 	require.False(t, lost.Commit == "", "the lost push named no commit")
 
 	// The next run. This is where the tool used to refuse to run at all.
@@ -709,7 +709,7 @@ func TestEveryCommitCarriesTheTrailer(t *testing.T) {
 	}
 	body, err := git(clone, "log", "-1", "--format=%B")
 	require.NoError(t, err)
-	require.False(t, !HasTrailer(body), "a commit made through this tool carries no %s trailer:\n%s", TrailerKey, body)
+	require.True(t, HasTrailer(body), "a commit made through this tool carries no %s trailer:\n%s", TrailerKey, body)
 	// A caller that named its own keeps it, and it is not doubled.
 	write(t, clone, "from-ada/b.md", noteText("Ada", "two", "body"))
 	if _, err := CommitOnly(clone, testIdentity["Ada"], []string{"from-ada/b.md"}, WithTrailer("ada: two", TrailerSend+" ada-bbbbbbbbbbbb")); err != nil {
@@ -779,7 +779,7 @@ func TestEnsureCleanReadsARenameAsThePairItIs(t *testing.T) {
 	require.Error(t, err, "a checkout holding a rename passed as clean")
 	// One change, named as the pair it is: both halves, in one entry, with nothing eaten
 	// off the front of the old path.
-	require.False(t, !strings.HasSuffix(err.Error(), ": from-ada/before.md -> from-ada/after.md"), "the refusal does not name the rename as one change over two paths: %v", err)
+	require.True(t, strings.HasSuffix(err.Error(), ": from-ada/before.md -> from-ada/after.md"), "the refusal does not name the rename as one change over two paths: %v", err)
 	require.NotContains(t, err.Error(), ",", "the old path was read as a second, separate change: %v", err)
 	// A short old path is the case that used to vanish: a record under four characters is
 	// skipped, so the rename was reported as clean.
@@ -848,7 +848,7 @@ func TestThePushRetryWaitsBetweenAttempts(t *testing.T) {
 	write(t, mine, "from-ada/a.md", noteText("Ada", "mine", "body"))
 	res, err := commitAndPushWithSleep(mine, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: mine", "origin", "main", 3, sleep)
 	require.NoError(t, err)
-	require.False(t, !res.Pushed || res.Attempts != 2, "res = %+v, want pushed on the second attempt", res)
+	require.True(t, res.Pushed && res.Attempts == 2, "res = %+v, want pushed on the second attempt", res)
 	// One rejected push, so one wait: before the fetch that takes what arrived, and never
 	// after the push that lands.
 	if len(slept) != 1 {
@@ -905,7 +905,7 @@ func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
 
 	// Nothing has happened: the fetch runs and the checkout stays where it is.
 	moved, err := FetchAndFastForward(reader, "origin", "main")
-	require.False(t, err != nil || moved, "a quiet bus: moved=%t err=%v, want false and no error", moved, err)
+	require.True(t, err == nil && !moved, "a quiet bus: moved=%t err=%v, want false and no error", moved, err)
 
 	// A note lands from somebody else: the reader is BEHIND and is fast-forwarded onto it.
 	write(t, writer, "from-bo/note.md", noteText("Bo", "the gate", "Is it on the queue?"))
@@ -913,7 +913,7 @@ func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
 		require.NoError(t, err, "the other bench could not send: %v", err)
 	}
 	moved, err = FetchAndFastForward(reader, "origin", "main")
-	require.False(t, err != nil || !moved, "a note on the bus: moved=%t err=%v, want true and no error", moved, err)
+	require.True(t, err == nil && moved, "a note on the bus: moved=%t err=%v, want true and no error", moved, err)
 	if _, err := os.Stat(filepath.Join(reader, "from-bo", "note.md")); err != nil {
 		require.NoError(t, err, "the checkout was not moved onto the note: %v", err)
 	}
@@ -923,7 +923,7 @@ func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
 	write(t, reader, "from-ada/mine.md", noteText("Ada", "mine", "Not pushed yet."))
 	commitByHand(t, reader, "from-ada/mine.md", "ada: not pushed")
 	moved, err = FetchAndFastForward(reader, "origin", "main")
-	require.False(t, err != nil || moved, "a checkout ahead: moved=%t err=%v, want false and no error", moved, err)
+	require.True(t, err == nil && !moved, "a checkout ahead: moved=%t err=%v, want false and no error", moved, err)
 
 	// And when the two have both moved, a poll will not merge or rebase to reconcile them:
 	// it says so, and names the recovery.

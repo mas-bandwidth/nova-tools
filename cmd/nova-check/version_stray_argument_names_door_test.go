@@ -14,7 +14,7 @@ import (
 // exit 2 without naming the door. ONBOARDING.md point 1 asks every exit-2 line
 // to end in `; run: nova-check help`.
 //
-// bare_verb_refusal_names_door_test.go parses the BARE verbs out of the help banner and skips the
+// every_refusal_names_door_test.go parses the BARE verbs out of the help banner and skips the
 // one bare verb that exits 0 (version); it never invokes `version` with an
 // argument, so this path is not in its table and needs its own assertion.
 func TestVersionsStrayArgumentRefusalNamesTheDoor(t *testing.T) {

@@ -171,7 +171,7 @@ func TestWorkerCheckFlagTypes(t *testing.T) {
 		n, all := drifts(out)
 		assert.Equal(t, c.wantDrifts, n, "%s: %d drift lines, want %d:\n%s%s", c.name, n, c.wantDrifts, all, errb)
 		got := strings.Contains(out, "WORKER DRIFT secret")
-		assert.False(t, got != c.wantSecret && c.wantDrifts == 2, "%s: secret drift present = %v, want %v:\n%s", c.name, got, c.wantSecret, out)
+		assert.True(t, got == c.wantSecret || c.wantDrifts != 2, "%s: secret drift present = %v, want %v:\n%s", c.name, got, c.wantSecret, out)
 	}
 
 	// A value that is not the flag's type is a refusal naming the flag.

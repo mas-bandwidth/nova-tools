@@ -20,21 +20,24 @@ func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 	root := writeBus(t, nil)
 	// A lane with no CURSOR is a reader who has not read yet, and that is not an error.
 	got, err := ReadCursor(root, "from-ada")
-	require.False(t, err != nil || got.Commit != "", "a lane with no cursor: %+v, %v", got, err)
+	require.NoError(t, err, "a lane with no cursor: %+v, %v", got, err)
+	require.Equal(t, "", got.Commit, "a lane with no cursor: %+v, %v", got, err)
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	require.NoError(t, WriteCursor(root, "from-ada", sha, 2, "", at("2026-09-09T12:34:56Z")))
 	got, err = ReadCursor(root, "from-ada")
 	require.NoError(t, err)
-	require.False(t, got.Commit != sha || got.Stamp != "2026-09-09T12:34:56Z", "round trip gave %+v", got)
+	require.Equal(t, sha, got.Commit, "round trip gave %+v", got)
+	require.Equal(t, "2026-09-09T12:34:56Z", got.Stamp, "round trip gave %+v", got)
 	// The count of what the run was carrying comes back with it, and says so: a cursor
 	// written before that field existed is Counted false and is trusted rather than
 	// compared against an OPEN file it never claimed anything about.
-	require.False(t, !got.Counted || got.Open != 2, "the carried count did not round trip: %+v", got)
+	require.True(t, got.Counted, "the carried count did not round trip: %+v", got)
+	require.Equal(t, 2, got.Open, "the carried count did not round trip: %+v", got)
 	// The commit is written FIRST, the stamp second, the count third: a cursor's subject
 	// is the commit.
 	{
 		line := readFile(t, root, CursorPath("from-ada"))
-		require.False(t, line != sha+" 2026-09-09T12:34:56Z open=2\n", "the cursor line is %q", line)
+		require.Equal(t, sha+" 2026-09-09T12:34:56Z open=2\n", line, "the cursor line is %q", line)
 	}
 	// A cursor file anyone with push access could have edited into an option to git is
 	// refused where it is READ, before it can become a git argument.
@@ -57,11 +60,18 @@ func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 	// so: nobody claimed anything about an OPEN file, so nothing is compared against one.
 	write(t, root, CursorPath("from-ada"), sha+" 2026-09-09T12:34:56Z\n")
 	old, err := ReadCursor(root, "from-ada")
-	require.False(t, err != nil || old.Commit != sha || old.Counted || old.Open != 0, "a cursor written before the count: %+v, %v", old, err)
+	require.NoError(t, err, "a cursor written before the count: %+v, %v", old, err)
+	require.Equal(t, sha, old.Commit, "a cursor written before the count: %+v, %v", old, err)
+	require.False(t, old.Counted, "a cursor written before the count: %+v, %v", old, err)
+	require.Equal(t, 0, old.Open, "a cursor written before the count: %+v, %v", old, err)
 	// A cursor with one token (commit-only) is documented valid. It must read without panicking.
 	write(t, root, CursorPath("from-ada"), sha+"\n")
 	commitOnly, err := ReadCursor(root, "from-ada")
-	require.False(t, err != nil || commitOnly.Commit != sha || commitOnly.Stamp != "" || commitOnly.Counted || commitOnly.Open != 0, "a commit-only cursor: %+v, %v", commitOnly, err)
+	require.NoError(t, err, "a commit-only cursor: %+v, %v", commitOnly, err)
+	require.Equal(t, sha, commitOnly.Commit, "a commit-only cursor: %+v, %v", commitOnly, err)
+	require.Equal(t, "", commitOnly.Stamp, "a commit-only cursor: %+v, %v", commitOnly, err)
+	require.False(t, commitOnly.Counted, "a commit-only cursor: %+v, %v", commitOnly, err)
+	require.Equal(t, 0, commitOnly.Open, "a commit-only cursor: %+v, %v", commitOnly, err)
 	// Two lines is a cursor that has been merged badly, and is a refusal rather than a
 	// guess about which of the two reads is the real one.
 	write(t, root, CursorPath("from-ada"), sha+" 2026-09-09T12:34:56Z\n"+sha+" 2026-09-09T12:35:56Z\n")
@@ -78,7 +88,8 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 	root := writeBus(t, nil)
 	{
 		got, err := ReadOpen(root, "from-ada")
-		require.False(t, err != nil || got != nil, "a lane with no OPEN: %+v, %v", got, err)
+		require.NoError(t, err, "a lane with no OPEN: %+v, %v", got, err)
+		require.Nil(t, got, "a lane with no OPEN: %+v, %v", got, err)
 	}
 	want := []OpenEntry{
 		{ID: "bo-abcdef012345", Kind: OpenNote, From: "Bo", Addr: "to",
@@ -93,20 +104,20 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 	got, err := ReadOpen(root, "from-ada")
 	require.NoError(t, err)
 	if len(got) != len(want) {
-		require.False(t, len(got) != len(want), "read back %d entries, wrote %d", len(got), len(want))
+		require.Equal(t, len(want), len(got), "read back %d entries, wrote %d", len(got), len(want))
 	}
 	for i := range want {
 		// ORDER, not a set. The order is the order a reader's open notes arrived in, and
 		// keeping it is what makes the file's diff between two runs the notes that
 		// actually opened and closed.
 		if got[i] != want[i] {
-			require.False(t, got[i] != want[i], "entry %d round-tripped as %+v, wrote %+v", i, got[i], want[i])
+			require.Equal(t, want[i], got[i], "entry %d round-tripped as %+v, wrote %+v", i, got[i], want[i])
 		}
 	}
 	raw := readFile(t, root, OpenPath("from-ada"))
 	// The version header is the first line, and it is what stops a v1 list being read as a
 	// v2 one -- see TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead.
-	require.False(t, !strings.HasPrefix(raw, OpenHeader+"\n"), "the open list does not begin with its version header: %q", raw)
+	require.True(t, strings.HasPrefix(raw, OpenHeader+"\n"), "the open list does not begin with its version header: %q", raw)
 	// A legacy note's id is "-", a path holding a space rides in its own tab-separated
 	// field, and every line here is the same EIGHT fields: none of these notes carries a
 	// Host line, so none of them writes the ninth. That is the compatibility claim in one
@@ -114,7 +125,7 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 	for _, line := range strings.Split(strings.TrimRight(raw, "\n"), "\n")[1:] {
 		{
 			n := strings.Count(line, "\t")
-			require.False(t, n != openFieldsV2-1, "the line holds %d tabs, want %d: %q", n, openFieldsV2-1, line)
+			require.Equal(t, openFieldsV2-1, n, "the line holds %d tabs, want %d: %q", n, openFieldsV2-1, line)
 		}
 	}
 	require.Contains(t, raw, "-\tnote\t-\tBo\tcc\t-\tfrom-bo/a legacy note.md\t", "the legacy entry is not <-> <kind> <heard> ... : %q", raw)
@@ -124,7 +135,7 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 	require.NoError(t, WriteOpen(root, "from-ada", nil))
 	{
 		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(OpenPath("from-ada"))))
-		require.False(t, !os.IsNotExist(err), "an empty OPEN list left a file behind: %v", err)
+		require.True(t, os.IsNotExist(err), "an empty OPEN list left a file behind: %v", err)
 	}
 	// And every shape that is not an entry is refused where it is read, rather than being
 	// guessed at into a listing.
@@ -216,7 +227,8 @@ func TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead(t *testing.T) {
 	}
 	{
 		got, err := ReadOpen(root, "from-ada")
-		require.False(t, err != nil || len(got) != 1, "a v2 open list did not read back: %+v, %v", got, err)
+		require.NoError(t, err, "a v2 open list did not read back: %+v, %v", got, err)
+		require.Equal(t, 1, len(got), "a v2 open list did not read back: %+v, %v", got, err)
 	}
 }
 
@@ -234,11 +246,11 @@ func TestIndexLineIsFiveFieldsAndCannotBeForged(t *testing.T) {
 	line := IndexLine(e)
 	{
 		n := strings.Count(line, "\t")
-		require.False(t, n != indexFields-1, "the line holds %d tabs, want %d: %q", n, indexFields-1, line)
+		require.Equal(t, indexFields-1, n, "the line holds %d tabs, want %d: %q", n, indexFields-1, line)
 	}
 	require.NotContains(t, line, "Bo\tQuill", "a tab in a name was not escaped: %q", line)
 	// An absent list is "-" and never empty, so no line ever ends in an invisible tab.
-	require.False(t, !strings.HasSuffix(line, "\t-"), "an absent Re was not written as a dash: %q", line)
+	require.True(t, strings.HasSuffix(line, "\t-"), "an absent Re was not written as a dash: %q", line)
 
 	root := writeBus(t, nil)
 	require.NoError(t, AppendIndexLine(root, e))
@@ -639,7 +651,7 @@ func TestAStrandedTemporaryIsIgnoredByTheLaneWalk(t *testing.T) {
 	{
 		n := len(tab.Notes)
 		if n != len(fixture()) {
-			require.False(t, n != len(fixture()), "the lane walk read %d notes, want %d: a temporary was read as a note", n, len(fixture()))
+			require.Equal(t, len(fixture()), n, "the lane walk read %d notes, want %d: a temporary was read as a note", n, len(fixture()))
 		}
 	}
 	for _, p := range tab.Check() {
@@ -671,11 +683,12 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 	require.NoError(t, WriteCursor(root, "from-ada", sha, 2, "2026-09-01", at("2026-09-09T12:34:56Z")))
 	{
 		line := readFile(t, root, CursorPath("from-ada"))
-		require.False(t, line != sha+" 2026-09-09T12:34:56Z open=2 legacy=2026-09-01\n", "the cursor line is %q", line)
+		require.Equal(t, sha+" 2026-09-09T12:34:56Z open=2 legacy=2026-09-01\n", line, "the cursor line is %q", line)
 	}
 	got, err := ReadCursor(root, "from-ada")
 	require.NoError(t, err)
-	require.False(t, got.Legacy != "2026-09-01" || !got.LegacyBefore().Equal(at("2026-09-01T00:00:00Z")), "the legacy line did not round trip: %+v", got)
+	require.Equal(t, "2026-09-01", got.Legacy, "the legacy line did not round trip: %+v", got)
+	require.True(t, got.LegacyBefore().Equal(at("2026-09-01T00:00:00Z")), "the legacy line did not round trip: %+v", got)
 	// No line is no token, which is exactly the shape of every cursor written before the
 	// line existed: three tokens, read the same way, LegacyBefore zero.
 	require.NoError(t, WriteCursor(root, "from-ada", sha, 2, "", at("2026-09-09T12:34:56Z")))
@@ -684,7 +697,9 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 		require.NotContains(t, line, "legacy=", "a cursor with no line still wrote one: %q", line)
 	}
 	got, err = ReadCursor(root, "from-ada")
-	require.False(t, err != nil || got.Legacy != "" || !got.LegacyBefore().IsZero(), "a cursor with no legacy line: %+v, %v", got, err)
+	require.NoError(t, err, "a cursor with no legacy line: %+v, %v", got, err)
+	require.Equal(t, "", got.Legacy, "a cursor with no legacy line: %+v, %v", got, err)
+	require.True(t, got.LegacyBefore().IsZero(), "a cursor with no legacy line: %+v, %v", got, err)
 	// The tokens are read by their PREFIX and not by their position, so a cursor may carry
 	// the line without the count and the two may arrive in either order.
 	for _, line := range []string{
@@ -693,16 +708,20 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 	} {
 		write(t, root, CursorPath("from-ada"), line)
 		got, err := ReadCursor(root, "from-ada")
-		require.False(t, err != nil || got.Legacy != "2026-09-01", "cursor %q read as %+v, %v", line, got, err)
+		require.NoError(t, err, "cursor %q read as %+v, %v", line, got, err)
+		require.Equal(t, "2026-09-01", got.Legacy, "cursor %q read as %+v, %v", line, got, err)
 	}
 	// An INSTANT token reads, and reads as itself and not as its day: this is the shape a
 	// bus switching TODAY writes, and a cursor holding one has to survive every later run.
 	write(t, root, CursorPath("from-ada"), sha+" 2026-09-09T12:34:56Z open=2 legacy=2026-09-09T18:07:00Z\n")
 	got, err = ReadCursor(root, "from-ada")
-	require.False(t, err != nil || got.Legacy != "2026-09-09T18:07:00Z" || !got.LegacyBefore().Equal(at("2026-09-09T18:07:00Z")), "a cursor with an instant line read as %+v, %v", got, err)
+	require.NoError(t, err, "a cursor with an instant line read as %+v, %v", got, err)
+	require.Equal(t, "2026-09-09T18:07:00Z", got.Legacy, "a cursor with an instant line read as %+v, %v", got, err)
+	require.True(t, got.LegacyBefore().Equal(at("2026-09-09T18:07:00Z")), "a cursor with an instant line read as %+v, %v", got, err)
 	{
 		line := got.LegacyLine()
-		require.False(t, line.Text != "2026-09-09T18:07:00Z" || !line.Before.Equal(at("2026-09-09T18:07:00Z")), "the cursor's line was not carried as given: %+v", line)
+		require.Equal(t, "2026-09-09T18:07:00Z", line.Text, "the cursor's line was not carried as given: %+v", line)
+		require.True(t, line.Before.Equal(at("2026-09-09T18:07:00Z")), "the cursor's line was not carried as given: %+v", line)
 	}
 	// And a line that is neither shape is a refusal at the READ, like every other value on
 	// this line that becomes a decision later. An offset is not a UTC instant.
@@ -769,11 +788,14 @@ The body.
 	// note a minute after it is on the open list, on the same afternoon and the same date.
 	instant, err := NewLegacyLine("2026-09-09T18:07:00Z")
 	require.NoError(t, err)
-	require.False(t, instant.Text != "2026-09-09T18:07:00Z" || !instant.Before.Equal(at("2026-09-09T18:07:00Z")), "an instant line parsed as %+v", instant)
+	require.Equal(t, "2026-09-09T18:07:00Z", instant.Text, "an instant line parsed as %+v", instant)
+	require.True(t, instant.Before.Equal(at("2026-09-09T18:07:00Z")), "an instant line parsed as %+v", instant)
 	res, err := InboxSince(root, c, me, changed, nil, 40, instant)
 	require.NoError(t, err)
 	if res.Legacy != 1 || len(res.Open) != 1 || !strings.Contains(res.Open[0].Path, "1808Z") {
-		require.False(t, res.Legacy != 1 || len(res.Open) != 1 || !strings.Contains(res.Open[0].Path, "1808Z"), "the line at 18:07 gave legacy=%d open=%+v, want the 18:06 note behind it and the 18:08 note listed", res.Legacy, res.Open)
+		require.Equal(t, 1, res.Legacy, "the line at 18:07 gave legacy=%d open=%+v, want the 18:06 note behind it and the 18:08 note listed", res.Legacy, res.Open)
+		require.Equal(t, 1, len(res.Open), "the line at 18:07 gave legacy=%d open=%+v, want the 18:06 note behind it and the 18:08 note listed", res.Legacy, res.Open)
+		require.True(t, strings.Contains(res.Open[0].Path, "1808Z"), "the line at 18:07 gave legacy=%d open=%+v, want the 18:06 note behind it and the 18:08 note listed", res.Legacy, res.Open)
 	}
 	// The same rule through the full walk, which is the read that WRITES the open list every
 	// later run inherits -- and is the read that reported zero on the real bus.
@@ -784,7 +806,7 @@ The body.
 	// Everything on this bus predates the switch except the 18:08 note, so exactly one
 	// entry survives and it is that one.
 	if covered != len(all)-1 {
-		require.False(t, covered != len(all)-1, "the full walk left %d of %d notes off, want all but the 18:08 note", covered, len(all))
+		require.Equal(t, len(all)-1, covered, "the full walk left %d of %d notes off, want all but the 18:08 note", covered, len(all))
 	}
 	for _, e := range keep {
 		require.NotContains(t, e.Path, "1806Z", "the full walk carried the note from before the switch")
@@ -799,11 +821,11 @@ The body.
 	// notes, which is exactly what the family saw and is the honest reading of a date.
 	tomorrow, err := NewLegacyLine("2026-09-10")
 	require.NoError(t, err)
-	require.False(t, !tomorrow.Before.Equal(at("2026-09-10T00:00:00Z")), "a date line is not midnight at its start: %+v", tomorrow)
+	require.True(t, tomorrow.Before.Equal(at("2026-09-10T00:00:00Z")), "a date line is not midnight at its start: %+v", tomorrow)
 	{
 		_, n, u := SplitLegacy(all, tomorrow)
 		if n+u != len(all) {
-			require.False(t, n+u != len(all), "tomorrow's date left %d of %d notes off, want all of them", n+u, len(all))
+			require.Equal(t, len(all), n+u, "tomorrow's date left %d of %d notes off, want all of them", n+u, len(all))
 		}
 	}
 	// And TODAY's date is midnight this morning, so both of today's notes are carried.
@@ -815,7 +837,7 @@ The body.
 		before = before || strings.Contains(e.Path, "1806Z")
 		after = after || strings.Contains(e.Path, "1808Z")
 	}
-	require.False(t, !before || !after, "today's date did not behave as midnight at its start: %+v", keep)
+	require.True(t, before && after, "today's date did not behave as midnight at its start: %+v", keep)
 
 	// The two shapes, and only the two: an instant must be UTC and to the second.
 	for _, bad := range []string{"last Tuesday", "2026-09-09T18:07:00+10:00", "2026-09-09T18:07Z", "2026-09-09 18:07:00Z", ""} {
@@ -870,7 +892,8 @@ The body.
 			Subject: "A note from before the bus adopted the tool"}}, 40, line)
 	require.NoError(t, err)
 	if len(res.Open) != 0 || res.Legacy != 1 {
-		require.False(t, len(res.Open) != 0 || res.Legacy != 1, "a carried note behind the line stayed: open=%+v legacy=%d", res.Open, res.Legacy)
+		require.Equal(t, 0, len(res.Open), "a carried note behind the line stayed: open=%+v legacy=%d", res.Open, res.Legacy)
+		require.Equal(t, 1, res.Legacy, "a carried note behind the line stayed: open=%+v legacy=%d", res.Open, res.Legacy)
 	}
 	{
 		got := NoteParsesIn(root) - before
@@ -901,7 +924,7 @@ The body.
 	all := OpenFromFull(undated.Inbox(me, 40), nil)
 	_, covered, _ = SplitLegacy(all, LegacyLine{Before: at("2030-01-01T00:00:00Z")})
 	if covered != len(all)-1 {
-		require.False(t, covered != len(all)-1, "an undated note was taken as older than the line: %d of %d left off", covered, len(all))
+		require.Equal(t, len(all)-1, covered, "an undated note was taken as older than the line: %d of %d left off", covered, len(all))
 	}
 }
 

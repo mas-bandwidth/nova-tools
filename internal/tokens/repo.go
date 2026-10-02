@@ -11,10 +11,10 @@ import (
 
 // Repo attribution: ONE rule, ONE function, ONE statement.
 //
-// The prototype had two copies of this rule in two scripts with two different regexp
-// tables, and they disagreed about `serialize`, `rowan` and `freddy`. So the table is the
-// caller's file — there is no built-in list, and `--repos` is required — and the ladder
-// below is written once and called from every source reader.
+// A rule with two regexp tables is two rules, and the copies disagree about which repo
+// a path names. So the table is the caller's file — there is no built-in list, and
+// `--repos` is required — and the ladder below is written once and called from every
+// source reader.
 //
 // The two named buckets are the other half. `unknown` means no path in this transcript
 // has ever named a repo; `other` means paths were seen and no rule matched them. They are
@@ -57,17 +57,17 @@ type Rules struct {
 // already held keep rising and no NEW stem is admitted, so the top of the list -- which is
 // what the flag is for -- is unaffected, and TotalUnattributed still counts every token.
 //
-// Measured 2026-09-18 on this bench's own transcripts: 2,256 files, 122,056 unattributed
-// tokens, and over 4,096 distinct stems -- so the first ceiling tried was one a real bench
-// reached on its first run. 50,000 stems is about 3 MB of strings and is a guard against a
-// pathological tree rather than a limit on an ordinary one.
+// An ordinary transcript tree reaches thousands of distinct stems, so a ceiling in the
+// low thousands would bind on a first run over a real tree. 50,000 stems is about 3 MB
+// of strings and is a guard against a pathological tree rather than a limit on an
+// ordinary one.
 const stemLimit = 50000
 
-// stemDepth is how many leading path elements a stem keeps. Three is where a tree is named
-// on a bench -- /Users/glenn/deepseek-working-3, /home/nova/actions-runner -- and a tally
-// keyed by the whole file path would be a list of FILES rather than a list of candidate
-// rules: one unnamed tree would arrive as a hundred stems, one per directory in it, and the
-// top of the list would say nothing.
+// stemDepth is how many leading path elements a stem keeps. Three is where a transcript
+// tree is named -- the tree's root falls within the first three elements of every path
+// under it -- and a tally keyed by the whole file path would be a list of FILES rather
+// than a list of candidate rules: one unnamed tree would arrive as a hundred stems, one
+// per directory in it, and the top of the list would say nothing.
 //
 // A path deeper than that folds onto its tree, which is the right grain for the first
 // question ("what is `other` made of?") and not for the second ("which repo inside that
@@ -154,8 +154,8 @@ func PathStem(tok string) string {
 		return tok
 	}
 	// A leading `/` is kept and is not an element; a leading `~` IS an element, because
-	// `~/rowan-working/nova-tools` and `/Users/glenn/rowan-working` are the same depth of
-	// answer -- the home directory has been named either way.
+	// `~/tree/repo` and `/home/who/tree/repo` are the same depth of answer -- the home
+	// directory has been named either way.
 	lead, rest := "", tok
 	if strings.HasPrefix(tok, "/") {
 		lead, rest = "/", tok[1:]

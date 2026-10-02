@@ -84,7 +84,7 @@ func checkGitTimeoutInChild(t *testing.T, fake string) {
 	require.NoError(t, testbin.WriteExecutable(filepath.Join(fake, "git"), []byte(quick), 0o755))
 	out, err := git(t.TempDir(), "fetch", "origin", "main")
 	require.NoError(t, err, "a git well inside the budget was refused: %v", err)
-	require.False(t, strings.TrimSpace(out) != "fine", "git printed %q", out)
+	require.Equal(t, "fine", strings.TrimSpace(out), "git printed %q", out)
 	// And a budget of nothing is a bad invocation rather than a call with no budget at all.
 	{
 		err := SetGitTimeout(0)

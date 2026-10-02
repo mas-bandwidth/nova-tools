@@ -1363,11 +1363,11 @@ func TestPromotionBaseCheckReadsTheAncestry(t *testing.T) {
 	ok, note := check(mergeRef(devTip, current), "dev")
 	assert.True(t, ok && note == "", "dev's tip an ancestor of the head: ok = %v, note = %q; want ok", ok, note)
 	ok, note = check(mergeRef(devTip, stale), "dev")
-	assert.False(t, ok && strings.Contains(note, "dev's tip "+devTip[:9]+" is not an ancestor") && strings.Contains(note, "the full comparison runs"), "a stale head: ok = %v, note = %q; want refused naming dev's tip", ok, note)
+	assert.True(t, !ok && strings.Contains(note, "dev's tip "+devTip[:9]+" is not an ancestor") && strings.Contains(note, "the full comparison runs"), "a stale head: ok = %v, note = %q; want refused naming dev's tip", ok, note)
 	ok, note = check(mergeRef(devTip, stale), "main")
 	assert.True(t, ok && note == "", "dev to main: ok = %v, note = %q; want no precondition", ok, note)
 	ok, note = check(current, "dev")
-	assert.False(t, ok || !strings.Contains(note, "not a pull request's merge ref"), "a one-parent checkout: ok = %v, note = %q; want refused", ok, note)
+	assert.True(t, !ok && strings.Contains(note, "not a pull request's merge ref"), "a one-parent checkout: ok = %v, note = %q; want refused", ok, note)
 
 	good := mergeRef(devTip, current)
 	r.git("update-ref", "refs/heads/witness-good", good)
@@ -1376,7 +1376,7 @@ func TestPromotionBaseCheckReadsTheAncestry(t *testing.T) {
 	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "witness-good", "file://"+r.root, shallow)
 	ok, note, err := promotionBaseCheck(shallow, "dev")
 	require.NoError(t, err)
-	assert.False(t, ok || !strings.Contains(note, "cut by a shallow graft") || !strings.Contains(note, foundationHistoryFetch), "a depth-2 checkout: ok = %v, note = %q; want refused naming the fetch", ok, note)
+	assert.True(t, !ok && strings.Contains(note, "cut by a shallow graft") && strings.Contains(note, foundationHistoryFetch), "a depth-2 checkout: ok = %v, note = %q; want refused naming the fetch", ok, note)
 	c := &scratchRepo{t: t, root: shallow}
 	c.git("fetch", "-q", "--no-tags", "--unshallow", "origin", "+witness-foundation:refs/remotes/origin/sprint/foundation")
 	ok, note, err = promotionBaseCheck(shallow, "dev")

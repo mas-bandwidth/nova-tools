@@ -14,5 +14,5 @@ const (
 
 // ONoFollow is oNoFollow for callers outside this package: `native` opens a log inside the
 // JOB, which is the worker's own writable directory, and a symlink planted there by a card
-// would carry that write out of the wall (security#30's class, issue #608).
+// would carry that write out of the wall.
 const ONoFollow = oNoFollow

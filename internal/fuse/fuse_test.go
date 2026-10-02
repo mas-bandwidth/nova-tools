@@ -576,7 +576,7 @@ func TestOneLineEscapesEveryControlCharacter(t *testing.T) {
 			got := OneLine(tc.in)
 			assert.Equal(t, tc.want, got, "OneLine(%q) = %q, want %q", tc.in, got, tc.want)
 			assert.False(t, strings.ContainsFunc(got, unicode.IsControl), "OneLine(%q) = %q still holds a control character", tc.in, got)
-			assert.False(t, tc.in != "" && got == "", "OneLine(%q) emptied the text; a reason must never vanish", tc.in)
+			assert.True(t, tc.in == "" || got != "", "OneLine(%q) emptied the text; a reason must never vanish", tc.in)
 			{
 				again := OneLine(tc.in)
 				assert.Equal(t, got, again, "OneLine(%q) is not deterministic: %q then %q", tc.in, got, again)

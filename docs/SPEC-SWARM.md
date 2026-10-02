@@ -194,7 +194,7 @@ A bench holds slot leases: the store is `<store>/slots` with one directory per l
 
 native takes directory leases (.lease, .slot-lease).
 
-## The card is a pipeline, not a loop (issue #856)
+## The card is a pipeline, not a loop
 
 Each model call receives its required context explicitly. In this repository
 a card is a pipeline of stateless model calls, not an agent loop: there is
