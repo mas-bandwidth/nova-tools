@@ -60,9 +60,9 @@ func TestUsageAndUnknownVerb(t *testing.T) {
 // show --advance, which is what makes the second wait a real one. (#328)
 func TestWaitUsageStatesUnadvancedCursorReturnsAtOnce(t *testing.T) {
 	t.Parallel()
-	banner := invoke(t, "", "help").mustCode(t, 0).stdout
-	require.Containsf(t, banner, "unadvanced cursor makes wait return AT ONCE", "the usage text does not say plainly that an unadvanced cursor makes wait return at once:\n%s", banner)
-	require.Containsf(t, banner, "--advance --remote origin --branch main", "the wait example loop does not show --advance:\n%s", banner)
+	help := invoke(t, "", "wait", "-h").mustCode(t, 0).stdout
+	require.Containsf(t, help, "unadvanced cursor makes wait return AT ONCE", "wait -h does not say plainly that an unadvanced cursor makes wait return at once:\n%s", help)
+	require.Containsf(t, help, "--advance --remote origin --branch main", "the wait example loop does not show --advance:\n%s", help)
 }
 
 func TestCheckRefusesABusWithNoRoster(t *testing.T) {

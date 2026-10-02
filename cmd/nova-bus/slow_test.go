@@ -308,7 +308,7 @@ func TestWaitNeverCommitsABeat(t *testing.T) {
 	polls, err := strconv.Atoi(field(t, r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):], "polls="))
 	require.Falsef(t, err != nil || polls < 2, "polls=%d, want several so a beat had every chance to land:\n%s", polls, r.stdout)
 	{
-		n := strings.Count(r.stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored")
+		n := strings.Count(r.stderr, "WAIT NOTE --beat, --beat-lease and --quiet-beats are retired and ignored")
 		require.Equalf(t, 1, n, "the retirement note printed %d times, want once:\n%s", n, r.stderr)
 	}
 	for _, where := range []string{checkout, bare} {

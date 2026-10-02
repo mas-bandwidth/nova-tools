@@ -25,23 +25,29 @@ func TestBannerStatesTheRosterAndLanes(t *testing.T) {
 		}
 	}
 	help := invoke(t, "", "help").stdout
-	for _, want := range []string{"ROSTER AND LANES", "a lane", "git init -b main bus", "nova-bus send --bus . --file ../d.md --as Ada --remote origin --branch main --no-push"} {
-		assert.Containsf(t, help, want, "the banner's roster paragraph does not say %q", want)
+	for _, want := range []string{"first send, from nothing", "git init -q -b main bus", "nova-bus send --bus bus --file d.md --as Ada --remote origin --branch main --no-push", "`nova-bus send -h` has"} {
+		assert.Containsf(t, help, want, "the banner's first send does not say %q", want)
+	}
+	send := invoke(t, "", "send", "-h").stdout
+	for _, want := range []string{"ROSTER AND LANES", "a lane", `"groups"`} {
+		assert.Containsf(t, send, want, "send -h's roster paragraph does not say %q", want)
 	}
 }
 
-// Every roster the banner prints is a roster the tool loads, with Ada able to send.
+// Every roster the banner and send -h print is a roster the tool loads, with Ada able to send.
 func TestTheRostersTheBannerPrintsLoad(t *testing.T) {
 	t.Parallel()
-	lines := strings.Split(invoke(t, "", "help").stdout, "\n")
+	lines := strings.Split(invoke(t, "", "help").stdout+invoke(t, "", "send", "-h").stdout, "\n")
 	var rosters []string
 	for i := 0; i < len(lines); i++ {
 		text := strings.TrimSpace(lines[i])
-		if !strings.HasPrefix(text, `{"participants":[`) {
+		at := strings.Index(text, `{"participants":[`)
+		if at < 0 {
 			continue
 		}
-		// a roster is its first line through the line that closes the object
-		cur := text
+		// a roster is its first line through the line that closes the object; the first
+		// send's is the argument of a printf
+		cur := strings.TrimSuffix(text[at:], "' > bus/participants.json")
 		for !strings.HasSuffix(cur, "}") || strings.Count(cur, "{") != strings.Count(cur, "}") {
 			i++
 			require.Falsef(t, i >= len(lines), "a roster in the banner never closes: %q", cur)
@@ -49,7 +55,7 @@ func TestTheRostersTheBannerPrintsLoad(t *testing.T) {
 		}
 		rosters = append(rosters, cur)
 	}
-	require.Falsef(t, len(rosters) < 2, "the banner prints %d rosters, want its synopsis and its paragraph", len(rosters))
+	require.Falsef(t, len(rosters) < 3, "the banner and send -h print %d rosters, want the first send's, send -h's synopsis and its paragraph", len(rosters))
 	for _, roster := range rosters {
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, bus.ConfigName), []byte(roster), 0o600))
@@ -99,4 +105,31 @@ func TestReceiptWordCountSourcesAreTheOnesTheBannerNames(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".nova-bus", "defaults"), []byte("# defaults\nreceipt-max-words=25\n"), 0o600))
 	r := invoke(t, "", "inbox", "--bus", dir, "--as", "Ada")
 	assert.NotContainsf(t, r.stderr, "receipt-max-words must be given", "a bus whose defaults file carries the count is still asked for the flag:\n%s", r.stderr)
+}
+
+// One reader serves both keys of <bus>/.nova-bus/defaults: the first line naming a key is
+// read, comments and blank lines are skipped, and a missing file or key is absent.
+func TestTheDefaultsFileIsReadOnce(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".nova-bus"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".nova-bus", "defaults"), []byte("# defaults\n\nhost = air\nreceipt-max-words=25\nreceipt-max-words=99\n"), 0o600))
+	for _, tc := range []struct {
+		dir, key, want string
+		ok             bool
+	}{
+		{dir, "host", "air", true},
+		{dir, "receipt-max-words", "25", true},
+		{dir, "nothing", "", false},
+		{t.TempDir(), "host", "", false},
+		{"", "host", "", false},
+	} {
+		got, ok := fromDefaults(tc.dir, tc.key)
+		assert.Equal(t, tc.want, got, tc.key)
+		assert.Equal(t, tc.ok, ok, tc.key)
+	}
+	n, ok := receiptMaxWordsFromDefaults(dir)
+	assert.True(t, ok)
+	assert.Equal(t, 25, n)
+	assert.Equal(t, "air", hostFromDefaults(dir))
 }

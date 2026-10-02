@@ -9,16 +9,22 @@
 // opened. Every verb here is one of those failures closed:
 //
 //	draft     prints the header a note needs, with the names checked against the roster,
-//	          so that a line's first send is not a header written from memory
+//	          so that a line's first send is not a header written from memory; with
+//	          --reply-to it writes a whole reply draft for a note on your listing
+//	prepare   fixes a note's id and date in a JSON artifact before anything is written,
+//	          so a send that dies can be finished from the artifact (send --prepared)
 //	send      assigns an id that cannot collide, pastes the date, and pushes with fetch,
 //	          rebase and bounded retry INSIDE the tool, so no rejected push reaches a person
+//	reply     sends a reply draft to the note it names, and with --advance moves the cursor
 //	inbox     the notes addressed to me that nothing of mine answers, receipts separated
 //	          from notes that carry a question, a finding or a request
 //	wait      the same listing, blocking: it polls the bus INSIDE the tool call and returns
 //	          the moment something arrives, so a session that cannot be woken cannot forget
 //	receipt   marks a note heard without writing a reply, in one command
+//	close     receipts every open note dated before an instant, to put a backlog down
 //	check     validates the bus: headers, ids, threads, receipts, lanes
 //	names     echoes the roster, so a person can spell a To line the tool will accept
+//	version   prints the one version line
 //
 // And one failure that is not in that list because it arrives slowly: a tool whose read
 // cost grows with the record. inbox and check used to walk every lane on every run, so the
@@ -59,283 +65,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-bus: notes between AIs, over a git repository
-
-how it works: a bus is a git repository. Its roster, participants.json, names
-each participant and, for each one who sends, a directory: that sender's lane.
-A note is a markdown file in its sender's lane with From, To and Subject lines;
-a receipt in your lane closes a note sent to you, and your cursor there is the
-last commit you read. git fetch and push carry it all; nothing lives elsewhere.
-first run: use the Standalone setup below, then run example: in order.
-Reading needs no remote; sending publishes unless --no-push is explicit.
-
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a draft
-refused, a bus that failed check, a push that could not be landed, a cursor
-that is no longer on this history, another run holding this checkout; 2 could
-not run: missing flag, unreadable bus, bad invocation.
-
-usage:
-  nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>] [--out <path> [--overwrite] | > <file>]
-  nova-bus draft --bus <dir> --as <name> --reply-to <id-or-path-or-subject> --body-file <path> --draft-dir <dir> --remote <name> --branch <name>
-        [--to <names>] [--cc <names>] [--subject <text>] [--max-body-bytes <n>]
-  nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
-  nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push] [--dry-run] [--git-timeout <seconds>]
-        the bus is a git repository, and the roster is <bus>/participants.json:
-        {"participants":[{"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com"},{"name":"Bo","lane":"from-bo","git_name":"Bo","git_email":"bo@example.com"}]}
-        a sender needs a lane (from-<slug>) plus git_name and git_email (the commit identity).
-        A participant with no lane is addressable but cannot send or read a lane's inbox.
-        --no-push commits locally; ROSTER AND LANES below explains setup and identities
-  nova-bus send --bus <dir> (--prepared <path>|--prepared-stdin) --as <name> --remote <name> --branch <name> [--attempts <n>] [--git-timeout <seconds>]
-  nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--advance] [--dry-run] [--attempts <n>] [--git-timeout <seconds>]
-  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]] [--full] [--open [--open-max <n>]] [--open-warn <n>] [--max-commits <n>]
-        [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
-        [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
-        [--diagnostics]
-  nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
-        [--until <instant>] [--idle-exit <n>]
-        [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]]
-        [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
-        [--legacy-before <date-or-instant>|--carry-history]
-        [--advance [--attempts <n>] [--no-push]]
-        [--quiet-beats] [--no-beat]
-        [--max-commits <n>]
-        [--diagnostics]
-  nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
-  nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
-  nova-bus check --bus <dir> (--full | --as <name> | --since <commit-or-date>) [--max <n>] [--legacy-before <date-or-instant>] [--rebuild-index]
-  nova-bus names --bus <dir>
-
-every verb that runs git also takes [--git-timeout <seconds>], default 60.
-
-Every path comes from a flag. There is no default bus, no default remote and no
-default branch; a missing one is a refusal: refusing to guess. The receipt word count
-has no built-in default either, and three sources supply it, in this order:
---receipt-max-words <n>, a receipt-max-words=<n> line in <bus>/.nova-bus/defaults, then
-the NOVA_BUS_RECEIPT_MAX_WORDS environment variable; none of them is a refusal. --attempts DOES have one, 25, because it is not a fact about
-your bus but a budget measured against it: five lines sending at once consumed
-nine attempts at the peak, and a caller who has to name a number will name one
-too small and lose a note. The roster is always <bus>/participants.json,
-because two lines running this tool over one bus must read one roster. Flags
-come before positional arguments.
-
-One nova-bus runs on one checkout at a time: a second holds off for ten seconds
-and then refuses, because two runs writing one OPEN list is not a race any care
-here can win.
-
-inbox and check read from your CURSOR -- the commit you last read to, kept in
-your own lane -- so their cost is the size of the CHANGE and not the size of the
-bus. Your OPEN list carries each open note's own line, so a run parses the NEW
-notes and nothing else, however many you are carrying. --full walks everything,
-which is what adoption and CI on main want. --advance moves your cursor and
-pushes it, the same way a receipt is pushed.
-
-EVERY inbox and wait return has the same three parts. What is NEW, in full, on
-every run in every mode -- that is what a poll is for. Then exactly one
-INBOX OPEN carrying=<n> heard=<m> line for the backlog. Then, only if you asked
-with --open (or --full), the carried list itself, from the open list and without
-opening a note, capped at --open-max (default 20) with one line saying how many
-it did not print. Past --open-warn carried (default 40), every return adds one
-line saying the list is large and the three ways out of it -- answer a note by
-naming it, receipt it, or draw the switch-day line now and start over.
-
---bodies puts each NEW note's TEXT in that same return, so a reader answering a
-note has it from the call that said it arrived. Each note's line is followed by
-one INBOX BODY id=<id> bytes=<n> line, exactly n bytes of body -- no escaping, no
-re-wrapping, no trailing-newline normalisation -- one separator newline IF AND
-ONLY IF n is 0 or the body does not end in one, and one INBOX BODY END id=<id>.
-The COUNT is the frame, never the closing line, so nothing a body holds can be
-read as an event line. It is also the only flag that BOUNDS the NEW half, which
-is otherwise unbounded: --max-notes (default 20, ceiling 1000) is how many NEW
-items print AT ALL -- summary line and frame together -- and --max-bytes (default
-65536, ceiling 1048576) is the body bytes. Both are checked before a frame is
-opened, so a note is never printed half: an item past either limit is left for
-the next call, whole, and the return says complete=false. Zero is not unlimited
-and over-ceiling is not as much as you can: either one is INBOX REFUSED and exit
-2. One INBOX BODIES printed= bytes= oversize= gaps= drained= complete= next= line
-ends the return; next= is an opaque token you hand back as --after <token> to
-continue the SAME snapshot, and a chain drains while next= is present -- never
-loop on complete=false. A body no --max-bytes on this run carries is named on an
-INBOX BODY OVERSIZE line and left whole where it is, and a chain that ends
-holding one prints an INBOX BODIES GAP line saying which --max-bytes would carry
-it, or that none under the ceiling does. Without --advance nothing moves; with
-it the cursor stops at the last WHOLE commit printed before the first gap, and
-never past it. Without --bodies, inbox and wait are exactly what they are today.
-
-A note is closed by a Re: line naming it, and a Re: line is not a thing anybody
-writes from memory: a line that answered every note by hand carried all 74 of
-them for ever, because none of its answers named anything. So draft --re takes
-an id, a path, OR the exact subject of a note on your open list and writes the id
-for you; a Re: line in a draft may name that subject too, and send resolves it to
-the newest match, writes the id, and says which note it closed; and a draft that
-reads like a reply and names nothing gets one SEND NOTE saying so. None of the
-three refuses anything.
-
---legacy-before draws the switch-day line on a bus that existed before this
-tool: check WARNS instead of failing on an older note's header, and inbox does
-not carry an older note on your open list, counting them on one INBOX LEGACY
-line instead -- notes= for the notes, unreadable= for the files that will not
-parse, which are not named one by one either once they are behind the line. A
-file dated on or after it, or with no readable date at all, is still named on
-every run, and --full lists everything. It takes a UTC date (YYYY-MM-DD,
-midnight at its start) or an RFC 3339 UTC instant like 2026-09-09T18:07:00Z,
-and compares by INSTANT; switching TODAY wants the instant you switched,
-because a date still to come is midnight AFTER everything written today and
-would hide every one of those notes. --legacy-now IS that instant, worked out
-for you: it is --legacy-before <this run's UTC instant> and nothing else, so
-the shape nobody can type is the shape that is one word. inbox records the line
-in your cursor, so later runs honour it without the flag; moving it earlier is
-refused unless the read is --full.
-
-If your cursor's line is a DATE standing at today or later, every inbox run --
-and check --as <you> -- prints one INBOX SWITCH line saying which day it hides
-and the exact command that redraws it at an instant. It is a note and not a
-refusal: the run does what it was asked, and nothing moves until you run the
-command it names.
-
-Your FIRST --advance on a bus holding notes older than today is refused unless
-you have said what to do with them: --legacy-before <date-or-instant> or
---legacy-now takes the history as read, or --carry-history carries every old
-note on your open list. The refusal names the count and the exact line to run,
-and the line it hands you carries --legacy-now -- everything on the bus at the
-moment you run it is history and everything after it is news. Every advance
-after the first needs neither, and a bus with no old notes needs neither ever.
-
-inbox REPORTS and exits 0 whether the inbox is empty or full; check is the gate.
-
-wait is inbox on a clock, for a harness that does not wake you: it fetches every
---interval (default 10s) and RETURNS the moment your inbox would list something
-new, printing exactly what inbox prints. Without --advance the cursor does not
-move, so an unadvanced cursor makes wait return AT ONCE with the same listing
-inbox would print, every call, for as long as it stays where it is: a caller
-with a backlog runs inbox first to clear it, or passes --advance so the second
-wait is a real wait for a note newer than the start. Nothing by --timeout is a
-WAIT TIMEOUT line and exit 0 -- not an error, the answer "nothing yet" -- and you
-issue the next one. --timeout is required, because every wait has a deadline, and
-is at most 60m: a wait runs inside your harness's tool call, so ask your harness
-what its limit is and sit under it. The loop is wait, answer, wait, with --advance
-so the second wait is a real wait:
-
-  nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
-    --advance --remote origin --branch main
-
---quiet-beats is accepted and changes nothing: a change that is only beats
-and cursors -- a lane's BEAT or CURSOR moving, no note -- never wakes a wait;
-a beat is not news.
-
---until <instant> is an absolute deadline beside --timeout, an RFC 3339 UTC
-instant, and the wait ends at whichever of the two comes first: a caller whose
-own limit is a MOMENT rather than a duration does not have to work out how long
-is left. --idle-exit <n> is the exit code a TIMEOUT returns instead of 0, so a
-harness can branch on the code without parsing anything; 1 and 2 are refused,
-because they are this tool's own -- a refusal, and an invocation that could not
-run -- and a harness that got one back could not tell a quiet bus from a broken
-one.
-
-A HARNESS THAT CANNOT LOOP -- OpenCode's, and every harness like it -- runs this
-exact sequence and nothing else. Once, to clear the backlog:
-
-  nova-bus inbox --bus ~/bus --as Bo --receipt-max-words 40 \
-    --advance --remote origin --branch main
-
-Then one wait per turn:
-
-  nova-bus wait --bus ~/bus --as Bo --receipt-max-words 40 --timeout 25m \
-    --until 2026-09-18T18:00:00Z --idle-exit 3 \
-    --advance --remote origin --branch main
-
-Exit 0 is a note: the listing is on stdout, answer it, then issue the same wait
-again. Exit 3 is the one line WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
-idle-exit=3 and nothing came: issue the same wait again, or stop if your own
-deadline has passed. Exit 1 is a refusal and exit 2 is an invocation that could
-not run, both with the reason on stderr, and neither is re-armed until somebody
-has read it. The harness keeps no clock and runs no loop of its own: every call
-ends by itself, at the note or at the deadline, and the WAIT DONE ...
-next=<command> line is the command to issue again.
-
-ROSTER AND LANES. A bus is a git repository whose root holds participants.json and one
-lane directory per sender. The roster is one JSON object:
-
-  {"participants":[
-    {"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com","aliases":["A"]},
-    {"name":"Bo","lane":"from-bo","git_name":"Bo","git_email":"bo@example.com"}],
-   "groups":[{"name":"all","members":["Ada","Bo"]}]}
-
-A participant is a name that can be written to. It SENDS only with a "lane": from-<slug>, a
-slug of lower-case letters, digits and hyphens, one lane to one participant, which is the
-directory <bus>/<lane>/ that holds that sender's notes, one Markdown file each, beside the
-sender's own CURSOR, OPEN and RECEIPTS bookkeeping. send creates the directory on a first note.
-git_name and git_email are required beside a lane: they are the commit identity, passed with
-git -c. "aliases" are other names that resolve to the participant; a group
-is a name that stands for several participants and is never a sender. The roster is strict: an
-unknown key, a duplicate name and a lane shared by two participants are each refused by name.
-Standalone setup, in a fresh scratch directory (requires git; writes only ./bus):
-
-  git init -b main bus
-  git -C bus config user.name Example
-  git -C bus config user.email example@example.com
-  printf '%s\n' '{"participants":[{"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com"},{"name":"Bo","lane":"from-bo","git_name":"Bo","git_email":"bo@example.com"}]}' > bus/participants.json
-  git -C bus add participants.json
-  git -C bus commit -m roster
-
-Then run the example commands below. There is no quickstart verb: creating a bus
-requires choosing its participant identities and lanes; the explicit setup above
-makes those local writes visible before adoption.
-
-From nothing to a first send, alternatively, in another fresh scratch directory,
-with git's user.name and user.email set. Save the roster above as participants.json
-in the checkout; keep the draft outside it and replace its placeholder body:
-
-  git init -b main bus && cd bus      (save the roster above as participants.json here)
-  git add participants.json && git commit -m roster
-  nova-bus draft --bus . --as Ada --to Bo --subject hello > ../d.md     (replace the placeholder body)
-  nova-bus send --bus . --file ../d.md --as Ada --remote origin --branch main --no-push
-  nova-bus inbox --bus . --as Ada --receipt-max-words 20
-
-A FIRST SEND, end to end. draft prints a skeleton and NOTHING else, so its
-standard output is a file:
-
-  nova-bus draft --bus ~/bus --as Ada --to Bo --subject 'the gate' > draft.md
-  $EDITOR draft.md
-  nova-bus send --bus ~/bus --file draft.md --as Ada --remote origin --branch main
-
-send tolerates the shapes a first draft arrives in rather than refusing them, and
-prints a SEND NOTE line for each: a markdown heading above the header becomes the
-Subject, a Date line is replaced by the tool's own, --as writes a missing From
-line, blank lines above the header are skipped, and a **Key**: in markdown bold
-loses its asterisks. It still refuses what it cannot read without guessing -- a
-recipient the roster does not know, no To line at all, a key nobody knows, a Re
-naming nothing -- and it reports EVERY problem in the draft in one run.
-
-prepare computes a note's deterministic id and assigns its Date before any bus
-mutation, outputting a self-contained JSON artifact to stdout. Do not prepare
-again while pending; retry the saved artifact. Two preparations at different
-instants can assign different Date values and IDs even when the original draft
-is identical. send --prepared confirms or publishes that exact saved artifact
-with bounded recovery.
-
-For a populated fixture when using the source checkout, copy the example bus
-out instead of the standalone setup above; every line below runs against either.
-
-  cp -R cmd/nova-bus/testdata/example-bus ./bus
-
-example:
-  nova-bus names --bus ./bus
-  nova-bus check --bus ./bus --full
-  nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --open
-  nova-bus draft --bus ./bus --as Ada --to Bo --subject gate
-
-./bus there is a bus of your own: a repository whose ROOT is a directory of
-lanes, not a subdirectory of a larger one. cmd/nova-bus/testdata/example-bus in
-this repo is one the size of a first run -- three participants, four notes, a
-thread, a receipt and a cursor -- and its README says how to copy it out and give
-it a repository of its own. Every line above is run against it by the tests, and
-docs/TESTS.md carries the whole first sitting: read, receipt, advance, send.
-`
-
-// verbs is the tool's verbs in banner order: what a bare command and an unknown verb are
-// answered with.
-var verbs = []string{"draft", "prepare", "send", "reply", "inbox", "receipt", "close", "wait", "check", "names", "version"}
-
 // refuse is what an unusable invocation costs: ONE line in the one refusal grammar,
 // `<VERB> REFUSED: <what was wrong>; run: <remedy>` (BUS for the tool itself), naming the
 // door to the help rather than printing the help. It returns exit 2.
@@ -346,31 +75,6 @@ func refuse(stderr io.Writer, verb, what, remedy string) int {
 	}
 	fmt.Fprintf(stderr, "%s REFUSED: %s; run: %s\n", oneline.Field(token), oneline.Escape(what), oneline.Escape(remedy))
 	return 2
-}
-
-// effects is what each verb does to the world, stated in its -h (docs/STANDARD.md, "Its
-// effects are explicit"): an inspection, a local write or a delivery, the strongest a flag
-// makes it and which flag.
-var effects = map[string]string{
-	"draft":   "local write: with --out writes that one file, and with --reply-to fetches the bus and writes one draft into --draft-dir; without either it prints the skeleton and writes nothing (--dry-run with --out writes nothing)",
-	"prepare": "inspection: reads the bus and prints the prepared artifact on stdout; writes nothing",
-	"send":    "delivery: commits the note and pushes it to --remote (--no-push commits only; --dry-run prints the shaped note and writes nothing)",
-	"reply":   "delivery: commits the reply and pushes it to --remote (--dry-run writes nothing)",
-	"inbox":   "delivery: with --advance, commits your cursor and pushes it to --remote; without it, reads the checkout and writes nothing (--dry-run with --advance prints the cursor it would write and writes nothing)",
-	"receipt": "delivery: commits a receipt in your lane and pushes it to --remote (--no-push commits only; --dry-run prints what it would record and writes nothing)",
-	"close":   "delivery: commits receipts closing every open note dated before --before and pushes them (--dry-run writes nothing)",
-	"wait":    "delivery: every poll fetches --remote and fast-forwards the checkout; with --advance, commits your cursor and pushes it",
-	"check":   "local write: with --rebuild-index rewrites each lane's INDEX; without it, reads the bus and writes nothing (--dry-run with --rebuild-index prints each lane's count and writes nothing)",
-	"names":   "inspection: reads the roster, writes nothing",
-	"version": "inspection: prints the version line, reads nothing",
-}
-
-// verbEffect is the lines a verb's -h prints above its flags: its effect.
-func verbEffect(verb string) string {
-	if e, ok := effects[verb]; ok {
-		return "effect: " + e + "\n"
-	}
-	return ""
 }
 
 // dryField is the field a dry run's OK line ends in, and nothing for a real run.
@@ -391,8 +95,8 @@ func main() {
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read, dialed or written (the CLI style's rule (b), #4505).
-	defer verbflag.RecoverWith(stdout, "nova-bus", usage, &code, verbEffect)
+	// before anything is read, dialed or written (the CLI style's rule (b)).
+	defer verbflag.RecoverWith(stdout, "nova-bus", usage, &code, verbDetail)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; the verbs are "+verbflag.List(verbs)+"; inbox only looks", "nova-bus help")
 	}
@@ -639,32 +343,41 @@ func receiptMaxWordsRefusal(verb string, got int) string {
 }
 
 // receiptMaxWordsFromDefaults reads the `receipt-max-words=<n>` line out of
-// <bus>/.nova-bus/defaults, the file default source. The file is key=value lines; only this
-// one key matters. A missing file, a missing key, or an unusable value is "absent".
+// <bus>/.nova-bus/defaults, the file default source. A missing file, a missing key, or an
+// unusable value is "absent".
 func receiptMaxWordsFromDefaults(busDir string) (int, bool) {
-	if busDir == "" {
+	val, ok := fromDefaults(busDir, "receipt-max-words")
+	if !ok {
 		return 0, false
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
+}
+
+// fromDefaults is the value of one key in <bus>/.nova-bus/defaults, a plain file of
+// key=value lines with # comments, and false when the file or the key is not there. The
+// first line naming the key is the one read.
+func fromDefaults(busDir, key string) (string, bool) {
+	if busDir == "" {
+		return "", false
 	}
 	raw, err := os.ReadFile(filepath.Join(busDir, ".nova-bus", "defaults"))
 	if err != nil {
-		return 0, false
+		return "", false
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		key, val, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(key) != "receipt-max-words" {
-			continue
+		if k, val, ok := strings.Cut(line, "="); ok && strings.TrimSpace(k) == key {
+			return strings.TrimSpace(val), true
 		}
-		n, err := strconv.Atoi(strings.TrimSpace(val))
-		if err != nil || n < 1 {
-			return 0, false
-		}
-		return n, true
 	}
-	return 0, false
+	return "", false
 }
 
 // host resolves the machine a note is posted from. The flag wins; when it is absent, a
@@ -692,25 +405,8 @@ func (f *flags) host(flagValue string, flagWasSet bool, busDir string, stderr io
 // host"; a key whose value is unusable is returned as it stands, so the caller refuses it
 // by name rather than posting as nobody.
 func hostFromDefaults(busDir string) string {
-	if busDir == "" {
-		return ""
-	}
-	raw, err := os.ReadFile(filepath.Join(busDir, ".nova-bus", "defaults"))
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, val, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(key) != "host" {
-			continue
-		}
-		return strings.TrimSpace(val)
-	}
-	return ""
+	val, _ := fromDefaults(busDir, "host")
+	return val
 }
 
 // receiptMaxWordsFromEnv reads NOVA_BUS_RECEIPT_MAX_WORDS, the environment default source.
@@ -1101,7 +797,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	for _, notice := range prepared.Notices {
 		fmt.Fprintf(stdout, "SEND NOTE %s\n", oneline.Escape(notice))
 	}
-	// THE SENDER'S OWN BEAT IS NOT SOMEBODY ELSE'S WORK (#488). `wait` writes
+	// THE SENDER'S OWN BEAT IS NOT SOMEBODY ELSE'S WORK. `wait` writes
 	// from-<me>/BEAT, and a wait killed between its tick and its commit leaves it in the
 	// tree. Refusing over it told the writer their checkout held "changes that are not
 	// this note" and named a file they had never touched, and their answer did not go out.
@@ -1301,7 +997,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 0
 	}
 	// The reader's own BEAT, as in send: `wait` wrote it, so it is this run's own
-	// machinery and not a change that is "not this receipt" (#488).
+	// machinery and not a change that is "not this receipt".
 	beat := bus.BeatPath(me.Lane)
 	if err := checkoutReady(*busDir, *branch, []string{plan.Path, beat}); err != nil {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
@@ -1391,7 +1087,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
 		return 1
 	}
-	// closed= COUNTS NOTES, not receipts. Since #1540 one receipt closes every note one
+	// closed= COUNTS NOTES, not receipts. One receipt closes every note one
 	// sender left before the stamp, so len(plan.Prepared) is the number of lanes answered
 	// and would be a different, smaller and quite surprising number here.
 	if *dryRun {
@@ -1410,7 +1106,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "CLOSE REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus close -h"))
 		return 1
 	}
-	// A PARTIAL CLOSE COMPLETES OR LEAVES NOTHING BEHIND (#1540). The collision this fix
+	// A PARTIAL CLOSE COMPLETES OR LEAVES NOTHING BEHIND. The collision this fix
 	// removes used to stop the loop at its second Save, with the first receipt written into
 	// the working tree, no commit, and the cursor where it started -- so the next run met a
 	// file it had not committed and the lane had to be cleaned by hand. Whatever stops the
@@ -1460,7 +1156,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(sha8) > 8 {
 		sha8 = sha8[:8]
 	}
-	// receipts= is new with #1540 and is the one number that changed shape: closed= counts
+	// receipts= is the one number that changed shape: closed= counts
 	// notes, as it always did and as the dry run above already did, and receipts= says how
 	// many notes it took to close them -- one per sender lane. A reader who wants to know
 	// whether a close collapsed 2964 files into a handful reads it here.
@@ -1654,7 +1350,7 @@ type inboxOpts struct {
 	// way; only the narration is a verb's choice.
 	walkProgress bool
 	diagnostics  bool
-	// quietBeats records that the caller passed `wait --quiet-beats`. Since #328 a change
+	// quietBeats records that the caller passed `wait --quiet-beats`. A change
 	// that is only beats and cursors never wakes a wait, so the flag is accepted and
 	// changes nothing; it is kept so callers that pass it keep working. It is `wait`'s
 	// only; `inbox` leaves it false.
@@ -1662,10 +1358,10 @@ type inboxOpts struct {
 	// me is the reader resolved against the roster, carried so `wait` can name its lane's
 	// files without resolving the roster twice. It is `wait`'s only; `inbox` leaves it zero.
 	me bus.Participant
-	// noBeat is `wait --no-beat`: this wait does not own the lane's BEAT. Since #3144 no
+	// noBeat is `wait --no-beat`: this wait does not own the lane's BEAT. No
 	// wait writes a BEAT or makes a beat commit -- presence is friend:<name> in Redis --
 	// so what the flag still decides is whether a dirty BEAT an older wait left behind is
-	// this wait's to discard (a process BESIDE a line never discards the line's, #1517).
+	// this wait's to discard (a process BESIDE a line never discards the line's).
 	// `inbox` leaves it false.
 	noBeat bool
 	// onNote is `wait --on-note`: on a note arrival exit 0 with the note, on an empty
@@ -1929,7 +1625,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// It worked exactly as written: 602 old notes went onto the open list, the cursor was
 	// written beside them, and every poll from then on printed the same 602 carried notes,
 	// forever, because an open note only comes off the list when something answers it.
-	// Glenn, reading the polls: "lots of spam there. do we need so much spam? it costs $$$".
+	// Read back, the polls were mostly noise, and every line of noise costs tokens.
 	// Every one of those lines was paid for, on every run, by a reader who had never said
 	// they meant to carry the history.
 	//
@@ -2286,7 +1982,7 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 	// NO LANE, NO WRITE, AND NOTHING TOUCHED. Every state path this function builds is
 	// lane + "/" + name, so a lane-less reader names "/CURSOR" and "/OPEN" -- absolute
 	// paths that land at the checkout ROOT and that git refuses to stage as outside the
-	// repository. That is how the 2026-09-19 break ended: the cursor was written at the
+	// repository. That is how one break ended: the cursor was written at the
 	// root, the staging failed, and the stray file refused every later run on the bus.
 	//
 	// A lane-less reader is a shape the roster can hold -- a participant with no lane of
@@ -2306,7 +2002,7 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 		return 1
 	}
 	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane)}
-	// --no-beat (#1517): the cursor commit does not name the BEAT, so a read-only wait
+	// --no-beat: the cursor commit does not name the BEAT, so a read-only wait
 	// that advances its cursor still writes nothing of the line's presence onto the bus.
 	if !noBeat {
 		paths = append(paths, bus.BeatPath(me.Lane))
@@ -2374,7 +2070,7 @@ const defaultOpenMax = 20
 
 // defaultCheckMax is how many findings `check` prints before one BUS MORE line names the
 // rest. It is the Conventions' cap: a check over a bus adopted onto an old history failed
-// 1,059 times (#2574), most of them one class of finding repeating, and a wall of red that
+// 1,059 times, most of them one class of finding repeating, and a wall of red that
 // large is a wall nobody reads -- the loud kind eats the quiet one and the one finding that
 // matters is somewhere in it. Twenty findings is a screen; the BUS CHECK line that follows
 // counts every finding by class, so the listing is capped and the counting never is.
@@ -2754,9 +2450,9 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	until := f.fs.String("until", "", "an absolute deadline as an RFC 3339 UTC instant (e.g. 2026-09-18T18:00:00Z); the wait ends at that moment or at --timeout, whichever comes first")
 	idleExit := f.fs.Int("idle-exit", 0, "exit with this code instead of 0 when the wait times out, so a harness that cannot loop can branch on the code without parsing anything; 1 and 2 are refused, they are this tool's own")
 	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
-	beat := f.fs.Duration("beat", defaultBeatInterval, "retired (#3144) and ignored with one WAIT NOTE: the bus carries notes, never beats; presence is friend:<name> in Redis, written by the friend's own runtime")
-	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "retired (#3144) and ignored with one WAIT NOTE, as --beat")
-	noBeat := f.fs.Bool("no-beat", false, "this wait does not own the lane's BEAT, so it never discards one an older wait left: a read-only poll for a process that runs beside a line rather than as it; no wait writes a BEAT since #3144; cannot be given with --beat or --beat-lease")
+	beat := f.fs.Duration("beat", defaultBeatInterval, "retired and ignored with one WAIT NOTE: the bus carries notes, never beats; presence is friend:<name> in Redis, written by the friend's own runtime")
+	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "retired and ignored with one WAIT NOTE, as --beat")
+	noBeat := f.fs.Bool("no-beat", false, "this wait does not own the lane's BEAT, so it never discards one an older wait left: a read-only poll for a process that runs beside a line rather than as it; no wait writes a BEAT; cannot be given with --beat or --beat-lease")
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
 	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
 	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
@@ -2773,11 +2469,11 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) are not carried on your open list, and are counted rather than listed")
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
-	quietBeats := f.fs.Bool("quiet-beats", false, "accepted for callers that pass it and changes nothing: a change that is only beats and cursors never wakes a wait, with or without this flag; it is not news")
+	quietBeats := f.fs.Bool("quiet-beats", false, "retired: accepted and changes nothing, with one WAIT NOTE; a change that is only beats and cursors never wakes a wait")
 	onNote := f.fs.Bool("on-note", false, "wait only for a note addressed to the caller: on arrival exit 0 with the note, and on an empty tick exit 0 with WAIT TIMEOUT and the rearm line; requires --timeout, --bus, --as, --remote and --branch; incompatible with --open and --full")
 	// --max-commits IS HERE BECAUSE THE REMEDY HAS TO BE TYPEABLE AT THE VERB THAT NEEDS IT
-	// (#1518). The since-walk is bounded in inboxListing, which `wait` polls through, so a
-	// wait has always been bounded -- it simply had no way to say a bigger number. Johnny's
+	// The since-walk is bounded in inboxListing, which `wait` polls through, so a
+	// wait has always been bounded -- it simply had no way to say a bigger number. One reader's
 	// loop ran for days behind a cursor the bus had left far behind, printing the bounded
 	// line's `remedy="raise --max-commits"` at a verb that refused the flag.
 	maxCommits := f.fs.Int("max-commits", defaultMaxCommits, "how many commits a since-walk may cross before it stops and names the remedy; raise it to read a staler cursor")
@@ -2794,7 +2490,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "remote": remote, "branch": branch}) {
 		return 2
 	}
-	// --on-note REFUSES WHEN ITS REQUIRED FLAGS ARE MISSING (#2178). Each missing flag
+	// --on-note REFUSES WHEN ITS REQUIRED FLAGS ARE MISSING. Each missing flag
 	// gets its own remedy line, because a unit restarted after a harness cap needs to know
 	// exactly which flag to add. The spec says: `--on-note needs <flag>; give it, refusing
 	// to guess`.
@@ -2819,13 +2515,13 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			fmt.Fprintf(stderr, "WAIT REFUSED: --on-note needs %s; give it, refusing to guess; run: nova-bus wait -h\n", oneline.Field(missing[0]))
 			return 2
 		}
-		// --on-note WITH --open IS REFUSED (#2178). --on-note prints no open frame.
+		// --on-note WITH --open IS REFUSED. --on-note prints no open frame.
 		if *openList {
 			fmt.Fprint(stderr, "WAIT REFUSED: --on-note prints no open frame; drop --open; run: nova-bus wait -h\n")
 			return 2
 		}
 	}
-	// --no-beat AND --beat ARE ONE DECISION EACH AND THEY DISAGREE (#1517). --no-beat
+	// --no-beat AND --beat ARE ONE DECISION EACH AND THEY DISAGREE. --no-beat
 	// says this wait writes no BEAT and --beat/--beat-lease say when and how far to write
 	// one; a caller that gave both meant one of them, and guessing which would silently
 	// break either presence or the read-only promise. It is refused by name, and the door
@@ -2943,8 +2639,8 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// and every clone pulled them and every bus monitor woke on them. Presence is
 	// friend:<name> in Redis, written by each participant's own runtime. --beat and
 	// --beat-lease stay parseable so a caller's argv does not break, and say so once.
-	if f.set("beat") || f.set("beat-lease") {
-		fmt.Fprint(stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored: the bus carries notes, never beats; presence is friend:<name> in Redis, written by the friend's own runtime (nova-tools #3144)\n")
+	if f.set("beat") || f.set("beat-lease") || f.set("quiet-beats") {
+		fmt.Fprint(stderr, "WAIT NOTE --beat, --beat-lease and --quiet-beats are retired and ignored: the bus carries notes, never beats, and a change that is only beats never wakes a wait; drop them\n")
 	}
 	// A wait always runs git, so the root check is unconditional -- see the same check, and
 	// the same reason for the order it is in, in cmdInbox.
@@ -2982,12 +2678,12 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
 	// inbox already refuses it in.
 	held, _ := bus.ReadCursor(*busDir, me.Lane)
-	// A WAIT THAT CANNOT SEE THE BUS IS NOT A WAIT, AND IT SAYS SO BEFORE IT BLOCKS (#1518).
+	// A WAIT THAT CANNOT SEE THE BUS IS NOT A WAIT, AND IT SAYS SO BEFORE IT BLOCKS.
 	//
 	// The distance from a cursor to HEAD only GROWS while a wait runs -- the cursor moves
 	// on --advance, at the end, and never during -- so a walk that is over the bound now is
 	// over it on every poll this call will make. Every one of those polls reads nothing,
-	// and the call then prints the same WAIT TIMEOUT as a wait over a quiet bus. Johnny's
+	// and the call then prints the same WAIT TIMEOUT as a wait over a quiet bus. One reader's
 	// loop did exactly that, once a minute, for hours, at exit 0:
 	//
 	//	INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"
@@ -3022,7 +2718,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)),
 			oneline.Field(dash(*until)), *idleExit)
 	}
-	// A KILLED TICK LEAVES THE NEXT ONE UNABLE TO START (#2627). An index.lock older than a
+	// A KILLED TICK LEAVES THE NEXT ONE UNABLE TO START. An index.lock older than a
 	// minute, with no git still owning the checkout, is the killed git's leftover, and a
 	// dirty BEAT is the generated file that same kill left half-written. Both are this
 	// tool's. A CURSOR, a hand edit, anything else is not, and is not touched here. The
@@ -3043,7 +2739,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	} else if rep.Cleared {
 		repairs.add("index.lock")
 	}
-	// A dirty BEAT is what a wait from before #3144, killed mid-tick, left behind. No wait
+	// A dirty BEAT is what an older wait, killed mid-tick, left behind. No wait
 	// writes one now, so the repair is the discard alone: the file goes back to what the
 	// bus holds, and nothing is regenerated.
 	if !o.noBeat {
@@ -3137,7 +2833,7 @@ func waitOwnedPaths(o inboxOpts) []string {
 
 // waitWalkOverBound answers whether this lane's cursor is further behind HEAD than the
 // walk's bound, which is the one condition under which a wait can see nothing whatever
-// happens (#1518).
+// happens.
 //
 // IT FAILS OPEN, in both directions that matter. A lane with no cursor at all is not over
 // any bound -- it reads from the beginning of the switch-day line, which is what a first
@@ -3164,14 +2860,13 @@ const maxIdleExit = 125
 // interval. It is a default, unlike --timeout, on the same test the tool's other two
 // defaults pass: it is not a fact about a bus that only its owner can supply. Ten seconds
 // is under the time it takes to read a note and well over the cost of a fetch, and it is
-// the number Glenn asked for after watching the family's lines wait on each other: "the
-// polling should be 10 sec". A shorter interval is a shorter round trip between two lines
+// the number chosen after watching lines wait on each other. A shorter interval is a shorter round trip between two lines
 // that are answering each other, and a git fetch of a bus this size is cheap enough that
 // the round trip is what the number should be chosen for.
 const defaultWaitInterval = 10 * time.Second
 
 // defaultBeatInterval and defaultBeatLease are the defaults of the retired --beat and
-// --beat-lease (#3144): a wait no longer writes or pushes a BEAT, and the flags are parsed
+// --beat-lease: a wait no longer writes or pushes a BEAT, and the flags are parsed
 // only so a caller's argv keeps working.
 const (
 	defaultBeatInterval = 60 * time.Second
@@ -3189,7 +2884,7 @@ const minWaitInterval = 100 * time.Millisecond
 // is called with the bus directory at the exact boundary a wait becomes blocked:
 // it has polled, found nothing new, and is about to sleep until its next poll.
 // Tests point it at a channel close so a note can be pushed at that boundary
-// instead of after a sleep that races the poll (#370). It is an atomic because it
+// instead of after a sleep that races the poll. It is an atomic because it
 // is read from whichever goroutine runs waitLoop and written once by a test, and
 // parallel tests may run waitLoop while a sibling's hook is installed.
 type waitBlockedHook func(busDir string)
@@ -3245,26 +2940,24 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 	if held, err := bus.ReadCursor(o.busDir, o.me.Lane); err == nil {
 		cursor = held.Commit
 	}
-	// NO BEAT IS WRITTEN OR PUSHED HERE (#3144). Until 2026-09-24 every tick rewrote
-	// from-<lane>/BEAT and every --beat pushed it as its own `beat <name>` commit: 79% of
-	// the bus's commits, pulled by every clone. Presence is friend:<name> in Redis, written
+	// NO BEAT IS WRITTEN OR PUSHED HERE. A tick used to rewrite from-<lane>/BEAT and every
+	// --beat pushed it as its own `beat <name>` commit: most of a bus's commits, pulled by
+	// every clone. Presence is friend:<name> in Redis, written
 	// by each participant's own runtime; a wait leaves the checkout exactly as its polls left it.
 	for {
 		polls++
 		elapsed := clock.Now().Sub(start).Round(time.Millisecond)
 		pollNow := now.Add(elapsed)
-		// Issue #328, re-landed: a wait returns the moment it sees news, an unadvanced
+		// A wait returns the moment it sees news, an unadvanced
 		// cursor's backlog included, printing exactly what inbox prints for that state;
 		// it blocks only while there is nothing new at all, until a note arrives or the
-		// deadline. #352 blocked over the backlog instead and broke byte-identity with
-		// inbox, which is why it was reverted.
+		// deadline. Blocking over the backlog instead breaks byte-identity with inbox.
 		//
-		// #328 (2026-09-17): a beat or a cursor is never news. A wait that woke on every
+		// A beat or a cursor is never news. A wait that woke on every
 		// line's presence beat (one a minute, six lines) was a poll with extra steps and cost the
-		// window a turn per beat; --quiet-beats is accepted and changes nothing (Johnny's read).
+		// window a turn per beat; --quiet-beats is accepted and changes nothing.
 		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) }
-		// --on-note WAKES ON A NOTE ADDRESSED TO: THE CALLER AND ON NOTHING ELSE (#2178,
-		// Stella's hold 6 on #3368). A Cc: note, a receipt or a heard note is data, not a
+		// --on-note WAKES ON A NOTE ADDRESSED TO: THE CALLER AND ON NOTHING ELSE. A Cc: note, a receipt or a heard note is data, not a
 		// wake: the tick that brings only those is empty, prints nothing and keeps waiting.
 		if o.onNote {
 			keep = func(r inboxReading) bool { return len(onNoteWakes(r)) > 0 }
@@ -3383,7 +3076,7 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	if rec.LockCleared {
 		repairs.add("index.lock")
 	}
-	// A BEAT the fast-forward had to discard is an older wait's leftover (#3144): the
+	// A BEAT the fast-forward had to discard is an older wait's leftover: the
 	// discard is the whole repair, and nothing is written back.
 	for _, p := range rec.Discarded {
 		repairs.add(p)
@@ -3411,7 +3104,7 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	}
 	// A poll whose since-walk hit the bound read nothing, so it has neither news to return
 	// on nor a read to advance over. `wait` refuses a cursor already past the bound before
-	// it blocks (WAIT BLIND, #1518); this is the same state arriving mid-wait, when the bus
+	// it blocks (WAIT BLIND); this is the same state arriving mid-wait, when the bus
 	// moves past the bound while the wait is standing there.
 	if r.Bounded {
 		return 0, r, "", false
@@ -3419,7 +3112,7 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	if !keep(r) {
 		return 0, r, "", false
 	}
-	// Issue #328: `wait --advance` skips notes already heard before it blocks. A reader who
+	// `wait --advance` skips notes already heard before it blocks. A reader who
 	// receipted a note and then waits has already taken that note -- heard is not answered,
 	// so the note is still news to the open list -- and a wait that returns on it pays a
 	// turn for nothing. When every new note is already heard, the cursor is moved to the
@@ -3585,7 +3278,7 @@ func sha8(s string) string {
 // printSwitchDayNote prints the ONE line this whole change exists to print, and prints
 // nothing at all when there is nothing to say.
 //
-// THE SILENCE IT ENDS. A friend's cursor read `... open=0 legacy=2026-09-10` and his inbox
+// THE SILENCE IT ENDS. A reader's cursor read `... open=0 legacy=<a date>` and the inbox
 // listed nothing, day after day, on a bus that was busy. Every note was there; his own
 // switch-day line stood in front of all of them, because a date is midnight at its START
 // and that date was tomorrow's. v0.10.1 made the line an instant and wrote the recovery
@@ -3811,7 +3504,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// it wherever it was met. The values `check` was never given are the placeholders they
 	// are; see printSwitchDayNote.
 	printSwitchDayNote(stdout, noteLegacy, *busDir, noteName, "<n>", "", "", now)
-	// THE CAP, AND THE COUNT THAT IS NEVER CAPPED. A check that fails 1,059 times (#2574)
+	// THE CAP, AND THE COUNT THAT IS NEVER CAPPED. A check that fails 1,059 times
 	// printed all 1,059 lines, most of them one class repeating, and a reader holding the
 	// wall could not tell the loud kind from the one finding that mattered. So the report
 	// is capped at --max findings, one BUS MORE line says what the cap held back and names

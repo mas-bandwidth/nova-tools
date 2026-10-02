@@ -114,14 +114,14 @@ func TestEveryFlagInTheSynopsisIsDefinedByItsVerb(t *testing.T) {
 	}
 	// The guard on the parser itself. A regexp or a block boundary that quietly stopped
 	// matching would leave this test green over nothing, which is the one way a tripwire
-	// fails that nobody notices. Twelve LINES over ten verbs, and the flag count, as the
-	// banner stands; a deliberate change to either moves these numbers in the same commit.
+	// fails that nobody notices. Fourteen LINES over twelve verbs (version and help
+	// included), and the flag count, as the banner stands; a deliberate change to either moves these numbers in the same commit.
 	// `draft` and `send` each have two forms and the banner shows both, because the reply
 	// form's and the prepared form's required flags are not the released form's and one
 	// line offering all of them is a line nobody can paste. `reply` is its own line.
 	{
 		got := len(block)
-		assert.Falsef(t, got != 12, "the synopsis parsed to %d verb lines, want 12: %+v", got, block)
+		assert.Falsef(t, got != 14, "the synopsis parsed to %d verb lines, want 14: %+v", got, block)
 	}
 	assert.Falsef(t, checked < 30, "only %d flags were checked; the banner offers more than that, so the parser is reading less than the banner says", checked)
 }
@@ -183,5 +183,24 @@ func TestTheBusCodeNamesOnlyToolsThatExist(t *testing.T) {
 				assert.True(t, known[n], "%s names %s, which is no tool under cmd/", f, n)
 			}
 		}
+	}
+}
+
+// The package doc names every verb the tool has, and the code comments carry no ticket
+// numbers or people: they say what the code does now.
+func TestThePackageDocNamesEveryVerb(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("main.go")
+	require.NoError(t, err)
+	doc, _, ok := strings.Cut(string(raw), "\npackage main")
+	require.True(t, ok)
+	for _, verb := range verbs {
+		assert.Regexp(t, `(?m)^//\t`+verb+` +\S`, doc, "the package doc does not list %s", verb)
+	}
+	for _, f := range []string{"main.go", "help.go", "draft.go", "reply.go", "verb_reply.go", "version.go"} {
+		src, err := os.ReadFile(f)
+		require.NoError(t, err)
+		assert.NotRegexp(t, `#[0-9]{3,5}\b`, string(src), "%s cites a ticket number", f)
+		assert.NotRegexp(t, `\b(Glenn|Rowan|Stella|Emma|Johnny|Freddy)\b`, string(src), "%s names a person", f)
 	}
 }
