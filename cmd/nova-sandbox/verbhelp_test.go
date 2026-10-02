@@ -46,3 +46,11 @@ func TestHelpNeverReachesTheBareWrap(t *testing.T) {
 func sandboxRun(args []string, stdout, stderr io.Writer) int {
 	return run(args, strings.NewReader(""), stdout, stderr, nil)
 }
+
+// `help <verb>` is that verb's help whatever follows the verb, for every verb the
+// tool's help names, `egress plan` included; `--` and a word after it are never the
+// command of a wrap.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+	testverbhelp.HelpWhateverFollows(t, sandboxRun, usage, "nova-sandbox")
+}

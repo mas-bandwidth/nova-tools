@@ -237,7 +237,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		// help <verb> for a NAMED verb only: anything else falls through to the bare
 		// wrap below, and help must never reach it.
 		if args[0] == "help" && len(args) > 1 && helpVerbs[args[1]] {
-			return run(append(args[1:], "--help"), stdin, stdout, stderr, env)
+			return run(verbflag.HelpArgs(args[1:], usage, "nova-sandbox"), stdin, stdout, stderr, env)
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
