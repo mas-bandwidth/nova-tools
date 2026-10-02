@@ -42,10 +42,10 @@ func TestAParseErrorIsQuietAndComesBackFromParse(t *testing.T) {
 		fs, _, _ := demo()
 		out, code, err := run(fs, args)
 		if err == nil || errors.Is(err, flag.ErrHelp) {
-			t.Errorf("%v: want a parse error, got %v", args, err)
+			assert.Failf(t, "assertion failed", "%v: want a parse error, got %v", args, err)
 		}
 		if out != "" || code != 0 {
-			t.Errorf("%v: a parse error printed %q and set code %d; the verb prints its own refusal", args, out, code)
+			assert.Failf(t, "assertion failed", "%v: a parse error printed %q and set code %d; the verb prints its own refusal", args, out, code)
 		}
 	}
 }
@@ -54,11 +54,11 @@ func TestAParseErrorThenHelpOnTheSameSetStillRaisesHelp(t *testing.T) {
 	t.Parallel()
 	fs, _, _ := demo()
 	if _, _, err := run(fs, []string{"--nope"}); err == nil {
-		t.Fatal("want a parse error first")
+		require.Fail(t, "want a parse error first")
 	}
 	out, code, _ := run(fs, []string{"--help"})
 	if code != 0 || !strings.HasPrefix(out, "usage: nova-demo row add [flags]\n") {
-		t.Fatalf("help after an error on the same set: code %d out %q", code, out)
+		require.Failf(t, "assertion failed", "help after an error on the same set: code %d out %q", code, out)
 	}
 }
 
@@ -67,10 +67,10 @@ func TestParseReadsFlagsAndLeavesThePositionals(t *testing.T) {
 	fs, label, force := demo()
 	out, code, err := run(fs, []string{"--label", "a b", "-force", "demo", "build", "--not-a-flag"})
 	if err != nil || out != "" || code != 0 {
-		t.Fatalf("err %v out %q code %d", err, out, code)
+		require.Failf(t, "assertion failed", "err %v out %q code %d", err, out, code)
 	}
 	if *label != "a b" || !*force || strings.Join(fs.Args(), ",") != "demo,build,--not-a-flag" {
-		t.Fatalf("label %q force %v args %v", *label, *force, fs.Args())
+		require.Failf(t, "assertion failed", "label %q force %v args %v", *label, *force, fs.Args())
 	}
 }
 
@@ -86,7 +86,7 @@ func TestEverySpellingOfHelpPrintsTheUsageAndExitsZero(t *testing.T) {
 		fs, _, _ := demo()
 		out, code, _ := run(fs, args)
 		if out != want || code != 0 {
-			t.Errorf("%v: code %d\n got %q\nwant %q", args, code, out, want)
+			assert.Failf(t, "assertion failed", "%v: code %d\n got %q\nwant %q", args, code, out, want)
 		}
 	}
 }
@@ -97,7 +97,7 @@ func TestHelpNeverPrintsADefault(t *testing.T) {
 	fs, _, _ := demo()
 	out, _, _ := run(fs, []string{"--help"})
 	if strings.Contains(out, "SECRET-DEFAULT") || strings.Contains(out, "7") {
-		t.Fatalf("help printed a default: %q", out)
+		require.Failf(t, "assertion failed", "help printed a default: %q", out)
 	}
 }
 
@@ -106,7 +106,7 @@ func TestHelpAfterTheTerminatorIsAPositional(t *testing.T) {
 	fs, _, _ := demo()
 	out, code, err := run(fs, []string{"--", "--help"})
 	if err != nil || out != "" || code != 0 || strings.Join(fs.Args(), ",") != "--help" {
-		t.Fatalf("err %v out %q code %d args %v", err, out, code, fs.Args())
+		require.Failf(t, "assertion failed", "err %v out %q code %d args %v", err, out, code, fs.Args())
 	}
 }
 
@@ -116,7 +116,7 @@ func TestASetThatDefinesHelpKeepsItsOwn(t *testing.T) {
 	own := fs.Bool("help", false, "this verb's own help flag")
 	out, code, err := run(fs, []string{"--help"})
 	if err != nil || out != "" || code != 0 || !*own {
-		t.Fatalf("err %v out %q code %d own %v", err, out, code, *own)
+		require.Failf(t, "assertion failed", "err %v out %q code %d own %v", err, out, code, *own)
 	}
 }
 
@@ -124,7 +124,7 @@ func TestASetWithNoFlagsPrintsNoFlagsHeading(t *testing.T) {
 	t.Parallel()
 	out, code, _ := run(New("list"), []string{"-h"})
 	if out != "usage: nova-demo list [flags]\nexit codes: 0 done, 1 refused, 2 usage\n" || code != 0 {
-		t.Fatalf("code %d out %q", code, out)
+		require.Failf(t, "assertion failed", "code %d out %q", code, out)
 	}
 }
 
@@ -141,7 +141,7 @@ func TestRecoverLetsAnyOtherPanicThrough(t *testing.T) {
 		return nil
 	}()
 	if got != "not help" || b.Len() != 0 || code != 0 {
-		t.Fatalf("recovered %v, printed %q, code %d", got, b.String(), code)
+		require.Failf(t, "assertion failed", "recovered %v, printed %q, code %d", got, b.String(), code)
 	}
 }
 
@@ -151,7 +151,7 @@ func TestRecoverWithNoPanicChangesNothing(t *testing.T) {
 	code := 1
 	func() { defer Recover(&b, "nova-demo", "", &code) }()
 	if b.Len() != 0 || code != 1 {
-		t.Fatalf("printed %q, code %d", b.String(), code)
+		require.Failf(t, "assertion failed", "printed %q, code %d", b.String(), code)
 	}
 }
 
@@ -185,7 +185,7 @@ func TestHelpIfAskedRaisesHelpForAHandReadVerb(t *testing.T) {
 			wantCode = 0
 		}
 		if b.String() != c.want || code != wantCode {
-			t.Errorf("%v: code %d out %q, want code %d out %q", c.args, code, b.String(), wantCode, c.want)
+			assert.Failf(t, "assertion failed", "%v: code %d out %q, want code %d out %q", c.args, code, b.String(), wantCode, c.want)
 		}
 	}
 }
@@ -240,10 +240,10 @@ func TestParseTurnsHelpIntoTheVerbsHelpAtExitZero(t *testing.T) {
 			"exit codes: 0 done, 1 said NO,\n" +
 			"2 could not run\n"
 		if out != want || code != 0 {
-			t.Errorf("%v: code %d\n got %q\nwant %q", args, code, out, want)
+			assert.Failf(t, "assertion failed", "%v: code %d\n got %q\nwant %q", args, code, out, want)
 		}
 		if stderr.Len() != 0 || ran {
-			t.Errorf("%v: help wrote %q to the set's output (usage ran %v); help is stdout only", args, stderr.String(), ran)
+			assert.Failf(t, "assertion failed", "%v: help wrote %q to the set's output (usage ran %v); help is stdout only", args, stderr.String(), ran)
 		}
 	}
 }
@@ -262,17 +262,17 @@ func TestParseLeavesAParseErrorAsItWas(t *testing.T) {
 		}
 		out, code, err := parseRun(fs, demoBanner, []string{"--width", "x"})
 		if err == nil || errors.Is(err, flag.ErrHelp) || out != "" || code != 7 {
-			t.Fatalf("custom=%v: err %v out %q code %d", custom, err, out, code)
+			require.Failf(t, "assertion failed", "custom=%v: err %v out %q code %d", custom, err, out, code)
 		}
 		got := stderr.String()
 		if !strings.HasPrefix(got, "invalid value \"x\" for flag -width") {
-			t.Errorf("custom=%v: the flag package's message is gone: %q", custom, got)
+			assert.True(t, strings.HasPrefix(got, "invalid value \"x\" for flag -width"), "custom=%v: the flag package's message is gone: %q", custom, got)
 		}
 		if custom && !strings.HasSuffix(got, "custom usage\n") {
-			t.Errorf("custom usage was not called after the error: %q", got)
+			assert.Failf(t, "assertion failed", "custom usage was not called after the error: %q", got)
 		}
 		if !custom && !strings.Contains(got, "-width int") {
-			t.Errorf("the default usage was not written after the error: %q", got)
+			assert.Failf(t, "assertion failed", "the default usage was not written after the error: %q", got)
 		}
 	}
 }
@@ -282,11 +282,11 @@ func TestParseOnASetFromNewIsStillQuietOnAnError(t *testing.T) {
 	fs, _, _ := demo()
 	out, code, err := parseRun(fs, "", []string{"--nope"})
 	if err == nil || out != "" || code != 7 {
-		t.Fatalf("err %v out %q code %d", err, out, code)
+		require.Failf(t, "assertion failed", "err %v out %q code %d", err, out, code)
 	}
 	out, code, _ = parseRun(fs, "", []string{"-h"})
 	if code != 0 || !strings.HasPrefix(out, "usage: nova-demo row add [flags]\nflags:\n") {
-		t.Fatalf("help after an error: code %d out %q", code, out)
+		require.Failf(t, "assertion failed", "help after an error: code %d out %q", code, out)
 	}
 }
 
@@ -304,7 +304,7 @@ func TestExcerptQuotesOnlyThatVerbsLines(t *testing.T) {
 	} {
 		got := Excerpt(demoBanner, "nova-demo", c.verb)
 		if strings.Join(got, "|") != strings.Join(c.want, "|") {
-			t.Errorf("%q: got %q want %q", c.verb, got, c.want)
+			assert.Equal(t, strings.Join(c.want, "|"), strings.Join(got, "|"), "%q: got %q want %q", c.verb, got, c.want)
 		}
 	}
 }
@@ -313,7 +313,7 @@ func TestVerbTakesTheToolsNameOffTheSetsName(t *testing.T) {
 	t.Parallel()
 	for name, want := range map[string]string{"nova-demo send": "send", "send": "send", "nova-demo": "", "slots take": "slots take"} {
 		if got := Verb("nova-demo", flag.NewFlagSet(name, flag.ContinueOnError)); got != want {
-			t.Errorf("%q: got %q want %q", name, got, want)
+			assert.Equal(t, want, got, "%q: got %q want %q", name, got, want)
 		}
 	}
 }
@@ -338,7 +338,7 @@ func TestExitCodesAreTheToolsOwn(t *testing.T) {
 		{"nova-demo: a demo\n\nrecall exits 1 on a miss (exit 2 on usage).\n", "exit codes: see `nova-demo help`"},
 	} {
 		if got := strings.Join(exitCodes(c.banner, "nova-demo"), "|"); got != c.want {
-			t.Errorf("got %q want %q", got, c.want)
+			assert.Equal(t, c.want, got, "got %q want %q", got, c.want)
 		}
 	}
 }
@@ -360,7 +360,7 @@ func TestBoolAskedReadsTheFlagBeforeTheParse(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := BoolAsked(tc.args, "json"); got != tc.want {
-				t.Errorf("BoolAsked(%q) = %v, want %v", tc.args, got, tc.want)
+				assert.Equal(t, tc.want, got, "BoolAsked(%q) = %v, want %v", tc.args, got, tc.want)
 			}
 		})
 	}
@@ -381,16 +381,16 @@ func TestRecoverWithShowsTheToolsLinesAboveTheFlags(t *testing.T) {
 	got := out.String()
 	ex, fl := strings.Index(got, "example:\n  tool go --to x\n"), strings.Index(got, "flags:\n")
 	if code != 0 || ex < 0 || fl < 0 || ex > fl {
-		t.Errorf("code %d; the example is not above the flags:\n%s", code, got)
+		assert.Failf(t, "assertion failed", "code %d; the example is not above the flags:\n%s", code, got)
 	}
 	if got := Insert("usage: t\nexit codes: 0\n", "x\n"); got != "usage: t\nx\nexit codes: 0\n" {
-		t.Errorf("Insert without flags: %q", got)
+		assert.Equal(t, "usage: t\nx\nexit codes: 0\n", got, "Insert without flags: %q", got)
 	}
 	if got := Insert("usage: t\n", "x\n"); got != "usage: t\nx\n" {
-		t.Errorf("Insert at the end: %q", got)
+		assert.Equal(t, "usage: t\nx\n", got, "Insert at the end: %q", got)
 	}
 	if got := Insert("usage: t\n", ""); got != "usage: t\n" {
-		t.Errorf("Insert of nothing: %q", got)
+		assert.Equal(t, "usage: t\n", got, "Insert of nothing: %q", got)
 	}
 }
 

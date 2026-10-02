@@ -34,9 +34,8 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 		assert.Contains(t, out, want, "log --card s1-1 has no %q", want)
 	}
 	assert.NotContains(t, out, "s1-2.w1", "log --card s1-1 shows s1-2's work")
-	if out := ta.ok("log --member m1"); !strings.Contains(out, "s1-2.w1: attempt 2") && !strings.Contains(out, "attempt 1 dealt to m1") {
-		t.Errorf("log --member m1:\n%s", out)
-	}
+	out = ta.ok("log --member m1")
+	assert.False(t, !strings.Contains(out, "s1-2.w1: attempt 2") && !strings.Contains(out, "attempt 1 dealt to m1"), "log --member m1:\n%s", out)
 	ta.mu.Lock()
 	ta.now = ta.now.Add(time.Hour)
 	ta.mu.Unlock()
@@ -48,8 +47,11 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 		} `json:"lines"`
 	}
 	ta.json("log --card s1-2", &j)
-	if len(j.Lines) == 0 || j.Lines[0].Kind != "move" || len(j.Lines[0].Cards) != 2 || j.Lines[0].Cards[1] != "s1-2" {
-		t.Errorf("log --json: %+v", j)
+	if assert.NotEmpty(t, j.Lines, "log --json: %+v", j) {
+		assert.Equal(t, "move", j.Lines[0].Kind, "log --json: %+v", j)
+		if assert.Len(t, j.Lines[0].Cards, 2, "log --json: %+v", j) {
+			assert.Equal(t, "s1-2", j.Lines[0].Cards[1], "log --json: %+v", j)
+		}
 	}
 	ta.ok("clear --confirm sprint")
 	assert.Contains(t, ta.ok("log --at-epoch 0 --card s1-1"), "m1 finished attempt 1: FAILED", "the old epoch's log after a clear")

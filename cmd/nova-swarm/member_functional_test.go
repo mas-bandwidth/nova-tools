@@ -259,14 +259,13 @@ func testMemberFunctionalDrive(t *testing.T) {
 	// Each card ran once, and every report was taken: a verb refused (exit 1)
 	// is a fault of the loop.
 	for _, tc := range []struct{ name, out, verb string }{{"m1", "\n" + mOut.String(), "finish"}, {"reader-a", "\n" + aOut.String(), "read"}, {"reader-b", "\n" + bOut.String(), "read"}} {
-		if strings.Contains(tc.out, "refused") || strings.Contains(tc.out, "exit=1") {
-			t.Errorf("%s: a verb was refused:\n%s", tc.name, tc.out)
-		}
+		assert.NotContains(t, tc.out, "refused", "%s: a verb was refused:\n%s", tc.name, tc.out)
+		assert.NotContains(t, tc.out, "exit=1", "%s: a verb was refused:\n%s", tc.name, tc.out)
 		n := strings.Count(tc.out, "\nstart ")
 		assert.Equal(t, 3, n, "%s started %d children, want 3 (one a card):\n%s", tc.name, n, tc.out)
-		if n := strings.Count(tc.out, "\n"+tc.verb+" "); n < 3 || strings.Count(tc.out, " exit=0\n") != 3 {
-			t.Errorf("%s: want %s reported 3 times with exit=0:\n%s", tc.name, tc.verb, tc.out)
-		}
+		n = strings.Count(tc.out, "\n"+tc.verb+" ")
+		assert.GreaterOrEqual(t, n, 3, "%s: want %s reported 3 times with exit=0:\n%s", tc.name, tc.verb, tc.out)
+		assert.Equal(t, 3, strings.Count(tc.out, " exit=0\n"), "%s: want %s reported 3 times with exit=0:\n%s", tc.name, tc.verb, tc.out)
 	}
 	// The head the member pushed, the branch and the report the child's
 	// RESULT.md holds reached the card.

@@ -2,6 +2,7 @@ package redisconn
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"sync/atomic"
 
@@ -81,9 +82,7 @@ func (t *Trips) ByLabel() map[string]int64 {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for label, n := range t.labels {
-		out[label] = n
-	}
+	maps.Copy(out, t.labels)
 	return out
 }
 

@@ -3,7 +3,9 @@ package tablemodel
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -110,7 +112,7 @@ func ActionTLA(a Action, epoch int) (string, error) {
 			return "", fmt.Errorf("row_add options: %v", err)
 		}
 		var nb []string
-		for _, col := range sortedKeys(opts.Binds) {
+		for _, col := range slices.Sorted(maps.Keys(opts.Binds)) {
 			t, err := target(opts.Binds[col])
 			if err != nil {
 				return "", err
@@ -131,7 +133,7 @@ func ActionTLA(a Action, epoch int) (string, error) {
 		var keys, nb []string
 		for _, row := range spec.Rows {
 			keys = append(keys, quote(row.Key))
-			for _, col := range sortedKeys(row.Binds) {
+			for _, col := range slices.Sorted(maps.Keys(row.Binds)) {
 				t, err := target(row.Binds[col])
 				if err != nil {
 					return "", err

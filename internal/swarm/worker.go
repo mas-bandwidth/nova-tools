@@ -671,10 +671,7 @@ func tailBytes(path string, n int) (string, int64) {
 	// line the seek lands in the middle of.
 	const slack = 4096
 	window := int64(n + slack)
-	off := size - window
-	if off < 0 {
-		off = 0
-	}
+	off := max(size-window, 0)
 	if _, err := f.Seek(off, io.SeekStart); err != nil {
 		return "", 0
 	}
@@ -693,10 +690,7 @@ func tailBytes(path string, n int) (string, int64) {
 	// Reserve the widest the mark can be, then keep the last line-bounded bytes that fit
 	// under the ceiling, the way oneline.Cap reserves its own mark before cutting.
 	maxMark := len(fmt.Sprintf("...+%dB", size))
-	budget := n - maxMark
-	if budget < 1 {
-		budget = 1
-	}
+	budget := max(n-maxMark, 1)
 	if len(s) > budget {
 		s = s[len(s)-budget:]
 		if nl := strings.IndexByte(s, '\n'); nl >= 0 {

@@ -68,13 +68,7 @@ func RunnerShare(cores int, runnersEnv string) (runners, share int) {
 	if err != nil || runners < 1 {
 		runners = DefaultRunners
 	}
-	share = cores / runners
-	if share < 1 {
-		share = 1
-	}
-	if share > ShareCeiling {
-		share = ShareCeiling
-	}
+	share = min(max(cores/runners, 1), ShareCeiling)
 	return runners, share
 }
 

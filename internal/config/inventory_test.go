@@ -182,6 +182,8 @@ func TestBuildInventoryOfAnEmptyStore(t *testing.T) {
 	for _, g := range []string{"all", "benches", "coordinator", "store", "store_deployer", "runners"} {
 		assert.Equal(t, []any{}, parsed[g]["hosts"], g)
 	}
+	// A store no kind was applied to has no revisions: an empty object, never null.
+	assert.Equal(t, map[string]any{"nova_config_rev": map[string]any{}}, parsed["all"]["vars"], "all.vars of %s", raw)
 	_, err = inv.HostJSON("nosuch")
 	var unknown *UnknownHostError
 	require.ErrorAs(t, err, &unknown)

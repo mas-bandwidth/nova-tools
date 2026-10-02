@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -435,12 +436,9 @@ func sealDryRun(opts SealOptions, carry sealCarry, targetFile string) (string, e
 // sealHas reports whether the decrypted seat file already holds name: the same line
 // sealApply drops before it appends the new one.
 func sealHas(existing []byte, name string) bool {
-	for _, line := range strings.Split(string(existing), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), name+":") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(string(existing), "\n"), func(line string) bool {
+		return strings.HasPrefix(strings.TrimSpace(line), name+":")
+	})
 }
 
 // readSealValue takes the value from stdin when asked or when stdin is not a terminal,

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,7 +52,7 @@ func TestNativeDeadlineKillsTheWholeTree(t *testing.T) {
 	// bound is a safety net and never the assertion.
 	if !pidGoneWithin(got.grandchild, 30*time.Second) {
 		_ = syscall.Kill(got.grandchild, syscall.SIGKILL)
-		t.Fatalf("the grandchild pid %d survived the deadline kill; the run reaped only the leader", got.grandchild)
+		require.Fail(t, fmt.Sprintf("the grandchild pid %d survived the deadline kill; the run reaped only the leader", got.grandchild))
 	}
 	_, err := os.Stat(filepath.Join(got.slot, "usage.tsv"))
 	require.NoError(t, err, "usage.tsv absent after a deadline kill")
@@ -199,7 +200,7 @@ func TestNativeTermFromOutsideWritesUsage(t *testing.T) {
 		}
 		if time.Now().After(waitFor) {
 			_ = cmd.Process.Kill()
-			t.Fatalf("the harness never started (no argv):\n%s", stderr.String())
+			require.Fail(t, fmt.Sprintf("the harness never started (no argv):\n%s", stderr.String()))
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

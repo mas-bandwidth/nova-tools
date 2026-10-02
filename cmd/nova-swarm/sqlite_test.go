@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/stretchr/testify/require"
 )
 
 // The native budget helpers a functional file and a slow file both call, kept
@@ -26,13 +27,9 @@ func needsSQLite(t *testing.T) {
 func usageRows(t *testing.T, jobDir string) ([]string, [][]string) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(jobDir, "usage.tsv"))
-	if err != nil {
-		t.Fatalf("the card wrote no usage.tsv under %s: %v", jobDir, err)
-	}
+	require.NoError(t, err, "the card wrote no usage.tsv under %s: %v", jobDir, err)
 	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("usage.tsv holds a header and at least one row:\n%s", raw)
-	}
+	require.GreaterOrEqual(t, len(lines), 2, "usage.tsv holds a header and at least one row:\n%s", raw)
 	var rows [][]string
 	for _, l := range lines[1:] {
 		rows = append(rows, strings.Split(l, "\t"))

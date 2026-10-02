@@ -3,8 +3,10 @@ package memindex
 import (
 	"fmt"
 	"io/fs"
+	"maps"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -331,13 +333,8 @@ func Wikilinks(fsys fs.FS, c *Corpus) ([]Finding, error) {
 			}
 		}
 	}
-	keys := make([]string, 0, len(unresolved))
-	for k := range unresolved {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 	var out []Finding
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(unresolved)) {
 		out = append(out, Finding{Kind: "wikilink",
 			Detail: fmt.Sprintf("[[%s]] resolves to no file (e.g. from %s)", k, strings.Join(unresolved[k], ", "))})
 	}

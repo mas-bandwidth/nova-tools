@@ -682,12 +682,7 @@ func Compare(s Step, res Result, norms []Norm) []Problem {
 }
 
 func marked(want []string) bool {
-	for _, line := range want {
-		if strings.HasPrefix(line, StderrMarker) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(want, func(line string) bool { return strings.HasPrefix(line, StderrMarker) })
 }
 
 // compareByStream is the comparison for a block written to #1570's convention.

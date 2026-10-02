@@ -231,16 +231,6 @@ type CountRow struct {
 	Measured int
 }
 
-// IsStale reports whether a row with this key is stale.
-func (r Result) IsStale(key string) bool {
-	for _, row := range r.Stale {
-		if row.Key == key {
-			return true
-		}
-	}
-	return false
-}
-
 // Check compares the measured keys with the list. Outside an update it only reports:
 // a list over its ceiling is refused here, and the stale rows and unlisted keys come
 // back for the caller to print with its own remedy. Under NOVA_CI_UPDATE=1 it

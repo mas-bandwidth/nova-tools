@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strings"
 	"time"
 
@@ -146,10 +147,5 @@ func okCode(code int, ok []int) bool {
 	if len(ok) == 0 {
 		return code == 0
 	}
-	for _, c := range ok {
-		if c == code {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ok, code)
 }
