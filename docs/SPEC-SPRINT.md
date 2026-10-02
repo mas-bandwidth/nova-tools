@@ -502,14 +502,16 @@ and it is the coordinator's decision, receipted.
   way and, when no card stays on it after that redeal (no withdrawn card, and no
   finished card that is the live work of a primary on the table and not
   landed), removed in the same run: the step takes its control card off the
-  table, held by the sync, and the verb deletes its beat record and then its
-  row, the row only while its control card is still on no cell at the revision
-  the delete read, checked and deleted as one atomic change (a WATCH on the
-  card's record around the table layer's row delete), so a `fleet up` that
-  placed the card again in between, and anything dealt to the member after it,
-  keep the row; a cleanup cut short leaves the row, which the next sync reads
-  as drift and finishes; so its width leaves the fleet's total, one line
-  saying so; while cards stay on
+  table, held by the sync, and the verb deletes its row and then its beat
+  record: the row only while its control card is still on no cell at the
+  revision the delete read, checked and deleted as one atomic change (a WATCH
+  on the card's record around the table layer's row delete), so a `fleet up`
+  that placed the card again in between, and anything dealt to the member
+  after it, keep the row; the members whose beat records are owed a delete are
+  written down before the rows go (the record `fleet-drop-debt`, which
+  teardown removes), so a cleanup cut short at any point is finished by the
+  next sync, one with nothing else to write included; its width leaves the
+  fleet's total, one line saying so; while cards stay on
   it, it stays held and a NOTE line says so, and a later sync removes it. A
   machine row that comes back places the same control card again before the
   step, under the fence too (the table layer's cell add; a batch never places a

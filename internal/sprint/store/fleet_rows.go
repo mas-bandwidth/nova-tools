@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -17,7 +18,8 @@ import (
 // its own, and it is conditional at its commit: the row goes only while its control
 // card is still on no cell at the revision the delete read (RowsDelIf, one atomic
 // change), so a fleet up that placed the card again in between, and anything dealt
-// to the member after it, keep the row, whenever they ran. A machine row that comes
+// to the member after it, keep the row, whenever they ran. The beat records the
+// deleted rows leave are owed in a record of their own (keyDropDebt) until deleted. A machine row that comes
 // back places the same control card again before the sync's step reads the table,
 // under the fence (fenceLocked): a batch never places a removed member, the table
 // layer's cell add does.
@@ -51,15 +53,53 @@ func (st *Store) fenceLocked(ctx context.Context, verb string, extras func(*spri
 	return fmt.Errorf("%s: the sprint kept changing under it (%d tries); nothing was changed; run it again", verb, r.tries)
 }
 
+// keyDropDebt is the members whose rows a fleet sync's cleanup deletes and whose
+// beat records it still owes a delete: written before the rows are deleted and
+// emptied once their beat records are, so a cleanup cut short after its row
+// delete is finished by the next sync, which finds no row left to read
+// (FinishDrops). Teardown removes it, and the beats it names.
+const keyDropDebt = "fleet-drop-debt"
+
+// dropDebt is the members the cleanup owes a beat delete; none on a store that
+// keeps no records.
+func (st *Store) dropDebt(ctx context.Context) ([]string, error) {
+	kv, err := st.rootKV()
+	if err != nil {
+		return nil, nil
+	}
+	raw, ok, err := kv.GetKey(ctx, keyDropDebt)
+	if err != nil || !ok || raw == "" {
+		return nil, err
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, fmt.Errorf("the fleet cleanup's record %s cannot be read: %w", keyDropDebt, err)
+	}
+	return out, nil
+}
+
+func (st *Store) putDropDebt(ctx context.Context, debt []string) error {
+	kv, err := st.rootKV()
+	if err != nil {
+		return nil // a store that keeps no records keeps no beats to owe
+	}
+	slices.Sort(debt)
+	b, err := json.Marshal(slices.Compact(debt))
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, keyDropDebt, string(b))
+}
+
 // DropMembers deletes the fleet row of every member whose control card is off
 // the table (a sync's step took it off) and that keep does not name, each only
-// while its control card is still on no cell at the revision read here
-// (RowsDelIf). The beat records go first and the rows last: a cleanup cut short
-// leaves its rows, which the next sync reads as drift and finishes; a member
-// placed again in between keeps its row, and its next beat writes its record
-// again. A machine still beating after its row is gone is a stranger the tick
-// names, and teardown finds no key of a row it can no longer read. It is the
-// members whose rows it deleted.
+// while its control card is still on no cell at the revision read here, checked
+// and deleted as one atomic change (RowsDelIf): a member placed again in between,
+// and anything dealt to it after, keep the row. The members are recorded as owed
+// a beat delete before the rows go (keyDropDebt), and their beat records are then
+// deleted (FinishDrops): a cleanup cut short at any point is finished by the next
+// sync. A machine still beating after its row is gone is a stranger the tick
+// names. It is the members whose rows it deleted.
 func (st *Store) DropMembers(ctx context.Context, keep []string) ([]string, error) {
 	pinned, err := st.pin(ctx)
 	if err != nil {
@@ -74,7 +114,7 @@ func (st *Store) DropMembers(ctx context.Context, keep []string) ([]string, erro
 		}
 		return out
 	}
-	// the control cards' records, on no cell, read with the rows
+	// the control cards' records, on no cell, read with the rows (in bounded read sets)
 	extras := func(s *sprint.Snapshot) map[string][]string {
 		return map[string][]string{sprint.Fleet: ctlIDs(off(s))}
 	}
@@ -83,22 +123,67 @@ func (st *Store) DropMembers(ctx context.Context, keep []string) ([]string, erro
 		return nil, err
 	}
 	var guards []RowGuard
-	var keys []string
+	var names []string
 	for _, m := range off(s) {
 		rec := s.Fleet.Card(sprint.CtlID(m))
 		if rec == nil {
 			continue // a row with no control card record at all is no member the sync removed
 		}
 		guards = append(guards, RowGuard{Row: m, ID: pinned.sid(sprint.CtlID(m)), Rev: rec.Rev})
-		keys = append(keys, pinned.Names.Key(beatKey(m)))
+		names = append(names, m)
 	}
-	if len(guards) == 0 {
-		return nil, nil
+	var deleted []string
+	if len(guards) > 0 {
+		debt, err := pinned.dropDebt(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err := pinned.putDropDebt(ctx, append(debt, names...)); err != nil {
+			return nil, err
+		}
+		if deleted, err = pinned.B.RowsDelIf(ctx, pinned.Names.Table(sprint.Fleet), guards); err != nil {
+			return deleted, err
+		}
 	}
-	if _, err := pinned.B.DeleteKeys(ctx, keys); err != nil {
-		return nil, err
+	return deleted, pinned.FinishDrops(ctx)
+}
+
+// FinishDrops deletes the beat record of every member the cleanup owes one
+// (keyDropDebt) whose fleet row is gone, and empties the record; a member whose
+// row is still there (placed again, or its delete still to come, which the next
+// sync's drift finds) is dropped from it without a delete. Every fleet sync that
+// writes runs it, and one with nothing to write too.
+func (st *Store) FinishDrops(ctx context.Context) error {
+	pinned, err := st.pin(ctx)
+	if err != nil {
+		return err
 	}
-	return pinned.B.RowsDelIf(ctx, pinned.Names.Table(sprint.Fleet), guards)
+	debt, err := pinned.dropDebt(ctx)
+	if err != nil || len(debt) == 0 {
+		return err
+	}
+	shapes, err := pinned.B.Shapes(ctx, []string{pinned.Names.Table(sprint.Fleet)})
+	if err != nil {
+		return err
+	}
+	rows := map[string]bool{}
+	for _, sh := range shapes {
+		for _, r := range sh.Rows {
+			rows[r.Key] = true
+		}
+	}
+	var keys []string
+	for _, m := range debt {
+		if !rows[m] {
+			keys = append(keys, pinned.Names.Key(beatKey(m)))
+		}
+	}
+	if len(keys) > 0 {
+		if _, err := pinned.B.DeleteKeys(ctx, keys); err != nil {
+			return err
+		}
+	}
+	return pinned.putDropDebt(ctx, nil)
 }
 
 // RejoinMembers places again, under the fence, the control card of each named

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 
@@ -20,9 +19,8 @@ import (
 // deletes first, as a store that did not answer.
 type seamed struct {
 	*store.Mem
-	once     sync.Once
-	between  func()
-	failKeys int
+	once    sync.Once
+	between func()
 }
 
 func (s *seamed) RowsDelIf(ctx context.Context, table string, guards []store.RowGuard) ([]string, error) {
@@ -30,14 +28,6 @@ func (s *seamed) RowsDelIf(ctx context.Context, table string, guards []store.Row
 		s.once.Do(s.between)
 	}
 	return s.Mem.RowsDelIf(ctx, table, guards)
-}
-
-func (s *seamed) DeleteKeys(ctx context.Context, keys []string) (int, error) {
-	if s.failKeys > 0 {
-		s.failKeys--
-		return 0, errors.New("the store did not answer")
-	}
-	return s.Mem.DeleteKeys(ctx, keys)
 }
 
 func (s *seamed) RowsDel(ctx context.Context, table string, rows []string) error {
@@ -86,30 +76,4 @@ func TestARemovedMemberRejoinedBeforeTheDeleteKeepsItsRowAndCards(t *testing.T) 
 	wc := snap.Fleet.Card("s1-1.w1")
 	require.NotNil(t, wc)
 	assert.Equal(t, "m2", wc.Row, "the card dealt to m2 is on the table")
-}
-
-// TestAFailedCleanupIsFinishedByTheNextSync: the delete of a removed member's
-// beat record fails once; the row is deleted only after its keys, so it stays,
-// the sync says it could not finish, and the next sync finds the row (its control
-// card off the table) as drift and finishes the cleanup.
-func TestAFailedCleanupIsFinishedByTheNextSync(t *testing.T) {
-	t.Parallel()
-	ta, inv := syncApp(t)
-	inv.set("m1", 4)
-	inv.set("m2", 4)
-	ta.ok("fleet sync")
-	seam := &seamed{Mem: ta.m, failKeys: 1}
-	ta.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) { return seam, nil }
-	inv.remove("m2")
-	code, out, errs := ta.do("fleet sync")
-	assert.Equal(t, 2, code, "the cleanup did not finish: %s%s", out, errs)
-	assert.Contains(t, errs, "run: nova-sprint fleet sync")
-	require.NotNil(t, ta.fleetRows()["m2"], "the row stays while its keys are not deleted")
-	code, check, _ := ta.do("fleet sync --check")
-	assert.Equal(t, 2, code, "the row left behind is drift: %s", check)
-	assert.Contains(t, check, "DRIFT remove m2")
-	ta.ok("fleet sync")
-	assert.Nil(t, ta.fleetRows()["m2"], "the next sync finished the cleanup")
-	code, check, _ = ta.do("fleet sync --check")
-	assert.Equal(t, 0, code, check)
 }

@@ -23,7 +23,7 @@ var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen,
 
 // machineKeys are the machine's records and the people's goals: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
-var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules, keyFriends}
+var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt}
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
 // revision, definition record and change log; and its operation records,
@@ -162,6 +162,11 @@ func (st *Store) Teardown(ctx context.Context) (int, error) {
 	if s, err := st.strangers(ctx); err == nil {
 		for m := range s {
 			beating[m] = true
+		}
+	}
+	if debt, err := st.dropDebt(ctx); err == nil {
+		for _, m := range debt {
+			beating[m] = true // a removed member whose beat record is still owed a delete
 		}
 	}
 	epochs.Beating = slices.Sorted(maps.Keys(beating))

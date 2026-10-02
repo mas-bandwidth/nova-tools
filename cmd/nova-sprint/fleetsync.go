@@ -240,6 +240,11 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 		return a.syncCheck(c.json, rep, drift, stdout)
 	}
 	if len(drift) == 0 {
+		// the beat records a cleanup cut short still owes, whose rows are gone
+		if err := st.FinishDrops(ctx); err != nil {
+			fmt.Fprintf(stderr, "%s %s: the fleet table matches the inventory; deleting the beat records of members removed before: %s\n", prog, name, oneline.WithRemedy(oneline.Escape(err.Error()), prog+" "+name))
+			return 2
+		}
 		return a.syncNothing(c.json, rep, stdout)
 	}
 	step := store.FleetStep(sprint.FleetReq{Op: "sync", Sync: want, Machines: machines, Who: c.actor})
