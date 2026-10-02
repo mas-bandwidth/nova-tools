@@ -133,8 +133,8 @@ func ReadFrame(path string) (Frame, error) {
 const JobName = "JOB.md"
 
 // ReadTitle begins the first line of a read's JOB.md in every profile, and of no work's: a
-// brief that speaks to its readers names it, so a work card never takes itself for a read (a
-// work card of the 5000-card load test, 2026-10-01, ended "nothing to do: no PR to review").
+// brief that speaks to its readers names it, so a work card never takes itself for a read
+// and stops with nothing to do.
 const ReadTitle = "# JOB: read"
 
 // PushedName is the file in the job directory the git shim records each push in:
