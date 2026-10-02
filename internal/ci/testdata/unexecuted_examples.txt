@@ -7,7 +7,7 @@
 # `help` banner under cmd/ (both listed as `example: <line>`), is either executed
 # by a test through the comparator (compared_examples.txt) or listed here.
 #
-# THE LIST ONLY SHRINKS. TestIssue2218 compares it with its copy at the change's
+# THE LIST ONLY SHRINKS. TestPlatformsMatchCILegsAndUnexecutedExamplesOnlyShrink compares it with its copy at the change's
 # base: a row the change adds fails the class test on the PR that adds it, and an
 # entry that matches no real example is a stale entry and a red run. Remove an
 # entry by moving it to compared_examples.txt once a test executes it.
