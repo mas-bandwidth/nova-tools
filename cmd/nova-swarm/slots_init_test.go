@@ -45,8 +45,9 @@ func TestSlotsInitMakesAStoreTheLeaseCodeCanRead(t *testing.T) {
 	got, want := string(raw), "capacity\t1\nreserve\t0\nswarm-space\t1\n"
 	assert.Equal(t, want, got, "shares.tsv is\n%q\nwant\n%q", got, want)
 	fi, err := os.Stat(filepath.Join(store, "slots"))
-	assert.NoError(t, err, "init makes the slots/ directory a lease is written into: %v", err)
-	assert.True(t, fi.IsDir(), "init makes the slots/ directory a lease is written into: %v", err)
+	if assert.NoError(t, err, "init makes the slots/ directory a lease is written into: %v", err) {
+		assert.True(t, fi.IsDir(), "init makes the slots/ directory a lease is written into: %v", err)
+	}
 }
 
 // The store init writes is honoured by the lease code: one seat means one lease, and the

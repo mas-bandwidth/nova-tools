@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -107,11 +108,15 @@ func TestSealDryRunPlansWhatTheRealRunThenTakes(t *testing.T) {
 	got := readMaybe(t, f.sopsStdin)
 	assert.Empty(t, got, "the dry run encrypted; sops stdin held:\n%s", got)
 	for _, arg := range strings.Split(readMaybe(t, f.sopsArgs), "\n") {
-		assert.NotEqual(t, "-e", arg, "the dry run ran a sops encrypt:\n%s", readMaybe(t, f.sopsArgs))
+		if arg == "-e" {
+			assert.Fail(t, fmt.Sprintf("the dry run ran a sops encrypt:\n%s", readMaybe(t, f.sopsArgs)))
+		}
 	}
 	for _, write := range []string{"checkout", "add", "commit", "push", "pull"} {
 		for _, arg := range strings.Split(readMaybe(t, f.gitArgs), "\n") {
-			assert.NotEqual(t, write, arg, "the dry run ran git %s:\n%s", write, readMaybe(t, f.gitArgs))
+			if arg == write {
+				assert.Fail(t, fmt.Sprintf("the dry run ran git %s:\n%s", write, readMaybe(t, f.gitArgs)))
+			}
 		}
 	}
 	{
@@ -218,7 +223,9 @@ func TestSeatInjectDryRunPlansWhatTheRealRunThenTakes(t *testing.T) {
 	}
 	for _, write := range []string{"checkout", "add", "commit", "push", "pull"} {
 		for _, arg := range strings.Split(readMaybe(t, f.gitArgs), "\n") {
-			assert.NotEqual(t, write, arg, "the dry run ran git %s:\n%s", write, readMaybe(t, f.gitArgs))
+			if arg == write {
+				assert.Fail(t, fmt.Sprintf("the dry run ran git %s:\n%s", write, readMaybe(t, f.gitArgs)))
+			}
 		}
 	}
 
