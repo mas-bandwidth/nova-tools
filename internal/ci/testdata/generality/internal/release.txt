@@ -1,12 +1,6 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 23
-internal/release/adopt.go:emma 1
-internal/release/adopt.go:glenn 1
-internal/release/adopt.go:hulk 2
-internal/release/adopt.go:johnny 4
-internal/release/adopt.go:rowan 1
+# ceiling: 17
 internal/release/adopt.go:space 2
-internal/release/adopt.go:studio 6
 internal/release/adopt.go:vision 1
 internal/release/build.go:hulk 2
 internal/release/build.go:studio 3
