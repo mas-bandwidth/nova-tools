@@ -238,3 +238,17 @@ loops:
 	_, err = LoadFixture(filepath.Join(dir, "absent.yml"))
 	assert.ErrorContains(t, err, "--fixture")
 }
+
+// A fixture that is not the fixture's shape is refused in one line naming
+// what it wants, with the YAML reader's words quoted, never its newlines.
+func TestAFixtureOfTheWrongShapeIsRefusedInOneLine(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "fx.yml")
+	require.NoError(t, os.WriteFile(path, []byte("- one\n- two\n"), 0o600))
+	_, err := LoadFixture(path)
+	require.Error(t, err)
+	msg := err.Error()
+	assert.NotContains(t, msg, "\n")
+	assert.Contains(t, msg, "is not the fixture's shape: \"yaml: unmarshal errors: line 1: cannot unmarshal !!seq into config.fixture\"")
+	assert.Contains(t, msg, "want a mapping with machines")
+}

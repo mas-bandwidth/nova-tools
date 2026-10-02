@@ -283,3 +283,29 @@ func TestApplyWritesRoutesAndReachesParity(t *testing.T) {
 	assert.Equal(t, "true", view["reasoning_as_output"])
 	assert.Equal(t, "metered", view["billing"])
 }
+
+// A route a tier's array names is held, as a row a ref names is: removing it
+// would leave the deal an array naming a route that is not there, which set
+// itself refuses (checkTierRoutes). The remove names the tier; once the array
+// lets it go, the route goes.
+func TestARouteATierNamesIsHeld(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := NewMem()
+	route, _ := Lookup(KindRoute)
+	for _, name := range []string{"flash-a", "flash-b"} {
+		row, err := route.NewRow(name, map[string]string{"tier": "flash", "provider": "p", "model": "m", "deadline": "60"})
+		require.NoError(t, err)
+		_, err = st.Insert(ctx, KindRoute, row, "a1")
+		require.NoError(t, err)
+	}
+	_, _, err := st.Update(ctx, KindTier, "flash", map[string]string{"routes": "flash-b,flash-a,flash-b"}, "a1")
+	require.NoError(t, err)
+	_, err = st.Delete(ctx, KindRoute, "flash-a", "a1")
+	assert.ErrorIs(t, err, ErrReferenced)
+	assert.ErrorContains(t, err, "route flash-a is in the --routes of tier flash")
+	_, _, err = st.Update(ctx, KindTier, "flash", map[string]string{"routes": "flash-b"}, "a1")
+	require.NoError(t, err)
+	_, err = st.Delete(ctx, KindRoute, "flash-a", "a1")
+	assert.NoError(t, err)
+}

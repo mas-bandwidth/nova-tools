@@ -292,7 +292,7 @@ var Kinds = []*Kind{
 			{Name: cardcost.FieldInputLong, Type: TypeDecimal, Help: "USD per million input tokens of a request above --" + cardcost.FieldLongContext},
 			{Name: cardcost.FieldOutputLong, Type: TypeDecimal, Help: "USD per million output tokens of a request above --" + cardcost.FieldLongContext},
 			{Name: cardcost.FieldRequest, Type: TypeDecimal, Help: "USD per request, on top of the tokens; empty when there is no fee"},
-			{Name: cardcost.FieldBilling, Type: TypeEnum, Enum: cardcost.Billings, Default: cardcost.BillingMetered, Help: "how it is paid: " + strings.Join(cardcost.Billings, " or ") + " (the default, metered: per token; plan: a subscription, so the predicted cost is the metered price of the same tokens)"},
+			{Name: cardcost.FieldBilling, Type: TypeEnum, Enum: cardcost.Billings, Default: cardcost.BillingMetered, Help: "how it is paid: metered (the default: per token) or plan (a subscription, so the predicted cost is the metered price of the same tokens)"},
 			{Name: cardcost.FieldGateway, Type: TypeDecimal, Help: "the percent a gateway adds on top of the prices, a decimal like 5.5; empty when none"},
 			{Name: cardcost.FieldSource, Type: TypeText, Help: "where the prices were read, free text (a URL)"},
 			{Name: cardcost.FieldAsOf, Type: TypeText, Help: "the date the prices were read, YYYY-MM-DD"},
