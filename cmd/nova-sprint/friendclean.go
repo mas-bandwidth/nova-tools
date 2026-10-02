@@ -325,11 +325,13 @@ func (cl *friendClean) dirty(dir string) string {
 	if _, err := g("rev-parse", "-q", "--verify", "refs/stash"); err == nil {
 		return "a stash"
 	}
-	log := []string{"log", "--oneline", "-1", "--branches", "--not", "--remotes"}
+	// HEAD joins the revisions only when it names a commit (an unborn HEAD would fail the
+	// log), and before --not, which negates every revision after it
+	log := []string{"log", "--oneline", "-1", "--branches"}
 	if _, err := g("rev-parse", "-q", "--verify", "HEAD"); err == nil {
-		log = []string{"log", "--oneline", "-1", "HEAD", "--branches", "--not", "--remotes"}
+		log = append(log, "HEAD")
 	}
-	switch out, err := g(log...); {
+	switch out, err := g(append(log, "--not", "--remotes")...); {
 	case err != nil:
 		return "git log failed: " + oneline.Err(err)
 	case out != "":
