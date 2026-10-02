@@ -448,10 +448,11 @@ and it is the coordinator's decision, receipted.
   table match nova-config's machine rows, in one step, and types no machine name
   and no width. The inventory is read through the config package by the config
   tool's own address rules (`--pg`, else `NOVA_PG_DSN`, the password from the
-  variable `NOVA_PG_PASSWORD_ENV` names; the friends' beats from the sprint's
-  Redis). A machine is a member when it has room: its width is its `slots` less
-  the friend slots charged to it (`nova-config machine width`), and a machine
-  with `slots` 0, or whose friends take the whole ceiling, is none. The sync
+  variable `NOVA_PG_PASSWORD_ENV` names). A machine's width is its row's
+  `width` field, set directly (`nova-config machine set <m> --width <n>`;
+  `nova-config machine width` prints it); no friend row, no beat and not the
+  machine's `slots` take part. A machine with width 1 or more is a member, and
+  one with width 0 is none. The sync
   writes only what differs: a member the table lacks is added at its width,
   down until it beats (presence brings it up, as for `fleet up`); a member whose
   width differs has its width set; a row the inventory no longer names is held,

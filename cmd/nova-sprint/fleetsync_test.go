@@ -19,6 +19,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // inventory is nova-config's in-memory store, and the fleet sync's reader
@@ -31,16 +33,17 @@ type inventory struct {
 
 func newInventory(t *testing.T) *inventory { return &inventory{t: t, m: config.NewMem()} }
 
-// set makes a machine row with these slots, or changes it.
-func (i *inventory) set(name string, slots int) {
+// set makes a machine row with this width, or changes it. Its slots are a
+// number unlike any width, so a sync that read them would be seen.
+func (i *inventory) set(name string, width int) {
 	i.t.Helper()
 	ctx := context.Background()
 	if _, found, _ := i.m.Get(ctx, config.KindMachine, name); found {
-		_, _, err := i.m.Update(ctx, config.KindMachine, name, map[string]string{"slots": fmt.Sprint(slots)}, "t")
+		_, _, err := i.m.Update(ctx, config.KindMachine, name, map[string]string{"width": fmt.Sprint(width)}, "t")
 		require.NoError(i.t, err)
 		return
 	}
-	row := config.Row{Name: name, Fields: map[string]string{"user": "u", "seat": "s", "slots": fmt.Sprint(slots), "runners": "0"}}
+	row := config.Row{Name: name, Fields: map[string]string{"user": "u", "seat": "s", "slots": "160", "runners": "0", "width": fmt.Sprint(width)}}
 	_, err := i.m.Insert(ctx, config.KindMachine, row, "t")
 	require.NoError(i.t, err)
 }
@@ -52,11 +55,11 @@ func (i *inventory) remove(name string) {
 }
 
 func (i *inventory) fn() inventoryFn {
-	return func(ctx context.Context, pg, redisAddr string) ([]config.MachineWidth, error) {
+	return func(ctx context.Context, pg string) ([]config.MachineWidth, error) {
 		if i.fail != nil {
 			return nil, i.fail
 		}
-		return config.Widths(ctx, i.m, nil)
+		return config.Widths(ctx, i.m)
 	}
 }
 
@@ -106,14 +109,14 @@ func (ta *testApp) dealIndex() string {
 }
 
 // TestFleetSyncBringsTheInventoryUpAtItsWidths: a member the inventory names
-// and the fleet lacks is added at its width (slots less the friends'), down
+// and the fleet lacks is added at its width (the row's width field), down
 // until it beats; the tick, as for fleet up, brings it up.
 func TestFleetSyncBringsTheInventoryUpAtItsWidths(t *testing.T) {
 	t.Parallel()
 	ta, inv := syncApp(t)
 	inv.set("m1", 4)
 	inv.set("m2", 2)
-	inv.set("m3", 0) // no slots: no member
+	inv.set("m3", 0) // width 0: no member
 	out := ta.ok("fleet sync")
 	for _, want := range []string{"MOVED m1 added, down until it beats width=4", "MOVED m2 added, down until it beats width=2", "FLEET-SYNC OK moved=2"} {
 		assert.Contains(t, out, want, "fleet sync lacks %q", want)
@@ -129,6 +132,27 @@ func TestFleetSyncBringsTheInventoryUpAtItsWidths(t *testing.T) {
 	require.Equal(t, sprint.Up, rows["m1"]["status"], "presence did not bring the synced members up: %v", rows)
 	require.Equal(t, sprint.Up, rows["m2"]["status"], "presence did not bring the synced members up: %v", rows)
 	ta.clean()
+}
+
+// TestFleetSyncTakesTheWidthAsSet: the width the row carries is the width the
+// fleet table gets. The machine's slots are not it, and a friend row carrying
+// slots takes nothing off it: no friend is charged to a machine, and no Redis
+// is dialled to find where one runs.
+func TestFleetSyncTakesTheWidthAsSet(t *testing.T) {
+	t.Parallel()
+	ta, inv := syncApp(t)
+	inv.set("m1", 32)
+	inv.set("m2", 16)
+	for _, f := range []string{"f1", "f2", "f3", "f4"} {
+		_, err := inv.m.Insert(context.Background(), config.KindFriend, config.Row{Name: f, Fields: map[string]string{"slots": "32", "tiers": "flash", "roles": "builder"}}, "t")
+		require.NoError(t, err)
+	}
+	_, _, err := inv.m.Update(context.Background(), config.KindFleet, config.KindFleet, map[string]string{"coordinator": "m2"}, "t")
+	require.NoError(t, err)
+	ta.ok("fleet sync")
+	rows := ta.fleetRows()
+	assert.Equal(t, "32", rows["m1"]["width"], "slots 160 and four friends of 32: %v", rows)
+	assert.Equal(t, "16", rows["m2"]["width"], "slots 160 and the coordinator machine: %v", rows)
 }
 
 // TestFleetSyncSetsAChangedWidthAndNothingElse: a width that differs is set;
@@ -168,7 +192,7 @@ func TestFleetSyncSetsAChangedWidthAndNothingElse(t *testing.T) {
 }
 
 // TestFleetSyncHoldsAMemberTheInventoryDropsAndRedealsItsCards: a machine
-// gone from the inventory (its row removed, or its slots 0) is held, never
+// gone from the inventory (its row removed, or its width 0) is held, never
 // deleted, and its unfinished cards go to the members that stay.
 func TestFleetSyncHoldsAMemberTheInventoryDropsAndRedealsItsCards(t *testing.T) {
 	t.Parallel()
@@ -193,9 +217,9 @@ func TestFleetSyncHoldsAMemberTheInventoryDropsAndRedealsItsCards(t *testing.T) 
 	require.Equal(t, "0", rows["m2"]["ready"], "m2 still holds cards: %v", rows["m2"])
 	require.Equal(t, "0", rows["m2"]["working"], "m2 still holds cards: %v", rows["m2"])
 	require.Equal(t, sprint.Up, rows["m1"]["status"], "m1 is not up: %v", rows["m1"])
-	// its slots at 0 is the same as gone: a machine that returns at 0 stays held
+	// its width at 0 is the same as gone: a machine that returns at 0 stays held
 	inv.set("m2", 0)
-	require.Contains(t, ta.ok("fleet sync"), "nothing to do", "a row with no slots is already held")
+	require.Contains(t, ta.ok("fleet sync"), "nothing to do", "a row with width 0 is already held")
 	ta.clean()
 }
 
@@ -328,7 +352,7 @@ func TestFleetSyncIsTheCoordinatorsAlone(t *testing.T) {
 }
 
 // TestSyncAfterSyncIsSync is the property: over many random inventories (a
-// machine added, dropped, widened, narrowed or given no slots), a sync leaves
+// machine added, dropped, widened, narrowed or given width 0), a sync leaves
 // the fleet table matching the inventory (every member at its width, every
 // other row held), a second sync writes nothing, and the check is clean.
 func TestSyncAfterSyncIsSync(t *testing.T) {
@@ -358,7 +382,7 @@ func TestSyncAfterSyncIsSync(t *testing.T) {
 			ta.ok("add --stream s1 --count 5")
 		}
 		ta.ok("fleet sync")
-		ws, _ := inv.fn()(context.Background(), "", "")
+		ws, _ := inv.fn()(context.Background(), "")
 		rows := ta.fleetRows()
 		for _, w := range ws {
 			switch {

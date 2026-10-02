@@ -350,3 +350,34 @@ func TestLoopArgvKeepsHTMLCharactersReadable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `["/bin/sh","-c","a && b > c"]`, row.Fields["argv"])
 }
+
+// A loop's command runs with its width field: above 0 it is the value of the
+// argv's last --width (any spelling, before any --), appended before the
+// -- (or at the end) when the argv has none; 0 leaves the argv as written, so
+// a row that carries --width in its argv and no field keeps it (LoopCommand).
+func TestALoopCommandRunsWithItsWidthField(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		argv  []string
+		width int
+		want  []string
+	}{
+		{"width 0 keeps the argv", []string{"nova-swarm", "member", "--width", "8"}, 0, []string{"nova-swarm", "member", "--width", "8"}},
+		{"the field replaces the argv's value", []string{"nova-swarm", "member", "--reader", "--width", "8", "--root", "r"}, 16, []string{"nova-swarm", "member", "--reader", "--width", "16", "--root", "r"}},
+		{"the last spelling is the one replaced", []string{"p", "-width", "1", "--width=2", "-width=3"}, 4, []string{"p", "-width", "1", "--width=2", "-width=4"}},
+		{"a single-dash pair", []string{"p", "-width", "1", "-x"}, 4, []string{"p", "-width", "4", "-x"}},
+		{"appended when the argv has none", []string{"nova-swarm", "member", "--reader"}, 5, []string{"nova-swarm", "member", "--reader", "--width", "5"}},
+		{"inserted before --", []string{"p", "--a", "--", "--width", "9"}, 3, []string{"p", "--a", "--width", "3", "--", "--width", "9"}},
+		{"the program word is never read as a flag", []string{"--width", "x"}, 2, []string{"--width", "x", "--width", "2"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			in := append([]string{}, tc.argv...)
+			assert.Equal(t, tc.want, LoopCommand(tc.argv, tc.width))
+			assert.Equal(t, in, tc.argv, "LoopCommand changed its argument")
+		})
+	}
+}

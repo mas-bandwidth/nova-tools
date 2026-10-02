@@ -150,6 +150,32 @@ func (p *PG) Version(ctx context.Context) (int, error) {
 	return int(v.Int64), nil
 }
 
+// Applied is the ledger: every version recorded in config.schema_migrations,
+// in order, none before the first migrate. migrate --dry-run prints it, so a
+// version missing below the greatest is seen rather than assumed.
+func (p *PG) Applied(ctx context.Context) ([]int, error) {
+	if v, err := p.Version(ctx); err != nil || v == 0 {
+		return nil, err
+	}
+	rows, err := p.db.QueryContext(ctx, `SELECT version FROM config.schema_migrations ORDER BY version`)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: read the migration ledger: %w", err)
+	}
+	defer rows.Close()
+	var out []int
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("postgres: read the migration ledger: %w", err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: read the migration ledger: %w", err)
+	}
+	return out, nil
+}
+
 // Migrate applies every embedded migration the ledger lacks, each in its own
 // transaction with its ledger row, and returns the version before, the
 // version after and the versions applied. Running it twice applies nothing
@@ -349,28 +375,6 @@ func listRows(ctx context.Context, q queryer, kind string) ([]Row, error) {
 		return nil, fmt.Errorf("postgres: list %s: %w", kind, err)
 	}
 	return out, nil
-}
-
-// MachinesAndFleet reads every machine row and the fleet row in one
-// read-only repeatable-read transaction: both come from one snapshot, so a
-// write between them cannot show one revision of the machines and another of
-// the fleet row.
-func (p *PG) MachinesAndFleet(ctx context.Context) ([]Row, Row, error) {
-	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
-	if err != nil {
-		return nil, Row{}, fmt.Errorf("postgres: begin read: %w", err)
-	}
-	// ignored: a read-only transaction; the rollback ends it and has nothing to undo
-	defer func() { _ = tx.Rollback() }()
-	machines, err := listRows(ctx, tx, KindMachine)
-	if err != nil {
-		return nil, Row{}, err
-	}
-	fleet, _, err := getRow(ctx, tx, KindFleet, KindFleet)
-	if err != nil {
-		return nil, Row{}, err
-	}
-	return machines, fleet, nil
 }
 
 // record appends the history row inside the write's transaction.

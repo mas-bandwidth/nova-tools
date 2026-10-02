@@ -21,7 +21,8 @@ Three things, each a flag or a variable, none a password on a line:
 | `--pg <dsn>` | `NOVA_PG_DSN` | `postgres://nova_config@space:5432/nova`, no password in it |
 | | `NOVA_PG_PASSWORD_ENV` | the NAME of the variable holding the password (`NOVA_PG_PASSWORD` when unset) |
 | `--redis <addr>` | `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat | the store apply writes |
-| `--as <friend>` | `NOVA_FRIEND` | who is making the change; every write records it |
+| `--as <name>` | `NOVA_FRIEND` | who is making the change; every write records it |
+| `--file <path>` | | a local JSON file in PostgreSQL's place, to try the tool with no database; exclusive with `--pg` |
 
 The password is sealed the way the Redis one is: `nova-secrets exec --only
 NOVA_PG_PASSWORD -- nova-config ...` leaves it in the environment, where a
@@ -33,13 +34,24 @@ wants.
 
 ## First run
 
-Nothing below needs a store:
+Nothing below needs a database: `--file <path>` keeps the rows in a local
+JSON file in PostgreSQL's place, with the same kinds, refusals, history and
+revisions (the strict in-memory store the tests hold to the store contract,
+saved after every write). It is never the fleet's store.
 
 ```
-nova-config kinds
-nova-config migrate --print
+nova-config migrate --file try.json
+nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
+nova-config machine set m1 --width 6 --as a1 --file try.json
+nova-config machine list --file try.json
+nova-config machine history m1 --file try.json
 ```
 
+Every verb's `-h` prints its flags (the ones `add` requires marked
+`required;`), its effect (an inspection, a store write, or apply's delivery
+to Redis) and a worked example that runs on the same file. `--dry-run` on
+`add`, `set`, `remove`, `apply` and `migrate` prints what the write would do
+and writes nothing; `--json` prints one JSON object of the same result.
 `kinds` prints one line per kind with its table, its fields and the fields
 `add` requires; `migrate --print` lists the migrations this binary carries.
 The executable transcript is in [TESTS.md](../TESTS.md#nova-config).
@@ -102,24 +114,26 @@ field and refuses a value outside its type, naming every problem in one line.
 
 A machine of the fleet, named by its tailnet host: `ssh <name>` reaches it
 ("All fleet machines *must* be on the tailnet. This is a hard requirement."),
-so there is no address field. The row is exactly the four declared facts
+so there is no address field. The row is exactly the five declared facts
 something reads, "not invented rando stuff".
 
 ```
-nova-config machine add hulk --user gaffer --seat swarm-hulk --slots 40 --runners 0 --as rowan
+nova-config machine add hulk --user gaffer --seat swarm-hulk --slots 40 --runners 0 --width 32 --as rowan
 CONFIG ADD kind=machine name=hulk rev=1
-nova-config machine add studio --user glenn --seat studio --slots 64 --runners 1 --as rowan
+nova-config machine add studio --user glenn --seat studio --slots 64 --runners 1 --width 16 --as rowan
 CONFIG ADD kind=machine name=studio rev=2
 nova-config machine list
-MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0
-MACHINE name=studio user=glenn seat=studio slots=64 runners=1
+MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=32
+MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=16
 CONFIG LIST kind=machine rows=2
 ```
 
 `--user` is the login the plays and the seals use on it; `--seat` its
-nova-secrets seat; `--slots` how many cards it may run at once, the machine
-ceiling (`machine:<m>:ceiling`; 0 runs none); `--runners` how many CI
-runners it hosts (0, the default, hosts none).
+nova-secrets seat; `--slots` the machine ceiling apply writes
+(`machine:<m>:ceiling`), which the friends' desired slots must fit under, and
+not the sprint's width; `--runners` how many CI runners it hosts (0, the
+default, hosts none); `--width` the most work cards the sprint's member on it
+runs at once (0, the default, is no member).
 
 Measured facts (os, arch, cores, memory) are never typed: "I like measured
 facts coming live ... It's more robust." With a Redis named (`--redis`, or
@@ -129,27 +143,39 @@ beat does not carry yet and `beat=none` for a machine that has never beaten:
 
 ```
 nova-config machine list --redis space:6380
-MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
-MACHINE name=studio user=glenn seat=studio slots=64 runners=1 beat=none
+MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=32 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
+MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=16 beat=none
 CONFIG LIST kind=machine rows=2
 ```
 
-**Width and its own name.** One ceiling per machine is shared by the friends
-and the sprint, so a machine's room for the sprint's member is its `slots`
-less the slots of the friends charged to it (her beat's machine, else the
-fleet row's coordinator machine; with no friend beats on the store, every
-friend is charged to the coordinator machine). `machine width` prints it; a
-machine with a width of 1 or more is a member of the sprint's fleet. The friends' machines come from their beats, so a
-Redis is named (`--redis`, `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`) whenever a
-friend row carries slots; with none, the width is the ceiling and no Redis is
-opened:
+**Width and its own name.** A machine's `width` is the sprint member's width
+on it, set directly (`machine set <m> --width <n>`) and used as set:
+`machine width` prints it, and `nova-sprint fleet sync` moves it to the fleet
+table. Nothing else takes part (not its `slots`, not any friend row, no
+Redis). A machine with a width of 1 or more is a member of the sprint's fleet;
+width 0 is not:
 
 ```
-nova-config machine width m1 --redis r:6379
-CONFIG WIDTH machine=m1 width=5 slots=8 charged=3 member=true
-nova-config machine width m1 --redis r:6379 --json
-{"machine":"m1","slots":8,"charged":3,"width":5,"member":true}
+nova-config machine width m1
+CONFIG WIDTH machine=m1 width=32 member=true
+nova-config machine width m1 --json
+{"machine":"m1","width":32,"member":true}
 ```
+
+**Migrating to a set width.** Before migration 0012 the width was derived: a
+machine's `slots` less the `slots` of the friends charged to it, a friend
+charged to the machine her live beat named, else to the fleet row's
+coordinator machine. 0012 adds `width` and fills it with that rule's
+beat-free part, since a migration reads no beats: every friend's `slots` are
+charged to the coordinator machine (never below 0), every other machine gets
+its `slots`. The fill is the old width exactly when no friend with slots had
+a beat naming another machine. To see any machine where it is not, compare
+with the fleet table the last sync wrote under the old rule, before syncing
+again: `nova-sprint fleet sync --check` prints each width that differs and
+writes nothing; set each one back with `nova-config machine set <m> --width
+<n> --as <name>`. Before any migrate, `nova-config migrate --dry-run` prints
+the ledger: each migration applied, pending (the ones migrate will apply) or
+missing (below the greatest recorded, which migrate will not apply).
 
 `machine self` prints this machine's own name, so a process learns it and types
 none: `NOVA_MACHINE`, else the tailnet's name for the host when a tailnet is
@@ -200,10 +226,9 @@ CONFIG HISTORY kind=friend name=rowan changes=2
 ```
 
 `--slots` is her desired slots; the friends' slots on a machine fit under
-its ceiling together, and are charged to it only while each friend is awake
-(the bench's share on that machine is the remainder, live); she is charged
+its ceiling together (apply refuses `CEILING` otherwise); she is charged
 to the machine her beat reports (or the fleet's coordinator machine when
-she has no beat);
+she has no beat); her slots take nothing off any machine's `width`;
 `--tiers` is a comma list of flash, frontier, pro, which she can do (the
 deal's tier filter); `--roles` is a comma list of builder, may-hold, reader.
 
@@ -227,21 +252,34 @@ a JSON array, the program first, so a word may hold a blank and nothing is
 split by a shell; a secret is never in it, it goes by name in `--keys`:
 
 ```
-nova-config loop add member-m1 --machine m1 --argv '["/opt/bin/nova-swarm","member","--width","2"]' --keepalive true --seat s-m1 --keys A_KEY,B_KEY --width 2 --as a1
-CONFIG ADD kind=loop name=member-m1 rev=12
+nova-config loop add reader-m1 --machine m1 --argv '["/opt/bin/nova-swarm","member","--reader"]' --keepalive true --seat s-m1 --keys A_KEY,B_KEY --width 2 --as a1
+CONFIG ADD kind=loop name=reader-m1 rev=12
 nova-config loop add refresh-m1 --machine m1 --argv '["/opt/bin/refresh","--once"]' --every 60 --as a1
 CONFIG ADD kind=loop name=refresh-m1 rev=13
 nova-config loop list
-LOOP name=member-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--width","2"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=2 enabled=true
+LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=2 enabled=true
 LOOP name=refresh-m1 machine=m1 argv=["/opt/bin/refresh","--once"] seat=- keys=- every=60 keepalive=false width=0 enabled=true
 CONFIG LIST kind=loop rows=2
+nova-config loop set reader-m1 --width 16 --as a1
+CONFIG SET kind=loop name=reader-m1 rev=14 changed=width
+nova-config loop show reader-m1
+LOOP name=reader-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--reader"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=16 enabled=true created=2026-09-30T02:00:00Z updated=2026-09-30T02:10:00Z command=["/opt/bin/nova-swarm","member","--reader","--width","16"]
 nova-config machine show m1
-MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 created=2026-09-30T02:00:00Z updated=2026-09-30T02:00:00Z loops=member-m1,refresh-m1
+MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 created=2026-09-30T02:00:00Z updated=2026-09-30T02:00:00Z loops=reader-m1,refresh-m1
 ```
 
 `--every <seconds>` runs it periodically and `--keepalive true` keeps a
-long-running one up; a loop has exactly one of the two. `--width` is a member
-loop's child cap (0 for any other). `--enabled false` writes the unit and
+long-running one up; a loop has exactly one of the two. `--width` is the
+`--width` the command runs with, set as one value and never by editing the
+argv: above 0 it replaces the argv's own `--width` (the last one before any
+`--`), or is appended when the argv has none; 0, the default, runs the argv
+as written. `loop show` prints the command the unit runs as `command=`, and
+the inventory hands the plays that command as the loop's `argv`
+(`LoopCommand`, `internal/config/kind.go`). It is a reader loop's width; a
+work member's width is its machine row's (`machine set <m> --width <n>`, moved
+to the fleet table by `nova-sprint fleet sync`), so its loop leaves the field
+0. Migration 0013 set each existing row's field to the `--width` its argv
+carried (0 when none), so no command changed. `--enabled false` writes the unit and
 does not start it. `--keys` needs a `--seat`. Its log is
 `~/nova-bench/loops/<name>.log`, derived from the name and never typed. A
 machine a loop names cannot be removed until the loop is.
@@ -311,21 +349,24 @@ A change of prices is a row in the route's history like any other set
 
 ### Refusals
 
-One stderr line each, naming the next step:
+One stderr line each, `nova-config <verb> REFUSED: <what>; run: <next>`:
 
 ```
-nova-config machine add: machine studio exists; run: nova-config machine set studio --<field> <value>
-nova-config fleet set: --store space names no machine row; run: nova-config machine list
-nova-config friend set: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...
-nova-config machine remove: machine studio is the --coordinator of the fleet; run: nova-config machine list
-nova-config friend remove: friend rowan is the --coordinator of the sprint; run: nova-config friend list
-nova-config fleet set: fleet takes no name: it is one row; want fleet set --<field> <value> ...; run: nova-config help
-nova-config loop set: loop refresh-m1 has --every 60 and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false; run: nova-config loop show refresh-m1
+nova-config machine add REFUSED: machine m1 exists; run: nova-config machine set m1 --<field> <value>
+nova-config fleet set REFUSED: --store m9 names no machine row; run: nova-config machine list
+nova-config friend set REFUSED: friend f9 not found; run: nova-config friend add f9 --<field> <value> ...
+nova-config machine remove REFUSED: machine m1 is the --coordinator of the fleet; run: nova-config machine list
+nova-config friend remove REFUSED: friend f1 is the --coordinator of the sprint; run: nova-config friend list
+nova-config route remove REFUSED: route flash-a is in the --routes of tier flash; set it out of the list first (tier set flash --routes <the rest>); run: nova-config route list
+nova-config fleet set REFUSED: fleet takes no name: it is one row; want fleet set --<field> <value> ...; run: nova-config fleet set -h
+nova-config loop set REFUSED: loop refresh-m1 has --every 60 and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false; run: nova-config loop show refresh-m1
+nova-config machine list REFUSED: unknown flag --jsno (nearest: --json); this verb takes --file, --json, --pg, --redis; run: nova-config machine list -h
 ```
 
 Exit 1 is the store saying no; exit 2 is an invocation that could not run
 (a missing flag, a bad value, a store that did not answer), and its line
-ends `run: nova-config help`.
+ends with the verb's own help, `run: nova-config <verb> -h`. A remedy
+repeats the `--pg` or `--file` the run was given, so it pastes.
 
 ## Apply: Redis as a copy
 
@@ -338,7 +379,7 @@ CHECK SET kind=fleet name=fleet changed=store,coordinator
 CONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=3 applied=0
 CHECK ADD kind=friend name=rowan
 CONFIG CHECK kind=friend add=1 set=0 remove=0 rev=5 applied=0
-CHECK SET kind=sprint name=sprint changed=coordinator,reader_tier
+CHECK SET kind=sprint name=sprint changed=coordinator
 CONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0
 CONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0
 CONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0
@@ -350,7 +391,7 @@ APPLY SET kind=fleet name=fleet changed=store,coordinator
 CONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=3 ms=1
 APPLY ADD kind=friend name=rowan
 CONFIG APPLY kind=friend add=1 set=0 remove=0 rev=5 ms=6
-APPLY SET kind=sprint name=sprint changed=coordinator,reader_tier
+APPLY SET kind=sprint name=sprint changed=coordinator
 CONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms=1
 CONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0
 CONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0
@@ -367,7 +408,7 @@ coordinator machine; the friend the sprint row names gets the `coordinator`
 role in Redis on top of her row's roles, so a handover (`sprint set
 --coordinator stella`, then `apply`) is two `SET ... changed=roles`, hers
 first. It never touches her logins or wake path: they are her presence's.
-For the sprint row, `sprint:coordinator` and `sprint:reader_tier` (the tier read cards' routes are drawn from, pro unless set). For a loop, the hash `loop:<l>`
+For the sprint row, `sprint:coordinator`. For a loop, the hash `loop:<l>`
 with every field, its log path, `rev` and `at`, and its name in the set
 `loops`: what the plays read to render one unit per loop. For a route, the
 hash `route:<r>` with every field, `rev` and `at`, and its name in the set
