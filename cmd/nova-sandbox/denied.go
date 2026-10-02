@@ -59,7 +59,7 @@ import (
 var denialStat = os.Stat
 
 // maxDenied is how many SANDBOX DENIED lines a run prints before one line stands for the
-// rest — rule 16 for a list. A command that fails on its first syscall can trip
+// rest. A command that fails on its first syscall can trip
 // hundreds, and a wall of them is not a remedy.
 const maxDenied = 10
 

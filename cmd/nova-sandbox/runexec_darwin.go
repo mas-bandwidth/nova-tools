@@ -27,7 +27,7 @@ import (
 // hands back the two things the supervisor needs: the channel the status arrives on, and
 // the function that signals the WHOLE group.
 func startInOwnGroup(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
-	// Rule 2: no root, the same as the bare form. The wall is sized for an unprivileged user
+	// No root, the same as the bare form. The wall is sized for an unprivileged user
 	// and says nothing about a root child, and a root child could delete far more than
 	// its own volume.
 	if os.Geteuid() == 0 {

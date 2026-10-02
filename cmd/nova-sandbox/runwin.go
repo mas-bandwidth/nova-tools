@@ -116,7 +116,7 @@ type winPlacer interface {
 	Exists(dir string) (bool, error)
 
 	// MakeScratch creates <scratch>/nova-<n> and the two directories the place is born
-	// with -- work/ (the working directory) and home/ (rule 9's HOME) -- and grants the
+	// with -- work/ (the working directory) and home/ (the child's HOME) -- and grants the
 	// AppContainer SID read+write on it and on nothing else the run created.
 	MakeScratch(dir string) error
 
@@ -174,7 +174,7 @@ var (
 	// runWinReadExit is how the host reads W10's status file. A test replaces it; the
 	// production body reads the file the guest wrote in the mapped writable folder.
 	runWinReadExit = readWSBExit
-	// runWinWall is rule 1 on windows: OS-ENFORCED OR REFUSED. The PLACE is built (this
+	// runWinWall is OS-ENFORCED OR REFUSED on windows. The PLACE is built (this
 	// file); the WALL is the AppContainer body of the section above, and it is not. A place
 	// without a wall is a directory that gets deleted, which is hygiene and not containment,
 	// so the verb refuses under --place job until the wall lands -- and the refusal names the
@@ -210,7 +210,7 @@ func runDisposableWindows(f runFlags, deadline time.Duration, stdin io.Reader, s
 			"%s names WSL, and WSL is never the answer on windows -- not as the wall, not as the place, not as a fallback: containment that only holds inside WSL is containment on another machine. Run the command itself, or refuse", oneline.Escape(bad))
 	}
 
-	// Rule 1, before anything is made: a place with no wall is not this verb. The check is
+	// Before anything is made: a place with no wall is not this verb. The check is
 	// here rather than inside Start so that a machine with no AppContainer body never gets a
 	// scratch directory made on it and removed again for nothing.
 	if f.place == placeJob {
@@ -273,7 +273,7 @@ func runInWinPlace(f runFlags, dir string, job winJob, deadline time.Duration, s
 	// The wall: the scratch is the ONE --write (W5), so the only place on this machine the
 	// command may write is the place that is about to be deleted. --read passes through
 	// unchanged, so a shared toolchain or reference checkout is read IN PLACE and never
-	// copied. Rule 8's temp directory defaults inside the scratch, which is what puts TEMP
+	// copied. The temp directory defaults inside the scratch, which is what puts TEMP
 	// and TMP on it too.
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads:  f.reads,

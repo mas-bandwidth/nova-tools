@@ -168,7 +168,7 @@ func egressVerb(args []string, stderr io.Writer) int {
 		Text: oneline.Escape(args[0]) + " is not an egress verb; it is one of plan, apply, check or drop"}})
 }
 
-// egressRefuse prints one rejection per independent problem (rule 16) and then the single remedy
+// egressRefuse prints one rejection per independent problem and then the single remedy
 // line, and costs 2: the verb could not run.
 func egressRefuse(stderr io.Writer, bad []sandbox.Refusal) int {
 	for _, r := range bad {
@@ -394,7 +394,7 @@ func needNft(stderr io.Writer) int {
 	return 0
 }
 
-// noNftBody implements rule 1 for these two verbs, naming the platform so a test on any
+// noNftBody refuses these two verbs off linux rather than claiming a wall, naming the platform so a test on any
 // host can ask what the tool says on Linux. apply and drop are nftables', and nftables is
 // linux's; on darwin the card's outbound wall is the seatbelt profile this binary already
 // generates, and saying so is better than a wall nobody applied.
