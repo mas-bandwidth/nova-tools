@@ -268,11 +268,16 @@ func (st *Store) Machine(ctx context.Context) (Machine, Heartbeat, error) {
 }
 
 // MachineLine reads the machine and says its line at the clock's reading;
-// "" when the store keeps no machine records.
+// "" when the store keeps no machine records. A store ticked by hand (ByHand)
+// has no silence: nothing ticks between its commands, so a RUNNING machine
+// is running however long since its last tick.
 func (st *Store) MachineLine(ctx context.Context) string {
 	m, hb, err := st.Machine(ctx)
 	if err != nil {
 		return ""
+	}
+	if st.ByHand && m.Running() {
+		return "machine: running"
 	}
 	return MachineLine(st.now(), m, hb)
 }

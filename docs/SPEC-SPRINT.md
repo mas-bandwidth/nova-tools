@@ -1212,7 +1212,11 @@ is read at the start of each tick and before each of its parts: after `stop`
 returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
 wait. `inbox` says `machine: running`, `machine: STOPPED` or `machine: DONE`,
 and nothing after the word: `machine: STOPPED` is also what it says when the
-state is RUNNING and nothing has ticked for 15 s (MachineSilence). The sprint line of every
+state is RUNNING and nothing has ticked for 15 s (MachineSilence), on a store
+a run loop ticks. A twin (`mem:<file>`) is ticked by hand and nothing ticks
+between its commands, so there a RUNNING machine says `machine: running`
+however long since its last tick, and the inbox's judgment that it is not
+ticking names `nova-sprint tick` (a twin refuses `run`). The sprint line of every
 verb says the same of a running machine after the progress
 (`3/10 30.0% -> ETA  machine: running`); a STOPPED machine has no ETA, so its
 line is `STOPPED`, followed with cards on the
@@ -1298,7 +1302,8 @@ on).
 `inbox` computes, from the machine's record and at read time as it computes
 the stale line, three groups no notification holds: the machine is not
 ticking (RUNNING and no tick for 15 s: its run loop is not running; the
-commands start the loop or stop the machine), the tick keeps failing (three
+commands start the loop or stop the machine; on a twin, which ticks only by
+hand, they tick by hand or stop it), the tick keeps failing (three
 failed ticks in a row, with the last error), and the machine is STOPPED and
 moves are due (primaries ready, work cards withdrawn, waiters whose needs have
 landed, primaries in review never asked at their attempt; the command is

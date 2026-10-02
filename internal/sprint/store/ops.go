@@ -381,7 +381,16 @@ func (st *Store) machineGroups(ctx context.Context, m Machine, hb Heartbeat) ([]
 		if m.Since.After(last) {
 			last = m.Since
 		}
-		if gap := now.Sub(last); gap > MachineSilence {
+		switch gap := now.Sub(last); {
+		case gap <= MachineSilence:
+		case st.ByHand:
+			// a twin ticks only by hand: not ticking is its normal state, and the
+			// remedy is the tick, never run, which a twin refuses
+			out = append(out, group("machine:silent", sprint.NMachineSilent,
+				fmt.Sprintf("the machine is RUNNING and nothing has ticked for %ds: a twin ticks only by hand", int(gap/time.Second)),
+				sprint.Command{Decision: "tick by hand", Lines: []string{"nova-sprint tick"}},
+				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop"}}))
+		default:
 			out = append(out, group("machine:silent", sprint.NMachineSilent,
 				fmt.Sprintf("the machine is RUNNING and nothing has ticked for %ds: its run loop is not running", int(gap/time.Second)),
 				sprint.Command{Decision: "run the loop", Lines: []string{"nova-sprint run"}},
