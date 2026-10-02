@@ -45,7 +45,7 @@ func TestStageCardUsesMirrorAndDissociates(t *testing.T) {
 	execCmd(t, root, "git", "clone", "--mirror", "-q", src, mirror)
 
 	card := []byte("base-repo: https://example.com/mas-bandwidth/repo.git\nbase-sha: " + sha1 + "\n")
-	res, err := StageCard(StageOptions{
+	res, err := StageCard(StageOptions{Identity: testStageIdentity,
 		Card:      card,
 		TargetDir: target,
 		JobDir:    jobDir,
@@ -93,7 +93,7 @@ func TestStageCardTimesOutAndWritesResult(t *testing.T) {
 
 	card := []byte("base-repo: https://example.com/mas-bandwidth/repo.git\nbase-sha: " + sha1 + "\n")
 	// 1ns timeout ensures immediate context deadline exceeded
-	res, err := StageCard(StageOptions{
+	res, err := StageCard(StageOptions{Identity: testStageIdentity,
 		Card:      card,
 		TargetDir: target,
 		JobDir:    jobDir,
@@ -150,7 +150,7 @@ func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 	}
 	done := make(chan stageOutcome, 1)
 	go func() {
-		res, err := StageCard(StageOptions{
+		res, err := StageCard(StageOptions{Identity: testStageIdentity,
 			Card:      card,
 			TargetDir: filepath.Join(jobDir, "repo"),
 			JobDir:    jobDir,
@@ -214,7 +214,7 @@ func TestStageCardRefusesWhenOriginCannotBeRepointed(t *testing.T) {
 
 	repointed := false
 	card := []byte("base-repo: https://example.com/owner/repo.git\nbase-sha: " + sha1 + "\n")
-	res, err := StageCard(StageOptions{
+	res, err := StageCard(StageOptions{Identity: testStageIdentity,
 		Card:      card,
 		TargetDir: target,
 		JobDir:    jobDir,
@@ -276,7 +276,7 @@ func TestStageCardStagesTheFramesCommitOnItsBranch(t *testing.T) {
 
 	target := filepath.Join(root, "jobs", "c1.w2", "repo")
 	card := []byte("c1: the card\nBASE: main\nThe work is branch sprint/c1.w2 from sprint/c1.w1, says the prose.\n")
-	res, err := StageCard(StageOptions{
+	res, err := StageCard(StageOptions{Identity: testStageIdentity,
 		Card: card, TargetDir: target, JobDir: filepath.Dir(target), BenchHome: filepath.Join(root, "home"), BenchName: "testhost",
 		Timeout: 30 * time.Second, Base: &CardBase{Repo: origin, Sha: prev, Ref: "main", Named: origin}, Branch: "sprint/c1.w2",
 	})
@@ -287,7 +287,7 @@ func TestStageCardStagesTheFramesCommitOnItsBranch(t *testing.T) {
 	assert.Equal(t, prev, strings.TrimSpace(execCmd(t, target, "git", "rev-parse", "HEAD")))
 	assert.Equal(t, "sprint/c1.w2", strings.TrimSpace(execCmd(t, target, "git", "symbolic-ref", "--short", "HEAD")))
 
-	_, err = StageCard(StageOptions{Card: card, TargetDir: filepath.Join(root, "jobs", "x", "repo"), BenchHome: filepath.Join(root, "home"),
+	_, err = StageCard(StageOptions{Identity: testStageIdentity, Card: card, TargetDir: filepath.Join(root, "jobs", "x", "repo"), BenchHome: filepath.Join(root, "home"),
 		Timeout: 30 * time.Second, Base: &CardBase{Repo: origin, Ref: "main", Named: origin}, Branch: "-x"})
 	assert.ErrorContains(t, err, "starts with '-'")
 }

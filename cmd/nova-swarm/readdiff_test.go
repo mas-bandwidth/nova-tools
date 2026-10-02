@@ -63,7 +63,7 @@ func TestAReadIsToldTheWorksChangeWhenTheBaseMoved(t *testing.T) {
 			require.NoError(t, os.MkdirAll(job, 0o755))
 			fr := &cardcontract.Frame{Kind: "read", Card: "w.r1", Attempt: 1, Model: model, Repo: origin,
 				BaseRef: "main", ReviewBase: "main", StageSha: head, Branch: "sprint/w"}
-			st, err := swarm.StageCard(swarm.StageOptions{TargetDir: filepath.Join(job, swarm.JobRepo), JobDir: job,
+			st, err := swarm.StageCard(swarm.StageOptions{Identity: testStageIdentity, TargetDir: filepath.Join(job, swarm.JobRepo), JobDir: job,
 				BenchHome: filepath.Join(root, "no-bench"), Base: &swarm.CardBase{Repo: origin, Sha: head, Ref: "main", Named: origin}, Branch: fr.Branch})
 			require.NoError(t, err)
 			require.Equal(t, head, st.BaseSha)
@@ -150,7 +150,7 @@ func (f readFixture) stage(t *testing.T, slot string) string {
 	t.Helper()
 	job := filepath.Join(slot, "jobs", "w.r1")
 	require.NoError(t, os.MkdirAll(job, 0o755))
-	st, err := swarm.StageCard(swarm.StageOptions{TargetDir: filepath.Join(job, swarm.JobRepo), JobDir: job,
+	st, err := swarm.StageCard(swarm.StageOptions{Identity: testStageIdentity, TargetDir: filepath.Join(job, swarm.JobRepo), JobDir: job,
 		BenchHome: f.bench, Base: &swarm.CardBase{Repo: f.repo, Sha: f.head, Ref: "main", Named: f.repo}, Branch: "sprint/w"})
 	require.NoError(t, err)
 	require.Equal(t, f.head, st.BaseSha)
@@ -267,3 +267,7 @@ func TestAReadWhoseBaseCannotBeFetchedIsRefusedAtStaging(t *testing.T) {
 	assert.Equal(t, member.EndStaging, res.End, "the member reads the launch as refused at staging")
 	assert.Contains(t, res.Staging, "the base branch main could not be fetched from origin")
 }
+
+// testStageIdentity is the commit identity these tests stage under: StageCard carries none
+// of its own.
+var testStageIdentity = swarm.StagingIdentity{Owner: "test-owner", Name: "Pool Worker", Email: "pool@example.com"}

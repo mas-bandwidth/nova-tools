@@ -71,7 +71,10 @@ the packet hands the reader its model, budget and deadline; a reader started
 with `--model`, `--tokens` and `--deadline` runs its reads on those instead.
 Both loops name the identity every child commits under, `--identity
 <owner>,<name>,<email>`, in their argv, so no file is written into a pool by
-hand; a loop without it reads the pool's `identity.tsv`.
+hand; a loop without it reads the pool's `identity.tsv`. With neither, every
+card is refused before its checkout is staged: nova-swarm carries no identity of
+its own, and the staged checkout's git config and the child's author and
+committer are both this one.
 
 The inventory reads the store `NOVA_SPRINT_REDIS` names (or `--redis`); export
 it, and `NOVA_MACHINE` when the machine running the play is a row, before the

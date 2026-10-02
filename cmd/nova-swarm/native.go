@@ -663,7 +663,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if bench == "" {
 		bench = "bench"
 	}
+	// THE POOL IDENTITY, resolved before staging: the staged checkout's local git config and
+	// the child's GIT_AUTHOR_* and GIT_COMMITTER_* both carry it, and a pool with none is
+	// refused before anything is cloned.
+	id, idRefusal := nativePoolIdentity(cfg)
+	if idRefusal != "" {
+		refuseNative(errOut, idRefusal)
+		return nativeRunResult{}, 2
+	}
 	stageOpts := swarm.StageOptions{
+		Identity:  id,
 		Card:      cfg.card,
 		TargetDir: filepath.Join(jobDir, "repo"),
 		JobDir:    jobDir,
@@ -804,16 +813,6 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	}
 	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
 	if cfg.root != "" {
-		var id swarm.StagingIdentity
-		if cfg.identity != nil {
-			id = *cfg.identity
-		} else {
-			var err error
-			if id, err = swarm.LoadPoolIdentity(cfg.root); err != nil {
-				refuseNative(errOut, err.Error()+"; or give the loop --identity <owner>,<name>,<email> in its nova-config argv")
-				return nativeRunResult{}, 2
-			}
-		}
 		for _, kv := range swarm.StagingGitEnv(id) {
 			name, _, _ := strings.Cut(kv, "=")
 			childEnv = append(environWithoutName(childEnv, name), kv)
@@ -2718,4 +2717,22 @@ func fileSHA256(path string) (string, error) {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// nativePoolIdentity is the identity a native run's child commits under: --identity (a
+// member passes its loop's), else the pool's <root>/identity.tsv. With neither the run is
+// refused, the line naming both settings: there is no identity of this tool's to fall back
+// to.
+func nativePoolIdentity(cfg nativeRunConfig) (swarm.StagingIdentity, string) {
+	if cfg.identity != nil {
+		return *cfg.identity, ""
+	}
+	if cfg.root == "" {
+		return swarm.StagingIdentity{}, "missing configured root for pool identity; refusing to launch under nobody's name"
+	}
+	id, err := swarm.LoadPoolIdentity(cfg.root)
+	if err != nil {
+		return swarm.StagingIdentity{}, err.Error() + "; or give the loop --identity <owner>,<name>,<email> in its nova-config argv"
+	}
+	return id, ""
 }

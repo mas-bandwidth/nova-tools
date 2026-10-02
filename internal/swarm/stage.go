@@ -287,6 +287,10 @@ func stageTimedOut(ctx context.Context, err error) bool {
 	return ctx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, exec.ErrWaitDelay)
 }
 
+// NoStageIdentity is StageCard's refusal of a stage given no commit identity: the setting
+// it wants and where a native run takes it from.
+const NoStageIdentity = "staging refused: no commit identity: the staged checkout commits under the pool identity, and none was given; give nova-swarm native (or the member loop's nova-config argv) --identity <owner>,<name>,<email>, or write the pool's <root>/identity.tsv"
+
 // StageOptions describes a card staging request.
 type StageOptions struct {
 	Card      []byte
@@ -300,6 +304,11 @@ type StageOptions struct {
 	// what the card's header lines say (docs/SPEC-CARD-CONTRACT.md layer 2).
 	Base   *CardBase
 	Branch string
+	// Identity is the name and email the staged checkout's local git config carries, the
+	// caller's (native's pool identity: --identity, else <root>/identity.tsv). A stage
+	// given no name or no email is refused before any git runs: this tool has no identity
+	// of its own to fall back to.
+	Identity StagingIdentity
 
 	// git, when set, builds every staging git call in place of stageGit: a test's seam for
 	// a step git itself would not fail.
@@ -386,6 +395,12 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	mirror := FindBenchMirror(opts.BenchHome, baseRepo)
 	if mirror == "" && isRemoteRepo(baseRepo) {
 		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, fmt.Errorf("staging refused: no bench mirror for %s: a card may not clone directly from github without a bench mirror", baseRepo)
+	}
+
+	// The checkout commits under the caller's identity: one that names no one is refused
+	// here, before the clone, never filled in from anybody's.
+	if strings.TrimSpace(opts.Identity.Name) == "" || strings.TrimSpace(opts.Identity.Email) == "" {
+		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror}, errors.New(NoStageIdentity)
 	}
 
 	cloneSource := mirror
@@ -508,10 +523,10 @@ func StageCard(opts StageOptions) (StageResult, error) {
 
 	// A checkout whose identity could not be set would take the model's commits under no
 	// name, found only when it commits: the stage fails here instead, saying which.
-	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.name", "Rowan").CombinedOutput(); err != nil {
+	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "--", "user.name", opts.Identity.Name).CombinedOutput(); err != nil {
 		return fail("config user.name", out, err)
 	}
-	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.email", "rowan@mas-bandwidth.com").CombinedOutput(); err != nil {
+	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "--", "user.email", opts.Identity.Email).CombinedOutput(); err != nil {
 		return fail("config user.email", out, err)
 	}
 

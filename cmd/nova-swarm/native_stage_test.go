@@ -125,6 +125,10 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 		alternates := filepath.Join(repoDir, ".git", "objects", "info", "alternates")
 		_, err = os.Stat(alternates)
 		require.True(t, os.IsNotExist(err), "staging did not dissociate from mirror: alternates file exists at %s", alternates)
+		// the checkout commits under the pool's identity (aSlot's identity.tsv), never one
+		// the tool carries
+		require.Equal(t, "Pool Worker", strings.TrimSpace(runGit(t, repoDir, "config", "--local", "--get", "user.name")))
+		require.Equal(t, "pool@example.com", strings.TrimSpace(runGit(t, repoDir, "config", "--local", "--get", "user.email")))
 	})
 
 	t.Run("times out and writes blocked result and usage", func(t *testing.T) {

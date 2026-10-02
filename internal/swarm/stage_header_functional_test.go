@@ -30,7 +30,7 @@ func TestStageCardStagesThePushedHeaderFromTheMirror(t *testing.T) {
 	jobDir := filepath.Join(root, "jobs", "card-1")
 	target := filepath.Join(jobDir, "repo")
 
-	res, err := StageCard(StageOptions{
+	res, err := StageCard(StageOptions{Identity: testStageIdentity,
 		Card:      pushedHeader(first),
 		TargetDir: target,
 		JobDir:    jobDir,
@@ -64,7 +64,7 @@ func TestStageCardChecksOutTheBaseRefWithoutASha(t *testing.T) {
 	jobDir := filepath.Join(root, "jobs", "card-2")
 	target := filepath.Join(jobDir, "repo")
 	card := []byte("RESULT: ref-card sha=000000000000\nREPO: mas-bandwidth/nova-tools\nBASE: dev\n")
-	res, err := StageCard(StageOptions{Card: card, TargetDir: target, JobDir: jobDir, BenchHome: benchHome, BenchName: "hulk", Timeout: 30 * time.Second})
+	res, err := StageCard(StageOptions{Identity: testStageIdentity, Card: card, TargetDir: target, JobDir: jobDir, BenchHome: benchHome, BenchName: "hulk", Timeout: 30 * time.Second})
 	require.NoError(t, err, "StageCard: %v", err)
 	head := strings.TrimSpace(execCmd(t, target, "git", "rev-parse", "HEAD"))
 	require.Equal(t, second, head, "HEAD = %s res=%+v, want the dev tip %s", head, res, second)
