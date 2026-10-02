@@ -37,7 +37,6 @@ internal/bus	TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntrie
 internal/bus	TestStaleIndexLockWithALiveGitIsLeftAlone	#4221 calls time.Sleep
 internal/bus	TestStaleLockStaysForCwdGitWithoutDashC	#4221 calls time.Sleep
 internal/bus	TestStellaPreparedAttributePrefixesPublishExactBytes	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/secrets	TestSealNoPRMakesNoGHCalls	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/swarm	TestOSProcessTreeCPUAccrual	#4221 calls time.Sleep
 internal/swarm	TestPausePointThreadDirected	#4221 calls time.Sleep
 internal/swarm	TestJobLeaseHeartbeatsItsMtime	#4221 calls time.Sleep
