@@ -7,7 +7,6 @@
 
 cmd/nova-sandbox 5
 cmd/nova-swarm 3
-cmd/nova-table 3
 internal/bounded 1
 internal/buildinfo 1
 internal/bus 23
@@ -30,7 +29,6 @@ internal/release 1
 internal/sandbox 1
 internal/seatcred 4
 internal/secrets 24
-internal/selftalk 1
 internal/sprint 6
 internal/sprint/store 4
 internal/subproc 1

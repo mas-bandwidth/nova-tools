@@ -32,7 +32,7 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last, text, pct(<count column>), pct(<count column>/<a>+<b>) or sum(<a>+<b>), not "rows"`},
 		{[]string{"create", "demo", "--columns", "a", "--width", "b=3", "--redis", addr}, "--width names column b, which --columns does not declare"},
 		{[]string{"create", "bad name", "--columns", "a", "--redis", addr}, "the table name wants letters, digits, _ . and -"},
-		{[]string{"row", "--redis", addr}, "wants add, set, hide, show, del, move, order, sort"},
+		{[]string{"row", "--redis", addr}, "the verbs are add, set, hide, show, del, move, order, sort"},
 		{[]string{"row", "add", "demo", "--redis", addr}, "wants a table and a row: row add <table> <row>"},
 		{[]string{"row", "add", "demo", "r", "ready=", "--redis", addr}, "a binding wants <col>=<key>"},
 		{[]string{"row", "add", "demo", "r", "ready=ws:s:ready", "--redis", addr}, "a row that binds a set wants --owner <verb>"},
@@ -41,12 +41,12 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 		{[]string{"row", "order", "demo", "--redis", addr}, "wants a table and the rows that go first, in order"},
 		{[]string{"row", "sort", "--redis", addr}, "wants one table: row sort <table>"},
 		{[]string{"row", "sort", "demo", "--manual", "--keep", "--redis", addr}, "--manual ends a standing sort and takes no --keep or --desc"},
-		{[]string{"col", "--redis", addr}, "wants add, del, move"},
+		{[]string{"col", "--redis", addr}, "the verbs are add, del, move"},
 		{[]string{"col", "add", "demo", "--redis", addr}, "wants a table and one column: col add <table>"},
 		{[]string{"col", "add", "demo", "a:rows", "--redis", addr}, `column a wants a projection of count`},
 		{[]string{"col", "del", "demo", "--redis", addr}, "wants a table and a column: col del <table> <col>"},
 		{[]string{"col", "move", "demo", "a", "--redis", addr}, "wants a table, a column and a place: col move <table> <col>"},
-		{[]string{"cell", "--redis", addr}, "wants add, remove, move, members"},
+		{[]string{"cell", "--redis", addr}, "the verbs are add, remove, move, members"},
 		{[]string{"cell", "add", "demo", "r", "c", "--redis", addr}, "wants a table, a row, a column and one or more members"},
 		{[]string{"cell", "add", "demo", "r", "c", "m", "--score", "x", "--redis", addr}, `--score wants a number, got "x"`},
 		{[]string{"cell", "move", "demo", "r", "c", "--redis", addr}, "wants a table, a row, the column left, the column joined and one or more members"},
@@ -55,7 +55,7 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 		{[]string{"watch", "--redis", addr}, "wants the tables to watch, comma-separated"},
 		{[]string{"watch", "demo", "--every", "0s", "--redis", addr}, "--every wants a duration between 1ms and 1h"},
 		{[]string{"list", "demo", "--redis", addr}, "takes no table name: list"},
-		{[]string{"show", "--bogus", "--redis", addr}, "unknown flag --bogus; show flags: --at-epoch, --redis"},
+		{[]string{"show", "--bogus", "--redis", addr}, "unknown flag --bogus; the flags of show are --at-epoch, --redis"},
 	} {
 		code, stdout, stderr := runTable(c.args...)
 		assert.EqualValues(t, 2, code, "%v: exit %d stdout %q, want 2 and nothing", c.args, code, stdout)
@@ -211,7 +211,7 @@ func TestABoundCellIsAViewTheWritesRefuse(t *testing.T) {
 		verb := strings.Join(args[:2], " ")
 		require.EqualValues(t, 1, code, "%v: exit %d stdout %q stderr %q", args, code, stdout, stderr)
 		require.Empty(t, stdout, "%v: exit %d stdout %q stderr %q", args, code, stdout, stderr)
-		require.False(t, (!strings.HasPrefix(stderr, "nova-table "+verb+": ") || !strings.Contains(stderr, "views.s.ready is bound to ws:s:ready, owned elsewhere; run: nova-sprint task move")), "%v: exit %d stdout %q stderr %q", args, code, stdout, stderr)
+		require.False(t, (!strings.HasPrefix(stderr, token(verb)+" REFUSED: ") || !strings.Contains(stderr, "views.s.ready is bound to ws:s:ready, owned elsewhere; run: nova-sprint task move")), "%v: exit %d stdout %q stderr %q", args, code, stdout, stderr)
 	}
 	{
 		n, err := mr.ZScore(ctx, "ws:s:ready", "c1").Result()

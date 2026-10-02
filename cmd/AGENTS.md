@@ -14,7 +14,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-redis/` | Redis instance owner: serve, scratch spill/recall, and fn load/check of the function library | `go test ./cmd/nova-redis` | `go test ./cmd/nova-redis` |
 | `nova-sandbox/` | OS-level process sandbox CLI | `go test ./cmd/nova-sandbox` | `go test ./cmd/nova-sandbox` |
 | `nova-secrets/` | zero-leak secrets store CLI | `go test ./cmd/nova-secrets` | `go test ./cmd/nova-secrets` |
-| `nova-self-talk/` | internal dialogue recording CLI | `go test ./cmd/nova-self-talk` | `go test ./cmd/nova-self-talk` |
+| `nova-self-talk/` | flags sentences where a writer passes a standing verdict on themselves | `go test ./cmd/nova-self-talk` | `go test ./cmd/nova-self-talk` |
 | `nova-sprint/` | the sprint table: four tables on nova-table, the moves between them, the coordinator's inbox, and the driver that plays the world | `go test ./cmd/nova-sprint` | `go test ./cmd/nova-sprint` |
 | `nova-swarm/` | native card runner, bench slot leases and card lint CLI | `go test ./cmd/nova-swarm` | `go test ./cmd/nova-swarm` |
 | `nova-table/` | tables of ordered sets, text and percentages over Redis | `go test ./cmd/nova-table` | `go test ./cmd/nova-table` |

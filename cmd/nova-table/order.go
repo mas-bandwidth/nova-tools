@@ -67,23 +67,6 @@ func (app *application) setVerb(verb, table, addr string, o ntable.SetOpts, writ
 	return 0
 }
 
-const colUsage = "wants add, del or move: col add <table> <column spec> [" + placeUsage + "], col del <table> <col>, col move <table> <col> " + placeUsage
-
-func (app *application) cmdCol(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return refuse(stderr, "col", colUsage)
-	}
-	switch args[0] {
-	case "add":
-		return app.cmdColAdd(args[1:], stdout, stderr)
-	case "del":
-		return app.cmdColDel(args[1:], stdout, stderr)
-	case "move":
-		return app.cmdColMove(args[1:], stdout, stderr)
-	}
-	return refuse(stderr, "col", "unknown subverb "+args[0]+"; "+colUsage)
-}
-
 func (app *application) cmdColAdd(args []string, stdout, stderr io.Writer) int {
 	const verb = "col add"
 	fs := verbflag.New(verb)
@@ -105,6 +88,9 @@ func (app *application) cmdColAdd(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
+	}
 	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{ColAdd: &col, ColAt: at}, write, *receipt,
 		fmt.Sprintf("TABLE COL ADD table=%s col=%s%s", pos[0], col.Name, placeWord(at)), stdout, stderr)
 }
@@ -120,6 +106,9 @@ func (app *application) cmdColDel(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(pos) != 2 {
 		return refuse(stderr, verb, "wants a table and a column: col del <table> <col>")
+	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
 	}
 	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{ColDel: pos[1]}, write, *receipt,
 		fmt.Sprintf("TABLE COL DEL table=%s col=%s", pos[0], pos[1]), stdout, stderr)
@@ -141,6 +130,9 @@ func (app *application) cmdColMove(args []string, stdout, stderr io.Writer) int 
 	}
 	if len(pos) != 2 || at == nil {
 		return refuse(stderr, verb, "wants a table, a column and a place: col move <table> <col> "+placeUsage)
+	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
 	}
 	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{ColMove: &ntable.Reorder{Item: pos[1], Place: *at}}, write, *receipt,
 		fmt.Sprintf("TABLE COL MOVE table=%s col=%s%s", pos[0], pos[1], placeWord(at)), stdout, stderr)
@@ -173,6 +165,9 @@ func (app *application) cmdRowMove(args []string, stdout, stderr io.Writer) int 
 	if len(pos) != 2 || at == nil {
 		return refuse(stderr, verb, "wants a table, a row and a place: row move <table> <row> "+placeUsage)
 	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
+	}
 	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{RowMove: &ntable.Reorder{Item: pos[1], Place: *at}}, write, *receipt,
 		fmt.Sprintf("TABLE ROW MOVE table=%s row=%s%s", pos[0], field(pos[1]), placeWord(at)), stdout, stderr)
 }
@@ -188,6 +183,9 @@ func (app *application) cmdRowOrder(args []string, stdout, stderr io.Writer) int
 	}
 	if len(pos) < 2 {
 		return refuse(stderr, verb, "wants a table and the rows that go first, in order; the rest keep their order: row order <table> <row> <row> ...")
+	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
 	}
 	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{RowOrder: pos[1:]}, write, *receipt,
 		fmt.Sprintf("TABLE ROW ORDER table=%s first=%s", pos[0], field(strings.Join(pos[1:], ","))), stdout, stderr)
@@ -216,6 +214,9 @@ func (app *application) cmdRowSort(args []string, stdout, stderr io.Writer) int 
 	line := fmt.Sprintf("TABLE ROW SORT table=%s by=%s desc=%v keep=%v", pos[0], field(*by), *desc, *keep)
 	if *manual {
 		line = fmt.Sprintf("TABLE ROW SORT table=%s manual=true", pos[0])
+	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
 	}
 	return app.setVerb(verb, pos[0], *addr, o, write, *receipt, line, stdout, stderr)
 }

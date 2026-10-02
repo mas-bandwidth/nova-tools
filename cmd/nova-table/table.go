@@ -76,6 +76,9 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	if !ntable.ValidName(t.Name) {
 		return refuse(stderr, verb, "the table name wants letters, digits, _ . and -, got "+strconv.Quote(t.Name))
 	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
+	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
@@ -119,6 +122,9 @@ func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
 	if *footer != "\x00" {
 		f := *footer
 		o.Footer = &f
+	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
 	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
@@ -181,6 +187,9 @@ func (app *application) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	if len(pos) != 1 {
 		return refuse(stderr, verb, "wants one table name: drop <table>")
 	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
+	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
@@ -241,6 +250,9 @@ func (app *application) cmdClear(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(pos) != 1 {
 		return refuse(stderr, verb, "wants one table name: clear <table>")
+	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
 	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
@@ -434,6 +446,9 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	addr := app.redisFlag(fs)
 	var tables, title, summary string
 	var clearState bool
+	if sub == "set" || sub == "state" || sub == "del" {
+		dryRunFlag(fs, app.dryRun)
+	}
 	if sub == "state" {
 		fs.BoolVar(&clearState, "clear", false, "clear the state: the summary line shows the counts again")
 	}
@@ -469,6 +484,9 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 		if len(list) == 0 {
 			return refuse(stderr, verb, "wants --tables <a,b,...>")
 		}
+	}
+	if code, ok := planned(stdout, fs, verb, *addr, pos); ok {
+		return code
 	}
 	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)

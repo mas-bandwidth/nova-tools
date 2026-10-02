@@ -28,13 +28,13 @@ func TestEveryShapeTheHelpNamesIsFound(t *testing.T) {
 		{"terrible at", "I am terrible at estimates.", "STANDING"},
 		{"cannot ever", "I cannot ever get this right.", "STANDING"},
 		{"fallible", "I am fallible.", "STANDING"},
-		{"RANKING: I am the best", "I am the best reviewer here.", "INSTALLATION RANKING"},
-		{"my\n                     weakest instrument", "Recall, my weakest instrument, failed again.", "INSTALLATION RANKING"},
-		{"FORECLOSURE: I will never be\n                     a good planner", "I will never be a good planner.", "INSTALLATION FORECLOSURE"},
-		{"I have no recall", "I have no recall of yesterday.", "INSTALLATION FORECLOSURE"},
-		{"(VERDICT-IDIOM: dead as a practice)", "Known as a proposition, dead as a practice.", "INSTALLATION VERDICT-IDIOM"},
-		{"TRAIT: I always\n                     overpromise", "I always overpromise.", "INSTALLATION TRAIT"},
-		{"I tend to rush", "I tend to rush.", "INSTALLATION TRAIT"},
+		{"RANKING: I am the best", "I am the best reviewer here.", "RANKING"},
+		{"my\n                     weakest instrument", "Recall, my weakest instrument, failed again.", "RANKING"},
+		{"FORECLOSURE: I will never be\n                     a good planner", "I will never be a good planner.", "FORECLOSURE"},
+		{"I have no recall", "I have no recall of yesterday.", "FORECLOSURE"},
+		{"(VERDICT-IDIOM: dead as a practice)", "Known as a proposition, dead as a practice.", "VERDICT-IDIOM"},
+		{"TRAIT: I always\n                     overpromise", "I always overpromise.", "TRAIT"},
+		{"I tend to rush", "I tend to rush.", "TRAIT"},
 	} {
 		t.Run(tc.sentence, func(t *testing.T) {
 			t.Parallel()
