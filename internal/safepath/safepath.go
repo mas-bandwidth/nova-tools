@@ -232,10 +232,6 @@ func resolveRoot(rootAbs, root string) (string, error) {
 
 // refuseUnsafeRoot refuses a root that is the whole disk or the user's home: those are
 // not a boundary, they are the absence of one, and a mistake under either is the disk.
-func refuseUnsafeRoot(root string) error {
-	return Policy{}.refuseUnsafeRoot(root)
-}
-
 func (p Policy) refuseUnsafeRoot(root string) error {
 	if isDisk, err := p.sameDir(root, string(os.PathSeparator)); err != nil {
 		return fmt.Errorf("%w: the root %q cannot be identified: %v", ErrUnsafe, root, err)
@@ -261,10 +257,6 @@ func (p Policy) refuseUnsafeRoot(root string) error {
 // refuseUnsafePath refuses a resolved path that is the whole disk or the user's home,
 // even when it is technically below the root: the home directory is never a directory
 // this tool computed, and deleting it is the bug that matters most.
-func refuseUnsafePath(path string) error {
-	return Policy{}.refuseUnsafePath(path)
-}
-
 func (p Policy) refuseUnsafePath(path string) error {
 	if isDisk, err := p.sameDir(path, string(os.PathSeparator)); err != nil {
 		return fmt.Errorf("%w: the path %q cannot be identified: %v", ErrUnsafe, path, err)

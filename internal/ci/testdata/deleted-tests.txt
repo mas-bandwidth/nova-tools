@@ -1231,3 +1231,6 @@ internal/nsprint/store/census_test.go the census read (CensusSet, CensusKeys, Ru
 internal/nsprint/store/census_cards_test.go RefuseCardCensus and CardCensusRequest have no verb left; no command calls them, so they and their tests go
 internal/nsprint/store/census_functional_test.go the census read it drove has no verb left; no command calls it, so it and its tests go
 internal/nsprint/store/reach_test.go its one test drove OpenProbe, Reach and Unreachable, which no command calls (nova-sprint doctor no longer opens through them); they go with it, and TestOpenSendsNoCommand3277 still holds that Open sends nothing
+cmd/nova-ci/issue2255_test.go no test was left in it: its one helper, makeFlakes, was reached by nothing (deadcode -test, tags functional,slow,perf,swarmtest,shippedsmoke, darwin, linux and windows)
+internal/bounded/issue2209_test.go it tested only bounded.Receipt, which goes with it: the receipt was for the nova-test verb, now under deprecated/, and nothing living builds one
+internal/log/slog_test.go it tested only log.LongVerb, which goes with it: the long-running verbs it was built for (nova-pulse harvest, the pull worker) are gone and nothing living builds one; docs/SPEC-LOGS.md drops its part and test 10
