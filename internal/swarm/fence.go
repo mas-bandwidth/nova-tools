@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"encoding/json"
+	"maps"
 	"path"
 	"path/filepath"
 	"strings"
@@ -124,12 +125,8 @@ func MergeFencePermission(raw []byte, jobDir string, reads []string) ([]byte, bo
 		// they allowed is still allowed and the job's own are never absent.
 		if prior, ok := existing[FenceExternalDirectory].(map[string]any); ok {
 			merged := map[string]any{}
-			for k, v := range prior {
-				merged[k] = v
-			}
-			for k, v := range mine[FenceExternalDirectory].(map[string]any) {
-				merged[k] = v
-			}
+			maps.Copy(merged, prior)
+			maps.Copy(merged, mine[FenceExternalDirectory].(map[string]any))
 			existing[FenceExternalDirectory] = merged
 		} else {
 			existing[FenceExternalDirectory] = mine[FenceExternalDirectory]
@@ -211,17 +208,17 @@ func FenceRejection(raw []byte) (string, bool) {
 		// `external_directory (/x/y/*)` -- the patterns are in the parentheses, the first
 		// of which is the path the card was stopped at. A form with no parentheses (a
 		// permission that carries no pattern) names the permission itself.
-		open := strings.Index(asked, "(")
-		if open < 0 || !strings.HasSuffix(asked, ")") {
+		before, after, found := strings.Cut(asked, "(")
+		if !found || !strings.HasSuffix(asked, ")") {
 			if asked == "" {
 				continue
 			}
 			return asked, true
 		}
-		patterns := asked[open+1 : len(asked)-1]
+		patterns := after[:len(after)-1]
 		first := strings.TrimSpace(strings.Split(patterns, ",")[0])
 		if first == "" {
-			first = strings.TrimSpace(asked[:open])
+			first = strings.TrimSpace(before)
 		}
 		if first == "" {
 			continue

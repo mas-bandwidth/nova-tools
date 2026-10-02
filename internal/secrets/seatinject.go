@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -258,7 +259,7 @@ func seatInjectTarget(storeDir, seatFile, recoveryKey string) (seatInjectHeld, e
 	if len(recipients) != 2 {
 		return held, fmt.Errorf("seat file %s names %d recipients in its sops metadata; expected exactly two, the seat's own key and the key recovery.pub declares (SPEC-SECRETS invariant 1)", seatFile, len(recipients))
 	}
-	if !containsString(recipients, recoveryKey) {
+	if !slices.Contains(recipients, recoveryKey) {
 		return held, fmt.Errorf("seat file %s does not name the key recovery.pub declares among its recipients; the recovery key is always kept, so this file is re-sealed by sops updatekeys in a reviewed pull request first", seatFile)
 	}
 	held.recipients = append([]string(nil), recipients...)
@@ -301,7 +302,7 @@ func sameKeySet(a, b []string) bool {
 		return false
 	}
 	for _, k := range a {
-		if !containsString(b, k) {
+		if !slices.Contains(b, k) {
 			return false
 		}
 	}
@@ -384,7 +385,7 @@ func seatInjectCompose(plaintext []byte, held seatInjectHeld, names []string, fr
 func seatInjectPlan(opts SeatInjectOptions, names []string, held seatInjectHeld, carry sealCarry, home, targetFile string) string {
 	var kept []string
 	for _, n := range held.names {
-		if _, clear := held.clear[n]; clear && !containsString(names, n) {
+		if _, clear := held.clear[n]; clear && !slices.Contains(names, n) {
 			kept = append(kept, n)
 		}
 	}

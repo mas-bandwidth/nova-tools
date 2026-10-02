@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -310,12 +311,7 @@ func pruneInstalled(root, bin string, keep func(string) bool, errs io.Writer) (i
 // separator so that no tag is matched out of the value half of a version line's
 // `key=value` extra -- the stamp is field two, alone, in every binary (#1297).
 func hasToken(line, version string) bool {
-	for _, f := range strings.Fields(strings.ReplaceAll(line, "=", " ")) {
-		if f == version {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Fields(strings.ReplaceAll(line, "=", " ")), version)
 }
 
 // atomicInstall writes beside the target and renames over it. The rename is what
