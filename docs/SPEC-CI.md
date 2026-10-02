@@ -229,7 +229,7 @@ and `slowest=` the single slowest package overall (or `slowest=none` when the
 stream is empty). On a refusal it prints one line per offending package, `CI-SLOW
 package=<pkg> seconds=<seconds> budget=<b> slowest=<TestA:3.2s,TestB:2.9s>`, the
 slowest tests in that package, comma-separated, worst first and capped at three,
-and exits 2 under `--enforce`, 0 without it; the lines go to stdout, so one `CI-SLOW` grep reads the whole run.
+and exits 1 under `--enforce` (the check ran and said no; 2 is input it could not read), 0 without it; the lines go to stdout, so one `CI-SLOW` grep reads the whole run.
 The stream is one `go test -json` line per event, parsed by `encoding/json`; a
 line that is not a TestEvent is a refusal naming its line number, never a silent
 skip, so a truncated pipe cannot read as a clean run.
@@ -288,7 +288,7 @@ budgets makes the verdict depend on the load instead. So:
   `test` job runs on `schedule` too, test-packages deals that tree onto the
   space shards only, and `ci unit-test` on the nightly leg runs `make test
   GOTEST_COUNT_FLAG=-count=1 SLOWTESTS_ENFORCE=1`, which passes `--enforce`: a
-  CI-SLOW line is exit 2 there and nowhere else. A red schedule run blocks
+  CI-SLOW line fails the run there (slowtests exits 1) and nowhere else. A red schedule run blocks
   nothing (ci-ok does not run on schedule); it is evidence, and its raw times
   are what a row is measured from. test-hosted's ubuntu leg was the other
   candidate (a fresh VM, idle by construction) and was not used: it runs `make

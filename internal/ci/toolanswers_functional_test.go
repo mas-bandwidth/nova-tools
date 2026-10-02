@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -39,11 +38,11 @@ func measureToolAnswers(t *testing.T, a *toolAnswers, tool, bin, banner, bareErr
 	code, out, errs = runIn(t, bin, append(strings.Fields(verb), noSuchFlag)...)
 	a.short(tool, answerFlag, tool+" "+verb+" "+noSuchFlag, unknownFlagAnswers(code, out+errs, flags))
 
+	// The verb-help walk visits the groups too: each group's -h is help that
+	// names the group's verbs.
 	for _, g := range verbGroups(verbs) {
 		code, out, errs = runIn(t, bin, g, "-h")
-		if code != 0 || strings.TrimSpace(out) == "" {
-			a.short(tool, answerGroup, tool+" "+g+" -h", fmt.Sprintf("exits %d with %q", code, firstLine(out+errs)))
-		}
+		a.short(tool, answerGroup, tool+" "+g+" -h", groupHelpAnswers(code, out, errs, groupMembers(g, verbs)))
 	}
 	for _, v := range verbs {
 		problem := "its -h is not help (exit 0 on stdout)"

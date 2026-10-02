@@ -235,8 +235,8 @@ func TestSlowtestsJSONIsTheSameVerdict(t *testing.T) {
 		"items":[{"kind":"slow-package","fields":{"package":"example.com/pkg","seconds":75.3,"budget":60,"slowest":"TestA:3.2s"}}]}`, stdout)
 
 	code, stdout, _ = runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--json", "--enforce"}, stdin)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, stdout, `"result":{"verb":"slowtests","status":"failed","exit":2,"why":["1 CI-SLOW finding(s) under --enforce"]}`)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stdout, `"result":{"verb":"slowtests","status":"failed","exit":1,"why":["1 CI-SLOW finding(s) under --enforce"]}`)
 }
 
 // One run names every problem with the flags and the files they name.
@@ -280,8 +280,9 @@ func TestSlowtestsUnderBudgetIsOK(t *testing.T) {
 const loadLine1of2 = "CI-LOAD load=1.00 cpus=2 per-cpu=0.50: measured, not a verdict\n"
 
 // slowtests over budget prints one line per offending package; it exits 0 (a
-// measurement) without --enforce and 2 with it.
-func TestSlowtestsOverBudgetExitsTwoOnlyUnderEnforce(t *testing.T) {
+// measurement) without --enforce and 1 with it (the check ran and said no;
+// 2 is a run that could not read its input).
+func TestSlowtestsOverBudgetExitsOneOnlyUnderEnforce(t *testing.T) {
 	t.Parallel()
 
 	stdin := `{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
@@ -291,7 +292,7 @@ func TestSlowtestsOverBudgetExitsTwoOnlyUnderEnforce(t *testing.T) {
 	for _, c := range []struct {
 		args []string
 		code int
-	}{{nil, 0}, {[]string{"--enforce"}, 2}} {
+	}{{nil, 0}, {[]string{"--enforce"}, 1}} {
 		code, stdout, _ := runCI(t, append([]string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, c.args...), stdin)
 		if code != c.code || stdout != want {
 			t.Errorf("%v: exit %d stdout %q, want %d and %q", c.args, code, stdout, c.code, want)
@@ -334,7 +335,7 @@ func TestSlowtestsUnitTierBudgetsReadTheAllowlist(t *testing.T) {
 {"Action":"pass","Package":"example.com/pkg","Elapsed":4.6}
 `
 	code, stdout, stderr := runCI(t, []string{"slowtests", "--package-budget", "2", "--test-budget", "1", "--allowlist", allow, "--enforce", "--load", "1", "--cpus", "2"}, stdin)
-	require.Equal(t, 2, code, "exit = %d, want 2; stderr: %s", code, stderr)
+	require.Equal(t, 1, code, "exit = %d, want 1; stderr: %s", code, stderr)
 	want := "CI-SLOW package=example.com/pkg seconds=4.6s budget=2s slowest=TestA:3.2s,TestB:1.3s\n" +
 		"CI-SLOW test=TestB package=example.com/pkg seconds=1.3s budget=1s\n" + loadLine1of2
 	assert.Equal(t, want, stdout, "stdout = %q, want %q", stdout, want)
@@ -350,8 +351,8 @@ func TestSlowtestsUnitTierBudgetsReadTheAllowlist(t *testing.T) {
 // 0.4 s (budget 1.2 s, three times it), and cmd/nova-bus at 58.8 s with no row
 // in the repository's own internal/ci/slow-tests_allowlist.txt -- exits 0 at
 // load 2 and at load 20 on a pull request leg, printing both CI-SLOW lines and
-// the CI-LOAD line, and exits 2 at both loads with --enforce (the nightly leg).
-// A SLEEPS skip missing from --sleeps exits 2 on both legs at both loads.
+// the CI-LOAD line, and exits 1 at both loads with --enforce (the nightly leg).
+// A SLEEPS skip missing from --sleeps exits 1 on both legs at both loads.
 func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 	t.Parallel()
 
@@ -379,7 +380,7 @@ func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 			name string
 			args []string
 			code int
-		}{{"pull request", nil, 0}, {"nightly", []string{"--enforce"}, 2}} {
+		}{{"pull request", nil, 0}, {"nightly", []string{"--enforce"}, 1}} {
 			args := append([]string{"slowtests", "--package-budget", "2", "--test-budget", "1", "--allowlist", allow, "--sleeps", ledger, "--load", load, "--cpus", "32"}, leg.args...)
 			code, stdout, stderr := runCI(t, args, slow)
 			want := "CI-SLOW package=github.com/mas-bandwidth/nova-tools/cmd/nova-bus seconds=58.8s budget=2s slowest=TestWait:0.9s\n" +
@@ -389,8 +390,8 @@ func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 				t.Errorf("load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
 			}
 			code, stdout, _ = runCI(t, args, sleeps)
-			if code != 2 || !strings.Contains(stdout, "CI-SLEEPS test=TestNew package=example.com/pkg") || strings.Contains(stdout, "TestKnown") {
-				t.Errorf("an unledgered SLEEPS skip at load %s, %s leg: exit %d stdout %q, want 2 naming TestNew only", load, leg.name, code, stdout)
+			if code != 1 || !strings.Contains(stdout, "CI-SLEEPS test=TestNew package=example.com/pkg") || strings.Contains(stdout, "TestKnown") {
+				t.Errorf("an unledgered SLEEPS skip at load %s, %s leg: exit %d stdout %q, want 1 naming TestNew only", load, leg.name, code, stdout)
 			}
 		}
 	}

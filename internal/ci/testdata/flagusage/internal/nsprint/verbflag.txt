@@ -1,3 +1,2 @@
 # flag-usage: flags registered with no description; each row's count only falls
-# ceiling: 1
-internal/nsprint/verbflag/verbflag.go:HelpIfAsked 1 the help of a verb that reads its flags by hand names them with no text; the row goes when no verb calls HelpIfAsked (each parses through verbflag.Parse or internal/tool)
+# ceiling: 0

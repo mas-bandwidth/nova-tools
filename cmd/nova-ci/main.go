@@ -120,8 +120,9 @@ usage:
 
 exit codes: 0 done and 2 usage or could not run, for every verb; by verb:
   slowtests: 0 inside budget, or CI-SLOW lines without --enforce (a
-    measurement); 2 a CI-SLEEPS line, a CI-SLOW line under --enforce, or
-    the invocation could not run (bad flag, unreadable stdin)
+    measurement); 1 a CI-SLEEPS line, or a CI-SLOW line under --enforce
+    (the check said no); 2 the invocation could not run (bad flag,
+    unreadable stdin)
   local: 0 green; 1 a red test or a package that did not build; 2 a
     CI-SLEEPS line, a step that could not run, or usage
   functional: 0 the selection printed (packages=0 included); 2 a flag, or
