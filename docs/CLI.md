@@ -1680,7 +1680,7 @@ nova-ci github receipt: --conclusion wants success, failure or cancelled (job.st
 
 ```
 nova-config kinds                                                        # every kind: its table, its fields, the fields add requires
-nova-config migrate [--pg <dsn>] [--print]                               # create or upgrade schema config from the migrations in the binary; --print lists them and connects to nothing
+nova-config migrate [--pg <dsn>] [--print | --dry-run]                   # create or upgrade schema config from the migrations in the binary; the role that runs it must own every table in schema config (else it refuses before applying any and prints the ALTER ... OWNER TO lines); --print lists them and connects to nothing; --dry-run prints the pending migrations and the ownership finding and applies nothing
 nova-config status [--pg <dsn>] [--redis <addr>]                         # the connection, the schema version, rows and revision per kind, and what Redis has applied
 nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]   # write Postgres into Redis per kind through the runtime's own functions, compare-and-set on the revision; --check prints the plan and writes nothing
 nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>] [--timeout <duration>] # print an Ansible dynamic JSON inventory of the applied state (Redis, never Postgres); --list is the default, --host prints one machine

@@ -71,7 +71,8 @@ usage:
   nova-config help
   nova-config version
   nova-config kinds
-  nova-config migrate [--pg <dsn>] [--print]
+  nova-config migrate [--pg <dsn>] [--print | --dry-run]
+      the role that runs migrate must own every table in schema config and be able to create in it; when it does not, migrate refuses before applying any migration and prints the ALTER TABLE config.<table> OWNER TO <role>; lines a role with the owners' rights runs once. --dry-run prints the pending migrations and that finding (MIGRATE PENDING, MIGRATE NOT-OWNED, MIGRATE WOULD-REFUSE) and applies nothing
   nova-config status [--pg <dsn>] [--redis <addr>]
   nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]
   nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>] [--timeout <duration>]
@@ -755,6 +756,7 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	fs := verbflag.New(verb)
 	pg, _, _ := connFlags(fs, false, false)
 	print := fs.Bool("print", false, "list the migrations this binary carries and connect to nothing")
+	dryRun := fs.Bool("dry-run", false, "print the pending migrations and who owns schema config's tables, and apply nothing")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
@@ -781,12 +783,89 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
+	have, err := st.Version(ctx)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	owners, err := st.Ownership(ctx)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	pending := config.Pending(all, have)
+	gaps := config.MigrateGaps(owners, pending)
+	if *dryRun {
+		return migrateDryRun(stdout, dsn, have, owners, pending, gaps)
+	}
+	if len(gaps) > 0 {
+		return refused(stderr, verb, ownershipWhy(owners.Role, pending, gaps), ownershipRemedy(owners.Role, gaps))
+	}
 	from, to, applied, err := st.Migrate(ctx)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
 	fmt.Fprintf(stdout, "CONFIG MIGRATE pg=%s from=%d to=%d applied=%d\n", config.Value(config.Redact(dsn)), from, to, len(applied))
 	return 0
+}
+
+// migrateDryRun prints what migrate would do and applies nothing: each
+// pending migration, each gap the role has on schema config (config.Gaps),
+// the refusal migrate would print when the role cannot apply them, and the
+// summary. It exits 0: a finding, not a refusal.
+func migrateDryRun(stdout io.Writer, dsn string, have int, owners config.Ownership, pending []config.Migration, gaps []config.Gap) int {
+	for _, m := range pending {
+		fmt.Fprintf(stdout, "MIGRATE PENDING version=%d file=%s\n", m.Version, config.Value(m.Name))
+	}
+	for _, g := range config.Gaps(owners) {
+		fmt.Fprintf(stdout, "MIGRATE NOT-OWNED table=%s owner=%s role=%s\n", config.Value(gapName(g)), config.Value(g.Owner), config.Value(owners.Role))
+	}
+	ready := "yes"
+	if len(gaps) > 0 {
+		ready = "no"
+		fmt.Fprintf(stdout, "MIGRATE WOULD-REFUSE %s; run: %s\n", oneline.Escape(ownershipWhy(owners.Role, pending, gaps)), ownershipRemedy(owners.Role, gaps))
+	}
+	fmt.Fprintf(stdout, "CONFIG MIGRATE pg=%s dry-run=true role=%s from=%d pending=%d ready=%s\n", config.Value(config.Redact(dsn)), config.Value(owners.Role), have, len(pending), ready)
+	return 0
+}
+
+// gapName is the gap's object as the lines name it.
+func gapName(g config.Gap) string {
+	if g.Table == "" {
+		return "schema config"
+	}
+	return "config." + g.Table
+}
+
+// ownershipWhy is why migrate refuses: the role, the migrations it cannot
+// apply, the rule, and each owner with what it holds.
+func ownershipWhy(role string, pending []config.Migration, gaps []config.Gap) string {
+	byOwner := map[string][]string{}
+	var owners []string
+	for _, g := range gaps {
+		if byOwner[g.Owner] == nil {
+			owners = append(owners, g.Owner)
+		}
+		byOwner[g.Owner] = append(byOwner[g.Owner], gapName(g))
+	}
+	held := make([]string, len(owners))
+	for i, o := range owners {
+		held[i] = o + " owns " + strings.Join(byOwner[o], ", ")
+	}
+	which := fmt.Sprintf("migration %d", pending[0].Version)
+	if len(pending) > 1 {
+		which = fmt.Sprintf("migrations %d to %d", pending[0].Version, pending[len(pending)-1].Version)
+	}
+	return fmt.Sprintf("role %s cannot apply %s and applied none: the role that runs migrate must own every table in schema config and be able to create in it, and %s, so a role with the owners' rights runs this once, in psql",
+		role, which, strings.Join(held, ", and "))
+}
+
+// ownershipRemedy is the statements that close every gap, on one line:
+// printed for a person to run, never run by migrate.
+func ownershipRemedy(role string, gaps []config.Gap) string {
+	lines := make([]string, len(gaps))
+	for i, g := range gaps {
+		lines[i] = g.Remedy(role)
+	}
+	return oneline.Escape(strings.Join(lines, " "))
 }
 
 // laterKind is a kind whose table a later migration made (loops since

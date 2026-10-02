@@ -39,6 +39,9 @@ type Store interface {
 	// Counts is the row count per kind that has many (a singleton kind is
 	// always one row and is left out).
 	Counts(ctx context.Context) (map[string]int, error)
+	// Ownership reads from the catalog who owns schema config and each of
+	// its tables, and the role connected: migrate's preflight (MigrateGaps).
+	Ownership(ctx context.Context) (Ownership, error)
 }
 
 // Change is one history row.
@@ -175,12 +178,19 @@ type Mem struct {
 	rows    map[string]map[string]Row // kind -> name -> row
 	history []Change
 	Now     func() time.Time
+	// Catalog is what Ownership answers; a test sets the owners it needs.
+	Catalog Ownership
 }
+
+// memRole is the role a Mem is connected as: it owns schema config and every
+// table in it until a test sets Catalog.
+const memRole = "nova_config"
 
 // NewMem returns an empty store: no rows of any kind but the singleton
 // kinds' one row each, as a migrated Postgres has.
 func NewMem() *Mem {
-	m := &Mem{rows: map[string]map[string]Row{}, Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }}
+	m := &Mem{rows: map[string]map[string]Row{}, Now: func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Catalog: Ownership{Role: memRole, SchemaOwner: memRole, Create: true, Tables: catalogTables(memRole)}}
 	for _, k := range Kinds {
 		names := k.Seed
 		if k.Singleton {
@@ -341,4 +351,15 @@ func (m *Mem) Counts(_ context.Context) (map[string]int, error) {
 		}
 	}
 	return out, nil
+}
+
+func (m *Mem) Ownership(context.Context) (Ownership, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	o := m.Catalog
+	o.Tables = map[string]string{}
+	for t, owner := range m.Catalog.Tables {
+		o.Tables[t] = owner
+	}
+	return o, nil
 }

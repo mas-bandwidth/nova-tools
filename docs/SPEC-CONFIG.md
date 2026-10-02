@@ -306,6 +306,15 @@ is never applied again, so `nova-config migrate` on a migrated database
 applies nothing and says so (`applied=0`). `0001_schema.sql` makes the
 schema, the ledger and the history table; every later file is one kind.
 
+The role that runs migrate must own every table in schema config and be
+able to create in it: migrations alter and fill tables, which only their
+owner may do. Before applying anything migrate reads the owners in one
+catalog query (`Store.Ownership`) and decides with `MigrateGaps` (the role,
+the owners, the pending migrations; the SQL is never read): with a migration
+pending and a table another role owns, it refuses before applying any and
+prints one `ALTER TABLE config.<table> OWNER TO <role>;` per table for a role
+with the owners' rights to run once. It never changes an owner or a grant.
+
 After every migrate the `nova_read` role, when it exists, is granted `USAGE`
 on the schema and `SELECT` on every table: a runtime tool that reads
 configuration straight from Postgres does it as that role.
@@ -485,6 +494,10 @@ CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>
 MIGRATION version=<v> file=<f> lines=<n>                 (migrate --print)
 CONFIG MIGRATE print=<n> pg=-
 CONFIG MIGRATE pg=<user@host:port/db> from=<v> to=<v> applied=<n>
+MIGRATE PENDING version=<v> file=<f>                     (migrate --dry-run)
+MIGRATE NOT-OWNED table=config.<t> owner=<role> role=<role>
+MIGRATE WOULD-REFUSE <the refusal migrate would print>; run: ALTER TABLE config.<t> OWNER TO <role>; ...
+CONFIG MIGRATE pg=<...> dry-run=true role=<role> from=<v> pending=<n> ready=yes|no
 CONFIG STATUS pg=<...> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
 CONFIG KIND name=<k> table=config.<t> fields=<f,...> required=<f,...> rows=many|one
 CONFIG KINDS count=<n>

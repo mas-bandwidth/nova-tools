@@ -57,6 +57,17 @@ the binary, each in its own transaction, each recorded in
 prints `applied=0`. Run it as the `nova_config` role, which owns the schema;
 the `nova_read` role, when it exists, is granted read on every table.
 
+The role that runs migrate must own every table in schema config. Before it
+applies anything, migrate reads the owners from the catalog and, when another
+role owns a table and a migration is pending, refuses (exit 1) naming the
+role, each table with its owner, and the one-time remedy, one `ALTER TABLE
+config.<table> OWNER TO <role>;` per table, which a role with the owners'
+rights runs in psql; migrate never changes an owner itself. `migrate
+--dry-run` prints `MIGRATE PENDING` per pending migration, `MIGRATE
+NOT-OWNED` per table the role does not own, `MIGRATE WOULD-REFUSE` with the
+same refusal when migrate would refuse, and a `CONFIG MIGRATE ... ready=yes|no`
+summary, applies nothing and exits 0.
+
 `status` is where things stand:
 
 ```

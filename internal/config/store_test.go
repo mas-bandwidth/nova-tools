@@ -23,6 +23,21 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		return row
 	}
 
+	t.Run("a store migrated by its own role owns schema config", func(t *testing.T) {
+		t.Parallel()
+		o, err := open(t).Ownership(ctx)
+		require.NoError(t, err)
+		require.NotEmpty(t, o.Role)
+		assert.Equal(t, o.Role, o.SchemaOwner)
+		for _, k := range Kinds {
+			assert.Equal(t, o.Role, o.Tables[k.Table], "table %s", k.Table)
+		}
+		assert.Equal(t, o.Role, o.Tables["schema_migrations"])
+		assert.Equal(t, o.Role, o.Tables["history"])
+		assert.Len(t, o.Tables, len(Kinds)+2, "tables %v", o.Tables)
+		assert.Empty(t, MigrateGaps(o, []Migration{{Version: 1}}))
+	})
+
 	t.Run("machines and fleet come from one read", func(t *testing.T) {
 		t.Parallel()
 		st := open(t)
