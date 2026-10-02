@@ -4076,7 +4076,7 @@ go test -race ./cmd/nova-bus -run TestInboxParsesOnlyWhatIsNewSinceTheCursor
 ```
 
 A bus of 10,000 generated notes, **500 of them open** for this reader, plus one
-new one. The package counts every call to `ParseNote` (`bus.NoteParses`,
+new one. The package counts the notes it parses out of each bus (`bus.NoteParsesIn`,
 instrumentation, read by nothing but a test), and the test asserts the **count**
 across one run is exactly 1 — twice, once with `--open` and once without, because
 printing the open list is a choice and neither choice may cost a parse — and then

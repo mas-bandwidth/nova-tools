@@ -33,8 +33,8 @@ import (
 // walks every commit between the two ends before it can answer, so the one run that reads
 // nothing was still paying for the whole distance in order to be told not to read it.
 //
-// So the numbers here are COUNTS and never a clock -- bus.CommitsWalked, taken where the
-// commits are enumerated, and bus.NoteParses, taken where a note is opened. A wall-clock
+// So the numbers here are COUNTS and never a clock -- bus.CommitsWalkedIn, taken where the
+// commits are enumerated, and bus.NoteParsesIn, taken where a note is opened. A wall-clock
 // assertion over a fixture this size is a flake on a shared runner and proves nothing on a
 // fast enough machine; a count of work not done is the only honest proof there is.
 //

@@ -1952,7 +1952,7 @@ hundreds of tests run one after another takes minutes against a two-minute
 ceiling and a one-minute target. A test stays serial only for a reason: it
 calls `t.Setenv`/`t.Chdir`, `os.Setenv` or `os.Chdir`, or assigns a
 package-level variable from test code, directly or through a helper, or reads a
-process-wide counter (`tokens.Opens`, `bus.NoteParses`) every parallel test adds
+process-wide counter (`tokens.Opens`) every parallel test adds
 to, or registers into a package map (`go test -race` finds those).
 **The test.** `TestEveryTestOpensWithTParallel`
 (`internal/ci/parallel_class_test.go`).

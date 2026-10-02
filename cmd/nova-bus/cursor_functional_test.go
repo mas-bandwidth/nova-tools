@@ -19,7 +19,7 @@ import (
 //
 // Every test here is about work NOT done, which is the hard kind to assert on: work not
 // done leaves no output. So the assertion is a COUNT taken at the one place the work
-// happens -- bus.NoteParses, incremented by ParseNote -- and never a wall time. A timing
+// happens -- bus.NoteParsesIn -- and never a wall time. A timing
 // assertion on a shared CI runner is a flake, and on a fast enough machine it passes over
 // a quadratic implementation.
 
@@ -34,10 +34,7 @@ import (
 // reply that CLOSES an open entry is also one parse, so closing is driven by the new notes
 // and not by a walk of what is being carried.
 // PARALLEL, and so is TestHeardSurvivesTheCursor, since the count they assert a DELTA of is
-// bus.NoteParsesIn(checkout): the parses over THIS test's own bus, and no other. They used
-// to read bus.NoteParses, one counter for the whole process, which a sibling parsing a note
-// beside them would have moved -- and so they ran alone, one after the other, and were the
-// package's critical path. The assertions are the same exact numbers over the same bus.
+// bus.NoteParsesIn(checkout): the parses over THIS test's own bus, and no other.
 func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
