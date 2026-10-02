@@ -361,25 +361,25 @@ near the end, and the sections below say how each is met.
     summed over every model.
 
 21. **A harness that shows nothing is counted from the provider's side, and
-    never apportioned.** Emma's harness (Antigravity, Gemini) and Johnny's
-    (Grok) record no token counts anywhere a tool can read. For them the source is `--provider
+    never apportioned.** A harness records no token counts anywhere a tool can read.
+    Its source is `--provider
     <label>=<file>`: a billing export the account holder downloads (Google
     Cloud, xAI), one row per (day, model, type, count) after the tool's
     parser for that provider's shape, with the parser's name in the
     `sources` column. Its repo is the fixed word `unattributed`: the tool
     never splits a provider total across repos by any proportion, because a
     split nobody measured is a number nobody can defend ("never invent a
-    split"). The export's rows are dated by rule 17: UTC days from
+    split"). The export's rows use UTC days from
     timestamps when it has them, its own local day with `day_basis=<zone>`
     when it has only totals, never a silent mix. A type the export does not
-    carry is `-` (rule 15). A friend's daily note may still carry the repos
+    carry is `-`. A daily note may still carry the repos
     touched that day, as the one comment shape `# repos: <name>[, <name>]…`
-    in the body (rule 6); `fold` records them beside the day as
+    in the body; `fold` records them beside the day as
     `TOKENS TOUCHED label=bus:<name> day=<d> repos=<list>` and adds no
     numbers to them, and a tokens note whose body is only that line and
     blanks is a valid note with zero rows. A `report` on such a harness
-    prints `TOKENS UNREADABLE` per source and exits 1 (rule 20), and that
-    line plus the daily `# repos:` note is the friend's whole duty. Stella's
+    prints `TOKENS UNREADABLE` per source and exits 1, and that
+    line plus the daily `# repos:` note is the harness's whole duty. The
     harness (Codex) is the third of these: it exposes no token usage, this
     spec has no Codex adapter, and her spend is counted provider-side from
     the account holder's OpenAI export under the same rule.
@@ -412,7 +412,7 @@ nova-tokens version
 The binary is `nova-tokens`, and that is its only name.
 
 **No guessed anything, with one named exception.** `--timeout` defaults to
-120 seconds (rule 19). Nothing else has a default: not the output directory,
+120 seconds. Nothing else has a default: not the output directory,
 not a source, not the rules file, not the scratch directory. `--scratch` is
 required when `--opencode` is given and refused otherwise, because a scratch
 directory with nothing to put in it is a flag that does nothing. A label in a
@@ -441,8 +441,8 @@ A day the sources name no row for is not written and not removed.
 
 Asserts nothing. Reads `<out>/<month>-??.tsv`, prints per `(model, repo)`,
 per model and the total, all five types, the rough count, per type column how
-many rows added were `-` (`dashes=`, rule 15), how many rows added were not
-UTC (`nonutc=`, rule 17), and the days it found and the days missing between
+many rows added were `-` (`dashes=`), how many rows added were not
+UTC (`nonutc=`), and the days it found and the days missing between
 the first and last. A `-` adds nothing and is counted; it is never read as
 zero. Writes nothing. Exits
 0 whenever it ran, including over a month with gaps: answering is its job,
@@ -450,7 +450,7 @@ and `missing=<n>` is the answer. `sum` is a **report**. Never gate on it.
 
 ### `check`
 
-Asserts what rule 13 says. Says NO (exit 1) on any malformed file, any
+Asserts the day-file validity rules. Says NO (exit 1) on any malformed file, any
 malformed row, any missing day, any stray file, or when `--through <day>` is
 given and the last folded day is older than `<day>` (`CHECK FAIL stale`).
 Deliberately does not check: whether a day's numbers are plausible, or whether a
@@ -490,7 +490,7 @@ token ledger's verbs, specified in [SPEC-STATE.md](SPEC-STATE.md).
 | 2 | could not run: missing flag, bad flag value, `--out` not a directory, `--repos` unreadable or malformed, a duplicate label, `sqlite3` absent when `--opencode` is given, a second fold holding the lock |
 
 **Exit 1 still writes.** A fold with one unreadable file writes every day it
-could compute and exits 1. The exit code is about the claim (rule 3), not
+could compute and exits 1. The exit code is about the claim, not
 about whether the files landed; `TOKENS DAY … written=true` is about the
 files. A caller who cannot read the keeper's transcripts should not declare
 them, and a caller who declares them is told, every run, that the report does
@@ -503,7 +503,7 @@ class, second is `OK`, `FAIL` or one of the informational tokens listed here.
 `OK` and informational lines go to stdout; `FAIL`, `UNREADABLE`, `UNPARSED`,
 `MIXED`, `SHRANK`, `QUIET`, `MISSING` and refusals go to stderr.
 `report` is the one
-exception, stated in rule 20: its stdout is exactly rule 6's body lines, and
+exception: its stdout is exactly the body's lines, and
 `REPORT OK`, `REPORT FAIL` and its `TOKENS UNREADABLE` lines go to stderr. Every path, label, model name,
 repo name, note id and reason renders through `internal/oneline`; every
 `key=value` carrying stored text is one token via `oneline.Field`; the tail
@@ -587,11 +587,11 @@ comma-joined list of the five type names this source reports at all
 all five for a swarm usage file; all five for OpenCode; whatever the
 export's columns are for a provider; for a bus lane, the types its lines
 named), so a reader of a mixed row can see which source could not have
-covered which cell (rule 15). `day_basis=` is `utc` for every kind but a
+covered which cell. `day_basis=` is `utc` for every kind but a
 provider export of local-day totals, where it is the export's zone, and a
 bus lane whose lines carry a seventh field, where it is that zone, or
-`mixed` when one lane's lines carry more than one (rule 17); `<zone>` in the
-block is that zone NAME as rule 17 declares it and rule 13 accepts it
+`mixed` when one lane's lines carry more than one; `<zone>` in the
+block is that zone NAME as the day-basis rules declare it and accept it
 (`America/Los_Angeles`, `+02:00`: no whitespace, never `utc`), not the word
 `zone`, which this tool never prints; a lane is
 allowed to be mixed across days, a row never. The fields that do not apply to a kind print `-`, never `0`: a
