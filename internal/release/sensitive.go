@@ -8,7 +8,7 @@ import (
 
 // SensitivePaths is THE LIST, and this file is the one place in code it exists.
 //
-// A release is the moment work
+// SPEC-RELEASE.md decision 1: a release is the moment work
 // stops being a diff somebody can revert and starts being binaries on every
 // bench in the fleet, so the ranges that touch the parts of this estate a
 // mistake cannot be taken back from -- the secret store, the sandbox that holds
