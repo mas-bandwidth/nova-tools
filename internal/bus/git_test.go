@@ -801,14 +801,14 @@ func TestEnsureCleanReadsARenameAsThePairItIs(t *testing.T) {
 	}
 }
 
-// TestIssue462: send must not refuse over the wait's own BEAT file in the same lane.
+// TestEnsureCleanDoesNotRefuseWaitOwnBeatInSameLane: send must not refuse over the wait's own BEAT file in the same lane.
 //
 // The failure: wait writes from-ada/BEAT every tick and may not have pushed yet. When
 // send calls EnsureClean it sees that untracked BEAT as dirty and refuses:
 // "the bus's checkout holds changes that are not this note: from-ada/BEAT".
 // SPEC.md lists BEAT as wait's file, not send's. The fix treats from-<lane>/BEAT
 // as permitted when the lane being sent to is the same lane.
-func TestIssue462(t *testing.T) {
+func TestEnsureCleanDoesNotRefuseWaitOwnBeatInSameLane(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
