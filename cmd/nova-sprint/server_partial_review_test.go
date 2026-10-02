@@ -36,7 +36,7 @@ func TestServerReviewRetriesAPartialBatchAfterRestart(t *testing.T) {
 		}
 		return nil
 	}
-	first := ta.a.serve(req)
+	first := ta.a.serveFrom(req, false)
 	require.Len(t, first.Results, 2)
 	require.Equal(t, 0, first.Results[0].Code, first.Results[0].Stderr)
 	require.Equal(t, 2, first.Results[1].Code, first.Results[1].Stdout+first.Results[1].Stderr)
@@ -47,7 +47,7 @@ func TestServerReviewRetriesAPartialBatchAfterRestart(t *testing.T) {
 	restarted.sleep = ta.a.sleep
 	restarted.serveAddr = "mem:0"
 	t.Cleanup(restarted.close)
-	again := restarted.serve(req)
+	again := restarted.serveFrom(req, false)
 	require.Len(t, again.Results, 2)
 	for i, result := range again.Results {
 		require.Equal(t, 0, result.Code, result.Stdout+result.Stderr)
