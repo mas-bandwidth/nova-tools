@@ -52,12 +52,12 @@ func authFromEnv(sel *seatcred.Selection) (user, password string, err error) {
 	return Auth("", "")
 }
 
-// Auth is the environment seat (internal/nsprint/redisauth, #3461): user is the
+// Auth is the environment seat (internal/nsprint/redisauth): user is the
 // ACL user, else UserEnv; passwordEnv the variable holding its password, else
 // PasswordEnvEnv, else DefaultPasswordEnv.
 func Auth(user, passwordEnv string) (string, string, error) { return redisauth.Auth(user, passwordEnv) }
 
-// NoUserHint is the #3520 refusal: password in the environment, ACL user unset.
+// NoUserHint is the NOAUTH refusal: password in the environment, ACL user unset.
 func NoUserHint() string { return redisauth.NoUserHint() }
 
 // noUserHook adds NoUserHint to a NOAUTH refusal. Open sends nothing
@@ -126,8 +126,8 @@ func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune fu
 	}
 	// No PING: go-redis dials on the first command, so the caller's
 	// first pipeline is the probe and an unreachable store fails there.
-	// No CLIENT SETINFO either (2026-09-27, Glenn: "You always need to
-	// batch redis"): go-redis sends the library name and version in a
+	// No CLIENT SETINFO either: Redis commands must be batched, and
+	// go-redis sends the library name and version in a
 	// round trip of its own after HELLO, and the store is 128 ms away, so
 	// every one-shot verb paid it for nothing. No CLIENT MAINT_NOTIFICATIONS
 	// either: go-redis v9.22.0 sends it after HELLO 3 unless told not to,

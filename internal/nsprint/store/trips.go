@@ -11,7 +11,7 @@ import (
 // Trips counts the network round trips a Store's client makes from the moment
 // CountTrips attaches it: each single command is one, each pipeline Exec is
 // one however many commands it carries. Verbs print the count on their
-// receipt (`trips=<n>`, #3261 and #3265) so a regression to serial reads
+// receipt (`trips=<n>`) so a regression to serial reads
 // shows in the output, not only in a test.
 type Trips struct {
 	n atomic.Int64

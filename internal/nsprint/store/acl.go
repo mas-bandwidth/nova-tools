@@ -8,7 +8,7 @@ import (
 
 // ACLRules are the baseline permissions for each actor in the fleet Redis.
 // The bench and friend seats run consumer copies through the table moves
-// (#3998: card work --fill, card beat, card end, and the session's give-back,
+// (card work --fill, card beat, card end, and the session's give-back,
 // card cancel), whose moves read and write task:*, ws:*, q:*, sprint:*, pr:*
 // (a read's line on the PR record), consumers and readers, with HDEL, LPOS and
 // RPUSH; the bench's copy ledger reads cfg:card
