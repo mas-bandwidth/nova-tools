@@ -75,21 +75,23 @@ func TestStatsPrintsThePassFromTheCards(t *testing.T) {
 		"m1":                  "2 | 0 | 3.0 4.0 n=2 | 7.0 8.0 n=2 | 3.0 4.0 n=2",
 		"reader-a":            "2 | 3.0 3.0 n=2 | 15.0 15.0 n=2 | 5.0 5.0 n=2",
 		"reader-b":            "2 | 30.0 30.0 n=2 | 5.0 5.0 n=2 | -5.0 -5.0 n=2", // a report with no begin is its begin
-		"flash-a":             "3 | 2 | 0 | 1 | 6.0 8.0 n=3",                     // the provider's take is a take of the route
-		"pro-a":               "4 | 4 | 0 | 0 | 10.0 15.0 n=4",
+		// a read runs on its card's tier, so the flash cards' four reads are flash-a's
+		// takes too; the provider's take is a take of the route
+		"flash-a": "7 | 6 | 0 | 1 | 6.0 15.0 n=7",
 	}
 	for k, v := range want {
 		assert.Equal(t, v, rows[k], "row %s\n%s", k, out)
 	}
-	assert.Contains(t, out, "STATS OK epoch=0 primaries=2 members=1 readers=2 routes=2\n")
+	assert.Contains(t, out, "STATS OK epoch=0 primaries=2 members=1 readers=2 routes=1\n")
 
 	var ps sprint.PassStats
 	ta.json("stats", &ps)
 	require.Len(t, ps.Work, 1)
 	assert.Equal(t, sprint.Measure{Median: 7, Max: 8, N: 2}, ps.Work[0].RunWall)
 	assert.Equal(t, sprint.Measure{Median: 49, Max: 58, N: 2}, ps.Stages.FinishToReads)
-	require.Len(t, ps.Routes, 2)
-	assert.Equal(t, sprint.RouteTakes{Route: "flash-a", Takes: 3, OK: 2, Provider: 1, RunWall: sprint.Measure{Median: 6, Max: 8, N: 3}}, ps.Routes[0])
+	require.Len(t, ps.Routes, 1)
+	assert.Equal(t, sprint.RouteTakes{Route: "flash-a", Takes: 7, OK: 6, Provider: 1, RunWall: sprint.Measure{Median: 6, Max: 15, N: 7}}, ps.Routes[0])
+
 }
 
 // An empty sprint prints its tables with no row and every stage "-".
