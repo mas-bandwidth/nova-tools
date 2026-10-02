@@ -1,6 +1,6 @@
 // Package tablemodel checks nova-table against its TLA+ models.
 //
-// Three checks live here, each turning the table models into an executable
+// Three checks live here, each turning the table models into an executable check of
 // the models:
 //
 //   - The suites (steps.go): the table model's contract, witness and control
