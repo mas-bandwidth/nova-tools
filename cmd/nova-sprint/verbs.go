@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 
@@ -37,7 +38,7 @@ var verbs []verb
 func init() {
 	verbs = []verb{
 		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
-		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held]", "add --stream s1 --count 100", (*app).cmdAdd},
+		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
@@ -923,7 +924,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("add")
 	stream := fs.String("stream", "", "the stream the primaries belong to, for life; with --count, several streams comma separated, one step")
 	count := fs.Int("count", 0, "admit n primaries with generated ids <stream>-<n>")
-	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table")
+	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table or of this add (default: the brief's Needs: or DEPENDS-ON: line; with a brief per card, added to each card's own)")
 	brief := fs.String("brief", "", fmt.Sprintf("the brief: a child's whole brief, at most %d KiB (the card lint advises %d bytes), held to the card lint (the sentences of the rules file: --rules, else the one init --rules recorded, else the built-in general rules; nova-swarm template --name card prints a card that passes the general ones, nova-swarm lint --rules lists them) and refused, exit 2, nothing written, when it fails; a card with no brief is not linted", cardlimits.MaxBriefBytes>>10, cardlimits.BriefAdvisoryBytes))
 	var briefFiles stringList
 	fs.Var(&briefFiles, "brief-file", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; given once, the brief of the cards the ids, --count or --sentinel name; given again, one card per file in the order given, each card's id its file's name without .md (a1.md is a1); not with --brief or --brief-dir")
@@ -935,6 +936,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	after := fs.String("after", "", "place the cards in line after this primary of the stream")
 	every := fs.Int("sentinel-every", 0, "with --count: a sentinel <stream>-gate-<n> after every k cards (a stop by its place in line)")
 	last := fs.Bool("sentinel-last", false, "with --sentinel-every: a sentinel after the last card too")
+	allowShared := fs.Bool("allow-shared-paths", false, "with --brief-dir or a repeated --brief-file: admit cards that name one file in their PATHS: lines though neither needs the other (by default refused, naming the file and the cards)")
 	held := fs.Bool("held", false, "admit the cards held: waiting, a sentinel never reached and no card dealt, nothing raised, until nova-sprint release <id> --reason <text>; a wave loads behind a held sentinel with nothing before it")
 	ids, err := parse(fs, args)
 	if err != nil {
@@ -963,7 +965,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if *every != 0 || *last {
 			return refuse(stderr, "add", "--sentinel-every goes with --count, not a card per brief file")
 		}
-		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, *held, c, stdout, stderr)
+		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, *held, *allowShared, c, stdout, stderr)
 	}
 	if len(briefFiles) == 1 {
 		if *brief != "" {
@@ -1012,9 +1014,13 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		}
 		c.says = append(c.says, unfilledSays("the brief", *brief)...)
 	}
+	cardNeeds := sprint.Split(*needs)
+	if *needs == "" {
+		cardNeeds = briefNeeds(*brief) // its Needs: or DEPENDS-ON: line, when --needs is not given
+	}
 	var rs []sprint.AddReq
 	for _, sn := range streams {
-		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: sprint.Split(*needs), Brief: *brief, Who: c.actor,
+		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: cardNeeds, Brief: *brief, Who: c.actor,
 			Sentinel: *sentinel != "", Before: *before, After: *after, Every: *every, Last: *last, Held: *held}
 		if *score != "" {
 			f, err := strconv.ParseFloat(*score, 64)
@@ -1045,7 +1051,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 // the order the files were named. Every brief is read and linted first (one
 // failing brief refuses the whole call, exit 2, nothing written), and one
 // store write adds every card.
-func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, held bool, c *common, stdout, stderr io.Writer) int {
+func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, held, allowShared bool, c *common, stdout, stderr io.Writer) int {
 	if stream == "" {
 		return refuse(stderr, "add", "wants --stream and --brief-dir <dir> or a repeated --brief-file")
 	}
@@ -1078,6 +1084,11 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 			return refuse(stderr, "add", fmt.Sprintf("%s: the brief is %d bytes, over the %d bytes a brief may be; a brief is a child's whole brief; shorten it", path, len(briefText), store.MaxBriefBytes))
 		}
 		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: uniquify(append(briefNeeds(briefText), extra...)), File: path})
+	}
+	if !allowShared {
+		if why := sharedPaths(cards); why != "" {
+			return refuse(stderr, "add", why)
+		}
 	}
 	// Every brief is linted first: one failing brief refuses the whole call,
 	// nothing written, every failing file named with its findings.
@@ -1136,29 +1147,88 @@ func (a *app) briefFiles(dir string, files []string, stderr io.Writer) ([]string
 }
 
 // briefNeeds is the needs a brief names: the first `Needs:` header line (read
-// by cardhdr.KeyValue), its ids comma separated, each cut at an opening
-// parenthesis. "none" or "-" (also after the cut, so "none (first card)") or
-// no such line is no needs.
+// by cardhdr.KeyValue), else the DEPENDS-ON: line of its typed header block
+// (swarm.CardHeaderValue; nova-tools#5096 item 17), its ids comma separated,
+// each cut at an opening parenthesis. "none" or "-" (also after the cut, so
+// "none (first card)"), an owner/repo#n reference (a pull request or issue,
+// not a card), or no such line is no needs.
 func briefNeeds(brief string) []string {
+	value, found := "", false
 	for _, line := range strings.Split(brief, "\n") {
-		key, value, ok := cardhdr.KeyValue(line)
-		if !ok || key != "Needs" {
+		if key, v, ok := cardhdr.KeyValue(line); ok && key == "Needs" {
+			value, found = v, true
+			break
+		}
+	}
+	if !found {
+		value, _ = swarm.CardHeaderValue([]byte(brief), "DEPENDS-ON")
+	}
+	var out []string
+	for _, id := range strings.Split(value, ",") {
+		if cut, _, ok := strings.Cut(id, "("); ok {
+			id = cut
+		}
+		switch id = strings.TrimSpace(id); {
+		case id == "", id == "-", id == "none", strings.Contains(id, "#"):
 			continue
 		}
-		var out []string
-		for _, id := range strings.Split(value, ",") {
-			if cut, _, ok := strings.Cut(id, "("); ok {
-				id = cut
+		out = append(out, id)
+	}
+	return out
+}
+
+// sharedPaths is the refusal of a many-brief add whose cards name one file in
+// their PATHS: header lines (swarm.CardHeaderValue; comma or space separated)
+// when neither needs the other through the needs of the add: they would edit
+// it at once (nova-tools#5096 item 17). "" when none does.
+func sharedPaths(cards []sprint.CardAdd) string {
+	needs := map[string][]string{}
+	for _, c := range cards {
+		needs[c.ID] = c.Needs
+	}
+	// reaches says a needs b, through the needs of the add's cards
+	var reaches func(a, b string, seen map[string]bool) bool
+	reaches = func(a, b string, seen map[string]bool) bool {
+		if seen[a] {
+			return false
+		}
+		seen[a] = true
+		for _, n := range needs[a] {
+			if n == b || reaches(n, b, seen) {
+				return true
 			}
-			switch id = strings.TrimSpace(id); id {
-			case "", "-", "none":
+		}
+		return false
+	}
+	byPath := map[string][]string{}
+	var order []string
+	for _, c := range cards {
+		value, _ := swarm.CardHeaderValue([]byte(c.Brief), "PATHS")
+		for _, p := range strings.FieldsFunc(value, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+			if p == "none" || p == "-" || slices.Contains(byPath[p], c.ID) {
 				continue
 			}
-			out = append(out, id)
+			if len(byPath[p]) == 0 {
+				order = append(order, p)
+			}
+			byPath[p] = append(byPath[p], c.ID)
 		}
-		return out
 	}
-	return nil
+	var clash []string
+	for _, p := range order {
+		ids := byPath[p]
+		for i := range ids {
+			for _, b := range ids[i+1:] {
+				if a := ids[i]; !reaches(a, b, map[string]bool{}) && !reaches(b, a, map[string]bool{}) {
+					clash = append(clash, fmt.Sprintf("%s is named in PATHS by %s and %s, and neither needs the other", p, a, b))
+				}
+			}
+		}
+	}
+	if len(clash) == 0 {
+		return ""
+	}
+	return strings.Join(clash, "; ") + "; two cards that edit one file at once conflict at the merge: chain them (DEPENDS-ON: or Needs: in the later brief), or give --allow-shared-paths"
 }
 
 // uniquify keeps the first of each id, in order: a need named by a brief and
