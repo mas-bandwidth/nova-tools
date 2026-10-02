@@ -24,7 +24,6 @@ internal/ci/testdata/generality-text/cmd/nova-version/testdata.txt this scan's l
 internal/ci/testdata/generality-text/docs.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/docs/nova-table.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/fleet/roles/container-runtime/tasks.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality-text/infra/image.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/ci.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/ci/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/ci/testdata/testoutpath.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
