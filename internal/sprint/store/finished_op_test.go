@@ -131,7 +131,7 @@ func TestRepairNeverAbandonsAnOperationThatApplied(t *testing.T) {
 	}
 	n := h.written(sprint.NAbandoned)
 	require.Equal(t, 0, n, "an operation that applied was released as abandoned (%d)", n)
-	require.NoError(t, werr, "the worker was told")
+	require.NoError(t, werr, "the worker was told: %v", werr)
 	h.machine()
 	h.tick(time.Hour)
 	h.machine()
@@ -283,7 +283,7 @@ func TestAWriterIsNotToldCutWhenItsOperationWasFinished(t *testing.T) {
 	h.clean("after")
 	require.Equal(t, sprint.Review, h.state("s1-1"), "s1-1 %s, pending %v", h.state("s1-1"), h.m.Pending())
 	require.Nil(t, h.m.Pending(), "s1-1 %s, pending %v", h.state("s1-1"), h.m.Pending())
-	require.NoError(t, werr, "the worker's finish applied and was committed, but the worker was told")
+	require.NoError(t, werr, "the worker's finish applied and was committed, but the worker was told: %v", werr)
 	require.Len(t, wres.Moved, 1, "the worker's result: %+v", wres)
 	require.Contains(t, wres.Moved[0], "s1-1", "the worker's result: %+v", wres)
 }

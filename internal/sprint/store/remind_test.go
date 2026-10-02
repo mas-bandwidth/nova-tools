@@ -230,9 +230,9 @@ func TestReminderTextBoundAndRefusals(t *testing.T) {
 	route, _ := goalFile(t, "a")
 	at := func(n int) *string { s := strings.Repeat("x", n); return &s }
 	_, _, err := h.st.SetGoal(h.ctx, "friend-a", at(MaxCardTextBytes), route)
-	require.NoError(t, err, "text at the bound")
+	require.NoError(t, err, "text at the bound: %v", err)
 	_, _, err = h.st.SetGoal(h.ctx, "friend-a", at(MaxCardTextBytes+1), route)
-	require.ErrorContains(t, err, "bound", "text over the bound")
+	require.ErrorContains(t, err, "bound", "text over the bound: %v", err)
 	blank := "  \n"
 	for name, c := range map[string]struct {
 		name  string

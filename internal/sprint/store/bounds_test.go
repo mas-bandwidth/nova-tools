@@ -21,7 +21,11 @@ func (h *harness) nothingWritten(before map[string]uint64) {
 		got := h.m.Revision(tb)
 		require.Equal(h.t, rev, got, "table %s moved %d -> %d", tb, rev, got)
 	}
-	require.Nil(h.t, h.m.Pending(), "the fence holds %v", h.m.Pending())
+	var pendingID any
+	if p := h.m.Pending(); p != nil {
+		pendingID = p.ID
+	}
+	require.Nil(h.t, h.m.Pending(), "the fence holds %s", pendingID)
 }
 
 func (h *harness) revisions() map[string]uint64 {
@@ -41,10 +45,10 @@ func TestACardTextOverTheBoundRefusesTheStepWhole(t *testing.T) {
 	h.setup(1)
 	before := h.revisions()
 	res, err := h.st.Run(h.ctx, AddStep(sprint.AddReq{Stream: "s2", Count: 2, Brief: strings.Repeat("b", MaxBriefBytes+1)}))
-	require.NoError(t, err)
-	require.Empty(t, res.Moved, "an over-long brief: %+v", res)
-	require.Len(t, res.Refused, 2, "an over-long brief: %+v", res)
-	require.Equal(t, 1, res.Attempts, "an over-long brief: %+v", res)
+	require.NoError(t, err, "an over-long brief: %+v %v", res, err)
+	require.Empty(t, res.Moved, "an over-long brief: %+v %v", res, err)
+	require.Len(t, res.Refused, 2, "an over-long brief: %+v %v", res, err)
+	require.Equal(t, 1, res.Attempts, "an over-long brief: %+v %v", res, err)
 	why := res.Refused[0].Why
 	for _, want := range []string{"field brief", fmt.Sprintf("is %d bytes, over the bound of 16384 bytes", MaxBriefBytes+1), "a child's whole brief", "shorten it, or point to a file or a comment"} {
 		assert.Contains(t, why, want, "refusal %q has no %q", why, want)
@@ -81,10 +85,10 @@ func TestAStepTheTableLayerRefusesIsRefusedBeforeAnyWrite(t *testing.T) {
 		}}}}
 	}}
 	res, err := h.st.Run(h.ctx, step)
-	require.NoError(t, err)
-	require.Empty(t, res.Moved, "an unwritable step: %+v", res)
-	require.Len(t, res.Refused, 1, "an unwritable step: %+v", res)
-	require.Equal(t, 1, res.Attempts, "an unwritable step: %+v", res)
+	require.NoError(t, err, "an unwritable step: %+v %v", res, err)
+	require.Empty(t, res.Moved, "an unwritable step: %+v %v", res, err)
+	require.Len(t, res.Refused, 1, "an unwritable step: %+v %v", res, err)
+	require.Equal(t, 1, res.Attempts, "an unwritable step: %+v %v", res, err)
 	why := res.Refused[0].Why
 	require.Contains(t, why, "LIMIT", "the refusal: %s", why)
 	require.Contains(t, why, "field value bytes", "the refusal: %s", why)
@@ -139,10 +143,10 @@ func TestAFirstManifestRefusedOnABoundIsNotRetried(t *testing.T) {
 	st.B = r
 	before := h.revisions()
 	res, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 2}}))
-	require.NoError(t, err)
-	require.Empty(t, res.Moved, "a first manifest refused on a bound: %+v", res)
-	require.Len(t, res.Refused, 2, "a first manifest refused on a bound: %+v", res)
-	require.Equal(t, 1, r.calls, "a first manifest refused on a bound: %+v; %d sends", res, r.calls)
+	require.NoError(t, err, "a first manifest refused on a bound: %+v %v; %d sends", res, err, r.calls)
+	require.Empty(t, res.Moved, "a first manifest refused on a bound: %+v %v; %d sends", res, err, r.calls)
+	require.Len(t, res.Refused, 2, "a first manifest refused on a bound: %+v %v; %d sends", res, err, r.calls)
+	require.Equal(t, 1, r.calls, "a first manifest refused on a bound: %+v %v; %d sends", res, err, r.calls)
 	why := res.Refused[0].Why
 	require.Contains(t, why, "changed entries: bound 1", "the refusal: %s", why)
 	require.NotContains(t, why, "kept changing", "the refusal: %s", why)
@@ -185,10 +189,10 @@ func TestRepairSkipsALaterManifestRefusedOnABound(t *testing.T) {
 	require.NoError(t, err)
 	h.pendingOp(op)
 	rr, err := h.st.Repair(h.ctx)
-	require.NoError(t, err)
-	require.Len(t, rr, 1, "repair: %+v", rr)
-	require.Equal(t, RepairSkipped, rr[0].Done, "repair: %+v", rr)
-	require.Len(t, rr[0].Skipped, 1, "repair: %+v", rr)
+	require.NoError(t, err, "repair: %+v %v", rr, err)
+	require.Len(t, rr, 1, "repair: %+v %v", rr, err)
+	require.Equal(t, RepairSkipped, rr[0].Done, "repair: %+v %v", rr, err)
+	require.Len(t, rr[0].Skipped, 1, "repair: %+v %v", rr, err)
 	require.Contains(t, rr[0].Skipped[0], "s1-1", "the skip does not carry the store's text: %s", rr[0].Skipped[0])
 	require.Contains(t, rr[0].Skipped[0], "LIMIT", "the skip does not carry the store's text: %s", rr[0].Skipped[0])
 	require.Nil(t, h.m.Pending(), "the fence is still held")
@@ -214,9 +218,9 @@ func TestAFirstManifestOverABoundIsAbandonedAtOnce(t *testing.T) {
 			Members: []ntable.BatchMemberEntry{{ID: p1.ID, Set: map[string]string{"probe": strings.Repeat("v", ntable.LimitFieldValueBytes+1)}}}},
 	}})
 	res, err := h.st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
-	require.NoError(t, err)
-	require.Len(t, res.Repaired, 1, "the verb after an unwritable pending operation: %+v", res)
-	require.True(t, strings.HasSuffix(res.Repaired[0], RepairAbandoned), "the verb after an unwritable pending operation: %+v", res)
+	require.NoError(t, err, "the verb after an unwritable pending operation: %+v %v", res, err)
+	require.Len(t, res.Repaired, 1, "the verb after an unwritable pending operation: %+v %v", res, err)
+	require.True(t, strings.HasSuffix(res.Repaired[0], RepairAbandoned), "the verb after an unwritable pending operation: %+v %v", res, err)
 	var pe *PendingError
 	require.False(t, errors.As(err, &pe), pe)
 }

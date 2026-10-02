@@ -256,14 +256,14 @@ func TestD1NotificationsAtTheCommitOnly(t *testing.T) {
 		return nil
 	}
 	_, err := h.st.Run(h.ctx, FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}, Failed: true}))
-	require.ErrorIs(t, err, ErrUnknown, "a lost commit")
+	require.ErrorIs(t, err, ErrUnknown, "a lost commit: %v", err)
 	open, _ := h.m.OpenNotes(h.ctx)
 	require.Empty(t, open, "a judgment is visible before the commit: %v", open)
 	h.m.Fail = nil
 	rr, err := h.st.Repair(h.ctx)
-	if err != nil || len(rr) != 1 || rr[0].Done != "finished" {
-		t.Fatalf("repair: %+v %v", rr, err)
-	}
+	require.NoError(t, err, "repair: %+v %v", rr, err)
+	require.Len(t, rr, 1, "repair: %+v %v", rr, err)
+	require.Equal(t, "finished", rr[0].Done, "repair: %+v %v", rr, err)
 	open, _ = h.m.OpenNotes(h.ctx)
 	require.Len(t, open, 1, "after repair: %v", open)
 	rr, _ = h.st.Repair(h.ctx)
@@ -370,7 +370,7 @@ func TestALaterMemberChangedIsSkippedByRepair(t *testing.T) {
 	}
 	h.tick(2 * time.Minute)
 	_, err = h.st.Run(h.ctx, FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
-	require.NoError(t, err, "a verb after the repair")
+	require.NoError(t, err, "a verb after the repair: %v", err)
 }
 
 // A pending operation whose first manifest never applied is left to its writer
@@ -386,7 +386,7 @@ func TestAnUnappliedPendingOperationIsAbandonedAfterTheGrace(t *testing.T) {
 		return nil
 	}
 	_, err := h.st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}))
-	require.ErrorIs(t, err, ErrUnknown, "start")
+	require.ErrorIs(t, err, ErrUnknown, "start: %v", err)
 	h.m.Fail = nil
 	// another writer's card now holds the id the start was to create: its
 	// first manifest can never apply

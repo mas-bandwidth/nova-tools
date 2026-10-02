@@ -16,7 +16,7 @@ import (
 func (h *harness) machine() TickResult {
 	h.t.Helper()
 	res, err := h.st.Tick(h.ctx)
-	require.NoError(h.t, err, "tick")
+	require.NoError(h.t, err, "tick: %v", err)
 	return res
 }
 
@@ -89,10 +89,10 @@ func TestStartAndStopAreIdempotentAndRecorded(t *testing.T) {
 	line = h.st.MachineLine(h.ctx)
 	require.Equal(t, "machine: running", line, "started: %q", line)
 	_, again, res, err := h.st.SetMachine(h.ctx, true)
-	require.NoError(t, err)
-	require.True(t, again.Running(), "start when running changed something: %+v %+v", again, res)
-	require.Equal(t, 0, res.Notes, "start when running changed something: %+v %+v", again, res)
-	require.True(t, again.Since.Equal(after.Since), "start when running changed something: %+v %+v", again, res)
+	require.NoError(t, err, "start when running changed something: %+v %+v %v", again, res, err)
+	require.True(t, again.Running(), "start when running changed something: %+v %+v %v", again, res, err)
+	require.Equal(t, 0, res.Notes, "start when running changed something: %+v %+v %v", again, res, err)
+	require.True(t, again.Since.Equal(after.Since), "start when running changed something: %+v %+v %v", again, res, err)
 	h.tick(MachineSilence + time.Second)
 	line = h.st.MachineLine(h.ctx)
 	require.Equal(t, "machine: STOPPED", line, "no tick: %q", line)
@@ -362,9 +362,9 @@ func TestAStuckOperationIsReportedOnceByTheFirstWriterAfterRepair(t *testing.T) 
 	h.m.Fail = nil
 	h.tick(5 * time.Minute)
 	rr, err := h.st.Repair(h.ctx)
-	require.NoError(t, err)
-	require.Len(t, rr, 1, "repair: %+v", rr)
-	require.Equal(t, RepairFinished, rr[0].Done, "repair: %+v", rr)
+	require.NoError(t, err, "repair: %+v %v", rr, err)
+	require.Len(t, rr, 1, "repair: %+v %v", rr, err)
+	require.Equal(t, RepairFinished, rr[0].Done, "repair: %+v %v", rr, err)
 	n := len(h.openOf(sprint.NOpStuck))
 	require.Equal(t, 0, n, "written by the repair itself: %d", n)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
@@ -732,7 +732,7 @@ func TestATickPartRefusedWholeNamesNoRows(t *testing.T) {
 	r := &refusing{Mem: h.m, table: "t-fleet"}
 	st.B = r
 	res, err := st.Tick(h.ctx)
-	require.NoError(t, err, "tick")
+	require.NoError(t, err, "tick: %v", err)
 	require.NotEqual(t, 0, r.calls, "the store refused %d manifests, the tick ran parts %+v", r.calls, res.Parts)
 	require.NotEmpty(t, res.Parts, "the store refused %d manifests, the tick ran parts %+v", r.calls, res.Parts)
 	for _, p := range res.Parts {

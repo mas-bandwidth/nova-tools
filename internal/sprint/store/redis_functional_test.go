@@ -76,7 +76,7 @@ func TestRedisAPendingOperationIsFinishedByTheNextVerb(t *testing.T) {
 	cut := *st
 	cut.B = lost
 	_, err := cut.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}))
-	require.ErrorIs(t, err, ErrUnknown, "start with a lost reply")
+	require.ErrorIs(t, err, ErrUnknown, "start with a lost reply: %v", err)
 	f, _ := st.B.ReadFence(h.ctx)
 	require.NotNil(t, f.Pending, "no pending operation")
 	res := h.must(TakeStep(sprint.TakeReq{As: "m1"}))
@@ -119,7 +119,8 @@ func TestRedisTwoWritersReleaseOneOperation(t *testing.T) {
 		go func() { errs <- st.B.Release(ctx, op, true) }()
 	}
 	for i := 0; i < 2; i++ {
-		require.NoError(t, <-errs, "release")
+		err := <-errs
+		require.NoError(t, err, "release: %v", err)
 	}
 	notes, _, err := st.B.NotesSince(ctx, "", 100)
 	require.NoError(t, err, "notifications: %d %v", len(notes), err)

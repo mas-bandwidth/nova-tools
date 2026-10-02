@@ -92,7 +92,7 @@ func TestAnAbandonedDealLeavesItsPropertyUnwritten(t *testing.T) {
 	}
 	calls := 0
 	_, err := h.st.Run(h.ctx, dealWithProp(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}, func(string, bool) string { return "m1" }, &calls))
-	require.ErrorIs(t, err, ErrUnknown, "start")
+	require.ErrorIs(t, err, ErrUnknown, "start: %v", err)
 	h.m.Fail = nil
 	s := h.snap()
 	_, err = h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
@@ -122,7 +122,7 @@ func TestARepairedDealWritesItsPropertyWhenACardApplied(t *testing.T) {
 	}
 	calls := 0
 	_, err := h.st.Run(h.ctx, dealWithProp(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}, func(string, bool) string { return "m2" }, &calls))
-	require.ErrorIs(t, err, ErrUnknown, "start")
+	require.ErrorIs(t, err, ErrUnknown, "start: %v", err)
 	h.m.Fail = nil
 	s := h.snap()
 	_, err = h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),

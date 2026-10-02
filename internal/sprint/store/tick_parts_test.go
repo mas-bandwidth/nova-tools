@@ -169,7 +169,7 @@ func TestTheTickFinishesAPendingOperationPastItsGrace(t *testing.T) {
 		return nil
 	}
 	_, err := h.st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}))
-	require.ErrorIs(t, err, ErrUnknown, "the cut")
+	require.ErrorIs(t, err, ErrUnknown, "the cut: %v", err)
 	h.m.Fail = nil
 	require.NotNil(t, h.m.Pending(), "nothing pending")
 	h.tick(2 * time.Minute)

@@ -39,7 +39,7 @@ func TestCallerOpOfAnEarlierEpochIsRefused(t *testing.T) {
 	// A caller's id holding the epoch's mark is refused before anything.
 	step.Epoch, step.CallerOp = nil, "x~1"
 	_, err = h.st.Run(h.ctx, step)
-	require.ErrorContains(t, err, "holds '~'", "an id with the epoch's mark")
+	require.ErrorContains(t, err, "holds '~'", "an id with the epoch's mark: %v", err)
 }
 
 // C2: notification and judgment ids carry the epoch: the same operation
@@ -75,7 +75,8 @@ func TestNoteIDsCarryTheEpoch(t *testing.T) {
 	if err != nil || len(res.Moved) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "belongs to epoch 0") {
 		t.Fatalf("ack of the old judgment: %+v %v", res, err)
 	}
-	require.ErrorContains(t, h.st.SetReview(h.ctx, oldID, t0), "belongs to epoch 0", "wait on the old judgment")
+	err = h.st.SetReview(h.ctx, oldID, t0)
+	require.ErrorContains(t, err, "belongs to epoch 0", "wait on the old judgment: %v", err)
 	require.Equal(t, img, h.image(), "the ack and the wait of the old judgment changed the store")
 	if v, _ := h.st.Inbox(h.ctx, 0, 0, 100); len(v.Open) == 0 || v.Open[0].Note.ID != newID {
 		t.Fatalf("the new judgment is not open: %+v", v.Open)

@@ -91,7 +91,7 @@ func TestAResolveThatLostToOtherWritersIsDoneNextTick(t *testing.T) {
 	h.landUnresolved("s1")
 	h.st.B = &loseTickPart{Mem: h.m, verb: "tick resolve", left: FenceTries}
 	_, err := h.st.Tick(h.ctx)
-	require.NoError(t, err, "the contended tick")
+	require.NoError(t, err, "the contended tick: %v", err)
 	h.st.B = h.m
 	require.Equal(t, sprint.Waiting, h.state("b"), "the scene: b %s", h.state("b"))
 	h.tick(time.Second)
@@ -259,8 +259,10 @@ func TestFewReadersIsWrittenOncePerSprint(t *testing.T) {
 	h.machine()
 	h.tick(time.Minute + time.Second)
 	h.machine()
-	require.Equal(t, was, h.written(sprint.NFewReaders), "few readers written times (was %d)", was)
-	require.Len(t, h.openOf(sprint.NFewReaders), 1, "open after one reader came")
+	n := h.written(sprint.NFewReaders)
+	open := len(h.openOf(sprint.NFewReaders))
+	require.Equal(t, was, n, "few readers written %d times (was %d), open %d, after one reader came", n, was, open)
+	require.Equal(t, 1, open, "few readers written %d times (was %d), open %d, after one reader came", n, was, open)
 	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-b"}))
 	h.beat()
 	h.tick(time.Second)

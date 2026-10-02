@@ -83,7 +83,7 @@ func TestCRResolveThatLosesToOtherWritersIsNeverRetried(t *testing.T) {
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
 	h.st.B = &loseResolve{Mem: h.m, left: FenceTries}
 	res, err := h.st.Tick(h.ctx)
-	require.NoError(t, err, "tick")
+	require.NoError(t, err, "tick: %v", err)
 	t.Logf("contended tick: parts %+v", res.Parts)
 	h.st.B = h.m
 	h.crTicks(5, "after the contention")

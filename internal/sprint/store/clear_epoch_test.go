@@ -136,7 +136,7 @@ func TestClearInTheMiddleOfAStep(t *testing.T) {
 			res, err := st.Run(h.ctx, step)
 			t.Logf("step: %+v err=%v", res, err)
 			t.Logf("clear: %+v err=%v", cres, cerr)
-			require.NoError(t, cerr, "clear")
+			require.NoError(t, cerr, "clear: %v", cerr)
 			require.GreaterOrEqual(t, w.seen, 2, "the step wrote %d manifests", w.seen)
 			s := h.snap()
 			require.Equal(t, uint64(1), s.Epoch, "epoch %d", s.Epoch)
@@ -153,7 +153,7 @@ func TestClearInTheMiddleOfAStep(t *testing.T) {
 			h.clean("after the clear mid-step")
 			// the old epoch: is it one consistent state (both or neither)?
 			old, err := h.st.At(0).Load(h.ctx, All, nil)
-			require.NoError(t, err, "old epoch")
+			require.NoError(t, err, "old epoch: %v", err)
 			t.Logf("old epoch: s1-1 %s, s1-2 %s, fleet cards %d", old.StateOf("s1-1"), old.StateOf("s1-2"), len(old.Fleet.Cards()))
 			if p := h.m.AtEpoch(0, true).(*Mem).Pending(); p != nil {
 				t.Logf("old epoch's fence still holds %s", p.ID)
@@ -189,7 +189,7 @@ func TestEmptyClearsThenTeardown(t *testing.T) {
 	_, err := m.AtEpoch(1, true).Shapes(h.ctx, []string{h.st.Names.Table(sprint.Work)})
 	require.Equal(t, "NOTABLE", refusalCode(err), "a read of epoch 1, which had no write: %v", err)
 	_, err = m.AtEpoch(0, true).Shapes(h.ctx, []string{h.st.Names.Table(sprint.Work)})
-	require.NoError(t, err, "a read of epoch 0, which init wrote")
+	require.NoError(t, err, "a read of epoch 0, which init wrote: %v", err)
 	_, err = m.AtEpoch(4, true).Shapes(h.ctx, []string{h.st.Names.Table(sprint.Work)})
 	require.Equal(t, "EPOCHAHEAD", refusalCode(err), "a read of epoch 4, ahead of the sprint: %v", err)
 	for e := uint64(0); e < 3; e++ {

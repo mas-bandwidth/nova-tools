@@ -437,7 +437,7 @@ func TestRedisCallerOperationReplay(t *testing.T) {
 	other.CallerOp = "op-1"
 	var conflict *OpConflictError
 	_, err = h.st.Run(h.ctx, other)
-	require.ErrorAs(t, err, &conflict, "another verb under the id")
+	require.ErrorAs(t, err, &conflict, "another verb under the id: %v", err)
 	args := DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})
 	args.CallerOp = "op-1"
 	args.Args = ArgsOf(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})
@@ -594,7 +594,7 @@ func TestRedisAClearInTheMiddleOfAStep(t *testing.T) {
 	res, err := st.Run(h.ctx, step)
 	t.Logf("step: %+v err=%v", res, err)
 	t.Logf("clear: %+v err=%v", cres, cerr)
-	require.NoError(t, cerr, "clear")
+	require.NoError(t, cerr, "clear: %v", cerr)
 	require.GreaterOrEqual(t, w.seen, 2, "the step wrote %d manifests", w.seen)
 	s := h.snap()
 	require.Equal(t, uint64(1), s.Epoch, "epoch %d", s.Epoch)
@@ -610,10 +610,10 @@ func TestRedisAClearInTheMiddleOfAStep(t *testing.T) {
 	}
 	h.clean("after the clear mid-step")
 	old, err := h.st.At(0).Load(h.ctx, All, nil)
-	require.NoError(t, err, "old epoch")
+	require.NoError(t, err, "old epoch: %v", err)
 	t.Logf("old epoch: s1-1 %s, s1-2 %s, fleet cards %d", old.StateOf("s1-1"), old.StateOf("s1-2"), len(old.Fleet.Cards()))
 	_, err = h.st.Repair(h.ctx)
-	require.NoError(t, err, "repair")
+	require.NoError(t, err, "repair: %v", err)
 	res, err = h.st.Run(h.ctx, step)
 	require.NoError(t, err, "the same verb again: %+v %v", res, err)
 	require.Empty(t, res.Moved, "the same verb again: %+v %v", res, err)
@@ -672,7 +672,7 @@ func TestRedisTeardownLeavesNoKeyAndNothingElse(t *testing.T) {
 	b.clean("the neighbour after the teardown")
 	// a second teardown deletes nothing more
 	_, err = a.st.Teardown(ctx)
-	require.NoError(t, err, "second teardown")
+	require.NoError(t, err, "second teardown: %v", err)
 	again := liveKeys(t, c)
 	require.Equal(t, strings.Join(untouched, "\n"), strings.Join(again, "\n"), "after the second teardown:\n%s", strings.Join(again, "\n"))
 	// and the neighbour's teardown leaves exactly the foreign keys
@@ -934,7 +934,8 @@ func TestRedisTheFenceRefusesWhatItShould(t *testing.T) {
 	}
 	require.NoError(t, h.st.B.Release(ctx, op("op-2"), false))
 	// a release of an operation the fence no longer holds does nothing
-	require.NoError(t, h.st.B.Release(ctx, op("op-2"), true), "a second release")
+	err = h.st.B.Release(ctx, op("op-2"), true)
+	require.NoError(t, err, "a second release: %v", err)
 	// a backend pinned to an epoch the sprint has left is refused
 	_, err = h.st.Clear(ctx)
 	require.NoError(t, err)

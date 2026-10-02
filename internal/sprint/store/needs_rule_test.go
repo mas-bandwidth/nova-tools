@@ -339,7 +339,7 @@ func TestRepairSkipsTheWaiterOfASkippedLanding(t *testing.T) {
 	st.B = h.outsideWrite("s1-1")
 	_, err := st.Run(h.ctx, MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
 	var cut *CutError
-	require.ErrorAs(t, err, &cut, "not cut")
+	require.ErrorAs(t, err, &cut, "not cut: %v", err)
 	h.tick(time.Hour)
 	rr, err := h.st.Repair(h.ctx)
 	require.NoError(t, err)

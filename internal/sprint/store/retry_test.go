@@ -83,7 +83,7 @@ func TestABusyTableStopsAtTheBudget(t *testing.T) {
 	st.Sleep = sl.sleep
 	st.Rand = func(n int64) int64 { return n - 1 }
 	_, err := st.Load(h.ctx, tables(sprint.Work), nil)
-	require.ErrorContains(t, err, "table t-work kept changing", "load")
+	require.ErrorContains(t, err, "table t-work kept changing", "load: %v", err)
 	if tot := sl.total(); tot > RetryBudget || tot < RetryBudget-backoffCap {
 		t.Fatalf("asleep %s, want at most %s and within a step of it", tot, RetryBudget)
 	}

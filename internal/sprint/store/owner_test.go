@@ -31,7 +31,7 @@ func TestOnlyTheCoordinatorAnswersAJudgment(t *testing.T) {
 	st := *h.st
 	st.Actor = "m1"
 	_, _, err := st.Wait(h.ctx, id, h.now.Add(10*60*1e9))
-	require.ErrorContains(t, err, "the-coordinator", "wait by a worker")
+	require.ErrorContains(t, err, "the-coordinator", "wait by a worker: %v", err)
 	// the coordinator answers it
 	h.must(AckStep(sprint.AckReq{Notes: []string{id}, Reason: "a flaky runner", Who: "the-coordinator"}))
 	require.Empty(t, h.openOf(sprint.NCIRed), "the coordinator's ack did not close it")

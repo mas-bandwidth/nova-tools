@@ -302,7 +302,7 @@ func TestAudit2ClosedRepairSkipNamesAStoredIDAfterAClear(t *testing.T) {
 	st.B = outside
 	var cut *CutError
 	_, err = st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	require.ErrorAs(t, err, &cut, "not cut")
+	require.ErrorAs(t, err, &cut, "not cut: %v", err)
 	h.tick(time.Hour)
 	if rr, err := h.st.Repair(h.ctx); err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped {
 		t.Fatalf("repair %+v %v", rr, err)

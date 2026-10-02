@@ -308,12 +308,12 @@ func (h *dHarness) observe() refmodel.State {
 		}
 		return out
 	})
-	require.NoError(h.t, err, "load")
+	require.NoError(h.t, err, "load: %v", err)
 	// The sprint as the next pump leaves its work table: every step but the
 	// pump queues its work-table changes while the machine runs, and the
 	// model's state is the work table with them applied (refmodel.Tick).
 	q, err := h.m.AtEpoch(s.Epoch, false).QueueRead(h.ctx)
-	require.NoError(h.t, err, "queue")
+	require.NoError(h.t, err, "queue: %v", err)
 	s = sprint.WithQueue(s, q)
 	for _, name := range All {
 		for _, c := range s.T(name).Cards() {
@@ -326,7 +326,7 @@ func (h *dHarness) observe() refmodel.State {
 		o.Pending = p.Verb
 	}
 	mach, _, err := h.st.Machine(h.ctx)
-	require.NoError(h.t, err, "machine")
+	require.NoError(h.t, err, "machine: %v", err)
 	if mach.Running() {
 		o.Machine = refmodel.Running
 	}
@@ -338,7 +338,7 @@ func (h *dHarness) observe() refmodel.State {
 // pending is the operation the fence of the sprint's epoch holds.
 func (h *dHarness) pending() *OpRecord {
 	f, err := h.m.AtEpoch(h.epoch, false).ReadFence(h.ctx)
-	require.NoError(h.t, err, "fence")
+	require.NoError(h.t, err, "fence: %v", err)
 	return f.Pending
 }
 
