@@ -141,4 +141,3 @@ func TestSlotCapacityReserveRefused(t *testing.T) {
 		t.Fatalf("refusal must name holders, got %q", holders)
 	}
 }
-

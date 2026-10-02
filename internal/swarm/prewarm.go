@@ -16,35 +16,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
-const PrewarmReceiptDir = "prewarm"
-
-// PrewarmCommand is one cache-producing phase. Run is injectable so unit tests prove the
-// complete plan without compiling the repository or reaching a network.
-type PrewarmCommand struct {
-	Name string
-	Dir  string
-	Env  []string
-	Argv []string
-}
-
-// PrewarmInput names one repository tip already present in a local checkout. Prewarm never
-// guesses a branch or fetches a remote: fleet adoption fetches the bench mirror first and
-// hands this verb the exact full commit it is warming.
-type PrewarmInput struct {
-	Root   string
-	Source string
-	Repo   string
-	Tip    string
-	Run    func(PrewarmCommand) error
-}
-
-type PrewarmResult struct {
-	Checkout string
-	Tip      string
-	Phases   int
-	Reused   bool
-}
-
 // LispCacheDir is the shared ASDF output directory under a swarm root.
 func LispCacheDir(root string) string { return filepath.Join(root, CacheDirName, "common-lisp") }
 

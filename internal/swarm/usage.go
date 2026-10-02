@@ -6,34 +6,17 @@ import (
 	"strings"
 )
 
-// USAGE OUTLIVES THE JOB (rule 12).
-//
-// DeepSeek's usage for two batches on 2026-09-11 lived in per-worker data directories that
-// were reclaimed with the jobs, and nothing survived. So the usage file is written OUTSIDE
-// the reclaimable subtree, by finalize, BEFORE anything else happens to the job, and
-// reclaim refuses without it.
-//
 // A field the provider did not report is the literal "-", never 0: a zero is a
 // measurement and a dash is an absence, and nova-tokens reads this file and reads "-" as
 // unknown (SPEC-TOKENS rule 14).
 
-// UsageColumns are the sixteen columns, in this order. The order is the contract.
-var UsageColumns = []string{
-	"job", "attempt", "from", "started", "ended", "end", "rc", "provider", "model", "repo",
-	"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd",
-}
-
 // The ways a job ends, as the `end` column spells them.
 const (
 	EndDone         = "done"
-	EndKilled       = "killed"
 	EndBudget       = "budget"
 	EndUnverifiable = "budget-unverifiable"
-	EndViolation    = "violation"
 	EndFailed       = "failed"
 	EndUnknown      = "unknown"
-	EndLaunchFailed = "launch-failed"
-	EndInputLimit   = "input-limit"
 	// EndProvider is a launch that did not take: the harness died inside the launch
 	// grace with a provider server error in its tail. It is retried with backoff and,
 	// after the third fast failure, is filed with the provider's own ref (issue #900).

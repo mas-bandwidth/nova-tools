@@ -114,9 +114,8 @@ const (
 
 // The placeholders a worker description may write into harness_args.
 const (
-	ModelPlaceholder   = "{model}"
-	PromptPlaceholder  = "{prompt}"
-	BaseURLPlaceholder = "{base_url}"
+	ModelPlaceholder  = "{model}"
+	PromptPlaceholder = "{prompt}"
 )
 
 // LoadWorker reads and checks a worker description, reporting EVERY independent problem in
@@ -710,4 +709,3 @@ func tailBytes(path string, n int) (string, int64) {
 	}
 	return s, size - int64(len(s))
 }
-

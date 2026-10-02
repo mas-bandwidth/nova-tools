@@ -22,7 +22,6 @@ import (
 //	           or a probe-row that finished `not done` with its reason. NEVER a failure: the
 //	           tool must not pay a worker for finding something.
 //	plan-only  a RESULT.md with NO head, whatever else it holds
-//	no-result  no RESULT.md at all
 //	malformed  a head without findings: <n>, a fourth state word, a table that does not
 //	           parse -- quarantined, never folded, counted in no other column
 
@@ -31,7 +30,6 @@ const (
 	ClassOK        = "ok"
 	ClassClean     = "clean"
 	ClassPlanOnly  = "plan-only"
-	ClassNoResult  = "no-result"
 	ClassMalformed = "malformed"
 )
 
