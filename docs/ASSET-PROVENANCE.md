@@ -7,7 +7,7 @@ are not ours would say so on its own line rather than being assumed.
 
 | file | provenance |
 |---|---|
-| `nova-tools-workshop.png` | **Generated**, not photographed or drawn: made with OpenAI image generation for Nova Tools on 2026-09-12, at the maintainer's request. It is the header image `README.md` shows. No third-party work is depicted in it and no other authorship is claimed for it. |
+| `nova-tools-workshop.png` | **Generated**, not photographed or drawn. It is the header image `README.md` shows. No third-party work is depicted in it and no other authorship is claimed for it. |
 
 A file added here gets its row in the same commit. "Generated" is worth writing
 down: an image with no provenance line reads as a photograph or as somebody
