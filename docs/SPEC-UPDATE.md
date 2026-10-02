@@ -279,7 +279,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     digest changes the retained observation; the unchanged table header cannot hide it.
     Both are on the line because they differ in what they can say: an opaque commit or a
     `devel` build is an identity this bench honestly runs though no order is known for it
-    , so it is reported, never dropped for lacking a dotted number. A first line
+    ; it is reported, never dropped for lacking a dotted number. A first line
     whose second token is `devel` or a bare commit, `^[0-9a-f]{7,40}$`, has no key,
     `version=-`, and the raw line is the fact: `nova-bus devel darwin/arm64 go1.27.1` never
     keys the toolchain's `1.27.1` as the tool's version (the same clause of the installed read keeps
@@ -493,7 +493,7 @@ carries, and what `pull` deletes.
 
 **`adopt` runs FROM the host that has ssh to every machine, and fans out from there.** It
 never needs the machines to reach one another. This is not a preference, it is the shape of
-the fleet: a dogfood pass ran `adopt` on
+the fleet: a dogfood pass runs `adopt` on
 hulk, the build host, and 3 of 3 machines refused — short names did not resolve, and
 Tailscale addresses gave `Permission denied (publickey)`, because **no bench in this fleet
 has ssh trust to any other bench**. Only the Studio does. The fleet was brought current by
