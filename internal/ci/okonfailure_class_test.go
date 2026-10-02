@@ -3,11 +3,13 @@ package ci
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // okOnFailureAllowlistPath is the shrink-only ledger of the print-then-exit
@@ -42,14 +44,13 @@ const (
 func TestNoOKOnFailure(t *testing.T) {
 	t.Parallel()
 
-	tree := repoTree(t)
-	ledger := newSiteLedger(t, okOnFailureAllowlistPath)
+	h := newCIHarness(t)
+	tree := h.repoTree()
+	ledger := h.newSiteLedger(okOnFailureAllowlistPath)
 	for _, files := range goFilesByDir(livingCmdFiles(tree)) {
 		var asts []*ast.File
 		for _, f := range files {
-			if f.ParseErr != nil {
-				t.Fatal(f.ParseErr)
-			}
+			require.NoError(t, f.ParseErr, f.Rel)
 			asts = append(asts, f.AST)
 		}
 		pkg := newCmdPackage(asts)
@@ -59,9 +60,7 @@ func TestNoOKOnFailure(t *testing.T) {
 			}
 		}
 	}
-	for _, v := range ledger.violations(t, "the word and the exit must agree: OK only at 0, FAIL or REFUSED only above it (a row's count only falls)") {
-		t.Error(v)
-	}
+	h.checkLedger(ledger, "the word and the exit must agree: OK only at 0, FAIL or REFUSED only above it (a row's count only falls)")
 }
 
 // okOnFailureSite is one disagreeing pair.
@@ -258,11 +257,8 @@ func b(w io.Writer, bad bool) int {
 	return 0
 }
 `
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", src, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newCIHarness(t)
+	fset, f := h.parseSource("main.go", src)
 	p := newCmdPackage([]*ast.File{f})
 	got := map[string]int{}
 	for _, s := range p.okOnFailureSites(fset, f) {
@@ -270,7 +266,15 @@ func b(w io.Writer, bad bool) int {
 	}
 	// a: one of each. b: an OK printed after a REFUSED then exit 2 (the last status
 	// line wins, not "any line says FAIL"), and a FAIL after an OK then exit 0.
-	if got[kindOKNonZero] != 2 || got[kindFailZero] != 2 || len(got) != 2 {
-		t.Errorf("got %v, want two %s and two %s", got, kindOKNonZero, kindFailZero)
+	tests := []struct {
+		kind string
+		want int
+	}{
+		{kind: kindOKNonZero, want: 2},
+		{kind: kindFailZero, want: 2},
 	}
+	for _, tc := range tests {
+		assert.Equal(t, tc.want, got[tc.kind], "got %v, want two %s and two %s", got, kindOKNonZero, kindFailZero)
+	}
+	assert.Len(t, got, 2, "got %v, want two %s and two %s", got, kindOKNonZero, kindFailZero)
 }
