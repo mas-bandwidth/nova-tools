@@ -1,5 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 18
+# ceiling: 13
 internal/release/adopt.go:emma 1
 internal/release/adopt.go:glenn 1
 internal/release/adopt.go:hulk 2
