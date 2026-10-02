@@ -5,6 +5,7 @@ package filelock_test
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestFunctional_TwoProcessesContend tests that when two distinct operating system
@@ -34,14 +37,14 @@ func TestFunctional_TwoProcessesContend(t *testing.T) {
 	)
 	stdinA, err := cmdA.StdinPipe()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	stdoutA, err := cmdA.StdoutPipe()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if err := cmdA.Start(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	defer func() {
 		_ = stdinA.Close()
@@ -52,19 +55,19 @@ func TestFunctional_TwoProcessesContend(t *testing.T) {
 	readerA := bufio.NewReader(stdoutA)
 	lineA, err := readerA.ReadString('\n')
 	if err != nil || strings.TrimSpace(lineA) != "HELD" {
-		t.Fatalf("Process A failed to hold lock: line=%q, err=%v", lineA, err)
+		require.Fail(t, fmt.Sprintf("Process A failed to hold lock: line=%q, err=%v", lineA, err))
 	}
 
 	// Verify Probe reports StateHeld by Process A
 	state, stamp, err := filelock.Probe(path)
 	if err != nil {
-		t.Fatalf("Probe failed: %v", err)
+		require.NoError(t, err, "Probe failed: %v", err)
 	}
 	if state != filelock.StateHeld {
-		t.Errorf("state = %s, want %s", state, filelock.StateHeld)
+		assert.Equal(t, filelock.StateHeld, state, "state = %s, want %s", state, filelock.StateHeld)
 	}
 	if stamp.PID != cmdA.Process.Pid {
-		t.Errorf("stamp PID = %d, want %d", stamp.PID, cmdA.Process.Pid)
+		assert.Equal(t, cmdA.Process.Pid, stamp.PID, "stamp PID = %d, want %d", stamp.PID, cmdA.Process.Pid)
 	}
 
 	// Process B attempts to acquire the lock immediately via TryLock
@@ -79,7 +82,7 @@ func TestFunctional_TwoProcessesContend(t *testing.T) {
 	// Helper exits with 2 when ErrHeld is returned
 	var exitErr *exec.ExitError
 	if !errors.As(errB, &exitErr) || exitErr.ExitCode() != 2 {
-		t.Fatalf("Process B should have failed with exit code 2 (held), got output %q, err %v", string(outB), errB)
+		require.Fail(t, fmt.Sprintf("Process B should have failed with exit code 2 (held), got output %q, err %v", string(outB), errB))
 	}
 
 	// Now release Process A by closing its stdin
@@ -96,7 +99,7 @@ func TestFunctional_TwoProcessesContend(t *testing.T) {
 	)
 	outB2, errB2 := cmdB2.CombinedOutput()
 	if errB2 != nil || strings.TrimSpace(string(outB2)) != "ACQUIRED" {
-		t.Fatalf("Process B2 failed to acquire after release: out=%q, err=%v", string(outB2), errB2)
+		require.Fail(t, fmt.Sprintf("Process B2 failed to acquire after release: out=%q, err=%v", string(outB2), errB2))
 	}
 }
 
@@ -118,14 +121,14 @@ func TestFunctional_KilledHolderLockFreedByKernelAndPreviousNoteObserved(t *test
 	)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 
 	reader := bufio.NewReader(stdout)
@@ -134,7 +137,7 @@ func TestFunctional_KilledHolderLockFreedByKernelAndPreviousNoteObserved(t *test
 		_ = stdin.Close()
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		t.Fatalf("Child failed to take lock: line=%q, err=%v", line, err)
+		require.Fail(t, fmt.Sprintf("Child failed to take lock: line=%q, err=%v", line, err))
 	}
 
 	holderPID := cmd.Process.Pid
@@ -142,15 +145,15 @@ func TestFunctional_KilledHolderLockFreedByKernelAndPreviousNoteObserved(t *test
 	// Verify StateHeld while alive
 	state, stamp, err := filelock.Probe(path)
 	if err != nil {
-		t.Fatalf("Probe failed: %v", err)
+		require.NoError(t, err, "Probe failed: %v", err)
 	}
 	if state != filelock.StateHeld || stamp.PID != holderPID {
-		t.Fatalf("Probe while alive = (%s, %+v), want StateHeld for PID %d", state, stamp, holderPID)
+		require.Fail(t, fmt.Sprintf("Probe while alive = (%s, %+v), want StateHeld for PID %d", state, stamp, holderPID))
 	}
 
 	// KILL the holder abruptly (SIGKILL) so it cannot run Unlock()
 	if err := cmd.Process.Kill(); err != nil {
-		t.Fatalf("failed to kill child: %v", err)
+		require.NoError(t, err, "failed to kill child: %v", err)
 	}
 	_ = stdin.Close()
 	_ = cmd.Wait()
@@ -159,43 +162,43 @@ func TestFunctional_KilledHolderLockFreedByKernelAndPreviousNoteObserved(t *test
 	// Probe can now acquire a shared lock and report StateFree!
 	stateAfter, _, err := filelock.Probe(path)
 	if err != nil {
-		t.Fatalf("Probe after kill failed: %v", err)
+		require.NoError(t, err, "Probe after kill failed: %v", err)
 	}
 	if stateAfter != filelock.StateFree {
-		t.Fatalf("Probe state after kill = %s, want %s (kernel drops lock)", stateAfter, filelock.StateFree)
+		require.Equal(t, filelock.StateFree, stateAfter, "Probe state after kill = %s, want %s (kernel drops lock)", stateAfter, filelock.StateFree)
 	}
 
 	// New taker acquires immediately and observes previous unreleased holder
 	lock, err := filelock.Lock(path, "recovery-taker", time.Second)
 	if err != nil {
-		t.Fatalf("Lock failed after holder died: %v", err)
+		require.NoError(t, err, "Lock failed after holder died: %v", err)
 	}
 	defer lock.Unlock()
 
 	if lock.Previous() == nil {
-		t.Fatalf("lock.Previous() = nil, want killed holder stamp")
+		require.Fail(t, fmt.Sprintf("lock.Previous() = nil, want killed holder stamp"))
 	}
 	if lock.Previous().PID != holderPID {
-		t.Errorf("Previous().PID = %d, want %d", lock.Previous().PID, holderPID)
+		assert.Fail(t, fmt.Sprintf("Previous().PID = %d, want %d", lock.Previous().PID, holderPID))
 	}
 	if lock.Previous().Label != "killed-worker" {
-		t.Errorf("Previous().Label = %q, want killed-worker", lock.Previous().Label)
+		assert.Fail(t, fmt.Sprintf("Previous().Label = %q, want killed-worker", lock.Previous().Label))
 	}
 
 	// When recovery-taker unlocks cleanly:
 	if err := lock.Unlock(); err != nil {
-		t.Fatalf("Unlock failed: %v", err)
+		require.NoError(t, err, "Unlock failed: %v", err)
 	}
 
 	// Next taker sees nil Previous() because Unlock cleanly truncated the note
 	nextLock, err := filelock.TryLock(path, "clean-taker")
 	if err != nil {
-		t.Fatalf("TryLock failed: %v", err)
+		require.NoError(t, err, "TryLock failed: %v", err)
 	}
 	defer nextLock.Unlock()
 
 	if nextLock.Previous() != nil {
-		t.Errorf("nextLock.Previous() = %+v, want nil after clean unlock", nextLock.Previous())
+		assert.Fail(t, fmt.Sprintf("nextLock.Previous() = %+v, want nil after clean unlock", nextLock.Previous()))
 	}
 }
 
@@ -256,7 +259,7 @@ func TestFunctional_ProbeDoesNotDisturbTaker(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "probed.lock")
 	if err := os.WriteFile(path, nil, 0666); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	stop := make(chan struct{})
 	done := make(chan int)
@@ -270,7 +273,7 @@ func TestFunctional_ProbeDoesNotDisturbTaker(t *testing.T) {
 			default:
 			}
 			if _, _, err := filelock.Probe(path); err != nil {
-				t.Errorf("Probe: %v", err)
+				assert.NoError(t, err, "Probe: %v", err)
 			}
 			probes++
 		}
@@ -292,13 +295,13 @@ func TestFunctional_ProbeDoesNotDisturbTaker(t *testing.T) {
 				firstHeld = err
 			}
 		default:
-			t.Fatalf("TryLock: %v", err)
+			require.Fail(t, fmt.Sprintf("TryLock: %v", err))
 		}
 	}
 	close(stop)
 	probes := <-done
 	t.Logf("%d takes beside %d probes: %d told held, %d told busy", takes, probes, held, busy)
 	if held > 0 {
-		t.Errorf("told held %d times of %d with nobody holding, only a prober; first: %v", held, takes, firstHeld)
+		assert.LessOrEqual(t, held, 0, "told held %d times of %d with nobody holding, only a prober; first: %v", held, takes, firstHeld)
 	}
 }

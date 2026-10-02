@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestProperty_StampRoundtrip(t *testing.T) {
@@ -40,11 +42,11 @@ func TestProperty_StampRoundtrip(t *testing.T) {
 		started := baseTime.Add(time.Duration(offsetSec)*time.Second + time.Duration(offsetNano)).UTC()
 		text, err := started.MarshalText()
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		var cleanTime time.Time
 		if err := cleanTime.UnmarshalText(text); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 
 		rawLabel := randomString(labelCharset, 40)
@@ -60,20 +62,20 @@ func TestProperty_StampRoundtrip(t *testing.T) {
 		formatted := original.Format()
 		parsed, err := ParseStamp(formatted)
 		if err != nil {
-			t.Fatalf("iteration %d: ParseStamp failed on formatted text %q: %v", i, formatted, err)
+			require.NoError(t, err, "iteration %d: ParseStamp failed on formatted text %q: %v", i, formatted, err)
 		}
 
 		if parsed.PID != original.PID {
-			t.Fatalf("iteration %d: PID = %d, want %d", i, parsed.PID, original.PID)
+			require.Equal(t, original.PID, parsed.PID, "iteration %d: PID = %d, want %d", i, parsed.PID, original.PID)
 		}
 		if parsed.Host != original.Host {
-			t.Fatalf("iteration %d: Host = %q, want %q", i, parsed.Host, original.Host)
+			require.Equal(t, original.Host, parsed.Host, "iteration %d: Host = %q, want %q", i, parsed.Host, original.Host)
 		}
 		if !parsed.Started.Equal(original.Started) {
-			t.Fatalf("iteration %d: Started = %v, want %v", i, parsed.Started, original.Started)
+			require.Fail(t, fmt.Sprintf("iteration %d: Started = %v, want %v", i, parsed.Started, original.Started))
 		}
 		if parsed.Label != cleanLabel {
-			t.Fatalf("iteration %d: Label = %q, want %q", i, parsed.Label, cleanLabel)
+			require.Equal(t, cleanLabel, parsed.Label, "iteration %d: Label = %q, want %q", i, parsed.Label, cleanLabel)
 		}
 	}
 }
@@ -90,7 +92,7 @@ func TestProperty_JitterBounds(t *testing.T) {
 		min := d
 		max := d + d/2 + 1
 		if jittered < min || jittered > max {
-			t.Fatalf("iteration %d: defaultJitter(%v) = %v; want [%v, %v]", i, d, jittered, min, max)
+			require.Fail(t, fmt.Sprintf("iteration %d: defaultJitter(%v) = %v; want [%v, %v]", i, d, jittered, min, max))
 		}
 	}
 }
@@ -108,16 +110,16 @@ func TestProperty_ProbeAbsentNeverCreates(t *testing.T) {
 
 		state, stamp, err := Probe(path)
 		if err != nil {
-			t.Fatalf("iteration %d: Probe(%s) err = %v", i, path, err)
+			require.NoError(t, err, "iteration %d: Probe(%s) err = %v", i, path, err)
 		}
 		if state != StateAbsent {
-			t.Fatalf("iteration %d: Probe(%s) state = %s, want %s", i, path, state, StateAbsent)
+			require.Equal(t, StateAbsent, state, "iteration %d: Probe(%s) state = %s, want %s", i, path, state, StateAbsent)
 		}
 		if !stamp.IsZero() {
-			t.Fatalf("iteration %d: stamp = %+v, want zero", i, stamp)
+			require.Fail(t, fmt.Sprintf("iteration %d: stamp = %+v, want zero", i, stamp))
 		}
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("iteration %d: Probe created file at %s: %v", i, path, err)
+			require.ErrorIs(t, err, os.ErrNotExist, "iteration %d: Probe created file at %s: %v", i, path, err)
 		}
 	}
 }
