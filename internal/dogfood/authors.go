@@ -126,7 +126,7 @@ func AuthorsFromGit(ctx context.Context, repo string, verbs []Verb, run Runner, 
 // under cmd/<tool>. A bare key (the tool's own invocation, `verb=-`) has no
 // word to search for, so it is placed by the commit that first added a file
 // under cmd/<tool>: the commit that introduced the tool, and with it the bare
-// invocation, which the tool's first commit establishes.
+// invocation, which nothing before that commit could have established.
 func authorArgs(v Verb) []string {
 	words := strings.Fields(v.Verb)
 	if len(words) == 0 {
