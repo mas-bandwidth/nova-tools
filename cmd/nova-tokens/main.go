@@ -1283,13 +1283,16 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// One TOKENS AVG line per model, after the body lines: the daily blended cost per
 	// token, summed over every repo the model wrote that day. Four types count toward
 	// tokens (input, output, cache write, cache read); reasoning is its own column and is
-	// not in the denominator. A model no source priced prints usd=- and usd_per_mtok=-:
-	// a cost nobody reported is no measurement, and never a zero.
+	// not in the denominator. usd= is the cost the sources reported, usd_per_mtok= divides
+	// it by the tokens that cost covers and no others, and unpriced= counts the tokens no
+	// source priced. A model no source priced prints usd=- and usd_per_mtok=-: a cost
+	// nobody reported is no measurement, and never a zero.
 	type modelAvg struct {
-		name   string // provider/model, or model where no source named a provider
-		tokens int64
-		usd    int64
-		priced bool
+		name         string // provider/model, or model where no source named a provider
+		tokens       int64  // every billed token the model's rows hold
+		pricedTokens int64  // the tokens the reported cost covers
+		usd          int64
+		priced       bool
 	}
 	avgs := map[string]*modelAvg{}
 	for _, row := range rows {
@@ -1302,36 +1305,36 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			a = &modelAvg{name: name}
 			avgs[name] = a
 		}
-		for _, t := range []tokens.Type{tokens.Input, tokens.Output, tokens.CacheWrite, tokens.CacheRead} {
-			if v, has := row.Counts.Get(t); has {
-				a.tokens += v
-			}
-		}
+		a.tokens += row.Counts.Billed()
+		a.pricedTokens += row.PricedTokens
 		a.usd += row.Usd
 		a.priced = a.priced || row.Priced
 	}
 	sortedAvg := slices.Collect(maps.Values(avgs))
 	sort.Slice(sortedAvg, func(i, j int) bool {
-		pi := avgRate(sortedAvg[i].usd, sortedAvg[i].tokens, sortedAvg[i].priced)
-		pj := avgRate(sortedAvg[j].usd, sortedAvg[j].tokens, sortedAvg[j].priced)
+		pi := avgRate(sortedAvg[i].usd, sortedAvg[i].pricedTokens, sortedAvg[i].priced)
+		pj := avgRate(sortedAvg[j].usd, sortedAvg[j].pricedTokens, sortedAvg[j].priced)
 		if pi != pj {
 			return pi > pj
 		}
 		return sortedAvg[i].name < sortedAvg[j].name
 	})
 	avgList := s.list(true, *max, "TOKENS", "avg", maxRemedy("report"))
-	var allTokens, allUsd int64
+	var allTokens, allPricedTokens, allUsd int64
 	allPriced := false
 	for _, a := range sortedAvg {
 		allTokens += a.tokens
+		allPricedTokens += a.pricedTokens
 		allUsd += a.usd
 		allPriced = allPriced || a.priced
 		avgList.Line(s.line("TOKENS", "AVG", "", "day", *day, "model", a.name, "tokens", a.tokens,
-			"usd", usdCell(a.usd, a.priced), "usd_per_mtok", usdPerMtokCell(a.usd, a.tokens, a.priced)))
+			"usd", usdCell(a.usd, a.priced), "usd_per_mtok", usdPerMtokCell(a.usd, a.pricedTokens, a.priced),
+			"unpriced", a.tokens-a.pricedTokens))
 	}
 	avgList.More()
 	fmt.Fprintln(s.err(), s.line("TOKENS", "AVG-ALL", "", "day", *day, "tokens", allTokens,
-		"usd", usdCell(allUsd, allPriced), "usd_per_mtok", usdPerMtokCell(allUsd, allTokens, allPriced)))
+		"usd", usdCell(allUsd, allPriced), "usd_per_mtok", usdPerMtokCell(allUsd, allPricedTokens, allPriced),
+		"unpriced", allTokens-allPricedTokens))
 	// The OK line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE section):
 	// what says the day is short is the TOKENS UNREADABLE / TOKENS UNPARSED lines above it,
 	// the TOKENS NOTE, and exit 1. Under --dry-run --note was not written, and the line
