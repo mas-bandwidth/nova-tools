@@ -15,7 +15,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
-// THE TYPED CARD HEADER, CHECKED BEFORE ANY SPEND (SPEC-TOOLWORK.md §5 rule 1).
+// THE TYPED CARD HEADER, CHECKED BEFORE ANY SPEND.
 //
 // `cut` writes five lines under the contract line and inside its hash:
 //
@@ -58,7 +58,7 @@ import (
 // KIND: IS THE NAME SET, NOT A SECOND TABLE. `hygiene.KindDeclared` reads
 // internal/hygiene/kinds.txt, which is the names `cut` and `nova-check hygiene`
 // already refuse. The gate TABLE -- steps, control, reject tokens -- is still
-// internal/pulse/kinds.go (SPEC-TOOLWORK.md §5 rule 3); refusing
+// internal/pulse/kinds.go; refusing
 // `TEST: none` on a gated kind needs that table, so that half still waits. Writing
 // a second name list here would be the same mistake `validGlobs` just undid.
 
@@ -87,7 +87,7 @@ func CardHeaderChecks() []string {
 }
 
 // TrustState is the coordinator's per-kind state, keyed by kind: `trial`, `trusted` or
-// `paused` (SPEC-TOOLWORK.md eligibility rule 1's TRUST listing).
+// `paused` (one of the trust states the coordinator tracks).
 type TrustState map[string]string
 
 // headerKeyRE is what makes a line a `KEY: value` line: one word, starting with a
@@ -113,7 +113,7 @@ type TrustState map[string]string
 // that does.
 //
 // THE KEY NAMES STAY UPPER CASE. Widening what CONTINUES the block is not the same as
-// widening what a typed key IS: SPEC-TOOLWORK.md (§5 rule 1) and
+// widening what a typed key IS: the card contract and
 // WORKER-CARDS.md:38-51 (now in the nova-work-old repository) write `KIND:`, `PATHS:`, `TEST:`, `LEGS:` and `SOURCE:` in
 // upper case and say nothing anywhere about case, so `paths:` is not `PATHS:` here and
 // the card that writes it still draws `paths-declared`. cardTypedKeys is the exact
