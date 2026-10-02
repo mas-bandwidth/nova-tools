@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // shq is a value quoted for sh: inside single quotes, each single quote closed, escaped
@@ -213,6 +215,7 @@ case "$1 $2" in
 	done
 	if [ "$nova_v" != ok ] && [ "$nova_v" != broken ]; then echo "gh: REFUSED pr review without --approve or --request-changes: the review is this read's verdict" >&2; exit 1; fi
 	if [ "$nova_v" = broken ] && [ -z "$nova_body" ]; then echo "gh: REFUSED pr review --request-changes with no --body: the findings are what the work is fixed by" >&2; exit 1; fi
+	if [ "$nova_v" = broken ] && ! printf '%s\n' "$nova_body" | grep -Eq '` + typedrec.FindingPattern + `'; then echo "gh: REFUSED pr review --request-changes: the body names no file, no line and no rule the work breaks; tell them what to do: a finding line naming the file (file:line), the line, or the card's STEP or RULE it breaks, and what to change" >&2; exit 1; fi
 	nova_result "$nova_v" "$nova_body" "$nova_body" ""
 	echo "- Reviewed pull request: the sprint records the verdict when this read finishes"
 	exit 0 ;;
@@ -253,6 +256,7 @@ func (claude) JobText(f Frame, s Staged) string {
 		b.WriteString("Approve or request changes with gh pr review; that ends the read:\n\n")
 		b.WriteString("    gh pr review --approve --body \"<what you checked>\"\n")
 		b.WriteString("    gh pr review --request-changes --body \"<findings, each with file:line>\"\n\n")
+		b.WriteString(BrokenFindingText + "\n\n")
 	} else {
 		fmt.Fprintf(&b, "# JOB: %s, attempt %d\n\n", f.Card, f.Attempt)
 		fmt.Fprintf(&b, "You are in a checkout of %s on branch %s at %s, from %s. The checkout is %s; work there. Commit as usual.\n\n", f.Repo, f.Branch, s.Head, orDash(f.BaseRef), s.Repo)
@@ -286,6 +290,7 @@ func (plain) JobText(f Frame, s Staged) string {
 		fmt.Fprintf(&b, "The checkout %s holds %s on branch %s at %s: the change under review, against %s. Review it (%s), run the card's gate, change nothing and commit nothing.\n\n", s.Repo, f.Repo, f.Branch, s.Head, orDash(f.ReviewBase), review)
 		writeReadDiff(&b, f, s)
 		b.WriteString("End by writing " + s.Job + "/RESULT.md in this shape (verdict ok, or broken with your findings):\n\n")
+		b.WriteString(BrokenFindingText + "\n\n")
 		b.WriteString(ShapeText("read") + "\n")
 	} else {
 		fmt.Fprintf(&b, "# JOB: %s, attempt %d\n\n", f.Card, f.Attempt)

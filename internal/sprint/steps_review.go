@@ -868,6 +868,14 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		given := reworkGiven(s, c)
 		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"],
 			"reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
+		// the head a reader passed: a next attempt that finds nothing to do at it goes back to
+		// review there, not to the coordinator as failed work (FieldPassedHead, Finish)
+		unset := []string{"readers"}
+		if len(okReaders(s, c)) > 0 && c.F("result") != "failed" {
+			set[FieldPassedHead] = c.F("head")
+		} else {
+			unset = append(unset, FieldPassedHead)
+		}
 		var u Unit
 		// the next member round the fleet with room (width.go; tla/DirtyTick.tla, WidthRespected):
 		// none up, or none below its width, and the primary waits ready for the tick's deal
@@ -877,7 +885,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		if m != "" {
 			var why string
-			u, why = deal(s, c, fix, m, q, ri, set, given, "readers")
+			u, why = deal(s, c, fix, m, q, ri, set, given, unset...)
 			if why != "" {
 				p.refuse(c.ID, why)
 				stays()
@@ -892,7 +900,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			if len(up) > 0 {
 				later = "no fleet member has room: the tick deals it when one has"
 			}
-			u = Unit{Key: c.ID, Stream: c.Row, Changes: append(retire, change(Work, moveEntry(c, c.Row, Ready, set, "result", "readers"))),
+			u = Unit{Key: c.ID, Stream: c.Row, Changes: append(retire, change(Work, moveEntry(c, c.Row, Ready, set, append(unset, "result")...))),
 				Moved: c.ID + " review -> ready (rework; " + later + ")"}
 		}
 		u.Moved += fmt.Sprintf("; %d read cards retired", len(retire))

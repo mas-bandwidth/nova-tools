@@ -261,11 +261,15 @@ func TestGhPrReviewIsTheRead(t *testing.T) {
 		assert.Equal(t, tc.verdict, res.Verdict, tc.line)
 		assert.Equal(t, tc.report, res.Report, tc.line)
 	}
-	for _, line := range []string{`gh pr review --comment --body x`, `gh pr review --request-changes`} {
+	for _, line := range []string{`gh pr review --comment --body x`, `gh pr review --request-changes`, `gh pr review --request-changes --body "Request changes."`} {
 		code, _, errb := r.sh(r.job, line)
 		assert.Equal(t, 1, code, line)
 		assert.Contains(t, errb, "REFUSED", line)
 	}
+	// a broken review that names no file, line or rule is refused at the review, so the
+	// reader names its defect there (docs/SPEC-CARD-CONTRACT.md section 3)
+	_, _, errb = r.sh(r.job, `gh pr review --request-changes --body "Request changes."`)
+	assert.Contains(t, errb, "names no file, no line and no rule the work breaks; tell them what to do")
 }
 
 // A read that hands its own RESULT.md to gh pr review as the body (it begins head: <sha>)

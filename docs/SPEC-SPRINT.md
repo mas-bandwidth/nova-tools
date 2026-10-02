@@ -629,6 +629,13 @@ id (`--op`) returns the original result, with no second counter or notification.
   reads exhausted when it was asked at its attempt, else stranded in review
   (failed work acknowledged, or never asked). An ack of that judgment itself
   does not write it again; ask closes stranded in review.
+- A broken read names its defect (docs/SPEC-CARD-CONTRACT.md section 3, a broken
+  read): a broken verdict whose finding names no file, line or rule the work breaks
+  is no read at all, neither ok nor broken; its member hands it back as a return
+  whose reason begins `no finding:`, the primary stays in review, and the tick asks
+  another reader, so the coordinator is never asked to judge on nothing. A broken
+  read's finding is recorded, and its judgment shows it, in full: every line of the
+  reader's report and body, never its first line alone.
 - A broken read notifies the coordinator. rework sends the primary back with
   the finding as the fix and delegates the next attempt at once (section 3);
   the primary's read cards are retired in the same step. When the fixed work
@@ -637,6 +644,13 @@ id (`--op`) returns the original result, with no second counter or notification.
   head, on new read cards of the new attempt, each with the route it draws
   (one path asks). A report against a retired
   read card is refused, naming the retirement.
+- A rework of a primary a reader passed (an ok read at its head when it is sent
+  back) keeps that head (`passed_head`). When the next attempt's worker finds
+  nothing to do or commits nothing (its failed finish begins `nothing to do:` or
+  `no commit:`, and pushed no head), the card was right: it is no failed work and
+  no judgment; the primary goes back to review at the passed head, and the tick
+  asks two readers at the new attempt (`TestNothingToDoAtAHeadAReaderPassedIsBackInReview`).
+  With no pass at the head it is failed work for the coordinator, as before.
 
 ## 7. Merging
 

@@ -149,6 +149,20 @@ The rulings of 2026-09-30 on the shape:
 - **The report line is the pull request title**, and the body carries the whole RESULT.md,
   with the gate's output, so the readers see it.
 
+**A broken read names its defect.** A read's `verdict: broken` tells the work what to do: at
+least one line of its report or body names the file (a path, or `file:line`), the line
+(`line <n>`), or the card's `STEP <n>` or RULE the work breaks, and says what to change
+(`typedrec.FindingPattern`, `typedrec.NamesADefect`; `TestABrokenFindingNamesAFileALineOrARule`).
+"Request changes." alone, or an approval's words under a broken verdict, is no finding. Every
+profile's read JOB.md says so (`cardcontract.BrokenFindingText`); the claude and openai gh shims
+refuse a `gh pr review --request-changes` whose body names none, in one line, so the reader names
+it before it ends (`TestGhPrReviewIsTheRead`, functional tier). The member reports a broken read's
+finding in full, every line of its report and body joined with ` / ` and cut to
+`member.MaxFindingBytes`, never its first line alone; a broken verdict whose finding names no
+defect is no verdict: the member hands the read back (`read --return`, its reason beginning
+`no finding:`), and the sprint asks another reader as for any return
+(`TestABrokenReadNamesItsDefectOrIsHandedBack`).
+
 ## 4. The finish
 
 A work card's finish is judged in one place, `member.Judge`, cited from the model's `Finish`:
@@ -163,8 +177,9 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   back, so there is nothing to judge (the owner, 2026-10-01: "that's fine with me."). A run
   its budget or its deadline ended with no result is failed work, the end said first
   (`budget: no RESULT.md shape`);
-- **failed** otherwise, with the reason: `<end>: no RESULT.md shape`, `nothing to do: <why>`,
-  `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`; a failed finish passes
+- **failed** otherwise, with the reason: `<end>: no RESULT.md shape`, `nothing to do: <why>`
+  (`cardhdr.EndNothing`),
+  `verdict <word>`, `no commit: <why>` (`cardhdr.EndNoCommit`), `push refused: <git's line>`; a failed finish passes
   `--failed` and opens the failed-work judgment, never review, and passes `--head` and
   `--branch` only when a push landed;
 - **provider failure**, a failed finish of its own kind, when the run ended with no result and

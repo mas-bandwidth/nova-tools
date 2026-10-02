@@ -1075,6 +1075,14 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Failed {
 			result, okWord, into = "failed", "no", DoneFailed
 		}
+		// A rework whose child found nothing to do, or committed nothing, at the head an
+		// earlier attempt pushed and a reader passed is no failed work: the card was right.
+		// It goes back to review at that head, where the machine's ask asks two readers
+		// (docs/SPEC-SPRINT.md section 6; Rework sets FieldPassedHead).
+		passed := r.Failed && r.Head == "" && IsNothingNew(r.Report) && pr.F(FieldPassedHead) != ""
+		if passed {
+			head, result, okWord, into = pr.F(FieldPassedHead), "ok", "yes", DoneOK
+		}
 		cardSet := map[string]string{"ok": okWord, "head": head, "finished": stamp(s.Now)}
 		if r.Report != "" {
 			cardSet["report"] = r.Report
@@ -1093,7 +1101,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			cardSet[FieldUsage] = rec
 		}
 		set := map[string]string{"head": head, "result": result}
-		if r.Failed {
+		if r.Failed && !passed {
 			set["failed"] = itoa(pr.Int("failed") + 1)
 		}
 		addConsumer(pr, set, workConsumer(s, c, 0, result, rec))
@@ -1106,7 +1114,12 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		// finish loads none) and no reader could start it (fleet pass 7, 2026-10-01: two
 		// such reads held a card twelve minutes)
 		asked := map[string]string{}
-		if !r.Failed {
+		if passed {
+			n := happened(NWorkOK, pr.Row, s.Now, pr.ID)
+			n.Who, n.Attempt = who, attempt
+			n.What = "nothing new at " + head + ", which a reader passed: back in review at it; " + r.Report
+			u.Notes = append(u.Notes, n)
+		} else if !r.Failed {
 			n := happened(NWorkOK, pr.Row, s.Now, pr.ID)
 			n.Who, n.Attempt = who, attempt
 			u.Notes = append(u.Notes, n)
@@ -1126,6 +1139,16 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	return p
+}
+
+// FieldPassedHead is the head of the attempt a rework sent back when a reader had passed
+// it (an ok read at it): what a next attempt that finds nothing new returns to review at.
+const FieldPassedHead = "passed_head"
+
+// IsNothingNew says a failed finish's report is the member's word for no new work: its
+// child found nothing to do (cardhdr.EndNothing) or committed nothing (cardhdr.EndNoCommit).
+func IsNothingNew(report string) bool {
+	return strings.HasPrefix(report, cardhdr.EndNothing+":") || strings.HasPrefix(report, cardhdr.EndNoCommit+":")
 }
 
 // IsProviderFailure says a failed finish's report names the provider as the cause: it

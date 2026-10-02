@@ -488,7 +488,7 @@ func TestReaderLoopBeginsAskedCardsAndReportsEndedReads(t *testing.T) {
 	require.Equal(t, []string{"r1", "r2"}, g.r.started(), "acted=%d started=%v", acted, g.r.started())
 	require.Empty(t, g.s.lines("beat"), "a reader beats no fleet row")
 	g.r.child("r1").end(Result{Ran: true, OK: true, Verdict: "ok", Report: "clean\nsecond"})
-	g.r.child("r2").end(Result{Ran: true, OK: false, Verdict: "broken", Report: "## Finding\nthe merge is wrong"})
+	g.r.child("r2").end(Result{Ran: true, OK: false, Verdict: "broken", Report: "## Finding\nmain.go:12: the merge is wrong"})
 	reading := func(id string, p *Packet) queueCard { return queueCard{ID: id, Col: "reading", Packet: p} }
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &a1), reading("r2", &a2)))
 	g.s.reset()
@@ -497,7 +497,7 @@ func TestReaderLoopBeginsAskedCardsAndReportsEndedReads(t *testing.T) {
 	require.Equal(t, 2, acted, "acted=%d err=%v", acted, err)
 	want := []string{
 		"read --as r --ok r1 --finding clean --epoch 7",
-		"read --as r --broken r2 --finding the merge is wrong --epoch 7",
+		"read --as r --broken r2 --finding main.go:12: the merge is wrong --epoch 7",
 	}
 	require.Equal(t, want, g.s.lines("report"), "report lines")
 	require.Equal(t, 0, g.m.Running(), "running=%d after both reads were reported", g.m.Running())
@@ -696,7 +696,8 @@ func TestCardTextForAReadPacket(t *testing.T) {
 	for _, want := range []string{
 		"This is read r1: attempt 1 of p1, worked by m2, at head deadbeef on branch work/c1 (base sprint/base).",
 		"The worker's report:\n\nlanded it\n",
-		"    nova-sprint read --as rd (--ok | --broken) r1 --epoch 4 --finding '<one line>'\n",
+		"    nova-sprint read --as rd (--ok | --broken) r1 --epoch 4 --finding '<your findings>'\n",
+		"at least one finding line names the file (file:line), the line, or the card's STEP or RULE the work breaks",
 	} {
 		require.Contains(t, got, want, "the read card lacks %q", want)
 	}
@@ -1009,7 +1010,7 @@ func TestAReadReportsOnlyItsVerdict(t *testing.T) {
 		res  Result
 		want string
 	}{
-		{"broken though the child ran ok", Result{Ran: true, OK: true, Verdict: "broken", Report: "the merge is wrong"}, "read --as r --broken r1 --finding the merge is wrong --epoch 7"},
+		{"broken though the child ran ok", Result{Ran: true, OK: true, Verdict: "broken", Report: "main.go:12: the merge is wrong"}, "read --as r --broken r1 --finding main.go:12: the merge is wrong --epoch 7"},
 		{"ok though OK is false", Result{Ran: true, OK: false, Verdict: "ok", Report: "clean"}, "read --as r --ok r1 --finding clean --epoch 7"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1405,7 +1406,7 @@ func TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch(t *testing.T) {
 		{"a work card finished ok", false, ok, false, []string{"c1:false"}},
 		{"a work card finished failed", false, Result{Ran: true, Report: "the harness fell over"}, false, []string{"c1:true"}},
 		{"a work card reaped", false, ok, true, []string{"c1:false"}},
-		{"a read with its verdict", true, Result{Ran: true, OK: true, Verdict: "broken", Report: "a bug"}, false, []string{"c1:false"}},
+		{"a read with its verdict", true, Result{Ran: true, OK: true, Verdict: "broken", Report: "main.go:3 has a bug"}, false, []string{"c1:false"}},
 		{"a read returned with no verdict", true, Result{Ran: true, Report: "no verdict"}, false, []string{"c1:true"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
