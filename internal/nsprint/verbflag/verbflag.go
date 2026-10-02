@@ -1,5 +1,5 @@
 // Package verbflag is the one seam every living tool's verbs parse their flags
-// through (#3254; the verb-help rule, the CLI style's rule (b), #4505). A parse
+// and enforces help and CLI standards. A parse
 // error comes back from Parse unchanged, so the verb prints its own one-line
 // refusal, worded by Explain. -h, -help or --help on a flag set that does not
 // define them is HELP, not a mistake: it unwinds to the dispatcher's deferred Recover, which
