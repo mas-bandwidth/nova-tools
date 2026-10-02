@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // This fake checks the caller's persisted state machine only. Actual bare-Git
@@ -86,10 +89,10 @@ func fakeBusPath(t *testing.T) string {
 	}
 	raw, e := os.Executable()
 	if e != nil {
-		t.Fatal(e)
+		require.NoError(t, e, e)
 	}
 	if e = testbin.Place(raw, filepath.Join(dir, name)); e != nil {
-		t.Fatal(e)
+		require.NoError(t, e, e)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("NOVA_UPDATE_FAKE_BUS", "1")
@@ -102,7 +105,7 @@ func calls(t *testing.T, p string) (int, int) {
 	t.Helper()
 	b, e := os.ReadFile(p)
 	if e != nil {
-		t.Fatal(e)
+		require.NoError(t, e, e)
 	}
 	s := string(b)
 	return strings.Count(s, "prepare\n"), strings.Count(s, "send\n")
@@ -121,31 +124,31 @@ func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
 	}
 	os.WriteFile(p, []byte(Header+"\n"+row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none")+"\n"), 0600)
 	if c, _, _ := run(t, Environment{}, args...); c != 1 {
-		t.Fatal(c)
+		require.EqualValues(t, 1, c, c)
 	}
 	if np, ns := calls(t, log); np != 1 || ns != 2 {
-		t.Fatal(np, ns)
+		require.Fail(t, fmt.Sprintln(np, ns))
 	}
 	s, _ = readSnapshot(sp)
 	for _, v := range s.Pending {
 		if v.ID != old || v.Observed["x"].Raw != "v1.0.0" {
-			t.Fatal("pending was replaced")
+			require.Fail(t, fmt.Sprintln("pending was replaced"))
 		}
 	}
 	t.Setenv("NOVA_UPDATE_BUS_MODE", "ok")
 	if c, o, e := run(t, Environment{}, args...); c != 0 {
-		t.Fatalf("%d %s %s", c, o, e)
+		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	}
 	if np, ns := calls(t, log); np != 2 || ns != 4 {
-		t.Fatal(np, ns)
+		require.Fail(t, fmt.Sprintln(np, ns))
 	}
 	s, _ = readSnapshot(sp)
 	if len(s.Pending) != 0 {
-		t.Fatal("pending not cleared")
+		require.Len(t, s.Pending, 0, "pending not cleared")
 	}
 	for _, v := range s.Delivered {
 		if v.Observed["x"].Raw != "v2.0.0" || v.ID == old {
-			t.Fatal(v)
+			require.Fail(t, fmt.Sprintln(v))
 		}
 	}
 }
@@ -156,24 +159,24 @@ func TestDeliveryScopeAndPreparedArtifactChecks(t *testing.T) {
 	same := o
 	same.to = "b,c"
 	if snapshotScope(o) != snapshotScope(same) {
-		t.Fatal("recipient order changed scope")
+		require.Fail(t, fmt.Sprintln("recipient order changed scope"))
 	}
 	other := o
 	other.host = "air"
 	if snapshotScope(o) == snapshotScope(other) {
-		t.Fatal("bench silently shared delivery state")
+		require.Fail(t, fmt.Sprintln("bench silently shared delivery state"))
 	}
 	good := map[string]string{"schema": "nova.bus.prepared/1", "id": "fixture-123", "path": "from-fixture/note.md", "note": "synthetic\n", "sha256": shaText("synthetic\n")}
 	b, _ := json.Marshal(good)
 	if _, e := validatePrepared(b); e != nil {
-		t.Fatal(e)
+		require.NoError(t, e, e)
 	}
 	if _, e := validatePrepared(append(b, []byte("{}")...)); e == nil {
-		t.Fatal("trailing artifact accepted")
+		require.Error(t, e, "trailing artifact accepted")
 	}
 	bad := bytes.Replace(b, []byte("synthetic\\n"), []byte("changed\\n"), 1)
 	if _, e := validatePrepared(bad); e == nil {
-		t.Fatal("wrong digest accepted")
+		require.Error(t, e, "wrong digest accepted")
 	}
 }
 
@@ -187,7 +190,7 @@ func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 	sum := shaText(note)
 	good := fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":%q,"sha256":%q}`, note, sum)
 	if id, err := validatePrepared([]byte(good)); err != nil || id != "fixture-1" {
-		t.Fatalf("valid artifact refused: %v %q", err, id)
+		require.Failf(t, "", "valid artifact refused: %v %q", err, id)
 	}
 	secret := "tell-nobody"
 	bad := map[string]string{
@@ -203,26 +206,26 @@ func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 	for name, raw := range bad {
 		id, err := validatePrepared([]byte(raw))
 		if err == nil {
-			t.Fatalf("%s accepted, id=%q", name, id)
+			require.Errorf(t, err, "%s accepted, id=%q", name, id)
 		}
 		if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "a note") {
-			t.Fatalf("%s diagnostic echoed content: %v", name, err)
+			require.Failf(t, "", "%s diagnostic echoed content: %v", name, err)
 		}
 	}
 	dir := t.TempDir()
 	dup := filepath.Join(dir, "dup.json")
 	if e := os.WriteFile(dup, []byte(`{"observed":{},"observed":{"x":{"raw":"`+secret+`","status":"tool","at":"t"}},"delivered":{},"pending":{}}`), 0600); e != nil {
-		t.Fatal(e)
+		require.NoError(t, e, e)
 	}
 	s, err := readSnapshot(dup)
 	if err == nil {
-		t.Fatalf("ambiguous snapshot accepted: %v", s)
+		require.Errorf(t, err, "ambiguous snapshot accepted: %v", s)
 	}
 	if strings.Contains(err.Error(), secret) {
-		t.Fatalf("snapshot diagnostic echoed content: %v", err)
+		require.Failf(t, "", "snapshot diagnostic echoed content: %v", err)
 	}
 	if b, _ := os.ReadFile(dup); !strings.Contains(string(b), secret) {
-		t.Fatal("refusal did not preserve the snapshot byte for byte")
+		require.Fail(t, fmt.Sprintln("refusal did not preserve the snapshot byte for byte"))
 	}
 }
 
@@ -231,18 +234,18 @@ func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 // on PATH can turn one event into two.
 func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL one\nSEND FAIL two\n"}); got != "SEND FAIL one" {
-		t.Fatalf("%q", got)
+		require.EqualValuesf(t, "SEND FAIL one", got, "%q", got)
 	}
 	// Stdout is the fallback when the bus said nothing on stderr: a SEND OK for
 	// some other id is the bus's grammar and worth relaying.
 	if got := busSaid(ProcessResult{Stdout: "SEND OK id=other\nmore"}); got != "SEND OK id=other" {
-		t.Fatalf("%q", got)
+		require.EqualValuesf(t, "SEND OK id=other", got, "%q", got)
 	}
 	if got := busSaid(ProcessResult{}); got != "nothing" {
-		t.Fatalf("%q", got)
+		require.EqualValuesf(t, "nothing", got, "%q", got)
 	}
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL " + strings.Repeat("x", 500)}); len(got) != 203 || !strings.HasSuffix(got, "...") {
-		t.Fatalf("unbounded: %d bytes: %q", len(got), got)
+		require.Failf(t, "", "unbounded: %d bytes: %q", len(got), got)
 	}
 	for _, mode := range []string{"prepare-fail", "prepare-shouty"} {
 		t.Run(mode, func(t *testing.T) {
@@ -253,23 +256,23 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 				filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 				"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
 			if c != 1 {
-				t.Fatal(c)
+				require.EqualValues(t, 1, c, c)
 			}
 			need(t, errout, "the bus said: PREPARE FAIL")
 			note := ""
 			for _, line := range strings.Split(errout, "\n") {
 				if strings.HasPrefix(line, "REPORT NOTE") {
 					if note != "" {
-						t.Fatalf("one refusal became two lines:\n%s", errout)
+						require.EqualValuesf(t, "", note, "one refusal became two lines:\n%s", errout)
 					}
 					note = line
 				}
 			}
 			if note == "" {
-				t.Fatalf("no REPORT NOTE line:\n%s", errout)
+				require.NotEqualValuesf(t, "", note, "no REPORT NOTE line:\n%s", errout)
 			}
 			if len(note) > 600 {
-				t.Fatalf("the refusal line is %d bytes, which is not bounded: %s", len(note), note)
+				require.LessOrEqualf(t, len(note), 600, "the refusal line is %d bytes, which is not bounded: %s", len(note), note)
 			}
 		})
 	}
@@ -298,11 +301,11 @@ func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
 		"schema and Schema": `{"schema":"nova.bus.prepared/1","Schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":` + fmt.Sprintf("%q", note) + `,"sha256":` + fmt.Sprintf("%q", sum) + `}`,
 	} {
 		if id, err := validatePrepared([]byte(raw)); err == nil {
-			t.Errorf("%s accepted, id=%q", name, id)
+			assert.Errorf(t, err, "%s accepted, id=%q", name, id)
 		}
 	}
 	if id, err := validatePrepared([]byte(artifact(`"id":"fixture-1"`))); err != nil || id != "fixture-1" {
-		t.Fatalf("the exact artifact was refused: %v %q", err, id)
+		require.Failf(t, "", "the exact artifact was refused: %v %q", err, id)
 	}
 	dir := t.TempDir()
 	for name, body := range map[string]string{
@@ -312,14 +315,14 @@ func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
 	} {
 		p := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".json")
 		if err := os.WriteFile(p, []byte(body), 0600); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		s, err := readSnapshot(p)
 		if err == nil {
-			t.Errorf("%s accepted: %+v", name, s)
+			assert.Errorf(t, err, "%s accepted: %+v", name, s)
 		}
 		if err != nil && strings.Contains(err.Error(), "tell-nobody") {
-			t.Errorf("%s echoed content: %v", name, err)
+			assert.Failf(t, "", "%s echoed content: %v", name, err)
 		}
 	}
 }
@@ -343,13 +346,13 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 		// named and the caller's own deadline stays the tighter of the two.
 		a, g := busBounds(c.remaining)
 		if a != c.attempts || g != c.gitSeconds {
-			t.Errorf("%s left: attempts=%d git-timeout=%d, want %d and %d", c.remaining, a, g, c.attempts, c.gitSeconds)
+			assert.Failf(t, "", "%s left: attempts=%d git-timeout=%d, want %d and %d", c.remaining, a, g, c.attempts, c.gitSeconds)
 		}
 		if a < 1 || g < 1 {
-			t.Errorf("%s left: a bound below one is not a bound", c.remaining)
+			assert.Failf(t, "", "%s left: a bound below one is not a bound", c.remaining)
 		}
 		if want := c.remaining; want >= time.Second && time.Duration(g)*time.Second > want {
-			t.Errorf("%s left: a git timeout of %ds promises more than remains", want, g)
+			assert.Failf(t, "", "%s left: a git timeout of %ds promises more than remains", want, g)
 		}
 	}
 	log := fakeBusPath(t)
@@ -358,11 +361,11 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--budget", "60s")
 	if c != 0 {
-		t.Fatalf("%d %s %s", c, out, errs)
+		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
 	}
 	b, err := os.ReadFile(log)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	sendArgv := ""
 	for _, line := range strings.Split(string(b), "\n") {
@@ -371,11 +374,11 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 		}
 	}
 	if sendArgv == "" {
-		t.Fatalf("no send argv was logged:\n%s", b)
+		require.NotEqualValuesf(t, "", sendArgv, "no send argv was logged:\n%s", b)
 	}
 	for _, want := range []string{"--attempts ", "--git-timeout ", "--prepared-stdin"} {
 		if !strings.Contains(sendArgv, want) {
-			t.Errorf("the send argv does not carry %s: %s", want, sendArgv)
+			assert.Containsf(t, sendArgv, want, "the send argv does not carry %s: %s", want, sendArgv)
 		}
 	}
 	fields := strings.Fields(sendArgv)
@@ -384,20 +387,20 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 			continue
 		}
 		if i+1 >= len(fields) {
-			t.Fatalf("%s names no value: %s", f, sendArgv)
+			require.Failf(t, "", "%s names no value: %s", f, sendArgv)
 		}
 		n, err := strconv.Atoi(fields[i+1])
 		if err != nil || n < 1 {
-			t.Errorf("%s is %q, which is not a finite bound", f, fields[i+1])
+			assert.Failf(t, "", "%s is %q, which is not a finite bound", f, fields[i+1])
 		}
 		if f == "--git-timeout" && n > 60 {
-			t.Errorf("--git-timeout %d exceeds the 60s budget", n)
+			assert.Failf(t, "", "--git-timeout %d exceeds the 60s budget", n)
 		}
 	}
 	// prepare takes neither: it runs no Git and touches no network.
 	for _, line := range strings.Split(string(b), "\n") {
 		if strings.HasPrefix(line, "argv prepare ") && (strings.Contains(line, "--attempts") || strings.Contains(line, "--git-timeout")) {
-			t.Errorf("prepare was handed a Git bound it has no use for: %s", line)
+			assert.Failf(t, "", "prepare was handed a Git bound it has no use for: %s", line)
 		}
 	}
 }
@@ -406,14 +409,14 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 // must not get to write on the caller's event line.
 func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL from-x/n.md: a named reason"}); got != "SEND FAIL from-x/n.md: a named reason" {
-		t.Fatalf("the bus's own grammar was not relayed: %q", got)
+		require.EqualValuesf(t, "SEND FAIL from-x/n.md: a named reason", got, "the bus's own grammar was not relayed: %q", got)
 	}
 	// Leading whitespace is normalised away before the grammar is checked, so the
 	// cases below are lines whose CONTENT is in no grammar this tool knows.
 	for _, alien := range []string{"gobbledegook tell-nobody-this", "bash: nova-bus: command not found", "Traceback (most recent call last):", "sendfail", "the bus says SEND FAIL later on"} {
 		got := busSaid(ProcessResult{Stderr: alien})
 		if strings.Contains(got, "tell-nobody-this") || got != "a line outside the bus's refusal grammar, not relayed" {
-			t.Errorf("%q was relayed as %q", alien, got)
+			assert.Failf(t, "", "%q was relayed as %q", alien, got)
 		}
 	}
 	fakeBusPath(t)
@@ -423,10 +426,10 @@ func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
 	if c != 1 {
-		t.Fatal(c)
+		require.EqualValues(t, 1, c, c)
 	}
 	if strings.Contains(out+errs, "tell-nobody-this") {
-		t.Fatalf("an alien binary's words reached the event line:\n%s%s", out, errs)
+		require.NotContainsf(t, out+errs, "tell-nobody-this", "an alien binary's words reached the event line:\n%s%s", out, errs)
 	}
 	need(t, errs, "a line outside the bus's refusal grammar, not relayed")
 }

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -34,7 +36,7 @@ func windowsMachines(t *testing.T, lines ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "machines.tsv")
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return path
 }
@@ -57,10 +59,10 @@ func TestAdoptTakesWindowsDrivePathsForBinAndDest(t *testing.T) {
 		"--dest", `C:\Users\nova\nova-release`,
 		"--platform", "windows-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 0 {
-		t.Fatalf("a windows bench was refused: code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "a windows bench was refused: code=%d errs=%s", code, e.String())
 	}
 	if !strings.Contains(o.String(), "RELEASE ADOPTED machine=threadripper") {
-		t.Fatalf("no adopted line:\n%s", o.String())
+		require.Contains(t, o.String(), "RELEASE ADOPTED machine=threadripper", "no adopted line:\n%s", o.String())
 	}
 }
 
@@ -82,24 +84,24 @@ func TestAdoptComposesSlashPathsForAWindowsBench(t *testing.T) {
 		"--dest", `C:\Users\nova\nova-release`,
 		"--retire", `C:\Users\nova\go\bin`,
 		"--platform", "windows-amd64"}, &o, &e, Deps{SSH: s}); code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	install := installRun(t, s, "threadripper")
 	want := "threadripper: C:/Users/nova/nova-release/v0.16.0/windows-amd64/nova-update.exe release install " +
 		"--from C:/Users/nova/nova-release --version v0.16.0 --bin C:/Users/nova/.local/bin " +
 		"--platform windows-amd64 --retire C:/Users/nova/go/bin"
 	if install != want {
-		t.Fatalf("the remote install is\n  %s\nwant\n  %s", install, want)
+		require.Equal(t, want, install, "the remote install is\n  %s\nwant\n  %s", install, want)
 	}
 	for _, run := range s.runs {
 		if strings.Contains(run, `\`) {
-			t.Fatalf("a backslash reached the far side's shell, where it is an escape: %s", run)
+			require.NotContains(t, run, `\`, "a backslash reached the far side's shell, where it is an escape: %s", run)
 		}
 	}
 	// The stream lands in <version>.partial/ by the same slash path, and is
 	// renamed into the final directory only after the bench verifies it.
 	if len(s.sends) != 1 || !strings.HasSuffix(s.sends[0], "-> C:/Users/nova/nova-release/v0.16.0.partial") {
-		t.Fatalf("the release was not sent to the windows dest: %v", s.sends)
+		require.FailNowf(t, "", "the release was not sent to the windows dest: %v", s.sends)
 	}
 }
 
@@ -120,7 +122,7 @@ func TestAdoptDryRunProbesTheExeOnAWindowsBench(t *testing.T) {
 		"--bin", `C:\Users\nova\.local\bin`,
 		"--dest", `C:\Users\nova\nova-release`,
 		"--platform", "windows-amd64", "--dry-run"}, &o, &e, Deps{SSH: s}); code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	want := "threadripper: C:/Users/nova/.local/bin/nova-update.exe version"
 	var found bool
@@ -130,10 +132,10 @@ func TestAdoptDryRunProbesTheExeOnAWindowsBench(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("the probe was not %q: %v", want, s.runs)
+		require.True(t, found, "the probe was not %q: %v", want, s.runs)
 	}
 	if len(s.sends) != 0 {
-		t.Fatalf("--dry-run streamed something: %v", s.sends)
+		require.Len(t, s.sends, 0, "--dry-run streamed something: %v", s.sends)
 	}
 }
 
@@ -154,10 +156,10 @@ func TestAdoptRefusesAWindowsPathForALinuxTarget(t *testing.T) {
 		"--dest", "~/nova-release",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: &fakeSSH{}})
 	if code != 2 {
-		t.Fatalf("a windows path was taken for a linux bench: code=%d out=%s", code, o.String())
+		require.Equal(t, 2, code, "a windows path was taken for a linux bench: code=%d out=%s", code, o.String())
 	}
 	if !strings.Contains(e.String(), "--bin") || !strings.Contains(e.String(), "linux") {
-		t.Fatalf("the refusal names neither the flag nor the target: %s", e.String())
+		require.FailNowf(t, "", "the refusal names neither the flag nor the target: %s", e.String())
 	}
 }
 
@@ -178,7 +180,7 @@ func TestAWindowsPathMayStillCarryNoShellSyntax(t *testing.T) {
 	} {
 		t.Run(bad, func(t *testing.T) {
 			if err := ValidRemotePathOn("windows", "--bin", bad); err == nil {
-				t.Fatalf("%q was taken as a path on a windows bench", bad)
+				require.Error(t, err, "%q was taken as a path on a windows bench", bad)
 			}
 		})
 	}
@@ -191,7 +193,7 @@ func TestAWindowsPathMayStillCarryNoShellSyntax(t *testing.T) {
 	} {
 		t.Run(good, func(t *testing.T) {
 			if err := ValidRemotePathOn("windows", "--bin", good); err != nil {
-				t.Fatalf("%q was refused on a windows bench: %v", good, err)
+				require.NoError(t, err, "%q was refused on a windows bench: %v", good, err)
 			}
 		})
 	}
@@ -211,7 +213,7 @@ func TestRemotePathFoldsBackslashesForTheFarSidesShell(t *testing.T) {
 		{"/home/nova/.local/bin", "/home/nova/.local/bin"},
 	} {
 		if got := RemotePath(tc.in); got != tc.want {
-			t.Fatalf("RemotePath(%q) = %q, want %q", tc.in, got, tc.want)
+			require.Equal(t, tc.want, got, "RemotePath(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
@@ -231,14 +233,14 @@ func TestTheMachineColumnsTakeAWindowsPath(t *testing.T) {
 		"--ssh", "ssh", "--from", from,
 		"--bin", "~/.local/bin", "--dest", "~/nova-release",
 		"--platform", "windows-amd64"}, &o, &e, Deps{SSH: s}); code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	install := installRun(t, s, "threadripper")
 	if !strings.Contains(install, "--bin C:/nova/bin") || !strings.Contains(install, "--from C:/nova/release") {
-		t.Fatalf("the columns did not reach the remote install: %s", install)
+		require.FailNowf(t, "", "the columns did not reach the remote install: %s", install)
 	}
 	if !strings.HasPrefix(install, "threadripper: C:/nova/release/v0.16.0/windows-amd64/nova-update.exe ") {
-		t.Fatalf("the remote tool is not under the column's dest: %s", install)
+		require.FailNowf(t, "", "the remote tool is not under the column's dest: %s", install)
 	}
 }
 
@@ -252,7 +254,7 @@ func TestAdoptFetchesFromAWindowsBuildHost(t *testing.T) {
 	served := ArtifactDir(built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update"), "v0.16.0", "windows", "amd64")
 	digest, err := fileSum(filepath.Join(served, SumsFile))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	s := &fakeSSH{
 		serves: map[string]string{"threadripper": served},
@@ -267,13 +269,13 @@ func TestAdoptFetchesFromAWindowsBuildHost(t *testing.T) {
 		"--stage", t.TempDir(), "--expect-sums", digest,
 		"--bin", `C:\Users\nova\.local\bin`, "--dest", `C:\Users\nova\nova-release`,
 		"--platform", "windows-amd64"}, &o, &e, Deps{SSH: s}); code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	if len(s.fetches) != 1 {
-		t.Fatalf("want one fetch from the build host, got %v", s.fetches)
+		require.Len(t, s.fetches, 1, "want one fetch from the build host, got %v", s.fetches)
 	}
 	if !strings.HasPrefix(s.fetches[0], "threadripper: C:/Users/nova/nova-release/v0.16.0/windows-amd64 -> ") {
-		t.Fatalf("the fetch did not name the windows build host's own path: %v", s.fetches)
+		require.FailNowf(t, "", "the fetch did not name the windows build host's own path: %v", s.fetches)
 	}
 	// Only the REMOTE half is checked for a backslash. The local half is the staging
 	// directory this test was handed, and on a windows runner that is a native path
@@ -282,7 +284,7 @@ func TestAdoptFetchesFromAWindowsBuildHost(t *testing.T) {
 	// it is about. What must carry no backslash is the path that goes over ssh.
 	remote, _, _ := strings.Cut(s.fetches[0], " -> ")
 	if strings.Contains(remote, `\`) {
-		t.Fatalf("a backslash reached the remote half of the fetch: %v", s.fetches)
+		require.NotContains(t, remote, `\`, "a backslash reached the remote half of the fetch: %v", s.fetches)
 	}
 }
 
@@ -296,11 +298,11 @@ func TestPullTakesAWindowsDestAndNamesTheExeFiles(t *testing.T) {
 	local := ArtifactDir(out, "v0.16.0", "windows", "amd64")
 	body, err := os.ReadFile(filepath.Join(local, SumsFile))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	changelog := filepath.Join(t.TempDir(), "CHANGELOG.md")
 	if err := os.WriteFile(changelog, []byte("# Changelog\n\n## v0.16.0 - 2026-09-18\n\nA release.\n"), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	s := &fakeSSH{remoteSums: map[string]string{"threadripper": string(body)}}
 	var o, e bytes.Buffer
@@ -309,7 +311,7 @@ func TestPullTakesAWindowsDestAndNamesTheExeFiles(t *testing.T) {
 		"--machines", windowsMachines(t, "threadripper"), "--ssh", "ssh",
 		"--dest", `C:\Users\nova\nova-release`,
 		"--reason", "a windows bench", "--platform", "windows-amd64"}, &o, &e, Deps{SSH: s}); code != 0 {
-		t.Fatalf("code=%d errs=%s out=%s", code, e.String(), o.String())
+		require.Equal(t, 0, code, "code=%d errs=%s out=%s", code, e.String(), o.String())
 	}
 	var removal string
 	for _, run := range s.runs {
@@ -318,10 +320,10 @@ func TestPullTakesAWindowsDestAndNamesTheExeFiles(t *testing.T) {
 		}
 	}
 	if removal == "" {
-		t.Fatalf("the pull never named nova-bus.exe on the windows bench: %v", s.runs)
+		require.FailNowf(t, "", "the pull never named nova-bus.exe on the windows bench: %v", s.runs)
 	}
 	if strings.Contains(removal, `\`) || !strings.Contains(removal, "C:/Users/nova/nova-release/v0.16.0/windows-amd64/nova-bus.exe") {
-		t.Fatalf("the removal does not name the windows path: %s", removal)
+		require.FailNowf(t, "", "the removal does not name the windows path: %s", removal)
 	}
 }
 
@@ -340,30 +342,30 @@ func TestTheWindowsSumsFileNamesOnlyExeFiles(t *testing.T) {
 	dir := ArtifactDir(out, "v0.16.0", "windows", "amd64")
 	body, err := os.ReadFile(filepath.Join(dir, SumsFile))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var names []string
 	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
 		sum, name, ok := strings.Cut(line, "  ")
 		if !ok {
-			t.Fatalf("%s is not a sha256sum line: %q", SumsFile, line)
+			require.True(t, ok, "%s is not a sha256sum line: %q", SumsFile, line)
 		}
 		if len(sum) != 64 {
-			t.Fatalf("%s line %q does not carry a sha256", SumsFile, line)
+			require.Len(t, sum, 64, "%s line %q does not carry a sha256", SumsFile, line)
 		}
 		if !strings.HasSuffix(name, ".exe") {
-			t.Fatalf("%s names %q, which no windows bench has", SumsFile, name)
+			require.FailNowf(t, "", "%s names %q, which no windows bench has", SumsFile, name)
 		}
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	if got := strings.Join(names, " "); got != "nova-bus.exe nova-swarm.exe nova-update.exe" {
-		t.Fatalf("%s lists %q", SumsFile, got)
+		require.Equal(t, "nova-bus.exe nova-swarm.exe nova-update.exe", got, "%s lists %q", SumsFile, got)
 	}
 	// And the digest file beside it is NOT one of the lines: it is written
 	// after, out of the file it is the digest of.
 	if strings.Contains(string(body), DigestFile) {
-		t.Fatalf("%s lists %s: a checksum over the digest of itself is a number that changes every build", SumsFile, DigestFile)
+		require.NotContains(t, string(body), DigestFile, "%s lists %s: a checksum over the digest of itself is a number that changes every build", SumsFile, DigestFile)
 	}
 }
 
@@ -385,22 +387,22 @@ func TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts(t *testing.T) {
 	source := t.TempDir()
 	for _, tool := range []string{"nova-bus", "nova-update"} {
 		if err := os.MkdirAll(filepath.Join(source, "cmd", tool), 0o755); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		if err := os.WriteFile(filepath.Join(source, "cmd", tool, "main.go"), []byte("package main\n"), 0o644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out,
 		"--source", source, "--platform", "windows-amd64"}, &o, &e, Deps{Toolchain: &fakeToolchain{}}); code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	if !strings.Contains(o.String(), "platform=windows-amd64") || !strings.Contains(o.String(), "verified=2") {
-		t.Fatalf("no windows build receipt with a verified count:\n%s", o.String())
+		require.FailNowf(t, "", "no windows build receipt with a verified count:\n%s", o.String())
 	}
 	if strings.Contains(o.String(), "ran=") || strings.Contains(o.String(), "answered=") {
-		t.Fatalf("the build claims to have run a windows artifact it cannot execute:\n%s", o.String())
+		require.FailNowf(t, "", "the build claims to have run a windows artifact it cannot execute:\n%s", o.String())
 	}
 }
 
@@ -426,11 +428,11 @@ func TestInstallMovesARunningFileAsideWhenTheRenameIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "nova-update.exe.built")
 	if err := testbin.WriteExecutable(src, []byte("new"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	dst := filepath.Join(dir, "nova-update.exe")
 	if err := testbin.WriteExecutable(dst, []byte("old"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var renames []string
 	refusedOnce := false
@@ -443,11 +445,11 @@ func TestInstallMovesARunningFileAsideWhenTheRenameIsRefused(t *testing.T) {
 		return os.Rename(oldpath, newpath)
 	}
 	if err := installFile(src, dst, rename); err != nil {
-		t.Fatalf("the install gave up on a file that was open for execution: %v", err)
+		require.NoError(t, err, "the install gave up on a file that was open for execution: %v", err)
 	}
 	body, err := os.ReadFile(dst)
 	if err != nil || string(body) != "new" {
-		t.Fatalf("the new binary is not in place: %q %v", body, err)
+		require.FailNowf(t, "", "the new binary is not in place: %q %v", body, err)
 	}
 	// The file it moved aside is DOT-PREFIXED, which is what keeps it out of
 	// `nova-version snapshot` (it takes nova-* only) and out of `--retire`.
@@ -458,10 +460,10 @@ func TestInstallMovesARunningFileAsideWhenTheRenameIsRefused(t *testing.T) {
 		}
 	}
 	if aside == "" {
-		t.Fatalf("nothing was moved aside: %v", renames)
+		require.FailNowf(t, "", "nothing was moved aside: %v", renames)
 	}
 	if !strings.HasPrefix(aside, ".") || !strings.Contains(aside, "nova-update.exe") {
-		t.Fatalf("the file moved aside is %q; it must be dot-prefixed so snapshot and retire skip it", aside)
+		require.FailNowf(t, "", "the file moved aside is %q; it must be dot-prefixed so snapshot and retire skip it", aside)
 	}
 }
 
@@ -475,11 +477,11 @@ func TestInstallPutsTheOldFileBackWhenTheFallbackAlsoFails(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "nova-bus.exe.built")
 	if err := testbin.WriteExecutable(src, []byte("new"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	dst := filepath.Join(dir, "nova-bus.exe")
 	if err := testbin.WriteExecutable(dst, []byte("old"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	// The new binary can never be moved into place -- a full disk, and it is
 	// full both times. Moving the old one aside and putting it back are
@@ -492,19 +494,19 @@ func TestInstallPutsTheOldFileBackWhenTheFallbackAlsoFails(t *testing.T) {
 		return os.Rename(oldpath, newpath)
 	}
 	if err := installFile(src, dst, rename); err == nil {
-		t.Fatal("a rename that failed twice reported success")
+		require.Error(t, err, "a rename that failed twice reported success")
 	}
 	body, err := os.ReadFile(dst)
 	if err != nil || string(body) != "old" {
-		t.Fatalf("the old binary was not put back: %q %v", body, err)
+		require.FailNowf(t, "", "the old binary was not put back: %q %v", body, err)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), ".") {
-			t.Fatalf("a temporary file was left behind: %s", entry.Name())
+			require.FailNowf(t, "", "a temporary file was left behind: %s", entry.Name())
 		}
 	}
 }
@@ -526,15 +528,15 @@ func TestInstallOnAWindowsArtifactDirectoryUsesExeNamesThroughout(t *testing.T) 
 			return "", fmt.Errorf("no such file")
 		}})
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	sort.Strings(probed)
 	if got := strings.Join(probed, " "); got != "nova-bus.exe nova-update.exe" {
-		t.Fatalf("probed %q, want the target's file names", got)
+		require.Equal(t, "nova-bus.exe nova-update.exe", got, "probed %q, want the target's file names", got)
 	}
 	for _, name := range []string{"nova-bus.exe", "nova-update.exe"} {
 		if _, err := os.Stat(filepath.Join(bin, name)); err != nil {
-			t.Fatalf("%s was not installed: %v", name, err)
+			require.NoError(t, err, "%s was not installed: %v", name, err)
 		}
 	}
 }

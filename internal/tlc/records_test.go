@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -24,9 +23,7 @@ func TestRecordsRoundTrip(t *testing.T) {
 	in[1].Exit, in[1].Result, in[1].Generated, in[1].Distinct = 124, "FAIL", "-", "-"
 	var b bytes.Buffer
 	require.NoError(t, WriteRecords(&b, in))
-	if !strings.HasPrefix(b.String(), "config\tmodule\tinput_sha256\tinput_files\tjar_sha256\tjava_version\thost\tcpus\tstarted_utc\tworkers\tgenerated\tdistinct\tseconds\texit\tresult\texpected\tproperty\tbudget\tmode\n") {
-		t.Fatalf("header: %q", strings.SplitN(b.String(), "\n", 2)[0])
-	}
+	require.True(t, strings.HasPrefix(b.String(), "config\tmodule\tinput_sha256\tinput_files\tjar_sha256\tjava_version\thost\tcpus\tstarted_utc\tworkers\tgenerated\tdistinct\tseconds\texit\tresult\texpected\tproperty\tbudget\tmode\n"), "header: %q", strings.SplitN(b.String(), "\n", 2)[0])
 	out, err := ReadRecords(&b)
 	require.NoError(t, err, "round trip = %v, %v", out, err)
 	require.Equal(t, in, out, "round trip = %v, %v", out, err)
@@ -117,8 +114,11 @@ func TestMergeOrdersByThePlanAndRefusesWhatIsWrong(t *testing.T) {
 		{"a record over another count of files", [][]Record{{a, b}, {fewer}}, "MCC.cfg (recorded "},
 	}
 	for _, tc := range refused {
-		if _, err := Merge(src, cases, tc.runs...); err == nil || !strings.Contains(err.Error(), tc.why) {
-			t.Errorf("%s: %v, want %q", tc.name, err, tc.why)
+		{
+			_, err := Merge(src, cases, tc.runs...)
+			if assert.Error(t, err, "%s: %v, want %q", tc.name, err, tc.why) {
+				assert.Contains(t, err.Error(), tc.why, "%s: %v, want %q", tc.name, err, tc.why)
+			}
 		}
 	}
 }
@@ -137,8 +137,13 @@ func TestMergeRefusesRecordsOfAnotherRunnerOrEditedModel(t *testing.T) {
 	_, err = Merge(otherRunner, cases, all)
 	assert.ErrorContains(t, err, "3 records were measured on other inputs", "records of another runner")
 	require.NoError(t, os.WriteFile(filepath.Join(src.TLADir, "Shared.tla"), []byte("edited\n"), 0o644))
-	if _, err := Merge(src, cases, all); err == nil || !strings.Contains(err.Error(), "2 records were measured on other inputs than these: MCA.cfg (") || strings.Contains(err.Error(), "MCC.cfg") {
-		t.Errorf("records of a model edited since: %v", err)
+	{
+		_, err := Merge(src, cases, all)
+		if assert.Error(t, err, "records of a model edited since: %v", err) {
+			if assert.Contains(t, err.Error(), "2 records were measured on other inputs than these: MCA.cfg (", "records of a model edited since: %v", err) {
+				assert.NotContains(t, err.Error(), "MCC.cfg", "records of a model edited since: %v", err)
+			}
+		}
 	}
 }
 
@@ -192,9 +197,9 @@ func TestCarryNamesEachRecordItDrops(t *testing.T) {
 	measured := recs["MCC.cfg"]
 	measured.InputSHA256 = strings.Repeat("1", 64) // replaced by the run below, so not dropped
 	kept, dropped, err := Carry(src, cases, []Record{recs["MCA.cfg"], stale, gone, measured}, []Record{recs["MCC.cfg"]})
-	if err != nil || len(kept) != 1 || kept[0].Config != "MCA.cfg" {
-		t.Fatalf("kept %+v, %v", kept, err)
-	}
+	require.NoError(t, err, "kept %+v, %v", kept, err)
+	require.Len(t, kept, 1, "kept %+v, %v", kept, err)
+	require.Equal(t, "MCA.cfg", kept[0].Config, "kept %+v, %v", kept, err)
 	want := []Dropped{{Config: "MCB.cfg", Group: "beta", Why: DroppedStale}, {Config: "MCGone.cfg", Why: DroppedGone}}
 	require.Equal(t, want, dropped, "dropped %+v, want %+v", dropped, want)
 	_, err = Merge(src, cases, kept, []Record{recs["MCC.cfg"]})
@@ -208,8 +213,11 @@ func TestPlatformIsTheGoosGoarchLabelOfALinuxMachine(t *testing.T) {
 	t.Parallel()
 	for goos, archs := range map[string][]string{"linux": {"amd64", "arm64", "riscv64"}} {
 		for _, arch := range archs {
-			if got, err := Platform(goos, arch); err != nil || got != goos+"-"+arch {
-				t.Errorf("%s/%s: %q, %v", goos, arch, got, err)
+			{
+				got, err := Platform(goos, arch)
+				if assert.NoError(t, err, "%s/%s: %q, %v", goos, arch, got, err) {
+					assert.Equal(t, goos+"-"+arch, got, "%s/%s: %q, %v", goos, arch, got, err)
+				}
 			}
 		}
 	}
@@ -236,8 +244,10 @@ func TestARecordThatNamesAnotherModuleExpectationOrPropertyIsNotCurrent(t *testi
 	a, b, c := recs["MCA.cfg"], recs["MCB.cfg"], recs["MCC.cfg"]
 	_, err := Merge(src, cases, []Record{a, b, c})
 	require.NoError(t, err, "the unchanged control is refused")
-	if got, err := StaleGroups(src, cases, []Record{a, b, c}); err != nil || len(got) != 0 {
-		t.Fatalf("the control has stale groups %v, %v", got, err)
+	{
+		got, err := StaleGroups(src, cases, []Record{a, b, c})
+		require.NoError(t, err, "the control has stale groups %v, %v", got, err)
+		require.Zero(t, len(got), "the control has stale groups %v, %v", got, err)
 	}
 	for _, tc := range []struct {
 		name   string
@@ -252,15 +262,27 @@ func TestARecordThatNamesAnotherModuleExpectationOrPropertyIsNotCurrent(t *testi
 		tc.edit(&tampered)
 		require.Equal(t, a.InputSHA256, tampered.InputSHA256, "%s: the probe changed the fingerprint columns", tc.name)
 		require.Equal(t, a.InputFiles, tampered.InputFiles, "%s: the probe changed the fingerprint columns", tc.name)
-		if _, err := Merge(src, cases, []Record{tampered, b, c}); err == nil || !strings.Contains(err.Error(), "record for MCA.cfg does not match the plan") || !strings.Contains(err.Error(), tc.phrase) {
-			t.Errorf("%s: merge accepted or misnamed the record: %v", tc.name, err)
+		{
+			_, err := Merge(src, cases, []Record{tampered, b, c})
+			if assert.Error(t, err, "%s: merge accepted or misnamed the record: %v", tc.name, err) {
+				if assert.Contains(t, err.Error(), "record for MCA.cfg does not match the plan", "%s: merge accepted or misnamed the record: %v", tc.name, err) {
+					assert.Contains(t, err.Error(), tc.phrase, "%s: merge accepted or misnamed the record: %v", tc.name, err)
+				}
+			}
 		}
-		if got, err := StaleGroups(src, cases, []Record{tampered, b, c}); err != nil || !reflect.DeepEqual(got, []string{"alpha"}) {
-			t.Errorf("%s: StaleGroups = %v, %v, want [alpha]", tc.name, got, err)
+		{
+			got, err := StaleGroups(src, cases, []Record{tampered, b, c})
+			if assert.NoError(t, err, "%s: StaleGroups = %v, %v, want [alpha]", tc.name, got, err) {
+				assert.Equal(t, []string{"alpha"}, got, "%s: StaleGroups = %v, %v, want [alpha]", tc.name, got, err)
+			}
 		}
 		kept, dropped, err := Carry(src, cases, []Record{tampered, b}, []Record{c})
-		if err != nil || len(kept) != 1 || kept[0].Config != "MCB.cfg" || !reflect.DeepEqual(dropped, []Dropped{{Config: "MCA.cfg", Group: "alpha", Why: DroppedStale}}) {
-			t.Errorf("%s: Carry kept %+v dropped %+v, %v", tc.name, kept, dropped, err)
+		if assert.NoError(t, err, "%s: Carry kept %+v dropped %+v, %v", tc.name, kept, dropped, err) {
+			if assert.Len(t, kept, 1, "%s: Carry kept %+v dropped %+v, %v", tc.name, kept, dropped, err) {
+				if assert.Equal(t, "MCB.cfg", kept[0].Config, "%s: Carry kept %+v dropped %+v, %v", tc.name, kept, dropped, err) {
+					assert.Equal(t, []Dropped{{Config: "MCA.cfg", Group: "alpha", Why: DroppedStale}}, dropped, "%s: Carry kept %+v dropped %+v, %v", tc.name, kept, dropped, err)
+				}
+			}
 		}
 	}
 }

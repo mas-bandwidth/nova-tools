@@ -7,10 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
 	"github.com/mas-bandwidth/nova-tools/internal/update"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Every verb answers -h and --help with its own help on stdout at exit 0, and
@@ -54,8 +55,9 @@ func TestStatusAndApplyHelpShowAnExampleThatRuns(t *testing.T) {
 	for _, tc := range []struct{ verb, flag string }{{"status", ""}, {"apply", "--dry-run"}} {
 		out.Reset()
 		errs.Reset()
-		if c := updateRun([]string{tc.verb, "-h"}, &out, &errs); c != 0 {
-			t.Fatalf("%s -h exited %d: %s", tc.verb, c, errs.String())
+		{
+			c := updateRun([]string{tc.verb, "-h"}, &out, &errs)
+			require.Equal(t, 0, c, "%s -h exited %d: %s", tc.verb, c, errs.String())
 		}
 		var example string
 		for _, l := range strings.Split(out.String(), "\n") {
@@ -64,15 +66,15 @@ func TestStatusAndApplyHelpShowAnExampleThatRuns(t *testing.T) {
 				example = l
 			}
 		}
-		if example == "" || !strings.HasSuffix(example, tc.flag) {
-			t.Fatalf("%s -h shows no example line ending %q:\n%s", tc.verb, tc.flag, out.String())
-		}
+		require.NotEmpty(t, example, "%s -h shows no example line ending %q:\n%s", tc.verb, tc.flag, out.String())
+		require.True(t, strings.HasSuffix(example, tc.flag), "%s -h shows no example line ending %q:\n%s", tc.verb, tc.flag, out.String())
 		// The line names ./versions.tsv, the file example --out writes; the test's is in a temp dir.
 		args := strings.Fields(strings.ReplaceAll(strings.TrimPrefix(example, "nova-update "), "versions.tsv", manifest))
 		out.Reset()
 		errs.Reset()
-		if c := updateRun(args, &out, &errs); c != 0 {
-			t.Errorf("the help example %q exits %d\nstdout: %s\nstderr: %s", example, c, out.String(), errs.String())
+		{
+			c := updateRun(args, &out, &errs)
+			assert.Equal(t, 0, c, "the help example %q exits %d\nstdout: %s\nstderr: %s", example, c, out.String(), errs.String())
 		}
 	}
 }

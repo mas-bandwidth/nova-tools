@@ -9,6 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	lua "github.com/yuin/gopher-lua"
 	"github.com/yuin/gopher-lua/parse"
 )
@@ -34,11 +36,11 @@ func freeNames(t *testing.T, name, src string) (reads, writes []string) {
 	t.Helper()
 	chunk, err := parse.Parse(strings.NewReader(src), name)
 	if err != nil {
-		t.Fatalf("parse %s: %v", name, err)
+		require.NoError(t, err, "parse %s: %v", name, err)
 	}
 	proto, err := lua.Compile(chunk, name)
 	if err != nil {
-		t.Fatalf("compile %s: %v", name, err)
+		require.NoError(t, err, "compile %s: %v", name, err)
 	}
 	r, w := map[string]bool{}, map[string]bool{}
 	var walk func(p *lua.FunctionProto)
@@ -80,14 +82,14 @@ func crossFileProblems(t *testing.T, fsys fs.FS) (problems, names []string, expo
 	t.Helper()
 	names, err := fs.Glob(fsys, "lua/*.lua")
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	sort.Strings(names) // Source's load order
 	exported = map[string]string{}
 	for _, name := range names {
 		src, err := fs.ReadFile(fsys, name)
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		reads, writes := freeNames(t, name, string(src))
 		for _, n := range reads {
@@ -126,7 +128,7 @@ func TestNoBareCrossFileReferences(t *testing.T) {
 
 	problems, names, exported := crossFileProblems(t, sources)
 	for _, p := range problems {
-		t.Error(p)
+		assert.Fail(t, p)
 	}
 	t.Logf("%d files, NS exports %v", len(names), exported)
 }
@@ -140,12 +142,12 @@ func TestCrossFileGuardSeesTheBrokenShape(t *testing.T) {
 	broken := "local function done() return HD.ingest(nil, {}) end\nredis.register_function('x', done)\n"
 	reads, _ := freeNames(t, "broken.lua", broken)
 	if strings.Join(reads, ",") != "HD,redis" {
-		t.Fatalf("broken shape reads %v, want [HD redis]", reads)
+		require.Equal(t, "HD,redis", strings.Join(reads, ","), "broken shape reads %v, want [HD redis]", reads)
 	}
 	fixed := "local HD = NS.HD\n" + broken
 	reads, _ = freeNames(t, "fixed.lua", fixed)
 	if strings.Join(reads, ",") != "NS,redis" {
-		t.Fatalf("fixed shape reads %v, want [NS redis]", reads)
+		require.Equal(t, "NS,redis", strings.Join(reads, ","), "fixed shape reads %v, want [NS redis]", reads)
 	}
 }
 
@@ -157,10 +159,10 @@ func TestCrossFileGuardBuiltinAllowanceIsExact(t *testing.T) {
 
 	reads, writes := freeNames(t, "builtin.lua", "return getmetatable({}), getmetatabl({})")
 	if strings.Join(reads, ",") != "getmetatabl,getmetatable" || len(writes) != 0 {
-		t.Fatalf("builtin control reads=%v writes=%v", reads, writes)
+		require.Failf(t, "assertion failed", "builtin control reads=%v writes=%v", reads, writes)
 	}
 	if !allowedGlobals["getmetatable"] || allowedGlobals["getmetatabl"] {
-		t.Fatal("builtin allowance must remain exact")
+		require.Fail(t, "builtin allowance must remain exact")
 	}
 }
 
@@ -173,13 +175,13 @@ func TestCrossFileGuardRefusesAnUnassignedNSRead(t *testing.T) {
 	reader := "local X = NS.later\nredis.register_function('ns_x', function() return X end)\n"
 	problems, _, _ := crossFileProblems(t, fstest.MapFS{"lua/a.lua": {Data: []byte(reader)}})
 	if len(problems) != 1 || !strings.Contains(problems[0], "lua/a.lua reads NS.later") {
-		t.Fatalf("an unassigned NS read: %v", problems)
+		require.Failf(t, "assertion failed", "an unassigned NS read: %v", problems)
 	}
 	problems, _, _ = crossFileProblems(t, fstest.MapFS{
 		"lua/a.lua": {Data: []byte("NS.later = {}\n")},
 		"lua/b.lua": {Data: []byte(reader)},
 	})
 	if len(problems) != 0 {
-		t.Fatalf("an NS read after its assignment: %v", problems)
+		require.Equal(t, 0, len(problems), "an NS read after its assignment: %v", problems)
 	}
 }
