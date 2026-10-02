@@ -137,15 +137,20 @@ func TestTheSprintIsDoneOnce(t *testing.T) {
 	w.tick(90 * time.Minute)
 	w.must(tickDone(w.s, req))
 	done := w.notesOf(NSprintDone)
-	if len(done) != 1 || done[0].Kind != Happened || done[0].What != "2 landed, 1 dropped, took 1h30m0s from the first start" ||
-		done[0].To != "coordinator" || done[0].Hint != DoneHint || len(w.openOn(SprintSubject)) != 0 {
-		t.Fatalf("the sprint is done: %+v", done)
-	}
+	require.Len(t, done, 1, "the sprint is done: %+v", done)
+	require.Equal(t, Happened, done[0].Kind, "the sprint is done: %+v", done)
+	require.Equal(t, "2 landed, 1 dropped, took 1h30m0s from the first start", done[0].What, "the sprint is done: %+v", done)
+	require.Equal(t, "coordinator", done[0].To, "the sprint is done: %+v", done)
+	require.Equal(t, DoneHint, done[0].Hint, "the sprint is done: %+v", done)
+	require.Empty(t, w.openOn(SprintSubject), "the sprint is done: %+v", done)
 	g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open, Recent: w.notes})
-	if len(g) == 0 || g[0].Type != NSprintDone || g[0].Kind != Happened || g[0].To != "coordinator" || g[0].Hint != DoneHint ||
-		g[0].What != done[0].What || len(g[0].Commands) != 0 {
-		t.Fatalf("the inbox does not show the sprint done first: %+v", g)
-	}
+	require.NotEmpty(t, g, "the inbox does not show the sprint done first: %+v", g)
+	require.Equal(t, NSprintDone, g[0].Type, "the inbox does not show the sprint done first: %+v", g)
+	require.Equal(t, Happened, g[0].Kind, "the inbox does not show the sprint done first: %+v", g)
+	require.Equal(t, "coordinator", g[0].To, "the inbox does not show the sprint done first: %+v", g)
+	require.Equal(t, DoneHint, g[0].Hint, "the inbox does not show the sprint done first: %+v", g)
+	require.Equal(t, done[0].What, g[0].What, "the inbox does not show the sprint done first: %+v", g)
+	require.Empty(t, g[0].Commands, "the inbox does not show the sprint done first: %+v", g)
 	// Not known when the machine first started: the counts alone.
 	p, _ = TickDone(w.s, TickReq{})
 	require.Len(t, p.Notes, 1, "with no first start: %+v", p.Notes)

@@ -22,8 +22,12 @@ func TestSprintDoneOutlastsAnAddOfNoCardAndIsNeverOverdue(t *testing.T) {
 	require.Len(t, p.Notes, 1, "an add that only opens a stream: s2 %v, done %+v", w.s.StreamCtl("s2") != nil, p)
 	w.must(tickDone(w.s, TickReq{}))
 	for _, g := range Inbox(InboxReq{Now: w.s.Now.Add(1000 * time.Hour), Open: w.s.Open, Recent: w.notes, Deadline: time.Minute}) {
-		if g.Type == NSprintDone && (g.Kind != Happened || g.Overdue || g.Marked || !g.Due.IsZero() || len(g.Decisions) != 0) {
-			t.Fatalf("the sprint is done, shown as a judgment or overdue: %+v", g)
+		if g.Type == NSprintDone {
+			require.Equal(t, Happened, g.Kind, "the sprint is done, shown as a judgment or overdue: %+v", g)
+			require.False(t, g.Overdue, "the sprint is done, shown as a judgment or overdue: %+v", g)
+			require.False(t, g.Marked, "the sprint is done, shown as a judgment or overdue: %+v", g)
+			require.True(t, g.Due.IsZero(), "the sprint is done, shown as a judgment or overdue: %+v", g)
+			require.Empty(t, g.Decisions, "the sprint is done, shown as a judgment or overdue: %+v", g)
 		}
 	}
 	require.Empty(t, w.s.Open, "the sprint done opened a judgment")

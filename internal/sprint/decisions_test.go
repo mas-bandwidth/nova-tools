@@ -59,9 +59,12 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "the fix"}))
 	pr := w.s.Work.Card("s1-1")
 	card := w.s.Fleet.Placed(pr.F("work"))
-	if pr.Col != Working || card == nil || card.ID != "s1-1.w2" || card.Col != Ready || card.F("fix") != "the fix" || card.Score != pr.Score {
-		t.Fatalf("rework did not delegate at once: primary %s card %+v", pr.Col, card)
-	}
+	require.Equal(t, Working, pr.Col, "rework did not delegate at once: primary %s card %+v", pr.Col, card)
+	require.NotNil(t, card, "rework did not delegate at once: primary %s card %+v", pr.Col, card)
+	require.Equal(t, "s1-1.w2", card.ID, "rework did not delegate at once: primary %s card %+v", pr.Col, card)
+	require.Equal(t, Ready, card.Col, "rework did not delegate at once: primary %s card %+v", pr.Col, card)
+	require.Equal(t, "the fix", card.F("fix"), "rework did not delegate at once: primary %s card %+v", pr.Col, card)
+	require.Equal(t, pr.Score, card.Score, "rework did not delegate at once: primary %s card %+v", pr.Col, card)
 	w.clean("delegated")
 	// A report against the retired card is refused, naming the retirement.
 	late := Read(w.s, ReadReq{As: reads[1].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{reads[1].ID}}})
@@ -180,8 +183,10 @@ func TestD4AcceptNamedIsAllOrNothing(t *testing.T) {
 	require.Empty(t, p.Units, "named set with one ineligible: %+v", p)
 	require.Len(t, p.Refused, 3, "named set with one ineligible: %+v", p)
 	for _, r := range p.Refused {
-		if r.Key == "s1-3" && !strings.Contains(r.Why, "two different readers") || r.Key != "s1-3" && !strings.Contains(r.Why, "eligible, not moved") {
-			t.Fatalf("refusal: %+v", r)
+		if r.Key == "s1-3" {
+			require.Contains(t, r.Why, "two different readers", "refusal: %+v", r)
+		} else {
+			require.Contains(t, r.Why, "eligible, not moved", "refusal: %+v", r)
 		}
 	}
 	p = w.do(Accept(w.s, AcceptReq{Sel: Sel{Stream: "s1"}}))
@@ -303,9 +308,11 @@ func TestD8CIObservation(t *testing.T) {
 	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 1}}))
 	p := w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "run-7", Source: "ci", Head: "old"}))
 	c := w.s.Work.Card("s1-1")
-	if c.Col != Working || c.F("ci_run") != "run-7" || c.F("ci_source") != "ci" || c.F("ci_head") != "" || c.F("ci") != "" {
-		t.Fatalf("ci fields: %+v", c.Fields)
-	}
+	require.Equal(t, Working, c.Col, "ci fields: %+v", c.Fields)
+	require.Equal(t, "run-7", c.F("ci_run"), "ci fields: %+v", c.Fields)
+	require.Equal(t, "ci", c.F("ci_source"), "ci fields: %+v", c.Fields)
+	require.Empty(t, c.F("ci_head"), "ci fields: %+v", c.Fields)
+	require.Empty(t, c.F("ci"), "ci fields: %+v", c.Fields)
 	require.Contains(t, p.Units[0].Moved, "old head", "an old head is not labelled: %s / %s", p.Units[0].Moved, w.notesOf(NCIRed)[0].What)
 	require.Contains(t, w.notesOf(NCIRed)[0].What, "old head", "an old head is not labelled: %s / %s", p.Units[0].Moved, w.notesOf(NCIRed)[0].What)
 	again := RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "run-7"})
@@ -517,8 +524,11 @@ func TestAReaderCountsOnceWhereItsCardIs(t *testing.T) {
 	require.Empty(t, p.Units, "accept: %+v", p)
 	require.Len(t, p.Refused, 2, "accept: %+v", p)
 	for _, r := range p.Refused {
-		if r.Key == "s1-2" && !strings.Contains(r.Why, "two different readers") || r.Key == "s1-1" && !strings.Contains(r.Why, "eligible, not moved") {
-			t.Fatalf("refusal: %+v", r)
+		if r.Key == "s1-2" {
+			require.Contains(t, r.Why, "two different readers", "refusal: %+v", r)
+		}
+		if r.Key == "s1-1" {
+			require.Contains(t, r.Why, "eligible, not moved", "refusal: %+v", r)
 		}
 	}
 	found := false

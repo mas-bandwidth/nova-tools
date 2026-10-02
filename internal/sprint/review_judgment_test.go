@@ -59,9 +59,10 @@ func openIDs(w *world, id string) []string {
 func ackRefused(w *world, id string) {
 	w.t.Helper()
 	p := w.do(Ack(w.s, AckReq{Notes: openIDs(w, id), Reason: "seen"}))
-	if len(p.Refused) != 1 || len(p.Units) != 0 || !strings.Contains(p.Refused[0].Why, "ack does not answer") || !strings.Contains(p.Refused[0].Why, "nova-sprint accept --group") {
-		w.t.Fatalf("an ack that silences %s: %+v", id, p)
-	}
+	require.Len(w.t, p.Refused, 1, "an ack that silences %s: %+v", id, p)
+	require.Empty(w.t, p.Units, "an ack that silences %s: %+v", id, p)
+	require.Contains(w.t, p.Refused[0].Why, "ack does not answer", "an ack that silences %s: %+v", id, p)
+	require.Contains(w.t, p.Refused[0].Why, "nova-sprint accept --group", "an ack that silences %s: %+v", id, p)
 }
 
 // Finish: failed work is its own judgment and nothing more; ok work that

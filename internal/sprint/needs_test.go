@@ -13,9 +13,7 @@ func land(w *world, ids ...string) {
 	for _, id := range ids {
 		accepted(w, id)
 		w.must(MergeStep(w.s, MergeReq{Stream: w.s.Work.Card(id).Row, Batch: 1}))
-		if w.state(id) != Landed {
-			w.t.Fatalf("%s is %s", id, w.state(id))
-		}
+		require.Equal(w.t, Landed, w.state(id), "%s is %s", id, w.state(id))
 		w.clean("landed " + id)
 	}
 }

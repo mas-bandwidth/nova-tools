@@ -41,9 +41,7 @@ func TestDealFillsTheFleetToWidthInOnePlan(t *testing.T) {
 	require.Equal(t, 0, ready, "after one plan: ready %d, working %d, want 0 and 150", ready, working)
 	require.Equal(t, 150, working, "after one plan: ready %d, working %d, want 0 and 150", ready, working)
 	for m, n := range perMember(s) {
-		if n != 18 && n != 19 {
-			t.Fatalf("%s holds %d, want 18 or 19 (round the fleet): %v", m, n, perMember(s))
-		}
+		require.Contains(t, []int{18, 19}, n, "%s holds %d, want 18 or 19 (round the fleet): %v", m, n, perMember(s))
 	}
 }
 
@@ -125,9 +123,11 @@ func TestTheWidthIsTheControlCards(t *testing.T) {
 	require.Len(t, p.Refused, 1, "a width past MaxWidth: %+v", p)
 	require.Empty(t, p.Units, "a width past MaxWidth: %+v", p)
 	specs, err := ParseMembers("m1:64,m2,m3:2")
-	if err != nil || len(specs) != 3 || specs[0] != (MemberSpec{"m1", 64}) || specs[1] != (MemberSpec{"m2", 0}) || specs[2] != (MemberSpec{"m3", 2}) {
-		t.Fatalf("ParseMembers: %+v %v", specs, err)
-	}
+	require.NoError(t, err, "ParseMembers: %+v %v", specs, err)
+	require.Len(t, specs, 3, "ParseMembers: %+v %v", specs, err)
+	require.Equal(t, MemberSpec{"m1", 64}, specs[0], "ParseMembers: %+v %v", specs, err)
+	require.Equal(t, MemberSpec{"m2", 0}, specs[1], "ParseMembers: %+v %v", specs, err)
+	require.Equal(t, MemberSpec{"m3", 2}, specs[2], "ParseMembers: %+v %v", specs, err)
 	for _, bad := range []string{"m1:0", "m1:x", "m1:1025", "m.1:4"} {
 		_, err = ParseMembers(bad)
 		assert.Error(t, err, "ParseMembers(%q) was taken", bad)

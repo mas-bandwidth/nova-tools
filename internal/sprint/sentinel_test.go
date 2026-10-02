@@ -71,10 +71,12 @@ func TestASentinelIsAStopTheCoordinatorReleases(t *testing.T) {
 	}
 	p = mergeOne(w, "s1")
 	reached := notesIn(p, NSentinelReached)
-	if len(reached) != 1 || reached[0].Kind != Judgment || stop.F("reached") == "" || stop.Col != Waiting || landsSentinel(w.s, p) ||
-		reached[0].What != "sentinel stop reached: 5 cards of s1 have landed; 1 cards wait behind it" {
-		t.Fatalf("the fifth landing: %+v, stop %s %v", reached, stop.Col, stop.Fields)
-	}
+	require.Len(t, reached, 1, "the fifth landing: %+v, stop %s %v", reached, stop.Col, stop.Fields)
+	require.Equal(t, Judgment, reached[0].Kind, "the fifth landing: %+v, stop %s %v", reached, stop.Col, stop.Fields)
+	require.NotEmpty(t, stop.F("reached"), "the fifth landing: %+v, stop %s %v", reached, stop.Col, stop.Fields)
+	require.Equal(t, Waiting, stop.Col, "the fifth landing: %+v, stop %s %v", reached, stop.Col, stop.Fields)
+	require.False(t, landsSentinel(w.s, p), "the fifth landing: %+v, stop %s %v", reached, stop.Col, stop.Fields)
+	require.Equal(t, "sentinel stop reached: 5 cards of s1 have landed; 1 cards wait behind it", reached[0].What, "the fifth landing: %+v, stop %s %v", reached, stop.Col, stop.Fields)
 	require.Equal(t, Waiting, w.state("b"), "b is %s; reached notes %d", w.state("b"), len(w.notesOf(NSentinelReached)))
 	require.Len(t, w.notesOf(NSentinelReached), 1, "b is %s; reached notes %d", w.state("b"), len(w.notesOf(NSentinelReached)))
 	p = SentinelsDue(w.s, "")
@@ -84,11 +86,14 @@ func TestASentinelIsAStopTheCoordinatorReleases(t *testing.T) {
 	require.Equal(t, "nova-sprint release stop --reason '<what you looked at and found>' --answers "+g[0].ID, g[0].Commands[0].Lines[0], "the inbox: %+v", g[0])
 	p = w.must(release(w, "the layer is green and read", "stop"))
 	landed := w.notesOf(NSentinelLanded)
-	if stop.Col != Landed || stop.F("released_by") != "coord" || stop.F("release_reason") != "the layer is green and read" || w.state("b") != Ready ||
-		len(landed) != 1 || landed[0].Kind != Happened || landed[0].What != "sentinel stop landed, released by coord: 1 cards are now ready; the layer is green and read" ||
-		len(w.openOn("stop")) != 0 {
-		t.Fatalf("release: stop %s, b %s, %+v", stop.Col, w.state("b"), landed)
-	}
+	require.Equal(t, Landed, stop.Col, "release: stop %s, b %s, %+v", stop.Col, w.state("b"), landed)
+	require.Equal(t, "coord", stop.F("released_by"), "release: stop %s, b %s, %+v", stop.Col, w.state("b"), landed)
+	require.Equal(t, "the layer is green and read", stop.F("release_reason"), "release: stop %s, b %s, %+v", stop.Col, w.state("b"), landed)
+	require.Equal(t, Ready, w.state("b"), "release: stop %s, b %s, %+v", stop.Col, w.state("b"), landed)
+	require.Len(t, landed, 1, "release: stop %s, b %s, %+v", stop.Col, w.state("b"), landed)
+	require.Equal(t, Happened, landed[0].Kind, "release: stop %s, b %s, %+v", stop.Col, w.state("b"), landed)
+	require.Equal(t, "sentinel stop landed, released by coord: 1 cards are now ready; the layer is green and read", landed[0].What, "release: stop %s, b %s, %+v", stop.Col, w.state("b"), landed)
+	require.Empty(t, w.openOn("stop"), "release: stop %s, b %s, %+v", stop.Col, w.state("b"), landed)
 	require.Equal(t, StreamLanded, w.s.StreamCtl("s1").F("state"), "stream s1 is %s", w.s.StreamCtl("s1").F("state"))
 	w.clean("released")
 }
@@ -237,9 +242,12 @@ func TestASentinelStopsTheStreamByPosition(t *testing.T) {
 	A := w.s.Work.Card("A")
 	require.NotEmpty(t, A.F("reached"), "A not reached")
 	w.must(Lawful(Add(w.s, AddReq{Stream: "a", IDs: []string{"a3"}, Before: "A"})))
-	if A.F("reached") != "" || !contains(WaitsFor(w.s, A, nil), "a3") || A.F("needs") != "" || len(w.openOn("A")) != 0 || w.state("a3") != Ready || w.state("b1") != Waiting {
-		t.Fatalf("a3 before A: A %v, open %v, a3 %s, b1 %s", A.Fields, w.openOn("A"), w.state("a3"), w.state("b1"))
-	}
+	require.Empty(t, A.F("reached"), "a3 before A: A %v, open %v, a3 %s, b1 %s", A.Fields, w.openOn("A"), w.state("a3"), w.state("b1"))
+	require.Contains(t, WaitsFor(w.s, A, nil), "a3", "a3 before A: A %v, open %v, a3 %s, b1 %s", A.Fields, w.openOn("A"), w.state("a3"), w.state("b1"))
+	require.Empty(t, A.F("needs"), "a3 before A: A %v, open %v, a3 %s, b1 %s", A.Fields, w.openOn("A"), w.state("a3"), w.state("b1"))
+	require.Empty(t, w.openOn("A"), "a3 before A: A %v, open %v, a3 %s, b1 %s", A.Fields, w.openOn("A"), w.state("a3"), w.state("b1"))
+	require.Equal(t, Ready, w.state("a3"), "a3 before A: A %v, open %v, a3 %s, b1 %s", A.Fields, w.openOn("A"), w.state("a3"), w.state("b1"))
+	require.Equal(t, Waiting, w.state("b1"), "a3 before A: A %v, open %v, a3 %s, b1 %s", A.Fields, w.openOn("A"), w.state("a3"), w.state("b1"))
 	a3 := w.s.Work.Card("a3")
 	require.Less(t, a3.Score, A.Score, "a3 is not in front of A: %v < %v, needs %q", a3.Score, A.Score, a3.F("needs"))
 	require.Empty(t, a3.F("needs"), "a3 is not in front of A: %v < %v, needs %q", a3.Score, A.Score, a3.F("needs"))
@@ -272,10 +280,12 @@ func TestASentinelInsertedInLine(t *testing.T) {
 	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-4"}}}))
 	p := w.must(Lawful(Add(w.s, AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true, After: "s1-4"})))
 	stop := w.s.Work.Card("stop")
-	if w.state("s1-5") != Waiting || w.state("s1-6") != Waiting || stop.F("needs") != "" || strings.Join(WaitsFor(w.s, stop, nil), ",") != "s1-4" ||
-		!strings.Contains(p.Units[0].Moved, "already past the stop: s1-4") || !strings.Contains(p.Units[0].Moved, "s1-5,s1-6 ready -> waiting behind it") {
-		t.Fatalf("inserted: s1-5 %s s1-6 %s waits %v moved %q", w.state("s1-5"), w.state("s1-6"), WaitsFor(w.s, stop, nil), p.Units[0].Moved)
-	}
+	require.Equal(t, Waiting, w.state("s1-5"), "inserted: s1-5 %s s1-6 %s waits %v moved %q", w.state("s1-5"), w.state("s1-6"), WaitsFor(w.s, stop, nil), p.Units[0].Moved)
+	require.Equal(t, Waiting, w.state("s1-6"), "inserted: s1-5 %s s1-6 %s waits %v moved %q", w.state("s1-5"), w.state("s1-6"), WaitsFor(w.s, stop, nil), p.Units[0].Moved)
+	require.Empty(t, stop.F("needs"), "inserted: s1-5 %s s1-6 %s waits %v moved %q", w.state("s1-5"), w.state("s1-6"), WaitsFor(w.s, stop, nil), p.Units[0].Moved)
+	require.Equal(t, "s1-4", strings.Join(WaitsFor(w.s, stop, nil), ","), "inserted: s1-5 %s s1-6 %s waits %v moved %q", w.state("s1-5"), w.state("s1-6"), WaitsFor(w.s, stop, nil), p.Units[0].Moved)
+	require.Contains(t, p.Units[0].Moved, "already past the stop: s1-4", "inserted: s1-5 %s s1-6 %s waits %v moved %q", w.state("s1-5"), w.state("s1-6"), WaitsFor(w.s, stop, nil), p.Units[0].Moved)
+	require.Contains(t, p.Units[0].Moved, "s1-5,s1-6 ready -> waiting behind it", "inserted: s1-5 %s s1-6 %s waits %v moved %q", w.state("s1-5"), w.state("s1-6"), WaitsFor(w.s, stop, nil), p.Units[0].Moved)
 	require.Less(t, w.s.Work.Card("s1-4").Score, stop.Score, "the stop is not in line after s1-4")
 	require.Less(t, stop.Score, w.s.Work.Card("s1-5").Score, "the stop is not in line after s1-4")
 	w.clean("inserted")

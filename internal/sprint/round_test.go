@@ -57,9 +57,7 @@ func (w *world) part(fn func(*Snapshot, TickReq) (Plan, int), r TickReq) Plan {
 func (w *world) place(tb *Table, id, row, col string) {
 	w.t.Helper()
 	c := tb.Card(id)
-	if c == nil {
-		w.t.Fatalf("no card %s in %s", id, tb.Name)
-	}
+	require.NotNil(w.t, c, "no card %s in %s", id, tb.Name)
 	c.Row, c.Col = row, col
 	c.Rev++
 	tb.cells, tb.byPrimary = nil, nil
@@ -121,8 +119,9 @@ func evenly(t *testing.T, what string, counts map[string]int, names []string, ro
 		}
 		hi = max(hi, counts[n])
 	}
-	if hi-lo > 1 || (round && hi != lo) {
-		t.Fatalf("%s: %v, want every count within one of the others (equal after a full round)", what, counts)
+	require.LessOrEqual(t, hi-lo, 1, "%s: %v, want every count within one of the others (equal after a full round)", what, counts)
+	if round {
+		require.Equal(t, lo, hi, "%s: %v, want every count within one of the others (equal after a full round)", what, counts)
 	}
 }
 
