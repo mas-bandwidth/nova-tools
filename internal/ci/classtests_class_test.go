@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // deletedTestsLogPath is where a change declares a test file or a list it
@@ -559,19 +561,35 @@ func pullRequestHeadRepo(eventPath string) string {
 	return payload.PullRequest.Head.Repo.FullName
 }
 
-// declaredRowsAdded reads the `<path> <why>` rows a unified diff of the log
-// adds: the declarations this change makes and no other.
+// declaredRowsAdded reads new path receipts, not edits to an existing receipt's
+// explanation. Pair removed and added keys with multiplicity: one replacement
+// cannot excuse a second added receipt or a new deletion using an old receipt.
 func declaredRowsAdded(diff string) map[string]string {
-	rows := map[string]string{}
+	removed := map[string]int{}
+	var added []string
 	for _, line := range strings.Split(diff, "\n") {
-		if !strings.HasPrefix(line, "+") || strings.HasPrefix(line, "+++") {
+		if len(line) == 0 || (line[0] != '+' && line[0] != '-') ||
+			strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") {
 			continue
 		}
 		row := strings.TrimSpace(line[1:])
 		if row == "" || strings.HasPrefix(row, "#") {
 			continue
 		}
+		p, _, _ := strings.Cut(row, " ")
+		if line[0] == '-' {
+			removed[p]++
+		} else {
+			added = append(added, row)
+		}
+	}
+	rows := map[string]string{}
+	for _, row := range added {
 		p, why, _ := strings.Cut(row, " ")
+		if removed[p] > 0 {
+			removed[p]--
+			continue
+		}
 		rows[p] = strings.TrimSpace(why)
 	}
 	return rows
@@ -744,12 +762,20 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 		t.Fatalf("declared deletion: findings = %q; want only the row that names no deletion", got)
 	}
 
+	// Editing the surviving test name in an old receipt is the shape of the
+	// tokens documentation change: it adds no new deletion declaration.
+	write(deletedTestsLogPath, "# the log\nb/keep_functional_test.go its cases moved to TestRenamed\nd/none_test.go never existed\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "rename the surviving test in its receipt")
+	require.Empty(t, findings(), "editing a historical receipt explanation adds no deletion")
+
 	// An old row declares nothing for a later change: the same file, put
 	// back and deleted again with no new row, is red.
 	write("b/keep_functional_test.go", "package b\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "put back")
 	remove("b/keep_functional_test.go")
+	write(deletedTestsLogPath, "# the log\nb/keep_functional_test.go its cases moved to TestRenamedAgain\nd/none_test.go never existed\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "gone again")
 	if got := findings(); len(got) != 1 || !strings.Contains(got[0], "deletes b/keep_functional_test.go") {
@@ -1577,4 +1603,13 @@ func TestDeclaredRowsAddedReadsOnlyTheAddedRows(t *testing.T) {
 	if len(got) != 2 || got["new/two_test.go"] != "moved to the functional tier" || got["new/three_test.go"] != "" {
 		t.Fatalf("declaredRowsAdded = %v; want the two added rows, the context, the comment and the removed row unread", got)
 	}
+}
+
+// Multiple rows for a path are legitimate history; replacing one explanation
+// does not turn an additional row into another historical explanation edit.
+func TestReceiptExplanationReplacementDoesNotHideAnotherReceipt(t *testing.T) {
+	t.Parallel()
+	diff := "-a/x_test.go old case name\n+a/x_test.go renamed case\n+a/x_test.go another deletion\n"
+	got := declaredRowsAdded(diff)
+	assert.Equal(t, map[string]string{"a/x_test.go": "another deletion"}, got, "replacement must leave the additional receipt")
 }

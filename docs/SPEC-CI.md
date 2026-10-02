@@ -2502,7 +2502,12 @@ for the deletions, `git diff <parent> HEAD -- deleted-tests.txt` for the
 rows this change adds. `TestMergeRuleReadsTheDeletionOutOfGit` proves it over
 a repository it builds: the stale-base squash shape red for the test file and
 the list and silent for a source file, a rename not a deletion, a same-change
-row green, a row naming no deletion red, an old row declaring nothing.
+row green, a row naming no deletion red, and an old row declaring nothing,
+even when its explanation names a renamed surviving test.
+`TestReceiptExplanationReplacementDoesNotHideAnotherReceipt` pins repeated
+receipt keys: replacing one old explanation cancels only one added row; a
+second row remains a new receipt requiring a deletion in the same change.
+Rewording an old explanation cannot authorize a fresh deletion.
 `TestGuardedByMergeRuleReadsThePath` and
 `TestDeclaredRowsAddedReadsOnlyTheAddedRows` pin the two readers;
 `TestPromotionSkipReadsTheEvent` pins the promotion shape against its

@@ -98,6 +98,10 @@ var ignoredCompoundWords = map[string]bool{
 var reWord = regexp.MustCompile(`[a-zA-Z0-9]+`)
 var reAccount = regexp.MustCompile(`(?i)mas-bandwidth`)
 
+// A counted whitespace unit describes formatting, not a machine. Blank only
+// that unit, so a named host elsewhere in the same sentence is still scanned.
+var reIndentUnit = regexp.MustCompile(`(?i)\b(?:[0-9]+|one|two|three|four|eight|single|double)(?:-|[ \t]+)(space)[ \t]+(?:indentation|indented|indent|padding)\b`)
+
 // isMarkedDocExample reports whether a comment line is an explicit documentation example.
 func isMarkedDocExample(comment string) bool {
 	lower := strings.ToLower(comment)
@@ -243,6 +247,14 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 // names on one line are individually counted.
 func extractTokensFromText(text string) []string {
 	var tokens []string
+
+	formatting := []byte(text)
+	for _, match := range reIndentUnit.FindAllStringSubmatchIndex(text, -1) {
+		for i := match[2]; i < match[3]; i++ {
+			formatting[i] = ' '
+		}
+	}
+	text = string(formatting)
 
 	// 1. Check for hyphenated account name: mas-bandwidth without consuming boundary delimiters.
 	// Matched on original bytes using case-insensitive regex to prevent UTF-8 byte-length drift
@@ -535,6 +547,17 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 		{"namespace", nil},
 		{"workspace", nil},
 		{"bench=space", []string{"space"}},
+		{"only two-space indentation removed", nil},
+		{"4-space padding", nil},
+		{"single space indent", nil},
+		{"eight-space indented text", nil},
+		{"two-space indentation on bench=space", []string{"space"}},
+		{"host=space", []string{"space"}},
+		{"spaceHost", []string{"space"}},
+		{"bench-space", []string{"space"}},
+		{"space.example.invalid", []string{"space"}},
+		{"two-space", []string{"space"}},
+
 		{"mas-bandwidth/nova-tools", []string{"mas-bandwidth"}},
 		{"rowan@mas-bandwidth.com", []string{"mas-bandwidth", "rowan"}},
 		{"// bench name (e.g. \"hulk\", \"space\")", nil},
