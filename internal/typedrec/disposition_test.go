@@ -3,6 +3,9 @@ package typedrec_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -39,19 +42,19 @@ func TestParseDisposition(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			c, ok := typedrec.ParseDisposition(tc.line)
-			if ok != tc.ok {
-				t.Fatalf("ok=%v, want %v (%+v)", ok, tc.ok, c)
-			}
+			require.Equal(t, tc.ok, ok, "ok=%v, want %v (%+v)", ok, tc.ok, c)
 			if !ok {
 				return
 			}
-			if c.Valid != tc.valid || c.Whole != tc.whole || c.Field != tc.field || c.Defect != tc.defect || c.Who != tc.who || c.Head != tc.head {
-				t.Fatalf("got %+v; want valid=%v whole=%v field=%q defect=%q who=%q head=%q", c, tc.valid, tc.whole, tc.field, tc.defect, tc.who, tc.head)
-			}
-			if tc.valid != (c.Refusal() == "") {
-				t.Fatalf("Refusal()=%q for valid=%v", c.Refusal(), tc.valid)
-			}
+			assert.Equal(t, tc.valid, c.Valid)
+			assert.Equal(t, tc.whole, c.Whole)
+			assert.Equal(t, tc.field, c.Field)
+			assert.Equal(t, tc.defect, c.Defect)
+			assert.Equal(t, tc.who, c.Who)
+			assert.Equal(t, tc.head, c.Head)
+			require.Equal(t, tc.valid, c.Refusal() == "", "Refusal()=%q for valid=%v", c.Refusal(), tc.valid)
 		})
 	}
 }
