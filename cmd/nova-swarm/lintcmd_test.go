@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TEST-COMMAND ACCEPTS MORE THAN ONE VOCABULARY (issue #1994).
@@ -63,12 +66,8 @@ func TestLintAcceptsAMakeTestCommand(t *testing.T) {
 	t.Parallel()
 
 	stdout, exit, _ := lintCmdCard(t, "make.card", "make tables-cs-leg-debug")
-	if exit != 0 {
-		t.Fatalf("a `make <target>` gate is the gate `ci-fast.yml` runs; lint must accept it, got %d\n%s", exit, stdout)
-	}
-	if strings.Contains(stdout, "test-command") {
-		t.Fatalf("`make <target>` is not a `test-command` drift:\n%s", stdout)
-	}
+	require.Equal(t, 0, exit, "a `make <target>` gate is the gate `ci-fast.yml` runs; lint must accept it, got %d\n%s", exit, stdout)
+	require.NotContains(t, stdout, "test-command", "`make <target>` is not a `test-command` drift:\n%s", stdout)
 }
 
 // `gmake` is the BSD make on macOS benches; AGENTS.md says benches run the card, and a
@@ -78,12 +77,8 @@ func TestLintAcceptsAGmakeTestCommand(t *testing.T) {
 	t.Parallel()
 
 	stdout, exit, _ := lintCmdCard(t, "gmake.card", "gmake tables-rust-fixedform")
-	if exit != 0 {
-		t.Fatalf("a `gmake` gate is the BSD-make gate on macOS benches; lint must accept it, got %d\n%s", exit, stdout)
-	}
-	if strings.Contains(stdout, "test-command") {
-		t.Fatalf("`gmake <target>` is not a `test-command` drift:\n%s", stdout)
-	}
+	require.Equal(t, 0, exit, "a `gmake` gate is the BSD-make gate on macOS benches; lint must accept it, got %d\n%s", exit, stdout)
+	require.NotContains(t, stdout, "test-command", "`gmake <target>` is not a `test-command` drift:\n%s", stdout)
 }
 
 // The other runners the polyglot lane measured. `dotnet test`, `ctest`, `mvn test` and
@@ -104,12 +99,8 @@ func TestLintAcceptsCommonPolyglotRunners(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, exit, _ := lintCmdCard(t, tc.name, tc.verb)
-			if exit != 0 {
-				t.Fatalf("`%s` is a valid gate; lint must accept it, got %d\n%s", tc.verb, exit, stdout)
-			}
-			if strings.Contains(stdout, "test-command") {
-				t.Fatalf("`%s` is not a `test-command` drift:\n%s", tc.verb, stdout)
-			}
+			require.Equal(t, 0, exit, "`%s` is a valid gate; lint must accept it, got %d\n%s", tc.verb, exit, stdout)
+			require.NotContains(t, stdout, "test-command", "`%s` is not a `test-command` drift:\n%s", tc.verb, stdout)
 		})
 	}
 }
@@ -128,12 +119,8 @@ func TestLintAcceptsScriptStyleTestCommands(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, exit, _ := lintCmdCard(t, tc.name, tc.verb)
-			if exit != 0 {
-				t.Fatalf("`%s` is a valid gate; lint must accept it, got %d\n%s", tc.verb, exit, stdout)
-			}
-			if strings.Contains(stdout, "test-command") {
-				t.Fatalf("`%s` is not a `test-command` drift:\n%s", tc.verb, stdout)
-			}
+			require.Equal(t, 0, exit, "`%s` is a valid gate; lint must accept it, got %d\n%s", tc.verb, exit, stdout)
+			require.NotContains(t, stdout, "test-command", "`%s` is not a `test-command` drift:\n%s", tc.verb, stdout)
 		})
 	}
 }
@@ -146,15 +133,9 @@ func TestLintStillRefusesCargoRunNotCargoTest(t *testing.T) {
 	t.Parallel()
 
 	stdout, exit, _ := lintCmdCard(t, "cargorun.card", "cargo run --quiet")
-	if exit != 1 {
-		t.Fatalf("`cargo run` is not a gate, the card drifts at exit 1, got %d\n%s", exit, stdout)
-	}
-	if !strings.Contains(stdout, "LINT DRIFT card=cargorun.card test-command:") {
-		t.Fatalf("the drift is test-command, named by token:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "no test command named") {
-		t.Fatalf("the drift says the verb in plain text:\n%s", stdout)
-	}
+	require.Equal(t, 1, exit, "`cargo run` is not a gate, the card drifts at exit 1, got %d\n%s", exit, stdout)
+	require.Contains(t, stdout, "LINT DRIFT card=cargorun.card test-command:", "the drift is test-command, named by token:\n%s", stdout)
+	require.Contains(t, stdout, "no test command named", "the drift says the verb in plain text:\n%s", stdout)
 }
 
 // The drift's remedy names the wider set so a card writer on a bench with a stale clone
@@ -165,9 +146,7 @@ func TestLintTestCommandRemedyNamesTheAcceptedSet(t *testing.T) {
 	t.Parallel()
 
 	stdout, exit, _ := lintCmdCard(t, "remedy.card", "node test/x.mjs")
-	if exit != 1 {
-		t.Fatalf("`node test/x.mjs` is not on the accepted list, drifts at exit 1, got %d\n%s", exit, stdout)
-	}
+	require.Equal(t, 1, exit, "`node test/x.mjs` is not on the accepted list, drifts at exit 1, got %d\n%s", exit, stdout)
 	drift := ""
 	for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
 		if strings.HasPrefix(line, "LINT DRIFT ") && strings.Contains(line, "test-command:") {
@@ -175,13 +154,9 @@ func TestLintTestCommandRemedyNamesTheAcceptedSet(t *testing.T) {
 			break
 		}
 	}
-	if drift == "" {
-		t.Fatalf("a card with no accepted gate drifts on test-command, no drift line:\n%s", stdout)
-	}
+	require.NotEmpty(t, drift, "a card with no accepted gate drifts on test-command, no drift line:\n%s", stdout)
 	for _, want := range []string{"make", "pytest", "cargo test", "npm test", "no tests"} {
-		if !strings.Contains(drift, want) {
-			t.Errorf("remedy names %q so a writer reads the binary's accepted set; got:\n%s", want, drift)
-		}
+		assert.Contains(t, drift, want, "remedy names %q so a writer reads the binary's accepted set; got:\n%s", want, drift)
 	}
 }
 
@@ -212,9 +187,7 @@ func TestLintTestCommandRefusesSubstringsAndFalsePositives(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, exit, _ := lintCmdCard(t, tc.name+".card", tc.verb)
-			if exit != 1 {
-				t.Fatalf("`%s` is not a test command and stays a drift, got exit %d", tc.verb, exit)
-			}
+			require.Equal(t, 1, exit, "`%s` is not a test command and stays a drift, got exit %d", tc.verb, exit)
 		})
 	}
 }
@@ -235,9 +208,7 @@ func TestLintAcceptsHyphenatedMakeTargets(t *testing.T) {
 	for _, verb := range cases {
 		t.Run(strings.ReplaceAll(verb, " ", "_"), func(t *testing.T) {
 			stdout, exit, _ := lintCmdCard(t, "hyphen.card", verb)
-			if exit != 0 {
-				t.Fatalf("`%s` is a valid gate, got exit %d\n%s", verb, exit, stdout)
-			}
+			require.Equal(t, 0, exit, "`%s` is a valid gate, got exit %d\n%s", verb, exit, stdout)
 		})
 	}
 }
@@ -248,9 +219,7 @@ func TestLintAcceptsMakeWithPathTarget(t *testing.T) {
 	t.Parallel()
 
 	stdout, exit, _ := lintCmdCard(t, "path.card", "make ./scripts/test.sh")
-	if exit != 0 {
-		t.Fatalf("`make ./scripts/test.sh` is a valid gate, got exit %d\n%s", exit, stdout)
-	}
+	require.Equal(t, 0, exit, "`make ./scripts/test.sh` is a valid gate, got exit %d\n%s", exit, stdout)
 }
 
 // A lint with no input is refused (exit 2) and the refusal names the three ways to give it
@@ -259,13 +228,9 @@ func TestLintWithNoInputNamesFleetAndRules(t *testing.T) {
 	t.Parallel()
 	var out, errb bytes.Buffer
 	code := run([]string{"lint"}, strings.NewReader(""), &out, &errb, time.Now().UTC())
-	if code != 2 {
-		t.Fatalf("exit %d, want 2\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
-	}
+	require.Equal(t, 2, code, "exit %d, want 2\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
 	for _, want := range []string{"--card is required", "--fleet", "--rules"} {
-		if !strings.Contains(errb.String(), want) {
-			t.Errorf("the refusal does not name %q:\n%s", want, errb.String())
-		}
+		assert.Contains(t, errb.String(), want, "the refusal does not name %q:\n%s", want, errb.String())
 	}
 	var help bytes.Buffer
 	run([]string{"help"}, strings.NewReader(""), &help, &errb, time.Now().UTC())
