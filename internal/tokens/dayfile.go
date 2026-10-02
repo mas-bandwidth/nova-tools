@@ -30,8 +30,7 @@ import (
 // not this is refused by `sum` and named by `check`, and the repair is `fold --day <d>`.
 const Version = "nova-tokens v1"
 
-// TempSuffix is the fixed temporary-file suffix check recognizes, so a temporary left by an
-// interrupted write is not reported as a stray.
+// TempSuffix is the legacy temporary-file suffix that check recognizes to support older file formats.
 const TempSuffix = ".tsv.tmp"
 
 // FileSuffix is a day file's extension.
