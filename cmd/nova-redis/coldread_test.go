@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"regexp"
 	"strings"
 	"testing"
@@ -54,7 +55,7 @@ func TestARefusalNamesEveryProblemInTheOneGrammar(t *testing.T) {
 		{"serve's bad bind and bad port at once", []string{"serve", "--bind", "0.0.0.0", "--port", "0", "--dir", "relative"},
 			[]string{`--bind "0.0.0.0" binds every interface`, `--port "0" needs a port`, `--dir "relative" is not absolute`}},
 		{"a misspelled flag lists the verb's flags", []string{"spill", "--zzz"},
-			[]string{"nova-redis spill REFUSED: unknown flag --zzz; the flags of spill are --addr, --dry-run, --name, --owner, --password-env, --ttl, --user, --value; run: nova-redis help spill"}},
+			[]string{"nova-redis spill REFUSED: unknown flag --zzz; the flags of spill are --addr, --dry-run, --json, --name, --owner, --password-env, --ttl, --user, --value; run: nova-redis help spill"}},
 		{"an unknown verb lists the verbs", []string{"zzz"},
 			[]string{`nova-redis REFUSED: unknown verb "zzz"; the verbs are serve, spill, recall, fn load, fn check, acl render, acl check, acl apply, version, help; run: nova-redis help`}},
 		{"an unknown fn subverb points at the group's help", []string{"fn", "deploy"},
@@ -124,6 +125,85 @@ func TestSpillDryRunNeedsNoStore(t *testing.T) {
 	code, _, errs = h.run("spill", "--dry-run", "--owner", "ada", "--name", "note", "--ttl", "0s", "--value", "hi")
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "--ttl is required and must be above zero")
+}
+
+// jsonOut is the one JSON object --json prints (internal/tool's Out).
+type jsonOut struct {
+	Result struct {
+		Verb, Status, Remedy string
+		Exit                 int
+		Why                  []string
+	}
+	Items []struct {
+		Kind   string
+		Fields map[string]any
+	}
+	Notes   []string
+	Payload string
+}
+
+func decodeOne(t *testing.T, out string) jsonOut {
+	t.Helper()
+	require.Equal(t, 1, strings.Count(out, "\n"), "one JSON object on one line: %q", out)
+	var v jsonOut
+	require.NoError(t, json.Unmarshal([]byte(out), &v), out)
+	return v
+}
+
+// Every verb but serve takes --json and prints one object of the same value
+// its lines print, on stdout, whatever the outcome: done, said no, refused.
+func TestEveryVerbPrintsOneJSONObjectWithJSON(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	stored := "a b=c\\x20 d" // a space, an '=' and a backslash: the line escapes them, JSON does not
+	code, _, errs := h.run("spill", "--owner", "ada", "--name", "note", "--ttl", "10m", "--value", stored)
+	require.Equal(t, 0, code, errs)
+
+	cases := []struct {
+		name     string
+		args     []string
+		code     int
+		status   string
+		kind     string
+		field    string
+		want     any
+		whyCount int
+	}{
+		{"recall carries the value exactly", []string{"recall", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "note", "--json"}, 0, "ok", "RECALL OK", "value", stored, 0},
+		{"recall of a missing key says no", []string{"recall", "--json", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "gone"}, 1, "failed", "RECALL MISSING", "key", "ada:gone", 0},
+		{"a dry run", []string{"spill", "--dry-run", "--json", "--addr", h.mr.Addr(), "--owner", "ada", "--name", "n", "--ttl", "1m", "--value", "v"}, 0, "ok", "SPILL OK", "written", float64(0), 0},
+		{"a refusal names every problem", []string{"spill", "--json", "--addr", "nohost", "--ttl", "0s"}, 2, "refused", "", "", nil, 5},
+		{"a store that does not answer", []string{"spill", "--json", "--addr", "127.0.0.1:1", "--owner", "a", "--name", "b", "--ttl", "1m", "--value", "c"}, 2, "refused", "SPILL FAIL", "class", "unreachable", 0},
+		{"acl render", []string{"acl", "render", "--json"}, 0, "ok", "ACL RENDER OK", "users", float64(4), 0},
+		{"version", []string{"version", "--json"}, 0, "ok", "", "", nil, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			code, out, errs := h.runBare(c.args...)
+			assert.Equal(t, c.code, code)
+			assert.Empty(t, errs, "with --json everything is the one object on stdout")
+			v := decodeOne(t, out)
+			assert.Equal(t, c.status, v.Result.Status)
+			assert.Equal(t, c.code, v.Result.Exit)
+			assert.Len(t, v.Result.Why, c.whyCount)
+			if c.kind == "" {
+				return
+			}
+			found := false
+			for _, it := range v.Items {
+				if it.Kind == c.kind {
+					found = true
+					assert.Equal(t, c.want, it.Fields[c.field])
+				}
+			}
+			assert.True(t, found, "no item of kind %q in %s", c.kind, out)
+		})
+	}
+	_, out, _ := h.runBare("version", "--json")
+	assert.True(t, strings.HasPrefix(decodeOne(t, out).Payload, "nova-redis "))
+	_, out, _ = h.runBare("spill", "--json")
+	assert.Equal(t, "nova-redis help spill", decodeOne(t, out).Result.Remedy)
 }
 
 // acl render prints what an operator reads, not the names of this repository's

@@ -189,7 +189,7 @@ func TestACLRefusals(t *testing.T) {
 		{"unknown", []string{"drop"}, 2, `unknown subverb "drop"`},
 		{"no addr", []string{"check"}, 2, "--addr is required"},
 		{"empty password", []string{"check", "--addr", "127.0.0.1:6379", "--user", "admin", "--password-env", "NOT_SET"}, 2, "NOT_SET is empty"},
-		{"render takes no addr", []string{"render", "--addr", "x:1"}, 2, "unknown flag --addr; acl render takes no flags; run: nova-redis help acl render"},
+		{"render takes no addr", []string{"render", "--addr", "x:1"}, 2, "unknown flag --addr; the flags of acl render are --json; run: nova-redis help acl render"},
 		{"bad password source", []string{"apply", "--addr", "127.0.0.1:6379", "--password-env-for", "bench"}, 2, "--password-env-for wants <user>=<VARIABLE>"},
 	}
 	for _, tc := range cases {

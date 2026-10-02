@@ -80,19 +80,21 @@ func fnVerb(args []string, stdout, stderr io.Writer, d deps, open opener) int {
 		return refuse(stderr, "fn", fmt.Sprintf("unknown subverb %q; want load or check", sub))
 	}
 	fs := flag.NewFlagSet("fn "+sub, flag.ContinueOnError)
+	rep := newReport("fn "+sub, fs, args[1:], stdout, stderr)
 	store := loginFlags(fs)
 	if problems, _ := parse(fs, args[1:], "addr"); len(problems) > 0 {
-		return refuse(stderr, "fn "+sub, problems...)
+		return rep.refuse(problems...)
 	}
 	if err := store.check(d); err != nil {
-		return refuse(stderr, "fn "+sub, err.Error())
+		return rep.refuse(err.Error())
 	}
 	lib := library()
 	want, err := lib.Digest()
 	if err != nil {
-		return refuse(stderr, "fn "+sub, fmt.Sprintf("this binary's library does not build, so nothing was sent to the store: %s; fix the Lua and rebuild", err))
+		return rep.refuse(fmt.Sprintf("this binary's library does not build, so nothing was sent to the store: %s; fix the Lua and rebuild", err))
 	}
-	at := oneline.Field(*store.addr)
+	at := *store.addr
+	name := oneline.Field(lib.Name)
 	ctx := context.Background()
 	failed := func(err error) int {
 		cause := oneline.Err(err)
@@ -105,11 +107,11 @@ func fnVerb(args []string, stdout, stderr io.Writer, d deps, open opener) int {
 		// redisconn's line ends in its next step; the line keeps one remedy,
 		// this verb's, which names the command to run again.
 		cause, _, _ = strings.Cut(cause, "; next: ")
-		fmt.Fprintf(stderr, "FAILED %s sha=%s store=%s err=%s remedy=%q\n", oneline.Field(lib.Name), want, at, cause, remedy(sub, err, store))
+		rep.line(true, "FAILED "+name, "sha", want, "store", at, "err", free(cause), "remedy", quoted(remedy(sub, err, store)))
 		if answered(err) {
-			return 1
+			return rep.done(1)
 		}
-		return 2
+		return rep.done(2)
 	}
 	client, closeStore, err := open(ctx, store)
 	if err != nil {
@@ -123,8 +125,10 @@ func fnVerb(args []string, stdout, stderr io.Writer, d deps, open opener) int {
 		if err != nil {
 			return failed(err)
 		}
-		fmt.Fprintf(stdout, "%s store=%s\n", r, at)
-		return 0
+		// The receipt's own line (redisfn.Receipt.String) after its outcome word.
+		word := r.Outcome.String()
+		rep.line(false, word, "library", bare{strings.TrimPrefix(r.String(), word+" "), map[string]string{"name": r.Library, "sha": r.Digest, "was": r.Was, "why": r.Why}}, "store", at)
+		return rep.done(0)
 	}
 
 	state, err := lib.Check(ctx, client)
@@ -135,16 +139,16 @@ func fnVerb(args []string, stdout, stderr io.Writer, d deps, open opener) int {
 	}
 	switch state {
 	case redisfn.Same:
-		fmt.Fprintf(stdout, "OK %s sha=%s loaded=%s want=%s store=%s\n", oneline.Field(lib.Name), want, want, want, at)
-		return 0
+		rep.line(false, "OK "+name, "sha", want, "loaded", want, "want", want, "store", at)
+		return rep.done(0)
 	case redisfn.Different, redisfn.Absent:
 		word := "STALE"
 		if state == redisfn.Absent {
 			word = "MISSING"
 		}
-		fmt.Fprintf(stdout, "%s %s sha=%s loaded=%s want=%s store=%s remedy=%q\n", word, oneline.Field(lib.Name), want, loaded, want, at,
-			"nova-redis fn load "+store.flags()+" puts this binary's library on the store")
-		return 1
+		rep.line(false, word+" "+name, "sha", want, "loaded", loaded, "want", want, "store", at,
+			"remedy", quoted("nova-redis fn load "+store.flags()+" puts this binary's library on the store"))
+		return rep.done(1)
 	}
 	return failed(err)
 }
