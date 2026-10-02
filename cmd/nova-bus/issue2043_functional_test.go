@@ -24,7 +24,7 @@ func TestIssue2043_DraftRefusesRetiredFileFlag(t *testing.T) {
 
 	r := invoke(t, "", "draft", "--bus", checkout, "--as", "Ada", "--to", "Bo", "--subject", "gate", "--file", target)
 	r.mustCode(t, 2).
-		mustContain(t, "stderr", "nova-bus draft: --file is retired because --file means input on send; use --out <path> (or --out <path> --overwrite)")
+		mustContain(t, "stderr", "DRAFT REFUSED: --file is retired because --file means input on send; use --out <path> (or --out <path> --overwrite)")
 }
 
 func TestIssue2043_DraftWritesOutFlag(t *testing.T) {

@@ -44,7 +44,7 @@ func TestRefusingToGuess(t *testing.T) {
 		{"check without --bus", []string{"check", "--full"}, "--bus is required"},
 		{"names without --bus", []string{"names"}, "--bus is required"},
 		{"a positional argument", []string{"check", "--bus", checkout, "--full", "extra"}, "takes no positional arguments"},
-		{"an unknown flag", []string{"check", "--bus", checkout, "--full", "--wibble"}, "nova-bus check:"},
+		{"an unknown flag", []string{"check", "--bus", checkout, "--full", "--wibble"}, "CHECK REFUSED:"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

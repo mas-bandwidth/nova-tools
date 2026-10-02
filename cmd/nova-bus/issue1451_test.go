@@ -74,18 +74,16 @@ func TestIssue1451EveryBareVerbRefusalNamesTheDoor(t *testing.T) {
 // label names the verb and each failure quotes the offending line.
 func requireDoorOnEveryRefusal(t *testing.T, label, stderr string) {
 	t.Helper()
-	const door = "; run: nova-bus help"
 	lines := 0
 	for _, line := range strings.Split(strings.TrimSuffix(stderr, "\n"), "\n") {
 		if line == "" {
 			continue
 		}
 		lines++
-		assert.Truef(t, strings.HasSuffix(line, door), "%s: refusal does not end at the door: %q", label, line)
-		{
-			n := strings.Count(line, door)
-			assert.Equalf(t, 1, n, "%s: the door appears %d times, want exactly 1: %q", label, n, line)
-		}
+		verb, _, _ := strings.Cut(line, " REFUSED: ")
+		door := "; run: nova-bus " + strings.ToLower(verb) + " -h"
+		assert.Truef(t, strings.HasSuffix(line, door), "%s: refusal does not end at its verb's door %q: %q", label, door, line)
+		assert.Equalf(t, 1, strings.Count(line, "; run: "), "%s: the door appears more than once: %q", label, line)
 	}
 	assert.NotEqualf(t, 0, lines, "%s: exit 2 with no refusal line: %q", label, stderr)
 }

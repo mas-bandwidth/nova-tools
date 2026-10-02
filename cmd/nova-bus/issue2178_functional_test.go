@@ -32,7 +32,7 @@ func TestIssue2178(t *testing.T) {
 		r := invoke(t, "", "wait", "--on-note", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 			"--remote", "origin", "--branch", "main")
 		assert.Equalf(t, 2, r.code, "exit = %d, want 2", r.code)
-		assert.Containsf(t, r.stderr, "nova-bus wait: --on-note needs --timeout", "stderr does not name the missing flag:\n%s", r.stderr)
+		assert.Containsf(t, r.stderr, "WAIT REFUSED: --on-note needs --timeout", "stderr does not name the missing flag:\n%s", r.stderr)
 		assert.Emptyf(t, r.stdout, "a refusal printed to stdout:\n%s", r.stdout)
 	})
 
@@ -40,7 +40,7 @@ func TestIssue2178(t *testing.T) {
 		r := invoke(t, "", "wait", "--on-note", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 			"--timeout", "1s", "--remote", "origin", "--branch", "main", "--open")
 		assert.Equalf(t, 2, r.code, "exit = %d, want 2", r.code)
-		assert.Containsf(t, r.stderr, "nova-bus wait: --on-note prints no open frame", "stderr does not refuse --open with --on-note:\n%s", r.stderr)
+		assert.Containsf(t, r.stderr, "WAIT REFUSED: --on-note prints no open frame", "stderr does not refuse --open with --on-note:\n%s", r.stderr)
 		assert.Emptyf(t, r.stdout, "a refusal printed to stdout:\n%s", r.stdout)
 	})
 }

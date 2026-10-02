@@ -513,7 +513,7 @@ func TestCheckSinceChecksOnlyWhatChanged(t *testing.T) {
 		mustCode(t, 2).mustContain(t, "stderr", "names no commit")
 	// And a --since that would be an option to git never reaches git.
 	invoke(t, "", "check", "--bus", checkout, "--since", "--upload-pack=id").
-		mustCode(t, 2).mustContain(t, "stderr", "nova-bus check:")
+		mustCode(t, 2).mustContain(t, "stderr", "CHECK REFUSED:")
 }
 
 // check refuses to guess a baseline, exactly the way every other flag here is refused.

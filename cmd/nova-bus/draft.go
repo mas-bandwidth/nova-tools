@@ -53,11 +53,11 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	given := map[string]bool{}
 	f.fs.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
 	if given["file"] {
-		fmt.Fprint(stderr, "nova-bus draft: --file is retired because --file means input on send; use --out <path> (or --out <path> --overwrite)\n")
+		fmt.Fprint(stderr, "DRAFT REFUSED: --file is retired because --file means input on send; use --out <path> (or --out <path> --overwrite); run: nova-bus draft -h\n")
 		return 2
 	}
 	if *overwrite && strings.TrimSpace(*out) == "" {
-		fmt.Fprintln(stderr, "nova-bus draft: --overwrite requires --out")
+		fmt.Fprintln(stderr, "DRAFT REFUSED: --overwrite requires --out; run: nova-bus draft -h")
 		return 2
 	}
 	if !given["reply-to"] {
@@ -75,7 +75,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		if strings.TrimSpace(*to) == "" {
-			fmt.Fprintf(stderr, "nova-bus draft: --to is required; refusing to guess; run: nova-bus help\n")
+			fmt.Fprintf(stderr, "DRAFT REFUSED: --to is required; refusing to guess; run: nova-bus draft -h\n")
 			return 2
 		}
 	} else {
@@ -90,7 +90,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 2
 	}
 	// Collected, like send's: a draft asked for with a misspelled name and a Re that is
@@ -157,7 +157,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(re) > 0 {
 		t, terr := bus.ReadBus(*busDir, c)
 		if terr != nil {
-			fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.WithRemedy(oneline.Err(terr), "nova-bus draft -h"))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(terr), "nova-bus draft -h"))
 			return 2
 		}
 		var open []bus.OpenEntry

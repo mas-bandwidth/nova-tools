@@ -15,9 +15,9 @@ import (
 func TestIssue1496ABareVerbNamesEveryMissingRequiredFlagInAFixedOrder(t *testing.T) {
 	t.Parallel()
 
-	const want = "nova-bus send: --branch is required; refusing to guess; run: nova-bus help\n" +
-		"nova-bus send: --bus is required; refusing to guess; run: nova-bus help\n" +
-		"nova-bus send: --remote is required; refusing to guess; run: nova-bus help\n"
+	const want = "SEND REFUSED: --branch is required; it wants the branch the bus lives on; refusing to guess; run: nova-bus send -h\n" +
+		"SEND REFUSED: --bus is required; it wants the bus's repository root; refusing to guess; run: nova-bus send -h\n" +
+		"SEND REFUSED: --remote is required; it wants the git remote to push to; refusing to guess; run: nova-bus send -h\n"
 	first := ""
 	for i := 0; i < 20; i++ {
 		r := invoke(t, "", "send")

@@ -47,6 +47,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -331,16 +332,24 @@ it a repository of its own. Every line above is run against it by the tests, and
 docs/TESTS.md carries the whole first sitting: read, receipt, advance, send.
 `
 
-// refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
-// door to the usage rather than the usage itself. It was the whole 102-line banner, on
-// every flag typo -- 6,473 bytes, about 1.6K tokens, to say that a dash was in the wrong
-// place. THE THREE SITES BELOW ARE THE ONLY ONES THIS CHANGE TOUCHES in this binary: the
-// bare invocation, the unknown verb, and the flag parse error. Everything else nova-bus
-// prints is another line's work.
-func refuse(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-bus%s: %s; run: nova-bus help\n", oneline.Escape(where), oneline.Escape(what))
+// verbs is the tool's verbs in banner order: what a bare command and an unknown verb are
+// answered with.
+var verbs = []string{"draft", "prepare", "send", "reply", "inbox", "receipt", "close", "wait", "check", "names", "version"}
+
+// refuse is what an unusable invocation costs: ONE line in the one refusal grammar,
+// `<VERB> REFUSED: <what was wrong>; run: <remedy>` (BUS for the tool itself), naming the
+// door to the help rather than printing the help. It returns exit 2.
+func refuse(stderr io.Writer, verb, what, remedy string) int {
+	token := "BUS"
+	if verb != "" {
+		token = strings.ToUpper(verb)
+	}
+	fmt.Fprintf(stderr, "%s REFUSED: %s; run: %s\n", oneline.Field(token), oneline.Escape(what), oneline.Escape(remedy))
 	return 2
 }
+
+// verbHelp is the remedy for a malformed invocation of a verb: its own help.
+func verbHelp(verb string) string { return "nova-bus " + verb + " -h" }
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
@@ -352,7 +361,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	// before anything is read, dialed or written (the CLI style's rule (b), #4505).
 	defer verbflag.Recover(stdout, "nova-bus", usage, &code)
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; `inbox --as <name>` is the one that only looks")
+		return refuse(stderr, "", "no verb given; the verbs are "+verbflag.List(verbs)+"; inbox only looks", "nova-bus help")
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
@@ -385,7 +394,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
-	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
+	near := ""
+	if n := verbflag.Nearest(cmd, verbs); n != "" {
+		near = "; did you mean " + n + "?"
+	}
+	return refuse(stderr, "", "unknown verb "+oneline.Quote(cmd)+near+"; the verbs are "+verbflag.List(verbs), "nova-bus help")
 }
 
 // ------------------------------------------------------------------------------- flags
@@ -421,16 +434,22 @@ func newFlags(verb string) *flags {
 }
 
 // parse runs the flag set and enforces the no-guessing rule for every flag named in
-// required. It prints its own refusal, escaped; exit 2 belongs to the caller.
+// required, naming every problem of the invocation at once (ONBOARDING point 2): every
+// value a flag cannot take, every missing required flag, and the verb's own line
+// (alsoRefuse), one REFUSED line each. It prints the refusal; exit 2 belongs to the caller.
 func (f *flags) parse(args []string, stderr io.Writer, required map[string]*string) bool {
 	// -h, -help and --help never land here: verbflag.Parse raises the verb's help, which
 	// run prints on stdout at exit 0.
-	if err := verbflag.Parse(f.fs, args); err != nil {
-		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
+	bad, err := parseEvery(f.fs, args)
+	for _, b := range bad {
+		refuse(stderr, f.verb, oneline.Cap(verbflag.Explain(f.fs, b), oneline.TailBytes), verbHelp(f.verb))
+	}
+	if err != nil { // the parse stopped here, so nothing after it was read
+		refuse(stderr, f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes), verbHelp(f.verb))
 		return false
 	}
 	if n := f.fs.NArg(); n > 0 {
-		fmt.Fprintf(stderr, "nova-bus %s: takes no positional arguments, got %d (flags come before arguments)\n", f.verb, n)
+		refuse(stderr, f.verb, fmt.Sprintf("takes no positional arguments, got %d (flags come before arguments)", n), verbHelp(f.verb))
 		return false
 	}
 	var missing []string
@@ -439,13 +458,9 @@ func (f *flags) parse(args []string, stderr io.Writer, required map[string]*stri
 			missing = append(missing, name)
 		}
 	}
-	for i := 1; i < len(missing); i++ {
-		for j := i; j > 0 && strings.Compare(missing[j], missing[j-1]) < 0; j-- {
-			missing[j], missing[j-1] = missing[j-1], missing[j]
-		}
-	}
+	sort.Strings(missing)
 	for _, name := range missing {
-		fmt.Fprintf(stderr, "nova-bus %s: --%s is required; refusing to guess; run: nova-bus help\n", f.verb, name)
+		refuse(stderr, f.verb, "--"+name+" is required; it wants "+wantsOf(f.fs, name)+"; refusing to guess", verbHelp(f.verb))
 	}
 	more := false
 	if f.alsoRefuse != nil {
@@ -454,8 +469,60 @@ func (f *flags) parse(args []string, stderr io.Writer, required map[string]*stri
 			more = true
 		}
 	}
-	return len(missing) == 0 && !more
+	return len(bad) == 0 && len(missing) == 0 && !more
 }
+
+// wantsOf is what a flag wants, in its own description's words.
+func wantsOf(fs *flag.FlagSet, name string) string {
+	if fl := fs.Lookup(name); fl != nil {
+		return strings.TrimSuffix(fl.Usage, " (required)")
+	}
+	return "a value"
+}
+
+// parseEvery is verbflag.Parse that goes on past a value its flag cannot take, so one run
+// names every bad value (`--receipt-max-words abc --timeout 5x` names both). For the parse
+// each flag's Set records its error and accepts nothing; the flags are restored before
+// anything is worded or printed, help included. err is the error the parse stopped on (an
+// unknown flag, a flag with no value), after which nothing was read.
+func parseEvery(fs *flag.FlagSet, args []string) (bad []error, err error) {
+	restore := map[*flag.Flag]flag.Value{}
+	fs.VisitAll(func(fl *flag.Flag) {
+		restore[fl] = fl.Value
+		c := collecting{Value: fl.Value, name: fl.Name, bad: &bad}
+		if b, ok := fl.Value.(interface{ IsBoolFlag() bool }); ok && b.IsBoolFlag() {
+			fl.Value = collectingBool{c}
+		} else {
+			fl.Value = c
+		}
+	})
+	defer func() {
+		for fl, v := range restore {
+			fl.Value = v
+		}
+	}()
+	return bad, verbflag.Parse(fs, args)
+}
+
+// collecting is a flag.Value that records a value its flag cannot take, in the flag
+// package's own words, instead of stopping the parse on it.
+type collecting struct {
+	flag.Value
+	name string
+	bad  *[]error
+}
+
+func (c collecting) Set(v string) error {
+	if err := c.Value.Set(v); err != nil {
+		*c.bad = append(*c.bad, fmt.Errorf("invalid value %q for flag -%s: %v", v, c.name, err))
+	}
+	return nil
+}
+
+// collectingBool is collecting for a boolean flag, which the flag package lets stand alone.
+type collectingBool struct{ collecting }
+
+func (collectingBool) IsBoolFlag() bool { return true }
 
 // gitArgs checks the two flags that become git's own argv. A --remote or --branch
 // beginning with a dash is an OPTION to git rather than a name, and this tool would run
@@ -467,7 +534,7 @@ func (f *flags) gitArgs(remote, branch string, stderr io.Writer) bool {
 		what, value string
 	}{{"remote", remote}, {"branch", branch}} {
 		if err := bus.ValidGitArg(c.what, c.value); err != nil {
-			fmt.Fprintf(stderr, "nova-bus %s: %s\n", f.verb, oneline.Err(err))
+			fmt.Fprintf(stderr, "%s REFUSED: %s\n", strings.ToUpper(f.verb), oneline.WithRemedy(oneline.Err(err), verbHelp(f.verb)))
 			return false
 		}
 	}
@@ -479,7 +546,7 @@ func (f *flags) gitArgs(remote, branch string, stderr io.Writer) bool {
 // reader may reasonably mean. A negative one is not, and is a bad invocation.
 func (f *flags) atLeastZero(name string, value int, stderr io.Writer) bool {
 	if value < 0 {
-		fmt.Fprintf(stderr, "nova-bus %s: --%s counts entries, so it is 0 or more, got %d\n", f.verb, name, value)
+		fmt.Fprintf(stderr, "%s REFUSED: --%s counts entries, so it is 0 or more, got %d; run: nova-bus %s -h\n", strings.ToUpper(f.verb), name, value, oneline.Field(f.verb))
 		return false
 	}
 	return true
@@ -488,7 +555,7 @@ func (f *flags) atLeastZero(name string, value int, stderr io.Writer) bool {
 // count reads a required positive integer flag.
 func (f *flags) count(name string, value int, stderr io.Writer) bool {
 	if value < 1 {
-		fmt.Fprintf(stderr, "nova-bus %s: --%s must be given and at least 1, got %d; refusing to guess; run: nova-bus help\n", f.verb, name, value)
+		fmt.Fprintf(stderr, "%s REFUSED: --%s must be given and at least 1, got %d; refusing to guess; run: nova-bus %s -h\n", strings.ToUpper(f.verb), name, value, oneline.Field(f.verb))
 		return false
 	}
 	return true
@@ -535,7 +602,7 @@ func resolveReceiptMaxWords(flagValue int, flagWasSet bool, busDir string) (int,
 // receiptMaxWordsRefusal is the one line for a missing receipt word count, which names
 // the three places it can be given.
 func receiptMaxWordsRefusal(verb string, got int) string {
-	return fmt.Sprintf("nova-bus %s: --receipt-max-words must be given and at least 1, got %d; refusing to guess; give the flag, or a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults (a plain text file, one key=value per line, that you create), or set the NOVA_BUS_RECEIPT_MAX_WORDS environment variable; run: nova-bus help", oneline.Field(verb), got)
+	return fmt.Sprintf("%s REFUSED: --receipt-max-words must be given and at least 1, got %d; refusing to guess; give the flag, or a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults (a plain text file, one key=value per line, that you create), or set the NOVA_BUS_RECEIPT_MAX_WORDS environment variable; run: nova-bus %s -h", oneline.Field(strings.ToUpper(verb)), got, oneline.Field(verb))
 }
 
 // receiptMaxWordsFromDefaults reads the `receipt-max-words=<n>` line out of
@@ -581,7 +648,7 @@ func (f *flags) host(flagValue string, flagWasSet bool, busDir string, stderr io
 		}
 	}
 	if err := bus.ValidHost(flagValue); err != nil {
-		fmt.Fprintf(stderr, "nova-bus %s: %s\n", f.verb, oneline.Err(err))
+		fmt.Fprintf(stderr, "%s REFUSED: %s\n", strings.ToUpper(f.verb), oneline.WithRemedy(oneline.Err(err), verbHelp(f.verb)))
 		return "", false
 	}
 	return flagValue, true
@@ -643,7 +710,7 @@ const defaultAttempts = 25
 // caller who asked for one and asked for none.
 func (f *flags) attempts(value int, stderr io.Writer) bool {
 	if value < 1 {
-		fmt.Fprintf(stderr, "nova-bus %s: --attempts is a number of tries and is at least 1, got %d\n", f.verb, value)
+		fmt.Fprintf(stderr, "%s REFUSED: --attempts is a number of tries and is at least 1, got %d; run: nova-bus %s -h\n", strings.ToUpper(f.verb), value, oneline.Field(f.verb))
 		return false
 	}
 	return true
@@ -654,7 +721,7 @@ func (f *flags) attempts(value int, stderr io.Writer) bool {
 // tool that is working.
 func (f *flags) gitTimeoutFlag(seconds int, stderr io.Writer) bool {
 	if err := gitTimeoutProblem(seconds); err != nil {
-		fmt.Fprintf(stderr, "nova-bus %s: %s\n", f.verb, oneline.Err(err))
+		fmt.Fprintf(stderr, "%s REFUSED: %s\n", strings.ToUpper(f.verb), oneline.WithRemedy(oneline.Err(err), verbHelp(f.verb)))
 		return false
 	}
 	return true
@@ -735,12 +802,12 @@ func printTranscript(stderr io.Writer, err error) {
 func openBus(verb, busDir string, stderr io.Writer) (*bus.Bus, bool) {
 	c, err := bus.LoadConfig(busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus %s: %s\n", verb, oneline.Err(err))
+		fmt.Fprintf(stderr, "%s REFUSED: %s\n", strings.ToUpper(verb), oneline.WithRemedy(oneline.Err(err), verbHelp(verb)))
 		return nil, false
 	}
 	t, err := bus.ReadBus(busDir, c)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus %s: %s\n", verb, oneline.Err(err))
+		fmt.Fprintf(stderr, "%s REFUSED: %s\n", strings.ToUpper(verb), oneline.WithRemedy(oneline.Err(err), verbHelp(verb)))
 		return nil, false
 	}
 	return t, true
@@ -759,7 +826,7 @@ func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 		return 2
 	}
 	if (*file == "") == !*useStdin {
-		fmt.Fprint(stderr, "nova-bus prepare: give exactly one of --file and --stdin; refusing to guess; run: nova-bus help\n")
+		fmt.Fprint(stderr, "PREPARE REFUSED: give exactly one of --file and --stdin; refusing to guess; run: nova-bus prepare -h\n")
 		return 2
 	}
 	source := "(stdin)"
@@ -767,7 +834,7 @@ func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 	if *useStdin {
 		raw, err := io.ReadAll(stdin)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-bus prepare: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus prepare -h"))
+			fmt.Fprintf(stderr, "PREPARE REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus prepare -h"))
 			return 2
 		}
 		text = string(raw)
@@ -775,13 +842,13 @@ func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 		source = *file
 		raw, err := os.ReadFile(*file)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-bus prepare: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus prepare -h"))
+			fmt.Fprintf(stderr, "PREPARE REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus prepare -h"))
 			return 2
 		}
 		text = string(raw)
 	}
 	if err := bus.IsRepoRoot(*busDir); err != nil {
-		fmt.Fprintf(stderr, "nova-bus prepare: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus prepare -h"))
+		fmt.Fprintf(stderr, "PREPARE REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus prepare -h"))
 		return 2
 	}
 	t, ok := openBus("prepare", *busDir, stderr)
@@ -842,35 +909,35 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	hasDraft := *file != "" || *useStdin
 	hasPrepared := *preparedFile != "" || *usePreparedStdin
 	if hasDraft && hasPrepared {
-		fmt.Fprint(stderr, "nova-bus send: --prepared is mutually exclusive with --file and --stdin; run: nova-bus send -h\n")
+		fmt.Fprint(stderr, "SEND REFUSED: --prepared is mutually exclusive with --file and --stdin; run: nova-bus send -h\n")
 		return 2
 	}
 	if hasPrepared && *dryRun {
-		fmt.Fprint(stderr, "nova-bus send: --dry-run shapes an ordinary draft; drop --prepared or drop --dry-run\n")
+		fmt.Fprint(stderr, "SEND REFUSED: --dry-run shapes an ordinary draft; drop --prepared or drop --dry-run; run: nova-bus send -h\n")
 		return 2
 	}
 	if hasPrepared {
 		if (*preparedFile == "") == !*usePreparedStdin {
-			fmt.Fprint(stderr, "nova-bus send: give exactly one of --prepared and --prepared-stdin; refusing to guess; run: nova-bus help\n")
+			fmt.Fprint(stderr, "SEND REFUSED: give exactly one of --prepared and --prepared-stdin; refusing to guess; run: nova-bus send -h\n")
 			return 2
 		}
 	} else {
 		if (*file == "") == !*useStdin {
-			fmt.Fprint(stderr, "nova-bus send: give exactly one of --file and --stdin; refusing to guess; run: nova-bus help\n")
+			fmt.Fprint(stderr, "SEND REFUSED: give exactly one of --file and --stdin; refusing to guess; run: nova-bus send -h\n")
 			return 2
 		}
 	}
 	if *preparedFile != "" || *usePreparedStdin {
 		if *noPush {
-			fmt.Fprint(stderr, "nova-bus send: --no-push cannot be used with --prepared; run: nova-bus send -h\n")
+			fmt.Fprint(stderr, "SEND REFUSED: --no-push cannot be used with --prepared; run: nova-bus send -h\n")
 			return 2
 		}
 		if *slug != "" {
-			fmt.Fprint(stderr, "nova-bus send: --slug cannot be used with --prepared; run: nova-bus send -h\n")
+			fmt.Fprint(stderr, "SEND REFUSED: --slug cannot be used with --prepared; run: nova-bus send -h\n")
 			return 2
 		}
 		if *as == "" {
-			fmt.Fprint(stderr, "nova-bus send: --as is required with --prepared; run: nova-bus send -h\n")
+			fmt.Fprint(stderr, "SEND REFUSED: --as is required with --prepared; run: nova-bus send -h\n")
 			return 2
 		}
 		source := "(prepared-stdin)"
@@ -883,16 +950,16 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 			raw, err = os.ReadFile(*preparedFile)
 		}
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
+			fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
 			return 2
 		}
 		if err := bus.IsRepoRoot(*busDir); err != nil {
-			fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
+			fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
 			return 2
 		}
 		c, err := bus.LoadConfig(*busDir)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
+			fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
 			return 2
 		}
 		art, p, err := bus.ValidatePreparedArtifact(raw, *busDir, c, *as)
@@ -926,7 +993,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	if *useStdin {
 		raw, err := io.ReadAll(stdin)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
+			fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
 			return 2
 		}
 		text = string(raw)
@@ -934,7 +1001,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		source = *file
 		raw, err := os.ReadFile(*file)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
+			fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
 			return 2
 		}
 		text = string(raw)
@@ -946,15 +1013,15 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	if kind, ok := preflightDraft(text); !ok {
 		switch kind {
 		case "id":
-			fmt.Fprintf(stderr, "nova-bus send: the tool mints the Id; delete the Id: header from %s; run: nova-bus send -h\n", oneline.Field(source))
+			fmt.Fprintf(stderr, "SEND REFUSED: the tool mints the Id; delete the Id: header from %s\n", oneline.Field(source))
 		case "re":
-			fmt.Fprintf(stderr, "nova-bus send: Re: names one thread; name one id in %s; run: nova-bus send -h\n", oneline.Field(source))
+			fmt.Fprintf(stderr, "SEND REFUSED: Re: names one thread; name one id in %s; run: nova-bus send -h\n", oneline.Field(source))
 		}
 		return 2
 	}
 	if *dryRun {
 		if err := bus.IsRepoRoot(*busDir); err != nil {
-			fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
+			fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
 			return 2
 		}
 		t, ok := openBus("send", *busDir, stderr)
@@ -972,7 +1039,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		return 0
 	}
 	if err := bus.IsRepoRoot(*busDir); err != nil {
-		fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
+		fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
 		return 2
 	}
 	release, err := bus.LockCheckout(*busDir, checkoutLockWait)
@@ -1156,11 +1223,11 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if len(notes) == 0 {
-		fmt.Fprint(stderr, "nova-bus receipt: --note is required; refusing to guess; run: nova-bus help\n")
+		fmt.Fprint(stderr, "RECEIPT REFUSED: --note is required; refusing to guess; run: nova-bus receipt -h\n")
 		return 2
 	}
 	if err := bus.IsRepoRoot(*busDir); err != nil {
-		fmt.Fprintf(stderr, "nova-bus receipt: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus receipt -h"))
+		fmt.Fprintf(stderr, "RECEIPT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus receipt -h"))
 		return 2
 	}
 	release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
@@ -1175,7 +1242,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	me, found := t.Config.Lookup(*as)
 	if !found {
-		fmt.Fprintf(stderr, "nova-bus receipt: --as %q names no one on this bus (known: %s); run: nova-bus receipt -h\n", *as, oneline.Escape(strings.Join(t.Config.KnownNames(), "; ")))
+		fmt.Fprintf(stderr, "RECEIPT REFUSED: --as %q names no one on this bus (known: %s); run: nova-bus receipt -h\n", *as, oneline.Escape(strings.Join(t.Config.KnownNames(), "; ")))
 		return 2
 	}
 	plan, err := bus.PlanReceipts(t, me, notes, now)
@@ -1251,7 +1318,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	before, err := time.Parse(time.RFC3339, *beforeFlag)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus close: --before %q is not an RFC 3339 instant; refusing to guess; run: nova-bus help\n", *beforeFlag)
+		fmt.Fprintf(stderr, "CLOSE REFUSED: --before %q is not an RFC 3339 instant; refusing to guess; run: nova-bus close -h\n", *beforeFlag)
 		return 2
 	}
 	if !*dryRun {
@@ -1259,12 +1326,12 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		if strings.TrimSpace(*remote) == "" || strings.TrimSpace(*branch) == "" {
-			fmt.Fprint(stderr, "nova-bus close: writing onto the bus needs --remote and --branch; refusing to guess (or pass --dry-run); run: nova-bus help\n")
+			fmt.Fprint(stderr, "CLOSE REFUSED: writing onto the bus needs --remote and --branch; refusing to guess (or pass --dry-run); run: nova-bus close -h\n")
 			return 2
 		}
 	}
 	if err := bus.IsRepoRoot(*busDir); err != nil {
-		fmt.Fprintf(stderr, "nova-bus close: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus close -h"))
+		fmt.Fprintf(stderr, "CLOSE REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus close -h"))
 		return 2
 	}
 	t, ok := openBus("close", *busDir, stderr)
@@ -1273,7 +1340,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	me, found := t.Config.Lookup(*as)
 	if !found {
-		fmt.Fprintf(stderr, "nova-bus close: --as %q names no one on this bus (known: %s); run: nova-bus close -h\n", *as, oneline.Escape(strings.Join(t.Config.KnownNames(), "; ")))
+		fmt.Fprintf(stderr, "CLOSE REFUSED: --as %q names no one on this bus (known: %s); run: nova-bus close -h\n", *as, oneline.Escape(strings.Join(t.Config.KnownNames(), "; ")))
 		return 2
 	}
 	plan, err := bus.PlanClose(t, me, before, now)
@@ -1404,7 +1471,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		// Two flags naming the same line say nothing about where it stands, whichever way
 		// round they disagree. This is exit 2, a bad invocation, like every other pair.
 		if strings.TrimSpace(*legacyBefore) != "" {
-			fmt.Fprint(stderr, "nova-bus inbox: --legacy-now draws the switch-day line at this run's instant and --legacy-before draws it where you say; give one or the other\n")
+			fmt.Fprint(stderr, "INBOX REFUSED: --legacy-now draws the switch-day line at this run's instant and --legacy-before draws it where you say; give one or the other; run: nova-bus inbox -h\n")
 			return 2
 		}
 		legacyValue = now.UTC().Format(bus.LegacyInstantLayout)
@@ -1418,10 +1485,10 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// says nothing about which. A line is drawn or it is not.
 	if *carryHistory && !flagLegacy.Before.IsZero() {
 		if *legacyNow {
-			fmt.Fprint(stderr, "nova-bus inbox: --legacy-now draws a switch-day line and --carry-history says there is none to draw; give one or the other\n")
+			fmt.Fprint(stderr, "INBOX REFUSED: --legacy-now draws a switch-day line and --carry-history says there is none to draw; give one or the other; run: nova-bus inbox -h\n")
 			return 2
 		}
-		fmt.Fprint(stderr, "nova-bus inbox: --legacy-before draws a switch-day line and --carry-history says there is none to draw; give one or the other\n")
+		fmt.Fprint(stderr, "INBOX REFUSED: --legacy-before draws a switch-day line and --carry-history says there is none to draw; give one or the other; run: nova-bus inbox -h\n")
 		return 2
 	}
 	maxWordsValue, ok := f.receiptMaxWords(*maxWords, f.set("receipt-max-words"), *busDir, stderr)
@@ -1435,7 +1502,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if *after != "" && !*bodies {
-		fmt.Fprintln(stderr, "nova-bus inbox: --after requires --bodies")
+		fmt.Fprintln(stderr, "INBOX REFUSED: --after requires --bodies; run: nova-bus inbox -h")
 		return 2
 	}
 	if *bodies && !bodyLimit(stderr, "--max-notes", int64(*maxNotes), maxBodiesNotesCeiling) {
@@ -1455,7 +1522,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// a report should do unless it was asked otherwise.
 	if *advance {
 		if strings.TrimSpace(*remote) == "" || strings.TrimSpace(*branch) == "" {
-			fmt.Fprint(stderr, "nova-bus inbox: --advance moves a cursor onto the bus, so it needs --remote and --branch; refusing to guess; run: nova-bus help\n")
+			fmt.Fprint(stderr, "INBOX REFUSED: --advance moves a cursor onto the bus, so it needs --remote and --branch; refusing to guess; run: nova-bus inbox -h\n")
 			return 2
 		}
 		if !f.attempts(*attempts, stderr) {
@@ -1482,7 +1549,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// runs first.
 	if !o.full || o.advance {
 		if err := bus.IsRepoRoot(o.busDir); err != nil {
-			fmt.Fprintf(stderr, "nova-bus inbox: reading only what changed, and moving a cursor, need git; %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus inbox -h"))
+			fmt.Fprintf(stderr, "INBOX REFUSED: reading only what changed, and moving a cursor, need git; %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus inbox -h"))
 			return 2
 		}
 		release, code := lockCheckout("INBOX", o.busDir, stderr)
@@ -1619,16 +1686,16 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	var r inboxReading
 	c, err := bus.LoadConfig(o.busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 		return 2, r
 	}
 	me, found := c.Lookup(o.as)
 	if !found {
-		fmt.Fprintf(stderr, "nova-bus inbox: --as %q names no one on this bus (known: %s)\n", o.as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
+		fmt.Fprintf(stderr, "INBOX REFUSED: --as %q names no one on this bus (known: %s); run: nova-bus inbox -h\n", o.as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
 		return 2, r
 	}
 	if me.Lane == "" {
-		fmt.Fprintf(stderr, "nova-bus inbox: %q has no lane on this bus, so nothing can answer for them\n", me.Name)
+		fmt.Fprintf(stderr, "INBOX REFUSED: %q has no lane on this bus, so nothing can answer for them; run: nova-bus inbox -h\n", me.Name)
 		return 2, r
 	}
 
@@ -1775,7 +1842,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				if walk != nil {
 					walk.abort()
 				}
-				fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
+				fmt.Fprintf(stderr, "INBOX REFUSED: %s; run: nova-bus inbox -h\n", oneline.Err(err))
 				return 2, r
 			}
 			if walk != nil {
@@ -1786,7 +1853,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	if scope.Full {
 		t, err := bus.ReadBus(o.busDir, c)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
+			fmt.Fprintf(stderr, "INBOX REFUSED: %s; run: nova-bus inbox -h\n", oneline.Err(err))
 			return 2, r
 		}
 		legacy = effectiveLegacy(o.legacy, held)
@@ -2698,12 +2765,12 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			missing = append(missing, "--branch")
 		}
 		if len(missing) > 0 {
-			fmt.Fprintf(stderr, "nova-bus wait: --on-note needs %s; give it, refusing to guess\n", oneline.Field(missing[0]))
+			fmt.Fprintf(stderr, "WAIT REFUSED: --on-note needs %s; give it, refusing to guess; run: nova-bus wait -h\n", oneline.Field(missing[0]))
 			return 2
 		}
 		// --on-note WITH --open IS REFUSED (#2178). --on-note prints no open frame.
 		if *openList {
-			fmt.Fprint(stderr, "nova-bus wait: --on-note prints no open frame; drop --open\n")
+			fmt.Fprint(stderr, "WAIT REFUSED: --on-note prints no open frame; drop --open; run: nova-bus wait -h\n")
 			return 2
 		}
 	}
@@ -2713,7 +2780,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// break either presence or the read-only promise. It is refused by name, and the door
 	// is the same one every invocation refusal names.
 	if *noBeat && (f.set("beat") || f.set("beat-lease")) {
-		fmt.Fprint(stderr, "nova-bus wait: --no-beat writes no BEAT and --beat/--beat-lease say when to write one; give one or the other; run: nova-bus help\n")
+		fmt.Fprint(stderr, "WAIT REFUSED: --no-beat writes no BEAT and --beat/--beat-lease say when to write one; give one or the other; run: nova-bus wait -h\n")
 		return 2
 	}
 	flagLegacy, ok := legacyLine("wait", *legacyBefore, stderr)
@@ -2721,7 +2788,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if *carryHistory && !flagLegacy.Before.IsZero() {
-		fmt.Fprint(stderr, "nova-bus wait: --legacy-before draws a switch-day line and --carry-history says there is none to draw; give one or the other\n")
+		fmt.Fprint(stderr, "WAIT REFUSED: --legacy-before draws a switch-day line and --carry-history says there is none to draw; give one or the other; run: nova-bus wait -h\n")
 		return 2
 	}
 	maxWordsValue, ok := f.receiptMaxWords(*maxWords, f.set("receipt-max-words"), *busDir, stderr)
@@ -2738,7 +2805,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if *after != "" && !*bodies {
-		fmt.Fprintln(stderr, "nova-bus wait: --after requires --bodies")
+		fmt.Fprintln(stderr, "WAIT REFUSED: --after requires --bodies; run: nova-bus wait -h")
 		return 2
 	}
 	if *bodies && !bodyLimit(stderr, "--max-notes", int64(*maxNotes), maxBodiesNotesCeiling) {
@@ -2757,7 +2824,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if *timeout <= 0 {
-		fmt.Fprint(stderr, "nova-bus wait: --timeout is required and is a duration like 25m; every wait has a deadline, and one with no deadline is a line that is stuck rather than waiting; refusing to guess; run: nova-bus help\n")
+		fmt.Fprint(stderr, "WAIT REFUSED: --timeout is required and is a duration like 25m; every wait has a deadline, and one with no deadline is a line that is stuck rather than waiting; refusing to guess; run: nova-bus wait -h\n")
 		return 2
 	}
 	// THE CEILING IS ABOUT THE HARNESS AND NOT ABOUT THE BUS. This verb is meant to be
@@ -2766,7 +2833,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// and the caller is told nothing at all. An hour is above every limit we know of and
 	// below anything anybody would call a hang.
 	if *timeout > maxWaitTimeout {
-		fmt.Fprintf(stderr, "nova-bus wait: --timeout %s is longer than %s, which is as long as this verb will block; a wait runs inside your harness's tool call and every harness kills one that runs too long, so a longer timeout is not a longer wait, it is a call that is killed with nothing said; ask your harness for its limit, sit under it, and issue the next wait when this one returns; run: nova-bus wait -h\n",
+		fmt.Fprintf(stderr, "WAIT REFUSED: --timeout %s is longer than %s, which is as long as this verb will block; a wait runs inside your harness's tool call and every harness kills one that runs too long, so a longer timeout is not a longer wait, it is a call that is killed with nothing said; ask your harness for its limit, sit under it, and issue the next wait when this one returns; run: nova-bus wait -h\n",
 			oneline.Field(timeout.String()), oneline.Field(maxWaitTimeout.String()))
 		return 2
 	}
@@ -2782,12 +2849,12 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *until != "" {
 		when, err := time.Parse(time.RFC3339, *until)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-bus wait: --until %s is not an RFC 3339 instant like 2026-09-18T18:00:00Z; %s\n", oneline.Field(*until), oneline.WithRemedy(oneline.Err(err), "nova-bus wait -h"))
+			fmt.Fprintf(stderr, "WAIT REFUSED: --until %s is not an RFC 3339 instant like 2026-09-18T18:00:00Z; %s\n", oneline.Field(*until), oneline.WithRemedy(oneline.Err(err), "nova-bus wait -h"))
 			return 2
 		}
 		left := when.Sub(now)
 		if left <= 0 {
-			fmt.Fprintf(stderr, "nova-bus wait: --until %s is now or in the past (it is %s), so this wait would end before it began; give an instant in the future, or leave --until off and let --timeout bound the call; run: nova-bus wait -h\n",
+			fmt.Fprintf(stderr, "WAIT REFUSED: --until %s is now or in the past (it is %s), so this wait would end before it began; give an instant in the future, or leave --until off and let --timeout bound the call; run: nova-bus wait -h\n",
 				oneline.Field(*until), oneline.Field(now.UTC().Format(time.RFC3339)))
 			return 2
 		}
@@ -2801,24 +2868,24 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// either would have to parse the output to know which it was, which is the thing this
 	// flag exists to make unnecessary. 126 and up are the shell's own.
 	if *idleExit < 0 || *idleExit > maxIdleExit {
-		fmt.Fprintf(stderr, "nova-bus wait: --idle-exit %d is not an exit code this verb will use; give one between 0 and %d, and note that %d and above belong to the shell; run: nova-bus wait -h\n", *idleExit, maxIdleExit, maxIdleExit+1)
+		fmt.Fprintf(stderr, "WAIT REFUSED: --idle-exit %d is not an exit code this verb will use; give one between 0 and %d, and note that %d and above belong to the shell; run: nova-bus wait -h\n", *idleExit, maxIdleExit, maxIdleExit+1)
 		return 2
 	}
 	if *idleExit == 1 || *idleExit == 2 {
-		fmt.Fprintf(stderr, "nova-bus wait: --idle-exit %d is this tool's own code -- 1 is a refusal and 2 is an invocation that could not run -- so a harness that got it back could not tell a quiet bus from a broken one; pick another, 3 is free; run: nova-bus wait -h\n", *idleExit)
+		fmt.Fprintf(stderr, "WAIT REFUSED: --idle-exit %d is this tool's own code -- 1 is a refusal and 2 is an invocation that could not run -- so a harness that got it back could not tell a quiet bus from a broken one; pick another, 3 is free; run: nova-bus wait -h\n", *idleExit)
 		return 2
 	}
 	if *interval < minWaitInterval {
-		fmt.Fprintf(stderr, "nova-bus wait: --interval %s is shorter than %s, and every poll is a git fetch against somebody's server; refusing to fetch faster than that; run: nova-bus wait -h\n",
+		fmt.Fprintf(stderr, "WAIT REFUSED: --interval %s is shorter than %s, and every poll is a git fetch against somebody's server; refusing to fetch faster than that; run: nova-bus wait -h\n",
 			oneline.Field(interval.String()), oneline.Field(minWaitInterval.String()))
 		return 2
 	}
 	if *beat <= 0 {
-		fmt.Fprint(stderr, "nova-bus wait: --beat must be a positive duration like 60s; run: nova-bus wait -h\n")
+		fmt.Fprint(stderr, "WAIT REFUSED: --beat must be a positive duration like 60s; run: nova-bus wait -h\n")
 		return 2
 	}
 	if *beatLease <= 0 {
-		fmt.Fprint(stderr, "nova-bus wait: --beat-lease must be a positive duration like 10m; run: nova-bus wait -h\n")
+		fmt.Fprint(stderr, "WAIT REFUSED: --beat-lease must be a positive duration like 10m; run: nova-bus wait -h\n")
 		return 2
 	}
 	// THE BUS CARRIES NOTES, NEVER BEATS (#3144). On 2026-09-23, 393 of 500 bus commits
@@ -2832,21 +2899,21 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// A wait always runs git, so the root check is unconditional -- see the same check, and
 	// the same reason for the order it is in, in cmdInbox.
 	if err := bus.IsRepoRoot(*busDir); err != nil {
-		fmt.Fprintf(stderr, "nova-bus wait: a wait fetches the bus and reads what changed since your cursor, which need git; %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus wait -h"))
+		fmt.Fprintf(stderr, "WAIT REFUSED: a wait fetches the bus and reads what changed since your cursor, which need git; %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus wait -h"))
 		return 2
 	}
 	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus wait: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus wait -h"))
+		fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus wait -h"))
 		return 2
 	}
 	me, found := c.Lookup(*as)
 	if !found {
-		fmt.Fprintf(stderr, "nova-bus wait: --as %q names no one on this bus (known: %s); run: nova-bus wait -h\n", *as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
+		fmt.Fprintf(stderr, "WAIT REFUSED: --as %q names no one on this bus (known: %s); run: nova-bus wait -h\n", *as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
 		return 2
 	}
 	if me.Lane == "" {
-		fmt.Fprintf(stderr, "nova-bus wait: %q has no lane on this bus, so nothing can answer for them; run: nova-bus wait -h\n", me.Name)
+		fmt.Fprintf(stderr, "WAIT REFUSED: %q has no lane on this bus, so nothing can answer for them; run: nova-bus wait -h\n", me.Name)
 		return 2
 	}
 	o := inboxOpts{
@@ -3530,7 +3597,7 @@ func legacyLine(verb, value string, stderr io.Writer) (bus.LegacyLine, bool) {
 	}
 	line, err := bus.NewLegacyLine(value)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus %s: --legacy-before %s\n", verb, oneline.Err(err))
+		fmt.Fprintf(stderr, "%s REFUSED: --legacy-before %s\n", strings.ToUpper(verb), oneline.WithRemedy(oneline.Err(err), verbHelp(verb)))
 		return bus.LegacyLine{}, false
 	}
 	return line, true
@@ -3559,11 +3626,11 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// what they want checked. There is no default here for the same reason there is no
 	// default bus.
 	if !*full && strings.TrimSpace(*as) == "" && strings.TrimSpace(*since) == "" {
-		fmt.Fprint(stderr, "nova-bus check: give one of --full, --as <name> or --since <commit>; refusing to guess; run: nova-bus help\n")
+		fmt.Fprint(stderr, "CHECK REFUSED: give one of --full, --as <name> or --since <commit>; refusing to guess; run: nova-bus check -h\n")
 		return 2
 	}
 	if *rebuildIndex && !*full {
-		fmt.Fprint(stderr, "nova-bus check: --rebuild-index writes each lane's INDEX from every note in it, so it needs --full\n")
+		fmt.Fprint(stderr, "CHECK REFUSED: --rebuild-index writes each lane's INDEX from every note in it, so it needs --full; run: nova-bus check -h\n")
 		return 2
 	}
 	line, ok := legacyLine("check", *legacyBefore, stderr)
@@ -3576,7 +3643,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// is not the caller's mistake. See the same reordering in cmdInbox.
 	if !*full {
 		if err := bus.IsRepoRoot(*busDir); err != nil {
-			fmt.Fprintf(stderr, "nova-bus check: checking only what changed needs git; %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus check -h"))
+			fmt.Fprintf(stderr, "CHECK REFUSED: checking only what changed needs git; %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus check -h"))
 			return 2
 		}
 	}
@@ -3590,7 +3657,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus check -h"))
+		fmt.Fprintf(stderr, "CHECK REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus check -h"))
 		return 2
 	}
 	scope := bus.Scope{Full: *full}
@@ -3602,17 +3669,17 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if strings.TrimSpace(*since) != "" {
 			from, err = bus.ResolveSinceCommit(*busDir, *since)
 			if err != nil {
-				fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus check -h"))
+				fmt.Fprintf(stderr, "CHECK REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus check -h"))
 				return 2
 			}
 		} else {
 			me, ok := c.Lookup(*as)
 			if !ok {
-				fmt.Fprintf(stderr, "nova-bus check: --as %q names no one on this bus (known: %s); run: nova-bus check -h\n", *as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
+				fmt.Fprintf(stderr, "CHECK REFUSED: --as %q names no one on this bus (known: %s); run: nova-bus check -h\n", *as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
 				return 2
 			}
 			if me.Lane == "" {
-				fmt.Fprintf(stderr, "nova-bus check: %q has no lane on this bus, so has no cursor; run: nova-bus check -h\n", me.Name)
+				fmt.Fprintf(stderr, "CHECK REFUSED: %q has no lane on this bus, so has no cursor; run: nova-bus check -h\n", me.Name)
 				return 2
 			}
 			cursor, cerr := bus.ReadCursor(*busDir, me.Lane)
@@ -3643,7 +3710,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if scope.Full {
 		t, terr := bus.ReadBus(*busDir, c)
 		if terr != nil {
-			fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.WithRemedy(oneline.Err(terr), "nova-bus check -h"))
+			fmt.Fprintf(stderr, "CHECK REFUSED: %s\n", oneline.WithRemedy(oneline.Err(terr), "nova-bus check -h"))
 			return 2
 		}
 		if *rebuildIndex {
@@ -3658,7 +3725,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		idx, ierr := bus.ReadIndex(*busDir, c)
 		if ierr != nil {
-			fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.WithRemedy(oneline.Err(ierr), "nova-bus check -h"))
+			fmt.Fprintf(stderr, "CHECK REFUSED: %s\n", oneline.WithRemedy(oneline.Err(ierr), "nova-bus check -h"))
 			return 2
 		}
 		problems = append(t.CheckWith(opts), bus.CheckIndex(c, t, idx)...)
@@ -3671,7 +3738,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		idx, ierr := bus.ReadIndex(*busDir, c)
 		if ierr != nil {
-			fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.WithRemedy(oneline.Err(ierr), "nova-bus check -h"))
+			fmt.Fprintf(stderr, "CHECK REFUSED: %s\n", oneline.WithRemedy(oneline.Err(ierr), "nova-bus check -h"))
 			return 2
 		}
 		scope.From, scope.Changed = from, len(changed)
@@ -3751,7 +3818,7 @@ func cmdNames(args []string, stdout, stderr io.Writer) int {
 	}
 	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus names: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus names -h"))
+		fmt.Fprintf(stderr, "NAMES REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus names -h"))
 		return 2
 	}
 	// THE NAMES ARE QUOTED, NOT FIELD-ESCAPED, and this verb exists for exactly the reason

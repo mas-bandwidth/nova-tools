@@ -23,22 +23,20 @@ var messageBusAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|parse|f.verb":            "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|parse|name":              "a required flag's name, a literal map key at every call site in this file",
-		"main.go|count|f.verb":            "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|count|name":              "a required flag's name, a literal at every call site in this file",
-		"main.go|host|f.verb":             "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|openBus|verb":            "the verb's own name, a literal at every call site in this file",
-		"main.go|printOpenEntries|token":  "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
-		"main.go|printBodyItem|kind":      "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned immediately above the site",
-		"main.go|printBodyItem|bodyBytes": "the note body is the explicitly requested verbatim byte payload; framing is emitted separately and the body is never escaped or rewritten",
-		"main.go|atLeastZero|f.verb":      "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|atLeastZero|name":        "a threshold flag's name, a literal at every call site in this file",
-		"main.go|lockCheckout|token":      "the verb's own event token, the literals \"INBOX\" and \"WAIT\" at the two call sites in this file",
-		"main.go|gitArgs|f.verb":          "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|attempts|f.verb":         "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|gitTimeoutFlag|f.verb":   "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|legacyLine|verb":         "the verb's own name, the literals \"inbox\", \"wait\" and \"check\" at the three call sites in this file",
+		"main.go|count|strings.ToUpper(f.verb)":          "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|count|name":                             "a required flag's name, a literal at every call site in this file",
+		"main.go|host|strings.ToUpper(f.verb)":           "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|openBus|strings.ToUpper(verb)":          "the verb's own name, a literal at every call site in this file",
+		"main.go|printOpenEntries|token":                 "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
+		"main.go|printBodyItem|kind":                     "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned immediately above the site",
+		"main.go|printBodyItem|bodyBytes":                "the note body is the explicitly requested verbatim byte payload; framing is emitted separately and the body is never escaped or rewritten",
+		"main.go|atLeastZero|strings.ToUpper(f.verb)":    "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|atLeastZero|name":                       "a threshold flag's name, a literal at every call site in this file",
+		"main.go|lockCheckout|token":                     "the verb's own event token, the literals \"INBOX\" and \"WAIT\" at the two call sites in this file",
+		"main.go|gitArgs|strings.ToUpper(f.verb)":        "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|attempts|strings.ToUpper(f.verb)":       "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|gitTimeoutFlag|strings.ToUpper(f.verb)": "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|legacyLine|strings.ToUpper(verb)":       "the verb's own name, the literals \"inbox\", \"wait\" and \"check\" at the three call sites in this file",
 		"main.go|waitLoop|lines": "the inbox listing this run has ALREADY printed, through the escape, into waitPoll's buffer -- every value in it went " +
 			"through oneline.Field or oneline.Escape at the site that wrote it. It is many lines and it is not an event line: escaping it here would " +
 			"fold a whole listing into one unreadable line, which is the mistake printTranscript below documents. The buffer exists because a poll " +
@@ -129,6 +127,9 @@ var messageBusAudit = audit.Config{
 		// every byte still goes through fmt.Fprintf at the emit site, where the elapsed
 		// duration is rendered through oneline.Field like every other line here.
 		`"sync"`,
+		// sort orders the missing required flags' names so one bare verb's refusal lines
+		// come in one order on every run; it holds no writer and reaches no stream.
+		`"sort"`,
 
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
