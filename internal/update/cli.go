@@ -56,6 +56,7 @@ func field(s string) string {
 	}
 	return oneline.Field(s)
 }
+
 // refusal is the one refusal line (STANDARD §2): what was wrong and what the
 // input wants, then the command a reader runs next.
 func refusal(w io.Writer, token, run string, err error) int {

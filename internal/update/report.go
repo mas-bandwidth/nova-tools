@@ -16,6 +16,7 @@ import (
 )
 
 func shaText(s string) string { sum := sha256.Sum256([]byte(s)); return hex.EncodeToString(sum[:]) }
+
 // report is the report verb's one value: the run's facts on its first line, an
 // item per tool read (TOOL, or UNKNOWN with its reason), per tool changed since
 // --snapshot (CHANGED) and per delivery (SENT), and a note for what is true and
