@@ -80,123 +80,36 @@ func (h testInstallHost) published(t *testing.T) string {
 
 func (h testInstallHost) lockHeld() bool { _, err := os.Stat(h.lock); return err == nil }
 
-func TestInstallRedisWhenPresentPublishesItsDirectoryAndTakesNoLock(t *testing.T) {
-	t.Parallel()
-	h := newTestInstallHost(t)
-	h.runner.onPath["redis-server"] = "/opt/r/bin/redis-server"
-	if code := installRedisServer(h.installHost); code != 0 {
-		t.Fatalf("exit %d, want 0", code)
-	}
-	if got := h.out.String(); got != "redis-server /opt/r/bin/redis-server\n" {
-		t.Fatalf("stdout %q", got)
-	}
-	if got := h.published(t); got != "/opt/r/bin\n" {
-		t.Fatalf("GITHUB_PATH got %q", got)
-	}
-	if len(h.runner.calls) != 0 || h.lockHeld() {
-		t.Fatalf("an installed redis-server ran %v / left a lock", h.runner.lines())
-	}
+// redisVersionLine is what `redis-server --version` prints for version v.
+func redisVersionLine(v string) string {
+	return "Redis server v=" + v + " sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=e53ff17674aa6190\n"
 }
 
-func TestInstallRedisWithAptInstallsUnderTheLockAndReleasesIt(t *testing.T) {
-	t.Parallel()
-	h := newTestInstallHost(t)
-	h.runner.onPath["apt-get"] = "/usr/bin/apt-get"
-	h.runner.answer = func(c cmdSpec) (string, int, error) {
-		if c.Name == "apt-get" && len(c.Args) > 0 && c.Args[0] == "install" {
-			if !h.lockHeld() {
-				t.Error("apt-get install ran without the lock held")
-			}
-			h.runner.onPath["redis-server"] = "/usr/bin/redis-server"
-		}
-		return "", 0, nil
-	}
-	if code := installRedisServer(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
-	want := []string{"apt-get update -qq", "apt-get install -y -qq redis-server"}
-	if got := h.runner.lines(); strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("commands %q, want %q", got, want)
-	}
-	if h.lockHeld() {
-		t.Fatal("the lock is still held after the install")
-	}
-	if h.published(t) != "/usr/bin\n" || h.out.String() != "redis-server /usr/bin/redis-server\n" {
-		t.Fatalf("published %q, stdout %q", h.published(t), h.out)
-	}
+// redisTestHost is a test host whose redis-servers answer --version from
+// versions (path -> version; a path not there prints nothing and exits 1), and
+// whose `make` leaves the binary a build would, reporting built, first on PATH
+// in $HOME/.local/bin ("" builds nothing). The fake PATH is runner.onPath.
+type redisTestHost struct {
+	testInstallHost
+	versions map[string]string
+	local    string // $HOME/.local/bin/redis-server
 }
 
-func TestInstallRedisRetriesAptAsRootWhenTheFirstTryFails(t *testing.T) {
-	t.Parallel()
-	h := newTestInstallHost(t)
-	h.runner.onPath["apt-get"] = "/usr/bin/apt-get"
-	h.runner.answer = func(c cmdSpec) (string, int, error) {
-		if c.Name == "apt-get" {
-			return "", 100, nil // not root
-		}
-		if c.Name == "sudo" && len(c.Args) > 2 && c.Args[2] == "install" {
-			h.runner.onPath["redis-server"] = "/usr/bin/redis-server"
-		}
-		return "", 0, nil
-	}
-	if code := installRedisServer(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
-	want := []string{
-		"apt-get update -qq",
-		"sudo -n apt-get update -qq",
-		"sudo -n apt-get install -y -qq redis-server",
-	}
-	if got := h.runner.lines(); strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("commands %q, want %q", got, want)
-	}
-}
-
-func TestInstallRedisReportsTheFailingAptCommandsCode(t *testing.T) {
-	t.Parallel()
-	h := newTestInstallHost(t)
-	h.runner.onPath["apt-get"] = "/usr/bin/apt-get"
-	h.runner.answer = func(c cmdSpec) (string, int, error) { return "", 100, nil }
-	if code := installRedisServer(h.installHost); code != 100 {
-		t.Fatalf("exit %d, want the last command's 100", code)
-	}
-	if h.lockHeld() {
-		t.Fatal("a failed install left the lock held")
-	}
-}
-
-func TestInstallRedisWithHomebrewInstallsAndPublishesItsBin(t *testing.T) {
-	t.Parallel()
-	h := newTestInstallHost(t)
-	h.runner.onPath["brew"] = "/opt/homebrew/bin/brew"
+func newRedisTestHost(t *testing.T, built string) redisTestHost {
+	t.Helper()
+	h := redisTestHost{testInstallHost: newTestInstallHost(t), versions: map[string]string{}}
+	h.local = filepath.Join(h.home, ".local", "bin", "redis-server")
 	h.runner.answer = func(c cmdSpec) (string, int, error) {
 		switch {
-		case c.Name == "brew" && c.Args[0] == "install":
-			if got := strings.Join(c.Env, " "); got != "HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_UPGRADE=1" {
-				t.Errorf("brew install env %q", got)
+		case len(c.Args) == 1 && c.Args[0] == "--version":
+			h.runner.mu.Lock()
+			v, ok := h.versions[c.Name]
+			h.runner.mu.Unlock()
+			if !ok {
+				return "", 1, nil
 			}
-			h.runner.onPath["redis-server"] = "/opt/homebrew/bin/redis-server"
-		case c.Name == "brew" && c.Args[0] == "--prefix":
-			return "/opt/homebrew\n", 0, nil
-		}
-		return "", 0, nil
-	}
-	if code := installRedisServer(h.installHost); code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, h.errb)
-	}
-	if got := strings.Join(h.runner.prepends, ","); got != "/opt/homebrew/bin" {
-		t.Fatalf("PATH prepended with %q", got)
-	}
-	if got := h.published(t); got != "/opt/homebrew/bin\n/opt/homebrew/bin\n" {
-		t.Fatalf("GITHUB_PATH got %q (the brew bin, then the binary's directory)", got)
-	}
-}
-
-func TestInstallRedisBuildsThePinnedSourceWhereThereIsNoPackageManager(t *testing.T) {
-	t.Parallel()
-	h := newTestInstallHost(t)
-	h.runner.answer = func(c cmdSpec) (string, int, error) {
-		if c.Name == "make" {
+			return redisVersionLine(v), 0, nil
+		case c.Name == "make" && built != "":
 			// make -C <tree> -jN redis-server: produce the binary the build would.
 			tree := c.Args[1]
 			if err := os.MkdirAll(filepath.Join(tree, "src"), 0o755); err != nil {
@@ -205,36 +118,149 @@ func TestInstallRedisBuildsThePinnedSourceWhereThereIsNoPackageManager(t *testin
 			if err := os.WriteFile(filepath.Join(tree, "src", "redis-server"), []byte("built"), 0o600); err != nil {
 				t.Error(err)
 			}
-			h.runner.onPath["redis-server"] = filepath.Join(h.home, ".local", "bin", "redis-server")
+			h.runner.mu.Lock()
+			h.versions[h.local] = built
+			h.runner.onPath["redis-server"] = h.local
+			h.runner.mu.Unlock()
 		}
 		return "", 0, nil
 	}
+	return h
+}
+
+// built says whether the source build ran, and checks its three steps.
+func (h redisTestHost) built(t *testing.T) bool {
+	t.Helper()
+	var steps []string
+	for _, l := range h.runner.lines() {
+		if !strings.HasSuffix(l, " --version") {
+			steps = append(steps, l)
+		}
+	}
+	if len(steps) == 0 {
+		return false
+	}
+	if len(steps) != 3 ||
+		!strings.HasPrefix(steps[0], "curl -fsSL https://download.redis.io/releases/redis-"+redisSourceVersion+".tar.gz -o ") ||
+		!strings.HasPrefix(steps[1], "tar -xzf ") ||
+		!strings.HasPrefix(steps[2], "make -C ") || !strings.HasSuffix(steps[2], " redis-server") || !strings.Contains(steps[2], "redis-"+redisSourceVersion) {
+		t.Fatalf("the build ran %q; want curl, tar and make of the pinned release and nothing else", steps)
+	}
+	return true
+}
+
+func TestInstallRedisWhenThePinnedOneIsFirstOnPathOnlyAsksItsVersion(t *testing.T) {
+	t.Parallel()
+	h := newRedisTestHost(t, redisSourceVersion)
+	h.runner.onPath["redis-server"] = "/opt/r/bin/redis-server"
+	h.versions["/opt/r/bin/redis-server"] = redisSourceVersion
 	if code := installRedisServer(h.installHost); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, h.errb)
 	}
-	lines := h.runner.lines()
-	if len(lines) != 3 ||
-		!strings.HasPrefix(lines[0], "curl -fsSL https://download.redis.io/releases/redis-"+redisSourceVersion+".tar.gz -o ") ||
-		!strings.HasPrefix(lines[1], "tar -xzf ") ||
-		!strings.HasPrefix(lines[2], "make -C ") || !strings.HasSuffix(lines[2], " redis-server") || !strings.Contains(lines[2], "redis-"+redisSourceVersion) {
-		t.Fatalf("commands %q", lines)
+	if got := h.out.String(); got != "redis-server /opt/r/bin/redis-server v="+redisSourceVersion+"\n" {
+		t.Fatalf("stdout %q", got)
 	}
-	dest := filepath.Join(h.home, ".local", "bin", "redis-server")
-	fi, err := os.Stat(dest)
-	if err != nil {
-		t.Fatal(err)
+	if got := h.published(t); got != "/opt/r/bin\n" {
+		t.Fatalf("GITHUB_PATH got %q", got)
 	}
-	if b, _ := os.ReadFile(dest); string(b) != "built" || fi.Mode().Perm() != 0o755 {
-		t.Fatalf("installed %q mode %v", b, fi.Mode())
+	if got := strings.Join(h.runner.lines(), "|"); got != "/opt/r/bin/redis-server --version" || h.lockHeld() || len(h.runner.prepends) != 0 {
+		t.Fatalf("the pinned redis-server first on PATH ran %q, prepended %q, lock held %v; want one version check and nothing else", got, h.runner.prepends, h.lockHeld())
 	}
-	if got := strings.Join(h.runner.prepends, ","); got != filepath.Join(h.home, ".local", "bin") {
-		t.Fatalf("PATH prepended with %q", got)
+}
+
+// #5151: the bench runners' apt server, 7.0.15 on hetzner and 8.0.5 on
+// spacegame, was first on PATH and the installer kept it.
+func TestInstallRedisBuildsThePinnedOneWhenTheFirstOnPathIsAnotherVersion(t *testing.T) {
+	t.Parallel()
+	for _, first := range []string{"7.0.15", "8.0.5", "8.10.3", ""} {
+		h := newRedisTestHost(t, redisSourceVersion)
+		h.runner.onPath["apt-get"] = "/usr/bin/apt-get"
+		h.runner.onPath["brew"] = "/opt/homebrew/bin/brew"
+		h.runner.onPath["redis-server"] = "/usr/bin/redis-server"
+		if first != "" {
+			h.versions["/usr/bin/redis-server"] = first
+		}
+		if code := installRedisServer(h.installHost); code != 0 {
+			t.Fatalf("first on PATH %q: exit %d, stderr %q", first, code, h.errb)
+		}
+		if !h.built(t) {
+			t.Fatalf("first on PATH %q: no build ran: %q", first, h.runner.lines())
+		}
+		if h.runner.ran("apt-get") || h.runner.ran("brew") || h.runner.ran("sudo") {
+			t.Fatalf("first on PATH %q: a package manager ran: %q", first, h.runner.lines())
+		}
+		dir := filepath.Dir(h.local)
+		if got := strings.Join(h.runner.prepends, ","); got != dir {
+			t.Fatalf("first on PATH %q: PATH prepended with %q, want %q", first, got, dir)
+		}
+		if got := h.published(t); got != dir+"\n" {
+			t.Fatalf("first on PATH %q: GITHUB_PATH got %q", first, got)
+		}
+		if got := h.out.String(); got != "redis-server "+h.local+" v="+redisSourceVersion+"\n" {
+			t.Fatalf("first on PATH %q: stdout %q", first, got)
+		}
+		fi, err := os.Stat(h.local)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b, _ := os.ReadFile(h.local); string(b) != "built" || fi.Mode().Perm() != 0o755 {
+			t.Fatalf("first on PATH %q: installed %q mode %v", first, b, fi.Mode())
+		}
+		if h.lockHeld() {
+			t.Fatalf("first on PATH %q: the lock is still held after the build", first)
+		}
+	}
+}
+
+func TestInstallRedisBuildsThePinnedOneWhereThereIsNone(t *testing.T) {
+	t.Parallel()
+	h := newRedisTestHost(t, redisSourceVersion)
+	if code := installRedisServer(h.installHost); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, h.errb)
+	}
+	if !h.built(t) || h.out.String() != "redis-server "+h.local+" v="+redisSourceVersion+"\n" {
+		t.Fatalf("ran %q, stdout %q", h.runner.lines(), h.out)
+	}
+}
+
+func TestInstallRedisPutsAnEarlierBuildFirstWithoutBuildingAgain(t *testing.T) {
+	t.Parallel()
+	h := newRedisTestHost(t, redisSourceVersion)
+	h.runner.onPath["redis-server"] = "/usr/bin/redis-server"
+	h.versions["/usr/bin/redis-server"] = "7.0.15"
+	h.versions[h.local] = redisSourceVersion
+	h.installHost.isExec = func(p string) bool { return p == h.local }
+	if code := installRedisServer(h.installHost); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, h.errb)
+	}
+	if h.built(t) || h.lockHeld() {
+		t.Fatalf("an earlier build in $HOME/.local/bin was built again: %q", h.runner.lines())
+	}
+	dir := filepath.Dir(h.local)
+	if got := strings.Join(h.runner.prepends, ","); got != dir || h.published(t) != dir+"\n" {
+		t.Fatalf("PATH prepended with %q, GITHUB_PATH %q; want %s first", got, h.published(t), dir)
+	}
+}
+
+func TestInstallRedisRefusesABuildThatReportsAnotherVersion(t *testing.T) {
+	t.Parallel()
+	h := newRedisTestHost(t, "8.0.5")
+	h.runner.onPath["redis-server"] = "/usr/bin/redis-server"
+	h.versions["/usr/bin/redis-server"] = "8.0.5"
+	if code := installRedisServer(h.installHost); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if want := "redis-server first on PATH is " + h.local + `, version "8.0.5", after the install; want ` + redisSourceVersion; !strings.Contains(h.errb.String(), want) {
+		t.Fatalf("stderr %q, want %q", h.errb, want)
+	}
+	if h.published(t) != "" || h.out.Len() != 0 {
+		t.Fatalf("a refused install published %q and said %q", h.published(t), h.out)
 	}
 }
 
 func TestInstallRedisSourceBuildWithoutABinaryIsRefused(t *testing.T) {
 	t.Parallel()
-	h := newTestInstallHost(t)
+	h := newRedisTestHost(t, "")
 	if code := installRedisServer(h.installHost); code != 1 {
 		t.Fatalf("exit %d, want 1 (the build produced nothing)", code)
 	}
@@ -243,21 +269,9 @@ func TestInstallRedisSourceBuildWithoutABinaryIsRefused(t *testing.T) {
 	}
 }
 
-func TestInstallRedisStillMissingAfterTheInstallIsRefused(t *testing.T) {
-	t.Parallel()
-	h := newTestInstallHost(t)
-	h.runner.onPath["apt-get"] = "/usr/bin/apt-get"
-	if code := installRedisServer(h.installHost); code != 1 {
-		t.Fatalf("exit %d, want 1", code)
-	}
-	if !strings.Contains(h.errb.String(), "redis-server still not on PATH after install") {
-		t.Fatalf("stderr %q", h.errb)
-	}
-}
-
 func TestInstallLockWaiterTakesTheBinaryAnotherRunnerInstalled(t *testing.T) {
 	t.Parallel()
-	h := newTestInstallHost(t)
+	h := newRedisTestHost(t, redisSourceVersion)
 	if err := os.Mkdir(h.lock, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +283,8 @@ func TestInstallLockWaiterTakesTheBinaryAnotherRunnerInstalled(t *testing.T) {
 		polls++
 		if polls == 3 {
 			h.runner.mu.Lock()
-			h.runner.onPath["redis-server"] = "/usr/bin/redis-server"
+			h.runner.onPath["redis-server"] = h.local
+			h.versions[h.local] = redisSourceVersion
 			h.runner.mu.Unlock()
 		}
 	}
@@ -279,8 +294,8 @@ func TestInstallLockWaiterTakesTheBinaryAnotherRunnerInstalled(t *testing.T) {
 	if polls != 3 {
 		t.Fatalf("polled %d times, want 3", polls)
 	}
-	if len(h.runner.calls) != 0 {
-		t.Fatalf("a waiter ran %v", h.runner.lines())
+	if h.built(t) {
+		t.Fatalf("a waiter built: %v", h.runner.lines())
 	}
 	if !h.lockHeld() {
 		t.Fatal("a waiter released a lock it never took")
@@ -289,7 +304,7 @@ func TestInstallLockWaiterTakesTheBinaryAnotherRunnerInstalled(t *testing.T) {
 
 func TestInstallLockTimesOutAfterFortyPolls(t *testing.T) {
 	t.Parallel()
-	h := newTestInstallHost(t)
+	h := newRedisTestHost(t, redisSourceVersion)
 	if err := os.Mkdir(h.lock, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -305,14 +320,14 @@ func TestInstallLockTimesOutAfterFortyPolls(t *testing.T) {
 	if !strings.Contains(h.errb.String(), "timed out waiting to install redis-server") {
 		t.Fatalf("stderr %q", h.errb)
 	}
-	if len(h.runner.calls) != 0 {
-		t.Fatalf("a timed-out waiter ran %v", h.runner.lines())
+	if h.built(t) {
+		t.Fatalf("a timed-out waiter built: %v", h.runner.lines())
 	}
 }
 
 func TestInstallLockOlderThanSixHundredSecondsIsTakenOver(t *testing.T) {
 	t.Parallel()
-	h := newTestInstallHost(t)
+	h := newRedisTestHost(t, redisSourceVersion)
 	if err := os.Mkdir(h.lock, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -320,27 +335,20 @@ func TestInstallLockOlderThanSixHundredSecondsIsTakenOver(t *testing.T) {
 	if err := os.Chtimes(h.lock, old, old); err != nil {
 		t.Fatal(err)
 	}
-	h.runner.onPath["apt-get"] = "/usr/bin/apt-get"
-	h.runner.answer = func(c cmdSpec) (string, int, error) {
-		if c.Name == "apt-get" && c.Args[0] == "install" {
-			h.runner.onPath["redis-server"] = "/usr/bin/redis-server"
-		}
-		return "", 0, nil
-	}
 	if code := installRedisServer(h.installHost); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, h.errb)
 	}
 	if *h.sleeps != 0 {
 		t.Fatalf("waited %d polls on a stale lock", *h.sleeps)
 	}
-	if !h.runner.ran("apt-get install") {
+	if !h.built(t) {
 		t.Fatalf("the stale lock was not taken over: %v", h.runner.lines())
 	}
 }
 
 func TestInstallLockExactlySixHundredSecondsOldIsStillHeld(t *testing.T) {
 	t.Parallel()
-	h := newTestInstallHost(t)
+	h := newRedisTestHost(t, redisSourceVersion)
 	if err := os.Mkdir(h.lock, 0o755); err != nil {
 		t.Fatal(err)
 	}

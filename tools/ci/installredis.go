@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 )
 
 // redisSourceVersion is the repository's one Redis version, the release the
-// source build installs. infra/functional-image/Containerfile names it too;
-// internal/ci TestRedisIsOneVersionEverywhere holds the two together. The apt
-// and Homebrew branches install what the distribution and Homebrew carry; only
-// the source build is pinned.
+// source build installs and the one internal/testredis accepts.
+// infra/functional-image/Containerfile names it too; internal/ci
+// TestRedisIsOneVersionEverywhere holds the places together.
 const redisSourceVersion = "8.10.2"
 
 const redisInstallLock = "/tmp/nova-redis-server-install.lock"
@@ -20,22 +20,29 @@ const redisInstallLock = "/tmp/nova-redis-server-install.lock"
 func init() {
 	register(verb{
 		name:    "install-redis-server",
-		summary: "put redis-server on PATH for the tests that start a private server",
+		summary: "put the pinned redis-server first on PATH for the tests that start a private server",
 		help: `usage: go run ./tools/ci install-redis-server
 
-Puts redis-server on PATH, for the controls that start a private server on
-loopback; they do not dial any store. A runner that already has the binary is
-unchanged. Linux uses apt-get (then sudo -n), macOS uses Homebrew, and a machine
-with neither builds the pinned source release (` + redisSourceVersion + `) into $HOME/.local/bin,
-which persists on a self-hosted runner. Several runners share one machine, so the
-install takes the lock directory ` + redisInstallLock + ` (a lock older than 600 s is taken over,
-a waiter polls every 3 s and gives up after 40 polls).
+Puts the repository's one Redis (` + redisSourceVersion + `) first on PATH, for the
+controls that start a private server on loopback; they do not dial any store.
+The version is what ` + "`redis-server --version`" + ` reports (v=` + redisSourceVersion + `).
+
+A runner whose first redis-server on PATH reports it is unchanged. Else a
+redis-server in $HOME/.local/bin that reports it is put first. Else the pinned
+source release is built and copied into $HOME/.local/bin, which persists on a
+self-hosted runner and which the bench runners' units put ahead of /usr/bin. A
+distribution's or Homebrew's redis-server is never taken: it is whatever
+version they carry (#5151: 7.0.15 and 8.0.5 on the benches, red on dev).
+Several runners share one machine, so the build takes the lock directory
+` + redisInstallLock + ` (a lock older than 600 s is taken over, a waiter polls
+every 3 s and gives up after 40 polls).
 
 The directory holding the binary is appended to the file GITHUB_PATH names, for
-the steps after this one, and "redis-server <path>" is printed.
+the steps after this one, and "redis-server <path> v=<version>" is printed.
 
-exit 0  redis-server is on PATH
-exit 1  the install failed, or the lock never came free
+exit 0  the pinned redis-server is first on PATH
+exit 1  the build failed, the lock never came free, or the redis-server first
+        on PATH after the build is still another version
 `,
 		do: func(e env, args []string) int {
 			if len(args) != 0 {
@@ -51,43 +58,67 @@ exit 1  the install failed, or the lock never came free
 
 // installRedisServer is the verb over a host: see the help.
 func installRedisServer(h installHost) int {
-	have := func() bool { _, err := h.run.LookPath("redis-server"); return err == nil }
+	// pinned is the redis-server to put first: the first on PATH when it
+	// reports the pin, else the one a build left in $HOME/.local/bin.
+	pinned := func() (string, bool) {
+		if bin, err := h.run.LookPath("redis-server"); err == nil && h.redisVersion(bin) == redisSourceVersion {
+			return bin, true
+		}
+		if home := h.getenv("HOME"); home != "" {
+			bin := filepath.Join(home, ".local", "bin", "redis-server")
+			if h.isExec(bin) && h.redisVersion(bin) == redisSourceVersion {
+				return bin, true
+			}
+		}
+		return "", false
+	}
+	// bin is what have last found, so found asks no second version of it.
+	var bin string
+	have := func() bool {
+		b, ok := pinned()
+		bin = b
+		return ok
+	}
 	found := func() int {
-		bin, err := h.run.LookPath("redis-server")
-		if err != nil {
-			fmt.Fprintln(h.stderr, "redis-server still not on PATH after install")
+		if bin == "" && !have() {
+			first, err := h.run.LookPath("redis-server")
+			if err != nil {
+				fmt.Fprintf(h.stderr, "no redis-server on PATH after the install; want %s\n", redisSourceVersion)
+				return 1
+			}
+			fmt.Fprintf(h.stderr, "redis-server first on PATH is %s, version %q, after the install; want %s\n", first, h.redisVersion(first), redisSourceVersion)
 			return 1
 		}
-		h.publish(filepath.Dir(bin))
-		fmt.Fprintf(h.stdout, "redis-server %s\n", bin)
+		dir := filepath.Dir(bin)
+		if first, err := h.run.LookPath("redis-server"); err != nil || first != bin {
+			h.run.PrependPath(dir)
+		}
+		h.publish(dir)
+		fmt.Fprintf(h.stdout, "redis-server %s v=%s\n", bin, redisSourceVersion)
 		return 0
 	}
 	install := func() int {
-		switch {
-		case lookOK(h.run, "apt-get"):
-			if code := h.aptInstall("redis-server"); code != 0 {
-				return code
-			}
-		case lookOK(h.run, "brew"):
-			if code := h.runInstallStep(brewEnv, "brew", "install", "redis"); code != 0 {
-				return code
-			}
-			prefix, code, err := capture(h.run, cmdSpec{Name: "brew", Args: []string{"--prefix"}, Stderr: h.stderr})
-			if err != nil || code != 0 {
-				fmt.Fprintln(h.stderr, "brew --prefix failed")
-				return 1
-			}
-			brewbin := filepath.Join(prefix, "bin")
-			h.run.PrependPath(brewbin)
-			h.publish(brewbin)
-		default:
-			if code := h.buildRedisFromSource(); code != 0 {
-				return code
-			}
+		if code := h.buildRedisFromSource(); code != 0 {
+			return code
 		}
 		return found()
 	}
 	return lockedInstall(h, "redis-server", have, found, install)
+}
+
+// redisVersion is the version bin reports, the v= field of `redis-server
+// --version` ("Redis server v=8.10.2 sha=..."); "" when it reports none.
+func (h installHost) redisVersion(bin string) string {
+	out, code, err := capture(h.run, cmdSpec{Name: bin, Args: []string{"--version"}})
+	if err != nil || code != 0 {
+		return ""
+	}
+	for _, f := range strings.Fields(out) {
+		if v, ok := strings.CutPrefix(f, "v="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // buildRedisFromSource downloads the pinned release, builds redis-server and
@@ -126,12 +157,21 @@ func (h installHost) buildRedisFromSource() int {
 		fmt.Fprintf(h.stderr, "the build produced no redis-server: %v\n", err)
 		return 1
 	}
+	// Written beside the target and renamed over it: another runner's test may
+	// be running the redis-server that is there now.
 	target := filepath.Join(dest, "redis-server")
-	if err := os.WriteFile(target, data, 0o755); err != nil {
+	next := target + ".new-" + strconv.Itoa(h.ownPID())
+	if err := os.WriteFile(next, data, 0o755); err != nil {
 		fmt.Fprintf(h.stderr, "%v\n", err)
 		return 1
 	}
-	if err := os.Chmod(target, 0o755); err != nil {
+	if err := os.Chmod(next, 0o755); err != nil {
+		os.Remove(next)
+		fmt.Fprintf(h.stderr, "%v\n", err)
+		return 1
+	}
+	if err := os.Rename(next, target); err != nil {
+		os.Remove(next)
 		fmt.Fprintf(h.stderr, "%v\n", err)
 		return 1
 	}

@@ -1679,7 +1679,8 @@ build the image.
 the repository's one Redis version, the one the functional image builds, the
 image `make test-functional-container` runs the functional tier in. Every other
 place that names a Redis version equals it: the CI installer's source build
-(`tools/ci/installredis.go`), the image's README,
+(`tools/ci/installredis.go`), the test harness's `RedisVersion`
+(`internal/testredis/testredis.go`), the image's README,
 `docs/nova-table/README.md`, and every phrase of the living tree that writes a
 three-part version right after the word Redis (`Redis <v>`, `Redis (<v>)`,
 `redis-server <v>`, `--redis-version <v>`, `redis-<v>.tar.gz`,
@@ -1720,12 +1721,14 @@ read``.
 feature generation and are not read: a minimum is written with one or two parts
 (`Redis 7 or later`), the version the repository runs in full. A file of a kind
 not listed (`.cfg`, `.sql`, `.tsv`) is not read. CI's functional job does not
-run in the image: it runs `make test-functional` on the runner's own
-`redis-server`, and the installer keeps a `redis-server` already on the runner's
-PATH, so a runner can be on another version than the one the image builds. The
-rule cannot read what `apt` or Homebrew installs on a runner or the
-`redis-server` a runner already holds, and cannot check a sha256 against a
-version offline: the image build's `sha256sum -c` checks it against the tarball.
+run in the image: it runs `make test-functional` on the runner's
+`redis-server`. The installer puts the pinned build first on PATH (it builds it
+into `$HOME/.local/bin` when the first `redis-server` on PATH reports another
+version, #5151), and `internal/testredis` refuses a `redis-server` that reports
+another version, naming the version found and the one wanted. The rule itself
+cannot read the `redis-server` a runner holds, and cannot check a sha256 against
+a version offline: the image build's `sha256sum -c` checks it against the
+tarball.
 
 ### `cardtemplates` — no card template carries a command only one platform has
 

@@ -102,7 +102,7 @@ RUN arch="$(dpkg --print-architecture)" \
 # Redis 8, the wording the tests expect (internal/redisfn's test texts are
 # Redis 8's); Redis 8.10.2 is also
 # the release `go run ./tools/ci install-redis-server` builds where the
-# distribution has none. This ARG is the repository's one Redis version:
+# first redis-server on PATH reports another version. This ARG is the repository's one Redis version:
 # internal/ci's TestRedisIsOneVersionEverywhere holds every other place that
 # names one to it.
 FROM apt-base AS redis-build

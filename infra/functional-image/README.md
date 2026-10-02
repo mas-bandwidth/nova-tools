@@ -27,8 +27,9 @@ one. Postgres is 16: it is the first directory the fixtures search
 `go run ./tools/ci install-postgres` installs. Redis is 8: the tests read Redis
 8's error wording (the texts in `internal/redisfn`'s tests are Redis 8's), and
 Redis 8.10.2 is the
-release `go run ./tools/ci install-redis-server` builds where the distribution
-has none. It is the repository's one Redis version:
+release `go run ./tools/ci install-redis-server` builds where the first
+redis-server on PATH reports another version, and the one `internal/testredis`
+accepts. It is the repository's one Redis version:
 `TestRedisIsOneVersionEverywhere` (`internal/ci`) reads every place that names
 one and is red when two differ.
 
