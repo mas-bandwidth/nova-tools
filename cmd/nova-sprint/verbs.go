@@ -54,7 +54,7 @@ func init() {
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
 		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
 		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
-		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
+		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--tier <tier>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
@@ -1695,17 +1695,22 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 }
 
 func (a *app) cmdRework(args []string, stdout, stderr io.Writer) int {
-	var fix, ans *string
+	var fix, ans, tier *string
 	return a.setVerb("rework", args, stdout, stderr, false, func(fs flagSet) {
 		fix = fs.String("fix", "", "the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work")
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+		tier = fs.String("tier", "", "the tier ("+cardhdr.RouteList+") this attempt and every later deal of the card draws its route from, over its brief's line 1, kept on the card; a card whose brief pins a model is refused")
 	}, func(ids []string, s *sel) string {
+		var why []string
 		if len(ids) == 0 && s.stream == "" {
-			return "wants ids (or --group, --stream); --fix <text> for all, else each primary's own finding or report"
+			why = append(why, "wants ids (or --group, --stream); --fix <text> for all, else each primary's own finding or report")
 		}
-		return ""
+		if *tier != "" && !cardhdr.IsRoute(*tier) {
+			why = append(why, "--tier wants "+cardhdr.RouteList+", found "+oneline.Escape(*tier))
+		}
+		return strings.Join(why, "; ")
 	}, func(ids []string, s *sel, c *common) store.Step {
-		return store.ReworkStep(sprint.ReworkReq{Sel: s.sel(ids), Fix: *fix, Answers: answers(*ans), Who: c.actor})
+		return store.ReworkStep(sprint.ReworkReq{Sel: s.sel(ids), Fix: *fix, Answers: answers(*ans), Tier: *tier, Who: c.actor})
 	})
 }
 
