@@ -79,7 +79,7 @@ usage:
   nova-config kinds [--json]
   nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--json]
   nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]
-  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>] [--kind <kind>] [--dry-run] [--json]
+  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] --as <name> [--kind <kind>] [--dry-run] [--json]
   nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>] [--timeout <duration>]
   nova-config <kind> add <name> --<field> <value> ... --as <name> [--dry-run] [--json]
   nova-config <kind> set <name> --<field> <value> ... --as <name> [--dry-run] [--json]
@@ -1406,17 +1406,12 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		}
 		kinds = []string{*kind}
 	}
-	var actor string
-	if !*check {
-		var err error
-		actor, err = actorName(*as, d.getenv)
-		if err != nil {
-			problems = append(problems, err.Error())
-		}
-	} else if *as != "" {
-		actor = *as
-	} else if v := d.getenv(envActor); v != "" {
-		actor = v
+	// The dry run makes every refusal the real run makes, in its order: --as
+	// too, though it records nothing (docs/STANDARD.md, section 2, "A verb that
+	// writes has a dry run").
+	actor, err := actorName(*as, d.getenv)
+	if err != nil {
+		problems = append(problems, err.Error())
 	}
 	dsn, err := c.dsn(d.getenv)
 	if err != nil {

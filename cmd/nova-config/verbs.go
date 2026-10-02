@@ -74,7 +74,7 @@ var toolExamples = map[string]string{
 	"kinds":     "nova-config kinds",
 	"migrate":   "nova-config migrate --file try.json",
 	"status":    "nova-config status --file try.json",
-	"apply":     "nova-config apply --dry-run --redis 127.0.0.1:6379 --file try.json",
+	"apply":     "nova-config apply --dry-run --redis 127.0.0.1:6379 --as a1 --file try.json",
 	"inventory": "nova-config inventory --fixture fleet/testdata/inventory-fixture.yml",
 	"version":   "nova-config version",
 }
