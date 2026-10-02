@@ -32,7 +32,7 @@ internal/secrets 22
 internal/sprint 6
 internal/sprint/store 4
 internal/subproc 1
-internal/swarm 42
+internal/swarm 38
 internal/testguard 5
 internal/tokens 2
 internal/tool 5

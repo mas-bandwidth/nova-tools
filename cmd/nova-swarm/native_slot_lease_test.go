@@ -2,13 +2,13 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,8 +55,12 @@ func TestNativeIgnoresTheRetiredSlotsStore(t *testing.T) {
 	cardPath := filepath.Join(root, "card.md")
 	write(t, cardPath, "RESULT: schema-card sha=aaaaaaaaaaaa\nKIND: schema\na schema card\n")
 	store := slotShares(t, "capacity\t1\nreserve\t0\nswarm-batman\t1\n")
-	// The holder is ALIVE (this test's own pid), so the seat is held and never reaped.
-	require.NoError(t, swarm.MakeSlotLease(store, "held-1", "swarm-batman", os.Getpid(), "held", time.Now().UTC().Add(time.Hour)))
+	// The holder is ALIVE (this test's own pid), so the seat is held and never reaped. The
+	// lease is written in the retired store's own shape, a directory under <store>/slots
+	// holding a file `lease`, since the code that wrote it went with the slots verb.
+	held := filepath.Join(store, "slots", "held-1")
+	require.NoError(t, os.MkdirAll(held, 0o755))
+	write(t, filepath.Join(held, "lease"), fmt.Sprintf("owner=swarm-batman\npid=%d\nlabel=held\nuntil=2099-01-01T00:00:00Z\n", os.Getpid()))
 	before := slotLeaseCount(t, store)
 
 	var stdout, stderr bytes.Buffer

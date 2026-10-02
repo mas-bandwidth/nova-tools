@@ -20,15 +20,13 @@ takes no new card and stops when the last is reported).`
 
 // verbExit is each verb's own exit codes.
 var verbExit = map[string]string{
-	"lint":          "exit codes: 0 the card is clean (a NOTE line is advice and changes nothing); 1 a drift, each on its LINT DRIFT line; 2 could not run: a missing flag, a file that cannot be read, a bad invocation",
-	"verify":        "exit codes: 0 the result holds its contract; 1 it does not (the line says why); 2 could not run: a missing flag, a file that cannot be read, a receipt that cannot be written",
-	"worker":        "exit codes: 0 WORKER OK; 1 the description was read and drifts, each on its WORKER DRIFT line; 2 it cannot be read, or a bad invocation",
-	"worker check":  "exit codes: 0 WORKER OK; 1 the description was read and drifts, each on its WORKER DRIFT line; 2 it cannot be read, or a bad invocation",
-	"member":        "exit codes: 0 it stopped as asked (--once, --ticks); 2 could not run: a missing flag, a directory that cannot be made; 3 its binary was replaced on disk (MEMBER STOP: its supervisor starts the new one; with children running it first takes no new card and stops when the last is reported)",
-	"native":        "exit codes: 0 the child exited 0 (the NATIVE line's OK, or INCOMPLETE and its why=, is the verdict); 1 the child was killed (its deadline, a TERM) or exited 255; any other code is the child's own; 2 could not run: a missing flag, a wall, a card or a worker description that is not there",
-	"slots take":    "exit codes: 0 the leases are granted; 2 refused: the owner's share or the bench is full (SLOTS REFUSED names the holders), a missing flag, or a store that cannot be read",
-	"doctor":        "exit codes: 0 the binaries agree, or there is one to read; 2 they drift, one shadows the other, or one cannot be read (the DOCTOR line says which)",
-	"slots release": "exit codes: 0 the leases named are freed; 2 a lease's holder still runs (SLOTS KEPT; --force frees it), a missing flag or a store that cannot be read",
+	"lint":         "exit codes: 0 the card is clean (a NOTE line is advice and changes nothing); 1 a drift, each on its LINT DRIFT line; 2 could not run: a missing flag, a file that cannot be read, a bad invocation",
+	"verify":       "exit codes: 0 the result holds its contract; 1 it does not (the line says why); 2 could not run: a missing flag, a file that cannot be read, a receipt that cannot be written",
+	"worker":       "exit codes: 0 WORKER OK; 1 the description was read and drifts, each on its WORKER DRIFT line; 2 it cannot be read, or a bad invocation",
+	"worker check": "exit codes: 0 WORKER OK; 1 the description was read and drifts, each on its WORKER DRIFT line; 2 it cannot be read, or a bad invocation",
+	"member":       "exit codes: 0 it stopped as asked (--once, --ticks); 2 could not run: a missing flag, a directory that cannot be made; 3 its binary was replaced on disk (MEMBER STOP: its supervisor starts the new one; with children running it first takes no new card and stops when the last is reported)",
+	"native":       "exit codes: 0 the child exited 0 (the NATIVE line's OK, or INCOMPLETE and its why=, is the verdict); 1 the child was killed (its deadline, a TERM) or exited 255; any other code is the child's own; 2 could not run: a missing flag, a wall, a card or a worker description that is not there",
+	"doctor":       "exit codes: 0 the binaries agree, or there is one to read; 2 they drift, one shadows the other, or one cannot be read (the DOCTOR line says which)",
 }
 
 // verbEffect is what running a verb does beyond printing, the last line of its -h, in the
@@ -39,6 +37,7 @@ var verbEffect = map[string]string{
 	"doctor":       "inspection: reads, writes nothing",
 	"lint":         "inspection: reads, writes nothing",
 	"template":     "inspection: prints a template, writes nothing",
+	"worker":       "inspection: reads, writes nothing",
 	"worker check": "inspection: reads, writes nothing",
 	"native":       "delivery: runs the card's harness, which calls the model's provider, and writes the job directory under --root",
 	"member":       "delivery: joins a sprint's fleet through --server, runs its cards as native children, pushes their commits and opens their pull requests",

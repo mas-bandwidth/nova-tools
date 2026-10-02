@@ -1,3 +1,2 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 1
-internal/swarm/slots.go:takeSlotLeases:blank 1 a dead worker's card that cannot be returned to queue/ is lost with no line; takeSlotLeases has no writer, and the slot is granted anyway
+# ceiling: 0

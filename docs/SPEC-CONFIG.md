@@ -156,8 +156,8 @@ and it just works"). Nothing else takes part: not the machine's `slots`, not
 any friend row, not any beat, and no Redis is read. A machine with a width of
 1 or more is a member of the sprint's fleet; a machine with width 0 (the
 default) is not. It is a static share, the same on every read of the same row:
-the CI legs running on the machine and every other child are taken off at the
-take, by a lease from the machine's one slot store, never in the width.
+the cards already running on the machine are counted at the sprint's take
+(docs/SPEC-SPRINT.md), never in the width.
 `nova-config machine width <name>` prints it (`Widths`,
 `internal/config/width.go`), and `nova-sprint fleet sync` moves it to the
 fleet table. Until migration 0012 the width was derived (the machine's `slots`

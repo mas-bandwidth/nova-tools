@@ -46,8 +46,7 @@ var bareFlagLineRE = regexp.MustCompile(`(?m)^  --[a-z][a-z0-9-]*( <[^>]+>)?$`)
 
 func TestEveryFlagOfEveryVerbSaysWhatItWants(t *testing.T) {
 	t.Parallel()
-	for _, verb := range [][]string{{"native"}, {"member"}, {"verify"}, {"template"}, {"profile"}, {"doctor"}, {"lint"},
-		{"slots", "init"}, {"slots", "take"}, {"slots", "release"}, {"slots", "list"}} {
+	for _, verb := range [][]string{{"native"}, {"member"}, {"verify"}, {"template"}, {"profile"}, {"doctor"}, {"lint"}} {
 		help := swarmHelp(t, append(verb, "-h")...)
 		assert.Contains(t, help, "flags:\n", "%v", verb)
 		assert.Empty(t, bareFlagLineRE.FindAllString(help, -1), "%v -h lists a flag with no description", verb)
@@ -66,20 +65,6 @@ func TestWorkerCheckSaysNoAtOneAndCouldNotRunAtTwo(t *testing.T) {
 	assert.Equal(t, 2, exit, "a description that cannot be read is a check that could not run")
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, "nova-swarm worker check REFUSED: the worker description cannot be read")
-}
-
-func TestSlotsListRefusesWhatIsNoStoreAndCountsAnEmptyOne(t *testing.T) {
-	t.Parallel()
-	exit, stdout, stderr := runSwarm(t, "slots", "list", "--store", filepath.Join(t.TempDir(), "nosuch"))
-	assert.Equal(t, 2, exit)
-	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "is no slot store (it holds no shares.tsv); run: nova-swarm slots init --store")
-
-	store := slotShares(t, "capacity\t1\nreserve\t0\nalice\t1\n")
-	exit, stdout, _ = runSwarm(t, "slots", "list", "--store", store)
-	assert.Equal(t, 0, exit)
-	assert.Contains(t, stdout, "SLOTS OK store=")
-	assert.Contains(t, stdout, " leases=0\n")
 }
 
 // The card template's own lines left unfilled are named, one NOTE each, under the OK the
