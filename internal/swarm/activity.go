@@ -3,7 +3,7 @@ package swarm
 // Child activity: what tells a working card from a dead one when neither writes a byte.
 //
 // Idle was a property of one file: a card whose log had not grown for --idle was killed.
-// The loop raised --idle when work stayed alive without log growth.
+// The work was alive and the log was not, so the loop raised --idle to
 // 900 s, which only delays the same kill. A card is idle when NOTHING moved: not its log and
 // not its process tree.
 //

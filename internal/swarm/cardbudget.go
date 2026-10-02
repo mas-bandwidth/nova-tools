@@ -36,7 +36,7 @@ func CardCacheRead(u ProviderUsage) (int, bool) {
 // assistant lines, or the usage row count where the log has fewer, because the two routes keep the
 // harness's words in two different files: the log to count is
 // `<job>/harness-output.log`, since
-// `native` never writes `harness.log`."
+// `native` never writes `harness.log`.
 //
 // THE NAMES ARE NOT INTERCHANGEABLE. `harness.log` has two owners on the native route
 // already -- a batch pins its runner's stdout to it, which is where the NATIVE OK line
