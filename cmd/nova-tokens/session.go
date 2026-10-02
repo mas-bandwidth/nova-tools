@@ -15,12 +15,39 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
+
+// mkdirAllRefuses is the refusal os.MkdirAll(path) would give before it makes anything:
+// path, or the nearest ancestor it would stop at, exists and is no directory. It walks
+// the path the way MkdirAll does (trailing separators, then the parent's prefix), so the
+// error is MkdirAll's own, word for word. What only making the directory can find (a
+// parent that is read-only) is not known without making it.
+func mkdirAllRefuses(path string) error {
+	if fi, err := os.Stat(path); err == nil {
+		if fi.IsDir() {
+			return nil
+		}
+		return &os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
+	}
+	i := len(path)
+	for i > 0 && os.IsPathSeparator(path[i-1]) {
+		i--
+	}
+	j := i
+	for j > 0 && !os.IsPathSeparator(path[j-1]) {
+		j--
+	}
+	if j > 1 {
+		return mkdirAllRefuses(path[:j-1])
+	}
+	return nil
+}
 
 func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("session")
@@ -74,10 +101,14 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// The fold. One day file per day the session's turns fell on, merged by source the way
 	// every other fold merges: this run recomputes the rows its own source wrote and keeps
 	// every other row exactly as it is. A dry run reads the day files and writes nothing.
+	mkdir := func() error { return os.MkdirAll(*out, 0o755) }
+	if *dryRun {
+		mkdir = func() error { return mkdirAllRefuses(*out) }
+	}
+	if err := mkdir(); err != nil {
+		return refuseVerb(s, "TOKENS", fmt.Sprintf("cannot open --out: %s", oneline.Err(err)))
+	}
 	if !*dryRun {
-		if err := os.MkdirAll(*out, 0o755); err != nil {
-			return refuseVerb(s, "TOKENS", fmt.Sprintf("cannot open --out: %s", oneline.Err(err)))
-		}
 		release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
 		if err != nil {
 			return refuseVerb(s, "TOKENS", oneline.Err(err))

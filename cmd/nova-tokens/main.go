@@ -80,7 +80,7 @@ Every verb but version takes --json: the same result as one JSON object on stdou
 refusal included. A verb that writes takes --dry-run: it is the real run's own plan --
 it reads what the real run reads and refuses what the real run refuses -- prints what it
 would write with dry_run=true on its last line, and writes nothing (ledger --dry-run dials
-no store). The one difference: a dry fold takes no fold.lock, so it neither waits for nor
+no store). The one difference: a dry fold or session takes no fold.lock, so it neither waits for nor
 refuses on a fold holding one. --opencode under --dry-run (and under sources) still reads a
 copy of the database, made in a new directory of the run's own under --scratch
 (.nova-tokens-dry-run-*) and removed before it exits: --scratch is left as it was. ` + "`<verb> -h`" + ` lists a verb's flags and states its effect.
@@ -1268,8 +1268,14 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return s.done(1, *max)
 	}
 	fmt.Fprint(s.out(), body)
-	if *notePath != "" && !*dryRun {
-		if err := atomicfile.Write(filepath.Clean(*notePath), []byte(body), 0o644); err != nil {
+	if *notePath != "" {
+		// A dry run checks the note's path exactly as the write would (atomicfile.Check)
+		// and refuses what it refuses; only the write itself is skipped.
+		write := func() error { return atomicfile.Write(filepath.Clean(*notePath), []byte(body), 0o644) }
+		if *dryRun {
+			write = func() error { return atomicfile.Check(filepath.Clean(*notePath), 0o644) }
+		}
+		if err := write(); err != nil {
 			r.add("--note " + *notePath + ": " + err.Error())
 			return r.print(stderr)
 		}

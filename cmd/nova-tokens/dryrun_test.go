@@ -80,3 +80,48 @@ func TestEveryDryRunLeavesTheWholeTreeAsItWas(t *testing.T) {
 		})
 	}
 }
+
+// A dry run is the real run's own plan: the same validation and the same refusals, with
+// only the final write skipped. Each row is an invocation the real run refuses or fails;
+// with --dry-run it must answer the same, line for line.
+func TestADryRunRefusesExactlyWhatTheRealRunRefuses(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	bench := filepath.Join(root, "bench")
+	copyExampleTree(t, filepath.Join("testdata", "example-bench"), bench)
+	out := mkdir(t, filepath.Join(root, "out"))
+	repos, tr := filepath.Join(bench, "repos.tsv"), filepath.Join(bench, "transcripts")
+	aFile := write(t, filepath.Join(root, "a-file"), "not a directory\n")
+	session := write(t, filepath.Join(root, "session.jsonl"), msg("s1", "2026-09-11T10:00:00Z", "claude-opus-5", map[string]int{"input_tokens": 3})+"\n")
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench="+tr), 0)
+	report := []string{"report", "--who", "ada", "--day", "2026-09-11", "--repos", repos, "--claude", "bench=" + tr}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		exit int
+	}{
+		{"fold with no flags", []string{"fold"}, 2},
+		{"fold into a file", []string{"fold", "--out", aFile, "--day", "2026-09-11", "--repos", repos, "--claude", "bench=" + tr}, 2},
+		{"fold with no rules file", []string{"fold", "--out", out, "--day", "2026-09-11", "--repos", filepath.Join(root, "none.tsv"), "--claude", "bench=" + tr}, 2},
+		{"fold with --scratch and no --opencode", []string{"fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench=" + tr, "--scratch", root}, 2},
+		{"report with no --who", []string{"report", "--day", "2026-09-11", "--repos", repos, "--claude", "bench=" + tr}, 2},
+		{"report --note into a missing directory", append(append([]string(nil), report...), "--note", filepath.Join(root, "missing", "note.txt")), 2},
+		{"report --note onto a directory", append(append([]string(nil), report...), "--note", out), 2},
+		{"ledger with no --redis", []string{"ledger", "--out", out, "--day", "2026-09-11"}, 2},
+		{"ledger whose user has no password", []string{"ledger", "--out", out, "--day", "2026-09-11", "--redis", "127.0.0.1:0",
+			"--user", "bench", "--password-env", "NOVA_TOKENS_TEST_UNSET_PASSWORD_VARIABLE"}, 1},
+		{"session with no transcript", []string{"session", "--out", out}, 2},
+		{"session --out a file", []string{"session", "--claude-session", session, "--out", aFile}, 2},
+		{"session --out below a file", []string{"session", "--claude-session", session, "--out", filepath.Join(aFile, "out")}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			real := invoke(t, tc.args...)
+			dry := invoke(t, append(append([]string(nil), tc.args...), "--dry-run")...)
+			assert.Equal(t, tc.exit, real.exit, "the real run: %s", real.all())
+			assert.Equal(t, real.exit, dry.exit, "--dry-run answered %s", dry.all())
+			assert.Equal(t, real.stderr, dry.stderr)
+		})
+	}
+}

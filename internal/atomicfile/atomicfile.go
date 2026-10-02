@@ -297,60 +297,13 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts .
 			fn(&opt)
 		}
 	}
-	if path == "" {
-		return fmt.Errorf("atomicfile: path is empty")
-	}
-
-	if filepath.Clean(path) != path {
-		return fmt.Errorf("atomicfile: path %q is not clean: use filepath.Clean", path)
-	}
-
-	if perm&^0o777 != 0 {
-		return fmt.Errorf("atomicfile: unsupported file mode %04o for %q: only permissions 0000-0777 supported", perm, path)
-	}
-
-	base := filepath.Base(path)
-	if len(base) > maxBaseNameLen {
-		return fmt.Errorf("atomicfile: base name of %q exceeds maximum length %d: name too long", path, maxBaseNameLen)
-	}
-
 	if h == nil {
 		h = defaultHooks()
 	}
-
-	dir := filepath.Dir(path)
-	// Lstat, not Stat. Stat follows a symlink parent, so the directory looks real
-	// and the temporary file is created in the link target. Do not compare
-	// EvalSymlinks to the lexical path: on macOS /tmp is /private/tmp.
-	dirInfo, err := h.lstat(dir)
-	if err != nil {
-		return wrapErr(fmt.Sprintf("atomicfile: parent directory for %q", path), err)
+	if err := check(path, perm, opt, h); err != nil {
+		return err
 	}
-	if dirInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("atomicfile: parent directory %q for %q is a symlink: pass the real directory", dir, path)
-	}
-	if !dirInfo.IsDir() {
-		return fmt.Errorf("atomicfile: parent directory %q for %q is not a directory", dir, path)
-	}
-
-	if _, err := h.evalSymlinks(dir); err != nil {
-		return wrapErr(fmt.Sprintf("atomicfile: resolve parent directory for %q", path), err)
-	}
-
-	targetInfo, err := h.lstat(path)
-	if err == nil {
-		if opt.noReplace {
-			return wrapErr(fmt.Sprintf("atomicfile: create %q", path), os.ErrExist)
-		}
-		if targetInfo.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("atomicfile: target %q is a symlink", path)
-		}
-		if targetInfo.IsDir() {
-			return fmt.Errorf("atomicfile: target %q is a directory", path)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return wrapErr(fmt.Sprintf("atomicfile: stat %q", path), err)
-	}
+	dir, base := filepath.Dir(path), filepath.Base(path)
 
 	f, err := h.createTemp(dir, base, perm)
 	if err != nil {
@@ -416,4 +369,74 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts .
 	_ = h.syncDir(dir)
 
 	return publishedErr
+}
+
+// Check answers whether Write would refuse path before writing anything: every check
+// Write makes before it creates its temporary file, in the same order and with the same
+// error. A caller that plans a write without making it (a --dry-run) calls Check and
+// refuses exactly what the write would. What only the write can find (a full disk, a
+// read-only directory) is not known here.
+func Check(path string, perm os.FileMode, opts ...Option) error {
+	var opt options
+	for _, fn := range opts {
+		if fn != nil {
+			fn(&opt)
+		}
+	}
+	return check(path, perm, opt, defaultHooks())
+}
+
+// check is Write's validation of path, before anything is created.
+func check(path string, perm os.FileMode, opt options, h *hooks) error {
+	if path == "" {
+		return fmt.Errorf("atomicfile: path is empty")
+	}
+
+	if filepath.Clean(path) != path {
+		return fmt.Errorf("atomicfile: path %q is not clean: use filepath.Clean", path)
+	}
+
+	if perm&^0o777 != 0 {
+		return fmt.Errorf("atomicfile: unsupported file mode %04o for %q: only permissions 0000-0777 supported", perm, path)
+	}
+
+	base := filepath.Base(path)
+	if len(base) > maxBaseNameLen {
+		return fmt.Errorf("atomicfile: base name of %q exceeds maximum length %d: name too long", path, maxBaseNameLen)
+	}
+
+	dir := filepath.Dir(path)
+	// Lstat, not Stat. Stat follows a symlink parent, so the directory looks real
+	// and the temporary file is created in the link target. Do not compare
+	// EvalSymlinks to the lexical path: on macOS /tmp is /private/tmp.
+	dirInfo, err := h.lstat(dir)
+	if err != nil {
+		return wrapErr(fmt.Sprintf("atomicfile: parent directory for %q", path), err)
+	}
+	if dirInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("atomicfile: parent directory %q for %q is a symlink: pass the real directory", dir, path)
+	}
+	if !dirInfo.IsDir() {
+		return fmt.Errorf("atomicfile: parent directory %q for %q is not a directory", dir, path)
+	}
+
+	if _, err := h.evalSymlinks(dir); err != nil {
+		return wrapErr(fmt.Sprintf("atomicfile: resolve parent directory for %q", path), err)
+	}
+
+	targetInfo, err := h.lstat(path)
+	if err == nil {
+		if opt.noReplace {
+			return wrapErr(fmt.Sprintf("atomicfile: create %q", path), os.ErrExist)
+		}
+		if targetInfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("atomicfile: target %q is a symlink", path)
+		}
+		if targetInfo.IsDir() {
+			return fmt.Errorf("atomicfile: target %q is a directory", path)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return wrapErr(fmt.Sprintf("atomicfile: stat %q", path), err)
+	}
+	return nil
 }
