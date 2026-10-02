@@ -133,7 +133,7 @@ func Kinds() []string {
 // KindDeclared says whether the KIND: line names a shape of work the tool declares.
 // SPEC-TOOLWORK.md hygiene rule 6: there is no default kind, and a kind the table does not hold
 // is refused. It was accepted silently and unlocked nothing, so a card carrying a kind
-// nobody had ever implemented came back clean (#1848).
+// nobody had ever implemented came back clean.
 func KindDeclared(name string) bool {
 	_, set := loadKinds()
 	return set[name]

@@ -211,7 +211,7 @@ type waitAllow struct {
 // (waits, net, goenv, testbins, templates) and of the `file spell date reason`
 // card template list: a row is keyed by its first two fields, every list only
 // shrinks, and a missing file is an empty list -- a tree with nothing parked in
-// it is the goal (nova-tools#4339).
+// it is the goal.
 var FileLineListOptions = allowlist.Options{Key: allowlist.Fields(2), Ceiling: true, MissingIsEmpty: true}
 
 // FileLineKey is a finding's key in those lists, the first two fields of the row

@@ -96,7 +96,7 @@ func Load(ctx context.Context, client *redis.Client) error {
 }
 
 // LoadMissing installs the embedded library only when the server holds no
-// nova_sprint library, and never replaces one it holds (#3620). A verb that
+// nova_sprint library, and never replaces one it holds. A verb that
 // loads on the way to its FCALL (card push, drain and release, the
 // reconciler's calls and expire duty) runs whatever binary its host has; with
 // Load, an older binary REPLACEd the deployed library with its own and every
