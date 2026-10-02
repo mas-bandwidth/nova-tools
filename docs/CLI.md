@@ -1829,7 +1829,7 @@ See [SPEC-CAIRN.md](SPEC-CAIRN.md).
 nova-cairn open --store ./checkpoints --session session-1 --publish never
 nova-cairn append --store ./checkpoints --session session-1 --entry note-1 --text "the words to keep" --publish never
 nova-cairn index --store ./checkpoints --max 20
-nova-cairn receipt --store ./checkpoints --session session-1 --entry note-1
+nova-cairn receipt --store ./checkpoints --session session-1 --entry note-1 [--text]
 ```
 
 Reuse stable session and entry IDs for retries. The same ID and bytes are a
@@ -1842,6 +1842,9 @@ Every line names the entry's `source=`. `open --source <ptr>` records the
 session's pointer; an `append` with no `--source` carries that pointer, and an
 `append --source` names the entry's own. `index` and `receipt` print what the
 entry holds, and `source=-` is an entry with no pointer at all.
+`receipt --text` also includes the stored words as a `text` fact in plain and
+JSON output. Nested entries return their exact stored text; bench-file entries
+return the whitespace-trimmed indexed section body.
 
 Two store shapes are read. The tool's own is `sessions/<id>.md` with `entries/`
 and `log.jsonl` beside it. A **bench store** keeps one markdown file per session
