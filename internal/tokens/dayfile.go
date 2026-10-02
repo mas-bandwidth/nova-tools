@@ -20,7 +20,7 @@ import (
 // goes through internal/atomicfile to a unique temporary sibling in the same directory
 // and lands by one atomic rename, with best-effort parent-directory fsync. Whole is not
 // the same as recomputed -- a fold recomputes the rows ITS OWN declared sources wrote and
-// carries the rest of the file's rows over unchanged (MergeDay). Unique temporary
+// carries the rest of the file's rows over unchanged. Unique temporary
 // sibling files guarantee that temporary files never collide; fold locking (lock.go)
 // serializes concurrent final updates. A stranded temporary left by an interrupted fold is
 // preserved, and `check` steps over valid day-file temporaries so wreckage of a killed
