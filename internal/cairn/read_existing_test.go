@@ -28,6 +28,9 @@ func TestFlatReadMetadataOrderingAndNestedPrecedence(t *testing.T) {
 	require.Equal(t, len("late prose"), rc.Bytes, "flat metadata=%+v", rc)
 	require.Equal(t, "unknown", rc.Policy, "flat metadata=%+v", rc)
 	require.Empty(t, rc.Source, "flat metadata=%+v", rc)
+	text, err := EntryText(store, "flat", "late")
+	require.NoError(t, err, "flat entry text")
+	require.Equal(t, "late prose", text, "flat entry text")
 	require.Equal(t, Ledger{Sessions: 2, Entries: 3}, Coverage(store), "coverage")
 	// A flat duplicate of a nested session is not a second record and cannot
 	// replace its entry metadata, even if its own contents are malformed.

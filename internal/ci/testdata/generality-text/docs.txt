@@ -33,7 +33,7 @@ docs/SPEC-CONFIG.md:rowan 2
 docs/SPEC-CONFIG.md:space 2
 docs/SPEC-CONFIG.md:stella 2
 docs/SPEC-CONFIG.md:studio 2
-docs/SPEC-RELEASE.md:johnny 4
+docs/SPEC-RELEASE.md:johnny 1
 docs/SPEC-RELEASE.md:rowan 1
 docs/SPEC-SANDBOX.md:glenn 1
 docs/SPEC-SANDBOX.md:johnny 1
@@ -68,4 +68,4 @@ docs/SPEC.md:space 16
 docs/SPEC.md:studio 1
 docs/TESTING.md:space 1
 docs/TESTS.md:emma 4
-docs/TESTS.md:rowan 3
+docs/TESTS.md:rowan 2

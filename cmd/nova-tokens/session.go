@@ -24,9 +24,9 @@ import (
 
 func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("session")
-	session := fs.String("claude-session", "", "")
-	out := fs.String("out", "", "")
-	day := fs.String("day", "", "")
+	session := fs.String("claude-session", "", "one Claude Code session transcript jsonl")
+	out := fs.String("out", "", "directory for the resulting daily token file")
+	day := fs.String("day", "", "one UTC day to write as YYYY-MM-DD; defaults to every stamped day")
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " session", err.Error())
 	}

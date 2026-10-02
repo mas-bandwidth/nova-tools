@@ -132,6 +132,11 @@ func ReadFrame(path string) (Frame, error) {
 // JobName is the frame's text in the job directory, the first thing the child reads.
 const JobName = "JOB.md"
 
+// ReadTitle begins the first line of a read's JOB.md in every profile, and of no work's: a
+// brief that speaks to its readers names it, so a work card never takes itself for a read (a
+// work card of the 5000-card load test, 2026-10-01, ended "nothing to do: no PR to review").
+const ReadTitle = "# JOB: read"
+
 // PushedName is the file in the job directory the git shim records each push in:
 // branch, head and checkout top, tab separated, one line a push.
 const PushedName = ".sprint/pushed.tsv"

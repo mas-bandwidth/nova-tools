@@ -431,12 +431,13 @@ func budgetText(seconds float64) string {
 	return strconv.FormatFloat(seconds, 'f', -1, 64) + "s"
 }
 
-// ExitCode is the enforced verdict (the nightly leg's): 2 when any package or
-// test is over budget or any test is an unledgered SLEEPS skip, 0 when none
-// is. Verdict is what a leg exits with.
+// ExitCode is the enforced verdict (the nightly leg's): 1, the check ran and
+// said no, when any package or test is over budget or any test is an
+// unledgered SLEEPS skip, 0 when none is; 2 is left to a run that could not
+// read its input. Verdict is what a leg exits with.
 func (r Report) ExitCode() int {
 	if len(r.Over) > 0 || len(r.OverTests) > 0 || len(r.Sleepers) > 0 {
-		return 2
+		return 1
 	}
 	return 0
 }
@@ -505,11 +506,12 @@ func (l Load) LoadLine() string {
 
 // Verdict is what the check prints and its exit code. Every CI-SLOW line and
 // the CI-LOAD line are printed on every leg, so the time is always measured.
-// The exit code never reads the load:
+// The exit code never reads the load, and a no is 1 (the check ran and said
+// no), apart from the 2 of a run that could not read its input:
 //
-//   - an unledgered SLEEPS skip (a CI-SLEEPS line) is 2 on every leg: it is
+//   - an unledgered SLEEPS skip (a CI-SLEEPS line) is 1 on every leg: it is
 //     what the test does, a static fact;
-//   - a CI-SLOW line is 2 only when enforce is set, which one caller does: the
+//   - a CI-SLOW line is 1 only when enforce is set, which one caller does: the
 //     nightly whole-tree run on the idle reference leg (ci.yml's schedule
 //     branch of the test step, `make test SLOWTESTS_ENFORCE=1`). Everywhere
 //     else it is a printed measurement and exit 0.
@@ -525,7 +527,7 @@ func Verdict(r Report, load Load, enforce bool, ledger string) ([]string, int) {
 	lines = append(lines, load.LoadLine())
 	code := 0
 	if len(sleeps) > 0 || (enforce && len(slow) > 0) {
-		code = 2
+		code = 1
 	}
 	return lines, code
 }

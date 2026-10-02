@@ -53,13 +53,14 @@ type Claim struct {
 	Line    int // first source line of the matched claim, before markdown flattening
 	Verdict Verdict
 	Text    string
+	Match   string // the negative words that made the sentence a claim
 }
 
 // claim matches a sentence carrying a first-person self/capability
 // assertion. The bounded context either side keeps a match to roughly one
 // sentence without needing a real parser.
 var claim = regexp.MustCompile(`(?i)[^.!?]{0,120}\b(I am|I'm|I have never|I always|I never|` +
-	`I cannot|I can't|I do not|I don't|my \w+ is|makes me|I tend|I struggle|I fail|` +
+	`I cannot|I can't|I can not|I do not|I don't|my \w+ is|makes me|I tend|I struggle|I fail|` +
 	`reliably|every time|in one direction)\b[^.!?]{0,160}[.!?]`)
 
 // negative is the vocabulary that turns a first-person assertion into a
@@ -68,8 +69,15 @@ var claim = regexp.MustCompile(`(?i)[^.!?]{0,120}\b(I am|I'm|I have never|I alwa
 // is deliberately narrow: widening it matches bare "cannot" and flags every
 // prohibition, and scoring prohibitions is exactly what got rules weakened.
 var negative = regexp.MustCompile(`(?i)\b(fallib\w*|fail\w*|unreliab\w*|weak\w*|incapab\w*|` +
-	`confabulat\w*|neurotic|inadequa\w*|broken|bad at|poor at|blind|worst|defect\w*|` +
-	`patholog\w*|flatters|cannot (?:verify|check|see|tell|trust|reliably|do))\b`)
+	`confabulat\w*|neurotic|inadequa\w*|broken|(?:bad|poor|terrible|awful|hopeless|useless|no good) at|` +
+	`blind|worst|defect\w*|patholog\w*|flatters|(?:can ?not|can't) (?:verify|check|see|tell|trust|reliably|do|ever))\b`)
+
+// standingRule is the first class's row of the detector table (Rules): the claim markers and
+// the negative vocabulary above are the whole of it.
+var standingRule = Rule{Class: "standing", Name: string(Standing), Pattern: negative.String(),
+	Says: "a first-person claim (I am, I cannot, I always, I never, my <noun> is, I tend, I fail ...) " +
+		"carrying a word of failure: fallible, weak, broken, bad at, terrible at, worst, cannot check, cannot ever ...",
+	Finds: "I am bad at estimating time.", Passes: "I cannot merge without a read."}
 
 // dated marks a claim as a record rather than a standing property.
 var dated = regexp.MustCompile(`(?i)\b(20\d\d-\d\d-\d\d|measured|that day|that night|once,|first time)\b`)
@@ -81,14 +89,6 @@ var markup = regexp.MustCompile("[*_`>#|]")
 // spans lines; without this the tool is blind to both regression cases that
 // occasioned it.
 var whitespace = regexp.MustCompile(`\s+`)
-
-// Flatten strips markdown and collapses all whitespace to single spaces.
-// Exported because a text check that matches against unflattened text is
-// blind to any claim spanning a hard wrap, and a shared implementation is
-// one true source for that fix.
-func Flatten(text string) string {
-	return strings.TrimSpace(whitespace.ReplaceAllString(markup.ReplaceAllString(text, ""), " "))
-}
 
 // Scan classifies every negative self/capability claim in text.
 //
@@ -102,14 +102,15 @@ func Scan(text string) []Claim {
 	for _, span := range claim.FindAllStringIndex(flat, -1) {
 		m := flat[span[0]:span[1]]
 		s := strings.TrimSpace(m)
-		if !negative.MatchString(s) {
+		word := negative.FindString(s)
+		if word == "" {
 			continue
 		}
 		v := Standing
 		if dated.MatchString(s) {
 			v = Dated
 		}
-		out = append(out, Claim{Line: lines[span[0]+strings.Index(m, s)], Verdict: v, Text: s})
+		out = append(out, Claim{Line: lines[span[0]+strings.Index(m, s)], Verdict: v, Text: s, Match: word})
 	}
 	return out
 }
@@ -121,31 +122,51 @@ func Base(p string) string {
 	return path.Base(strings.ReplaceAll(p, `\`, "/"))
 }
 
-// flattenWithLines performs Flatten's byte transformations while retaining the
+// flattenWithLines strips markdown and collapses all whitespace to single
+// spaces, so a claim spanning a hard wrap is one sentence, while retaining the
 // original line for each output byte. Repeated sentences and hard wraps keep
 // their own locations; searching the original text for a flattened match cannot.
+//
+// A HEADING AND A BLANK LINE END A SENTENCE. A hard wrap joins two lines of one
+// sentence, but the line break on either side of a heading or a blank line is a
+// boundary the writer drew: joining across it glued "# Journal" onto the claim
+// under it and reported the claim on the heading's line. A '.' is inserted at
+// that break, so the claim pattern, which stops at a terminator, starts after it.
 func flattenWithLines(text string) (string, []int) {
 	var flat []byte
 	var lines []int
-	line := 1
-	for i := 0; i < len(text); i++ {
-		b := text[i]
-		originalLine := line
-		if b == '\n' {
-			line++
-		}
+	emit := func(b byte, line int) {
 		if strings.ContainsRune("*_`>#|", rune(b)) {
-			continue
+			return
 		}
 		switch b {
 		case ' ', '\t', '\n', '\r', '\f':
 			if len(flat) > 0 && flat[len(flat)-1] == ' ' {
-				continue
+				return
 			}
 			b = ' '
 		}
 		flat = append(flat, b)
-		lines = append(lines, originalLine)
+		lines = append(lines, line)
+	}
+	boundary := func(s string) bool {
+		s = strings.TrimSpace(s)
+		return s == "" || strings.HasPrefix(s, "#")
+	}
+	split := strings.Split(text, "\n")
+	for i, raw := range split {
+		for j := 0; j < len(raw); j++ {
+			emit(raw[j], i+1)
+		}
+		if i+1 < len(split) {
+			if boundary(raw) || boundary(split[i+1]) {
+				emit('.', i+1)
+			}
+			emit('\n', i+1)
+		}
+	}
+	if len(flat) == 0 {
+		return "", nil
 	}
 	raw := string(flat)
 	trimmed := strings.TrimSpace(raw)

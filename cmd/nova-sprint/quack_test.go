@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -73,6 +74,40 @@ func TestQuackCutsStampedCardsThatAlternateTiersAndPassTheLint(t *testing.T) {
 	assert.NotEqual(t, stamp, second[0][len("quack-"):len("quack-")+12], "each pass has its own stamp")
 }
 
+// A quack brief's read paragraph is for a read alone, and says how to tell: by JOB.md's
+// first line, which every profile writes for a read and for no work card, a work card whose
+// id begins "read" included. It judges the work's diff from the start JOB.md names, never
+// against the base's tip. On the 5000-card load test (2026-10-01) the brief said "JOB.md
+// says kind read", which no JOB.md says, and a work card ended "nothing to do: no PR to
+// review yet"; readers that diffed against dev's tip took every card landed since for
+// deletions in the work.
+func TestQuackBriefTellsAReadByJobMdsFirstLine(t *testing.T) {
+	t.Parallel()
+	const id = "quack-0123456789ab-a-001"
+	brief := quackBrief(id, "a", "flash", "https://example.com/quack.git", "dev", nil)
+	title := "`" + cardcontract.ReadTitle + " <card>, attempt <n>`"
+	require.Contains(t, brief, "As a read (only when JOB.md's first line is "+title)
+	assert.Contains(t, brief, "from the start commit JOB.md names")
+	assert.Contains(t, brief, "a diff against BASE's tip shows every card landed since as deleted")
+	assert.NotContains(t, brief, "kind read", "no JOB.md says it")
+
+	// the brief's title, <card> and <n> filled by any card id (no blank) and attempt
+	readTitle := regexp.MustCompile(`^` + regexp.QuoteMeta(cardcontract.ReadTitle) + ` \S+, attempt [0-9]+$`)
+	firstLine := func(s string) string { l, _, _ := strings.Cut(s, "\n"); return l }
+	st := cardcontract.Staged{Job: "/j", Repo: "/j/repo", Head: strings.Repeat("a", 40), Git: "/usr/bin/git", Start: strings.Repeat("b", 40)}
+	for _, family := range cardcontract.Families {
+		p := cardcontract.For(family)
+		for _, card := range []string{id + ".w1", "readme-fix.w1", "read.w1"} {
+			work := cardcontract.Frame{Kind: "work", Card: card, Attempt: 1, Repo: "https://example.com/quack.git", Branch: "sprint/w", BaseRef: "dev"}
+			l := firstLine(p.JobText(work, st))
+			assert.False(t, readTitle.MatchString(l), "%s: a work card's JOB.md never opens as a read's: %q", family, l)
+		}
+		read := cardcontract.Frame{Kind: "read", Card: id + ".r1.reader-a", Attempt: 1, Repo: "https://example.com/quack.git", Branch: "sprint/w", BaseRef: "dev", ReviewBase: "dev"}
+		l := firstLine(p.JobText(read, st))
+		assert.True(t, readTitle.MatchString(l), "%s: a read's JOB.md opens as the brief says: %q", family, l)
+	}
+}
+
 // One run names every problem: no streams, no count, no repository, a tier
 // that is no tier, an id given; and nothing is written.
 func TestQuackRefusesEveryMissingInputAtOnce(t *testing.T) {
@@ -86,7 +121,7 @@ func TestQuackRefusesEveryMissingInputAtOnce(t *testing.T) {
 		assert.Contains(t, errs, want)
 	}
 	assert.Equal(t, before, ta.applies(), "a refusal writes nothing")
-	assert.True(t, strings.HasPrefix(errs, "nova-sprint quack: "), errs)
+	assert.True(t, strings.HasPrefix(errs, "nova-sprint quack REFUSED: "), errs)
 }
 
 // The --op contract (docs/SPEC-SPRINT.md section 11): the same quack call

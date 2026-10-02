@@ -55,4 +55,4 @@ func IsCardContractLine(line string) bool {
 // for any tool that has to print the rule rather than apply it. It names the stopgap in
 // the same breath so a writer reading a card `cut` wrote is not told it is wrong, and so
 // that nobody has to read two documents to learn which of the two to type.
-const CardContractWanted = "`RESULT: <label> sha=<sha12>`, with the colon (SPEC-TOOLWORK.md §5 rule 7, SPEC-SWARM.md:969). The colon-less `RESULT <label> sha=` the plain `cut` template still renders is accepted as a stopgap until the renderer card of rule 7 lands, and is not the form to write"
+const CardContractWanted = "`RESULT: <label> sha=<sha12>`, with the colon. The colon-less `RESULT <label> sha=` an older renderer prints is accepted as a stopgap, and is not the form to write"

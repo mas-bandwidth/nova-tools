@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestScaffoldWritesConfinedFiles(t *testing.T) {
@@ -135,7 +137,9 @@ func TestScaffoldRuleAndVerbBasic(t *testing.T) {
 	writeTool(t, tree, "nova-ci")
 
 	// Rule
-	writtenRule, err := Rule(tree, "sample")
+	ruleFiles, err := RuleFiles(tree, "sample")
+	require.NoError(t, err, "Rule failed: %v", err)
+	writtenRule, err := Write(tree, ruleFiles)
 	if err != nil {
 		t.Fatalf("Rule failed: %v", err)
 	}
@@ -144,7 +148,9 @@ func TestScaffoldRuleAndVerbBasic(t *testing.T) {
 	}
 
 	// Verb
-	writtenVerb, err := Verb(tree, "nova-ci", "sample")
+	verbFiles, err := VerbFiles(tree, "nova-ci", "sample")
+	require.NoError(t, err, "Verb failed: %v", err)
+	writtenVerb, err := Write(tree, verbFiles)
 	if err != nil {
 		t.Fatalf("Verb failed: %v", err)
 	}
@@ -187,12 +193,12 @@ func TestVerbRefusesAToolWithNoMain(t *testing.T) {
 				_ = os.MkdirAll(filepath.Join(tree, "cmd", "tool"), 0o755)
 				_ = os.WriteFile(filepath.Join(tree, "cmd", "tool", f), []byte(src), 0o644)
 			}
-			written, err := Verb(tree, "tool", "probe")
+			planned, err := VerbFiles(tree, "tool", "probe")
 			if err == nil || !strings.Contains(err.Error(), "no func main") {
 				t.Fatalf("Verb into a tool with no func main: err %v, want a no-func-main refusal", err)
 			}
-			if len(written) != 0 {
-				t.Fatalf("Verb wrote %v despite refusing", written)
+			if len(planned) != 0 {
+				t.Fatalf("Verb wrote %v despite refusing", planned)
 			}
 			if _, err := os.Stat(filepath.Join(tree, "cmd", "tool", "probe.go")); err == nil {
 				t.Fatalf("cmd/tool/probe.go was written despite the refusal")

@@ -1,0 +1,5 @@
+# flag-usage: flags registered with no description; each row's count only falls
+# ceiling: 3
+cmd/nova-work/import.go:runImport 3 declared before the rule (tool ledger X7); the tool's author describes each flag
+cmd/nova-work/main.go:*common.bind 5 declared before the rule (tool ledger X7); the tool's author describes each flag
+cmd/nova-work/verify.go:runVerify 3 declared before the rule (tool ledger X7); the tool's author describes each flag

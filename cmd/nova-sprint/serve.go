@@ -133,19 +133,16 @@ func flagWord(words []string, name string) (value string, ok bool) {
 // which reads the config store with its caller's own credentials.
 var notServed = []string{"run", "tick", "land", "play", "fleet sync"}
 
-// serve is the server's one step: the batch's verbs run in order, each through
+// serveFrom is the server's one step: the batch's verbs run in order, each through
 // the verb's own code with its worker as the actor, and each answered. The
 // server's own words (the store, the actor) go between the verb and what the
 // worker sent. A verb the server does not run (workerVerb) is answered as a
 // usage refusal, exit 2, and the batch goes on: every verb has its own answer.
+// Local batches run any verb the server runs (verbArgs.unserved), while fleet
+// batches run a worker's verbs only.
 // One batch, and one tick, at a time (a.serial): the lock is taken here, after
 // the request is read whole, and released before any answer is written, so a
 // slow worker never holds the tick.
-func (a *app) serve(req sprintwire.Request) sprintwire.Response { return a.serveFrom(req, false) }
-
-// serveFrom is serve for a batch from this machine (local: the coordinator's, any verb
-// the server runs, verbArgs.unserved) or from the fleet (a worker's verbs only,
-// workerVerb).
 func (a *app) serveFrom(req sprintwire.Request, local bool) sprintwire.Response {
 	a.serial.Lock()
 	defer a.serial.Unlock()

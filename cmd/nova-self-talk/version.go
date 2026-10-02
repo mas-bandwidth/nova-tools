@@ -30,7 +30,7 @@ var version string
 // agree about and this verb exists to end an argument rather than to start one.
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
-		fmt.Fprintf(stderr, "nova-self-talk version: takes no flags and no arguments, got %d; run: nova-self-talk version -h\n", len(args))
+		fmt.Fprintf(stderr, "nova-self-talk version REFUSED: takes no flags and no arguments, got %d; run: nova-self-talk version -h\n", len(args))
 		return 2
 	}
 	fmt.Fprintln(stdout, buildinfo.Line("nova-self-talk", version))

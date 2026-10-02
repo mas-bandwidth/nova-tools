@@ -10,8 +10,14 @@ import (
 	"testing"
 )
 
+// The first run needs the binary alone, so it runs in an empty directory: the
+// example lines write their own manifest there, never into the checkout.
 func TestExecutableFirstRun(t *testing.T) {
-	t.Chdir("../..")
+	doc, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
 	var banner bytes.Buffer
 	update.Main("nova-update", []string{"help"}, "", &banner, &banner)
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-update")
@@ -24,10 +30,6 @@ func TestExecutableFirstRun(t *testing.T) {
 		if code == 2 {
 			t.Fatalf("%s refused: %s", line, errs.String())
 		}
-	}
-	doc, err := os.ReadFile("docs/TESTS.md")
-	if err != nil {
-		t.Fatal(err)
 	}
 	transcript, err := onboarding.FirstRun(string(doc), "nova-update")
 	if err != nil {
@@ -78,11 +80,11 @@ func TestMissingIndependentFlagsAreNamedTogether(t *testing.T) {
 // it passes on an abridged or reordered transcript; this test keeps the whole
 // promise.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
-	t.Chdir(repoRoot(t))
-	raw, err := os.ReadFile(filepath.Join("docs", "TESTS.md"))
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Chdir(t.TempDir())
 	lines, err := onboarding.FirstRun(string(raw), "nova-update")
 	if err != nil {
 		t.Fatal(err)
@@ -182,13 +184,5 @@ func repoRoot(t *testing.T) string {
 	return root
 }
 
-// REPORT has a dynamic timestamp as its second token, unlike two-word events.
-// Remove only that value; keep the field and every other output shape check.
-func firstRunShape(line string) string {
-	if strings.HasPrefix(line, "REPORT at=") {
-		fields := strings.Fields(line)
-		fields[1] = "at="
-		line = strings.Join(fields, " ")
-	}
-	return onboarding.Shape(line)
-}
+// firstRunShape is a line's event and field names, its values dropped.
+func firstRunShape(line string) string { return onboarding.Shape(line) }

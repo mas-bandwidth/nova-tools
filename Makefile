@@ -255,7 +255,8 @@ preflight:
 # 2026-09-26). What is ENFORCED on every leg is static: no unit test waits on
 # the wall clock (internal/ci: TestNoUnitTestWaitsOnTheWallClock), and a test
 # skipped with the SLEEPS marker that internal/ci/sleeps-skips_allowlist.txt does
-# not name is a CI-SLEEPS line and exit 2 here, whatever SLOWTESTS_ENFORCE says.
+# not name is a CI-SLEEPS line (slowtests exits 1) and fails the target here,
+# whatever SLOWTESTS_ENFORCE says.
 # The wall times are MEASUREMENTS: slowtests prints every CI-SLOW line and a
 # CI-LOAD line (the host's load, never read by the verdict) and exits 0 on
 # them, unless SLOWTESTS_ENFORCE=1 passes --enforce, which one caller does: the

@@ -89,6 +89,25 @@ func Write(root string, outs []Planned) (written []string, err error) {
 	return written, nil
 }
 
+// Check is Write's dry run: the same preflight over every planned file, and
+// the paths Write would lay down, with nothing written.
+func Check(root string, outs []Planned) ([]string, error) {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	// ignored: a deferred close of a root handle only read through
+	defer func() { _ = r.Close() }()
+	var rels []string
+	for _, o := range outs {
+		if err := Preflight(r, o.Rel); err != nil {
+			return nil, err
+		}
+		rels = append(rels, o.Rel)
+	}
+	return rels, nil
+}
+
 // Preflight walks rel one element at a time with Lstat so no symlink is
 // followed: a symlink anywhere on the path is refused, as is a file where a
 // directory goes and a final file that already exists. The first element that
