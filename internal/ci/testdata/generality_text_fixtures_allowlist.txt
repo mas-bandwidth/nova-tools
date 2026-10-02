@@ -71,7 +71,7 @@ internal/ci/testdata/generality/internal/redisfn.txt the Go scan's ledger: each 
 internal/ci/testdata/generality/internal/release.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/safepath.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/sandbox.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
- internal/ci/testdata/generality/internal/seatcred.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/seatcred.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/secrets.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/selftalk.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/swarm.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
@@ -84,7 +84,7 @@ internal/ci/testdata/generality/internal/update.txt the Go scan's ledger: each r
 internal/ci/testdata/generality/internal/worklang.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/yield.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/tools/ghrelease.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality_text_fixtures_allowlist.txt exact recorded fixture and ledger paths are identifiers; reasons remain required and stale entries fail
+internal/ci/testdata/generality_text_fixtures_allowlist.txt exact recorded fixture and ledger paths are identifiers, including source directory names; reasons remain required and stale entries fail
 internal/tlc/testdata/temporal-new.log captured TLC model checker output
 internal/tlc/testdata/temporal-old.log captured TLC model checker output
 internal/workgh/testdata/reliable/call-01.json recorded GitHub GraphQL reply for a public repository
