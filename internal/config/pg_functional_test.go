@@ -310,6 +310,9 @@ func TestMigrationFifteenMovesTheLoopWidthToTheMachine(t *testing.T) {
 		{"blank-word", `["nova-swarm","member","--as","a b","--width","2","--x","&<>"]`, "m1", 0, `["nova-swarm","member","--as","a b","--x","&<>"]`},
 		{"after-terminator", `["nova-swarm","member","--","--width","9"]`, "m1", 0, `["nova-swarm","member","--","--width","9"]`},
 		{"another-program", `["p","--width","12"]`, "m1", 12, `["p","--width","12"]`},
+		// the fleet's member rows: env, the endpoint names, then the member
+		{"member-env", `["/usr/bin/env","NOVA_SPRINT_REDIS_USER=bench","NOVA_SPRINT_REDIS_PASSWORD_ENV=P","~/.local/bin/nova-swarm","member","--as","m1","--width","4"]`, "m1", 4, `["/usr/bin/env","NOVA_SPRINT_REDIS_USER=bench","NOVA_SPRINT_REDIS_PASSWORD_ENV=P","~/.local/bin/nova-swarm","member","--as","m1"]`},
+		{"other-env", `["/usr/bin/env","A=b","p","--width","5"]`, "m1", 5, `["/usr/bin/env","A=b","p","--width","5"]`},
 		{"reader-2", `["p","--reader"]`, "m1", 1, `["p","--reader"]`}, // its name ends in -2 and names no machine: kept
 		// a machine whose own name ends in -2: its one reader reader-bench-2 is
 		// kept, not mistaken for a second reader of a machine named bench

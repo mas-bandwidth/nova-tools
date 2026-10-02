@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -456,10 +457,11 @@ func checkLoop(r Row) error {
 // widths"). Another program's --width is its own; migration 0015 stripped the
 // member argvs that carried one.
 func memberArgvSpellsWidth(argv []string) bool {
-	if len(argv) < 2 || argv[1] != "member" || argv[0][strings.LastIndexByte(argv[0], '/')+1:] != "nova-swarm" {
+	at, ok := memberAt(argv)
+	if !ok {
 		return false
 	}
-	for _, w := range argv[2:] {
+	for _, w := range argv[at+2:] {
 		switch {
 		case w == "--":
 			return false
@@ -468,6 +470,24 @@ func memberArgvSpellsWidth(argv []string) bool {
 		}
 	}
 	return false
+}
+
+// memberAt is the index of a nova-swarm member argv's program word: 0, or,
+// under env, the first word after env's NAME=value words (the fleet's member
+// rows run as /usr/bin/env NOVA_SPRINT_REDIS_USER=... nova-swarm member ...);
+// false when the argv is not a nova-swarm member's.
+func memberAt(argv []string) (int, bool) {
+	at := 0
+	if len(argv) > 0 && filepath.Base(argv[0]) == "env" {
+		at = 1
+		for at < len(argv) && strings.Contains(argv[at], "=") {
+			at++
+		}
+	}
+	if at+1 >= len(argv) || filepath.Base(argv[at]) != "nova-swarm" || argv[at+1] != "member" {
+		return 0, false
+	}
+	return at, true
 }
 
 // deriveCoordinator is the friend kind's Derive: the sprint row's

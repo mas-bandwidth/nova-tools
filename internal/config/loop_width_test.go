@@ -26,6 +26,9 @@ func TestALoopArgvCarryingAWidthIsRefused(t *testing.T) {
 		{"a member's --width", `["/opt/bin/nova-swarm","member","--as","m1","--width=4"]`, "its machine row's"},
 		{"a single dash", `["nova-swarm","member","-width","4"]`, "its machine row's"},
 		{"after -- it is the child's", `["nova-swarm","member","--","--width","4"]`, ""},
+		// the fleet's member rows run under env with their endpoint names first
+		{"a member under env", `["/usr/bin/env","NOVA_SPRINT_REDIS_USER=bench","~/.local/bin/nova-swarm","member","--as","m1","--width","4"]`, "its machine row's"},
+		{"another program under env", `["/usr/bin/env","A=b","/bin/other","--width","4"]`, ""},
 		{"another program's", `["/bin/other","--width","4"]`, ""},
 		{"no width", `["nova-swarm","member","--as","reader-m1","--reader"]`, ""},
 	} {

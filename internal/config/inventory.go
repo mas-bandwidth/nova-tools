@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -278,14 +277,8 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 // rendered unit environment, while every other assignment and argv word stays
 // byte-for-byte the row's. A non-member loop is untouched.
 func memberArgv(argv []string) []string {
-	if len(argv) < 3 || filepath.Base(argv[0]) != "env" {
-		return argv
-	}
-	program := 1
-	for program < len(argv) && strings.Contains(argv[program], "=") {
-		program++
-	}
-	if program+1 >= len(argv) || filepath.Base(argv[program]) != "nova-swarm" || argv[program+1] != "member" {
+	program, ok := memberAt(argv)
+	if !ok || program == 0 {
 		return argv
 	}
 	out := make([]string, 0, len(argv))
