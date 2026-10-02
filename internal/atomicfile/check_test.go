@@ -114,6 +114,35 @@ func TestCheckAppendFollowsALinkAsTheAppendDoes(t *testing.T) {
 		name  string
 		setup func(t *testing.T, root string) string
 	}{
+		{"relative missing component before dotdot", func(t *testing.T, root string) string {
+			p := filepath.Join(root, "log")
+			require.NoError(t, os.Symlink("missing/../new.log", p))
+			return p
+		}},
+		{"relative symlink component before dotdot", func(t *testing.T, root string) string {
+			require.NoError(t, os.MkdirAll(filepath.Join(root, "real", "d"), 0o755))
+			require.NoError(t, os.Symlink(filepath.Join(root, "real", "d"), filepath.Join(root, "via")))
+			// The kernel reaches real/new.log; lexical cleaning reaches root/new.log,
+			// a directory, so it incorrectly refuses the append.
+			require.NoError(t, os.Mkdir(filepath.Join(root, "new.log"), 0o755))
+			p := filepath.Join(root, "log")
+			require.NoError(t, os.Symlink("via/../new.log", p))
+			return p
+		}},
+		{"relative link chain keeps dotdot", func(t *testing.T, root string) string {
+			require.NoError(t, os.MkdirAll(filepath.Join(root, "real", "d"), 0o755))
+			require.NoError(t, os.Symlink(filepath.Join(root, "real", "d"), filepath.Join(root, "via")))
+			require.NoError(t, os.Symlink("missing/../new.log", filepath.Join(root, "real", "next")))
+			p := filepath.Join(root, "log")
+			require.NoError(t, os.Symlink("via/../next", p))
+			return p
+		}},
+		{"relative link cycle", func(t *testing.T, root string) string {
+			p := filepath.Join(root, "log")
+			require.NoError(t, os.Symlink("next", p))
+			require.NoError(t, os.Symlink("log", filepath.Join(root, "next")))
+			return p
+		}},
 		{"link into a missing directory", func(t *testing.T, root string) string {
 			p := filepath.Join(root, "log")
 			require.NoError(t, os.Symlink(filepath.Join(root, "missing", "log"), p))
@@ -144,11 +173,15 @@ func TestCheckAppendFollowsALinkAsTheAppendDoes(t *testing.T) {
 			p := tc.setup(t, real)
 			f, werr := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 			if werr == nil {
-				_ = f.Close()
+				_, err := f.WriteString("append")
+				require.NoError(t, err)
+				require.NoError(t, f.Close())
 			}
 			p = tc.setup(t, plan)
 			link, _ := os.Readlink(p)
+			before := appendTree(t, plan)
 			cerr := CheckAppend(p)
+			assert.Equal(t, before, appendTree(t, plan), "the check changed the tree")
 			assert.Equal(t, werr == nil, cerr == nil, "append: %v; check: %v", werr, cerr)
 			after, _ := os.Readlink(p)
 			assert.Equal(t, link, after, "the check changed the link")
@@ -156,4 +189,37 @@ func TestCheckAppendFollowsALinkAsTheAppendDoes(t *testing.T) {
 			assert.True(t, os.IsNotExist(err), "the check made a directory")
 		})
 	}
+}
+
+// appendTree records directories, link texts and file bytes without following links.
+func appendTree(t *testing.T, root string) map[string]string {
+	t.Helper()
+	out := make(map[string]string)
+	require.NoError(t, filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		switch {
+		case entry.Type()&os.ModeSymlink != 0:
+			text, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			out[rel] = "link:" + text
+		case entry.IsDir():
+			out[rel] = "dir"
+		default:
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			out[rel] = "file:" + string(data)
+		}
+		return nil
+	}))
+	return out
 }

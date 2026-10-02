@@ -71,7 +71,7 @@ func CheckAppend(path string) error {
 	fi, err := os.Stat(target)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		parent := filepath.Dir(target)
+		parent := appendParent(target)
 		pi, perr := os.Stat(parent)
 		if perr != nil {
 			return wrapErr(fmt.Sprintf("atomicfile: open %q", path), perr)
@@ -104,11 +104,23 @@ func referent(path string) (string, error) {
 			return "", err
 		}
 		if !filepath.IsAbs(to) {
-			to = filepath.Join(filepath.Dir(path), to)
+			to = appendParent(path) + to
 		}
 		path = to
 	}
 	return "", &fs.PathError{Op: "open", Path: path, Err: errors.New("too many levels of symbolic links")}
+}
+
+// appendParent keeps every component for the kernel to traverse: filepath.Dir
+// and Join clean missing/.. and symlink/.. before the kernel can interpret them.
+// The trailing separator also makes it a prefix for a relative link target.
+func appendParent(path string) string {
+	for i := len(path) - 1; i >= 0; i-- {
+		if os.IsPathSeparator(path[i]) {
+			return path[:i+1]
+		}
+	}
+	return filepath.VolumeName(path) + "." + string(os.PathSeparator)
 }
 
 // checkMkdirAll answers whether os.MkdirAll(dir) would succeed without making
