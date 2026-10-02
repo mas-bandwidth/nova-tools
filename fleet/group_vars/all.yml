@@ -28,6 +28,14 @@ nova_systemd_scope: user
 # alone and listed.
 nova_retire_units: []
 
+# The disk guard loops.yml adds to every machine (nova-swarm disk-guard): on
+# when true, run every nova_disk_guard_every seconds, with these arguments
+# after the --root of each loop record's argv. The scan finds the readers'
+# roots, a stopped loop's too; the glob holds the CI runners' Go build caches.
+nova_disk_guard: true
+nova_disk_guard_every: 900
+nova_disk_guard_args: ["--scan", "~/nova-bench/run", "--cache", "~/runner-*/_cache/go-build"]
+
 # The nova-secrets layout a loop with keys opens its secrets through: the
 # store, the directory of seat keys (<seat>.key) and the sops binary: nova_sops
 # when a host sets it, else the first of these that exists on the machine.

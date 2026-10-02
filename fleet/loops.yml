@@ -23,6 +23,11 @@
 # its name takes it over. --check lists each retirement as WOULD-RETIRE with its
 # file and changes nothing. A loop logs to its record's log, under
 # ~/nova-bench/loops.
+#
+# Beside the records, every machine gets one more unit, disk-guard: nova-swarm
+# disk-guard every nova_disk_guard_every seconds, which keeps the disk from
+# filling (Go caches, loop logs, stopped pools, land clones, mirror temp packs;
+# docs/FLEET.md says what removes each and when).
 - name: loop units from the loop records
   hosts: all
   gather_facts: true
@@ -35,7 +40,38 @@
     loop_other_dir: "{{ loop_user_dir if loop_system else loop_system_dir }}"
     loop_domain: "{{ 'system' if loop_system else 'gui/' ~ ansible_user_uid }}"
     loop_patterns: "{{ ['com.nova.loop.*.plist'] if loop_darwin else ['nova-loop-*.service', 'nova-loop-*.timer'] }}"
-    loop_names: "{{ nova_loops | map(attribute='name') | list }}"
+    loop_names: "{{ loop_records | map(attribute='name') | list }}"
+    # The disk guard every machine runs (nova-swarm disk-guard, docs/FLEET.md): a
+    # periodic row this play adds beside the records, its --root each root a
+    # record's argv names (--root <dir> or --root=<dir>), then
+    # nova_disk_guard_args. A record named disk-guard on the host takes its
+    # place; nova_disk_guard false leaves it out.
+    loop_guard_roots: >-
+      {%- set out = [] -%}
+      {%- for r in nova_loops -%}
+      {%- for w in r.argv -%}
+      {%- if loop.index0 > 0 and r.argv[loop.index0 - 1] == '--root' -%}{%- set _ = out.append(w) -%}{%- endif -%}
+      {%- if w.startswith('--root=') -%}{%- set _ = out.append(w[7:]) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out | unique | list }}
+    loop_guard_argv: >-
+      {%- set out = ['nova-swarm', 'disk-guard'] -%}
+      {%- for r in loop_guard_roots -%}{%- set _ = out.extend(['--root', r]) -%}{%- endfor -%}
+      {{ out + nova_disk_guard_args }}
+    loop_guard:
+      name: disk-guard
+      argv: "{{ loop_guard_argv }}"
+      seat: ""
+      keys: []
+      every: "{{ nova_disk_guard_every | int }}"
+      keepalive: false
+      width: 0
+      enabled: true
+      log: ~/nova-bench/loops/disk-guard.log
+    loop_records: >-
+      {{ nova_loops + ([loop_guard] if (nova_disk_guard | bool)
+         and 'disk-guard' not in (nova_loops | map(attribute='name') | list) else []) }}
     loop_scope: "{{ 'system' if loop_system else 'user' }}"
     loop_runtime: { XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}" }
     # The mark every unit this play writes carries (its templates' first
@@ -94,7 +130,7 @@
 
     - name: a machine with a loop that opens secrets has sops
       ansible.builtin.assert:
-        that: nova_sops != '' or nova_loops | selectattr('keys') | list | length == 0
+        that: nova_sops != '' or loop_records | selectattr('keys') | list | length == 0
         fail_msg: "{{ inventory_hostname }} has no sops at any of {{ nova_sops_candidates | join(', ') }}; install it or set nova_sops in host_vars"
         quiet: true
 
@@ -118,7 +154,7 @@
               + (item['keys'] | map('regex_replace', '^', '--require=') | list) + ['--']) if item['keys'] else [] }}
         loop_exec: "{{ loop_secrets + loop_argv }}"
         loop_log: "{{ item.log | regex_replace('^~/', nova_home ~ '/') }}"
-      loop: "{{ nova_loops }}"
+      loop: "{{ loop_records }}"
       loop_control: { label: "{{ item.name }}" }
       become: "{{ loop_system }}"
       register: loop_units
@@ -130,7 +166,7 @@
         mode: "0644"
       vars:
         l: "{{ item }}"
-      loop: "{{ nova_loops | rejectattr('keepalive') | list }}"
+      loop: "{{ loop_records | rejectattr('keepalive') | list }}"
       loop_control: { label: "{{ item.name }}" }
       become: "{{ loop_system }}"
       register: loop_timers
@@ -201,13 +237,13 @@
       become: "{{ loop_system }}"
       when: >-
         loop_darwin and item.rc | default(1) == 0 and (
-          not (nova_loops | selectattr('name', 'equalto', item.item) | first).enabled
+          not (loop_records | selectattr('name', 'equalto', item.item) | first).enabled
           or (loop_units.results | selectattr('item.name', 'equalto', item.item) | first).changed)
 
     - name: load the enabled (darwin)
       ansible.builtin.command: "launchctl bootstrap {{ loop_domain }} {{ loop_dir }}/com.nova.loop.{{ item.name }}.plist"
       changed_when: true
-      loop: "{{ nova_loops | selectattr('enabled') | list }}"
+      loop: "{{ loop_records | selectattr('enabled') | list }}"
       loop_control: { label: "{{ item.name }}" }
       become: "{{ loop_system }}"
       when: >-
@@ -237,7 +273,7 @@
           {{ ('restarted' if ((loop_units.results + (loop_timers.results | default([])))
                                | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list) else 'started')
              if item.enabled else 'stopped' }}
-      loop: "{{ nova_loops }}"
+      loop: "{{ loop_records }}"
       loop_control: { label: "{{ item.name }}" }
       environment: "{{ {} if loop_system else loop_runtime }}"
       become: "{{ loop_system }}"
@@ -273,7 +309,7 @@
     - name: the receipt
       ansible.builtin.debug:
         msg: >-
-          LOOPS host={{ inventory_hostname }} place={{ loop_dir }} records={{ nova_loops | length }}
-          enabled={{ nova_loops | selectattr('enabled') | list | length }}
+          LOOPS host={{ inventory_hostname }} place={{ loop_dir }} records={{ loop_records | length }}
+          enabled={{ loop_records | selectattr('enabled') | list | length }}
           written={{ loop_units.results | default([]) | selectattr('changed') | list | length }}
           retired={{ loop_retire | length }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}
