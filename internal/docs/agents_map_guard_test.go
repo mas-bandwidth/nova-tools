@@ -53,14 +53,14 @@ func TestCatalogRoutesAndGuardsAreValid(t *testing.T) {
 	for _, e := range DefaultCatalog {
 		dirPath := filepath.Join(root, filepath.FromSlash(e.Path))
 		st, err := os.Stat(dirPath)
-		assert.False(t, err != nil || !st.IsDir(), "catalog path %s does not exist on disk", e.Path)
+		assert.True(t, err == nil && st.IsDir(), "catalog path %s does not exist on disk", e.Path)
 
 		if strings.HasPrefix(e.Guard, "go test ./") {
 			pkgPath := strings.TrimPrefix(e.Guard, "go test ./")
 			pkgPath = strings.TrimSuffix(pkgPath, "/...")
 			absPkg := filepath.Join(root, filepath.FromSlash(pkgPath))
 			pst, statErr := os.Stat(absPkg)
-			assert.False(t, statErr != nil || !pst.IsDir(), "catalog entry %s has guard %q pointing to missing package %s", e.Path, e.Guard, pkgPath)
+			assert.True(t, statErr == nil && pst.IsDir(), "catalog entry %s has guard %q pointing to missing package %s", e.Path, e.Guard, pkgPath)
 		}
 
 		for _, m := range specRe.FindAllStringSubmatch(e.Purpose, -1) {
