@@ -119,3 +119,70 @@ func TestToolchainRootsResolveSymlinks(t *testing.T) {
 	}
 	assert.True(t, found, "a symlinked ~/sdk was dropped; it is a directory and it is the card's toolchain")
 }
+
+// TestBenchGoBinFindsTheSdkGoTheUnitPathLacks is the mechanical sprint's hurt of 2026-10-02:
+// the loop unit's PATH names no Go, so a card's bare `go` was "command not found" although
+// the wall grants the sdk tree. BenchGoBin searches env.sh's own entries before the
+// caller's PATH and names the directory the found `go` really lives in.
+func TestBenchGoBinFindsTheSdkGoTheUnitPathLacks(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the bench layouts are links into the sdk tree")
+	}
+	exe := []byte("#!/bin/sh\nexit 0\n")
+	// bench lays out a fake home: the sdk Go, and each of links as name -> target, both
+	// home-relative.
+	bench := func(t *testing.T, links map[string]string) string {
+		home := t.TempDir()
+		sdkBin := filepath.Join(home, "sdk", "go1.26.6", "bin")
+		require.NoError(t, os.MkdirAll(sdkBin, 0o755))
+		require.NoError(t, testbin.WriteExecutable(filepath.Join(sdkBin, "go"), exe, 0o755))
+		for name, target := range links {
+			require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(home, name)), 0o755))
+			require.NoError(t, os.Symlink(filepath.Join(home, target), filepath.Join(home, name)))
+		}
+		return home
+	}
+	other := t.TempDir()
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(other, "go"), exe, 0o755))
+	cases := map[string]struct {
+		links map[string]string
+		path  string
+		want  string // home-relative; "other" is the go on the caller's PATH; "" is none
+	}{
+		"a Mac bench: sdk/bin links into the sdk tree": {
+			links: map[string]string{"sdk/bin/go": "sdk/go1.26.6/bin/go"}, path: "/usr/bin:/bin", want: "sdk/go1.26.6/bin"},
+		"a linux bench: go/bin links into the sdk tree": {
+			links: map[string]string{"go/bin/go": "sdk/go1.26.6/bin/go"}, path: "/usr/bin:/bin", want: "sdk/go1.26.6/bin"},
+		"the sdk is searched before the caller's PATH": {
+			links: map[string]string{"sdk/bin/go": "sdk/go1.26.6/bin/go"}, path: other, want: "sdk/go1.26.6/bin"},
+		"no Go in the home: the caller's PATH": {path: other, want: "other"},
+		"no Go anywhere":                       {path: "/nonexistent", want: ""},
+	}
+	// A relative entry names a directory by the working directory, which inside a card is
+	// the card's own: it is never read, though it reaches a Go here.
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	rel, err := filepath.Rel(wd, other)
+	require.NoError(t, err)
+	cases["a relative PATH entry is never read"] = struct {
+		links map[string]string
+		path  string
+		want  string
+	}{path: rel, want: ""}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			home := bench(t, c.links)
+			want := ""
+			switch c.want {
+			case "":
+			case "other":
+				want, _ = filepath.EvalSymlinks(other)
+			default:
+				want, _ = filepath.EvalSymlinks(filepath.Join(home, filepath.FromSlash(c.want)))
+			}
+			assert.Equal(t, want, BenchGoBin(home, c.path))
+		})
+	}
+}
