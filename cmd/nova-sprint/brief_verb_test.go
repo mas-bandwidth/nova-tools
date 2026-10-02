@@ -73,5 +73,14 @@ func TestBriefReplacesAnUnstartedPrimarysBriefOnAStoppedSprint(t *testing.T) {
 	code, _, errs = ta.do("brief a-1 --brief-file " + good)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "a-1 is working: a card dealt, working, in review, merging or landed keeps its brief")
+	// the refusal says what changes a working card instead, whether the machine
+	// runs or not: stopping it would not let the brief be replaced
+	remedy := "run: nova-sprint drop a-1 --reason '<why>', then nova-sprint add --stream a <new id> --brief-file <path>, or once it finishes (review), nova-sprint rework a-1 --fix '<what changes>'"
+	assert.Contains(t, errs, remedy)
+	ta.ok("start")
+	code, _, errs = ta.do("brief a-1 --brief-file " + good)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, remedy)
+	assert.NotContains(t, errs, "run: nova-sprint stop")
 	ta.clean()
 }
