@@ -469,7 +469,8 @@ the flag exactly as before.
 **The rule set is the coordinator's, and the tool is general.** The required sentences are not
 one repository's. They come from a rules file, one required sentence per line:
 
-- `nova-sprint add --rules <file>` holds that add's brief to the file;
+- `nova-sprint add --rules <file>` holds that add's brief to the file, read at add time (its
+  absolute path tried is named in a refusal, as init's is);
 - `nova-sprint init --rules <file>` records the file's absolute path for the sprint (the key
   `sprint:rules`, kept by a clear and removed by teardown), and every later `add` without
   `--rules` reads it;
