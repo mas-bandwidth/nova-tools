@@ -4,7 +4,7 @@
 # section is still on the transcripts allowlist), per SPEC-TOOLWORK.md documents rule 6. One per line: `<test file>:<TestName> <the $ line, exactly as pasted>`
 # or `<test file>:<TestName> example: <a help banner's example line>`.
 #
-# TestIssue2218 checks every entry: the example is a real pasted or help example;
+# TestPlatformsMatchCILegsAndUnexecutedExamplesOnlyShrink checks every entry: the example is a real pasted or help example;
 # the named test is declared in a _test.go file of the example's tool's package;
 # the test, or a test helper it calls, reaches the comparator; it carries the
 # example's own command text (a string literal the example is, or begins with,
