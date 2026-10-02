@@ -1,7 +1,10 @@
 package workfile_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -60,19 +63,19 @@ func TestEncodeDecodeIsTheIdentity(t *testing.T) {
 			t.Parallel()
 			tree := tc.tree(t)
 			data, err := workfile.Encode(tree)
-			require.NoError(t, err)
+			require.NoError(t, err, "%s: %v", tc.name, err)
 			back, err := workfile.Decode(tc.name, data, workfile.Limits(len(data)))
-			require.NoError(t, err)
+			require.NoError(t, err, "%s: %v", tc.name, err)
 			d := workfile.Diff(back, tree, nil)
 			var first any
 			if len(d) > 0 {
 				first = d[0]
 			}
-			require.Empty(t, d, "%d differences after the round trip, first %+v", len(d), first)
+			require.Empty(t, d, "%s: %d differences after the round trip, first %+v", tc.name, len(d), first)
 			again, err := workfile.Encode(back)
-			require.NoError(t, err)
-			assert.Equal(t, data, again, "the second encoding differs")
-			assert.Equal(t, tree.Count(), back.Count(), "counts mismatch: counts %+v, want %+v", back.Count(), tree.Count())
+			require.NoError(t, err, "%s: the second encoding differs (%v)", tc.name, err)
+			assert.True(t, bytes.Equal(again, data), "%s: the second encoding differs (%v)", tc.name, err)
+			assert.Equal(t, tree.Count(), back.Count(), "%s: counts %+v, want %+v", tc.name, back.Count(), tree.Count())
 		})
 	}
 }
@@ -287,9 +290,11 @@ func TestDiffSeesRepeatsAndOrder(t *testing.T) {
 func TestPathAndURLAreOneLookupEachWay(t *testing.T) {
 	t.Parallel()
 	p, err := workfile.PathOfURL(workfile.Web + "o/r/issues/12")
+	require.NoError(t, err, "path %q %v", p, err)
 	require.Equal(t, "repos/o/r/issues/12", p, "path %q %v", p, err)
 
 	u, err := workfile.URLOfPath(p)
+	require.NoError(t, err, "url %q %v", u, err)
 	require.Equal(t, workfile.Web+"o/r/issues/12", u, "url %q %v", u, err)
 
 	t.Run("bad URLs", func(t *testing.T) {
@@ -323,4 +328,50 @@ func TestPathAndURLAreOneLookupEachWay(t *testing.T) {
 		require.Equal(t, "external", workfile.OriginOf("CONTRIBUTOR"), "origin")
 		require.Equal(t, "external", workfile.OriginOf(""), "origin")
 	})
+}
+
+type probeT struct {
+	failed  bool
+	message string
+}
+
+var _ require.TestingT = (*probeT)(nil)
+
+func (p *probeT) Errorf(format string, args ...interface{}) {
+	p.failed = true
+	p.message = fmt.Sprintf(format, args...)
+}
+
+func (p *probeT) FailNow() {
+	p.failed = true
+}
+
+func (p *probeT) Helper() {}
+
+// TestPathOfURLRetainedCheckFailsOnNonNilError proves that returning the expected
+// string plus a non-nil error passes require.Equal alone, but fails require.NoError
+// with the complete "path %q %v" diagnostic.
+func TestPathOfURLRetainedCheckFailsOnNonNilError(t *testing.T) {
+	t.Parallel()
+	mock := &probeT{}
+	p := "repos/o/r/issues/12"
+	err := errors.New("synthetic error")
+
+	// Equal alone passes when p matches, missing the non-nil error entirely.
+	require.Equal(mock, "repos/o/r/issues/12", p, "path %q %v", p, err)
+	require.False(t, mock.failed, "require.Equal alone must not fail on matching string")
+
+	// The retained require.NoError fails on non-nil error and emits the diagnostic.
+	require.NoError(mock, err, "path %q %v", p, err)
+	require.True(t, mock.failed, "require.NoError must fail on non-nil error")
+	require.Contains(t, mock.message, fmt.Sprintf("path %q %v", p, err))
+
+	// URLOfPath retained check similarly fails on non-nil error:
+	mockURL := &probeT{}
+	u := workfile.Web + "o/r/issues/12"
+	require.Equal(mockURL, workfile.Web+"o/r/issues/12", u, "url %q %v", u, err)
+	require.False(t, mockURL.failed, "require.Equal alone must not fail on matching string")
+	require.NoError(mockURL, err, "url %q %v", u, err)
+	require.True(t, mockURL.failed, "require.NoError must fail on non-nil error")
+	require.Contains(t, mockURL.message, fmt.Sprintf("url %q %v", u, err))
 }
