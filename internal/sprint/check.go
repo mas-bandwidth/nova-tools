@@ -223,7 +223,7 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 		}
 	}
 	// 11. The needs make no cycle: add refuses the add that would close one
-	// , and a store written before add walked the
+	// , and a store may hold a cycle add does not write, so its
 	// sentinels' needs may still hold one; each is named with the cards it
 	// keeps from ever being reached.
 	for _, f := range Cycles(s) {
