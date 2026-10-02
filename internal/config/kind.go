@@ -102,7 +102,7 @@ type Kind struct {
 	// Doc is the one sentence `nova-config kinds` prints about the kind.
 	Doc string
 	// Singleton is a kind of exactly one row, named as the kind is (the
-	// fleet: the fleet has exactly one coordinator at a time). Its migration
+	// fleet has exactly one coordinator at a time). Its migration
 	// creates the row, so the grammar has no add,
 	// remove or list and its set, show and history take no name
 	// (docs/SPEC-CONFIG.md, "Singleton kinds").
@@ -185,8 +185,8 @@ const CoordinatorRole = "coordinator"
 // (each names no row), and tiers last (each names routes).
 //
 // A machine's record is exactly the declared facts something reads, one
-// reader each, and contains no invented fields, so it reflects only declared
-// machine facts. Its name is the tailnet host: `ssh <name>`
+// reader each, and nothing invented. Its name is the tailnet host: `ssh <name>`
+// Its name is the tailnet host: `ssh <name>`
 // reaches it, so there is no address field ("All fleet machines must be on
 // the tailnet. This is a hard requirement."). Measured facts (os, arch,
 // cores, memory) are never typed: they come live from the machine's own
@@ -306,8 +306,8 @@ var Kinds = []*Kind{
 	},
 	{
 		// A tier's route array: the deal takes routes[index mod len] for each
-		// card of the tier, using an index that advances on the fleet table. The route
-		// array is stored in configuration so each tier controls its route order.
+		// card of the tier, the index a uint64 counter on the fleet table
+		// (internal/sprint/route.go, tla/RouteIndex.tla).
 		Name:  KindTier,
 		Table: "tiers",
 		Doc:   "a model tier's route array: the deal takes routes[index mod len] for each card of the tier, a route named twice taking two turns; one row each for " + strings.Join(RouteTiers, " and ") + ", created by migrate",
