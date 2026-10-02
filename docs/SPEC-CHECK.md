@@ -150,3 +150,41 @@ a bench or a clock; nothing below reaches a network.
 21. `TestJSONCarriesTheSameReadingAsTheLines`: `--json` parses to the same per-stream numbers, ratios, trends, verdict and absent list that the lines print, and prints no `CONVERGENCE` line.
 22. `TestTheSameTickReadTwiceIsNotTwoTicks`: one widening reading applied three times at one instant leaves the streak at one and exits 0, and the same reading at a later instant is the second tick and the red.
 23. `TestEveryChildIsBounded`: a fake forge and a fake git that hang past `--timeout` are each exit 2 naming the child and the deadline, and no stream line is printed.
+
+## nova-check exec-deadline — specification
+
+**Every subprocess has a deadline**: an unbounded `exec.CommandContext` (with `context.Background()`, `context.TODO()`, `nil`, or an untimed context) is an unbounded wait, and an escaped child process or grandchild holding a pipe end can hang the caller indefinitely. This audit rule mechanises the verification that Go code spawning processes attaches a deadline or timeout.
+
+Exit codes follow the Conventions: 0 for clean (no violations), 1 when violations are found, 2 when the tool could not run (missing flags, unreadable targets).
+
+`help` prints this line, byte for byte:
+
+```
+nova-check exec-deadline (--dir <dir> | --file <path>) [--exclude <prefix>] [--strict] [--include-tests] [--fail-max <n>]
+```
+
+### The audit rules
+
+1. **Direct Untimed Contexts are Refused**:
+   - `exec.CommandContext(context.Background(), ...)`
+   - `exec.CommandContext(context.TODO(), ...)`
+   - `exec.CommandContext(nil, ...)`
+   - `exec.CommandContext(context.WithCancel(...), ...)` without an intervening `WithTimeout` or `WithDeadline`.
+
+2. **Untimed Variable Provenance is Traced**:
+   - Context variables initialized from `context.Background()` or `context.TODO()` that are never re-assigned with `context.WithTimeout`, `context.WithDeadline`, `context.WithTimeoutCause`, or `context.WithDeadlineCause` before the call site are flagged.
+   - Variables aliased from an untimed context inherit that state.
+   - Uninitialized `var ctx context.Context` passed to `exec.CommandContext` is flagged.
+
+3. **Strict Mode for Parameters**:
+   - By default, function parameters `ctx context.Context` are treated as caller-managed.
+   - Under `--strict`, any parameter passed to `exec.CommandContext` must be wrapped with a local `WithTimeout`/`WithDeadline` or guarded by a `ctx.Deadline()` check.
+
+4. **One-Line Grammars**:
+   - Clean pass:
+     `EXEC-DEADLINE OK files=<n> exec-calls=<m> excluded=<k>`
+   - Violation findings:
+     `EXEC-DEADLINE FAIL <file>:<line>:<col>: <detail>`
+   - Summary line on failure:
+     `EXEC-DEADLINE FAIL files=<n> exec-calls=<m> violations=<t> shown=<s> excluded=<k>`
+
