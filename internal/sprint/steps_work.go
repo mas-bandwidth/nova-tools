@@ -817,7 +817,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, createEntry(card, m, Ready, c.Score, fields)),
 		change(Work, moveEntry(c, c.Row, Working, set, append(unset, "result")...)),
-	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s", c.ID, c.Col, card, m)}, ""
+	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s (fleet ready)", c.ID, c.Col, card, m)}, ""
 }
 
 // redeal deals a withdrawn work card again, into the ready queue of the up
@@ -851,7 +851,7 @@ func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexe
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, moveEntry(wc, m, Ready, set, unset...)),
 		change(Work, moveEntry(c, c.Row, Working, primary, "result")),
-	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}, ""
+	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s gen=%d (fleet ready, dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}, ""
 }
 
 // TakeReq is a worker taking its work cards. Gens names the generation the
@@ -968,7 +968,7 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	}, s.Fleet.Card)
 	for _, c := range chosen {
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, takenStamps(c, s.Now), "untaken_since"))},
-			Moved: fmt.Sprintf("%s ready -> working member=%s gen=%s", c.ID, r.As, c.F("gen"))})
+			Moved: fmt.Sprintf("%s fleet ready -> working member=%s gen=%s", c.ID, r.As, c.F("gen"))})
 	}
 	return p
 }

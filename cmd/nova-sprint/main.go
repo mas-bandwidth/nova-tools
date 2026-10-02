@@ -208,6 +208,12 @@ type common struct {
 	// card's packet), read after the step and printed with its report.
 	packets func(ctx context.Context, st *store.Store, res store.Result) []sprint.Packet
 	handed  []sprint.Packet
+	// says is what the verb tells its reader about what it did that the moves
+	// do not say (a card's id from its file, a card with no brief, a take cut
+	// short and why), printed as NOTE lines under its summary line; after, when
+	// set, adds to it from the step's result.
+	says  []string
+	after func(ctx context.Context, st *store.Store, res store.Result) []string
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {
@@ -252,7 +258,8 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep, CheckTwin: a.checkTwin}
+	// a twin is ticked by hand: no machine runs between its commands (twin.go)
+	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep, CheckTwin: a.checkTwin, ByHand: a.twinOpen(c.redis)}
 	// every verb this process runs on the store reads through one twin: a
 	// verb after the first reads only what changed (store/twin.go)
 	if a.readTwins == nil {
