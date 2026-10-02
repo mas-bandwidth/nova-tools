@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -119,10 +120,7 @@ type limitedGitBuffer struct{ bytes.Buffer }
 
 func (b *limitedGitBuffer) Write(p []byte) (int, error) {
 	if b.Len() < gitOutputCap {
-		remain := gitOutputCap - b.Len()
-		if remain > len(p) {
-			remain = len(p)
-		}
+		remain := min(gitOutputCap-b.Len(), len(p))
 		// ignored: a bytes.Buffer write never returns an error
 		_, _ = b.Buffer.Write(p[:remain])
 	}
@@ -360,12 +358,9 @@ func WithTrailer(message, what string) string {
 // rather than only the last paragraph, because a rebase, a cherry-pick or a person editing
 // a message can add lines under it, and a commit this tool made does not stop being one.
 func HasTrailer(message string) bool {
-	for _, line := range strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), TrailerKey+":") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n"), func(line string) bool {
+		return strings.HasPrefix(strings.TrimSpace(line), TrailerKey+":")
+	})
 }
 
 // HasExactTrailer reports whether a commit message carries the exact trailer key and value.
