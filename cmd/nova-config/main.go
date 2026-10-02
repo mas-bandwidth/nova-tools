@@ -72,7 +72,7 @@ usage:
   nova-config version
   nova-config kinds
   nova-config migrate [--pg <dsn>] [--print | --dry-run]
-      the role that runs migrate must own every table in schema config and be able to create in it; when it does not, migrate refuses before applying any migration and prints the ALTER TABLE config.<table> OWNER TO <role>; lines a role with the owners' rights runs once. --dry-run prints the pending migrations and that finding (MIGRATE PENDING, MIGRATE NOT-OWNED, MIGRATE WOULD-REFUSE) and applies nothing
+      the role that runs migrate must own every table in schema config and be able to create in it; when it does not, migrate refuses before applying any migration and prints the ALTER TABLE config.<table> OWNER TO <role>; lines a role with the owners' rights runs once. --dry-run prints the pending migrations and that finding (MIGRATE PENDING, MIGRATE NOT-OWNED, MIGRATE WOULD-REFUSE) and applies nothing, exiting 0 when ready=yes and 1 when ready=no
   nova-config status [--pg <dsn>] [--redis <addr>]
   nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]
   nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>] [--timeout <duration>]
@@ -135,7 +135,7 @@ the applied state and reads only Redis. Lose Redis: run nova-config apply.
 Fleet apply and inventory require explicit redis_port and pg_dsn; set both
 with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --as <actor>.
 
-exit codes: 0 done, 1 refused, 2 usage
+exit codes: 0 done, 1 refused (migrate --dry-run: ready=no, nothing attempted), 2 usage
 
 `
 
@@ -810,7 +810,9 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 // migrateDryRun prints what migrate would do and applies nothing: each
 // pending migration, each gap the role has on schema config (config.Gaps),
 // the refusal migrate would print when the role cannot apply them, and the
-// summary. It exits 0: a finding, not a refusal.
+// summary. It exits 0 when migrate would apply (ready=yes) and 1 when it
+// would refuse (ready=no), so a play or script gating on the dry run stops on
+// it; nothing was attempted, so it prints no refusal line.
 func migrateDryRun(stdout io.Writer, dsn string, have int, owners config.Ownership, pending []config.Migration, gaps []config.Gap) int {
 	for _, m := range pending {
 		fmt.Fprintf(stdout, "MIGRATE PENDING version=%d file=%s\n", m.Version, config.Value(m.Name))
@@ -824,6 +826,9 @@ func migrateDryRun(stdout io.Writer, dsn string, have int, owners config.Ownersh
 		fmt.Fprintf(stdout, "MIGRATE WOULD-REFUSE %s; run: %s\n", oneline.Escape(ownershipWhy(owners.Role, pending, gaps)), ownershipRemedy(owners.Role, gaps))
 	}
 	fmt.Fprintf(stdout, "CONFIG MIGRATE pg=%s dry-run=true role=%s from=%d pending=%d ready=%s\n", config.Value(config.Redact(dsn)), config.Value(owners.Role), have, len(pending), ready)
+	if len(gaps) > 0 {
+		return 1
+	}
 	return 0
 }
 

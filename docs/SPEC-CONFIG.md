@@ -505,7 +505,9 @@ CONFIG KINDS count=<n>
 
 Exit codes: 0 done; 1 refused (the store or Redis said no: a duplicate, a
 missing row, a ref naming no row, a row another names, a set that breaks
-the kind's `Check`, a ceiling, working copies, `CONFLICT`, a status behind); 2 usage (a flag, a value, a name on a
+the kind's `Check`, a ceiling, working copies, `CONFLICT`, a status behind;
+and `migrate --dry-run` ending `ready=no`, which prints its lines and no
+refusal line, since nothing was attempted); 2 usage (a flag, a value, a name on a
 singleton, a store that did not answer). A refusal is
 one stderr line, `nova-config <verb>: <why>; run: <next step>`.
 

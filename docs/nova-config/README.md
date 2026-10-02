@@ -66,7 +66,9 @@ rights runs in psql; migrate never changes an owner itself. `migrate
 --dry-run` prints `MIGRATE PENDING` per pending migration, `MIGRATE
 NOT-OWNED` per table the role does not own, `MIGRATE WOULD-REFUSE` with the
 same refusal when migrate would refuse, and a `CONFIG MIGRATE ... ready=yes|no`
-summary, applies nothing and exits 0.
+summary and applies nothing: it exits 0 when `ready=yes` and 1 when
+`ready=no`, so a play or script gating on it stops there (no refusal line:
+nothing was attempted).
 
 `status` is where things stand:
 

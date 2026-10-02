@@ -720,7 +720,7 @@ flags:
   --seat <string>  its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store
   --slots <string>  how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none
   --user <string>  the login the plays and seals use on it (ssh <user>@<name>)
-exit codes: 0 done, 1 refused, 2 usage
+exit codes: 0 done, 1 refused (migrate --dry-run: ready=no, nothing attempted), 2 usage
 ```
 
 `kinds` is one line per kind: its table under schema `config`, its fields in

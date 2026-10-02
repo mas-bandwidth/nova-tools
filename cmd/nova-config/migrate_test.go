@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
@@ -46,7 +47,7 @@ func TestMigrateRefusesBeforeApplyingWhenTheRoleDoesNotOwnTheTables(t *testing.T
 	assert.Equal(t, 9, h.store.version, "the refusal applied a migration")
 
 	code, out, errs = h.run(t, "migrate", "--dry-run")
-	require.Equal(t, 0, code, "dry-run: stdout %q stderr %q", out, errs)
+	require.Equal(t, 1, code, "dry-run ready=no: stdout %q stderr %q", out, errs)
 	assert.Equal(t, "", errs)
 	assert.Equal(t, "MIGRATE PENDING version=10 file=0010_sprint_reader_tier.sql\n"+
 		"MIGRATE PENDING version=11 file=0011_fleet_endpoints.sql\n"+
@@ -63,6 +64,9 @@ func TestMigrateRefusesBeforeApplyingWhenTheRoleDoesNotOwnTheTables(t *testing.T
 	for tb := range h.store.Catalog.Tables {
 		h.store.Catalog.Tables[tb] = "nova_config"
 	}
+	code, out, errs = h.run(t, "migrate", "--dry-run")
+	require.Equal(t, 0, code, "dry-run ready=yes: stdout %q stderr %q", out, errs)
+	assert.True(t, strings.HasSuffix(out, " from=9 pending=2 ready=yes\n"), "dry-run after the ALTER lines: %q", out)
 	code, out, errs = h.run(t, "migrate")
 	require.Equal(t, 0, code, "after the ALTER lines: stdout %q stderr %q", out, errs)
 	assert.Equal(t, "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=9 to=11 applied=2\n", out)
