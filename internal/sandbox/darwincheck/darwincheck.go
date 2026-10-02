@@ -54,7 +54,7 @@ type Options struct {
 	// the working directory.
 	BaseDir string
 	// NoNetwork skips the two DNS checks, the only ones that touch the network.
-	// The operator run keeps them: they are the measurement of rule 7 and a Go
+	// The operator run keeps them: they are the measurement of the DNS guarantee and a Go
 	// test is the wrong place for it.
 	NoNetwork bool
 	// DumpProfile prints the filled profile on standard output and returns 0
@@ -171,7 +171,7 @@ func (c *checker) run(o Options, git string) int {
 	// The child environment, as a swarm worker's launcher really holds it: an SSH
 	// agent socket and an agent-shaped name beside a variable that must survive.
 	// The wrapper builds the child environment from it by EXCLUSION, and the set
-	// is rule 9's exact one.
+	// is exactly the agent scrub set the env check asserts.
 	agentSock := filepath.Join(c.scratch, "secret", "agent.sock")
 	c.childEnv = childEnv([]string{
 		"SSH_AUTH_SOCK=" + agentSock,
@@ -249,8 +249,8 @@ func (c *checker) makeScratch(o Options) (err error) {
 	c.ref = filepath.Join(scratch, "ref")              // the read set: a local repo to clone --shared
 	c.secret = filepath.Join(scratch, "secret", "env") // a named secret, in NEITHER list
 	c.outside = filepath.Join(scratch, "outside")      // the write-outside target, in NEITHER list
-	c.home = filepath.Join(c.w, "home")                // rule 9: HOME inside a --write
-	c.ntmp = filepath.Join(c.w, ".nova-sandbox-tmp")   // rule 8
+	c.home = filepath.Join(c.w, "home")                // HOME inside the write set
+	c.ntmp = filepath.Join(c.w, ".nova-sandbox-tmp")   // TMPDIR inside the write set
 	for _, d := range []string{c.w, c.ref, c.home, c.ntmp, filepath.Dir(c.secret), c.outside} {
 		if err = os.MkdirAll(d, 0o755); err != nil {
 			return err
@@ -351,7 +351,7 @@ func (c *checker) sandboxArgs(profile, command string) []string {
 	}
 }
 
-// walled runs a shell command inside the wall, from the write set (rule 13: a
+// walled runs a shell command inside the wall, from the write set: a
 // working directory outside every named path is denied to getcwd(3), and every
 // git command dies with "shell-init: error retrieving current directory").
 func (c *checker) walled(command string) Result {
@@ -459,7 +459,7 @@ func (c *checker) suite(o Options) {
 		c.controlOK("cxx_compile_control", "/usr/bin/c++", "-o", filepath.Join(c.outside, "probe-ctl"), filepath.Join(w, "probe.cpp"))
 	}
 
-	// stdout to a pipe the caller drains (rule 12)
+	// stdout to a pipe the caller drains
 	if piped := c.walled("echo nova-pipe"); piped.exitCode() == 0 && strings.TrimRight(piped.Stdout, "\n") == "nova-pipe" {
 		c.ok("stdout_to_pipe")
 	} else {
@@ -498,7 +498,7 @@ func (c *checker) suite(o Options) {
 	c.waitForSocket(filepath.Join(w, "job.sock"))
 	c.expectOK("unix_socket_inside", "nc -U ./job.sock < /dev/null")
 
-	// --- rule 7: DNS resolves inside the wall, and does so because of the socket ---
+	// --- DNS resolves inside the wall, and does so because of the socket ---
 	// curl to a NAME, not an IP: any HTTP status at all means the name resolved and
 	// the connection was made (200 and 404 both count). rc=6 / 000 is "could not
 	// resolve host".
@@ -509,18 +509,18 @@ func (c *checker) suite(o Options) {
 		c.dnsChecks()
 	}
 
-	// --- rule 7: mach-lookup is narrowed, and the clipboard is the witness ---
+	// --- mach-lookup is narrowed, and the clipboard is the witness ---
 	c.expectDeny("clipboard_denied", "pbpaste > /dev/null")
 
-	// --- rule 4: a sandbox cannot be nested inside this one ---
+	// --- a sandbox cannot be nested inside this one ---
 	// A wrapped launcher must drop its own sandbox flag rather than discover this at
 	// run time: sandbox-exec: sandbox_apply: Operation not permitted.
 	c.expectDeny("nested_sandbox_refused", "/usr/bin/sandbox-exec -p '(version 1)(allow default)' /bin/sh -c true")
 
-	// --- rule 9: the agent is gone from the child environment ---
+	// --- the agent is gone from the child environment ---
 	// The caller's environment held SSH_AUTH_SOCK and GPG_AGENT_INFO; the child must
 	// hold neither, and must still hold what the caller meant to pass (the provider
-	// key arrives this way, rule 6).
+	// key arrives this way).
 	c.expectOK("env_no_ssh_auth_sock", `test -z "${SSH_AUTH_SOCK:-}" && test -z "${GPG_AGENT_INFO:-}" && test "${NOVA_KEEP:-}" = kept`)
 }
 
