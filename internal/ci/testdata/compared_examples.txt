@@ -77,3 +77,16 @@ cmd/nova-tokens/report_example_test.go:TestTheHelpReportExampleIsWhatItPrints ex
 cmd/nova-check/polish_test.go:TestPolishLinksBannerExampleMatchesOutput example: nova-check links --dir ./self
 cmd/nova-fuse/firstrun_test.go:TestInitBannerExampleThroughTheComparator example: nova-fuse init --box ./fuse-box.json
 cmd/nova-tokens/fold_example_test.go:TestHelpFoldExampleIsComparedToOutput example: nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine $ nova-memory check --root ./corpus --channels bm25 --k 2 -
+cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine $ nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
+cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine $ nova-memory quickstart --root ./corpus
+cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine $ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
+cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine $ nova-memory stats --root ./corpus
+cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine example: nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
+cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine example: nova-memory quickstart --root ./corpus
+cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine example: nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
+cmd/nova-tokens/read_examples_test.go:TestTheHelpReadingExamplesAreWhatTheyPrint example: nova-tokens check --out ./out
+cmd/nova-tokens/read_examples_test.go:TestTheHelpReadingExamplesAreWhatTheyPrint example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
+cmd/nova-tokens/read_examples_test.go:TestTheHelpReadingExamplesAreWhatTheyPrint example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
+cmd/nova-tokens/read_examples_test.go:TestTheHelpReadingExamplesAreWhatTheyPrint example: nova-tokens sum --out ./out --month 2026-09
+cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine $ nova-memory search --root ./corpus --channels bm25 --k 3 glazing minutes pressure
