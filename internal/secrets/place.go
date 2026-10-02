@@ -125,10 +125,6 @@ func storeHead(storeDir string) string {
 	return head
 }
 
-// removeUnder removes the private snapshot directory. Tests replace it to make the
-// removal fail deterministically; shipped commands always use safepath.RemoveUnder.
-var removeUnder = safepath.RemoveUnder
-
 // decryptSnapshot decrypts sealed, the seat file's bytes as place read them ONCE, from a
 // private copy, never from the store's pathname a second time: the bytes sops decrypts are
 // then exactly the bytes the receipt's blob id names, whatever happens to the store's file
@@ -139,7 +135,13 @@ var removeUnder = safepath.RemoveUnder
 // joined by errors.Join with the decrypt's or the write's own error when that step had
 // already failed, and the plaintext is zeroed and not returned, so no caller places a
 // value read through a snapshot that is still on disk.
-func decryptSnapshot(sopsPath, keyPath, file string, sealed []byte) (out []byte, err error) {
+func decryptSnapshot(sopsPath, keyPath, file string, sealed []byte) ([]byte, error) {
+	return decryptSnapshotWithRemoval(sopsPath, keyPath, file, sealed, safepath.RemoveUnder)
+}
+
+// decryptSnapshotWithRemoval keeps cleanup injection local to one call, so failure
+// probes share no mutable state with other decrypts.
+func decryptSnapshotWithRemoval(sopsPath, keyPath, file string, sealed []byte, removeUnder func(string, string) error) (out []byte, err error) {
 	dir, err := os.MkdirTemp("", "nova-secrets-place-*")
 	if err != nil {
 		return nil, fmt.Errorf("cannot make a private snapshot directory for %s: %w", file, err)

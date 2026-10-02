@@ -8,26 +8,24 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
-// errRemovalRefused is the failure the swapped remover reports.
+// errRemovalRefused is the failure the injected remover reports.
 var errRemovalRefused = errors.New("test: the snapshot's removal failed")
 
-// failSnapshotRemoval swaps removeUnder for one that removes the directory (so the test
-// leaves nothing behind) and then reports errRemovalRefused, so decryptSnapshot sees a
-// failed cleanup every time. It returns where the snapshot directory was. The swap is a
-// package var, so callers never run in parallel.
-func failSnapshotRemoval(t *testing.T) *string {
+// failSnapshotRemoval removes the directory (so the test leaves nothing behind),
+// then reports errRemovalRefused. Both the remover and captured path belong to one call.
+func failSnapshotRemoval(t *testing.T) (func(string, string) error, *string) {
 	t.Helper()
-	real := removeUnder
-	t.Cleanup(func() { removeUnder = real })
 	removed := new(string)
-	removeUnder = func(root, path string) error {
+	remove := func(root, path string) error {
 		*removed = path
-		require.NoError(t, real(root, path))
+		require.NoError(t, safepath.RemoveUnder(root, path))
 		return errRemovalRefused
 	}
-	return removed
+	return remove, removed
 }
 
 // sealedRowan is the fixture's sealed seat file and its bytes as place reads them.
@@ -43,11 +41,12 @@ func sealedRowan(t *testing.T, f *seatFixture) (string, []byte) {
 // is not a recipient of rowan.yaml) AND the snapshot's removal fails. Both errors come
 // back, the removal's no longer hidden behind the decrypt's, and no plaintext does.
 func TestDecryptSnapshotJoinsAFailedRemovalWithTheDecryptError(t *testing.T) {
+	t.Parallel()
 	f := newSeatFixture(t)
 	file, sealed := sealedRowan(t, f)
-	removed := failSnapshotRemoval(t)
+	remove, removed := failSnapshotRemoval(t)
 
-	out, err := decryptSnapshot(f.sopsPath, f.airKey, file, sealed)
+	out, err := decryptSnapshotWithRemoval(f.sopsPath, f.airKey, file, sealed, remove)
 	require.Error(t, err)
 	assert.Empty(t, out, "no plaintext comes back from a place whose snapshot was not removed")
 	assert.ErrorIs(t, err, errRemovalRefused, "the removal failure is kept beside the decrypt's")
@@ -68,6 +67,7 @@ func TestDecryptSnapshotJoinsAFailedRemovalWithTheDecryptError(t *testing.T) {
 // TestDecryptSnapshotFailsAndClearsWhenOnlyTheRemovalFails: the decrypt succeeds, the
 // removal fails, and the call returns the removal's error and no plaintext.
 func TestDecryptSnapshotFailsAndClearsWhenOnlyTheRemovalFails(t *testing.T) {
+	t.Parallel()
 	f := newSeatFixture(t)
 	file, sealed := sealedRowan(t, f)
 
@@ -77,8 +77,8 @@ func TestDecryptSnapshotFailsAndClearsWhenOnlyTheRemovalFails(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(out), "GH_TOKEN")
 
-	removed := failSnapshotRemoval(t)
-	out, err = decryptSnapshot(f.sopsPath, f.rowanKey, file, sealed)
+	remove, removed := failSnapshotRemoval(t)
+	out, err = decryptSnapshotWithRemoval(f.sopsPath, f.rowanKey, file, sealed, remove)
 	require.Error(t, err)
 	assert.Empty(t, out, "no plaintext comes back from a place whose snapshot was not removed")
 	assert.ErrorIs(t, err, errRemovalRefused)
