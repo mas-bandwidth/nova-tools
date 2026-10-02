@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -40,7 +41,7 @@ func reapSurvivors(t *testing.T) {
 				}
 				return nil
 			})
-			r := streams(func(_ []string, _, stderr io.Writer) int { return reapAll(false, stderr) }).Do(t).Exit(0)
+			r := testkit.Streams(func(_ []string, _, stderr io.Writer) int { return reapAll(false, stderr) }).Do(t).Exit(0)
 			assert.Equal(t, c.order, b.signals)
 			assert.Contains(t, r.Stderr, "SANDBOX REAP volume=nova-orphan procs=2 deleted=yes", r)
 			assert.Contains(t, strings.Join(b.vols.calls, " "), "delete:disk3s9")
