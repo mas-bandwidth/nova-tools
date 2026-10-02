@@ -20,20 +20,26 @@ import (
 // command for this tool, is a command a first run can type.
 const ExampleHeading = "\nexample:\n"
 
-// SetupHeading is the line above a banner's one setup line: the shell line a
-// first run types before its examples work, because it makes the files they
+// SetupHeading is the line above a banner's setup block: the shell steps a
+// first run types before its examples work, because they make the files they
 // read. A test that runs the examples runs it first (SetupLine).
 const SetupHeading = "setup (run it first, in an empty directory):"
 
-// SetupLine returns the line under a banner's SetupHeading, trimmed, or ""
-// when the banner has none.
+// SetupLine returns the contiguous block under a banner's SetupHeading, with
+// only the banner's two-space indentation removed, or "" when it has none.
 func SetupLine(usage string) string {
 	_, tail, found := strings.Cut(usage, "\n"+SetupHeading+"\n")
 	if !found {
 		return ""
 	}
-	line, _, _ := strings.Cut(tail, "\n")
-	return strings.TrimSpace(line)
+	var lines []string
+	for _, line := range strings.Split(tail, "\n") {
+		if strings.TrimSpace(line) == "" {
+			break
+		}
+		lines = append(lines, strings.TrimPrefix(line, "  "))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // FirstRunHeading is the subsection a stranger reads before anything else

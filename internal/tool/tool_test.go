@@ -788,11 +788,13 @@ func TestPositionalArguments(t *testing.T) {
 }
 
 // TestASetupLineIsPrintedAboveTheExamples pins Tool.Setup: the banner prints
-// the one line under onboarding's setup heading, after the exit codes and
+// the block under onboarding's setup heading, after the exit codes and
 // above the example block, which it leaves as it was; a tool without one
 // prints no heading.
 func TestASetupLineIsPrintedAboveTheExamples(t *testing.T) {
 	t.Parallel()
+	multi := memo()
+	multi.Setup = "mkdir -p ./notes\nprintf '%s' \\\n  'a note' > ./notes/a.md"
 	for _, tc := range []struct {
 		name  string
 		tool  *Tool
@@ -801,6 +803,8 @@ func TestASetupLineIsPrintedAboveTheExamples(t *testing.T) {
 	}{
 		{"a tool with a setup line", memo(), "mkdir -p ./notes",
 			"exit codes: 0 done, 2 could not run.\n\n" + onboarding.SetupHeading + "\n  mkdir -p ./notes\n\nexample:\n  nova-memo search --root ./notes glass\n"},
+		{"a tool with multiple setup steps", multi, multi.Setup,
+			"exit codes: 0 done, 2 could not run.\n\n" + onboarding.SetupHeading + "\n  mkdir -p ./notes\n  printf '%s' \\\n    'a note' > ./notes/a.md\n\nexample:\n  nova-memo search --root ./notes glass\n"},
 		{"a tool without one", demo(), "", "exit codes: 0 done, 1 said no, 2 could not run.\n\nexample:\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

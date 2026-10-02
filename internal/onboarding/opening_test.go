@@ -89,15 +89,17 @@ func TestHowItWorksLengthStopsAtTheFirstRunOrABlankLine(t *testing.T) {
 	}
 }
 
-// TestSetupLine reads the one line under a banner's setup heading: trimmed,
-// "" when the banner has no heading, and only the first line under it.
+// TestSetupLine reads the setup block up to its blank separator and removes
+// banner indentation without changing shell continuation indentation.
 func TestSetupLine(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, banner, want string }{
 		{"the line under the heading", "x: y\n\n" + SetupHeading + "\n  mkdir -p ./in && cp a b\n\nexample:\n  x run\n", "mkdir -p ./in && cp a b"},
 		{"no heading", "x: y\n\nexample:\n  x run\n", ""},
 		{"the heading inside a sentence is no heading", "x: y " + SetupHeading + "\n  mkdir z\n", ""},
-		{"one line only", "x\n" + SetupHeading + "\n  one\n  two\n", "one"},
+		{"multiple steps", "x\n" + SetupHeading + "\n  one\n  two\n\nexample:\n  x run\n", "one\ntwo"},
+		{"shell continuation", "x\n" + SetupHeading + "\n  printf '%s' \\\n    '{' \\\n    '}' > ./x\n  printf '\\n' >> ./x\n\nexample:\n  x run\n", "printf '%s' \\\n  '{' \\\n  '}' > ./x\nprintf '\\n' >> ./x"},
+		{"whitespace separator", "x\n" + SetupHeading + "\n  one\n  \nexample:\n  x run\n", "one"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

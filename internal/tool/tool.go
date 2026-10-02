@@ -57,7 +57,7 @@ type Tool struct {
 	// only ones Out.As may put in place of OK or FAIL: at most MaxWords,
 	// upper case, none of OK, FAIL, REFUSED, MORE or NOTE (Problems).
 	Words []string
-	// Setup, when set, is the one shell line a first run types before the
+	// Setup, when set, is the shell block a first run types before the
 	// examples work (it makes the files they read): the banner prints it
 	// under SetupHeading, above the example block.
 	Setup string
@@ -380,7 +380,11 @@ func (t *Tool) Banner() string {
 	b.WriteString(json + ": the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
 	fmt.Fprintf(&b, "exit codes: %s\n\n", t.ExitTable)
 	if setup := strings.TrimSpace(t.Setup); setup != "" {
-		fmt.Fprintf(&b, "%s\n  %s\n\n", SetupHeading, setup)
+		fmt.Fprintf(&b, "%s\n", SetupHeading)
+		for _, line := range strings.Split(setup, "\n") {
+			fmt.Fprintf(&b, "  %s\n", line)
+		}
+		b.WriteString("\n")
 	}
 	b.WriteString("example:\n")
 	for _, v := range t.verbs() {

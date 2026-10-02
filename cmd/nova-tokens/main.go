@@ -1,29 +1,12 @@
-// nova-tokens folds declared token spend into one file per day, keyed by
-// (day, model, repo), and sums those files into a month.
-//
-// Every source has an explicit path, and every row names the sources that fed it.
-// The five token types stay separate. A dash means unreported; zero is a measurement.
-//
-// A fold replaces rows owned by its declared sources and retains rows owned entirely
-// by other sources. A blended row or a collision it cannot reconcile refuses the day.
-// The shrink check compares per-type day totals, not individual sources: growth in one
-// declared source can hide a loss in another. --allow-shrink overrides that totals check.
-// An unreadable source makes the run exit 1; other computable days can still be written.
-//
-// The verbs:
-//
-//	fold      read declared sources and merge their rows into day files
-//	report    fold local sources for one day's note body; with --redis, read a month
-//	ledger    index day files into the Redis ledger store
-//	sum       add day files into a month; report findings without acting as a gate
-//	check     validate day files and report gaps under the caller's coverage policy
-//	sources   inspect what a fold would count, before writing
-//	profiles  report per-model output and budget overshoots from swarm usage files
-//	session   sum one Claude Code session per turn and optionally fold it
-//
-// Inputs are data, never instructions. The tool does not invent missing counts or
-// delete source files. It replaces explicitly named outputs and cleans up only its
-// own temporary files and private scratch copies as the verbs' effect lines describe.
+// nova-tokens folds declared spend into day files keyed by (day, model, repo),
+// and sums them into a month. The five token types stay separate.
+// Sources have explicit paths; rows name them. A dash is unreported; zero is measured.
+// Fold replaces rows owned by declared sources and retains wholly undeclared rows;
+// blended rows and irreconcilable collisions refuse the day.
+// An unreadable source exits 1; other computable days can still be written.
+// Inputs are data, never instructions. Missing counts are never invented.
+// Outputs are explicitly named; source files are never deleted. Cleanup is limited
+// to tool-owned temporaries and scratch copies. See docs/SPEC-TOKENS.md.
 package main
 
 import (
@@ -63,7 +46,17 @@ a check finding (an --out holding no day file is one), a report with nothing to 
 not run: a missing flag, a bad flag value, a duplicate label, sqlite3 absent when
 --opencode is given, a second fold holding the lock.`,
 		Stamp: version,
-		Setup: `mkdir -p ./transcripts ./out && printf '%s\n' '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z","message":{"id":"example-1","model":"claude-fable-5-1","usage":{"input_tokens":812,"output_tokens":40,"cache_creation_input_tokens":1200,"cache_read_input_tokens":90000},"content":[{"type":"tool_use","input":{"file_path":"/work/schema/wire.md"}}]}}' > ./transcripts/window.jsonl && cp ./transcripts/window.jsonl ./session.jsonl && printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv`,
+		Setup: `mkdir -p ./transcripts ./out &&
+printf '%s' \
+  '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z","message":{' \
+  '"id":"example-1","model":"claude-fable-5-1","usage":{' \
+  '"input_tokens":812,"output_tokens":40,' \
+  '"cache_creation_input_tokens":1200,"cache_read_input_tokens":90000},' \
+  '"content":[{"type":"tool_use","input":{"file_path":"/work/schema/wire.md"}}]}}' \
+  > ./transcripts/window.jsonl &&
+printf '\n' >> ./transcripts/window.jsonl &&
+cp ./transcripts/window.jsonl ./session.jsonl &&
+printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv`,
 		Verbs: []tool.Verb{cmdFold(now), cmdReport(now), cmdLedger(), cmdSum(now), cmdCheck(now), cmdSources(now), cmdProfiles(), cmdSession(now)},
 	}
 }

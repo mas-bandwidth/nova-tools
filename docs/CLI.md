@@ -1264,12 +1264,19 @@ Provider usage can be supplied with `--provider <kind>:<label>=<file>`, where ki
 
 ### First run
 
-The transcript lives in [TESTS.md](TESTS.md), where a test executes it against `cmd/nova-tokens/testdata/example-bench` on every run. For a first try from the binary alone, `nova-tokens help` includes one setup command that writes a small transcript and rules file into the current directory, followed by commands to fold, check and sum it. Here is the same setup separated into steps. Run it in an empty directory: it creates `transcripts` and `out` and replaces the named example files. Keep the JSON record on one line.
+The transcript lives in [TESTS.md](TESTS.md), where a test executes it against `cmd/nova-tokens/testdata/example-bench` on every run. For a first try from the binary alone, `nova-tokens help` includes the setup below, followed by commands to fold, check and sum it. Run it in an empty directory: it creates `transcripts` and `out` and replaces the named example files. The continued `printf` joins the JSON pieces into one record; the next step ends its line.
 
 ```sh
-mkdir -p ./transcripts ./out
-printf '%s\n' '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z","message":{"id":"example-1","model":"claude-fable-5-1","usage":{"input_tokens":812,"output_tokens":40,"cache_creation_input_tokens":1200,"cache_read_input_tokens":90000},"content":[{"type":"tool_use","input":{"file_path":"/work/schema/wire.md"}}]}}' > ./transcripts/window.jsonl
-cp ./transcripts/window.jsonl ./session.jsonl
+mkdir -p ./transcripts ./out &&
+printf '%s' \
+  '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z","message":{' \
+  '"id":"example-1","model":"claude-fable-5-1","usage":{' \
+  '"input_tokens":812,"output_tokens":40,' \
+  '"cache_creation_input_tokens":1200,"cache_read_input_tokens":90000},' \
+  '"content":[{"type":"tool_use","input":{"file_path":"/work/schema/wire.md"}}]}}' \
+  > ./transcripts/window.jsonl &&
+printf '\n' >> ./transcripts/window.jsonl &&
+cp ./transcripts/window.jsonl ./session.jsonl &&
 printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
 nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
 nova-tokens check --out ./out
