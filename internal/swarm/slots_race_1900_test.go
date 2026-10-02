@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // ISSUE #1900. The store had no lock. TakeSlotLeases reaped, counted the lease
@@ -53,25 +55,18 @@ func TestConcurrentTakesNeverExceedCapacity(t *testing.T) {
 		close(start)
 		wg.Wait()
 
-		if granted > 1 {
-			t.Fatalf("trial %d: a capacity-1 store granted %d seats", trial, granted)
-		}
+		require.LessOrEqual(t, granted, 1, "trial %d: a capacity-1 store granted %d seats", trial, granted)
 		entries, err := os.ReadDir(filepath.Join(store, "slots"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		live := 0
 		for _, e := range entries {
 			if e.IsDir() {
 				live++
 			}
 		}
-		if live > 1 {
-			t.Fatalf("trial %d: a capacity-1 store holds %d lease directories", trial, live)
-		}
-		if granted != 1 || live != 1 {
-			t.Fatalf("trial %d: the one seat was not granted at all (granted=%d live=%d); a lock that refuses everybody is not the fix", trial, granted, live)
-		}
+		require.LessOrEqual(t, live, 1, "trial %d: a capacity-1 store holds %d lease directories", trial, live)
+		require.Equal(t, 1, granted, "trial %d: the one seat was not granted at all (granted=%d live=%d); a lock that refuses everybody is not the fix", trial, granted, live)
+		require.Equal(t, 1, live, "trial %d: the one seat was not granted at all (granted=%d live=%d); a lock that refuses everybody is not the fix", trial, granted, live)
 	}
 }
 
@@ -85,19 +80,14 @@ func TestTheStoreLockDoesNotChangeTheSharesFormat(t *testing.T) {
 	body := "capacity\t4\nreserve\t1\nalice\t2\nbob\t2\n"
 	writeShares(t, store, body)
 
-	if _, _, _, _, _, ok, err := TakeSlotLeases(store, "alice", 1, time.Hour, "card", time.Now().UTC(), os.Getpid()); err != nil || !ok {
-		t.Fatalf("a store made before the lock existed no longer takes: ok=%v err=%v", ok, err)
-	}
+	_, _, _, _, _, ok, err := TakeSlotLeases(store, "alice", 1, time.Hour, "card", time.Now().UTC(), os.Getpid())
+	require.NoError(t, err, "a store made before the lock existed no longer takes: ok=%v err=%v", ok, err)
+	require.True(t, ok, "a store made before the lock existed no longer takes: ok=%v err=%v", ok, err)
 	raw, err := os.ReadFile(filepath.Join(store, "shares.tsv"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != body {
-		t.Fatalf("shares.tsv was rewritten:\n got: %q\nwant: %q", raw, body)
-	}
-	if _, err := os.Stat(filepath.Join(store, SlotStoreLockName)); err != nil {
-		t.Fatalf("the lock file was not made beside shares.tsv: %v", err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, body, string(raw), "shares.tsv was rewritten:\n got: %q\nwant: %q", raw, body)
+	_, err = os.Stat(filepath.Join(store, SlotStoreLockName))
+	require.NoError(t, err, "the lock file was not made beside shares.tsv: %v", err)
 }
 
 // A take against a store that was never `slots init`ed still says shares.tsv, and does
@@ -107,20 +97,14 @@ func TestTakeAgainstAStoreThatWasNeverInitedStillSaysSharesTSV(t *testing.T) {
 
 	store := filepath.Join(t.TempDir(), "never-made")
 	_, _, _, _, _, ok, err := TakeSlotLeases(store, "alice", 1, time.Hour, "card", time.Now().UTC(), os.Getpid())
-	if ok || err == nil {
-		t.Fatalf("a take against a store with no shares.tsv granted: ok=%v err=%v", ok, err)
-	}
-	if _, serr := os.Stat(store); serr == nil {
-		t.Fatalf("the refused take made the store directory at %s", store)
-	}
+	require.False(t, ok, "a take against a store with no shares.tsv granted: ok=%v err=%v", ok, err)
+	require.Error(t, err, "a take against a store with no shares.tsv granted: ok=%v err=%v", ok, err)
+	_, serr := os.Stat(store)
+	require.Error(t, serr, "the refused take made the store directory at %s", store)
 }
 
 func writeShares(t *testing.T, store, body string) {
 	t.Helper()
-	if err := os.MkdirAll(store, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(store, "shares.tsv"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(store, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(store, "shares.tsv"), []byte(body), 0o644))
 }

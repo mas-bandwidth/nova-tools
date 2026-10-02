@@ -172,7 +172,7 @@ func (app *application) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
 	write, receipt := app.writeFlags(fs)
-	definition := fs.Bool("definition", false, "also remove the saved column definition; keep snapshots from earlier epochs")
+	definition := fs.Bool("definition", false, "also remove the saved column definition, the identity hash and the rows of every epoch; keep the definition snapshots of earlier epochs")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())

@@ -8,6 +8,8 @@ package main
 // said so; the block did not).
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,13 +21,9 @@ import (
 func outputGrammar(t *testing.T) map[string]string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.False(t, err != nil, err)
 	raw, err := os.ReadFile(filepath.Join(root, "docs", "SPEC-TOKENS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.False(t, err != nil, err)
 	var block, cur []string
 	in := false
 	for _, line := range strings.Split(string(raw), "\n") {
@@ -45,9 +43,7 @@ func outputGrammar(t *testing.T) map[string]string {
 			cur = append(cur, line)
 		}
 	}
-	if block == nil {
-		t.Fatal("docs/SPEC-TOKENS.md has no OUTPUT GRAMMAR block carrying `TOKENS FOLD at=`; this test was reading the wrong thing and would have passed by checking nothing")
-	}
+	require.False(t, block == nil, "docs/SPEC-TOKENS.md has no OUTPUT GRAMMAR block carrying `TOKENS FOLD at=`; this test was reading the wrong thing and would have passed by checking nothing")
 	out := map[string]string{}
 	for _, l := range block {
 		f := strings.Fields(l)
@@ -158,26 +154,22 @@ func checkAgainstGrammar(t *testing.T, grammar map[string]string, line string) {
 	kind := f[0] + " " + strings.TrimSuffix(f[1], ":")
 	tmpl, ok := grammar[kind]
 	if !ok {
-		t.Errorf("the tool prints %q; the output grammar has no line for %s, so a consumer scanning the grammar cannot parse it", line, kind)
+		assert.Failf(t, "output grammar lacks printed line", "the tool prints %q; the output grammar has no line for %s, so a consumer scanning the grammar cannot parse it", line, kind)
 		return
 	}
 	want := grammarPairs(head(tmpl))
 	for k, v := range grammarPairs(head(line)) {
 		spec, ok := want[k]
 		if !ok {
-			t.Errorf("%s prints %s=%s; the output grammar's %s line has no %s= field", kind, k, v, kind, k)
+			assert.Failf(t, "output grammar field missing", "%s prints %s=%s; the output grammar's %s line has no %s= field", kind, k, v, kind, k)
 			continue
 		}
 		if i := strings.Index(spec, "<"); i > 0 {
-			if !strings.HasPrefix(v, spec[:i]) {
-				t.Errorf("%s prints %s=%s; the output grammar admits only %s=%s", kind, k, v, k, spec)
-			}
+			assert.False(t, !strings.HasPrefix(v, spec[:i]), "%s prints %s=%s; the output grammar admits only %s=%s", kind, k, v, k, spec)
 			continue
 		}
 		if alts, closed := grammarEnum(spec); closed {
-			if !grammarAdmits(alts, v) {
-				t.Errorf("%s prints %s=%s; the output grammar enumerates %s=%s", kind, k, v, k, spec)
-			}
+			assert.False(t, !grammarAdmits(alts, v), "%s prints %s=%s; the output grammar enumerates %s=%s", kind, k, v, k, spec)
 		}
 	}
 }
@@ -267,10 +259,6 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 			}
 		}
 	}
-	if !sawPartial {
-		t.Fatal("no TOKENS PARTIAL line was checked against the grammar")
-	}
-	if n < 10 {
-		t.Fatalf("%d printed lines checked against the grammar; the fixtures printed nothing and this test would have passed by checking nothing", n)
-	}
+	require.False(t, !sawPartial, "no TOKENS PARTIAL line was checked against the grammar")
+	require.False(t, n < 10, "%d printed lines checked against the grammar; the fixtures printed nothing and this test would have passed by checking nothing", n)
 }

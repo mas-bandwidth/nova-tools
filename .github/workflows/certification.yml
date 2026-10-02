@@ -122,7 +122,7 @@ jobs:
     # The last green whole-tree race run (dev push 36137551959, 2026-09-25, 15-minute cap) took
     # 421 s of test step on ubuntu-latest and 497 s on macos-latest. The cap stays two minutes;
     # the legs meet it by shard count, with the deal of ci.yml's test-hosted (heavy packages
-    # first, one per shard, then round-robin) over the live packages only (deprecated/PACKAGES:
+    # first, one per shard, then round-robin) over the live packages only (internal/pkgselect/DEPRECATED:
     # deprecated packages are never tested).
     #
     # THE HEAVY LIST is measured, not named: the per-package times this job's own legs report
@@ -216,8 +216,7 @@ jobs:
         # gofmt -l prints unformatted files and exits 0 either way, so the exit
         # code is not the product here — the output is, and `ci gofmt` turns it
         # into the exit. Checked on one leg: formatting is a property of the
-        # source, not of the platform or the shard. deprecated/ is out of scope
-        # of the testing drive; see deprecated/README.md.
+        # source, not of the platform or the shard.
         if: matrix.os == 'ubuntu-latest' && matrix.shard == 1
         shell: bash
         run: |
@@ -727,7 +726,11 @@ jobs:
     # leg's share: a wall clock measured on two cores of eight shared runners measures the
     # neighbours. The drive takes about 25 s and its build under a minute warm, inside the
     # two-minute cap; a cold cache that puts it over is read in the morning, not a CL gate.
-    runs-on: [self-hosted, linux, x64, space]
+    # The bench is configuration, not a name in the tree: the coordinator sets the
+    # repository variable TICK_GATE_RUNS_ON to a JSON array of runner labels. Unset,
+    # the job does not run on a guess and certification-ok reports it not-configured.
+    if: vars.TICK_GATE_RUNS_ON != ''
+    runs-on: ${{ fromJSON(vars.TICK_GATE_RUNS_ON) }}
     timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
@@ -823,7 +826,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" aggregate \
+          "$RUNNER_TEMP/ci" aggregate --skip-ok tick-gate \
             race-cache=${{ needs.race-cache.result }} test=${{ needs.test.result }} smoke=${{ needs.smoke.result }} \
             release-build=${{ needs.release-build.result }} release-dry-run=${{ needs.release-dry-run.result }} \
             release-checks=${{ needs.release-checks.result }} perf=${{ needs.perf.result }} \

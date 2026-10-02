@@ -3,7 +3,10 @@ package sprint
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The deal goes round the fleet and the ask goes round the readers (errata 3,
@@ -25,6 +28,73 @@ func propsAnswer(t *Table, names []string) map[string]string {
 		}
 	}
 	return out
+}
+
+// fleetWorld is a world of the members up at the width (0: the default) and
+// n ready primaries in stream s1.
+func fleetWorld(t *testing.T, primaries, width int, members ...string) *world {
+	t.Helper()
+	w := newWorld(t, "reader-a")
+	for _, m := range members {
+		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m, Width: width}))
+	}
+	if primaries > 0 {
+		w.must(Add(w.s, AddReq{Stream: "s1", Count: primaries}))
+	}
+	return w
+}
+
+// part runs one part of the tick (steps_tick.go) on the world's state and
+// applies its plan.
+func (w *world) part(fn func(*Snapshot, TickReq) (Plan, int), r TickReq) Plan {
+	w.t.Helper()
+	p, _ := fn(w.s, r)
+	return w.must(p)
+}
+
+// place moves a card to row and column in the table, as a write of the store
+// would.
+func (w *world) place(tb *Table, id, row, col string) {
+	w.t.Helper()
+	c := tb.Card(id)
+	require.NotNil(w.t, c, "no card %s in %s", id, tb.Name)
+	c.Row, c.Col = row, col
+	c.Rev++
+	tb.cells, tb.byPrimary = nil, nil
+}
+
+// putWorkCard puts primary p's first work card on the member in the column,
+// and the primary in the state that card's place gives it.
+func putWorkCard(w *world, p, member, col string, score float64, extra map[string]string) {
+	fields := map[string]string{"kind": "work", "primary": p, "stream": "s1", "attempt": "1", "gen": "2", "member": member,
+		"dealt": stamp(t0), "untaken_since": stamp(t0), "redeals": "0"}
+	for k, v := range extra {
+		fields[k] = v
+	}
+	w.s.Fleet.Put(&Card{ID: p + ".w1", Row: member, Col: col, Score: score, Rev: 1, Fields: fields})
+	prim := map[string]string{"kind": "primary", "attempt": "1", "stream": "s1"}
+	pcol := Working
+	if col == Withdrawn {
+		pcol = Ready
+	} else {
+		prim["work"] = p + ".w1"
+	}
+	w.s.Work.Put(&Card{ID: p, Row: "s1", Col: pcol, Score: score, Rev: 1, Fields: prim})
+}
+
+// putRead puts a read card of the primary at the attempt by the reader, placed
+// in the column ("" keeps it unplaced), and names it on the primary (rcards),
+// as the ask and the read leave it.
+func putRead(w *world, primary string, attempt int, reader, col string) *Card {
+	pr := w.s.Work.Card(primary)
+	c := &Card{ID: ReadCardID(primary, attempt, reader), Score: pr.Score, Rev: 1, Fields: map[string]string{
+		"kind": "read", "primary": primary, "stream": pr.Row, "reader": reader, "attempt": itoa(attempt), "head": pr.F("head")}}
+	if col != "" {
+		c.Row, c.Col = reader, col
+	}
+	w.s.Readers.Put(c)
+	pr.Fields["rcards"] = strings.Join(append(Split(pr.F("rcards")), c.ID), ",")
+	return c
 }
 
 // eightIdle is a world of 8 up members of room 2 and 30 ready primaries.
@@ -49,8 +119,9 @@ func evenly(t *testing.T, what string, counts map[string]int, names []string, ro
 		}
 		hi = max(hi, counts[n])
 	}
-	if hi-lo > 1 || (round && hi != lo) {
-		t.Fatalf("%s: %v, want every count within one of the others (equal after a full round)", what, counts)
+	require.LessOrEqual(t, hi-lo, 1, "%s: %v, want every count within one of the others (equal after a full round)", what, counts)
+	if round {
+		require.Equal(t, lo, hi, "%s: %v, want every count within one of the others (equal after a full round)", what, counts)
 	}
 }
 
@@ -82,13 +153,12 @@ func TestTheDealGoesRoundTheFleet(t *testing.T) {
 		evenly(t, fmt.Sprintf("after deal %d", i), dealt, members, i%8 == 0)
 	}
 	for i, m := range order {
-		if want := fmt.Sprintf("m%d", i%8+1); m != want {
-			t.Fatalf("deal %d went to %s, want %s: the deals %v", i+1, m, want, order)
-		}
+		want := fmt.Sprintf("m%d", i%8+1)
+		require.Equal(t, want, m, "deal %d went to %s, want %s: the deals %v", i+1, m, want, order)
 	}
-	if last, ok := w.s.Fleet.Prop(PropDealIndex); !ok || indexPast(w.s.Fleet.Rows(), last) != "m6" {
-		t.Fatalf("the fleet table's deal_index is %q (%v), want m6", last, ok)
-	}
+	last, ok := w.s.Fleet.Prop(PropDealIndex)
+	require.True(t, ok, "the fleet table's deal_index is %q (%v), want m6", last, ok)
+	require.Equal(t, "m6", indexPast(w.s.Fleet.Rows(), last), "the fleet table's deal_index is %q (%v), want m6", last, ok)
 	// every member's done is within one of the others
 	done := map[string]int{}
 	for _, m := range members {
@@ -97,26 +167,23 @@ func TestTheDealGoesRoundTheFleet(t *testing.T) {
 	evenly(t, "done", done, members, false)
 }
 
-// The same through R6: one card ready at a time, dealt by the rule, worked at
-// once.
-func TestR6GoesRoundTheFleet(t *testing.T) {
+// The same through the tick's deal (T3): one card ready at a time, dealt by
+// the tick, worked at once.
+func TestTheTickDealGoesRoundTheFleet(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 0, "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")
-	members := f.snap().Fleet.Rows()
+	w := fleetWorld(t, 0, 0, "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")
+	members := w.s.Fleet.Rows()
 	dealt := map[string]int{}
 	for i := 1; i <= 24; i++ {
-		f.w.must(Add(f.snap(), AddReq{Stream: "s1", Count: 1}))
-		f.run(ruleDeal, "deal")
-		cs := f.snap().Fleet.Column(Ready)
-		if len(cs) != 1 {
-			t.Fatalf("deal %d: nothing dealt", i)
-		}
+		w.must(Add(w.s, AddReq{Stream: "s1", Count: 1}))
+		w.part(TickDeal, TickReq{})
+		cs := w.s.Fleet.Column(Ready)
+		require.Len(t, cs, 1, "deal %d: nothing dealt", i)
 		wc := cs[0]
-		if want := fmt.Sprintf("m%d", (i-1)%8+1); wc.Row != want {
-			t.Fatalf("deal %d went to %s, want %s", i, wc.Row, want)
-		}
+		want := fmt.Sprintf("m%d", (i-1)%8+1)
+		require.Equal(t, want, wc.Row, "deal %d went to %s, want %s", i, wc.Row, want)
 		dealt[wc.Row]++
-		workIt(f.w, wc)
+		workIt(w, wc)
 		evenly(t, fmt.Sprintf("after deal %d", i), dealt, members, i%8 == 0)
 	}
 }
@@ -126,9 +193,10 @@ func TestR6GoesRoundTheFleet(t *testing.T) {
 func TestTheDealSkipsAFullMemberAndTheQueueDoesNotChoose(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t, "reader-a")
-	// m1 and m2 at width 2, m3 at width 3
+	// m1 and m2 at width 1, m3 at width 2: rooms (DealAhead times the width) of
+	// 2, 2 and 4
 	for i, m := range []string{"m1", "m2", "m3"} {
-		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m, Width: []int{2, 2, 3}[i]}))
+		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m, Width: []int{1, 1, 2}[i]}))
 	}
 	w.must(Add(w.s, AddReq{Stream: "s1", Count: 8}))
 	deal := func(id string) string {
@@ -140,23 +208,19 @@ func TestTheDealSkipsAFullMemberAndTheQueueDoesNotChoose(t *testing.T) {
 	for _, id := range []string{"s1-1", "s1-2", "s1-3", "s1-4"} {
 		got = append(got, deal(id))
 	}
-	if want := []string{"m1", "m2", "m3", "m1"}; !slices.Equal(got, want) {
-		t.Fatalf("deals %v, want %v", got, want)
-	}
-	// m1 two ready (at its width), m2 one, m3 none ready once it takes its card
+	want := []string{"m1", "m2", "m3", "m1"}
+	require.Equal(t, want, got, "deals %v, want %v", got, want)
+	// m1 two ready (at its room), m2 one, m3 none ready once it takes its card
 	// (one working): the index is past m1, so m2, though m3's queue is shorter
 	w.must(Take(w.s, TakeReq{As: "m3", Sel: Sel{IDs: []string{"s1-3.w1"}}, Gens: gensOf(w.s, "s1-3.w1")}))
-	if m := deal("s1-5"); m != "m2" {
-		t.Fatalf("s1-5 went to %s, want m2 (the index, not m3's shorter queue)", m)
-	}
-	if m := deal("s1-6"); m != "m3" {
-		t.Fatalf("s1-6 went to %s, want m3", m)
-	}
-	// past m3: m1 and m2 are at their width, skipped, and m3 (one working, one
-	// ready) is below its width of three
-	if m := deal("s1-7"); m != "m3" {
-		t.Fatalf("s1-7 went to %s, want m3: m1 and m2 are full", m)
-	}
+	m := deal("s1-5")
+	require.Equal(t, "m2", m, "s1-5 went to %s, want m2 (the index, not m3's shorter queue)", m)
+	m = deal("s1-6")
+	require.Equal(t, "m3", m, "s1-6 went to %s, want m3", m)
+	// past m3: m1 and m2 are at their room, skipped, and m3 (one working, one
+	// ready) is below its room of four
+	m = deal("s1-7")
+	require.Equal(t, "m3", m, "s1-7 went to %s, want m3: m1 and m2 are full", m)
 }
 
 // A member down is skipped and its turn is not given to its neighbour twice:
@@ -178,9 +242,8 @@ func TestTheDealSkipsADownMemberEvenly(t *testing.T) {
 		got = append(got, wc.Row)
 		workIt(w, wc)
 	}
-	if want := []string{"m1", "m3", "m4", "m1", "m3", "m4", "m1", "m3", "m4"}; !slices.Equal(got, want) {
-		t.Fatalf("deals %v, want %v: m2 is down and skipped, the others in turn", got, want)
-	}
+	want := []string{"m1", "m3", "m4", "m1", "m3", "m4", "m1", "m3", "m4"}
+	require.Equal(t, want, got, "deals %v, want %v: m2 is down and skipped, the others in turn", got, want)
 }
 
 // 4 free readers, 40 reads asked one primary at a time (two each): every
@@ -206,21 +269,24 @@ func TestTheAskGoesRoundTheReaders(t *testing.T) {
 		}
 		evenly(t, fmt.Sprintf("after ask %d", i), asked, readers, (2*i)%len(readers) == 0)
 	}
-	if last, ok := w.s.Readers.Prop(PropAskIndex); !ok || indexPast(w.s.Readers.Rows(), last) != "reader-d" {
-		t.Fatalf("the readers table's ask_index is %q (%v), want reader-d", last, ok)
-	}
+	last, ok := w.s.Readers.Prop(PropAskIndex)
+	require.True(t, ok, "the readers table's ask_index is %q (%v), want reader-d", last, ok)
+	require.Equal(t, "reader-d", indexPast(w.s.Readers.Rows(), last), "the readers table's ask_index is %q (%v), want reader-d", last, ok)
 }
 
-// R8 asks round the readers too: one primary in review at a time.
-func TestR8GoesRoundTheReaders(t *testing.T) {
+// The tick's ask (T2) asks round the readers too: one primary in review at a
+// time, each worked as it is dealt.
+func TestTheTickAskGoesRoundTheReaders(t *testing.T) {
 	t.Parallel()
-	w := rvReview(t, 12, 0)
+	w := eightIdle(t, "reader-a", "reader-b", "reader-c")
 	readers := w.s.Readers.Rows()
 	asked := map[string]int{}
 	for i := 1; i <= 12; i++ {
 		id := fmt.Sprintf("s1-%d", i)
-		rp := rvPlan(w, ruleAsk, "ask:"+id)
-		w.must(rp.Plan)
+		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
+		workIt(w, w.s.Fleet.Card(WorkCardID(id, 1)))
+		p := w.part(TickAsk, TickReq{})
+		require.Len(t, p.Units, 1, "ask %d: the tick asked %d primaries, want the one in review", i, len(p.Units))
 		for _, rd := range readers {
 			if w.s.Readers.Card(ReadCardID(id, 1, rd)) != nil {
 				asked[rd]++
@@ -249,36 +315,33 @@ func TestTheDealGoesRoundTheFleetAcrossStreams(t *testing.T) {
 		id := fmt.Sprintf("%s-%d", streams[i%3], i/3+1)
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
 		wc := w.s.Fleet.Card(WorkCardID(id, 1))
-		if want := fmt.Sprintf("m%d", i%8+1); wc.Row != want {
-			t.Fatalf("deal %d (%s) went to %s, want %s", i+1, id, wc.Row, want)
-		}
+		want := fmt.Sprintf("m%d", i%8+1)
+		require.Equal(t, want, wc.Row, "deal %d (%s) went to %s, want %s", i+1, id, wc.Row, want)
 		dealt[wc.Row]++
 		workIt(w, wc)
 		evenly(t, fmt.Sprintf("after deal %d", i+1), dealt, members, (i+1)%8 == 0)
 	}
 }
 
-// R6 over 10 streams of 3: each run deals the room in stream turns, and the
-// members' counts stay within one fleet-wide after every run.
-func TestR6GoesRoundTheFleetOverTenStreams(t *testing.T) {
+// The tick's deal over 10 streams of 3: each run deals the room in stream
+// turns, and the members' counts stay within one fleet-wide after every run.
+func TestTheTickDealGoesRoundTheFleetOverTenStreams(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 0, "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")
+	w := fleetWorld(t, 0, 0, "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")
 	for i := 1; i <= 10; i++ {
-		f.w.must(Add(f.snap(), AddReq{Stream: fmt.Sprintf("s%02d", i), Count: 3}))
+		w.must(Add(w.s, AddReq{Stream: fmt.Sprintf("s%02d", i), Count: 3}))
 	}
-	members := f.snap().Fleet.Rows()
+	members := w.s.Fleet.Rows()
 	dealt := map[string]int{}
-	for run := 1; len(f.snap().Work.Column(Ready)) > 0; run++ {
-		if run > 10 {
-			t.Fatalf("not dealt in 10 runs")
-		}
-		f.run(ruleDeal, "deal")
-		cs := f.snap().Fleet.Column(Ready)
+	for run := 1; len(w.s.Work.Column(Ready)) > 0; run++ {
+		require.LessOrEqual(t, run, 10, "not dealt in 10 runs")
+		w.part(TickDeal, TickReq{})
+		cs := w.s.Fleet.Column(Ready)
 		for _, wc := range cs {
 			dealt[wc.Row]++
 		}
 		for _, wc := range cs {
-			workIt(f.w, wc)
+			workIt(w, wc)
 		}
 		evenly(t, fmt.Sprintf("after run %d", run), dealt, members, false)
 	}
@@ -286,9 +349,7 @@ func TestR6GoesRoundTheFleetOverTenStreams(t *testing.T) {
 	for _, n := range dealt {
 		total += n
 	}
-	if total != 30 {
-		t.Fatalf("dealt %d, want 30", total)
-	}
+	require.Equal(t, 30, total, "dealt %d, want 30", total)
 }
 
 // The ask's index is one for the readers: primaries of three streams asked in

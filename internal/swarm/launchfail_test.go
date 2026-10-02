@@ -4,6 +4,9 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestProviderLaunchFailureReadsTheProviderTail: the one classifier both paths ask, over
@@ -36,31 +39,25 @@ func TestProviderLaunchFailureReadsTheProviderTail(t *testing.T) {
 func TestLaunchGraceDefaultAndOverride(t *testing.T) {
 	t.Parallel()
 
-	if got := LaunchGrace(Worker{}); got != DefaultLaunchGrace {
-		t.Errorf("a description naming no grace takes the default %s, got %s", DefaultLaunchGrace, got)
-	}
-	if got := LaunchGrace(Worker{LaunchGrace: "2s"}); got != 2*time.Second {
-		t.Errorf("launch_grace 2s reads as %s", got)
-	}
-	if got := LaunchGrace(Worker{LaunchGrace: "not-a-duration"}); got != DefaultLaunchGrace {
-		t.Errorf("an unreadable grace falls back to the default %s, got %s", DefaultLaunchGrace, got)
-	}
+	got := LaunchGrace(Worker{})
+	assert.Equal(t, DefaultLaunchGrace, got, "a description naming no grace takes the default %s, got %s", DefaultLaunchGrace, got)
+	got = LaunchGrace(Worker{LaunchGrace: "2s"})
+	assert.Equal(t, 2*time.Second, got, "launch_grace 2s reads as %s", got)
+	got = LaunchGrace(Worker{LaunchGrace: "not-a-duration"})
+	assert.Equal(t, DefaultLaunchGrace, got, "an unreadable grace falls back to the default %s, got %s", DefaultLaunchGrace, got)
 }
 
 // TestProviderRetryDelayBands: 5-20s after the first fast failure, 30-60s after the second.
 func TestProviderRetryDelayBands(t *testing.T) {
-	if err := os.Unsetenv("NOVA_SWARM_PROVIDER_BACKOFF"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Unsetenv("NOVA_SWARM_PROVIDER_BACKOFF"))
 	for _, c := range []struct {
 		failed int
 		lo, hi time.Duration
 	}{{1, 5 * time.Second, 20 * time.Second}, {2, 30 * time.Second, 60 * time.Second}} {
 		for i := 0; i < 50; i++ {
 			got := ProviderRetryDelay(c.failed)
-			if got < c.lo || got > c.hi {
-				t.Fatalf("the delay after failure %d is %s, want within [%s,%s]", c.failed, got, c.lo, c.hi)
-			}
+			require.GreaterOrEqual(t, got, c.lo, "the delay after failure %d is %s, want within [%s,%s]", c.failed, got, c.lo, c.hi)
+			require.LessOrEqual(t, got, c.hi, "the delay after failure %d is %s, want within [%s,%s]", c.failed, got, c.lo, c.hi)
 		}
 	}
 }

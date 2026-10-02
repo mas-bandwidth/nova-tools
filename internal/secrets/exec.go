@@ -16,39 +16,25 @@ import (
 // applies --only and --require filters, prints the OK line to stderr,
 // sets RLIMIT_CORE to 0, and replaces the current process with cmdArgs.
 func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []string, cmdArgs []string) (int, error) {
-	if len(cmdArgs) == 0 {
-		return 125, fmt.Errorf("no command specified after '--'")
-	}
-
 	// 0. Set RLIMIT_CORE to 0 immediately (M5)
 	if err := setRlimitCoreZero(); err != nil {
 		return 125, fmt.Errorf("failed to set RLIMIT_CORE to 0: %w", err)
 	}
 
-	// Pre-validate command binary existence before printing OK (M4)
-	if _, err := exec.LookPath(cmdArgs[0]); err != nil {
-		return 125, fmt.Errorf("command not found: %s", cmdArgs[0])
+	// Every flag and the command, named at once (ONBOARDING point 2): the command after
+	// '--' is one more required input, not a refusal of its own ahead of the flags.
+	command := ""
+	if len(cmdArgs) > 0 {
+		command = cmdArgs[0]
+	}
+	if err := preflight("", need{storeDir, "--store <dir>", false}, need{asName, "--as <name>", false}, need{keyPath, "--key <path>", false},
+		need{sopsPath, "--sops <path>", false}, need{onlyArg, "--only <names|all>", false}, need{command, "the command after '--' (-- <cmd> [args...])", false}); err != nil {
+		return 125, fmt.Errorf("%w; example: nova-secrets exec --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --only GH_TOKEN -- gh api user", err)
 	}
 
-	var missing []string
-	if storeDir == "" {
-		missing = append(missing, "--store <dir>")
-	}
-	if asName == "" {
-		missing = append(missing, "--as <name>")
-	}
-	if keyPath == "" {
-		missing = append(missing, "--key <path>")
-	}
-	if sopsPath == "" {
-		missing = append(missing, "--sops <path>")
-	}
-	if onlyArg == "" {
-		missing = append(missing, "--only <names|all>")
-	}
-	if len(missing) > 0 {
-		return 125, fmt.Errorf("missing required flags: %s; example: nova-secrets exec --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN -- gh api user",
-			strings.Join(missing, ", "))
+	// Pre-validate command binary existence before printing OK (M4)
+	if _, err := exec.LookPath(cmdArgs[0]); err != nil {
+		return 125, fmt.Errorf("command not found: %s; the command after '--' is a program on PATH or a path to one", cmdArgs[0])
 	}
 	// 1-7. The store, the seat's file and its key, checked and decrypted by the
 	// one path every in-process reader of a seat also takes (seatfile.go).
@@ -81,7 +67,7 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		}
 		if len(missingOnly) > 0 {
 			sort.Strings(missingOnly)
-			return 125, fmt.Errorf("--only names key(s) not in %s: %s", targetFile, strings.Join(missingOnly, ", "))
+			return 125, fmt.Errorf("--only names key(s) not in %s: %s; the names the seat holds: run: nova-secrets names --store %s --as %s", targetFile, strings.Join(missingOnly, ", "), storeDir, asName)
 		}
 		onlyWord = strconv.Itoa(len(selectedSecrets))
 	}

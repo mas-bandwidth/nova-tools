@@ -387,6 +387,44 @@ func TestATextColumnOfWholeNumbersFoldsSumAndMax(t *testing.T) {
 	}
 }
 
+// TestATextColumnOfMoneyFoldsExactly: a text sum column of money amounts ("$" and a
+// decimal, "-" for none) totals them exactly to "$" and four places, never "?"; a column
+// of dashes only folds to "-"; an amount that is not a decimal is "?"; and max keeps the
+// largest.
+func TestATextColumnOfMoneyFoldsExactly(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, fold string
+		cells      []string
+		want       string
+	}{
+		{name: "amounts and dashes", fold: ntable.Sum, cells: []string{"$0.0046", "$0.0001", "-"}, want: "$0.01"},
+		{name: "past a float's digits", fold: ntable.Sum, cells: []string{"$0.1", "$0.2", "-"}, want: "$0.30"},
+		{name: "a blank cell is none", fold: ntable.Sum, cells: []string{"$1.5", "", "-"}, want: "$1.50"},
+		{name: "rounded up to the next cent", fold: ntable.Sum, cells: []string{"$6.7786", "$6.7990", "$6.6335"}, want: "$20.22"},
+		{name: "whole cents are kept", fold: ntable.Sum, cells: []string{"$6.78", "$6.80", "$6.64"}, want: "$20.22"},
+		{name: "nothing priced", fold: ntable.Sum, cells: []string{"-", "-", ""}, want: "-"},
+		{name: "an amount that is no decimal", fold: ntable.Sum, cells: []string{"$1e-3", "-", "-"}, want: "?"},
+		{name: "max", fold: ntable.Max, cells: []string{"$0.5", "$2.25", "-"}, want: "$2.25"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cols, err := ntable.ParseColumns("n:count,cost:text:" + tc.fold)
+			require.NoError(t, err)
+			tab := ntable.Table{Name: "t", Columns: cols}
+			for i, v := range tc.cells {
+				r := ntable.NewRow(tab, string(rune('a'+i)))
+				r.Texts = map[string]string{"cost": v}
+				tab.Rows = append(tab.Rows, r)
+			}
+			lines := strings.Split(strings.TrimRight(ntable.Render(tab, ntable.RenderOpts{}), "\n"), "\n")
+			last := lines[len(lines)-1]
+			assert.True(t, strings.HasSuffix(last, " "+tc.want), "footer %q wants %s", last, tc.want)
+		})
+	}
+}
+
 // TestRenderCellsAlignByTerminalColumns: cell width is counted in terminal columns, so a
 // wide East Asian row key (2 columns a rune) and one with a combining mark (0 columns) line
 // up with their ASCII neighbours and the separators stay in one column.

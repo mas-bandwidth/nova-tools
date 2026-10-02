@@ -2,8 +2,10 @@ package docs
 
 import (
 	"os"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // wsl2bench_test.go holds tools/bench-wsl2.ps1 against the one-step bootstrap
@@ -26,9 +28,7 @@ func TestWSL2BootstrapScriptCarriesTheOneStepSetup(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(wsl2BootstrapPath)
-	if err != nil {
-		t.Fatalf("tools/bench-wsl2.ps1 is not in the tree: the WSL2 Windows setup is still about twenty hands (winget, wsl --install, the interactive user prompt, .wslconfig, the admin paste, the apt + Go paste inside the distro, wsl --set-default) because there is no single script to run once from an elevated PowerShell: %v", err)
-	}
+	require.NoError(t, err, "tools/bench-wsl2.ps1 is not in the tree: the WSL2 Windows setup is still about twenty hands (winget, wsl --install, the interactive user prompt, .wslconfig, the admin paste, the apt + Go paste inside the distro, wsl --set-default) because there is no single script to run once from an elevated PowerShell: %v", err)
 	script := string(raw)
 
 	// The host half: Tailscale, the clock, the power setting that lets the box
@@ -81,26 +81,18 @@ func TestWSL2BootstrapScriptCarriesTheOneStepSetup(t *testing.T) {
 		"CHECK`t",
 		"sshd",
 	} {
-		if !strings.Contains(script, want) {
-			t.Errorf("tools/bench-wsl2.ps1 does not carry %q; the one-step bootstrap is missing a step the issue had to do by hand", want)
-		}
+		assert.Contains(t, script, want, "tools/bench-wsl2.ps1 does not carry %q; the one-step bootstrap is missing a step the issue had to do by hand", want)
 	}
 
 	// The auth key is the single approval and it is a secret: it may be a
 	// parameter and it may reach tailscale, but it never reaches a printed line.
 	for _, leak := range []string{"Write-Host $AuthKey", "Write-Output $AuthKey", "echo $AuthKey", "Write-Host $authKey"} {
-		if strings.Contains(script, leak) {
-			t.Errorf("tools/bench-wsl2.ps1 prints the Tailscale auth key (%q); it is the one secret at the one approval and belongs in no line", leak)
-		}
+		assert.NotContains(t, script, leak, "tools/bench-wsl2.ps1 prints the Tailscale auth key (%q); it is the one secret at the one approval and belongs in no line", leak)
 	}
 
 	// And the fleet page a person reads first has to name the script, or the
 	// next WSL2 box is provisioned from the twenty hands again.
 	spec, err := os.ReadFile(wsl2FleetSpecPath)
-	if err != nil {
-		t.Fatalf("%s: %v", wsl2FleetSpecPath, err)
-	}
-	if !strings.Contains(string(spec), "tools/bench-wsl2.ps1") {
-		t.Errorf("%s does not name tools/bench-wsl2.ps1; the page that says the Threadripper joins as a Linux machine must name the one script that provisions it", wsl2FleetSpecPath)
-	}
+	require.NoError(t, err, "%s: %v", wsl2FleetSpecPath, err)
+	assert.Contains(t, string(spec), "tools/bench-wsl2.ps1", "%s does not name tools/bench-wsl2.ps1; the page that says the Threadripper joins as a Linux machine must name the one script that provisions it", wsl2FleetSpecPath)
 }

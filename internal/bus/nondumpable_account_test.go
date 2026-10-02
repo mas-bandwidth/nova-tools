@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"github.com/stretchr/testify/require"
 	"io/fs"
 	"os"
 	"strconv"
@@ -87,13 +88,9 @@ func TestUnplacedGitIsForeignOnlyByItsStatusUID(t *testing.T) {
 	dir, lock := oldIndexLock(t)
 	plant := func() {
 		t.Helper()
-		if err := os.WriteFile(lock, nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(lock, nil, 0o644))
 		when := time.Now().Add(-2 * time.Minute)
-		if err := os.Chtimes(lock, when, when); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Chtimes(lock, when, when))
 	}
 	for _, c := range cases {
 		plant()
@@ -102,14 +99,14 @@ func TestUnplacedGitIsForeignOnlyByItsStatusUID(t *testing.T) {
 			return classifyViews([]procView{v}, self)
 		}, indexLockOwner, self)
 		if rep.Scan != c.want || rep.Cleared != c.cleared || !rep.Scanned {
-			t.Fatalf("%s: view=%+v report=%+v err=%v, want scan=%+v cleared=%v scanned", c.name, v, rep, err, c.want, c.cleared)
+			require.False(t, rep.Scan != c.want || rep.Cleared != c.cleared || !rep.Scanned, "%s: view=%+v report=%+v err=%v, want scan=%+v cleared=%v scanned", c.name, v, rep, err, c.want, c.cleared)
 		}
 		if c.unknown != (err != nil && strings.HasPrefix(err.Error(), ownershipUnknown)) {
-			t.Fatalf("%s: err=%v, want unknown=%v", c.name, err, c.unknown)
+			require.False(t, c.unknown != (err != nil && strings.HasPrefix(err.Error(), ownershipUnknown)), "%s: err=%v, want unknown=%v", c.name, err, c.unknown)
 		}
 		_, statErr := os.Lstat(lock)
 		if c.cleared != os.IsNotExist(statErr) {
-			t.Fatalf("%s: lock present=%v after cleared=%v", c.name, statErr == nil, c.cleared)
+			require.False(t, c.cleared != os.IsNotExist(statErr), "%s: lock present=%v after cleared=%v", c.name, statErr == nil, c.cleared)
 		}
 	}
 
@@ -121,11 +118,10 @@ func TestUnplacedGitIsForeignOnlyByItsStatusUID(t *testing.T) {
 	rep, err := clearStaleIndexLockReport(dir, time.Now(), func() ([]gitProc, error) {
 		return classifyViews([]procView{v}, self)
 	}, indexLockOwner, self)
-	if err != nil || rep.Cleared || rep.Scan != (LockScan{Owner: 1}) {
-		t.Fatalf("non-dumpable own git naming the checkout: report=%+v err=%v, want owner=1 and the lock kept", rep, err)
-	}
-	if _, statErr := os.Lstat(lock); statErr != nil {
-		t.Fatalf("owner's lock lost: %v", statErr)
+	require.False(t, err != nil || rep.Cleared || rep.Scan != (LockScan{Owner: 1}), "non-dumpable own git naming the checkout: report=%+v err=%v, want owner=1 and the lock kept", rep, err)
+	{
+		_, statErr := os.Lstat(lock)
+		require.Equal(t, nil, statErr, "owner's lock lost: %v", statErr)
 	}
 }
 
@@ -148,7 +144,7 @@ func TestStatusEffectiveUIDIsTheSecondField(t *testing.T) {
 	} {
 		uid, ok := statusEffectiveUID([]byte(c.status))
 		if uid != c.uid || ok != c.ok {
-			t.Fatalf("status %q: uid=%d ok=%v, want %d %v", c.status, uid, ok, c.uid, c.ok)
+			require.False(t, uid != c.uid || ok != c.ok, "status %q: uid=%d ok=%v, want %d %v", c.status, uid, ok, c.uid, c.ok)
 		}
 	}
 }
@@ -172,23 +168,19 @@ func TestLockScanCountsEveryProcessItSaw(t *testing.T) {
 		{commErr: &fs.PathError{Op: "stat", Path: "/proc/10", Err: syscall.ENOENT}},
 	}
 	rep, err := clearStaleIndexLockReport(dir, time.Now(), func() ([]gitProc, error) { return classifyViews(views, self) }, indexLockOwner, self)
-	if err != nil || rep.Cleared || !rep.Scanned || rep.Scan != (LockScan{Owner: 1, Foreign: 1, Unknown: 1}) {
-		t.Fatalf("owner beside foreign and unknown: report=%+v err=%v, want owner=1 foreign=1 unknown=1, kept, no error", rep, err)
-	}
-	if _, statErr := os.Lstat(lock); statErr != nil {
-		t.Fatalf("owner's lock lost: %v", statErr)
+	require.False(t, err != nil || rep.Cleared || !rep.Scanned || rep.Scan != (LockScan{Owner: 1, Foreign: 1, Unknown: 1}), "owner beside foreign and unknown: report=%+v err=%v, want owner=1 foreign=1 unknown=1, kept, no error", rep, err)
+	{
+		_, statErr := os.Lstat(lock)
+		require.Equal(t, nil, statErr, "owner's lock lost: %v", statErr)
 	}
 
 	rep, err = clearStaleIndexLockReport(dir, time.Now(), func() ([]gitProc, error) { return nil, ownershipUnknownErr("ps failed") }, indexLockOwner, self)
-	if err == nil || rep.Scanned || rep.Cleared || rep.Scan != (LockScan{}) {
-		t.Fatalf("a scan that failed as a whole: report=%+v err=%v, want no counts and the failure", rep, err)
-	}
+	require.False(t, err == nil || rep.Scanned || rep.Cleared || rep.Scan != (LockScan{}), "a scan that failed as a whole: report=%+v err=%v, want no counts and the failure", rep, err)
 
 	rep, err = clearStaleIndexLockReport(dir, time.Now(), func() ([]gitProc, error) { return classifyViews(views[:1], self) }, indexLockOwner, self)
-	if err != nil || !rep.Cleared || !rep.Scanned || rep.Scan != (LockScan{Foreign: 1}) {
-		t.Fatalf("only a foreign git: report=%+v err=%v, want cleared with foreign=1", rep, err)
-	}
-	if _, statErr := os.Lstat(lock); !os.IsNotExist(statErr) {
-		t.Fatalf("stale index.lock still present: %v", statErr)
+	require.False(t, err != nil || !rep.Cleared || !rep.Scanned || rep.Scan != (LockScan{Foreign: 1}), "only a foreign git: report=%+v err=%v, want cleared with foreign=1", rep, err)
+	{
+		_, statErr := os.Lstat(lock)
+		require.False(t, !os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A first run by someone who has never seen this tool hits three refusals in a
@@ -64,15 +66,9 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			exit, stdout, stderr := runCLI(t, "", tc.args...)
-			if exit != 2 {
-				t.Fatalf("exit = %d, want 2 — guidance must not soften the refusal; stderr: %s", exit, stderr)
-			}
-			if !strings.Contains(stderr, tc.want) {
-				t.Errorf("stderr = %q,\nwant it to contain %q", stderr, tc.want)
-			}
-			if stdout != "" {
-				t.Errorf("a refusal must print nothing on stdout, got %q", stdout)
-			}
+			require.Equalf(t, 2, exit, "exit = %d, want 2 — guidance must not soften the refusal; stderr: %s", exit, stderr)
+			assert.Containsf(t, stderr, tc.want, "stderr = %q,\nwant it to contain %q", stderr, tc.want)
+			assert.Equalf(t, "", stdout, "a refusal must print nothing on stdout, got %q", stdout)
 		})
 	}
 }
@@ -86,30 +82,16 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 
 	examples := usageExamples(t)
-	if len(examples) != 4 {
-		t.Fatalf("want quickstart, search, check and verify examples under `example:`, got %d: %q", len(examples), examples)
-	}
-	if !strings.HasPrefix(examples[0], "nova-memory quickstart ") {
-		t.Errorf("the first example is not the quickstart: %q", examples[0])
-	}
-	if !strings.HasPrefix(examples[1], "nova-memory search ") {
-		t.Errorf("the second example is not a search: %q", examples[1])
-	}
-	if !strings.HasPrefix(examples[2], "nova-memory check ") {
-		t.Errorf("the third example is not a check: %q", examples[2])
-	}
-	if !strings.HasPrefix(examples[3], "nova-memory verify ") {
-		t.Errorf("the fourth example is not a verify: %q", examples[3])
-	}
+	require.Lenf(t, examples, 4, "want quickstart, search, check and verify examples under `example:`, got %d: %q", len(examples), examples)
+	assert.Truef(t, strings.HasPrefix(examples[0], "nova-memory quickstart "), "the first example is not the quickstart: %q", examples[0])
+	assert.Truef(t, strings.HasPrefix(examples[1], "nova-memory search "), "the second example is not a search: %q", examples[1])
+	assert.Truef(t, strings.HasPrefix(examples[2], "nova-memory check "), "the third example is not a check: %q", examples[2])
+	assert.Truef(t, strings.HasPrefix(examples[3], "nova-memory verify "), "the fourth example is not a verify: %q", examples[3])
 	draft := writeDraft(t)
 	for _, ex := range examples {
 		exit, stdout, stderr := runCLI(t, "", localize(strings.Fields(ex)[1:], draft)...)
-		if exit != 0 {
-			t.Fatalf("the usage example %q does not run: exit %d, stderr: %s", ex, exit, stderr)
-		}
-		if stdout == "" {
-			t.Errorf("the usage example %q printed nothing", ex)
-		}
+		require.Equalf(t, 0, exit, "the usage example %q does not run: exit %d, stderr: %s", ex, exit, stderr)
+		assert.NotEqualf(t, "", stdout, "the usage example %q printed nothing", ex)
 	}
 }
 
@@ -121,13 +103,9 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 func usageExamples(t *testing.T) []string {
 	t.Helper()
 	exit, stdout, stderr := runCLI(t, "", "help")
-	if exit != 0 {
-		t.Fatalf("`nova-memory help` must be exit 0, got %d; stderr: %s", exit, stderr)
-	}
+	require.Equalf(t, 0, exit, "`nova-memory help` must be exit 0, got %d; stderr: %s", exit, stderr)
 	_, tail, found := strings.Cut(stdout, "\nexample:\n")
-	if !found {
-		t.Fatalf("the usage banner has no `example:` section:\n%s", stdout)
-	}
+	require.Truef(t, found, "the usage banner has no `example:` section:\n%s", stdout)
 	var out []string
 	for _, line := range strings.Split(tail, "\n") {
 		if line = strings.TrimSpace(line); strings.HasPrefix(line, "nova-memory ") {
@@ -176,11 +154,11 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 		for i := 0; i < len(want) || i < len(got); i++ {
 			switch {
 			case i >= len(want):
-				t.Errorf("%q printed a line docs/TESTS.md does not show, at position %d:\n  %s\nThe document abridges what the tool said. Re-run the command and paste ALL of it.", command, i+1, got[i])
+				assert.Failf(t, "extra transcript line", "%q printed a line docs/TESTS.md does not show, at position %d:\n  %s\nThe document abridges what the tool said. Re-run the command and paste ALL of it.", command, i+1, got[i])
 			case i >= len(got):
-				t.Errorf("%q printed only %d lines and docs/TESTS.md shows %d; the document's line %d, %q, was never printed.", command, len(got), len(want), i+1, want[i])
+				assert.Failf(t, "missing transcript line", "%q printed only %d lines and docs/TESTS.md shows %d; the document's line %d, %q, was never printed.", command, len(got), len(want), i+1, want[i])
 			case want[i] != got[i]:
-				t.Errorf("docs/TESTS.md line %d under %q has shape\n  %s\nand the tool printed\n  %s\nRe-run the command and paste what it said.", i+1, command, want[i], got[i])
+				assert.Failf(t, "transcript shape mismatch", "docs/TESTS.md line %d under %q has shape\n  %s\nand the tool printed\n  %s\nRe-run the command and paste what it said.", i+1, command, want[i], got[i])
 			}
 		}
 		for _, s := range want {
@@ -192,9 +170,7 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 		if cmd, ok := strings.CutPrefix(line, "$ nova-memory "); ok {
 			compare()
 			exit, stdout, stderr := runCLI(t, "", localize(strings.Fields(cmd), draft)...)
-			if exit != 0 {
-				t.Fatalf("the transcript command %q does not run: exit %d, stderr: %s", line, exit, stderr)
-			}
+			require.Equalf(t, 0, exit, "the transcript command %q does not run: exit %d, stderr: %s", line, exit, stderr)
 			command, want, got = line, nil, shapesOf(stdout)
 			continue
 		}
@@ -202,16 +178,12 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 		if s == "" {
 			continue
 		}
-		if command == "" {
-			t.Fatalf("transcript line before any command: %q", line)
-		}
+		require.NotEqualf(t, "", command, "transcript line before any command: %q", line)
 		want = append(want, s)
 	}
 	compare()
 
-	if ran == 0 {
-		t.Fatal("the block holds no nova-memory command; this test passed by running nothing")
-	}
+	require.NotEqual(t, 0, ran, "the block holds no nova-memory command; this test passed by running nothing")
 	// The counts stay although the walk above is now complete, and they guard a
 	// different thing: deleting a whole `$ ` step from the document deletes BOTH
 	// sides of the comparison, so an ordered walk cannot notice.
@@ -219,9 +191,7 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 		"SEARCH OK": 1, "SEARCH CAL": 1, "SEARCH HIT": 3, "SEARCH NOTE": 1,
 		"MEMORY OK": 1, "MEMORY CAL": 1, "MEMORY CAND": 1, "MEMORY HIT": 3, "MEMORY NOTE": 3,
 	} {
-		if seen[prefix] != want {
-			t.Errorf("the docs/TESTS.md block shows %d %s lines, want %d", seen[prefix], prefix, want)
-		}
+		assert.Equalf(t, want, seen[prefix], "the docs/TESTS.md block shows %d %s lines, want %d", seen[prefix], prefix, want)
 	}
 }
 
@@ -267,20 +237,14 @@ func shape(line string) string {
 func readmeFirstRun(t *testing.T) [][]string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// Scoped to THIS tool's section first: every command in this repo now carries
 	// a `### First run` (ONBOARDING.md), so cutting on the first one in the file
 	// would hand this test another binary's transcript to run.
 	_, section, found := strings.Cut(string(raw), "\n## nova-memory\n")
-	if !found {
-		t.Fatal("docs/TESTS.md has no `## nova-memory` section")
-	}
+	require.True(t, found, "docs/TESTS.md has no `## nova-memory` section")
 	_, tail, found := strings.Cut(section, "\n### First run\n")
-	if !found {
-		t.Fatal("docs/TESTS.md `## nova-memory` has no `### First run` section; it is what a stranger reads before anything else here")
-	}
+	require.True(t, found, "docs/TESTS.md `## nova-memory` has no `### First run` section; it is what a stranger reads before anything else here")
 	body, _, found := strings.Cut(tail, "\n## ")
 	if !found {
 		body = tail
@@ -301,9 +265,7 @@ func readmeFirstRun(t *testing.T) [][]string {
 			lines = append(lines, line)
 		}
 	}
-	if len(blocks) < 2 {
-		t.Fatalf("`### First run` must hold a quickstart transcript and the two-verb transcript, got %d fenced blocks", len(blocks))
-	}
+	require.GreaterOrEqualf(t, len(blocks), 2, "`### First run` must hold a quickstart transcript and the two-verb transcript, got %d fenced blocks", len(blocks))
 	return blocks
 }
 
@@ -326,9 +288,7 @@ func localize(args []string, draft string) []string {
 func writeDraft(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "draft.md")
-	if err := os.WriteFile(path, []byte(firstRunDraft), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(firstRunDraft), 0o644))
 	return path
 }
 
@@ -344,25 +304,22 @@ func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
 	t.Parallel()
 
 	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus)
-	if exit != 0 {
-		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
-	}
+	require.Equalf(t, 0, exit, "exit = %d, want 0; stderr: %s", exit, stderr)
 	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
 
-	if !strings.HasPrefix(lines[0], "QUICKSTART OK root=") {
-		t.Fatalf("the first line does not say what this run chose: %q", lines[0])
-	}
+	require.Truef(t, strings.HasPrefix(lines[0], "QUICKSTART RUN root="), "the first line does not say what this run chose: %q", lines[0])
 	words := field(t, lines[0], "words")
-	if got := field(t, lines[0], "words-source"); got != "corpus-top-terms" {
-		t.Errorf("words-source = %q, want corpus-top-terms when --words was not given", got)
+	{
+		got := field(t, lines[0], "words-source")
+		assert.Equalf(t, "corpus-top-terms", got, "words-source = %q, want corpus-top-terms when --words was not given", got)
 	}
 	for _, w := range strings.Split(words, `\x20`) {
-		if quickstartFunctionWords[w] {
-			t.Errorf("the demonstration query offers %q, a function word, as one of this corpus's own terms", w)
-		}
+		assert.Falsef(t, quickstartFunctionWords[w], "the demonstration query offers %q, a function word, as one of this corpus's own terms", w)
 	}
-	if want := "QUICKSTART NOTE " + quickstartChoiceNote; lines[len(lines)-1] != want {
-		t.Errorf("the last line is\n  %s\nwant\n  %s", lines[len(lines)-1], want)
+	assert.Equalf(t, "QUICKSTART OK done=3", lines[len(lines)-2], "the line before NOTE is\n  %s\nwant\n  %s", lines[len(lines)-2], "QUICKSTART OK done=3")
+	{
+		want := "QUICKSTART NOTE " + quickstartChoiceNote
+		assert.Equalf(t, want, lines[len(lines)-1], "the last line is\n  %s\nwant\n  %s", lines[len(lines)-1], want)
 	}
 
 	// Each echo, and the token the output under it must open with. The k
@@ -376,14 +333,10 @@ func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
 	at := 0
 	for _, st := range steps {
 		i := indexOf(lines, st.echo)
-		if i < 0 {
-			t.Fatalf("quickstart never printed the command line\n  %s\ngot:\n%s", st.echo, stdout)
-		}
-		if i < at {
-			t.Errorf("the steps are out of order: %q came before the step above it", st.echo)
-		}
-		if i+1 >= len(lines) || !strings.HasPrefix(lines[i+1], st.token+" ") {
-			t.Errorf("the line under %q is not that command's output: %q", st.echo, lines[i+1])
+		require.GreaterOrEqualf(t, i, 0, "quickstart never printed the command line\n  %s\ngot:\n%s", st.echo, stdout)
+		assert.GreaterOrEqualf(t, i, at, "the steps are out of order: %q came before the step above it", st.echo)
+		if assert.Lessf(t, i+1, len(lines), "no output under %q: %q", st.echo, lines) {
+			assert.Truef(t, strings.HasPrefix(lines[i+1], st.token+" "), "the line under %q is not that command's output: %q", st.echo, lines[i+1])
 		}
 		at = i
 	}
@@ -396,12 +349,9 @@ func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
 			demo = i
 		}
 	}
-	if demo < 0 || demo >= indexOf(lines, steps[2].echo) {
-		t.Errorf("no QUICKSTART DEMO line above the check step:\n%s", stdout)
-	}
-	if !strings.Contains(quickstartChoiceNote, "not defaults") {
-		t.Error("the closing note no longer says the choices are not defaults, which is the whole point of the verb")
-	}
+	assert.GreaterOrEqualf(t, demo, 0, "no QUICKSTART DEMO line above the check step:\n%s", stdout)
+	assert.Lessf(t, demo, indexOf(lines, steps[2].echo), "no QUICKSTART DEMO line above the check step:\n%s", stdout)
+	assert.Contains(t, quickstartChoiceNote, "not defaults", "the closing note no longer says the choices are not defaults, which is the whole point of the verb")
 }
 
 // --words and --draft are the caller's, and they must reach the echoed line:
@@ -412,23 +362,19 @@ func TestQuickstartRunsTheWordsAndDraftItWasGiven(t *testing.T) {
 
 	draft := writeDraft(t)
 	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--words", "glazing", "--words", "brass", "--draft", draft)
-	if exit != 0 {
-		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
-	}
+	require.Equalf(t, 0, exit, "exit = %d, want 0; stderr: %s", exit, stderr)
 	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
-	if got := field(t, lines[0], "words-source"); got != "given" {
-		t.Errorf("words-source = %q, want given", got)
+	{
+		got := field(t, lines[0], "words-source")
+		assert.Equalf(t, "given", got, "words-source = %q, want given", got)
 	}
 	want := "$ nova-memory search --root " + corpus + " --channels bm25 --k 3 glazing brass"
-	if indexOf(lines, want) < 0 {
-		t.Errorf("quickstart never printed\n  %s\ngot:\n%s", want, stdout)
+	assert.GreaterOrEqualf(t, indexOf(lines, want), 0, "quickstart never printed\n  %s\ngot:\n%s", want, stdout)
+	{
+		want := "$ nova-memory check --root " + corpus + " --channels bm25 --k 2 " + draft
+		assert.GreaterOrEqualf(t, indexOf(lines, want), 0, "quickstart never printed\n  %s\ngot:\n%s", want, stdout)
 	}
-	if want := "$ nova-memory check --root " + corpus + " --channels bm25 --k 2 " + draft; indexOf(lines, want) < 0 {
-		t.Errorf("quickstart never printed\n  %s\ngot:\n%s", want, stdout)
-	}
-	if strings.Contains(stdout, "QUICKSTART DEMO") {
-		t.Error("a run given its own --draft must not announce the corpus's first paragraph")
-	}
+	assert.NotContains(t, stdout, "QUICKSTART DEMO", "a run given its own --draft must not announce the corpus's first paragraph")
 }
 
 // Exit 0 means all three ran. A step that could not run ends the demonstration
@@ -438,22 +384,25 @@ func TestQuickstartExitsTwoWhenAStepCouldNotRun(t *testing.T) {
 	t.Parallel()
 
 	empty := filepath.Join(t.TempDir(), "empty.md")
-	if err := os.WriteFile(empty, []byte("ok\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(empty, []byte("ok\n"), 0o644))
 	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--draft", empty)
-	if exit != 2 {
-		t.Fatalf("exit = %d, want 2; stderr: %s", exit, stderr)
-	}
-	if !strings.Contains(stderr, "the check step could not run") {
-		t.Errorf("stderr does not name the step that failed: %q", stderr)
-	}
-	if strings.Contains(stdout, quickstartChoiceNote) {
-		t.Error("a quickstart that did not finish printed its closing note anyway")
-	}
-	if !strings.Contains(stdout, "SEARCH OK") {
-		t.Errorf("the steps that did run must still be on the page: %q", stdout)
-	}
+	require.Equalf(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
+	assert.Containsf(t, stderr, "the check step could not run", "stderr does not name the step that failed: %q", stderr)
+	assert.NotContains(t, stdout, quickstartChoiceNote, "a quickstart that did not finish printed its closing note anyway")
+	assert.Containsf(t, stdout, "SEARCH OK", "the steps that did run must still be on the page: %q", stdout)
+	assert.NotContainsf(t, stdout, "QUICKSTART OK", "a quickstart that failed printed QUICKSTART OK:\n%s", stdout)
+}
+
+// A quickstart given a missing draft file refuses and exits 2, and must NOT
+// print QUICKSTART OK before or after the failure.
+func TestQuickstartWithMissingDraftDoesNotPrintOK(t *testing.T) {
+	t.Parallel()
+
+	missing := filepath.Join(t.TempDir(), "missing-draft.md")
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--draft", missing)
+	require.Equalf(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
+	assert.NotContainsf(t, stdout, "QUICKSTART OK", "quickstart with missing draft printed QUICKSTART OK:\n%s", stdout)
+	assert.Containsf(t, stderr, "the check step could not run", "stderr does not name the step that failed: %q", stderr)
 }
 
 // The README's quickstart transcript, held to the tool: the first line is RUN,
@@ -466,13 +415,9 @@ func TestREADMEFirstRunQuickstartBlockMatchesWhatTheToolPrints(t *testing.T) {
 
 	lines := readmeFirstRun(t)[0]
 	cmd, ok := strings.CutPrefix(lines[0], "$ nova-memory quickstart ")
-	if !ok {
-		t.Fatalf("`### First run` must open on the quickstart command, got %q", lines[0])
-	}
+	require.Truef(t, ok, "`### First run` must open on the quickstart command, got %q", lines[0])
 	exit, stdout, stderr := runCLI(t, "", localize(append([]string{"quickstart"}, strings.Fields(cmd)...), "")...)
-	if exit != 0 {
-		t.Fatalf("the README quickstart does not run: exit %d, stderr: %s", exit, stderr)
-	}
+	require.Equalf(t, 0, exit, "the README quickstart does not run: exit %d, stderr: %s", exit, stderr)
 	printedShape, printedEcho := map[string]bool{}, map[string]bool{}
 	for _, out := range strings.Split(stdout, "\n") {
 		if strings.HasPrefix(out, "$ nova-memory ") {
@@ -486,9 +431,7 @@ func TestREADMEFirstRunQuickstartBlockMatchesWhatTheToolPrints(t *testing.T) {
 	seen := map[string]int{}
 	for _, line := range lines[1:] {
 		if strings.HasPrefix(line, "$ nova-memory ") {
-			if !printedEcho[rootless(line)] {
-				t.Errorf("README shows the command line\n  %s\nwhich this quickstart never printed. Re-run it and paste what it said.", line)
-			}
+			assert.Truef(t, printedEcho[rootless(line)], "README shows the command line\n  %s\nwhich this quickstart never printed. Re-run it and paste what it said.", line)
 			seen["$ nova-memory"]++
 			continue
 		}
@@ -496,9 +439,7 @@ func TestREADMEFirstRunQuickstartBlockMatchesWhatTheToolPrints(t *testing.T) {
 		if s == "" {
 			continue
 		}
-		if !printedShape[s] {
-			t.Errorf("README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
-		}
+		assert.Truef(t, printedShape[s], "README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
 		seen[strings.Join(strings.Fields(s)[:2], " ")]++
 	}
 	for prefix, want := range map[string]int{
@@ -506,13 +447,9 @@ func TestREADMEFirstRunQuickstartBlockMatchesWhatTheToolPrints(t *testing.T) {
 		"SEARCH OK": 1, "SEARCH CAL": 1, "SEARCH HIT": 3,
 		"MEMORY OK": 1, "MEMORY CAL": 1, "MEMORY CAND": 1, "MEMORY HIT": 2,
 	} {
-		if seen[prefix] != want {
-			t.Errorf("the README quickstart transcript shows %d %s lines, want %d", seen[prefix], prefix, want)
-		}
+		assert.Equalf(t, want, seen[prefix], "the README quickstart transcript shows %d %s lines, want %d", seen[prefix], prefix, want)
 	}
-	if !strings.HasSuffix(strings.TrimSpace(lines[len(lines)-1]), quickstartChoiceNote) {
-		t.Errorf("the transcript does not end on the sentence the verb exists for: %q", lines[len(lines)-1])
-	}
+	assert.Truef(t, strings.HasSuffix(strings.TrimSpace(lines[len(lines)-1]), quickstartChoiceNote), "the transcript does not end on the sentence the verb exists for: %q", lines[len(lines)-1])
 }
 
 // rootless replaces the argument of --root, so a command line the README shows
@@ -545,7 +482,7 @@ func field(t *testing.T, line, key string) string {
 			return v
 		}
 	}
-	t.Fatalf("no %s= field on %q", key, line)
+	require.FailNowf(t, "missing expected field", "no %s= field on %q", key, line)
 	return ""
 }
 
@@ -611,19 +548,13 @@ func TestARefusalReportsEveryReasonAtOnce(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			exit, stdout, stderr := runCLI(t, "", tc.args...)
-			if exit != 2 {
-				t.Fatalf("exit = %d, want 2; stderr: %s", exit, stderr)
-			}
-			if stdout != "" {
-				t.Errorf("a refusal must print nothing on stdout, got %q", stdout)
-			}
+			require.Equalf(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
+			assert.Equalf(t, "", stdout, "a refusal must print nothing on stdout, got %q", stdout)
 			for _, w := range tc.want {
-				if !strings.Contains(stderr, w) {
-					t.Errorf("stderr does not report %q; one run must report them all, got:\n%s", w, stderr)
-				}
+				assert.Containsf(t, stderr, w, "stderr does not report %q; one run must report them all, got:\n%s", w, stderr)
 			}
-			if strings.Contains(stderr, "--channels is required") && strings.Contains(stderr, "named no channels") {
-				t.Errorf("a missing --channels was reported twice, once as missing and once as empty:\n%s", stderr)
+			if strings.Contains(stderr, "--channels is required") {
+				assert.NotContainsf(t, stderr, "named no channels", "a missing --channels was reported twice, once as missing and once as empty:\n%s", stderr)
 			}
 		})
 	}
@@ -685,12 +616,11 @@ func TestTheEchoedStepPastesBackIntoThatPlatformsShell(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := commandLineFor(tc.argv, tc.windows); got != tc.want {
-				t.Errorf("commandLineFor(%q, windows=%v) =\n  %s\nwant\n  %s", tc.argv, tc.windows, got, tc.want)
+			{
+				got := commandLineFor(tc.argv, tc.windows)
+				assert.Equalf(t, tc.want, got, "commandLineFor(%q, windows=%v) =\n  %s\nwant\n  %s", tc.argv, tc.windows, got, tc.want)
 			}
-			if strings.Contains(commandLineFor(tc.argv, tc.windows), "\n") {
-				t.Error("the echoed line is more than one line")
-			}
+			assert.NotContains(t, commandLineFor(tc.argv, tc.windows), "\n", "the echoed line is more than one line")
 		})
 	}
 }
@@ -700,37 +630,28 @@ func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
 	t.Parallel()
 
 	exit, stdout, _ := runCLI(t, "", "help")
-	if exit != 0 {
-		t.Fatalf("help failed: %d", exit)
-	}
-	// All thirteen flags supported by nova-memory subcommands.
+	require.Equalf(t, 0, exit, "help failed: %d", exit)
+	// All flags supported by nova-memory subcommands.
 	flags := []string{
 		"root", "channels", "k", "exclude", "floor", "links",
-		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft", "pin",
+		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft", "pin", "json",
 	}
 	for _, f := range flags {
 		target := "  --" + f + " "
-		if !strings.Contains(stdout, target) {
-			t.Errorf("flag --%s has no entry in the usage banner flags list:\n%s", f, stdout)
-		}
+		assert.Containsf(t, stdout, target, "flag --%s has no entry in the usage banner flags list:\n%s", f, stdout)
 	}
 	// Assert --fail-max default is not welded onto words.
 	welded := "cannot bury the one frontmatter finding. the words the demonstration search runs."
-	if strings.Contains(stdout, welded) {
-		t.Errorf("the --fail-max and --words help text are still welded together:\n%s", stdout)
-	}
+	assert.NotContainsf(t, stdout, welded, "the --fail-max and --words help text are still welded together:\n%s", stdout)
 }
 
 func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {
 	t.Parallel()
 
 	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--words", "-glazing")
-	if exit != 0 {
-		t.Fatalf("quickstart with dash-leading word failed: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "$ nova-memory search ") || !strings.Contains(stdout, "SEARCH OK query=-glazing") {
-		t.Errorf("quickstart did not complete search step with dash-leading word:\n%s", stdout)
-	}
+	require.Equalf(t, 0, exit, "quickstart with dash-leading word failed: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	assert.Containsf(t, stdout, "$ nova-memory search ", "quickstart did not complete search step with dash-leading word:\n%s", stdout)
+	assert.Containsf(t, stdout, `query="-glazing"`, "quickstart did not complete search step with dash-leading word:\n%s", stdout)
 }
 
 // TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine runs the whole
@@ -770,28 +691,18 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// disagree, the section is being read two ways and one reader drifts
 	// unwatched.
 	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	firstRun, err := onboarding.FirstRun(string(raw), "nova-memory")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var flat []string
 	for _, b := range blocks {
 		flat = append(flat, b...)
 	}
-	if strings.Join(flat, "\n") != strings.Join(firstRun, "\n") {
-		t.Fatalf("the two readers of `### First run` disagree:\nblocks:\n%s\nFirstRun:\n%s",
-			strings.Join(flat, "\n"), strings.Join(firstRun, "\n"))
-	}
+	require.Equalf(t, strings.Join(firstRun, "\n"), strings.Join(flat, "\n"), "the two readers of `### First run` disagree:\nblocks:\n%s\nFirstRun:\n%s",
+		strings.Join(flat, "\n"), strings.Join(firstRun, "\n"))
 
-	if len(blocks) != 2 {
-		t.Fatalf("`### First run` holds %d fenced blocks, want 2: the quickstart transcript and the two-verb sitting", len(blocks))
-	}
-	if !strings.HasPrefix(blocks[0][0], "$ nova-memory quickstart ") {
-		t.Fatalf("the first `### First run` block does not open on the quickstart command: %q", blocks[0][0])
-	}
+	require.Lenf(t, blocks, 2, "`### First run` holds %d fenced blocks, want 2: the quickstart transcript and the two-verb sitting", len(blocks))
+	require.Truef(t, strings.HasPrefix(blocks[0][0], "$ nova-memory quickstart "), "the first `### First run` block does not open on the quickstart command: %q", blocks[0][0])
 
 	// The transcript WRITES a draft beside the corpus, so it runs against a
 	// copy of the fixture in t.TempDir(), never against what ships. Standing in
@@ -806,24 +717,18 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 
 	// The first block: one command, all of its output.
 	quickstart, err := onboarding.Steps("nova-memory", blocks[0][:1])
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	quickstart[0].Want = blocks[0][1:]
 	problems = append(problems, onboarding.Execute(quickstart, run, norms...)...)
 
 	// The second block: every `$` line is a command.
 	steps, err := onboarding.Steps("nova-memory", blocks[1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) != 2 {
-		t.Errorf("the second `### First run` block runs %d commands, want 2: a search and a check of the draft", len(steps))
-	}
+	require.NoError(t, err)
+	assert.Lenf(t, steps, 2, "the second `### First run` block runs %d commands, want 2: a search and a check of the draft", len(steps))
 	problems = append(problems, onboarding.Execute(steps, run, norms...)...)
 
 	for _, p := range problems {
-		t.Error(p)
+		assert.Fail(t, p.String())
 	}
 }
 
@@ -838,9 +743,7 @@ func buildTimeNorm(t *testing.T) onboarding.Norm {
 		`build=[0-9]+(?:\.[0-9]+)?(?:ns|µs|ms|s)\b`,
 		"build=<the index build time of this run>",
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return n
 }
 
@@ -869,12 +772,8 @@ func firstRunSitting(t *testing.T) string {
 		}
 		return os.WriteFile(filepath.Join(dst, rel), b, 0o644)
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sit, "draft.md"), []byte(firstRunDraft), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(sit, "draft.md"), []byte(firstRunDraft), 0o644))
 	return sit
 }
 
@@ -899,11 +798,10 @@ func runDocumented(t *testing.T) onboarding.Runner {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "docs", "TESTS.md")); err != nil {
-		t.Fatalf("docs/TESTS.md is not under %s: %v", root, err)
+	require.NoError(t, err)
+	{
+		_, err := os.Stat(filepath.Join(root, "docs", "TESTS.md"))
+		require.NoErrorf(t, err, "docs/TESTS.md is not under %s: %v", root, err)
 	}
 	return root
 }
@@ -917,18 +815,14 @@ func TestVerifyHelpExampleMatchesWhatTheToolPrints(t *testing.T) {
 		}
 		found = true
 		code, out, errOut := runCLI(t, "", localize(strings.Fields(line)[1:], "")...)
-		if code != 0 {
-			t.Fatalf("example exit %d: %s", code, errOut)
-		}
+		require.Equalf(t, 0, code, "example exit %d: %s", code, errOut)
 		want := onboarding.Step{Line: line, Want: []string{
 			"VERIFY INFO wikilink: [[storm-glass]] resolves to no file (e.g. from log/1974-03-11.md)",
 			"VERIFY OK gating=0 info=1 shown=1 coverage=0 frontmatter=0 links=info",
 		}}
 		for _, problem := range onboarding.CompareTranscript([]onboarding.Step{want}, []onboarding.Result{{Code: code, Stdout: out, Stderr: errOut}}, nil) {
-			t.Error(problem)
+			assert.Fail(t, problem.String())
 		}
 	}
-	if !found {
-		t.Fatal("help has no nova-memory verify example")
-	}
+	require.True(t, found, "help has no nova-memory verify example")
 }

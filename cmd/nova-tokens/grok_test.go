@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/stretchr/testify/assert"
 	"path/filepath"
 	"testing"
 )
@@ -39,8 +40,9 @@ func TestGrokUsageFoldsToOneRowWithInOutUsd(t *testing.T) {
 	wantContains(t, r.stdout, "TOKENS DAY date=2026-09-12 rows=1 ")
 	wantContains(t, read(t, filepath.Join(out, "2026-09-12.tsv")),
 		"2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:johnny")
-	if c := invoke(t, "check", "--out", out); c.exit != 0 {
-		t.Errorf("check over the folded day: exit %d, want 0\n%s", c.exit, c.stderr)
+	{
+		c := invoke(t, "check", "--out", out)
+		assert.False(t, c.exit != 0, "check over the folded day: exit %d, want 0\n%s", c.exit, c.stderr)
 	}
 
 	rep := invoke(t, "report", "--who", "johnny", "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)

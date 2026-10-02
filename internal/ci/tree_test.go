@@ -251,10 +251,6 @@ func loadRepoTree(root string) (*repoTreeIndex, error) {
 			return nil
 		}
 		if d.IsDir() {
-			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-			if isDeprecatedDir(root, path) {
-				return fs.SkipDir
-			}
 			return nil
 		}
 		// Anything that is not a directory is a file the walks this replaces

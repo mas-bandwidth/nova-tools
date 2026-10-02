@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // world is a snapshot the tests move by applying plans to it, the way a store
@@ -54,18 +56,18 @@ func (w *world) do(p Plan) Plan {
 	w.closeAll(p.Closes)
 	w.note(p.Notes...)
 	// the table properties, each guarded on the value its plan read, as the
-	// table layer applies them (L1 contract amendment, table properties)
+	// table layer applies them (docs/SPEC-NOVA-TABLE.md, table properties)
 	for _, pw := range p.Props {
 		tb := w.s.T(pw.Table)
 		cur, ok := tb.props[pw.Name]
-		if ok == pw.WasAbsent || (ok && cur != pw.Was) {
-			w.t.Fatalf("PROPGUARD: %s.%s is %q (%v), the plan read %q (absent %v)", pw.Table, pw.Name, cur, ok, pw.Was, pw.WasAbsent)
+		require.NotEqual(w.t, pw.WasAbsent, ok, "PROPGUARD: %s.%s is %q (%v), the plan read %q (absent %v)", pw.Table, pw.Name, cur, ok, pw.Was, pw.WasAbsent)
+		if ok {
+			require.Equal(w.t, pw.Was, cur, "PROPGUARD: %s.%s is %q (%v), the plan read %q (absent %v)", pw.Table, pw.Name, cur, ok, pw.Was, pw.WasAbsent)
 		}
 		if tb.props == nil {
 			tb.props = map[string]string{}
 		}
 		tb.props[pw.Name] = pw.Value
-		tb.propsRead = true
 	}
 	for _, tb := range []*Table{w.s.Work, w.s.Readers, w.s.Merge, w.s.Fleet} {
 		tb.cells, tb.byPrimary = nil, nil
@@ -75,9 +77,7 @@ func (w *world) do(p Plan) Plan {
 
 func (w *world) must(p Plan) Plan {
 	w.t.Helper()
-	if len(p.Refused) > 0 {
-		w.t.Fatalf("refused: %v", p.Refused)
-	}
+	require.Empty(w.t, p.Refused, "refused: %v", p.Refused)
 	return w.do(p)
 }
 
@@ -114,9 +114,7 @@ func (w *world) entry(ch Change) {
 	e := ch.Entry
 	c := tb.Card(e.ID)
 	if e.Expect != nil && e.Expect.Absent {
-		if c != nil {
-			w.t.Fatalf("%s: create %s: exists", ch.Table, e.ID)
-		}
+		require.Nil(w.t, c, "%s: create %s: exists", ch.Table, e.ID)
 		c = &Card{ID: e.ID, Row: e.Create.Row, Col: e.Create.Col, Score: e.Create.Score, Rev: 1, Fields: map[string]string{}}
 		for k, v := range e.Set {
 			c.Fields[k] = v
@@ -124,23 +122,20 @@ func (w *world) entry(ch Change) {
 		tb.Put(c)
 		return
 	}
-	if c == nil {
-		w.t.Fatalf("%s: %s: no such member", ch.Table, e.ID)
-	}
+	require.NotNil(w.t, c, "%s: %s: no such member", ch.Table, e.ID)
 	if e.Expect != nil {
-		if e.Expect.Revision != "" && e.Expect.Revision != strconv.FormatUint(c.Rev, 10) {
-			w.t.Fatalf("%s: %s: revision %s, expected %s", ch.Table, e.ID, strconv.FormatUint(c.Rev, 10), e.Expect.Revision)
+		if e.Expect.Revision != "" {
+			require.Equal(w.t, e.Expect.Revision, strconv.FormatUint(c.Rev, 10), "%s: %s: revision %s, expected %s", ch.Table, e.ID, strconv.FormatUint(c.Rev, 10), e.Expect.Revision)
 		}
-		if pl := e.Expect.Place; pl != nil && (pl.Row != c.Row || pl.Col != c.Col) {
-			w.t.Fatalf("%s: %s: at %s:%s, expected %s:%s", ch.Table, e.ID, c.Row, c.Col, pl.Row, pl.Col)
+		if pl := e.Expect.Place; pl != nil {
+			require.Equal(w.t, pl.Row, c.Row, "%s: %s: at %s:%s, expected %s:%s", ch.Table, e.ID, c.Row, c.Col, pl.Row, pl.Col)
+			require.Equal(w.t, pl.Col, c.Col, "%s: %s: at %s:%s, expected %s:%s", ch.Table, e.ID, c.Row, c.Col, pl.Row, pl.Col)
 		}
 	}
 	changed := false
 	if e.Move != nil {
 		if e.Move.Row != c.Row || e.Move.Col != c.Col {
-			if !tb.HasRow(e.Move.Row) {
-				w.t.Fatalf("%s: %s: no row %s", ch.Table, e.ID, e.Move.Row)
-			}
+			require.True(w.t, tb.HasRow(e.Move.Row), "%s: %s: no row %s", ch.Table, e.ID, e.Move.Row)
 			c.Row, c.Col, changed = e.Move.Row, e.Move.Col, true
 		}
 		if e.Move.Score != nil && *e.Move.Score != c.Score {
@@ -169,9 +164,8 @@ func (w *world) entry(ch Change) {
 // clean fails when the snapshot breaks any rule of section 9.
 func (w *world) clean(when string) {
 	w.t.Helper()
-	if v := Check(w.s, nil); len(v) > 0 {
-		w.t.Fatalf("%s: %v", when, v)
-	}
+	v := Check(w.s, nil)
+	require.Empty(w.t, v, "%s: %v", when, v)
 }
 
 func (w *world) state(id string) State { return w.s.StateOf(id) }

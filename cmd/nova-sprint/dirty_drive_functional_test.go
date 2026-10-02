@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -74,6 +75,7 @@ type driveTick struct {
 	cost   store.PartTime   // the tick's cost summed: its trips, whole-table reads, records, mismatches
 	load   string           // the machine's load averages as the tick ended
 	said   []string         // what the tick said once (a NOTE): why a table was read whole
+	routes int64            // the round trips of the tick's one read of the routes
 }
 
 // driveSampleAt is the landed count of each stream, every driveSample ticks.
@@ -91,6 +93,15 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	defer stop()
 	err := fn.Load(ctx, c)
 	require.NoError(t, err)
+	// three routes of the tier the cards are (a brief naming none is flash) and the
+	// tier's array, as nova-config's apply writes them: every deal takes the array
+	// at the route index, and the gate holds with it
+	for i, name := range []string{"flash-a", "flash-b", "flash-c"} {
+		require.NoError(t, c.SAdd(ctx, config.RoutesKey, name).Err())
+		require.NoError(t, c.HSet(ctx, config.RouteKey(name), "name", name, "tier", "flash", "provider", "prov"+strconv.Itoa(i),
+			"model", "m"+strconv.Itoa(i), "tokens", "100000", "deadline", "900", "enabled", "true").Err())
+	}
+	require.NoError(t, c.HSet(ctx, config.TierKey("flash"), "name", "flash", "routes", "flash-a,flash-b,flash-c,flash-c").Err())
 	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
 	getenv := func(k string) string { return env[k] }
 	world, coord, loop, machines := newApp(getenv), newApp(getenv), newApp(getenv), newApp(getenv)
@@ -244,7 +255,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			began := time.Now()
 			res, err := st.Tick(lctx)
 			q, _ := st.B.QueueRead(lctx)
-			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), took: res.Took, times: res.Times, cost: res.Cost(), load: machineLoad(), said: res.Said}
+			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), took: res.Took, times: res.Times, cost: res.Cost(), load: machineLoad(), said: res.Said, routes: res.RouteTrips}
 			if err != nil && lctx.Err() == nil {
 				tk.err = err.Error()
 			}
@@ -509,13 +520,20 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	// its twin never disagrees with the store's counts
 	var over []string
 	var sumTook, maxTook time.Duration
-	whole := int64(0)
+	whole, routeTrips, routeMax := int64(0), int64(0), int64(0)
 	var loads, why []string
 	for i, tk := range ticks {
+		routeTrips += tk.routes
+		routeMax = max(routeMax, tk.routes)
 		sumTook += tk.took
 		maxTook = max(maxTook, tk.took)
 		if i > 0 {
 			whole += tk.cost.Reads
+			for _, pt := range tk.times {
+				if pt.Reads > 0 {
+					why = append(why, fmt.Sprintf("tick %d part %s/%s read %d whole (%d trips, %d stale)", tk.n, pt.Table, pt.Name, pt.Reads, pt.Trips, pt.Stale))
+				}
+			}
 		}
 		for _, n := range tk.said {
 			why = append(why, fmt.Sprintf("tick %d: %s", tk.n, n))
@@ -533,8 +551,8 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			loads = append(loads, tk.load)
 		}
 	}
-	gate := fmt.Sprintf("THE GATE: %d ticks, mean %s, max %s, %d over %s; whole-table reads after the first tick %d; machine load %s",
-		len(ticks), (sumTook / time.Duration(max(len(ticks), 1))).Round(time.Millisecond), maxTook.Round(time.Millisecond), len(over), MaxTickWall, whole, strings.Join(loads, " | "))
+	gate := fmt.Sprintf("THE GATE: %d ticks, mean %s, max %s, %d over %s; whole-table reads after the first tick %d; the routes read (3 routes): %d round trips, at most %d a tick; machine load %s",
+		len(ticks), (sumTook / time.Duration(max(len(ticks), 1))).Round(time.Millisecond), maxTook.Round(time.Millisecond), len(over), MaxTickWall, whole, routeTrips, routeMax, strings.Join(loads, " | "))
 	fmt.Fprintln(os.Stderr, gate)
 	for _, o := range over {
 		if os.Getenv(GateStoreEnv) == "1" {
@@ -543,6 +561,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			fmt.Fprintf(os.Stderr, "NOTE over the gate of %s (asserted only against a bench's store, %s=1): %s\n", MaxTickWall, GateStoreEnv, o)
 		}
 	}
+	assert.LessOrEqual(t, routeMax, int64(2), "a tick read the routes in %d round trips: once a tick, SMEMBERS and one pipeline", routeMax)
 	assert.Zero(t, whole, "the loop read %d tables whole after its first tick: its twin did not catch up; it said: %s", whole, strings.Join(why, "; "))
 	for _, w := range why {
 		fmt.Fprintln(os.Stderr, "NOTE "+w)

@@ -88,8 +88,8 @@ func TestWriteFileFailsTheTestWhenItCannotWrite(t *testing.T) {
 // can be asserted on.
 type recorder struct {
 	testing.TB
-	failed bool
-	msg    string
+	failed, skipped bool
+	msg             string
 }
 
 func (r *recorder) Helper() {}
@@ -98,6 +98,11 @@ func (r *recorder) Errorf(format string, args ...any) {
 	r.msg += fmt.Sprintf(format, args...)
 }
 func (r *recorder) FailNow() { panic(r) }
+func (r *recorder) Skipf(format string, args ...any) {
+	r.skipped = true
+	r.msg += fmt.Sprintf(format, args...)
+	panic(r)
+}
 
 // runs calls f, stopping at the recorder's FailNow as a test would stop.
 func runs(r *recorder, f func()) {

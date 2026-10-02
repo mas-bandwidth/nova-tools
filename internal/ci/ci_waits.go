@@ -99,16 +99,12 @@ func (r WaitsResult) ExitCode() int {
 // and cmd/.
 var checkWaitsDirs = []string{"internal", "cmd"}
 
-// walkCITestFiles reads every _test.go under root/internal and root/cmd -- the
+// walkCITestFilesWith reads every _test.go under root/internal and root/cmd -- the
 // two trees checkWaitsDirs names -- and calls fn with the repo-relative slash
 // path and the file's bytes. testdata, .git and vendor are skipped so the
 // fixtures the checkers are tested with are never read as offenders. A tree
 // that is not there is not an error: a checkout without cmd/ is still checked
 // for the part it has.
-func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
-	return walkCITestFilesWith(root, defaultSourceSeams(), fn)
-}
-
 func walkCITestFilesWith(root string, seams SourceSeams, fn func(rel string, src []byte) error) error {
 	for _, dir := range checkWaitsDirs {
 		base := filepath.Join(root, dir)
@@ -292,14 +288,10 @@ func matchWaitAllow(entries []waitAllow, used []bool, f WaitFinding) int {
 	return loose
 }
 
-// scanWaitFile parses one _test.go and returns its fixed-wait findings. The
+// scanWaitFileWith parses one _test.go and returns its fixed-wait findings. The
 // second result is false when the file does not parse: a file that is not Go
 // cannot carry the shapes this check reads, and a fixture deliberately holding
 // a broken literal is not the offender itself.
-func scanWaitFile(rel string, src []byte) ([]WaitFinding, bool) {
-	return scanWaitFileWith(rel, src, defaultSourceSeams())
-}
-
 func scanWaitFileWith(rel string, src []byte, seams SourceSeams) ([]WaitFinding, bool) {
 	fset, file, err := seams.parseFile(rel, src, 0)
 	if err != nil {

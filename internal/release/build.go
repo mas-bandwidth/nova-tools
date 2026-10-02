@@ -228,12 +228,21 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		fmt.Fprintf(out, "RELEASE BUILT version=%s platform=%s tools=%d verified=%d out=%s sums=%s digest=%s\n",
 			field(o.version), field(goos+"-"+goarch), len(tools), verified, field(dir), field(digest), field(digestPath))
 	}
+	// LAST, and never a reason to fail: every platform is built and verified,
+	// and the old version directories under --out are removed by the rule in
+	// prune.go. The version just built stays, and so does the version of the
+	// nova-update running this build, which is what this machine has installed.
+	self := ""
+	if deps.Self != nil {
+		self = deps.Self()
+	}
+	pruned, pruneFailed := pruneDefault(o.out, func(name string) bool { return name == o.version || name == self }, errs)
 	// ONE LINE THAT NAMES EVERY PLATFORM. The repeated --platform used to keep
 	// the LAST flag and print one green receipt, which is how a release ends
 	// up half a platform short with nobody the wiser. `platforms=` and `sums=`
 	// are the same list in the same order, one token each.
-	fmt.Fprintf(out, "RELEASE BUILD OK version=%s platforms=%s tools=%d sums=%s dogfood=%s out=%s\n",
-		field(o.version), field(strings.Join(names, ",")), len(tools), field(strings.Join(digests, ",")), gate, field(o.out))
+	fmt.Fprintf(out, "RELEASE BUILD OK version=%s platforms=%s tools=%d sums=%s dogfood=%s out=%s pruned=%d prune-failed=%d\n",
+		field(o.version), field(strings.Join(names, ",")), len(tools), field(strings.Join(digests, ",")), gate, field(o.out), pruned, pruneFailed)
 	return 0
 }
 

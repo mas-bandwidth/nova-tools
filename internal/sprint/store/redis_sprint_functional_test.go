@@ -31,6 +31,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // liveClient is a client of a Redis the test started, with the table layer's
@@ -40,9 +42,7 @@ func liveClient(t *testing.T) *redis.Client {
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
-	if err := fn.Load(context.Background(), c); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, fn.Load(context.Background(), c))
 	return c
 }
 
@@ -54,15 +54,9 @@ func liveHarnessOn(t *testing.T, c *redis.Client, prefix string) *harness {
 	now := func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now }
 	names := sprint.Names{Prefix: prefix}
 	h.st = &Store{B: &Redis{C: c, Names: names, Now: now}, Names: names, Actor: "tester", Now: now}
-	if err := h.st.Init(h.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.st.B.RowsAdd(h.ctx, names.Table(sprint.Readers), []string{"reader-a", "reader-b", "reader-c"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.st.B.SetCoordinator(h.ctx, h.st.Actor); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.Init(h.ctx))
+	require.NoError(t, h.st.B.RowsAdd(h.ctx, names.Table(sprint.Readers), []string{"reader-a", "reader-b", "reader-c"}))
+	require.NoError(t, h.st.B.SetCoordinator(h.ctx, h.st.Actor))
 	h.beat()
 	return h
 }
@@ -77,13 +71,9 @@ func liveHarness(t *testing.T) (*harness, *redis.Client) {
 func liveOpen(h *harness, typ string) []sprint.Open {
 	h.t.Helper()
 	p, err := h.st.Pinned(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	open, err := p.B.OpenNotes(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	var out []sprint.Open
 	for _, o := range open {
 		if o.Note.Type == typ {
@@ -97,13 +87,9 @@ func liveOpen(h *harness, typ string) []sprint.Open {
 func liveNotes(h *harness) []sprint.Note {
 	h.t.Helper()
 	p, err := h.st.Pinned(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	notes, _, err := p.B.NotesSince(h.ctx, "", 100000)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	return notes
 }
 
@@ -124,9 +110,7 @@ func liveKeys(t *testing.T, c *redis.Client) []string {
 	var cur uint64
 	for {
 		ks, next, err := c.Scan(context.Background(), cur, "*", 500).Result()
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		keys = append(keys, ks...)
 		if cur = next; cur == 0 {
 			break
@@ -144,9 +128,7 @@ func liveKeys(t *testing.T, c *redis.Client) []string {
 func TestRedisASprintToLandedByTicks(t *testing.T) {
 	t.Parallel()
 	h, _ := liveHarness(t)
-	if err := h.st.B.SetCoordinator(h.ctx, "tester"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.B.SetCoordinator(h.ctx, "tester"))
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"a"}}))
@@ -156,9 +138,8 @@ func TestRedisASprintToLandedByTicks(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"y"}, Needs: []string{"b"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"z"}}))
 	h.clean("setup")
-	if line := h.st.MachineLine(h.ctx); line != "machine: STOPPED" {
-		t.Fatalf("a new sprint: %q", line)
-	}
+	line := h.st.MachineLine(h.ctx)
+	require.Equal(t, "machine: STOPPED", line, "a new sprint: %q", line)
 	// STOPPED: the tick moves nothing.
 	if res := h.machine(); len(res.Moved()) != 0 || res.State != Stopped {
 		t.Fatalf("a stopped tick: %+v", res)
@@ -192,9 +173,7 @@ func TestRedisASprintToLandedByTicks(t *testing.T) {
 	}
 	h.machine()
 	for _, id := range []string{"a", "b", "y", "z"} {
-		if h.state(id) != sprint.Landed {
-			t.Fatalf("%s is %s before the sentinel", id, h.state(id))
-		}
+		require.Equal(t, sprint.Landed, h.state(id), "%s is %s before the sentinel", id, h.state(id))
 	}
 	if h.state("stop") != sprint.Waiting || h.state("after") != sprint.Waiting || !reached() {
 		t.Fatalf("at the sentinel: stop %s after %s reached %d", h.state("stop"), h.state("after"), len(liveOpen(h, sprint.NSentinelReached)))
@@ -202,9 +181,7 @@ func TestRedisASprintToLandedByTicks(t *testing.T) {
 	// The tick does nothing twice: a further tick moves and writes nothing.
 	before := liveWritten(h, sprint.NSentinelReached)
 	h.quiet("at the sentinel")
-	if liveWritten(h, sprint.NSentinelReached) != before {
-		t.Fatalf("a second tick wrote the sentinel's judgment again")
-	}
+	require.Equal(t, before, liveWritten(h, sprint.NSentinelReached), "a second tick wrote the sentinel's judgment again")
 	// The coordinator releases it; the tick moves what waited behind it.
 	h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"stop"}, Reason: "a, b, y and z are green", Coordinator: "tester", Who: "tester"}))
 	for i := 0; i < 8 && h.state("after") != sprint.Landed; i++ {
@@ -214,27 +191,20 @@ func TestRedisASprintToLandedByTicks(t *testing.T) {
 	}
 	s := h.snap()
 	for _, id := range []string{"a", "b", "stop", "after", "y", "z"} {
-		if s.StateOf(id) != sprint.Landed {
-			t.Fatalf("%s is %s at the end", id, s.StateOf(id))
-		}
+		require.Equal(t, sprint.Landed, s.StateOf(id), "%s is %s at the end", id, s.StateOf(id))
 	}
 	for _, st := range []string{"s1", "s2"} {
-		if s.StreamCtl(st).F("state") != sprint.StreamLanded {
-			t.Fatalf("stream %s is %s", st, s.StreamCtl(st).F("state"))
-		}
+		require.Equal(t, string(sprint.StreamLanded), s.StreamCtl(st).F("state"), "stream %s is %s", st, s.StreamCtl(st).F("state"))
 	}
-	if reached() {
-		t.Fatalf("the sentinel's judgment is still open after its release")
-	}
+	require.False(t, reached(), "the sentinel's judgment is still open after its release")
 	h.clean("landed")
 	// The machine's records: state, heartbeat with its ticks.
 	m, hb, err := h.st.Machine(h.ctx)
 	if err != nil || !m.Running() || hb.Ticks == 0 || hb.Error != "" {
 		t.Fatalf("the machine's records: %+v %+v %v", m, hb, err)
 	}
-	if line := h.st.MachineLine(h.ctx); line != "machine: running" {
-		t.Fatalf("machine line: %q", line)
-	}
+	line = h.st.MachineLine(h.ctx)
+	require.Equal(t, "machine: running", line, "machine line: %q", line)
 	// The inbox stream and its cursor.
 	notes, ids, err := h.st.B.NotesSince(h.ctx, "", 100000)
 	if err != nil || len(notes) < 4 || len(ids) != len(notes) {
@@ -245,13 +215,9 @@ func TestRedisASprintToLandedByTicks(t *testing.T) {
 		seen[n.Type] = true
 	}
 	for _, typ := range []string{sprint.NSentinelReached, sprint.NStreamLanded, sprint.NMachineStarted} {
-		if !seen[typ] {
-			t.Fatalf("no %q notification among %v", typ, seen)
-		}
+		require.True(t, seen[typ], "no %q notification among %v", typ, seen)
 	}
-	if err := h.st.B.SetCursor(h.ctx, ids[len(ids)-1]); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.B.SetCursor(h.ctx, ids[len(ids)-1]))
 	if cur, err := h.st.B.Cursor(h.ctx); err != nil || cur != ids[len(ids)-1] {
 		t.Fatalf("cursor %q %v", cur, err)
 	}
@@ -264,24 +230,19 @@ func TestRedisASprintToLandedByTicks(t *testing.T) {
 	}
 	// Progress: each stream has a clock.
 	clocks, err := h.st.StreamClocks(h.ctx)
-	if err != nil || len(clocks) < 2 {
-		t.Fatalf("stream clocks: %+v %v", clocks, err)
-	}
+	require.NoError(t, err, "stream clocks: %+v %v", clocks, err)
+	require.GreaterOrEqual(t, len(clocks), 2, "stream clocks: %+v %v", clocks, err)
 	for _, c := range clocks {
-		if c.Progress.IsZero() {
-			t.Fatalf("stream %s has no progress clock", c.Stream)
-		}
+		require.False(t, c.Progress.IsZero(), "stream %s has no progress clock", c.Stream)
 	}
 	// Stop and start are idempotent and recorded once.
 	notesBefore := len(liveNotes(h))
 	h.stopMachine()
 	h.stopMachine()
-	if line := h.st.MachineLine(h.ctx); line != "machine: STOPPED" {
-		t.Fatalf("stopped: %q", line)
-	}
-	if n := len(liveNotes(h)); n != notesBefore+1 {
-		t.Fatalf("stopping twice wrote %d notifications", n-notesBefore)
-	}
+	line = h.st.MachineLine(h.ctx)
+	require.Equal(t, "machine: STOPPED", line, "stopped: %q", line)
+	n := len(liveNotes(h))
+	require.Equal(t, notesBefore+1, n, "stopping twice wrote %d notifications", n-notesBefore)
 }
 
 // outsideWriteLive changes a primary's brief on the work table, as a writer
@@ -293,9 +254,7 @@ func (h *harness) outsideWriteLive(id string) *racer {
 		p := s.Work.Card(id)
 		_, err := h.st.B.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: table, Epoch: fmt.Sprint(s.Work.Epoch), ExpectedTableRevision: fmt.Sprint(s.Work.Revision),
 			OperationID: "outside-" + id, Actor: "outside", Members: []ntable.BatchMemberEntry{{ID: p.ID, Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: p.Row, Col: p.Col}}, Set: map[string]string{"brief": "outside"}}}})
-		if err != nil {
-			h.t.Error(err)
-		}
+		assert.NoError(h.t, err)
 	}}
 }
 
@@ -350,9 +309,8 @@ func TestRedisAMultiTableStepCutIsRepairedSkippingWhatMoved(t *testing.T) {
 	if c := s.Work.Card("s1-1"); c.Col != sprint.Ready || c.F("brief") != "outside" {
 		t.Fatalf("s1-1 overwritten: %s brief=%s", c.Col, c.F("brief"))
 	}
-	if c := s.Work.Card("s1-2"); c.Col != sprint.Working {
-		t.Fatalf("s1-2, whose expectation held, is %s", c.Col)
-	}
+	c := s.Work.Card("s1-2")
+	require.Equal(t, sprint.Working, c.Col, "s1-2, whose expectation held, is %s", c.Col)
 	ns := liveSkipNotes(h)
 	if len(ns) != 1 || ns[0].Kind != sprint.Judgment || len(ns[0].Primaries) != 1 || ns[0].Primaries[0] != "s1-1" {
 		t.Fatalf("skip judgments: %+v", ns)
@@ -366,13 +324,10 @@ func TestRedisAMultiTableStepCutIsRepairedSkippingWhatMoved(t *testing.T) {
 	for _, o := range liveOpen(h, NRepairSkipped) {
 		found = found || (o.Note.ID == ns[0].ID && o.Subject() == "s1-1")
 	}
-	if !found {
-		t.Fatalf("the skip judgment is not open on s1-1")
-	}
+	require.True(t, found, "the skip judgment is not open on s1-1")
 	rep, _, err := h.st.Check(h.ctx, 3)
-	if err != nil || rep.Pending != "" {
-		t.Fatalf("check after the repair: pending %q %v", rep.Pending, err)
-	}
+	require.NoError(t, err, "check after the repair: pending %q %v", rep.Pending, err)
+	require.Empty(t, rep.Pending, "check after the repair: pending %q %v", rep.Pending, err)
 	// a second repair has nothing to do and writes nothing
 	if rr, err := h.st.Repair(h.ctx); err != nil || len(rr) != 0 {
 		t.Fatalf("a second repair: %+v %v", rr, err)
@@ -382,9 +337,7 @@ func TestRedisAMultiTableStepCutIsRepairedSkippingWhatMoved(t *testing.T) {
 	if err != nil || !res.Replay || len(res.Skipped) != 1 || !strings.Contains(res.Skipped[0], "s1-1") {
 		t.Fatalf("replay: %+v %v", res, err)
 	}
-	if len(liveSkipNotes(h)) != 1 {
-		t.Fatalf("%d skip judgments after the replay", len(liveSkipNotes(h)))
-	}
+	require.Len(t, liveSkipNotes(h), 1, "%d skip judgments after the replay", len(liveSkipNotes(h)))
 }
 
 // failsWork is a store that refuses every send of the work table's manifest
@@ -433,22 +386,17 @@ func TestRedisACutStepIsRepairedWhole(t *testing.T) {
 	}
 	// the fleet table applied, the work table did not
 	s := h.snap()
-	if s.Work.Card("s1-1").Col != sprint.Ready {
-		t.Fatalf("the work table moved: s1-1 is %s", s.Work.Card("s1-1").Col)
-	}
+	require.Equal(t, sprint.Ready, s.Work.Card("s1-1").Col, "the work table moved: s1-1 is %s", s.Work.Card("s1-1").Col)
 	rep, _, err := h.st.Check(h.ctx, 3)
-	if err != nil || rep.Pending == "" {
-		t.Fatalf("check does not name the pending operation: %+v %v", rep, err)
-	}
+	require.NoError(t, err, "check does not name the pending operation: %+v %v", rep, err)
+	require.NotEmpty(t, rep.Pending, "check does not name the pending operation: %+v %v", rep, err)
 	cut.set(false)
 	rr, err := h.st.Repair(h.ctx)
 	if err != nil || len(rr) != 1 || rr[0].Done != RepairFinished {
 		t.Fatalf("repair: %+v %v", rr, err)
 	}
 	for _, id := range []string{"s1-1", "s1-2"} {
-		if h.state(id) != sprint.Working {
-			t.Fatalf("%s is %s after the repair", id, h.state(id))
-		}
+		require.Equal(t, sprint.Working, h.state(id), "%s is %s after the repair", id, h.state(id))
 	}
 	h.clean("repaired")
 	// The replay of the caller's operation id: the recorded result, no new work.
@@ -457,9 +405,8 @@ func TestRedisACutStepIsRepairedWhole(t *testing.T) {
 	if err != nil || !rep2.Replay || h.snap().Work.Revision != rev {
 		t.Fatalf("replay: %+v %v", rep2, err)
 	}
-	if n := len(h.snap().Fleet.Of("s1-1")); n != 1 {
-		t.Fatalf("s1-1 has %d work cards", n)
-	}
+	n := len(h.snap().Fleet.Of("s1-1"))
+	require.Equal(t, 1, n, "s1-1 has %d work cards", n)
 }
 
 // The caller's operation ids on the real store: a retry returns the recorded
@@ -473,9 +420,8 @@ func TestRedisCallerOperationReplay(t *testing.T) {
 	deal.CallerOp = "op-1"
 	deal.Args = ArgsOf(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}})
 	first := h.must(deal)
-	if len(first.Moved) != 1 || first.Replay {
-		t.Fatalf("first: %+v", first)
-	}
+	require.Len(t, first.Moved, 1, "first: %+v", first)
+	require.False(t, first.Replay, "first: %+v", first)
 	rev := h.snap().Work.Revision
 	again, err := h.st.Run(h.ctx, deal)
 	if err != nil || !again.Replay || len(again.Moved) != 1 || h.snap().Work.Revision != rev {
@@ -490,22 +436,18 @@ func TestRedisCallerOperationReplay(t *testing.T) {
 	other := AddStep(sprint.AddReq{Stream: "s1", Count: 1})
 	other.CallerOp = "op-1"
 	var conflict *OpConflictError
-	if _, err := h.st.Run(h.ctx, other); !errors.As(err, &conflict) {
-		t.Fatalf("another verb under the id: %v", err)
-	}
+	_, err = h.st.Run(h.ctx, other)
+	require.ErrorAs(t, err, &conflict, "another verb under the id: %v", err)
 	args := DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})
 	args.CallerOp = "op-1"
 	args.Args = ArgsOf(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})
 	if _, err := h.st.Run(h.ctx, args); !errors.As(err, &conflict) || !conflict.OtherArgs {
 		t.Fatalf("other arguments under the id: %v", err)
 	}
-	if h.state("s1-2") != sprint.Ready {
-		t.Fatalf("a conflicting step moved s1-2: %s", h.state("s1-2"))
-	}
+	require.Equal(t, sprint.Ready, h.state("s1-2"), "a conflicting step moved s1-2: %s", h.state("s1-2"))
 	// after a clear
-	if _, err := h.st.Clear(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err = h.st.Clear(h.ctx)
+	require.NoError(t, err)
 	e, ok, err := h.st.B.DoneBefore(h.ctx, "op-1", 1)
 	if err != nil || !ok || e != 0 {
 		t.Fatalf("DoneBefore: %d %v %v", e, ok, err)
@@ -526,20 +468,14 @@ func liveImage(h *harness, c *redis.Client) string {
 		names[i] = h.st.Names.Table(tb)
 	}
 	p, err := h.st.Pinned(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	shapes, err := p.B.Shapes(h.ctx, names)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	for _, sh := range shapes {
 		fmt.Fprintf(&b, "%s rev %d epoch %d\n", sh.Name, sh.Revision, sh.Epoch)
 	}
 	f, err := p.B.ReadFence(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	fmt.Fprintf(&b, "fence gen %d pending %v\n", f.Gen, f.Pending != nil)
 	fmt.Fprintf(&b, "notes %d\n", len(liveNotes(h)))
 	fmt.Fprintf(&b, "dbsize %d\n", c.DBSize(h.ctx).Val())
@@ -632,14 +568,12 @@ func TestRedisALateWriterAfterAClearIsRefused(t *testing.T) {
 		t.Fatalf("the late deal that read before a clear: %+v %v", res, err)
 	}
 	now, err := h.st.EpochNow(h.ctx)
-	if err != nil || now.N != 2 {
-		t.Fatalf("epoch %+v %v", now, err)
-	}
+	require.NoError(t, err, "epoch %+v %v", now, err)
+	require.Equal(t, uint64(2), now.N, "epoch %+v %v", now, err)
 	h.clean("after the racing clear")
 	old1, err := h.st.At(1).Load(h.ctx, All, nil)
-	if err != nil || old1.StateOf("s1-1") == sprint.Working {
-		t.Fatalf("epoch 1 holds a deal made after its clear: %v %v", old1.StateOf("s1-1"), err)
-	}
+	require.NoError(t, err, "epoch 1 holds a deal made after its clear: %v %v", old1.StateOf("s1-1"), err)
+	require.NotEqual(t, sprint.Working, old1.StateOf("s1-1"), "epoch 1 holds a deal made after its clear: %v %v", old1.StateOf("s1-1"), err)
 }
 
 // A clear between a step's first manifest and its last, on the real table
@@ -660,16 +594,10 @@ func TestRedisAClearInTheMiddleOfAStep(t *testing.T) {
 	res, err := st.Run(h.ctx, step)
 	t.Logf("step: %+v err=%v", res, err)
 	t.Logf("clear: %+v err=%v", cres, cerr)
-	if cerr != nil {
-		t.Fatalf("clear: %v", cerr)
-	}
-	if w.seen < 2 {
-		t.Fatalf("the step wrote %d manifests", w.seen)
-	}
+	require.NoError(t, cerr, "clear: %v", cerr)
+	require.GreaterOrEqual(t, w.seen, 2, "the step wrote %d manifests", w.seen)
 	s := h.snap()
-	if s.Epoch != 1 {
-		t.Fatalf("epoch %d", s.Epoch)
-	}
+	require.Equal(t, uint64(1), s.Epoch, "epoch %d", s.Epoch)
 	for _, c := range s.Work.Cards() {
 		if c.Placed() {
 			t.Errorf("the new epoch holds %s at %s", c.ID, c.Col)
@@ -682,17 +610,13 @@ func TestRedisAClearInTheMiddleOfAStep(t *testing.T) {
 	}
 	h.clean("after the clear mid-step")
 	old, err := h.st.At(0).Load(h.ctx, All, nil)
-	if err != nil {
-		t.Fatalf("old epoch: %v", err)
-	}
+	require.NoError(t, err, "old epoch: %v", err)
 	t.Logf("old epoch: s1-1 %s, s1-2 %s, fleet cards %d", old.StateOf("s1-1"), old.StateOf("s1-2"), len(old.Fleet.Cards()))
-	if _, err := h.st.Repair(h.ctx); err != nil {
-		t.Fatalf("repair: %v", err)
-	}
+	_, err = h.st.Repair(h.ctx)
+	require.NoError(t, err, "repair: %v", err)
 	res, err = h.st.Run(h.ctx, step)
-	if err != nil || len(res.Moved) != 0 {
-		t.Fatalf("the same verb again: %+v %v", res, err)
-	}
+	require.NoError(t, err, "the same verb again: %+v %v", res, err)
+	require.Empty(t, res.Moved, "the same verb again: %+v %v", res, err)
 	h.clean("end")
 }
 
@@ -704,9 +628,8 @@ func TestRedisTeardownLeavesNoKeyAndNothingElse(t *testing.T) {
 	t.Parallel()
 	c := liveClient(t)
 	ctx := context.Background()
-	if left := liveKeys(t, c); len(left) != 0 {
-		t.Fatalf("a new Redis holds %v", left)
-	}
+	left := liveKeys(t, c)
+	require.Empty(t, left, "a new Redis holds %v", left)
 	// the neighbour: another sprint on the same Redis
 	b := liveHarnessOn(t, c, "g-")
 	b.setup(2)
@@ -719,9 +642,7 @@ func TestRedisTeardownLeavesNoKeyAndNothingElse(t *testing.T) {
 	// keys of no sprint, and keys that look like the sprint's but are not its own
 	foreign := []string{"other:key", "f-stranger", "table:f-work:stranger", "f-sprint-not:fence"}
 	for _, k := range foreign {
-		if err := c.Set(ctx, k, "x", 0).Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, c.Set(ctx, k, "x", 0).Err())
 	}
 	untouched := liveKeys(t, c)
 
@@ -735,43 +656,31 @@ func TestRedisTeardownLeavesNoKeyAndNothingElse(t *testing.T) {
 		}
 		a.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
 		a.through("s1-1")
-		if err := a.st.B.SetCoordinator(ctx, "tester"); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, a.st.B.SetCoordinator(ctx, "tester"))
 	}
 	a.startMachine()
 	route := "file:" + filepath.Join(t.TempDir(), "goal.txt")
 	a.setGoal("friend-a", "goal", route)
 	a.machine()
-	if len(liveKeys(t, c)) <= len(untouched) {
-		t.Fatalf("the sprint wrote no keys")
-	}
+	require.Greater(t, len(liveKeys(t, c)), len(untouched), "the sprint wrote no keys")
 	n, err := a.st.Teardown(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Logf("teardown deleted %d keys", n)
 	after := liveKeys(t, c)
-	if strings.Join(after, "\n") != strings.Join(untouched, "\n") {
-		t.Fatalf("after teardown:\n%s\nbefore the sprint:\n%s", strings.Join(after, "\n"), strings.Join(untouched, "\n"))
-	}
+	require.Equal(t, strings.Join(untouched, "\n"), strings.Join(after, "\n"), "after teardown:\n%s\nbefore the sprint:\n%s", strings.Join(after, "\n"), strings.Join(untouched, "\n"))
 	// the neighbour is whole
 	b.clean("the neighbour after the teardown")
 	// a second teardown deletes nothing more
-	if _, err := a.st.Teardown(ctx); err != nil {
-		t.Fatalf("second teardown: %v", err)
-	}
-	if again := liveKeys(t, c); strings.Join(again, "\n") != strings.Join(untouched, "\n") {
-		t.Fatalf("after the second teardown:\n%s", strings.Join(again, "\n"))
-	}
+	_, err = a.st.Teardown(ctx)
+	require.NoError(t, err, "second teardown: %v", err)
+	again := liveKeys(t, c)
+	require.Equal(t, strings.Join(untouched, "\n"), strings.Join(again, "\n"), "after the second teardown:\n%s", strings.Join(again, "\n"))
 	// and the neighbour's teardown leaves exactly the foreign keys
-	if _, err := b.st.Teardown(ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err = b.st.Teardown(ctx)
+	require.NoError(t, err)
 	sort.Strings(foreign)
-	if got := liveKeys(t, c); strings.Join(got, "\n") != strings.Join(foreign, "\n") {
-		t.Fatalf("after both teardowns: %v, want %v", got, foreign)
-	}
+	got := liveKeys(t, c)
+	require.Equal(t, strings.Join(foreign, "\n"), strings.Join(got, "\n"), "after both teardowns: %v, want %v", got, foreign)
 }
 
 // Writers racing on the fence, each with a client and a store of its own: of
@@ -812,9 +721,7 @@ func TestRedisWritersRaceForTheSamePrimaries(t *testing.T) {
 		moved := map[string]int{}
 		busy := 0
 		for o := range outs {
-			if o.err != nil {
-				t.Fatalf("round %d: a writer failed: %v", round, o.err)
-			}
+			require.NoError(t, o.err, "round %d: a writer failed: %v", round, o.err)
 			for _, m := range o.res.Moved {
 				moved[strings.Fields(m)[0]]++
 			}
@@ -825,15 +732,10 @@ func TestRedisWritersRaceForTheSamePrimaries(t *testing.T) {
 			}
 		}
 		for _, id := range ids {
-			if moved[id] != 1 {
-				t.Fatalf("round %d: %s was started %d times (%v)", round, id, moved[id], moved)
-			}
-			if h.state(id) != sprint.Working {
-				t.Fatalf("round %d: %s is %s", round, id, h.state(id))
-			}
-			if n := len(h.snap().Fleet.Of(id)); n != 1 {
-				t.Fatalf("round %d: %s has %d work cards", round, id, n)
-			}
+			require.Equal(t, 1, moved[id], "round %d: %s was started %d times (%v)", round, id, moved[id], moved)
+			require.Equal(t, sprint.Working, h.state(id), "round %d: %s is %s", round, id, h.state(id))
+			n := len(h.snap().Fleet.Of(id))
+			require.Equal(t, 1, n, "round %d: %s has %d work cards", round, id, n)
 		}
 		if busy > 0 {
 			t.Logf("round %d: %d refusals said the sprint kept changing", round, busy)
@@ -882,16 +784,13 @@ func TestRedisTicksRaceEachOther(t *testing.T) {
 	working := 0
 	for i := 1; i <= 9; i++ {
 		id := fmt.Sprintf("s1-%d", i)
-		if n := len(s.Fleet.Of(id)); n > 1 {
-			t.Errorf("%s has %d work cards", id, n)
-		}
+		n := len(s.Fleet.Of(id))
+		assert.LessOrEqual(t, n, 1, "%s has %d work cards", id, n)
 		if s.StateOf(id) == sprint.Working || s.StateOf(id) == sprint.Ready {
 			working++
 		}
 	}
-	if working != 9 {
-		t.Errorf("%d of 9 primaries were dealt", working)
-	}
+	assert.Equal(t, 9, working, "%d of 9 primaries were dealt", working)
 	h.clean("after the racing ticks")
 	h.tick(time.Second)
 	h.quiet("after the racing ticks")
@@ -906,9 +805,7 @@ func TestRedisTheCoordinatorsRecords(t *testing.T) {
 	if who, err := h.st.B.Coordinator(h.ctx); err != nil || who != h.st.Actor {
 		t.Fatalf("the harness's coordinator: %q %v", who, err)
 	}
-	if err := h.st.B.SetCoordinator(h.ctx, "tester"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.B.SetCoordinator(h.ctx, "tester"))
 	if who, err := h.st.B.Coordinator(h.ctx); err != nil || who != "tester" {
 		t.Fatalf("the coordinator: %q %v", who, err)
 	}
@@ -917,35 +814,24 @@ func TestRedisTheCoordinatorsRecords(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	open := liveOpen(h, sprint.NSentinelReached)
-	if len(open) != 1 {
-		t.Fatalf("open judgments: %d", len(open))
-	}
+	require.Len(t, open, 1, "open judgments: %d", len(open))
 	when := h.now.Add(2 * time.Hour).UTC().Truncate(time.Second)
-	if err := h.st.SetReview(h.ctx, open[0].Note.ID, when); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.SetReview(h.ctx, open[0].Note.ID, when))
 	if got := liveOpen(h, sprint.NSentinelReached); len(got) != 1 || !got[0].Note.Review.Equal(when) {
 		t.Fatalf("the review time: %+v", got)
 	}
-	if err := h.st.SetReview(h.ctx, "no-such-note", when); err == nil {
-		t.Fatalf("a review time of no judgment was accepted")
-	}
+	require.Error(t, h.st.SetReview(h.ctx, "no-such-note", when), "a review time of no judgment was accepted")
 	// release by another actor is refused; by the coordinator it lands
 	coordinator, err := h.st.B.Coordinator(h.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	res, err := h.st.Run(h.ctx, ReleaseStep(sprint.ReleaseReq{IDs: []string{"stop"}, Reason: "x", Coordinator: coordinator, Who: "someone-else"}))
 	if err != nil || len(res.Refused) == 0 || h.state("stop") == sprint.Landed {
 		t.Fatalf("a release by another actor: %+v %v", res, err)
 	}
 	h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"stop"}, Reason: "x", Coordinator: "tester", Who: "tester"}))
-	if h.state("stop") != sprint.Landed {
-		t.Fatalf("stop is %s", h.state("stop"))
-	}
-	if open := liveOpen(h, sprint.NSentinelReached); len(open) != 0 {
-		t.Fatalf("the judgment is open after the release: %d", len(open))
-	}
+	require.Equal(t, sprint.Landed, h.state("stop"), "stop is %s", h.state("stop"))
+	open = liveOpen(h, sprint.NSentinelReached)
+	require.Empty(t, open, "the judgment is open after the release: %d", len(open))
 	h.clean("released")
 }
 
@@ -958,9 +844,8 @@ func TestRedisTheReminders(t *testing.T) {
 	h, _ := liveHarness(t)
 	route, path := goalFile(t, "a")
 	h.setGoal("friend-a", "keep the queue full", route)
-	if res := h.machine(); len(reminded(res)) != 0 {
-		t.Fatalf("a stopped machine reminded: %v", reminded(res))
-	}
+	res := h.machine()
+	require.Empty(t, reminded(res), "a stopped machine reminded: %v", reminded(res))
 	h.startMachine()
 	if got := reminded(h.machine()); len(got) != 1 || !strings.HasPrefix(got[0], "REMINDER 1 to friend-a") {
 		t.Fatalf("the first tick after start: %v", got)
@@ -969,49 +854,40 @@ func TestRedisTheReminders(t *testing.T) {
 		t.Fatalf("file: %q %v", b, err)
 	}
 	h.tick(sprint.RemindEvery - time.Second)
-	if got := reminded(h.machine()); len(got) != 0 {
-		t.Fatalf("before five minutes: %v", got)
-	}
+	got := reminded(h.machine())
+	require.Empty(t, got, "before five minutes: %v", got)
 	h.tick(time.Second)
 	if got := reminded(h.machine()); len(got) != 1 || !strings.HasPrefix(got[0], "REMINDER 2 ") {
 		t.Fatalf("at five minutes: %v", got)
 	}
-	if got := reminded(h.machine()); len(got) != 0 {
-		t.Fatalf("a second tick right after: %v", got)
-	}
+	got = reminded(h.machine())
+	require.Empty(t, got, "a second tick right after: %v", got)
 	if g := h.goal("friend-a"); g.Count != 2 {
 		t.Fatalf("record: %+v", g)
 	}
 	// a failing route: one judgment however often it fails
 	blocker := filepath.Join(t.TempDir(), "blocker")
-	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
 	h.setGoal("friend-b", "goal", "file:"+filepath.Join(blocker, "sub", "b.txt"))
 	h.machine()
 	for i := 0; i < 3; i++ {
 		h.tick(sprint.RemindEvery)
 		h.machine()
 	}
-	if n := liveWritten(h, sprint.NRemindFailed); n != 1 {
-		t.Fatalf("%d failure judgments written", n)
-	}
-	if open := liveOpen(h, sprint.NRemindFailed); len(open) != 1 {
-		t.Fatalf("open failure judgments: %d", len(open))
-	}
+	n := liveWritten(h, sprint.NRemindFailed)
+	require.Equal(t, 1, n, "%d failure judgments written", n)
+	open := liveOpen(h, sprint.NRemindFailed)
+	require.Len(t, open, 1, "open failure judgments: %d", len(open))
 	route2, path2 := goalFile(t, "b")
 	if _, _, err := h.st.SetGoal(h.ctx, "friend-b", nil, route2); err != nil {
 		t.Fatal(err)
 	}
-	if got := reminded(h.machine()); len(got) == 0 {
-		t.Fatalf("no delivery after the route was fixed")
-	}
+	require.NotEmpty(t, reminded(h.machine()), "no delivery after the route was fixed")
 	if _, err := os.Stat(path2); err != nil {
 		t.Fatalf("no file at the fixed route: %v", err)
 	}
-	if open := liveOpen(h, sprint.NRemindFailed); len(open) != 0 {
-		t.Fatalf("the failure stayed open after a delivery: %d", len(open))
-	}
+	open = liveOpen(h, sprint.NRemindFailed)
+	require.Empty(t, open, "the failure stayed open after a delivery: %d", len(open))
 	// a clear keeps the people and forgets the pushes
 	if _, err := h.st.Clear(h.ctx); err != nil {
 		t.Fatal(err)
@@ -1034,9 +910,8 @@ func TestRedisTheFenceRefusesWhatItShould(t *testing.T) {
 	ctx := h.ctx
 	op := func(id string) OpRecord { return OpRecord{ID: id, Verb: "test", At: time.Now()} }
 	f, err := h.st.B.ReadFence(ctx)
-	if err != nil || f.Pending != nil {
-		t.Fatalf("a new fence: %+v %v", f, err)
-	}
+	require.NoError(t, err, "a new fence: %+v %v", f, err)
+	require.Nil(t, f.Pending, "a new fence: %+v %v", f, err)
 	if ok, err := h.st.B.Acquire(ctx, f.Gen, op("op-1")); !ok || err != nil {
 		t.Fatalf("acquire at the generation read: %v %v", ok, err)
 	}
@@ -1049,9 +924,7 @@ func TestRedisTheFenceRefusesWhatItShould(t *testing.T) {
 	if got, err := h.st.B.ReadFence(ctx); err != nil || got.Pending == nil || got.Pending.ID != "op-1" || got.Gen != f.Gen+1 {
 		t.Fatalf("the fence: %+v %v", got, err)
 	}
-	if err := h.st.B.Release(ctx, op("op-1"), true); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.B.Release(ctx, op("op-1"), true))
 	// empty again, but the generation moved: a writer that read before is refused
 	if ok, err := h.st.B.Acquire(ctx, f.Gen, op("op-2")); ok || err != nil {
 		t.Fatalf("acquire at a stale generation: %v %v", ok, err)
@@ -1059,21 +932,15 @@ func TestRedisTheFenceRefusesWhatItShould(t *testing.T) {
 	if ok, err := h.st.B.Acquire(ctx, f.Gen+1, op("op-2")); !ok || err != nil {
 		t.Fatalf("acquire at the current generation: %v %v", ok, err)
 	}
-	if err := h.st.B.Release(ctx, op("op-2"), false); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.B.Release(ctx, op("op-2"), false))
 	// a release of an operation the fence no longer holds does nothing
-	if err := h.st.B.Release(ctx, op("op-2"), true); err != nil {
-		t.Fatalf("a second release: %v", err)
-	}
+	err = h.st.B.Release(ctx, op("op-2"), true)
+	require.NoError(t, err, "a second release: %v", err)
 	// a backend pinned to an epoch the sprint has left is refused
-	if _, err := h.st.Clear(ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err = h.st.Clear(ctx)
+	require.NoError(t, err)
 	f, err = h.st.B.ReadFence(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if ok, err := h.st.B.AtEpoch(0, false).Acquire(ctx, f.Gen, op("op-3")); ok || err != nil {
 		t.Fatalf("acquire at epoch 0 after a clear: %v %v", ok, err)
 	}

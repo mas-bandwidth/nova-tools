@@ -24,9 +24,9 @@ import (
 
 func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("session")
-	session := fs.String("claude-session", "", "")
-	out := fs.String("out", "", "")
-	day := fs.String("day", "", "")
+	session := fs.String("claude-session", "", "one Claude Code session transcript jsonl")
+	out := fs.String("out", "", "directory for the resulting daily token file")
+	day := fs.String("day", "", "one UTC day to write as YYYY-MM-DD; defaults to every stamped day")
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " session", err.Error())
 	}
@@ -93,14 +93,22 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		fresh := sum.Rows(d)
 		var old []tokens.DayRow
-		if f, findings, err := tokens.ReadDayFile(tokens.Path(*out, d)); err == nil {
+		prior, findings, err := tokens.ReadDayFile(tokens.Path(*out, d))
+		if err != nil {
+			if !os.IsNotExist(err) {
+				fmt.Fprintf(stderr, "TOKENS REFUSED: cannot read %s: %s\n",
+					oneline.Field(tokens.Path(*out, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
+				exit = 1
+				continue
+			}
+		} else {
 			if len(findings) > 0 {
 				fmt.Fprintf(stderr, "TOKENS REFUSED: the day file %s has %d findings; the repair is nova-tokens check --out %s\n",
 					oneline.Field(tokens.Path(*out, d)), len(findings), oneline.Field(*out))
 				exit = 1
 				continue
 			}
-			old = f.Rows
+			old = prior.Rows
 		}
 		rows, retained, partials := tokens.MergeDay(old, fresh, []string{tokens.SessionLabel})
 		if len(partials) > 0 {

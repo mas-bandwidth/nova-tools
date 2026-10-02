@@ -93,9 +93,11 @@ func TestEpochDropTemplateAndMemberIdentity(t *testing.T) {
 	_, err = ntable.DropDefinition(ctx, c, tb.Name, opts)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), c.Exists(ctx, ntable.DefKey(tb.Name)).Val(), "explicit definition drop retained template")
+	// the definition of every epoch stays readable; its rows go with the table
 	history, err := ntable.ReadAt(ctx, c, tb.Name, 0)
 	require.NoError(t, err, "template drop erased history: %#v %v", history, err)
-	require.Equal(t, history, old, "template drop erased history: %#v %v", history, err)
+	require.True(t, ntable.SameDefinition(old, history), "template drop changed the epoch's definition: %#v", history)
+	require.Empty(t, history.Rows, "template drop left the rows of epoch 0: %#v", history)
 	epoch := c.HGet(ctx, ntable.MemberKey("unplaced"), "epoch").Val()
 	require.Equal(t, "1", epoch, "unplaced identity lost: %s", epoch)
 	require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 2).Err())

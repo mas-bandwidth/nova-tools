@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -43,18 +46,11 @@ func TestLintGoodCardPasses(t *testing.T) {
 
 	card := writeLintCard(t, "good.card", lintGoodCard())
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card)
-	if exit != 0 {
-		t.Fatalf("a good card lints clean at exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "LINT OK card=good.card checks=") {
-		t.Fatalf("the OK line names the card and the checks: %q", stdout)
-	}
-	if lines := strings.Count(strings.TrimSuffix(stdout, "\n"), "\n") + 1; lines != 1 {
-		t.Fatalf("LINT OK is one line, got %d:\n%s", lines, stdout)
-	}
-	if stderr != "" {
-		t.Fatalf("a clean lint writes nothing to stderr: %q", stderr)
-	}
+	require.Equal(t, 0, exit, "a good card lints clean at exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "LINT OK card=good.card checks=", "the OK line names the card and the checks: %q", stdout)
+	lines := strings.Count(strings.TrimSuffix(stdout, "\n"), "\n") + 1
+	require.Equal(t, 1, lines, "LINT OK is one line, got %d:\n%s", lines, stdout)
+	require.Empty(t, stderr, "a clean lint writes nothing to stderr: %q", stderr)
 }
 
 // A card that writes its scratch above the job is the defect that killed cards tonight: the
@@ -73,15 +69,9 @@ func TestLintNamesTheParentPathLine(t *testing.T) {
 	}, "\n")
 	card := writeLintCard(t, "parent.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 1 {
-		t.Fatalf("a card with a ../ path drifts at exit 1, got %d\nstdout: %s", exit, stdout)
-	}
-	if !strings.Contains(stdout, "LINT DRIFT card=parent.card no-parent-path: 3:") {
-		t.Fatalf("the no-parent-path finding names check, line and card: %q", stdout)
-	}
-	if !strings.Contains(stdout, "../scratch/red.txt") {
-		t.Fatalf("the finding quotes the offending line: %q", stdout)
-	}
+	require.Equal(t, 1, exit, "a card with a ../ path drifts at exit 1, got %d\nstdout: %s", exit, stdout)
+	require.Contains(t, stdout, "LINT DRIFT card=parent.card no-parent-path: 3:", "the no-parent-path finding names check, line and card: %q", stdout)
+	require.Contains(t, stdout, "../scratch/red.txt", "the finding quotes the offending line: %q", stdout)
 }
 
 // A card that names no red test is the defect the work order says to catch: the check name
@@ -100,12 +90,8 @@ func TestLintNamesTheMissingRedTest(t *testing.T) {
 	}, "\n")
 	card := writeLintCard(t, "nored.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 1 {
-		t.Fatalf("a card with no red test drifts at exit 1, got %d\nstdout: %s", exit, stdout)
-	}
-	if !strings.Contains(stdout, "LINT DRIFT card=nored.card red-test:") {
-		t.Fatalf("the red-test finding names the check: %q", stdout)
-	}
+	require.Equal(t, 1, exit, "a card with no red test drifts at exit 1, got %d\nstdout: %s", exit, stdout)
+	require.Contains(t, stdout, "LINT DRIFT card=nored.card red-test:", "the red-test finding names the check: %q", stdout)
 }
 
 // A card that reaches for the sandbox is a probe this tool does not run, and its defect is
@@ -117,12 +103,8 @@ func TestLintRefusesNovaSandbox(t *testing.T) {
 		"STEP 2. nova-sandbox probe --secret /root/.ssh/id_rsa", 1)
 	card := writeLintCard(t, "sandbox.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 1 {
-		t.Fatalf("a card invoking nova-sandbox drifts at exit 1, got %d\nstdout: %s", exit, stdout)
-	}
-	if !strings.Contains(stdout, "LINT DRIFT card=sandbox.card no-sandbox: 4:") {
-		t.Fatalf("the no-sandbox finding names check and line: %q", stdout)
-	}
+	require.Equal(t, 1, exit, "a card invoking nova-sandbox drifts at exit 1, got %d\nstdout: %s", exit, stdout)
+	require.Contains(t, stdout, "LINT DRIFT card=sandbox.card no-sandbox: 4:", "the no-sandbox finding names check and line: %q", stdout)
 }
 
 // issue #1471: a new friend who follows the help (`nova-swarm template --name <t>` then
@@ -141,26 +123,17 @@ func TestTemplateThenLintPasses(t *testing.T) {
 	for _, name := range swarm.TemplateNames() {
 		t.Run(name, func(t *testing.T) {
 			exit, body, stderr := runSwarm(t, "template", "--name", name)
-			if exit != 0 {
-				t.Fatalf("template --name %s exited %d: %s", name, exit, stderr)
-			}
+			require.Equal(t, 0, exit, "template --name %s exited %d: %s", name, exit, stderr)
 			card := writeLintCard(t, name+".md", body)
 			exit, stdout, _ := runSwarm(t, "lint", "--card", card)
 			if cardTemplates[name] {
-				if exit != 0 {
-					t.Fatalf("the %s card template lints clean at exit 0, got %d\nstdout: %s", name, exit, stdout)
-				}
-				if !strings.Contains(stdout, "LINT OK") {
-					t.Fatalf("the %s card template reports LINT OK: %q", name, stdout)
-				}
+				require.Equal(t, 0, exit, "the %s card template lints clean at exit 0, got %d\nstdout: %s", name, exit, stdout)
+				require.Contains(t, stdout, "LINT OK", "the %s card template reports LINT OK: %q", name, stdout)
 				return
 			}
-			if strings.Contains(stdout, "result-first") {
-				t.Fatalf("the %s template is not a card; lint says so by name, not as a result-first drift: %q", name, stdout)
-			}
-			if !strings.Contains(stdout, "not a card") || !strings.Contains(stdout, name) {
-				t.Fatalf("the %s template gets a named not-a-card answer: %q", name, stdout)
-			}
+			require.NotContains(t, stdout, "result-first", "the %s template is not a card; lint says so by name, not as a result-first drift: %q", name, stdout)
+			require.Contains(t, stdout, "not a card", "the %s template gets a named not-a-card answer: %q", name, stdout)
+			require.Contains(t, stdout, name, "the %s template gets a named not-a-card answer: %q", name, stdout)
 		})
 	}
 }
@@ -177,21 +150,24 @@ func TestLintAdvisesAnOversizeCardAndDoesNotRefuseIt(t *testing.T) {
 	body := lintGoodCard() + "RESULT: padding " + strings.Repeat("x", 12000) + "\n"
 	card := writeLintCard(t, "big.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 0 {
-		t.Fatalf("an oversize card is advice, not a defect, so the lint exits 0, got %d\nstdout: %s", exit, stdout)
-	}
-	if !strings.Contains(stdout, "LINT NOTE card=big.card size:") {
-		t.Fatalf("the size finding is a NOTE naming the check: %q", stdout)
-	}
-	if strings.Contains(stdout, "LINT DRIFT card=big.card size:") {
-		t.Fatalf("the size finding is never a DRIFT, which is the line a caller refuses on: %q", stdout)
-	}
-	if !strings.Contains(stdout, "advisory") {
-		t.Fatalf("the word a manager needs is in the line: advisory, not a limit: %q", stdout)
-	}
-	if !strings.Contains(stdout, "bytes=") || !strings.Contains(stdout, "cap=12000") {
-		t.Fatalf("a clean card still carries its size and the cap: %q", stdout)
-	}
+	require.Equal(t, 0, exit, "an oversize card is advice, not a defect, so the lint exits 0, got %d\nstdout: %s", exit, stdout)
+	require.Contains(t, stdout, "LINT NOTE card=big.card size:", "the size finding is a NOTE naming the check: %q", stdout)
+	require.NotContains(t, stdout, "LINT DRIFT card=big.card size:", "the size finding is never a DRIFT, which is the line a caller refuses on: %q", stdout)
+	require.Contains(t, stdout, "advisory", "the word a manager needs is in the line: advisory, not a limit: %q", stdout)
+	require.Contains(t, stdout, "bytes=", "a clean card still carries its size and the cap: %q", stdout)
+	require.Contains(t, stdout, "cap=12000", "a clean card still carries its size and the cap: %q", stdout)
+	// the note says where the refusal is: nova-sprint add holds a brief to 16384 bytes
+	assert.Contains(t, stdout, "nova-sprint add refuses a brief over 16384 bytes")
+}
+
+// The lint's two numbers are internal/cardlimits': 12000 is the advice, and the bound the
+// note names is the one nova-sprint add enforces (the store reads it there too), above the
+// advice.
+func TestTheSizeNoteAgreesWithTheSprintsBriefBound(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, 16384, cardRefusedBytes, "the note names the bound the sprint enforces")
+	assert.Equal(t, 12000, cardMaxBytes, "the advice")
+	assert.Less(t, cardMaxBytes, cardRefusedBytes, "the advice sits under the bound")
 }
 
 // A card that is BOTH over the ceiling and drifting is refused for the drift alone, and the
@@ -202,16 +178,9 @@ func TestAnOversizeDriftingCardIsRefusedForTheDriftAndSaysTheCeilingIsAdvisory(t
 	body := lintGoodCard() + "STEP 6. cd ../elsewhere\n" + "RESULT: padding " + strings.Repeat("x", 12000) + "\n"
 	card := writeLintCard(t, "bigdrift.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 1 {
-		t.Fatalf("a card that walks above the job is refused, got %d\nstdout: %s", exit, stdout)
-	}
-	if !strings.Contains(stdout, "LINT DRIFT card=bigdrift.card no-parent-path:") {
-		t.Fatalf("the drift it is refused for is named: %q", stdout)
-	}
-	if strings.Contains(stdout, "LINT DRIFT card=bigdrift.card size:") {
-		t.Fatalf("the size is still never a DRIFT, even on a card that has one: %q", stdout)
-	}
-	if !strings.Contains(stdout, "LINT SIZE card=bigdrift.card bytes=") || !strings.Contains(stdout, "advisory=true") {
-		t.Fatalf("the closing size line says advisory=true: %q", stdout)
-	}
+	require.Equal(t, 1, exit, "a card that walks above the job is refused, got %d\nstdout: %s", exit, stdout)
+	require.Contains(t, stdout, "LINT DRIFT card=bigdrift.card no-parent-path:", "the drift it is refused for is named: %q", stdout)
+	require.NotContains(t, stdout, "LINT DRIFT card=bigdrift.card size:", "the size is still never a DRIFT, even on a card that has one: %q", stdout)
+	require.Contains(t, stdout, "LINT SIZE card=bigdrift.card bytes=", "the closing size line says advisory=true: %q", stdout)
+	require.Contains(t, stdout, "advisory=true", "the closing size line says advisory=true: %q", stdout)
 }

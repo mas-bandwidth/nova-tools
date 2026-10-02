@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // S6. A caller's operation id recorded for another verb is refused as a
@@ -28,9 +29,8 @@ func TestACallerOpOfAnotherVerbIsAConflict(t *testing.T) {
 		t.Fatalf("take under start's operation id: %+v %v", res, err)
 	}
 	h.nothingWritten(before)
-	if again := h.must(start); !again.Replay {
-		t.Fatalf("start's own retry: %+v", again)
-	}
+	again := h.must(start)
+	require.True(t, again.Replay, "start's own retry: %+v", again)
 }
 
 // S6. The same verb with other arguments under a recorded caller's operation

@@ -176,9 +176,7 @@ func TestADeclaredNormCoversOnlyItsOwnField(t *testing.T) {
 	if !strings.Contains(problems[0].Message, "created= (the instant of this run)") {
 		t.Errorf("the failure does not list what was not compared:\n%s", problems[0].Message)
 	}
-	// An id the tool derives from its content reproduces, so HexID is declared
-	// only where a run really invents one -- and then it covers that field only.
-	if problems := Compare(step, res, []Norm{Instant("created"), Instant("seen"), HexID("id", 8)}); len(problems) != 0 {
+	if problems := Compare(step, res, []Norm{Instant("created"), Instant("seen")}); len(problems) != 0 {
 		t.Errorf("declaring every run-owned value still disagreed: %v", problems)
 	}
 }
@@ -267,11 +265,11 @@ var errNotInvokable = notInvokable{}
 // --- on that head; the comment on each names the one edit that reverts its fix.
 
 // ROW 1. A norm declared for one field must not match a DIFFERENT field whose
-// name merely ends in the declared one. `HexID("id", 8)` matched inside
-// `parent_id=`, and `Instant("created")` inside `last_created=`, so a changed
-// value on a field nobody declared was erased and the comparison found nothing.
-// Reverting fix: drop `field:` from the Norm that Instant and HexID build (one
-// edit each) and apply falls back to the unanchored ReplaceAllString.
+// name merely ends in the declared one. `Instant("created")` matched inside
+// `last_created=`, so a changed value on a field nobody declared was erased and
+// the comparison found nothing.
+// Reverting fix: drop `field:` from the Norm that Instant builds (one edit) and
+// apply falls back to the unanchored ReplaceAllString.
 func TestADeclaredNormDoesNotMatchAFieldWhoseNameEndsInIt(t *testing.T) {
 	t.Parallel()
 
@@ -281,12 +279,6 @@ func TestADeclaredNormDoesNotMatchAFieldWhoseNameEndsInIt(t *testing.T) {
 		got  string
 		norm Norm
 	}{
-		{
-			what: "an id field whose name ends in the declared one",
-			want: "OK parent_id=aaaaaaaa",
-			got:  "OK parent_id=bbbbbbbb",
-			norm: HexID("id", 8),
-		},
 		{
 			what: "an instant field whose name ends in the declared one",
 			want: "OK last_created=2026-09-19T01:00:00Z",
@@ -299,32 +291,6 @@ func TestADeclaredNormDoesNotMatchAFieldWhoseNameEndsInIt(t *testing.T) {
 		if len(problems) != 1 {
 			t.Errorf("%s: Compare found %d problems, want 1; the declared norm swallowed a field it does not name.\nwant: %s\ngot:  %s", c.what, len(problems), c.want, c.got)
 		}
-	}
-	// And the declared field itself is still normalised, so the fix is a
-	// boundary and not a norm that stopped working.
-	step := Step{Line: "$ nova-alpha put", Want: []string{"OK parent_id=aaaaaaaa id=0f1e2d3c"}}
-	if problems := Compare(step, Result{Stdout: "OK parent_id=aaaaaaaa id=9b8a7c6d\n"}, []Norm{HexID("id", 8)}); len(problems) != 0 {
-		t.Errorf("the declared id= was not normalised: %v", problems)
-	}
-}
-
-// ROW 1, the value's own boundary. `HexID(field, n)` promises EXACTLY n hex
-// digits, so an id longer than that is a tool disagreeing with the document and
-// not a value the norm declared. THIS ONE WAS ALREADY GREEN at 1b22de16 -- the
-// unanchored pattern normalised the first n digits and the remainder still
-// disagreed, so nothing was masked -- and it is written down because the fix
-// for the rows above REPLACES that pattern: a boundary that covered too much
-// must not become one that covers too little.
-func TestAHexIDNormCoversExactlyTheDigitsItDeclares(t *testing.T) {
-	t.Parallel()
-
-	step := Step{Line: "$ nova-alpha put", Want: []string{"OK id=aaaaaaaa"}}
-	if problems := Compare(step, Result{Stdout: "OK id=aaaaaaaabbbb\n"}, []Norm{HexID("id", 8)}); len(problems) != 1 {
-		t.Errorf("Compare found %d problems, want 1: an id longer than the %d digits declared was normalised anyway", len(problems), 8)
-	}
-	step = Step{Line: "$ nova-alpha put", Want: []string{"OK id=aaaaaaaabbbb"}}
-	if problems := Compare(step, Result{Stdout: "OK id=aaaaaaaa\n"}, []Norm{HexID("id", 8)}); len(problems) != 1 {
-		t.Errorf("Compare found %d problems, want 1: a document showing more digits than the norm declares was accepted", len(problems))
 	}
 }
 

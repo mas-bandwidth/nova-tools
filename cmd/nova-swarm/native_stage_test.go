@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -22,9 +24,7 @@ import (
 func captureStageLine(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
+	require.NoError(t, err, "os.Pipe")
 	orig := os.Stdout
 	os.Stdout = w
 	lineCh := make(chan string, 1)
@@ -47,9 +47,7 @@ func captureStageLine(t *testing.T, fn func()) string {
 	defer r.Close()
 	select {
 	case line, ok := <-lineCh:
-		if !ok {
-			t.Fatalf("nativeRun printed no STAGE OK/FAIL line")
-		}
+		require.True(t, ok, "nativeRun printed no STAGE OK/FAIL line")
 		return line
 	case <-time.After(30 * time.Second):
 		t.Fatalf("timed out waiting for a STAGE OK/FAIL line (30s safety bound, not the wait itself)")
@@ -70,19 +68,13 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 	srcDir := filepath.Join(root, "src-repo")
 	mirrorDir := filepath.Join(benchHome, "nova-bench", "mirror", "sample-repo.git")
 
-	if err := os.MkdirAll(srcDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(mirrorDir), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(srcDir, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Dir(mirrorDir), 0o755))
 
 	runGit(t, srcDir, "init", "-q")
 	runGit(t, srcDir, "config", "user.name", "test")
 	runGit(t, srcDir, "config", "user.email", "test@example.com")
-	if err := os.WriteFile(filepath.Join(srcDir, "README.md"), []byte("# sample\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "README.md"), []byte("# sample\n"), 0o644))
 	runGit(t, srcDir, "add", "README.md")
 	runGit(t, srcDir, "commit", "-q", "-m", "initial commit")
 	headSha := strings.TrimSpace(runGit(t, srcDir, "rev-parse", "HEAD"))
@@ -105,12 +97,8 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 			deadline:     30 * time.Second,
 			noWall:       true,
 		}, &errOut)
-		if code != 2 {
-			t.Fatalf("expected refusal exit code 2 when no bench mirror exists, got %d:\n%s", code, errOut.String())
-		}
-		if !strings.Contains(errOut.String(), "no bench mirror") {
-			t.Fatalf("expected error mentioning no bench mirror, got:\n%s", errOut.String())
-		}
+		require.Equal(t, 2, code, "expected refusal exit code 2 when no bench mirror exists, got %d:\n%s", code, errOut.String())
+		require.Contains(t, errOut.String(), "no bench mirror", "expected error mentioning no bench mirror, got:\n%s", errOut.String())
 	})
 
 	t.Run("stages cleanly from bench mirror", func(t *testing.T) {
@@ -129,20 +117,14 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 			deadline:     30 * time.Second,
 			noWall:       true,
 		}, &errOut)
-		if code != 0 {
-			t.Fatalf("expected code 0 on successful staging, got %d:\n%s", code, errOut.String())
-		}
-		if res.rc != 0 {
-			t.Fatalf("expected harness rc 0, got %d", res.rc)
-		}
+		require.Equal(t, 0, code, "expected code 0 on successful staging, got %d:\n%s", code, errOut.String())
+		require.Equal(t, 0, res.rc, "expected harness rc 0, got %d", res.rc)
 		repoDir := filepath.Join(slot, "jobs", "card-mirrored", "repo")
-		if _, err := os.Stat(repoDir); err != nil {
-			t.Fatalf("expected repo dir %s to exist: %v", repoDir, err)
-		}
+		_, err := os.Stat(repoDir)
+		require.NoError(t, err, "expected repo dir %s to exist", repoDir)
 		alternates := filepath.Join(repoDir, ".git", "objects", "info", "alternates")
-		if _, err := os.Stat(alternates); !os.IsNotExist(err) {
-			t.Fatalf("staging did not dissociate from mirror: alternates file exists at %s", alternates)
-		}
+		_, err = os.Stat(alternates)
+		require.True(t, os.IsNotExist(err), "staging did not dissociate from mirror: alternates file exists at %s", alternates)
 	})
 
 	t.Run("times out and writes blocked result and usage", func(t *testing.T) {
@@ -161,32 +143,20 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 			deadline:     30 * time.Second,
 			noWall:       true,
 		}, &errOut)
-		if code == 0 {
-			t.Fatalf("expected non-zero code on stage timeout, got %d", code)
-		}
-		if res.end != "stage-timeout" {
-			t.Fatalf("expected res.end = stage-timeout, got %q", res.end)
-		}
+		require.NotEqual(t, 0, code, "expected non-zero code on stage timeout, got %d", code)
+		require.Equal(t, "stage-timeout", res.end, "expected res.end = stage-timeout, got %q", res.end)
 
 		resultPath := filepath.Join(slot, "jobs", "card-timeout", "RESULT.md")
 		resultBytes, err := os.ReadFile(resultPath)
-		if err != nil {
-			t.Fatalf("RESULT.md not written on stage timeout: %v", err)
-		}
+		require.NoError(t, err, "RESULT.md not written on stage timeout")
 		resultLines := strings.Split(string(resultBytes), "\n")
 		expectedLine1 := "RESULT: BLOCKED stage-timeout bench-1 1"
-		if resultLines[0] != expectedLine1 {
-			t.Fatalf("expected RESULT.md line 1 %q, got %q", expectedLine1, resultLines[0])
-		}
+		require.Equal(t, expectedLine1, resultLines[0], "expected RESULT.md line 1 %q, got %q", expectedLine1, resultLines[0])
 
 		usagePath := filepath.Join(slot, "jobs", "card-timeout", "usage.tsv")
 		usageBytes, err := os.ReadFile(usagePath)
-		if err != nil {
-			t.Fatalf("usage.tsv not written on stage timeout: %v", err)
-		}
-		if !strings.Contains(string(usageBytes), "card-timeout") {
-			t.Fatalf("usage.tsv does not mention card-timeout:\n%s", string(usageBytes))
-		}
+		require.NoError(t, err, "usage.tsv not written on stage timeout")
+		require.Contains(t, string(usageBytes), "card-timeout", "usage.tsv does not mention card-timeout:\n%s", string(usageBytes))
 	})
 }
 
@@ -202,18 +172,12 @@ func TestStageOKLinePrintsOnSuccessfulStage(t *testing.T) {
 	srcDir := filepath.Join(root, "src-repo")
 	mirrorDir := filepath.Join(benchHome, "nova-bench", "mirror", "sample-repo.git")
 
-	if err := os.MkdirAll(srcDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(mirrorDir), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(srcDir, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Dir(mirrorDir), 0o755))
 	runGit(t, srcDir, "init", "-q")
 	runGit(t, srcDir, "config", "user.name", "test")
 	runGit(t, srcDir, "config", "user.email", "test@example.com")
-	if err := os.WriteFile(filepath.Join(srcDir, "README.md"), []byte("# sample\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "README.md"), []byte("# sample\n"), 0o644))
 	runGit(t, srcDir, "add", "README.md")
 	runGit(t, srcDir, "commit", "-q", "-m", "initial commit")
 	headSha := strings.TrimSpace(runGit(t, srcDir, "rev-parse", "HEAD"))
@@ -237,16 +201,10 @@ func TestStageOKLinePrintsOnSuccessfulStage(t *testing.T) {
 			noWall:       true,
 		}, &errOut)
 	})
-	if code != 0 {
-		t.Fatalf("expected code 0 on successful staging, got %d:\n%s", code, errOut.String())
-	}
-	if !strings.HasPrefix(line, "STAGE OK ") {
-		t.Fatalf("expected a STAGE OK line, got %q", line)
-	}
+	require.Equal(t, 0, code, "expected code 0 on successful staging, got %d:\n%s", code, errOut.String())
+	require.True(t, strings.HasPrefix(line, "STAGE OK "), "expected a STAGE OK line, got %q", line)
 	for _, want := range []string{"bench=bench-1", "repo=https://example.com/mas-bandwidth/sample-repo.git", "base=" + headSha[:8], "secs="} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("STAGE OK line missing %q:\n%s", want, line)
-		}
+		require.Contains(t, line, want, "STAGE OK line missing %q:\n%s", want, line)
 	}
 }
 
@@ -276,12 +234,8 @@ func TestStageFailLinePrintsOnStagingFailure(t *testing.T) {
 			noWall:       true,
 		}, &errOut)
 	})
-	if code != 2 {
-		t.Fatalf("expected refusal exit code 2 when no bench mirror exists, got %d:\n%s", code, errOut.String())
-	}
-	if !strings.HasPrefix(line, "STAGE FAIL ") {
-		t.Fatalf("expected a STAGE FAIL line, got %q", line)
-	}
+	require.Equal(t, 2, code, "expected refusal exit code 2 when no bench mirror exists, got %d:\n%s", code, errOut.String())
+	require.True(t, strings.HasPrefix(line, "STAGE FAIL "), "expected a STAGE FAIL line, got %q", line)
 	if !strings.Contains(line, "bench=bench-1") || !strings.Contains(line, "repo=https://example.com/mas-bandwidth/missing-mirror.git") {
 		t.Fatalf("STAGE FAIL line missing bench/repo fields:\n%s", line)
 	}
@@ -299,21 +253,15 @@ func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
 	benchHome := filepath.Join(root, "bench-home")
 	srcDir := filepath.Join(root, "src-repo")
 	mirrorDir := filepath.Join(benchHome, "nova-bench", "mirror", "nova-tools.git")
-	if err := os.MkdirAll(srcDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(mirrorDir), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(srcDir, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Dir(mirrorDir), 0o755))
 	runGit(t, srcDir, "init", "-q")
 	runGit(t, srcDir, "checkout", "-q", "-b", "dev")
 	runGit(t, srcDir, "config", "user.name", "test")
 	runGit(t, srcDir, "config", "user.email", "test@example.com")
 	var shas []string
 	for _, body := range []string{"one\n", "two\n"} {
-		if err := os.WriteFile(filepath.Join(srcDir, "README.md"), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(srcDir, "README.md"), []byte(body), 0o644))
 		runGit(t, srcDir, "add", "README.md")
 		runGit(t, srcDir, "commit", "-q", "-m", "commit")
 		shas = append(shas, strings.TrimSpace(runGit(t, srcDir, "rev-parse", "HEAD")))
@@ -341,28 +289,20 @@ func TestStagePushedHeaderStagesRepoBeforeTheModel(t *testing.T) {
 			noWall:       true,
 		}, &errOut)
 	})
-	if code != 0 {
-		t.Fatalf("expected code 0, got %d:\n%s", code, errOut.String())
-	}
-	if !strings.HasPrefix(line, "STAGE OK ") {
-		t.Fatalf("expected a STAGE OK line, got %q", line)
-	}
+	require.Equal(t, 0, code, "expected code 0, got %d:\n%s", code, errOut.String())
+	require.True(t, strings.HasPrefix(line, "STAGE OK "), "expected a STAGE OK line, got %q", line)
 	for _, want := range []string{"bench=bench-1", "/mas-bandwidth/nova-tools.git", "base=" + base[:8]} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("STAGE OK line missing %q:\n%s", want, line)
-		}
+		require.Contains(t, line, want, "STAGE OK line missing %q:\n%s", want, line)
 	}
 	repoDir := filepath.Join(slot, "jobs", "card-pushed-header", "repo")
-	if head := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD")); head != base {
-		t.Fatalf("<job>/repo HEAD = %s, want base-sha %s", head, base)
-	}
+	head := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+	require.Equal(t, base, head, "<job>/repo HEAD = %s, want base-sha %s", head, base)
 	wantBranch := swarm.CardStageBranch(cardText)
 	if wantBranch == "" || wantBranch == swarm.CardStageBranch(nil) {
 		t.Fatalf("the card's branch is %q, want one derived from its label", wantBranch)
 	}
-	if branch := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD")); branch != wantBranch {
-		t.Fatalf("<job>/repo is on %q, want the card's branch %q", branch, wantBranch)
-	}
+	branch := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD"))
+	require.Equal(t, wantBranch, branch, "<job>/repo is on %q, want the card's branch %q", branch, wantBranch)
 }
 
 // TestStageNamedRepoNotStagedIsRefused is the other half of #3711: a card that names a repo
@@ -392,15 +332,11 @@ func TestStageNamedRepoNotStagedIsRefused(t *testing.T) {
 			noWall:       true,
 		}, &errOut)
 	})
-	if code != 2 {
-		t.Fatalf("expected refusal exit 2, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 2, code, "expected refusal exit 2, got %d:\n%s", code, errOut.String())
 	if !strings.HasPrefix(line, "STAGE FAIL ") || !strings.Contains(line, "reason=no-repo-staged") || !strings.Contains(line, "bench=bench-1") || !strings.Contains(line, "repo=nova-tools") {
 		t.Fatalf("expected STAGE FAIL bench=bench-1 repo=nova-tools ... reason=no-repo-staged, got %q", line)
 	}
-	if !strings.Contains(errOut.String(), "nothing was staged") {
-		t.Fatalf("refusal does not name the cause:\n%s", errOut.String())
-	}
+	require.Contains(t, errOut.String(), "nothing was staged", "refusal does not name the cause:\n%s", errOut.String())
 
 	// No repo line at all: nothing to stage, the card runs as before.
 	plain := []byte("RESULT: card-no-repo sha=123456789012\nKIND: read\n")

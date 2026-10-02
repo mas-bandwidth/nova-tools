@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // firstrun_test.go pins the onboarding standard for this binary: the usage
@@ -31,13 +33,9 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 
 	exit, stdout, stderr := runCIIn(t, "", "help")
-	if exit != 0 {
-		t.Fatalf("`nova-ci help` exit = %d, want 0; stderr: %s", exit, stderr)
-	}
+	require.Equal(t, 0, exit, "`nova-ci help` exit = %d, want 0; stderr: %s", exit, stderr)
 	examples, err := onboarding.ExampleLines(stdout, "nova-ci")
-	if err != nil {
-		t.Fatalf("%v\n\n%s", err, stdout)
-	}
+	require.NoError(t, err, "%v\n\n%s", err, stdout)
 	for _, ex := range examples {
 		args := strings.Fields(ex)[1:]
 		exit, out, errs := runCIIn(t, "", args...)
@@ -45,12 +43,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 			t.Errorf("the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, errs)
 			continue
 		}
-		if exit != 0 {
-			t.Errorf("the usage example %q ran but said NO (exit %d)\nstderr: %s", ex, exit, errs)
-		}
-		if out == "" {
-			t.Errorf("the usage example %q printed nothing on stdout", ex)
-		}
+		assert.Equal(t, 0, exit, "the usage example %q ran but said NO (exit %d)\nstderr: %s", ex, exit, errs)
+		assert.NotEmpty(t, out, "the usage example %q printed nothing on stdout", ex)
 	}
 }
 
@@ -60,23 +54,13 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	t.Parallel()
 
 	exit, _, stderr := runCIIn(t, "", "slowtests", "--budget", "0")
-	if exit != 2 {
-		t.Errorf("--budget 0 exit = %d, want 2", exit)
-	}
-	if !strings.Contains(stderr, "greater than zero") {
-		t.Errorf("--budget 0 stderr = %q, want it to say the budget must be greater than zero", stderr)
-	}
+	assert.Equal(t, 2, exit, "--budget 0 exit = %d, want 2", exit)
+	assert.Contains(t, stderr, "greater than zero", "--budget 0 stderr = %q, want it to say the budget must be greater than zero", stderr)
 
 	exit, _, stderr = runCIIn(t, "not json\n", "slowtests")
-	if exit != 2 {
-		t.Errorf("a malformed stdin exit = %d, want 2", exit)
-	}
-	if !strings.Contains(stderr, "line 1") {
-		t.Errorf("a malformed stdin stderr = %q, want it to name line 1", stderr)
-	}
-	if !strings.Contains(stderr, "run: nova-ci help") {
-		t.Errorf("a refusal stderr = %q, want it to name the door", stderr)
-	}
+	assert.Equal(t, 2, exit, "a malformed stdin exit = %d, want 2", exit)
+	assert.Contains(t, stderr, "line 1", "a malformed stdin stderr = %q, want it to name line 1", stderr)
+	assert.Contains(t, stderr, "run: go test -json <packages> | nova-ci slowtests --budget 60", "a refusal stderr = %q, want the command that makes the input", stderr)
 }
 
 // (c) The `### First run` block of docs/TESTS.md is EXECUTED: every command in
@@ -99,35 +83,38 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 //
 // The transcript's paths (`cmd/nova-ci/testdata/example-events.jsonl`) are
 // written from the root of the checkout, which is where a reader typing them
-// stands, so the test moves there rather than rewriting them -- a rewritten
-// path is no longer the line the document promised.
+// stands. The runner resolves input redirections from that root without
+// changing the documented command lines.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
-	t.Chdir(repoRoot(t))
-	raw, err := os.ReadFile(filepath.Join("docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Parallel()
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
+	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-ci")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-ci", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) == 0 {
-		t.Fatal("the `### First run` block holds no nova-ci command; this test would pass by running nothing")
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, steps, "the `### First run` block holds no nova-ci command; this test would pass by running nothing")
 	// Both budgets are the point of the section: one over and one under, so a
 	// reader sees the refusal and the green. A transcript that has lost one of
 	// them still matches line for line and is still short of a first run.
-	if len(steps) != 2 {
-		t.Errorf("the `### First run` block runs %d commands, want 2: one budget the fixture exceeds and one it does not", len(steps))
+	assert.Len(t, steps, 2, "the `### First run` block runs %d commands, want 2: one budget the fixture exceeds and one it does not", len(steps))
+	// The banner's example block is this sitting, after `nova-ci help`, so the
+	// lines a reader pastes from the binary alone are the ones compared here.
+	_, banner, _ := runCIIn(t, "", "help")
+	examples, err := onboarding.ExampleLines(banner, "nova-ci")
+	require.NoError(t, err)
+	var documented []string
+	for _, s := range steps {
+		line := strings.TrimPrefix(s.Line, "$ ")
+		require.True(t, strings.HasPrefix(line, "nova-ci slowtests "), "the first run is slowtests only: %q", s.Line)
+		documented = append(documented, line)
 	}
+	assert.Equal(t, append([]string{"nova-ci help"}, documented...), examples, "the banner's example: block is not the documented first run")
 	// The sitting: every documented command, in order, in one temp-free run.
 	// A command that could not be invoked at all stops the sitting, because
 	// every line after it would be compared against a state that never happened.
-	run := runDocumented(t)
+	run := runDocumented(t, root)
 	got := make([]onboarding.Result, 0, len(steps))
 	for _, s := range steps {
 		res, err := run(s)
@@ -142,14 +129,14 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 }
 
 // runDocumented calls this binary's own entry point with the documented
-// arguments, opening the file a `< path` redirect names -- relative to the
-// checkout root, where the test now stands and where the document's reader does.
-func runDocumented(t *testing.T) onboarding.Runner {
+// arguments, opening the file a `< path` redirect names relative to the
+// checkout root where the document's reader stands.
+func runDocumented(t *testing.T, root string) onboarding.Runner {
 	t.Helper()
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		stdin := io.Reader(strings.NewReader(""))
 		if s.Stdin != "" {
-			f, err := os.Open(s.Stdin)
+			f, err := os.Open(filepath.Join(root, s.Stdin))
 			if err != nil {
 				return onboarding.Result{}, err
 			}
@@ -167,9 +154,7 @@ func runDocumented(t *testing.T) onboarding.Runner {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if _, err := os.Stat(filepath.Join(root, "docs", "TESTS.md")); err != nil {
 		t.Fatalf("docs/TESTS.md is not under %s: %v", root, err)
 	}

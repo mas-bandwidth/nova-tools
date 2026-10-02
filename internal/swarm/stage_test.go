@@ -3,7 +3,6 @@ package swarm
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -16,27 +15,24 @@ func TestParseCardBase(t *testing.T) {
 
 	card := []byte("RESULT test-1 sha=1234\nbase-repo: https://example.com/mas-bandwidth/nova-tools.git\nbase-sha: 09fbedc9052145b20677501a1dbcb5f5ba9c87d4\nKIND: fix\n")
 	repo, sha, ok := ParseCardBase(card)
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if repo != "https://example.com/mas-bandwidth/nova-tools.git" {
-		t.Fatalf("unexpected repo: %s", repo)
-	}
-	if sha != "09fbedc9052145b20677501a1dbcb5f5ba9c87d4" {
-		t.Fatalf("unexpected sha: %s", sha)
-	}
+	require.True(t, ok, "expected ok=true")
+	require.Equal(t, "https://example.com/mas-bandwidth/nova-tools.git", repo, "unexpected repo: %s", repo)
+	require.Equal(t, "09fbedc9052145b20677501a1dbcb5f5ba9c87d4", sha, "unexpected sha: %s", sha)
 
+	// The header only (docs/SPEC-CARD-CONTRACT.md): a clone URL in the body names no
+	// repository, and a header-looking line in the body overrides nothing.
 	cardFallback := []byte("RESULT test-2\nBASE: dev@09fbedc9052145b20677501a1dbcb5f5ba9c87d4\nSTEP 1. " + forgeClone("mas-bandwidth/schema") + " repo\n")
-	repo, sha, ok = ParseCardBase(cardFallback)
-	if !ok {
-		t.Fatal("expected ok=true for fallback")
-	}
-	if repo != defaultProbeBase+"/mas-bandwidth/schema.git" {
-		t.Fatalf("unexpected repo: %s", repo)
-	}
-	if sha != "09fbedc9052145b20677501a1dbcb5f5ba9c87d4" {
-		t.Fatalf("unexpected sha: %s", sha)
-	}
+	_, _, ok = ParseCardBase(cardFallback)
+	assert.False(t, ok, "a clone URL in the body is prose, not the card's repository")
+	prose := []byte("RESULT test-3\nbase-repo: https://example.com/o/real.git\nBASE: main@09fbedc9052145b20677501a1dbcb5f5ba9c87d4\n\nThe card says, later:\nbase-repo: https://example.com/o/prose.git\nbase-sha: 1111111111111111111111111111111111111111\n")
+	cb := ReadCardBase(prose)
+	assert.Equal(t, "https://example.com/o/real.git", cb.Repo)
+	assert.Equal(t, "09fbedc9052145b20677501a1dbcb5f5ba9c87d4", cb.Sha)
+	assert.Equal(t, "main", cb.Ref)
+	inline := []byte("c1: the card tier: pro\nREPO: o/real\nBASE: main\nRepo o/real. The base is main.\nbase-repo: https://example.com/o/prose.git\n")
+	assert.Equal(t, "o/real", ReadCardBase(inline).Named, "the header ends at the first line of prose")
+	staged := []byte("c1: the card\nREPO: o/real\nStage: pr/4926.md notes/a.md\nStage: b.md\n\nStage: prose.md\n")
+	assert.Equal(t, []string{"pr/4926.md", "notes/a.md", "b.md"}, ReadCardBase(staged).Stage, "Stage: header lines, in order; one in the body names nothing")
 }
 
 func TestFindBenchMirror(t *testing.T) {
@@ -44,22 +40,14 @@ func TestFindBenchMirror(t *testing.T) {
 
 	home := t.TempDir()
 	mirrorDir := filepath.Join(home, "nova-bench", "mirror", "nova-tools.git")
-	if err := os.MkdirAll(mirrorDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(mirrorDir, "HEAD"), []byte("ref: refs/heads/dev\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(mirrorDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(mirrorDir, "HEAD"), []byte("ref: refs/heads/dev\n"), 0o644))
 
 	found := FindBenchMirror(home, "https://example.com/mas-bandwidth/nova-tools.git")
-	if found != mirrorDir {
-		t.Fatalf("expected %s, got %s", mirrorDir, found)
-	}
+	require.Equal(t, mirrorDir, found, "expected %s, got %s", mirrorDir, found)
 
 	notFound := FindBenchMirror(home, "https://example.com/mas-bandwidth/nonexistent.git")
-	if notFound != "" {
-		t.Fatalf("expected empty string, got %s", notFound)
-	}
+	require.Empty(t, notFound, "expected empty string, got %s", notFound)
 }
 
 func TestStageCardFailsWithoutMirror(t *testing.T) {
@@ -78,15 +66,9 @@ func TestStageCardFailsWithoutMirror(t *testing.T) {
 		BenchName: "testhost",
 		Timeout:   30 * time.Second,
 	})
-	if err == nil {
-		t.Fatal("expected StageCard to fail when cloning directly without mirror")
-	}
-	if res.Staged {
-		t.Fatal("expected Staged=false")
-	}
-	if !strings.Contains(err.Error(), "no bench mirror") {
-		t.Fatalf("expected error mentioning no bench mirror, got: %v", err)
-	}
+	require.Error(t, err, "expected StageCard to fail when cloning directly without mirror")
+	require.False(t, res.Staged, "expected Staged=false")
+	require.Contains(t, err.Error(), "no bench mirror", "expected error mentioning no bench mirror, got: %v", err)
 }
 
 // TestStageCardRefusesACardValueGitWouldReadAsAnOption holds the refusal of ideas#829: a

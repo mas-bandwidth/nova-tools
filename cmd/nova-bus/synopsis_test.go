@@ -4,6 +4,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The synopsis is a promise, and until this file nothing kept it.
@@ -54,9 +57,7 @@ func readSynopsis(t *testing.T) []synopsisVerb {
 			break
 		}
 	}
-	if start < 0 {
-		t.Fatal("the banner has no `usage:` line; this check reads the block under it")
-	}
+	require.False(t, start < 0, "the banner has no `usage:` line; this check reads the block under it")
 	var block []synopsisVerb
 	for _, line := range lines[start:] {
 		text := strings.TrimSpace(line)
@@ -65,14 +66,10 @@ func readSynopsis(t *testing.T) []synopsisVerb {
 		}
 		if rest, ok := strings.CutPrefix(text, "nova-bus "); ok {
 			fields := strings.Fields(rest)
-			if len(fields) == 0 {
-				t.Fatalf("a `nova-bus` line with no verb on it: %q", line)
-			}
+			require.NotEmptyf(t, len(fields), "a `nova-bus` line with no verb on it: %q", line)
 			block = append(block, synopsisVerb{verb: fields[0]})
 		}
-		if len(block) == 0 {
-			t.Fatalf("a continuation line before any verb: %q", line)
-		}
+		require.NotEmptyf(t, len(block), "a continuation line before any verb: %q", line)
 		cur := &block[len(block)-1]
 		for _, flag := range synopsisFlag.FindAllString(text, -1) {
 			name := strings.TrimPrefix(flag, "--")
@@ -108,10 +105,8 @@ func TestEveryFlagInTheSynopsisIsDefinedByItsVerb(t *testing.T) {
 			// argument` instead, and a defined boolean parses and is then refused for the
 			// --bus every verb requires. All three are exit 2 and only one is a defect.
 			r := invoke(t, "", v.verb, "--"+name)
-			if strings.Contains(r.stderr, "flag provided but not defined: -"+name) {
-				t.Errorf("`nova-bus help` offers --%s to `%s` and %s does not define it, so the line the tool printed exits 2: %s",
-					name, v.verb, v.verb, strings.TrimSpace(r.stderr))
-			}
+			assert.NotContainsf(t, r.stderr, "flag provided but not defined: -"+name, "`nova-bus help` offers --%s to `%s` and %s does not define it, so the line the tool printed exits 2: %s",
+				name, v.verb, v.verb, strings.TrimSpace(r.stderr))
 			checked++
 		}
 	}
@@ -122,12 +117,11 @@ func TestEveryFlagInTheSynopsisIsDefinedByItsVerb(t *testing.T) {
 	// `draft` and `send` each have two forms and the banner shows both, because the reply
 	// form's and the prepared form's required flags are not the released form's and one
 	// line offering all of them is a line nobody can paste. `reply` is its own line.
-	if got := len(block); got != 12 {
-		t.Errorf("the synopsis parsed to %d verb lines, want 12: %+v", got, block)
+	{
+		got := len(block)
+		assert.Falsef(t, got != 12, "the synopsis parsed to %d verb lines, want 12: %+v", got, block)
 	}
-	if checked < 30 {
-		t.Errorf("only %d flags were checked; the banner offers more than that, so the parser is reading less than the banner says", checked)
-	}
+	assert.Falsef(t, checked < 30, "only %d flags were checked; the banner offers more than that, so the parser is reading less than the banner says", checked)
 }
 
 // TestEveryVerbInTheSynopsisIsDispatchable is the other half of the same promise: a banner
@@ -138,8 +132,6 @@ func TestEveryVerbInTheSynopsisIsDispatchable(t *testing.T) {
 	t.Parallel()
 	for _, v := range readSynopsis(t) {
 		r := invoke(t, "", v.verb)
-		if strings.Contains(r.stderr, "unknown subcommand") {
-			t.Errorf("`nova-bus help` names the verb %q and the dispatch does not: %s", v.verb, strings.TrimSpace(r.stderr))
-		}
+		assert.NotContainsf(t, r.stderr, "unknown subcommand", "`nova-bus help` names the verb %q and the dispatch does not: %s", v.verb, strings.TrimSpace(r.stderr))
 	}
 }

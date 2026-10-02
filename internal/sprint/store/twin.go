@@ -179,10 +179,16 @@ func (tw *Twin) reset(epoch uint64) {
 // ShareTwin has the store read and write through the twin (a process's
 // one twin of a store: every step it runs, a verb's or a tick's part, reads
 // only what changed since the last); nil is none.
-func (st *Store) ShareTwin(tw *Twin) { st.tw = tw }
+func (st *Store) ShareTwin(tw *Twin) {
+	lazyMu.Lock()
+	st.tw = tw
+	lazyMu.Unlock()
+}
 
 // twin is the store's twin, made on first use; its pinned copies share it.
 func (st *Store) twin() *Twin {
+	lazyMu.Lock()
+	defer lazyMu.Unlock()
 	if st.tw == nil {
 		st.tw = NewTwin()
 	}
@@ -269,7 +275,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 // checkTwin gives CheckTwin the twin's snapshot with a fresh read of the
 // same generation (its own read, not counted).
 func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint64, load []string, extras func(*sprint.Snapshot) map[string][]string, held string) error {
-	chk := *st
+	chk := st.clone()
 	chk.Stats, chk.CheckTwin, chk.tw = &Stats{}, nil, nil
 	var fresh *sprint.Snapshot
 	var err error
@@ -738,7 +744,9 @@ func twinTables(load []string) bool {
 func (st *Store) stepTwin(step Step) (*Twin, func()) {
 	tw := step.Twin
 	if tw == nil {
+		lazyMu.Lock()
 		tw = st.tw
+		lazyMu.Unlock()
 	}
 	if tw == nil || !tw.mu.TryLock() {
 		return nil, func() {}
@@ -779,7 +787,7 @@ func TwinDiff(twin, fresh *sprint.Snapshot) string {
 		if fmt.Sprint(a.Props()) != fmt.Sprint(b.Props()) {
 			out = append(out, fmt.Sprintf("%s: props %v, fresh %v", name, a.Props(), b.Props()))
 		}
-		ac, bc := a.LoadedCards(), b.LoadedCards()
+		ac, bc := a.Cards(), b.Cards()
 		byID := map[string]*sprint.Card{}
 		for _, c := range bc {
 			byID[c.ID] = c

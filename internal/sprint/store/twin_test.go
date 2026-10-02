@@ -67,6 +67,9 @@ func TestAWriteDuringTheTickIsReadAgain(t *testing.T) {
 	h.setup(4)
 	h.startMachine()
 	h.machine()
+	// m2 finishes its cards, so the tick below asks them: the ask is a part that
+	// runs after the world's write
+	h.work("m2")
 	h.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 100}, Who: "m1"}))
 	s := h.snap()
 	var ids, primaries []string
@@ -160,7 +163,7 @@ func TestATwinReadCutShortLeavesNoTableHalfRead(t *testing.T) {
 	require.Equal(t, gen.Gen, at, "fresh read: %v at %d, twin at %d", err, at, gen.Gen)
 	d := TwinDiff(snap, fresh)
 	require.Empty(t, d, "the twin after a cut read: %s", d)
-	require.NotEmpty(t, snap.Merge.LoadedCards(), "the merge table is empty: the check shows nothing")
+	require.NotEmpty(t, snap.Merge.Cards(), "the merge table is empty: the check shows nothing")
 }
 
 // The exchanges of one writing part of the tick, by kind, after another
@@ -230,7 +233,8 @@ func TestATicksPartsTripsArePinned(t *testing.T) {
 	}
 	// each part: its read of the twin (the view, the fence last, the queue),
 	// its acquire, one apply for each table it writes, its release; the ask
-	// also catches the readers table up from its change stream
+	// also catches the readers table up from its change stream; the readers'
+	// beats and holds are read once by the tick, before its parts (first read)
 	want := map[string]int64{"work/drain": 8, "readers/ask": 9}
 	require.Equal(t, fmt.Sprint(want), fmt.Sprint(got), "the busy tick's parts made %v round trips, want %v: %s", got, want, busy.TimesLine())
 }

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -86,11 +87,16 @@ type Store struct {
 	// harness whose other writers write from inside a part's plan (a writer
 	// that would wait on the lock its own caller holds) leaves it off.
 	LockAfterLoss bool
-	root          Backend   // the backend before pinning
-	epoch         uint64    // the epoch the store is pinned to
-	cleared       time.Time // when the pinned epoch began
-	pinned        bool
-	old           bool // pinned to an earlier epoch, for reading
+	// ByHand says no machine runs between commands (a twin, mem:<file>): a
+	// RUNNING machine that has not ticked waits for the next tick by hand and
+	// is not stopped, so its line stays running and the inbox's not-ticking
+	// judgment names nova-sprint tick (docs/SPEC-SPRINT.md section 14).
+	ByHand  bool
+	root    Backend   // the backend before pinning
+	epoch   uint64    // the epoch the store is pinned to
+	cleared time.Time // when the pinned epoch began
+	pinned  bool
+	old     bool // pinned to an earlier epoch, for reading
 }
 
 // Step is one verb's step: the tables its plan reads, any records it reads
@@ -134,6 +140,25 @@ type Step struct {
 	// tables plans on it while the fence is at its generation, instead of
 	// reading them, and applies its receipts to it when it commits.
 	Twin *Twin
+	// Routes says the step deals (or asks what the next deal does): it plans
+	// with the model tiers' routes (routes.go, sprint.Snapshot.Routes), read
+	// before its first read of the tables, never between that read and its
+	// Acquire; through RouteCache when one is given (a tick's, read once).
+	Routes     bool
+	RouteCache *RouteCache
+	// Prices says the step prices what a worker reports (finish, read with usage:
+	// internal/sprint/cost.go): it plans with the routes alone, the routes set and
+	// each route's record (routes.go, PriceRoutes), read before its tables. It reads
+	// no tier array: a worker's ACL reads routes and route:*
+	// only (internal/redisacl, the member role), and pricing needs no more.
+	Prices bool
+	// Readers says the step asks, or reads what the ask would do: it plans
+	// with the readers' states (sprint.Snapshot.ReaderStates), read after its
+	// tables, or ReaderStates when given: a tick reads them once and every
+	// part plans on that reading (tla/DirtyTick.tla holds who is up constant
+	// within a tick).
+	Readers      bool
+	ReaderStates map[string]string
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
@@ -239,6 +264,17 @@ func (e *CutError) Error() string {
 }
 
 func (e *CutError) Unwrap() error { return e.Cause }
+
+// SyncError is a step whose write committed and whose display cells then did
+// not sync: the step's cards are in the table, so it is not a failed step; the
+// error says what the sync met.
+type SyncError struct{ Cause error }
+
+func (e *SyncError) Error() string {
+	return fmt.Sprintf("the step's write committed, and the display cells did not sync: %v; run: nova-sprint check", e.Cause)
+}
+
+func (e *SyncError) Unwrap() error { return e.Cause }
 
 func (st *Store) attempts() int {
 	if st.Attempts > 0 {
@@ -364,6 +400,18 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			_ = st.B.Release(context.WithoutCancel(ctx), *lock, false)
 		}
 	}()
+	var routes RouteSet
+	if step.Routes {
+		if routes, err = st.cached(ctx, step.RouteCache); err != nil {
+			return res, err
+		}
+	}
+	var priced []sprint.Route
+	if step.Prices {
+		if priced, err = st.priceRoutes(ctx); err != nil {
+			return res, err
+		}
+	}
 	for res.Attempts < st.attempts() {
 		res.Attempts++
 		if wantLock && lock == nil && !locked {
@@ -445,11 +493,25 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				// and moves no card a later queued change names, so that
 				// change still finds the card where it expects it
 				held = sprint.QueuedCards(q)
+				snap.Held = held
 			default:
 				// A step other than the pump plans on the work table as the
 				// pump will leave it: its changes queue after the ones before
 				// it, each where they leave the card (sprint.Drain).
 				snap = sprint.WithQueue(snap, q)
+			}
+		}
+		if step.Routes {
+			routes.into(snap)
+		}
+		if step.Prices {
+			snap.Routes = priced
+		}
+		if step.Readers && step.ReaderStates != nil {
+			snap.ReaderStates = step.ReaderStates
+		} else if step.Readers {
+			if err := st.readerStatesInto(ctx, snap); err != nil {
+				return res, err
 			}
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
@@ -551,9 +613,14 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			ok, err = st.B.Acquire(ctx, gen, op)
 		}
 		if err != nil {
-			// A write the store did not take leaves the fence without this
-			// operation: nothing was changed, and the store's reason says why.
-			if f, ferr := st.B.ReadFence(ctx); ferr == nil && (f.Pending == nil || f.Pending.ID != op.ID) {
+			if rec, confirmed := st.committed(ctx, step, op); confirmed {
+				return st.after(ctx, step, rec)
+			}
+			// An ordinary acquire that did not advance the generation wrote
+			// nothing. A moved or empty fence alone is ambiguous: another
+			// writer may already have committed this operation. Relock does
+			// not advance the generation and needs its exact receipt.
+			if f, ferr := st.B.ReadFence(ctx); ferr == nil && lock == nil && f.Gen == gen && f.Pending == nil {
 				res.Op = ""
 				return refuseWhole(res, plan, fmt.Sprintf("the store did not take the step's record (%d bytes): %v; nothing was changed", recordSize(op), err))
 			}
@@ -576,12 +643,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		applied, receipts, err := st.apply(ctx, op)
 		var bound *boundError
-		var cut *CutError
-		if (errors.As(err, &cut) || err == nil && !applied) && st.finishedElsewhere(ctx, op) {
+		if err != nil || !applied {
 			// Another writer (the tick, another verb, repair) finished this
 			// operation: its recorded result is this step's, as a replay.
-			raw, _, _ := st.B.Done(ctx, op.CallerOp)
-			if rec, rerr := replay(step, raw); rerr == nil {
+			if rec, confirmed := st.committed(ctx, step, op); confirmed {
 				return st.after(ctx, step, rec)
 			}
 		}
@@ -603,6 +668,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			continue
 		}
 		if err := st.B.Release(ctx, op, true); err != nil {
+			if rec, confirmed := st.committed(ctx, step, op); confirmed {
+				return st.after(ctx, step, rec)
+			}
 			res.Pending = op.ID
 			return res, fmt.Errorf("%w: the commit of %s: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
 		}
@@ -741,16 +809,17 @@ func (st *Store) callerOp(ctx context.Context, step Step, res Result) (Result, b
 	return res, true, nil
 }
 
-// finishedElsewhere says the fence no longer holds the operation and its
-// result is recorded: another writer finished it. An operation released
-// without a record was abandoned: nothing of it happened.
-func (st *Store) finishedElsewhere(ctx context.Context, op OpRecord) bool {
-	f, err := st.B.ReadFence(ctx)
-	if err != nil || f.Pending != nil && f.Pending.ID == op.ID {
-		return false
+// committed confirms this exact operation from the receipt written atomically
+// with its release (Redis.commit). A planned move or another operation's
+// receipt cannot confirm a lost reply; unreadable proof leaves it unknown.
+func (st *Store) committed(ctx context.Context, step Step, op OpRecord) (Result, bool) {
+	raw, ok, err := st.B.Done(ctx, op.CallerOp)
+	if err != nil || !ok {
+		return Result{}, false
 	}
-	_, ok, err := st.B.Done(ctx, op.CallerOp)
-	return err == nil && ok
+	step.CallerOp = op.CallerOp
+	rec, err := replay(step, raw)
+	return rec, err == nil && rec.Op == op.ID
 }
 
 // after brings the display cells up to date after a step. A step finished at
@@ -769,7 +838,7 @@ func (st *Store) after(ctx context.Context, step Step, res Result) (Result, erro
 			if es, left, lerr := st.left(ctx); lerr == nil && left {
 				return res, &ClearedError{Held: st.epoch, Now: es.N, At: es.Cleared, Finished: true}
 			}
-			return res, err
+			return res, &SyncError{Cause: err}
 		}
 	}
 	return res, nil
@@ -799,12 +868,29 @@ type entryKey struct{ table, id string }
 // sent again against a fresher one.
 const manifestBudget = ntable.LimitManifestBytes - 64
 
-// MaxCardTextBytes bounds each text field a card carries (CardTextFields): a
-// step that would write a longer one is refused before anything is written.
-const MaxCardTextBytes = 8 << 10
+// MaxCardTextBytes bounds each text field a card carries (CardTextFields),
+// the brief excepted (MaxBriefBytes): a step that would write a longer one is
+// refused before anything is written.
+const MaxCardTextBytes = sprint.MaxCardTextBytes
+
+// MaxBriefBytes bounds the brief field: cardlimits.MaxBriefBytes, the number the card
+// lint names too and read from the one package that holds it (nothing behind it, so the lint
+// reads it without the store). A brief is a child's whole brief; the bound sits above the
+// lint's advice (cardlimits.BriefAdvisoryBytes) and under the table layer's field bound
+// (ntable.LimitFieldValueBytes, 64 KiB, which the table function library enforces too). A
+// bound is a constant of the model (tla/SprintEvents.tla), which does not change with it.
+const MaxBriefBytes = cardlimits.MaxBriefBytes
+
+// TextBound is the bound of one card text field, in bytes.
+func TextBound(field string) int {
+	if field == "brief" {
+		return MaxBriefBytes
+	}
+	return MaxCardTextBytes
+}
 
 // CardTextFields are the text fields a card carries.
-var CardTextFields = []string{"brief", "fix", "finding", "report", "reason", "note", "return_reason", "ci_note", "did"}
+var CardTextFields = []string{"brief", "fix", "finding", "report", "reason", "note", "return_reason", "ci_note", "did", "why"}
 
 // unwritable is why a step's plan cannot be written, before anything is: a
 // card text field over MaxCardTextBytes, or a manifest the table layer's own
@@ -813,8 +899,12 @@ func unwritable(plan sprint.Plan, op OpRecord) string {
 	for _, u := range plan.Units {
 		for _, c := range u.Changes {
 			for _, f := range CardTextFields {
-				if v, ok := c.Entry.Set[f]; ok && len(v) > MaxCardTextBytes {
-					return fmt.Sprintf("card %s: field %s is %d bytes, over the bound of %d bytes; shorten it, or point to a file or a comment", c.Entry.ID, f, len(v), MaxCardTextBytes)
+				if v, ok := c.Entry.Set[f]; ok && len(v) > TextBound(f) {
+					why := "shorten it, or point to a file or a comment"
+					if f == "brief" {
+						why = fmt.Sprintf("a brief is a child's whole brief, up to %d KiB, and the card lint advises at most %d bytes; %s", MaxBriefBytes>>10, cardlimits.BriefAdvisoryBytes, why)
+					}
+					return fmt.Sprintf("card %s: field %s is %d bytes, over the bound of %d bytes; %s", c.Entry.ID, f, len(v), TextBound(f), why)
 				}
 			}
 		}
@@ -1739,8 +1829,8 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest, bar
 // entry: only when one of its member changes applied, in a manifest of its own
 // holding the properties and their expectations, which refuses them all
 // when an expectation no longer holds. Otherwise they are skipped: a deal none
-// of whose cards applied leaves its index where it was (L1 contract
-// amendment, table properties, section 4).
+// of whose cards applied leaves its index where it was (docs/SPEC-NOVA-TABLE.md,
+// table properties).
 func (st *Store) applyProps(ctx context.Context, man ntable.BatchManifest, changedOne bool) ([]Skip, error) {
 	if len(man.Props)+len(man.PropExpect)+len(man.PropAbsent) == 0 {
 		return nil, nil

@@ -8,6 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // resultLiftDepth is how far below the job root the lookup looks for a result the card wrote
@@ -21,9 +24,17 @@ const resultLiftDepth = 2
 // directory below it (issue #594). A path that is not a regular file is not a result: a
 // planted symlink is not followed and a FIFO is not a published report (issue #233). It is
 // exported because `native` asks it: whether the harness published anything at all (#591).
+// A framed card's finish that the gh shim recorded (cardcontract.FinishName, in the card
+// contract's shape) is a published result too, after the job root's RESULT.md: a child
+// whose `gh pr create` or `gh pr review` is its end published (docs/SPEC-CARD-CONTRACT.md).
 func FindCardResult(job string) (string, bool) {
 	if root := ResultPath(job); isRegularFile(root) {
 		return root, true
+	}
+	if finish := filepath.Join(job, cardcontract.FinishName); isRegularFile(finish) {
+		if b, err := os.ReadFile(finish); err == nil && typedrec.ParseCardResult(b).Shaped {
+			return finish, true
+		}
 	}
 	return findResultBelow(job, resultLiftDepth)
 }

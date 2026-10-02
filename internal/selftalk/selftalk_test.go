@@ -8,7 +8,12 @@ package selftalk
 // survive promotion, by the origin spec's own promotion clause (the list
 // moves to the caller and the default becomes empty).
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 // A1 — a first-person capability denial with negative vocabulary is STANDING.
 func TestA1_CapabilityDenialIsStanding(t *testing.T) {
@@ -76,6 +81,29 @@ func TestA4_MarkdownEmphasisDoesNotHideAClaim(t *testing.T) {
 		if got := Scan(in); len(got) == 0 {
 			t.Errorf("markdown hid the claim: %q", in)
 		}
+	}
+}
+
+// A heading and a blank line each end a sentence: a claim under a heading is
+// reported on its own line with only its own words, never glued to the heading
+// or to the paragraph before it (ledger T4).
+func TestAHeadingOrABlankLineEndsASentence(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name, in string
+		line     int
+	}{
+		{"heading", "# Journal\nI am bad at estimating time.\n", 2},
+		{"blank line", "A paragraph with no stop\n\nI am bad at estimating time.\n", 3},
+		{"heading after a paragraph", "Some prose\n## Notes\nI am bad at estimating time.\n", 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Scan(tc.in)
+			require.Len(t, got, 1)
+			assert.Equal(t, tc.line, got[0].Line)
+			assert.Equal(t, "I am bad at estimating time.", got[0].Text)
+		})
 	}
 }
 
@@ -166,17 +194,14 @@ func TestNoFalsePositivesOnOrdinaryProse(t *testing.T) {
 	}
 }
 
-// Flatten is exported and other text handling may lean on it: pin the two
-// behaviors the acceptance cases depend on — markup stripped, wraps
-// collapsed to single spaces.
+// Flattening is what Scan matches against: pin the two behaviors the
+// acceptance cases depend on — markup stripped, wraps collapsed to single
+// spaces.
 func TestFlatten(t *testing.T) {
 	t.Parallel()
 
-	in := "**bold** and a line\nthat wraps\t twice"
-	want := "bold and a line that wraps twice"
-	if got := Flatten(in); got != want {
-		t.Errorf("Flatten(%q) = %q, want %q", in, got, want)
-	}
+	got, _ := flattenWithLines("**bold** and a line\nthat wraps\t twice")
+	assert.Equal(t, "bold and a line that wraps twice", got)
 }
 
 // Base is what --skip matching is decided on; it must see through both

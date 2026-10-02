@@ -25,13 +25,10 @@ import (
 // so a reader sees the whole exception set without reading the test.
 const namedPathsAllowlistPath = "testdata/namedpaths_allowlist.txt"
 
-// namedPathRootDirs are the top-level directories of THIS repository. A token that starts
-// with one of them and carries a slash is a name a friend will follow, so it must exist.
-// Anything else is somebody else's tree -- an import path, a URL, a path on a bench -- and
-// this rule says nothing about it.
-var namedPathRootDirs = []string{"cmd", "internal", "docs", "tools", "scripts", "testdata", "fleet", "infra", ".github"}
-
-// namedPathRe finds the candidates. The alternation is namedPathRootDirs, and the tail is
+// namedPathRe finds the candidates. The alternation is the top-level directories of THIS
+// repository: a token that starts with one of them and carries a slash is a name a friend
+// will follow, so it must exist. Anything else is somebody else's tree -- an import path, a
+// URL, a path on a bench -- and this rule says nothing about it. The tail is
 // the character set a path of ours is written in; a glob or a template breaks out of that
 // set at its first metacharacter, which is how namedPathIsTemplate sees one.
 var namedPathRe = regexp.MustCompile(`(?:\.github|cmd|internal|docs|tools|scripts|testdata|fleet|infra)/[\w./-]+`)
@@ -330,10 +327,6 @@ var namedPathTestdataDirs = func() func(root string) []string {
 					return nil //nolint:nilerr // an unreadable directory holds no fixtures we can name
 				}
 				if d.Name() == ".git" {
-					return filepath.SkipDir
-				}
-				// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-				if isDeprecatedDir(root, path) {
 					return filepath.SkipDir
 				}
 				if d.Name() == "testdata" {

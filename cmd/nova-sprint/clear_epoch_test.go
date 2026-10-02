@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -34,20 +37,14 @@ func TestInboxReadAfterClear(t *testing.T) {
 		Last, Cursor string
 	}
 	ta.json("inbox --read", &v)
-	if v.Last == "" {
-		t.Fatalf("no notification at the new epoch")
-	}
+	require.NotEmpty(t, v.Last, "no notification at the new epoch")
 	var after struct{ Cursor string }
 	ta.json("inbox", &after)
 	var old struct{ Cursor string }
 	ta.json("inbox --at-epoch 0", &old)
 	t.Logf("last=%q new-epoch cursor after --read=%q old-epoch cursor before=%q after=%q", v.Last, after.Cursor, before.Cursor, old.Cursor)
-	if after.Cursor != v.Last {
-		t.Errorf("inbox --read at epoch 1 did not move epoch 1's cursor (cursor %q, last %q)", after.Cursor, v.Last)
-	}
-	if old.Cursor != before.Cursor {
-		t.Errorf("inbox --read at epoch 1 wrote epoch 0's cursor: %q -> %q", before.Cursor, old.Cursor)
-	}
+	assert.Equal(t, v.Last, after.Cursor, "inbox --read at epoch 1 did not move epoch 1's cursor")
+	assert.Equal(t, before.Cursor, old.Cursor, "inbox --read at epoch 1 wrote epoch 0's cursor")
 }
 
 // C1: reader add after a clear adds the reader at the new epoch.
@@ -57,9 +54,7 @@ func TestReaderAddAfterClear(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("clear --confirm sprint")
 	code, out, errs := ta.do("reader add reader-c")
-	if code != 0 {
-		t.Errorf("reader add after clear: exit %d %s%s", code, out, errs)
-	}
+	assert.Equal(t, 0, code, "reader add after clear: exit %d %s%s", code, out, errs)
 }
 
 // C1, C2: wait on a judgment of the new epoch works; a wait or an ack naming
@@ -78,18 +73,14 @@ func TestWaitAfterClear(t *testing.T) {
 	// an old judgment's wait: must not change the old epoch, must say cleared
 	code, out, errs := ta.do("wait " + oldNote + " --for 1h")
 	t.Logf("wait old judgment after clear: %d %s%s", code, out, errs)
-	if code == 0 {
-		t.Errorf("wait on an old epoch's judgment after clear succeeded (it wrote the old epoch): %s", out)
-	}
+	assert.NotEqual(t, 0, code, "wait on an old epoch's judgment after clear succeeded (it wrote the old epoch): %s", out)
 	ta.ok("add --stream s1 --count 2")
 	ta.deal(2)
 	ta.ok("take --as m1 --limit 2")
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'red again'")
 	g := ta.group(sprint.NWorkFailed, "s1")
 	code, out, errs = ta.do("wait " + g.Notes[0] + " --for 1h")
-	if code != 0 {
-		t.Errorf("wait on the new epoch's judgment: exit %d %s%s", code, out, errs)
-	}
+	assert.Equal(t, 0, code, "wait on the new epoch's judgment: exit %d %s%s", code, out, errs)
 	// ack of the OLD judgment id after clear
 	code, out, errs = ta.do("ack " + oldNote + " --reason x")
 	t.Logf("ack old judgment after clear: %d %s%s", code, out, errs)
@@ -103,9 +94,9 @@ func TestInboxReadRefusesAnEarlierEpoch(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("clear --confirm sprint")
-	if code, _, errs := ta.do("inbox --read --at-epoch 0"); code != 2 || !strings.Contains(errs, "give one of them") {
-		t.Fatalf("inbox --read --at-epoch 0: exit %d %s", code, errs)
-	}
+	code, _, errs := ta.do("inbox --read --at-epoch 0")
+	require.Equal(t, 2, code, "inbox --read --at-epoch 0: exit %d %s", code, errs)
+	require.Contains(t, errs, "give one of them", "inbox --read --at-epoch 0: exit %d %s", code, errs)
 }
 
 // epochImage is everything the store holds of an epoch, read as it was: every
@@ -114,14 +105,10 @@ func TestInboxReadRefusesAnEarlierEpoch(t *testing.T) {
 func (ta *testApp) epochImage(e uint64) string {
 	ta.t.Helper()
 	st, err := ta.a.storeAt(common{redis: "mem:0", actor: "tester"}, int64(e))
-	if err != nil {
-		ta.t.Fatal(err)
-	}
+	require.NoError(ta.t, err)
 	ctx := context.Background()
 	s, err := st.Load(ctx, store.All, nil)
-	if err != nil {
-		ta.t.Fatal(err)
-	}
+	require.NoError(ta.t, err)
 	var lines []string
 	for _, tb := range []*sprint.Table{s.Work, s.Readers, s.Merge, s.Fleet} {
 		lines = append(lines, fmt.Sprintf("%s rows %v", tb.Name, tb.Rows()))
@@ -130,9 +117,7 @@ func (ta *testApp) epochImage(e uint64) string {
 		}
 	}
 	v, err := st.Inbox(ctx, 0, 0, 10000)
-	if err != nil {
-		ta.t.Fatal(err)
-	}
+	require.NoError(ta.t, err)
 	lines = append(lines, "cursor "+v.Cursor+" last "+v.Last)
 	for _, o := range v.Open {
 		lines = append(lines, fmt.Sprintf("open %s review %s", o.Key, o.Note.Review))
@@ -195,13 +180,9 @@ func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 	for _, line := range lines {
 		before := ta.m.Touched(0)
 		code, out, errs := ta.do(line)
-		if n := ta.m.Touched(0) - before; n != 0 {
-			t.Errorf("%s (exit %d) made %d store calls naming epoch 0:\n%s%s", line, code, n, out, errs)
-		}
+		assert.Zero(t, ta.m.Touched(0)-before, "%s (exit %d) made store calls naming epoch 0:\n%s%s", line, code, out, errs)
 	}
-	if got := ta.epochImage(0); got != img {
-		t.Fatalf("epoch 0 changed:\n%s\nwas\n%s", got, img)
-	}
+	require.Equal(t, img, ta.epochImage(0), "epoch 0 changed")
 }
 
 // Every report names its epoch: a worker from before a clear, finishing the
@@ -222,18 +203,18 @@ func TestAnOldWorkersFinishIsRefusedAfterAClear(t *testing.T) {
 		code := ta.a.run(split(line), &out, &errb)
 		return code, out.String() + errb.String()
 	}
-	if code, out := raw("finish --as m1 p1.w1@1"); code == 0 || !strings.Contains(out, "--epoch") {
-		t.Fatalf("a finish naming no epoch: %d %s", code, out)
-	}
-	if code, out := raw("finish --as m1 p1.w1@1 --epoch 0"); code == 0 || !strings.Contains(out, "cleared") {
-		t.Fatalf("a finish of epoch 0: %d %s", code, out)
-	}
-	if code, out := raw("read --as reader-a --ok p1.r1.reader-a"); code == 0 || !strings.Contains(out, "--epoch") {
-		t.Fatalf("a read naming no epoch: %d %s", code, out)
-	}
+	code, out := raw("finish --as m1 p1.w1@1")
+	require.NotEqual(t, 0, code, "a finish naming no epoch: %d %s", code, out)
+	require.Contains(t, out, "--epoch", "a finish naming no epoch: %d %s", code, out)
+	code, out = raw("finish --as m1 p1.w1@1 --epoch 0")
+	require.NotEqual(t, 0, code, "a finish of epoch 0: %d %s", code, out)
+	require.Contains(t, out, "cleared", "a finish of epoch 0: %d %s", code, out)
+	code, out = raw("read --as reader-a --ok p1.r1.reader-a")
+	require.NotEqual(t, 0, code, "a read naming no epoch: %d %s", code, out)
+	require.Contains(t, out, "--epoch", "a read naming no epoch: %d %s", code, out)
 	var q struct{ Cards []queueCard }
 	ta.json("queue --as m1", &q)
-	if len(q.Cards) != 1 || q.Cards[0].ID != "p1.w1" || q.Cards[0].Col != "ready" {
-		t.Fatalf("the new epoch's card: %+v", q.Cards)
-	}
+	require.Len(t, q.Cards, 1, "the new epoch's card: %+v", q.Cards)
+	require.Equal(t, "p1.w1", q.Cards[0].ID, "the new epoch's card: %+v", q.Cards)
+	require.Equal(t, "ready", q.Cards[0].Col, "the new epoch's card: %+v", q.Cards)
 }

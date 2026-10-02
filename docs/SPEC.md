@@ -1708,14 +1708,36 @@ prose: identifiers and code snippets in fences and backticks are skipped.
 ## nova-self-talk — the self-talk register, classified
 
 ```
-nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
+nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] [--json] <file>...
+nova-self-talk scan [flags] <file>...
+nova-self-talk shapes [--json]
+nova-self-talk example [--dry-run] [--json] <dir>
 nova-self-talk version
-nova-self-talk help
+nova-self-talk help [<verb>]
 ```
 
-`version` is a verb here the way `help` is: as the WHOLE invocation, because
-this tool takes its files positionally and has no other verb. A file actually
-named `version`, named beside another file, is still a file.
+**Verbs and files.** The first argument is a verb only when it is `scan`,
+`shapes`, `example`, `version` or `help`; anything else is the first file, so
+the plain use stays `nova-self-talk <file>...` and `scan` is the same scan
+named as a verb. A file whose name is a verb is given as `./version`. A named
+file that cannot be read and has no `.`, `/` or `\` in its name is most often
+a verb guessed wrong, so its refusal names the verbs. `help <verb>` is that
+verb's help, `help` with anything else the banner. `-` is standard input, one
+file named `-`.
+
+**`shapes`** prints the detector table the scan walks (`selftalk.Rules`): one
+row per rule with its class, its shape, what it finds, its pattern, a sentence
+it reports and a near miss it passes, then the licences. A test runs every
+row's two sentences through the scan. **`example <dir>`** writes the two
+example pages built into the binary into `<dir>`, keeps a page already there
+with the same bytes, and refuses before writing anything if one has other
+bytes; `--dry-run` writes nothing. It is the tool's only write.
+
+**Findings.** Each finding line carries `match="<words>"`: the words its rule
+matched. **`--json`** prints the run as one JSON object on stdout (`result`,
+`facts` with the closing line's counts, `items` one per finding, skip and
+banner, `more`, `notes`), capped by `--max` the same way; a refusal under
+`--json` is the same object with `status` `refused`.
 
 **`--max <n>`, default 20, `0` for all.** At most n finding lines per CLASS —
 `standing` and `installation` capped separately, so six hundred of the first
@@ -1888,7 +1910,9 @@ what the first one misses; what remains is genuinely out of reach of grammar and
 5. **The first-person promise written with *always* or *never*** —
    *"I never optimize how things look over what is true"* is a commitment, and
    it is grammatically identical to a habitual self-report. Those two adverbs
-   are out of the habituality markers for that reason.
+   are out of the habituality markers for that reason; `TRAIT` reaches them
+   only through closed sets of failing verbs (*"I always overpromise"*, *"I
+   never finish anything"*), which a promise does not use.
 
 (**The sentences in 3–5 above are each pinned by a test that goes red if the
 tool ever reaches them**, and this section is rewritten in the same commit that
@@ -2305,8 +2329,8 @@ preserves), and a read verb added later is fused by default, not by memory.
 ```
 nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
 nova-memory stats  --root <dir>... [--exclude <glob>]...
-nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <words>...
-nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <file|->
+nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <words>...
+nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
 nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                    [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
                    [--fail-max <n>]
@@ -2336,7 +2360,10 @@ chunk. Text is normalized before it is indexed — blockquote and
 emphasis characters stripped **first**, then whitespace collapsed, then
 casefolded — because that order is what recovers a phrase a hard wrap or an
 emphasis marker split, which is exactly the class of miss that makes a hand
-grep answer "not present" when it is present. Every chunk is classed by its
+grep answer "not present" when it is present. Retrieval keeps this normalized
+text; receipts separately retain the source paragraph with its original case,
+markup and normalized line endings, and its first source line (1-based). The
+indexable paragraph ordinal stays the stable retrieval ID and tie-break. Every chunk is classed by its
 **top-level directory** (`.` for root files): the corpus classifies itself,
 and the tool assumes nothing whatever about layout. Frontmatter `name:` and
 `type:` are carried into receipts when a file has them, surfaced and never
@@ -2353,11 +2380,11 @@ editorial decision it exists to inform.
 **The one-line guarantee, met here.** A receipt's `class=`, `name=` and
 `type=` are the corpus's own text and are fields, one token each, so a
 frontmatter `name: x lockdown=clear` cannot pose as a field on a receipt; so
-are `check`'s `source=`, `eval`'s `expected=`, and the caller's own `query=`
-on `SEARCH OK` and `EVAL MISS`, which is argv and so the one slot
-a caller controls outright (a query of `quokka class=poison` prints as
-`query=quokka\x20class\x3dpoison`, never as a second `class=` field). A receipt's fields end
-at the `: ` after `type=`; the `<file>:<para>` and the Go-quoted snippet that follow are the
+are `check`'s `source=` and `eval`'s `expected=` and `query=`. On `SEARCH OK`,
+the caller's query is quoted free text after the `: ` that closes the typed
+fields: `query="quokka class=poison"` remains readable without forging a
+`class=` field. A receipt's fields end at the `: ` after `root=`;
+the `<file>:<line>` and the Go-quoted original snippet that follow are the
 tail, the path escaped for one line and keeping its spaces, and the tail is never scanned for
 fields, as Conventions says. `MEMORY CAND`'s candidate and `VERIFY INFO`'s detail sit after the
 same `: ` for the same reason. The root, the candidate and the gold file in every
@@ -2365,6 +2392,14 @@ refusal, and the detail of every `verify` finding, render through
 `internal/oneline`. The flag parser is given no stream. Pinned by
 `TestNoCorpusOrCallerTextCanForgeALine` and by the shared source audit.
 
+
+**Two renderings of retrieval evidence.** `search` and `check` accept
+`--json`: the result envelope, facts, calibration, candidates, hits and notes
+come from the same retrieval value as the typed lines. Hits carry the source
+file, line, original snippet and paragraph ordinal. A calibration probe with
+no hit has null score and channel in JSON and `-` in the typed line; absence
+is not a measured zero. Unusable inputs produce a refused envelope at exit 2
+with every discovered problem and the help remedy.
 
 **No defaults, applied here.** `--root` is required on every verb: **no
 environment variable is consulted and there is no discovery from the working
@@ -2423,9 +2458,10 @@ output, and the printed line is the argv that ran, through the same dispatch a
 shell reaches, so a transcript cannot teach an invocation that does not work.
 
 ```
-QUICKSTART OK root=<dir> steps=3 channels=bm25 k=3/2 words=<w> words-source=given|corpus-top-terms candidate=<file|corpus-first-paragraph>
+QUICKSTART RUN root=<dir> steps=3 channels=bm25 k=3/2 words=<w> words-source=given|corpus-top-terms candidate=<file|corpus-first-paragraph>
 $ nova-memory <verb> --root <dir> ...
-QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: <file>:<para>
+QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: <file>:<line>
+QUICKSTART OK done=3
 QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults: see --channels and --k
 ```
 
@@ -2526,7 +2562,7 @@ address to go read, and a normalized snippet.
 ```
 SEARCH OK query=<q> hits=<n> k=<n> channels=<list> files=<n> chunks=<n>
 SEARCH CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
-SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<para> "<snippet>"
+SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<line> "<snippet>"
 SEARCH MISS every query term is out of vocabulary for this corpus
 SEARCH NOTE <caveat>
 ```
@@ -2572,7 +2608,7 @@ consolidation ritual calls in place of re-reading the whole self.
 MEMORY OK candidates=<n> source=<name> k=<n> channels=<list> files=<n> chunks=<n>
 MEMORY CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
 MEMORY CAND n=<i>: "<normalized candidate>"
-MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<para> "<snippet>"
+MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<line> "<snippet>"
 MEMORY MISS cand=<i> every query term is out of vocabulary for this corpus
 MEMORY NOTE <caveat>
 ```
@@ -4076,7 +4112,7 @@ go test -race ./cmd/nova-bus -run TestInboxParsesOnlyWhatIsNewSinceTheCursor
 ```
 
 A bus of 10,000 generated notes, **500 of them open** for this reader, plus one
-new one. The package counts every call to `ParseNote` (`bus.NoteParses`,
+new one. The package counts the notes it parses out of each bus (`bus.NoteParsesIn`,
 instrumentation, read by nothing but a test), and the test asserts the **count**
 across one run is exactly 1 — twice, once with `--open` and once without, because
 printing the open list is a choice and neither choice may cost a parse — and then

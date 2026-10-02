@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const tailnetRunning = `{"BackendState":"Running","Self":{"HostName":"Box-1","DNSName":"m1.tail1234.ts.net.","Online":true}}`
@@ -46,9 +49,16 @@ func TestSelfNameIsTheTailnetNameWhenThereIsATailnet(t *testing.T) {
 		{"hostname label when no dns name", nil, "box.local", tsReturns(`{"BackendState":"Running","Self":{"HostName":"M5"}}`), "m5", SelfTailnet},
 	} {
 		got, how, err := SelfName(ctx, selfSrc(c.env, c.host, c.ts))
-		if err != nil || got != c.want || how != c.how {
-			t.Errorf("%s: %q %q %v, want %q %q", c.name, got, how, err, c.want, c.how)
-		}
+		assertionMsg52 := []any{"%s: %q %q %v, want %q %q", c.name, got, how, err, c.want, c.how}
+		func() {
+			if !assert.NoError(t, err, assertionMsg52...) {
+				return
+			}
+			if !assert.Equal(t, c.want, got, assertionMsg52...) {
+				return
+			}
+			assert.Equal(t, c.how, how, assertionMsg52...)
+		}()
 	}
 }
 
@@ -58,9 +68,14 @@ func TestSelfNameRefusesAnInvalidNovaMachine(t *testing.T) {
 	t.Parallel()
 	for _, bad := range []string{"m 1", "-m1", "m1/x", "m_1"} {
 		env := map[string]string{EnvMachine: bad}
-		if n, _, err := SelfName(context.Background(), selfSrc(env, "box.local", nil)); err == nil || n != "" {
-			t.Errorf("%q: %q %v", bad, n, err)
-		}
+		n, _, err := SelfName(context.Background(), selfSrc(env, "box.local", nil))
+		assertionMsg63 := []any{"%q: %q %v", bad, n, err}
+		func() {
+			if !assert.Error(t, err, assertionMsg63...) {
+				return
+			}
+			assert.Equal(t, "", n, assertionMsg63...)
+		}()
 	}
 }
 
@@ -69,9 +84,14 @@ func TestSelfNameRefusesAnInvalidNovaMachine(t *testing.T) {
 func TestSelfNameValidatesTheHostname(t *testing.T) {
 	t.Parallel()
 	for _, h := range []string{"bad_host.local", "-x.local"} {
-		if n, _, err := SelfName(context.Background(), selfSrc(nil, h, nil)); err == nil || n != "" {
-			t.Errorf("%q: %q %v", h, n, err)
-		}
+		n, _, err := SelfName(context.Background(), selfSrc(nil, h, nil))
+		assertionMsg73 := []any{"%q: %q %v", h, n, err}
+		func() {
+			if !assert.Error(t, err, assertionMsg73...) {
+				return
+			}
+			assert.Equal(t, "", n, assertionMsg73...)
+		}()
 	}
 }
 
@@ -80,11 +100,13 @@ func TestSelfNameValidatesTheHostname(t *testing.T) {
 func TestSelfNameRefusesWhenNothingNamesTheMachine(t *testing.T) {
 	t.Parallel()
 	src := SelfSource{Getenv: func(string) string { return "" }, Hostname: func() (string, error) { return "", errors.New("no hostname") }}
-	if n, _, err := SelfName(context.Background(), src); err == nil || n != "" {
-		t.Fatalf("%q %v", n, err)
-	}
+	n, _, err := SelfName(context.Background(), src)
+	assertionMsg83 := []any{"%q %v", n, err}
+	require.Error(t, err, assertionMsg83...)
+	require.Equal(t, "", n, assertionMsg83...)
 	src.Hostname = func() (string, error) { return ".local", nil }
-	if n, _, err := SelfName(context.Background(), src); err == nil || n != "" {
-		t.Fatalf("an empty first label: %q %v", n, err)
-	}
+	n, _, err = SelfName(context.Background(), src)
+	assertionMsg86 := []any{"an empty first label: %q %v", n, err}
+	require.Error(t, err, assertionMsg86...)
+	require.Equal(t, "", n, assertionMsg86...)
 }

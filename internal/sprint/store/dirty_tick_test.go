@@ -18,7 +18,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// (a) The order of a tick's updates: work, readers, merge, fleet, then end.
+// (a) The order of a tick's updates: the start (the fleet's and the readers'
+// rebalance, once), then work, readers, merge, fleet, then end.
 func TestTheTickUpdatesTheTablesInTheOwnersOrder(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -26,7 +27,7 @@ func TestTheTickUpdatesTheTablesInTheOwnersOrder(t *testing.T) {
 	h.startMachine()
 	for i := 0; i < 3; i++ {
 		res := h.machine()
-		got, want := res.Order, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
+		got, want := res.Order, []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
 		require.Equal(t, want, got, "tick %d updated %v, want %v", i+1, got, want)
 		t.Logf("tick %d: %s", i+1, strings.Join(res.Order, " -> "))
 		h.work("m1")
@@ -185,12 +186,12 @@ func TestAMutuallyDirtyingTickSettles(t *testing.T) {
 		{Table: sprint.Fleet, Parts: []sprint.TickPartDef{{Name: "to-merge", Fn: ping(sprint.Merge, 3)}}},
 	}
 	res := h.machine()
-	want := []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, sprint.Merge, sprint.Fleet, sprint.Merge, sprint.Fleet, sprint.Merge, "end"}
+	want := []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, sprint.Merge, sprint.Fleet, sprint.Merge, sprint.Fleet, sprint.Merge, "end"}
 	require.Equal(t, want, res.Order, "the tick updated %v, want %v", res.Order, want)
 	t.Logf("settled: %s", strings.Join(res.Order, " -> "))
 	// the tick after writes nothing more: its first pass only
 	res = h.machine()
-	require.Equal(t, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}, res.Order, "the next tick updated %v", res.Order)
+	require.Equal(t, []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}, res.Order, "the next tick updated %v", res.Order)
 
 	g := newHarness(t)
 	g.setup(1)
@@ -472,4 +473,108 @@ func TestAMergeBeforeThePumpSeesTheQueuedAccept(t *testing.T) {
 		require.Equal(t, sprint.Landed, st, "%s is %s after the pump", id, st)
 	}
 	h.clean("landed")
+}
+
+// queueARankAfterTheDrain makes the one world event of a tick: a part of the
+// work table's update, before accept, queues a rank of s1-1 after the pump's
+// drain. The rank names the card, so the accept step holds it for the next
+// tick's pump (LeaveQueued; docs/SPEC-SPRINT.md's accept row). The part runs
+// once; the later ticks run the tick's own parts.
+func (h *harness) queueARankAfterTheDrain() {
+	h.t.Helper()
+	ranked := false
+	work := sprint.TickTables[0]
+	var parts []sprint.TickPartDef
+	for _, p := range work.Parts {
+		if p.Name == "accept" {
+			parts = append(parts, sprint.TickPartDef{Name: "world", Fn: func(s *sprint.Snapshot, _ sprint.TickReq) (sprint.Plan, int) {
+				if ranked {
+					return sprint.Plan{}, 0
+				}
+				ranked = true
+				h.must(RankStep(sprint.RankReq{IDs: []string{"s1-1"}, First: true}))
+				return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: "world", At: s.Now}}}, 0
+			}})
+		}
+		parts = append(parts, p)
+	}
+	work.Parts = parts
+	h.st.Updates = []sprint.TableUpdate{work, sprint.TickTables[1], sprint.TickTables[2], sprint.TickTables[3]}
+}
+
+// readyToMerge is the one "ready to merge" note written so far.
+func (h *harness) readyToMerge() sprint.Note {
+	h.t.Helper()
+	notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
+	var found []sprint.Note
+	for _, n := range notes {
+		if n.Type == sprint.NReadyToMerge {
+			found = append(found, n)
+		}
+	}
+	require.Len(h.t, found, 1)
+	return found[0]
+}
+
+// A review primary a change queued after the pump's work drain (a queued rank)
+// waits for the next tick's pump: the accept part does not plan it, so it moves
+// to no merge queue and no note says it did (no phantom "ready to merge"), and
+// the stream's state and its "started merging" note follow the cards accepted
+// (docs/SPEC-SPRINT.md's accept row; tla/DirtyTick.tla). Each subtest is red
+// without the accept part's skip of a held card.
+func TestAnAcceptHeldBackByTheQueueEmitsNoPhantomReadyToMergeNote(t *testing.T) {
+	t.Parallel()
+	t.Run("all held", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		h.setup(1)
+		h.startMachine()
+		h.machine() // deals s1-1
+		h.work("m1")
+		h.machine() // moves s1-1 to review, asks readers
+		h.readAll() // readers read and give ok
+
+		h.queueARankAfterTheDrain()
+		h.machine()
+		require.Equal(t, sprint.Review, h.table().StateOf("s1-1"), "the held card stays in review")
+		require.Equal(t, sprint.StreamWaiting, h.table().StreamCtl("s1").F("state"))
+		require.Zero(t, h.written(sprint.NReadyToMerge), "a phantom ready to merge note")
+		require.Zero(t, h.written(sprint.NStartedMerging))
+
+		// the next tick drains the rank and accepts the card
+		h.st.Updates = nil
+		h.machine()
+		require.Equal(t, sprint.Merging, h.table().StateOf("s1-1"))
+		require.Equal(t, sprint.StreamMerging, h.table().StreamCtl("s1").F("state"))
+		require.Equal(t, 1, h.written(sprint.NReadyToMerge))
+	})
+
+	t.Run("first held second kept", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		h.setup(2)
+		h.startMachine()
+		h.machine() // deals both
+		h.work("m1")
+		h.work("m2")
+		h.machine() // moves both to review, asks readers
+		h.readAll() // readers read both
+
+		h.queueARankAfterTheDrain()
+		h.machine()
+		require.Equal(t, sprint.Review, h.table().StateOf("s1-1"), "the held card stays in review")
+		require.Equal(t, sprint.Merging, h.table().StateOf("s1-2"))
+		require.Equal(t, sprint.StreamMerging, h.table().StreamCtl("s1").F("state"), "the stream follows the card accepted")
+		require.Equal(t, 1, h.written(sprint.NStartedMerging))
+		rtm := h.readyToMerge()
+		require.Equal(t, []string{"s1-2"}, rtm.Primaries)
+		require.Equal(t, 1, rtm.Count)
+		require.NotContains(t, rtm.What, "s1-1")
+
+		// the next tick accepts the held card
+		h.st.Updates = nil
+		h.machine()
+		require.Equal(t, sprint.Merging, h.table().StateOf("s1-1"))
+		require.Equal(t, 2, h.written(sprint.NReadyToMerge))
+	})
 }

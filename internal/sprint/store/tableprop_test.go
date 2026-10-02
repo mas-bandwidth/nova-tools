@@ -1,7 +1,7 @@
 package store
 
 // A step writes a table property in the same batch as its members, guarded on
-// the value its plan read (L1 contract amendment, table properties, section 4).
+// the value its plan read (docs/SPEC-NOVA-TABLE.md, table properties).
 
 import (
 	"errors"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // dealWithProp is the deal verb whose plan also writes fleet.probe_index, from
@@ -45,9 +46,8 @@ func TestAStepWritesATablePropertyWithItsMembers(t *testing.T) {
 	}
 	// the next deal reads it and moves it on
 	h.must(dealWithProp(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}, func(was string, _ bool) string { return was + "+" }, &calls))
-	if v, _ := propOf(t, h, "probe_index"); v != "m1+" {
-		t.Fatalf("deal_index %q, want m1+", v)
-	}
+	v, _ := propOf(t, h, "probe_index")
+	require.Equal(t, "m1+", v, "deal_index %q, want m1+", v)
 }
 
 // A property another writer moved between the plan's read and its write
@@ -61,9 +61,8 @@ func TestAMovedPropertyRefusesTheStepAndItIsPlannedAgain(t *testing.T) {
 		s := h.snap()
 		m := ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
 			OperationID: "other-" + v, Members: []ntable.BatchMemberEntry{}, Props: map[string]string{"probe_index": v}}
-		if _, err := h.m.Apply(h.ctx, m); err != nil {
-			t.Fatal(err)
-		}
+		_, err := h.m.Apply(h.ctx, m)
+		require.NoError(t, err)
 	}
 	set("5")
 	calls := 0
@@ -92,24 +91,21 @@ func TestAnAbandonedDealLeavesItsPropertyUnwritten(t *testing.T) {
 		return nil
 	}
 	calls := 0
-	if _, err := h.st.Run(h.ctx, dealWithProp(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}, func(string, bool) string { return "m1" }, &calls)); !errors.Is(err, ErrUnknown) {
-		t.Fatalf("start: %v", err)
-	}
+	_, err := h.st.Run(h.ctx, dealWithProp(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}, func(string, bool) string { return "m1" }, &calls))
+	require.ErrorIs(t, err, ErrUnknown, "start: %v", err)
 	h.m.Fail = nil
 	s := h.snap()
-	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
+	_, err = h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
 		OperationID: "intruder", Members: []ntable.BatchMemberEntry{{ID: "s1-1.w1", Expect: &ntable.MemberExpect{Absent: true},
-			Create: &ntable.MemberCreateOp{Row: "m1", Col: sprint.DoneOK, Score: 1}}}}); err != nil {
-		t.Fatal(err)
-	}
+			Create: &ntable.MemberCreateOp{Row: "m1", Col: sprint.DoneOK, Score: 1}}}})
+	require.NoError(t, err)
 	h.tick(2 * time.Minute)
 	res := h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
 	if h.m.Pending() != nil || len(res.Repaired) != 1 || !strings.Contains(res.Repaired[0], "abandoned") {
 		t.Fatalf("past the grace: %+v", res)
 	}
-	if v, ok := propOf(t, h, "probe_index"); ok {
-		t.Fatalf("an abandoned deal wrote deal_index %q", v)
-	}
+	v, ok := propOf(t, h, "probe_index")
+	require.False(t, ok, "an abandoned deal wrote deal_index %q", v)
 }
 
 // A first manifest finished entry by entry past the grace, one of whose cards
@@ -125,16 +121,14 @@ func TestARepairedDealWritesItsPropertyWhenACardApplied(t *testing.T) {
 		return nil
 	}
 	calls := 0
-	if _, err := h.st.Run(h.ctx, dealWithProp(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}, func(string, bool) string { return "m2" }, &calls)); !errors.Is(err, ErrUnknown) {
-		t.Fatalf("start: %v", err)
-	}
+	_, err := h.st.Run(h.ctx, dealWithProp(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}, func(string, bool) string { return "m2" }, &calls))
+	require.ErrorIs(t, err, ErrUnknown, "start: %v", err)
 	h.m.Fail = nil
 	s := h.snap()
-	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
+	_, err = h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-fleet", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
 		OperationID: "intruder", Members: []ntable.BatchMemberEntry{{ID: "s1-1.w1", Expect: &ntable.MemberExpect{Absent: true},
-			Create: &ntable.MemberCreateOp{Row: "m1", Col: sprint.DoneOK, Score: 1}}}}); err != nil {
-		t.Fatal(err)
-	}
+			Create: &ntable.MemberCreateOp{Row: "m1", Col: sprint.DoneOK, Score: 1}}}})
+	require.NoError(t, err)
 	h.tick(2 * time.Minute)
 	res := h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
 	if h.m.Pending() != nil || len(res.Repaired) != 1 || strings.Contains(res.Repaired[0], "abandoned") {

@@ -43,8 +43,21 @@ func ShowLine(k *Kind, row Row) string {
 // `<field>=<before>><after>`; for an add every field's value; for a remove
 // every field's last value.
 func HistoryLine(c Change) string {
+	return fmt.Sprintf("HISTORY id=%d kind=%s name=%s op=%s actor=%s at=%s", c.ID, Value(c.Kind), Value(c.Name), Value(c.Op), Value(c.Actor), Value(c.At)) + changeFields(c)
+}
+
+// PlanLine is the change a dry run would record (Plan): `CONFIG DRY-RUN
+// op=<add|set|remove> kind=<k> name=<n> actor=<a> wrote=nothing` then the
+// fields as HistoryLine prints them.
+func PlanLine(c Change) string {
+	return "CONFIG DRY-RUN op=" + Value(c.Op) + " kind=" + Value(c.Kind) + " name=" + Value(c.Name) + " actor=" + Value(c.Actor) + " wrote=nothing" + changeFields(c)
+}
+
+// changeFields is a change's fields: every value of an add's after and a
+// remove's before, and `<field>=<before>><after>` for each field a set
+// changes.
+func changeFields(c Change) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "HISTORY id=%d kind=%s name=%s op=%s actor=%s at=%s", c.ID, Value(c.Kind), Value(c.Name), Value(c.Op), Value(c.Actor), Value(c.At))
 	switch c.Op {
 	case OpAdd:
 		for _, f := range sortedKeys(c.After) {

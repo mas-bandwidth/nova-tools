@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The fixtures are real TLC outputs, each cut from a run on a bench:
@@ -21,9 +24,7 @@ import (
 func fixture(t *testing.T, name string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(raw)
 }
 
@@ -49,9 +50,7 @@ func TestParseReadsTheStatisticsAndTheViolation(t *testing.T) {
 	}
 	for _, c := range cases {
 		o := Parse(fixture(t, c.file))
-		if o.Completed != c.completed {
-			t.Errorf("%s: completed = %v, want %v", c.file, o.Completed, c.completed)
-		}
+		assert.Equal(t, c.completed, o.Completed, "%s: completed = %v, want %v", c.file, o.Completed, c.completed)
 		if c.generated != "" && (o.Generated != c.generated || o.Distinct != c.distinct) {
 			t.Errorf("%s: stats = %s/%s, want %s/%s", c.file, o.Generated, o.Distinct, c.generated, c.distinct)
 		}
@@ -70,14 +69,12 @@ func TestParseReadsTheStatisticsAndTheViolation(t *testing.T) {
 func TestAnInitialStateViolationCountsTheOneStateTLCPrinted(t *testing.T) {
 	t.Parallel()
 	o := Parse(fixture(t, "initial-new.log"))
-	if !o.InitialState || !o.HasStats() {
-		t.Fatalf("outcome = %+v", o)
-	}
+	require.True(t, o.InitialState, "outcome = %+v", o)
+	require.True(t, o.HasStats(), "outcome = %+v", o)
 	// A violation later in the search keeps TLC's own count.
 	later := Parse(fixture(t, "invariant.log"))
-	if later.InitialState || later.Generated != "3" {
-		t.Fatalf("outcome = %+v", later)
-	}
+	require.False(t, later.InitialState, "outcome = %+v", later)
+	require.Equal(t, "3", later.Generated, "outcome = %+v", later)
 }
 
 func TestParseKeepsTheTotalsNotTheProgressLine(t *testing.T) {
@@ -88,12 +85,10 @@ func TestParseKeepsTheTotalsNotTheProgressLine(t *testing.T) {
 	out := "Progress(1) at t: 1,000 states generated, 500 distinct states found, 9 states left on queue.\n" +
 		"2500 states generated, 700 distinct states found, 0 states left on queue.\n"
 	o := Parse(out)
-	if o.Generated != "2500" || o.Distinct != "700" {
-		t.Fatalf("stats = %s/%s, want 2500/700", o.Generated, o.Distinct)
-	}
-	if got := Parse("no counts here\n"); got.HasStats() {
-		t.Fatalf("a log with no counts has stats %s/%s", got.Generated, got.Distinct)
-	}
+	require.Equal(t, "2500", o.Generated, "stats = %s/%s, want 2500/700", o.Generated, o.Distinct)
+	require.Equal(t, "700", o.Distinct, "stats = %s/%s, want 2500/700", o.Generated, o.Distinct)
+	got := Parse("no counts here\n")
+	require.False(t, got.HasStats(), "a log with no counts has stats %s/%s", got.Generated, got.Distinct)
 }
 
 func TestAcceptsRequiresTheDeclaredExitAndTheDeclaredName(t *testing.T) {
@@ -137,9 +132,8 @@ func TestAcceptsRequiresTheDeclaredExitAndTheDeclaredName(t *testing.T) {
 		{"an unknown kind", Case{Expected: "nonsense", Property: "-"}, 0, fixture(t, "pass.log"), "", false},
 	}
 	for _, tc := range tests {
-		if got := Accepts(tc.c, tc.code, tc.log, tc.cfg); got != tc.want {
-			t.Errorf("%s: Accepts = %v, want %v", tc.name, got, tc.want)
-		}
+		got := Accepts(tc.c, tc.code, tc.log, tc.cfg)
+		assert.Equal(t, tc.want, got, "%s: Accepts = %v, want %v", tc.name, got, tc.want)
 	}
 }
 

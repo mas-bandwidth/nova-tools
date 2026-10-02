@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Defect #1466: with an empty receipts directory the gate finds nothing, so
@@ -23,32 +25,19 @@ func TestIssue1466TheDogfoodGateRefusesAnEmptyReceiptSetUnlessAllowEmpty(t *test
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
-	if err := os.MkdirAll(receipts, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(receipts, 0o755))
 
 	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
-	if code != 1 {
-		t.Fatalf("exit %d, want 1\n%s", code, stderr)
-	}
-	if !strings.Contains(stderr, receipts) {
-		t.Fatalf("the refusal does not name the receipts path:\n%s", stderr)
-	}
-	if !strings.Contains(stderr, "--allow-empty") {
-		t.Fatalf("the refusal does not name the remedy:\n%s", stderr)
-	}
-	if got := len(strings.Split(strings.TrimRight(stderr, "\n"), "\n")); got != 1 {
-		t.Fatalf("the refusal is %d lines, want 1:\n%s", got, stderr)
+	require.EqualValues(t, 1, code, "exit %d, want 1\n%s", code, stderr)
+	require.Contains(t, stderr, receipts, "the refusal does not name the receipts path:\n%s", stderr)
+	require.Contains(t, stderr, "--allow-empty", "the refusal does not name the remedy:\n%s", stderr)
+	{
+		got := len(strings.Split(strings.TrimRight(stderr, "\n"), "\n"))
+		require.EqualValues(t, 1, got, "the refusal is %d lines, want 1:\n%s", got, stderr)
 	}
 
 	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--allow-empty")
-	if code != 0 {
-		t.Fatalf("exit %d, want 0\n%s", code, stderr)
-	}
-	if !strings.Contains(stdout, "DOGFOOD GATE OK") {
-		t.Fatalf("no gate line with --allow-empty:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "require-all=no") {
-		t.Fatalf("--allow-empty disturbed the old summary:\n%s", stdout)
-	}
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.Contains(t, stdout, "DOGFOOD GATE OK", "no gate line with --allow-empty:\n%s", stdout)
+	require.Contains(t, stdout, "require-all=no", "--allow-empty disturbed the old summary:\n%s", stdout)
 }

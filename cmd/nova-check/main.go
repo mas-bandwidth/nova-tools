@@ -25,16 +25,15 @@ import (
 
 const usage = `nova-check: checks over markdown records and repositories, each finding named by file and line
 
-how it works: each verb is one check over the files you name; nothing is kept
-between runs and nothing is written except by spelling --write. links, nocode,
-kernel and spelling fit any markdown tree (spelling matches a list of known
-misspellings, not a dictionary); attest, floors, corpus, hygiene, dogfood and
-convergence read a record repository's own manifest, ledgers and receipts.
-first run: copy the example records (the cp lines above example:), then run the
-lines under example: in order.
+how it works: most verbs inspect named paths and keep no state between runs.
+dogfood record appends a receipt; spelling --write edits files in place.
+convergence reads forge data through gh, an optional checkout through git, and
+the files you name; --state stores its two-tick streak. Other repository checks
+read the manifests, ledgers and receipts you name.
+first run: create the small markdown tree below, then run the example commands.
 
 usage:
-  nova-check version    print this build identity (--version also accepted)
+  nova-check version [--json] print this build identity (--version also accepted)
   nova-check quickstart --dir <dir> [--fail-max <n>] the two checks a first run can make
                                                      with nothing but a directory: links,
                                                      then nocode. Both run even if the
@@ -93,16 +92,15 @@ usage:
                          --retired <file> --since <RFC3339|24h>
         [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
         [--certs <tsv>] [--state <file>] [--by <name>] [--json]
-                                                     are we converging: one line per stream,
-                                                     now against --since, with the ratio and
-                                                     the trend. Seven streams -- LANDING,
-                                                     CLASSES, SCRIPTS, PRS, EDGES, FLEET,
-                                                     LEDGER -- each from a real source, and
-                                                     a stream whose source was not named is
-                                                     ABSENT rather than zero. Exit 1 only
-                                                     when a stream has widened on two
-                                                     consecutive ticks, which is why the
-                                                     streak lives in --state.
+                                                     LANDING and PRS read the forge through
+                                                     gh; CLASSES reads the optional checkout
+                                                     through git. SCRIPTS, EDGES, FLEET and
+                                                     LEDGER read the named paths. --state
+                                                     stores the two-tick streak. Each stream
+                                                     shows now, --since, ratio and trend;
+                                                     an unnamed optional source is ABSENT,
+                                                     not zero. Exit 1 after two consecutive
+                                                     widening ticks.
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
                       [--ignore <word|@file>] [--write] [--exclude <prefix>]
                       [--fail-max <n>]
@@ -110,6 +108,10 @@ usage:
                                                      fenced code blocks and inline code spans
                                                      are blanked so code is not prose;
                                                      --write fixes misspellings in place
+
+  --json           on attest, links, kernel, nocode, floors, corpus, hygiene, spelling
+                   and version: structured findings and totals; convergence uses
+                   its reading object. quickstart and dogfood use typed lines.
 
   --fail-max <n>   on quickstart, attest, links, nocode, corpus and spelling: how many
                    FAIL lines to print before one MORE line stands for the
@@ -119,19 +121,20 @@ usage:
 
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation).
 
-cp -R cmd/nova-check/testdata/example-self ./self
-cp -R cmd/nova-check/testdata/example-dogfood/receipts ./dogfood-receipts
+mkdir -p ./self/docs
+printf '# Kernel\n' > ./self/docs/SEED-CORE.md
 
 example:
   nova-check quickstart --dir ./self
-  nova-check attest --home ./self --manifest ./self/MANIFEST
+  nova-check links --dir ./self
   nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
-  nova-check corpus --ledger ./self/corpus/anchors.md --root ./self --min-anchors 2
-  nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 
-./self there is a directory of your own; cmd/nova-check/testdata/example-self
-in this repo is one the size of a first run, and every line above is run
-against it by the tests.
+links findings are relative to --dir; kernel findings use the --file path as given.
+attest manifests list one path per line relative to --home (blank lines and # comments ignored).
+corpus ledgers use markdown rows: | fragment | home file | given | by |.
+floors checks the fixed eight-floor charter: --core has numbered bold titles;
+--source has the section 6 charter enumeration and section 0 rank declarations.
+
 `
 
 // The hints below turn this binary's most-hit refusals into a next step. The
@@ -201,6 +204,9 @@ const failMaxRemedy = "--fail-max <n> raises the ceiling, --fail-max 0 prints ev
 // door to the usage rather than the usage itself. It was the whole 38-line banner, on
 // every flag typo -- 2,411 bytes to say a dash was in the wrong place.
 func refuse(stderr io.Writer, where, what string) int {
+	if out, ok := stderr.(*jsonOutput); ok && *out.enabled {
+		return out.refuse(where, what)
+	}
 	fmt.Fprintf(stderr, "nova-check%s: %s; run: nova-check help\n", oneline.Escape(where), oneline.Escape(what))
 	return 2
 }
@@ -258,7 +264,7 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
-		return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", args[0]))
+		return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q; verbs: quickstart, attest, links, kernel, nocode, floors, corpus, hygiene, dogfood, convergence, spelling, version", args[0]))
 	}
 }
 
@@ -387,7 +393,11 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 }
 
 func cmdAttest(args []string, stdout, stderr io.Writer) int {
+	var asJSON bool
+	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
+	defer stderr.(*jsonOutput).finish()
 	fs := flag.NewFlagSet("attest", flag.ContinueOnError)
+	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
 	home := fs.String("home", "", "memory-home directory (required)")
 	manifest := fs.String("manifest", "", "file listing the paths a full boot must read, relative to --home (required)")
 	failMax := addFailMax(fs)
@@ -400,6 +410,9 @@ func cmdAttest(args []string, stdout, stderr io.Writer) int {
 	att, failures, err := check.Attest(*home, *manifest)
 	if err != nil {
 		return refuse(stderr, " attest", oneline.Err(err))
+	}
+	if asJSON {
+		return renderFailures(stdout, "attest", failures, *failMax, "home", *home, "manifest", *manifest, "files", att.Files, "bytes", att.Bytes, "sha256", att.SHA256)
 	}
 	if len(failures) > 0 {
 		list := bounded.Capped(stderr, *failMax, "ATTEST", "entry", failMaxRemedy)
@@ -415,7 +428,11 @@ func cmdAttest(args []string, stdout, stderr io.Writer) int {
 }
 
 func cmdLinks(args []string, stdout, stderr io.Writer) int {
+	var asJSON bool
+	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
+	defer stderr.(*jsonOutput).finish()
 	fs := flag.NewFlagSet("links", flag.ContinueOnError)
+	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
 	dir := fs.String("dir", "", "directory tree to scan for markdown links (required)")
 	failMax := addFailMax(fs)
 	var exclude repeatable
@@ -439,6 +456,9 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 	}
 	if err != nil {
 		return refuse(stderr, " links", oneline.Err(err))
+	}
+	if asJSON {
+		return renderLinks(stdout, *dir, res, *failMax)
 	}
 	if len(res.Broken) > 0 {
 		list := bounded.Capped(stderr, *failMax, "LINKS", "broken", failMaxRemedy)
@@ -465,7 +485,11 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 }
 
 func cmdKernel(args []string, stdout, stderr io.Writer) int {
+	var asJSON bool
+	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
+	defer stderr.(*jsonOutput).finish()
 	fs := flag.NewFlagSet("kernel", flag.ContinueOnError)
+	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
 	file := fs.String("file", "", "kernel file to measure (required)")
 	maxBytes := fs.Int64("max-bytes", 0, "size budget in bytes, must be positive (one of --max-bytes / --max-tokens)")
 	maxTokens := fs.Int64("max-tokens", 0, "size budget in tokens, must be positive (one of --max-bytes / --max-tokens)")
@@ -526,6 +550,9 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return refuse(stderr, " kernel", oneline.Err(err))
 		}
+		if asJSON {
+			return renderFailures(stdout, "kernel", failures, 0, "file", *file, "tokens", tokens, "budget", *maxTokens, "bytes", measured, "divisor", *bytesPerToken)
+		}
 		if len(failures) > 0 {
 			for _, f := range failures {
 				fmt.Fprintf(stderr, "KERNEL FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
@@ -545,6 +572,9 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	measured, failures, err := check.Kernel(*file, *maxBytes)
 	if err != nil {
 		return refuse(stderr, " kernel", oneline.Err(err))
+	}
+	if asJSON {
+		return renderFailures(stdout, "kernel", failures, 0, "file", *file, "bytes", measured, "budget", *maxBytes)
 	}
 	if len(failures) > 0 {
 		for _, f := range failures {
@@ -574,7 +604,11 @@ func excludeFlags(exclude repeatable) []string {
 }
 
 func cmdNoCode(args []string, stdout, stderr io.Writer) int {
+	var asJSON bool
+	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
+	defer stderr.(*jsonOutput).finish()
 	fs := flag.NewFlagSet("nocode", flag.ContinueOnError)
+	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
 	dir := fs.String("dir", "", "self-repo directory to scan (required)")
 	staged := fs.Bool("staged", false, "advisory over the index: classify what is about to be committed, not the working tree (--dir is the repository root)")
 	denyExt := fs.String("deny-ext", "", "replace the floor EXTENSION list (not the name floor): comma list, or @file")
@@ -617,6 +651,9 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		if nerr != nil {
 			return refuse(stderr, " nocode", oneline.Err(nerr))
 		}
+		if asJSON {
+			return renderNoCodeList(stdout, source, deny, names, prefixes)
+		}
 		fmt.Fprintf(stdout, "NOCODE DENY-LIST source=%s count=%d\n", oneline.Field(source), len(deny))
 		for _, e := range deny {
 			fmt.Fprintf(stdout, "%s\n", oneline.Escape(e))
@@ -650,6 +687,9 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	scanned, findings, err := check.NoCode(opts)
 	if err != nil {
 		return refuse(stderr, " nocode", oneline.Err(err))
+	}
+	if asJSON {
+		return renderFailures(stdout, "nocode", findings, *failMax, "dir", *dir, "files", scanned, "deny-list", source)
 	}
 	if len(findings) > 0 {
 		list := bounded.Capped(stderr, *failMax, "NOCODE", "file", failMaxRemedy)
@@ -708,7 +748,11 @@ func effectiveDenyList(replace, add string) ([]string, string, error) {
 }
 
 func cmdFloors(args []string, stdout, stderr io.Writer) int {
+	var asJSON bool
+	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
+	defer stderr.(*jsonOutput).finish()
 	fs := flag.NewFlagSet("floors", flag.ContinueOnError)
+	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
 	core := fs.String("core", "", "the door: path to SEED-CORE.md (required)")
 	source := fs.String("source", "", "the source: path to SEED.md (required)")
 	if !parse(fs, args, stderr, map[string]*string{"core": core, "source": source}) {
@@ -717,6 +761,9 @@ func cmdFloors(args []string, stdout, stderr io.Writer) int {
 	floors, failures, err := check.Floors(*core, *source)
 	if err != nil {
 		return refuse(stderr, " floors", oneline.Err(err))
+	}
+	if asJSON {
+		return renderFailures(stdout, "floors", failures, 0, "core", *core, "source", *source, "floors", floors)
 	}
 	if len(failures) > 0 {
 		for _, f := range failures {
@@ -729,7 +776,11 @@ func cmdFloors(args []string, stdout, stderr io.Writer) int {
 }
 
 func cmdCorpus(args []string, stdout, stderr io.Writer) int {
+	var asJSON bool
+	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
+	defer stderr.(*jsonOutput).finish()
 	fs := flag.NewFlagSet("corpus", flag.ContinueOnError)
+	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
 	ledger := fs.String("ledger", "", "the ledger of protected material, a markdown file (required)")
 	root := fs.String("root", "", "the repo the ledger's home paths are relative to (required)")
 	minAnchors := fs.Int("min-anchors", 0, "the fewest rows the ledger may hold, must be positive (required); the ledger is inside what it protects, so its own shrinking must be red")
@@ -780,6 +831,9 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 		rows.Line(fmt.Sprintf("CORPUS FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
 	}
 	rows.More()
+	if asJSON && parseErr != nil && len(malformed) > 0 {
+		return renderCorpus(stdout, *ledger, len(anchors), *minAnchors, nil, malformed, *failMax)
+	}
 	if parseErr != nil {
 		if len(malformed) > 0 {
 			// Rows were found and judged bad. The check RAN, and the answer
@@ -793,6 +847,9 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	failures, err := check.Corpus(*root, *ledger, *minAnchors, anchors)
 	if err != nil {
 		return refuse(stderr, " corpus", oneline.Err(err))
+	}
+	if asJSON {
+		return renderCorpus(stdout, *ledger, len(anchors), *minAnchors, failures, malformed, *failMax)
 	}
 	if len(failures) > 0 || len(malformed) > 0 {
 		list := bounded.Capped(stderr, *failMax, "CORPUS", "anchor", failMaxRemedy)

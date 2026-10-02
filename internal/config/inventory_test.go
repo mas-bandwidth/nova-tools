@@ -1,245 +1,254 @@
 package config
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
-	"strings"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestBuildInventoryStructure(t *testing.T) {
-	t.Parallel()
+// loopView is a loop's Redis view as the loop kind's apply writes it, with
+// the fields a case overrides.
+func loopView(name, machine string, over map[string]string) View {
+	v := View{
+		"name": name, "machine": machine, "argv": `["nova-swarm","member","--width","2"]`,
+		"seat": "seat-a", "keys": "API_KEY,BENCH_PASSWORD", "every": "0", "keepalive": "true",
+		"width": "2", "enabled": "true", "log": "~/nova-bench/loops/" + name + ".log",
+	}
+	for k, x := range over {
+		v[k] = x
+	}
+	return v
+}
 
-	ctx := context.Background()
-	st := NewMem()
-	machine, _ := Lookup(KindMachine)
-	for _, r := range []struct {
-		n   string
-		raw map[string]string
+// snapshot is two machines, the fleet row naming both, a beat for one and
+// the loops the case gives (nil: the loop kind never applied).
+func snapshot(loops map[string]View) *Snapshot {
+	s := &Snapshot{
+		Machines: map[string]View{
+			"bench-alpha": {"user": "user-a", "seat": "seat-a", "slots": "64", "runners": "1"},
+			"bench-beta":  {"user": "user-b", "seat": "seat-b", "slots": "40", "runners": "0"},
+		},
+		Fleet: View{"store": "bench-beta", "coordinator": "bench-alpha"},
+		Loops: loops,
+		Beats: map[string]*Beat{"bench-beta": {OS: "linux", Arch: "amd64"}},
+		Revs:  map[string]int64{KindMachine: 3, KindFleet: 2},
+	}
+	if loops != nil {
+		s.Revs[KindLoop] = 4
+	}
+	return s
+}
+
+// The inventory's groups, host variables and all.vars from one snapshot: the
+// fleet row decides coordinator, store and store_deployer, the beat the
+// platform, and the loop views each machine's nova_loops, typed.
+func TestBuildInventoryFromTheAppliedState(t *testing.T) {
+	t.Parallel()
+	inv, err := BuildInventory(snapshot(map[string]View{
+		"member-beta": loopView("member-beta", "bench-beta", nil),
+		"tick":        loopView("tick", "bench-alpha", map[string]string{"argv": `["nova-sprint","run"]`, "seat": "", "keys": "", "every": "5", "keepalive": "false", "width": "0", "enabled": "false"}),
+	}), "bench-alpha")
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"bench-alpha", "bench-beta"}, inv.All.Hosts)
+	assert.Equal(t, []string{"bench-alpha", "bench-beta"}, inv.Benches.Hosts)
+	assert.Equal(t, []string{"bench-alpha"}, inv.Coordinator.Hosts)
+	assert.Equal(t, []string{"bench-alpha"}, inv.StoreDeployer.Hosts)
+	assert.Equal(t, []string{"bench-beta"}, inv.Store.Hosts)
+	assert.Equal(t, []string{"bench-alpha"}, inv.Runners.Hosts)
+	assert.Equal(t, "bench-beta", inv.All.Vars["nova_store"])
+	assert.Equal(t, map[string]int64{KindMachine: 3, KindFleet: 2, KindLoop: 4}, inv.All.Vars["nova_config_rev"])
+
+	alpha, beta := inv.Meta.Hostvars["bench-alpha"], inv.Meta.Hostvars["bench-beta"]
+	assert.Equal(t, map[string]any{
+		"ansible_host": "bench-alpha", "ansible_user": "user-a", "nova_seat": "seat-a", "slots": 64, "runners": 1,
+		"kind": "machine", "ansible_connection": "local",
+		"nova_loops": []InventoryLoop{{Name: "tick", Argv: []string{"nova-sprint", "run"}, Keys: []string{}, Every: 5, Log: "~/nova-bench/loops/tick.log"}},
+	}, alpha)
+	assert.Equal(t, "linux", beta["nova_os"])
+	assert.Equal(t, "amd64", beta["nova_arch"])
+	assert.NotContains(t, beta, "ansible_connection")
+	assert.NotContains(t, alpha, "nova_os", "a machine with no beat carries no platform: the plays gather it")
+	assert.Equal(t, []InventoryLoop{{
+		Name: "member-beta", Argv: []string{"nova-swarm", "member", "--width", "2"}, Seat: "seat-a",
+		Keys: []string{"API_KEY", "BENCH_PASSWORD"}, Keepalive: true, Width: 2, Enabled: true,
+		Log: "~/nova-bench/loops/member-beta.log",
+	}}, beta["nova_loops"])
+}
+
+// nova_loops' argv is the command the unit runs: a width field above 0 is the
+// argv's --width (LoopCommand), so the plays render the field's value and a
+// reader's width is set as one value, never by editing the argv.
+func TestNovaLoopsArgvRunsWithTheWidthField(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		argv  string
+		width string
+		want  []string
 	}{
-		{"bench-alpha", map[string]string{"user": "user-a", "seat": "seat-alpha", "slots": "64", "runners": "1"}},
-		{"bench-beta", map[string]string{"user": "user-b", "seat": "seat-beta", "slots": "64"}},
-	} {
-		row, err := machine.NewRow(r.n, r.raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.Insert(ctx, KindMachine, row, "operator"); err != nil {
-			t.Fatal(err)
-		}
+		{"the field replaces the argv's", `["nova-swarm","member","--reader","--width","8"]`, "16", []string{"nova-swarm", "member", "--reader", "--width", "16"}},
+		{"the field is appended", `["nova-swarm","member","--reader"]`, "4", []string{"nova-swarm", "member", "--reader", "--width", "4"}},
+		{"width 0 keeps the argv's", `["nova-swarm","member","--reader","--width","8"]`, "0", []string{"nova-swarm", "member", "--reader", "--width", "8"}},
 	}
-	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "bench-alpha", "store": "bench-beta"}, "operator"); err != nil {
-		t.Fatal(err)
-	}
-
-	inv, err := BuildInventory(ctx, st, "bench-alpha")
-	if err != nil {
-		t.Fatalf("BuildInventory: %v", err)
-	}
-
-	// Verify groups
-	if len(inv.All.Hosts) != 2 || inv.All.Hosts[0] != "bench-alpha" || inv.All.Hosts[1] != "bench-beta" {
-		t.Errorf("all hosts: got %v, want [bench-alpha bench-beta]", inv.All.Hosts)
-	}
-	if len(inv.Benches.Hosts) != 2 || inv.Benches.Hosts[0] != "bench-alpha" || inv.Benches.Hosts[1] != "bench-beta" {
-		t.Errorf("benches hosts: got %v, want [bench-alpha bench-beta]", inv.Benches.Hosts)
-	}
-	if len(inv.Coordinator.Hosts) != 1 || inv.Coordinator.Hosts[0] != "bench-alpha" {
-		t.Errorf("coordinator hosts: got %v, want [bench-alpha]", inv.Coordinator.Hosts)
-	}
-	if len(inv.Store.Hosts) != 1 || inv.Store.Hosts[0] != "bench-beta" {
-		t.Errorf("store hosts: got %v, want [bench-beta]", inv.Store.Hosts)
-	}
-	if len(inv.Runners.Hosts) != 1 || inv.Runners.Hosts[0] != "bench-alpha" {
-		t.Errorf("runners hosts: got %v, want [bench-alpha]", inv.Runners.Hosts)
-	}
-
-	// Verify hostvars for bench-alpha (local host)
-	alphaHV, ok := inv.Meta.Hostvars["bench-alpha"]
-	if !ok {
-		t.Fatal("hostvars missing bench-alpha")
-	}
-	if alphaHV["ansible_host"] != "bench-alpha" {
-		t.Errorf("bench-alpha ansible_host: got %v, want bench-alpha", alphaHV["ansible_host"])
-	}
-	if alphaHV["ansible_user"] != "user-a" || alphaHV["nova_seat"] != "seat-alpha" {
-		t.Errorf("bench-alpha ansible_user / nova_seat: got %v / %v, want user-a / seat-alpha", alphaHV["ansible_user"], alphaHV["nova_seat"])
-	}
-	for _, dup := range []string{"user", "seat", "registry_seat"} {
-		if _, ok := alphaHV[dup]; ok {
-			t.Errorf("bench-alpha carries %q, a second spelling of a value ansible or the plays already read", dup)
-		}
-	}
-	if alphaHV["slots"] != 64 {
-		t.Errorf("bench-alpha slots: got %v, want 64", alphaHV["slots"])
-	}
-	if alphaHV["runners"] != 1 {
-		t.Errorf("bench-alpha runners: got %v, want 1", alphaHV["runners"])
-	}
-	if alphaHV["kind"] != "machine" {
-		t.Errorf("bench-alpha kind: got %v, want machine", alphaHV["kind"])
-	}
-	if alphaHV["ansible_connection"] != "local" {
-		t.Errorf("bench-alpha ansible_connection: got %v, want local", alphaHV["ansible_connection"])
-	}
-
-	// Verify hostvars for bench-beta (remote host)
-	betaHV, ok := inv.Meta.Hostvars["bench-beta"]
-	if !ok {
-		t.Fatal("hostvars missing bench-beta")
-	}
-	if betaHV["ansible_host"] != "bench-beta" {
-		t.Errorf("bench-beta ansible_host: got %v, want bench-beta", betaHV["ansible_host"])
-	}
-	if betaHV["ansible_user"] != "user-b" {
-		t.Errorf("bench-beta ansible_user: got %v, want user-b", betaHV["ansible_user"])
-	}
-	if betaHV["slots"] != 64 {
-		t.Errorf("bench-beta slots: got %v, want 64", betaHV["slots"])
-	}
-	if betaHV["runners"] != 0 {
-		t.Errorf("bench-beta runners: got %v, want 0", betaHV["runners"])
-	}
-	if _, hasConn := betaHV["ansible_connection"]; hasConn {
-		t.Errorf("bench-beta should not have ansible_connection, got %v", betaHV["ansible_connection"])
-	}
-
-	// Verify JSON output parses into standard map
-	rawJSON, err := inv.JSON()
-	if err != nil {
-		t.Fatalf("JSON: %v", err)
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal(rawJSON, &parsed); err != nil {
-		t.Fatalf("Unmarshal inventory JSON: %v", err)
-	}
-	if _, hasMeta := parsed["_meta"]; !hasMeta {
-		t.Error("JSON missing _meta key")
-	}
-
-	// Verify HostJSON
-	hostRaw, err := inv.HostJSON("bench-alpha")
-	if err != nil {
-		t.Fatalf("HostJSON: %v", err)
-	}
-	var parsedHost map[string]any
-	if err := json.Unmarshal(hostRaw, &parsedHost); err != nil {
-		t.Fatalf("Unmarshal HostJSON: %v", err)
-	}
-	if parsedHost["ansible_host"] != "bench-alpha" {
-		t.Errorf("HostJSON ansible_host: got %v", parsedHost["ansible_host"])
-	}
-
-	// HostJSON for a name the inventory does not hold is a typed refusal
-	// that carries the known names, never an empty object.
-	unknownRaw, err := inv.HostJSON("unknown")
-	var unknown *UnknownHostError
-	if !errors.As(err, &unknown) || unknownRaw != nil {
-		t.Fatalf("HostJSON unknown: got %q, %v; want *UnknownHostError", unknownRaw, err)
-	}
-	if unknown.Name != "unknown" || len(unknown.Known) != 2 || unknown.Known[0] != "bench-alpha" || unknown.Known[1] != "bench-beta" {
-		t.Errorf("HostJSON unknown: %+v", unknown)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			inv, err := BuildInventory(snapshot(map[string]View{"r": loopView("r", "bench-beta", map[string]string{"argv": tc.argv, "width": tc.width})}), "")
+			require.NoError(t, err)
+			loops := inv.Meta.Hostvars["bench-beta"]["nova_loops"].([]InventoryLoop)
+			require.Len(t, loops, 1)
+			assert.Equal(t, tc.want, loops[0].Argv)
+		})
 	}
 }
 
-func TestBuildInventoryEmptyStore(t *testing.T) {
+// nova_loops says what the store says: absent when the loop kind was never
+// applied (a play must not read that as "run nothing" and retire every
+// unit), an empty list on every machine when it was applied with no rows.
+func TestNovaLoopsIsAbsentUntilTheLoopKindIsApplied(t *testing.T) {
 	t.Parallel()
+	never, err := BuildInventory(snapshot(nil), "")
+	require.NoError(t, err)
+	none, err := BuildInventory(snapshot(map[string]View{}), "")
+	require.NoError(t, err)
+	for _, m := range []string{"bench-alpha", "bench-beta"} {
+		assert.NotContains(t, never.Meta.Hostvars[m], "nova_loops", m)
+		assert.Equal(t, []InventoryLoop{}, none.Meta.Hostvars[m]["nova_loops"], m)
+	}
+	raw, err := none.JSON()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"nova_loops": []`)
+}
 
-	ctx := context.Background()
-	st := NewMem()
-
-	inv, err := BuildInventory(ctx, st, "")
-	if err != nil {
-		t.Fatalf("BuildInventory on empty store: %v", err)
+// A loop view the plays cannot render a unit from is refused by name, with
+// the command that shows it; nothing is guessed.
+func TestALoopViewThatDoesNotParseIsRefused(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		over map[string]string
+		want string
+	}{
+		{"argv not JSON", map[string]string{"argv": "nova-swarm member"}, `argv "nova-swarm member" is not a JSON list`},
+		{"argv empty", map[string]string{"argv": "[]"}, "is not a JSON list of at least one string"},
+		{"keys without a seat", map[string]string{"seat": ""}, "names secrets and the loop has no seat"},
+		{"every and keepalive", map[string]string{"every": "30"}, "a loop runs every n seconds or is kept alive, exactly one"},
+		{"neither", map[string]string{"keepalive": "false"}, "exactly one"},
+		{"every negative", map[string]string{"every": "-1", "keepalive": "false"}, "is not a count of seconds"},
+		{"keepalive word", map[string]string{"keepalive": "yes please"}, "is not true or false"},
+		{"enabled word", map[string]string{"enabled": "maybe"}, "is not true or false"},
+		{"no log", map[string]string{"log": ""}, "log \"\" is empty"},
+		{"no machine row", map[string]string{"machine": "bench-gone"}, `names machine "bench-gone", which has no machine row`},
 	}
-	if len(inv.All.Hosts) != 0 || len(inv.Benches.Hosts) != 0 {
-		t.Errorf("empty store should have empty hosts, got all=%v benches=%v", inv.All.Hosts, inv.Benches.Hosts)
-	}
-	if len(inv.Meta.Hostvars) != 0 {
-		t.Errorf("empty store should have empty hostvars, got %v", inv.Meta.Hostvars)
-	}
-	raw, err := inv.JSON()
-	if err != nil {
-		t.Fatalf("JSON: %v", err)
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := BuildInventory(snapshot(map[string]View{"one": loopView("one", "bench-beta", tc.over)}), "")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			assert.Contains(t, err.Error(), "loop")
+		})
 	}
 }
 
+// An empty login or seat is left out, never emitted as "".
 func TestBuildInventoryOmitsEmptyValues(t *testing.T) {
 	t.Parallel()
-
-	ctx := context.Background()
-	st := NewMem()
-	// A machine row whose login and seat are empty strings.
-	if _, err := st.Insert(ctx, KindMachine, Row{Name: "bench-empty", Fields: map[string]string{"user": "", "seat": "", "slots": "2", "runners": "0"}}, "operator"); err != nil {
-		t.Fatal(err)
-	}
-	inv, err := BuildInventory(ctx, st, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := snapshot(nil)
+	s.Machines["bench-empty"] = View{"user": "", "seat": "", "slots": "2", "runners": "0"}
+	inv, err := BuildInventory(s, "")
+	require.NoError(t, err)
 	hv := inv.Meta.Hostvars["bench-empty"]
-	for _, k := range []string{"ansible_user", "nova_seat", "registry_seat", "user", "seat"} {
-		if v, ok := hv[k]; ok {
-			t.Errorf("empty value emitted as %s=%q", k, v)
-		}
+	for _, k := range []string{"ansible_user", "nova_seat", "user", "seat"} {
+		assert.NotContains(t, hv, k)
 	}
-	raw, err := inv.JSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), `""`) {
-		t.Errorf("the inventory JSON holds an empty string:\n%s", raw)
-	}
-	if hv["ansible_host"] != "bench-empty" || hv["slots"] != 2 {
-		t.Errorf("hostvars: %v", hv)
-	}
+	assert.Equal(t, 2, hv["slots"])
 }
 
-// oneReadStore fails every read but MachinesAndFleet, so a BuildInventory
-// that reads the machines and the fleet row apart cannot pass.
-type oneReadStore struct {
-	Store
-	reads int
-}
-
-func (o *oneReadStore) MachinesAndFleet(ctx context.Context) ([]Row, Row, error) {
-	o.reads++
-	return o.Store.MachinesAndFleet(ctx)
-}
-func (o *oneReadStore) List(context.Context, string) ([]Row, error) {
-	panic("inventory read machines apart from the fleet row")
-}
-func (o *oneReadStore) Get(context.Context, string, string) (Row, bool, error) {
-	panic("inventory read the fleet row apart from the machines")
-}
-
-func TestBuildInventoryReadsMachinesAndFleetInOneRead(t *testing.T) {
+// An empty store is an inventory with no hosts and every group present.
+func TestBuildInventoryOfAnEmptyStore(t *testing.T) {
 	t.Parallel()
+	inv, err := BuildInventory(&Snapshot{Fleet: View{}}, "")
+	require.NoError(t, err)
+	raw, err := inv.JSON()
+	require.NoError(t, err)
+	var parsed map[string]map[string]any
+	require.NoError(t, json.Unmarshal(raw, &parsed))
+	for _, g := range []string{"all", "benches", "coordinator", "store", "store_deployer", "runners"} {
+		assert.Equal(t, []any{}, parsed[g]["hosts"], g)
+	}
+	_, err = inv.HostJSON("nosuch")
+	var unknown *UnknownHostError
+	require.ErrorAs(t, err, &unknown)
+	assert.Equal(t, []string{}, unknown.Known)
+}
 
-	ctx := context.Background()
-	mem := NewMem()
-	machine, _ := Lookup(KindMachine)
-	row, err := machine.NewRow("bench-alpha", map[string]string{"user": "user-a", "seat": "seat-a", "slots": "1"})
-	if err != nil {
-		t.Fatal(err)
+// A fixture file is the snapshot the Redis view gives for the same rows:
+// the loop fields in their canonical text, enabled true unless it says
+// false, the loops key's absence the loop kind never applied, and an
+// unknown field refused.
+func TestLoadFixtureIsTheAppliedStateOfTheSameRows(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	write := func(name, text string) string {
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte(text), 0o600))
+		return p
 	}
-	if _, err := mem.Insert(ctx, KindMachine, row, "operator"); err != nil {
-		t.Fatal(err)
+	full := write("full.yml", `
+machines:
+  bench-alpha: {user: user-a, seat: seat-a, slots: 4, runners: 1, os: darwin, arch: arm64}
+  bench-beta: {user: user-b, seat: seat-b, slots: 2}
+fleet: {store: bench-beta, coordinator: bench-alpha}
+loops:
+  member-beta: {machine: bench-beta, argv: [nova-swarm, member], seat: seat-b, keys: [Z_KEY, A_KEY], keepalive: true, width: 2}
+  tick: {machine: bench-alpha, argv: ["~/bin/tick", "--once"], every: 30, enabled: false}
+`)
+	snap, err := LoadFixture(full)
+	require.NoError(t, err)
+	assert.Equal(t, View{"user": "user-a", "seat": "seat-a", "slots": "4", "runners": "1"}, snap.Machines["bench-alpha"])
+	assert.Equal(t, &Beat{OS: "darwin", Arch: "arm64"}, snap.Beats["bench-alpha"])
+	assert.NotContains(t, snap.Beats, "bench-beta")
+	assert.Equal(t, View{
+		"name": "member-beta", "machine": "bench-beta", "argv": `["nova-swarm","member"]`, "seat": "seat-b",
+		"keys": "A_KEY,Z_KEY", "every": "0", "keepalive": "true", "width": "2", "enabled": "true",
+		"log": "~/nova-bench/loops/member-beta.log",
+	}, snap.Loops["member-beta"])
+	assert.Equal(t, "false", snap.Loops["tick"]["enabled"])
+	inv, err := BuildInventory(snap, "")
+	require.NoError(t, err)
+	assert.Len(t, inv.Meta.Hostvars["bench-beta"]["nova_loops"], 1)
+
+	bare, err := LoadFixture(write("bare.yml", "machines:\n  bench-alpha: {user: u, seat: s, slots: 1}\n"))
+	require.NoError(t, err)
+	assert.Nil(t, bare.Loops)
+
+	for name, text := range map[string]string{
+		"unknown field": "machines:\n  bench-alpha: {user: u, seats: s}\n",
+		"bad name":      "machines:\n  Bench_Alpha: {user: u}\n",
+	} {
+		_, err := LoadFixture(write(name+".yml", text))
+		assert.Error(t, err, name)
 	}
-	if _, _, err := mem.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "bench-alpha"}, "operator"); err != nil {
-		t.Fatal(err)
-	}
-	st := &oneReadStore{Store: mem}
-	inv, err := BuildInventory(ctx, st, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.reads != 1 || len(inv.Store.Hosts) != 1 || inv.Store.Hosts[0] != "bench-alpha" {
-		t.Fatalf("reads %d, store group %v", st.reads, inv.Store.Hosts)
-	}
+	_, err = LoadFixture(filepath.Join(dir, "absent.yml"))
+	assert.ErrorContains(t, err, "--fixture")
+}
+
+// A fixture that is not the fixture's shape is refused in one line naming
+// what it wants, with the YAML reader's words quoted, never its newlines.
+func TestAFixtureOfTheWrongShapeIsRefusedInOneLine(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "fx.yml")
+	require.NoError(t, os.WriteFile(path, []byte("- one\n- two\n"), 0o600))
+	_, err := LoadFixture(path)
+	require.Error(t, err)
+	msg := err.Error()
+	assert.NotContains(t, msg, "\n")
+	assert.Contains(t, msg, "is not the fixture's shape: \"yaml: unmarshal errors: line 1: cannot unmarshal !!seq into config.fixture\"")
+	assert.Contains(t, msg, "want a mapping with machines")
 }

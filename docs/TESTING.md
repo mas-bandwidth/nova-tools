@@ -38,6 +38,16 @@ than one per test, and the same two-minute cap as every job. On a working machin
 they run inside one container per run, `make test-functional-container
 PKGS=<packages>` ([TESTING.md](../TESTING.md)), never bare.
 
+### Vetting the build-tagged test files
+
+A test file behind an opt-in build tag is compiled by no plain `go vet ./...`,
+so the vet targets compile each tag on every change: the lint job runs `make
+vet-functional`, `make vet-slow`, `make vet-shippedsmoke` and `make vet-novadisk`
+(and certification vets `perf` with `go vet -tags perf`).
+`internal/ci`'s `TestEveryTestBuildTagIsVettedByCIVetSteps` reads the vet
+targets and refuses a tag no vet step passes, so a tag that hides a test file is
+type-checked on a pull request rather than only when its nightly job runs.
+
 ### Table epoch actions and receipt replay
 
 `TestTableEpochActionsAndReceiptReplay` in `internal/ntable` runs eight fixed

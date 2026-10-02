@@ -220,7 +220,7 @@ func TestBoundToLocalhostAndTailnetOnly(t *testing.T) {
 		if code != 2 || len(h.launches) != 0 {
 			t.Errorf("%s (--bind %q): exit %d launches %d, want 2 and 0 (a public bind is refused, never launched)", tc.name, tc.bind, code, len(h.launches))
 		}
-		if !strings.HasPrefix(errb, "nova-redis serve: ") {
+		if !strings.HasPrefix(errb, "nova-redis serve REFUSED: ") {
 			t.Errorf("%s: stderr %q is not a serve refusal", tc.name, errb)
 		}
 	}

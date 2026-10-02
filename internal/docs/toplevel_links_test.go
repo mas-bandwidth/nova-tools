@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // toplevel_links_test.go holds the top-level documents' relative links against
@@ -32,19 +35,14 @@ func TestEveryTopLevelDocLinkResolves(t *testing.T) {
 	var files []string
 	for _, pattern := range []string{"../../*.md", "../../docs/*.md"} {
 		matches, err := filepath.Glob(pattern)
-		if err != nil {
-			t.Fatalf("globbing %s: %v", pattern, err)
-		}
+		require.NoError(t, err, "globbing %s: %v", pattern, err)
 		files = append(files, matches...)
 	}
-	if len(files) < 10 {
-		t.Fatalf("collected %d top-level documents, want at least ten; the scan is reading the wrong directory", len(files))
-	}
+	require.GreaterOrEqual(t, len(files), 10, "collected %d top-level documents, want at least ten; the scan is reading the wrong directory", len(files))
 
 	for _, file := range files {
 		data, err := os.ReadFile(file)
-		if err != nil {
-			t.Errorf("%s: %v", file, err)
+		if !assert.NoError(t, err, "%s: %v", file, err) {
 			continue
 		}
 		inFence := false
@@ -69,9 +67,8 @@ func TestEveryTopLevelDocLinkResolves(t *testing.T) {
 					continue
 				}
 				resolved := filepath.Join(filepath.Dir(file), target)
-				if _, err := os.Stat(resolved); err != nil {
-					t.Errorf("%s:%d: link target %q resolves to %s, which does not exist", file, lineNo, written, resolved)
-				}
+				_, statErr := os.Stat(resolved)
+				assert.NoError(t, statErr, "%s:%d: link target %q resolves to %s, which does not exist", file, lineNo, written, resolved)
 			}
 		}
 	}

@@ -31,11 +31,11 @@ func TestVoluntaryAdoptionMatrix(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"ADOPTION tool=nova-bus friend=rowan state=adopted",
-		"ADOPTION tool=nova-wake friend=rowan state=declined",
-		"ADOPTION tool=nova-tokens friend=rowan state=equivalent",
-		"ADOPTION tool=nova-swarm friend=rowan state=unknown",
-		"ADOPTION OK",
+		"ADOPTION CHOICE tool=nova-bus friend=rowan state=adopted",
+		"ADOPTION CHOICE tool=nova-wake friend=rowan state=declined version=0.12.0: declines upgrade: pins to stable pair",
+		"ADOPTION CHOICE tool=nova-tokens friend=rowan state=equivalent",
+		"ADOPTION CHOICE tool=nova-swarm friend=rowan state=unknown",
+		"ADOPTION OK entries=4 friends=1",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("adoption output missing %q:\n%s", want, got)

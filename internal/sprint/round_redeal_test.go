@@ -2,18 +2,18 @@ package sprint
 
 import (
 	"fmt"
-	"slices"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Every placement of a card on a member goes round the fleet (errata 3,
 // amendment 5: every placement, first attempts and redeals and levelling alike,
 // moves the index; round.go): the rework of failed work and of work a read
-// found broken (the coordinator's rework and R10), the cards of a member that
-// goes down (fleet down and R2), the levelling (fleet level and R7), and the
-// replacement of a late card (R11, rules_time_test.go). The shortest queue with
-// its ties broken by name, which this replaces, gave the redeals of an idle
-// fleet to its first members.
+// found broken (the coordinator's rework), the cards of a member that goes
+// down (fleet down and the tick's presence), and the levelling (fleet level
+// and the tick's level). The shortest queue with its ties broken by name,
+// which this replaces, gave the redeals of an idle fleet to its first members.
 
 // reworkIt sends one primary back with a fix, by the engine under test.
 type reworkIt func(w *world, id string)
@@ -22,16 +22,6 @@ type reworkIt func(w *world, id string)
 func stepRework(w *world, id string) {
 	w.t.Helper()
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{id}}, Fix: "make the test pass"}))
-}
-
-// ruleReworkOf is R10 on the key rework:<p>, read and planned as the tick does.
-func ruleReworkOf(w *world, id string) {
-	w.t.Helper()
-	rp := rvPlan(w, ruleRework, "rework:"+id)
-	if len(rp.Plan.Units) != 1 || len(rp.Plan.Refused) != 0 {
-		w.t.Fatalf("R10 on %s: %d units, refused %v", id, len(rp.Plan.Units), rp.Plan.Refused)
-	}
-	w.rvApply(rp)
 }
 
 // failedOnce is 8 idle members and 30 primaries whose first attempts were
@@ -54,7 +44,7 @@ func failedOnce(t *testing.T, broken bool) (*world, map[string]string) {
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{wc.ID}}, Gens: gensOf(w.s, wc.ID)}))
 		// a reader found it broken: its read card at the attempt, named on the
 		// primary (rcards), as the ask and the read leave it
-		rvPutRead(w, id, 1, "reader-a", Broken).Fields["finding"] = "the test is red"
+		putRead(w, id, 1, "reader-a", Broken).Fields["finding"] = "the test is red"
 	}
 	return w, first
 }
@@ -73,9 +63,9 @@ func reworksGoRound(t *testing.T, w *world, first map[string]string, rework rewo
 		firstN[m]++
 	}
 	evenly(t, "first attempts", firstN, members, false)
-	if last, _ := w.s.Fleet.Prop(PropDealIndex); indexPast(members, last) != "m6" || first["s1-7"] != "m7" {
-		t.Fatalf("the index is past %q and s1-7 was on %s: want m6 and m7", last, first["s1-7"])
-	}
+	last, _ := w.s.Fleet.Prop(PropDealIndex)
+	require.Equal(t, "m6", indexPast(members, last), "the index is past %q and s1-7 was on %s: want m6 and m7", last, first["s1-7"])
+	require.Equal(t, "m7", first["s1-7"], "the index is past %q and s1-7 was on %s: want m6 and m7", last, first["s1-7"])
 	order := []string{"s1-7"}
 	for i := 1; i <= 30; i++ {
 		if id := fmt.Sprintf("s1-%d", i); id != "s1-7" {
@@ -87,22 +77,16 @@ func reworksGoRound(t *testing.T, w *world, first map[string]string, rework rewo
 	for k, id := range order {
 		rework(w, id)
 		wc := w.s.Fleet.Card(WorkCardID(id, 2))
-		if wc == nil || wc.Col != Ready {
-			t.Fatalf("rework %d of %s: its second attempt is %+v, want dealt", k+1, id, wc)
-		}
-		if wc.Row == first[id] {
-			t.Fatalf("rework %d: %s went back to %s, the member its first attempt was on", k+1, id, wc.Row)
-		}
-		if last, _ := w.s.Fleet.Prop(PropDealIndex); indexPast(members, last) != wc.Row {
-			t.Fatalf("rework %d: the index is past %q, want past %s, the member dealt to", k+1, last, wc.Row)
-		}
+		require.NotNil(t, wc, "rework %d of %s: its second attempt is %+v, want dealt", k+1, id, wc)
+		require.Equal(t, Ready, wc.Col, "rework %d of %s: its second attempt is %+v, want dealt", k+1, id, wc)
+		require.NotEqual(t, first[id], wc.Row, "rework %d: %s went back to %s, the member its first attempt was on", k+1, id, wc.Row)
+		last, _ = w.s.Fleet.Prop(PropDealIndex)
+		require.Equal(t, wc.Row, indexPast(members, last), "rework %d: the index is past %q, want past %s, the member dealt to", k+1, last, wc.Row)
 		got = append(got, wc.Row)
 		again[wc.Row]++
 		workIt(w, wc)
 	}
-	if got[0] != "m8" {
-		t.Fatalf("s1-7 went to %s, want m8: m7 is the member it failed on and is skipped", got[0])
-	}
+	require.Equal(t, "m8", got[0], "s1-7 went to %s, want m8: m7 is the member it failed on and is skipped", got[0])
 	t.Logf("second attempts: %v", again)
 	evenly(t, "second attempts", again, members, false)
 }
@@ -113,48 +97,34 @@ func TestTheReworksOfFailedWorkGoRoundTheFleet(t *testing.T) {
 	reworksGoRound(t, w, first, stepRework)
 }
 
-func TestR10ReworksOfFailedWorkGoRoundTheFleet(t *testing.T) {
-	t.Parallel()
-	w, first := failedOnce(t, false)
-	reworksGoRound(t, w, first, ruleReworkOf)
-}
-
 func TestTheReworksOfBrokenReadsGoRoundTheFleet(t *testing.T) {
 	t.Parallel()
 	w, first := failedOnce(t, true)
 	reworksGoRound(t, w, first, stepRework)
 }
 
-func TestR10ReworksOfBrokenReadsGoRoundTheFleet(t *testing.T) {
-	t.Parallel()
-	w, first := failedOnce(t, true)
-	reworksGoRound(t, w, first, ruleReworkOf)
-}
-
 // The avoid member takes the rework only when no other up member has room.
 func TestTheReworkAvoidsTheMemberThatFailedItWhileAnotherHasRoom(t *testing.T) {
 	t.Parallel()
-	for _, rework := range []reworkIt{stepRework, ruleReworkOf} {
+	for _, rework := range []reworkIt{stepRework} {
 		w := newWorld(t, "reader-a")
-		for _, m := range []string{"m1", "m2"} { // each at width 2 (width.go)
-			w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m, Width: 2}))
+		for _, m := range []string{"m1", "m2"} { // each at width 1: a room of DealAhead times it, 2 (width.go)
+			w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m, Width: 1}))
 		}
 		w.must(Add(w.s, AddReq{Stream: "s1", Count: 3}))
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}})) // m1
 		w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1")}))
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1"), Failed: true, Report: "red"}))
-		// m2 at its width: two ready cards, dealt past the index
+		// m2 at its room: two ready cards, dealt past the index
 		w.s.Fleet.SetProps(map[string]string{PropDealIndex: "m1"})
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-2"}}}))
 		w.s.Fleet.SetProps(map[string]string{PropDealIndex: "m1"})
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-3"}}}))
-		if w.s.Fleet.Count("m2", Ready) != 2 {
-			t.Fatalf("m2 has %d ready, want 2", w.s.Fleet.Count("m2", Ready))
-		}
+		require.Equal(t, 2, w.s.Fleet.Count("m2", Ready), "m2 has %d ready, want 2", w.s.Fleet.Count("m2", Ready))
 		rework(w, "s1-1")
-		if wc := w.s.Fleet.Card("s1-1.w2"); wc == nil || wc.Row != "m1" {
-			t.Fatalf("s1-1's second attempt is %+v, want on m1: no other member has room", wc)
-		}
+		wc := w.s.Fleet.Card("s1-1.w2")
+		require.NotNil(t, wc, "s1-1's second attempt is %+v, want on m1: no other member has room", wc)
+		require.Equal(t, "m1", wc.Row, "s1-1's second attempt is %+v, want on m1: no other member has room", wc)
 	}
 }
 
@@ -171,12 +141,9 @@ func TestADownMembersCardsGoRoundTheFleet(t *testing.T) {
 		for i := 1; i <= 6; i++ {
 			got = append(got, s.Fleet.Card(WorkCardID(fmt.Sprintf("s1-%d", i), 1)).Row)
 		}
-		if !slices.Equal(got, want) {
-			t.Fatalf("%s: m1's cards went to %v, want %v: round the fleet from past m4", what, got, want)
-		}
-		if last, _ := s.Fleet.Prop(PropDealIndex); indexPast(s.Fleet.Rows(), last) != "m3" {
-			t.Fatalf("%s: the index is past %q, want m3", what, last)
-		}
+		require.Equal(t, want, got, "%s: m1's cards went to %v, want %v: round the fleet from past m4", what, got, want)
+		last, _ := s.Fleet.Prop(PropDealIndex)
+		require.Equal(t, "m3", indexPast(s.Fleet.Rows(), last), "%s: the index is past %q, want m3", what, last)
 	}
 
 	// fleet down (the verb, and presence's down)
@@ -197,18 +164,22 @@ func TestADownMembersCardsGoRoundTheFleet(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
 	check(t, w.s, "fleet down")
 
-	// R2
-	f := newFleetT(t, 0, members...)
+	// the tick's presence: m1 has no beat, the others beat now
+	w = fleetWorld(t, 0, 0, members...)
 	for i := 1; i <= 6; i++ {
 		col := Working
 		if i > 4 {
 			col = Ready
 		}
-		putWorkCard(f, fmt.Sprintf("s1-%d", i), "m1", col, float64(10+i), nil)
+		putWorkCard(w, fmt.Sprintf("s1-%d", i), "m1", col, float64(10+i), nil)
 	}
-	f.snap().Fleet.SetProps(map[string]string{PropDealIndex: "m4"})
-	f.run(ruleDown, "down:m1")
-	check(t, f.snap(), "R2")
+	w.s.Fleet.SetProps(map[string]string{PropDealIndex: "m4"})
+	beats := map[string]Beat{}
+	for _, m := range members[1:] {
+		beats[m] = Beat{At: w.s.Now}
+	}
+	w.part(TickPresence, TickReq{Beats: beats})
+	check(t, w.s, "presence")
 }
 
 // The level goes round the fleet: twelve cards on m1 and seven members idle,
@@ -225,12 +196,9 @@ func TestTheLevelGoesRoundTheFleet(t *testing.T) {
 		for _, m := range members {
 			got[m] = s.Fleet.Count(m, Ready)
 		}
-		if !mapsEqual(got, want) {
-			t.Fatalf("%s: the queues are %v, want %v: round the fleet from past m5", what, got, want)
-		}
-		if last, _ := s.Fleet.Prop(PropDealIndex); indexPast(s.Fleet.Rows(), last) != "m8" {
-			t.Fatalf("%s: the index is past %q, want m8", what, last)
-		}
+		require.Equal(t, want, got, "%s: the queues are %v, want %v: round the fleet from past m5", what, got, want)
+		last, _ := s.Fleet.Prop(PropDealIndex)
+		require.Equal(t, "m8", indexPast(s.Fleet.Rows(), last), "%s: the index is past %q, want m8", what, last)
 	}
 	upAll := func(s *Snapshot) {
 		for _, m := range members[1:] {
@@ -250,32 +218,17 @@ func TestTheLevelGoesRoundTheFleet(t *testing.T) {
 		w.must(FleetStep(w.s, FleetReq{Op: "down", Member: m}))
 	}
 	w.must(Add(w.s, AddReq{Stream: "s1", Count: 12}))
-	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 12}})) // m1 alone: every card spills to it
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 12}})) // m1 alone: every card goes to it (12 is within its width)
 	upAll(w.s)
 	w.must(FleetStep(w.s, FleetReq{Op: "level"}))
 	check(t, w.s, "fleet level")
 
-	// R7: it moves what its read loaded of the longest queue, and runs again
-	f := newFleetT(t, 0, members...)
-	f.partialOnly = true // the whole sprint's plan moves the newest cards, a read's the newest it loaded
+	// the tick's level (T4), on cards put on m1 as a store holds them
+	w = fleetWorld(t, 0, 0, members...)
 	for i := 1; i <= 12; i++ {
-		putWorkCard(f, fmt.Sprintf("s1-%d", i), "m1", Ready, float64(10+i), nil)
+		putWorkCard(w, fmt.Sprintf("s1-%d", i), "m1", Ready, float64(10+i), nil)
 	}
-	upAll(f.snap())
-	for i := 0; i < 12 && f.snap().Fleet.Count("m1", Ready) > 2; i++ {
-		f.run(ruleLevel, "level")
-	}
-	check(t, f.snap(), "R7")
-}
-
-func mapsEqual(a, b map[string]int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
+	upAll(w.s)
+	w.part(TickLevel, TickReq{})
+	check(t, w.s, "the tick's level")
 }

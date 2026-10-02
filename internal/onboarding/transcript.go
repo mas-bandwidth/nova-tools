@@ -315,7 +315,7 @@ func splitList(value string) []string {
 //
 // NOTHING IS EXPANDED. `$PWD` reaches the Runner as the six characters the
 // document writes, because only the caller's package knows what its transcript
-// means by them -- deprecated/cmd/nova-merge's test declares a Path norm for exactly that
+// means by them -- the deleted nova-merge tool's test declares a Path norm for exactly that
 // spelling. A transcript that needs a value expanded says so to its Runner; it
 // does not get one from here.
 func SplitShell(cmd string) ([]string, error) {
@@ -397,17 +397,17 @@ type Norm struct {
 	Name string
 	// Re matches the whole value INCLUDING its field name, so that a norm
 	// declared for one field cannot quietly swallow another's value. For a norm
-	// built by Instant or HexID it is anchored and matched against ONE token of
-	// the line at a time -- see field below.
+	// built by Instant it is anchored and matched against ONE token of the line
+	// at a time -- see field below.
 	Re *regexp.Regexp
 	// As is what a match becomes on both sides of the comparison.
 	As string
 
-	// field is the name Instant and HexID were given. When it is set, this norm
-	// is applied token by token and may replace only a COMPLETE
-	// `field=value` token of the output grammar. An unanchored pattern is what
-	// let `HexID("id", 8)` normalise `parent_id=` and `Instant("created")`
-	// normalise `last_created=`: the comparison then found no problem on a line
+	// field is the name Instant was given. When it is set, this norm is applied
+	// token by token and may replace only a COMPLETE `field=value` token of the
+	// output grammar. An unanchored pattern is what let a norm for `id`
+	// normalise `parent_id=` and `Instant("created")` normalise
+	// `last_created=`: the comparison then found no problem on a line
 	// whose undeclared field had changed, which is the opposite of what this
 	// type promises. Go's regexp has no look-behind, so the boundary is drawn
 	// here rather than in the pattern.
@@ -560,20 +560,6 @@ func Instant(field string) Norm {
 func isInstant(v string) bool {
 	_, err := time.Parse(time.RFC3339, v)
 	return err == nil
-}
-
-// HexID declares that the named field's value is n lower-case hex digits and
-// belongs to the run. An id a tool derives from its content reproduces exactly
-// and should NOT be declared here: it is part of what the document promises.
-// EXACTLY n digits: an id of another length is the tool disagreeing with the
-// document, and it stays on the line to be compared.
-func HexID(field string, n int) Norm {
-	return Norm{
-		Name:  fmt.Sprintf("%s= (an id of this run, %d hex digits)", field, n),
-		Re:    regexp.MustCompile(fmt.Sprintf(`^%s=[0-9a-f]{%d}$`, regexp.QuoteMeta(field), n)),
-		As:    field + "=<an id of this run>",
-		field: field,
-	}
 }
 
 // Path declares that a path the document writes stands for a directory this run

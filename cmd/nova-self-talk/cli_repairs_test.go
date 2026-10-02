@@ -34,7 +34,7 @@ func TestStandingFindingsNameOriginalLines(t *testing.T) {
 	if code := run([]string{f}, &out, &errOut); code != 1 {
 		t.Fatalf("exit %d err=%s", code, errOut.String())
 	}
-	for _, line := range []string{":3: STANDING:", ":6: STANDING:", ":8: STANDING:"} {
+	for _, line := range []string{":3: STANDING match=", ":6: STANDING match=", ":8: STANDING match="} {
 		if !strings.Contains(errOut.String(), f+line) {
 			t.Errorf("missing %s: %s", line, errOut.String())
 		}

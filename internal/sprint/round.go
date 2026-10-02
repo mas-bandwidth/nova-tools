@@ -1,7 +1,6 @@
 package sprint
 
 import (
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,8 +24,8 @@ import (
 // moves it, first attempts and redeals and levelling alike (errata 3,
 // amendment 5): the deal (R6, T3) and the withdrawn card dealt again, the
 // rework of failed or broken work (R10, the coordinator's rework), the cards of
-// a member that goes down (R2, fleet down), the levelling (R7, T4, fleet up
-// and level) and the replacement of a late card (R11). A rework skips the
+// a member that goes down (R2, fleet down and the tick's presence) and the
+// levelling (R7, T4, fleet up and level). A rework skips the
 // member of the attempt it sends back while another up member has room. The
 // model is tla/SprintEvents.tla: RoundOne from dcur in PlanDeal, PlanDown,
 // PlanRework and PlanLate, and dcur moved by each of their effects; the
@@ -88,6 +87,7 @@ type round struct {
 	name  string // the property
 	read  string // the value the step read
 	had   bool   // whether the table had the property
+	steps bool   // a unit's moves are the steps it took, a decimal (a route index, route.go)
 }
 
 // newRound is the index over names at the counter a table's property holds.
@@ -199,38 +199,25 @@ func (r *round) member(up []string, q, room map[string]int, avoid string) string
 // next is the member a card placed on the fleet goes to (errata 3 amendment
 // 5: every placement, first attempts and redeals and levelling alike, goes
 // round the fleet and moves the index): the first from the index that is up
-// and below its room, the avoid member only when no other has room; with
-// spill, when none has room, the first up from the index, the avoid member
-// only when it is the one up. "" when none. It neither moves the index nor
-// counts the card: the caller that places it moves the index past it (moved)
-// and counts it (q).
-func (r *round) next(up []string, q, room map[string]int, avoid string, spill bool) string {
-	m := r.member(up, q, room, avoid)
-	if m == "" && spill {
-		m = r.member(up, q, roomOf(up, math.MaxInt), avoid)
-	}
-	return m
-}
-
-// roomOf is the same room, most, for every member of up.
-func roomOf(up []string, most int) map[string]int {
-	out := make(map[string]int, len(up))
-	for _, x := range up {
-		out[x] = most
-	}
-	return out
+// and below its room, the avoid member only when no other has room; "" when
+// none has room (a card is never placed past a width: tla/DirtyTick.tla,
+// WidthRespected). It neither moves the index nor counts the card: the caller
+// that places it moves the index past it (moved) and counts it (q).
+func (r *round) next(up []string, q, room map[string]int, avoid string) string {
+	return r.member(up, q, room, avoid)
 }
 
 // levelTo is where the level moves the newest card of the longest queue, and
 // moves the index past it (errata 3 amendment 5): the next member round the
-// fleet from the index that is below its width (held, the work cards it
-// holds, under widths: a member at its width takes no more, errata 3
-// amendment 9) and whose queue (n) is below the up members' mean rounded
+// fleet from the index that is below its room (held, the work cards it
+// holds, under widths: DealAhead times its width, width.go) and whose backlog
+// (n, which may be below zero: level) is below the up members' mean rounded
 // down, or, when none such is below it, at it. A member that receives is
-// never the longest while two queues differ by more than one, so no card is
-// moved twice, and every move takes a card from a queue at least two longer
-// than the one it joins. "" when none.
-func (r *round) levelTo(up []string, n, held, widths map[string]int) string {
+// never the longest while two backlogs differ by more than one, so no card is
+// moved twice, and every move takes a card from a backlog at least two longer
+// than the one it joins. A member of avoid (the card's StagingRefusers) is never the
+// target. "" when none.
+func (r *round) levelTo(up []string, n, held, widths map[string]int, avoid []string) string {
 	if len(up) == 0 {
 		return ""
 	}
@@ -239,11 +226,14 @@ func (r *round) levelTo(up []string, n, held, widths map[string]int) string {
 		total += n[m]
 	}
 	mean := total / len(up)
+	if total < 0 && total%len(up) != 0 {
+		mean-- // rounded down, below zero too
+	}
 	isUp := make(map[string]bool, len(up))
 	for _, x := range up {
 		isUp[x] = true
 	}
-	open := func(x string) bool { return isUp[x] && held[x] < widths[x] }
+	open := func(x string) bool { return isUp[x] && held[x] < widths[x] && !contains(avoid, x) }
 	to := r.scan(func(x string) bool { return open(x) && n[x] < mean })
 	if to == "" {
 		to = r.scan(func(x string) bool { return open(x) && n[x] <= mean })
@@ -450,8 +440,13 @@ func roundWrite(p *Plan, r *round, moves roundMoves) {
 		if m == "" {
 			continue
 		}
-		for _, x := range strings.Split(m, ",") {
-			w.moved(x)
+		if r.steps {
+			n, _ := strconv.ParseUint(m, 10, 64)
+			w.count += n
+		} else {
+			for _, x := range strings.Split(m, ",") {
+				w.moved(x)
+			}
 		}
 		moved = true
 	}

@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -234,8 +235,16 @@ func egressPlanVerb(f egressFlags, stderr io.Writer) int {
 	in := sandbox.EgressInput{
 		Run: f.run, PolicyPath: f.policy, Names: names, ModelHost: f.modelHost,
 		Resolver: resolver, BenchCIDRs: cidrs, UID: f.uid, Veth: f.veth,
-		Lookup: egressLookup(resolver),
 	}
+	// Every problem the plan can name without the network is named first, all at once: a
+	// plan refused for its flags never waits on a resolver (a missing --run cost a 30 s
+	// resolver timeout before it was named). Without a Lookup the only resolve_failed is
+	// "no resolver was given", which is this check's own and not the caller's.
+	_, inputBad := sandbox.BuildEgress(in)
+	if inputBad = slices.DeleteFunc(inputBad, func(r sandbox.Refusal) bool { return r.Reason == "resolve_failed" }); len(inputBad) > 0 {
+		return egressRefuse(stderr, inputBad)
+	}
+	in.Lookup = egressLookup(resolver)
 	// The resolution is the one step of this verb that takes real time, so it says so:
 	// a reader staring at a silent terminal cannot tell a slow resolver from a hung one.
 	fmt.Fprintf(stderr, "EGRESS STEP name=resolve state=start\n")

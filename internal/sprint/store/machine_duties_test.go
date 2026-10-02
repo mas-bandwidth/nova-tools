@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -36,9 +37,7 @@ func TestCRResolveBoundLeavesTheRestWaitingForever(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 250, Needs: []string{"root"}}))
 	h.through("root")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
-	if h.state("root") != sprint.Landed {
-		t.Fatalf("root %s", h.state("root"))
-	}
+	require.Equal(t, sprint.Landed, h.state("root"), "root %s", h.state("root"))
 	h.startMachine()
 	h.crTicks(5, "after the landing")
 	// and past a full read
@@ -84,17 +83,13 @@ func TestCRResolveThatLosesToOtherWritersIsNeverRetried(t *testing.T) {
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
 	h.st.B = &loseResolve{Mem: h.m, left: FenceTries}
 	res, err := h.st.Tick(h.ctx)
-	if err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	require.NoError(t, err, "tick: %v", err)
 	t.Logf("contended tick: parts %+v", res.Parts)
 	h.st.B = h.m
 	h.crTicks(5, "after the contention")
 	h.tick(2 * time.Minute)
 	h.crTicks(3, "after a full read")
-	if st := h.state("b"); st == sprint.Waiting {
-		t.Fatalf("STALL: b is waiting with its need a landed; no judgment; the tick recorded the landing as seen")
-	}
+	require.NotEqual(t, sprint.Waiting, h.state("b"), "STALL: b is waiting with its need a landed; no judgment; the tick recorded the landing as seen")
 }
 
 // PROBE D1: the deadlines read stamps "dealt" (work card in ready), "asked"
@@ -107,27 +102,21 @@ func TestCRDeadlinesThatNeverFire(t *testing.T) {
 	h.machine() // dealt: s1-1 to m1, s1-2 to m2
 	h.tick(3 * time.Hour)
 	h.crTicks(2, "untaken")
-	if h.written(sprint.NWorkLate) == 0 {
-		t.Errorf("MISSING: a work card dealt 3h ago and never taken raised nothing")
-	}
+	assert.NotEqual(t, 0, h.written(sprint.NWorkLate), "MISSING: a work card dealt 3h ago and never taken raised nothing")
 	// readers: finish both, the tick asks, nobody begins
 	h.work("m1")
 	h.work("m2")
 	h.machine()
 	h.tick(3 * time.Hour)
 	h.crTicks(2, "unbegun")
-	if h.written(sprint.NReadLate) == 0 {
-		t.Errorf("MISSING: read cards asked 3h ago and never begun raised nothing")
-	}
+	assert.NotEqual(t, 0, h.written(sprint.NReadLate), "MISSING: read cards asked 3h ago and never begun raised nothing")
 	// begin and never report
 	for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
 		h.run(ReadStep(sprint.ReadReq{As: r, Begin: true, Sel: sprint.Sel{Limit: 100}, Who: r}))
 	}
 	h.tick(5 * time.Hour)
 	h.crTicks(2, "unreported")
-	if h.written(sprint.NReadLate) == 0 {
-		t.Errorf("MISSING: read cards begun 5h ago and never reported raised nothing")
-	}
+	assert.NotEqual(t, 0, h.written(sprint.NReadLate), "MISSING: read cards begun 5h ago and never reported raised nothing")
 	s := h.snap()
 	for _, c := range s.Readers.Column(sprint.Reading) {
 		t.Logf("read card %s fields: %v", c.ID, c.Fields)
@@ -177,9 +166,7 @@ func TestCRAckOfWorkFailedLeavesAPrimaryWithNoJudgment(t *testing.T) {
 	h.must(FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Failed: true}))
 	h.machine()
 	o := h.openOf(sprint.NWorkFailed)
-	if len(o) != 1 {
-		t.Fatalf("failed: %d", len(o))
-	}
+	require.Len(t, o, 1, "failed: %d", len(o))
 	r := h.run(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "looked"}))
 	if len(r.Refused) > 0 {
 		t.Skipf("ack refused: %v", r.Refused)
@@ -201,12 +188,9 @@ func TestCRAckedTickJudgmentComesBack(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	o := h.openOf(sprint.NNoMember)
-	if len(o) != 1 {
-		t.Fatalf("no member: %d", len(o))
-	}
-	if res := h.run(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "the fleet is off tonight"})); len(res.Refused) != 1 {
-		t.Fatalf("ack of no member up: %+v", res)
-	}
+	require.Len(t, o, 1, "no member: %d", len(o))
+	res := h.run(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "the fleet is off tonight"}))
+	require.Len(t, res.Refused, 1, "ack of no member up: %+v", res)
 	for i := 0; i < 5; i++ {
 		h.tick(time.Minute + time.Second)
 		h.machine()
@@ -228,29 +212,23 @@ func TestCRAllMembersDownThenOneUp(t *testing.T) {
 	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m2"}))
 	h.crTicks(3, "all down")
 	s := h.snap()
-	if n := len(s.Work.Column(sprint.Working)); n != 0 {
-		t.Fatalf("working with nobody up: %d", n)
-	}
-	if len(h.openOf(sprint.NNoMember)) != 1 {
-		t.Fatalf("no-member judgment: %d", len(h.openOf(sprint.NNoMember)))
-	}
+	n := len(s.Work.Column(sprint.Working))
+	require.Equal(t, 0, n, "working with nobody up: %d", n)
+	require.Len(t, h.openOf(sprint.NNoMember), 1, "no-member judgment: %d", len(h.openOf(sprint.NNoMember)))
 	up := h.must(FleetStep(sprint.FleetReq{Op: "release", Member: "m2"}))
 	h.crTicks(2, "one up")
 	s = h.snap()
 	if n := s.Fleet.Count("m2", sprint.Ready); n != 6 {
 		t.Fatalf("m2 ready %d; the up: %+v; m2 %v; ready %d", n, up.Moved, s.MemberCtl("m2").Fields, len(s.Work.Column(sprint.Ready)))
 	}
-	if len(h.openOf(sprint.NNoMember)) != 0 {
-		t.Fatalf("no-member still open")
-	}
+	require.Empty(t, h.openOf(sprint.NNoMember), "no-member still open")
 	for i := 0; i < 10; i++ {
 		h.work("m2")
 		h.crTicks(1, "draining")
 	}
 	s = h.snap()
-	if n := len(s.Work.Column(sprint.Ready)) + len(s.Work.Column(sprint.Working)); n != 0 {
-		t.Fatalf("left ready/working %d", n)
-	}
+	n = len(s.Work.Column(sprint.Ready)) + len(s.Work.Column(sprint.Working))
+	require.Equal(t, 0, n, "left ready/working %d", n)
 }
 
 // PROBE 5: 1,000 ready, 3 members; workers take everything each round.
@@ -279,9 +257,8 @@ func TestCRThousandReadyThreeMembers(t *testing.T) {
 		}
 		s := h.snap()
 		for _, m := range []string{"m1", "m2", "m3"} {
-			if n := heldBy(s, m); n > s.Width(m) {
-				t.Fatalf("tick %d: %s holds %d, its width %d", ticks, m, n, s.Width(m))
-			}
+			n := heldBy(s, m)
+			require.LessOrEqual(t, n, s.Width(m), "tick %d: %s holds %d, its width %d", ticks, m, n, s.Width(m))
 		}
 		for _, m := range []string{"m1", "m2", "m3"} {
 			h.work(m)
@@ -305,9 +282,7 @@ func TestCROneReaderThenTwo(t *testing.T) {
 	n := 0
 	h.st = &Store{B: h.m, Names: sprint.Names{Prefix: "t-"}, Actor: "tester",
 		Now: func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now }, NewID: func() string { n++; return fmt.Sprint(n) }, Sleep: func(time.Duration) {}}
-	if err := h.st.Init(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.Init(h.ctx))
 	h.beat()
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 3}))
@@ -315,27 +290,21 @@ func TestCROneReaderThenTwo(t *testing.T) {
 	h.machine()
 	h.work("m1")
 	h.crTicks(3, "no readers")
-	if got := len(h.openOf(sprint.NCannotAsk)); got != 3 {
-		t.Fatalf("cannot ask open %d, want 3 (the three dealt in one tick, at m1's width)", got)
-	}
-	w := h.written(sprint.NCannotAsk)
-	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a"}); err != nil {
-		t.Fatal(err)
-	}
+	got := len(h.openOf(sprint.NFewReaders))
+	require.Equal(t, 1, got, "fewer than two readers up: open %d, want 1 (one judgment for the three dealt in one tick, at m1's width)", got)
+	w := h.written(sprint.NFewReaders)
+	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a"}))
+	h.beat()
 	h.crTicks(3, "one reader")
-	t.Logf("cannot-ask written %d then %d after the first reader (the why text changes 0 free -> 1 free)", w, h.written(sprint.NCannotAsk))
-	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-b"}); err != nil {
-		t.Fatal(err)
-	}
+	t.Logf("few-readers written %d then %d after the first reader (the why text changes 0 free -> 1 free)", w, h.written(sprint.NFewReaders))
+	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-b"}))
+	h.beat()
 	h.crTicks(2, "two readers")
-	if got := len(h.openOf(sprint.NCannotAsk)); got != 0 {
-		t.Fatalf("still open %d", got)
-	}
+	got = len(h.openOf(sprint.NFewReaders))
+	require.Equal(t, 0, got, "still open %d", got)
 	s := h.snap()
 	for _, c := range s.Work.Column(sprint.Review) {
-		if len(s.Readers.Of(c.ID)) != 2 {
-			t.Fatalf("%s asked of %d", c.ID, len(s.Readers.Of(c.ID)))
-		}
+		require.Len(t, s.Readers.Of(c.ID), 2, "%s asked of %d", c.ID, len(s.Readers.Of(c.ID)))
 	}
 }
 

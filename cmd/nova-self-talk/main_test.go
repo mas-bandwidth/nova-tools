@@ -51,7 +51,7 @@ func TestExitOneOnStandingClaim(t *testing.T) {
 	if got := run([]string{f}, &stdout, &stderr); got != 1 {
 		t.Errorf("want exit 1, got %d\nstdout: %s", got, stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "SELFTALK FAIL "+f+":1: STANDING: I cannot check my own work.") {
+	if !strings.Contains(stderr.String(), "SELFTALK FAIL "+f+`:1: STANDING match="cannot check": I cannot check my own work.`) {
 		t.Errorf("stderr = %q, want a SELFTALK FAIL line naming the file, verdict, and claim", stderr.String())
 	}
 	if strings.Contains(stdout.String(), "SELFTALK OK") {
@@ -262,7 +262,7 @@ func TestInstallationExitsOneWithShapeAndLine(t *testing.T) {
 	if got := run([]string{f}, &stdout, &stderr); got != 1 {
 		t.Errorf("want exit 1 on an installation, got %d\nstdout: %s", got, stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "SELFTALK FAIL "+f+":3: INSTALLATION RANKING: ") {
+	if !strings.Contains(stderr.String(), "SELFTALK FAIL "+f+":3: INSTALLATION RANKING match=") {
 		t.Errorf("stderr = %q, want a FAIL line naming file, line, class and shape", stderr.String())
 	}
 	if strings.Contains(stdout.String(), "SELFTALK OK") {
@@ -408,7 +408,7 @@ func TestNoFileNameOrClaimCanForgeALine(t *testing.T) {
 			t.Fatalf("exit = %d, want 1; stderr: %s", got, stderr.String())
 		}
 		noForgedLine(t, stdout.String(), stderr.String())
-		if !strings.Contains(stderr.String(), "SELFTALK FAIL "+strings.ReplaceAll(f, "\n", `\x0a`)+":1: STANDING: I cannot check my own work.") {
+		if !strings.Contains(stderr.String(), "SELFTALK FAIL "+strings.ReplaceAll(f, "\n", `\x0a`)+`:1: STANDING match="cannot check": I cannot check my own work.`) {
 			t.Errorf("stderr = %q, want the file name escaped inside its one FAIL line", stderr.String())
 		}
 
@@ -431,7 +431,7 @@ func TestNoFileNameOrClaimCanForgeALine(t *testing.T) {
 		if got := run([]string{f}, &stdout, &stderr); got != 1 {
 			t.Fatalf("exit = %d, want 1; stderr: %s", got, stderr.String())
 		}
-		if !strings.Contains(stderr.String(), `STANDING: I cannot check my \u202eown work.`) {
+		if !strings.Contains(stderr.String(), `: I cannot check my \u202eown work.`) {
 			t.Errorf("stderr = %q, want the override escaped", stderr.String())
 		}
 	})
@@ -442,7 +442,7 @@ func TestNoFileNameOrClaimCanForgeALine(t *testing.T) {
 			t.Fatalf("exit = %d, want 2; stderr: %s", got, stderr.String())
 		}
 		noForgedLine(t, stdout.String(), stderr.String())
-		if !strings.Contains(stderr.String(), `nova-self-talk: flag provided but not defined: -bogus\x0aSELFTALK OK files`) {
+		if !strings.Contains(stderr.String(), `nova-self-talk REFUSED: unknown flag -bogus\x0aSELFTALK OK files`) {
 			t.Errorf("stderr = %q, want this tool's own refusal with the flag escaped", stderr.String())
 		}
 	})

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
@@ -96,23 +97,9 @@ var prNumberRegex = regexp.MustCompile(`/pull/(\d+)`)
 // RunSeal reads one value, folds it into the seat file under --name, and carries the
 // change through a branch, a commit and, unless --no-pr, a pull request to its merge.
 func RunSeal(opts SealOptions) (line string, err error) {
-	if opts.StoreDir == "" {
-		return "", fmt.Errorf("missing --store <dir>")
-	}
-	if opts.AsName == "" {
-		return "", fmt.Errorf("missing --as <name>")
-	}
-	if !IsValidAsName(opts.AsName) {
-		return "", fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", opts.AsName)
-	}
-	if opts.KeyPath == "" {
-		return "", fmt.Errorf("missing --key <path>")
-	}
-	if opts.SopsPath == "" {
-		return "", fmt.Errorf("missing --sops <path>")
-	}
-	if opts.Name == "" {
-		return "", fmt.Errorf("missing --name <NAME>")
+	if err := preflight(opts.StoreDir, need{opts.StoreDir, "--store <dir>", false}, need{opts.AsName, "--as <name>", true},
+		need{opts.KeyPath, "--key <path>", false}, need{opts.SopsPath, "--sops <path>", false}, need{opts.Name, "--name <NAME>", false}); err != nil {
+		return "", err
 	}
 	if !IsValidEnvVar(opts.Name) {
 		return "", fmt.Errorf("invalid key name %q: must match [A-Z][A-Z0-9_]*", opts.Name)
@@ -127,18 +114,6 @@ func RunSeal(opts SealOptions) (line string, err error) {
 		opts.Now = time.Now
 	}
 
-	sFi, err := os.Stat(opts.StoreDir)
-	if err != nil || !sFi.IsDir() {
-		return "", fmt.Errorf("store %s is not a directory", opts.StoreDir)
-	}
-	gitDir := filepath.Join(opts.StoreDir, ".git")
-	gFi, err := os.Stat(gitDir)
-	if err != nil || !gFi.IsDir() {
-		return "", fmt.Errorf("store %s has no .git directory; clone it: git clone <url> %s", opts.StoreDir, opts.StoreDir)
-	}
-	if _, err := os.Stat(filepath.Join(opts.StoreDir, ".sops.yaml")); err != nil {
-		return "", fmt.Errorf("store %s carries no .sops.yaml", opts.StoreDir)
-	}
 	if err := CheckInvariant6(opts.KeyPath); err != nil {
 		return "", err
 	}
@@ -199,9 +174,12 @@ func RunSeal(opts SealOptions) (line string, err error) {
 		return "", err
 	}
 	switch {
+	// A --no-pr value is not on the store's own branch, so it is not what exec reads: the
+	// NOTE says so, with the next command, so nobody takes the OK for a delivered value.
 	case opts.NoPR:
-		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s committed branch=%s",
-			oneline.Field(opts.Name), oneline.Field(opts.AsName), oneline.Field(branch)), nil
+		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s committed branch=%s\n"+
+			"SECRETS SEAL NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C %s push -u origin %s, then open and merge its pull request",
+			oneline.Field(opts.Name), oneline.Field(opts.AsName), oneline.Field(branch), oneline.Field(opts.StoreDir), oneline.Field(branch)), nil
 	case !merged:
 		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s pr=#%s open (gate not yet approved)",
 			oneline.Field(opts.Name), oneline.Field(opts.AsName), prNum), nil
@@ -374,7 +352,9 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 func (c sealCarry) preflight() (home string, err error) {
 	home, err = sealGitOutput(c.run, c.storeDir, c.gitPath, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
-		return "", err
+		// In a working copy (the store's shape is checked first) this is a HEAD with no
+		// commit under it: a store made with git init and nothing committed yet.
+		return "", fmt.Errorf("%w; a store with no commit yet has no branch to return to; run: git -C %s add .sops.yaml recovery.pub && git -C %s commit -m 'a new store'", err, c.storeDir, c.storeDir)
 	}
 	if home == "" || home == "HEAD" {
 		return "", fmt.Errorf("store %s is not on a branch; seal needs a named branch to return to", c.storeDir)
@@ -594,7 +574,7 @@ func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile string, 
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		}
-		return nil, fmt.Errorf("sops encrypt failed: exit %d (transcript withheld; the value is on stdin only)", exitCode)
+		return nil, fmt.Errorf("sops encrypt failed: exit %d (transcript withheld; the value is on stdin only); the usual cause is a recipient in the .sops.yaml rule for %s that is not an age1… public key, such as keygen's <recovery key> placeholder left in; the same call with --dry-run lists the recipients", exitCode, seatFile)
 	}
 	return out, nil
 }
@@ -637,7 +617,7 @@ func sealGit(run execCommand, dir, gitPath string, args ...string) error {
 }
 
 func sealGitOutput(run execCommand, dir, gitPath string, args ...string) (string, error) {
-	out, err := run(nil, append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), dir, gitPath, args...)
+	out, err := run(nil, append(gitrun.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0"), dir, gitPath, args...)
 	if err != nil {
 		return "", fmt.Errorf("git %s failed: %s (transcript withheld)", args[0], oneline.Err(err))
 	}

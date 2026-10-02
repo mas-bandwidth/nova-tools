@@ -68,7 +68,7 @@ type Line struct {
 const MaxCause = 300
 
 // TextFields are the fields whose words a move line carries in Text.
-var TextFields = []string{"brief", "fix", "report", "finding", "reason", "return_reason", "did", "note", "ci_note"}
+var TextFields = []string{"brief", "fix", "report", "finding", "reason", "return_reason", "did", "note", "ci_note", "why"}
 
 // Names is the cards a line is about: a move line's card, or a
 // notification's subjects and named cards.

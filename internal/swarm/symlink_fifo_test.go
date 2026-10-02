@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // THE DISPATCHER READS AND WRITES WORKER-WRITABLE PATHS, AND A WORKER OWNS ITS JOB
@@ -25,9 +27,7 @@ func plantLink(t *testing.T, target, link string) {
 func outsideFile(t *testing.T, dir string) string {
 	t.Helper()
 	v := filepath.Join(dir, "outside-the-wall")
-	if err := os.WriteFile(v, []byte("a secret the wall was keeping\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(v, []byte("a secret the wall was keeping\n"), 0o644))
 	return v
 }
 
@@ -37,18 +37,12 @@ func TestReadFileSteadyRefusesASymlink(t *testing.T) {
 
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(job, 0o755))
 	v := outsideFile(t, dir)
 	plantLink(t, v, ResultPath(job))
 	raw, err := readFileSteady(ResultPath(job))
-	if err == nil {
-		t.Fatalf("the dispatcher read through a planted symlink and got %q", string(raw))
-	}
-	if missing(err) {
-		t.Fatal("a planted symlink must not read as a record that is simply gone")
-	}
+	require.Error(t, err, "the dispatcher read through a planted symlink and got %q", string(raw))
+	require.False(t, missing(err), "a planted symlink must not read as a record that is simply gone")
 }
 
 func TestHarnessTailRefusesASymlink(t *testing.T) {
@@ -56,14 +50,11 @@ func TestHarnessTailRefusesASymlink(t *testing.T) {
 
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(job, 0o755))
 	v := outsideFile(t, dir)
 	plantLink(t, v, filepath.Join(job, "harness.log"))
-	if tail := HarnessTail(job); tail != "" {
-		t.Fatalf("the log= tail carried a file from outside the wall: %q", tail)
-	}
+	tail := HarnessTail(job)
+	require.Empty(t, tail, "the log= tail carried a file from outside the wall: %q", tail)
 }
 
 // Finding 3: the atomic write's temporary is the dispatcher's, never the worker's.
@@ -72,29 +63,18 @@ func TestWriteAtomicDoesNotWriteThroughAPlantedTemp(t *testing.T) {
 
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(job, 0o755))
 	v := outsideFile(t, dir)
 	target := ExitPath(job)
 	plantLink(t, v, target+".tmp")
-	if err := writeAtomic(target, []byte("{\"rc\":0}\n"), 0o644); err != nil {
-		t.Fatalf("a correct write was refused: %v", err)
-	}
+	err := writeAtomic(target, []byte("{\"rc\":0}\n"), 0o644)
+	require.NoError(t, err, "a correct write was refused: %v", err)
 	raw, err := os.ReadFile(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != "a secret the wall was keeping\n" {
-		t.Fatalf("the supervisor truncated a file outside the job through the planted temporary: %q", string(raw))
-	}
+	require.NoError(t, err)
+	require.Equal(t, "a secret the wall was keeping\n", string(raw), "the supervisor truncated a file outside the job through the planted temporary: %q", string(raw))
 	fi, err := os.Lstat(target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !fi.Mode().IsRegular() {
-		t.Fatal("the rename moved the planted link over the record's own path")
-	}
+	require.NoError(t, err)
+	require.True(t, fi.Mode().IsRegular(), "the rename moved the planted link over the record's own path")
 }
 
 // Finding 4: a FIFO is not a record, and it must never park the dispatcher.
@@ -103,9 +83,7 @@ func TestReadFileSteadyDoesNotBlockOnAFIFO(t *testing.T) {
 
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(job, 0o755))
 	plantFIFO(t, ResultPath(job))
 	done := make(chan error, 1)
 	go func() {
@@ -114,12 +92,8 @@ func TestReadFileSteadyDoesNotBlockOnAFIFO(t *testing.T) {
 	}()
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("a FIFO read as a published report")
-		}
-		if missing(err) {
-			t.Fatal("a FIFO must not read as a record that is simply gone")
-		}
+		require.Error(t, err, "a FIFO read as a published report")
+		require.False(t, missing(err), "a FIFO must not read as a record that is simply gone")
 	case <-time.After(30 * time.Second):
 		t.Fatal("STILL BLOCKED after 30s reading a FIFO at RESULT.md: the dispatcher is wedged")
 	}
@@ -130,9 +104,7 @@ func TestReadJSONDoesNotBlockOnAFIFO(t *testing.T) {
 
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(job, 0o755))
 	plantFIFO(t, ExitPath(job))
 	done := make(chan error, 1)
 	go func() {
@@ -141,54 +113,8 @@ func TestReadJSONDoesNotBlockOnAFIFO(t *testing.T) {
 	}()
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("a FIFO read as an exit record")
-		}
+		require.Error(t, err, "a FIFO read as an exit record")
 	case <-time.After(30 * time.Second):
 		t.Fatal("STILL BLOCKED after 30s reading a FIFO at exit.json: the recovery pass is wedged")
-	}
-}
-
-// CountRefusals IS A READ OF A WORKER-WRITABLE PATH TOO (Fable's cold read of #226, F2).
-//
-// It is a bare os.Open on <job>/harness.log, called unconditionally after the guarded
-// reads, so a FIFO there parked the dispatcher at the same place the guarded reads had just
-// been taught to refuse.
-func TestCountRefusalsDoesNotBlockOnAFIFO(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	job := filepath.Join(dir, "job")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	plantFIFO(t, filepath.Join(job, "harness.log"))
-	done := make(chan int, 1)
-	go func() { done <- CountRefusals(filepath.Join(job, "harness.log")) }()
-	select {
-	case n := <-done:
-		if n != 0 {
-			t.Fatalf("a FIFO counted %d refusals", n)
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("STILL BLOCKED after 30s counting refusals in a FIFO at harness.log: the dispatcher is wedged")
-	}
-}
-
-func TestCountRefusalsRefusesASymlink(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	job := filepath.Join(dir, "job")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	v := filepath.Join(dir, "outside-the-wall")
-	if err := os.WriteFile(v, []byte("permission denied\nunauthorized\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	plantLink(t, v, filepath.Join(job, "harness.log"))
-	if n := CountRefusals(filepath.Join(job, "harness.log")); n != 0 {
-		t.Fatalf("refusals were counted out of a file from outside the wall: %d", n)
 	}
 }

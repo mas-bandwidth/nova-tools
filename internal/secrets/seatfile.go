@@ -1,9 +1,11 @@
 package secrets
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -26,36 +28,13 @@ type SeatFile struct {
 // (internal/seatcred, nova-tools#4052), so no shell wrapper stands between the
 // two and neither can check less than the other.
 func OpenSeatFile(storeDir, asName, keyPath, sopsPath string) (SeatFile, error) {
-	var missing []string
-	for _, m := range []struct{ v, flag string }{{storeDir, "--store <dir>"}, {asName, "--as <name>"}, {keyPath, "--key <path>"}, {sopsPath, "--sops <path>"}} {
-		if m.v == "" {
-			missing = append(missing, m.flag)
-		}
-	}
-	if len(missing) > 0 {
-		return SeatFile{}, fmt.Errorf("missing: %s", strings.Join(missing, ", "))
-	}
-	if !IsValidAsName(asName) {
-		return SeatFile{}, fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
-	}
-
-	// 1. Store filesystem checks
-	sFi, err := os.Stat(storeDir)
-	if err != nil || !sFi.IsDir() {
-		return SeatFile{}, fmt.Errorf("store %s is not a directory", storeDir)
-	}
-	gitDir := filepath.Join(storeDir, ".git")
-	gFi, err := os.Stat(gitDir)
-	if err != nil || !gFi.IsDir() {
-		return SeatFile{}, fmt.Errorf("store %s has no .git directory", storeDir)
-	}
-	sopsConfigPath := filepath.Join(storeDir, ".sops.yaml")
-	if _, err := os.Stat(sopsConfigPath); err != nil {
-		return SeatFile{}, fmt.Errorf("store %s carries no .sops.yaml", storeDir)
+	// 1. The invocation and the store's shape, every problem at once
+	if err := preflight(storeDir, need{storeDir, "--store <dir>", false}, need{asName, "--as <name>", true}, need{keyPath, "--key <path>", false}, need{sopsPath, "--sops <path>", false}); err != nil {
+		return SeatFile{}, err
 	}
 	targetFile := filepath.Join(storeDir, asName+".yaml")
 	if _, err := os.Stat(targetFile); err != nil {
-		return SeatFile{}, fmt.Errorf("store file %s is absent", targetFile)
+		return SeatFile{}, seatAbsent(storeDir, asName)
 	}
 
 	// 2. Invariant 8 git check and complete committed-artifact validation
@@ -123,4 +102,81 @@ func OpenSeatFile(storeDir, asName, keyPath, sopsPath string) (SeatFile, error) 
 	}
 
 	return SeatFile{Path: targetFile, HeadSHA: headSHA, Secrets: secretsMap}, nil
+}
+
+// need is one flag a verb requires: the value it was given, the flag spelled with what
+// it wants ("--store <dir>"), and whether the value names a seat, which is then a path
+// component and held to IsValidAsName.
+type need struct {
+	v, flag string
+	seat    bool
+}
+
+// preflight is every problem a verb can name before it reads a store file, in one
+// error, so a caller fixes the call once (STANDARD §2, ONBOARDING point 2): each
+// required flag left empty, each seat name that is not one, and, when --store is
+// given, each way it falls short of a store.
+func preflight(storeDir string, needs ...need) error {
+	var missing, problems []string
+	for _, n := range needs {
+		switch {
+		case n.v == "":
+			missing = append(missing, n.flag)
+		case n.seat && !IsValidAsName(n.v):
+			problems = append(problems, fmt.Sprintf("invalid seat name %q for %s: must match [A-Za-z0-9_-]+", n.v, strings.Fields(n.flag)[0]))
+		}
+	}
+	if len(missing) > 0 {
+		problems = append([]string{"missing " + strings.Join(missing, ", ")}, problems...)
+	}
+	if storeDir != "" {
+		if err := storeShape(storeDir); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(problems, "; "))
+}
+
+// storeShape names at once every way dir falls short of a store: a directory that is
+// a git working copy (a .git directory, never a worktree's .git file) carrying a
+// .sops.yaml. The remedy is the command that makes one.
+func storeShape(dir string) error {
+	remedy := fmt.Sprintf("run: git clone <store url> %s (a new store: git init it, then write its .sops.yaml from the rule block nova-secrets keygen prints)", dir)
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return fmt.Errorf("store %s is not a directory; %s", dir, remedy)
+	}
+	var lacks []string
+	if fi, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		lacks = append(lacks, "no .git directory")
+	} else if !fi.IsDir() {
+		lacks = append(lacks, "a .git that is a file (a worktree or submodule), where a directory working copy is wanted")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".sops.yaml")); err != nil {
+		lacks = append(lacks, "no .sops.yaml")
+	}
+	if len(lacks) == 0 {
+		return nil
+	}
+	return fmt.Errorf("store %s has %s; %s", dir, strings.Join(lacks, " and "), remedy)
+}
+
+// seatAbsent refuses a seat with no file in the store, naming the seats the store does
+// hold, or, when it holds none, the verb that writes a seat's first value.
+func seatAbsent(storeDir, asName string) error {
+	var seats []string
+	if entries, err := os.ReadDir(storeDir); err == nil {
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".yaml") && e.Name() != ".sops.yaml" {
+				seats = append(seats, strings.TrimSuffix(e.Name(), ".yaml"))
+			}
+		}
+	}
+	if len(seats) == 0 {
+		return fmt.Errorf("seat file %s.yaml is absent: store %s holds no seat file yet; seal writes a seat's first value: run: nova-secrets seal --store %s --as %s --key <path> --sops <path> --name <NAME>", asName, storeDir, storeDir, asName)
+	}
+	sort.Strings(seats)
+	return fmt.Errorf("seat file %s.yaml is absent in store %s; its seats are %s: pass --as one of them; seal starts a new seat: run: nova-secrets seal --store %s --as %s --key <path> --sops <path> --name <NAME>", asName, storeDir, strings.Join(seats, ", "), storeDir, asName)
 }
