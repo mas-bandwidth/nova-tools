@@ -1,0 +1,5 @@
+# tool-answers: the mistakes this tool does not yet answer with the way forward; each row's count only falls
+# ceiling: 3
+cmd/nova-sandbox:bare 1 the bare refusal predates the REFUSED word (tool ledger X4)
+cmd/nova-sandbox:dry-run 10 verbs whose -h states no effect, or that write with no --dry-run (tool ledger X12)
+cmd/nova-sandbox:unknown-flag 1 the unknown-flag answer names no flag of the verb (tool ledger X2)
