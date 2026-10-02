@@ -21,8 +21,8 @@ const logPath = "/usr/bin/log"
 const denialPredicate = `subsystem == "com.apple.sandbox.reporting" AND category == "violation"`
 
 // denialReadTimeout bounds the one process this costs, and it is SMALL on purpose.
-// `log show` opens an on-disk archive before filtering.
-// a query for a three-second window took over ten seconds and found nothing, and a card
+// `log show` opens an on-disk archive before it filters anything: a query for a
+// three-second window took over ten seconds and found nothing, and a card
 // whose test suite fails would have paid that on every run. A diagnostic that slows a
 // failing run down more than it explains it is not worth having, so the bound is two
 // seconds and going over it is silence, not an error.
