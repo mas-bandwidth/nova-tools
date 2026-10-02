@@ -50,7 +50,7 @@ var fuseHelps = map[string]fuseHelp{
 	"lockdown": {
 		"lockdown --box <path> [--dry-run] [--] <reason>",
 		localWrite,
-		"Blow the hard fuse and verify it. Every untrusted read and surface-driven act stops; authored outbound life continues. An absent or broken box is replaced with a blown box; unreadable bytes are backed up when possible.",
+		"Blow the hard fuse and verify it. Every untrusted read and surface-driven act stops; authored outbound life continues. An absent or broken box is replaced with a blown box; unreadable bytes are backed up when possible. A box already blown is left as it is: the first time and reason stay, and the line says already=blown.",
 		"0 blown and verified; 1 write or verification failed; 2 bad invocation. Every failure remains no permission to read.",
 		true, true,
 	},
