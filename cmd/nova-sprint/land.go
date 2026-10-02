@@ -103,7 +103,25 @@ type landBatch struct {
 	Fact   string `json:"fact,omitempty"`
 	Reason string `json:"reason,omitempty"`
 	DryRun bool   `json:"dry_run,omitempty"`
+	// Times is how long each of the batch's steps took; nil for a batch refused before
+	// its git ran, and for a dry run.
+	Times *landTimes `json:"times,omitempty"`
 }
+
+// landTimes is a batch's steps, in seconds: the fetch, the merges (with any head
+// fetched at its merge), the check, the queue read again before the push, the push and
+// the report. A rebuild on a moved base adds its fetch, merges, check and push.
+type landTimes struct {
+	Fetch  float64 `json:"fetch"`
+	Merge  float64 `json:"merge"`
+	Check  float64 `json:"check"`
+	Queue  float64 `json:"queue"`
+	Push   float64 `json:"push"`
+	Report float64 `json:"report"`
+}
+
+// since adds the seconds from start to now to *to.
+func since(to *float64, start time.Time) { *to += time.Since(start).Seconds() }
 
 // line is the batch's output line.
 func (b landBatch) line() string {
@@ -118,6 +136,9 @@ func (b landBatch) line() string {
 	}
 	if b.Dir != "" {
 		l += " dir=" + oneline.Field(b.Dir)
+	}
+	if t := b.Times; t != nil {
+		l += fmt.Sprintf(" fetch=%.1fs merge=%.1fs check=%.1fs queue=%.1fs push=%.1fs report=%.1fs", t.Fetch, t.Merge, t.Check, t.Queue, t.Push, t.Report)
 	}
 	if b.Fact != "" {
 		l += " fact=" + b.Fact
@@ -401,7 +422,8 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" {
 		return refuse("the clone " + dir + " is not clean (" + firstLine(out, err) + "); commit or discard its changes, then run land again")
 	}
-	merged, failed, why := l.build(ctx, dir, stream, cards)
+	b.Times = &landTimes{}
+	merged, failed, why := l.build(ctx, dir, stream, cards, b.Times)
 	if why != "" {
 		return refuse(why)
 	}
@@ -414,17 +436,25 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		if err != nil {
 			return refuse("the batch branch has no tip: " + firstLine("", err))
 		}
-		if why := l.runCheck(ctx, dir); why != "" {
+		start := time.Now()
+		why := l.runCheck(ctx, dir)
+		since(&b.Times.Check, start)
+		if why != "" {
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
 			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, cards[:len(merged)], "red", why)
 		}
-		if why := l.queueHead(ctx, stream, cards[:len(merged)]); why != "" {
+		start = time.Now()
+		why = l.queueHead(ctx, stream, cards[:len(merged)])
+		since(&b.Times.Queue, start)
+		if why != "" {
 			return refuse(why)
 		}
 		if l.a.beforePush != nil {
 			l.a.beforePush(attempt)
 		}
+		start = time.Now()
 		_, err = l.git(ctx, dir, "push", "--porcelain", "origin", tip+":refs/heads/"+b.Base)
+		since(&b.Times.Push, start)
 		if err == nil {
 			b.Tip = tip
 			if !l.landed(b, stream, cards[:len(merged)]) {
@@ -443,7 +473,7 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
 			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Rejected: true, Note: firstLine("", err)}, cards[:len(merged)], "rejected", "the push to "+b.Base+" was rejected again after a rebuild on the moved base: "+firstLine("", err))
 		}
-		merged, failed, why = l.build(ctx, dir, stream, cards)
+		merged, failed, why = l.build(ctx, dir, stream, cards, b.Times)
 		if why != "" {
 			return refuse(why)
 		}
@@ -497,7 +527,11 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 		ids[i] = c.id
 	}
 	b.Cards, b.IDs = len(ids), ids
+	start := time.Now()
 	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
+	if b.Times != nil {
+		since(&b.Times.Report, start)
+	}
 	if code := stepExit(res, err); code != 0 || !movedExactly(res.Moved, ids) {
 		b.Status, b.Reason = "failed", "the batch was pushed to "+b.Base+" at "+b.Tip+" and NOT reported ("+stepWhy(res, err)+
 			"); "+againRemedy(stream)
@@ -636,8 +670,9 @@ func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 // a commit on origin, or a merge that left unmerged paths): merged is the
 // cards merged, failed the card that ended the batch, why a refusal of the
 // whole batch that blames no card (git's own failure: the fetch, the cut, an
-// identity, a hook, the disk), nothing to report.
-func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard) (merged []string, failed conflictCard, why string) {
+// identity, a hook, the disk), nothing to report. The fetch's seconds and the
+// merges' are added to t.
+func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard, t *landTimes) (merged []string, failed conflictCard, why string) {
 	base := cards[0].base
 	// THE FETCH BRINGS WHAT THE BATCH NEEDS AND NOTHING ELSE: the base, and the cards'
 	// heads by their ids, in one exchange. A fetch of every branch of origin costs a
@@ -654,11 +689,17 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 			fetch = append(fetch, c.head)
 		}
 	}
-	if _, err := l.git(ctx, dir, fetch...); err != nil {
-		if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin", baseRef); err != nil {
-			return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
-		}
+	start := time.Now()
+	_, err := l.git(ctx, dir, fetch...)
+	if err != nil {
+		_, err = l.git(ctx, dir, "fetch", "--no-tags", "origin", baseRef)
 	}
+	since(&t.Fetch, start)
+	if err != nil {
+		return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
+	}
+	start = time.Now()
+	defer since(&t.Merge, start)
 	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {
 		return nil, failed, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
 	}
