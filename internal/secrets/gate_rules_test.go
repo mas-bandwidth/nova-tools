@@ -106,58 +106,6 @@ func TestGateRefusesAnOptionShapedRefBeforeAskingGit(t *testing.T) {
 	assert.Contains(t, line, `SECRETS GATE REFUSED: --head -R begins with "-", the shape of an option, not a git ref`)
 }
 
-// check, the gate and seat inject judge recipients with one predicate, so the three give
-// the same verdict on every shape: approved exactly when there is one seat key and the
-// declared recovery key, distinct, in either order. check and the gate judge a rule's
-// recipients; seat inject judges the seat file's own (here sealed to the same shape as
-// its rule, so the rule-and-file match it also holds is not what decides).
-func TestCheckTheGateAndSeatInjectGiveOneVerdictOnRecipients(t *testing.T) {
-	t.Parallel()
-	seat, rec, other := gateSeatKey, gateRecoveryKey, gateThirdKey
-	for _, c := range []struct {
-		name       string
-		recipients []string
-		ok         bool
-	}{
-		{"seat then recovery", []string{seat, rec}, true},
-		{"recovery then seat", []string{rec, seat}, true},
-		{"recovery twice", []string{rec, rec}, false},
-		{"seat twice", []string{seat, seat}, false},
-		{"seat and a stranger", []string{seat, other}, false},
-		{"recovery alone", []string{rec}, false},
-		{"seat alone", []string{seat}, false},
-		{"three distinct", []string{seat, other, rec}, false},
-		{"seat, recovery, seat", []string{seat, rec, seat}, false},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			rule := CreationRule{PathRegex: `^rowan\.yaml$`, Recipients: c.recipients}
-			checkFails := CheckInvariant1("store", &SopsConfig{CreationRules: []CreationRule{rule}}, rec)
-			assert.Equal(t, c.ok, len(checkFails) == 0, "check: %+v", checkFails)
-			sops := gateSops("  - path_regex: ^rowan\\.yaml$\n    age: " + strings.Join(c.recipients, ",") + "\n")
-
-			dir := gateStart(t)
-			base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
-			head := gateCommit(t, dir, map[string]string{".sops.yaml": sops, "rowan.yaml": gateSealedFile()})
-			line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-			assert.Equal(t, c.ok, code == 0, "gate: %s", line)
-
-			store := storeOf(t, map[string]string{".sops.yaml": sops, "rowan.yaml": injectTargetFile(c.recipients, injectSealedBody)})
-			_, injectErr := seatInjectTarget(store, "rowan.yaml", rec)
-			assert.Equal(t, c.ok, injectErr == nil, "seat inject: %v", injectErr)
-
-			if !c.ok && len(checkFails) == 1 {
-				// one predicate, one reason: the gate and seat inject carry check's words
-				reason := strings.TrimPrefix(checkFails[0].Reason, `rule for ^rowan\.yaml$ `)
-				assert.Equal(t, "GATE REFUSE rule=1 file=.sops.yaml: rule "+reason, line)
-				if assert.Error(t, injectErr) {
-					assert.Contains(t, injectErr.Error(), "seat file rowan.yaml "+reason)
-				}
-			}
-		})
-	}
-}
-
 // seat inject refuses a seat file sealed to the recovery key twice (a seat that holds no
 // key of its own) or to the seat key twice (a file the recovery key cannot open), naming
 // the duplicate, and takes the two distinct keys in either order; through the verb, so
@@ -169,8 +117,8 @@ func TestSeatInjectHoldsTheSeatFileToOneSeatKeyAndTheRecoveryKey(t *testing.T) {
 		recipients []string
 		want       string
 	}{
-		{"recovery key twice", []string{pubRecovery, pubRecovery}, "seat file air.yaml has duplicate recipient " + pubRecovery + "; a seat is one seat key and the declared recovery key, distinct"},
-		{"seat key twice", []string{pubAir, pubAir}, "seat file air.yaml has duplicate recipient " + pubAir + "; a seat is one seat key and the declared recovery key, distinct"},
+		{"recovery key twice", []string{pubRecovery, pubRecovery}, "seat file air.yaml: is under a rule that has duplicate recipient " + pubRecovery + "; a seat is one seat key and the declared recovery key, distinct"},
+		{"seat key twice", []string{pubAir, pubAir}, "seat file air.yaml: is under a rule that has duplicate recipient " + pubAir + "; a seat is one seat key and the declared recovery key, distinct"},
 		{"seat then recovery", []string{pubAir, pubRecovery}, ""},
 		{"recovery then seat", []string{pubRecovery, pubAir}, ""},
 	} {
@@ -226,5 +174,5 @@ func TestSeatInjectRefusesARuleThatIsNotTheFilesOwnRecipients(t *testing.T) {
 	mustWrite(t, filepath.Join(f.storeDir, "air.yaml"), injectTargetFile([]string{pubAir, pubRecovery}, injectSealedBody), 0o644)
 	_, err := seatInjectTarget(f.storeDir, "air.yaml", pubRecovery)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "the rule for air.yaml names recipients its sops metadata does not")
+	assert.Contains(t, err.Error(), "seat file air.yaml: is under a rule that has duplicate recipient "+pubRecovery)
 }

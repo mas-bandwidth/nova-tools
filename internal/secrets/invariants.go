@@ -76,15 +76,6 @@ func CheckInvariant1(storeDir string, sopsCfg *SopsConfig, recoveryKey string) [
 			})
 		}
 
-		for _, rec := range rule.Recipients {
-			if !IsValidAgePublicKey(rec) {
-				failures = append(failures, CheckFailure{
-					Kind:   "rule-shape",
-					File:   ".sops.yaml",
-					Reason: fmt.Sprintf("rule for %s recipient %q is not a valid age public key", label, rec),
-				})
-			}
-		}
 		if problem := ruleRecipientsProblem(rule.Recipients, recoveryKey); problem != "" {
 			failures = append(failures, CheckFailure{
 				Kind:   "rule-shape",
@@ -97,8 +88,26 @@ func CheckInvariant1(storeDir string, sopsCfg *SopsConfig, recoveryKey string) [
 	return failures
 }
 
-// ruleRecipientsProblem is the one judgement of a seat's recipients: exactly two,
-// distinct, one of them the declared recovery key, so the other is the seat's own key.
+// seatFileRecipientsProblem is the one judgement of a seat file's recipients (its sops
+// metadata) against its rule's in .sops.yaml, made by check (CheckInvariant2), the
+// store's gate (RunGate) and seat inject (seatInjectTarget) alike. The rule is held to
+// ruleRecipientsProblem, and the file must then be exactly the rule: two keys, the
+// rule's two, in either order. A clean rule is two distinct keys, so a file equal to it
+// is clean too, and a file with a duplicate, a missing key or one more differs from it.
+// It returns why not, or "" when the file is its rule.
+func seatFileRecipientsProblem(file, rule []string, recoveryKey string) string {
+	if problem := ruleRecipientsProblem(rule, recoveryKey); problem != "" {
+		return "is under a rule that " + problem
+	}
+	if len(file) != 2 || !slices.Contains(file, rule[0]) || !slices.Contains(file, rule[1]) {
+		return "recipients differ from .sops.yaml"
+	}
+	return ""
+}
+
+// ruleRecipientsProblem is the one judgement of a seat's recipients: exactly two valid
+// age public keys, distinct, one of them the declared recovery key, so the other is the
+// seat's own key.
 // check (CheckInvariant1) and the store's gate (RunGate) hold a creation rule's
 // recipients to it, seat inject (seatInjectTarget) the seat file's own, and seat add
 // (RunSeatAdd) the rule it is about to write. It returns why they are not, worded to
@@ -108,6 +117,11 @@ func CheckInvariant1(storeDir string, sopsCfg *SopsConfig, recoveryKey string) [
 func ruleRecipientsProblem(recipients []string, recoveryKey string) string {
 	if len(recipients) != 2 {
 		return fmt.Sprintf("has %d recipients; expected exactly 2 (one seat key and declared recovery key)", len(recipients))
+	}
+	for _, r := range recipients {
+		if !IsValidAgePublicKey(r) {
+			return fmt.Sprintf("recipient %q is not a valid age public key", r)
+		}
 	}
 	if recipients[0] == recipients[1] {
 		return fmt.Sprintf("has duplicate recipient %s; a seat is one seat key and the declared recovery key, distinct", recipients[0])
@@ -143,11 +157,18 @@ func CheckInvariant2(storeDir string, sopsCfg *SopsConfig, files []string) []Che
 			continue
 		}
 
-		if !sameKeySet(fileRecipients, rule.Recipients) {
+		// The recovery key itself is invariant 1's to name; here the file is held to its
+		// rule. A file under a bad rule is fixed with the rule (invariant 1 names it), any
+		// other difference by bringing the file to its rule.
+		if problem := seatFileRecipientsProblem(fileRecipients, rule.Recipients, ""); problem != "" {
+			remedy := "run: sops updatekeys " + file
+			if ruleRecipientsProblem(rule.Recipients, "") != "" {
+				remedy = "the rule is fixed first in .sops.yaml, then run: sops updatekeys " + file
+			}
 			failures = append(failures, CheckFailure{
 				Kind:   "recipients-drift",
 				File:   file,
-				Reason: fmt.Sprintf("recipients differ from .sops.yaml; run: sops updatekeys %s", file),
+				Reason: fmt.Sprintf("%s; %s", problem, remedy),
 			})
 		}
 	}
