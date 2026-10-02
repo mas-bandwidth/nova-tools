@@ -84,7 +84,7 @@ receipt** no receipt's `--closes` names, and with `--require-all` on every verb 
 naming a tool that is not under that `cmd/` is set aside and counted on
 `DOGFOOD NOTE shipped=<n> outside=<n> cmd=<dir>`, and judges nothing.
 
-**An edge is answered, not outlived.** It used to be cleared by anybody running
+**An edge is answered, not outlived.** It is not cleared by somebody else running
 the verb again later and finding nothing — so where two people dogfood the same
 verb, the second one's pass silently closed the first one's finding, unread and
 unfiled, and the row printed that second person's `ok=yes` over it. A finding is
@@ -160,13 +160,13 @@ those findings.
 commas. There is no default: a range checked against nobody would admit
 anybody, so the flag is required and the repository's own config is never a
 fallback. An email spelled with a bracket still inside it is refused rather
-than quietly matched against no one (#1805).
+than quietly matched against no one.
 
 `--kind` is a card kind this toolchain DECLARES, and there is no default one
 (SPEC-TOOLWORK §5 rules 3 and 6). It unlocks an allowlisted stray exception and
-nothing else, so a kind the tool does not hold used to unlock nothing and print
+nothing else. A kind the tool does not hold is not answered with
 `HYGIENE OK` — a clean answer about a shape of work that does not exist. It is
-now refused by name, listing the kinds there are (#1848):
+refused by name, listing the kinds there are:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
@@ -184,7 +184,7 @@ bound that held.
 
 Findings are capped like every listing here, and the `MORE` line carries the
 command that prints the rest — the same run with the cap lifted, quoted so it
-can be pasted (#1804):
+can be pasted:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
