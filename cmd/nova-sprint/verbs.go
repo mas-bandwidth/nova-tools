@@ -37,9 +37,9 @@ var verbs []verb
 func init() {
 	verbs = []verb{
 		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
-		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>]", "add --stream s1 --count 100", (*app).cmdAdd},
+		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
-		{"release", "<sentinel>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
+		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "", "stop", (*app).cmdMachineStop},
@@ -934,6 +934,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	after := fs.String("after", "", "place the cards in line after this primary of the stream")
 	every := fs.Int("sentinel-every", 0, "with --count: a sentinel <stream>-gate-<n> after every k cards (a stop by its place in line)")
 	last := fs.Bool("sentinel-last", false, "with --sentinel-every: a sentinel after the last card too")
+	held := fs.Bool("held", false, "admit the cards held: waiting, a sentinel never reached and no card dealt, nothing raised, until nova-sprint release <id> --reason <text>; a wave loads behind a held sentinel with nothing before it")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "add", err.Error())
@@ -961,7 +962,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if *every != 0 || *last {
 			return refuse(stderr, "add", "--sentinel-every goes with --count, not a card per brief file")
 		}
-		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, c, stdout, stderr)
+		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, *held, c, stdout, stderr)
 	}
 	if len(briefFiles) == 1 {
 		if *brief != "" {
@@ -1013,7 +1014,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	var rs []sprint.AddReq
 	for _, sn := range streams {
 		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: sprint.Split(*needs), Brief: *brief, Who: c.actor,
-			Sentinel: *sentinel != "", Before: *before, After: *after, Every: *every, Last: *last}
+			Sentinel: *sentinel != "", Before: *before, After: *after, Every: *every, Last: *last, Held: *held}
 		if *score != "" {
 			f, err := strconv.ParseFloat(*score, 64)
 			if err != nil {
@@ -1043,7 +1044,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 // the order the files were named. Every brief is read and linted first (one
 // failing brief refuses the whole call, exit 2, nothing written), and one
 // store write adds every card.
-func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, c *common, stdout, stderr io.Writer) int {
+func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, held bool, c *common, stdout, stderr io.Writer) int {
 	if stream == "" {
 		return refuse(stderr, "add", "wants --stream and --brief-dir <dir> or a repeated --brief-file")
 	}
@@ -1094,7 +1095,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		}
 		st = s
 	}
-	r := sprint.AddReq{Stream: stream, Cards: cards, Who: c.actor, Before: before, After: after}
+	r := sprint.AddReq{Stream: stream, Cards: cards, Who: c.actor, Before: before, After: after, Held: held}
 	if score != "" {
 		f, err := strconv.ParseFloat(score, 64)
 		if err != nil {
@@ -1323,14 +1324,14 @@ func lintBrief(verbName, brief string, rules []swarm.ChildRule, max int, stderr 
 
 func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("release")
-	reason := fs.String("reason", "", "what you looked at and found: recorded on the sentinel and in its notification")
+	reason := fs.String("reason", "", "what you looked at and found: recorded on the sentinel or held card, and in a sentinel's notification")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "release", err.Error())
 	}
 	if len(ids) == 0 {
-		return refuse(stderr, "release", "wants the sentinels it releases and --reason <text>")
+		return refuse(stderr, "release", "wants the sentinels or held cards it releases and --reason <text>")
 	}
 	st, err := a.store(*c)
 	if err != nil {

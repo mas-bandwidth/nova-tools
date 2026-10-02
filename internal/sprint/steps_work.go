@@ -55,8 +55,11 @@ type AddReq struct {
 	// cards, none after the last unless Last: a stream in stops, one step.
 	Every int
 	Last  bool
-	Only  []string
-	Who   string
+	// Held admits every card held (IsHeld): waiting, a sentinel never
+	// reached, nothing dealt, until the coordinator's release.
+	Held bool
+	Only []string
+	Who  string
 }
 
 // gatePrefix is the prefix of the sentinels add --sentinel-every names.
@@ -327,7 +330,13 @@ func Add(s *Snapshot, r AddReq) Plan {
 		if a.sent || a.gate {
 			kind, col = "sentinel", Waiting
 		}
+		if r.Held {
+			col = Waiting
+		}
 		fields := map[string]string{"kind": kind, "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
+		if r.Held {
+			fields[FieldHeld] = stamp(s.Now)
+		}
 		if a.brief != "" && !a.gate {
 			fields["brief"] = a.brief
 		}
@@ -337,6 +346,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 		u := Unit{Key: a.id, Stream: r.Stream, Moved: fmt.Sprintf("%s -> %s stream=%s score=%s", a.id, col, r.Stream, fmtScore(a.score))}
 		if a.gate {
 			u.Moved = "sentinel " + u.Moved
+		}
+		if r.Held {
+			u.Moved += "; held until release"
 		}
 		if r.Sentinel {
 			u.Moved = "sentinel " + u.Moved
@@ -351,7 +363,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 					open = append(open, c.ID)
 				}
 			}
-			if len(open) == 0 {
+			if len(open) == 0 && !r.Held {
 				fields["reached"] = stamp(s.Now)
 				u.Notes = append(u.Notes, reachedNote(s, &Card{ID: a.id, Row: r.Stream}, nil, len(pulled), r.Who))
 				u.Moved += "; reached"
@@ -636,6 +648,12 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 			continue
 		}
+		if IsHeld(c) { // held, never reached or ready: the coordinator releases it
+			if len(r.IDs) > 0 {
+				p.refuse(c.ID, "held (add --held): the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
+			}
+			continue
+		}
 		if IsSentinel(c) { // reached, never ready: the coordinator releases it
 			if c.F("reached") == "" {
 				p.Units = append(p.Units, reachUnit(s, c, nil, r.Who))
@@ -657,7 +675,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
 	var out []Unit
 	for _, c := range s.Work.Column(Waiting) {
-		if landing[c.ID] || len(WaitsFor(s, c, landing)) > 0 {
+		if landing[c.ID] || IsHeld(c) || len(WaitsFor(s, c, landing)) > 0 {
 			continue
 		}
 		if IsSentinel(c) {
