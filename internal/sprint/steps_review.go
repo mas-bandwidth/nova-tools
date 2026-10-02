@@ -295,6 +295,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		}
 		return ""
 	}, s.Readers.Card)
+	namePrimarysReads(&p, all)
 	col := OK
 	if r.Verdict == "broken" {
 		col = Broken
@@ -422,6 +423,27 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		}
 	}
 	return p
+}
+
+// namePrimarysReads makes a read's refusal of a primary named where its read
+// card is meant say the read card: when the reader holds a read of that
+// primary (one of held, its asked or reading cards), the refusal names its id,
+// <primary>.r<attempt>.<reader>, so the next call is a paste.
+func namePrimarysReads(p *Plan, held []*Card) {
+	for i, rf := range p.Refused {
+		if rf.Why != noSuchCard {
+			continue
+		}
+		var ids []string
+		for _, c := range held {
+			if c.F("primary") == rf.Key {
+				ids = append(ids, c.ID)
+			}
+		}
+		if len(ids) > 0 {
+			p.Refused[i].Why = fmt.Sprintf("%s: %s is a primary, and a read names its read card: %s", noSuchCard, rf.Key, strings.Join(ids, ", "))
+		}
+	}
 }
 
 // reviewStep is what a step does around a primary it leaves in review, for
