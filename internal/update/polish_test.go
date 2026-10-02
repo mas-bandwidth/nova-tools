@@ -3,11 +3,13 @@ package update
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -222,6 +224,17 @@ func TestUpdateVerbsTakeJSONAndLeadWithTheirStatus(t *testing.T) {
 		assert.True(t, strings.HasPrefix(out, "APPLY OK name=foo dry_run=true from=1.0.0 to=1.2.0 "), out)
 		assert.Contains(t, out, "APPLY PLAN name=foo argv=2 version=1.2.0: install-foo 1.2.0")
 	})
+}
+
+// `help <verb>` is that verb's help whatever follows the verb, for every verb the
+// tool's help names and every verb of the release pipeline its `help release`
+// prints, `release cut` included.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+	_, release, _ := runTool(t, "nova-update", "help", "release")
+	testverbhelp.HelpWhateverFollows(t, func(args []string, stdout, stderr io.Writer) int {
+		return Run("nova-update", args, "v0", stdout, stderr, Environment{})
+	}, helpText("nova-update")+"\n"+release, "nova-update")
 }
 
 // The release verbs are one line of nova-update's usage, pointing at their own
