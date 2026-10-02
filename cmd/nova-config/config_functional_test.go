@@ -94,9 +94,9 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	require.Contains(t, errs, "run: nova-config migrate", "status before migrate: %q %q", out, errs)
 	out, _ = r.run(t, 0, "migrate")
 	require.True(t, strings.HasPrefix(out, "CONFIG MIGRATE pg=postgres@127.0.0.1:"), "migrate: %q", out)
-	require.True(t, strings.HasSuffix(out, " from=0 to=10 applied=10\n"), "migrate: %q", out)
+	require.True(t, strings.HasSuffix(out, " from=0 to=12 applied=12\n"), "migrate: %q", out)
 	out, _ = r.run(t, 0, "migrate")
-	require.True(t, strings.HasSuffix(out, " from=10 to=10 applied=0\n"), "migrate twice: %q", out)
+	require.True(t, strings.HasSuffix(out, " from=12 to=12 applied=0\n"), "migrate twice: %q", out)
 	out, _ = r.run(t, 0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
 	require.Equal(t, "CONFIG ADD kind=machine name=studio rev=1\n", out, "machine add: %q", out)
 	_, errs = r.run(t, 1, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
@@ -110,7 +110,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "friend", "list")
 	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=-\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = r.run(t, 0, "machine", "show", "studio")
-	require.True(t, strings.HasPrefix(out, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 created="), "machine show: %q", out)
+	require.True(t, strings.HasPrefix(out, "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=0 created="), "machine show: %q", out)
 	// The fleet row: there since migrate, set without a name, a machine it
 	// names cannot be removed.
 	out, _ = r.run(t, 0, "fleet", "show")
@@ -151,7 +151,13 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	out, _ = r.run(t, 0, "machine", "remove", "studio")
 	require.Equal(t, "CONFIG REMOVE kind=machine name=studio rev=9\n", out, "machine remove: %q", out)
 	out, _ = r.run(t, 0, "status")
-	require.Contains(t, out, " schema=10 machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 loop=0 loop_rev=0 route=0 route_rev=0 tier=2 tier_rev=0 redis=-", "status: %q", out)
+	require.Contains(t, out, " schema=12 machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 loop=0 loop_rev=0 route=0 route_rev=0 tier=2 tier_rev=0 redis=-", "status: %q", out)
+	// The width: set on the row, printed as set, with no Redis anywhere.
+	r.run(t, 0, "machine", "add", "wide", "--user", "u", "--seat", "s", "--slots", "160", "--width", "16")
+	out, _ = r.run(t, 0, "machine", "set", "wide", "--width", "32")
+	require.Equal(t, "CONFIG SET kind=machine name=wide rev=11 changed=width\n", out, "machine set --width: %q", out)
+	out, _ = r.run(t, 0, "machine", "width", "wide")
+	require.Equal(t, "CONFIG WIDTH machine=wide width=32 member=true\n", out, "machine width: %q", out)
 }
 
 func TestApplyEndToEnd(t *testing.T) {
@@ -172,14 +178,14 @@ func TestApplyEndToEnd(t *testing.T) {
 
 	// --check prints the plan and writes nothing but that beat.
 	out, _ := r.run(t, 0, "apply", "--check")
-	want := "CHECK ADD kind=machine name=hulk\nCHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0\nCHECK SET kind=fleet name=fleet changed=store,coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=5 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=4 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator,reader_tier\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=2 set=0 remove=0 rev=0 applied=0\n"
+	want := "CHECK ADD kind=machine name=hulk\nCHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0\nCHECK SET kind=fleet name=fleet changed=store,coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=5 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=4 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=2 set=0 remove=0 rev=0 applied=0\n"
 	require.Equal(t, want, out, "apply --check:\n%s\nwant:\n%s", out, want)
 	nCheck221, _ := r.client.DBSize(ctx).Result()
 	require.Equal(t, int64(1), nCheck221, "--check wrote %d keys (the beat is the one)", nCheck221-1)
 
 	// apply writes everything, one CONFIG APPLY line per kind.
 	out, _ = r.run(t, 0, "apply")
-	for _, want := range []string{"APPLY ADD kind=machine name=studio\n", "CONFIG APPLY kind=machine add=2 set=0 remove=0 rev=2 ms=", "APPLY SET kind=fleet name=fleet changed=store,coordinator\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=5 ms=", "APPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=4 ms=", "APPLY SET kind=sprint name=sprint changed=coordinator,reader_tier\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms="} {
+	for _, want := range []string{"APPLY ADD kind=machine name=studio\n", "CONFIG APPLY kind=machine add=2 set=0 remove=0 rev=2 ms=", "APPLY SET kind=fleet name=fleet changed=store,coordinator\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=5 ms=", "APPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=4 ms=", "APPLY SET kind=sprint name=sprint changed=coordinator\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms="} {
 		require.Contains(t, out, want, "apply output lacks %q:\n%s", want, out)
 	}
 	gotCheck232 := r.client.HGetAll(ctx, "friend:rowan:desired").Val()
@@ -201,7 +207,8 @@ func TestApplyEndToEnd(t *testing.T) {
 	require.Equal(t, "swarm-hulk", gotCheck250["seat"], "machine:hulk %v", gotCheck250)
 	require.Equal(t, "64", gotCheck250["slots"], "machine:hulk %v", gotCheck250)
 	require.Equal(t, "2", gotCheck250["runners"], "machine:hulk %v", gotCheck250)
-	require.Len(t, gotCheck250, 6, "machine:hulk %v", gotCheck250)
+	require.Equal(t, "0", gotCheck250["width"], "machine:hulk %v", gotCheck250)
+	require.Len(t, gotCheck250, 7, "machine:hulk %v", gotCheck250)
 	gotCheck253 := r.client.HGet(ctx, "machine:hulk:ceiling", "slots").Val()
 	require.Equal(t, "64", gotCheck253, "hulk ceiling %q", gotCheck253)
 	gotCheck256 := r.client.Get(ctx, config.FleetKey("store")).Val()
@@ -221,9 +228,9 @@ func TestApplyEndToEnd(t *testing.T) {
 	// machine that has not beaten; nothing is stored.
 	r.client.HSet(ctx, config.BeatKey("hulk"), "host", "hulk", "at", "1790000000000", "load1", "0.5", "ncpu", "64", "cpu", "3")
 	out, _ = r.run(t, 0, "machine", "list")
-	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=0 beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list with the live facts: %q", out)
+	require.Equal(t, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 width=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\nMACHINE name=studio user=glenn seat=studio slots=64 runners=0 width=0 beat=none\nCONFIG LIST kind=machine rows=2\n", out, "machine list with the live facts: %q", out)
 	out, _ = r.run(t, 0, "machine", "show", "hulk")
-	require.True(t, strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 created="), "machine show with the live facts: %q", out)
+	require.True(t, strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=64 runners=2 width=0 created="), "machine show with the live facts: %q", out)
 	require.True(t, strings.HasSuffix(out, " os=- arch=- cores=64 memory_gb=- beat=2026-09-21T14:13:20Z\n"), "machine show with the live facts: %q", out)
 	gotCheck282 := r.client.HGet(ctx, "machine:hulk", "cores").Val()
 	require.Equal(t, "", gotCheck282, "a live fact was stored in the registry hash")

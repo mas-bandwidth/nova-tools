@@ -351,28 +351,6 @@ func listRows(ctx context.Context, q queryer, kind string) ([]Row, error) {
 	return out, nil
 }
 
-// MachinesAndFleet reads every machine row and the fleet row in one
-// read-only repeatable-read transaction: both come from one snapshot, so a
-// write between them cannot show one revision of the machines and another of
-// the fleet row.
-func (p *PG) MachinesAndFleet(ctx context.Context) ([]Row, Row, error) {
-	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
-	if err != nil {
-		return nil, Row{}, fmt.Errorf("postgres: begin read: %w", err)
-	}
-	// ignored: a read-only transaction; the rollback ends it and has nothing to undo
-	defer func() { _ = tx.Rollback() }()
-	machines, err := listRows(ctx, tx, KindMachine)
-	if err != nil {
-		return nil, Row{}, err
-	}
-	fleet, _, err := getRow(ctx, tx, KindFleet, KindFleet)
-	if err != nil {
-		return nil, Row{}, err
-	}
-	return machines, fleet, nil
-}
-
 // record appends the history row inside the write's transaction.
 func record(ctx context.Context, tx *sql.Tx, kind, name, op string, before, after map[string]string, actor string) (int64, error) {
 	var b, a []byte

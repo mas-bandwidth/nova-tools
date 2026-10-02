@@ -102,24 +102,26 @@ field and refuses a value outside its type, naming every problem in one line.
 
 A machine of the fleet, named by its tailnet host: `ssh <name>` reaches it
 ("All fleet machines *must* be on the tailnet. This is a hard requirement."),
-so there is no address field. The row is exactly the four declared facts
+so there is no address field. The row is exactly the five declared facts
 something reads, "not invented rando stuff".
 
 ```
-nova-config machine add hulk --user gaffer --seat swarm-hulk --slots 40 --runners 0 --as rowan
+nova-config machine add hulk --user gaffer --seat swarm-hulk --slots 40 --runners 0 --width 32 --as rowan
 CONFIG ADD kind=machine name=hulk rev=1
-nova-config machine add studio --user glenn --seat studio --slots 64 --runners 1 --as rowan
+nova-config machine add studio --user glenn --seat studio --slots 64 --runners 1 --width 16 --as rowan
 CONFIG ADD kind=machine name=studio rev=2
 nova-config machine list
-MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0
-MACHINE name=studio user=glenn seat=studio slots=64 runners=1
+MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=32
+MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=16
 CONFIG LIST kind=machine rows=2
 ```
 
 `--user` is the login the plays and the seals use on it; `--seat` its
-nova-secrets seat; `--slots` how many cards it may run at once, the machine
-ceiling (`machine:<m>:ceiling`; 0 runs none); `--runners` how many CI
-runners it hosts (0, the default, hosts none).
+nova-secrets seat; `--slots` the machine ceiling apply writes
+(`machine:<m>:ceiling`), which the friends' desired slots must fit under, and
+not the sprint's width; `--runners` how many CI runners it hosts (0, the
+default, hosts none); `--width` the most work cards the sprint's member on it
+runs at once (0, the default, is no member).
 
 Measured facts (os, arch, cores, memory) are never typed: "I like measured
 facts coming live ... It's more robust." With a Redis named (`--redis`, or
@@ -129,26 +131,23 @@ beat does not carry yet and `beat=none` for a machine that has never beaten:
 
 ```
 nova-config machine list --redis space:6380
-MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
-MACHINE name=studio user=glenn seat=studio slots=64 runners=1 beat=none
+MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 width=32 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
+MACHINE name=studio user=glenn seat=studio slots=64 runners=1 width=16 beat=none
 CONFIG LIST kind=machine rows=2
 ```
 
-**Width and its own name.** One ceiling per machine is shared by the friends
-and the sprint, so a machine's room for the sprint's member is its `slots`
-less the slots of the friends charged to it (her beat's machine, else the
-fleet row's coordinator machine; with no friend beats on the store, every
-friend is charged to the coordinator machine). `machine width` prints it; a
-machine with a width of 1 or more is a member of the sprint's fleet. The friends' machines come from their beats, so a
-Redis is named (`--redis`, `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`) whenever a
-friend row carries slots; with none, the width is the ceiling and no Redis is
-opened:
+**Width and its own name.** A machine's `width` is the sprint member's width
+on it, set directly (`machine set <m> --width <n>`) and used as set:
+`machine width` prints it, and `nova-sprint fleet sync` moves it to the fleet
+table. Nothing else takes part (not its `slots`, not any friend row, no
+Redis). A machine with a width of 1 or more is a member of the sprint's fleet;
+width 0 is not:
 
 ```
-nova-config machine width m1 --redis r:6379
-CONFIG WIDTH machine=m1 width=5 slots=8 charged=3 member=true
-nova-config machine width m1 --redis r:6379 --json
-{"machine":"m1","slots":8,"charged":3,"width":5,"member":true}
+nova-config machine width m1
+CONFIG WIDTH machine=m1 width=32 member=true
+nova-config machine width m1 --json
+{"machine":"m1","width":32,"member":true}
 ```
 
 `machine self` prints this machine's own name, so a process learns it and types
@@ -200,10 +199,9 @@ CONFIG HISTORY kind=friend name=rowan changes=2
 ```
 
 `--slots` is her desired slots; the friends' slots on a machine fit under
-its ceiling together, and are charged to it only while each friend is awake
-(the bench's share on that machine is the remainder, live); she is charged
+its ceiling together (apply refuses `CEILING` otherwise); she is charged
 to the machine her beat reports (or the fleet's coordinator machine when
-she has no beat);
+she has no beat); her slots take nothing off any machine's `width`;
 `--tiers` is a comma list of flash, frontier, pro, which she can do (the
 deal's tier filter); `--roles` is a comma list of builder, may-hold, reader.
 
@@ -338,7 +336,7 @@ CHECK SET kind=fleet name=fleet changed=store,coordinator
 CONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=3 applied=0
 CHECK ADD kind=friend name=rowan
 CONFIG CHECK kind=friend add=1 set=0 remove=0 rev=5 applied=0
-CHECK SET kind=sprint name=sprint changed=coordinator,reader_tier
+CHECK SET kind=sprint name=sprint changed=coordinator
 CONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0
 CONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0
 CONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0
@@ -350,7 +348,7 @@ APPLY SET kind=fleet name=fleet changed=store,coordinator
 CONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=3 ms=1
 APPLY ADD kind=friend name=rowan
 CONFIG APPLY kind=friend add=1 set=0 remove=0 rev=5 ms=6
-APPLY SET kind=sprint name=sprint changed=coordinator,reader_tier
+APPLY SET kind=sprint name=sprint changed=coordinator
 CONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms=1
 CONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0
 CONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0
@@ -367,7 +365,7 @@ coordinator machine; the friend the sprint row names gets the `coordinator`
 role in Redis on top of her row's roles, so a handover (`sprint set
 --coordinator stella`, then `apply`) is two `SET ... changed=roles`, hers
 first. It never touches her logins or wake path: they are her presence's.
-For the sprint row, `sprint:coordinator` and `sprint:reader_tier` (the tier read cards' routes are drawn from, pro unless set). For a loop, the hash `loop:<l>`
+For the sprint row, `sprint:coordinator`. For a loop, the hash `loop:<l>`
 with every field, its log path, `rev` and `at`, and its name in the set
 `loops`: what the plays read to render one unit per loop. For a route, the
 hash `route:<r>` with every field, `rev` and `at`, and its name in the set
