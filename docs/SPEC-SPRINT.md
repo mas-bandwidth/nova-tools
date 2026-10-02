@@ -919,7 +919,9 @@ exactly, member by member, never by their counts.
     judgment naming it, or its stream while the stream is stopped or it merges
     there, or the tick's judgment on it that the coordinator acknowledged; (d)
     what it waits on, itself held, followed through the chain (a need not
-    landed, a sentinel not released, a place in the ready queues); (e) with
+    landed, a sentinel not released, a place in the ready queues, counted on
+    the members the deal may give it: a member below its room that refused
+    its card at staging holds no place for it); (e) with
     the machine STOPPED, the next tick. A chain that ends in nothing or in a
     cycle holds nothing. A judgment past its due time that no overdue mark
     holds, a stopped stream with no open judgment, and an operation pending
