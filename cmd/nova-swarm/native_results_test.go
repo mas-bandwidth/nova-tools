@@ -214,3 +214,61 @@ func usageDataRows(t *testing.T, path string) int {
 	}
 	return n
 }
+
+// TestReaderVerdictRecognizedFromHarnessLogWhenResultMDIsAbsent is the break-it probe
+// for defect 1 (card neg-03, route reader-space, attempt 1): an OpenCode reader writes
+// `verdict: ok` and `report: pushed=620175e8...` directly to stdout/stderr in
+// harness-output.log without writing a physical RESULT.md file.
+// nativeLeftAResult must recognize the result from harness-output.log so the run earns
+// NATIVE OK rather than NATIVE INCOMPLETE why=no-result (which caused ran=false and
+// verdict=""), and member.Result must extract the verdict and report.
+//
+// Break-it probe:
+// - Removing the harness log check in nativeLeftAResult causes assertion 1 and assertion 2 to fail.
+// - Removing report: parsing in readResult causes assertion 3 to fail.
+// - Removing the fallback to harness log in nativeChild.Result causes assertions 4-7 to fail.
+func TestReaderVerdictRecognizedFromHarnessLogWhenResultMDIsAbsent(t *testing.T) {
+	t.Parallel()
+
+	jobDir := t.TempDir()
+	logContent := "SANDBOX OK backend=sandbox-exec abi=- read=3 read-noexec=0 write=2 net=nopromise cwd=" + jobDir + " ancestors=17 cmd=opencode\n" +
+		"verdict: ok\n" +
+		"report: pushed=620175e81234567890abcdef1234567890abcdef\n" +
+		"SANDBOX DONE exit=0 cmd=opencode\n"
+
+	harnessLog := filepath.Join(jobDir, "harness-output.log")
+	require.NoError(t, os.WriteFile(harnessLog, []byte(logContent), 0o644))
+
+	// 1. nativeLeftAResult must return true for the job directory holding harness-output.log
+	assert.True(t, nativeLeftAResult(jobDir), "nativeLeftAResult must return true when harness-output.log contains verdict: ok without RESULT.md")
+
+	// 2. nativeVerdictWhy returns OK with no why= failure reason
+	runRes := nativeRunResult{job: jobDir, harness: "ok", rc: 0}
+	verdictWord, why := nativeVerdictWhy(runRes)
+	assert.Equal(t, "OK", verdictWord, "verdict word on NATIVE line must be OK")
+	assert.Empty(t, why, "why must be empty for successful reader run")
+
+	// 3. readResult on the harness log extracts verdict and report
+	head, verdict, report := readResult(harnessLog)
+	assert.Empty(t, head, "head should be empty when not specified")
+	assert.Equal(t, "ok", verdict, "verdict must be ok")
+	assert.Equal(t, "pushed=620175e81234567890abcdef1234567890abcdef", report, "report must be extracted")
+
+	// 4. nativeChild.Result() extracts verdict and report even when RESULT.md is absent
+	resultsDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(resultsDir, "report"), []byte(logContent), 0o644))
+	child := &nativeChild{
+		job:     jobDir,
+		results: resultsDir,
+		logPath: filepath.Join(jobDir, "native.log"),
+	}
+	require.NoError(t, os.WriteFile(child.logPath, []byte("NATIVE OK label=neg-03 job="+jobDir+" rc=0 harness=ok\n"), 0o644))
+
+	res := child.Result()
+	assert.True(t, res.Ran, "child must be marked as ran")
+	assert.True(t, res.OK, "child must be marked as OK")
+	assert.Equal(t, "ok", res.Verdict, "verdict must be parsed as ok")
+	assert.Equal(t, "pushed=620175e81234567890abcdef1234567890abcdef", res.Report, "report must be extracted from harness output")
+}
+
+

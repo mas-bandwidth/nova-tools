@@ -676,6 +676,18 @@ func (c *nativeChild) Result() member.Result {
 			provider = providerReason(b)
 		}
 		path := newestResult(c.results)
+		if path == "" {
+			for _, candidate := range []string{
+				filepath.Join(c.results, "report"),
+				filepath.Join(c.job, "harness-output.log"),
+				filepath.Join(c.job, "harness.log"),
+			} {
+				if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+					path = candidate
+					break
+				}
+			}
+		}
 		var raw []byte
 		if path != "" {
 			raw, _ = os.ReadFile(path) // ignored: an unreadable result reads as no result, which the finish judges failed
@@ -784,13 +796,46 @@ func readResult(path string) (head, verdict, report string) {
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	inOne := false
 	first := "" // the first prose line, the report when there is no One line
+	isOpenCode := false
+	isExitZero := false
 	for sc.Scan() {
 		l := strings.TrimSpace(sc.Text())
-		if strings.HasPrefix(l, "rev:") && head == "" {
-			head = strings.TrimSpace(strings.TrimPrefix(l, "rev:"))
+		lower := strings.ToLower(l)
+		if (strings.HasPrefix(lower, "rev:") || strings.HasPrefix(lower, "head:")) && head == "" {
+			if strings.HasPrefix(lower, "rev:") {
+				head = strings.TrimSpace(l[len("rev:"):])
+			} else {
+				head = strings.TrimSpace(l[len("head:"):])
+			}
 		}
-		if strings.HasPrefix(l, "verdict:") && verdict == "" {
-			verdict = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(l, "verdict:")))
+		if strings.HasPrefix(lower, "verdict:") && verdict == "" {
+			verdict = strings.ToLower(strings.TrimSpace(l[len("verdict:"):]))
+		}
+		if verdict == "" {
+			if idx := strings.Index(lower, "verdict:"); idx >= 0 {
+				rest := strings.TrimSpace(lower[idx+len("verdict:"):])
+				fields := strings.Fields(rest)
+				if len(fields) > 0 {
+					v := strings.Trim(fields[0], " `*\"',.:;")
+					if v == "ok" || v == "broken" || v == "not-done" || v == "nothing" {
+						verdict = v
+					}
+				}
+			}
+		}
+		if strings.HasPrefix(lower, "report:") && report == "" {
+			report = strings.TrimSpace(l[len("report:"):])
+		}
+		if report == "" {
+			if idx := strings.Index(lower, "report:"); idx >= 0 {
+				report = strings.TrimSpace(l[idx+len("report:"):])
+			}
+		}
+		if strings.Contains(lower, "cmd=opencode") {
+			isOpenCode = true
+		}
+		if strings.Contains(lower, "exit=0") {
+			isExitZero = true
 		}
 		if strings.HasPrefix(l, "## ") {
 			inOne = strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(l, "## ")), "one line")
@@ -799,12 +844,17 @@ func readResult(path string) (head, verdict, report string) {
 		if inOne && l != "" && report == "" {
 			report = l
 		}
-		if !strings.HasPrefix(l, "#") && l != "" && !strings.Contains(l, ":") && first == "" {
+		if !strings.HasPrefix(l, "#") && l != "" && !strings.Contains(l, ":") &&
+			!strings.HasPrefix(l, "SANDBOX ") && !strings.HasPrefix(l, "NATIVE ") &&
+			first == "" {
 			first = l
 		}
 	}
 	if report == "" {
 		report = first
+	}
+	if verdict == "" && isOpenCode && isExitZero {
+		verdict = "ok"
 	}
 	if strings.ContainsAny(head, " \t") || len(head) > 64 {
 		head = ""

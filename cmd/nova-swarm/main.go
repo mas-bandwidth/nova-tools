@@ -957,6 +957,10 @@ func nativeProcessExit(childRC int) int {
 // end, and the child writes no RESULT.md; that record, in the contract's shape, is the
 // artefact (swarm.FindCardResult reads its shape). The machinery writes no such file, so the
 // asked report's exclusion above stands.
+//
+// A READER'S VERDICT IN HARNESS OUTPUT (defect 1). When an OpenCode reader writes `verdict: ok`
+// directly to stdout/stderr in harness-output.log without writing a physical RESULT.md,
+// that verdict is recognized from the harness log rather than failing with no-result.
 func nativeLeftAResult(job string) bool {
 	if strings.TrimSpace(job) == "" {
 		return false
@@ -970,6 +974,17 @@ func nativeLeftAResult(job string) bool {
 	} {
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && !swarm.AskedReport(p) {
 			return true
+		}
+	}
+	for _, p := range []string{
+		filepath.Join(job, "harness-output.log"),
+		filepath.Join(job, "harness.log"),
+		job,
+	} {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			if _, v, _ := readResult(p); v != "" {
+				return true
+			}
 		}
 	}
 	return false
