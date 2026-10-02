@@ -377,7 +377,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	}
 
 	// (3a) THE LABEL IS A NAME, NOT A PATH. The slot is checked against the
-	// root above; that check is only one piece, and the directories this run makes next are two more:
+	// root above; that check is not the whole of it, and the directories this run
 	// then makes, leases and hands the wall as write roots are <slot>/jobs/<label> and
 	// <slot>/tmp/<label>, and a label is a string a card's own TSV row can spell. A label of
 	// `../../../OUTSIDE` makes both of those joins a path OUTSIDE the swarm root: MkdirAll
@@ -397,10 +397,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 
 	// The job directory is where the child runs and writes: <slot>/jobs/<label>, made here
 	// before the child starts, so the card's cwd exists and the card is told its place by
-	// that cwd (SPEC-SWARM rule 13). HOME is a data directory under the slot directory; the
+	// that cwd (docs/SPEC-SWARM.md). HOME is a data directory under the slot directory; the
 	// child is pointed at it and nothing above it.
 	jobDir := filepath.Join(cfg.slotDir, "jobs", cfg.label)
-	// THE RESULTS ROOT IS NOT THE JOB (issue #2632). A sweep deletes the job
+	// THE RESULTS ROOT IS NOT THE JOB. A sweep deletes the job
 	// directory. Publishing into it, or into a directory inside it, would make
 	// the copy the sweep removes.
 	if cfg.resultsRoot != "" && within(jobDir, cfg.resultsRoot) {
@@ -434,7 +434,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// whether that is lawful before any repair is designed: under **Slots** a worker has
 	// "its own data home" and "its own job directory" and "a slot is held by exactly one
 	// worker", and under **the races, taken out** two workers on one data home is the
-	// a locked database failure SPEC-SWARM closed on purpose. So the second run is
+	// locked database failure SPEC-SWARM closed on purpose. So the second run is
 	// REFUSED rather than made safe, and it is refused HERE -- the take is the first thing
 	// this verb does to the job directory that was not already there, and nothing of the
 	// holder's is touched on the way out.
@@ -459,7 +459,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// second run in the same <slot>/jobs/<label>. It cannot refuse a second run in the same
 	// SLOT under a different label, and the data home below is per SLOT, not per job: two
 	// labels in one slot is one HOME, one cache and one opencode.db, which is the
-	// SPEC-SWARM closed on purpose. The bench store
+	// locked database failure SPEC-SWARM closed on purpose. The bench store
 	// cannot answer this -- its lease is a count and names no directory -- so the slot says
 	// it itself, with the same lease machinery and the same four rules, and it is taken
 	// HERE, after the job lease, so that same-slot-same-label keeps saying what slot ownership requires.
