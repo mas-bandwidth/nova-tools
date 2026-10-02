@@ -17,7 +17,7 @@ const DispositionWord = "DISPOSITION"
 // It is a claim, never an authority: parsing authenticates nobody, and the
 // reviewer principal, head match and release rules stay in merge.
 type ReadClaim struct {
-	Who     string // lower-cased and trimmed, so who=Johnny and who=johnny are one friend
+	Who     string // lower-cased and trimmed so equivalent names have one canonical form
 	Head    string // lower-cased as typed; empty when the line names no head
 	Verdict string // upper-cased as typed
 	Score   string
