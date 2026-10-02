@@ -21,10 +21,10 @@ import (
 const resultLiftDepth = 2
 
 // FindCardResult is THE ONE PLACE a card's published result is looked for: the job root
-// first (ResultPath, the name the legacy runner's records use), then `repo/` and one
-// directory below it (issue #594). A path that is not a regular file is not a result: a
-// planted symlink is not followed and a FIFO is not a published report (issue #233). It is
-// exported because `native` asks it: whether the harness published anything at all (#591).
+// first (ResultPath), then `repo/` and one
+// directory below it. A path that is not a regular file is not a result: a
+// planted symlink is not followed and a FIFO is not a published report. It is
+// exported because `native` asks whether the harness published anything at all.
 // A framed card's finish that the gh shim recorded (cardcontract.FinishName, in the card
 // contract's shape) is a published result too, after the job root's RESULT.md: a child
 // whose `gh pr create` or `gh pr review` is its end published (docs/SPEC-CARD-CONTRACT.md).

@@ -7,7 +7,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// ONE RESULT CONTRACT, READ BY MACHINERY (slice 3 of PR #241).
+// ONE RESULT CONTRACT, READ BY MACHINERY.
 //
 // A job's RESULT.md is accepted or refused by comparing its first line to the card's
 // contract line, byte for byte. Line 2 is the disposition and is returned verbatim; the

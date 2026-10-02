@@ -14,7 +14,7 @@ import (
 //
 // A worker description optionally carries `max_turns` and `max_cache_read`.
 // The supervisor samples usage every --usage-interval beside the token
-// budget (rule 13); when a running task's cache_read exceeds max_cache_read,
+// budget; when a running task's cache_read exceeds max_cache_read,
 // or its turn count exceeds max_turns, the supervisor stops the task on the
 // existing stop path used for the deadline, the job moves to failed/ with
 // end=budget in usage.tsv, and the task's report carries
@@ -34,14 +34,14 @@ func CardCacheRead(u ProviderUsage) (int, bool) {
 
 // CountCardTurnsIn counts a job's assistant turns against a NAMED log: the log's
 // assistant lines, or the usage row count where the log has fewer, because the two routes keep the
-// harness's words in two different files and rule 13d says which is which: "Turns are
-// counted as rule 13b counts them, with `<job>/harness-output.log` as the log, since
+// harness's words in two different files: the log to count is
+// `<job>/harness-output.log`, since
 // `native` never writes `harness.log`."
 //
 // THE NAMES ARE NOT INTERCHANGEABLE. `harness.log` has two owners on the native route
 // already -- a batch pins its runner's stdout to it, which is where the NATIVE OK line
 // lands -- so counting "assistant" in it would count the machinery's own lines and not the
-// model's turns. `harness-output.log` is the capture with one writer (issue #608).
+// model's turns. `harness-output.log` is the capture with one writer.
 func CountCardTurnsIn(logPath string, u ProviderUsage) int {
 	return max(countAssistantLines(logPath), u.Turns)
 }
@@ -89,7 +89,7 @@ func PromptDefectLine(id string, cacheRead, max, turns int) string {
 		id, cacheRead, max, turns)
 }
 
-// THE MEASURED STARTUP COST (CARD-8349). Stella's read: a 2k cap was smaller
+// THE MEASURED STARTUP COST. A 2k cap was smaller
 // than the harness's own first context, so every card carrying it would have
 // died at once, at load, before doing any work. A card budget is only a budget
 // if it is above what the harness spends before the card's first turn; a

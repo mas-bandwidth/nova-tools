@@ -1,6 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 48
-internal/swarm/cardbudget.go:stella 1
+# ceiling: 47
 internal/swarm/fence.go:rowan 1
 internal/swarm/fileretry.go:stella 1
 internal/swarm/inputlimit.go:space 1

@@ -42,7 +42,7 @@ func newProcSnapshot() *procSnapshot {
 // gone. /proc/<pid>/stat counts in USER_HZ, which the kernel fixes at 100 regardless of
 // CONFIG_HZ, so one tick is exactly ten milliseconds; the value is scaled here so both
 // platforms hand the monitor one unit and a CPU-activity floor can be compared across them
-// (issue #916).
+// so both platforms use the same unit.
 func cpuOf(pid int) (uint64, bool) {
 	fields, ok := statFields(pid)
 	// fields[0] is field 3, so fields[11] and fields[12] are fields 14 and 15: utime, stime.
