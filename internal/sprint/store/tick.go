@@ -63,6 +63,11 @@ type KV interface {
 	// ShowState writes only a stored view's state text; a view that is not
 	// there is left alone.
 	ShowState(ctx context.Context, view, state string) error
+	// SetKeys writes records and deletes others in one atomic exchange (one
+	// MULTI/EXEC on Redis, one lock in Mem): the writes by record name and the
+	// deletes by record name, so a friend sync's roster, job records and
+	// removed friends' beat and jobs records land together or not at all.
+	SetKeys(ctx context.Context, writes map[string]string, deletes []string) error
 }
 
 // Both stores keep the machine's records.
@@ -1240,6 +1245,28 @@ func (m *Mem) SetKey(_ context.Context, name, value string) error {
 	return nil
 }
 
+// SetKeys writes records and deletes others under one lock: the writes and
+// the deletes land together, so a failed write leaves none of them. A delete
+// of a name it does not hold is not an error.
+func (m *Mem) SetKeys(_ context.Context, writes map[string]string, deletes []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.count("setkeys")
+	if err := m.fail("setkeys"); err != nil {
+		return err
+	}
+	if m.kv == nil {
+		m.kv = map[string]string{}
+	}
+	for name, value := range writes {
+		m.kv[name] = value
+	}
+	for _, name := range deletes {
+		delete(m.kv, name)
+	}
+	return nil
+}
+
 // GetKey reads a machine record.
 func (r *Redis) GetKey(ctx context.Context, name string) (string, bool, error) {
 	v, err := r.C.Get(ctx, r.Names.Key(name)).Result()
@@ -1252,6 +1279,22 @@ func (r *Redis) GetKey(ctx context.Context, name string) (string, bool, error) {
 // SetKey writes a machine record.
 func (r *Redis) SetKey(ctx context.Context, name, value string) error {
 	return r.C.Set(ctx, r.Names.Key(name), value, 0).Err()
+}
+
+// SetKeys writes records and deletes others in one MULTI/EXEC: the writes and
+// the deletes land together, so a failed exchange leaves none of them. A
+// delete of a name that is not there is not an error.
+func (r *Redis) SetKeys(ctx context.Context, writes map[string]string, deletes []string) error {
+	_, err := r.C.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		for name, value := range writes {
+			p.Set(ctx, r.Names.Key(name), value, 0)
+		}
+		for _, name := range deletes {
+			p.Del(ctx, r.Names.Key(name))
+		}
+		return nil
+	})
+	return err
 }
 
 // SetKeyShowing writes a machine record and the view's state in one

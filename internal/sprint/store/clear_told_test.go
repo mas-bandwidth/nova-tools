@@ -50,6 +50,10 @@ func (c *clearOnCall) ShowState(ctx context.Context, view, state string) error {
 	return c.kv.ShowState(ctx, view, state)
 }
 
+func (c *clearOnCall) SetKeys(ctx context.Context, writes map[string]string, deletes []string) error {
+	return c.kv.SetKeys(ctx, writes, deletes)
+}
+
 func (c *clearOnCall) ReadFence(ctx context.Context) (Fence, error) {
 	c.at("fence")
 	return c.Backend.ReadFence(ctx)
