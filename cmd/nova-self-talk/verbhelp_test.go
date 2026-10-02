@@ -13,5 +13,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
 	testverbhelp.Check(t, run, []testverbhelp.Case{
 		{Verb: "version"},
+		{Verb: "reconcile", Flags: []string{"--questions", "{dir}/self-check.md"}},
 	})
+	testverbhelp.HelpVerb(t, run, "nova-self-talk", "version", "reconcile")
 }

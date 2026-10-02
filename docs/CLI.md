@@ -243,6 +243,7 @@ are in [SPEC-CHECK.md](SPEC-CHECK.md).
 ## nova-self-talk
 
 ```
+nova-self-talk reconcile [--questions <path>] <answer-file>...
 nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
 nova-self-talk help
 ```
@@ -277,6 +278,32 @@ SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM: A rule weakened to
 **What a first run gets wrong.** Naming no files is a refusal, not an empty green; a shell glob is the usual first run. A file that cannot be read is not a clean file: the run names every unreadable path and scans nothing. A skipped file is announced, and a run whose every file was skipped exits 0 with `files=0`, so a caller gating on the exit code should also require `files>0`. There is no `quickstart` verb, because the first run is already one word and a filename.
 
 **The honest limit, printed on every run:** this catches known shapes only. Register, irony and quotation beyond the marked cases are invisible to grammar. A green means the known shapes are clear, never that the file is.
+
+### reconcile
+
+```
+nova-self-talk reconcile [--questions <path>] <answer-file>...
+```
+
+Reconciles self-check answer files against the baseline question set in `identity/self-check.md` (or `--questions <path>`), and refuses when the two do not account.
+
+**The test is accounting, not equality.** A run that answered fewer questions cold and names the gaps as spoiled or skipped has done the honest thing and reconciles:
+
+```
+nova-self-talk reconcile identity/self-check-answers-2026-08-12-0512.md
+RECONCILE OK file=identity/self-check-answers-2026-08-12-0512.md matched=65 unassisted=65 gaps=0 expected=65
+self-check reconciles: 65 answered against 65 asked
+```
+
+A run with gaps that are not accounted for refuses with exit 1, naming the unaccounted count:
+
+```
+nova-self-talk reconcile identity/self-check-answers-under-answered.md
+RECONCILE FAIL file=... matched=63 unassisted=63 gaps=2 expected=65 missing=2
+SELF-CHECK UNDER-ANSWERED: 63 answered against 65 asked -- 2 question(s) unaccounted for, and only 0 named as spoiled or skipped.
+```
+
+**It leaks nothing.** It reads the baseline for a count and never prints a question: the cold read survives the gate.
 
 ## nova-fuse
 

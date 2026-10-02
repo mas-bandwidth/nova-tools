@@ -49,7 +49,7 @@ var selfTalkAudit = audit.Config{
 		// its own, and returns a STRING that this package prints -- rendered field by
 		// field through oneline.Field before it is returned.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
-		`"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"regexp"`, `"strings"`,
+		`"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"regexp"`, `"strings"`,
 		// bounded prints the capped finding listings and the one MORE line that stands
 		// for what they did not print. Every line reaching it is rendered by a
 		// fmt.Sprintf in THIS package, which the classifier walks like any other print

@@ -28,6 +28,7 @@ const usage = `nova-self-talk: the self-talk register, classified (see docs/SPEC
 
 usage:
   nova-self-talk version    print this build identity (--version also accepted)
+  nova-self-talk reconcile [--questions <path>] <answer-file>...
   nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
   nova-self-talk help
 
@@ -62,6 +63,14 @@ writer's, and this tool never makes it.
                           hundred. DATED claims are never listed at all: they
                           are the WELCOME case -- a measurement, a record --
                           and they print as one count.
+
+reconcile:
+  nova-self-talk reconcile [--questions <path>] <answer-file>...
+                          reconcile a self-check answer file against the baseline
+                          question set in identity/self-check.md (or --questions).
+                          Compares answers against questions, reports matched
+                          count, unassisted count, and gaps, and refuses when
+                          the two do not account. Naming the gaps reconciles.
 
 Flags come before files. Exit codes: 0 no findings, 1 findings, 2 could not
 run (bad invocation, unreadable file). Use -- before a dash-prefixed filename.
@@ -172,6 +181,12 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
+	if len(args) == 2 && args[0] == "help" && args[1] == "version" {
+		verbflag.HelpIfAsked([]string{"-h"}, "version")
+	}
+	if len(args) == 2 && args[0] == "help" && args[1] == "reconcile" {
+		return cmdReconcile([]string{"-h"}, stdout, stderr)
+	}
 	// `version` is a word here for the same reason `help` is, and it is recognised in
 	// the same place: as the WHOLE invocation, before the flag set is built. This tool
 	// takes files positionally, so a lone `version` is a file named version to the
@@ -180,6 +195,9 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	// actually named `version` is still scanned when it is named beside another.
 	if len(args) == 1 && (args[0] == "version" || args[0] == "--version") {
 		return cmdVersion(nil, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "reconcile" {
+		return cmdReconcile(args[1:], stdout, stderr)
 	}
 	fs := flag.NewFlagSet("nova-self-talk", flag.ContinueOnError)
 	// Package flag is given no stream: its error text quotes the argument it could
