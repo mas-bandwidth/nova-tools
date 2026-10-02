@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -230,15 +231,14 @@ var Benches = []string{"space", "studio", "superman", "batman", "air"}
 // CI run (`run<id>`, the digits of a GitHub Actions run id) or a bench in
 // Benches. Free text is refused: `2s@guess` names nothing a reader can open.
 func parseMeasured(field string) (float64, string, error) {
-	at := strings.Index(field, "s@")
-	if at <= 0 || at+2 >= len(field) {
+	before, where, found := strings.Cut(field, "s@")
+	if !found || before == "" || where == "" {
 		return 0, "", fmt.Errorf("measured %q is not <seconds>s@<where>; a row names the time it was cut from and where", field)
 	}
-	secs, err := strconv.ParseFloat(field[:at], 64)
+	secs, err := strconv.ParseFloat(before, 64)
 	if err != nil || secs <= 0 {
 		return 0, "", fmt.Errorf("measured %q is not a positive number of seconds", field)
 	}
-	where := field[at+2:]
 	if !measuredWhere(where) {
 		return 0, "", fmt.Errorf("measured %q: where %q is neither run<id> (a CI run) nor a bench (%s)", field, where, strings.Join(Benches, ", "))
 	}
@@ -255,12 +255,7 @@ func measuredWhere(where string) bool {
 		}
 		return true
 	}
-	for _, b := range Benches {
-		if where == b {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(Benches, where)
 }
 
 // ParseSleeps reads the SLEEPS ledger: `pkg<TAB>test<TAB>where` rows, blank
@@ -312,12 +307,7 @@ func (b Budgets) budgetFor(pkg, test string, def float64) float64 {
 
 // ledgered reports whether the SLEEPS ledger names (pkg, test).
 func (b Budgets) ledgered(pkg, test string) bool {
-	for _, row := range b.Sleeps {
-		if row.Test == test && matches(row.Package, pkg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(b.Sleeps, func(row SleepRow) bool { return row.Test == test && matches(row.Package, pkg) })
 }
 
 // topLevel is a test name's top-level test: a subtest's skip is its parent's.

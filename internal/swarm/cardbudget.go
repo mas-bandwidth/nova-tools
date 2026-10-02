@@ -43,11 +43,7 @@ func CardCacheRead(u ProviderUsage) (int, bool) {
 // lands -- so counting "assistant" in it would count the machinery's own lines and not the
 // model's turns. `harness-output.log` is the capture with one writer (issue #608).
 func CountCardTurnsIn(logPath string, u ProviderUsage) int {
-	n := countAssistantLines(logPath)
-	if u.Turns > n {
-		n = u.Turns
-	}
-	return n
+	return max(countAssistantLines(logPath), u.Turns)
 }
 
 // countAssistantLines counts the harness log lines that carry an assistant

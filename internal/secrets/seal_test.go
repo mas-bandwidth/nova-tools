@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -53,27 +56,15 @@ func newSealFixture(t *testing.T, decryptOut string) *sealFixture {
 		gitArgs:    filepath.Join(dir, "git.args"),
 		ghArgs:     filepath.Join(dir, "gh.args"),
 	}
-	if err := os.MkdirAll(f.storeDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(f.storeDir, ".git"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(f.storeDir, ".sops.yaml"), []byte("creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: age1abc\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(f.storeDir, "rowan.yaml"), []byte("ENC[old]\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(f.storeDir, 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(f.storeDir, ".git"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(f.storeDir, ".sops.yaml"), []byte("creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: age1abc\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(f.storeDir, "rowan.yaml"), []byte("ENC[old]\n"), 0644))
 
 	keyDir := filepath.Join(dir, "keys")
-	if err := os.MkdirAll(keyDir, 0700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(keyDir, 0700))
 	f.keyPath = filepath.Join(keyDir, "rowan.key")
-	if err := os.WriteFile(f.keyPath, []byte("AGE-SECRET-KEY-1TEST\n# public key: age1test\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(f.keyPath, []byte("AGE-SECRET-KEY-1TEST\n# public key: age1test\n"), 0600))
 
 	sopsBody := "ARGS=\"" + f.sopsArgs + "\"\n" +
 		"STDIN=\"" + f.sopsStdin + "\"\n" +
@@ -101,18 +92,14 @@ func newSealFixture(t *testing.T, decryptOut string) *sealFixture {
 		"exit 0\n"
 	f.ghPath = f.writeScript(t, "gh", ghBody)
 
-	if err := os.WriteFile(f.sopsDecOut, []byte(decryptOut), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(f.sopsDecOut, []byte(decryptOut), 0644))
 	return f
 }
 
 func (f *sealFixture) writeScript(t *testing.T, name, body string) string {
 	t.Helper()
 	p := filepath.Join(f.dir, name)
-	if err := testbin.WriteExecutable(p, []byte("#!/bin/sh\n"+body), 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(p, []byte("#!/bin/sh\n"+body), 0755))
 	return p
 }
 
@@ -149,36 +136,23 @@ func TestSealPipedValueLandsInEncryptStdinNotArgv(t *testing.T) {
 	skipPOSIXFakesOnWindows(t)
 	f := newSealFixture(t, "OTHER: keepme\nTARGET: oldvalue\n")
 	line, err := RunSeal(f.options(t, "TARGET", "newsecretvalue\n", true))
-	if err != nil {
-		t.Fatalf("RunSeal: %v", err)
-	}
+	require.NoError(t, err, "RunSeal: %v", err)
 	stdin := readMaybe(t, f.sopsStdin)
-	if !strings.Contains(stdin, "TARGET: newsecretvalue") {
-		t.Errorf("encrypt stdin missing the pasted value; got:\n%s", stdin)
-	}
-	if n := strings.Count(stdin, "TARGET:"); n != 1 {
-		t.Errorf("encrypt stdin holds %d TARGET lines, want 1:\n%s", n, stdin)
-	}
+	assert.Contains(t, stdin, "TARGET: newsecretvalue", "encrypt stdin missing the pasted value; got:\n%s", stdin)
+	n := strings.Count(stdin, "TARGET:")
+	assert.Equal(t, 1, n, "encrypt stdin holds %d TARGET lines, want 1:\n%s", n, stdin)
 	argv := readMaybe(t, f.sopsArgs)
-	if strings.Contains(argv, "newsecretvalue") {
-		t.Errorf("value leaked into sops argv:\n%s", argv)
-	}
-	if !strings.Contains(argv, "--filename-override") || !strings.Contains(argv, "rowan.yaml") {
-		t.Errorf("encrypt did not use --filename-override rowan.yaml:\n%s", argv)
-	}
-	if !strings.HasSuffix(strings.TrimSpace(argv), "/dev/stdin") {
-		t.Errorf("encrypt argv must end with the /dev/stdin file argument (real sops exits 100 without it):\n%s", argv)
-	}
+	assert.NotContains(t, argv, "newsecretvalue", "value leaked into sops argv:\n%s", argv)
+	assert.Contains(t, argv, "--filename-override", "encrypt did not use --filename-override rowan.yaml:\n%s", argv)
+	assert.Contains(t, argv, "rowan.yaml", "encrypt did not use --filename-override rowan.yaml:\n%s", argv)
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(argv), "/dev/stdin"), "encrypt argv must end with the /dev/stdin file argument (real sops exits 100 without it):\n%s", argv)
 	wantCwd, _ := filepath.EvalSymlinks(f.storeDir)
-	if got := strings.TrimSpace(readMaybe(t, f.sopsArgs+".cwd")); got != wantCwd {
-		t.Errorf("encrypt ran in %q, want the store %q (sops finds .sops.yaml from its cwd)", got, wantCwd)
-	}
-	if strings.Contains(line, "newsecretvalue") {
-		t.Errorf("value leaked into the OK line: %s", line)
-	}
-	if !strings.Contains(line, "SEAL OK") || !strings.Contains(line, "name=TARGET") || !strings.Contains(line, "seat=rowan") {
-		t.Errorf("unexpected OK line: %s", line)
-	}
+	got := strings.TrimSpace(readMaybe(t, f.sopsArgs+".cwd"))
+	assert.Equal(t, wantCwd, got, "encrypt ran in %q, want the store %q (sops finds .sops.yaml from its cwd)", got, wantCwd)
+	assert.NotContains(t, line, "newsecretvalue", "value leaked into the OK line: %s", line)
+	assert.Contains(t, line, "SEAL OK", "unexpected OK line: %s", line)
+	assert.Contains(t, line, "name=TARGET", "unexpected OK line: %s", line)
+	assert.Contains(t, line, "seat=rowan", "unexpected OK line: %s", line)
 }
 
 func TestSealEmptyValueRefused(t *testing.T) {
@@ -188,16 +162,11 @@ func TestSealEmptyValueRefused(t *testing.T) {
 	f := newSealFixture(t, "TARGET: old\n")
 	for _, value := range []string{"", "\n"} {
 		_, err := RunSeal(f.options(t, "TARGET", value, true))
-		if err == nil {
-			t.Fatalf("RunSeal accepted an empty value %q", value)
-		}
-		if !strings.Contains(strings.ToLower(err.Error()), "empty") {
-			t.Errorf("empty-value refusal does not say empty: %v", err)
-		}
+		require.Error(t, err, "RunSeal accepted an empty value %q", value)
+		assert.Contains(t, strings.ToLower(err.Error()), "empty", "empty-value refusal does not say empty: %v", err)
 	}
-	if got := readMaybe(t, f.sopsArgs); got != "" {
-		t.Errorf("empty value still started sops:\n%s", got)
-	}
+	got := readMaybe(t, f.sopsArgs)
+	assert.Empty(t, got, "empty value still started sops:\n%s", got)
 }
 
 func TestSealReplacesExistingNameNotDuplicated(t *testing.T) {
@@ -205,19 +174,13 @@ func TestSealReplacesExistingNameNotDuplicated(t *testing.T) {
 
 	skipPOSIXFakesOnWindows(t)
 	f := newSealFixture(t, "TARGET: old\nOTHER: keepme\nTARGET: older\n")
-	if _, err := RunSeal(f.options(t, "TARGET", "fresh\n", true)); err != nil {
-		t.Fatalf("RunSeal: %v", err)
-	}
+	_, err := RunSeal(f.options(t, "TARGET", "fresh\n", true))
+	require.NoError(t, err, "RunSeal: %v", err)
 	stdin := readMaybe(t, f.sopsStdin)
-	if n := strings.Count(stdin, "TARGET:"); n != 1 {
-		t.Errorf("TARGET appears %d times, want 1:\n%s", n, stdin)
-	}
-	if !strings.Contains(stdin, "TARGET: fresh") {
-		t.Errorf("new value missing:\n%s", stdin)
-	}
-	if !strings.Contains(stdin, "OTHER: keepme") {
-		t.Errorf("unrelated key was dropped:\n%s", stdin)
-	}
+	n := strings.Count(stdin, "TARGET:")
+	assert.Equal(t, 1, n, "TARGET appears %d times, want 1:\n%s", n, stdin)
+	assert.Contains(t, stdin, "TARGET: fresh", "new value missing:\n%s", stdin)
+	assert.Contains(t, stdin, "OTHER: keepme", "unrelated key was dropped:\n%s", stdin)
 }
 
 // TestSealNoPRMakesNoGHCalls: --no-pr must not leave the store on the seal
@@ -259,15 +222,11 @@ func TestSealNoPRMakesNoGHCalls(t *testing.T) {
 			initTrackedGitStore(t, f.storeDir)
 
 			gitBin, err := exec.LookPath("git")
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			origBranch := gitC(t, f.storeDir, "rev-parse", "--abbrev-ref", "HEAD")
 			origHEAD := gitC(t, f.storeDir, "rev-parse", "HEAD")
 			origSeat, err := os.ReadFile(filepath.Join(f.storeDir, "rowan.yaml"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 
 			var gitLog []string
 			opts := f.options(t, "TARGET", placeholder+"\n", true)
@@ -284,79 +243,52 @@ func TestSealNoPRMakesNoGHCalls(t *testing.T) {
 			}
 
 			line, runErr := RunSeal(opts)
-			if strings.Contains(line, placeholder) {
-				t.Errorf("value leaked into the OK line: %s", line)
+			assert.NotContains(t, line, placeholder, "value leaked into the OK line: %s", line)
+			if runErr != nil {
+				assert.NotContains(t, runErr.Error(), placeholder, "value leaked into the error: %v", runErr)
 			}
-			if runErr != nil && strings.Contains(runErr.Error(), placeholder) {
-				t.Errorf("value leaked into the error: %v", runErr)
-			}
-			if got := readMaybe(t, f.ghArgs); got != "" {
-				t.Errorf("--no-pr called gh:\n%s", got)
-			}
+			got := readMaybe(t, f.ghArgs)
+			assert.Empty(t, got, "--no-pr called gh:\n%s", got)
 			joined := strings.Join(gitLog, "\n")
-			if strings.Contains(joined, "push") {
-				t.Errorf("--no-pr pushed:\n%s", joined)
-			}
-			if strings.Contains(joined, "pull") {
-				t.Errorf("--no-pr pulled:\n%s", joined)
-			}
+			assert.NotContains(t, joined, "push", "--no-pr pushed:\n%s", joined)
+			assert.NotContains(t, joined, "pull", "--no-pr pulled:\n%s", joined)
 
 			gotBranch := gitC(t, f.storeDir, "rev-parse", "--abbrev-ref", "HEAD")
 			gotHEAD := gitC(t, f.storeDir, "rev-parse", "HEAD")
 			gotSeat, err := os.ReadFile(filepath.Join(f.storeDir, "rowan.yaml"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if gotBranch != origBranch {
-				t.Errorf("final branch %s, want starting branch %s", gotBranch, origBranch)
-			}
-			if gotHEAD != origHEAD {
-				t.Errorf("final HEAD %s, want starting HEAD %s", gotHEAD, origHEAD)
-			}
-			if string(gotSeat) != string(origSeat) {
-				t.Errorf("final worktree seat file differs from the starting tree")
-			}
-			if st, err := CheckGitWorkingCopy(f.storeDir); err != nil || !st.Clean {
-				t.Errorf("exec would refuse this store after --no-pr: %v", err)
+			require.NoError(t, err)
+			assert.Equal(t, origBranch, gotBranch, "final branch %s, want starting branch %s", gotBranch, origBranch)
+			assert.Equal(t, origHEAD, gotHEAD, "final HEAD %s, want starting HEAD %s", gotHEAD, origHEAD)
+			assert.Equal(t, string(origSeat), string(gotSeat), "final worktree seat file differs from the starting tree")
+			{
+				st, err := CheckGitWorkingCopy(f.storeDir)
+				if assert.NoError(t, err, "exec would refuse this store after --no-pr: %v", err) {
+					assert.True(t, st.Clean, "exec would refuse this store after --no-pr: %v", err)
+				}
 			}
 
 			if tc.wantErr {
-				if runErr == nil {
-					t.Fatalf("RunSeal succeeded, want injected git failure")
-				}
-			} else if runErr != nil {
-				t.Fatalf("RunSeal: %v", runErr)
+				require.Error(t, runErr, "RunSeal succeeded, want injected git failure")
+			} else {
+				require.NoError(t, runErr, "RunSeal: %v", runErr)
 			}
 
 			if !tc.wantErr {
-				if !strings.Contains(joined, "checkout") || !strings.Contains(joined, "commit") {
-					t.Errorf("--no-pr did not checkout/commit:\n%s", joined)
-				}
-				if !strings.Contains(line, "committed") {
-					t.Errorf("--no-pr line should say committed: %s", line)
-				}
-				if !strings.Contains(line, "branch="+wantBranch) {
-					t.Errorf("--no-pr line should name the seal branch: %s", line)
-				}
+				assert.Contains(t, joined, "checkout", "--no-pr did not checkout/commit:\n%s", joined)
+				assert.Contains(t, joined, "commit", "--no-pr did not checkout/commit:\n%s", joined)
+				assert.Contains(t, line, "committed", "--no-pr line should say committed: %s", line)
+				assert.Contains(t, line, "branch="+wantBranch, "--no-pr line should name the seal branch: %s", line)
 			}
 
 			sealSHA, sealErr := gitCErr(t, f.storeDir, "rev-parse", wantBranch)
 			if tc.wantCommit {
-				if sealErr != nil {
-					t.Fatalf("seal commit is not retrievable on %s: %v", wantBranch, sealErr)
-				}
-				if sealSHA == origHEAD {
-					t.Errorf("seal branch %s still points at the starting commit", wantBranch)
-				}
+				require.NoError(t, sealErr, "seal commit is not retrievable on %s: %v", wantBranch, sealErr)
+				assert.NotEqual(t, origHEAD, sealSHA, "seal branch %s still points at the starting commit", wantBranch)
 				blob := gitC(t, f.storeDir, "show", wantBranch+":rowan.yaml")
-				if !strings.Contains(blob, "ENC[marker]") {
-					t.Errorf("seal commit does not hold the new ciphertext")
-				}
-				if strings.Contains(blob, placeholder) {
-					t.Errorf("placeholder leaked into the committed seat file")
-				}
-			} else if sealErr == nil && sealSHA != origHEAD {
-				t.Errorf("injected failure still moved %s to %s", wantBranch, sealSHA)
+				assert.Contains(t, blob, "ENC[marker]", "seal commit does not hold the new ciphertext")
+				assert.NotContains(t, blob, placeholder, "placeholder leaked into the committed seat file")
+			} else if sealErr == nil {
+				assert.Equal(t, origHEAD, sealSHA, "injected failure still moved %s to %s", wantBranch, sealSHA)
 			}
 		})
 	}
@@ -388,18 +320,12 @@ func TestReviewSealNoPRPreservesStartingDirtyWorktree(t *testing.T) {
 			initTrackedGitStore(t, f.storeDir)
 
 			gitBin, err := exec.LookPath("git")
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			owned := filepath.Join(f.storeDir, ".sops.yaml")
 			origOwned, err := os.ReadFile(owned)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			dirty := append(append([]byte{}, origOwned...), []byte("# "+marker+"\n")...)
-			if err := os.WriteFile(owned, dirty, 0644); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(owned, dirty, 0644))
 			if tc.staged {
 				gitC(t, f.storeDir, "add", ".sops.yaml")
 			}
@@ -407,9 +333,7 @@ func TestReviewSealNoPRPreservesStartingDirtyWorktree(t *testing.T) {
 			origBranch := gitC(t, f.storeDir, "rev-parse", "--abbrev-ref", "HEAD")
 			origHEAD := gitC(t, f.storeDir, "rev-parse", "HEAD")
 			origSeat, err := os.ReadFile(filepath.Join(f.storeDir, "rowan.yaml"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 
 			var gitLog []string
 			opts := f.options(t, "TARGET", "placeholder-value\n", true)
@@ -423,48 +347,25 @@ func TestReviewSealNoPRPreservesStartingDirtyWorktree(t *testing.T) {
 			}
 
 			line, runErr := RunSeal(opts)
-			if strings.Contains(line, marker) {
-				t.Errorf("caller edit leaked into the OK line: %s", line)
-			}
-			if runErr == nil {
-				t.Errorf("RunSeal accepted a dirty worktree")
-			} else {
+			assert.NotContains(t, line, marker, "caller edit leaked into the OK line: %s", line)
+			if assert.Error(t, runErr, "RunSeal accepted a dirty worktree") {
 				msg := strings.ToLower(runErr.Error())
-				if !strings.Contains(msg, "clean") && !strings.Contains(msg, "dirty") {
-					t.Errorf("refusal does not name a dirty/clean store: %v", runErr)
-				}
-				if !strings.Contains(msg, "git status") && !strings.Contains(msg, "commit") {
-					t.Errorf("refusal is not actionable: %v", runErr)
-				}
-				if strings.Contains(runErr.Error(), marker) {
-					t.Errorf("caller edit leaked into the error: %v", runErr)
-				}
+				assert.True(t, strings.Contains(msg, "clean") || strings.Contains(msg, "dirty"), "refusal does not name a dirty/clean store: %v", runErr)
+				assert.True(t, strings.Contains(msg, "git status") || strings.Contains(msg, "commit"), "refusal is not actionable: %v", runErr)
+				assert.NotContains(t, runErr.Error(), marker, "caller edit leaked into the error: %v", runErr)
 			}
 
 			gotOwned, err := os.ReadFile(owned)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(gotOwned) != string(dirty) {
-				t.Errorf("starting dirty worktree was not restored")
-			}
+			require.NoError(t, err)
+			assert.Equal(t, string(dirty), string(gotOwned), "starting dirty worktree was not restored")
 			gotSeat, err := os.ReadFile(filepath.Join(f.storeDir, "rowan.yaml"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(gotSeat) != string(origSeat) {
-				t.Errorf("seat file was rewritten despite a dirty starting worktree")
-			}
-			if gitC(t, f.storeDir, "rev-parse", "--abbrev-ref", "HEAD") != origBranch {
-				t.Errorf("left the starting branch")
-			}
-			if gitC(t, f.storeDir, "rev-parse", "HEAD") != origHEAD {
-				t.Errorf("moved HEAD")
-			}
+			require.NoError(t, err)
+			assert.Equal(t, string(origSeat), string(gotSeat), "seat file was rewritten despite a dirty starting worktree")
+			assert.Equal(t, origBranch, gitC(t, f.storeDir, "rev-parse", "--abbrev-ref", "HEAD"), "left the starting branch")
+			assert.Equal(t, origHEAD, gitC(t, f.storeDir, "rev-parse", "HEAD"), "moved HEAD")
 			joined := strings.Join(gitLog, "\n")
-			if strings.Contains(joined, "checkout -b") || strings.Contains(joined, "checkout -f") {
-				t.Errorf("dirty store still switched branches:\n%s", joined)
-			}
+			assert.NotContains(t, joined, "checkout -b", "dirty store still switched branches:\n%s", joined)
+			assert.NotContains(t, joined, "checkout -f", "dirty store still switched branches:\n%s", joined)
 		})
 	}
 }
@@ -475,18 +376,13 @@ func TestSealFullPathOpensPRAndMerges(t *testing.T) {
 	skipPOSIXFakesOnWindows(t)
 	f := newSealFixture(t, "TARGET: old\n")
 	line, err := RunSeal(f.options(t, "TARGET", "v\n", false))
-	if err != nil {
-		t.Fatalf("RunSeal: %v", err)
-	}
+	require.NoError(t, err, "RunSeal: %v", err)
 	gh := readMaybe(t, f.ghArgs)
 	for _, want := range []string{"pr", "create", "view", "merge"} {
-		if !strings.Contains(gh, want) {
-			t.Errorf("gh calls missing %q:\n%s", want, gh)
-		}
+		assert.Contains(t, gh, want, "gh calls missing %q:\n%s", want, gh)
 	}
-	if !strings.Contains(line, "pr=#42") || !strings.Contains(line, "merged") {
-		t.Errorf("unexpected merged line: %s", line)
-	}
+	assert.Contains(t, line, "pr=#42", "unexpected merged line: %s", line)
+	assert.Contains(t, line, "merged", "unexpected merged line: %s", line)
 }
 
 // TestSealSaysWhatItIsDoing: a person at a terminal must be able to tell waiting from
@@ -501,30 +397,23 @@ func TestSealSaysWhatItIsDoing(t *testing.T) {
 	opts := f.options(t, "TARGET", "quietsecretvalue\n", false)
 	var progress strings.Builder
 	opts.Progress = &progress
-	if _, err := RunSeal(opts); err != nil {
-		t.Fatalf("RunSeal: %v", err)
-	}
+	_, err := RunSeal(opts)
+	require.NoError(t, err, "RunSeal: %v", err)
 	got := progress.String()
 	for _, want := range []string{"reading rowan.yaml", "encrypting", "committing on branch seal/rowan-TARGET-",
 		"pushing", "opening the pull request", "pull request #42 is open; waiting", "approved; merging #42",
 		"returning the store to its branch", "checking the seat decrypts"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("progress missing %q:\n%s", want, got)
-		}
+		assert.Contains(t, got, want, "progress missing %q:\n%s", want, got)
 	}
-	if strings.Contains(got, "quietsecretvalue") {
-		t.Errorf("value leaked into progress:\n%s", got)
-	}
+	assert.NotContains(t, got, "quietsecretvalue", "value leaked into progress:\n%s", got)
 	for _, l := range strings.Split(strings.TrimSpace(got), "\n") {
-		if !strings.HasPrefix(l, "seal: ") {
-			t.Errorf("progress line without the seal: prefix: %q", l)
-		}
+		assert.True(t, strings.HasPrefix(l, "seal: "), "progress line without the seal: prefix: %q", l)
 	}
 	git := strings.ReplaceAll(readMaybe(t, f.gitArgs), "\n", " ")
 	back, pull := strings.Index(git, "checkout -f"), strings.LastIndex(git, "pull")
-	if back < 0 || pull < 0 || back > pull {
-		t.Errorf("after the merge git must checkout -f the starting branch and then pull; got: %s", git)
-	}
+	assert.GreaterOrEqual(t, back, 0, "after the merge git must checkout -f the starting branch and then pull; got: %s", git)
+	assert.GreaterOrEqual(t, pull, 0, "after the merge git must checkout -f the starting branch and then pull; got: %s", git)
+	assert.LessOrEqual(t, back, pull, "after the merge git must checkout -f the starting branch and then pull; got: %s", git)
 }
 
 // TestSealEncryptTakesValueOnStdin asserts the core seal promise on every
@@ -537,9 +426,7 @@ func TestSealEncryptTakesValueOnStdin(t *testing.T) {
 	var gotStdin, gotDir string
 	var gotArgs []string
 	run := func(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
-		if name != "sops" {
-			t.Fatalf("unexpected helper %q", name)
-		}
+		require.Equal(t, "sops", name, "unexpected helper %q", name)
 		gotDir = dir
 		gotArgs = append([]string(nil), args...)
 		b, err := io.ReadAll(stdin)
@@ -553,29 +440,18 @@ func TestSealEncryptTakesValueOnStdin(t *testing.T) {
 	const value = "newsecretvalue"
 	plaintext := []byte("TARGET: " + value + "\n")
 	out, err := sealEncrypt(run, "sops", "/nonexistent/rowan.key", "/the/store", "rowan.yaml", plaintext)
-	if err != nil {
-		t.Fatalf("sealEncrypt: %v", err)
-	}
-	if !strings.Contains(gotStdin, "TARGET: "+value) {
-		t.Errorf("encrypt stdin missing the pasted value; got:\n%s", gotStdin)
-	}
-	if n := strings.Count(gotStdin, "TARGET:"); n != 1 {
-		t.Errorf("encrypt stdin holds %d TARGET lines, want 1:\n%s", n, gotStdin)
-	}
+	require.NoError(t, err, "sealEncrypt: %v", err)
+	assert.Contains(t, gotStdin, "TARGET: "+value, "encrypt stdin missing the pasted value; got:\n%s", gotStdin)
+	n := strings.Count(gotStdin, "TARGET:")
+	assert.Equal(t, 1, n, "encrypt stdin holds %d TARGET lines, want 1:\n%s", n, gotStdin)
 	for _, a := range gotArgs {
-		if strings.Contains(a, value) {
-			t.Errorf("value leaked into encrypt argv: %q", a)
-		}
+		assert.NotContains(t, a, value, "value leaked into encrypt argv: %q", a)
 	}
-	if len(gotArgs) == 0 || gotArgs[len(gotArgs)-1] != "/dev/stdin" {
-		t.Errorf("encrypt argv must end with /dev/stdin, got %q", gotArgs)
+	if assert.NotEmpty(t, gotArgs, "encrypt argv must end with /dev/stdin, got %q", gotArgs) {
+		assert.Equal(t, "/dev/stdin", gotArgs[len(gotArgs)-1], "encrypt argv must end with /dev/stdin, got %q", gotArgs)
 	}
-	if gotDir != "/the/store" {
-		t.Errorf("encrypt dir = %q, want the store", gotDir)
-	}
-	if !strings.Contains(string(out), "ENC[marker]") {
-		t.Errorf("encrypt stdout not returned: %q", out)
-	}
+	assert.Equal(t, "/the/store", gotDir, "encrypt dir = %q, want the store", gotDir)
+	assert.Contains(t, string(out), "ENC[marker]", "encrypt stdout not returned: %q", out)
 }
 
 func initTrackedGitStore(t *testing.T, storeDir string) {
@@ -595,9 +471,7 @@ func initTrackedGitStore(t *testing.T, storeDir string) {
 func gitC(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	out, err := gitCErr(t, dir, args...)
-	if err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
+	require.NoError(t, err, "git %v: %v\n%s", args, err, out)
 	return out
 }
 

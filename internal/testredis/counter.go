@@ -60,12 +60,10 @@ func (l launch) counter(t testing.TB, listen func(network, address string) (net.
 				return
 			}
 			conns = append(conns, c)
-			serving.Add(1)
-			go func() {
-				defer serving.Done()
+			serving.Go(func() {
 				defer c.Close()
 				serveCounted(c, &n)
-			}()
+			})
 		}
 	}()
 	return ln.Addr().String(), n.Load

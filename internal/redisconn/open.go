@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -271,10 +273,7 @@ func (d *firstDial) done() {
 func (d *firstDial) hangUp() {
 	d.mu.Lock()
 	d.closed = true
-	var toClose []net.Conn
-	for c := range d.conns {
-		toClose = append(toClose, c)
-	}
+	toClose := slices.Collect(maps.Keys(d.conns))
 	clear(d.conns)
 	d.mu.Unlock()
 

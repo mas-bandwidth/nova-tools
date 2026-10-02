@@ -270,10 +270,7 @@ func Retrieve(c *Corpus, channels []Channel, text string, k int) []FileHit {
 	}
 	// Fusion headroom: ask each channel for more than k, so a file's best
 	// chunk is unlikely to be truncated away before aggregation.
-	deep := k * 10
-	if deep < 50 {
-		deep = 50
-	}
+	deep := max(k*10, 50)
 	// The native score is claimed by the first channel IN THE CALLER'S ORDER
 	// that surfaced the chunk, so every receipt carries a score some channel
 	// actually computed, and names which one. Channels is a slice, so which

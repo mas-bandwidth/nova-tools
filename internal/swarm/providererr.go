@@ -3,6 +3,7 @@ package swarm
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -118,13 +119,7 @@ func errorTail(last string) string {
 // itself; a failed route not on the list hands back to the list's first other route. ""
 // when the list has nowhere else to go.
 func NextRoute(routes []string, failed string) string {
-	at := -1
-	for i, r := range routes {
-		if r == failed {
-			at = i
-			break
-		}
-	}
+	at := slices.Index(routes, failed)
 	for k := 1; k <= len(routes); k++ {
 		r := routes[(at+k+len(routes))%len(routes)]
 		if r != "" && r != failed {

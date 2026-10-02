@@ -3,8 +3,9 @@ package update
 import (
 	"bufio"
 	"fmt"
+	"maps"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -69,11 +70,7 @@ func diffVerb(c *tool.Call) *tool.Out {
 	for n := range after {
 		names[n] = true
 	}
-	ordered := make([]string, 0, len(names))
-	for n := range names {
-		ordered = append(ordered, n)
-	}
-	sort.Strings(ordered)
+	ordered := slices.Sorted(maps.Keys(names))
 	o := tool.Done().Fact("from", from).Fact("to", to).Fact("tools", len(ordered))
 	changed := 0
 	for _, n := range ordered {

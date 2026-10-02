@@ -6,10 +6,11 @@
 package seattest
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -44,13 +45,8 @@ func Home(t *testing.T, seat string, values map[string]string) string {
 	write(t, filepath.Join(store, "recovery.pub"), recPub+"\n")
 	write(t, filepath.Join(store, ".sops.yaml"), "creation_rules:\n  - path_regex: ^"+seat+"\\.yaml$\n    age: "+seatPub+","+recPub+"\n")
 
-	names := make([]string, 0, len(values))
-	for k := range values {
-		names = append(names, k)
-	}
-	sort.Strings(names)
 	var plain strings.Builder
-	for _, k := range names {
+	for _, k := range slices.Sorted(maps.Keys(values)) {
 		plain.WriteString(k + ": " + values[k] + "\n")
 	}
 	file := filepath.Join(store, seat+".yaml")

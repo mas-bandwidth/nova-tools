@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -144,12 +146,7 @@ func Platform(goos, goarch string) (string, error) {
 
 // ValidPlatform reports whether label is in Platforms.
 func ValidPlatform(label string) bool {
-	for _, p := range Platforms {
-		if p == label {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(Platforms, label)
 }
 
 // ReadRecordsFile reads the records at path.
@@ -241,10 +238,7 @@ func OneJar(cases []Case, records []Record) error {
 	if len(count) <= 1 {
 		return nil
 	}
-	jars := make([]string, 0, len(count))
-	for j := range count {
-		jars = append(jars, j)
-	}
+	jars := slices.Collect(maps.Keys(count))
 	sort.Slice(jars, func(a, b int) bool {
 		if count[jars[a]] != count[jars[b]] {
 			return count[jars[a]] > count[jars[b]]
@@ -267,11 +261,7 @@ func OneJar(cases []Case, records []Record) error {
 			cfgs = append(cfgs, r.Config)
 		}
 	}
-	var groups []string
-	for g := range other {
-		groups = append(groups, g)
-	}
-	sort.Strings(groups)
+	groups := slices.Sorted(maps.Keys(other))
 	return fmt.Errorf("the records hold %d jars: %s; one jar measures the whole file: run again, with the jar %s, the groups recorded under the other jars (%s: %s), or run every group with one jar and merge without --keep",
 		len(jars), strings.Join(parts, ", "), short(jars[0]), strings.Join(groups, ", "), strings.Join(cfgs, ", "))
 }

@@ -3,6 +3,8 @@ package sandbox
 import (
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestSystemReadsAreNotAFieldOnInputOrPolicy pins c1cbe386 (#948): linuxReadRoots
@@ -14,9 +16,8 @@ func TestSystemReadsAreNotAFieldOnInputOrPolicy(t *testing.T) {
 
 	for _, typ := range []reflect.Type{reflect.TypeOf(Input{}), reflect.TypeOf(Policy{})} {
 		for _, name := range []string{"SystemReads", "NoSystemReads"} {
-			if f, ok := typ.FieldByName(name); ok {
-				t.Fatalf("%s still carries %s: linuxReadRoots is the one enforced policy", typ, f.Name)
-			}
+			f, ok := typ.FieldByName(name)
+			require.False(t, ok, "%s still carries %s: linuxReadRoots is the one enforced policy", typ, f.Name)
 		}
 	}
 }

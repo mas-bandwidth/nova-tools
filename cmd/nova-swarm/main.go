@@ -695,9 +695,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		}
 		idleDur = v
 	}
-	if idleDur > d {
-		idleDur = d
-	}
+	idleDur = min(idleDur, d)
 	cardRaw, err := os.ReadFile(*cardPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-swarm native: --card wants a readable file: %s\n", oneline.Err(err))

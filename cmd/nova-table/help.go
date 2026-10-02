@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
@@ -93,12 +94,7 @@ func rootNames() string {
 	return strings.Join(names, ", ")
 }
 func isGroup(name string) bool {
-	for _, c := range commands {
-		if strings.HasPrefix(c.name, name+" ") {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(commands, func(c command) bool { return strings.HasPrefix(c.name, name+" ") })
 }
 func isHelp(s string) bool { return s == "-h" || s == "--help" || s == "-help" || s == "--h" }
 func (app *application) dispatch(args []string, out, errout io.Writer) int {

@@ -294,9 +294,8 @@ func TestSlowtestsOverBudgetExitsOneOnlyUnderEnforce(t *testing.T) {
 		code int
 	}{{nil, 0}, {[]string{"--enforce"}, 1}} {
 		code, stdout, _ := runCI(t, append([]string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, c.args...), stdin)
-		if code != c.code || stdout != want {
-			t.Errorf("%v: exit %d stdout %q, want %d and %q", c.args, code, stdout, c.code, want)
-		}
+		assert.Equal(t, c.code, code, "%v: exit %d stdout %q, want %d and %q", c.args, code, stdout, c.code, want)
+		assert.Equal(t, want, stdout, "%v: exit %d stdout %q, want %d and %q", c.args, code, stdout, c.code, want)
 	}
 }
 
@@ -341,9 +340,8 @@ func TestSlowtestsUnitTierBudgetsReadTheAllowlist(t *testing.T) {
 	assert.Equal(t, want, stdout, "stdout = %q, want %q", stdout, want)
 
 	code, _, stderr = runCI(t, []string{"slowtests", "--package-budget", "2", "--allowlist", filepath.Join(t.TempDir(), "absent")}, "")
-	if code != 2 || !strings.Contains(stderr, "--allowlist") {
-		t.Errorf("a missing allowlist: exit %d stderr %q, want a refusal naming --allowlist", code, stderr)
-	}
+	assert.Equal(t, 2, code, "a missing allowlist: exit %d stderr %q, want a refusal naming --allowlist", code, stderr)
+	assert.Contains(t, stderr, "--allowlist", "a missing allowlist: exit %d stderr %q, want a refusal naming --allowlist", code, stderr)
 }
 
 // PROBES 1, 5 and 6 of the #4413 ruling at the verb, with the load and CPUs
@@ -386,13 +384,13 @@ func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 			want := "CI-SLOW package=github.com/mas-bandwidth/nova-tools/cmd/nova-bus seconds=58.8s budget=2s slowest=TestWait:0.9s\n" +
 				"CI-SLOW test=TestA package=example.com/pkg seconds=1.4s budget=1.2s\n" +
 				"CI-LOAD load=" + load + ".00 cpus=32 per-cpu="
-			if code != leg.code || !strings.HasPrefix(stdout, want) || !strings.HasSuffix(stdout, ": measured, not a verdict\n") {
-				t.Errorf("load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
-			}
+			assert.Equal(t, leg.code, code, "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
+			assert.True(t, strings.HasPrefix(stdout, want), "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
+			assert.True(t, strings.HasSuffix(stdout, ": measured, not a verdict\n"), "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)
 			code, stdout, _ = runCI(t, args, sleeps)
-			if code != 1 || !strings.Contains(stdout, "CI-SLEEPS test=TestNew package=example.com/pkg") || strings.Contains(stdout, "TestKnown") {
-				t.Errorf("an unledgered SLEEPS skip at load %s, %s leg: exit %d stdout %q, want 1 naming TestNew only", load, leg.name, code, stdout)
-			}
+			assert.Equal(t, 1, code, "an unledgered SLEEPS skip at load %s, %s leg: exit %d stdout %q, want 1 naming TestNew only", load, leg.name, code, stdout)
+			assert.Contains(t, stdout, "CI-SLEEPS test=TestNew package=example.com/pkg", "an unledgered SLEEPS skip at load %s, %s leg: exit %d stdout %q, want 1 naming TestNew only", load, leg.name, code, stdout)
+			assert.NotContains(t, stdout, "TestKnown", "an unledgered SLEEPS skip at load %s, %s leg: exit %d stdout %q, want 1 naming TestNew only", load, leg.name, code, stdout)
 		}
 	}
 }
@@ -407,20 +405,20 @@ func TestLoadFromAFailedReadIsUnknownWithItsReason(t *testing.T) {
 	failed := loadFrom("darwin", 32, func(string) (string, error) {
 		return "", errors.New(`sysctl -n vm.loadavg: exec: "sysctl": executable file not found in $PATH`)
 	})
-	if failed.Known || failed.CPUs != 32 || !strings.Contains(failed.Why, "sysctl") || !strings.Contains(failed.LoadLine(), "load=unknown") {
-		t.Errorf("a failed read = %+v, want unknown, 32 CPUs, and the reason", failed)
-	}
-	if got := loadFrom("windows", 8, readLoadAvg); got.Known || !strings.Contains(got.Why, "windows has no load average") {
-		t.Errorf("windows = %+v, want unknown with its reason", got)
-	}
-	if got := loadFrom("linux", 4, func(string) (string, error) { return "garbage", nil }); got.Known || got.Why == "" {
-		t.Errorf("an unparsable figure = %+v, want unknown with its reason", got)
-	}
+	assert.False(t, failed.Known, "a failed read = %+v, want unknown, 32 CPUs, and the reason", failed)
+	assert.Equal(t, 32, failed.CPUs, "a failed read = %+v, want unknown, 32 CPUs, and the reason", failed)
+	assert.Contains(t, failed.Why, "sysctl", "a failed read = %+v, want unknown, 32 CPUs, and the reason", failed)
+	assert.Contains(t, failed.LoadLine(), "load=unknown", "a failed read = %+v, want unknown, 32 CPUs, and the reason", failed)
+	got := loadFrom("windows", 8, readLoadAvg)
+	assert.False(t, got.Known, "windows = %+v, want unknown with its reason", got)
+	assert.Contains(t, got.Why, "windows has no load average", "windows = %+v, want unknown with its reason", got)
+	got = loadFrom("linux", 4, func(string) (string, error) { return "garbage", nil })
+	assert.False(t, got.Known, "an unparsable figure = %+v, want unknown with its reason", got)
+	assert.NotEqual(t, "", got.Why, "an unparsable figure = %+v, want unknown with its reason", got)
 	for raw, want := range map[string]float64{"{ 17.36 21.31 19.56 }\n": 21.31, "0.52 0.48 0.59 1/467 12345\n": 0.52} {
 		got := loadFrom("x", 32, func(string) (string, error) { return raw, nil })
-		if !got.Known || got.Avg != want {
-			t.Errorf("loadFrom(%q) = %+v, want %g known", raw, got, want)
-		}
+		assert.True(t, got.Known, "loadFrom(%q) = %+v, want %g known", raw, got, want)
+		assert.Equal(t, want, got.Avg, "loadFrom(%q) = %+v, want %g known", raw, got, want)
 	}
 }
 
@@ -431,14 +429,13 @@ func TestFunctionalSelectsNothingWithoutTheTag(t *testing.T) {
 	t.Parallel()
 
 	code, _, stderr := runCI(t, []string{"functional"}, "")
-	if code != 2 || !strings.Contains(stderr, "run: nova-ci functional -h") {
-		t.Errorf("bare functional: exit %d stderr %q, want a refusal", code, stderr)
-	}
+	assert.Equal(t, 2, code, "bare functional: exit %d stderr %q, want a refusal", code, stderr)
+	assert.Contains(t, stderr, "run: nova-ci functional -h", "bare functional: exit %d stderr %q, want a refusal", code, stderr)
 	dir := filepath.Join("..", "..", "internal", "ci", "slowtests")
 	code, stdout, stderr := runCI(t, []string{"functional", dir}, "")
-	if code != 0 || stdout != "CI FUNCTIONAL OK packages=0 reason=no-functional-tag-in-1-dirs\n" || stderr != "" {
-		t.Errorf("functional %s: exit %d stdout %q stderr %q, want 0 and one CI FUNCTIONAL OK line", dir, code, stdout, stderr)
-	}
+	assert.Equal(t, 0, code, "functional %s: exit %d stdout %q stderr %q, want 0 and one CI FUNCTIONAL OK line", dir, code, stdout, stderr)
+	assert.Equal(t, "CI FUNCTIONAL OK packages=0 reason=no-functional-tag-in-1-dirs\n", stdout, "functional %s: exit %d stdout %q stderr %q, want 0 and one CI FUNCTIONAL OK line", dir, code, stdout, stderr)
+	assert.Equal(t, "", stderr, "functional %s: exit %d stdout %q stderr %q, want 0 and one CI FUNCTIONAL OK line", dir, code, stdout, stderr)
 }
 
 // The four silent exits the cold audit found (a typo, -h, --help, an unknown
@@ -463,16 +460,13 @@ func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
 		{"all at once", []string{"--bogus", "./nope", ".", "./also-nope"}, []string{`unknown flag "--bogus"`, `"./nope" matches no package`, `"./also-nope" matches no package`}},
 	} {
 		code, stdout, stderr := runCI(t, append([]string{"functional"}, tc.args...), "")
-		if code != 2 || stdout != "" {
-			t.Errorf("%s: exit %d stdout %q, want 2 and nothing on stdout", tc.name, code, stdout)
-		}
-		if strings.Count(stderr, "\n") != 1 || !strings.HasPrefix(stderr, "nova-ci functional REFUSED: ") || !strings.HasSuffix(stderr, "; run: nova-ci functional -h\n") {
-			t.Errorf("%s: stderr %q, want one line `nova-ci functional REFUSED: ...; run: nova-ci functional -h`", tc.name, stderr)
-		}
+		assert.Equal(t, 2, code, "%s: exit %d stdout %q, want 2 and nothing on stdout", tc.name, code, stdout)
+		assert.Equal(t, "", stdout, "%s: exit %d stdout %q, want 2 and nothing on stdout", tc.name, code, stdout)
+		assert.Equal(t, 1, strings.Count(stderr, "\n"), "%s: stderr %q, want one line `nova-ci functional REFUSED: ...; run: nova-ci functional -h`", tc.name, stderr)
+		assert.True(t, strings.HasPrefix(stderr, "nova-ci functional REFUSED: "), "%s: stderr %q, want one line `nova-ci functional REFUSED: ...; run: nova-ci functional -h`", tc.name, stderr)
+		assert.True(t, strings.HasSuffix(stderr, "; run: nova-ci functional -h\n"), "%s: stderr %q, want one line `nova-ci functional REFUSED: ...; run: nova-ci functional -h`", tc.name, stderr)
 		for _, w := range tc.want {
-			if !strings.Contains(stderr, w) {
-				t.Errorf("%s: stderr %q lacks %q", tc.name, stderr, w)
-			}
+			assert.Contains(t, stderr, w, "%s: stderr %q lacks %q", tc.name, stderr, w)
 		}
 	}
 }

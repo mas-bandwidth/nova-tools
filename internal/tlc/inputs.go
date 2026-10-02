@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -124,9 +125,7 @@ func (s Source) Inputs(config string) ([]Input, error) {
 		}
 	}
 	files[CasesRowPath(config)] = []byte(head + "\n" + rowText + "\n")
-	for path, raw := range s.Runner {
-		files[path] = raw
-	}
+	maps.Copy(files, s.Runner)
 	out := make([]Input, 0, len(files))
 	for path, raw := range files {
 		sum := sha256.Sum256(raw)

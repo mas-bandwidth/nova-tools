@@ -271,9 +271,7 @@ func (s *liveSampler) Defect() string {
 func (s *liveSampler) enter() {
 	s.mu.Lock()
 	s.inflight++
-	if s.inflight > s.maxFlight {
-		s.maxFlight = s.inflight
-	}
+	s.maxFlight = max(s.maxFlight, s.inflight)
 	s.mu.Unlock()
 }
 

@@ -2,8 +2,10 @@ package tokens
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -520,10 +522,5 @@ func mergeSources(a, b []string) []string {
 	for _, l := range b {
 		set[l] = true
 	}
-	out := make([]string, 0, len(set))
-	for l := range set {
-		out = append(out, l)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(set))
 }

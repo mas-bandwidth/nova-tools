@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -64,12 +65,7 @@ var Moves = []Move{
 
 // Legal says from -> to is a move of the lifecycle.
 func Legal(from, to State) bool {
-	for _, m := range Moves {
-		if m.From == from && m.To == to {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(Moves, func(m Move) bool { return m.From == from && m.To == to })
 }
 
 // IsOpen says a primary in s has not landed: drop may take it off the table.
@@ -83,12 +79,7 @@ func IsOpen(s State) bool {
 
 // IsState says s is one of the six states.
 func IsState(s string) bool {
-	for _, x := range States {
-		if x == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(States, s)
 }
 
 // Lawful holds a plan to the lifecycle: a primary is admitted waiting or

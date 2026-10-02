@@ -49,73 +49,61 @@ func TestNewVerbYieldsABuildingTestingSkeleton(t *testing.T) {
 		"cmd/nova-ci/testdata/probe/fixture.txt",
 		"make/verb_nova-ci_probe.mk",
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("new-verb did not report writing %s:\n%s", want, out)
-		}
-		if _, err := os.Stat(filepath.Join(tree, filepath.FromSlash(want))); err != nil {
-			t.Errorf("new-verb did not write %s: %v", want, err)
-		}
+		assert.Contains(t, out, want, "new-verb did not report writing %s:\n%s", want, out)
+		_, err := os.Stat(filepath.Join(tree, filepath.FromSlash(want)))
+		assert.NoError(t, err, "new-verb did not write %s: %v", want, err)
 	}
 
 	// DISPATCH: new-verb prints the exact case to add and leaves the switch alone
 	dispatch := "\tcase \"probe\":\n\t\treturn cmdProbe(args[1:], stdout, stderr)\n"
-	if !strings.Contains(out, "add to the dispatch switch in cmd/nova-ci") || !strings.Contains(out, dispatch) {
-		t.Errorf("new-verb did not print the dispatch case %q:\n%s", dispatch, out)
-	}
+	assert.Contains(t, out, "add to the dispatch switch in cmd/nova-ci", "new-verb did not print the dispatch case %q:\n%s", dispatch, out)
+	assert.Contains(t, out, dispatch, "new-verb did not print the dispatch case %q:\n%s", dispatch, out)
 	mainGo := filepath.Join(tree, "cmd", "nova-ci", "main.go")
 	src, err := os.ReadFile(mainGo)
 	require.NoError(t, err)
-	if strings.Contains(string(src), "cmdProbe") {
-		t.Errorf("new-verb edited the dispatch switch in %s; it must only print the case", mainGo)
-	}
+	assert.NotContains(t, string(src), "cmdProbe", "new-verb edited the dispatch switch in %s; it must only print the case", mainGo)
 
 	// BUILDING: the copied tree builds cleanly
 	runIn(t, tree, "go", "build", "./cmd/nova-ci")
 	runIn(t, tree, "go", "vet", "./cmd/nova-ci")
 
 	// TESTING: the fixture test passes
-	if got := runIn(t, tree, "go", "test", "-v", "-count=1", "-run", "TestCmdProbe", "./cmd/nova-ci"); !strings.Contains(got, "PASS") && !strings.Contains(got, "ok") {
-		t.Errorf("go test of the CLI verb skeleton did not pass:\n%s", got)
-	}
+	got := runIn(t, tree, "go", "test", "-v", "-count=1", "-run", "TestCmdProbe", "./cmd/nova-ci")
+	assert.False(t, !strings.Contains(got, "PASS") && !strings.Contains(got, "ok"), "go test of the CLI verb skeleton did not pass:\n%s", got)
 
 	// Makefile integration: make test-verb-nova-ci-probe runs and passes
-	if got := runIn(t, tree, "make", "-f", "Makefile", "test-verb-nova-ci-probe"); !strings.Contains(got, "PASS") && !strings.Contains(got, "ok") {
-		t.Errorf("make test-verb-nova-ci-probe did not pass:\n%s", got)
-	}
+	got = runIn(t, tree, "make", "-f", "Makefile", "test-verb-nova-ci-probe")
+	assert.False(t, !strings.Contains(got, "PASS") && !strings.Contains(got, "ok"), "make test-verb-nova-ci-probe did not pass:\n%s", got)
 
 	// The printed case is exact: pasted under the switch, the verb runs
 	const sw = "\tswitch args[0] {\n"
-	if !strings.Contains(string(src), sw) {
-		t.Fatalf("%s has no %q to paste the case under", mainGo, sw)
-	}
+	require.Contains(t, string(src), sw, "%s has no %q to paste the case under", mainGo, sw)
 	require.NoError(t, os.WriteFile(mainGo, []byte(strings.Replace(string(src), sw, sw+dispatch, 1)), 0o644))
-	if got := runIn(t, tree, "go", "run", "./cmd/nova-ci", "probe"); !strings.Contains(got, "nova-ci probe: OK") {
-		t.Errorf("nova-ci probe after pasting the printed case did not run the verb:\n%s", got)
-	}
+	got = runIn(t, tree, "go", "run", "./cmd/nova-ci", "probe")
+	assert.Contains(t, got, "nova-ci probe: OK", "nova-ci probe after pasting the printed case did not run the verb:\n%s", got)
 
 	// Write discipline: second run refuses rather than overwrite
 	cmd := exec.Command(bin, "new-verb", "--root", tree, "nova-ci", "probe")
 	cmd.Env = goenv.Clean(os.Environ())
-	if got, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(got), "already exists") {
-		t.Errorf("second new-verb run was not refused (err %v):\n%s", err, got)
-	}
+	combined, err := cmd.CombinedOutput()
+	assert.Error(t, err, "second new-verb run was not refused (err %v):\n%s", err, combined)
+	assert.Contains(t, string(combined), "already exists", "second new-verb run was not refused (err %v):\n%s", err, combined)
 
 	// Invalid names are refused
 	cmd = exec.Command(bin, "new-verb", "--root", tree, "nova-ci", "Invalid Verb!")
 	cmd.Env = goenv.Clean(os.Environ())
-	if got, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(got), "verb name") {
-		t.Errorf("new-verb with invalid verb name was not refused (err %v):\n%s", err, got)
-	}
+	combined, err = cmd.CombinedOutput()
+	assert.Error(t, err, "new-verb with invalid verb name was not refused (err %v):\n%s", err, combined)
+	assert.Contains(t, string(combined), "verb name", "new-verb with invalid verb name was not refused (err %v):\n%s", err, combined)
 
 	// A tool with no func main is refused and nothing is written
 	cmd = exec.Command(bin, "new-verb", "--root", tree, "ghost", "probe")
 	cmd.Env = goenv.Clean(os.Environ())
-	if got, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(got), "no func main") {
-		t.Errorf("new-verb into a tool with no func main was not refused (err %v):\n%s", err, got)
-	}
-	if _, err := os.Stat(filepath.Join(tree, "cmd", "ghost")); err == nil {
-		t.Errorf("new-verb into a tool with no func main wrote cmd/ghost")
-	}
+	combined, err = cmd.CombinedOutput()
+	assert.Error(t, err, "new-verb into a tool with no func main was not refused (err %v):\n%s", err, combined)
+	assert.Contains(t, string(combined), "no func main", "new-verb into a tool with no func main was not refused (err %v):\n%s", err, combined)
+	_, err = os.Stat(filepath.Join(tree, "cmd", "ghost"))
+	assert.Error(t, err, "new-verb into a tool with no func main wrote cmd/ghost")
 }
 
 // In process, on a temp tree: --dry-run lists exactly the files the real run
@@ -184,9 +172,7 @@ func scaffoldTree(t *testing.T, pattern string) (root, bin, tree string) {
 	list.Dir = root
 	list.Env = goenv.Clean(os.Environ())
 	out, err := list.Output()
-	if err != nil {
-		t.Fatalf("go list -deps -test %s: %v", pattern, err)
-	}
+	require.NoError(t, err, "go list -deps -test %s: %v", pattern, err)
 	seen := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		parts := strings.Split(line, "|")
@@ -216,9 +202,8 @@ func buildCLI(t *testing.T) string {
 	bin := filepath.Join(dir, "nova-ci")
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Env = goenv.Clean(os.Environ())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("go build nova-ci: %v\n%s", err, out)
-	}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "go build nova-ci: %v\n%s", err, out)
 	return bin
 }
 
@@ -227,9 +212,7 @@ func runScaffoldCmd(t *testing.T, bin string, args ...string) string {
 	cmd := exec.Command(bin, args...)
 	cmd.Env = goenv.Clean(os.Environ())
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s %s: %v\n%s", bin, strings.Join(args, " "), err, out)
-	}
+	require.NoError(t, err, "%s %s: %v\n%s", bin, strings.Join(args, " "), err, out)
 	return string(out)
 }
 
@@ -239,9 +222,7 @@ func runIn(t *testing.T, dir, name string, args ...string) string {
 	cmd.Dir = dir
 	cmd.Env = append(goenv.Clean(os.Environ()), "GOWORK=off", "GOFLAGS=-mod=mod")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s %s in %s: %v\n%s", name, strings.Join(args, " "), dir, err, out)
-	}
+	require.NoError(t, err, "%s %s in %s: %v\n%s", name, strings.Join(args, " "), dir, err, out)
 	return string(out)
 }
 
