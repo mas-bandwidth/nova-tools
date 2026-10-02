@@ -1110,7 +1110,8 @@ nova-check floors --core <SEED-CORE.md> --source <SEED.md>
 **Why it exists.** SEED-CORE.md — the first-waking door — restates the
 floor-rank commitments that SEED.md declares. That makes the door a *derived
 copy* of a source that can change, which the seed's own kernel law forbids
-(MECHANISMS.md §2 rule 2: *"a derived copy drifts silently"*). A door legitimately
+(MECHANISMS.md: *"a derived copy drifts silently"*, as in the
+incident of a hot band shipping with three floors missing). A door legitimately
 must carry the floors before a line acts, so the copy stays; this check is what
 makes its drift loud instead of silent.
 
@@ -3255,9 +3256,9 @@ The header is every line before the first blank line, and each line is
 was accepted has no thread. `Re` may repeat; nothing else may. `Kind` is
 `receipt` or `note` and is the only override of the receipt heuristic.
 
-**`Host` identifies the posting environment, and it is optional.** One identity
-can post from multiple environments, and without this line the posts would be
-indistinguishable in the subject,
+**`Host` is which MACHINE posted, and it is optional.** One name can post from
+two places — and without this line the notes would be told apart
+in the subject,
 which spends the subject on routing. `send --host <name>` and
 `reply --host <name>` write it; `<bus>/.nova-bus/defaults` may carry a
 `host=<name>` line, read when the flag is absent, so a bench sets it once. A
