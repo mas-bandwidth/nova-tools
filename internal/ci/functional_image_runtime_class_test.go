@@ -141,7 +141,7 @@ func TestContainerRuntimeSubidsNeverReuseARange(t *testing.T) {
 		body := k.text()
 		if v, ok := k.module("ansible.builtin.lineinfile"); ok {
 			writes++
-			assert.True(t, !strings.Contains(body, "container_runtime_subid_start") && strings.Contains(body, "container_runtime_subid_new_start"), "%s/tasks/subid.yml: the row is written at the fixed start (%v); it must start at container_runtime_subid_new_start, after every other user's range", containerRuntimeRole, v)
+			assert.False(t, strings.Contains(body, "container_runtime_subid_start") || !strings.Contains(body, "container_runtime_subid_new_start"), "%s/tasks/subid.yml: the row is written at the fixed start (%v); it must start at container_runtime_subid_new_start, after every other user's range", containerRuntimeRole, v)
 			assert.Contains(t, body, "container_runtime_subid.mine | length == 0", "%s/tasks/subid.yml: the row is written when the user already has one", containerRuntimeRole)
 			assert.NotContains(t, body, "regexp", "%s/tasks/subid.yml: a row is matched by a regexp; the user name is data, never a pattern", containerRuntimeRole)
 		}
@@ -327,7 +327,7 @@ func TestContainerRuntimeDropInHasItsDirectory(t *testing.T) {
 	require.True(t, copyAt >= 0 && dirAt >= 0, "%s/tasks/main.yml: want a directory task and a copy of the drop-in; found directory at %d, copy at %d", containerRuntimeRole, dirAt+1, copyAt+1)
 	assert.LessOrEqual(t, dirAt, copyAt, "%s/tasks/main.yml: the drop-in directory task (%d) comes after the copy (%d)", containerRuntimeRole, dirAt+1, copyAt+1)
 	assert.Equal(t, dirPath, filepath.Dir(dest), "%s/tasks/main.yml: the drop-in is copied to %q but the directory task makes %q", containerRuntimeRole, dest, dirPath)
-	assert.True(t, !strings.Contains(dest, "user@.service.d") && strings.Contains(dest, "user@{{ container_runtime_uid }}.service.d"), "%s/tasks/main.yml: the drop-in %q is not for the runner's manager only (user@<uid>.service.d)", containerRuntimeRole, dest)
+	assert.False(t, strings.Contains(dest, "user@.service.d") || !strings.Contains(dest, "user@{{ container_runtime_uid }}.service.d"), "%s/tasks/main.yml: the drop-in %q is not for the runner's manager only (user@<uid>.service.d)", containerRuntimeRole, dest)
 	dm, cm := tasks[dirAt].args("ansible.builtin.file"), tasks[copyAt].args("ansible.builtin.copy")
 	for _, c := range []struct {
 		what string
