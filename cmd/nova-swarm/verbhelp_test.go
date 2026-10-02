@@ -31,7 +31,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "slots list", Flags: []string{"--store", "{dir}/store"}},
 		{Verb: "worker check"},
 	})
-	testverbhelp.HelpVerb(t, swarmRun, "nova-swarm", "version", "batch", "slots take", "worker")
+	testverbhelp.HelpVerb(t, swarmRun, "nova-swarm", "version", "batch", "slots take", "slots list", "worker")
 }
 
 func swarmRun(args []string, stdout, stderr io.Writer) int {

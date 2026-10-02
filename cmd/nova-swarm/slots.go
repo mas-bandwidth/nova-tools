@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -201,10 +202,12 @@ func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 func cmdSlotsList(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("slots list")
 	store := f.fs.String("store", "", "")
+	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.want(*store, "store", "the directory holding shares.tsv and slots/")
+	f.wantMax(*max)
 	if f.refused(stderr) {
 		return 2
 	}
@@ -214,8 +217,12 @@ func cmdSlotsList(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm slots list: %s\n", oneline.Err(err))
 		return 2
 	}
+	list := bounded.Capped(stdout, *max, "SLOTS", "lease", "--max 0")
 	for _, l := range leases {
-		fmt.Fprintln(stdout, l.Line(now))
+		list.Line(l.Line(now))
+	}
+	if list.Elided() > 0 {
+		fmt.Fprintf(stdout, "... and %d more (use --max 0 to see all)\n", list.Elided())
 	}
 	return 0
 }

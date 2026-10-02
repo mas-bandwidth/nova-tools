@@ -727,7 +727,7 @@ usage:
                        (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
-  nova-swarm slots list --store <dir>
+  nova-swarm slots list --store <dir> [--max <n>]
   nova-swarm worker    check <description.json> [--env] [--max <n>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO; 2 could not run:
