@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
@@ -64,9 +67,7 @@ func TestNoSilentFailureOnTheLivePath(t *testing.T) {
 	}
 
 	for _, src := range tree.GoFilesUnder(false, silentLivePackages...) {
-		if src.ParseErr != nil {
-			t.Fatal(src.ParseErr)
-		}
+		require.NoError(t, src.ParseErr)
 		rel := src.Rel
 		for _, decl := range src.AST.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -106,7 +107,7 @@ func TestNoSilentFailureOnTheLivePath(t *testing.T) {
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 
@@ -140,9 +141,8 @@ func readSilentAllowlist(t *testing.T) *allowlist.List {
 	t.Helper()
 	allow := loadAllowlist(t, silentAllowlistPath, shrinkOnly)
 	for _, row := range allow.Rows() {
-		if _, reason, _ := strings.Cut(row.Text, " "); strings.TrimSpace(reason) == "" {
-			t.Errorf("%s: %q carries no reason; a row says why the shape is judged not silent", silentAllowlistPath, row.Text)
-		}
+		_, reason, _ := strings.Cut(row.Text, " ")
+		assert.NotEmpty(t, strings.TrimSpace(reason), "%s: %q carries no reason; a row says why the shape is judged not silent", silentAllowlistPath, row.Text)
 	}
 	return allow
 }
@@ -171,9 +171,7 @@ func g() (int, error) { return 0, nil }
 `
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "p.go", src, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var discards, literals int
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -188,10 +186,6 @@ func g() (int, error) { return 0, nil }
 		}
 		return true
 	})
-	if discards != 1 {
-		t.Errorf("discards = %d, want 1 (only `_ = err`)", discards)
-	}
-	if literals != 2 {
-		t.Errorf("literals = %d, want 2 (the const and the local string, never the comment)", literals)
-	}
+	assert.Equal(t, 1, discards, "discards = %d, want 1 (only `_ = err`)", discards)
+	assert.Equal(t, 2, literals, "literals = %d, want 2 (the const and the local string, never the comment)", literals)
 }

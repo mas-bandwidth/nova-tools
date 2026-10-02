@@ -11,7 +11,8 @@ import (
 //   - coordinator: the sprint's coordinator alone (init --coordinator, set
 //     once by the first init); another actor is refused and nothing written.
 //   - worker: a fleet member or a reader, named by --as (fleet beat: the
-//     member); its actor is that name, whatever --actor says.
+//     member; friend beat: the friend); its actor is that name, whatever
+//     --actor says.
 //   - report: an outside actor's report (merge, ci), anyone's who names it.
 //   - machine: the run loop's (tick, run), recorded as the machine.
 //   - read: changes nothing and needs no actor.
@@ -31,11 +32,11 @@ var verbClasses = map[string]string{
 	"start": classCoordinator, "stop": classCoordinator, "ask": classCoordinator, "accept": classCoordinator,
 	"rework": classCoordinator, "return": classCoordinator, "drop": classCoordinator, "rank": classCoordinator, "brief": classCoordinator, "move": classCoordinator,
 	"resume": classCoordinator, "land": classCoordinator, "fleet up": classCoordinator, "fleet down": classCoordinator,
-	"fleet level": classCoordinator, "fleet sync": classCoordinator, "reader add": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "stream remove": classCoordinator, "wait": classCoordinator,
+	"fleet level": classCoordinator, "fleet sync": classCoordinator, "friend sync": classCoordinator, "friend down": classCoordinator, "friend up": classCoordinator, "reader add": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "stream remove": classCoordinator, "wait": classCoordinator,
 	"ack": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
 
-	"take": classWorker, "finish": classWorker, "read": classWorker, "fleet beat": classWorker,
+	"take": classWorker, "finish": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker,
 
 	"merge": classReport, "ci": classReport,
 

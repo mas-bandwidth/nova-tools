@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
@@ -172,9 +174,7 @@ var (
 func repoTree(t *testing.T) *repoTreeIndex {
 	t.Helper()
 	idx, err := sharedRepoTree()
-	if err != nil {
-		t.Fatalf("loading the shared repository tree at %s: %v", repoRoot(t), err)
-	}
+	require.NoError(t, err, "loading the shared repository tree at %s: %v", repoRoot(t), err)
 	return idx
 }
 
@@ -471,8 +471,6 @@ func repoGoList(t *testing.T) []byte {
 		cmd.Env = goenv.Clean(os.Environ())
 		repoGoListOut, repoGoListErr = cmd.Output()
 	})
-	if repoGoListErr != nil {
-		t.Fatal(repoGoListErr)
-	}
+	require.NoError(t, repoGoListErr)
 	return repoGoListOut
 }

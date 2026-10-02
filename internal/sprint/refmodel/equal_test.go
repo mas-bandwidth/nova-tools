@@ -6,6 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
@@ -19,16 +22,14 @@ func TestEqualIsTheSameMovesInAnyOrder(t *testing.T) {
 	t.Parallel()
 	a := []refmodel.Move{deal("p3"), deal("p1"), deal("p2")}
 	b := []refmodel.Move{deal("p1"), deal("p2"), deal("p3")}
-	if ok, diff := refmodel.Equal(a, b); !ok || diff != "" {
-		t.Errorf("the same moves in two orders: %v %q", ok, diff)
-	}
-	if ok, diff := refmodel.Equal(nil, nil); !ok || diff != "" {
-		t.Errorf("no moves and no moves: %v %q", ok, diff)
-	}
+	ok, diff := refmodel.Equal(a, b)
+	assert.True(t, ok, "the same moves in two orders: %v %q", ok, diff)
+	assert.Empty(t, diff, "the same moves in two orders: %v %q", ok, diff)
+	ok, diff = refmodel.Equal(nil, nil)
+	assert.True(t, ok, "no moves and no moves: %v %q", ok, diff)
+	assert.Empty(t, diff, "no moves and no moves: %v %q", ok, diff)
 	// equal does not sort what it was given
-	if a[0].Card != "p3" {
-		t.Error("Equal sorted its argument")
-	}
+	assert.Equal(t, "p3", a[0].Card, "Equal sorted its argument")
 }
 
 func TestEqualNamesTheFirstCardThatDiffers(t *testing.T) {
@@ -38,48 +39,44 @@ func TestEqualNamesTheFirstCardThatDiffers(t *testing.T) {
 	moved.To = "s1:review"
 	b := []refmodel.Move{deal("p1"), moved, deal("p3")}
 	ok, diff := refmodel.Equal(a, b)
-	if ok {
-		t.Fatal("moves that differ in where a card goes are equal")
-	}
+	require.False(t, ok, "moves that differ in where a card goes are equal")
 	for _, want := range []string{"card p2", "deal", "the first has", "the second has", `to="s1:working"`, `to="s1:review"`} {
-		if !strings.Contains(diff, want) {
-			t.Errorf("the difference does not say %q: %s", want, diff)
-		}
+		assert.Contains(t, diff, want, "the difference does not say %q: %s", want, diff)
 	}
-	if strings.Contains(diff, "p1") || strings.Contains(diff, "p3") {
-		t.Errorf("the difference names a card that is the same on both sides: %s", diff)
-	}
+	assert.NotContains(t, diff, "p1", "the difference names a card that is the same on both sides: %s", diff)
+	assert.NotContains(t, diff, "p3", "the difference names a card that is the same on both sides: %s", diff)
 }
 
 func TestEqualNamesACardOneSideDoesNotMove(t *testing.T) {
 	t.Parallel()
 	a := []refmodel.Move{deal("p1"), deal("p2")}
 	b := []refmodel.Move{deal("p1")}
-	if ok, diff := refmodel.Equal(a, b); ok || !strings.Contains(diff, "card p2") || !strings.Contains(diff, "the second has no such move") {
-		t.Errorf("a card only the first moves: %v %q", ok, diff)
-	}
-	if ok, diff := refmodel.Equal(b, a); ok || !strings.Contains(diff, "card p2") || !strings.Contains(diff, "the first has no such move") {
-		t.Errorf("a card only the second moves: %v %q", ok, diff)
-	}
+	ok, diff := refmodel.Equal(a, b)
+	assert.False(t, ok, "a card only the first moves: %v %q", ok, diff)
+	assert.Contains(t, diff, "card p2", "a card only the first moves: %v %q", ok, diff)
+	assert.Contains(t, diff, "the second has no such move", "a card only the first moves: %v %q", ok, diff)
+	ok, diff = refmodel.Equal(b, a)
+	assert.False(t, ok, "a card only the second moves: %v %q", ok, diff)
+	assert.Contains(t, diff, "card p2", "a card only the second moves: %v %q", ok, diff)
+	assert.Contains(t, diff, "the first has no such move", "a card only the second moves: %v %q", ok, diff)
 	// the first of two differences, in the order of the tick, is the one named
 	late := refmodel.Move{Duty: refmodel.DutyOverdue, Kind: refmodel.KindNotice, Type: sprint.NOverdue}
-	if _, diff := refmodel.Equal(append(slices.Clone(a), late), nil); !strings.Contains(diff, "card p1") {
-		t.Errorf("the first difference is the first card in the tick's order: %s", diff)
-	}
+	_, diff = refmodel.Equal(append(slices.Clone(a), late), nil)
+	assert.Contains(t, diff, "card p1", "the first difference is the first card in the tick's order: %s", diff)
 }
 
 func TestEqualNamesAMoveOfNoCardByItsDutyAndKind(t *testing.T) {
 	t.Parallel()
 	due := refmodel.Move{Duty: refmodel.DutyPresence, Kind: refmodel.KindDue, Attrs: []string{"due=1"}}
 	ok, diff := refmodel.Equal([]refmodel.Move{due}, nil)
-	if ok || !strings.HasPrefix(diff, "the presence due move differs: the first has ") || strings.Contains(diff, "  ") || strings.Contains(diff, "card") {
-		t.Errorf("a count left due, by its duty and kind: %v %q", ok, diff)
-	}
+	assert.False(t, ok, "a count left due, by its duty and kind: %v %q", ok, diff)
+	assert.True(t, strings.HasPrefix(diff, "the presence due move differs: the first has "), "a count left due, by its duty and kind: %v %q", ok, diff)
+	assert.NotContains(t, diff, "  ", "a count left due, by its duty and kind: %v %q", ok, diff)
+	assert.NotContains(t, diff, "card", "a count left due, by its duty and kind: %v %q", ok, diff)
 	notice := refmodel.Move{Duty: refmodel.DutyStrangers, Kind: refmodel.KindNotice, Type: sprint.NUnknownMachine}
-	if _, diff := refmodel.Equal(nil, []refmodel.Move{notice}); !strings.HasPrefix(diff, "the strangers notice "+sprint.NUnknownMachine+" move differs: the second has ") ||
-		!strings.HasSuffix(diff, "the first has no such move") {
-		t.Errorf("a notice of no card, by its duty and kind: %q", diff)
-	}
+	_, diff = refmodel.Equal(nil, []refmodel.Move{notice})
+	assert.True(t, strings.HasPrefix(diff, "the strangers notice "+sprint.NUnknownMachine+" move differs: the second has "), "a notice of no card, by its duty and kind: %q", diff)
+	assert.True(t, strings.HasSuffix(diff, "the first has no such move"), "a notice of no card, by its duty and kind: %q", diff)
 }
 
 func TestEqualSeesWhichJudgmentAnUpdateRewrites(t *testing.T) {
@@ -87,21 +84,19 @@ func TestEqualSeesWhichJudgmentAnUpdateRewrites(t *testing.T) {
 	update := func(id string) refmodel.Move {
 		return refmodel.Move{Duty: refmodel.DutyDeadlines, Kind: refmodel.KindUpdate, Card: "s1-1.w1", Type: sprint.NWorkLate, Subjects: []string{"s1-1"}, Attrs: []string{"id=" + id}, Words: "late"}
 	}
-	if ok, _ := refmodel.Equal([]refmodel.Move{update("n1")}, []refmodel.Move{update("n2")}); ok {
-		t.Error("updates of two judgments are equal")
-	}
-	if ok, diff := refmodel.Equal([]refmodel.Move{update("n1")}, []refmodel.Move{update("n1")}); !ok {
-		t.Errorf("updates of one judgment differ: %s", diff)
-	}
+	ok, _ := refmodel.Equal([]refmodel.Move{update("n1")}, []refmodel.Move{update("n2")})
+	assert.False(t, ok, "updates of two judgments are equal")
+	ok, diff := refmodel.Equal([]refmodel.Move{update("n1")}, []refmodel.Move{update("n1")})
+	assert.True(t, ok, "updates of one judgment differ: %s", diff)
 }
 
 func TestEqualNamesANoteBySubject(t *testing.T) {
 	t.Parallel()
 	open := refmodel.Move{Duty: refmodel.DutyDeal, Kind: refmodel.KindOpen, Type: sprint.NBound, Subjects: []string{"p7", "p8"}}
 	ok, diff := refmodel.Equal([]refmodel.Move{open}, nil)
-	if ok || !strings.Contains(diff, "card p7") || !strings.Contains(diff, sprint.NBound) {
-		t.Errorf("a judgment one side raises: %v %q", ok, diff)
-	}
+	assert.False(t, ok, "a judgment one side raises: %v %q", ok, diff)
+	assert.Contains(t, diff, "card p7", "a judgment one side raises: %v %q", ok, diff)
+	assert.Contains(t, diff, sprint.NBound, "a judgment one side raises: %v %q", ok, diff)
 }
 
 func TestEqualSeesEveryFieldOfAMove(t *testing.T) {
@@ -127,9 +122,8 @@ func TestEqualSeesEveryFieldOfAMove(t *testing.T) {
 	} {
 		other := base
 		change(&other)
-		if ok, _ := refmodel.Equal([]refmodel.Move{base}, []refmodel.Move{other}); ok {
-			t.Errorf("moves that differ in their %s are equal", name)
-		}
+		ok, _ := refmodel.Equal([]refmodel.Move{base}, []refmodel.Move{other})
+		assert.False(t, ok, "moves that differ in their %s are equal", name)
 	}
 }
 
@@ -139,19 +133,15 @@ func TestShapeIsTheMovesWithoutTheirWords(t *testing.T) {
 	a.Words = "p1 ready -> working"
 	b := deal("p1")
 	b.Words = "dealt p1"
-	if ok, _ := refmodel.Equal([]refmodel.Move{a}, []refmodel.Move{b}); ok {
-		t.Fatal("the fixture: moves in other words are unequal to Equal")
-	}
-	if ok, diff := refmodel.Equal(refmodel.Shape([]refmodel.Move{a}), refmodel.Shape([]refmodel.Move{b})); !ok {
-		t.Errorf("the same moves in other words differ in shape: %s", diff)
-	}
-	if a.Words == "" {
-		t.Error("Shape changed the moves it was given")
-	}
+	ok, _ := refmodel.Equal([]refmodel.Move{a}, []refmodel.Move{b})
+	require.False(t, ok, "the fixture: moves in other words are unequal to Equal")
+	ok, diff := refmodel.Equal(refmodel.Shape([]refmodel.Move{a}), refmodel.Shape([]refmodel.Move{b}))
+	assert.True(t, ok, "the same moves in other words differ in shape: %s", diff)
+	assert.NotEmpty(t, a.Words, "Shape changed the moves it was given")
 	for _, m := range refmodel.Shape([]refmodel.Move{a, b}) {
-		if m.Words != "" || m.Card != "p1" || m.To != "s1:working" {
-			t.Errorf("Shape kept the words or lost the rest: %+v", m)
-		}
+		assert.Empty(t, m.Words, "Shape kept the words or lost the rest: %+v", m)
+		assert.Equal(t, "p1", m.Card, "Shape kept the words or lost the rest: %+v", m)
+		assert.Equal(t, "s1:working", m.To, "Shape kept the words or lost the rest: %+v", m)
 	}
 }
 
@@ -171,19 +161,16 @@ func TestTheEqualityTestSeesADutyLeftOut(t *testing.T) {
 			dropped := short[len(short)-1]
 			short = short[:len(short)-1]
 			ok, diff := refmodel.Equal(want[d.Name], short)
-			if ok {
-				t.Fatalf("a duty short of a move (%s) is equal to today's tick", dropped)
-			}
-			if name := firstName(dropped); !strings.Contains(diff, name) && !strings.Contains(diff, d.Name) {
-				t.Fatalf("the difference names neither the card %q nor the duty %s: %s", name, d.Name, diff)
-			}
+			require.False(t, ok, "a duty short of a move (%s) is equal to today's tick", dropped)
+			name := firstName(dropped)
+			require.True(t, strings.Contains(diff, name) || strings.Contains(diff, d.Name), "the difference names neither the card %q nor the duty %s: %s", name, d.Name, diff)
 			seen++
 		}
 		if seen > 50 {
 			return
 		}
 	}
-	t.Error("no duty made a move to leave out")
+	assert.Fail(t, "no duty made a move to leave out")
 }
 
 // firstName is the card or subject a move is about.
@@ -205,9 +192,7 @@ func TestTheEqualityTestSeesTheWrongTime(t *testing.T) {
 			differing++
 		}
 	}
-	if differing < minSamplesWithMoves {
-		t.Errorf("only %d snapshots are decided differently three hours on: the time is not read", differing)
-	}
+	assert.GreaterOrEqual(t, differing, minSamplesWithMoves, "only %d snapshots are decided differently three hours on: the time is not read", differing)
 }
 
 func TestTheEqualityTestSeesASnapshotThatIsNotTheOneGiven(t *testing.T) {
@@ -222,7 +207,5 @@ func TestTheEqualityTestSeesASnapshotThatIsNotTheOneGiven(t *testing.T) {
 			differing++
 		}
 	}
-	if differing < minSamplesWithMoves {
-		t.Errorf("only %d snapshots are decided differently without their beats, goals and strangers: they are not read", differing)
-	}
+	assert.GreaterOrEqual(t, differing, minSamplesWithMoves, "only %d snapshots are decided differently without their beats, goals and strangers: they are not read", differing)
 }

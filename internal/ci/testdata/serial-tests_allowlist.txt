@@ -185,10 +185,10 @@ internal/update/process_functional_test.go:TestJoinReporterDeathAfterRemoteConfi
 internal/update/process_functional_test.go:TestJoinReporterDeathWithPendingSavedFinishesTheSameReport serial: swaps package var update.jobMap, t.Setenv
 internal/update/process_functional_test.go:TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers serial: t.Setenv
 internal/update/rules_test.go:TestRule18EveryRefusalNamesARemedy serial: t.Setenv
-internal/update/rules_test.go:TestRule25SnapshotSurvivesAReporterKilledWhileWriting serial: t.Setenv
+internal/update/snapshot_crash_functional_test.go:TestRule25SnapshotSurvivesAReporterKilledWhileWriting serial: t.Setenv
 internal/update/rules_test.go:TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked serial: t.Setenv
 internal/update/rules_test.go:TestRule9CheckWritesNothingAndNeverRunsAnApply serial: t.Setenv
-internal/update/rules_test.go:TestSnapshotRenameBarrierHelper serial: swaps package var update.renameSnapshot
+internal/update/snapshot_crash_functional_test.go:TestSnapshotRenameBarrierHelper serial: swaps package var update.renameSnapshot
 internal/update/slow_test.go:TestJoinChildDeathAtWriteBoundariesRecoversOneContribution serial: t.Setenv
 internal/update/slow_test.go:TestJoinLostConfirmationRecoversWithoutASecondNote serial: t.Setenv
 internal/update/slow_test.go:TestJoinRealBusPublishesOneNoteAndOneIndexRow serial: t.Setenv
@@ -196,14 +196,13 @@ internal/update/slow_test.go:TestJoinRefusedPushRecoversToOneNoteWithTheSameID s
 internal/update/slow_test.go:TestPendingBeforeDispatchAndQuietRetry serial: t.Setenv
 internal/update/stella_deadline_test.go:TestDeadlineHealthyChildUnderLoadIsFullyDrained serial: t.Setenv
 internal/update/stella_deadline_unix_test.go:TestDeadlineEscapedPipeGrandchildReturnsInsideBudget serial: t.Setenv
-internal/update/stella_snapshot_test.go:TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp serial: swaps package var update.jobMap, t.Setenv
+internal/update/stella_snapshot_functional_test.go:TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp serial: swaps package var update.jobMap, t.Setenv
 internal/update/update_test.go:TestApplyOnlyNamedEntryAndExactTarget serial: t.Setenv
 internal/update/update_test.go:TestCheckCapsAndFilterActuallyAvoidsReads serial: t.Setenv
-internal/update/update_test.go:TestFourReadLimitAndOverallBudget serial: t.Setenv
-internal/update/update_test.go:TestHealthyCommandWithLingeringGrandchildStillReads serial: t.Setenv
+internal/update/process_transport_functional_test.go:TestHealthyCommandWithLingeringGrandchildStillReads serial: t.Setenv
 internal/update/process_functional_test.go:TestHeldPipePastGraceIsNamedAndEchoesNoContent serial: t.Setenv
 internal/update/update_test.go:TestProcessFailuresAreDistinguishable serial: t.Setenv
-internal/update/update_test.go:TestProcessesAreBoundedAndRawSurvivesFailure serial: t.Setenv
+internal/update/process_transport_functional_test.go:TestProcessesAreBoundedAndRawSurvivesFailure serial: t.Setenv
 internal/update/update_test.go:TestReportLocalLocatorWithVersionStringInstalled serial: t.Setenv
 internal/update/update_test.go:TestReportNeverReadsLatestAndPartialIsVisible serial: t.Setenv
 internal/update/update_test.go:TestSnapshotObservationDoesNotSuppressDelivery serial: t.Setenv

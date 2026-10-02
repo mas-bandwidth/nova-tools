@@ -37,6 +37,8 @@ The wall grants the platform toolchain roots where a reader looks for them:
 - Darwin: `~/sdk`, `~/go/pkg/mod`, `/opt/homebrew/Cellar/go`, `/opt/homebrew/Cellar/sbcl`, `/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`, `/usr/local/share/dotnet`.
 - Linux: `~/sdk`, `~/go/pkg/mod`.
 
+The child's `PATH` carries the bench's Go right after the shell wrappers: the directory the first `go` in `~/sdk/bin`, `~/go/bin` and then the member's own `PATH` resolves into (`swarm.BenchGoBin`), so `go` and `gofmt` are found inside the wall whatever `PATH` the loop unit gave the member.
+
 ## The living verbs
 
 The tool exposes ten living verbs, dispatched directly from `cmd/nova-swarm/main.go`:

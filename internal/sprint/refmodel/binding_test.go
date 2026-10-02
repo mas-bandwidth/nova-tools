@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
@@ -104,9 +107,7 @@ func loadSample(tb testing.TB, s sample) *loaded {
 
 func (l *loaded) must(err error) {
 	l.tb.Helper()
-	if err != nil {
-		l.tb.Fatal(err)
-	}
+	require.NoError(l.tb, err)
 }
 
 // apply writes one manifest of members to a table.
@@ -118,9 +119,7 @@ func (l *loaded) apply(table string, members []ntable.BatchMemberEntry) {
 	l.ops++
 	_, err := l.m.Apply(l.ctx, ntable.BatchManifest{Schema: 1, Table: table, Epoch: "0", ExpectedTableRevision: strconv.FormatUint(l.m.Revision(table), 10),
 		OperationID: fmt.Sprintf("load-%d", l.ops), Actor: "load", Members: members})
-	if err != nil {
-		l.tb.Fatalf("load %s: %v", table, err)
-	}
+	require.NoError(l.tb, err, "load %s: %v", table, err)
 }
 
 // judgments writes the open judgments and the acknowledged conditions as one
@@ -152,9 +151,7 @@ func (l *loaded) judgments(t *sprint.Snapshot) {
 	l.must(err)
 	ok, err := l.m.Acquire(l.ctx, f.Gen, op)
 	l.must(err)
-	if !ok {
-		l.tb.Fatal("load: the fence is not free")
-	}
+	require.True(l.tb, ok, "load: the fence is not free")
 	l.must(l.m.Release(l.ctx, op, true))
 }
 
@@ -172,7 +169,7 @@ func (l *loaded) run(s sample, part string) (store.Result, int) {
 			return res, due
 		}
 	}
-	l.tb.Fatalf("the tick has no part %s", part)
+	require.FailNowf(l.tb, "assertion failed", "the tick has no part %s", part)
 	return store.Result{}, 0
 }
 
@@ -203,7 +200,7 @@ func TestTheStoreWritesWhatTheReferenceDecides(t *testing.T) {
 			l := loadSample(t, s)
 			res, due := l.run(s, part.Name)
 			if problem := l.differs(s, moves, res, due); problem != "" {
-				t.Fatalf("sample %d, part %s: %s\nthe reference:%s", i, part.Name, problem, show(moves))
+				require.Failf(t, "assertion failed", "sample %d, part %s: %s\nthe reference:%s", i, part.Name, problem, show(moves))
 			}
 			compared[i] = true
 			if len(moves) > 0 {
@@ -215,16 +212,10 @@ func TestTheStoreWritesWhatTheReferenceDecides(t *testing.T) {
 		}
 	}
 	for _, part := range sprint.TickParts {
-		if withMoves[part.Name] < minSamplesWithMoves {
-			t.Errorf("the part %s had moves on %d samples, fewer than %d: the store was not compared on it", part.Name, withMoves[part.Name], minSamplesWithMoves)
-		}
+		assert.GreaterOrEqual(t, withMoves[part.Name], minSamplesWithMoves, "the part %s had moves on %d samples, fewer than %d: the store was not compared on it", part.Name, withMoves[part.Name], minSamplesWithMoves)
 	}
-	if len(compared) < bindingMin {
-		t.Errorf("%d samples were compared, fewer than %d", len(compared), bindingMin)
-	}
-	if filtered < minSamplesWithFilter {
-		t.Errorf("the store's filter changed a plan on %d of the parts compared, fewer than %d: it is not seen at work", filtered, minSamplesWithFilter)
-	}
+	assert.GreaterOrEqual(t, len(compared), bindingMin, "%d samples were compared, fewer than %d", len(compared), bindingMin)
+	assert.GreaterOrEqual(t, filtered, minSamplesWithFilter, "the store's filter changed a plan on %d of the parts compared, fewer than %d: it is not seen at work", filtered, minSamplesWithFilter)
 	t.Logf("%d samples compared; parts with moves, by part: %v; parts the store's filter changed: %d", len(compared), withMoves, filtered)
 }
 

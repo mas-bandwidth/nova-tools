@@ -132,26 +132,25 @@ func TestRepairSkipsWhatNoLongerHoldsAndReleases(t *testing.T) {
 	h.cutStart("")
 	h.tick(time.Hour)
 	rr, err := h.st.Repair(h.ctx)
-	if err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped {
-		t.Fatalf("repair: %+v %v", rr, err)
-	}
+	require.NoError(t, err, "repair: %+v %v", rr, err)
+	require.Len(t, rr, 1, "repair: %+v %v", rr, err)
+	require.Equal(t, RepairSkipped, rr[0].Done, "repair: %+v %v", rr, err)
 	require.Nil(t, h.m.Pending(), "the fence is still held")
 	s := h.snap()
 	if c := s.Work.Card("s1-1"); c.Col != sprint.Ready || c.F("brief") != "outside" {
-		t.Fatalf("s1-1 overwritten: %s brief=%s", c.Col, c.F("brief"))
+		require.Failf(t, "", "s1-1 overwritten: %s brief=%s", c.Col, c.F("brief"))
 	}
 	c := s.Work.Card("s1-2")
 	require.Equal(t, sprint.Working, c.Col, "s1-2, whose expectation held, is %s", c.Col)
 	ns := h.skipNotes()
 	require.Len(t, ns, 1, "%d skip judgments", len(ns))
 	n := ns[0]
-	if n.Kind != sprint.Judgment || len(n.Primaries) != 1 || n.Primaries[0] != "s1-1" || len(n.Decisions) != len(RepairSkippedDecisions) {
-		t.Fatalf("skip judgment: %+v", n)
-	}
+	require.Equal(t, sprint.Judgment, n.Kind, "skip judgment: %+v", n)
+	require.Len(t, n.Primaries, 1, "skip judgment: %+v", n)
+	require.Equal(t, "s1-1", n.Primaries[0], "skip judgment: %+v", n)
+	require.Len(t, n.Decisions, len(RepairSkippedDecisions), "skip judgment: %+v", n)
 	for _, want := range []string{"card s1-1", "t-work", "expected", "found revision 2"} {
-		if !strings.Contains(n.What, want) && !strings.Contains(rr[0].Skipped[0], want) {
-			t.Fatalf("the skip does not say %q: %s | %v", want, n.What, rr[0].Skipped)
-		}
+		require.True(t, strings.Contains(n.What, want) || strings.Contains(rr[0].Skipped[0], want), "the skip does not say %q: %s | %v", want, n.What, rr[0].Skipped)
 	}
 	open, _ := h.m.OpenNotes(h.ctx)
 	found := false
@@ -178,9 +177,9 @@ func TestEveryVerbRunsAfterASkippingRepair(t *testing.T) {
 	h.cutStart("")
 	h.tick(time.Hour)
 	res, err := h.st.Run(h.ctx, CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Run: "r"}))
-	if err != nil || len(res.Repaired) != 1 || !strings.HasSuffix(res.Repaired[0], RepairSkipped) {
-		t.Fatalf("the verb after the cut: %+v %v", res, err)
-	}
+	require.NoError(t, err, "the verb after the cut: %+v %v", res, err)
+	require.Len(t, res.Repaired, 1, "the verb after the cut: %+v %v", res, err)
+	require.True(t, strings.HasSuffix(res.Repaired[0], RepairSkipped), "the verb after the cut: %+v %v", res, err)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 1}))
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s2-1"}}}))
@@ -203,18 +202,20 @@ func TestTheSkipJudgmentIsWrittenOnceOverTwoRepairs(t *testing.T) {
 		return nil
 	}
 	rr, err := h.st.Repair(h.ctx)
-	if err != nil || len(rr) != 1 || rr[0].Done != RepairOpen || h.m.Pending() == nil {
-		t.Fatalf("a repair whose release is lost: %+v %v", rr, err)
-	}
+	require.NoError(t, err, "a repair whose release is lost: %+v %v", rr, err)
+	require.Len(t, rr, 1, "a repair whose release is lost: %+v %v", rr, err)
+	require.Equal(t, RepairOpen, rr[0].Done, "a repair whose release is lost: %+v %v", rr, err)
+	require.NotNil(t, h.m.Pending(), "a repair whose release is lost: %+v %v", rr, err)
 	h.m.Fail = nil
 	require.Empty(t, h.skipNotes(), "a judgment was written before the release")
 	rr, err = h.st.Repair(h.ctx)
-	if err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped || len(rr[0].Skipped) != 1 {
-		t.Fatalf("the second repair: %+v %v", rr, err)
-	}
-	if rr, err := h.st.Repair(h.ctx); err != nil || len(rr) != 0 {
-		t.Fatalf("a third repair: %+v %v", rr, err)
-	}
+	require.NoError(t, err, "the second repair: %+v %v", rr, err)
+	require.Len(t, rr, 1, "the second repair: %+v %v", rr, err)
+	require.Equal(t, RepairSkipped, rr[0].Done, "the second repair: %+v %v", rr, err)
+	require.Len(t, rr[0].Skipped, 1, "the second repair: %+v %v", rr, err)
+	rr, err = h.st.Repair(h.ctx)
+	require.NoError(t, err, "a third repair: %+v %v", rr, err)
+	require.Empty(t, rr, "a third repair: %+v %v", rr, err)
 	n := len(h.skipNotes())
 	require.Equal(t, 1, n, "%d skip judgments over two repairs", n)
 	require.Equal(t, sprint.Working, h.state("s1-2"), "states %s %s", h.state("s1-1"), h.state("s1-2"))
@@ -228,12 +229,12 @@ func TestAReplayOfASkippedOperationReturnsTheSkips(t *testing.T) {
 	h := newHarness(t)
 	h.setup(2)
 	step := h.cutStart("caller-9")
-	if _, err := h.st.Repair(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err := h.st.Repair(h.ctx)
+	require.NoError(t, err)
 	res, err := h.st.Run(h.ctx, step)
-	if err != nil || !res.Replay || len(res.Skipped) != 1 || !strings.Contains(res.Skipped[0], "s1-1") {
-		t.Fatalf("replay: %+v %v", res, err)
-	}
+	require.NoError(t, err, "replay: %+v %v", res, err)
+	require.True(t, res.Replay, "replay: %+v %v", res, err)
+	require.Len(t, res.Skipped, 1, "replay: %+v %v", res, err)
+	require.Contains(t, res.Skipped[0], "s1-1", "replay: %+v %v", res, err)
 	require.Len(t, h.skipNotes(), 1, "%d skip judgments", len(h.skipNotes()))
 }

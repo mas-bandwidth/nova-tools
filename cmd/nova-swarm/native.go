@@ -802,7 +802,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
+	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell,
+		swarm.BenchGoBin(benchHome(cfg), os.Getenv("PATH")))
 	if cfg.root != "" {
 		var id swarm.StagingIdentity
 		if cfg.identity != nil {
@@ -1788,7 +1789,12 @@ func benchOS(cfg nativeRunConfig) string {
 // -- and every shell under it is handed an environment with the secret names unset. Both
 // are empty on windows and in the unit tests of the argv builder, and the environment is
 // then exactly what it was.
-func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell string) []string {
+//
+// goBin is the bench's Go (swarm.BenchGoBin: GOROOT/bin, where `go` and `gofmt` live),
+// put on the child's PATH right after the wrappers, so a card's bare `go` and `gofmt`
+// resolve to the toolchain the wall grants whatever PATH the loop unit started the member
+// with. Empty names no Go and leaves PATH as it was.
+func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell, goBin string) []string {
 	var kept []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -1832,7 +1838,7 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	}
 	// The wrappers go on before the secret is re-added, so the ONE process that keeps the
 	// key is the harness itself and every shell it spawns by name is scrubbed (#1814).
-	out = pathWithShimFirst(out, shimDir)
+	out = pathWithDirFirst(pathWithDirFirst(out, goBin), shimDir)
 	if shimShell != "" {
 		out = append(out, "SHELL="+shimShell)
 	}

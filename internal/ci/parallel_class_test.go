@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // parallel_class_test.go is Glenn's rule of 2026-09-25: Go tests always run in
@@ -46,9 +48,7 @@ func TestEveryTestOpensWithTParallel(t *testing.T) {
 		if f.HasDirNamed("testdata") {
 			continue
 		}
-		if f.ParseErr != nil {
-			t.Fatal(f.ParseErr)
-		}
+		require.NoError(t, f.ParseErr)
 		for _, decl := range f.AST.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Recv != nil || fn.Body == nil || !isGoTestName(fn.Name.Name) {
@@ -89,12 +89,10 @@ func TestEveryTestOpensWithTParallel(t *testing.T) {
 			"%s lists %s, but %s; delete the stale entry and lower its ceiling line (the list only shrinks; NOVA_CI_UPDATE=1 does both)",
 			serialTestsAllowlistPath, row.Key, gone))
 	}
-	if total == 0 {
-		t.Fatal("no test function found under cmd/ or internal/; the walk is broken, not the tree")
-	}
+	require.Positive(t, total, "no test function found under cmd/ or internal/; the walk is broken, not the tree")
 	sort.Strings(violations)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 	t.Logf("%d of %d test functions open with t.Parallel(); %d on the serial allowlist", parallel, total, allow.Len())
 }
@@ -163,11 +161,9 @@ func readSerialTestsAllowlist(t *testing.T) *allowlist.List {
 	for _, row := range allow.Rows() {
 		_, reason, _ := strings.Cut(row.Text, " ")
 		reason = strings.TrimSpace(reason)
-		if !strings.HasPrefix(reason, "serial: ") || len(reason) == len("serial: ") {
-			t.Errorf("%s:%d: %q carries no `serial: <reason>`", serialTestsAllowlistPath, row.Line, row.Text)
-		}
-		if at, dup := first[row.Key]; dup {
-			t.Errorf("%s:%d: %s is listed twice (first at line %d)", serialTestsAllowlistPath, row.Line, row.Key, at)
+		assert.False(t, !strings.HasPrefix(reason, "serial: ") || len(reason) == len("serial: "), "%s:%d: %q carries no `serial: <reason>`", serialTestsAllowlistPath, row.Line, row.Text)
+		at, dup := first[row.Key]
+		if !assert.False(t, dup, "%s:%d: %s is listed twice (first at line %d)", serialTestsAllowlistPath, row.Line, row.Key, at) {
 			continue
 		}
 		first[row.Key] = row.Line

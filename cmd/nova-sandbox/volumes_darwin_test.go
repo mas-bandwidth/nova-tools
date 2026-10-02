@@ -35,6 +35,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 )
 
 // fakeDiskutil stands in for /usr/sbin/diskutil. It answers the three commands Create
@@ -415,6 +417,79 @@ func TestTheCreateLockIsAnExclusiveFlock(t *testing.T) {
 	err = syscall.Flock(int(other.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	require.NoError(t, err, "the create lock was not released: %v", err)
 	_ = syscall.Flock(int(other.Fd()), syscall.LOCK_UN)
+}
+
+// The compatibility witness for the other direction: during an upgrade an OLD nova-sandbox
+// (before internal/filelock) can hold the create lock while a new one asks. The old binary
+// took a bare `flock(LOCK_EX)` on the same file, so that is what is staged here, on a
+// second descriptor. While it is held the new lock must refuse as held -- never take it
+// beside the old holder -- and once the old one lets go the new lock must take it. The
+// lock file the old binary made (0600, empty) must also be one the new lock opens. Both
+// binaries lock the same file with the same kernel lock (darwin only), so there is no
+// mixed-version hole; this test is what says so. lockVolumeCreate is filelock.Lock on
+// this path with production's bound, so the take is asked of filelock directly, on the
+// test's own file, with no package-level swap.
+func TestAnOldBinarysCreateLockKeepsTheNewOneOut(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "volume-create.lock")
+
+	oldBinary, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	require.NoError(t, err, "stage the old binary's lock file: %v", err)
+	defer oldBinary.Close()
+	require.NoError(t, syscall.Flock(int(oldBinary.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "stage the old binary's flock")
+
+	_, err = filelock.TryLock(path, "witness")
+	require.Error(t, err, "the new lock was taken while an old binary held the same file; two diskutil runs could overlap across an upgrade")
+	require.True(t, errors.Is(err, filelock.ErrHeld), "an old binary's flock was not read as held: %v", err)
+
+	require.NoError(t, syscall.Flock(int(oldBinary.Fd()), syscall.LOCK_UN))
+	l, err := filelock.TryLock(path, "witness")
+	require.NoError(t, err, "the new lock could not be taken once the old binary let go: %v", err)
+	require.NoError(t, l.Unlock())
+}
+
+// The fresh-file witness. Before internal/filelock this tool created volume-create.lock
+// 0600 (volumes_darwin.go:265 at 4bb0a044e); filelock alone creates 0666 less the umask.
+// With no lock file present, the create lock must make it 0600 still, under a umask that
+// would make a 0666 create something else -- and a caller that takes filelock with no
+// adapter must still get filelock's own default, so nothing generic changed.
+// The umask is measured with a probe file rather than set: it is the process's, and the
+// other tests run beside this one.
+func TestAFreshCreateLockIsMadeOwnerOnly(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	probe := filepath.Join(dir, "probe")
+	require.NoError(t, os.WriteFile(probe, nil, 0o666))
+	pinfo, err := os.Stat(probe)
+	require.NoError(t, err)
+	def := pinfo.Mode().Perm()
+	if def == 0o600 {
+		t.Skipf("this process's umask already makes a 0666 create 0600, so the witness cannot tell the modes apart")
+	}
+
+	t.Run("the create lock", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(dir, "volume-create.lock")
+		unlock, err := lockVolumeCreateAt(path)
+		require.NoError(t, err, "the create lock on a fresh path: %v", err)
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "a fresh volume-create.lock is %v; this tool has always made it 0600 (a 0666 create here gives %v)", info.Mode().Perm(), def)
+		unlock()
+		info, err = os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the release changed the lock file's mode to %v", info.Mode().Perm())
+	})
+	t.Run("a generic filelock caller", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(dir, "generic.lock")
+		l, err := filelock.TryLock(path, "witness")
+		require.NoError(t, err)
+		defer func() { require.NoError(t, l.Unlock()) }()
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, def, info.Mode().Perm(), "a caller with no adapter got %v, want filelock's default (0666 less the umask: %v)", info.Mode().Perm(), def)
+	})
 }
 
 // The lock file lives under the caller's own cache directory and nowhere else. A lock at

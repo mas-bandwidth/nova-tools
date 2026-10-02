@@ -1,7 +1,6 @@
 package store
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -24,15 +23,17 @@ func TestCallerOpOfAnEarlierEpochIsRefused(t *testing.T) {
 	for _, held := range []*uint64{nil, new(uint64)} {
 		step.Epoch = held
 		res, err := h.st.Run(h.ctx, step)
-		if err != nil || res.Replay || len(res.Moved) != 0 || len(res.Refused) != 1 {
-			t.Fatalf("the same operation after the clear (held %v): %+v %v", held, res, err)
+		require.NoError(t, err, "the same operation after the clear (held %v): %+v %v", held, res, err)
+		require.False(t, res.Replay, "the same operation after the clear (held %v): %+v %v", held, res, err)
+		require.Empty(t, res.Moved, "the same operation after the clear (held %v): %+v %v", held, res, err)
+		require.Len(t, res.Refused, 1, "the same operation after the clear (held %v): %+v %v", held, res, err)
+		why := res.Refused[0].Why
+		if held == nil {
+			require.Contains(t, why, "cleared at", "the refusal: %s", why)
+			require.Contains(t, why, "operation caller-1 belongs to epoch 0", "the refusal: %s", why)
 		}
-		if why := res.Refused[0].Why; held == nil && (!strings.Contains(why, "cleared at") || !strings.Contains(why, "operation caller-1 belongs to epoch 0")) {
-			t.Fatalf("the refusal: %s", why)
-		}
-		if c := h.snap().Work.Card("late"); c != nil && c.Placed() {
-			t.Fatalf("the operation of epoch 0 ran again at epoch 1")
-		}
+		c := h.snap().Work.Card("late")
+		require.False(t, c != nil && c.Placed(), "the operation of epoch 0 ran again at epoch 1")
 		got := h.image()
 		require.Equal(t, img, got, "the refused operation changed the store:\n%s\nwas\n%s", got, img)
 	}
@@ -62,31 +63,33 @@ func TestNoteIDsCarryTheEpoch(t *testing.T) {
 		return v.Open[0].Note.ID
 	}
 	oldID := failIt()
-	if _, err := h.st.Clear(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err := h.st.Clear(h.ctx)
+	require.NoError(t, err)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
 	newID := failIt()
-	if oldID == newID || sprint.IDEpoch(oldID) != 0 || sprint.IDEpoch(newID) != 1 {
-		t.Fatalf("judgment ids: epoch 0 %s, epoch 1 %s", oldID, newID)
-	}
+	require.NotEqual(t, oldID, newID, "judgment ids: epoch 0 %s, epoch 1 %s", oldID, newID)
+	require.Equal(t, uint64(0), sprint.IDEpoch(oldID), "judgment ids: epoch 0 %s, epoch 1 %s", oldID, newID)
+	require.Equal(t, uint64(1), sprint.IDEpoch(newID), "judgment ids: epoch 0 %s, epoch 1 %s", oldID, newID)
 	img := h.image()
 	res, err := h.st.Run(h.ctx, AckStep(sprint.AckReq{Notes: []string{oldID}, Reason: "x"}))
-	if err != nil || len(res.Moved) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "belongs to epoch 0") {
-		t.Fatalf("ack of the old judgment: %+v %v", res, err)
-	}
+	require.NoError(t, err, "ack of the old judgment: %+v %v", res, err)
+	require.Empty(t, res.Moved, "ack of the old judgment: %+v %v", res, err)
+	require.Len(t, res.Refused, 1, "ack of the old judgment: %+v %v", res, err)
+	require.Contains(t, res.Refused[0].Why, "belongs to epoch 0", "ack of the old judgment: %+v %v", res, err)
 	err = h.st.SetReview(h.ctx, oldID, t0)
 	require.ErrorContains(t, err, "belongs to epoch 0", "wait on the old judgment: %v", err)
 	require.Equal(t, img, h.image(), "the ack and the wait of the old judgment changed the store")
-	if v, _ := h.st.Inbox(h.ctx, 0, 0, 100); len(v.Open) == 0 || v.Open[0].Note.ID != newID {
-		t.Fatalf("the new judgment is not open: %+v", v.Open)
-	}
+	v, _ := h.st.Inbox(h.ctx, 0, 0, 100)
+	require.NotEmpty(t, v.Open, "the new judgment is not open: %+v", v.Open)
+	require.Equal(t, newID, v.Open[0].Note.ID, "the new judgment is not open: %+v", v.Open)
 	// An answer naming the old judgment refuses the whole step, naming its
 	// epoch and the clear: the rework moves nothing.
 	img = h.image()
 	res, err = h.st.Run(h.ctx, ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "x", Answers: []string{oldID}}))
-	if err != nil || len(res.Moved) != 0 || len(res.Refused) != 1 || res.Refused[0].Key != oldID || !strings.Contains(res.Refused[0].Why, "judgment of epoch 0; the sprint was cleared at") {
-		t.Fatalf("an answer naming the old judgment: %+v %v", res, err)
-	}
+	require.NoError(t, err, "an answer naming the old judgment: %+v %v", res, err)
+	require.Empty(t, res.Moved, "an answer naming the old judgment: %+v %v", res, err)
+	require.Len(t, res.Refused, 1, "an answer naming the old judgment: %+v %v", res, err)
+	require.Equal(t, oldID, res.Refused[0].Key, "an answer naming the old judgment: %+v %v", res, err)
+	require.Contains(t, res.Refused[0].Why, "judgment of epoch 0; the sprint was cleared at", "an answer naming the old judgment: %+v %v", res, err)
 	require.Equal(t, img, h.image(), "the refused rework changed the store")
 }

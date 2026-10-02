@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
@@ -21,16 +24,12 @@ func TestTimingTableReproduces(t *testing.T) {
 	t.Parallel()
 
 	pkg, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	root := filepath.Dir(filepath.Dir(filepath.Dir(pkg))) // internal/ci/timing -> the checkout
 	script := filepath.Join(root, "cmd", "nova-ci", "timing.go")
 	log := filepath.Join(pkg, "testdata", "events.jsonl")
 	golden, err := os.ReadFile(filepath.Join(pkg, "testdata", "table.tsv"))
-	if err != nil {
-		t.Fatalf("the committed table is missing; run the script once and commit its output: %v", err)
-	}
+	require.NoError(t, err, "the committed table is missing; run the script once and commit its output: %v", err)
 	for run := 1; run <= 2; run++ {
 		cmd := exec.Command("go", "run", script, "--log", log)
 		cmd.Env = goenv.Clean(os.Environ())
@@ -38,12 +37,8 @@ func TestTimingTableReproduces(t *testing.T) {
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("run %d: the script did not print the table: %v\n%s", run, err, stderr.String())
-		}
-		if string(out) != string(golden) {
-			t.Fatalf("run %d did not reproduce the committed table:\n got %q\nwant %q", run, out, golden)
-		}
+		require.NoError(t, err, "run %d: the script did not print the table: %v\n%s", run, err, stderr.String())
+		require.Equal(t, string(golden), string(out), "run %d did not reproduce the committed table:\n got %q\nwant %q", run, out, golden)
 	}
 }
 
@@ -89,31 +84,20 @@ func TestTimingRefusesABadHarvest(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Load(strings.NewReader(tc.line + "\n"))
-			if err == nil {
-				t.Fatalf("Load took %q, want a refusal naming %q", tc.line, tc.want)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("the refusal says %q, want it to say %q", err, tc.want)
-			}
+			require.Error(t, err, "Load took %q, want a refusal naming %q", tc.line, tc.want)
+			assert.ErrorContains(t, err, tc.want, "the refusal says %q, want it to say %q", err, tc.want)
 		})
 	}
 	t.Run("a job named twice", func(t *testing.T) {
 		_, err := Load(strings.NewReader(good + "\n" + good + "\n"))
-		if err == nil {
-			t.Fatal("Load took the same job twice, want a refusal")
-		}
-		if !strings.Contains(err.Error(), "line 2") || !strings.Contains(err.Error(), "appears twice") {
-			t.Errorf("the refusal says %q, want the second line and the repeat named", err)
-		}
+		require.Error(t, err, "Load took the same job twice, want a refusal")
+		assert.ErrorContains(t, err, "line 2", "the refusal says %q, want the second line and the repeat named", err)
+		assert.ErrorContains(t, err, "appears twice", "the refusal says %q, want the second line and the repeat named", err)
 	})
 	t.Run("a blank line is skipped", func(t *testing.T) {
 		events, err := Load(strings.NewReader("\n" + good + "\n\n"))
-		if err != nil {
-			t.Fatalf("Load refused a harvest with blank lines: %v", err)
-		}
-		if len(events) != 1 {
-			t.Fatalf("Load kept %d events, want 1", len(events))
-		}
+		require.NoError(t, err, "Load refused a harvest with blank lines: %v", err)
+		require.Len(t, events, 1, "Load kept %d events, want 1", len(events))
 	})
 }
 
@@ -141,9 +125,9 @@ func TestTimingSelectAndRender(t *testing.T) {
 		for _, e := range kept {
 			got[e.PR]++
 		}
-		if len(kept) != 3 || got[1404] != 2 || got[700] != 1 {
-			t.Fatalf("Select kept %+v, want both jobs of nova-tools PR 1404 and the whole of schema PR 700", kept)
-		}
+		require.Len(t, kept, 3, "Select kept %+v, want both jobs of nova-tools PR 1404 and the whole of schema PR 700", kept)
+		require.Equal(t, 2, got[1404], "Select kept %+v, want both jobs of nova-tools PR 1404 and the whole of schema PR 700", kept)
+		require.Equal(t, 1, got[700], "Select kept %+v, want both jobs of nova-tools PR 1404 and the whole of schema PR 700", kept)
 	})
 	t.Run("PR numbers with gaps still select the last N", func(t *testing.T) {
 		gap := []Event{
@@ -157,36 +141,32 @@ func TestTimingSelectAndRender(t *testing.T) {
 		for _, e := range kept {
 			got[e.PR]++
 		}
-		if len(kept) != 3 || got[100] != 1 || got[98] != 2 || got[90] != 0 {
-			t.Fatalf("Select(last=2) over PRs 100, 98, 90 kept %+v, want PR 100 and both jobs of PR 98", kept)
-		}
+		require.Len(t, kept, 3, "Select(last=2) over PRs 100, 98, 90 kept %+v, want PR 100 and both jobs of PR 98", kept)
+		require.Equal(t, 1, got[100], "Select(last=2) over PRs 100, 98, 90 kept %+v, want PR 100 and both jobs of PR 98", kept)
+		require.Equal(t, 2, got[98], "Select(last=2) over PRs 100, 98, 90 kept %+v, want PR 100 and both jobs of PR 98", kept)
+		require.Equal(t, 0, got[90], "Select(last=2) over PRs 100, 98, 90 kept %+v, want PR 100 and both jobs of PR 98", kept)
 	})
 	t.Run("last of zero or less keeps everything", func(t *testing.T) {
-		if kept := Select(events, DefaultRepos, 0); len(kept) != 5 {
-			t.Fatalf("Select with last=0 kept %d events, want 5 (the other repo dropped)", len(kept))
-		}
+		got := Select(events, DefaultRepos, 0)
+		require.Len(t, got, 5, "Select with last=0 kept %d events, want 5 (the other repo dropped)", len(got))
 	})
 	t.Run("the table's shape", func(t *testing.T) {
 		rows, err := Rows(Select(events, DefaultRepos, 0))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		want := "repo\tpr\tjob\topened\tqueue_s\tsetup_s\ttest_s\tpr_open_to_green_s\n" +
 			"mas-bandwidth/nova-tools\t1404\ttest (1/3)\t2026-08-01T06:00:00Z\t60\t120\t1200\t2130\n" +
 			"mas-bandwidth/nova-tools\t1404\ttest (2/3)\t2026-08-01T06:00:00Z\t120\t150\t1800\t2130\n" +
 			"mas-bandwidth/schema\t699\tcheck\t2026-08-01T04:00:00Z\t60\t60\t600\t-\n" +
 			"mas-bandwidth/schema\t699\ttest\t2026-08-01T04:00:00Z\t60\t60\t2400\t-\n" +
 			"mas-bandwidth/schema\t700\ttest\t2026-08-01T05:00:00Z\t60\t60\t1200\t1380\n"
-		if got := Render(rows); got != want {
-			t.Errorf("Render printed:\n%s\nwant:\n%s", got, want)
-		}
+		got := Render(rows)
+		assert.Equal(t, want, got, "Render printed:\n%s\nwant:\n%s", got, want)
 	})
 	t.Run("an event that does not say green", func(t *testing.T) {
 		bad := job("mas-bandwidth/nova-tools", 1, "test", "2026-08-01T06:00:00Z", "2026-08-01T06:01:00Z", "2026-08-01T06:02:00Z", "2026-08-01T06:04:00Z", "2026-08-01T06:24:00Z", true)
 		bad.Green = nil
-		if _, err := Rows([]Event{bad}); err == nil {
-			t.Fatal("Rows took an event that does not say whether it was green, want a refusal")
-		}
+		_, err := Rows([]Event{bad})
+		require.Error(t, err, "Rows took an event that does not say whether it was green, want a refusal")
 	})
 }
 

@@ -49,9 +49,11 @@ func TestEveryMemberWhoseBeatLapsedGoesDownInOneTick(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 36}))
 	h.startMachine()
 	h.machine()
-	if d := h.dealtTo(); d["m1"] != 9 || d["m2"] != 9 || d["m3"] != 9 || d["m4"] != 9 {
-		t.Fatalf("dealt %v, want nine each", d)
-	}
+	d := h.dealtTo()
+	require.Equal(t, 9, d["m1"], "dealt %v, want nine each", d)
+	require.Equal(t, 9, d["m2"], "dealt %v, want nine each", d)
+	require.Equal(t, 9, d["m3"], "dealt %v, want nine each", d)
+	require.Equal(t, 9, d["m4"], "dealt %v, want nine each", d)
 	// m1 and m2 fall silent together, holding 18; m3 and m4 have room for
 	// seven cards each (DealAhead times the width of 8, less the 9 they hold):
 	// fourteen go to them, the other four are withdrawn for the next deal, and
@@ -66,7 +68,7 @@ func TestEveryMemberWhoseBeatLapsedGoesDownInOneTick(t *testing.T) {
 		n := h.memberNotes(sprint.NMemberDown, m)
 		require.Len(t, n, 1, "%s's down notes: %q", m, n)
 	}
-	d := h.dealtTo()
+	d = h.dealtTo()
 	for m, want := range map[string]int{"m1": 0, "m2": 0, "m3": sprint.DealAhead * 8, "m4": sprint.DealAhead * 8} {
 		require.Equal(t, want, d[m], "after one tick: dealt %v, want m3 and m4 at DealAhead times their width of 8 and nothing on m1 and m2", d)
 	}
@@ -113,13 +115,12 @@ func TestTheLevelEvensEveryQueueInOneTick(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 64}))
 	h.startMachine()
 	h.machine()
-	if d := h.dealtTo(); d["m1"] != 64 {
-		t.Fatalf("dealt %v, want every card on m1", d)
-	}
+	d := h.dealtTo()
+	require.Equal(t, 64, d["m1"], "dealt %v, want every card on m1", d)
 	h.setLive(ms...)
 	h.tick(time.Second)
 	h.machine()
-	d := h.dealtTo()
+	d = h.dealtTo()
 	for _, m := range ms {
 		require.Equal(t, 8, d[m], "after one tick with the fleet back: dealt %v, want eight each", d)
 	}

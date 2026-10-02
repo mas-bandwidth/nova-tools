@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
 )
@@ -24,35 +27,25 @@ func TestTheCommandReferenceDeclaresEveryReleaseVerb(t *testing.T) {
 
 	path := filepath.Join(repoRoot(t), "docs", "CLI.md")
 	declared, err := dogfood.ParseCLI(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	have := map[string]bool{}
 	for _, v := range declared {
 		have[v.Key()] = true
 	}
 	for _, line := range strings.Split(release.Verbs, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			t.Fatalf("a usage line is not `nova-update release <verb> ...`: %q", line)
-		}
+		require.GreaterOrEqualf(t, len(fields), 3, "a usage line is not `nova-update release <verb> ...`: %q", line)
 		key := fields[0] + " " + fields[1] + " " + fields[2]
-		if !have[key] {
-			t.Errorf("docs/CLI.md declares no %q; the release verbs are the last mile and the reference is where a person looks for them", key)
-		}
+		assert.Truef(t, have[key], "docs/CLI.md declares no %q; the release verbs are the last mile and the reference is where a person looks for them", key)
 	}
 	// And the section is found by its heading, so a reader scanning the
 	// reference for the release verbs has something to scan for.
 	text := readFile(t, path)
-	if !strings.Contains(text, "### The release verb") {
-		t.Error("docs/CLI.md has no `### The release verb` heading under nova-update")
-	}
+	assert.Contains(t, text, "### The release verb", "docs/CLI.md has no `### The release verb` heading under nova-update")
 	// The flags a person cannot get through a release without, named where
 	// they will meet them.
 	for _, want := range []string{"--security-read", "--paths-from", "--local-diff", "--expect-sums-from", "--platform", "--receipts", "--no-dogfood-gate"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("docs/CLI.md does not name %s", want)
-		}
+		assert.Containsf(t, text, want, "docs/CLI.md does not name %s", want)
 	}
 }
 
@@ -72,15 +65,11 @@ func TestTheDogfoodGateIsInTheReleaseSpec(t *testing.T) {
 		release.DogfoodWaiverPrefix,
 		"dogfood-gate=skipped",
 	} {
-		if !strings.Contains(spec, want) {
-			t.Errorf("docs/SPEC-RELEASE.md does not carry %q", want)
-		}
+		assert.Containsf(t, spec, want, "docs/SPEC-RELEASE.md does not carry %q", want)
 	}
 	// And the remedy the refusal hands somebody is the remedy the spec
 	// prints, composed from the one string rather than retyped beside it.
-	if !strings.Contains(spec, release.DogfoodRemedy) {
-		t.Errorf("docs/SPEC-RELEASE.md does not carry the remedy %q", release.DogfoodRemedy)
-	}
+	assert.Containsf(t, spec, release.DogfoodRemedy, "docs/SPEC-RELEASE.md does not carry the remedy %q", release.DogfoodRemedy)
 }
 
 // Every edge the fourth release dogfood found is a NUMBERED lesson in
@@ -107,8 +96,6 @@ func TestTheFourthDogfoodsLessonsAreInTheReleaseSpec(t *testing.T) {
 		"SUMS.digest",
 		"--expect-sums-from",
 	} {
-		if !strings.Contains(spec, want) {
-			t.Errorf("docs/SPEC-RELEASE.md does not carry %q", want)
-		}
+		assert.Containsf(t, spec, want, "docs/SPEC-RELEASE.md does not carry %q", want)
 	}
 }

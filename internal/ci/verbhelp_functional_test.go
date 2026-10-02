@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
 )
@@ -111,9 +115,7 @@ func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) (map[str
 	}
 	helps := map[string]string{}
 	verbs := usageVerbs(tool, banner)
-	if len(verbs) == 0 {
-		t.Fatalf("`%s help` names no verb in its usage block; the verb-help check would pass by checking nothing", tool)
-	}
+	require.NotEmpty(t, verbs, "`%s help` names no verb in its usage block; the verb-help check would pass by checking nothing", tool)
 	_, byDesign := helpRefusedByDesign[tool]
 	for _, verb := range verbs {
 		dir := t.TempDir()
@@ -132,14 +134,13 @@ func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) (map[str
 			code = exitErr.ExitCode()
 		default:
 			cancel()
-			t.Fatalf("running %s %s: %v", tool, strings.Join(args, " "), err)
+			require.FailNowf(t, fmt.Sprintf("running %s %s: %v", tool, strings.Join(args, " "), err), "")
 		}
 		cancel()
 		line := tool + " " + strings.Join(args, " ")
 		if byDesign {
-			if code != 2 || out.Len() != 0 {
-				t.Errorf("`%s` exited %d with stdout %q; %s refuses -h at exit 2 by design (%s)", line, code, out.String(), tool, helpRefusedByDesign[tool])
-			}
+			assert.Equal(t, 2, code, "`%s` exited %d with stdout %q; %s refuses -h at exit 2 by design (%s)", line, code, out.String(), tool, helpRefusedByDesign[tool])
+			assert.Equal(t, 0, out.Len(), "`%s` exited %d with stdout %q; %s refuses -h at exit 2 by design (%s)", line, code, out.String(), tool, helpRefusedByDesign[tool])
 			// Its verb's help is `<tool> help <verb>`, the route the refusal names:
 			// that is the help the tool-answers walk reads for its effect and dry run.
 			if hcode, hout, herr := runIn(t, bin, append([]string{"help"}, strings.Fields(verb)...)...); hcode == 0 && herr == "" && strings.TrimSpace(hout) != "" {
@@ -148,7 +149,7 @@ func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) (map[str
 			continue
 		}
 		if code != 0 || strings.TrimSpace(out.String()) == "" || errb.Len() != 0 {
-			t.Errorf("`%s` exited %d, stdout %d bytes, stderr %q; want that verb's help on stdout at exit 0 and nothing on stderr (route the verb's flag parsing through internal/nsprint/verbflag)", line, code, out.Len(), errb.String())
+			assert.Failf(t, fmt.Sprintf("`%s` exited %d, stdout %d bytes, stderr %q; want that verb's help on stdout at exit 0 and nothing on stderr (route the verb's flag parsing through internal/nsprint/verbflag)", line, code, out.Len(), errb.String()), "")
 		} else {
 			helps[verb] = out.String()
 		}
@@ -161,19 +162,18 @@ func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) (map[str
 		// One verb per tool is enough: every verb's help is assembled by one
 		// seam or one table.
 		if verb == verbs[0] {
-			if want := statedExitCodes(banner); want == "" {
-				t.Errorf("`%s help` states no exit codes; the onboarding standard wants an `exit codes: 0 ..., 1 ..., 2 ...` line in every banner", tool)
-			} else if !helpStatesExitCodes(tool, out.String()) {
-				t.Errorf("`%s` prints no exit-codes line stating a code; its banner states %q; got:\n%s", line, want, out.String())
+			want := statedExitCodes(banner)
+			assert.NotEmpty(t, want, "`%s help` states no exit codes; the onboarding standard wants an `exit codes: 0 ..., 1 ..., 2 ...` line in every banner", tool)
+			if want != "" {
+				assert.True(t, helpStatesExitCodes(tool, out.String()), "`%s` prints no exit-codes line stating a code; its banner states %q; got:\n%s", line, want, out.String())
 			}
 		}
-		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
-			var names []string
-			for _, e := range entries {
-				names = append(names, filepath.Join(dir, e.Name()))
-			}
-			t.Errorf("`%s` created %v; help writes nothing", line, names)
+		entries, _ := os.ReadDir(dir)
+		var names []string
+		for _, e := range entries {
+			names = append(names, filepath.Join(dir, e.Name()))
 		}
+		assert.Empty(t, names, "`%s` created %v; help writes nothing", line, names)
 	}
 	return helps, true
 }

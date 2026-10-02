@@ -20,6 +20,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // wallReadRootsBegin/End bracket the standard's copy of the wall's linux read-root table, as
@@ -42,58 +45,40 @@ func TestBenchStandardAndTheWallNameTheSameReadRoots(t *testing.T) {
 
 	root := repoRoot(t)
 	wallSrc, err := os.ReadFile(filepath.Join(root, "internal", "sandbox", "wrap_linux.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	m := regexp.MustCompile(`(?m)^var linuxReadRoots = \[\]string\{([^}]*)\}`).FindSubmatch(wallSrc)
-	if m == nil {
-		t.Fatal("internal/sandbox/wrap_linux.go no longer declares `var linuxReadRoots = []string{...}` on one line; update this test's reader with it")
-	}
+	require.NotNil(t, m, "internal/sandbox/wrap_linux.go no longer declares `var linuxReadRoots = []string{...}` on one line; update this test's reader with it")
 	var fromWall []string
 	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllSubmatch(m[1], -1) {
 		fromWall = append(fromWall, string(q[1]))
 	}
-	if len(fromWall) == 0 {
-		t.Fatal("the wall's linux read-root table parsed empty")
-	}
+	require.NotEmpty(t, fromWall, "the wall's linux read-root table parsed empty")
 
 	body := string(rawBenchStandard(t, root))
 	fromStandard := quotedBetween(t, body, wallReadRootsBegin, wallReadRootsEnd)
-	if strings.Join(fromStandard, " ") != strings.Join(fromWall, " ") {
-		t.Errorf("the executable-root check and the wall name different linux read roots:\n  %s: %v\n  internal/sandbox/wrap_linux.go linuxReadRoots: %v\nThey are ONE list: a root the wall grants and the check omits rejects a conforming bench. Edit both sides together.",
-			benchStandardSource, fromStandard, fromWall)
-	}
+	assert.Equal(t, strings.Join(fromWall, " "), strings.Join(fromStandard, " "), "the executable-root check and the wall name different linux read roots:\n  %s: %v\n  internal/sandbox/wrap_linux.go linuxReadRoots: %v\nThey are ONE list: a root the wall grants and the check omits rejects a conforming bench. Edit both sides together.",
+		benchStandardSource, fromStandard, fromWall)
 	// The block is only half the rule: the check must actually read it, with the
 	// per-machine resolver directory and $HOME/sdk, or the block is decoration.
 	i := strings.Index(body, "func wallExecRoots(")
-	if i < 0 {
-		t.Fatalf("%s no longer declares wallExecRoots, the function that joins the wall's table, the resolver directory and $HOME/sdk", benchStandardSource)
-	}
+	require.NotEqual(t, -1, i, "%s no longer declares wallExecRoots, the function that joins the wall's table, the resolver directory and $HOME/sdk", benchStandardSource)
 	fn := body[i:]
 	if j := strings.Index(fn, "\n}\n"); j >= 0 {
 		fn = fn[:j]
 	}
 	for _, want := range []string{"wallReadRoots", "resolvDir", `"sdk"`} {
-		if !strings.Contains(fn, want) {
-			t.Errorf("wallExecRoots does not read %s", want)
-		}
+		assert.Contains(t, fn, want, "wallExecRoots does not read %s", want)
 	}
-	if !strings.Contains(body, "wallExecRoots(w.home, resolvDir)") {
-		t.Errorf("the executable-root check does not call wallExecRoots")
-	}
+	assert.Contains(t, body, "wallExecRoots(w.home, resolvDir)", "the executable-root check does not call wallExecRoots")
 }
 
 // quotedBetween is the double-quoted strings of the lines between two markers, in order.
 func quotedBetween(t *testing.T, body, begin, end string) []string {
 	t.Helper()
 	_, after, found := strings.Cut(body, begin)
-	if !found {
-		t.Fatalf("%s carries no %q marker", benchStandardSource, begin)
-	}
+	require.True(t, found, "%s carries no %q marker", benchStandardSource, begin)
 	block, _, found := strings.Cut(after, end)
-	if !found {
-		t.Fatalf("%s carries no %q marker", benchStandardSource, end)
-	}
+	require.True(t, found, "%s carries no %q marker", benchStandardSource, end)
 	var out []string
 	for _, line := range strings.Split(block, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "//") {

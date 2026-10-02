@@ -239,7 +239,7 @@ func (a *toolAnswers) check(t *testing.T, tools int) {
 		return
 	}
 	for _, v := range a.ledger.violations(t, "a tool answers every mistake with the way forward; on internal/tool it does by construction (a row's count only falls)") {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 

@@ -123,7 +123,7 @@ func (h *harness) a2AckRefused(typ string) {
 	require.NotEmpty(h.t, ids, "no open %q to acknowledge", typ)
 	res := h.run(AckStep(sprint.AckReq{Notes: ids, Reason: "looked", Who: "tester"}))
 	if len(res.Moved) != 0 || len(res.Refused) != len(ids) || !strings.Contains(res.Refused[0].Why, "ack does not answer") || !strings.Contains(res.Refused[0].Why, "nova-sprint ") {
-		h.t.Fatalf("ack of %q: %+v", typ, res)
+		require.Fail(h.t, fmt.Sprintf("ack of %q: %+v", typ, res))
 	}
 }
 
@@ -235,9 +235,9 @@ func TestAudit2ClosedAckedTickJudgmentHoldsForEver(t *testing.T) {
 	h.a2Run(2*time.Hour+5*time.Minute, 5*time.Minute)
 	h.a2AckRefused(sprint.NWorkLate)
 	late := h.a2Open(sprint.NWorkLate)
-	if _, held, err := h.st.Wait(h.ctx, late[0].Note.ID, h.now.Add(30*time.Minute)); err != nil || !held {
-		t.Fatalf("wait on the deadline: %v %v", held, err)
-	}
+	_, held, err := h.st.Wait(h.ctx, late[0].Note.ID, h.now.Add(30*time.Minute))
+	require.NoError(t, err, "wait on the deadline: %v %v", held, err)
+	require.True(t, held, "wait on the deadline: %v %v", held, err)
 	h.readInbox()
 	// the rest of the stream moves, so the stale line is masked
 	for i := 0; i < 30; i++ {
@@ -246,7 +246,7 @@ func TestAudit2ClosedAckedTickJudgmentHoldsForEver(t *testing.T) {
 		h.readInbox()
 	}
 	if s := h.snap(); s.StateOf("s1-1") != sprint.Working || s.Fleet.Placed(c.ID).Col != sprint.Working {
-		t.Fatalf("s1-1 %s", s.StateOf("s1-1"))
+		require.Failf(t, "", "s1-1 %s", s.StateOf("s1-1"))
 	}
 	h.a2Names("s1-1", "work card taken twelve hours ago, its deadline waited on for 30 minutes")
 	n := h.written(sprint.NWorkLate)
@@ -304,9 +304,10 @@ func TestAudit2ClosedRepairSkipNamesAStoredIDAfterAClear(t *testing.T) {
 	_, err = st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	require.ErrorAs(t, err, &cut, "not cut: %v", err)
 	h.tick(time.Hour)
-	if rr, err := h.st.Repair(h.ctx); err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped {
-		t.Fatalf("repair %+v %v", rr, err)
-	}
+	rr, err := h.st.Repair(h.ctx)
+	require.NoError(t, err, "repair %+v %v", rr, err)
+	require.Len(t, rr, 1, "repair %+v %v", rr, err)
+	require.Equal(t, RepairSkipped, rr[0].Done, "repair %+v %v", rr, err)
 	var subjects []string
 	for _, o := range h.a2Open(sprint.NRepairSkipped) {
 		subjects = append(subjects, o.Subject())
@@ -368,9 +369,9 @@ func TestAudit2ClosedDeadRunLoopIsNoJudgment(t *testing.T) {
 			silent = &g
 		}
 	}
-	if silent == nil || len(silent.Commands) == 0 || silent.Commands[0].Lines[0] != "nova-sprint run" {
-		t.Fatalf("a RUNNING machine an hour without a tick: %+v", silent)
-	}
+	require.NotNil(t, silent, "a RUNNING machine an hour without a tick: %+v", silent)
+	require.NotEmpty(t, silent.Commands, "a RUNNING machine an hour without a tick: %+v", silent)
+	require.Equal(t, "nova-sprint run", silent.Commands[0].Lines[0], "a RUNNING machine an hour without a tick: %+v", silent)
 	// three failed ticks in a row are a group too
 	h.m.Fail = func(p string) error {
 		if p == "fence" {
@@ -411,7 +412,7 @@ func TestAudit2ClosedClearLeavesTheMachineStoppedSilently(t *testing.T) {
 		note = note || g.Type == sprint.NMachineStopped
 	}
 	if !due || !note {
-		t.Fatalf("the new epoch's inbox: moves due %v, stopped note %v: %+v", due, note, h.a2Inbox().Groups)
+		require.Failf(t, "", "the new epoch's inbox: moves due %v, stopped note %v: %+v", due, note, h.a2Inbox().Groups)
 	}
 }
 
@@ -476,9 +477,9 @@ func TestAudit2ClosedEmptyStreamIsStaleForEver(t *testing.T) {
 	h.a2Run(10*time.Hour, 30*time.Minute)
 	st := h.a2Stale()
 	require.Empty(t, st, "an empty stream is stale: %v", st)
-	if c := h.snap().StreamCtl("s1"); c.F("state") != sprint.StreamWaiting || c.F("since") != "" {
-		t.Fatalf("the empty stream: %v", c.Fields)
-	}
+	c := h.snap().StreamCtl("s1")
+	require.Equal(t, sprint.StreamWaiting, c.F("state"), "the empty stream: %v", c.Fields)
+	require.Equal(t, "", c.F("since"), "the empty stream: %v", c.Fields)
 	// a clear restores every stream empty: never stale either
 	_, err := h.st.Clear(h.ctx)
 	require.NoError(t, err)
@@ -505,7 +506,7 @@ func TestAudit2ClosedReminderDecisionsHaveNoCommands(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("no reminder group")
+	require.FailNow(t, "no reminder group")
 }
 
 // DEFECT I. ask --another after accept retired a slow reader's card and the

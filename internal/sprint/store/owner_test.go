@@ -1,7 +1,6 @@
 package store
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -21,13 +20,14 @@ func TestOnlyTheCoordinatorAnswersAJudgment(t *testing.T) {
 	require.Len(t, open, 1, "ci red: %d", len(open))
 	id := open[0].Note.ID
 	res := h.run(AckStep(sprint.AckReq{Notes: []string{id}, Reason: "looked", Who: "m1"}))
-	if len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "the-coordinator") || len(h.openOf(sprint.NCIRed)) != 1 {
-		t.Fatalf("ack by a worker: %+v", res)
-	}
+	require.Len(t, res.Refused, 1, "ack by a worker: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "the-coordinator", "ack by a worker: %+v", res)
+	require.Len(t, h.openOf(sprint.NCIRed), 1, "ack by a worker: %+v", res)
 	res = h.run(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "x", Answers: []string{id}, Who: "reader-a"}))
-	if len(res.Refused) != 1 || len(res.Moved) != 0 || !strings.Contains(res.Refused[0].Why, "the-coordinator") || h.state("s1-1") != sprint.Ready {
-		t.Fatalf("drop --answers by a reader: %+v", res)
-	}
+	require.Len(t, res.Refused, 1, "drop --answers by a reader: %+v", res)
+	require.Empty(t, res.Moved, "drop --answers by a reader: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "the-coordinator", "drop --answers by a reader: %+v", res)
+	require.Equal(t, sprint.Ready, h.state("s1-1"), "drop --answers by a reader: %+v", res)
 	st := *h.st
 	st.Actor = "m1"
 	_, _, err := st.Wait(h.ctx, id, h.now.Add(10*60*1e9))

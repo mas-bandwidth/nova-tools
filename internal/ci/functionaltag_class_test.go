@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"fmt"
 	"go/build/constraint"
 	"go/parser"
 	"go/token"
@@ -8,6 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // functionaltag_class_test.go is Glenn's ruling of 2026-09-26 11:20 AM ET
@@ -94,9 +98,8 @@ func TestNeedsFunctionalReadsTheConstraint(t *testing.T) {
 		"package x\n\n//go:build functional\n":                 false,
 		"package x\n":                                          false,
 	} {
-		if got := needsFunctional([]byte(src)); got != want {
-			t.Errorf("needsFunctional(%q) = %v, want %v", src, got, want)
-		}
+		got := needsFunctional([]byte(src))
+		assert.Equal(t, want, got, "needsFunctional(%q) = %v, want %v", src, got, want)
 	}
 }
 
@@ -110,9 +113,8 @@ func TestStartsRedisSeesTheHelpersThroughTheirImport(t *testing.T) {
 		"package x\nimport \"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil\"\nvar a = testutil.FreePort(nil)\n":        false,
 		"package x\n// testutil.Start(t) in prose, no import\n":                                                                        false,
 	} {
-		if got := startsRedis([]byte(src)); got != want {
-			t.Errorf("startsRedis(%q) = %v, want %v", src, got, want)
-		}
+		got := startsRedis([]byte(src))
+		assert.Equal(t, want, got, "startsRedis(%q) = %v, want %v", src, got, want)
 	}
 }
 
@@ -134,13 +136,11 @@ func TestRedisBackedTestsCarryTheFunctionalTag(t *testing.T) {
 			bad = append(bad, f.Rel)
 		}
 	}
-	if seen == 0 {
-		t.Fatal("no _test.go calls one of redisHelpers; the walk is broken, not the tree")
-	}
+	require.Positive(t, seen, "no _test.go calls one of redisHelpers; the walk is broken, not the tree")
 	sort.Strings(bad)
 	for _, rel := range bad {
-		t.Errorf("%s starts a redis-server but builds without `-tags functional`: put `//go:build functional` "+
+		assert.Fail(t, fmt.Sprintf("%s starts a redis-server but builds without `-tags functional`: put `//go:build functional` "+
 			"(joined with && to any constraint it has) on its first line, or move its redis-backed tests to "+
-			"<name>_functional_test.go and keep the pure ones here", rel)
+			"<name>_functional_test.go and keep the pure ones here", rel))
 	}
 }

@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // discardedAllowlistPath is the shrink-only ledger of the discarded errors the
@@ -63,9 +65,7 @@ func TestNoErrorIsDiscarded(t *testing.T) {
 		if src.HasDirNamed("testdata") {
 			continue
 		}
-		if src.ParseErr != nil {
-			t.Fatal(src.ParseErr)
-		}
+		require.NoError(t, src.ParseErr)
 		lines := strings.Split(string(src.Src), "\n")
 		for _, s := range discardedSites(tree.FSet, src.AST) {
 			if reasonedAt(lines, s.line) {
@@ -283,9 +283,7 @@ func requireReasons(t *testing.T, allow *allowlist.Packages) {
 	for _, problem := range missing {
 		t.Error(problem)
 	}
-	if len(missing) > 0 {
-		t.FailNow()
-	}
+	require.Empty(t, missing)
 }
 
 // siteLedger is one class test's run against its counted ledger: the sites it
@@ -299,9 +297,7 @@ type siteLedger struct {
 func newSiteLedger(t *testing.T, path string) *siteLedger {
 	t.Helper()
 	allow, err := allowlist.LoadPackages(path, countedLedger)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	requireReasons(t, allow)
 	return &siteLedger{path: path, allow: allow, sites: map[string][]string{}}
 }
@@ -383,9 +379,7 @@ func f2() error { return nil }
 `
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "p.go", src, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines := strings.Split(src, "\n")
 	got := map[string]int{}
 	for _, s := range discardedSites(fset, f) {
@@ -396,9 +390,7 @@ func f2() error { return nil }
 	}
 	want := map[string]int{shapeBlank: 3, shapeBareRet: 1, shapeErrNilled: 1}
 	for shape, n := range want {
-		if got[shape] != n {
-			t.Errorf("%s: %d unreasoned sites, want %d (got %v)", shape, got[shape], n, got)
-		}
+		assert.Equal(t, n, got[shape], "%s: %d unreasoned sites, want %d (got %v)", shape, got[shape], n, got)
 	}
 }
 
@@ -448,9 +440,7 @@ func TestNoScriptHidesAFailure(t *testing.T) {
 			continue
 		}
 		raw, err := os.ReadFile(f.Path)
-		if err != nil {
-			t.Fatalf("%s: %v", f.Rel, err)
-		}
+		require.NoError(t, err, "%s: %v", f.Rel, err)
 		lines := strings.Split(string(raw), "\n")
 		for i, line := range lines {
 			for _, shape := range scriptHideLine(line) {
@@ -512,13 +502,10 @@ func TestScriptHideRuleReadsTheShapes(t *testing.T) {
 		`nova-secrets check >/dev/null 2>&1`:       1,
 		`echo "no failure here" # || not a shape"`: 0,
 	} {
-		if got := len(scriptHideLine(line)); got != want {
-			t.Errorf("scriptHideLine(%q) found %d shapes, want %d", line, got, want)
-		}
+		got := scriptHideLine(line)
+		assert.Len(t, got, want, "scriptHideLine(%q) found %d shapes, want %d", line, len(got), want)
 	}
-	if !scriptReasonedAt([]string{"# ignored: a probe whose answer is the exit", "kill -0 1 2>/dev/null"}, 1) {
-		t.Error("a reason on the line above was not read")
-	}
+	assert.True(t, scriptReasonedAt([]string{"# ignored: a probe whose answer is the exit", "kill -0 1 2>/dev/null"}, 1), "a reason on the line above was not read")
 }
 
 // TestSiteLedgerShrinksBySiteNotByRow proves the four never-silent ledgers are
@@ -532,14 +519,10 @@ func TestSiteLedgerShrinksBySiteNotByRow(t *testing.T) {
 		"a.txt": "# ceiling: 1\na/a.go:f:blank 2 two sites\n",
 		"b.txt": "# ceiling: 1\nb/b.sh:or-true 1 one site\n",
 	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(contents), 0600))
 	}
 	allow, err := allowlist.LoadPackages(dir, countedLedger)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	run := func(sites map[string]int) []string {
 		l := &siteLedger{path: dir, allow: allow, sites: map[string][]string{}}
 		for k, n := range sites {
@@ -549,23 +532,29 @@ func TestSiteLedgerShrinksBySiteNotByRow(t *testing.T) {
 		}
 		return l.violationsMode(t, "REMEDY", false)
 	}
-	if got := run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 1}); len(got) != 0 {
-		t.Errorf("a ledger that matches is quiet, got %q", got)
+	got := run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 1})
+	assert.Empty(t, got, "a ledger that matches is quiet, got %q", got)
+
+	got = run(map[string]int{"a/a.go:f:blank": 3, "b/b.sh:or-true": 1})
+	if assert.Len(t, got, 1, "a new site under a listed key must be red with the remedy, got %q", got) {
+		assert.Contains(t, got[0], "lists a/a.go:f:blank at 2 sites, but 3 are there now", "a new site under a listed key must be red with the remedy, got %q", got)
+		assert.Contains(t, got[0], "REMEDY", "a new site under a listed key must be red with the remedy, got %q", got)
 	}
-	if got := run(map[string]int{"a/a.go:f:blank": 3, "b/b.sh:or-true": 1}); len(got) != 1 || !strings.Contains(got[0], "lists a/a.go:f:blank at 2 sites, but 3 are there now") || !strings.Contains(got[0], "REMEDY") {
-		t.Errorf("a new site under a listed key must be red with the remedy, got %q", got)
+	got = run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 2})
+	if assert.Len(t, got, 1, "a second site under a one-site row must be red, got %q", got) {
+		assert.Contains(t, got[0], "b/b.sh:or-true at 1 sites, but 2", "a second site under a one-site row must be red, got %q", got)
 	}
-	if got := run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 2}); len(got) != 1 || !strings.Contains(got[0], "b/b.sh:or-true at 1 sites, but 2") {
-		t.Errorf("a second site under a one-site row must be red, got %q", got)
+	got = run(map[string]int{"a/a.go:f:blank": 1, "b/b.sh:or-true": 1})
+	if assert.Len(t, got, 1, "a fixed site must ask for a lower count, got %q", got) {
+		assert.Contains(t, got[0], "lower the row's count to 1", "a fixed site must ask for a lower count, got %q", got)
 	}
-	if got := run(map[string]int{"a/a.go:f:blank": 1, "b/b.sh:or-true": 1}); len(got) != 1 || !strings.Contains(got[0], "lower the row's count to 1") {
-		t.Errorf("a fixed site must ask for a lower count, got %q", got)
+	got = run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 1, "c/c.go:g:blank": 2})
+	if assert.Len(t, got, 2, "a key with no row must be red at each of its sites, got %q", got) {
+		assert.Contains(t, got[0], "c/c.go:g:blank#", "a key with no row must be red at each of its sites, got %q", got)
 	}
-	if got := run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 1, "c/c.go:g:blank": 2}); len(got) != 2 || !strings.Contains(got[0], "c/c.go:g:blank#") {
-		t.Errorf("a key with no row must be red at each of its sites, got %q", got)
-	}
-	if got := run(map[string]int{"a/a.go:f:blank": 2}); len(got) != 1 || !strings.Contains(got[0], "b/b.sh:or-true, but no site") {
-		t.Errorf("a row with no site left is stale, got %q", got)
+	got = run(map[string]int{"a/a.go:f:blank": 2})
+	if assert.Len(t, got, 1, "a row with no site left is stale, got %q", got) {
+		assert.Contains(t, got[0], "b/b.sh:or-true, but no site", "a row with no site left is stale, got %q", got)
 	}
 }
 
@@ -575,18 +564,13 @@ func TestSiteLedgerNamesReasonlessShard(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	file := filepath.Join(dir, "cmd", "nova-test.txt")
-	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(file, []byte("# ceiling: 1\ncmd/nova-test/main.go:f:blank 1\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(file), 0700))
+	require.NoError(t, os.WriteFile(file, []byte("# ceiling: 1\ncmd/nova-test/main.go:f:blank 1\n"), 0600))
 	allow, err := allowlist.LoadPackages(dir, countedLedger)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got := missingReasons(allow)
-	if len(got) != 1 || !strings.Contains(got[0], file+":2:") || !strings.Contains(got[0], "carries no reason") {
-		t.Errorf("reasonless row must name its shard and line, got %q", got)
+	if assert.Len(t, got, 1, "reasonless row must name its shard and line, got %q", got) {
+		assert.Contains(t, got[0], file+":2:", "reasonless row must name its shard and line, got %q", got)
+		assert.Contains(t, got[0], "carries no reason", "reasonless row must name its shard and line, got %q", got)
 	}
 }
