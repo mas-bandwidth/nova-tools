@@ -12,7 +12,6 @@ package sprintdash
 
 import (
 	"bytes"
-	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -40,8 +39,6 @@ const (
 	Window = time.Hour
 	// MinSpan is the samples throughput needs before it shows: until then it is null.
 	MinSpan = 10 * time.Minute
-	// ReadTimeout bounds one read of the sprint.
-	ReadTimeout = time.Minute
 	// LogEvery is the time between the read-time summary lines on Log.
 	LogEvery = time.Minute
 )
@@ -49,8 +46,9 @@ const (
 // Server serves the page and the sprint's cached copy. Read, Now and Every are
 // required; the rest may be left zero.
 type Server struct {
-	// Read reads the sprint once: the bytes `where --json` prints.
-	Read func(ctx context.Context) ([]byte, error)
+	// Read reads the sprint once: the bytes `where --json` prints. It is bounded by its
+	// own transport (the sprint server's client, or the store's connection).
+	Read func() ([]byte, error)
 	// Now is the server's clock.
 	Now func() time.Time
 	// Every is the least time between two reads' starts.
@@ -77,10 +75,7 @@ type snapshot struct {
 	OK                bool            `json:"ok"`
 	Data              json.RawMessage `json:"data"`
 	FetchedAt         *time.Time      `json:"fetchedAt"`
-	AttemptAt         *time.Time      `json:"attemptAt"`
 	Error             *string         `json:"error"`
-	ReadSeconds       *float64        `json:"readSeconds"`
-	MinInterval       float64         `json:"minInterval"`
 	Throughput        *float64        `json:"throughput"`
 	ThroughputMinutes float64         `json:"throughputMinutes"`
 	Build             string          `json:"build"`
@@ -119,7 +114,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "no logo", http.StatusNotFound)
 		}
 	case "/api/sprint":
-		s.Refresh(context.WithoutCancel(r.Context()))
+		s.Refresh()
 		s.send(w, "application/json", s.Snapshot())
 	case "/healthz":
 		s.send(w, "text/plain; charset=utf-8", []byte("ok\n"))
@@ -145,7 +140,7 @@ func file(name string) []byte {
 
 // Refresh reads the sprint when Every has passed since the last read began and no
 // read is running; otherwise the cached copy stands.
-func (s *Server) Refresh(ctx context.Context) {
+func (s *Server) Refresh() {
 	s.mu.Lock()
 	start := s.Now()
 	if s.reading || !s.began.IsZero() && start.Sub(s.began) < s.Every {
@@ -155,9 +150,7 @@ func (s *Server) Refresh(ctx context.Context) {
 	s.reading, s.began = true, start
 	s.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(ctx, ReadTimeout)
-	body, err := s.Read(ctx)
-	cancel()
+	body, err := s.Read()
 	if err == nil {
 		err = sprintJSON(body)
 	}
@@ -186,8 +179,6 @@ func sprintJSON(body []byte) error {
 // throughput sample; a failed one keeps the copy, and a new failure is logged once.
 func (s *Server) record(start, end time.Time, body []byte, err error) {
 	took := end.Sub(start)
-	secs := float64(took.Milliseconds()) / 1000
-	s.snap.AttemptAt, s.snap.ReadSeconds = &end, &secs
 	if err != nil {
 		why := oneline.Escape(err.Error())
 		if s.snap.OK || s.snap.Error == nil || *s.snap.Error != why {
@@ -269,7 +260,6 @@ func (s *Server) Snapshot() []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	snap := s.snap
-	snap.MinInterval = s.Every.Seconds()
 	snap.Build = build
 	b, err := json.Marshal(snap)
 	if err != nil {

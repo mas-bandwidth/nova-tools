@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -27,7 +26,7 @@ func TestDashboardReadsTheSprintAsWhereJSONDoes(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, want, string(got))
 
-	srv := &sprintdash.Server{Read: func(context.Context) ([]byte, error) { return ta.a.whereJSON("", false) }, Now: ta.a.now, Every: time.Second}
+	srv := &sprintdash.Server{Read: func() ([]byte, error) { return ta.a.whereJSON("", false) }, Now: ta.a.now, Every: time.Second}
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/sprint", nil))
 	var v struct {
@@ -84,6 +83,8 @@ func TestDashboardListensOnPrivateAddressesOnly(t *testing.T) {
 		{net.IPv4(100, 128, 0, 1), "a public address"},
 		{net.IPv4(8, 8, 8, 8), "a public address"},
 		{net.IPv4(203, 0, 113, 7), "a public address"},
+		{net.IPv4(169, 254, 1, 1), "a link-local address"},
+		{net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, "a link-local address"},
 	} {
 		assert.Contains(t, listenable(tc.ip), tc.why, "%s", tc.ip)
 	}

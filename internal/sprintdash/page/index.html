@@ -11,7 +11,7 @@
 @font-face { font-family: "Nunito"; font-style: normal; font-weight: 800; font-display: swap; src: url("nunito-800.woff2") format("woff2"); }
 /* Dark is the designed-for theme and the default; light is a toggle only.
    Type is set large (28 px base) to read from across the room; the spacing
-   grid is 16 px. Tables scroll sideways in a narrow frame, never shrink. */
+   grid is 16 px. Tables never scroll sideways: a table too wide takes its compact form. */
 :root, :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0d0f12;
@@ -93,8 +93,6 @@ body {
 .top { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 2rem; }
 .brand, .meta, .right { display: contents; }
 .brand h1 { margin: 0 1rem 0 0; display: inline-flex; align-items: center; gap: 1rem; font-size: 2.5rem; line-height: 3rem; font-weight: 650; letter-spacing: -.01em; }
-#logo { width: 2rem; height: 2rem; flex: none; color: currentColor; }
-img#logo.raster { width: auto; height: 3rem; margin-right: 0.5rem; }
 img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 @media (min-width: 1200px) { img#logo.logo-tile { width: 7.5rem; height: 7.5rem; } .wordmark { font-size: 7rem; line-height: 7.5rem; } }
 /* the lockup: tile, then the wordmark in a heavy rounded face */
@@ -154,7 +152,7 @@ button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 .empty { padding: 1rem 3rem 3rem; color: var(--text-2); font-size: 1.625rem; }
 .empty code { font: 1.5rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
 
-/* rows: CSS grid tables that scroll sideways when the frame is narrow */
+/* rows: CSS grid tables */
 .rows { padding: 0 0 1rem; }
 .row { display: grid; align-items: center; column-gap: 2rem; padding: 0 3rem; min-height: 5rem; border-bottom: 1px solid var(--border); }
 .row:last-child { border-bottom: 0; }
@@ -199,7 +197,7 @@ footer a:hover { color: var(--text); }
 @media (prefers-reduced-motion: reduce) { .flash, :root { animation: none; } }
 
 
-/* ---------- tables (SPEC.md: Work, Fleet, Friends, Responsive) ----------
+/* ---------- tables (docs/SPEC-SPRINT-DASHBOARD.md: Work, Fleet, Friends, Responsive) ----------
    Two forms per table: the full form, and the compact form (the panel gets class
    "compact" from app.js when the full form's header row would overflow). Never squeezed,
    never scrolled. Children: Work 1 stream 2 status 3 waiting 4 ready 5 working
@@ -207,7 +205,7 @@ footer a:hover { color: var(--text); }
    5 working / width 6 done 7 ok% 8 load; Friends the same without load. Minimum widths
    are the measured widest content of each column at the 28 px type. */
 .row > * { min-width: 0; }
-/* One right edge for the status column of Work, Fleet and Friends (SPEC.md, Glenn 7:36 PM):
+/* One right edge for the status column of Work, Fleet and Friends (docs/SPEC-SPRINT-DASHBOARD.md):
    every table's status column ends --E from the panel's left edge, whatever its padding,
    gutter or status width, so the pills line up down the page. The panels are all full width,
    and 45vw is the same length in each; 28rem keeps Work's name column at its ~220 px cap. */

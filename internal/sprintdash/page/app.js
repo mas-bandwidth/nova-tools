@@ -43,7 +43,6 @@ function el(tag, cls, text) {
 // (.fv) inside the node, so the tint hugs the digits, not the cell. A track
 // cell flashes only when it goes lit <-> unlit. The clock never flashes
 // (setLiveHTML does not use these helpers).
-var flashCount = 0;
 ["all", "all2", "pct", "eta", "eta-at", "cost", "cost-per", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
  "streams-sub", "fleet-head", "friends-sub", "readers-sub"].forEach(function (id) { var e = document.getElementById(id); if (e) quiet(e); });
 function valEl(e) {
@@ -55,7 +54,6 @@ function valEl(e) {
   return e._fv;
 }
 function flash(t) {
-  flashCount++;
   t.classList.remove("flash"); void t.offsetWidth; t.classList.add("flash");
   if (!t._flashEnd) { t._flashEnd = function () { t.classList.remove("flash"); }; t.addEventListener("animationend", t._flashEnd); }
 }
@@ -297,7 +295,7 @@ function fleetLike(box, table, withLoad) {
     if (withLoad) box._total._c.push(el("div"));
     box._total._c.forEach(function (c) { box._total.appendChild(c); });
   }
-  var t = { ready: 0, working: 0, width: 0, done: 0, ok: 0, up: 0, held: 0, down: 0, upWidth: 0, upWorking: 0 };
+  var t = { ready: 0, done: 0, ok: 0, up: 0, held: 0, down: 0 };
   var scale = Math.max(1, names.reduce(function (a, n) { return Math.max(a, int(table[n].width)); }, 0));
   // the track column is exactly the widest track, so the figure sits right after it
   var tw = (scale * (TRACK_CELL + TRACK_GAP) - TRACK_GAP).toFixed(3) + "rem";
@@ -314,9 +312,8 @@ function fleetLike(box, table, withLoad) {
   }, function (r, k) {
     var m = table[k], working = int(m.working), width = int(m.width), done = int(m.done);
     var okv = m.okpct != null ? m.okpct : m["ok%"];
-    t.ready += int(m.ready); t.working += working; t.width += width; t.done += done; t.ok += int(m.ok);
+    t.ready += int(m.ready); t.done += done; t.ok += int(m.ok);
     if (m.status in t) t[m.status]++;
-    if (m.status === "up") { t.upWidth += width; t.upWorking += working; }
     setText(r.name, k);
     setPill(r.pill, m.status || "-", STATUS_TONE[m.status] || "neutral");
     setTrack(r.track, working, width, scale);
@@ -335,7 +332,6 @@ function fleetLike(box, table, withLoad) {
 function renderFleet(d) {
   var r = fleetLike($("fleet"), d.tables.fleet || {}, true);
   setText($("fleet-head"), r.t.up + " up · " + r.t.held + " held · " + r.t.down + " down");
-  return r.t;
 }
 
 function renderFriends(d) {
@@ -397,7 +393,7 @@ function renderReaders(d) {
   strip._v.ci.style.color = ci === "red" ? "var(--critical)" : ci === "green" ? "var(--good)" : "var(--text-3)";
 }
 
-function renderHero(d, s, ft) {
+function renderHero(d, s) {
   var landed = int(d.landed), all = int(d.all);
   setText($("landed"), landed.toLocaleString("en-US")); setText($("all"), all.toLocaleString("en-US")); setText($("all2"), all.toLocaleString("en-US"));
   setText($("pct"), all ? (landed / all * 100).toFixed(1) + "%" : "-");
@@ -433,7 +429,6 @@ function setLive(since) {
   setLiveHTML($("live-text"), "Updated <span class=\"mono\">" + clock(since) + "</span>");
 }
 function setLiveHTML(e, s) { if (e.innerHTML !== s) e.innerHTML = s; }
-var DEBUG_FLASH = /(?:^|[?&])debug=flash(?:&|$)/.test(location.search), prevSig = null;
 // The full form of a table, unless any of its rows or cells would overflow: then the compact form.
 // Measured with the class removed and set again in the same task, so nothing flickers.
 function fitTables() {
@@ -455,21 +450,13 @@ function fitTables() {
 }
 window.addEventListener("resize", fitTables);
 function render(d) {
-  flashCount = 0;
   var s = renderStreams(d);
   renderOverall(s.sum, s.all);
-  var ft = renderFleet(d);
+  renderFleet(d);
   renderFriends(d);
   if (SHOW_ALL) renderReaders(d);
-  renderHero(d, s, ft);
+  renderHero(d, s);
   fitTables();
-  if (DEBUG_FLASH) { // ?debug=flash: one line per refresh, same=1 when the rendered data did not change
-    var sig = JSON.stringify([d.landed, d.all, d.summary, d.coordinator, d.epoch, d.machine, d.tables.work, d.tables.fleet, d.tables.friends || null,
-      (d.streams || []).map(function (x) { return [x.Stream, x.State]; }), d.tables.merge]);
-    var line = "flashes=" + flashCount + " same=" + (sig === prevSig ? 1 : 0);
-    prevSig = sig; console.log(line);
-    var log = $("flashlog") || document.body.appendChild(el("pre", "", "")); log.id = "flashlog"; log.textContent += line + "\n";
-  }
 }
 function poll() {
   if (inFlight) return;

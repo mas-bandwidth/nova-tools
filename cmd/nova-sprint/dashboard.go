@@ -53,7 +53,7 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 	redis := (verbArgs{fs: fs}).given("redis")
 	stdout = &lockedWriter{w: stdout} // the listeners and the reads write lines from their own goroutines
 	srv := &sprintdash.Server{
-		Read:    func(context.Context) ([]byte, error) { return a.whereJSON(c.redis, redis) },
+		Read:    func() ([]byte, error) { return a.whereJSON(c.redis, redis) },
 		Now:     a.now,
 		Every:   *every,
 		Logo:    *logo,
@@ -136,6 +136,8 @@ func listenable(ip net.IP) string {
 	switch {
 	case ip == nil:
 		return "the address is an IP address of this machine (loopback, or its address on the fleet's private network), never a name"
+	case ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast():
+		return "a link-local address; the page checks no credential, so it listens on loopback or the fleet's private network (the tailnet) only"
 	case ip.IsUnspecified():
 		return "the page shows the sprint and checks no credential, so it does not listen on every network; name loopback or this machine's tailnet address"
 	case !ip.IsLoopback() && !ip.IsPrivate() && !tailnetRange.Contains(ip):

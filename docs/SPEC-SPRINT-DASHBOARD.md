@@ -10,14 +10,16 @@ nothing from anywhere else.
 
 A user tunes the page by editing this specification and the page together: a change to
 `index.html` or `app.js` is a change to the line below that says it, in the same commit.
-`TestDashboardPageIsTheSpec` (internal/sprintdash) holds the two equal: it reads
-this file and the page's markup and compares the panel titles and their order, each
-table's column headers and their order, which columns are numeric (right-aligned), the
-hero tiles and their labels, the progress bar's label and legend, the header's wordmark
-and pills, and the footer line. A change to the page without this file, or to this file
-without the page, is red. In this repository the specification is locked (its lock
-sections): a line changes only with the owner's words, quoted with the date. A copy
-of nova-tools is its owner's to tune the same way.
+`TestDashboardPageIsTheSpec` (internal/sprintdash) holds part of the two equal: it reads
+the quoted rules of this file and the page's markup (and app.js's legend states) and
+compares the panel titles and their order, each table's column headers and their order,
+which columns are numeric (right-aligned), the hero tiles and their labels, the progress
+bar's label and legend, the header's wordmark and pills, and the footer line. A change to
+any of these in one without the other is red. The rest (sizes, colours, motion, layout)
+is checked by eye against this file, at the widths its Responsive section names. In
+this repository the specification is locked (its lock sections): a line changes only
+with the owner's words, quoted with the date. A copy of nova-tools is its owner's to
+tune the same way.
 
 ## Serving and publishing
 
@@ -29,7 +31,8 @@ else on the store `--redis` names), at most once per `--every` and only while a 
 asks: `/api/sprint` is that copy, with the build number and the throughput. Every answer
 is no-store; the page reloads itself when the build number changes (a new binary, or a
 new `--logo` file). A read that fails holds the last good copy, the page says nothing,
-and the dashboard's output takes one line per new failure. `--logo` names an image file
+and the dashboard's output takes one line per new failure, and once a minute a line of
+the reads' count, failures and read times. `--logo` names an image file
 served as the logo and the favicon; with none, the slot renders nothing.
 `/healthz` answers `ok`.
 

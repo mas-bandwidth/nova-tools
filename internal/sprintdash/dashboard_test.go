@@ -2,7 +2,6 @@ package sprintdash
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,7 +35,7 @@ func newRig(t *testing.T) *rig {
 	r.s = &Server{
 		Now:   func() time.Time { return r.now },
 		Every: time.Second,
-		Read: func(context.Context) ([]byte, error) {
+		Read: func() ([]byte, error) {
 			r.reads++
 			return r.next()
 		},
@@ -78,7 +77,8 @@ func TestDashboardReadsAtMostOncePerEvery(t *testing.T) {
 	assert.Equal(t, 2, r.reads, "an ask Every after the last read began: a read")
 }
 
-// While a read runs, every other ask is answered from the cached copy at once.
+// While a read runs, every other ask is answered from the cached copy at once and starts
+// no second read, however long the read takes: reads never overlap.
 func TestDashboardAnswersFromTheCacheWhileAReadRuns(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -94,14 +94,16 @@ func TestDashboardAnswersFromTheCacheWhileAReadRuns(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		r.s.Refresh(context.Background())
+		r.s.Refresh()
 	}()
 	<-entered
-	v := r.api() // the read above is still running
+	r.advance(2 * time.Second) // the read is still running past Every (the channels order the clock)
+	v := r.api()
+	assert.Equal(t, 2, r.reads, "an ask while a read runs starts no second read")
 	assert.InDelta(t, 0, v["data"].(map[string]any)["landed"], 0, "the ask during a read is the copy before it")
 	close(release)
 	wg.Wait()
-	assert.Equal(t, 2, r.reads)
+	r.next = func() ([]byte, error) { return where(5), nil }
 	assert.InDelta(t, 5, r.api()["data"].(map[string]any)["landed"], 0)
 }
 
