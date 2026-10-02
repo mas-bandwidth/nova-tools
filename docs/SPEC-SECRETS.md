@@ -130,13 +130,14 @@ so an installed-tool inventory can ask it on a bench with no credential setup.
 every refusal the real run has, then prints one `SECRETS <VERB> PLAN` line per step the real run
 would take and a last `SECRETS <VERB> DRY-RUN OK` line, at exit 0: the file written and whether
 the name is added or replaced, the recipients it is encrypted to, the machine, ssh target and
-remote path a placement writes, the `sha256` its receipt records, the branch, the commit message
+remote path a placement writes, the sealed file its receipt records, the branch, the commit message
 and the pull request title a store change carries. The plan and the real run are read off the same
 values, so the one is the other. A dry run starts no ssh child, no `git` write, push or `gh`
 call, and no `sops` encrypt, and writes no file and no receipt; the two reads it makes are the
 ones the real run makes first (a `sops -d` to learn that a name exists, and git's own branch and
 clean-tree reads). `seal --dry-run` takes no value, from stdin or a terminal. No value, fragment
-or length reaches a plan line; `place --dry-run` prints the `sha256` the real receipt prints.
+or length reaches a plan line; `place --dry-run` prints the `file`, `head` and `blob` the real
+receipt records.
 
 Three verbs write into the store: **`seal`**, which folds one pasted value into one seat file
 and carries that change through a branch and a review; **`seat add`**, which creates a
@@ -507,9 +508,11 @@ nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> \
   --machine <name> --secret <name> [--path <remote path>] \
   [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
 nova-secrets placed --machine <name> [--receipts <dir>]
-SECRETS PLACE OK machine=<name> secret=<name> path=<path> sha256=<hex> stamp=<stamp>
+SECRETS PLACE OK machine=<name> secret=<name> path=<path> file=<seat>.yaml head=<commit|-> blob=<blob id> stamp=<stamp>
 SECRETS PLACED OK machine=<name> count=<n>
-SECRETS PLACED ITEM machine=<name> secret=<name> path=<path> sha256=<hex> stamp=<stamp>
+SECRETS PLACED ITEM machine=<name> secret=<name> path=<path> file=<seat>.yaml head=<commit|-> blob=<blob id> stamp=<stamp>
+SECRETS PLACED ITEM machine=<name> secret=<name> path=<path> file=- head=- blob=- stamp=<stamp> identity=unknown
+SECRETS PLACED NOTE <n> receipt(s) for <name> carry no sealed-file identity (identity=unknown: place again)[; <m> were written by an older build ...]; run: ... or remove the file: rm <receipt file>
 ```
 
 **What it asserts.** A bench or a runner gets the keys it needs by machinery rather than by a
@@ -519,13 +522,39 @@ without `--path`, to `<home>/.config/nova-secrets/<secret>.env` using the machin
 fleet registry. The machine's ssh target comes from `--machines` (the tab-separated fleet file:
 name, ssh target, home, an optional fourth column ignored), defaulting to
 `~/.config/nova-tools/fleet.tsv`, and a name it does not hold is refused naming the file. **The value travels on the ssh child's
-stdin, never in an argument list, and `place` writes a receipt — machine, secret, path, sha256 of
-the value, stamp — under `--receipts` (default `~/.config/nova-secrets/placed`), keyed by machine
-and replaced per secret.** `placed` reads those receipts back by name and hash; a machine with
+stdin, never in an argument list, and `place` writes a receipt — machine, secret, path, the
+sealed file it came from, stamp — under `--receipts` (default `~/.config/nova-secrets/placed`),
+keyed by machine and replaced per secret.** `placed` reads those receipts back; a machine with
 none placed is `count=0` at exit 0, an answer and not a failure. **No value, fragment, length or
 transcript appears on any line or in any receipt**, and a `place` refusal is exit 2 naming the
 missing machine or the store and the file to add it to, before anything is copied. This verb
 reads the machine file it is handed and no other source.
+
+**Nothing derived from a value.** Nothing nova-secrets prints, writes to a receipt, logs, puts
+in a `--json` object or a dry-run plan is derived from a secret's plaintext in a way a reader
+without the key could test a guess against: no hash of the value, whole or truncated, salted or
+not, and not its length. A short value behind a published hash is found by trying candidates.
+So a placement is identified by the sealed file instead: `file` is the seat file the value was
+sealed in, `head` the store's HEAD commit when it was placed (`-` when HEAD named none), and
+`blob` the git blob id of that file's sealed bytes as `place` read them. The blob id hashes the
+ciphertext, which sops encrypts under a random data key, so it tells a reader nothing about the
+value. Whether a machine is at the store's current value is a comparison of public ids: the
+receipt's `blob` against `git -C <store> rev-parse HEAD:<file>`. Equal blobs mean the same
+ciphertext and so the same value; a different blob means the seat file changed (this value or
+another in it) and the value is placed again. `place --dry-run` says `action=unchanged` only when
+the receipt already records this blob, file and path. The rule is held by
+`TestNoOutputCarriesADigestOfTheValue` (cmd/nova-secrets), over every line `place`, `place
+--dry-run` and `placed` print and every receipt they write.
+
+**Receipts from an older build.** A receipt line written before this rule has four fields, the
+third a sha256 of the value. A current build reads such a line with that field dropped: it is
+never kept, compared or printed, and the line lists as `file=- head=- blob=- ...
+identity=unknown`, meaning "place again". Until the machine's receipt file is rewritten, the old
+digest stays on disk in it. The next `place` to that machine rewrites the whole file in the
+six-field form and drops every old digest from it; to refresh each secret's identity, place each
+again (`nova-secrets place ... --machine <name> --secret <NAME>`), or remove the file outright
+(`rm <receipts>/<machine>.receipt`, default `~/.config/nova-secrets/placed/<machine>.receipt`).
+`placed` names the count of such lines and both commands in a `SECRETS PLACED NOTE` line.
 
 ### `seal`
 

@@ -3,7 +3,6 @@ package secrets
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -21,13 +20,20 @@ import (
 
 // place.go implements issue #764: `nova-secrets place` copies one named secret from the
 // local store to a remote fleet machine over ssh with mode 0600, never prints or logs the
-// value, and writes a receipt (machine, secret, path, sha256 of the value, stamp).
-// `nova-secrets placed --machine <name>` reads those receipts back by name and hash.
+// value, and writes a receipt (machine, secret, path, the sealed file it came from, stamp).
+// `nova-secrets placed --machine <name>` reads those receipts back.
 //
 // The machine's ssh target comes from the fleet registry file (nova-work CONFIG's machines
 // section, materialised as the tab-separated fleet file nova-pulse already reads). The value
-// travels to the machine on the ssh child's stdin, never in an argument list, and the only
-// thing written down is its sha256.
+// travels to the machine on the ssh child's stdin, never in an argument list.
+//
+// What was placed is identified by the SEALED file, never by the value (docs/SPEC-SECRETS.md,
+// "Nothing derived from a value"): the store's HEAD commit and the git blob id of the seat
+// file as it was read. The blob id is a hash of the ciphertext, which sops encrypts under a
+// random data key, so a reader without the key can test no guess of the value against it,
+// unlike a hash of the value itself, which a short value gives up to anyone who tries
+// candidates. "Is the machine at the store's current value?" is then a comparison of two
+// public ids: the receipt's blob against `git -C <store> rev-parse HEAD:<file>`.
 
 // FleetMachine is one machine in the fleet registry: a name, the ssh target that reaches it,
 // and its home directory (used as the default root for a placed secret).
@@ -49,9 +55,8 @@ type PlaceInput struct {
 	Machines   string
 	Receipts   string
 	SSH        string
-	// DryRun prints the plan and writes nothing: the secret is decrypted (the read the
-	// verb needs to know it exists and to name its sha256) but no ssh child runs and no
-	// receipt is written.
+	// DryRun prints the plan and writes nothing: the seat file is decrypted (the read the
+	// verb needs to know the secret exists) but no ssh child runs and no receipt is written.
 	DryRun bool
 	Now    func() time.Time
 }
@@ -62,12 +67,60 @@ type PlacedInput struct {
 	Receipts string
 }
 
-// placedReceipt is one line of a machine's receipt file. It never holds the value.
+// placedReceipt is one line of a machine's receipt file: six tab-separated fields,
+// secret, path, file, head, blob, stamp. It holds nothing derived from the value: File is
+// the seat file (<seat>.yaml) the value was sealed in, Head the store's HEAD commit when it
+// was placed ("-" when HEAD named none), Blob the git blob id of that file's sealed bytes.
+//
+// A line written by an older build has four fields, the third an unkeyed sha256 of the
+// value. It is read with that field DROPPED, never kept, compared or printed: File, Head
+// and Blob are "", Unknown and Legacy are set, so it lists as identity=unknown, and the
+// next write of the machine's receipt file rewrites it as "-" fields, without the digest.
 type placedReceipt struct {
-	Secret string
-	Path   string
-	SHA256 string
-	Stamp  string
+	Secret  string
+	Path    string
+	File    string
+	Head    string
+	Blob    string
+	Stamp   string
+	Unknown bool // no sealed-file identity: place again
+	Legacy  bool // read from an older build's line, whose file still holds a digest
+}
+
+// dash is a receipt value as its file holds it: "-" for one it does not hold.
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// field is a receipt value as a line prints it.
+func field(s string) string { return oneline.Field(dash(s)) }
+
+// sealedIdentity is the store's HEAD commit and the git blob id of the sealed seat file
+// at file: the public ids a receipt records in place of anything derived from a value.
+// HEAD is read from .git as files and is "" when it names no commit yet.
+func sealedIdentity(storeDir, file string) (head, blob string, err error) {
+	sealed, err := os.ReadFile(file)
+	if err != nil {
+		return "", "", fmt.Errorf("cannot read the sealed file %s: %w", file, err)
+	}
+	id := GitBlobSHA1(sealed)
+	gitDir := filepath.Join(storeDir, ".git")
+	if raw, err := os.ReadFile(filepath.Join(gitDir, "HEAD")); err == nil {
+		head = strings.TrimSpace(string(raw))
+		if ref, ok := strings.CutPrefix(head, "ref: "); ok {
+			// A branch with no commit yet resolves to nothing, and the receipt says head=-.
+			if head, err = resolveRef(gitDir, ref); err != nil {
+				head = ""
+			}
+		}
+		if !isValidHexSHA(head) {
+			head = ""
+		}
+	}
+	return head, hex.EncodeToString(id[:]), nil
 }
 
 // ReadFleetMachines parses the tab-separated fleet registry: name, ssh target, home, and
@@ -176,17 +229,19 @@ func RunPlace(in PlaceInput) (string, error) {
 		return "", fmt.Errorf("secret %s is not in %s; run: sops %s", in.Secret, targetFile, targetFile)
 	}
 
+	head, blob, err := sealedIdentity(in.StoreDir, targetFile)
+	if err != nil {
+		return "", err
+	}
+	receipt := placedReceipt{Secret: in.Secret, Path: remotePath, File: in.AsName + ".yaml", Head: head, Blob: blob}
+
 	if in.DryRun {
-		return placeDryRun(in, machine, remotePath, sec)
+		return placeDryRun(in, machine, receipt)
 	}
 
-	var hash string
-	err = sec.Use(func(value string) error {
-		sum := sha256.Sum256([]byte(value))
-		hash = hex.EncodeToString(sum[:])
+	if err := sec.Use(func(value string) error {
 		return sshPlaceSecret(in.SSH, machine.Target, remotePath, value)
-	})
-	if err != nil {
+	}); err != nil {
 		return "", err
 	}
 
@@ -194,60 +249,55 @@ func RunPlace(in PlaceInput) (string, error) {
 	if in.Now != nil {
 		now = in.Now
 	}
-	stamp := now().UTC().Format(time.RFC3339)
-	receipt := placedReceipt{Secret: in.Secret, Path: remotePath, SHA256: hash, Stamp: stamp}
+	receipt.Stamp = now().UTC().Format(time.RFC3339)
 	if err := writeReceipt(in.Receipts, in.Machine, receipt); err != nil {
 		return "", err
 	}
 
-	return fmt.Sprintf("SECRETS PLACE OK machine=%s secret=%s path=%s sha256=%s stamp=%s",
+	return fmt.Sprintf("SECRETS PLACE OK machine=%s secret=%s path=%s file=%s head=%s blob=%s stamp=%s",
 		oneline.Field(in.Machine), oneline.Field(in.Secret), oneline.Field(remotePath),
-		oneline.Field(hash), oneline.Field(stamp)), nil
+		field(receipt.File), field(head), field(blob), oneline.Field(receipt.Stamp)), nil
 }
 
 // placeDryRun is `place --dry-run`: every refusal RunPlace has already passed by the time
 // it is called (the store, the key, the registry, the machine, the path, the secret in the
 // seat file), then the plan the real run takes -- the machine and ssh target, the remote
-// path and mode, the sha256 the receipt would record, and whether that receipt is added,
-// replaced or already holds this exact hash -- and nothing written: no ssh child, no
-// receipt, not even the receipts directory. The value is hashed and never shown.
-func placeDryRun(in PlaceInput, machine FleetMachine, remotePath string, sec Secret) (string, error) {
-	var hash string
-	if err := sec.Use(func(value string) error {
-		sum := sha256.Sum256([]byte(value))
-		hash = hex.EncodeToString(sum[:])
-		return nil
-	}); err != nil {
-		return "", err
-	}
+// path and mode, the sealed file the receipt would record, and whether that receipt is
+// added, replaced or already records this sealed file at this path -- and nothing written:
+// no ssh child, no receipt, not even the receipts directory. The value is not read here.
+func placeDryRun(in PlaceInput, machine FleetMachine, want placedReceipt) (string, error) {
 	receipts, err := readReceipts(in.Receipts, in.Machine)
 	if err != nil {
 		return "", err
 	}
-	receipt := "add"
+	action := "add"
 	for _, r := range receipts {
 		if r.Secret != in.Secret {
 			continue
 		}
-		receipt = "replace"
-		if r.SHA256 == hash && r.Path == remotePath {
-			receipt = "unchanged"
+		action = "replace"
+		// The same ciphertext holds the same value; an old receipt's identity is unknown.
+		if !r.Unknown && r.Blob == want.Blob && r.File == want.File && r.Path == want.Path {
+			action = "unchanged"
 		}
 	}
 	lines := []string{
-		fmt.Sprintf("SECRETS PLACE PLAN machine=%s secret=%s path=%s mode=0600 sha256=%s",
-			oneline.Field(in.Machine), oneline.Field(in.Secret), oneline.Field(remotePath), oneline.Field(hash)),
+		fmt.Sprintf("SECRETS PLACE PLAN machine=%s secret=%s path=%s mode=0600 file=%s head=%s blob=%s",
+			oneline.Field(in.Machine), oneline.Field(in.Secret), oneline.Field(want.Path), field(want.File), field(want.Head), field(want.Blob)),
 		fmt.Sprintf("SECRETS PLACE PLAN ssh=%s target=%s writes=%s the value travels on stdin, never in an argument",
-			oneline.Field(in.SSH), oneline.Field(machine.Target), oneline.Field(remotePath)),
+			oneline.Field(in.SSH), oneline.Field(machine.Target), oneline.Field(want.Path)),
 		fmt.Sprintf("SECRETS PLACE PLAN receipt=%s action=%s",
-			oneline.Field(receiptPath(in.Receipts, in.Machine)), receipt),
+			oneline.Field(receiptPath(in.Receipts, in.Machine)), action),
 		fmt.Sprintf("SECRETS PLACE DRY-RUN OK machine=%s secret=%s nothing written, no ssh run",
 			oneline.Field(in.Machine), oneline.Field(in.Secret)),
 	}
 	return strings.Join(lines, "\n"), nil
 }
 
-// RunPlaced lists the receipts written for one machine, by name and hash.
+// RunPlaced lists the receipts written for one machine: each secret, its remote path, the
+// sealed file it was placed from (file, head, blob) and its stamp. A receipt from an older
+// build lists as identity=unknown, and a NOTE says its file still holds an old digest on
+// disk and how to rewrite or remove it.
 func RunPlaced(in PlacedInput) (string, []string, error) {
 	if in.Machine == "" {
 		return "", nil, fmt.Errorf("missing --machine <name>")
@@ -262,11 +312,30 @@ func RunPlaced(in PlacedInput) (string, []string, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	items := make([]string, 0, len(receipts))
+	items := make([]string, 0, len(receipts)+1)
+	unknown, legacy := 0, 0
 	for _, r := range receipts {
-		items = append(items, fmt.Sprintf("SECRETS PLACED ITEM machine=%s secret=%s path=%s sha256=%s stamp=%s",
+		line := fmt.Sprintf("SECRETS PLACED ITEM machine=%s secret=%s path=%s file=%s head=%s blob=%s stamp=%s",
 			oneline.Field(in.Machine), oneline.Field(r.Secret), oneline.Field(r.Path),
-			oneline.Field(r.SHA256), oneline.Field(r.Stamp)))
+			field(r.File), field(r.Head), field(r.Blob), oneline.Field(r.Stamp))
+		if r.Unknown {
+			line += " identity=unknown"
+			unknown++
+		}
+		if r.Legacy {
+			legacy++
+		}
+		items = append(items, line)
+	}
+	if unknown > 0 {
+		file := oneline.Field(receiptPath(in.Receipts, in.Machine))
+		note := fmt.Sprintf("SECRETS PLACED NOTE %d receipt(s) for %s carry no sealed-file identity (identity=unknown: place again)", unknown, oneline.Field(in.Machine))
+		if legacy > 0 {
+			note += fmt.Sprintf("; %d were written by an older build and still hold a hash of the value on disk, never read or shown, until the next place to %s rewrites %s",
+				legacy, oneline.Field(in.Machine), file)
+		}
+		items = append(items, note+fmt.Sprintf("; run: nova-secrets place --machine %s --secret <NAME> ... for each, or remove the file: rm %s",
+			oneline.Field(in.Machine), file))
 	}
 	okLine := fmt.Sprintf("SECRETS PLACED OK machine=%s count=%d", oneline.Field(in.Machine), len(receipts))
 	return okLine, items, nil
@@ -322,10 +391,23 @@ func readReceipts(dir, machine string) ([]placedReceipt, error) {
 			continue
 		}
 		fields := strings.Split(line, "\t")
-		if len(fields) != 4 {
-			return nil, fmt.Errorf("receipt %s line %d: want 4 tab-separated fields", receiptPath(dir, machine), n+1)
+		switch len(fields) {
+		case 6:
+			r := placedReceipt{Secret: fields[0], Path: fields[1], File: fields[2], Head: fields[3], Blob: fields[4], Stamp: fields[5]}
+			for _, f := range []*string{&r.File, &r.Head, &r.Blob} {
+				if *f == "-" {
+					*f = ""
+				}
+			}
+			r.Unknown = r.Blob == ""
+			out = append(out, r)
+		case 4:
+			// An older build's line: secret, path, sha256 of the value, stamp. The digest
+			// (fields[2]) is dropped here and goes no further.
+			out = append(out, placedReceipt{Secret: fields[0], Path: fields[1], Stamp: fields[3], Unknown: true, Legacy: true})
+		default:
+			return nil, fmt.Errorf("receipt %s line %d: want 6 tab-separated fields (secret, path, file, head, blob, stamp); run: rm %s and place again", receiptPath(dir, machine), n+1, receiptPath(dir, machine))
 		}
-		out = append(out, placedReceipt{Secret: fields[0], Path: fields[1], SHA256: fields[2], Stamp: fields[3]})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Secret < out[j].Secret })
 	return out, nil
@@ -353,8 +435,10 @@ func writeReceipt(dir, machine string, add placedReceipt) error {
 	sort.Slice(existing, func(i, j int) bool { return existing[i].Secret < existing[j].Secret })
 
 	var b strings.Builder
+	// Every line is written in the six-field form, so an older build's line loses its
+	// digest here: its file, head and blob are written as "-".
 	for _, r := range existing {
-		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", r.Secret, r.Path, r.SHA256, r.Stamp)
+		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Secret, r.Path, dash(r.File), dash(r.Head), dash(r.Blob), r.Stamp)
 	}
 
 	final := receiptPath(dir, machine)

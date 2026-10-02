@@ -123,7 +123,7 @@ var verbEffects = map[string]string{
 	"gate":        "effect: inspection. Diffs --base..--head in the store with git and judges every seat rule change; writes nothing, calls no network.",
 	"keygen":      "effect: local write. Makes one age key file at --key (mode 0600) with --age-keygen, never over an existing file, and prints the .sops.yaml rule block for it.",
 	"place":       "effect: delivery. Copies one value over ssh to --machine (on ssh's stdin, never in an argument) and writes a receipt under --receipts; --dry-run writes nothing and runs no ssh.",
-	"placed":      "effect: inspection. Lists the receipts under --receipts for --machine, by name and hash; writes nothing.",
+	"placed":      "effect: inspection. Lists the receipts under --receipts for --machine, by name and the sealed file each came from (file, head, blob), never a hash of a value; writes nothing.",
 	"seal":        "effect: store write. Reads one value at a hidden prompt (or --stdin), seals it into <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run writes nothing.",
 	"seat add":    "effect: local write. Writes the new seat's rule into .sops.yaml and its <as>.yaml, re-sealed from --from; commits nothing.",
 	"seat inject": "effect: store write. Re-seals the --only values from --from into the existing <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run writes nothing.",
