@@ -98,7 +98,8 @@ type TrustState map[string]string
 // are lower case: the launcher scripts
 // read `base-repo:` and `base-sha:` out of the card's first 40 lines with a
 // case-sensitive `sed`, and refuse to launch without both. So on every one of the 59
-// cards, those two lower-case lines ENDED the header block, and
+// cards, those two lower-case lines end the header block under the old key
+// pattern, and every subsequent typed key sits outside the block the gate reads;
 // `PATHS:`, `FILES:`, `TEST:`, `RUN:`, `SYMBOL:`, `RED-WHEN:`, `DONE-WHEN:`,
 // `NO-SUBAGENTS:` and `SOURCE:` -- every key under them -- were outside the header the
 // gate reads. `bin/sprint-stage:37` refuses the whole stage on one such card, so the set
