@@ -43,6 +43,12 @@ func dryRunFlag(fs *flag.FlagSet, value bool) {
 // cell) is left to the real run. It reports whether the verb is done, and the
 // exit.
 func (app *application) preflight(stdout, stderr io.Writer, fs *flag.FlagSet, verb, addr string, args []string, call func(redis.Cmdable) error) (int, bool) {
+	return app.preflightWith(stderr, fs, verb, call, func(p *planClient) int { return plan(stdout, fs, verb, addr, args, p) })
+}
+
+// preflightWith is preflight with the verb's own plan line (batch prints its
+// manifest's counts).
+func (app *application) preflightWith(stderr io.Writer, fs *flag.FlagSet, verb string, call func(redis.Cmdable) error, show func(*planClient) int) (int, bool) {
 	if code, refused := app.overridden(stderr, fs, verb); refused {
 		return code, true
 	}
@@ -55,7 +61,7 @@ func (app *application) preflight(stdout, stderr io.Writer, fs *flag.FlagSet, ve
 	if f := fs.Lookup("dry-run"); f == nil || f.Value.String() != "true" {
 		return 0, false
 	}
-	return plan(stdout, fs, verb, addr, args, p), true
+	return show(p), true
 }
 
 // plan prints a dry run's one line; its exit is 0, or 1 when the line did not

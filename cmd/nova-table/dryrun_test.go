@@ -41,6 +41,7 @@ var writeRefusals = map[string][]string{
 	"view set":      {"view", "set", "work"},
 	"view state":    {"view", "state", "work"},
 	"view del":      {"view", "del"},
+	"batch":         {"batch", "--actor", strings.Repeat("a", 1<<20), batchManifest}, // store-free: ntable.ApplyBatch's outgoing bytes
 }
 
 // batchManifest is the manifest batch's help shows.
@@ -57,7 +58,7 @@ func TestADryRunIsTheRealRunsOwnPlan(t *testing.T) {
 	nowhere := filepath.Join(t.TempDir(), "no-store.sock")
 	var writes []string
 	for _, c := range commands {
-		if strings.HasPrefix(effectOf(c.name), "store write") && c.name != "shell" && c.name != "batch" {
+		if strings.HasPrefix(effectOf(c.name), "store write") && c.name != "shell" {
 			writes = append(writes, c.name)
 		}
 	}
@@ -90,9 +91,7 @@ func TestADryRunIsTheRealRunsOwnPlan(t *testing.T) {
 			require.EqualValues(t, 0, code, "%v: %q", args, errout)
 			assert.Empty(t, errout)
 			assert.True(t, strings.HasPrefix(out, "TABLE DRY-RUN verb="+strings.Join(strings.Fields(c.name), "-")+" "), "%q", out)
-			if c.name != "batch" {
-				assert.Contains(t, out, ` sends="FCALL ns_`, "the plan names the command the real run sends first")
-			}
+			assert.Contains(t, out, ` sends="FCALL ns_`, "the plan names the command the real run sends first")
 			assert.Contains(t, out, " redis="+nowhere+" dialled=0 written=0\n")
 			assert.Equal(t, 1, strings.Count(out, "\n"), "%q", out)
 		})
@@ -105,4 +104,55 @@ func TestADryRunIsTheRealRunsOwnPlan(t *testing.T) {
 		require.EqualValues(t, 0, code, "%q", errout.String())
 		assert.Equal(t, "TABLE DRY-RUN verb=cell-move arg1=demo arg2=build arg3=ready arg4=done arg5=b2 sends=\"FCALL ns_table_cell_move\" redis=- dialled=0 written=0\n", out.String())
 	})
+}
+
+// TestABatchDryRunMakesTheEncodedRequestsChecks: a manifest that passes the
+// raw input's checks and grows past the manifest bound only when it is
+// encoded for sending (an actor of 200000 '<', escaped six bytes each; an
+// actor added by --actor to a manifest naming none) is refused LIMIT by the
+// dry run as by the real run, in the lines and in JSON, before any dial.
+func TestABatchDryRunMakesTheEncodedRequestsChecks(t *testing.T) {
+	t.Parallel()
+	nowhere := filepath.Join(t.TempDir(), "no-store.sock")
+	escaped := strings.Replace(batchManifest, `"members"`, `"actor":"`+strings.Repeat("<", 200000)+`","members"`, 1)
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"an actor that grows when encoded", []string{"batch", escaped}},
+		{"an actor added by --actor", []string{"batch", "--actor", strings.Repeat("a", 1<<20), batchManifest}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, json := range []bool{false, true} {
+				var real, dry []string
+				for _, d := range []bool{false, true} {
+					args := append(slices.Clone(tc.args), "--redis", nowhere)
+					if json {
+						args = append(args, "--json")
+					}
+					if d {
+						args = append(args, "--dry-run")
+					}
+					code, out, errout := runTable(args...)
+					assert.EqualValues(t, 1, code, "json=%v dry=%v: %s%s", json, d, out, errout)
+					assert.NotContains(t, out+errout, "unreachable")
+					got := []string{out, errout}
+					if d {
+						dry = got
+					} else {
+						real = got
+					}
+				}
+				assert.Equal(t, real, dry, "json=%v: the refusal with and without --dry-run", json)
+				if json {
+					assert.Contains(t, dry[0], `"status":"refused"`)
+					assert.Contains(t, dry[0], "manifest bytes")
+				} else {
+					assert.Contains(t, dry[1], "BATCH REFUSED: ")
+					assert.Contains(t, dry[1], "manifest bytes")
+				}
+			}
+		})
+	}
 }

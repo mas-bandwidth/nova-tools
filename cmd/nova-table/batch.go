@@ -13,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/redis/go-redis/v9"
 )
 
 // batchUsageDetails states the manifest grammar from SPEC-NOVA-TABLE's
@@ -125,13 +126,17 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, fmt.Sprintf("--actor %q differs from the manifest's actor %q; make them equal or drop --actor; changed=no; run: nova-table batch -h", *actor, manifest.Actor))
 	}
 
-	if code, refused := app.overridden(stderr, fs, verb); refused {
+	// The real run's own call, checked before any dial: ApplyBatch encodes the
+	// reconciled manifest (the actor above included) and checks the bytes it
+	// would send, so a manifest that grows past a bound when encoded is refused
+	// here, with or without --dry-run (preflight).
+	ctx := context.Background()
+	call := func(c redis.Cmdable) (ntable.Receipt, error) { return ntable.ApplyBatch(ctx, c, *manifest) }
+	if code, done := app.preflightWith(stderr, fs, verb, sent(call), func(p *planClient) int {
+		return batchPlan(stdout, stderr, manifest, *addr, *asJSON, p)
+	}); done {
 		return code
 	}
-	if fs.Lookup("dry-run").Value.String() == "true" {
-		return batchPlan(stdout, stderr, manifest, *addr, *asJSON)
-	}
-	ctx := context.Background()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
@@ -139,7 +144,7 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	defer st.Close()
 	trips := st.CountTrips()
 
-	rcpt, err := ntable.ApplyBatch(ctx, c, *manifest)
+	rcpt, err := call(c)
 	if errors.Is(err, ntable.ErrUnknownOutcome) {
 		// the store did not confirm: the batch may or may not be applied. Send the same manifest again.
 		text := err.Error()
@@ -186,10 +191,11 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 
 // batchPlan answers batch --dry-run: the manifest has passed every check made
 // before sending (its grammar, its bounds, its rules, the --epoch and --actor
-// it must agree with), so the plan is what the store would be sent, and
-// nothing is dialled or written. The store's own checks (the table's epoch
+// it must agree with, and ApplyBatch's own check of the bytes it would send),
+// so the plan is what the store would be sent, and nothing is dialled or
+// written. The store's own checks (the table's epoch
 // and revision, each member's expectation) are left to the real run.
-func batchPlan(stdout, stderr io.Writer, m *ntable.BatchManifest, addr string, asJSON bool) int {
+func batchPlan(stdout, stderr io.Writer, m *ntable.BatchManifest, addr string, asJSON bool, p *planClient) int {
 	if strings.TrimSpace(addr) == "" {
 		addr = "-"
 	}
@@ -203,11 +209,11 @@ func batchPlan(stdout, stderr io.Writer, m *ntable.BatchManifest, addr string, a
 		return printJSON(stdout, stderr, "batch", map[string]any{
 			"dry_run": true, "table": m.Table, "operation_id": m.OperationID, "epoch": m.Epoch,
 			"expected_table_revision": m.ExpectedTableRevision, "members": len(m.Members),
-			"changes": changes, "guards": len(m.Members) - changes, "redis": addr, "dialled": 0, "written": 0,
+			"changes": changes, "guards": len(m.Members) - changes, "sends": p.sends, "redis": addr, "dialled": p.dials, "written": 0,
 		})
 	}
-	if _, err := fmt.Fprintf(stdout, "TABLE DRY-RUN verb=batch table=%s operation=%s epoch=%s expected_table_revision=%s members=%d changes=%d guards=%d redis=%s dialled=0 written=0\n",
-		m.Table, field(m.OperationID), m.Epoch, m.ExpectedTableRevision, len(m.Members), changes, len(m.Members)-changes, field(addr)); err != nil {
+	if _, err := fmt.Fprintf(stdout, "TABLE DRY-RUN verb=batch table=%s operation=%s epoch=%s expected_table_revision=%s members=%d changes=%d guards=%d sends=%s redis=%s dialled=%d written=0\n",
+		m.Table, field(m.OperationID), m.Epoch, m.ExpectedTableRevision, len(m.Members), changes, len(m.Members)-changes, field(p.sends), field(addr), p.dials); err != nil {
 		return 1
 	}
 	return 0
