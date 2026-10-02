@@ -313,13 +313,13 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 // taken as they are.
 func parse(fs *flag.FlagSet, args []string) ([]string, error) { return parseEach(fs, args, nil) }
 
-// parseEach is parse, telling each (when set) where each flag the words give
-// begins and how many words it is: 1, or 2 with its value. It hands the flag
+// parseEach is parse, telling each (when set) of each flag the words give: its
+// name, where it begins and how many words it is (1, or 2 with its value). It hands the flag
 // package one flag at a time, its value with it, so the flag package never sees
 // the -- that ends the flags (it would end its parse there, and the words after
 // it would be read as flags again): every word after a -- is taken as it is, and
 // a -- that is a flag's value is that value.
-func parseEach(fs *flag.FlagSet, args []string, each func(at, n int)) ([]string, error) {
+func parseEach(fs *flag.FlagSet, args []string, each func(name string, at, n int)) ([]string, error) {
 	var pos []string
 	for i := 0; i < len(args); {
 		w := args[i]
@@ -345,7 +345,7 @@ func parseEach(fs *flag.FlagSet, args []string, each func(at, n int)) ([]string,
 			return nil, flagRefusal(fs, err)
 		}
 		if each != nil {
-			each(i, n)
+			each(name, i, n)
 		}
 		i += n
 	}

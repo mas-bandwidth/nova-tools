@@ -3,9 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,6 +22,13 @@ import (
 // sent is every verb it forwarded.
 func coordinatorAt(t *testing.T, r *serverRig, actor string, sent *[][]string) func(args ...string) (int, string, string) {
 	t.Helper()
+	_, run := clientOf(t, r, actor, sent)
+	return run
+}
+
+// clientOf is coordinatorAt with its app, for a test that gives it a clock.
+func clientOf(t *testing.T, r *serverRig, actor string, sent *[][]string) (*app, func(args ...string) (int, string, string)) {
+	t.Helper()
 	env := map[string]string{ServerEnv: "127.0.0.1:6390", "NOVA_SPRINT_ACTOR": actor}
 	c := newApp(func(k string) string { return env[k] })
 	t.Cleanup(c.close)
@@ -26,7 +37,7 @@ func coordinatorAt(t *testing.T, r *serverRig, actor string, sent *[][]string) f
 		*sent = append(*sent, verbs...)
 		return r.a.serveFrom(sprintwire.Request{Verbs: verbs}, true).Results, nil
 	}
-	return func(args ...string) (int, string, string) {
+	return c, func(args ...string) (int, string, string) {
 		var out, errb bytes.Buffer
 		code := c.run(args, &out, &errb)
 		return code, out.String(), errb.String()
@@ -65,23 +76,21 @@ func TestTheCoordinatorsVerbsRunOnTheServer(t *testing.T) {
 	assert.Len(t, r.queue("m1")["ready"], 3, "nothing was cleared")
 }
 
-// What is not sent: the reads, the verbs the server runs for nobody, a verb given its
-// own store, and a verb's help. Each runs here, as before (here it is refused for want
-// of a store, which is the proof it was not sent).
+// What is not sent: the verbs the server runs for nobody, a verb given its own store,
+// and a verb's help. Each runs here, as before (here it is refused for want of a store,
+// which is the proof it was not sent).
 func TestWhatTheCoordinatorRunsItself(t *testing.T) {
 	t.Parallel()
 	r := newServerRig(t, twoLanes()...)
 	var sent [][]string
 	boss := coordinatorAt(t, r, "boss", &sent)
 	for name, args := range map[string][]string{
-		"a read":                {"where"},
-		"the inbox":             {"inbox"},
-		"a worker's queue":      {"queue", "--as", "m1"},
 		"land":                  {"land", "--stream", "s1", "--dry-run"},
 		"run":                   {"run"},
 		"tick":                  {"tick"},
 		"fleet sync":            {"fleet", "sync", "--check"},
 		"a verb with its store": {"add", "--stream", "s1", "--count", "1", "--redis", "mem:" + filepath.Join(t.TempDir(), "other.twin")},
+		"a read with its store": {"where", "--redis", "mem:" + filepath.Join(t.TempDir(), "other.twin")},
 	} {
 		boss(args...)
 		assert.Empty(t, sent, "%s is run here, not sent: %v", name, args)
@@ -90,6 +99,127 @@ func TestWhatTheCoordinatorRunsItself(t *testing.T) {
 	assert.Equal(t, 0, code)
 	assert.Contains(t, out, "usage: nova-sprint add")
 	assert.Empty(t, sent, "a verb's help is printed here")
+}
+
+// The reads go to the server too, and print here byte for byte what they print run on
+// the store itself: the same exit code, stdout and stderr.
+func TestAReadThroughTheServerIsTheReadItself(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, twoLanes()...)
+	at := r.a.now()
+	r.a.now = func() time.Time { return at }
+	var sent [][]string
+	boss := coordinatorAt(t, r, "boss", &sent)
+	local := func(args []string) (int, string, string) {
+		r.a.serial.Lock()
+		defer r.a.serial.Unlock()
+		var out, errb bytes.Buffer
+		code := r.a.run(args, &out, &errb)
+		return code, out.String(), errb.String()
+	}
+	reads := [][]string{
+		{"where"}, {"where", "--json"}, {"inbox"}, {"inbox", "--json"}, {"card", "s1-1"}, {"card", "s1-1", "--json"},
+		{"card", "no-such-card"}, {"log"}, {"log", "--json", "--stream", "s1"}, {"queue", "--as", "m1"},
+		{"queue", "--stream", "s1", "--json"}, {"routes"}, {"check"}, {"check", "--json"}, {"goal", "show"},
+	}
+	for _, args := range reads {
+		code, out, errs := local(args)
+		fcode, fout, ferrs := boss(args...)
+		assert.Equal(t, []any{code, out, errs}, []any{fcode, fout, ferrs}, "%v", args)
+	}
+	assert.Len(t, sent, len(reads), "every read was sent")
+}
+
+// where --watch through the server is a watch here: one plain where sent a frame, and
+// the server held by none of them between frames, so a tick runs between two.
+func TestAWatchThroughTheServerSendsOneReadAFrame(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, twoLanes()...)
+	var sent [][]string
+	c, boss := clientOf(t, r, "boss", &sent)
+	ctx, stop := context.WithCancel(context.Background())
+	t.Cleanup(stop)
+	c.notify = func(context.Context) (context.Context, context.CancelFunc) { return ctx, stop }
+	frames := 0
+	c.sleep = func(time.Duration) {
+		frames++
+		require.True(t, r.a.serial.TryLock(), "the server is held between two frames")
+		r.a.serial.Unlock()
+		if frames == 2 {
+			r.boss("nova-sprint tick")
+		}
+		if frames == 4 {
+			stop()
+		}
+	}
+	code, out, errs := boss("where", "--watch", "--every", "100ms", "--json")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, slices.Repeat([][]string{{"where", "--actor", "boss", "--json"}}, 4), sent, "one plain where a frame")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	require.Len(t, lines, 4, out)
+	assert.NotEqual(t, lines[1], lines[2], "the tick between the second and third frames is in the third")
+}
+
+// inbox --wait through the server waits here: it reads the server's log for a tick end
+// once a second on this process's clock, and wakes at the tick end after a judgment
+// opens, or says its timeout, then prints the inbox as inbox --wait prints it.
+func TestAnInboxWaitThroughTheServerPollsForATickEnd(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, "nova-sprint init --readers reader-a,reader-b --members m1:2",
+		"nova-sprint add --stream s1 --count 1", "nova-sprint start", "nova-sprint tick", "nova-sprint tick",
+		"nova-sprint take --as m1 --limit 1", "nova-sprint finish --as m1 --epoch 0 s1-1.w1@1")
+	clock := r.a.now()
+	r.a.now = func() time.Time { return clock } // the server's clock, still: what it prints is the same at every read
+	var sent [][]string
+	c, boss := clientOf(t, r, "boss", &sent)
+	waited := clock
+	c.now = func() time.Time { return waited }
+	polls := 0
+	c.sleep = func(d time.Duration) {
+		assert.Equal(t, time.Second, d)
+		waited = waited.Add(d)
+		if polls++; polls == 2 {
+			r.boss("nova-sprint reader away reader-a") // fewer than two readers up: a judgment at the tick
+			r.boss("nova-sprint tick")
+		}
+	}
+	code, out, errs := boss("inbox", "--wait", "--timeout", "4s")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, 2, polls, "woke at the tick end after the judgment, not at the timeout")
+	assert.Equal(t, r.boss("nova-sprint inbox"), out, "the inbox, as inbox --wait prints it when it woke")
+	assert.Contains(t, out, "fewer than two readers up")
+	assert.Len(t, sent, 4, "three reads of the log, then the inbox")
+
+	code, out, errs = boss("inbox", "--wait", "--timeout", "3s", "--json")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, 5, polls, "three more polls of a second: the timeout")
+	assert.Equal(t, "inbox --wait: no tick end in 3s\n", errs, "said on stderr under --json, as inbox --wait says it")
+	var got map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &got), out)
+	assert.Equal(t, false, got["woke"])
+	_, plain, _ := boss("inbox", "--json")
+	assert.Equal(t, strings.TrimSuffix(plain, "}\n")+`,"woke":false}`+"\n", out, "the inbox's own object, with woke last, as encoding/json orders a map")
+
+	code, _, errs = boss("inbox", "--wait", "--timeout", "0s")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "--timeout above zero")
+}
+
+// The coordinator's side of a small sprint, with no store named and no store
+// credentials: every verb goes through the server.
+func TestACoordinatorWithNoStoreRunsTheSprintThroughTheServer(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t)
+	var sent [][]string
+	boss := coordinatorAt(t, r, "boss", &sent)
+	for _, line := range []string{"init --readers reader-a,reader-b --members m1:2", "add --stream s1 --count 2", "start", "where", "inbox", "card s1-1", "log --stream s1", "clear --confirm sprint", "where"} {
+		code, out, errs := boss(split(line)...)
+		require.Equal(t, 0, code, "%s\n%s%s", line, out, errs)
+		if line == "start" {
+			r.boss("nova-sprint tick")
+		}
+	}
+	assert.Len(t, sent, 9, "every verb was the server's")
 }
 
 // A worker's verb sent from the server's own machine is held as from anywhere: it
@@ -131,7 +261,13 @@ func TestACoordinatorsVerbTheServerDidNotAnswer(t *testing.T) {
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errb.String(), "did not answer")
 	assert.Contains(t, errb.String(), "nothing is known of what ran")
+	assert.Contains(t, errb.String(), "nova-sprint run --listen", "the remedy")
 	assert.Empty(t, out.String())
+	out.Reset()
+	errb.Reset()
+	assert.Equal(t, 2, c.run([]string{"where"}, &out, &errb), "a read is not run on a store here either")
+	assert.Equal(t, 1, strings.Count(errb.String(), "\n"), "one line: %s", errb.String())
+	assert.Contains(t, errb.String(), "did not answer")
 }
 
 // A file the coordinator names is sent as its absolute path: the server runs in another
@@ -168,8 +304,8 @@ func TestTheServerNeverActsAsItsOwnEnvironment(t *testing.T) {
 }
 
 // A read that waits for the sprint to move (where --watch, inbox --wait) is never run by
-// the server, whose line of control the tick it waits for needs: the server refuses it,
-// and the coordinator's command runs it where it is typed, never sending it. inbox
+// the server, whose line of control the tick it waits for needs: the server refuses it
+// (the coordinator's command waits itself, sending plain reads). inbox
 // --wait --read would also move the cursor, which is the server's to move: with a server
 // named it is refused, and the remedy is the wait, then the read.
 func TestAWaitingReadIsNeverRunByTheServer(t *testing.T) {
@@ -187,8 +323,7 @@ func TestAWaitingReadIsNeverRunByTheServer(t *testing.T) {
 	code, out, errs := boss("inbox", "--read", "--wait", "--timeout", "1ms")
 	assert.Equal(t, 2, code, "%s%s", out, errs)
 	assert.Contains(t, errs, "run nova-sprint inbox --wait, then nova-sprint inbox --read; nothing was changed")
-	boss("where", "--watch")
-	assert.Empty(t, sent, "a waiting read runs where it is typed, and a waiting cursor write is refused here")
+	assert.Empty(t, sent, "a waiting cursor write is refused here")
 }
 
 // Which word is a flag is the verb's flags' to say: a value after a flag that takes one
