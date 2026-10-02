@@ -1,7 +1,7 @@
 # Migrated counted package ledger; original row keys preserved.
 # ceiling: 6
 internal/ci/sleeps-skips_allowlist.txt:glenn 1
-internal/ci/sleeps-skips_allowlist.txt:stella 2
+internal/ci/sleeps-skips_allowlist.txt:stella 1
 internal/ci/slow-tests_allowlist.txt:glenn 1
 internal/ci/slow-tests_allowlist.txt:rowan 1
 internal/ci/slow-tests_allowlist.txt:space 1
