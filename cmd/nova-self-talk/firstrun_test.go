@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
@@ -49,13 +52,9 @@ func examples(t *testing.T) []string {
 	// costs one line and the hint under it, and names the door (`run: nova-self-talk
 	// help`). Reading it through that door is also a test that the door opens.
 	exit, stdout, stderr := runSelfTalk(t, "help")
-	if exit != 0 {
-		t.Fatalf("`nova-self-talk help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)
-	}
+	require.Equal(t, 0, exit, "`nova-self-talk help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)
 	lines, err := onboarding.ExampleLines(stdout, "nova-self-talk")
-	if err != nil {
-		t.Fatalf("%s\n\n%s", err, stdout)
-	}
+	require.NoError(t, err, "%s\n\n%s", err, stdout)
 	return lines
 }
 
@@ -68,16 +67,11 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 
 	for _, ex := range examples(t) {
 		exit, stdout, stderr := runSelfTalk(t, localize(strings.Fields(ex)[1:])...)
-		if exit == 2 {
-			t.Errorf("the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, stderr)
+		if !assert.NotEqual(t, 2, exit, "the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, stderr) {
 			continue
 		}
-		if exit != 1 {
-			t.Errorf("the usage example %q exits %d; the fixture pages carry findings, so an example that stopped flagging them has drifted", ex, exit)
-		}
-		if !strings.Contains(stdout, "SELFTALK NOTE") {
-			t.Errorf("the usage example %q printed no NOTE; every completed run carries it\nstdout: %s", ex, stdout)
-		}
+		assert.Equal(t, 1, exit, "the usage example %q exits %d; the fixture pages carry findings, so an example that stopped flagging them has drifted", ex, exit)
+		assert.Contains(t, stdout, "SELFTALK NOTE", "the usage example %q printed no NOTE; every completed run carries it\nstdout: %s", ex, stdout)
 	}
 }
 
@@ -97,15 +91,9 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			exit, stdout, stderr := runSelfTalk(t, tc.args...)
-			if exit != 2 {
-				t.Fatalf("exit = %d, want 2; stderr: %s", exit, stderr)
-			}
-			if !strings.Contains(stderr, tc.want) {
-				t.Errorf("stderr = %q,\nwant it to contain %q", stderr, tc.want)
-			}
-			if stdout != "" {
-				t.Errorf("a refusal must print nothing on stdout, got %q", stdout)
-			}
+			require.Equal(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
+			assert.Contains(t, stderr, tc.want, "stderr = %q,\nwant it to contain %q", stderr, tc.want)
+			assert.Empty(t, stdout, "a refusal must print nothing on stdout, got %q", stdout)
 		})
 	}
 }
@@ -117,27 +105,18 @@ func TestEveryUnreadableFileIsNamedInOneRun(t *testing.T) {
 
 	dir := t.TempDir()
 	good := filepath.Join(dir, "real.md")
-	if err := os.WriteFile(good, []byte("I cannot check my own work.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(good, []byte("I cannot check my own work.\n"), 0o644))
 	missing := []string{filepath.Join(dir, "one.md"), filepath.Join(dir, "two.md"), filepath.Join(dir, "three.md")}
 	exit, stdout, stderr := runSelfTalk(t, append([]string{good}, missing...)...)
-	if exit != 2 {
-		t.Fatalf("exit = %d, want 2; stderr: %s", exit, stderr)
-	}
+	require.Equal(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
 	for _, m := range missing {
-		if !strings.Contains(stderr, m) {
-			t.Errorf("one run must name every unreadable file; %q is missing from:\n%s", m, stderr)
-		}
+		assert.Contains(t, stderr, m, "one run must name every unreadable file; %q is missing from:\n%s", m, stderr)
 	}
 	// And nothing was scanned: a run that printed findings and then refused
 	// would be reporting findings from a run that did not happen.
-	if strings.Contains(stderr, "SELFTALK FAIL") || strings.Contains(stdout, "SELFTALK") {
-		t.Errorf("a refused run must scan nothing:\nstdout: %s\nstderr: %s", stdout, stderr)
-	}
-	if !strings.Contains(stderr, "NOTHING was scanned") {
-		t.Errorf("the refusal must say that nothing was scanned:\n%s", stderr)
-	}
+	assert.NotContains(t, stderr, "SELFTALK FAIL", "a refused run must scan nothing:\nstdout: %s\nstderr: %s", stdout, stderr)
+	assert.NotContains(t, stdout, "SELFTALK", "a refused run must scan nothing:\nstdout: %s\nstderr: %s", stdout, stderr)
+	assert.Contains(t, stderr, "NOTHING was scanned", "the refusal must say that nothing was scanned:\n%s", stderr)
 }
 
 // (c) The `### First run` transcript of docs/TESTS.md is EXECUTED: every
@@ -169,16 +148,10 @@ func TestEveryUnreadableFileIsNamedInOneRun(t *testing.T) {
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	doc := transcriptDoc(t)
 	lines, err := onboarding.FirstRun(doc, "nova-self-talk")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-self-talk", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) != 3 {
-		t.Fatalf("the `### First run` block runs %d commands, want 3: one file, the rule document beside it, then the rule document skipped", len(steps))
-	}
+	require.NoError(t, err)
+	require.Len(t, steps, 3, "the `### First run` block runs %d commands, want 3: one file, the rule document beside it, then the rule document skipped", len(steps))
 
 	dir := t.TempDir()
 	copyDir(t, examplePages, filepath.Join(dir, "pages"))
@@ -202,27 +175,19 @@ func TestHelpExamplesAreTheFirstRunThroughTheComparator(t *testing.T) {
 		"nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md",
 		"nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md",
 	}
-	if got := examples(t); strings.Join(got, "\n") != strings.Join(linesOfTheBanner, "\n") {
-		t.Fatalf("the banner's example block is not the sitting this test runs\nbanner:\n  %s\nwant:\n  %s",
-			strings.Join(got, "\n  "), strings.Join(linesOfTheBanner, "\n  "))
-	}
+	got := examples(t)
+	require.Equal(t, strings.Join(linesOfTheBanner, "\n"), strings.Join(got, "\n"), "the banner's example block is not the sitting this test runs\nbanner:\n  %s\nwant:\n  %s",
+		strings.Join(got, "\n  "), strings.Join(linesOfTheBanner, "\n  "))
 	lines, err := onboarding.FirstRun(transcriptDoc(t), "nova-self-talk")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-self-talk", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) != len(linesOfTheBanner) {
-		t.Fatalf("the first run runs %d commands and the banner's example block %d; they are one list", len(steps), len(linesOfTheBanner))
-	}
+	require.NoError(t, err)
+	require.Len(t, steps, len(linesOfTheBanner), "the first run runs %d commands and the banner's example block %d; they are one list", len(steps), len(linesOfTheBanner))
 	pages := filepath.Join(t.TempDir(), "pages")
 	copyDir(t, examplePages, pages)
 	for i, s := range steps {
-		if got := "nova-self-talk " + strings.Join(s.Args, " "); got != linesOfTheBanner[i] {
-			t.Fatalf("first-run command %d is %q and the banner's example is %q; they are one list", i+1, got, linesOfTheBanner[i])
-		}
+		command := "nova-self-talk " + strings.Join(s.Args, " ")
+		require.Equal(t, linesOfTheBanner[i], command, "first-run command %d is %q and the banner's example is %q; they are one list", i+1, command, linesOfTheBanner[i])
 		for j, a := range s.Args {
 			if rest, ok := strings.CutPrefix(a, "./pages/"); ok {
 				steps[i].Args[j] = filepath.Join(pages, rest)
@@ -258,9 +223,7 @@ var errReadsNothing = readsNothing{}
 func transcriptDoc(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(raw)
 }
 
@@ -268,24 +231,16 @@ func transcriptDoc(t *testing.T) string {
 func copyDir(t *testing.T, from, to string) {
 	t.Helper()
 	entries, err := os.ReadDir(from)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(to, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(to, 0o755))
 	for _, e := range entries {
 		if e.IsDir() {
 			copyDir(t, filepath.Join(from, e.Name()), filepath.Join(to, e.Name()))
 			continue
 		}
 		body, err := os.ReadFile(filepath.Join(from, e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(to, e.Name()), body, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(to, e.Name()), body, 0o644))
 	}
 }
 
@@ -305,16 +260,12 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	t.Parallel()
 
 	lines := exampleBlockLines(usage)
-	if len(lines) == 0 {
-		t.Fatal("the usage banner's `example:` block holds no line; this test would pass by running nothing")
-	}
+	require.NotEmpty(t, lines, "the usage banner's `example:` block holds no line; this test would pass by running nothing")
 
 	setup := fixtureSetupLine(usage)
-	if setup == "" {
-		t.Fatalf("the usage banner has no fixture setup line above the block, so a stranger pasting it names\n"+
-			"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
-			"The missing line is:\n  %s", wantFixtureSetup)
-	}
+	require.NotEmpty(t, setup, "the usage banner has no fixture setup line above the block, so a stranger pasting it names\n"+
+		"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
+		"The missing line is:\n  %s", wantFixtureSetup)
 
 	bin := buildExampleBinary(t)
 
@@ -322,22 +273,18 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	// the binary and no checkout runs the first run as printed (ledger X6).
 	root := t.TempDir()
 
-	if exit, out := runExampleLine(t, root, filepath.Dir(bin), setup); exit != 0 {
-		t.Fatalf("the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
-			exit, setup, exampleFirstLine(out))
-	}
+	setupExit, setupOut := runExampleLine(t, root, filepath.Dir(bin), setup)
+	require.Equal(t, 0, setupExit, "the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
+		setupExit, setup, exampleFirstLine(setupOut))
 
 	for _, line := range lines {
 		exit, out := runExampleLine(t, root, filepath.Dir(bin), line)
-		if exit == 2 {
-			t.Errorf("the example `%s` exits 2 (could not run) -- a line a stranger pastes must run as printed:\nfirst output line: %s",
-				line, exampleFirstLine(out))
+		if !assert.NotEqual(t, 2, exit, "the example `%s` exits 2 (could not run) -- a line a stranger pastes must run as printed:\nfirst output line: %s",
+			line, exampleFirstLine(out)) {
 			continue
 		}
-		if exit != 1 {
-			t.Errorf("the example `%s` exits %d, want 1: the fixture pages carry findings, so a line that stopped flagging them has drifted\nfirst output line: %s",
-				line, exit, exampleFirstLine(out))
-		}
+		assert.Equal(t, 1, exit, "the example `%s` exits %d, want 1: the fixture pages carry findings, so a line that stopped flagging them has drifted\nfirst output line: %s",
+			line, exit, exampleFirstLine(out))
 	}
 }
 
@@ -392,9 +339,8 @@ func buildExampleBinary(t *testing.T) string {
 	}
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Env = goenv.Clean(os.Environ())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building nova-self-talk: %v\n%s", err, out)
-	}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "building nova-self-talk: %v\n%s", err, out)
 	return bin
 }
 

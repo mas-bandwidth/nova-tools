@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The egress wall is the card's OUTBOUND half, and these tests are the whole of it that can
@@ -41,9 +44,7 @@ func addrs(t *testing.T, ss ...string) []netip.Addr {
 	out := make([]netip.Addr, 0, len(ss))
 	for _, s := range ss {
 		a, err := netip.ParseAddr(s)
-		if err != nil {
-			t.Fatalf("test fixture %q is not an address: %s", s, err)
-		}
+		require.NoError(t, err, "test fixture %q is not an address: %s", s, err)
 		out = append(out, a)
 	}
 	return out
@@ -54,9 +55,7 @@ func prefixes(t *testing.T, ss ...string) []netip.Prefix {
 	out := make([]netip.Prefix, 0, len(ss))
 	for _, s := range ss {
 		p, err := netip.ParsePrefix(s)
-		if err != nil {
-			t.Fatalf("test fixture %q is not a prefix: %s", s, err)
-		}
+		require.NoError(t, err, "test fixture %q is not a prefix: %s", s, err)
 		out = append(out, p)
 	}
 	return out
@@ -110,9 +109,7 @@ func allowedNames() string {
 func mustBuild(t *testing.T, in EgressInput) EgressPlan {
 	t.Helper()
 	p, bad := BuildEgress(in)
-	if len(bad) > 0 {
-		t.Fatalf("BuildEgress refused a good input: %v", bad)
-	}
+	require.Empty(t, bad, "BuildEgress refused a good input: %v", bad)
 	return p
 }
 
@@ -120,13 +117,10 @@ func TestParseEgressPolicyTakesNamesAndComments(t *testing.T) {
 	t.Parallel()
 
 	names, bad := ParseEgressPolicy([]byte("# the header\n\none.example.test\n  two.example.test  # the api\n\n# a comment\nmodel.example.test\n"))
-	if len(bad) > 0 {
-		t.Fatalf("a well-formed policy was refused: %v", bad)
-	}
+	require.Empty(t, bad, "a well-formed policy was refused: %v", bad)
 	want := "one.example.test|two.example.test|model.example.test"
-	if got := strings.Join(names, "|"); got != want {
-		t.Errorf("the policy's names are %q, want %q (order is the file's)", got, want)
-	}
+	got := strings.Join(names, "|")
+	assert.Equal(t, want, got, "the policy's names are %q, want %q (order is the file's)", got, want)
 }
 
 func TestParseEgressPolicyRefusesWhatIsNotAHostname(t *testing.T) {
@@ -142,18 +136,16 @@ func TestParseEgressPolicyRefusesWhatIsNotAHostname(t *testing.T) {
 		"*.example.test",                  // no wildcards: the wall is per name
 		strings.Repeat("a", 64) + ".test", // a label over 63 bytes
 	} {
-		if _, bad := ParseEgressPolicy([]byte(line + "\n")); len(bad) == 0 {
-			t.Errorf("ParseEgressPolicy accepted %q; the file is the reviewed contract and only a hostname belongs in it", line)
-		}
+		_, bad := ParseEgressPolicy([]byte(line + "\n"))
+		assert.NotEmpty(t, bad, "ParseEgressPolicy accepted %q; the file is the reviewed contract and only a hostname belongs in it", line)
 	}
 }
 
 func TestParseEgressPolicyRefusesAnEmptyFile(t *testing.T) {
 	t.Parallel()
 
-	if _, bad := ParseEgressPolicy([]byte("# only comments\n\n")); len(bad) == 0 {
-		t.Error("a policy with no names was accepted; a plan built from it would allow nothing and the caller would learn that from a silent wall instead of a refusal")
-	}
+	_, bad := ParseEgressPolicy([]byte("# only comments\n\n"))
+	assert.NotEmpty(t, bad, "a policy with no names was accepted; a plan built from it would allow nothing and the caller would learn that from a silent wall instead of a refusal")
 }
 
 // The shipped file is the contract, so this reads IT: the three names Johnny's page fixes
@@ -163,17 +155,13 @@ func TestTheShippedPolicyCarriesTheReviewedNames(t *testing.T) {
 	t.Parallel()
 
 	names, bad := ParseEgressPolicy(readShippedPolicy(t))
-	if len(bad) > 0 {
-		t.Fatalf("infra/image/egress.txt does not parse: %v", bad)
-	}
+	require.Empty(t, bad, "infra/image/egress.txt does not parse: %v", bad)
 	have := map[string]bool{}
 	for _, n := range names {
 		have[n] = true
 	}
 	for _, want := range EgressBaseNames {
-		if !have[want] {
-			t.Errorf("infra/image/egress.txt does not carry %q; the card cannot reach a name that is not in the reviewed file", want)
-		}
+		assert.True(t, have[want], "infra/image/egress.txt does not carry %q; the card cannot reach a name that is not in the reviewed file", want)
 	}
 	models := 0
 	for _, n := range names {
@@ -181,9 +169,7 @@ func TestTheShippedPolicyCarriesTheReviewedNames(t *testing.T) {
 			models++
 		}
 	}
-	if models == 0 {
-		t.Error("infra/image/egress.txt carries no model host; --model-host may only name a host already in the file, so no run could reach a model at all")
-	}
+	assert.NotZero(t, models, "infra/image/egress.txt carries no model host; --model-host may only name a host already in the file, so no run could reach a model at all")
 }
 
 func TestBuildEgressPinsEveryAllowedNameOnceAndAsksNothingElse(t *testing.T) {
@@ -192,15 +178,12 @@ func TestBuildEgressPinsEveryAllowedNameOnceAndAsksNothingElse(t *testing.T) {
 	in := goodInput(t)
 	p := mustBuild(t, in)
 	res := in.Lookup.(*fakeResolver)
-	if got, want := strings.Join(res.asked, ","), allowedNames(); got != want {
-		t.Errorf("the plan resolved %q, want %q: every allowed name is asked exactly once at plan time and pinned", got, want)
-	}
-	if got, want := strings.Join(p.Names, ","), allowedNames(); got != want {
-		t.Errorf("the plan allows %q, want %q", got, want)
-	}
-	if n := len(p.Addrs[EgressBaseNames[1]]); n != 2 {
-		t.Errorf("%s pinned %d addresses, want 2: every address the name resolves to is pinned, or the run fails on the one that was left out", EgressBaseNames[1], n)
-	}
+	got, want := strings.Join(res.asked, ","), allowedNames()
+	assert.Equal(t, want, got, "the plan resolved %q, want %q: every allowed name is asked exactly once at plan time and pinned", got, want)
+	got, want = strings.Join(p.Names, ","), allowedNames()
+	assert.Equal(t, want, got, "the plan allows %q, want %q", got, want)
+	n := len(p.Addrs[EgressBaseNames[1]])
+	assert.Equal(t, 2, n, "%s pinned %d addresses, want 2: every address the name resolves to is pinned, or the run fails on the one that was left out", EgressBaseNames[1], n)
 }
 
 // The model host is the ONE per-run name, and it may only be a name the file already
@@ -212,9 +195,7 @@ func TestBuildEgressRefusesAModelHostThatIsNotInThePolicy(t *testing.T) {
 	in := goodInput(t)
 	in.ModelHost = "other-model.example.test"
 	_, bad := BuildEgress(in)
-	if !hasReason(bad, "bad_model_host") {
-		t.Fatalf("a --model-host outside the policy file was accepted: %v", bad)
-	}
+	require.True(t, hasReason(bad, "bad_model_host"), "a --model-host outside the policy file was accepted: %v", bad)
 }
 
 // A second model host in the file is not a second model host in the run.
@@ -227,16 +208,10 @@ func TestBuildEgressAllowsExactlyOneModelHost(t *testing.T) {
 	in.Lookup.(*fakeResolver).table[second] = addrs(t, secondAddr)
 	p := mustBuild(t, in)
 	for _, n := range p.Names {
-		if n == second {
-			t.Fatalf("the plan allows a second model host %q; a run allows the three base names and the ONE host named by --model-host", n)
-		}
+		require.NotEqual(t, second, n, "the plan allows a second model host %q; a run allows the three base names and the ONE host named by --model-host", n)
 	}
-	if !strings.Contains(p.Text, testModelHost) {
-		t.Error("the plan does not name the model host it was given")
-	}
-	if strings.Contains(p.Text, secondAddr) {
-		t.Error("the plan pinned an address of a name it does not allow")
-	}
+	assert.Contains(t, p.Text, testModelHost, "the plan does not name the model host it was given")
+	assert.NotContains(t, p.Text, secondAddr, "the plan pinned an address of a name it does not allow")
 }
 
 func TestBuildEgressRefusesAPolicyMissingABaseName(t *testing.T) {
@@ -245,9 +220,7 @@ func TestBuildEgressRefusesAPolicyMissingABaseName(t *testing.T) {
 	in := goodInput(t)
 	in.Names = []string{EgressBaseNames[1], testModelHost}
 	_, bad := BuildEgress(in)
-	if !hasReason(bad, "bad_policy") {
-		t.Fatalf("a policy missing %s was accepted: %v; the three base names are the card contract's and a plan that quietly left one out would fail inside the run instead", EgressBaseNames[0], bad)
-	}
+	require.True(t, hasReason(bad, "bad_policy"), "a policy missing %s was accepted: %v; the three base names are the card contract's and a plan that quietly left one out would fail inside the run instead", EgressBaseNames[0], bad)
 }
 
 // Fail closed on a resolver that answers with an address inside a denied range: that is
@@ -259,9 +232,7 @@ func TestBuildEgressRefusesAPinnedAddressInsideADeniedRange(t *testing.T) {
 		in := goodInput(t)
 		in.Lookup.(*fakeResolver).table[EgressBaseNames[1]] = addrs(t, bad)
 		_, refusals := BuildEgress(in)
-		if !hasReason(refusals, "bad_address") {
-			t.Errorf("a name resolved to %s and the plan was built anyway: %v; a pinned address inside a denied range is a poisoned answer and the plan fails closed", bad, refusals)
-		}
+		assert.True(t, hasReason(refusals, "bad_address"), "a name resolved to %s and the plan was built anyway: %v; a pinned address inside a denied range is a poisoned answer and the plan fails closed", bad, refusals)
 	}
 }
 
@@ -272,9 +243,7 @@ func TestBuildEgressRefusesAResolverThatIsItselfDenied(t *testing.T) {
 		in := goodInput(t)
 		in.Resolver = netip.MustParseAddr(r)
 		_, bad := BuildEgress(in)
-		if !hasReason(bad, "bad_resolver") {
-			t.Errorf("--resolver %s was accepted: %v; the deny rules come first, so DNS would be dropped and every name would fail with no line saying why", r, bad)
-		}
+		assert.True(t, hasReason(bad, "bad_resolver"), "--resolver %s was accepted: %v; the deny rules come first, so DNS would be dropped and every name would fail with no line saying why", r, bad)
 	}
 }
 
@@ -284,9 +253,7 @@ func TestBuildEgressRefusesWithNoSelector(t *testing.T) {
 	in := goodInput(t)
 	in.UID, in.Veth = "", ""
 	_, bad := BuildEgress(in)
-	if !hasReason(bad, "no_selector") {
-		t.Fatalf("a plan with neither --uid nor --veth was built: %v; every rule is scoped to the card's own traffic, and an unscoped default deny would firewall the bench itself", bad)
-	}
+	require.True(t, hasReason(bad, "no_selector"), "a plan with neither --uid nor --veth was built: %v; every rule is scoped to the card's own traffic, and an unscoped default deny would firewall the bench itself", bad)
 }
 
 func TestBuildEgressRefusesABadRunName(t *testing.T) {
@@ -295,9 +262,8 @@ func TestBuildEgressRefusesABadRunName(t *testing.T) {
 	for _, run := range []string{"", "a b", "j1; drop", "../x", strings.Repeat("j", 40)} {
 		in := goodInput(t)
 		in.Run = run
-		if _, bad := BuildEgress(in); !hasReason(bad, "no_name") {
-			t.Errorf("--run %q was accepted; it becomes an nft table name", run)
-		}
+		_, bad := BuildEgress(in)
+		assert.True(t, hasReason(bad, "no_name"), "--run %q was accepted; it becomes an nft table name", run)
 	}
 }
 
@@ -307,9 +273,7 @@ func TestBuildEgressRefusesAResolverFailure(t *testing.T) {
 	in := goodInput(t)
 	in.Lookup.(*fakeResolver).err = errors.New("i/o timeout")
 	_, bad := BuildEgress(in)
-	if !hasReason(bad, "resolve_failed") {
-		t.Fatalf("a resolver failure did not refuse the plan: %v; a name that cannot be pinned is a name the run cannot reach, and that is a refusal at plan time rather than a surprise inside the card", bad)
-	}
+	require.True(t, hasReason(bad, "resolve_failed"), "a resolver failure did not refuse the plan: %v; a name that cannot be pinned is a name the run cannot reach, and that is a refusal at plan time rather than a surprise inside the card", bad)
 }
 
 // The rendered ruleset: the shape a reader checks, asserted line by line rather than as a
@@ -329,21 +293,16 @@ func TestRenderedPlanHasTheShapeThePageAsksFor(t *testing.T) {
 		"meta skuid 10001 ip daddr 198.51.100.10 tcp dport 443 accept",
 		"meta skuid 10001 ip6 daddr 2001:db8::11 tcp dport 443 accept",
 	} {
-		if !strings.Contains(p.Text, want) {
-			t.Errorf("the rendered plan has no line %q:\n%s", want, p.Text)
-		}
+		assert.Contains(t, p.Text, want, "the rendered plan has no line %q:\n%s", want, p.Text)
 	}
 	// The default deny is the LAST rule of the chain, and it is the whole point: anything
 	// the allows above did not name is dropped.
 	lines := ruleLines(p.Text)
-	if last := lines[len(lines)-1]; last != "meta skuid 10001 drop" {
-		t.Errorf("the last rule of the chain is %q, want the default deny `meta skuid 10001 drop`", last)
-	}
+	last := lines[len(lines)-1]
+	assert.Equal(t, "meta skuid 10001 drop", last, "the last rule of the chain is %q, want the default deny `meta skuid 10001 drop`", last)
 	// Every rule carries the selector: one unscoped rule would be a rule about the bench.
 	for _, l := range lines {
-		if !strings.HasPrefix(l, "meta skuid 10001 ") {
-			t.Errorf("rule %q is not scoped to the card; an unscoped rule in the output hook is a rule about the bench's own traffic", l)
-		}
+		assert.True(t, strings.HasPrefix(l, "meta skuid 10001 "), "rule %q is not scoped to the card; an unscoped rule in the output hook is a rule about the bench's own traffic", l)
 	}
 }
 
@@ -358,9 +317,7 @@ func TestRenderedPlanCarriesAVethChainWhenAVethIsNamed(t *testing.T) {
 		`iifname "veth-j1" ip daddr 169.254.169.254/32 drop`,
 		`iifname "veth-j1" drop`,
 	} {
-		if !strings.Contains(p.Text, want) {
-			t.Errorf("the veth plan has no line %q:\n%s", want, p.Text)
-		}
+		assert.Contains(t, p.Text, want, "the veth plan has no line %q:\n%s", want, p.Text)
 	}
 }
 
@@ -369,9 +326,8 @@ func TestBuildEgressRefusesAVethNameThatIsNotOne(t *testing.T) {
 
 	in := goodInput(t)
 	in.UID, in.Veth = "", `veth"; drop`
-	if _, bad := BuildEgress(in); !hasReason(bad, "bad_veth") {
-		t.Fatal("a veth name carrying a quote was accepted; it goes inside quotes in an nft rule")
-	}
+	_, bad := BuildEgress(in)
+	require.True(t, hasReason(bad, "bad_veth"), "a veth name carrying a quote was accepted; it goes inside quotes in an nft rule")
 }
 
 func TestBuildEgressRefusesAUIDThatIsNotANumber(t *testing.T) {
@@ -379,9 +335,8 @@ func TestBuildEgressRefusesAUIDThatIsNotANumber(t *testing.T) {
 
 	in := goodInput(t)
 	in.UID = "root"
-	if _, bad := BuildEgress(in); !hasReason(bad, "bad_uid") {
-		t.Fatal("a --uid that is not a number was accepted; it goes into `meta skuid <n>` verbatim")
-	}
+	_, bad := BuildEgress(in)
+	require.True(t, hasReason(bad, "bad_uid"), "a --uid that is not a number was accepted; it goes into `meta skuid <n>` verbatim")
 }
 
 func TestPlanCountsAreTheRulesItRendered(t *testing.T) {
@@ -399,9 +354,8 @@ func TestPlanCountsAreTheRulesItRendered(t *testing.T) {
 			t.Errorf("rule %q ends in neither accept nor drop; the audit reads these lines and a third verdict would be one it cannot check", l)
 		}
 	}
-	if p.Allow != allow || p.Deny != deny {
-		t.Errorf("the plan counts allow=%d deny=%d, rendered allow=%d deny=%d; the receipt is what a reader compares with the file", p.Allow, p.Deny, allow, deny)
-	}
+	assert.Equal(t, allow, p.Allow, "the plan counts allow=%d deny=%d, rendered allow=%d deny=%d; the receipt is what a reader compares with the file", p.Allow, p.Deny, allow, deny)
+	assert.Equal(t, deny, p.Deny, "the plan counts allow=%d deny=%d, rendered allow=%d deny=%d; the receipt is what a reader compares with the file", p.Allow, p.Deny, allow, deny)
 }
 
 // The test of the tests: the audit has to go RED on a plan that lost each invariant. A
@@ -411,15 +365,10 @@ func TestCheckEgressPlanPassesTheRealPlan(t *testing.T) {
 
 	p := mustBuild(t, goodInput(t))
 	audit, bad := CheckEgressPlan(p.Text)
-	if len(bad) > 0 {
-		t.Fatalf("the plan this tool renders fails its own audit: %v", bad)
-	}
-	if audit.Allow != p.Allow || audit.Deny != p.Deny {
-		t.Errorf("the audit counts allow=%d deny=%d, the plan says allow=%d deny=%d", audit.Allow, audit.Deny, p.Allow, p.Deny)
-	}
-	if audit.Table != "nova_egress_j1" {
-		t.Errorf("the audit read the table as %q, want nova_egress_j1", audit.Table)
-	}
+	require.Empty(t, bad, "the plan this tool renders fails its own audit: %v", bad)
+	assert.Equal(t, p.Allow, audit.Allow, "the audit counts allow=%d deny=%d, the plan says allow=%d deny=%d", audit.Allow, audit.Deny, p.Allow, p.Deny)
+	assert.Equal(t, p.Deny, audit.Deny, "the audit counts allow=%d deny=%d, the plan says allow=%d deny=%d", audit.Allow, audit.Deny, p.Allow, p.Deny)
+	assert.Equal(t, "nova_egress_j1", audit.Table, "the audit read the table as %q, want nova_egress_j1", audit.Table)
 }
 
 func TestCheckEgressPlanGoesRedOnEachLostInvariant(t *testing.T) {
@@ -441,13 +390,9 @@ func TestCheckEgressPlanGoesRedOnEachLostInvariant(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			broken := strings.Replace(good, c.from, c.to, 1)
-			if broken == good {
-				t.Fatalf("the test did not change the plan: %q is not in it", c.from)
-			}
+			require.NotEqual(t, good, broken, "the test did not change the plan: %q is not in it", c.from)
 			_, bad := CheckEgressPlan(broken)
-			if !hasReason(bad, c.reason) {
-				t.Errorf("the audit passed a plan whose %s (want reason=%s, got %v)", c.name, c.reason, bad)
-			}
+			assert.True(t, hasReason(bad, c.reason), "the audit passed a plan whose %s (want reason=%s, got %v)", c.name, c.reason, bad)
 		})
 	}
 }
@@ -456,9 +401,8 @@ func TestCheckEgressPlanRefusesSomethingThatIsNotAPlan(t *testing.T) {
 	t.Parallel()
 
 	for _, text := range []string{"", "# only a comment\n", "table ip nova_egress_j1 {\n}\n", "table inet other {\n}\n"} {
-		if _, bad := CheckEgressPlan(text); len(bad) == 0 {
-			t.Errorf("the audit passed %q, which is not a plan this tool wrote", text)
-		}
+		_, bad := CheckEgressPlan(text)
+		assert.NotEmpty(t, bad, "the audit passed %q, which is not a plan this tool wrote", text)
 	}
 }
 
@@ -468,9 +412,7 @@ func TestCheckEgressPlanRefusesSomethingThatIsNotAPlan(t *testing.T) {
 func readShippedPolicy(t *testing.T) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "infra", "image", "egress.txt"))
-	if err != nil {
-		t.Fatalf("infra/image/egress.txt is the allowlist and it has to be readable: %s", err)
-	}
+	require.NoError(t, err, "infra/image/egress.txt is the allowlist and it has to be readable: %s", err)
 	return raw
 }
 
