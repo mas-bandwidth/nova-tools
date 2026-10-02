@@ -96,7 +96,7 @@ func TestTheNoteOfAMachineIsSetShownCutListedAndClearedAsTheRoutesIs(t *testing.
 	assert.Equal(t, "CONFIG SET kind=machine name=superman rev=4 changed=note\n", out)
 	code, out, _ = h.run(t, "machine", "list")
 	require.Equal(t, 0, code)
-	assert.Contains(t, out, " width=8 note=- ")
+	assert.Contains(t, out, " width=8 tla=false note=- ")
 }
 
 func TestApplyCarriesTheNoteIntoTheViewsTheSprintReads(t *testing.T) {

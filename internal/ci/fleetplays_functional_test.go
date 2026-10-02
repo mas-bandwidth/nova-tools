@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -275,6 +276,79 @@ func TestToolsPlayNamesTheDogfoodReceipts(t *testing.T) {
 	assert.NotContains(t, out, "WOULD-BUILD")
 	out = r.play(t, "tools.yml", append(vars, "-e", `{"nova_release_gate_args": ["--no-dogfood-gate", "--reason", "the test"]}`)...)
 	assert.Contains(t, out, "WOULD-BUILD version=v0.0.0-check")
+}
+
+// tlaRig is the tla play on the machine running the test: the tla fixture
+// (localhost a record machine), a jar directory, a java and the facts saying
+// Linux, all under the test's own temp dir.
+type tlaRig struct {
+	*fleetPlayRig
+	jarDir, jar, java string
+}
+
+func newTLARig(t *testing.T) *tlaRig {
+	t.Helper()
+	r := &tlaRig{fleetPlayRig: newFleetPlayRig(t, "tla-fixture.yml")}
+	r.jarDir = filepath.Join(r.dir, "opt-tla")
+	require.NoError(t, os.MkdirAll(r.jarDir, 0o755))
+	r.jar = filepath.Join(r.jarDir, "tla2tools.jar")
+	r.java = filepath.Join(r.dir, "java")
+	require.NoError(t, os.WriteFile(r.java, []byte("#!/bin/sh\necho 'openjdk version \"21.0.12.1\" 2026-08-18 LTS' >&2\n"), 0o755))
+	return r
+}
+
+// vars are the play's -e for this rig, the sum file the repository's unless
+// one is given.
+func (r *tlaRig) vars(sum string, extra ...string) []string {
+	java, err := json.Marshal(map[string][]string{"nova_tla_java_candidates": {filepath.Join(r.dir, "no-java"), r.java}})
+	if err != nil {
+		panic(err) // a map of strings always marshals
+	}
+	v := []string{"--tags", "tla", "-e", "ansible_system=Linux", "-e", "nova_home=" + r.home, "-e", "nova_tla_dir=" + r.jarDir, "-e", string(java)}
+	if sum != "" {
+		v = append(v, "-e", "nova_tla_sha256_file="+sum)
+	}
+	return append(v, extra...)
+}
+
+// repoSum is the SHA-256 the repository pins the TLC jar to.
+func repoSum(t *testing.T, root string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(root, "tla", "tla2tools.sha256"))
+	require.NoError(t, err)
+	f := strings.Fields(string(b))
+	require.NotEmpty(t, f)
+	require.Regexp(t, `^[0-9a-f]{64}$`, f[0])
+	return f[0]
+}
+
+// TestTLAPlayHoldsTheJarToTheRepositorysSum runs the tools play's tla play on
+// a record machine: its --check rendering names the repository's sum
+// (tla/tla2tools.sha256); a missing jar and a jar whose SHA-256 differs are
+// refused, naming the path, both sums and how to place the jar; the pinned
+// jar (here a jar the test pins with a sum file of its own) passes, owned by
+// the login, with the java found echoed.
+func TestTLAPlayHoldsTheJarToTheRepositorysSum(t *testing.T) {
+	t.Parallel()
+	r := newTLARig(t)
+	want := repoSum(t, r.root)
+
+	check, err := r.playResult(t, "tools.yml", r.vars("", "--check")...)
+	require.Error(t, err, "--check with no jar passed:\n%s", check)
+	assert.Contains(t, check, "TLA REFUSED host=localhost jar="+r.jar+" want="+want+" got=none")
+	assert.Contains(t, check, "scp a tla2tools.jar whose sha256sum is "+want+" to localhost:"+r.jar)
+
+	require.NoError(t, os.WriteFile(r.jar, []byte("not the pinned jar\n"), 0o644))
+	got := sha256.Sum256([]byte("not the pinned jar\n"))
+	out, err := r.playResult(t, "tools.yml", r.vars("")...)
+	require.Error(t, err, "a jar whose sum differs passed:\n%s", out)
+	assert.Contains(t, out, "TLA REFUSED host=localhost jar="+r.jar+" want="+want+" got="+hex.EncodeToString(got[:]))
+
+	sum := filepath.Join(r.dir, "tla2tools.sha256")
+	require.NoError(t, os.WriteFile(sum, []byte(hex.EncodeToString(got[:])+"  tla2tools.jar\n"), 0o644))
+	out = r.play(t, "tools.yml", r.vars(sum)...)
+	assert.Contains(t, out, "TLA OK host=localhost jar="+r.jar+" sha256="+hex.EncodeToString(got[:])+" java="+r.java+" version=21.0.12.1")
+	assert.Regexp(t, `localhost\s+: ok=\d+\s+changed=0 `, out, "a converged record machine changes nothing")
 }
 
 // TestLoopsPlayRecordFilter: nova_loop_only names the records a run renders and

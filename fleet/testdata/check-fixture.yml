@@ -9,11 +9,10 @@ fleet: {store: localhost, coordinator: "", redis_port: 6380, pg_dsn: postgres://
 loops:
   member-local:
     machine: localhost
-    argv: [/usr/bin/env, "NOVA_SPRINT_REDIS=old-store:6379", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", nova-swarm, member, --as, localhost, --width, "2"]
+    argv: [/usr/bin/env, "NOVA_SPRINT_REDIS=old-store:6379", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", nova-swarm, member, --as, localhost]
     seat: seat-local
     keys: [API_KEY, NOVA_REDIS_BENCH_PASSWORD]
     keepalive: true
-    width: 2
   tick-local:
     machine: localhost
     argv: ["~/bin/tick", --once, "50%"]

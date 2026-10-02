@@ -2698,7 +2698,9 @@ stales every case, and edits to files no case reads stale none.
 each change stales the case. `TestTLCRecordHostIsAPlatformLabel` refuses a `host` cell that is not a listed platform label
 and a CPU count that is not a count. `TestTLCRecordFileHoldsOneJar` holds the record file to one `jar_sha256`, and `tlacheck merge` refuses a
 set of records measured with more than one jar, naming each jar with its record count and the
-groups to run again. `TestTLCRecordFreshnessAndCoverageWitnesses` proves failed
+groups to run again. `TestTLCRecordsNameThePinnedJar` holds that jar to the SHA-256
+`tla/tla2tools.sha256` pins, the one the record machines hold (the tools play's tla play)
+and `tlacheck run --bench` checks before it runs. `TestTLCRecordFreshnessAndCoverageWitnesses` proves failed
 records, wrong exits, invalid gate waivers and manual required records refuse, while a
 declared failed bench measurement is retained as debt, never PASS.
 

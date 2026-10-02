@@ -12,7 +12,7 @@ run would do.
 
 | play | what it converges | on |
 |---|---|---|
-| `fleet/tools.yml` | the build `nova_version` of the checkout `nova_source` in `~/.local/bin`, the build fact, the retired tools gone, the schema migrated, the function library loaded | every machine; the build on the machine running the play; migrate and `fn load` on `store_deployer` |
+| `fleet/tools.yml` | the build `nova_version` of the checkout `nova_source` in `~/.local/bin`, the build fact, the retired tools gone, the schema migrated, the function library loaded; the pinned TLC jar on the record machines | every machine; the build on the machine running the play; migrate and `fn load` on `store_deployer`; the jar on `tla` (`--tags tla` runs that alone) |
 | `fleet/redis.yml` | the store's ACL users, rendered from the library and the key families | the render on the machine running the play; check and apply on `store_deployer` |
 | `fleet/loops.yml` | one launchd or systemd unit per loop record, none for a record that is gone | every machine |
 
@@ -28,7 +28,7 @@ handles".
 nova-config machine add bench-a --user nova --seat bench-a --slots 2 --width 2 --as ada
 nova-config fleet set --store bench-a --coordinator bench-a --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova --as ada
 nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--server","bench-a:6390","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
-nova-config loop add reader-1 --machine bench-a --argv '["nova-swarm","member","--as","reader-1","--server","bench-a:6390","--reader","--harness","opencode","--root","nova-bench/reader-1","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --width 8 --as ada
+nova-config loop add reader-bench-a --machine bench-a --argv '["nova-swarm","member","--as","reader-bench-a","--server","bench-a:6390","--reader","--harness","opencode","--root","nova-bench/reader","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
 nova-config route add flash-a --tier flash --provider deepseek --model deepseek-v4-flash --tokens 200000 --deadline 900 --as ada
 nova-config route add pro-a --tier pro --provider openrouter --model x-ai/grok-4 --tokens 400000 --deadline 1800 --as ada
 nova-config apply --as ada
@@ -60,11 +60,14 @@ card's own `model:` line. `nova-sprint routes` shows what each route's attempts
 did.
 
 A reader is a loop record the same as a member: `nova-swarm member --reader`
-under the readers row of its `--as` name (`nova-sprint init --readers reader-1`,
-or `nova-sprint reader add reader-1`), with its width, the most reads it runs at
-once: the loop row's `--width`, which the inventory renders as the command's
-`--width` (`nova-config loop set reader-1 --width 16 --as ada`, then `apply`
-and `loops.yml`; the argv is never edited for it). It names no model either: the ask draws each read card's route from the
+under the readers row of its `--as` name (`nova-sprint init --readers
+reader-bench-a`, or `nova-sprint reader add reader-bench-a`). It is named for
+its machine, `reader-<m>`, one reader per machine, and it runs at the
+machine's width, the fleet row's, read with its queue every tick exactly as
+the member on the machine reads its own (the owner, 2026-10-02: "why not just
+have as many readers as workers per-machine"): no loop row carries a width,
+and an argv that spells `--width` is refused by `loop add` and `loop set`. A
+machine of width 0 (no member) reads nothing either. It names no model either: the ask draws each read card's route from the
 tier of the card it reads, the tier its work was dealt on (flash when line 1
 names none), at that tier's rolling index, and
 the packet hands the reader its model, budget and deadline; a reader started
@@ -86,7 +89,9 @@ supervisor pushes nothing twice:
 nova-config loop add inbox-push --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/<coordinator>-working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true --as ada
 ```
 
-The friends are nova-config's friend rows: `nova-sprint friend sync --actor ada`
+A friend's working directory, how her jobs arrive and are reported, and how
+their clones are removed once done, is docs/FRIENDS.md. The friends are
+nova-config's friend rows: `nova-sprint friend sync --actor ada`
 copies their names into the sprint's friends table, and each friend says it is
 there by beating from its own machinery, beside its harness, every few seconds
 (the same window and misses as a member's beat; `where` shows it `up`, `down`,
@@ -138,7 +143,8 @@ with `--check`.
 ## Variables
 
 The inventory gives each host `ansible_user`, `nova_seat`, `slots`,
-`runners`, `nova_redis_port`, `nova_redis_addr`, the explicit `nova_pg_dsn`,
+`runners`, `nova_tla` (its row's `tla`; the `tla` group is the hosts where it
+is true), `nova_redis_port`, `nova_redis_addr`, the explicit `nova_pg_dsn`,
 `nova_os` and `nova_arch` (from its beat, when it has one) and `nova_loops`,
 and `all.vars` `nova_store`. The rest are defaults in
 `fleet/group_vars/all.yml`. The inventory's host variables override them, and
@@ -165,6 +171,9 @@ an explicit localhost; it is never derived from the Redis store machine.
 | `nova_release_out`, `nova_release_gocache` | `~/nova-bench/release-build`, `~/nova-bench/release-gocache` on the machine running the play | where the build is written and its Go cache |
 | `nova_version`, `nova_source` | none: `-e` | the build to install and the checkout it is built from |
 | `nova_dogfood_receipts` | none: `-e` | the dogfood receipts directory the build's definition-of-done gate reads |
+| `nova_tla_dir`, `nova_tla_jar` | `/opt/tla`, `/opt/tla/tla2tools.jar` | where a record machine holds the TLC jar |
+| `nova_tla_sha256_file` | `tla/tla2tools.sha256` of the checkout the play runs from | the SHA-256 the jar must have, read on the machine running the play |
+| `nova_tla_java_candidates` | `~/sdk/bin/java`, `/usr/bin/java`, `/usr/local/bin/java` | the java a record machine runs TLC with: the first that exists |
 | `nova_release_gate_args` | `--cli <nova_source>/docs/CLI.md --receipts <nova_dogfood_receipts>` | the build's gate flags; a waiver replaces them whole with `--no-dogfood-gate --reason <why>`, and then no receipts are named |
 | `nova_release_build_args` | `[]` | flags appended to the build after the gate's; `nova-update release cycle` passes `--incremental --gate report --reason <why>` |
 
@@ -188,6 +197,7 @@ password reaches the tool's environment and no file, line or log. That the
 2. On the machine running the play, one `nice -n 19 nova-update release build` (`GOMAXPROCS=4`, its own Go cache) for every platform that has no `SHA256SUMS` under `nova_release_out/<version>/` yet; a platform already built is not built again. `--check` prints `WOULD-BUILD ... built=<platforms> missing=<platforms>`. After a successful build it removes the old version directories in `nova_release_out`: it keeps the version just built, the version of the `nova-update` running it, and the 3 newest of the rest (`pruned=<n>` on its `RELEASE BUILD OK` line). The Go cache (`nova_release_gocache`) is the build's own `GOCACHE`, trimmed by Go itself of entries unused for five days, and is not pruned here.
 3. On every machine: the platform's directory copied to `~/nova-bench/release/<version>/<platform>/`: when the machine has the installed build's directory and this one is not begun, it is seeded from that directory on the machine (unverified); then one listing measures the sha256 of every file in the stage and only the files whose bytes differ from the release's `SHA256SUMS` are sent, so a missing, rebuilt or corrupt file is sent and an intact reused one is not (`tla/BenchStage.tla`). Then that release's own `nova-update release install`, which verifies the `SHA256SUMS` whole and skips a tool that already answers the version or already holds its bytes, then, last, removes the old version directories under `~/nova-bench/release/`: it keeps the version installed, every version the bin directory's binaries answered before it (so a bad build can be put back), and the 3 newest of the rest; only names that parse as a version are touched, and a removal that fails is counted (`prune-failed=<n>` on the `RELEASE INSTALLED` line) and never fails the install; the tools named in `fleet/retired-tools.txt` (tools nova-tools once shipped and ships no more, by exact name) are removed from the bin directory, and nothing else is: a binary the list does not name (a credential helper, a loop wrapper of the fleet's own, a `.prev` copy) is never touched, whatever its name; the build fact (`~/.config/nova/build`) holds the version. `--check` prints `TOOLS host=<m> ... UP-TO-DATE` or `WOULD-INSTALL` from the installed `nova-update version` or the build fact, and `WOULD-REMOVE <path>` for each retired tool present.
 4. On `store_deployer`: `nova-config migrate` (the schema a kind the build adds needs: run before any `nova-config loop add`), then `nova-redis fn load` as the deploy user; `--check` runs `nova-redis fn check` instead.
+5. On `tla`, the record machines (rows with `tla=true`; tagged `tla`, so `--tags tla` runs this step alone): the machine is Linux; `nova_tla_dir` exists and is the login's, and the jar at `nova_tla_jar` is the login's (sudo only when either is not); the jar's SHA-256 is the first word of `nova_tla_sha256_file`; java (the first of `nova_tla_java_candidates`) runs. It downloads and copies nothing: a jar that is missing or differs refuses the host with `TLA REFUSED host=<m> jar=<path> want=<sha> got=<sha|none>` and the `scp` that places it; a host that passes prints `TLA OK host=<m> jar=<path> sha256=<sha> java=<path> version=<v>`, and `--check` says the same. `tlacheck run --bench` runs the records there (tla/README.md, "The record machines").
 
 A machinery install during a sprint is one command from the coordinator,
 `nova-update release cycle` (docs/CLI.md, SPEC-RELEASE rule 13): this play
@@ -223,8 +233,7 @@ names none. `docs/CLI.md` ("The store's ACL") has the verbs' lines.
 ## loops.yml
 
 One unit per record of `nova_loops`, from the record's fields and the host's
-layout: the command is the record's `argv`, which the inventory renders with
-the loop row's width as its `--width` when the width is above 0 (a bare program is the installed
+layout: the command is the record's `argv`, word for word (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
 record's log under `~/nova-bench/loops/`, which the play creates. Every unit

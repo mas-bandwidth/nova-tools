@@ -314,8 +314,8 @@ func TestFleetPlaysReadOnlyTheInventory(t *testing.T) {
 	member := full.Meta.Hostvars["bench-b"]["nova_loops"].([]config.InventoryLoop)
 	require.Len(t, member, 1)
 	assert.Equal(t, config.InventoryLoop{
-		Name: "member-bench-b", Argv: []string{"/usr/bin/env", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", "~/.local/bin/nova-swarm", "member", "--as", "bench-b", "--width", "4"}, Seat: "bench-b",
-		Keys: []string{"API_KEY", "NOVA_REDIS_BENCH_PASSWORD"}, Keepalive: true, Width: 4, Enabled: true, Log: "~/nova-bench/loops/member-bench-b.log",
+		Name: "member-bench-b", Argv: []string{"/usr/bin/env", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", "~/.local/bin/nova-swarm", "member", "--as", "bench-b"}, Seat: "bench-b",
+		Keys: []string{"API_KEY", "NOVA_REDIS_BENCH_PASSWORD"}, Keepalive: true, Enabled: true, Log: "~/nova-bench/loops/member-bench-b.log",
 	}, member[0])
 	// The retired tools are names nova-tools no longer ships: none is a
 	// living cmd/ directory, so tools.yml never removes a tool it installs.
@@ -332,6 +332,9 @@ func TestFleetPlaysReadOnlyTheInventory(t *testing.T) {
 		assert.True(t, os.IsNotExist(err), "fleet/retired-tools.txt names %s, which cmd/ still ships", l)
 	}
 	assert.NotZero(t, n)
+	assert.Equal(t, []string{"bench-b"}, full.TLA.Hosts, "the tla group is the rows with tla: true")
+	assert.Equal(t, true, full.Meta.Hostvars["bench-b"]["nova_tla"])
+	assert.Equal(t, false, full.Meta.Hostvars["bench-a"]["nova_tla"])
 	check := invs["check-fixture.yml"]
 	assert.Equal(t, "local", check.Meta.Hostvars["localhost"]["ansible_connection"])
 	assert.Empty(t, check.StoreDeployer.Hosts, "the check fixture dials no store")
