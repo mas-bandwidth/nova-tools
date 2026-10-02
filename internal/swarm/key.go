@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"unicode"
 )
@@ -64,35 +63,6 @@ func ReadKey(path, varName string) (string, error) {
 		return "", fmt.Errorf("the key file %s is empty; it wants one line, either the bare key or %s=<key>: printf '%%s\\n' \"$KEY\" > %s && chmod 600 %s", path, envOr(varName), path, path)
 	}
 	return key, nil
-}
-
-// KeyFileMode reports whether the key file is readable by anybody but its owner. It is a
-// NOTE rather than a refusal: a mode this tool refused over would be this tool deciding
-// how somebody else's machine is administered, and a mode nobody mentions is how a key
-// ends up world-readable.
-func KeyFileMode(path string) (os.FileMode, bool) {
-	if runtime.GOOS == "windows" {
-		return 0, false
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0, false
-	}
-	mode := info.Mode().Perm()
-	return mode, mode&0o077 != 0
-}
-
-// ReadKeyOrSecret is the key the worker description names, by either half (issue #881):
-// read from the key file, or read from this process's own environment under the name the
-// description's `secret` carries. run and supervise both call it, so the variable must be
-// present and non-empty in EACH process's own environment -- run's at admission, the
-// supervisor's when it inherits that environment and starts the harness. It returns the
-// value and an error that names the variable and never the value.
-func ReadKeyOrSecret(w Worker) (string, error) {
-	if w.Secret != "" {
-		return SecretFromEnv(w.Secret)
-	}
-	return ReadKey(w.KeyFile, w.EnvVar)
 }
 
 // SecretFromEnv reads the variable a description names as its `secret` from this

@@ -1,11 +1,7 @@
 package swarm
 
 import (
-	"fmt"
 	"math"
-	"os"
-	"strings"
-	"time"
 )
 
 // Bench width: a measured power of two (docs/SPEC-SWARM.md "Benches").
@@ -118,19 +114,4 @@ func Version8(v string) string {
 		return v[:8]
 	}
 	return v
-}
-
-// WriteMeasuredTable writes one doubling round beside the benches table: one
-// header line and one row per W, so the width on the row can be re-derived
-// without re-running the bench.
-func WriteMeasuredTable(path, name string, rounds []SizeRound, now time.Time) error {
-	var b strings.Builder
-	b.WriteString("bench\tw\tload\tcores\tcards_per_min\tabstains\theld\tat\n")
-	stamp := now.UTC().Format(time.RFC3339)
-	for _, r := range rounds {
-		r.Held = SizeRoundHolds(r)
-		fmt.Fprintf(&b, "%s\t%d\t%.2f\t%d\t%.2f\t%d\t%t\t%s\n",
-			name, r.W, r.Load, r.Cores, r.CardsPerMin, r.Abstains, r.Held, stamp)
-	}
-	return os.WriteFile(path, []byte(b.String()), 0o600)
 }

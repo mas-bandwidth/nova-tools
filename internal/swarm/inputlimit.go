@@ -2,8 +2,6 @@ package swarm
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -325,13 +323,6 @@ func isWordRune(b byte) bool {
 	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
 }
 
-// inputLimitedOutcome is rateLimitedOutcome's question, in its own words and for its own
-// class: what the log SAYS is this job's outcome only when the job did not finish and its
-// end is not one the supervisor reaped it with.
-func inputLimitedOutcome(end string, rc int) bool {
-	return rateLimitedOutcome(true, end, rc)
-}
-
 // OverMaxInput is the task budget checked BEFORE the launch: `max_input` is the ceiling a
 // task names on the prompt this tool hands the harness, and the refusal carries the MEASURED
 // size beside it.
@@ -371,25 +362,6 @@ func TooShortForAPhrase(phrase string) (string, bool) {
 	return "", true
 }
 
-// PromptSize is the size of the prompt this tool handed the harness, read back from the job
-// directory -- the one input size the dispatcher can measure, and the thing `max_input` is a
-// ceiling on.
-// It reports whether it could measure at all, so the two callers can differ where they must:
-// the pre-launch check reads an unmeasurable prompt as no bytes, which no ceiling refuses --
-// a check the tool cannot make is never a refusal it invents -- and the line prints the dash
-// that is rule 12's word for an absence, never a zero.
-func PromptSize(jobDir string) (int, bool) {
-	fi, err := os.Stat(filepath.Join(jobDir, "PROMPT.md"))
-	if err != nil {
-		return 0, false
-	}
-	const maxInt = int64(^uint(0) >> 1)
-	if fi.Size() > maxInt {
-		return int(maxInt), true
-	}
-	return int(fi.Size()), true
-}
-
 // ISSUE #163: A STRUCTURED SIGNAL, NOT A HEURISTIC OVER THE TRANSCRIPT. The class above is
 // real -- a job that died because the request did not fit is named, never retried, in one
 // line -- but #150 established it by READING prose, and five rounds of review each narrowed
@@ -426,12 +398,6 @@ type InputLimitSignal struct {
 	Class InputLimitClass
 	Value int
 	Limit int
-}
-
-// InputLimitSignalLine is the structured line the supervisor emits from a signal it read: the
-// one line the next reader trusts, `class`, the measured `value` and the `limit` it hit.
-func InputLimitSignalLine(sig InputLimitSignal) string {
-	return fmt.Sprintf("INPUT LIMIT class=%s value=%d limit=%d", sig.Class, sig.Value, sig.Limit)
 }
 
 // stripPaint removes the ANSI escape sequences a harness writes to a terminal, so the

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -470,20 +469,4 @@ func childClause(before string) string {
 		return before[all[len(all)-1][1]:]
 	}
 	return before
-}
-
-// ChildRuleNames is every child-rule check token, sorted, for listings and tests.
-func ChildRuleNames() []string {
-	names := make([]string, 0, len(CardChildRemedies))
-	for n := range CardChildRemedies {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// ChildFindingLine is one finding as `nova-sprint add` and `nova-swarm lint` print it
-// after their own prefix: `<check>: <line>: <excerpt>`.
-func ChildFindingLine(f CardHeaderFinding) string {
-	return fmt.Sprintf("%s: %d: %s", f.Check, f.Line, f.Excerpt)
 }
