@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,13 +15,13 @@ func TestCaptureCancelsAtExactLimitWithoutKeepingACompletePrefix(t *testing.T) {
 	b := NewCapture(4, cancel)
 	n, err := b.Write([]byte("abc"))
 	require.NoError(t, err)
-	assert.Equal(t, 3, n)
-	assert.False(t, b.Hit())
+	require.Equal(t, 3, n)
+	require.False(t, b.Hit())
 
 	n, err = b.Write([]byte("defgh"))
 	require.NoError(t, err)
-	assert.Equal(t, 5, n)
-	assert.True(t, b.Hit())
+	require.Equal(t, 5, n)
+	require.True(t, b.Hit())
 
 	require.Equal(t, "abcd", string(b.Bytes()), "capture not capped/cancelled")
 	require.Error(t, ctx.Err(), "capture not capped/cancelled")

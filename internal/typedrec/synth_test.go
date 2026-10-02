@@ -29,6 +29,6 @@ func TestResultFormatIsTheTwoLineContract(t *testing.T) {
 		}
 	}
 	f, s := JudgementFields(KindFix)
-	assert.Empty(t, f, "a fix card needs nothing from the model beyond two lines")
-	assert.Empty(t, s, "a fix card needs nothing from the model beyond two lines")
+	require.Empty(t, f, "a fix card needs nothing from the model beyond two lines, got %v %v", f, s)
+	require.Empty(t, s, "a fix card needs nothing from the model beyond two lines, got %v %v", f, s)
 }

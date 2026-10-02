@@ -81,10 +81,6 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists"},
 	{file: "tools/ci/revertonred.go", fn: "land", record: "git-refspec", since: "a1f1f62c1",
 		reason: "the git push refspec HEAD:main, not a RESULT parser"},
-	{file: "cmd/nova-sprint/quack.go", fn: "quackBrief", record: "SPEC-CARD", since: "20833d613",
-		reason: "the test card's REPO: header for staging quack cards, written not parsed"},
-	{file: "cmd/nova-sprint/landprune.go", fn: "tidyRefs", record: "git-refname", since: "71f672fa7",
-		reason: "skips the remote default branch HEAD in for-each-ref, not a RESULT parser"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
@@ -469,57 +465,58 @@ func TestOneTypedParser(t *testing.T) {
 
 		// 1. omitted-field
 		hits1, err := pc.scanFile(filepath.Join(fixDir, "omitted-field.go"), "omitted-field.go")
-		require.NoError(t, err)
-		require.Len(t, hits1, 1)
-		assert.Equal(t, "FINDINGS", hits1[0].tok)
+		if assert.NoError(t, err, "fixture 1 omitted-field: unexpected error") && assert.Len(t, hits1, 1, "fixture 1 omitted-field: tokens length") {
+			assert.Equal(t, "FINDINGS", hits1[0].tok)
+		}
 
 		// 2. split-shadow
 		hits2, err := pc.scanFile(filepath.Join(fixDir, "split-shadow.go"), "split-shadow.go")
-		require.NoError(t, err)
-		require.Len(t, hits2, 1)
-		assert.Equal(t, "PROBES", hits2[0].tok)
+		if assert.NoError(t, err, "fixture 2 split-shadow: unexpected error") && assert.Len(t, hits2, 1, "fixture 2 split-shadow: tokens length") {
+			assert.Equal(t, "PROBES", hits2[0].tok)
+		}
 
 		// 3. scanner-shadow
 		hits3, err := pc.scanFile(filepath.Join(fixDir, "scanner-shadow.go"), "scanner-shadow.go")
-		require.NoError(t, err)
-		require.Len(t, hits3, 1)
-		assert.Equal(t, "SUGGEST", hits3[0].tok)
+		if assert.NoError(t, err, "fixture 3 scanner-shadow: unexpected error") && assert.Len(t, hits3, 1, "fixture 3 scanner-shadow: tokens length") {
+			assert.Equal(t, "SUGGEST", hits3[0].tok)
+		}
 
 		// 4. byte-shadow
 		hits4, err := pc.scanFile(filepath.Join(fixDir, "byte-shadow.go"), "byte-shadow.go")
-		require.NoError(t, err)
-		require.Len(t, hits4, 1)
-		assert.Equal(t, "HEAD", hits4[0].tok)
+		if assert.NoError(t, err, "fixture 4 byte-shadow: unexpected error") && assert.Len(t, hits4, 1, "fixture 4 byte-shadow: tokens length") {
+			assert.Equal(t, "HEAD", hits4[0].tok)
+		}
 
 		// 5. const-concat
 		hits5, err := pc.scanFile(filepath.Join(fixDir, "const-concat.go"), "const-concat.go")
-		require.NoError(t, err)
-		require.Len(t, hits5, 1)
-		assert.Equal(t, "FLOOR", hits5[0].tok)
+		if assert.NoError(t, err, "fixture 5 const-concat: unexpected error") && assert.Len(t, hits5, 1, "fixture 5 const-concat: tokens length") {
+			assert.Equal(t, "FLOOR", hits5[0].tok)
+		}
 
 		// 6. prefix-table
 		hits6, err := pc.scanFile(filepath.Join(fixDir, "prefix-table.go"), "prefix-table.go")
-		require.NoError(t, err)
-		require.Len(t, hits6, 2)
-		assert.Equal(t, "RED", hits6[0].tok)
+		if assert.NoError(t, err, "fixture 6 prefix-table: unexpected error") && assert.Len(t, hits6, 2, "fixture 6 prefix-table: tokens length") {
+			assert.Equal(t, "RED", hits6[0].tok)
+		}
 
 		// 8. var-shadow: a never-assigned package var holding "HEAD:" folds like a const.
 		hits8, err := pc.scanFile(filepath.Join(fixDir, "var-shadow.go"), "var-shadow.go")
-		require.NoError(t, err)
-		require.Len(t, hits8, 1)
-		assert.Equal(t, "HEAD", hits8[0].tok)
+		if assert.NoError(t, err, "fixture 8 var-shadow: unexpected error") && assert.Len(t, hits8, 1, "fixture 8 var-shadow: tokens length") {
+			assert.Equal(t, "HEAD", hits8[0].tok)
+		}
 
 		// 9. typed-shadow: a string the typed parser returned, compared raw.
 		hits9, err := pc.scanFile(filepath.Join(fixDir, "typed-shadow.go"), "typed-shadow.go")
-		require.NoError(t, err)
-		require.Len(t, hits9, 1)
-		assert.Equal(t, "DONE", hits9[0].tok)
-		assert.Equal(t, "bare", hits9[0].form)
+		if assert.NoError(t, err, "fixture 9 typed-shadow: unexpected error") && assert.Len(t, hits9, 1, "fixture 9 typed-shadow: tokens length") {
+			assert.Equal(t, "DONE", hits9[0].tok)
+			assert.Equal(t, "bare", hits9[0].form)
+		}
 
 		// 7. clean
 		hits7, err := pc.scanFile(filepath.Join(fixDir, "clean.go"), "clean.go")
-		require.NoError(t, err)
-		assert.Empty(t, hits7)
+		if assert.NoError(t, err, "fixture 7 clean: unexpected error") {
+			assert.Empty(t, hits7, "fixture 7 clean: expected 0 hits")
+		}
 	})
 
 	t.Run("rev2-rule-red", func(t *testing.T) {
@@ -639,7 +636,9 @@ func TestOneTypedParser(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		assert.Empty(t, unexpectedHits, "unexpected RESULT parser hit(s)")
+		for _, h := range unexpectedHits {
+			assert.Failf(t, "unexpected RESULT parser hit", "%s:%d %s() %s %s %s", h.file, h.line, h.fn, h.form, h.tok, h.shape)
+		}
 
 		// Ensure every allowlist entry has at least 1 hit
 		for _, a := range allowlist {

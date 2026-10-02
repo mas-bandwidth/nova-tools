@@ -12,11 +12,11 @@ import (
 func TestParseTableCheck(t *testing.T) {
 	t.Parallel()
 	got, err := typedrec.ParseTableCheck([]any{"CHECK", "18446744073709551615", "9007199254740993", "2", "3"})
-	require.NoError(t, err)
-	assert.Equal(t, uint64(18446744073709551615), got.Epoch)
-	assert.Equal(t, uint64(9007199254740993), got.Revision)
-	assert.Equal(t, uint64(2), got.Members)
-	assert.Equal(t, uint64(3), got.Cells)
+	require.NoError(t, err, "report=%+v", got)
+	require.Equal(t, uint64(18446744073709551615), got.Epoch, "report=%+v", got)
+	require.Equal(t, uint64(9007199254740993), got.Revision, "report=%+v", got)
+	require.Equal(t, uint64(2), got.Members, "report=%+v", got)
+	require.Equal(t, uint64(3), got.Cells, "report=%+v", got)
 
 	for _, reply := range [][]any{
 		nil, {"CHECK"}, {"OK", "0", "0", "0", "0"}, {"CHECK", int64(0), "0", "0", "0"},

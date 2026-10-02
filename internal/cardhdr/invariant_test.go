@@ -128,8 +128,8 @@ func TestLintOneInvariantExemptsPlanNotStitch(t *testing.T) {
 		noKids := strings.Replace(plan, "BUILD:\n1. the child card-lint-a\n2. the child card-lint-b", build, 1)
 		got := LintOneInvariant(Card{Text: noKids})
 		assert.Equal(t, RulePlanChildren, got.Rules(), "KIND: plan with BUILD %q", build)
-		if assert.NotEmpty(t, got) {
-			assert.Equal(t, "KIND: plan", got[0].Line)
+		if assert.NotEmpty(t, got, "KIND: plan with BUILD %q", build) {
+			assert.Equal(t, "KIND: plan", got[0].Line, "KIND: plan with BUILD %q: refusals %v, want plan-children on the KIND line", build, got)
 		}
 	}
 	for _, kind := range []string{"KIND: fix", "KIND: parent"} {

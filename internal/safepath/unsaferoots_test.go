@@ -36,7 +36,6 @@ func TestRemoveUnderRootsRefusesAnUnsafeRoot(t *testing.T) {
 		mustWrite(t, filepath.Join(victim, "keep"), "x")
 
 		err = RemoveUnderRoots(victim, home)
-		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnderRoots(%q, %q) want a refusal that wraps ErrUnsafe", victim, home)
 		assert.True(t, exists(victim), "RemoveUnderRoots deleted %s under the user's home; a refusal must leave it", victim)
 	})
@@ -48,7 +47,6 @@ func TestRemoveUnderRootsRefusesAnUnsafeRoot(t *testing.T) {
 		mustWrite(t, filepath.Join(victim, "keep"), "x")
 
 		err := RemoveUnderRoots(victim, string(os.PathSeparator))
-		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnderRoots(%q, %q) want a refusal that wraps ErrUnsafe", victim, string(os.PathSeparator))
 		assert.True(t, exists(victim), "RemoveUnderRoots deleted %s under the whole disk; a refusal must leave it", victim)
 	})
@@ -81,7 +79,6 @@ func TestRemoveUnderRootsRefusesARootThatIsASymlinkToHome(t *testing.T) {
 	require.NoError(t, os.Symlink(fakeHomeReal, rootLink))
 
 	err = policy.RemoveUnderRoots(victim, rootLink)
-	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnderRoots(%q, %q) want a refusal that wraps ErrUnsafe", victim, rootLink)
 	assert.True(t, exists(victim), "RemoveUnderRoots deleted %s through a root that is a symlink to the fixture's home", victim)
 }
@@ -98,7 +95,6 @@ func TestRemoveUnderRootsRefusesAPathThatIsHomeUnderAWiderRoot(t *testing.T) {
 	parent := filepath.Dir(fakeHomeReal)
 
 	err = policy.RemoveUnderRoots(fakeHomeReal, parent)
-	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnderRoots(%q, %q) want a refusal that wraps ErrUnsafe", fakeHomeReal, parent)
 	assert.True(t, exists(marker), "RemoveUnderRoots deleted %s, the fixture's stand-in home, under a wider root", fakeHomeReal)
 }
@@ -126,7 +122,6 @@ func TestRemoveUnderRefusesARootThatResolvesToAnUnsafeDirectory(t *testing.T) {
 		require.NoError(t, os.Symlink(fakeHomeReal, rootLink))
 
 		err = policy.RemoveUnder(rootLink, victim)
-		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnder(%q, %q) want a refusal that wraps ErrUnsafe", rootLink, victim)
 		assert.True(t, exists(victim), "RemoveUnder deleted %s through a root that is a symlink to the fixture's home", victim)
 	})
@@ -140,7 +135,6 @@ func TestRemoveUnderRefusesARootThatResolvesToAnUnsafeDirectory(t *testing.T) {
 		mustWrite(t, filepath.Join(victim, "keep"), "x")
 
 		err := RemoveUnder(rootLink, victim)
-		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnder(%q, %q) want a refusal that wraps ErrUnsafe", rootLink, victim)
 		assert.True(t, exists(victim), "RemoveUnder deleted %s through a root that is a symlink to the whole disk", victim)
 	})
@@ -197,7 +191,6 @@ func TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) 
 		}
 
 		err := policy.RemoveUnderRoots(realHome, parent)
-		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnderRoots(%q, %q) with HOME=%q want a refusal that wraps ErrUnsafe", realHome, parent, "home")
 		assert.True(t, exists(realHome), "RemoveUnderRoots deleted %s, the fixture's stand-in home, because HOME was spelled relative", realHome)
 	})
@@ -246,7 +239,6 @@ func TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) 
 		require.True(t, os.SameFile(vi, ri), "the fixture's own premise failed: %q and %q are not the same directory", variant, realHome)
 
 		err := policy.RemoveUnderRoots(variant, parent)
-		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnderRoots(%q, %q) want a refusal: it IS %q", variant, parent, realHome)
 		assert.True(t, exists(realHome), "RemoveUnderRoots deleted the fixture's home through the spelling %q", variant)
 	})
@@ -269,7 +261,6 @@ func TestRemoveUnderIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) {
 		}
 
 		err := policy.RemoveUnder(realHome, victim)
-		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnder(%q, %q) with HOME=%q want a refusal: the root IS the home", realHome, victim, "home")
 		assert.True(t, exists(victim), "RemoveUnder removed %s under a root that is the home, because HOME was spelled relative", victim)
 	})
@@ -286,7 +277,6 @@ func TestRemoveUnderIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) {
 		policy := Policy{UserHomeDir: func() (string, error) { return realHome, nil }}
 
 		err := policy.RemoveUnder(filepath.Join(parent, "Glenn"), victim)
-		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnsafe, "RemoveUnder with the root spelled %q want a refusal: it IS the home", filepath.Join(parent, "Glenn"))
 		assert.True(t, exists(victim), "RemoveUnder removed %s under the home spelled with a different case", victim)
 	})
