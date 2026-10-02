@@ -1316,7 +1316,7 @@ func lintBrief(verbName, brief string, rules []swarm.ChildRule, max int, stderr 
 func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("release")
 	reason := fs.String("reason", "", "what you looked at and found: recorded on the sentinel and in its notification")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "release", err.Error())
@@ -1584,7 +1584,7 @@ func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
 	var ans, instead *string
 	return a.setVerb("ask", args, stdout, stderr, false, func(fs flagSet) {
 		another = fs.Bool("another", false, "one more reader for a primary already asked")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 		instead = fs.String("instead", "", "take back this reader's read (asked or reading) of the one primary named and ask one other reader, as --another chooses")
 	}, func(ids []string, s *sel) string {
 		if *instead != "" && s.group != "" {
@@ -1598,7 +1598,7 @@ func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("read")
-	as := fs.String("as", "", "the reader; several, comma separated, each reporting its own named cards in one step")
+	as := fs.String("as", "", "the reader; use read-card IDs from queue --as <reader>; several readers, comma separated, each reporting its own named read cards in one step")
 	begin := fs.Bool("begin", false, "asked -> reading")
 	ok := fs.Bool("ok", false, "the read found it good")
 	broken := fs.Bool("broken", false, "the read found it broken")
@@ -1678,8 +1678,8 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 	var readOK *bool
 	var ans *string
 	return a.setVerb("accept", args, stdout, stderr, false, func(fs flagSet) {
-		readOK = fs.Bool("read-ok", false, "every primary in review with ok reads from two different readers")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		readOK = fs.Bool("read-ok", false, "every primary in review with ok reads from two different readers; moves eligible primaries into the merge queue")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" && !*readOK && s.limit == 0 {
 			return "wants ids, --stream <s>, --read-ok or --group <id>"
@@ -1698,7 +1698,7 @@ func (a *app) cmdRework(args []string, stdout, stderr io.Writer) int {
 	var fix, ans *string
 	return a.setVerb("rework", args, stdout, stderr, false, func(fs flagSet) {
 		fix = fs.String("fix", "", "the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" {
 			return "wants ids (or --group, --stream); --fix <text> for all, else each primary's own finding or report"
@@ -1713,7 +1713,7 @@ func (a *app) cmdReturn(args []string, stdout, stderr io.Writer) int {
 	var reason, ans *string
 	return a.setVerb("return", args, stdout, stderr, false, func(fs flagSet) {
 		reason = fs.String("reason", "", "why it goes back to review")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" {
 			return "wants ids, --stream <s> or --group <id>"
@@ -1728,7 +1728,7 @@ func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	var reason, ans *string
 	return a.setVerb("drop", args, stdout, stderr, true, func(fs flagSet) {
 		reason = fs.String("reason", "", "why it leaves the table; kept with its record")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if *reason == "" || len(ids) == 0 && s.stream == "" && s.col == "" {
 			return "wants ids (or --stream/--col, --group) and --reason <text>"
@@ -1810,7 +1810,7 @@ func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("rank")
 	score := fs.String("score", "", "the new score of the first id; the rest follow it")
 	first := fs.Bool("first", false, "ahead of every primary")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "rank", err.Error())
@@ -1835,7 +1835,7 @@ func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("merge")
-	stream := fs.String("stream", "", "the stream")
+	stream := fs.String("stream", "", "the stream whose queued batches are selected to merge and land")
 	batch := fs.Int("batch", 10, "the batch: the head n of the stream's queue")
 	conflict := fs.String("conflict", "", "fact: this card of the batch did not merge")
 	cross := fs.String("cross", "", "fact: <card>=<other>: the card needs <other> first; <other> is on the table, in another stream, not landed")
@@ -1875,7 +1875,7 @@ func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("resume")
 	stream := fs.String("stream", "", "the stopped stream")
 	did := fs.String("did", "", "what the coordinator did about the cause; required after a red branch")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "resume", err.Error())

@@ -26,7 +26,7 @@ handles".
 
 ```
 nova-config machine add bench-a --user nova --seat bench-a --slots 2 --width 2 --as ada
-nova-config fleet set --store bench-a --coordinator bench-a --as ada
+nova-config fleet set --store bench-a --coordinator bench-a --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova --as ada
 nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--server","bench-a:6390","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
 nova-config loop add reader-1 --machine bench-a --argv '["nova-swarm","member","--as","reader-1","--server","bench-a:6390","--reader","--harness","opencode","--root","nova-bench/reader-1","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --width 8 --as ada
 nova-config route add flash-a --tier flash --provider deepseek --model deepseek-v4-flash --tokens 200000 --deadline 900 --as ada
@@ -91,20 +91,22 @@ file instead of the store: machines (with `os` and `arch` standing in for the
 beat), the fleet row and loops. A file with no `loops` key is a fleet whose
 loops were never applied. `fleet/testdata/inventory-fixture.yml` is two
 machines and their loops; `fleet/testdata/check-fixture.yml` is the machine
-running the play, named `localhost`, with no store, which is what
+running the play, named `localhost`, with no store deployer, which is what
 `TestFleetPlaysPassSyntaxAndCheckOnTheFixture` runs all three plays against
 with `--check`.
 
 ## Variables
 
 The inventory gives each host `ansible_user`, `nova_seat`, `slots`,
-`runners`, `nova_os` and `nova_arch` (from its beat, when it has one) and
-`nova_loops`, and `all.vars` `nova_store`. The rest are defaults in
+`runners`, `nova_redis_port`, `nova_redis_addr`, the explicit `nova_pg_dsn`,
+`nova_os` and `nova_arch` (from its beat, when it has one) and `nova_loops`,
+and `all.vars` `nova_store`. The rest are defaults in
 `fleet/group_vars/all.yml`. The inventory's host variables override them, and
 so do a `group_vars/benches.yml` and `host_vars/<machine>.yml` beside the
 inventory; a `group_vars/all.yml` beside the inventory does not (the play's own
-is read after it). A fleet whose Redis listens on another port than 6379 sets
-`nova_redis_port` in its `group_vars/benches.yml`.
+is read after it). The host variables ensure an applied nonstandard Redis port
+outranks every group default. The Postgres URI is preserved exactly, including
+an explicit localhost; it is never derived from the Redis store machine.
 
 | variable | default | what it is |
 |---|---|---|
@@ -115,13 +117,21 @@ is read after it). A fleet whose Redis listens on another port than 6379 sets
 | `nova_launchd_domain` | `auto` | darwin: `gui` (a LaunchAgent in the login's GUI domain), `system` (a LaunchDaemon dropped to the login; sudo), or `auto`, which asks launchd whether the login has a GUI domain and takes `system` when it has not |
 | `nova_systemd_scope` | `user` | linux: a user unit (with linger) or `system` |
 | `nova_retire_units` | `[]` | units of another tool's to retire by name (below) |
-| `nova_redis_port`, `nova_redis_addr` | `6379`, `<nova_store>:<port>` | the store |
+| `nova_redis_port`, `nova_redis_addr` | the explicit applied fleet row (no port default) | the store |
 | `nova_redis_deploy_user`, `nova_redis_deploy_password_key` | `coordinator`, `NOVA_REDIS_COORDINATOR_PASSWORD` | who loads the library, and the secret holding its password in the `store_deployer` seat |
 | `nova_redis_admin_user`, `nova_redis_admin_password_key` | `admin`, `NOVA_REDIS_ADMIN_PASSWORD` | who writes the ACL, and its secret |
 | `nova_redis_user_password_keys` | `coordinator`, `bench` | the secret holding the password of a user `acl apply` creates |
-| `nova_pg_dsn`, `nova_pg_password_key` | `postgres://nova_config@<nova_store>:5432/nova`, `NOVA_PG_CONFIG_PASSWORD` | the configuration store `tools.yml` migrates |
+| `nova_pg_dsn`, `nova_pg_password_key` | the applied fleet row (no inferred DSN), `NOVA_PG_CONFIG_PASSWORD` | the configuration store `tools.yml` migrates; an empty DSN is refused with the set and apply commands |
 | `nova_release_out`, `nova_release_gocache` | `~/nova-bench/release-build`, `~/nova-bench/release-gocache` on the machine running the play | where the build is written and its Go cache |
 | `nova_version`, `nova_source` | none: `-e` | the build to install and the checkout it is built from |
+
+An existing schema has neither endpoint before migration 0014 adds their
+columns. Bootstrap once with `nova-config migrate --pg
+postgres://user@localhost:5432/db`, then run `nova-config fleet set --redis_port
+<port> --pg_dsn postgres://user@localhost:5432/db --as <actor>` and
+`nova-config apply --kind fleet --as <actor>`. Both endpoints stay unset after
+migration until declared. Inventory and fleet apply refuse an unset endpoint
+before any member argv is rewritten; inventory never guesses a Redis port.
 
 Every secret is named, never valued: a task that needs one runs its tool under
 `nova-secrets exec --only <NAME> --require=<NAME>` as the host's seat, so the
@@ -135,6 +145,17 @@ password reaches the tool's environment and no file, line or log. That the
 2. On the machine running the play, one `nice -n 19 nova-update release build` (`GOMAXPROCS=4`, its own Go cache) for every platform that has no `SHA256SUMS` under `nova_release_out/<version>/` yet; a platform already built is not built again. `--check` prints `WOULD-BUILD ... built=<platforms> missing=<platforms>`. After a successful build it removes the old version directories in `nova_release_out`: it keeps the version just built, the version of the `nova-update` running it, and the 3 newest of the rest (`pruned=<n>` on its `RELEASE BUILD OK` line). The Go cache (`nova_release_gocache`) is the build's own `GOCACHE`, trimmed by Go itself of entries unused for five days, and is not pruned here.
 3. On every machine: the platform's directory copied to `~/nova-bench/release/<version>/<platform>/` (only files that differ), then that release's own `nova-update release install`, which verifies the `SHA256SUMS` whole and skips a tool that already answers the version, then, last, removes the old version directories under `~/nova-bench/release/`: it keeps the version installed, every version the bin directory's binaries answered before it (so a bad build can be put back), and the 3 newest of the rest; only names that parse as a version are touched, and a removal that fails is counted (`prune-failed=<n>` on the `RELEASE INSTALLED` line) and never fails the install; the tools named in `fleet/retired-tools.txt` (tools nova-tools once shipped and ships no more, by exact name) are removed from the bin directory, and nothing else is: a binary the list does not name (a credential helper, a loop wrapper of the fleet's own, a `.prev` copy) is never touched, whatever its name; the build fact (`~/.config/nova/build`) holds the version. `--check` prints `TOOLS host=<m> ... UP-TO-DATE` or `WOULD-INSTALL` from the installed `nova-update version`, and `WOULD-REMOVE <path>` for each retired tool present.
 4. On `store_deployer`: `nova-config migrate` (the schema a kind the build adds needs: run before any `nova-config loop add`), then `nova-redis fn load` as the deploy user; `--check` runs `nova-redis fn check` instead.
+
+The role that runs migrate must own every table in schema config. The play
+runs it as the role `nova_pg_dsn` names (the config role), so a schema whose
+tables another role made (an admin role at setup) is refused before any
+migration is applied, and the refusal is the play's failure line: it names
+the role, each table it does not own with its owner, and ends in `run:` and
+one `ALTER TABLE config."<table>" OWNER TO "<role>";` per table. Run those once,
+in psql, as a role with the owners' rights (the owner or a superuser), then
+run the play again. `nova-config migrate --dry-run` prints the same finding,
+applies nothing, and exits 1 when migrate would refuse (`ready=no`), 0 when
+it would apply.
 
 ## redis.yml
 
@@ -157,7 +178,15 @@ layout: the command is the record's `argv`, which the inventory renders with
 the loop row's width as its `--width` when the width is above 0 (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
-record's log under `~/nova-bench/loops/`, which the play creates.
+record's log under `~/nova-bench/loops/`, which the play creates. Every unit
+gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
+a `nova-swarm member`, inventory removes an older endpoint assignment from the
+rendered `/usr/bin/env` prefix while preserving its Redis user, password
+variable name and every other word. This compatibility projection does not
+rewrite Postgres: remove that old assignment from the loop row with
+`nova-config loop set <loop> --argv '<argv>' --as <actor>`, then apply the loop
+kind. The endpoint remains effective from the unit environment during that
+cleanup.
 
 - darwin: `com.nova.loop.<name>.plist` (`templates/nova-loop.plist.j2`) in
   `~/Library/LaunchAgents` (GUI domain) or `/Library/LaunchDaemons` (system,

@@ -19,7 +19,7 @@ func TestReadmeCatalogueContainsOnlyLivingTools(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(root, "README.md"))
 	require.NoError(t, err)
 	page := string(raw)
-	living := strings.Fields("nova-bus nova-table nova-redis nova-config nova-swarm nova-secrets nova-tokens nova-memory nova-cairn nova-check nova-self-talk nova-fuse nova-sandbox nova-ci nova-version nova-update")
+	living := strings.Fields("nova-bus nova-table nova-sprint nova-redis nova-config nova-swarm nova-secrets nova-tokens nova-memory nova-cairn nova-check nova-self-talk nova-fuse nova-sandbox nova-ci nova-version nova-update")
 	expected := map[string]bool{}
 	for _, name := range living {
 		expected[name] = true

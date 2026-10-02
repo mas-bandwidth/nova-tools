@@ -55,6 +55,9 @@ func (r reopening) Rev(ctx context.Context, kind string) (int64, error) {
 func (r reopening) Counts(ctx context.Context) (map[string]int, error) {
 	return r.open().Counts(ctx)
 }
+func (r reopening) Ownership(ctx context.Context) (Ownership, error) {
+	return r.open().Ownership(ctx)
+}
 
 // migratedFile is a file store made by Migrate in the test's own directory.
 func migratedFile(t *testing.T) string {
