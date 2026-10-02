@@ -775,7 +775,7 @@ func TestAnInterruptThatCutsAReadShortEndsTheWatchWithExitZero(t *testing.T) {
 			require.True(t, strings.HasPrefix(w[1], "\x1b[H"), "the cursor hidden, the one frame, the cursor restored: %q", w)
 			require.Equal(t, "\x1b[?25h", w[2], "the cursor hidden, the one frame, the cursor restored: %q", w)
 			assert.True(t, cut.sawDone, "the read the interrupt arrived in was not made in the command's context: the interrupt cannot cut it short")
-			if assert.NotNil(t, cut.dialCtx, "the store was opened in a context the interrupt does not end") {
+			if assert.True(t, cut.dialCtx != nil, "the store was opened in a context the interrupt does not end") {
 				assert.Error(t, cut.dialCtx.Err(), "the store was opened in a context the interrupt does not end")
 			}
 		})

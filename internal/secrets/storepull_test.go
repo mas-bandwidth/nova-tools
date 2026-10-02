@@ -283,7 +283,7 @@ func TestStorePullKeyRefusesAMalformedKeyWithoutPanicking(t *testing.T) {
 			func() {
 				defer func() {
 					r := recover()
-					require.Nil(t, r, "a malformed %s key panicked the parser instead of being refused: %v", c.typ, r)
+					require.True(t, r == nil, "a malformed %s key panicked the parser instead of being refused: %v", c.typ, r)
 				}()
 				_, err = privateKeyPublicBlob(path)
 			}()
