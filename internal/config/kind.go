@@ -186,7 +186,6 @@ const CoordinatorRole = "coordinator"
 //
 // A machine's record is exactly the declared facts something reads, one
 // reader each, and nothing invented. Its name is the tailnet host: `ssh <name>`
-// Its name is the tailnet host: `ssh <name>`
 // reaches it, so there is no address field ("All fleet machines must be on
 // the tailnet. This is a hard requirement."). Measured facts (os, arch,
 // cores, memory) are never typed: they come live from the machine's own
