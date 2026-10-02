@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
 )
 
@@ -315,4 +316,105 @@ func TestExampleWritesThePagesFromTheBinary(t *testing.T) {
 	exit, _, stderr = runSelfTalk(t, "example")
 	assert.Equal(t, 2, exit)
 	assert.Contains(t, stderr, "takes one directory to write the pages into, got 0 arguments: nova-self-talk example ./pages")
+}
+
+// The command example points to must survive shell parsing as one literal path, including a
+// leading dash that would otherwise be parsed as a scan flag.
+func TestExampleNextQuotesPathAsOneShellArgument(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name, verb, file string
+		want             []string
+	}{
+		{"ordinary path", "", "pages/journal.md", []string{"nova-self-talk", "pages/journal.md"}},
+		{"spaces", "", "pages/my journal.md", []string{"nova-self-talk", "pages/my journal.md"}},
+		{"apostrophe", "", "pages/O'Brien.md", []string{"nova-self-talk", "pages/O'Brien.md"}},
+		{"literal shell syntax", "example", "pages/$HOME;$(touch marker).md", []string{"nova-self-talk", "example", "pages/$HOME;$(touch marker).md"}},
+		{"leading dash", "", "-pages/journal.md", []string{"nova-self-talk", "--", "-pages/journal.md"}},
+		{"leading dash directory", "example", "-pages", []string{"nova-self-talk", "example", "--", "-pages"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := onboarding.SplitShell(exampleNext(tc.verb, tc.file))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// The emitted line and JSON remedy both hold a path the existing shell parser reads as one word.
+func TestExampleEmitsRunnableNextCommandInBothFormats(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), "O'Brien $HOME;$(touch marker) pages")
+	exit, text, stderr := runSelfTalk(t, "example", dir)
+	require.Equal(t, 0, exit, stderr)
+	_, next, found := strings.Cut(strings.TrimSpace(text), "; run: ")
+	require.True(t, found, text)
+	want := []string{"nova-self-talk", filepath.Join(dir, "journal.md")}
+	got, err := onboarding.SplitShell(next)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+
+	exit, raw, stderr := runSelfTalk(t, "example", "--json", dir)
+	require.Equal(t, 0, exit, stderr)
+	var result struct {
+		Result struct {
+			Remedy string `json:"remedy"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &result), raw)
+	assert.Equal(t, next, result.Result.Remedy)
+	got, err = onboarding.SplitShell(result.Result.Remedy)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+// Paths whose characters the one-line renderer escapes cannot be replayed; refuse before writing
+// the example directory, in both result formats.
+func TestExampleRefusesControlCharactersBeforeWriting(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		char rune
+	}{
+		{"tab", '\t'},
+		{"newline", '\n'},
+		{"delete", 0x7f},
+		{"c1", '\u0085'},
+		{"line separator", '\u2028'},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, asJSON := range []bool{false, true} {
+				t.Run(map[bool]string{false: "text", true: "json"}[asJSON], func(t *testing.T) {
+					t.Parallel()
+					root := t.TempDir()
+					dir := filepath.Join(root, "bad"+string(tc.char)+"name")
+					args := []string{"example"}
+					if asJSON {
+						args = append(args, "--json")
+					}
+					args = append(args, dir)
+					exit, stdout, stderr := runSelfTalk(t, args...)
+					assert.Equal(t, 2, exit)
+					if asJSON {
+						assert.Empty(t, stderr)
+						assert.Contains(t, stdout, `"status":"refused"`)
+						assert.Contains(t, stdout, "characters the one-line output must escape")
+						assert.Contains(t, stdout, "would not name the same path")
+					} else {
+						assert.Empty(t, stdout)
+						assert.Contains(t, stderr, "characters the one-line output must escape")
+						assert.Contains(t, stderr, "would not name the same path")
+					}
+					entries, err := os.ReadDir(root)
+					require.NoError(t, err)
+					assert.Empty(t, entries)
+				})
+			}
+		})
+	}
 }
