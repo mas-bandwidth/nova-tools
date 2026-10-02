@@ -297,5 +297,5 @@ func TestQuickstartWithEveryCheckPassingPrintsOK(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("no links here\n"), 0o644))
 	exit, stdout, stderr := runCheck(t, "quickstart", "--dir", dir)
 	require.EqualValues(t, 0, exit, "exit = %d, want 0; stdout: %s\nstderr: %s", exit, stdout, stderr)
-	assert.False(t, !strings.Contains(stdout, "QUICKSTART OK done=2 worst-exit=0 ") || strings.Contains(stdout, "QUICKSTART FAIL"), "a clean run closes with OK:\n%s", stdout)
+	assert.True(t, strings.Contains(stdout, "QUICKSTART OK done=2 worst-exit=0 ") && !strings.Contains(stdout, "QUICKSTART FAIL"), "a clean run closes with OK:\n%s", stdout)
 }
