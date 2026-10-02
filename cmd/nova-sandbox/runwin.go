@@ -115,7 +115,7 @@ type winPlacer interface {
 	Exists(dir string) (bool, error)
 
 	// MakeScratch creates <scratch>/nova-<n> and the two directories the place is born
-	// with -- work/ (the working directory) and home/ (rule 9's HOME) -- and grants the
+	// with -- work/ (the working directory) and home/ (the child's HOME) -- and grants the
 	// AppContainer SID read+write on it and on nothing else the run created.
 	MakeScratch(dir string) error
 
@@ -172,7 +172,7 @@ var (
 	// runWinReadExit is how the host reads W10's status file. A test replaces it; the
 	// production body reads the file the guest wrote in the mapped writable folder.
 	runWinReadExit = readWSBExit
-	// runWinWall is rule 1: OS-ENFORCED OR REFUSED on windows. The PLACE is built (this
+	// runWinWall is OS-ENFORCED OR REFUSED on windows. The PLACE is built (this
 	// file); the WALL is the AppContainer body of the section above, and it is not. A place
 	// without a wall is a directory that gets deleted, which is hygiene and not containment,
 	// so the verb refuses under --place job until the wall lands.
@@ -207,7 +207,7 @@ func runDisposableWindows(f runFlags, deadline time.Duration, stdin io.Reader, s
 			"%s names WSL, and WSL is never the answer on windows -- not as the wall, not as the place, not as a fallback: containment that only holds inside WSL is containment on another machine. Run the command itself, or refuse", oneline.Escape(bad))
 	}
 
-	// Before anything is made: a place with no wall is not this verb (rule 1). The check is
+	// Before anything is made: a place with no wall is not this verb. The check is
 	// here rather than inside Start so that a machine with no AppContainer body never gets a
 	// scratch directory made on it and removed again for nothing.
 	if f.place == placeJob {
