@@ -455,7 +455,7 @@ $ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
 
 ```
 $ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
-SEND OK id=<id> path=<sender-lane>/<note>.md commit=<commit> pushed=true attempts=1 wakes=1 body_bytes=47
+SEND OK id=bo-d95f4cc80be2 path=<sender-lane>/<note>.md commit=<commit> pushed=true attempts=1 wakes=1 body_bytes=47
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
 ! INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it
@@ -463,7 +463,7 @@ $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=3
 INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
-INBOX NOTE id=<id> from=<sender> addr=to path=<path>: gate
+INBOX NOTE id=bo-d95f4cc80be2 from=<sender> addr=to path=<path>: gate
 INBOX HEARD id=<id> from=<sender> addr=to path=<path>: The runner skips three steps
 INBOX RECEIPT id=<id> from=<sender> addr=to path=<path>: Heard
 INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
@@ -584,7 +584,7 @@ INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <in
 
 A bounded run **read nothing, so it moves no cursor**, and `--advance` beside it writes nothing at all: advancing over a walk nobody made would take every unread note behind the bound as read, which is the one outcome the bound exists to prevent. Raise the bound to read the stale cursor, or draw a switch-day line with `close --before <instant>` to take the history as read and start over.
 
-`--open-warn` carries a warning threshold (default 40). Above it, every return adds a note naming the three ways out: answer with `Re: <id>`, say heard with `receipt --note <id>`, or start over with `--full --legacy-now`. The note records a fact — a backlog grows one note at a time and no single run says it is growing — rather than refusing.
+`--open-warn` carries a warning threshold (default 40). Above it, every return adds a note naming the three ways out: answer with `Re: <id>`, say heard with `receipt --note <id>`, or start over with `--full --legacy-now --advance`. The note records a fact — a backlog grows one note at a time and no single run says it is growing — rather than refusing.
 
 **`wait`** is the same listing, blocking, for a harness that does not wake you:
 
