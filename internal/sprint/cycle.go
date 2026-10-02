@@ -8,14 +8,14 @@ import (
 	"strings"
 )
 
-// The graph of what waits on what. A waiting primary waits for the needs it
-// names, and a card behind a sentinel waits for that sentinel; a sentinel
-// waits for every primary of its stream before it. The last is never
-// materialised as edges: a sentinel's need is the rank interval of its line
-// from the sentinel before it (inclusive) up to itself, and the sentinel
-// before it already needs everything earlier, so every card of a line is in
-// exactly one sentinel's interval and one walk over the whole table is linear
-// in its cards.
+// The graph of what waits on what (docs/SPEC-SPRINT.md, sentinel cards). A
+// waiting primary waits for the needs it names, and a card behind a sentinel
+// waits for that sentinel; a sentinel waits for every primary of its stream
+// before it. The last is never materialised as edges: a sentinel's need is
+// the rank interval of its line from the sentinel before it (inclusive) up
+// to itself, and the sentinel before it already needs everything earlier, so
+// every card of a line is in exactly one sentinel's interval and one walk
+// over the whole table is linear in its cards.
 //
 // Only a waiting card waits: a card ready or in flight is past every stop and
 // holds nothing up, and a landed card, a card off the table or a name with no
