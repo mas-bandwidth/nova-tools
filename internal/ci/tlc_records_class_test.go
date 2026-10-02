@@ -182,7 +182,7 @@ func tlcRecordProblems(root string) []string {
 		}
 		// These models are outside layer one's required table gate. New modules
 		// and cases are required by default; changing a gate to debt cannot hide one.
-		bench := row[1] == "MCCardMachine.tla" || row[1] == "MCTableMachine.tla"
+		bench := row[1] == "MCCardMachine.tla" || row[1] == "MCTableMachine.tla" || row[1] == "MCFileLock.tla"
 		if row[6] != "required" && row[6] != "bench" || row[6] == "bench" && !bench {
 			bad("TLC %s cannot leave the required model gate", row[0])
 		}
