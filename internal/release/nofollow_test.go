@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // plantSymlink puts a regular file outside parent and a symlink named name
@@ -17,14 +19,14 @@ func plantSymlink(t *testing.T, parent, name, body string) (link, outside string
 	outsideDir := t.TempDir()
 	outside = filepath.Join(outsideDir, "target")
 	if err := os.WriteFile(outside, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if err := os.MkdirAll(parent, 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	link = filepath.Join(parent, name)
 	if err := os.Symlink(outside, link); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return link, outside
 }
@@ -32,27 +34,27 @@ func plantSymlink(t *testing.T, parent, name, body string) (link, outside string
 func assertSymlinkRefused(t *testing.T, op, link, outside, before string, err error) {
 	t.Helper()
 	if err == nil {
-		t.Fatal("a symlink destination was written")
+		require.Error(t, err, "a symlink destination was written")
 	}
 	msg := err.Error()
 	for _, want := range []string{op, "destination is a symlink", link, "pass the real file, or remove the link, and retry"} {
 		if !strings.Contains(msg, want) {
-			t.Fatalf("error %q does not contain %q", msg, want)
+			require.Contains(t, msg, want, "error %q does not contain %q", msg, want)
 		}
 	}
 	got, rerr := os.ReadFile(outside)
 	if rerr != nil {
-		t.Fatalf("reading outside file: %v", rerr)
+		require.NoError(t, rerr, "reading outside file: %v", rerr)
 	}
 	if string(got) != before {
-		t.Fatalf("outside file changed from %q to %q", before, got)
+		require.Equal(t, before, string(got), "outside file changed from %q to %q", before, got)
 	}
 	target, rerr := os.Readlink(link)
 	if rerr != nil {
-		t.Fatalf("destination is no longer a symlink: %v", rerr)
+		require.NoError(t, rerr, "destination is no longer a symlink: %v", rerr)
 	}
 	if target != outside {
-		t.Fatalf("symlink target = %q, want %q", target, outside)
+		require.Equal(t, outside, target, "symlink target = %q, want %q", target, outside)
 	}
 }
 
@@ -84,13 +86,13 @@ func TestInstallFileSymlinkDestination(t *testing.T) {
 	link, outside := plantSymlink(t, parent, ".nova-tool.new", before)
 	src := filepath.Join(t.TempDir(), "src")
 	if err := os.WriteFile(src, []byte("INSTALLED-BODY"), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	dst := filepath.Join(parent, "nova-tool")
 	err := installFile(src, dst, os.Rename)
 	assertSymlinkRefused(t, "install", link, outside, before, err)
 	if _, statErr := os.Lstat(dst); !os.IsNotExist(statErr) {
-		t.Fatalf("install renamed onto dst after a refused write: %v", statErr)
+		require.FailNowf(t, "", "install renamed onto dst after a refused write: %v", statErr)
 	}
 }
 
@@ -100,7 +102,7 @@ func TestWriteSumsSymlinkDestination(t *testing.T) {
 	const before = "ORIGINAL-SUMS"
 	link, outside := plantSymlink(t, parent, SumsFile, before)
 	if err := os.WriteFile(filepath.Join(parent, "nova-witness"), []byte("bits"), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	_, err := writeSums(parent)
 	assertSymlinkRefused(t, "write sums", link, outside, before, err)
@@ -115,13 +117,13 @@ func TestReadTarSymlinkDestination(t *testing.T) {
 	tw := tar.NewWriter(&buf)
 	body := []byte("TAR-BODY")
 	if err := tw.WriteHeader(&tar.Header{Name: "got.dat", Mode: 0o644, Size: int64(len(body))}); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if _, err := tw.Write(body); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if err := tw.Close(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	err := readTar(&buf, parent)
 	assertSymlinkRefused(t, "unpack", link, outside, before, err)
@@ -135,40 +137,40 @@ func TestNoFollowTrailingSlashSymlinkIsRefused(t *testing.T) {
 		outside := t.TempDir()
 		secret := filepath.Join(outside, "secret")
 		if err := os.WriteFile(secret, []byte("SECRET"), 0o644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		link := filepath.Join(parent, "dirlink")
 		if err := os.Symlink(outside, link); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		slash := link + string(os.PathSeparator)
 		err := writeNoFollow("write", slash, []byte("NOPE"), 0o644)
 		if err == nil {
-			t.Fatal("a trailing-slash symlink destination was written")
+			require.Error(t, err, "a trailing-slash symlink destination was written")
 		}
 		msg := err.Error()
 		for _, want := range []string{"write", "destination is a symlink", slash, "pass the real file, or remove the link, and retry"} {
 			if !strings.Contains(msg, want) {
-				t.Fatalf("error %q does not contain %q", msg, want)
+				require.Contains(t, msg, want, "error %q does not contain %q", msg, want)
 			}
 		}
 		secretBody, rerr := os.ReadFile(secret)
 		if rerr != nil || string(secretBody) != "SECRET" {
-			t.Fatalf("outside file = %q err=%v", secretBody, rerr)
+			require.FailNowf(t, "", "outside file = %q err=%v", secretBody, rerr)
 		}
 		got, rerr := os.Readlink(link)
 		if rerr != nil {
-			t.Fatalf("directory link was replaced: %v", rerr)
+			require.NoError(t, rerr, "directory link was replaced: %v", rerr)
 		}
 		if got != outside {
-			t.Fatalf("directory link target = %q, want %q", got, outside)
+			require.Equal(t, outside, got, "directory link target = %q, want %q", got, outside)
 		}
 		entries, rerr := os.ReadDir(outside)
 		if rerr != nil {
-			t.Fatal(rerr)
+			require.NoError(t, rerr, rerr)
 		}
 		if len(entries) != 1 || entries[0].Name() != "secret" {
-			t.Fatalf("outside directory changed: %v", entries)
+			require.FailNowf(t, "", "outside directory changed: %v", entries)
 		}
 	})
 
@@ -178,21 +180,21 @@ func TestNoFollowTrailingSlashSymlinkIsRefused(t *testing.T) {
 		slash := link + string(os.PathSeparator)
 		err := writeNoFollow("write", slash, []byte("NOPE"), 0o644)
 		if err == nil {
-			t.Fatal("a trailing-slash symlink destination was written")
+			require.Error(t, err, "a trailing-slash symlink destination was written")
 		}
 		msg := err.Error()
 		for _, want := range []string{"write", "destination is a symlink", slash, "pass the real file, or remove the link, and retry"} {
 			if !strings.Contains(msg, want) {
-				t.Fatalf("error %q does not contain %q", msg, want)
+				require.Contains(t, msg, want, "error %q does not contain %q", msg, want)
 			}
 		}
 		got, rerr := os.ReadFile(outside)
 		if rerr != nil || string(got) != before {
-			t.Fatalf("outside file = %q err=%v", got, rerr)
+			require.FailNowf(t, "", "outside file = %q err=%v", got, rerr)
 		}
 		target, rerr := os.Readlink(link)
 		if rerr != nil || target != outside {
-			t.Fatalf("link = %q err=%v", target, rerr)
+			require.FailNowf(t, "", "link = %q err=%v", target, rerr)
 		}
 	})
 }
@@ -202,23 +204,23 @@ func TestNoFollowCreatesAndReplacesARegularFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "out.txt")
 	if err := writeNoFollow("write", path, []byte("one"), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if err := writeNoFollow("write", path, []byte("two"), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if string(got) != "two" {
-		t.Fatalf("got %q", got)
+		require.Equal(t, "two", string(got), "got %q", got)
 	}
 	fi, err := os.Lstat(path)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if !fi.Mode().IsRegular() {
-		t.Fatalf("created file is %v, want a regular file", fi.Mode())
+		require.FailNowf(t, "", "created file is %v, want a regular file", fi.Mode())
 	}
 }
