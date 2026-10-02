@@ -13,6 +13,7 @@
 // day. Every verb and every refusal here is one of those closed.
 //
 //	fold      read the declared sources, write one file per day, refuse a day that shrinks
+//	collate   daily token log aggregation into reports/tokens/<day>.tsv with staleness guard
 //	report    a friend on another machine folds their own day and prints the body of a note
 //	sum       a month is a sum of day files; it asserts nothing and is never a gate
 //	check     the gate: every file parses, every row has every column, a missing day is named
@@ -47,6 +48,10 @@ usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
                       [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
+  nova-tokens collate [--out <dir>] (--day <YYYY-MM-DD> | --today | --yesterday | --all) --repos <file>
+                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+                      [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
+                      [--max-staleness <hours>] [--strict | --no-spend <file>]
   nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
@@ -178,6 +183,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 		return 0
 	case "fold":
 		return cmdFold(rest, stdout, stderr, now)
+	case "collate":
+		return cmdCollate(rest, stdout, stderr, now)
 	case "report":
 		return cmdReport(rest, stdout, stderr, now)
 	case "ledger":

@@ -387,6 +387,10 @@ near the end, and the sections below say how each is met.
 nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
                     [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
+nova-tokens collate [--out <dir>] (--day <YYYY-MM-DD> | --today | --yesterday | --all) --repos <file>
+                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+                    [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
+                    [--max-staleness <hours>] [--strict | --no-spend <file>]
 nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                     [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
@@ -411,9 +415,10 @@ nova-tokens version
 
 The binary is `nova-tokens`, and that is its only name.
 
-**No guessed anything, with one named exception.** `--timeout` defaults to
-120 seconds (rule 19). Nothing else has a default: not the output directory,
-not a source, not the rules file, not the scratch directory. `--scratch` is
+**No guessed anything, with two named exceptions.** `--timeout` defaults to
+120 seconds (rule 19). `collate`'s `--out` defaults to `reports/tokens`, which
+is created if it does not exist. Nothing else has a default: not a source,
+not the rules file, not the scratch directory. `--scratch` is
 required when `--opencode` is given and refused otherwise, because a scratch
 directory with nothing to put in it is a flag that does nothing. A label in a
 source flag is `[a-z0-9-]+`, at most 32 characters, and unique across the
@@ -463,6 +468,42 @@ and a bus self-report carry no tool inputs to read one from, and their rows are
 `-`, which is the truthful answer rather than a gap. A fold with no `--units`
 puts every row on `-`, which is one unit value, so it splits no
 `(model, repo)` row.
+
+### `collate`
+
+Coordinates daily token log aggregation into `--out <dir>` (defaulting to
+`reports/tokens`, which is created if absent), reading declared sources,
+attributing repos, merging rows across sources, asserting Rule 10 shrink
+protection, acquiring flock-based file lock `fold.lock` under `--timeout`,
+writing day files atomically, and checking ledger freshness.
+
+Exactly one date selection flag is given: `--day <YYYY-MM-DD>`, `--today`,
+`--yesterday`, or `--all`.
+
+When a day asked for is not written (`written=false` due to missing rows,
+conflicts, unreadable sources, unallowed shrink, or partial merges), `collate`
+reports `TOKENS UNWRITTEN day=<d>: day was asked for and not written` on stderr,
+counts `unwritten=<n>`, marks the run failed, and exits 1.
+
+Following collation, `collate` runs `check` across `--out`. Any directory read
+error or file finding reported by `check` is printed as `TOKENS UNREADABLE
+label=out ...` on stderr, counted in `unreadable=<n>`, and causes the run to
+exit 1.
+
+Freshness is evaluated against `--max-staleness <hours>` (default 36 hours). If
+declared sources have activity and the latest folded day has ceased advancing
+beyond the staleness horizon, `collate` reports `TOKENS STALE last=<last>
+expected=<expected> threshold=<n>h: day files have ceased advancing` on stderr,
+and exits 1.
+
+Exit codes:
+- 0: all asked-for days written, no unreadable sources or check findings, no
+  unparsed lines, no mixed bases, no conflicts, no unallowed shrinks, no
+  partials, not stale.
+- 1: any asked-for day unwritten, check error or finding under `--out`, unreadable source,
+  unparsed line/note, mixed base, conflict, unallowed shrink, partial row, or stale.
+- 2: missing or invalid flags, mutually exclusive flags, `--out` not a directory,
+  `--repos` unreadable or malformed, lock timeout.
 
 ### `sum`
 
@@ -585,7 +626,7 @@ token ledger's verbs, specified in [SPEC-STATE.md](SPEC-STATE.md).
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: every source read, every line parsed, every day written; a sum or a listing printed; a check with nothing to name |
-| 1 | the verb ran and said **NO**: a declared source with an unreadable file, an unparsed bus line or note, a row of two day bases, a lane-day with competing reports (`TOKENS CONFLICT`), a day that would shrink, a check finding, a `report` with nothing to show |
+| 1 | the verb ran and said **NO**: a declared source with an unreadable file, an unparsed bus line or note, a row of two day bases, a lane-day with competing reports (`TOKENS CONFLICT`), a day that would shrink, a check finding, a `report` with nothing to show, a day asked for and not written, a stale collate |
 | 2 | could not run: missing flag, bad flag value, `--out` not a directory, `--repos` unreadable or malformed, a duplicate label, `sqlite3` absent when `--opencode` is given, a second fold holding the lock |
 
 **Exit 1 still writes.** A fold with one unreadable file writes every day it
@@ -619,14 +660,19 @@ TOKENS CONFLICT label=bus:<name> day=<d> notes=<id,id,…>: competing reports; s
 TOKENS TOUCHED label=bus:<name> day=<d> repos=<list>
 TOKENS MIXED date=<d> model=<model> repo=<repo> bases=<utc,zone>: two day bases on one row; declare one export for that day
 TOKENS DAY date=<d> rows=<n> models=<n> repos=<n> turns=<n|-> unknown=<pct>% other=<pct>% rough=<n> dashes=<n> nonutc=<n> sources=<labels> written=<true|false>
+TOKENS COLLATE day=<d> written=<true|false> sources=<labels> turns=<n|-> rows=<n>
+TOKENS UNWRITTEN day=<d>: <reason>
+TOKENS STALE last=<d|-> expected=<d> threshold=<n>h: day files have ceased advancing
 TOKENS SHRANK date=<d> type=<type> file=<n> now=<n|-> written=<true|false>: a source went quiet; --allow-shrink writes it anyway
 TOKENS QUIET label=<label> day=<d>: a declared source has zero samples for an explicitly selected existing day
 TOKENS PARTIAL date=<d> model=<model> repo=<repo> sources=<labels> folded=<labels> written=<true|false>: this fold declared only some of the sources that wrote the row; declare every source in the file's sources= line, or fold this day into its own --out
-TOKENS MORE kind=<source|unreadable|unparsed|superseded|conflict|touched|mixed|day|partial|quiet> shown=<n> total=<t> <remedy>
+TOKENS MORE kind=<source|unreadable|unparsed|superseded|conflict|touched|mixed|day|collate|unwritten|partial|quiet|stale> shown=<n> total=<t> <remedy>
 TOKENS OK days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n> partial=<n> quiet=<n>
 TOKENS FAIL days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n> partial=<n> quiet=<n>
 TOKENS NOTE <the one remedy line>
 TOKENS REFUSED: <reason>
+COLLATE OK days=<n> rows=<n> sum_input=<n> sum_output=<n> ledger=<ledger> published=<published>
+COLLATE FAIL days=<n> unreadable=<n> unwritten=<n> partial=<n> shrank=<n> stale=<n>
 REPORT OK who=<name> day=<d> rows=<n> at=<stamp> build=<id> subject=<subject>
 REPORT FAIL who=<name> day=<d> rows=<n> unreadable=<n>
 REPORT REFUSED: <reason>

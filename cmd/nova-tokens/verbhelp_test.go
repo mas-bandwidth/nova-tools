@@ -16,6 +16,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	out := []string{"--out", "{dir}/out"}
 	testverbhelp.Check(t, tokensRun, []testverbhelp.Case{
 		{Verb: "fold", Flags: out},
+		{Verb: "collate", Flags: out},
 		{Verb: "report"},
 		{Verb: "ledger"},
 		{Verb: "sum"},
