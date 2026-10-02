@@ -2,7 +2,7 @@
 # ceiling: 67
 docs/CLI.md:emma 2
 docs/CLI.md:freddy 1
-docs/CLI.md:johnny 2
+docs/CLI.md:johnny 1
 docs/CLI.md:mas-bandwidth 4
 docs/CLI.md:mini 2
 docs/CLI.md:rowan 15

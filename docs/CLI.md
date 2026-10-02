@@ -304,19 +304,19 @@ The standalone sitting in `nova-fuse help` starts with `init --box ./fuse-box.js
 ```
 $ nova-fuse status --box ./fuse-box.json
 STATUS OK lockdown=clear quarantines=1
-STATUS OK quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token
+STATUS OK quarantine=a-public-issue-tracker: an issue body addresses me directly and asks for a token
 
 $ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
-FUSE FAIL quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
+FUSE FAIL quarantine=a-public-issue-tracker: an issue body addresses me directly and asks for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
 
 $ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
-QUARANTINE OK a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)
+QUARANTINE OK a-forum: a post addresses me and asks for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)
 
 $ nova-fuse check --box ./fuse-box.json a-forum
-FUSE FAIL quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
+FUSE FAIL quarantine=a-forum: a post addresses me and asks for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
 
 $ nova-fuse lift quarantine --box ./fuse-box.json a-forum
-LIFT OK quarantine=a-forum was since=2026-09-09T18:27:40Z: a post addressed me and asked for a token
+LIFT OK quarantine=a-forum: a post addresses me and asks for a token
 LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both directions; a rescind is announced, never silent -- say so out loud)
 ```
 
@@ -408,7 +408,7 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 **What the flags want.** `--channels` is a retrieval method, `bm25` or `trigram`, never a directory. `--k` is the number of hits, your reading budget; there is no default. `--root` is your corpus, written out every run, and repeatable: two roots are indexed together in one ranking, each hit naming its root. A run short two flags prints two sentences and stops once.
 
-**`verify` and `eval` are bounded**, per kind: at most `--fail-max` findings per kind, one `MORE` line per kind that elided anything, then the count line; without the bound a large corpus prints every finding on its own line and buries the count. `eval` lists misses only; a passing row is a number, not a line.
+**`verify` and `eval` are bounded**, per kind: at most `--fail-max` findings per kind, one `MORE` line per kind that elided anything, then the count line; the bound keeps a large corpus from printing every finding on its own line and burying the count. `eval` lists misses only; a passing row is a number, not a line.
 
 **`boot` loads a pin, not a directory.** The pin file names the few memories a session loads — one slash path per line relative to `--root`, `#` comments and blank lines ignored, order = boot order — and boot reads exactly those files, reporting `BOOT OK files=<n> bytes=<n>`. It never walks the directory: search answers the rest from the index. A boot that cannot name a memory (missing file, empty file, non-canonical path) is a refusal, because a self that loaded less than it thinks is the failure this verb exists to remove.
 
@@ -455,7 +455,7 @@ $ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
 
 ```
 $ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
-SEND OK id=bo-d95f4cc80be2 path=from-bo/2026-09-28T0232Z-gate-d95f4cc80be2.md commit=c8fa925d8e01c3d14372055bc325cc954a656cc4 pushed=true attempts=1 wakes=1 body_bytes=47
+SEND OK id=<id> path=<sender-lane>/<note>.md commit=<commit> pushed=true attempts=1 wakes=1 body_bytes=47
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
 ! INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it
@@ -463,9 +463,9 @@ $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=3
 INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
-INBOX NOTE id=bo-d95f4cc80be2 from=Bo addr=to at=2026-09-28T02:32:36Z path=from-bo/2026-09-28T0232Z-gate-d95f4cc80be2.md: gate
-INBOX HEARD id=bo-222222222222 from=Bo addr=to at=2026-09-09T14:00:00Z path=from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md: The Windows runner skips three steps
-INBOX RECEIPT id=bo-111111111111 from=Bo addr=to at=2026-09-09T13:00:00Z path=from-bo/2026-09-09T1300Z-heard-111111111111.md: Heard
+INBOX NOTE id=<id> from=<sender> addr=to path=<path>: gate
+INBOX HEARD id=<id> from=<sender> addr=to path=<path>: The runner skips three steps
+INBOX RECEIPT id=<id> from=<sender> addr=to path=<path>: Heard
 INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
 INBOX CURSOR commit=c8fa925d8e01c3d14372055bc325cc954a656cc4 carrying=3 pushed=true attempts=1
 ```
@@ -535,7 +535,7 @@ nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Ada --remote origin --br
 
 A `Re:` line is how a note gets closed: your reply carrying `Re: <id>` takes that note off your open list. If a draft has no `Re:` and reads like a reply, `send` says so in one line and sends it anyway. It refuses a draft that already carries `Id:`, an unknown header key, a recipient the roster does not know, a sender with no lane, a `Re:` naming nothing, an empty body, and a checkout that is dirty, on the wrong branch, or ahead of the remote with somebody else's work. The `.nova-bus/` directory is the tool's own per-clone state, never a note, so a `<bus>/.nova-bus/defaults` file written for `inbox` does not count as a dirty checkout; a fresh clone runs `inbox` then `send` with no hand step in between. Every refusal in a draft is reported in one run. A conflict on the tool's own files never reaches you: `INDEX` and `RECEIPTS` merge as unions, `CURSOR` takes the further read, and the first send writes a `.gitattributes` so your own pulls settle the same way. The one conflict left is two benches writing the same note in the same second, which is yours to decide.
 
-**`--host <name>` says which MACHINE posted**, on `send` and on `reply`. One name can post from two places — one identity on two machines — and telling those places apart from the subject line spends the subject on routing. The flag writes a `Host:` line under `From:`, `inbox` prints `host=<name>` beside `from=` on the line, and a `host=<name>` line in `<bus>/.nova-bus/defaults` supplies it when the flag is absent, so a bench sets it once and every note from it says where it came from:
+**`--host <name>` says which source posted**, on `send` and on `reply`. One identity can post from multiple sources, and telling those sources apart from the subject line spends the subject on routing. The flag writes a `Host:` line under `From:`, `inbox` prints `host=<name>` beside `from=` on the line, and a `host=<name>` line in `<bus>/.nova-bus/defaults` supplies it when the flag is absent, so a bench sets it once and every note from it says where it came from:
 
 ```
 nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Rowan --host air --remote origin --branch main
@@ -551,7 +551,7 @@ Continuing the first run above, in the same directory, Ada answers Bo's note. Th
 
 ```
 nova-bus reply --bus ./bus --as Ada --re bo-d95f4cc80be2 --file reply.md --advance --remote origin --branch main
-REPLY OK id=ada-61fec2eb3303 re=bo-d95f4cc80be2 path=from-ada/2026-09-28T0232Z-re-gate-61fec2eb3303.md to=Bo subject=Re:\x20gate commit=15c09be4117d03a54f483f9ebe53a2ddb4ff95f9 pushed=true advanced=true attempts=1
+REPLY OK id=<id> re=<id> path=<sender-lane>/<note>.md to=<recipient> subject=Re:\x20gate commit=<commit> pushed=true advanced=true attempts=1
 
 nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40
 ! INBOX WALK commits=1/1 notes=1 elapsed=12ms
@@ -584,7 +584,7 @@ INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <in
 
 A bounded run **read nothing, so it moves no cursor**, and `--advance` beside it writes nothing at all: advancing over a walk nobody made would take every unread note behind the bound as read, which is the one outcome the bound exists to prevent. Raise the bound to read the stale cursor, or draw a switch-day line with `close --before <instant>` to take the history as read and start over.
 
-`--open-warn` carries a warning threshold (default 40). Above it, every return adds a note naming the three ways out: answer with `Re: <id>`, say heard with `receipt --note <id>`, or start over with `--full --legacy-now --advance`. The note records a fact — a backlog grows one note at a time and no single run says it is growing — rather than refusing.
+`--open-warn` carries a warning threshold (default 40). Above it, every return adds a note naming the three ways out: answer with `Re: <id>`, say heard with `receipt --note <id>`, or start over with `--full --advance`. The note records a fact — a backlog grows one note at a time and no single run says it is growing — rather than refusing.
 
 **`wait`** is the same listing, blocking, for a harness that does not wake you:
 
@@ -596,11 +596,11 @@ It fetches every `--interval` and returns the moment your inbox would list somet
 
 `--quiet-beats` is accepted and changes nothing: a change that is only beats and cursors — a lane's `BEAT` or `CURSOR` moving, no note — never wakes a wait; a beat is not news.
 
-`--max-commits <n>` bounds the since-walk exactly as it does on `inbox` (500 by default), and a wait whose cursor is **further behind than that bound** is refused before it blocks, because every poll it made would read nothing and it would still end by saying "nothing yet":
+`--max-commits <n>` bounds the since-walk exactly as it does on `inbox` (500 by default), and a wait whose cursor is **further behind than that bound** is refused before it blocks, because every poll would read nothing and it would still end by saying "nothing yet":
 
 ```
 WAIT BLIND commits=500 remedy="raise --max-commits or close --before <instant>"
-WAIT REFUSED: as=Johnny cursor=8cd06f5a... is further behind than this walk may cross, ...
+WAIT REFUSED: the cursor is further behind than this walk may cross, ...
 ```
 
 exit 2. That is a loop stopping rather than a loop running green and deaf for hours. The two ways out are the ones the line names: raise the bound for this read, or `close --before <instant>` to empty the backlog the cursor is behind.
@@ -618,7 +618,7 @@ nova-bus close --bus ~/bus --as Ada --before 2026-09-18T12:00:00Z --remote origi
 CLOSE OK closed=2964 kept=184 receipts=7 commit=9141bd52
 ```
 
-**One receipt per sender lane**, carrying a `Re:` line for every note of theirs it closes — `closed=` counts the notes, `receipts=` the files it took. One file per closed note cannot finish: every receipt in a run shares the stamp as its subject, so every filename differs only by an id hashed over fields two receipts also share but for `re`, and two notes sharing a target id produce one filename twice and `file exists` at the second write. One receipt per lane removes that by construction — two receipts differ in `To`, in `Re` and in body — and a target named twice is closed once. A close that cannot finish takes back everything it wrote, so a failed run leaves the lane exactly as it found it.
+**One receipt per sender lane**, carrying a `Re:` line for every note it closes — `closed=` counts the notes, `receipts=` the files it takes. One receipt per lane prevents filename collisions by construction: receipts differ in `To`, in `Re` and in body, and a target named twice is closed once. A close that cannot finish takes back everything it writes, so a failed run leaves the lane exactly as it finds it.
 
 **`check`** is the gate: every note parses, every header resolves, every note sits in the lane its `From:` names, every id is well formed and unique, every `Re:` and receipt names something that exists, every lane has an owner and holds nothing but notes, its state files and a `README.md`. It reports every finding in one run and asserts nothing about a body. It refuses to guess what to check: give it `--full`, `--as <name>` or `--since <commit>`.
 
