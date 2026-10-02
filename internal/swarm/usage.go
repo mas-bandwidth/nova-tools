@@ -114,7 +114,7 @@ func (u ProviderUsage) add(columns []string) (sum int, seen int, partial bool) {
 }
 
 // ReadProviderUsage reads the provider's own accounting for one job, from the source the
-// worker description names. There are two: `database`, the job's own data home in
+// worker description names. There are two: `opencode`, the job's own data home in
 // the data home this tool exported for it, and `none`, which reports nothing and under
 // which only `--tokens unmetered` tasks may run.
 //
