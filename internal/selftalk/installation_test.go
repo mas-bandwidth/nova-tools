@@ -241,12 +241,13 @@ func TestHaveNoRequiresASelfScope(t *testing.T) {
 	assert.True(t, len(got) != 0 && got[0].Shape == Foreclosure, "specimen 8 is the measured foreclosure and must stay flagged: %#v", got)
 }
 
-// AnyInstallation is half of what the binary's exit code is derived from.
-func TestAnyInstallationDrivesTheExitCode(t *testing.T) {
+// A finding of this class is half of what the binary's exit code is derived from: a dated
+// record is none, a foreclosure is one.
+func TestAnInstallationIsWhatTripsTheExitCode(t *testing.T) {
 	t.Parallel()
 
-	assert.False(t, AnyInstallation(ScanInstallation("on 2026-07-30 four of my own checks were wrong")), "a dated record must not trip the exit code")
-	assert.True(t, AnyInstallation(ScanInstallation("I have no associative recall to drag anything back later.")), "an installation must trip the exit code")
+	assert.Empty(t, ScanInstallation("on 2026-07-30 four of my own checks were wrong"), "a dated record must not trip the exit code")
+	assert.NotEmpty(t, ScanInstallation("I have no associative recall to drag anything back later."), "an installation must trip the exit code")
 }
 
 // TestIssue2297 — nova-tools #2297: pin the three INSTALLATION behaviours the
