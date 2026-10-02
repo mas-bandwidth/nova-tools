@@ -6,7 +6,7 @@ docs/CLI.md:glenn 1
 docs/CLI.md:johnny 2
 docs/CLI.md:mas-bandwidth 4
 docs/CLI.md:mini 2
-docs/CLI.md:rowan 29
+docs/CLI.md:rowan 24
 docs/CLI.md:space 3
 docs/CLI.md:stella 7
 docs/CLI.md:studio 11
