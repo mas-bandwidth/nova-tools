@@ -10,9 +10,9 @@ import (
 )
 
 // Ran is one run of a Main made inside a test, with its checks as methods.
-// Each check fails the test through require, naming the arguments run, the
-// exit code and both streams, so a failing line explains itself; each returns
-// the Ran, so checks chain:
+// Each check is the testify require call it names, with the Ran as its
+// message, so a failing line prints the arguments run, the exit code and both
+// streams; each returns the Ran, so checks chain:
 //
 //	tool.Do(t, "send").Exit(2).Err("--to is required").NotOut("OK")
 //
@@ -43,34 +43,47 @@ func (r Ran) String() string {
 	return fmt.Sprintf("run %q: exit=%d stdout=%q stderr=%q", r.Args, r.Code, r.Stdout, r.Stderr)
 }
 
-// Exit fails the test unless the run exited want.
+// Exit is require.Equal on the exit code.
 func (r Ran) Exit(want int) Ran {
 	r.t.Helper()
-	return r.holds(r.Code == want, "exit %d, want %d", r.Code, want)
+	require.Equal(r.t, want, r.Code, r)
+	return r
 }
 
-// Out fails the test unless stdout contains every one of wants.
+// Out is require.Contains on stdout, for each of wants.
 func (r Ran) Out(wants ...string) Ran {
 	r.t.Helper()
-	return r.contains("stdout", r.Stdout, true, wants)
+	for _, w := range wants {
+		require.Contains(r.t, r.Stdout, w, r)
+	}
+	return r
 }
 
-// NotOut fails the test if stdout contains any one of nots.
+// NotOut is require.NotContains on stdout, for each of nots.
 func (r Ran) NotOut(nots ...string) Ran {
 	r.t.Helper()
-	return r.contains("stdout", r.Stdout, false, nots)
+	for _, n := range nots {
+		require.NotContains(r.t, r.Stdout, n, r)
+	}
+	return r
 }
 
-// Err fails the test unless stderr contains every one of wants.
+// Err is require.Contains on stderr, for each of wants.
 func (r Ran) Err(wants ...string) Ran {
 	r.t.Helper()
-	return r.contains("stderr", r.Stderr, true, wants)
+	for _, w := range wants {
+		require.Contains(r.t, r.Stderr, w, r)
+	}
+	return r
 }
 
-// NotErr fails the test if stderr contains any one of nots.
+// NotErr is require.NotContains on stderr, for each of nots.
 func (r Ran) NotErr(nots ...string) Ran {
 	r.t.Helper()
-	return r.contains("stderr", r.Stderr, false, nots)
+	for _, n := range nots {
+		require.NotContains(r.t, r.Stderr, n, r)
+	}
+	return r
 }
 
 // The refusal grammar, `<TOKEN> REFUSED: <reason>; run: <remedy>`
@@ -87,8 +100,10 @@ const (
 // misses is named at once.
 func (r Ran) Refused(says string) Ran {
 	r.t.Helper()
-	problems := r.refusal(says)
-	return r.holds(len(problems) == 0, "not the refusal: %s", strings.Join(problems, "; "))
+	if problems := r.refusal(says); len(problems) > 0 {
+		require.FailNow(r.t, "not the refusal: "+strings.Join(problems, "; "), r.String())
+	}
+	return r
 }
 
 // refusal is every clause of Refused the run misses.
@@ -137,29 +152,4 @@ func Refusals(t testing.TB, m Main, rows []Refusal) {
 			assert.Fail(t, "not the refusal: "+strings.Join(problems, "; "), r.String())
 		}
 	}
-}
-
-// contains is Out, NotOut, Err and NotErr: each of subs must be in got (or
-// must not be, when want is false).
-func (r Ran) contains(stream, got string, want bool, subs []string) Ran {
-	r.t.Helper()
-	for _, s := range subs {
-		if strings.Contains(got, s) != want {
-			verb := "does not contain"
-			if !want {
-				verb = "contains"
-			}
-			r.holds(false, "%s %s %q", stream, verb, s)
-		}
-	}
-	return r
-}
-
-// holds fails the test, naming the run, unless ok.
-func (r Ran) holds(ok bool, format string, args ...any) Ran {
-	r.t.Helper()
-	if !ok {
-		require.FailNow(r.t, fmt.Sprintf(format, args...), r.String())
-	}
-	return r
 }

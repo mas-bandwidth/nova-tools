@@ -1,7 +1,6 @@
 package testkit_test
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -38,35 +37,31 @@ func TestTreeRefusesANameThatEscapesTheRootAndWritesNothing(t *testing.T) {
 	}
 }
 
-func TestCopyTreeCopiesFilesAndModesAndSkipsGitAndLinks(t *testing.T) {
+func TestTreeOverwritesAFileAlreadyThere(t *testing.T) {
 	t.Parallel()
-	src := testkit.Tree(t, t.TempDir(), map[string]string{"a.txt": "one", "sub/b.txt": "two", ".git/HEAD": "ref", "run.sh": "#!/bin/sh\n"})
-	require.NoError(t, os.Chmod(filepath.Join(src, "run.sh"), 0o755))
-	if runtime.GOOS != "windows" {
-		require.NoError(t, os.Symlink(filepath.Join(src, "a.txt"), filepath.Join(src, "link")))
-	}
-	dst := filepath.Join(t.TempDir(), "copy")
-	testkit.WriteFile(t, filepath.Join(dst, "a.txt"), "stale")
-	testkit.CopyTree(t, src, dst)
-	assert.Equal(t, "one", testkit.ReadFile(t, filepath.Join(dst, "a.txt")), "a file already there is overwritten")
-	assert.Equal(t, "two", testkit.ReadFile(t, filepath.Join(dst, "sub", "b.txt")))
-	assert.NoDirExists(t, filepath.Join(dst, ".git"))
-	_, err := os.Lstat(filepath.Join(dst, "link"))
-	assert.ErrorIs(t, err, fs.ErrNotExist, "a link was copied")
-	if runtime.GOOS != "windows" {
-		info, err := os.Stat(filepath.Join(dst, "run.sh"))
-		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
-	}
+	root := testkit.Tree(t, filepath.Join(t.TempDir(), "made"), map[string]string{"go.mod": "module x\n"})
+	testkit.Tree(t, root, map[string]string{"go.mod": "module y\n", "sub/new.txt": "beside it"})
+	assert.Equal(t, "module y\n", testkit.ReadFile(t, filepath.Join(root, "go.mod")))
+	assert.Equal(t, "beside it", testkit.ReadFile(t, filepath.Join(root, "sub", "new.txt")))
 }
 
-func TestCopyTreeFailsTheTestNamingAMissingSource(t *testing.T) {
+// A name that is lexically inside the root but reaches a sibling directory
+// through a symlink already in the root is refused, and the sibling is left
+// empty: the writes go through an os.Root.
+func TestTreeRefusesToWriteThroughASymlinkOutOfTheRoot(t *testing.T) {
 	t.Parallel()
-	missing := filepath.Join(t.TempDir(), "missing")
-	rec := &recorder{TB: t}
-	runs(rec, func() { testkit.CopyTree(rec, missing, t.TempDir()) })
-	assert.True(t, rec.failed, "CopyTree passed a missing source")
-	assert.Contains(t, rec.msg, "copy tree "+missing)
+	testkit.SkipOn(t, "windows", "creating a symlink needs a privilege a test does not have")
+	root, sibling := t.TempDir(), t.TempDir()
+	require.NoError(t, os.Symlink(sibling, filepath.Join(root, "link")))
+	for _, name := range []string{"link/file.txt", "link/deeper/file.txt"} {
+		rec := &recorder{TB: t}
+		runs(rec, func() { testkit.Tree(rec, root, map[string]string{name: "outside"}) })
+		assert.True(t, rec.failed, "Tree wrote %q through the link", name)
+		assert.Contains(t, rec.msg, `tree: "`+name+`" under `+root)
+	}
+	entries, err := os.ReadDir(sibling)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "a write through the link reached the sibling directory")
 }
 
 func TestJSONDecodesOrFailsWithTheText(t *testing.T) {
