@@ -5,6 +5,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // chancesLine is the chances play prints before its first tick.
@@ -48,12 +51,8 @@ func TestPlaySaysItsChances(t *testing.T) {
 	} {
 		ta := playing(t)
 		out := ta.ok("play --ticks 1 " + c.args)
-		if got := chancesLine(t, out); got != c.want {
-			t.Errorf("play %s:\n%s\nwant %s", c.args, got, c.want)
-		}
-		if !strings.Contains(out, "PLAY OK stopped=ticks") {
-			t.Errorf("play %s:\n%s", c.args, out)
-		}
+		assert.Equal(t, c.want, chancesLine(t, out), "play %s", c.args)
+		assert.Contains(t, out, "PLAY OK stopped=ticks", "play %s:\n%s", c.args, out)
 	}
 }
 
@@ -75,12 +74,8 @@ func TestTheFlagsReachTheSourceThatDraws(t *testing.T) {
 	} {
 		ta := playing(t)
 		out := ta.ok("play --ticks 1 --seed 1 --down 0.001 --every " + c.every)
-		if line := chancesLine(t, out); !strings.Contains(line, c.line) {
-			t.Errorf("--every %s: %s\nwant %q in it", c.every, line, c.line)
-		}
-		if got := strings.Contains(out, "falls silent"); got != c.silent {
-			t.Errorf("--every %s at 0.001 each second: a machine fell silent is %v, want %v\n%s", c.every, got, c.silent, out)
-		}
+		assert.Contains(t, chancesLine(t, out), c.line, "--every %s", c.every)
+		assert.Equal(t, c.silent, strings.Contains(out, "falls silent"), "--every %s at 0.001 each second: a machine fell silent\n%s", c.every, out)
 	}
 	// --red 1 with nothing else drawn: the first merge batch is red
 	ta := newTestApp(t)
@@ -90,9 +85,7 @@ func TestTheFlagsReachTheSourceThatDraws(t *testing.T) {
 	for round := 1; round <= 60; round++ {
 		ta.ok("tick")
 		out := ta.ok(fmt.Sprintf("play --seed %d --ticks 3 --fail 0 --broken 0 --stuck 0 --cross 0 --red 1", round))
-		if line := chancesLine(t, out); !strings.Contains(line, "red=1 ") {
-			t.Fatalf("--red 1: %s", line)
-		}
+		require.Contains(t, chancesLine(t, out), "red=1 ", "--red 1")
 		if strings.Contains(out, " --red ") {
 			return
 		}
@@ -108,14 +101,14 @@ func TestAPlayThatIsRefusedPrintsNothingOnStdout(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 3")
-	if code, out, errs := ta.do("play --simulation --seed 1 --ticks 1"); code != 2 || out != "" || !strings.Contains(errs, "no machine is running") {
-		t.Fatalf("play with the machine stopped: exit %d, stdout %q, stderr %q", code, out, errs)
-	}
+	code, out, errs := ta.do("play --simulation --seed 1 --ticks 1")
+	require.Equal(t, 2, code, "play with the machine stopped: exit %d, stdout %q, stderr %q", code, out, errs)
+	require.Empty(t, out, "play with the machine stopped: exit %d, stdout %q, stderr %q", code, out, errs)
+	require.Contains(t, errs, "no machine is running", "play with the machine stopped: exit %d, stdout %q, stderr %q", code, out, errs)
 	ta.ok("start")
-	out := ta.ok("play --simulation --seed 1 --ticks 1")
-	if !strings.HasPrefix(out, "chances: ") || !strings.Contains(out, "\ntick 1 ") {
-		t.Fatalf("a play that plays says its chances before its first tick:\n%s", out)
-	}
+	out = ta.ok("play --simulation --seed 1 --ticks 1")
+	require.True(t, strings.HasPrefix(out, "chances: "), "a play that plays says its chances before its first tick:\n%s", out)
+	require.Contains(t, out, "\ntick 1 ", "a play that plays says its chances before its first tick:\n%s", out)
 }
 
 func TestPlayRefusesAChanceOutsideZeroToOne(t *testing.T) {
@@ -124,9 +117,10 @@ func TestPlayRefusesAChanceOutsideZeroToOne(t *testing.T) {
 	for _, flag := range []string{"broken", "fail", "stuck", "cross", "down", "up", "red", "flap"} {
 		for _, simulation := range []string{"", "--simulation "} {
 			line := fmt.Sprintf("play --ticks 1 %s--%s 1.5", simulation, flag)
-			if code, out, errs := ta.do(line); code != 2 || out != "" || !strings.Contains(errs, "--"+flag+" wants a chance from 0 to 1, found 1.5") {
-				t.Errorf("%s: exit %d %q %q", line, code, out, errs)
-			}
+			code, out, errs := ta.do(line)
+			assert.Equal(t, 2, code, "%s: exit %d %q %q", line, code, out, errs)
+			assert.Empty(t, out, "%s: exit %d %q %q", line, code, out, errs)
+			assert.Contains(t, errs, "--"+flag+" wants a chance from 0 to 1, found 1.5", "%s: exit %d %q %q", line, code, out, errs)
 		}
 	}
 }
@@ -190,9 +184,7 @@ func TestPlaySimulationLandsEveryStream(t *testing.T) {
 	t.Parallel()
 	seen := landsUnder(t, "")
 	for _, name := range []string{"work came back not ok", "a reader found it broken", "a merge needed help"} {
-		if seen[name] == 0 {
-			t.Errorf("no event of %q in the whole run", name)
-		}
+		assert.NotZero(t, seen[name], "no event of %q in the whole run", name)
 	}
 }
 
@@ -205,9 +197,7 @@ func TestPlaySimulationWithMachinesGoingDownAndComingBackLandsEveryStream(t *tes
 	t.Parallel()
 	seen := landsUnder(t, "--down 0.3 --up 0.3")
 	for _, name := range []string{"a machine went down", "a machine came back"} {
-		if seen[name] == 0 {
-			t.Errorf("no event of %q in the whole run", name)
-		}
+		assert.NotZero(t, seen[name], "no event of %q in the whole run", name)
 	}
 }
 
@@ -253,9 +243,7 @@ func TestPlaySimulationBatchesOneCallForEveryMachineATick(t *testing.T) {
 			}
 		}
 	}
-	if len(ready) != len(members) {
-		t.Fatalf("the machine dealt %v: every machine wants a ready queue", ready)
-	}
+	require.Len(t, ready, len(members), "the machine dealt %v: every machine wants a ready queue", ready)
 	ta.live = nil // from here the driver's machines beat
 	out := ta.ok("play --simulation --down 0 --seed 1 --ticks 2")
 	one, two, _ := strings.Cut(out, "\ntick 2 ")
@@ -265,11 +253,9 @@ func TestPlaySimulationBatchesOneCallForEveryMachineATick(t *testing.T) {
 		if verb, as, n := movedLine(strings.TrimSpace(l)); verb == "take" {
 			takes++
 			taken += n
-			if as != all {
-				t.Errorf("the take names %s, want every machine, %s:\n%s", as, all, l)
-			}
-		} else if verb != "" {
-			t.Errorf("the first world tick ran %s before anything was taken:\n%s", verb, l)
+			assert.Equal(t, all, as, "the take names every machine:\n%s", l)
+		} else {
+			assert.Empty(t, verb, "the first world tick ran %s before anything was taken:\n%s", verb, l)
 		}
 	}
 	finishes, finished := 0, 0
@@ -277,18 +263,15 @@ func TestPlaySimulationBatchesOneCallForEveryMachineATick(t *testing.T) {
 		if verb, as, n := movedLine(strings.TrimSpace(l)); verb == "finish" {
 			finishes++
 			finished += n
-			if as != all {
-				t.Errorf("a finish names %s, want every machine, %s:\n%s", as, all, l)
-			}
-		} else if verb == "take" {
-			t.Errorf("a machine took with its queue taken:\n%s", l)
+			assert.Equal(t, all, as, "a finish names every machine:\n%s", l)
+		} else {
+			assert.NotEqual(t, "take", verb, "a machine took with its queue taken:\n%s", l)
 		}
 	}
-	if takes != 1 || taken != total {
-		t.Errorf("%d take calls moving %d of the %d ready, want one moving all\n%s", takes, taken, total, out)
-	}
-	if finishes < 1 || finishes > 2 || finished != taken {
-		t.Errorf("%d finish calls moving %d of the %d taken, want one or two moving all\n%s", finishes, finished, taken, out)
-	}
+	assert.Equal(t, 1, takes, "%d take calls moving %d of the %d ready, want one moving all\n%s", takes, taken, total, out)
+	assert.Equal(t, total, taken, "%d take calls moving %d of the %d ready, want one moving all\n%s", takes, taken, total, out)
+	assert.GreaterOrEqual(t, finishes, 1, "%d finish calls moving %d of the %d taken, want one or two moving all\n%s", finishes, finished, taken, out)
+	assert.LessOrEqual(t, finishes, 2, "%d finish calls moving %d of the %d taken, want one or two moving all\n%s", finishes, finished, taken, out)
+	assert.Equal(t, taken, finished, "%d finish calls moving %d of the %d taken, want one or two moving all\n%s", finishes, finished, taken, out)
 	t.Logf("%d ready over %d machines: one take, %d finishes", total, len(members), finishes)
 }

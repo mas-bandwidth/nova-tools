@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -50,34 +52,31 @@ func TestAGroupIsNamedByItsIDNeverItsPosition(t *testing.T) {
 	ta.deal(2)
 	ta.failOnce("m1", "s1-1.w1@1", "tests red")
 	first := ta.group(sprint.NWorkFailed, "s1")
-	if first.ID == "" || first.Size != 1 || first.Primaries[0] != "s1-1" {
-		t.Fatalf("the first group: %+v", first)
-	}
+	require.NotEmpty(t, first.ID, "the first group: %+v", first)
+	require.Equal(t, 1, first.Size, "the first group: %+v", first)
+	require.Equal(t, "s1-1", first.Primaries[0], "the first group: %+v", first)
 	// s2-1 fails twice for the same cause: a marked group, sorted first.
 	ta.failOnce("m1", "s2-1.w1@1", "tests red")
 	ta.ok("rework s2-1 --fix 'try again'")
 	ta.failOnce("m1", "s2-1.w2@1", "tests red")
 	gs := ta.inboxGroups()
-	if gs[0].Stream != "s2" || !gs[0].Marked {
-		t.Fatalf("the repeat is not first: %+v", gs)
-	}
-	if again := ta.group(sprint.NWorkFailed, "s1"); again.ID != first.ID {
-		t.Fatalf("the id moved: %s then %s", first.ID, again.ID)
-	}
+	require.Equal(t, "s2", gs[0].Stream, "the repeat is not first: %+v", gs)
+	require.True(t, gs[0].Marked, "the repeat is not first: %+v", gs)
+	require.Equal(t, first.ID, ta.group(sprint.NWorkFailed, "s1").ID, "the id moved")
 	code, out, errs := ta.do("rework --group 1 --fix 'the fix'")
-	if code != 2 || !strings.Contains(errs, "group numbers are not accepted") || !strings.Contains(errs, first.ID+" (work came back failed, s1, size 1)") || strings.Contains(out, "MOVED") {
-		t.Fatalf("a group number: %d\n%s%s", code, out, errs)
-	}
-	if code, _, errs := ta.do("inbox --open 2"); code != 2 || !strings.Contains(errs, "group numbers are not accepted") {
-		t.Fatalf("inbox --open 2: %d %s", code, errs)
-	}
+	require.Equal(t, 2, code, "a group number: %d\n%s%s", code, out, errs)
+	require.Contains(t, errs, "group numbers are not accepted", "a group number: %d\n%s%s", code, out, errs)
+	require.Contains(t, errs, first.ID+" (work came back failed, s1, size 1)", "a group number: %d\n%s%s", code, out, errs)
+	require.NotContains(t, out, "MOVED", "a group number: %d\n%s%s", code, out, errs)
+	code, _, errs = ta.do("inbox --open 2")
+	require.Equal(t, 2, code, "inbox --open 2: %d %s", code, errs)
+	require.Contains(t, errs, "group numbers are not accepted", "inbox --open 2: %d %s", code, errs)
 	out = ta.ok("rework --group " + first.ID + " --fix 'the fix'")
-	if !strings.Contains(out, "MOVED s1-1 work review -> working (rework)") || strings.Contains(out, "s2-1") {
-		t.Fatalf("rework by id: %s", out)
-	}
-	if code, _, errs := ta.do("rework --group " + first.ID + " --fix 'the fix'"); code != 1 || !strings.Contains(errs, "no inbox group "+first.ID+" now") {
-		t.Fatalf("an answered group: %d %s", code, errs)
-	}
+	require.Contains(t, out, "MOVED s1-1 work review -> working (rework)", "rework by id")
+	require.NotContains(t, out, "s2-1", "rework by id")
+	code, _, errs = ta.do("rework --group " + first.ID + " --fix 'the fix'")
+	require.Equal(t, 1, code, "an answered group: %d %s", code, errs)
+	require.Contains(t, errs, "no inbox group "+first.ID+" now", "an answered group: %d %s", code, errs)
 	ta.clean()
 }
 
@@ -94,34 +93,30 @@ func TestAGroupOfAnotherSizeThanPrintedIsRefused(t *testing.T) {
 	sizePrinted := g.Size
 	ta.failOnce("m1", "s1-2.w1@1", "tests red")
 	now := ta.group(sprint.NWorkFailed, "s1")
-	if now.ID != g.ID || now.Size != 2 {
-		t.Fatalf("the group grew under another id or size: %+v", now)
-	}
+	require.Equal(t, g.ID, now.ID, "the group grew under another id or size: %+v", now)
+	require.Equal(t, 2, now.Size, "the group grew under another id or size: %+v", now)
 	code, out, errs := ta.do("drop --group " + g.ID + " --expect 1 --reason obsolete --answers " + strings.Join(g.Notes, ","))
-	if code != 1 || !strings.Contains(errs, "REFUSED group "+g.ID+": it has 2 now, not 1 as printed; nothing changed") ||
-		!strings.Contains(errs, "ADDED s1-2") || strings.Contains(errs, "ADDED s1-1") || !strings.Contains(errs, "DROP FAIL moved=0") || strings.Contains(out, "MOVED") {
-		t.Fatalf("a grown group: %d\n%s%s", code, out, errs)
-	}
-	if code, _, errs := ta.do("drop --group " + g.ID + " --expect 1 --reason obsolete"); code != 1 || !strings.Contains(errs, "NOW s1-1") || !strings.Contains(errs, "NOW s1-2") {
-		t.Fatalf("a grown group, no --answers: %d %s", code, errs)
-	}
-	if ta.group(sprint.NWorkFailed, "s1").Size != 2 {
-		t.Fatalf("a refused verb changed the group")
-	}
+	require.Equal(t, 1, code, "a grown group: %d\n%s%s", code, out, errs)
+	require.Contains(t, errs, "REFUSED group "+g.ID+": it has 2 now, not 1 as printed; nothing changed", "a grown group: %d\n%s%s", code, out, errs)
+	require.Contains(t, errs, "ADDED s1-2", "a grown group: %d\n%s%s", code, out, errs)
+	require.NotContains(t, errs, "ADDED s1-1", "a grown group: %d\n%s%s", code, out, errs)
+	require.Contains(t, errs, "DROP FAIL moved=0", "a grown group: %d\n%s%s", code, out, errs)
+	require.NotContains(t, out, "MOVED", "a grown group: %d\n%s%s", code, out, errs)
+	code, _, errs = ta.do("drop --group " + g.ID + " --expect 1 --reason obsolete")
+	require.Equal(t, 1, code, "a grown group, no --answers: %d %s", code, errs)
+	require.Contains(t, errs, "NOW s1-1", "a grown group, no --answers: %d %s", code, errs)
+	require.Contains(t, errs, "NOW s1-2", "a grown group, no --answers: %d %s", code, errs)
+	require.Equal(t, 2, ta.group(sprint.NWorkFailed, "s1").Size, "a refused verb changed the group")
 	_ = sizePrinted
 	out = ta.ok("rework --group " + g.ID + " --expect 2 --fix 'the fix'")
-	if !strings.Contains(out, "GROUP "+g.ID+" acted on 2, the group had 2 when printed") {
-		t.Fatalf("rework --expect: %s", out)
-	}
+	require.Contains(t, out, "GROUP "+g.ID+" acted on 2, the group had 2 when printed", "rework --expect")
 	ta.failOnce("m1", "s1-3.w1@1", "tests red")
 	g = ta.group(sprint.NWorkFailed, "s1")
 	out = ta.ok("rework --group " + g.ID + " --fix 'the fix'")
-	if !strings.Contains(out, "GROUP "+g.ID+" acted on 1\n") {
-		t.Fatalf("rework without --expect: %s", out)
-	}
-	if code, _, errs := ta.do("rework s1-1 --expect 2 --fix x"); code != 2 || !strings.Contains(errs, "--expect goes with --group") {
-		t.Fatalf("--expect without --group: %d %s", code, errs)
-	}
+	require.Contains(t, out, "GROUP "+g.ID+" acted on 1\n", "rework without --expect")
+	code, _, errs = ta.do("rework s1-1 --expect 2 --fix x")
+	require.Equal(t, 2, code, "--expect without --group: %d %s", code, errs)
+	require.Contains(t, errs, "--expect goes with --group", "--expect without --group: %d %s", code, errs)
 	ta.clean()
 }
 
@@ -142,36 +137,24 @@ func TestReworkTakesTheFindingOrTheReport(t *testing.T) {
 	broken := ta.group(sprint.NReadBroken, "s1")
 	// all or nothing: s1-3 has no finding, report or --fix, so nothing moves
 	code, out, errs := ta.do("rework s1-1 s1-2 s1-3 --answers " + broken.ID)
-	if code != 1 || !strings.Contains(errs, "REFUSED s1-3: no --fix, and no finding of a broken read or report of failed work") ||
-		!strings.Contains(errs, "REFUSED s1-1: not written: the verb names several and applies all or none") ||
-		!strings.Contains(errs, "REFUSED s1-2: not written: the verb names several and applies all or none") ||
-		strings.Contains(out, "MOVED") {
-		t.Fatalf("rework with no --fix for one of three: %d\n%s%s", code, out, errs)
-	}
+	require.Equal(t, 1, code, "rework with no --fix for one of three: %d\n%s%s", code, out, errs)
+	require.Contains(t, errs, "REFUSED s1-3: no --fix, and no finding of a broken read or report of failed work", "rework with no --fix for one of three: %d\n%s%s", code, out, errs)
+	require.Contains(t, errs, "REFUSED s1-1: not written: the verb names several and applies all or none", "rework with no --fix for one of three: %d\n%s%s", code, out, errs)
+	require.Contains(t, errs, "REFUSED s1-2: not written: the verb names several and applies all or none", "rework with no --fix for one of three: %d\n%s%s", code, out, errs)
+	require.NotContains(t, out, "MOVED", "rework with no --fix for one of three: %d\n%s%s", code, out, errs)
 	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
-		if out := ta.ok("card --fields " + id); !strings.Contains(out, "place=s1:review ") {
-			t.Fatalf("%s moved by a refused rework:\n%s", id, out)
-		}
+		require.Contains(t, ta.ok("card --fields "+id), "place=s1:review ", "%s moved by a refused rework", id)
 	}
-	if g := ta.group(sprint.NReadBroken, "s1"); g.ID != broken.ID {
-		t.Fatalf("the refused rework answered the judgment: %+v", g)
-	}
+	require.Equal(t, broken.ID, ta.group(sprint.NReadBroken, "s1").ID, "the refused rework answered the judgment")
 	out = ta.ok("rework s1-1 s1-2 --answers " + broken.ID)
-	if !strings.Contains(out, "MOVED s1-1 work review -> working (rework)") || !strings.Contains(out, "MOVED s1-2 work review -> working (rework)") {
-		t.Fatalf("rework with the finding and the report: %s", out)
-	}
+	require.Contains(t, out, "MOVED s1-1 work review -> working (rework)", "rework with the finding and the report")
+	require.Contains(t, out, "MOVED s1-2 work review -> working (rework)", "rework with the finding and the report")
 	for id, want := range map[string]string{"s1-1": `fix=the\x20empty\x20case\x20is\x20not\x20handled`, "s1-2": `fix=the\x20tests\x20went\x20red`} {
-		if out := ta.ok("card --fields " + id); !strings.Contains(out, want) {
-			t.Fatalf("%s: no %s in\n%s", id, want, out)
-		}
+		require.Contains(t, ta.ok("card --fields "+id), want, "%s: no %s in its card", id, want)
 	}
 	out = ta.ok("rework s1-3 s1-4 --fix 'handle the empty case'")
-	if !strings.Contains(out, "moved=2") {
-		t.Fatalf("rework --fix: %s", out)
-	}
-	if out := ta.ok("card --fields s1-4"); !strings.Contains(out, `fix=handle\x20the\x20empty\x20case`) {
-		t.Fatalf("--fix for all: %s", out)
-	}
+	require.Contains(t, out, "moved=2", "rework --fix")
+	require.Contains(t, ta.ok("card --fields s1-4"), `fix=handle\x20the\x20empty\x20case`, "--fix for all")
 	ta.clean()
 }
 
@@ -205,22 +188,19 @@ func TestRedNamesWhatItKnows(t *testing.T) {
 	ta := newTestApp(t)
 	ta.toMerging("s1", "s2")
 	code, _, errs := ta.do("merge --stream s1 --red --suspect s2-1")
-	if code != 1 || !strings.Contains(errs, "REFUSED s2-1: a suspect is a card of the batch; the batch of 3 is s1-1 .. s1-3") {
-		t.Fatalf("a suspect outside the batch: %d %s", code, errs)
-	}
-	if code, _, errs := ta.do("merge --stream s1 --suspect s1-2"); code != 2 || !strings.Contains(errs, "--suspect goes with --red") {
-		t.Fatalf("--suspect without --red: %d %s", code, errs)
-	}
+	require.Equal(t, 1, code, "a suspect outside the batch: %d %s", code, errs)
+	require.Contains(t, errs, "REFUSED s2-1: a suspect is a card of the batch; the batch of 3 is s1-1 .. s1-3", "a suspect outside the batch: %d %s", code, errs)
+	code, _, errs = ta.do("merge --stream s1 --suspect s1-2")
+	require.Equal(t, 2, code, "--suspect without --red: %d %s", code, errs)
+	require.Contains(t, errs, "--suspect goes with --red", "--suspect without --red: %d %s", code, errs)
 	ta.ok("merge --stream s1 --red --suspect s1-2 s1-3")
 	g := ta.group(sprint.NRed, "s1")
-	if strings.Join(g.Suspects, ",") != "s1-2,s1-3" || g.What != "suspects: s1-2, s1-3 (of the batch of 3)" {
-		t.Fatalf("named suspects: %+v", g)
-	}
+	require.Equal(t, []string{"s1-2", "s1-3"}, g.Suspects, "named suspects: %+v", g)
+	require.Equal(t, "suspects: s1-2, s1-3 (of the batch of 3)", g.What, "named suspects: %+v", g)
 	ta.ok("merge --stream s2 --red")
 	g = ta.group(sprint.NRed, "s2")
-	if len(g.Suspects) != 0 || g.What != "no suspect named; the batch of 3 is s2-1 .. s2-3; list it: nova-sprint queue --stream s2 --max 3" {
-		t.Fatalf("no suspect: %+v", g)
-	}
+	require.Empty(t, g.Suspects, "no suspect: %+v", g)
+	require.Equal(t, "no suspect named; the batch of 3 is s2-1 .. s2-3; list it: nova-sprint queue --stream s2 --max 3", g.What, "no suspect: %+v", g)
 	ta.clean()
 }
 
@@ -279,9 +259,7 @@ JUDGMENT N3   stream stopped: stream branch red  stream=s1  size=3  waited=1m0s 
   resume with what you did:
     nova-sprint resume --stream s1 --did '<what you did>' --answers N3
 `
-	if !strings.HasPrefix(golden, want) {
-		t.Fatalf("the inbox:\n%s\nwant it to begin:\n%s", golden, want)
-	}
+	require.True(t, strings.HasPrefix(golden, want), "the inbox:\n%s\nwant it to begin:\n%s", golden, want)
 	// the commands with nothing to fill in run as printed
 	run := func(g sprint.Group, decision string) {
 		for _, c := range g.Commands {
@@ -298,9 +276,8 @@ JUDGMENT N3   stream stopped: stream branch red  stream=s1  size=3  waited=1m0s 
 	run(gs[0], "rework with a fix")
 	run(gs[1], "rework with the finding")
 	run(gs[2], "take the suspect off and resume")
-	if out := ta.ok("inbox"); openBesidesReturned(out) {
-		t.Fatalf("a judgment is still open after its commands ran:\n%s", out)
-	}
+	out = ta.ok("inbox")
+	require.False(t, openBesidesReturned(out), "a judgment is still open after its commands ran:\n%s", out)
 	ta.clean()
 }
 
@@ -330,10 +307,10 @@ func TestStopAndLookListsTheCardsThenTheWholeGroup(t *testing.T) {
 		return out
 	}()})
 	look := g[0].Commands[2]
-	if look.Decision != sprint.RepeatDecision || len(look.Lines) != sprint.MaxLook+1 || look.Lines[0] != "nova-sprint card s1-1" ||
-		look.Lines[sprint.MaxLook] != "nova-sprint inbox --open n1" {
-		t.Fatalf("stop and look: %+v", look)
-	}
+	require.Equal(t, sprint.RepeatDecision, look.Decision, "stop and look: %+v", look)
+	require.Len(t, look.Lines, sprint.MaxLook+1, "stop and look: %+v", look)
+	require.Equal(t, "nova-sprint card s1-1", look.Lines[0], "stop and look: %+v", look)
+	require.Equal(t, "nova-sprint inbox --open n1", look.Lines[sprint.MaxLook], "stop and look: %+v", look)
 }
 
 // I3: a stopped stream's decisions run as printed once the placeholders are
@@ -372,12 +349,9 @@ func TestAStoppedStreamsCommandsRunAndAnswerIt(t *testing.T) {
 					ta.ok(fill.Replace(strings.TrimPrefix(l, "nova-sprint ")))
 				}
 			}
-			if !found {
-				t.Fatalf("no decision %q: %+v", c.decision, g.Commands)
-			}
-			if out := ta.ok("inbox"); openBesidesReturned(out) {
-				t.Fatalf("still open:\n%s", out)
-			}
+			require.True(t, found, "no decision %q: %+v", c.decision, g.Commands)
+			out := ta.ok("inbox")
+			require.False(t, openBesidesReturned(out), "still open:\n%s", out)
 			ta.clean()
 		})
 	}
@@ -393,9 +367,7 @@ func TestHelpShowsTheWorkedExample(t *testing.T) {
 		for _, want := range []string{"reading the inbox and answering a judgment:", "$ nova-sprint inbox",
 			"nova-sprint rework --group finish-0314a1b2-1.1 --expect 2 --answers finish-0314a1b2-1.1", "a group number is refused",
 			"one answer to each judgment"} {
-			if !strings.Contains(out, want) {
-				t.Fatalf("%s lacks %q:\n%s", line, want, out)
-			}
+			require.Contains(t, out, want, "%s lacks %q", line, want)
 		}
 		// the sprint done is no judgment of the tick (errata 3 amendment 6):
 		// help shows it as the HAPPENED line it is, above the answers
@@ -404,14 +376,10 @@ func TestHelpShowsTheWorkedExample(t *testing.T) {
 			want--
 		}
 		answers, _, _ := strings.Cut(out[strings.Index(out, "one answer to each judgment"):], "\n\n")
-		if n := strings.Count(answers, "\n  "); n != want {
-			t.Fatalf("%s: %d answers for %d judgment types and the repeat", line, n, want-1)
-		}
-		if !strings.Contains(out, "  HAPPENED tick-done-0317a1b2-1.1   the sprint is done  x1  for=coordinator") {
-			t.Fatalf("%s does not show the sprint done:\n%s", line, out)
-		}
+		require.Equal(t, want, strings.Count(answers, "\n  "), "%s: answers for %d judgment types and the repeat", line, want-1)
+		require.Contains(t, out, "  HAPPENED tick-done-0317a1b2-1.1   the sprint is done  x1  for=coordinator", "%s does not show the sprint done", line)
 	}
-	if out := ta.ok("help inbox"); !strings.HasPrefix(out, "usage: nova-sprint inbox [flags]") || !strings.Contains(out, "--open <string>") {
-		t.Fatalf("help inbox: %s", out)
-	}
+	out := ta.ok("help inbox")
+	require.True(t, strings.HasPrefix(out, "usage: nova-sprint inbox [flags]"), "help inbox: %s", out)
+	require.Contains(t, out, "--open <string>", "help inbox")
 }
