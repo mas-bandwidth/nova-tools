@@ -384,6 +384,32 @@ writer; `cmd/nova-ci/cost_test.go` runs the verb end to end through `run()`,
 every refusal, the store seam, and executes the `### cost` transcript of
 docs/CLI.md line for line through `onboarding.CompareTranscript`.
 
+## The CI merge queue inspection verb
+
+**The verb.** `nova-ci queue` inspects the merge queue of a target branch:
+
+```
+queue  query the merge queue for --repo and --branch; print entry positions, states,
+       and the failing lines of failed merge-group runs; inspect dequeued PRs or runs with --pr / --run
+```
+
+It queries the forge's `mergeQueue` GraphQL API and recent `merge_group` workflow
+runs. If a queued PR's merge_group run failed, it inspects the failed run's jobs,
+reads the failing job's log, and extracts the first failing lines past subtest headers.
+Pass `--pr <number>` to inspect a specific PR (even after GitHub dequeues it upon
+failure, selecting its latest failed run) or `--run <id>` to inspect a specific
+merge_group run directly.
+
+**Its output.** Formatted as receipt lines by default (one `QUEUE` line per entry,
+or `QUEUE OK ... entries=0` if empty), aligned table (`--table`), or JSON (`--json`).
+At most one output selector may be passed among `--format`, `--json`, and `--table`.
+When the queue is empty, `--json` prints an empty list `[]`.
+
+**Its refusals.** Missing `--repo`, invalid repository shape (wants `owner/name`),
+empty `--branch`, negative or invalid `--pr` or `--run`, multiple output selectors,
+or unknown repo / no credentials / forge errors (naming the underlying cause:
+`repository <repo> not found` or `not authenticated to forge: run gh auth login`). Exit 2.
+
 ## The CI class test against a real network host on the CI path
 
 **The help line.** The class test is entered in the CI check roster and in help

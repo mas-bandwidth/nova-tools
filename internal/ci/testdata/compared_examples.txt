@@ -34,6 +34,7 @@ cmd/nova-secrets/seat_inject_functional_test.go:TestTheHelpExampleIsWhatSeatInje
 cmd/nova-ci/receipt_test.go:TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints $ nova-ci github receipt --from-runner --repo nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion success
 cmd/nova-ci/receipt_test.go:TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints $ nova-ci github receipt --from-runner --repo mas-bandwidth/nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion skipped
 cmd/nova-ci/cost_test.go:TestTheCommandReferenceCostIsWhatTheToolPrints $ nova-ci cost --repo mas-bandwidth/nova-tools --sha 0123456789abcdef0123456789abcdef01234567 --run-id 777 --workflow ci --conclusion failure --pr 4328 < internal/cicost/testdata/jobs.json
+cmd/nova-ci/queue_test.go:TestTheCommandReferenceQueueIsWhatTheToolPrints $ nova-ci queue --repo mas-bandwidth/nova-tools --branch dev
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox check --bogus
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox bogus
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123

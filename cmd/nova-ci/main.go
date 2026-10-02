@@ -10,6 +10,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -106,6 +107,12 @@ usage:
                       any dial (a flag the receipt refuses, a partial or
                       count-mismatched listing, a listing that is not the
                       forge's).
+  nova-ci queue --repo owner/name [--branch dev] [--pr <number>] [--run <id>]
+                [--format receipt|table|json] [--json] [--table] [--fail-lines <n>]
+                      print each merge-queue entry on the branch, its state, and
+                      for a failed merge-group run the job name and the first
+                      FAIL lines, one receipt line per entry. Pass --pr to inspect
+                      a specific or dequeued PR, or --run to inspect a run.
 
 exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
             line under --enforce, or the invocation could not run (bad flag,
@@ -155,6 +162,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		return cmdGitHub(args[1:], stdout, stderr, os.Getenv)
 	case "cost":
 		return cmdCost(args[1:], stdin, stdout, stderr, openCostStore)
+	case "queue":
+		return cmdQueue(context.Background(), args[1:], stdout, stderr, nil)
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
 			return run(append(args[1:], "--help"), stdin, stdout, stderr)
