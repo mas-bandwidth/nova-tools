@@ -160,8 +160,9 @@ CHECK line, so nothing was hidden to make it green. A gate that cannot go red is
 either: an --out with no day file in it is CHECK FAIL, never a green over nothing.
 
 sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
-first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
-is the evidence for improving the --repos file.
+first by path mentions, capped by --max. Each mentions= count is path occurrences, not
+billed tokens or the other=<pct>% spend share. SOURCES OK unattributed= counts all these
+mentions; the listing is evidence for improving the --repos file.
 
   mkdir -p ./transcripts ./out && printf '%s\n' '{"type":"assistant","timestamp":"2026-09-11T09:12:00Z","message":{"id":"example-1","model":"claude-fable-5-1","usage":{"input_tokens":812,"output_tokens":40,"cache_creation_input_tokens":1200,"cache_read_input_tokens":90000},"content":[{"type":"tool_use","input":{"file_path":"/work/schema/wire.md"}}]}}' > ./transcripts/window.jsonl && cp ./transcripts/window.jsonl ./session.jsonl && printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
 
@@ -227,12 +228,12 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) 
 // The clock is an argument and NOT a flag: the stamp on a day file is when the tool
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
 func run(args []string, stdout, stderr io.Writer, now time.Time) int {
-	return runWith(args, stdout, stderr, now, newPrivateDir)
+	return runWith(args, stdout, stderr, now, newPrivateDir, tokens.HaveSQLite)
 }
 
-// runWith is run with the one thing a run makes that a test must be able to refuse: the
-// private directory a run that writes nothing copies an OpenCode database into.
-func runWith(args []string, stdout, stderr io.Writer, now time.Time, newPrivate privateDir) (code int) {
+// runWith injects private-copy allocation and SQLite availability so either refusal
+// can be exercised without depending on the host installation.
+func runWith(args []string, stdout, stderr io.Writer, now time.Time, newPrivate privateDir, haveSQLite func() error) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help, its effect included, on stdout
 	// at exit 0, before anything is read or written (the CLI style's rule (b)).
 	defer verbflag.RecoverWith(stdout, "nova-tokens", usage, &code, effectOf)
@@ -245,14 +246,14 @@ func runWith(args []string, stdout, stderr io.Writer, now time.Time, newPrivate 
 	case "help", "-h", "--help":
 		if verb == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
 			// --help goes right after the verb: after a word or a -- it would be one.
-			return run(append([]string{rest[0], "--help"}, rest[1:]...), stdout, stderr, now)
+			return runWith(append([]string{rest[0], "--help"}, rest[1:]...), stdout, stderr, now, newPrivate, haveSQLite)
 		}
 		fmt.Fprintf(stdout, "%s", usage)
 		return 0
 	case "fold":
-		return cmdFold(rest, stdout, stderr, now, newPrivate)
+		return cmdFold(rest, stdout, stderr, now, newPrivate, haveSQLite)
 	case "report":
-		return cmdReport(rest, stdout, stderr, now, newPrivate)
+		return cmdReport(rest, stdout, stderr, now, newPrivate, haveSQLite)
 	case "ledger":
 		return cmdLedger(rest, stdout, stderr)
 	case "sum":
@@ -260,7 +261,7 @@ func runWith(args []string, stdout, stderr io.Writer, now time.Time, newPrivate 
 	case "check":
 		return cmdCheck(rest, stdout, stderr, now)
 	case "sources":
-		return cmdSources(rest, stdout, stderr, now, newPrivate)
+		return cmdSources(rest, stdout, stderr, now, newPrivate, haveSQLite)
 	case "profiles":
 		return cmdProfiles(rest, stdout, stderr, now)
 	case "session":
@@ -344,6 +345,7 @@ type sourceFlags struct {
 	repos    string
 	// newPrivate makes the private copy directory under --scratch (newPrivateDir).
 	newPrivate privateDir
+	haveSQLite func() error
 }
 
 func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
@@ -450,7 +452,11 @@ func (s *sourceFlags) check(r *refusals) {
 				r.add("--scratch is not a directory: " + s.scratch + "; it wants " + wantsScratch)
 			}
 		}
-		if err := tokens.HaveSQLite(); err != nil {
+		haveSQLite := s.haveSQLite
+		if haveSQLite == nil {
+			haveSQLite = tokens.HaveSQLite
+		}
+		if err := haveSQLite(); err != nil {
 			r.add(err.Error())
 		}
 	} else if strings.TrimSpace(s.scratch) != "" {
@@ -592,7 +598,7 @@ var foldLists = []struct {
 // a row mixed two day bases, a lane-day had competing reports, or a day would have shrunk
 // -- and it still writes the rest, because the exit code is about the claim. Under
 // --dry-run it reads and decides exactly the same and writes nothing, the lock included.
-func cmdFold(args []string, stdout, stderr io.Writer, now time.Time, newPrivate privateDir) int {
+func cmdFold(args []string, stdout, stderr io.Writer, now time.Time, newPrivate privateDir, haveSQLite func() error) int {
 	fs := newFlagSet("fold")
 	out := fs.String("out", "", "directory for daily token files")
 	day := fs.String("day", "", "one UTC day to fold as YYYY-MM-DD")
@@ -609,6 +615,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time, newPrivate 
 	r := &refusals{token: "TOKENS", s: s}
 	r.required("out", *out, wantsOut)
 	checkDay(r, *day, *all)
+	sf.haveSQLite = haveSQLite
 	sf.check(r)
 	checkMax(r, *max)
 	if len(r.list) > 0 {
@@ -1040,7 +1047,7 @@ func firstConflictLabel(sources []*tokens.Source) string {
 // second reader would drift -- prints what each yielded, and writes nothing. It exists so
 // a person can see what a fold would count before it writes, and it exits 0 whenever it
 // ran, because asserting is not its job.
-func cmdSources(args []string, stdout, stderr io.Writer, now time.Time, newPrivate privateDir) int {
+func cmdSources(args []string, stdout, stderr io.Writer, now time.Time, newPrivate privateDir, haveSQLite func() error) int {
 	fs := newFlagSet("sources")
 	day := fs.String("day", "", "one UTC day to inspect as YYYY-MM-DD")
 	all := fs.Bool("all", false, "inspect every day named by the sources")
@@ -1054,6 +1061,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time, newPriva
 	}
 	r := &refusals{token: "SOURCES", s: s}
 	checkDay(r, *day, *all)
+	sf.haveSQLite = haveSQLite
 	sf.check(r)
 	checkMax(r, *max)
 	if len(r.list) > 0 {
@@ -1126,7 +1134,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time, newPriva
 	unattributedField := tokens.Dash
 	if *unattributed {
 		for _, u := range rules.Unattributed() {
-			stems.Line(s.line("SOURCES", "UNATTRIBUTED", "", "stem", u.Stem, "tokens", u.Count))
+			stems.Line(s.line("SOURCES", "UNATTRIBUTED", "", "stem", u.Stem, "mentions", u.Count))
 		}
 		stems.More()
 		unattributedField = strconv.Itoa(rules.TotalUnattributed())
@@ -1149,7 +1157,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time, newPriva
 // THIS IS THE ONE PLACE IN THE FAMILY WHERE THE OK LINE LEAVES STDOUT, because here stdout
 // is the artifact. The spec says so in as many words, which is the exception SPEC.md's
 // Conventions allow when a spec states one.
-func cmdReport(args []string, stdout, stderr io.Writer, now time.Time, newPrivate privateDir) int {
+func cmdReport(args []string, stdout, stderr io.Writer, now time.Time, newPrivate privateDir, haveSQLite func() error) int {
 	fs := newFlagSet("report")
 	who := fs.String("who", "", "name to write in each note body row")
 	day := fs.String("day", "", "one UTC day to report as YYYY-MM-DD")
@@ -1183,6 +1191,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time, newPrivat
 	case !tokens.ValidDay(*day):
 		r.add("--day is not a day: " + *day + "; it wants " + wantsDay)
 	}
+	sf.haveSQLite = haveSQLite
 	sf.check(r)
 	checkMax(r, *max)
 	seen := map[string]bool{}

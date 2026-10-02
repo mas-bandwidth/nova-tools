@@ -561,7 +561,7 @@ CHECK REFUSED: <reason>
 SOURCES SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|mixed|<zone>> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
 SOURCES UNREADABLE label=<label> path=<path>: <why>
 SOURCES UNPARSED label=<kind>:<name> note=<id> line=<n>: <text>
-SOURCES UNATTRIBUTED stem=<path> tokens=<n>
+SOURCES UNATTRIBUTED stem=<path> mentions=<n>
 SOURCES MORE kind=<source|unreadable|unparsed|unattributed> shown=<n> total=<t> nova-tokens sources … --max 0
 SOURCES OK sources=<n> files=<n> messages=<n> unreadable=<n> unparsed=<n> rows=<n> unattributed=<n|->
 SOURCES REFUSED: <reason>
@@ -905,28 +905,29 @@ and `TOKENS SOURCE` does not hide that: `unknown=` on the day line does.
 The table is the caller's file, the rule is one function, and the two shares
 on the day line are how a person sees whether the file is good enough.
 
-**`sources --unattributed` says what `other` is made of.** The share on the day
+**`sources --unattributed` lists unmatched path mentions.** The share on the day
 line is the diagnosis and never the remedy: without a listing, the only way to
 learn which paths fell to `other` is to grep the transcripts by hand. With the
 flag, `sources` tallies
-every path token that reached the `other` arm, keyed by the token's leading
+every path mention that reached the `other` arm, keyed by the path's leading
 directory to four elements — which is where a repo is named, and which is the
 shape a rule matches — and prints them heaviest first, capped by `--max`:
 
 ```
-SOURCES UNATTRIBUTED stem=<path> tokens=<n>
+SOURCES UNATTRIBUTED stem=<path> mentions=<n>
 ```
 
-`SOURCES OK` then carries `unattributed=<n>`, the total tokens that fell to
-`other`; without the flag nothing is tallied and the field is `-`, because a
+`mentions=<n>` counts path occurrences, not billed tokens or the `other=<pct>%`
+spend share. `SOURCES OK` carries `unattributed=<n>`, the total unmatched path
+mentions; without the flag nothing is tallied and the field is `-`, because a
 dash is an absence where a zero is a measurement. The tally is taken inside the
 attribution ladder as the paths go past, so there is no second read of anything,
 and `fold` never takes it: `sources` is the verb that only looks.
 
 The tally holds at most 50,000 distinct stems — past that the stems already held
 keep counting and no new one is admitted, so the top of the list is unaffected
-and `unattributed=<n>` is still every token. The `SOURCES MORE` line's `total=`
-is the stems the tally holds, and `unattributed=` on the `OK` line is the number
+and `unattributed=<n>` still counts every unmatched path mention. The `SOURCES MORE`
+line's `total=` is the stems the tally holds, and `unattributed=` on the `OK` line is the number
 that is never capped.
 
 ## The month sum

@@ -123,11 +123,11 @@ func (r *Rules) Unattributed() []UnattributedStem {
 	return out
 }
 
-// TotalUnattributed is every path token that fell to `other`, counted whether or not its
-// stem got a place in the tally.
+// TotalUnattributed counts unmatched path mentions, not billed tokens, whether or not
+// their stems got a place in the tally.
 func (r *Rules) TotalUnattributed() int { return r.total }
 
-// record tallies the tokens of one message that named no repo this file knows.
+// record tallies path mentions of one message that named no repo this file knows.
 func (r *Rules) record(tokens []string) {
 	if r.dayFilter != "" && r.currentDay != r.dayFilter {
 		return

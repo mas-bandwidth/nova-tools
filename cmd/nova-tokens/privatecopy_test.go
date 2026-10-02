@@ -26,7 +26,6 @@ func TestAPrivateCopyThatCannotBeMadeIsOneUnreadableOnEveryLine(t *testing.T) {
 	db := write(t, filepath.Join(dir, "opencode.db"), "SQLite format 3\x00 not really\n")
 	repos := reposFile(t, dir)
 	refused := errors.New("no room for a private copy")
-	failing := func(string) (string, error) { return "", refused }
 	opencode := []string{"--repos", repos, "--opencode", "a=" + db, "--opencode", "b=" + db, "--scratch", scratch}
 
 	for _, tc := range []struct {
@@ -39,7 +38,15 @@ func TestAPrivateCopyThatCannotBeMadeIsOneUnreadableOnEveryLine(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			code := runWith(tc.args, &stdout, &stderr, foldStamp, failing)
+			allocations, lookups := 0, 0
+			failing := func(string) (string, error) {
+				allocations++
+				return "", refused
+			}
+			available := func() error { lookups++; return nil }
+			code := runWith(tc.args, &stdout, &stderr, foldStamp, failing, available)
+			assert.Equal(t, 1, lookups, "SQLite availability must use the injected check")
+			assert.Equal(t, 1, allocations, "the allocator must be reached exactly once")
 			all := stdout.String() + stderr.String()
 			for _, label := range []string{"opencode:a", "opencode:b"} {
 				assert.Equal(t, 1, strings.Count(all, tc.token+" UNREADABLE label="+label+" "), "UNREADABLE lines for %s:\n%s", label, all)
@@ -61,6 +68,15 @@ func TestAPrivateCopyThatCannotBeMadeIsOneUnreadableOnEveryLine(t *testing.T) {
 			ents, err := os.ReadDir(scratch)
 			require.NoError(t, err)
 			assert.Empty(t, ents, "something was made in --scratch")
+
+			stdout.Reset()
+			stderr.Reset()
+			allocations = 0
+			missing := errors.New("sqlite3 is not on PATH: injected lookup failure")
+			code = runWith(tc.args, &stdout, &stderr, foldStamp, failing, func() error { return missing })
+			assert.Equal(t, 2, code)
+			assert.Contains(t, stderr.String(), missing.Error())
+			assert.Zero(t, allocations, "a missing SQLite must refuse before allocation")
 		})
 	}
 }
