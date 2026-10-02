@@ -44,7 +44,7 @@ type Bus struct {
 }
 
 // When is the note's moment, for ordering. The Date line is preferred because it is what
-// the author wrote; the filename's UTC minute is the fallback, because a legacy note may
+// the author wrote; the filename's UTC minute is the fallback, because an accepted note format may
 // carry a Date this tool cannot parse and still sort correctly by its name.
 func (n Note) When() time.Time {
 	for _, layout := range []string{DateLayout, time.RFC1123, time.RFC1123Z, time.RFC3339, time.UnixDate, time.ANSIC} {
@@ -67,8 +67,8 @@ func (n Note) When() time.Time {
 // WHY THE LINE READS A DATE THE REST OF THE TOOL DOES NOT. The rule the tolerance rests on
 // is that a file which cannot say when it was written cannot claim to predate anything.
 // That is right, and the first version of it read too little: a bus written by hand for
-// months names its notes four ways -- `2026-09-09T0041Z-slug.md`, the same with seconds,
-// the same with the stamp accidentally doubled, and a plain `2026-09-06-slug.md` -- and
+// Accepted notes use four filename shapes -- a UTC timestamp with minutes, the same with seconds,
+// the same with the stamp accidentally doubled, and a plain date-only stamp -- and
 // only the first is the minute When parses. Every one of the other three still says its
 // DAY, in the first ten characters, which is all a line drawn on a date needs. On a real
 // bus those three shapes are 87 notes, and refusing to read their day
@@ -176,7 +176,7 @@ func (t *Bus) readLane(lane string) error {
 		// between the write and the rename, and reporting it as a stray would make a check
 		// fail over a file the next write replaces.
 		//
-		// AND THE LANE'S README, which is neither. It ends in `.md`, so this walk used to
+		// The lane's README is neither. It ends in `.md`, so this walk skips it rather than
 		// parse it as a note, fail, and hand every reader on the bus an `INBOX UNREADABLE`
 		// about a file that is doing exactly what it says it is doing. It is the one non-note
 		// document a lane may hold; see LaneDocName.
@@ -326,7 +326,7 @@ type InboxItem struct {
 
 // Unreadable lists the notes on the bus that would not parse, outside the given lane.
 //
-// It exists because inbox used to step over them in silence. A note somebody wrote, on the
+// It reports them because inbox must not step over them in silence. A note somebody wrote, on the
 // bus, addressed to a reader who is never told it is there, is the exact failure this
 // tool was built to end -- and it is worse than a lost push, because nothing about it looks
 // wrong. An unreadable note has no To line to test, so this cannot say whether it was
@@ -400,7 +400,7 @@ type Problem struct {
 	Where  string // a path, a path:line, or a lane
 	Reason string
 
-	// Warn is set when the finding was inside the legacy tolerance: it is reported and
+	// Warn is set when the finding is inside the configured tolerance: it is reported and
 	// does not fail the run.
 	Warn bool
 }
@@ -438,7 +438,7 @@ type CheckOptions struct {
 	LegacyBefore time.Time
 }
 
-// tolerates reports whether a finding about this note is inside the legacy window.
+// tolerates reports whether a finding about this note is inside the configured window.
 func (o CheckOptions) tolerates(n *Note) bool {
 	if o.LegacyBefore.IsZero() {
 		return false
@@ -473,7 +473,7 @@ func (t *Bus) CheckWith(o CheckOptions) []Problem {
 	add := func(where, format string, args ...any) {
 		ps = append(ps, Problem{Where: where, Reason: fmt.Sprintf(format, args...)})
 	}
-	// warn is add for the findings the legacy tolerance can forgive. It is a separate call
+	// warn adds findings the configured tolerance can forgive. It is a separate call
 	// rather than a flag on add so that every tolerated site is visible in this function as
 	// a different verb.
 	warn := func(n *Note, where, format string, args ...any) {
