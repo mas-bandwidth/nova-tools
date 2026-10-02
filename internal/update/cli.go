@@ -64,7 +64,7 @@ func refusal(w io.Writer, token, run string, err error) int {
 }
 
 // updateVerbNames are nova-update's verbs, as a refusal lists them.
-const updateVerbNames = "check, status, apply, report, watch, adoption, release, version"
+const updateVerbNames = "example, check, status, apply, report, watch, adoption, release, version"
 
 // flagProblem says what a flag parse error means in the words a reader acts on
 // (STANDARD §3.2): an unknown flag is named with every flag the verb takes, a
@@ -104,7 +104,8 @@ func flagProblem(f *flag.FlagSet, err error) error {
 // the spec file and compares the two. nova-version's usage lines are its
 // verbs' own (versiontool.go). The release verbs are one line here; their own
 // lines are release.Verbs, printed by `nova-update help release`.
-const updateVerbs = `nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+const updateVerbs = `nova-update example [--out <path>]
+nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
@@ -117,8 +118,8 @@ nova-update help`
 // manifestShape is the one sentence that says what the file --file names holds:
 // the rule-2 manifest, one tab-separated line per tool, written by hand in git.
 // The usage line and the refusal on a missing file both carry it, so neither
-// reads as if --file were an output. No verb writes the file, so no verb is
-// named; the spec carries the same shape once (SPEC-UPDATE rule 2).
+// reads as if --file were an output. Only `example` writes one, the example to
+// start from; the spec carries the same shape once (SPEC-UPDATE rule 2).
 const manifestShape = "one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand"
 
 // updateOpening opens the banner with its three answers:
@@ -132,8 +133,8 @@ how to read its installed version, where its latest release is published, and
 the command that installs it. check and report compare the two; apply runs one
 named entry's command and reads the version again, nothing else. The release
 verbs build, publish and install nova-tools' own releases.
-first run: from a nova-tools checkout, the lines under example: read the
-included manifest; they install nothing.`
+first run: the binary alone; the lines under example: write a one-tool manifest
+(Go) to ./versions.tsv and read it; they install nothing.`
 )
 
 // helpText is what help prints, as a string: the text verbflag quotes a verb's
@@ -157,9 +158,10 @@ func help(name string, w io.Writer) {
 	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
 	fmt.Fprint(w, twoBinaries())
 	fmt.Fprint(w, manifestHelp(name))
-	fmt.Fprintf(w, "\n%s\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n", exitCodes(name), name, name)
-	fmt.Fprintf(w, "  %s status --file cmd/%s/testdata/example.tsv\n  %s apply --file cmd/%s/testdata/dry-run.tsv go --dry-run\n", name, name, name, name)
-	fmt.Fprintf(w, "  %s version\n", name)
+	fmt.Fprintf(w, "\n%s\n\nexample:\n", exitCodes(name))
+	for _, line := range []string{"example --out versions.tsv", "report --file versions.tsv", "status --file versions.tsv", "apply --file versions.tsv go --dry-run", "version"} {
+		fmt.Fprintf(w, "  %s %s\n", name, line)
+	}
 }
 
 // twoBinaries says, in nova-update's banner, how nova-update and nova-version
@@ -200,6 +202,7 @@ func verbDetail(name, verb string) string {
 		"report":   "inspection: reads each installed version, no latest, no network; --snapshot writes its state file (local write); --send delivers the note through nova-bus (delivery); --store reads the fleet's Redis",
 		"watch":    "inspection: runs each check's command; with --bus and its four companions, delivery: the receipt goes out through nova-bus",
 		"adoption": "inspection: reads the ledger, writes nothing",
+		"example":  "inspection: prints the example manifest; with --out, local write: writes it, never over another file",
 		"version":  "inspection: prints this binary's version line",
 	}
 	detail := ""
@@ -296,6 +299,19 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	}
 	if verb == "adoption" {
 		return adoptionVerb(name, args, out, errs)
+	}
+	if verb == "example" {
+		f := flag.NewFlagSet("example", flag.ContinueOnError)
+		f.SetOutput(io.Discard)
+		path := f.String("out", "", "write the example manifest to this path (an existing file is never overwritten); without it, print the manifest")
+		asJSON := f.Bool("json", false, "print the result as one JSON object instead of lines")
+		if err := verbflag.Parse(f, args); err != nil {
+			return emit(refused("example", name+" example -h", flagProblem(f, err).Error()), asked, 0, out, errs)
+		}
+		if f.NArg() != 0 {
+			return emit(refused("example", name+" example -h", fmt.Sprintf("example takes no positional arguments, got %q", f.Arg(0))), *asJSON, 0, out, errs)
+		}
+		return emit(exampleVerb(name, *path), *asJSON, 0, out, errs)
 	}
 	if verb != "report" && verb != "check" && verb != "status" && verb != "apply" && verb != "watch" {
 		return emit(refused("update", door, fmt.Sprintf("unknown verb %q; the verbs are %s", verb, updateVerbNames)), asked, 0, out, errs)
@@ -416,7 +432,7 @@ func checked(name, verb string, o options, positional []string, env Environment)
 	}
 	file, err := os.Open(o.file)
 	if err != nil {
-		return refused(verb, help, fmt.Sprintf("cannot open %s (supply a readable --file: %s)", o.file, manifestShape))
+		return refused(verb, help, fmt.Sprintf("cannot open %s (supply a readable --file: %s; %s example --out %s writes one to start from)", o.file, manifestShape, name, o.file))
 	}
 	entries, err := Load(file)
 	file.Close()

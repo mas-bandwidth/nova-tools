@@ -24,9 +24,19 @@ func VersionTool(stamp string, env Environment) *tool.Tool {
 diff compares two snapshots; moved writes the note of what two commits' binaries changed.
 It is one of two binaries sharing the manifest and report; latest and installing are nova-update's.
 THE MANIFEST is the file --file names, written by hand; report -h states its six rules.
-first run: from a nova-tools checkout, the example lines read the included manifest.`,
+first run: the binary alone; the example lines write a one-tool manifest and read it.`,
 		ExitTable: "0 the verb ran and passed: a report whose every entry answered (under send, whose note nova-bus took), a snapshot whose tools all answer, a diff, a moved note written; 1 the tool said NO (a report or a snapshot with an UNKNOWN tool, a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).",
 		Verbs: []tool.Verb{
+			{
+				Name:    "example",
+				Usage:   "example [--out <path>]",
+				Example: "example --out versions.tsv",
+				Effect:  tool.LocalWrite + " with --out, never over another file; without it, inspection: prints the example manifest",
+				Flags: func(f *tool.Flags) {
+					f.String("out", "", "write the example manifest to this path (an existing file is never overwritten); without it, print the manifest")
+				},
+				Run: func(c *tool.Call) *tool.Out { return exampleVerb("nova-version", c.Str("out")) },
+			},
 			{
 				Name:   "moved",
 				Usage:  "moved --from <sha> --to <sha> --repo <dir> --out <path>",
@@ -45,7 +55,7 @@ first run: from a nova-tools checkout, the example lines read the included manif
 			{
 				Name:    "snapshot",
 				Usage:   "snapshot " + manifest + "\nsnapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]",
-				Example: "snapshot --file cmd/nova-version/testdata/example.tsv",
+				Example: "snapshot --file versions.tsv",
 				Effect:  tool.LocalWrite + "; with --file, inspection",
 				Flags: func(f *tool.Flags) {
 					f.String("file", "", "manifest of adopted tools: count how many answer")
@@ -90,7 +100,7 @@ first run: from a nova-tools checkout, the example lines read the included manif
 				Usage: "report " + manifest + " [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]",
 				// The second example line is the version verb's: the banner's
 				// examples are its verbs' in order, and version is last.
-				Example: "report --file cmd/nova-version/testdata/example.tsv\nversion",
+				Example: "report --file versions.tsv\nversion",
 				// The strongest effect a flag gives it: --send delivers the note and
 				// writes the --snapshot state file; without --send it only reads.
 				Effect: tool.Delivery + "; only with --send, which also writes the --snapshot state file; " +

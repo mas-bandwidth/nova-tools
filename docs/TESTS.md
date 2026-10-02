@@ -647,12 +647,16 @@ SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
 
 ### First run
 
-From the nova-tools checkout, using the declared Go-version fixture. This reads
-local stdout only and performs no update or bus action.
+With the binary alone, in an empty directory: `example` writes the one-tool Go
+manifest and `report` reads it. This writes `versions.tsv` and performs no update
+or bus action.
 
 ```text
-$ nova-update report --file cmd/nova-update/testdata/example.tsv
-REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=20ms file=cmd/nova-update/testdata/example.tsv host=- as=- entries=1 kinds=tool at=2026-10-02T02:43:13Z timeout=5s budget=1m0s max=20 snapshot=-
+$ nova-update example --out versions.tsv
+EXAMPLE OK wrote=versions.tsv entries=1 unchanged=false
+EXAMPLE NOTE next: nova-update report --file versions.tsv
+$ nova-update report --file versions.tsv
+REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=23ms file=versions.tsv host=- as=- entries=1 kinds=tool at=2026-10-02T02:55:03Z timeout=5s budget=1m0s max=20 snapshot=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
 ```
 
@@ -661,12 +665,16 @@ REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20da
 
 ### First run
 
-From the nova-tools checkout, using the declared Go-version fixture. This reads
-local stdout only and performs no update or bus action.
+With the binary alone, in an empty directory: `example` writes the one-tool Go
+manifest and `report` reads it. This writes `versions.tsv` and performs no update
+or bus action.
 
 ```text
-$ nova-version report --file cmd/nova-version/testdata/example.tsv
-REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=21ms file=cmd/nova-version/testdata/example.tsv host=- as=- entries=1 kinds=tool at=2026-10-02T02:43:13Z timeout=5s budget=1m0s max=20 snapshot=-
+$ nova-version example --out versions.tsv
+EXAMPLE OK wrote=versions.tsv entries=1 unchanged=false
+EXAMPLE NOTE next: nova-version report --file versions.tsv
+$ nova-version report --file versions.tsv
+REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=24ms file=versions.tsv host=- as=- entries=1 kinds=tool at=2026-10-02T02:55:03Z timeout=5s budget=1m0s max=20 snapshot=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
 ```
 

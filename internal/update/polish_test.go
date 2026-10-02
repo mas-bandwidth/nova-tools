@@ -86,7 +86,7 @@ func TestEveryUpdateRefusalEndsInACommandToRun(t *testing.T) {
 	t.Parallel()
 	dash := writeFile(t, "dash.tsv", Header+"\nfoo\ttool\t1.0.0\t-\tnone\tme\n")
 	adopt := writeFile(t, "adopt.tsv", "check\tcommand\towner\n")
-	verbs := "the verbs are check, status, apply, report, watch, adoption, release, version"
+	verbs := "the verbs are example, check, status, apply, report, watch, adoption, release, version"
 	for _, c := range []struct {
 		name string
 		args []string
@@ -266,6 +266,48 @@ func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
 			if verb != "watch" && verb != "adoption" && verb != "version" {
 				assert.Contains(t, h, "name<TAB>kind<TAB>installed<TAB>latest<TAB>apply<TAB>owner")
 			}
+		})
+	}
+}
+
+// Both tools' first run needs the binary alone (ledger U9, X6): `example` prints
+// the example manifest, or writes it to --out and names the next command; the
+// same file again is unchanged, so the help's example lines run twice, and a file
+// holding anything else is never overwritten.
+func TestExampleWritesAManifestTheFirstRunReads(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"nova-update", "nova-version"} {
+		t.Run(name, func(t *testing.T) {
+			code, printed, _ := runTool(t, name, "example")
+			require.Equal(t, 0, code)
+			entries, err := Load(strings.NewReader(printed))
+			require.NoError(t, err)
+			assert.Len(t, entries, 1)
+
+			path := filepath.Join(t.TempDir(), "versions.tsv")
+			code, out, _ := runTool(t, name, "example", "--out", path)
+			require.Equal(t, 0, code)
+			assert.Contains(t, out, "EXAMPLE OK wrote="+path+" entries=1 unchanged=false")
+			assert.Contains(t, out, "EXAMPLE NOTE next: "+name+" report --file "+path)
+			written, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, printed, string(written))
+
+			code, out, _ = runTool(t, name, "example", "--out", path)
+			assert.Equal(t, 0, code)
+			assert.Contains(t, out, "unchanged=true")
+
+			mine := writeFile(t, "mine.tsv", "my own manifest\n")
+			code, _, errs := runTool(t, name, "example", "--out", mine)
+			assert.Equal(t, 2, code)
+			assert.Contains(t, errs, "refusing to overwrite it")
+			kept, err := os.ReadFile(mine)
+			require.NoError(t, err)
+			assert.Equal(t, "my own manifest\n", string(kept))
+
+			code, _, errs = runTool(t, name, "report", "--file", filepath.Join(t.TempDir(), "absent.tsv"))
+			assert.Equal(t, 2, code)
+			assert.Contains(t, errs, name+" example --out ")
 		})
 	}
 }

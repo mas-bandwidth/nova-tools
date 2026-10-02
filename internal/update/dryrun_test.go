@@ -307,8 +307,8 @@ func TestHelpNamesStatusAndDryRun(t *testing.T) {
 		"nova-update status --file <path>",
 		"nova-update apply --file <path> <name> [--version <v>] [--dry-run]",
 		"apply --dry-run prints the plan and writes nothing",
-		"nova-update status --file cmd/nova-update/testdata/example.tsv",
-		"nova-update apply --file cmd/nova-update/testdata/dry-run.tsv go --dry-run",
+		"nova-update status --file versions.tsv",
+		"nova-update apply --file versions.tsv go --dry-run",
 	} {
 		if !strings.Contains(up, want) {
 			t.Errorf("nova-update help is missing %q:\n%s", want, up)

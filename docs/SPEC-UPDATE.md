@@ -405,6 +405,7 @@ DIFFERENT line, so the morning names a person, not only a number.
 ## The verbs
 
 ```
+nova-update example [--out <path>]
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
@@ -416,7 +417,7 @@ nova-update release <cut|build|install|adopt|pull> ...   nova-tools' own release
 nova-update help
 ```
 
-Those nine usage lines are the string `nova-update help` prints, byte for byte, under the
+Those ten usage lines are the string `nova-update help` prints, byte for byte, under the
 banner's opening (what the tool does, how it works, the first run): one string
 in the binary, so the spec and the help cannot drift apart. The release pipeline is one
 line there, so a reader of the manifest verbs is not handed it: its five usage lines are
@@ -692,22 +693,25 @@ included. A value is one `internal/oneline` token, except the text after `: ` on
 
 ## First run — meet your installed tools
 
-From the nova-tools checkout, with Go on PATH:
+With the binary alone and Go on PATH, in any directory:
 
 ```sh
-go run ./cmd/nova-update report --file cmd/nova-update/testdata/example.tsv
-go run ./cmd/nova-version report --file cmd/nova-version/testdata/example.tsv
+nova-update example --out versions.tsv
+nova-update report --file versions.tsv
 ```
 
-The shipped example reads `go version` and reports the actual identity on your bench.
-It performs no latest-version lookup, installation or bus delivery. Output timestamps,
-paths and versions come from your run; UNKNOWN means an incomplete inventory.
+`example` writes the example manifest, one tool (Go, read with `go version` on both
+sides), into `versions.tsv`, or prints it without `--out`; it leaves a file already
+holding the example unchanged and never overwrites anything else. `nova-version example`
+is the same verb. The report reads `go version` and reports the actual identity on your
+bench; it performs no latest-version lookup, installation or bus delivery. Output
+timestamps, paths and versions come from your run; UNKNOWN means an incomplete inventory.
 
-Then create your own six-column manifest and choose which tools to check. The examples
-in `versions.tsv` demonstrate supported source types; replace their entries and owner
-labels with your team's choices before use. `apply.tsv` is a parser-only fixture with
-fictional executable paths, not a runnable installation example. An explicit `apply`
-runs the installer your own manifest names, so review that command before choosing it.
+Then replace the example with your own six-column manifest and choose which tools to
+check. In a nova-tools checkout, `cmd/nova-update/testdata/versions.tsv` demonstrates
+the supported source types; `apply.tsv` there is a parser-only fixture with fictional
+executable paths, not a runnable installation example. An explicit `apply` runs the
+installer your own manifest names, so review that command before choosing it.
 
 [CLI.md](CLI.md#nova-update) covers optional reporting and delivery. The executable
 first-run transcripts in [TESTS.md](TESTS.md#nova-update) are checked by the command

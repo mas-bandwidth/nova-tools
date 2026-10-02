@@ -1257,13 +1257,17 @@ no user, no variable is read unless `--password-env` names it.
 ### First run
 
 ```sh
-nova-update report --file cmd/nova-update/testdata/example.tsv
+nova-update example --out versions.tsv
+nova-update report --file versions.tsv
 ```
 
-Run this from the nova-tools checkout. The executable transcript is in [TESTS.md](TESTS.md#nova-update).
+Run this with the binary alone, in any directory: `example` writes a one-tool
+manifest (Go, read with `go version` on both sides) and names the next command; the
+same file again is left unchanged, and a file holding anything else is never
+overwritten. The executable transcript is in [TESTS.md](TESTS.md#nova-update).
 The report reads only installed identities. UNKNOWN means a partial inventory; it
-never means zero or current. Use your own explicit six-column manifest for your
-bench. There is no quickstart: a manifest and any snapshot path belong to the caller.
+never means zero or current. Replace the example with your own six-column manifest
+for your bench; it and any snapshot path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
 then `--version`, then bare, all inside one `--timeout` — so our own tools, which
 answer a bare invocation with a usage refusal, are read rather than reported
@@ -1285,8 +1289,8 @@ result as one JSON object on stdout, refusals included. The first line of every 
 is the verb, its status word (`OK`, `FAIL`, `REFUSED`) and the run's counts.
 
 ```sh
-nova-update status --file cmd/nova-update/testdata/example.tsv
-nova-update apply --file cmd/nova-update/testdata/dry-run.tsv go --dry-run
+nova-update status --file versions.tsv
+nova-update apply --file versions.tsv go --dry-run
 ```
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
@@ -1407,13 +1411,17 @@ the date and `--reason`. `--dry-run` says what would be deleted and deletes noth
 ### First run
 
 ```sh
-nova-version report --file cmd/nova-version/testdata/example.tsv
+nova-version example --out versions.tsv
+nova-version report --file versions.tsv
 ```
 
-Run this from the nova-tools checkout. The executable transcript is in [TESTS.md](TESTS.md#nova-version).
+Run this with the binary alone, in any directory: `example` writes a one-tool
+manifest (Go) and names the next command; the same file again is left unchanged,
+and a file holding anything else is never overwritten. The executable transcript is
+in [TESTS.md](TESTS.md#nova-version).
 The report reads only installed identities. UNKNOWN means a partial inventory; it
-never means zero or current. Use your own explicit six-column manifest for your
-bench. There is no quickstart: a manifest and any snapshot path belong to the caller.
+never means zero or current. Replace the example with your own six-column manifest
+for your bench; it and any snapshot path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
 then `--version`, then bare, all inside one `--timeout` — so our own tools, which
 answer a bare invocation with a usage refusal, are read rather than reported

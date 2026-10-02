@@ -255,7 +255,7 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 func snapshotAdopted(file string, timeout, budget time.Duration) *tool.Out {
 	f, err := os.Open(file)
 	if err != nil {
-		return tool.Refuse(fmt.Sprintf("cannot open %s (supply a readable --file: %s)", file, manifestShape))
+		return tool.Refuse(fmt.Sprintf("cannot open %s (supply a readable --file: %s; nova-version example --out %s writes one to start from)", file, manifestShape, file))
 	}
 	entries, err := Load(f)
 	f.Close()
