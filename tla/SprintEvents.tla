@@ -24,7 +24,10 @@
 \*   wk                  a primary's live work card: its places (a set, so that
 \*                       a card dealt twice is a state OnePlace can see), gen,
 \*                       taken, untaken_replaced, and the running-time timers of
-\*                       its two card kinds, each as a field and as its due entry
+\*                       its two card kinds, each as a field and as its due entry,
+\*                       the untaken one DealtMax units long (nova-tools#5096
+\*                       item 22); and ua, a ghost: the running time since the
+\*                       first deal after its last take, kept to DealtMax
 \*   rd                  the read cards of a primary's attempt, by reader, with the
 \*                       timer of their one deadline (unbegun and unreported as one)
 \*   mi                  a stream's merge-idle timer and entry
@@ -54,7 +57,8 @@
 \*   lease, tk, vk       the lease; tick processes; verb processes
 \*
 \* TIME is relative, in units of one deadline: every timer holds what remains
-\* until it is due (1 or 0; -1 when unset). Wall advances time: running-time
+\* until it is due (1 or 0, the untaken timer DealtMax down to 0; -1 when
+\* unset). Wall advances time: running-time
 \* timers and entries move only while RUNNING, wall-time ones (cut entries,
 \* R17's fields) always. So the state stays finite however long a behaviour
 \* runs, and a deadline passing is an event with fairness.
@@ -166,6 +170,7 @@ CONSTANTS
   L1Bound,      \* the units layer 1 accepts: below StepBound, the builder counted wrong (LIMIT)
   MaxAttempts, MaxRedeals, MaxRereads,
   MaxPlaceTries, \* unplaced (H15): untaken withdrawals before "this card cannot be placed" (3 in the design)
+  DealtMax,     \* the dealt bound: units of one take deadline a card may wait dealt and never taken (3 in the design)
   GenMod,       \* generations are kept modulo GenMod
   MaxActs,      \* outside actions (verbs) in all
   MaxCrashes,   \* tick and verb crashes in all
@@ -180,6 +185,8 @@ CONSTANTS
   Scn,          \* the initial state (see Init)
   Fixes,        \* proposed repairs of the holes this model found, each off unless named (see below)
   Broken
+
+ASSUME DealtMax \in Nat /\ DealtMax >= 1
 
 VARIABLES
   col, score, fld, wk, rd, mi,
@@ -236,6 +243,13 @@ Cols == {"none", "landed", "removed"} \cup OpenCols
 Min(a, b) == IF a < b THEN a ELSE b
 Max(a, b) == IF a > b THEN a ELSE b
 Dec(x) == IF x > 0 THEN x - 1 ELSE x      \* a timer after one unit: -1 stays unset
+\* The untaken timer of a card dealt and not taken since its last take: the dealt
+\* bound, DealtMax take deadlines; its own deadline starts at its take, so a card
+\* waiting in a member's ready queue is the machine's queue (nova-tools#5096 item
+\* 22). W30: the old rule, one deadline from the deal.
+UntakenT == IF Broken = "W30" THEN 1 ELSE DealtMax
+\* ua, the untaken span's age, after one unit of running time: kept to DealtMax.
+Age(x) == IF x >= 0 THEN Min(x + 1, DealtMax) ELSE x
 S(c) == StreamOf[c]
 Range(q) == {q[i] : i \in DOMAIN q}
 Take(q, n) == IF Len(q) <= n THEN q ELSE SubSeq(q, 1, n)
@@ -522,7 +536,7 @@ JOpenAll(JS, ty, subs, ca) ==
 NoReads == [r \in Readers |-> [st |-> "none", t |-> -1, e |-> -1]]
 Retire(x) == IF x.st \in {"asked", "begun", "ok", "broken"} THEN [x EXCEPT !.st = "retired", !.t = -1] ELSE x
 NewCard(w, m) == [w EXCEPT !.pl = {<<m, "ready">>}, !.gen = (@ + 1) % GenMod, !.taken = FALSE,
-                           !.repl = FALSE, !.tu = 1, !.tf = -1, !.m0 = m]
+                           !.repl = FALSE, !.tu = UntakenT, !.ua = 0, !.tf = -1, !.m0 = m]
 
 \* H12's repair: R6's 30 s clock restarts at every deal (with unplaced,
 \* H15's repair, at a take instead: VEff); when the entry fires with work
@@ -546,7 +560,8 @@ Eff1(T, u) ==
     [] u.op = "redealw" ->
          Restart([T EXCEPT !.col[c] = "working", !.dcur = Past(MemSeq, u.m),
                            !.wk[c] = [@ EXCEPT !.pl = {<<u.m, "ready">>}, !.gen = (@ + 1) % GenMod,
-                                               !.tu = IF @ < 0 THEN 1 ELSE @, !.m0 = u.m],
+                                               !.tu = IF @ < 0 THEN UntakenT ELSE @,
+                                               !.ua = IF @ < 0 THEN 0 ELSE @, !.m0 = u.m],
                            !.J = JClose(@, "nostable", SprintS, "-")])
     [] u.op = "refuse"   -> [T EXCEPT !.fld[c].refused = TRUE, !.J = JOpen(@, "refused", CS(c), "deal")]
     [] u.op = "nomember" -> [T EXCEPT !.J = JOpen(@, "nomember", SprintS, "-")]
@@ -565,7 +580,8 @@ Eff1(T, u) ==
     [] u.op = "redeal2" ->
          LET wasW == InWorking(wk[c]) IN
          [T EXCEPT !.wk[c] = [@ EXCEPT !.pl = {<<u.m, "ready">>}, !.gen = (@ + 1) % GenMod, !.m0 = u.m,
-                                       !.tu = IF wasW THEN 1 ELSE @, !.tf = IF wasW THEN -1 ELSE @,
+                                       !.tu = IF wasW THEN UntakenT ELSE @, !.ua = IF wasW THEN 0 ELSE @,
+                                       !.tf = IF wasW THEN -1 ELSE @,
                                        !.taken = IF wasW THEN FALSE ELSE @],
                    !.fld[c].redeals = IF wasW /\ Broken # "W7b" THEN @ + 1 ELSE @]
     [] u.op = "withdraw2" ->                     \* (unplaced, H15: an untaken withdrawal counts)
@@ -574,18 +590,18 @@ Eff1(T, u) ==
              bd == nr >= MaxRedeals
              nt == IF ~wasW /\ TriesOn THEN Min(fld[c].tries + 1, MaxPlaceTries) ELSE fld[c].tries
          IN [[T EXCEPT !.wk[c] = [@ EXCEPT !.pl = {Withdrawn}, !.tf = -1, !.taken = FALSE,
-                                           !.tu = IF wasW THEN -1 ELSE @],
+                                           !.tu = IF wasW THEN -1 ELSE @, !.ua = IF wasW THEN -1 ELSE @],
                        !.col[c] = "ready", !.fld[c].redeals = nr, !.fld[c].bound = @ \/ bd,
                        !.fld[c].tries = nt,
                        !.J = IF bd THEN JOpen(@, "bound", CS(c), "redeals") ELSE @]
              EXCEPT !.J = IF PlaceOn /\ nt >= MaxPlaceTries THEN JOpen(@, "unplaced", CS(c), "-") ELSE @]
     [] u.op = "replace" ->                       \* R11, untaken: once per untaken span (W7a: without end)
          [T EXCEPT !.wk[c] = [@ EXCEPT !.pl = {<<u.m, "ready">>}, !.gen = (@ + 1) % GenMod, !.m0 = u.m,
-                                       !.repl = Broken # "W7a", !.tu = 1],
+                                       !.repl = Broken # "W7a", !.tu = UntakenT],
                    !.J = IF "judgeguard" \in Fixes THEN JClose(@, "latework", WS(c), "untaken") ELSE @]
     [] u.op = "replaceF" ->                      \* R11, unfinished: a redeal that counts (W7b: not counted)
          [T EXCEPT !.wk[c] = [@ EXCEPT !.pl = {<<u.m, "ready">>}, !.gen = (@ + 1) % GenMod, !.m0 = u.m,
-                                       !.tf = -1, !.tu = 1, !.taken = FALSE, !.repl = FALSE],
+                                       !.tf = -1, !.tu = UntakenT, !.ua = 0, !.taken = FALSE, !.repl = FALSE],
                    !.fld[c].redeals = IF Broken # "W7b" THEN @ + 1 ELSE @]
     [] u.op = "latej" -> [T EXCEPT !.J = JOpen(@, "latework", WS(c), u.x)]
     [] u.op = "needmet" ->                       \* decided on the present state, as the Lua does
@@ -919,7 +935,7 @@ WK0(p) == LET pl == Scn.wpl[p]
               w == \E x \in pl : x[2] = "working"
           IN [pl |-> pl, gen |-> 0, taken |-> w, repl |-> FALSE,
               m0 |-> IF pl = {} THEN None ELSE (CHOOSE x \in pl : TRUE)[1],
-              tu |-> IF r THEN 1 ELSE -1, eu |-> IF r THEN 1 ELSE -1,
+              tu |-> IF r THEN UntakenT ELSE -1, eu |-> IF r THEN UntakenT ELSE -1, ua |-> IF r THEN 0 ELSE -1,
               tf |-> IF w THEN 1 ELSE -1, ef |-> IF w THEN 1 ELSE -1]
 Wait0 == [n \in Cards |-> {w \in Cards : Scn.col[w] = "waiting" /\ n \in NeedsOf[w] /\ Scn.col[n] \in {"none"} \cup OpenCols}]
 
@@ -1341,7 +1357,7 @@ VGuard(v, a, sn) ==
 DropEff(T, c) ==
   IF c \in Prims
   THEN [T EXCEPT !.col[c] = "removed",
-                 !.wk[c] = [@ EXCEPT !.pl = {}, !.tu = -1, !.tf = -1, !.taken = FALSE],
+                 !.wk[c] = [@ EXCEPT !.pl = {}, !.tu = -1, !.ua = -1, !.tf = -1, !.taken = FALSE],
                  !.rd[c] = [r \in Readers |-> Retire(T.rd[c][r])],
                  !.J = JCloseSubj(@, SubjOf(c))]
   ELSE [T EXCEPT !.col[c] = "removed", !.J = JCloseSubj(@, SubjOf(c))]
@@ -1377,7 +1393,7 @@ VEff(v, a, sn) ==
                         !.next = IF AddScore[a] = -1 THEN @ + 2 ELSE @]
     [] v = "take" ->                               \* unplaced (H15): the count ends; R6's 30 s entry restarts
          [Cur EXCEPT !.wk[a] = [@ EXCEPT !.pl = {<<MemberOf(wk[a]), "working">>}, !.taken = TRUE,
-                                         !.repl = FALSE, !.tu = -1, !.tf = 1],
+                                         !.repl = FALSE, !.tu = -1, !.ua = -1, !.tf = 1],
                      !.fld[a].tries = 0,
                      !.sw = IF StableOn /\ PlaceOn THEN 1 ELSE @,
                      !.J = JClose(@, "unplaced", CS(a), "-")]
@@ -1399,7 +1415,7 @@ VEff(v, a, sn) ==
                                           !.redeals = 0, !.rereads = 0, !.result = "none", !.avoid = wk[a].m0,
                                           !.tries = 0],
                      !.col[a] = "ready",
-                     !.wk[a] = [@ EXCEPT !.pl = {}, !.tu = -1, !.tf = -1, !.taken = FALSE],
+                     !.wk[a] = [@ EXCEPT !.pl = {}, !.tu = -1, !.ua = -1, !.tf = -1, !.taken = FALSE],
                      !.rd[a] = NoReads,
                      !.J = {j \in @ : ~(j.subj = CS(a) /\ j.ty \in {"cannotask", "bound", "refused", "unplaced"})}]
     [] v = "ack" -> AckEff(a)
@@ -1571,7 +1587,8 @@ Beat(m) ==
 Wall ==
   LET rt(y) == IF running THEN Dec(y) ELSE y
       re(y) == IF running \/ Broken = "W3" THEN Dec(y) ELSE y
-      nwk == [p \in Prims |-> [wk[p] EXCEPT !.tu = rt(@), !.tf = rt(@), !.eu = re(@), !.ef = re(@)]]
+      ra(y) == IF running THEN Age(y) ELSE y
+      nwk == [p \in Prims |-> [wk[p] EXCEPT !.tu = rt(@), !.tf = rt(@), !.eu = re(@), !.ef = re(@), !.ua = ra(@)]]
       nrd == [p \in Prims |-> [r \in Readers |-> [rd[p][r] EXCEPT !.t = rt(@), !.e = re(@)]]]
       nmi == [s \in Streams |-> [mi[s] EXCEPT !.t = rt(@), !.e = re(@)]]
       nbeat == [m \in Members |-> IF m \in Steady THEN beat[m] ELSE rt(beat[m])]   \* a steady member keeps beating
@@ -1935,6 +1952,14 @@ DropComplete ==
 RedealsCounted ==
   [][\A p \in Prims : (InWorking(wk[p]) /\ ~InWorking(wk'[p]) /\ col'[p] \notin {"review", "removed"})
                       => fld'[p].redeals = Min(fld[p].redeals + 1, MaxRedeals)]_vars
+\* nova-tools#5096 item 22: a card's deadline starts at its take; dealt and never
+\* taken it is judged late only after the dealt bound, DealtMax take deadlines of
+\* running time since the first deal after its last take (ua, which no redeal,
+\* replacement or withdrawal before a take resets), never at one deadline from
+\* the deal while it waits in a member's ready queue (W30's property).
+DealtBoundHeld ==
+  [][\A p \in Prims : (~Present("latework", WS(p), "untaken") /\ Present("latework", WS(p), "untaken")')
+                      => wk[p].ua >= DealtMax]_vars
 \* H7, as the split and stopclose leave it: R17 raises only on a dry plan
 \* that still changes a card when its step applies (the claim errata 3
 \* makes for the split; without stopinputs its guard is the clock fields
