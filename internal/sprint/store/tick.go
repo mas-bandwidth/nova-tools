@@ -64,7 +64,7 @@ type KV interface {
 	// there is left alone.
 	ShowState(ctx context.Context, view, state string) error
 	// SetKeys writes records and deletes others in one atomic exchange (one
-	// MULTI/EXEC on Redis, one lock in Mem): the writes by record name and the
+	// EVAL on Redis, one lock in Mem): the writes by record name and the
 	// deletes by record name, so a friend sync's roster, job records and
 	// removed friends' beat and jobs records land together or not at all.
 	SetKeys(ctx context.Context, writes map[string]string, deletes []string) error
@@ -1281,20 +1281,52 @@ func (r *Redis) SetKey(ctx context.Context, name, value string) error {
 	return r.C.Set(ctx, r.Names.Key(name), value, 0).Err()
 }
 
-// SetKeys writes records and deletes others in one MULTI/EXEC: the writes and
-// the deletes land together, so a failed exchange leaves none of them. A
-// delete of a name that is not there is not an error.
+// setKeysScript is the Redis.SetKeys exchange, one EVAL. Lua scripts run
+// atomically, so nothing interleaves and a refusal writes nothing. It reads
+// the type of every write key and the presence of every delete key before it
+// mutates anything: a write key holding a non-string type would make SET fail
+// WRONGTYPE after the other writes had already run, so the exchange refuses
+// up front instead; a delete key is DEL'd whatever it holds, and DEL of an
+// absent key is a no-op, so a delete's presence is read but never an error.
+//
+// KEYS[1..nw] are the write keys and KEYS[nw+1..] the delete keys; ARGV[1] is
+// nw and ARGV[2..nw+1] are the write values, each beside its key.
+const setKeysScript = `
+local nw = tonumber(ARGV[1])
+for i = 1, nw do
+  local t = redis.call('TYPE', KEYS[i]).ok
+  if t ~= 'none' and t ~= 'string' then
+    return redis.error_reply('WRONGTYPE Operation against a key holding the wrong kind of value')
+  end
+end
+for i = nw + 1, #KEYS do
+  redis.call('EXISTS', KEYS[i])
+end
+for i = 1, nw do
+  redis.call('SET', KEYS[i], ARGV[i + 1])
+end
+for i = nw + 1, #KEYS do
+  redis.call('DEL', KEYS[i])
+end
+return nw
+`
+
+// SetKeys writes records and deletes others in one EVAL: the writes and the
+// deletes land together or not at all, and a write key holding a non-string
+// type refuses the whole exchange (MULTI/EXEC could not roll back a WRONGTYPE
+// on one SET). A delete of a name that is not there is not an error.
 func (r *Redis) SetKeys(ctx context.Context, writes map[string]string, deletes []string) error {
-	_, err := r.C.TxPipelined(ctx, func(p redis.Pipeliner) error {
-		for name, value := range writes {
-			p.Set(ctx, r.Names.Key(name), value, 0)
-		}
-		for _, name := range deletes {
-			p.Del(ctx, r.Names.Key(name))
-		}
-		return nil
-	})
-	return err
+	keys := make([]string, 0, len(writes)+len(deletes))
+	args := make([]interface{}, 0, len(writes)+1)
+	args = append(args, len(writes))
+	for name, value := range writes {
+		keys = append(keys, r.Names.Key(name))
+		args = append(args, value)
+	}
+	for _, name := range deletes {
+		keys = append(keys, r.Names.Key(name))
+	}
+	return r.C.Eval(ctx, setKeysScript, keys, args...).Err()
 }
 
 // SetKeyShowing writes a machine record and the view's state in one

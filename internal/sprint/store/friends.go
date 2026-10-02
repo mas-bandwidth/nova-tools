@@ -190,8 +190,8 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 	}
 	// One batched write: the roster, the changed job records and the removed
 	// friends' beat and jobs records land together or not at all (SetKeys is
-	// one MULTI/EXEC on Redis). A failed removal leaves the friend in the
-	// roster, so the next sync finds its records and Teardown knows it.
+	// one EVAL on Redis). A failed removal leaves the friend in the roster, so
+	// the next sync finds its records and Teardown knows it.
 	puts := map[string]string{}
 	var dels []string
 	if rosterChanged {
