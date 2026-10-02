@@ -214,7 +214,7 @@ func TestBatchPrintsCountsScoresAndFields(t *testing.T) {
 		`MEMBER m2 place=-->build:done score=-->2.5 member_revision=0->1 fields={}`,
 		`MEMBER m3 place=-->- score=-->- member_revision=0->0 fields={}`,
 	} {
-		assert.False(t, !strings.Contains(stdout, w+"\n") && !strings.Contains(stdout, w+" "), "stdout lacks %q:\n%s", w, stdout)
+		assert.True(t, strings.Contains(stdout, w+"\n") || strings.Contains(stdout, w+" "), "stdout lacks %q:\n%s", w, stdout)
 	}
 }
 
