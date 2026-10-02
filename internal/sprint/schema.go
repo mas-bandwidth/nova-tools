@@ -43,8 +43,7 @@ const (
 	Stuck    = "stuck"
 	CI       = "ci"
 	StateCol = "state"
-	// Cost is the work table's last column (the owner, 2026-10-01: "add a final
-	// column to the work stream table, which is "cost""): a stream's cell is the sum
+	// Cost is the work table's last column: a stream's cell is the sum
 	// of its landed cards' totals, kept on the stream's control card (FieldCost) and
 	// mirrored as the row's text; the footer is the sum over the streams.
 	Cost     = "cost"
@@ -117,7 +116,7 @@ func (n Names) EpochKey() string { return n.Key("epoch") }
 // KeyAt is a sprint key of one epoch: the key itself at epoch 0, with the
 // epoch after it at a later one. The sprint's own keys (the fence, the
 // notifications, the judgments, the cursor, the operation records) are per
-// epoch, so an epoch's inbox is its own and the old one stays readable.
+// epoch, so an epoch's inbox is its own and an earlier one stays readable.
 func (n Names) KeyAt(name string, epoch uint64) string {
 	if epoch == 0 {
 		return n.Key(name)
