@@ -131,7 +131,7 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	for _, w := range []string{
 		`ExecStart="` + home + `/.local/bin/nova-secrets" "exec" "--store" "` + home + `/nova-bench/secrets" "--as" "seat-local"`,
 		`Environment="NOVA_SPRINT_REDIS=localhost:6380"`,
-		`"--only" "API_KEY,NOVA_REDIS_BENCH_PASSWORD" "--require=API_KEY" "--require=NOVA_REDIS_BENCH_PASSWORD" "--" "/usr/bin/env" "NOVA_SPRINT_REDIS_USER=bench" "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD" "` + home + `/.local/bin/nova-swarm" "member"`,
+		`"--only" "API_KEY,NOVA_REDIS_BENCH_PASSWORD" "--require=API_KEY" "--require=NOVA_REDIS_BENCH_PASSWORD" "--" "/usr/bin/env" "NOVA_SPRINT_REDIS_USER=bench" "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD" "nova-swarm" "member"`,
 		`ExecStart="` + home + `/bin/tick" "--once" "50%%"`,
 		"Type=oneshot",
 		"OnUnitActiveSec=30",
@@ -241,7 +241,9 @@ func TestDeployerPlaysCheckOnTheFixture(t *testing.T) {
 func TestToolsPlayRefusesAnEmptyFleetDSN(t *testing.T) {
 	t.Parallel()
 	r := newFleetPlayRig(t, "deployer-fixture.yml")
-	out, err := r.playResult(t, "tools.yml", "--check", "--limit", "store_deployer", "-e", "nova_pg_dsn=")
+	out, err := r.playResult(t, "tools.yml", "--check", "--limit", "store_deployer", "-e", "nova_pg_dsn=",
+		"-e", "nova_home="+r.home, "-e", "nova_version=v0.0.0-check",
+		"-e", "nova_source="+r.root, "-e", "nova_release_out="+filepath.Join(r.dir, "release"))
 	require.Error(t, err)
 	assert.Contains(t, out, "the applied fleet row needs redis_port and pg_dsn")
 	assert.Contains(t, out, "nova-config migrate")
