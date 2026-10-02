@@ -4,9 +4,9 @@ package swarm
 // ownership.
 //
 // The bench's hygiene pass has to decide, hourly, which job directories are finished work
-// and which are a card still doing its job. It decides by SILENCE -- no new bytes in
-// harness-output.log for fifteen minutes -- and a card in one long model call or one long
-// compile is silent and working. That heuristic deletes <slot>/data and
+// and which are a card still doing its job. Deciding by SILENCE -- no new bytes in
+// harness-output.log for fifteen minutes -- is wrong, because a card in one long model call
+// or one long compile is silent and working; that heuristic once deleted <slot>/data and
 // <slot>/tmp, a running card's HOME and TMPDIR, out from under two certify passes.
 //
 // A launcher knows what a heuristic can only guess, so it says so on disk: `nova-swarm
