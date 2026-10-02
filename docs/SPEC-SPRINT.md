@@ -93,12 +93,17 @@ the people and no coordinator (`where --json` carries them; `check`, `inbox` and
 `goal show` say the same in their own words). The merge table has no `since`
 column. Every table is shown, with its header, empty or not, and every
 stream row is shown in the work table, at zero when it has no cards, with its
-footer. A row's first cell is its identity. The readers table is one row, `all`,
+footer; a table with no row shows its header, the one rule under it and its
+footer, with no second rule (the owner, 2026-10-02: "when the work stream table
+is empty, please just show the summary row"). A row's first cell is its
+identity. The readers table is one row, its first cell blank (the owner,
+2026-10-02: "please remove 'all'"),
 whose four cells are the sums over every reader (readers away or down counted
 too), and it has no footer, which would say the same thing twice (the owner,
 2026-10-01: "If you raise reader widths, I would like you to change the table to
 just be one row, sum of all"; "i don't reallllly need to see all readers, i just
-need to see reader *progress* overall got it?"). The merge table is one row, `all`,
+need to see reader *progress* overall got it?"). The merge table is one row, its
+first cell blank,
 the same way (the owner, 2026-10-01, about 21:00 ET: "Can we please (for next
 sprint) do the same for merge"): queued, merged and stuck are the sums over every
 stream; ci and state, which do not add up, show the value across the streams that
