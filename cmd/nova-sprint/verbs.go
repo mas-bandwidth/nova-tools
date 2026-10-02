@@ -79,8 +79,8 @@ func init() {
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
-		{"ack", "<note>... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
-		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
+		{"ack", "<note>[,<note>]... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
+		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir>]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
 		{"card", "<id>", "card s1-4", (*app).cmdCard},
 		{"log", "[--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]", "log --card s1-4", (*app).cmdLog},
 		{"check", "", "check", (*app).cmdCheck},
@@ -2192,6 +2192,20 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// splitCommas is the words with each comma list among them split into its
+// items: ack takes the ack line inbox prints, whose notes are joined by commas.
+func splitCommas(words []string) []string {
+	var out []string
+	for _, w := range words {
+		for _, item := range strings.Split(w, ",") {
+			if item != "" {
+				out = append(out, item)
+			}
+		}
+	}
+	return out
+}
+
 func (a *app) cmdAck(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("ack")
 	reason := fs.String("reason", "", "why nothing is to be done")
@@ -2199,6 +2213,7 @@ func (a *app) cmdAck(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "ack", err.Error())
 	}
+	notes = splitCommas(notes) // the ack line inbox prints joins a group's notes with commas
 	if len(notes) == 0 || *reason == "" {
 		return refuse(stderr, "ack", "wants notification ids and --reason <text>")
 	}

@@ -48,7 +48,9 @@ words:
   DECIDED      an inbox note recording a judgment's answer: what was decided, by whom
   group        one inbox line: the notes of one type, stream and cause, named by its oldest note's id
   cursor       the coordinator's place in the notes; inbox --read moves it; it bounds HAPPENED and
-               DECIDED lines, never the open judgments
+               DECIDED lines, never the open judgments; inbox --wait wakes for a judgment or a note
+               to the coordinator that was not there when it began, and --push <dir> writes each
+               once as <dir>/<note id>.md, the files there being its cursor
   deal         the tick placing a ready primary's work card on an up member below twice its width
   level        moving cards dealt and not taken from a member that cannot start them to one with
                free lanes; asked reads are levelled across the readers up the same way
