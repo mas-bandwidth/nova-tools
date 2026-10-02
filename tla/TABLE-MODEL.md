@@ -1,6 +1,6 @@
 # nova-table: current implementation model and counterexamples
 
-Source: `internal/nsprint/fn/lua/table.lua` (`f77458853af46fdbbafd6881a4b46006431f266f`), with the public-call shape in `internal/ntable/store.go`. The coordinator spec defines a table as a dimension and placement as one cell per member **per table**.
+The table implementation is in `internal/nsprint/fn/lua/table.lua`, with the public-call shape in `internal/ntable/store.go`. The coordinator spec defines a table as a dimension and placement as one cell per member **per table**.
 
 **Disposition: the desired ONE PLACE and lossless-bind contract is not implemented.** The model intentionally contains the current behavior. Passing the narrower current-contract suite is not approval of the desired foundation. The default `strict` runner fails on an outstanding invariant; `witnesses` verifies that each named known failure remains reproducible. No assumed repair has been inserted into the model.
 
@@ -67,7 +67,7 @@ go run ./tools/tlacheck witnesses /tmp/table-f7745885.lua
 
 `all` means current-contract checks plus **five expected failures and one allowed cross-table scope control**, not all desired invariants passing. The entire TLC runner has a 120-second budget, including all cases; timeout is a failure, not success or an inconclusive green. `strict` is expected to fail today: exit 1, with a `TABLE FAIL` line naming the first finding the table code still has. A newly missing or changed counterexample fails witness mode so a repair requires updating the model and its disposition. Do not install the positive-only suite as proof that ONE PLACE is solved. CI integration into nova-tools is still owed with the implementation repair and its cross-repository source pin.
 
-The larger three-call check generates 11,230,481 states, finds 693,619 distinct states, and exhausts its queue in about 32 seconds; the smaller fixed-point run generates 49,752 states, finds 1,157 distinct states and exhausts its queue in under a second. Five expected counterexamples, the cross-table scope control and both positive configurations finish together in about 40 seconds. These are bounded-instance results and machine-specific timings. Retained raw logs are the evidence; counts should be refreshed when semantics or configurations change.
+Recorded runs of the larger three-call check report 11,230,481 generated states, 693,619 distinct states, and queue exhaustion in about 32 seconds; the smaller fixed-point run reports 49,752 generated states, 1,157 distinct states and queue exhaustion in under a second. Recorded runs of five expected counterexamples, the cross-table scope control and both positive configurations finish together in about 40 seconds. These are bounded-instance results and recorded timings, not guarantees. Retained raw logs are the evidence; counts should be refreshed when semantics or configurations change.
 
 ## Required next decisions and gates
 
@@ -77,4 +77,4 @@ The larger three-call check generates 11,230,481 states, finds 693,619 distinct 
 4. Write abstraction mappings to the rebased CardMachine and later backend, explicitly marking any assumed repairs. Model external work as start/progress/completion/timeout steps, not one Redis transition.
 5. Keep runtime corruption checks and functional atomic-refusal tests alongside model checking and future committed trace validation.
 
-This revision is prepared for independent review. It changes no live store, ACL, fleet process, existing CardMachine model, or coordinator spec.
+The model changes no live store, ACL, fleet process, existing CardMachine model, or coordinator spec.
