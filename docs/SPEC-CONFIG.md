@@ -200,7 +200,6 @@ facts.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
-| `reader_tier` | enum: flash, pro (default pro) | | the ask: the tier a read card's route is drawn from, at that tier's rolling index as a work card's is (internal/sprint/route.go, readRouteOf), so a reader loop needs no `--model` | `sprint:reader_tier` |
 
 **`loop`** (`config.loops`): a supervised process on one machine. Every
 value is data in the row: the code names no machine, seat, secret or
@@ -312,7 +311,8 @@ config.fleet             (name PK = 'fleet', store -> machines.name,
 config.friends           (name PK, slots, tiers, roles, created_at, updated_at)
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           created_at, updated_at; the one row inserted by
-                          the migration)
+                          the migration; reader_tier added by 0010, dropped
+                          by 0011)
 config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every, keepalive boolean, width, enabled boolean,
                           created_at, updated_at; CHECK exactly one of
@@ -428,7 +428,7 @@ registry member, the desired and roles hashes are removed in one
 transaction, with a `config-remove` receipt in `cap:log`; her beat, logins
 and wake path stay, they are hers.
 
-**sprint:** a plain `SET sprint:<field>` for each field (`sprint:coordinator <friend>`, `sprint:reader_tier <tier>`), `DEL` when empty.
+**sprint:** a plain `SET sprint:<field>` for each field (`sprint:coordinator <friend>`), `DEL` when empty.
 Never removed. The handover is `nova-config sprint set --coordinator
 stella --as rowan` then `apply`: the sprint kind's own revision moves and
 the friend kind's plan is two `SET ... changed=roles`, stella's first.
@@ -446,7 +446,7 @@ and `at`, written whole in one transaction with the name added to the set
 `routes`; this is the view the deal reads. It reads, writes and removes as
 a loop does (one code path, `hashKinds`), with no derived field.
 
-`machine:<m>`, `machines`, `fleet:*`, `sprint:coordinator`, `sprint:reader_tier`, `loop:<l>`,
+`machine:<m>`, `machines`, `fleet:*`, `sprint:coordinator`, `loop:<l>`,
 `loops`, `route:<r>` and `routes` are nova-config's own keys: no function in
 the library reads or writes them.
 
