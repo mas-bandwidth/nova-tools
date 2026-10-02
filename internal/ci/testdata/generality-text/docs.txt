@@ -43,12 +43,12 @@ docs/SPEC-SECRETS.md:space 9
 docs/SPEC-SECRETS.md:stella 1
 docs/SPEC-SECRETS.md:studio 1
 docs/SPEC-SWARM.md:space 4
-docs/SPEC-TOKENS.md:emma 13
+docs/SPEC-TOKENS.md:emma 12
 docs/SPEC-TOKENS.md:freddy 2
 docs/SPEC-TOKENS.md:glenn 2
-docs/SPEC-TOKENS.md:johnny 2
+docs/SPEC-TOKENS.md:johnny 1
 docs/SPEC-TOKENS.md:space 2
-docs/SPEC-TOKENS.md:stella 2
+docs/SPEC-TOKENS.md:stella 1
 docs/SPEC-UPDATE.md:freddy 1
 docs/SPEC-UPDATE.md:glenn 1
 docs/SPEC-UPDATE.md:johnny 1
