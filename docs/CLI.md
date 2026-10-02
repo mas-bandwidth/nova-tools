@@ -1344,8 +1344,11 @@ and the same binaries answering for themselves on every bench in the fleet. Five
 can refuse. The gates are in [docs/SPEC-RELEASE.md](SPEC-RELEASE.md) and the verbs in
 [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
+These cut and build examples run from the tools checkout. `./dogfood` names the directory holding
+the recorded use receipts; replace it with the directory holding your records.
+
 ```sh
-nova-update release cut --repo mas-bandwidth/nova-tools --from main --version v0.17.0 --changelog ./CHANGELOG.md --sums ./release/v0.17.0/linux-amd64/SHA256SUMS
+nova-update release cut --repo mas-bandwidth/nova-tools --from main --version v0.17.0 --changelog ./CHANGELOG.md --sums ./release/v0.17.0/linux-amd64/SHA256SUMS --receipts ./dogfood
 ```
 
 `cut` refuses a commit whose checks are not green, refuses a version that is already a tag, writes the
@@ -1362,14 +1365,16 @@ past it: classify from a complete local list instead, with `--local-diff <checko
 (`git diff --name-only <previous>...<head>`) and `--paths-from <file>` to write it or read it back.
 `--dry-run` decides and prints and writes nothing.
 
-**With both inputs available, `cut` and `build` first run the dogfood gate.** It is `nova-check dogfood gate --cli
+**With a resolved command reference, `cut` and `build` require receipts or a reasoned waiver before forge reads or compilation.**
+With both inputs available, they run `nova-check dogfood gate --cli
 <reference> --receipts <dir>` in process: a verb somebody ran that did not do what they needed, and
 that nobody has run since and said it did, is an **open edge**, and an open edge refuses —
 `RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or --no-dogfood-gate
 --reason <why>"`. `--cli` defaults to `docs/CLI.md` beside the checkout the verb was already given
 (`--changelog` for `cut`, `--source` for `build`), when that reference exists.
-`--receipts` has no default. If no reference is resolved or no receipts directory is
-named, the release continues with `dogfood-gate=skipped`; that is not a passed gate.
+`--receipts` has no default. When a reference resolves, omitting `--receipts` refuses and names
+`--receipts <dir>` or `--no-dogfood-gate --reason <why>` as the remedy. If no reference resolves,
+the release continues with `dogfood-gate=skipped`; that is not a passed gate.
 The gate checks reported open edges, not whether every verb has a receipt.
 It judges the **shipped set** only: the tools under the checkout's `cmd/`. A receipt
 naming any other tool is set aside and counted on `RELEASE CUT NOTE dogfood-gate shipped=<n>
@@ -1380,7 +1385,7 @@ tested, dogfooded by a non-author on real work, and the feedback is applied — 
 [SPEC-RELEASE.md](SPEC-RELEASE.md) §12.
 
 ```sh
-nova-update release build --version v0.17.0 --out ./release --source . --platform linux-amd64 --platform darwin-arm64,darwin-amd64
+nova-update release build --version v0.17.0 --out ./release --source . --platform linux-amd64 --platform darwin-arm64,darwin-amd64 --receipts ./dogfood
 ```
 
 `build` compiles every `cmd/nova-*` for every platform named — `--platform` is repeatable **and**
@@ -1423,7 +1428,7 @@ and standard named by `--certify`, `--certs`, and `--standard`. `--no-certify` e
 certification and is reported in the output.
 
 ```sh
-nova-update release build --version v0.17.0 --out ./release --source . --platform windows-amd64
+nova-update release build --version v0.17.0 --out ./release --source . --platform windows-amd64 --receipts ./dogfood
 nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from ./release --bin 'C:\Users\nova\.local\bin' --dest 'C:\Users\nova\nova-release' --platform windows-amd64 --certify ./registry.tsv --certs ./certs.tsv --standard ./docs/STANDARD.md
 ```
 

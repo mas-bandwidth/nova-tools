@@ -4,9 +4,10 @@ package release
 // An open edge is a reported failure with no later successful use closing it.
 // Filing feedback alone does not close the edge.
 //
-// When both inputs are available, cut and build run the gate before forge
-// reads or compilation. Missing inputs skip it; an explicit waiver requires
-// a reason. Those outcomes are recorded separately from a passed gate.
+// A resolved command reference requires explicit receipts before cut reads
+// the forge or build asks the toolchain, unless a reasoned waiver was given.
+// Without a resolved reference, the gate is skipped. A skip and a waiver are
+// recorded separately from a passed gate.
 // ReadDogfood uses the same parser and judgment as nova-check dogfood gate,
 // in process, without starting a shell.
 
@@ -41,14 +42,15 @@ const DogfoodRemedy = "fix the open edges or " + DogfoodWaiveFlag + " " + Dogfoo
 const DogfoodWaiverPrefix = "Dogfood gate waived: "
 
 // DogfoodNote explains the gate's inputs and its distinct pass, skip and waiver outcomes.
-var DogfoodNote = "cut and build check dogfood receipts before forge reads or compilation when both inputs are available.\n" +
+var DogfoodNote = "cut and build check dogfood inputs before forge reads or compilation.\n" +
 	"The gate refuses an open edge: a reported failure with no later successful use closing it.\n" +
 	"It checks reported failures; it does not require a receipt for every verb.\n\n" +
 	"--cli names the command reference. If omitted, an existing docs/CLI.md is read from\n" +
 	"the checkout named by --changelog (cut) or --source (build).\n" +
 	"--receipts names the receipts directory; there is no default.\n" +
-	"If no reference is resolved or no receipts directory is named, the release continues\n" +
-	"with dogfood-gate=skipped and a note naming the missing input. Skipped does not mean passed.\n\n" +
+	"When a command reference resolves, --receipts is required unless the gate is waived with a reason.\n" +
+	"If no reference resolves, the release continues with dogfood-gate=skipped and a note\n" +
+	"naming the missing reference. Skipped does not mean passed.\n\n" +
 	"To proceed despite an open edge, fix it or use " + DogfoodWaiveFlag + " " + DogfoodReasonFlag + " <why>.\n" +
 	"The waiver appears in the release output and, for cut, in the CHANGELOG section."
 
@@ -57,7 +59,7 @@ var DogfoodNote = "cut and build check dogfood receipts before forge reads or co
 // apart in what they will accept.
 func addDogfoodFlags(f *flag.FlagSet, o *options, cliDefault string) {
 	f.StringVar(&o.cli, "cli", "", "the command reference the dogfood gate reads its verbs from (default: "+cliDefault+")")
-	f.StringVar(&o.receipts, "receipts", "", "the dogfood receipts directory; without it the gate is skipped and the line says so")
+	f.StringVar(&o.receipts, "receipts", "", "the dogfood receipts directory; required when a command reference resolves, unless "+DogfoodWaiveFlag+" "+DogfoodReasonFlag+" <why> waives the gate")
 	f.BoolVar(&o.noDogfood, "no-dogfood-gate", false, "waive the dogfood gate; "+DogfoodReasonFlag+" <why> is then required")
 	f.StringVar(&o.reason, "reason", "", "why the gate was waived; it goes on the line and into the changelog")
 }
@@ -169,7 +171,8 @@ func exists(path string) bool {
 // dogfoodCheck is the gate as `cut` and `build` run it. It answers the token
 // the receipt line carries -- ok, waived or skipped -- and an error, which is
 // either an ordinary refusal or errDogfood for the one whose line is already
-// written.
+// written. A resolved reference with no receipts refuses before either verb
+// reaches its forge or toolchain; the reasoned waiver is checked first.
 func dogfoodCheck(token string, o options, deps Deps, checkout string, out, errs io.Writer) (string, error) {
 	if o.noDogfood {
 		// An explicit waiver must record why it was requested.
@@ -184,10 +187,14 @@ func dogfoodCheck(token string, o options, deps Deps, checkout string, out, errs
 		return "waived", nil
 	}
 	cli, receipts, cmd := dogfoodPaths(o, checkout)
+	if cli != "" && receipts == "" {
+		return "", refuse("name the receipts directory with --receipts <dir>, or waive the gate with "+DogfoodWaiveFlag+" "+DogfoodReasonFlag+" <why>",
+			"the command reference %s resolved, but no receipts directory was named", cli)
+	}
 	if cli == "" || receipts == "" {
-		// NAMED, NEVER SILENT. The gate could not run, which is not the same
-		// as the gate passing, and the line says which of the two inputs was
-		// missing so the remedy is one flag rather than a guess.
+		// Without a reference the existing skip remains named; it does not
+		// claim the gate passed. The guard above refuses missing receipts
+		// whenever a reference resolved.
 		fmt.Fprintf(errs, "RELEASE %s NOTE dogfood-gate=skipped cli=%s receipts=%s remedy=%q\n",
 			token, field(cli), field(receipts),
 			"name both with --cli <file> and --receipts <dir> so the definition of done is checked before the release")

@@ -372,8 +372,8 @@ The definition of done requires tests, real-work use by a non-author, and the fe
 The release gate checks one part of that claim: reported failures in the receipts. It does not
 require a receipt for every verb or establish that the whole definition of done has been met.
 
-**With both inputs available, `cut` and `build` run the gate before forge reads or compilation.**
-They call `internal/dogfood.Gate` in process, using the same check as
+**With a resolved command reference, `cut` and `build` require receipts or a reasoned waiver before forge reads or compilation.**
+With both inputs available, they call `internal/dogfood.Gate` in process, using the same check as
 `nova-check dogfood gate --cli <reference> --receipts <dir>`.
 
 **An open edge refuses.** An open edge is a verb somebody ran, that did not do what they needed, and
@@ -408,9 +408,12 @@ cannot be read refuses naming its path: an I/O error is not a tool outside the r
 
 **The two inputs.** `--cli` names the command reference. If omitted, an existing `docs/CLI.md` beside
 the given checkout is used (`--changelog` for `cut`, `--source` for `build`). `--receipts` names the
-receipts directory and has no default (SPEC-UPDATE rule 1: no path is guessed). If no reference is
-resolved or no receipts directory is named, the release continues and prints
-`RELEASE CUT NOTE dogfood-gate=skipped …` (or `RELEASE BUILD NOTE …`), naming the missing input.
+receipts directory and has no default (SPEC-UPDATE rule 1: no path is guessed). When a reference
+resolves but no receipts directory is named, the verb refuses with exit 2 before any forge or
+toolchain call and before changing files. The remedy names `--receipts <dir>` or
+`--no-dogfood-gate --reason <why>`. An explicit waiver is checked first and still requires a reason.
+If no reference resolves, the release continues and prints
+`RELEASE CUT NOTE dogfood-gate=skipped …` (or `RELEASE BUILD NOTE …`), naming the missing reference.
 Skipped does not mean passed. Once both inputs resolve, a read failure produces an error.
 
 **The waiver is work, and it outlives the terminal.** `--no-dogfood-gate` without `--reason <why>`
@@ -422,6 +425,7 @@ is a gate nobody has. The `RELEASE CUT` and `RELEASE BUILD OK` receipts carry
 
 *Tests: `TestCutRefusesOnAnOpenEdgeBeforeItAsksTheForgeAnything`,
 `TestBuildRefusesOnAnOpenEdgeBeforeItCompilesAnything`,
+`TestReleaseRequiresReceiptsForAResolvedReference`, `TestTheReceiptsDirectoryHasNoDefault`,
 `TestCutWaivesTheGateOnlyWithAReasonAndRecordsItEverywhere`, `TestCutNamesASkippedGate`,
 `TestCutFindsTheReferenceBesideTheChangelog`, `TestTheRefusalIsBounded`, `TestTheGateIsASeam`,
 `TestTheDogfoodGateIsInTheReleaseSpec`, `TestCutJudgesOnlyTheToolsUnderCmd`,

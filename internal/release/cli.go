@@ -60,8 +60,9 @@ type Deps struct {
 	// Git is the local checkout `cut --local-diff` reads the complete path
 	// list out of when the forge's compare is at its ceiling.
 	Git Git
-	// Dogfood checks release receipts when its inputs are available. A nil value
-	// uses ReadDogfood, which reads the reference and receipts from disk.
+	// Dogfood checks release receipts after input and waiver preflight. A
+	// resolved reference requires receipts unless a reasoned waiver was given;
+	// no resolved reference skips the gate. A nil value uses ReadDogfood.
 	Dogfood Dogfood
 	Now     func() time.Time
 	// Self answers what the nova-update RUNNING THIS is stamped with. It is a

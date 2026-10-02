@@ -555,8 +555,9 @@ func TestTheGateRefusesAToolDirectoryItCannotRead(t *testing.T) {
 
 // The gate's receipts come from --receipts alone: no path under the home
 // directory of whoever runs the cut stands in for the flag (SPEC-UPDATE rule 1),
-// so two machines running one command mean one thing. Without --receipts the
-// flag's help says the gate is skipped, and the paths resolve to no receipts.
+// so two machines running one command mean one thing. The paths resolve to no
+// receipts without the flag; with a reference, the help requires that input
+// or a reasoned waiver and the command-level witness pins the refusal.
 func TestTheReceiptsDirectoryHasNoDefault(t *testing.T) {
 	t.Parallel()
 	checkout := t.TempDir()
@@ -567,6 +568,9 @@ func TestTheReceiptsDirectoryHasNoDefault(t *testing.T) {
 	usage := f.Lookup("receipts").Usage
 	assert.NotContains(t, usage, "default", "--receipts names a default directory")
 	assert.NotContains(t, usage, "~/", "--receipts names a home path")
+	assert.NotContains(t, usage, "skipped", "missing receipts must not promise a skip")
+	assert.Contains(t, usage, "required when a command reference resolves")
+	assert.Contains(t, usage, "--no-dogfood-gate --reason <why>")
 	assert.NotContains(t, DogfoodNote, "~/", "the gate's help names a home path")
 	cli, receipts, _ := dogfoodPaths(options{}, checkout)
 	assert.NotEmpty(t, cli, "the reference beside the checkout was not found")
