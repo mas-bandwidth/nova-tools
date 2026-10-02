@@ -1,8 +1,8 @@
 roles: services
 expect: ^LOKI OK
 
-# Local, over ssh: the services host answers for itself. A fleet nobody could see looked
-# healthy on 2026-09-17 because nothing ever asked Loki whether it was ready.
+# The services host answers for itself over ssh. This check asks the local Loki
+# whether it reports ready.
 set -eu
 PORT="${NOVA_LOKI_PORT:-3100}"
 CURL=$(command -v curl 2>/dev/null || true)
