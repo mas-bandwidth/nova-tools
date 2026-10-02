@@ -47,11 +47,10 @@ const waitDelay = 2 * time.Second
 // inputs) is a json_extract, and the answers come back as `sqlite3 -json` prints them:
 // a JSON array of row objects keyed by the SELECT's own aliases. Bare columns were
 // `no such column: providerID`, one TOKENS UNREADABLE, and every OpenCode row of the day
-// lost (measured 2026-09-11, folding the day beside the prototype). Every extracted column
-// must be given the SELECT's own alias.
+// lost. Every extracted column must be given the SELECT's own alias.
 //
 // `time_created` is epoch MILLISECONDS; strftime renders it as the RFC 3339 UTC stamp
-// rule 17 folds by, so the day is the message's own stamp and never the bench's clock.
+// the fold uses, so the day is the message's own stamp and never the bench's clock.
 // -json rather than -tabs because a tool part's `command` input holds tabs and newlines,
 // and a row that splits on the data inside it is a row read wrong.
 const (
@@ -228,7 +227,7 @@ func query(db, sql string, timeout time.Duration) ([]map[string]string, error) {
 }
 
 // cellText renders one JSON cell as text. SQL NULL is the empty string, which is a column
-// the row does not carry: a dash in the day file and never a zero (rule 15).
+// the row does not carry: a dash in the day file and never a zero.
 func cellText(v any) string {
 	switch t := v.(type) {
 	case nil:

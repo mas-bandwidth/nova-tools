@@ -188,11 +188,11 @@ func Shrinks(old, now Counts, day string) []Shrink {
 //
 // A fold declares SOURCES, and a day file's rows each name the sources that wrote them.
 // A run that declares one source and recomputes the file whole ERASES every row the other
-// sources wrote, and rule 10 cannot see it: the shrink comparison is over the day's per-type
+// sources wrote, and the shrink comparison cannot see it: it is over the day's per-type
 // TOTALS, so a run whose own numbers are bigger than what it deleted writes a smaller file
-// with a bigger total and says written=true. Measured at tip, 2026-09-14: a day holding
-// `claude-x 410` folded with only `--swarm freddy=<pool>` (mercury-2.5, 2000) came back
-// holding the mercury row alone, exit 0, no TOKENS SHRANK.
+// with a bigger total and says written=true. A day holding a retained row with a small
+// count, folded by a run whose own row carries a larger count, comes back holding the
+// run's row alone, exit 0, no TOKENS SHRANK.
 //
 // So the fold merges by source instead. This run's rows replace the rows its own sources
 // wrote; a row no declared source wrote is kept exactly as it is; and the two rows that
@@ -263,7 +263,7 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 		case in > 0:
 			// replaced: this run recomputed every source that wrote it. A (model, repo)
 			// this run no longer reports at all is a row that drops out of the merged
-			// file. If overall day totals fall or become unknown, rule 10 catches the
+			// file. If overall day totals fall or become unknown, the shrink comparison catches the
 			// shrink; but if another declared source rises by more than this row's
 			// totals, day-total comparison cannot see the per-source quiet shrink
 			// (preserved as follow-up).
@@ -336,7 +336,7 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 			f = append(f, Finding{Line: 1, Reason: "the version line carries no `" + want + "=`; it wants " + Version + " day=… at=… build=… turns=<n or -> sources=…"})
 		}
 	}
-	// Rule 13: "the version line carries `turns=` as an integer or `-`". An EMPTY value is
+	// The version line carries `turns=` as an integer or `-`. An EMPTY value is
 	// present but says nothing, and a NEGATIVE one is not a count of messages; both read
 	// clean when the check was only `!= "" && != Dash`.
 	if _, ok := fields["turns"]; ok && d.Turns != Dash {

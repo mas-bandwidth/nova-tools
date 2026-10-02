@@ -1,9 +1,8 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 8
+# ceiling: 7
 internal/tokens/bus.go:emma 2
 internal/tokens/bus.go:space 1
 internal/tokens/claude_session.go:glenn 1
-internal/tokens/dayfile.go:freddy 1
 internal/tokens/provider.go:space 1
 internal/tokens/repo.go:freddy 1
 internal/tokens/repo.go:glenn 2
