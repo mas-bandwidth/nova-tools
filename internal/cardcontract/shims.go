@@ -148,7 +148,9 @@ exit 2
 // `nothing:` says there is nothing to do), pr review finishes a read, pr diff/view/checks
 // answer from the staged checkout, and everything else is refused: the wall holds no forge
 // credential and no network. The finish is recorded in <job>/.sprint/finish.md, which the
-// child is never told to write.
+// child is never told to write. The record's report is the body's own report: line when it
+// has one (a read that hands its RESULT.md over as the body), else its first line: a body
+// that begins head: <sha> would otherwise give the inbox a commit id for the finding.
 const ghClaude = `nova_here() { if "$NOVA_GIT" rev-parse --git-dir >/dev/null 2>&1; then "$NOVA_GIT" "$@"; else "$NOVA_GIT" -C "$NOVA_STAGED" "$@"; fi; }
 nova_refuse() { echo "gh: REFUSED $1: the wall holds no GitHub credential and no network; this card's change is in the staged checkout (gh pr diff, gh pr view) and the sprint opens its pull request when it finishes" >&2; exit 2; }
 nova_need() { [ "$1" -ge 2 ] || { echo "gh: flag needs an argument: $2" >&2; exit 1; }; }
@@ -156,7 +158,7 @@ nova_base() { if [ -n "$NOVA_START" ]; then echo "$NOVA_START"; elif "$NOVA_GIT"
 nova_result() {
 	nova_h=$(nova_here rev-parse HEAD 2>/dev/null)
 	nova_br=$(nova_here symbolic-ref -q --short HEAD 2>/dev/null); [ -n "$nova_br" ] || nova_br="$NOVA_BRANCH"
-	nova_rep=$(printf '%s\n' "$2" | awk 'NF { print; exit }')
+	nova_rep=$(printf '%s\n' "$2" | awk '!r && /^[ \t]*report:/ { r = $0; sub(/^[ \t]*report:[ \t]*/, "", r) } NF && f == "" { f = $0 } END { print (r != "" ? r : f) }')
 	[ -n "$nova_rep" ] || nova_rep="$1"
 	{
 		printf 'head: %s\nbranch: %s\nverdict: %s\ngate: -\noutput: -\nreport: %s\n' "${nova_h:--}" "$nova_br" "$1" "$nova_rep"
