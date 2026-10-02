@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
@@ -33,9 +36,7 @@ func newSittingHome(t *testing.T) sittingHome {
 	home := t.TempDir()
 	h := sittingHome{bin: buildNovaSecrets(t), home: home, sops: filepath.Join(home, "fake-sops"), ageKeygen: writeFakeAgeKeygen(t), bo: agePub('q')}
 	fakeBin := filepath.Join(home, "fakebin")
-	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(fakeBin, 0o755))
 	// gh says it ran and whether the token reached it; ssh swallows the value it is handed.
 	writeFakeExe(t, filepath.Join(fakeBin, "gh"), "#!/bin/sh\necho \"gh $* token=${GH_TOKEN:+set}\"\n")
 	writeFakeExe(t, filepath.Join(fakeBin, "ssh"), "#!/bin/sh\ncat >/dev/null\nexit 0\n")
@@ -45,9 +46,7 @@ func newSittingHome(t *testing.T) sittingHome {
 
 	ada, recovery := agePub('p'), agePub('z')
 	store := filepath.Join(home, "secrets")
-	if err := os.MkdirAll(store, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(store, 0o755))
 	initGitStore(t, store)
 	for name, body := range map[string]string{
 		"recovery.pub": recovery + "\n",
@@ -55,21 +54,13 @@ func newSittingHome(t *testing.T) sittingHome {
 		"ada.yaml": "GH_TOKEN: ENC[AES256_GCM,data:x,iv:a,tag:b,type:str]\nDEEPSEEK_API_KEY: ENC[AES256_GCM,data:y,iv:a,tag:b,type:str]\n" +
 			"NOVA_REDIS_BENCH_PASSWORD: ENC[AES256_GCM,data:z,iv:a,tag:b,type:str]\nsops:\n    age:\n        - recipient: " + ada + "\n        - recipient: " + recovery + "\n",
 	} {
-		if err := os.WriteFile(filepath.Join(store, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(store, name), []byte(body), 0o644))
 	}
 	commitAndPush(t, store)
 	keyDir := filepath.Join(home, ".config", "nova-secrets")
-	if err := os.MkdirAll(keyDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(keyDir, "ada.key"), []byte("AGE-SECRET-KEY-FAKE\n# public key: "+ada+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "fleet.tsv"), []byte("bench-a\tbench-a.example\t/home/bench\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(keyDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(keyDir, "ada.key"), []byte("AGE-SECRET-KEY-FAKE\n# public key: "+ada+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "fleet.tsv"), []byte("bench-a\tbench-a.example\t/home/bench\n"), 0o644))
 	return h
 }
 
@@ -82,9 +73,7 @@ func runSitting(t *testing.T, h sittingHome, banner []string, sitting []onboardi
 		{"the instant of the placing", `stamp=\S+`, "stamp=-"},
 	} {
 		norm, err := onboarding.Elide(n[0], n[1], n[2])
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		norms = append(norms, norm)
 	}
 	for _, s := range sitting {
@@ -93,13 +82,9 @@ func runSitting(t *testing.T, h sittingHome, banner []string, sitting []onboardi
 		for _, ex := range banner {
 			found = found || ex == line
 		}
-		if !found {
-			t.Fatalf("the banner's example block does not hold this sitting's command:\n  %s", line)
-		}
+		require.True(t, found, "the banner's example block does not hold this sitting's command:\n  %s", line)
 		words, err := onboarding.SplitShell(line)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		var args []string
 		for _, a := range words[1:] {
 			switch {
@@ -122,14 +107,10 @@ func runSitting(t *testing.T, h sittingHome, banner []string, sitting []onboardi
 		code := 0
 		if err := cmd.Run(); err != nil {
 			exitErr, ok := err.(*exec.ExitError)
-			if !ok {
-				t.Fatalf("the example\n  %s\ncould not be run: %v", line, err)
-			}
+			require.True(t, ok, "the example\n  %s\ncould not be run: %v", line, err)
 			code = exitErr.ExitCode()
 		}
-		if code != 0 {
-			t.Errorf("the example %s exits %d\nstdout: %s\nstderr: %s", line, code, stdout.String(), stderr.String())
-		}
+		assert.Equal(t, 0, code, "the example %s exits %d\nstdout: %s\nstderr: %s", line, code, stdout.String(), stderr.String())
 		for _, p := range onboarding.Compare(s, onboarding.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}, norms) {
 			t.Error(p)
 		}
@@ -139,13 +120,9 @@ func runSitting(t *testing.T, h sittingHome, banner []string, sitting []onboardi
 func bannerExamples(t *testing.T) []string {
 	t.Helper()
 	out, errOut, code := runNovaSecrets(buildNovaSecrets(t), "help")
-	if code != 0 {
-		t.Fatalf("`nova-secrets help` exits %d: %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "`nova-secrets help` exits %d: %s", code, errOut)
 	examples, err := onboarding.ExampleLines(out, "nova-secrets")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return examples
 }
 
@@ -153,9 +130,7 @@ func bannerExamples(t *testing.T) []string {
 func TestTheHelpExampleIsWhatKeygenPrints(t *testing.T) {
 	t.Parallel()
 	h := newSittingHome(t)
-	if err := os.Remove(filepath.Join(h.home, ".config", "nova-secrets", "ada.key")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Remove(filepath.Join(h.home, ".config", "nova-secrets", "ada.key")))
 	pub := "age1fake000000000000000000000000000000000000000000000000000000000"
 	runSitting(t, h, bannerExamples(t), []onboarding.Step{
 		{Line: "$ nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen", Want: []string{

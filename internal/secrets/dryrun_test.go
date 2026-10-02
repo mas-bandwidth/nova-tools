@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // `--dry-run` on seal, seat inject and place (a cold rater's first fix: "no dry-run on
@@ -36,20 +39,17 @@ func treeOf(t *testing.T, dir string) map[string]string {
 		out[rel] = string(b)
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return out
 }
 
 func sameTree(t *testing.T, what string, before, after map[string]string) {
 	t.Helper()
-	if len(before) != len(after) {
-		t.Errorf("%s changed the file set: %d entries before, %d after", what, len(before), len(after))
-	}
+	assert.Len(t, before, len(after), "%s changed the file set: %d entries before, %d after", what, len(before), len(after))
 	for k, v := range before {
-		if got, ok := after[k]; !ok || got != v {
-			t.Errorf("%s changed %s", what, k)
+		got, ok := after[k]
+		if assert.True(t, ok, "%s changed %s", what, k) {
+			assert.Equal(t, v, got, "%s changed %s", what, k)
 		}
 	}
 }
@@ -72,9 +72,7 @@ func planField(t *testing.T, lines, key string) string {
 func quotedField(t *testing.T, lines, key string) string {
 	t.Helper()
 	_, rest, ok := strings.Cut(lines, key+`="`)
-	if !ok {
-		t.Fatalf("no %s=\"...\" in:\n%s", key, lines)
-	}
+	require.True(t, ok, "no %s=\"...\" in:\n%s", key, lines)
 	val, _, _ := strings.Cut(rest, `"`)
 	return val
 }
@@ -101,31 +99,24 @@ func TestSealDryRunPlansWhatTheRealRunThenTakes(t *testing.T) {
 	dry.Stdin = untouchable{t}
 	dry.DryRun = true
 	plan, err := RunSeal(dry)
-	if err != nil {
-		t.Fatalf("RunSeal --dry-run: %v", err)
-	}
+	require.NoError(t, err, "RunSeal --dry-run: %v", err)
 
 	sameTree(t, "seal --dry-run", before, treeOf(t, f.storeDir))
-	if strings.Contains(plan, "oldvalue") || strings.Contains(plan, "keepme") {
-		t.Errorf("a value reached the plan:\n%s", plan)
-	}
-	if got := readMaybe(t, f.sopsStdin); got != "" {
-		t.Errorf("the dry run encrypted; sops stdin held:\n%s", got)
-	}
+	assert.NotContains(t, plan, "oldvalue", "a value reached the plan:\n%s", plan)
+	assert.NotContains(t, plan, "keepme", "a value reached the plan:\n%s", plan)
+	got := readMaybe(t, f.sopsStdin)
+	assert.Empty(t, got, "the dry run encrypted; sops stdin held:\n%s", got)
 	for _, arg := range strings.Split(readMaybe(t, f.sopsArgs), "\n") {
-		if arg == "-e" {
-			t.Errorf("the dry run ran a sops encrypt:\n%s", readMaybe(t, f.sopsArgs))
-		}
+		assert.NotEqual(t, "-e", arg, "the dry run ran a sops encrypt:\n%s", readMaybe(t, f.sopsArgs))
 	}
 	for _, write := range []string{"checkout", "add", "commit", "push", "pull"} {
 		for _, arg := range strings.Split(readMaybe(t, f.gitArgs), "\n") {
-			if arg == write {
-				t.Errorf("the dry run ran git %s:\n%s", write, readMaybe(t, f.gitArgs))
-			}
+			assert.NotEqual(t, write, arg, "the dry run ran git %s:\n%s", write, readMaybe(t, f.gitArgs))
 		}
 	}
-	if got := readMaybe(t, f.ghArgs); got != "" {
-		t.Errorf("the dry run called gh:\n%s", got)
+	{
+		got := readMaybe(t, f.ghArgs)
+		assert.Empty(t, got, "the dry run called gh:\n%s", got)
 	}
 
 	want := []string{
@@ -135,30 +126,22 @@ func TestSealDryRunPlansWhatTheRealRunThenTakes(t *testing.T) {
 		"SECRETS SEAL DRY-RUN OK name=TARGET seat=rowan nothing written",
 	}
 	lines := strings.Split(plan, "\n")
-	if len(lines) != len(want) {
-		t.Fatalf("plan has %d lines, want %d:\n%s", len(lines), len(want), plan)
-	}
+	require.Len(t, lines, len(want), "plan has %d lines, want %d:\n%s", len(lines), len(want), plan)
 	for i, w := range want {
-		if !strings.HasPrefix(lines[i], w) {
-			t.Errorf("plan line %d:\n got %s\nwant prefix %s", i, lines[i], w)
-		}
+		assert.True(t, strings.HasPrefix(lines[i], w), "plan line %d:\n got %s\nwant prefix %s", i, lines[i], w)
 	}
 
 	// The real run, from the same fixture: what it hands to git and gh is the plan.
-	if _, err := RunSeal(f.options(t, "TARGET", "newvalue\n", false)); err != nil {
-		t.Fatalf("RunSeal: %v", err)
-	}
+	_, err = RunSeal(f.options(t, "TARGET", "newvalue\n", false))
+	require.NoError(t, err, "RunSeal: %v", err)
 	git := readMaybe(t, f.gitArgs)
 	branch, msg := planField(t, plan, "branch"), quotedField(t, plan, "commit")
 	for _, w := range []string{"checkout\n-b\n" + branch + "\n", "commit\n-m\n" + msg + "\n"} {
-		if !strings.Contains(git, w) {
-			t.Errorf("the real run's git calls do not hold the planned %q:\n%s", w, git)
-		}
+		assert.Contains(t, git, w, "the real run's git calls do not hold the planned %q:\n%s", w, git)
 	}
 	gh := readMaybe(t, f.ghArgs)
-	if w := "pr\ncreate\n--head\n" + branch + "\n--title\n" + quotedField(t, plan, "title") + "\n"; !strings.Contains(gh, w) {
-		t.Errorf("the real run's pull request is not the planned one %q:\n%s", w, gh)
-	}
+	w := "pr\ncreate\n--head\n" + branch + "\n--title\n" + quotedField(t, plan, "title") + "\n"
+	assert.Contains(t, gh, w, "the real run's pull request is not the planned one %q:\n%s", w, gh)
 }
 
 func oneLineField(s string) string { return strings.ReplaceAll(s, " ", `\x20`) }
@@ -173,15 +156,10 @@ func TestSealDryRunNoPRPlansNoPushAndAddsAName(t *testing.T) {
 	o := f.options(t, "TARGET", "", true)
 	o.DryRun = true
 	plan, err := RunSeal(o)
-	if err != nil {
-		t.Fatalf("RunSeal --dry-run --no-pr: %v", err)
-	}
-	if !strings.Contains(plan, "action=add name=TARGET") {
-		t.Errorf("a new name is not planned as an add:\n%s", plan)
-	}
-	if !strings.Contains(plan, "PLAN push none (--no-pr): no push, no gh call") || strings.Contains(plan, "pr title=") {
-		t.Errorf("--no-pr is not planned as no push and no pull request:\n%s", plan)
-	}
+	require.NoError(t, err, "RunSeal --dry-run --no-pr: %v", err)
+	assert.Contains(t, plan, "action=add name=TARGET", "a new name is not planned as an add:\n%s", plan)
+	assert.Contains(t, plan, "PLAN push none (--no-pr): no push, no gh call", "--no-pr is not planned as no push and no pull request:\n%s", plan)
+	assert.NotContains(t, plan, "pr title=", "--no-pr is not planned as no push and no pull request:\n%s", plan)
 }
 
 // TestSealDryRunRefusesWhereTheRealRunRefuses: a store whose rule matches no seat file, a
@@ -197,22 +175,19 @@ func TestSealDryRunRefusesWhereTheRealRunRefuses(t *testing.T) {
 	noRule := f.options(t, "TARGET", "", true)
 	noRule.DryRun = true
 	noRule.AsName = "stranger"
-	if _, err := RunSeal(noRule); err == nil || !strings.Contains(err.Error(), "no rule matching stranger.yaml") {
-		t.Errorf("a seat with no rule was not refused by name: %v", err)
-	}
+	_, err := RunSeal(noRule)
+	assert.ErrorContains(t, err, "no rule matching stranger.yaml", "a seat with no rule was not refused by name: %v", err)
 
 	badName := f.options(t, "not-a-name", "", true)
 	badName.DryRun = true
-	if _, err := RunSeal(badName); err == nil || !strings.Contains(err.Error(), "invalid key name") {
-		t.Errorf("a bad key name was not refused: %v", err)
-	}
+	_, err = RunSeal(badName)
+	assert.ErrorContains(t, err, "invalid key name", "a bad key name was not refused: %v", err)
 
 	detached := f.options(t, "TARGET", "", true)
 	detached.DryRun = true
 	detached.GitPath = f.writeScript(t, "git-detached", "if [ \"$1\" = \"rev-parse\" ]; then echo HEAD; fi\nexit 0\n")
-	if _, err := RunSeal(detached); err == nil || !strings.Contains(err.Error(), "not on a branch") {
-		t.Errorf("a store off a branch was not refused: %v", err)
-	}
+	_, err = RunSeal(detached)
+	assert.ErrorContains(t, err, "not on a branch", "a store off a branch was not refused: %v", err)
 
 	sameTree(t, "a refused seal --dry-run", before, treeOf(t, f.storeDir))
 }
@@ -232,53 +207,43 @@ func TestSeatInjectDryRunPlansWhatTheRealRunThenTakes(t *testing.T) {
 	dry := f.options("EXTRA_KEY,NOVA_REDIS_BENCH_PASSWORD", false)
 	dry.DryRun = true
 	plan, err := RunSeatInject(dry)
-	if err != nil {
-		t.Fatalf("RunSeatInject --dry-run: %v", err)
-	}
+	require.NoError(t, err, "RunSeatInject --dry-run: %v", err)
 	sameTree(t, "seat inject --dry-run", before, treeOf(t, f.storeDir))
 	assertNoValue(t, "the plan", plan)
-	if got := readMaybe(t, f.sopsStdin); got != "" {
-		t.Errorf("the dry run encrypted; sops stdin held:\n%s", got)
-	}
-	if got := readMaybe(t, f.ghArgs); got != "" {
-		t.Errorf("the dry run called gh:\n%s", got)
+	got := readMaybe(t, f.sopsStdin)
+	assert.Empty(t, got, "the dry run encrypted; sops stdin held:\n%s", got)
+	{
+		got := readMaybe(t, f.ghArgs)
+		assert.Empty(t, got, "the dry run called gh:\n%s", got)
 	}
 	for _, write := range []string{"checkout", "add", "commit", "push", "pull"} {
 		for _, arg := range strings.Split(readMaybe(t, f.gitArgs), "\n") {
-			if arg == write {
-				t.Errorf("the dry run ran git %s:\n%s", write, readMaybe(t, f.gitArgs))
-			}
+			assert.NotEqual(t, write, arg, "the dry run ran git %s:\n%s", write, readMaybe(t, f.gitArgs))
 		}
 	}
 
-	if got, want := planField(t, plan, "recipients"), pubAir+","+pubRecovery; got != want {
-		t.Errorf("recipients=%s, want the target's own %s", got, want)
+	{
+		got, want := planField(t, plan, "recipients"), pubAir+","+pubRecovery
+		assert.Equal(t, want, got, "recipients=%s, want the target's own %s", got, want)
 	}
 	for _, want := range []string{"deliver=EXTRA_KEY,NOVA_REDIS_BENCH_PASSWORD", "keep-clear=SPACE_HOST", "from=rowan",
 		"SECRETS SEAT INJECT DRY-RUN OK seat=air from=rowan names=2 nothing written"} {
-		if !strings.Contains(plan, want) {
-			t.Errorf("plan missing %q:\n%s", want, plan)
-		}
+		assert.Contains(t, plan, want, "plan missing %q:\n%s", want, plan)
 	}
 
 	// The real run, same fixture.
-	if _, err := RunSeatInject(f.options("EXTRA_KEY,NOVA_REDIS_BENCH_PASSWORD", false)); err != nil {
-		t.Fatalf("RunSeatInject: %v", err)
-	}
+	_, err = RunSeatInject(f.options("EXTRA_KEY,NOVA_REDIS_BENCH_PASSWORD", false))
+	require.NoError(t, err, "RunSeatInject: %v", err)
 	branch := planField(t, plan, "branch")
 	git, gh := readMaybe(t, f.gitArgs), readMaybe(t, f.ghArgs)
 	for _, w := range []string{"checkout\n-b\n" + branch + "\n", "commit\n-m\n" + quotedField(t, plan, "commit") + "\n"} {
-		if !strings.Contains(git, w) {
-			t.Errorf("the real run's git calls do not hold the planned %q:\n%s", w, git)
-		}
+		assert.Contains(t, git, w, "the real run's git calls do not hold the planned %q:\n%s", w, git)
 	}
-	if w := "pr\ncreate\n--head\n" + branch + "\n--title\n" + quotedField(t, plan, "title") + "\n"; !strings.Contains(gh, w) {
-		t.Errorf("the real run's pull request is not the planned one %q:\n%s", w, gh)
-	}
+	w := "pr\ncreate\n--head\n" + branch + "\n--title\n" + quotedField(t, plan, "title") + "\n"
+	assert.Contains(t, gh, w, "the real run's pull request is not the planned one %q:\n%s", w, gh)
 	air := f.read(t, "air.yaml")
-	if !strings.Contains(air, "recipient: "+pubAir) || !strings.Contains(air, "recipient: "+pubRecovery) {
-		t.Errorf("the real run did not seal to the planned recipients:\n%s", air)
-	}
+	assert.Contains(t, air, "recipient: "+pubAir, "the real run did not seal to the planned recipients:\n%s", air)
+	assert.Contains(t, air, "recipient: "+pubRecovery, "the real run did not seal to the planned recipients:\n%s", air)
 }
 
 // TestSeatInjectDryRunRefusesWhereTheRealRunRefuses: the refusals that precede the
@@ -291,15 +256,13 @@ func TestSeatInjectDryRunRefusesWhereTheRealRunRefuses(t *testing.T) {
 
 	missing := f.options("NOT_IN_THE_SOURCE", true)
 	missing.DryRun = true
-	if _, err := RunSeatInject(missing); err == nil || !strings.Contains(err.Error(), "NOT_IN_THE_SOURCE") {
-		t.Errorf("an --only name the source lacks was not refused by name: %v", err)
-	}
+	_, err := RunSeatInject(missing)
+	assert.ErrorContains(t, err, "NOT_IN_THE_SOURCE", "an --only name the source lacks was not refused by name: %v", err)
 
 	unopenable := f.options("NOVA_REDIS_BENCH_PASSWORD", true)
 	unopenable.DryRun = true
 	unopenable.KeyPath = f.airKey
-	if _, err := RunSeatInject(unopenable); err == nil || !strings.Contains(err.Error(), "cannot be opened") {
-		t.Errorf("a source this key cannot open was not refused: %v", err)
-	}
+	_, err = RunSeatInject(unopenable)
+	assert.ErrorContains(t, err, "cannot be opened", "a source this key cannot open was not refused: %v", err)
 	sameTree(t, "a refused seat inject --dry-run", before, treeOf(t, f.storeDir))
 }
