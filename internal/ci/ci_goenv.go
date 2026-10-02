@@ -157,8 +157,7 @@ func checkGoEnvWith(root, allowlistPath string, seams SourceSeams) (GoEnvResult,
 // matchGoEnvAllow returns the index of an unused entry that allows this
 // finding, or -1. A row allows ONE offender of its kind in its file; the line
 // is for a reader and an exact match is only preferred, never required, so a
-// merge that shifts lines does not turn dev red (the lesson the waits list
-// carries from #1073).
+// merge that shifts lines does not turn dev red.
 func matchGoEnvAllow(entries []waitAllow, used []bool, f GoEnvFinding) int {
 	loose := -1
 	for i, e := range entries {

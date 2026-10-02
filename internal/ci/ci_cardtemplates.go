@@ -4,14 +4,14 @@ package ci
 // docs/SPEC-CI.md. A card template is the text a worker is handed verbatim: the
 // swarm does not rewrite it, so every command spelt in it runs, as written, on
 // whatever bench the card was dealt to. The estate is mixed -- linux benches
-// (hulk, vision, space, mini) and darwin ones (the Studio, the Air) -- so a
+// and darwin ones -- so a
 // template that spells a GNU-only command is a card that is dead on arrival the
 // first time the router picks a Mac.
 //
-// The hurt, measured 2026-09-18 by the schema dogfood: the round-1 card
-// templates spelt `/usr/bin/time -f`, `nproc`, `go --version` and `java
-// --version`. Every one of them is fine on hulk and wrong on the Air, and the
-// card did not fail at cut time or at admission -- it failed inside the worker,
+// The hurt the schema dogfood measures: card templates that spell
+// `/usr/bin/time -f`, `nproc`, `go --version` or `java --version` run on a
+// linux bench and fail on a darwin one, and the
+// card does not fail at cut time or at admission -- it fails inside the worker,
 // minutes in, with a shell error that named nothing about portability.
 //
 // This file reads every *.md and *.card under the template directories as TEXT
