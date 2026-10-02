@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,8 +74,11 @@ func TestSilentBodyAfterHeadersIsOneUpstreamRequest(t *testing.T) {
 	require.NoError(t, err)
 	resp2, err := client.Do(again)
 	require.NoError(t, err)
-	_, _ = io.Copy(io.Discard, resp2.Body)
+	body2, err := io.ReadAll(resp2.Body)
+	require.NoError(t, err)
 	resp2.Body.Close()
+	assert.Equal(t, http.StatusBadGateway, resp2.StatusCode, "must return 502 Bad Gateway")
+	assert.Equal(t, "lost\n", string(body2), "must return 'lost\n' error message")
 
 	got, upn := p.Requests(), upstream.Load()
 	require.Equal(t, int64(1), got, "requests=%d upstream=%d, want 1 and 1", got, upn)

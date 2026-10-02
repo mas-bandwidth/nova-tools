@@ -289,6 +289,9 @@ func TestAttachedOrFallbackReadsTheTextToItsEnd(t *testing.T) {
 		{" 2>&1", false},
 		{" 2>&1 || true", true},
 		{" ; true || true", false},
+		{"&", false},
+		{"&>out", false},
+		{"&>out || true", true},
 	} {
 		t.Run(c.rest, func(t *testing.T) {
 			got := attachedOrFallback(c.rest)
