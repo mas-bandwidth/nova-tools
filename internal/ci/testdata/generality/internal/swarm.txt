@@ -38,8 +38,6 @@ internal/swarm/wall.go:glenn 3
 internal/swarm/wall.go:hulk 1
 internal/swarm/wall.go:johnny 1
 internal/swarm/wall.go:stella 3
-internal/swarm/wallread.go:hulk 2
-internal/swarm/wallread.go:studio 1
 internal/swarm/worker.go:rowan 3
 internal/swarm/worker.go:space 1
 internal/swarm/worker.go:stella 1
