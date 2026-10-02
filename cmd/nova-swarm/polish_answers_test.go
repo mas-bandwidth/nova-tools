@@ -142,3 +142,15 @@ func TestTheHelpNamesTheLiveVerbsAndTheCardsRepoAndBase(t *testing.T) {
 	assert.Contains(t, tmpl, "  REPO:      <owner>/<name>")
 	assert.Contains(t, tmpl, "  BASE:      <branch>")
 }
+
+// The banner's containment sentence is true: every job runs inside nova-sandbox UNLESS the
+// caller types --no-wall, and it says so, with the name the NATIVE line carries for such a
+// run, so a reader never takes a no-wall run for a walled one.
+func TestTheBannerNamesTheOneWayOutOfTheWall(t *testing.T) {
+	t.Parallel()
+	_, stdout, _ := runSwarm(t, "help")
+	claim := stdout[strings.Index(stdout, "EVERY JOB RUNS INSIDE nova-sandbox"):]
+	claim, _, _ = strings.Cut(claim, "\n\n")
+	assert.Contains(t, claim, "unless the caller types\n--no-wall", "the banner says every job is walled and does not name --no-wall:\n%s", claim)
+	assert.Contains(t, claim, "sandbox="+swarm.SandboxNoneByFlag, "the banner does not name what the NATIVE line says of a no-wall run:\n%s", claim)
+}

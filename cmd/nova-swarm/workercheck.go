@@ -59,8 +59,8 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 		switch {
 		case workerHelpFlag(rest[i]):
 			fs := flag.NewFlagSet("worker check", flag.ContinueOnError)
-			fs.Bool("env", false, "")
-			fs.Int("max", bounded.Default, "")
+			fs.Bool("env", false, "also require every secret the description names to be set in this process's environment")
+			fs.Int("max", bounded.Default, "at most this many WORKER DRIFT lines, then one MORE line; 0 for all")
 			panic(verbflag.Help{FS: fs})
 		case rest[i] == "--env":
 			requireEnv = true

@@ -55,6 +55,7 @@ usage:
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--typed] [--child-rules | --child-rules-file <file>] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+                       (a bare --card holds the card to nova-swarm's own card contract, the shape native runs, the same for every adopter: the RESULT line first and written last, numbered STEPs entering the repository, a test and its command, a deadline, the files named, scratch under a named root; --rules lists every check; an adopter's own rules go in --child-rules-file)
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
                        (--child-rules holds the card to the rules the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; the sentences are the built-in general rules, or the lines of --child-rules-file, one required sentence per line; template --name card prints a card that passes the general ones)
                        (--base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed)
@@ -96,12 +97,13 @@ description names -- one line, the bare key or NAME=<key>, mode 0600 -- and it i
 never an argument, never a log line, never in a file this tool writes. The
 harness config this tool writes carries the variable's NAME, never its value.
 
-EVERY JOB RUNS INSIDE nova-sandbox (docs/SPEC-SANDBOX.md). The job directory and
-its data home are the only writable paths; the slot directory and whatever
-read_roots names in the worker description are readable; the key file, ~/.ssh and
-the gh configuration are in neither list and the kernel denies them.
-A command that runs outside the wall and dies
-inside it is missing a read_roots entry.
+EVERY JOB RUNS INSIDE nova-sandbox (docs/SPEC-SANDBOX.md) unless the caller types
+--no-wall (native and member), the one opt-out, which no card can ask for and
+which the NATIVE line names as sandbox=none-by-flag. Inside the wall the job
+directory and its data home are the only writable paths; the slot directory and
+whatever read_roots names in the worker description are readable; the key file,
+~/.ssh and the gh configuration are in neither list and the kernel denies them.
+A command that runs outside the wall and dies inside it is missing a read_roots entry.
 
 A card to start from: nova-swarm template --name card prints one that passes
 the lint (lint --card <file> --child-rules): put it in a file, fill in its
