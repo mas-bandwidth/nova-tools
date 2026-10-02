@@ -118,7 +118,7 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 			return exitCannotRun
 		}
 		eng := newPodman(cfg.podman, stderr)
-		return runTier(ctx, eng, cfg, realClock{}, stdout, stderr)
+		return runTier(ctx, eng, cfg, stdout, stderr)
 	case "reap":
 		cfg, err := parseReap(args[1:])
 		if err != nil {
