@@ -135,7 +135,7 @@ func TestTriggerAckOfFailedWorkIsStranded(t *testing.T) {
 	require.Equal(t, string(sprint.NWorkFailed), open[0].Note.Type, "open: %v", open)
 	res := h.run(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "looked"}))
 	require.Len(t, res.Refused, 1, "ack of failed work: %+v", res)
-	require.Contains(t, res.Refused[0].Why, "nova-sprint rework --group", "ack of failed work: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "nova-sprint rework s1-1", "ack of failed work: %+v", res)
 	h.readInbox()
 	got := h.judgmentsOn("s1-1")
 	require.Len(t, got, 1, "after the refused ack: %v", got)
