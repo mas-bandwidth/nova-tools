@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // widthMembers is eight fleet machines (errata 3 amendment 9: "each fleet
@@ -61,21 +62,15 @@ func TestOneTickDealsTheWholeReadyColumnToWidth(t *testing.T) {
 	ready, working := len(s.Work.Column(sprint.Ready)), len(s.Work.Column(sprint.Working))
 	by := dealtBy(res)
 	t.Logf("after one tick: ready %d, working %d; dealt by machine %v", ready, working, by)
-	if ready != 0 || working != 150 {
-		t.Fatalf("after one tick: ready %d, working %d, want 0 and 150", ready, working)
-	}
+	require.Equal(t, 0, ready, "after one tick: ready %d, working %d, want 0 and 150", ready, working)
+	require.Equal(t, 150, working, "after one tick: ready %d, working %d, want 0 and 150", ready, working)
 	for _, m := range widthMembers {
 		n := heldBy(s, m)
-		if n != 18 && n != 19 || by[m] != n {
-			t.Fatalf("%s holds %d (dealt %d this tick), want 18 or 19 round the fleet: %v", m, n, by[m], by)
-		}
-		if s.Width(m) != 64 {
-			t.Fatalf("%s width %d", m, s.Width(m))
-		}
+		require.True(t, n == 18 || n == 19, "%s holds %d (dealt %d this tick), want 18 or 19 round the fleet: %v", m, n, by[m], by)
+		require.Equal(t, n, by[m], "%s holds %d (dealt %d this tick), want 18 or 19 round the fleet: %v", m, n, by[m], by)
+		require.Equal(t, 64, s.Width(m), "%s width %d", m, s.Width(m))
 	}
-	if res.Due != 0 {
-		t.Fatalf("due %d after a deal the fleet had room for", res.Due)
-	}
+	require.Equal(t, 0, res.Due, "due %d after a deal the fleet had room for", res.Due)
 	h.clean("one tick")
 }
 
@@ -86,13 +81,11 @@ func TestOneTickDealsFiveHundred(t *testing.T) {
 	h := widthSprint(t, 64, 167) // 501 ready, the room 512
 	res := h.machine()
 	s := h.snap()
-	if r, w := len(s.Work.Column(sprint.Ready)), len(s.Work.Column(sprint.Working)); r != 0 || w != 501 {
-		t.Fatalf("ready %d, working %d, want 0 and 501", r, w)
-	}
+	r, w := len(s.Work.Column(sprint.Ready)), len(s.Work.Column(sprint.Working))
+	require.Equal(t, 0, r, "ready %d, working %d, want 0 and 501", r, w)
+	require.Equal(t, 501, w, "ready %d, working %d, want 0 and 501", r, w)
 	for _, p := range res.Parts {
-		if len(p.Refused) > 0 {
-			t.Fatalf("part %s refused %v", p.Name, p.Refused)
-		}
+		require.Empty(t, p.Refused, "part %s refused %v", p.Name, p.Refused)
 	}
 	h.clean("five hundred")
 }
@@ -109,14 +102,12 @@ func TestAMachineAtDealAheadTimesItsWidthTakesNoMore(t *testing.T) {
 	h.machine()
 	s := h.snap()
 	for _, m := range widthMembers {
-		if n := heldBy(s, m); n != full {
-			t.Fatalf("%s holds %d, want DealAhead times its width, %d", m, n, full)
-		}
+		n := heldBy(s, m)
+		require.Equal(t, full, n, "%s holds %d, want DealAhead times its width, %d", m, n, full)
 	}
 	h.tick(time.Second)
-	if res := h.machine(); len(dealtBy(res)) != 0 {
-		t.Fatalf("a full fleet was dealt %v", dealtBy(res))
-	}
+	res := h.machine()
+	require.Empty(t, dealtBy(res), "a full fleet was dealt %v", dealtBy(res))
 	h.work("m3") // takes its eight and finishes them
 	h.tick(time.Second)
 	by := dealtBy(h.machine())
@@ -124,13 +115,10 @@ func TestAMachineAtDealAheadTimesItsWidthTakesNoMore(t *testing.T) {
 	for _, n := range by {
 		total += n
 	}
-	if total != full {
-		t.Fatalf("after m3 finished %d: dealt %v, want %d in all", full, by, full)
-	}
+	require.Equal(t, full, total, "after m3 finished %d: dealt %v, want %d in all", full, by, full)
 	for _, m := range widthMembers {
-		if n := heldBy(h.snap(), m); n != full {
-			t.Fatalf("%s holds %d, want DealAhead times its width, %d", m, n, full)
-		}
+		n := heldBy(h.snap(), m)
+		require.Equal(t, full, n, "%s holds %d, want DealAhead times its width, %d", m, n, full)
 	}
 }
 
@@ -142,13 +130,11 @@ func TestWidthTwoDealsDealAheadTimesTwo(t *testing.T) {
 	h.machine()
 	s := h.snap()
 	for _, m := range widthMembers {
-		if n := s.Fleet.Count(m, sprint.Ready); n != sprint.DealAhead*2 {
-			t.Fatalf("%s ready %d, want DealAhead times 2", m, n)
-		}
+		n := s.Fleet.Count(m, sprint.Ready)
+		require.Equal(t, sprint.DealAhead*2, n, "%s ready %d, want DealAhead times 2", m, n)
 	}
-	if w := len(s.Work.Column(sprint.Working)); w != 8*sprint.DealAhead*2 {
-		t.Fatalf("working %d, want %d", w, 8*sprint.DealAhead*2)
-	}
+	w := len(s.Work.Column(sprint.Working))
+	require.Equal(t, 8*sprint.DealAhead*2, w, "working %d, want %d", w, 8*sprint.DealAhead*2)
 }
 
 // The fleet table's width column shows each machine's width.
@@ -157,18 +143,15 @@ func TestTheFleetTableShowsTheWidth(t *testing.T) {
 	h := widthSprint(t, 64, 1)
 	h.must(FleetStep(sprint.FleetReq{Op: "release", Member: "m2", Width: 8}))
 	shapes, err := h.m.Shapes(h.ctx, []string{"t-fleet"})
-	if err != nil || len(shapes) != 1 {
-		t.Fatalf("shapes: %v", err)
-	}
+	require.NoError(t, err, "shapes: %v", err)
+	require.Len(t, shapes, 1, "shapes: %v", err)
 	got := map[string]string{}
 	for _, r := range shapes[0].Rows {
 		got[r.Key] = r.Texts[sprint.FieldWidth]
 	}
-	if got["m1"] != "64" || got["m2"] != "8" {
-		t.Fatalf("the width column: %v", got)
-	}
+	require.Equal(t, "64", got["m1"], "the width column: %v", got)
+	require.Equal(t, "8", got["m2"], "the width column: %v", got)
 	cols := fmt.Sprint(shapes[0].Columns)
-	if !strings.Contains(cols, "working") || !strings.Contains(cols, "width") {
-		t.Fatalf("columns %s", cols)
-	}
+	require.Contains(t, cols, "working", "columns %s", cols)
+	require.Contains(t, cols, "width", "columns %s", cols)
 }

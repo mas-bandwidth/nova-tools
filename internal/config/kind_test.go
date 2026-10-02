@@ -59,17 +59,19 @@ func TestKindsApplyInDependencyOrder(t *testing.T) {
 
 // TestTheMachineRowIsTheDeclaredFactsSomethingReads: Glenn 2026-09-27, "I
 // only want the fleet to have actual defined useful things associated with
-// each machine, not invented rando stuff". Four declared fields, no address
-// (the name is the tailnet host), no measured fact, no note.
+// each machine, not invented rando stuff". Five declared fields, no address
+// (the name is the tailnet host), no measured fact, no note. width is the
+// sprint member's width, set directly (the owner, 2026-10-01: "we should just
+// be able to set width specifically in nova-config and it just works").
 func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 	t.Parallel()
 
 	machine, _ := Lookup(KindMachine)
 	scopedGot70 := strings.Join(machine.FieldNames(), ",")
-	require.Equal(t, "user,seat,slots,runners", scopedGot70, "machine fields %s, want user,seat,slots,runners", scopedGot70)
+	require.Equal(t, "user,seat,slots,runners,width", scopedGot70, "machine fields %s, want user,seat,slots,runners,width", scopedGot70)
 	for _, f := range machine.Fields {
-		scopedWant75 := f.Name != "runners"
-		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners defaults to 0; the rest are typed on add)", f.Name, f.Required, scopedWant75)
+		scopedWant75 := f.Name != "runners" && f.Name != "width"
+		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0; the rest are typed on add)", f.Name, f.Required, scopedWant75)
 	}
 	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "note", "store", "coordinator", "machine", "harness", "logins", "wake"} {
 		_, scopedOk81 := machine.Field(invented)
@@ -104,18 +106,13 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
-	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend and the reader tier", sprint}
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend", sprint}
 	require.True(t, sprint.Singleton, assertionMsg100...)
-	require.Len(t, sprint.Fields, 2, assertionMsg100...)
+	require.Len(t, sprint.Fields, 1, assertionMsg100...)
 	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
 	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
 	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
 	require.False(t, sprint.Fields[0].Required, assertionMsg100...)
-	// the tier a read card's route is drawn from (internal/sprint/route.go, readRouteOf)
-	require.Equal(t, FieldReaderTier, sprint.Fields[1].Name, assertionMsg100...)
-	require.Equal(t, TypeEnum, sprint.Fields[1].Type, assertionMsg100...)
-	require.Equal(t, RouteTiers, sprint.Fields[1].Enum, assertionMsg100...)
-	require.Equal(t, "pro", sprint.Fields[1].Default, assertionMsg100...)
 }
 
 // TestDeriveGivesTheSprintCoordinatorTheRole: the rows apply plans carry
@@ -147,10 +144,11 @@ func TestDeriveGivesTheSprintCoordinatorTheRole(t *testing.T) {
 	require.Equal(t, "builder", byName(derived, "rowan"), "no coordinator is named")
 }
 
-// TestTheFleetIsOneRowOfTwoMachineRefs: Glenn 2026-09-27, "in the fleet
-// there is only one coordinator at a time": the store and the coordinator
-// are fleet facts, one value each, each a machine row or empty.
-func TestTheFleetIsOneRowOfTwoMachineRefs(t *testing.T) {
+// TestTheFleetIsOneRowOfEndpointsAndMachineRefs: the two machine names and
+// both store endpoints are fleet-wide facts. Both stay unset until
+// explicitly declared; Postgres never holds a
+// password.
+func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	t.Parallel()
 
 	fleet, _ := Lookup(KindFleet)
@@ -158,8 +156,10 @@ func TestTheFleetIsOneRowOfTwoMachineRefs(t *testing.T) {
 	require.True(t, fleet.Singleton, assertionMsg144...)
 	require.Equal(t, "fleet", fleet.Table, assertionMsg144...)
 	scopedGot169 := strings.Join(fleet.FieldNames(), ",")
-	require.Equal(t, "store,coordinator", scopedGot169, "fleet fields %s, want store,coordinator", scopedGot169)
-	for _, f := range fleet.Fields {
+	require.Equal(t, "store,coordinator,redis_port,pg_dsn", scopedGot169, "fleet fields %s", scopedGot169)
+	for _, name := range []string{"store", "coordinator"} {
+		f, ok := fleet.Field(name)
+		require.True(t, ok)
 		assertionMsg158 := []any{"--%s %+v: an optional ref to a machine row", f.Name, f}
 		func() {
 			if !assert.Equal(t, TypeRef, f.Type, assertionMsg158...) {
@@ -176,6 +176,8 @@ func TestTheFleetIsOneRowOfTwoMachineRefs(t *testing.T) {
 	require.NoError(t, err, assertionMsg153...)
 	require.Equal(t, "hulk", row.Fields["store"], assertionMsg153...)
 	require.Equal(t, "", row.Fields["coordinator"], assertionMsg153...)
+	require.Empty(t, row.Fields["redis_port"], assertionMsg153...)
+	require.Equal(t, "", row.Fields["pg_dsn"], assertionMsg153...)
 	{
 		_, err := fleet.NewRow(KindFleet, map[string]string{"store": "Hulk"})
 		assertionMsg156 := []any{"a ref that is not a name: %v", err}
@@ -188,6 +190,38 @@ func TestTheFleetIsOneRowOfTwoMachineRefs(t *testing.T) {
 		require.NoError(t, err, assertionMsg160...)
 		require.Equal(t, "", got["coordinator"], assertionMsg160...)
 	}
+	for _, tc := range []struct {
+		name string
+		raw  map[string]string
+		want string
+	}{
+		{"zero port", map[string]string{"redis_port": "0"}, "1 through 65535"},
+		{"empty port", map[string]string{"redis_port": ""}, "non-negative integer"},
+		{"large port", map[string]string{"redis_port": "65536"}, "1 through 65535"},
+		{"malformed dsn", map[string]string{"pg_dsn": "not a URI"}, "password-free postgres://"},
+		{"password in userinfo", map[string]string{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova"}, "carries a password"},
+		{"password in query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print"}, "carries a password"},
+		{"encoded mixed-case password key", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?%70aSsWoRd=do-not-print"}, "carries a password"},
+		{"semicolon query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print;sslmode=disable"}, "valid URI query"},
+		{"invalid query escape", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print%zz"}, "valid URI query"},
+		{"zero Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:0/nova"}, "TCP port from 1 through 65535"},
+		{"large Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:65536/nova"}, "TCP port from 1 through 65535"},
+		{"empty Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:/nova"}, "TCP port from 1 through 65535"},
+		{"nonnumeric Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:do-not-print/nova"}, "password-free postgres://"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := fleet.NewRow(KindFleet, tc.raw)
+			require.ErrorContains(t, err, tc.want)
+			assert.NotContains(t, err.Error(), "do-not-print")
+		})
+	}
+	row, err = fleet.NewRow(KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"})
+	require.NoError(t, err)
+	assert.Equal(t, "6380", row.Fields["redis_port"])
+	assert.Equal(t, "postgres://user@localhost:5432/nova", row.Fields["pg_dsn"])
+	_, err = fleet.NewRow(KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost/nova?sslmode=require&application_name=nova%3Bconfig"})
+	assert.NoError(t, err, "an omitted port and a percent-encoded query value are valid")
 }
 
 func TestCanonicalValidatesEveryType(t *testing.T) {

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
@@ -54,9 +58,7 @@ func runBudgetCard(t *testing.T, tokens, directives string, extra ...string) (in
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	card := filepath.Join(root, "card.md")
-	if err := os.WriteFile(card, []byte("a card\n"+directives), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(card, []byte("a card\n"+directives), 0o644))
 	args := append(budgetNativeArgs(t, bin, card, slot, root, tokens), extra...)
 	var stdout, stderr bytes.Buffer
 	rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
@@ -106,12 +108,9 @@ func TestNativeLineReportsWhatTheFinalReadSaw(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rc, stdout, stderr := runBudgetCard(t, "50000", tc.directives)
-			if rc != 0 {
-				t.Fatalf("this launch exits 0, got %d:\n%s", rc, stderr)
-			}
-			if got := budgetOf(t, stdout); got != tc.want {
-				t.Fatalf("budget= is %q, want %q (%s):\n%s", got, tc.want, tc.why, stdout)
-			}
+			require.Equal(t, 0, rc, "this launch exits 0, got %d:\n%s", rc, stderr)
+			got := budgetOf(t, stdout)
+			require.Equal(t, tc.want, got, "budget= is %q, want %q (%s):\n%s", got, tc.want, tc.why, stdout)
 		})
 	}
 }
@@ -124,12 +123,9 @@ func TestNativeUnmeteredIsNeverAFigure(t *testing.T) {
 
 	needsSQLite(t)
 	rc, stdout, stderr := runBudgetCard(t, "unmetered", "FAKE-USAGE-DB 100 50 0 0 7 0.5\nFAKE-FINDINGS 1\n")
-	if rc != 0 {
-		t.Fatalf("the launch exits 0, got %d:\n%s", rc, stderr)
-	}
-	if got := budgetOf(t, stdout); got != "unmetered" {
-		t.Fatalf("an unmetered card prints the word whatever the harness reported, got %q:\n%s", got, stdout)
-	}
+	require.Equal(t, 0, rc, "the launch exits 0, got %d:\n%s", rc, stderr)
+	got := budgetOf(t, stdout)
+	require.Equal(t, "unmetered", got, "an unmetered card prints the word whatever the harness reported, got %q:\n%s", got, stdout)
 }
 
 // TestNativeSamplesThroughAWriteAheadLog: rule 13d, "a database with a write-ahead log
@@ -151,9 +147,7 @@ func TestNativeSamplesThroughAWriteAheadLog(t *testing.T) {
 	// for the whole of it rather than appearing partway through.
 	dataHome := filepath.Join(slot, "data")
 	db := filepath.Join(dataHome, "opencode", "opencode.db")
-	if err := os.MkdirAll(filepath.Dir(db), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
 	sql := `PRAGMA journal_mode=WAL;
 CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);
 INSERT INTO message (data, time_created) VALUES (json_object('role','assistant','providerID','fake','modelID','fake-model','tokens',json_object('input',1000,'output',500,'cache',json_object('write',0,'read',0),'reasoning',0),'cost',0.1), ` +
@@ -161,38 +155,28 @@ INSERT INTO message (data, time_created) VALUES (json_object('role','assistant',
 `
 	cmd := exec.Command(swarm.SQLiteBinary, db)
 	cmd.Stdin = strings.NewReader(sql)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building the WAL fixture store: %v\n%s", err, out)
-	}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "building the WAL fixture store:\n%s", out)
 	// A connection that keeps the -wal in place for the run: sqlite removes it on the last
 	// clean close, so a fixture that closed would be testing the absence of a -wal.
 	hold, err := os.OpenFile(db+"-wal", os.O_RDONLY|os.O_CREATE, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer hold.Close()
-	if _, err := os.Stat(db + "-wal"); err != nil {
-		t.Fatalf("the fixture wanted a -wal beside the database for the whole run: %v", err)
-	}
+	_, err = os.Stat(db + "-wal")
+	require.NoError(t, err, "the fixture wanted a -wal beside the database for the whole run")
 
 	card := filepath.Join(root, "card.md")
-	if err := os.WriteFile(card, []byte("a card\nFAKE-SLEEP 2500ms\nFAKE-FINDINGS 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(card, []byte("a card\nFAKE-SLEEP 2500ms\nFAKE-FINDINGS 1\n"), 0o644))
 	args := append(budgetNativeArgs(t, bin, card, slot, root, "50000"), "--usage-interval", "1s")
 	var stdout, stderr bytes.Buffer
 	rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("a card whose database has a -wal beside it runs, got exit %d:\n%s", rc, stderr.String())
-	}
+	require.Equal(t, 0, rc, "a card whose database has a -wal beside it runs, got exit %d:\n%s", rc, stderr.String())
 	// THE READS WERE ANSWERS. The final read saw the 1500 the fixture wrote; had the reads
 	// been failures the line would carry the dash.
-	if got := budgetOf(t, stdout.String()); got != "1500/50000" {
-		t.Fatalf("the reads through the -wal are answers, so the line carries the figure; got %q:\n%s", got, stdout.String())
-	}
-	if _, err := os.Stat(db + "-wal"); err != nil {
-		t.Errorf("the -wal was beside the database for the whole run, and is still: %v", err)
-	}
+	got := budgetOf(t, stdout.String())
+	require.Equal(t, "1500/50000", got, "the reads through the -wal are answers, so the line carries the figure; got %q:\n%s", got, stdout.String())
+	_, err = os.Stat(db + "-wal")
+	assert.NoError(t, err, "the -wal was beside the database for the whole run, and is still")
 }
 
 // TestLiveSamplerNeverRunsTwoReadsAtOnce holds the same clause at the unit, where it can be
@@ -203,20 +187,15 @@ func TestLiveSamplerNeverRunsTwoReadsAtOnce(t *testing.T) {
 	needsSQLite(t)
 	dataHome := t.TempDir()
 	db := filepath.Join(dataHome, "opencode", "opencode.db")
-	if err := os.MkdirAll(filepath.Dir(db), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
 	cmd := exec.Command(swarm.SQLiteBinary, db)
 	cmd.Stdin = strings.NewReader("CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building the fixture store: %v\n%s", err, out)
-	}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "building the fixture store:\n%s", out)
 	// A reader that takes a good deal longer than the interval below, so a loop that
 	// queued its ticks would show two reads in flight at once.
 	slow := t.TempDir()
-	if err := testbin.WriteExecutable(filepath.Join(slow, swarm.SQLiteBinary), []byte("#!/bin/sh\nsleep 1\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(slow, swarm.SQLiteBinary), []byte("#!/bin/sh\nsleep 1\n"), 0o755))
 	t.Setenv("PATH", slow+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	s := startLiveSampler(dataHome, 50*time.Millisecond, nativeRunConfig{tokens: 1 << 30}, filepath.Join(dataHome, "harness-output.log"))
@@ -231,15 +210,13 @@ func TestLiveSamplerNeverRunsTwoReadsAtOnce(t *testing.T) {
 		if time.Now().After(deadline) {
 			answered, _ := s.Counts()
 			s.Stop()
-			t.Fatalf("the sampler answered %d reads in 30s; it wants two", answered)
+			require.Fail(t, fmt.Sprintf("the sampler answered %d reads in 30s; it wants two", answered))
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	s.Stop()
 	answered, maxFlight := s.Counts()
-	if maxFlight > 1 {
-		t.Fatalf("no sample starts while one is unanswered (rule 13d): %d were in flight at once over %d reads", maxFlight, answered)
-	}
+	require.LessOrEqual(t, maxFlight, 1, "no sample starts while one is unanswered (rule 13d): %d were in flight at once over %d reads", maxFlight, answered)
 }
 
 // TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt: the two halves of rule 13d's
@@ -249,20 +226,14 @@ func TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt(t *testing.T) {
 	windowsIsNotABench(t)
 	dataHome := t.TempDir()
 	db := filepath.Join(dataHome, "opencode", "opencode.db")
-	if err := os.MkdirAll(filepath.Dir(db), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
 	// A file that is not a database, so every read of it FAILS -- as distinct from a
 	// database that is not there, which is an absence.
-	if err := os.WriteFile(db, []byte("not a database\x00"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(db, []byte("not a database\x00"), 0o644))
 	// A reader that refuses, the way sqlite3 refuses bytes that are not a database.
 	bad := t.TempDir()
-	if err := testbin.WriteExecutable(filepath.Join(bad, swarm.SQLiteBinary),
-		[]byte("#!/bin/sh\necho 'Error: file is not a database' >&2\nexit 1\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(bad, swarm.SQLiteBinary),
+		[]byte("#!/bin/sh\necho 'Error: file is not a database' >&2\nexit 1\n"), 0o755))
 	t.Setenv("PATH", bad+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	s := startLiveSampler(dataHome, 20*time.Millisecond, nativeRunConfig{tokens: 1 << 30}, filepath.Join(dataHome, "harness-output.log"))
@@ -270,14 +241,12 @@ func TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt(t *testing.T) {
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		if _, _, _, failures, err := s.Observed(); failures >= 3 {
-			if err == nil {
-				t.Fatalf("a failed read carries the reason it gave")
-			}
+			require.Error(t, err, "a failed read carries the reason it gave")
 			return
 		}
 		if time.Now().After(deadline) {
 			_, _, _, failures, _ := s.Observed()
-			t.Fatalf("three consecutive failed reads were counted; got %d in 30s", failures)
+			require.Fail(t, fmt.Sprintf("three consecutive failed reads were counted; got %d in 30s", failures))
 		}
 		time.Sleep(5 * time.Millisecond)
 	}

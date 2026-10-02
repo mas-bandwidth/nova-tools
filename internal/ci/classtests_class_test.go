@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // deletedTestsLogPath is where a change declares a test file or a list it
@@ -651,18 +653,15 @@ func (m *mergeDeletions) ordinaryFindings() []string {
 func TestNoMergeDeletesATestFileUndeclared(t *testing.T) {
 	t.Parallel()
 
-	log := loadAllowlist(t, "testdata/deleted-tests.txt", allowlist.Options{})
+	log := loadAllowlist(t, "testdata/deleted-tests.txt", allowlist.Options{RepeatedKeys: true})
 	for _, row := range distinctRows(log.Rows()) {
-		if _, why, _ := strings.Cut(row.Text, " "); strings.TrimSpace(why) == "" {
-			t.Errorf("%s: %q carries no why", deletedTestsLogPath, row.Text)
-		}
+		_, why, _ := strings.Cut(row.Text, " ")
+		assert.NotEmpty(t, strings.TrimSpace(why), "%s: %q carries no why", deletedTestsLogPath, row.Text)
 	}
 	if skip, note := promotionSkip(os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_BASE_REF"), os.Getenv("GITHUB_HEAD_REF"),
 		pullRequestHeadRepo(os.Getenv("GITHUB_EVENT_PATH")), os.Getenv("GITHUB_REPOSITORY")); skip {
 		ok, baseNote, err := promotionBaseCheck(repoTree(t).Root, os.Getenv("GITHUB_BASE_REF"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		if ok {
 			t.Log(note)
 			return
@@ -670,14 +669,12 @@ func TestNoMergeDeletesATestFileUndeclared(t *testing.T) {
 		t.Log(baseNote)
 	}
 	m, note, err := readMergeDeletionsFor(repoTree(t).Root, os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_REF"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if note != "" {
 		t.Log(note)
 	}
 	for _, f := range m.findings() {
-		t.Error(f)
+		assert.Fail(t, f)
 	}
 }
 
@@ -695,9 +692,7 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 	findings := func() []string {
 		t.Helper()
 		m, err := readMergeDeletions(root)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		return m.findings()
 	}
 
@@ -708,9 +703,8 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 	write("c/main.go", "package c\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "base")
-	if _, err := readMergeDeletions(root); err == nil || !strings.Contains(err.Error(), "no parent") {
-		t.Fatalf("a root commit: err = %v; want no parent", err)
-	}
+	_, err := readMergeDeletions(root)
+	require.True(t, err != nil && strings.Contains(err.Error(), "no parent"), "a root commit: err = %v; want no parent", err)
 
 	// The stale-base squash shape: files the parent had are gone, nothing
 	// in the change says so. The test file and the list are red; the
@@ -721,17 +715,14 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 	git("add", "-A")
 	git("commit", "-q", "-m", "squash from a stale base")
 	got := findings()
-	if len(got) != 2 || !strings.Contains(got[0], "deletes a/x_test.go") || !strings.Contains(got[1], "deletes internal/ci/testdata/foo_allowlist.txt") ||
-		!strings.Contains(got[0], "squash from a stale base") || !strings.Contains(got[0], "git checkout ") {
-		t.Fatalf("stale-base squash findings = %q; want the test file and the list, naming the commit and the restore", got)
-	}
+	require.True(t, len(got) == 2 && strings.Contains(got[0], "deletes a/x_test.go") && strings.Contains(got[1], "deletes internal/ci/testdata/foo_allowlist.txt") &&
+		strings.Contains(got[0], "squash from a stale base") && strings.Contains(got[0], "git checkout "), "stale-base squash findings = %q; want the test file and the list, naming the commit and the restore", got)
 
 	// A rename is not a deletion.
 	git("mv", "b/keep_test.go", "b/keep_functional_test.go")
 	git("commit", "-q", "-m", "split")
-	if got := findings(); len(got) != 0 {
-		t.Fatalf("a rename: findings = %q; want none", got)
-	}
+	gotRename := findings()
+	require.Empty(t, gotRename, "a rename: findings = %q; want none", gotRename)
 
 	// A row added in the same change declares the deletion; a row that
 	// names no deletion of this change is red, as is a row with no why.
@@ -740,9 +731,7 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 	git("add", "-A")
 	git("commit", "-q", "-m", "declared")
 	got = findings()
-	if len(got) != 1 || !strings.Contains(got[0], `"d/none_test.go"`) || !strings.Contains(got[0], "deletes no such file") {
-		t.Fatalf("declared deletion: findings = %q; want only the row that names no deletion", got)
-	}
+	require.True(t, len(got) == 1 && strings.Contains(got[0], `"d/none_test.go"`) && strings.Contains(got[0], "deletes no such file"), "declared deletion: findings = %q; want only the row that names no deletion", got)
 
 	// An old row declares nothing for a later change: the same file, put
 	// back and deleted again with no new row, is red.
@@ -752,9 +741,8 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 	remove("b/keep_functional_test.go")
 	git("add", "-A")
 	git("commit", "-q", "-m", "gone again")
-	if got := findings(); len(got) != 1 || !strings.Contains(got[0], "deletes b/keep_functional_test.go") {
-		t.Fatalf("an old row: findings = %q; want the deletion red", got)
-	}
+	gotOld := findings()
+	require.True(t, len(gotOld) == 1 && strings.Contains(gotOld[0], "deletes b/keep_functional_test.go"), "an old row: findings = %q; want the deletion red", gotOld)
 }
 
 // TestPromotionSkipReadsTheEvent pins the one shape that skips the
@@ -789,14 +777,11 @@ func TestPromotionSkipReadsTheEvent(t *testing.T) {
 		{"no environment", "", "", "", "", "", false},
 	} {
 		skip, note := promotionSkip(tc.event, tc.base, tc.head, tc.headRepo, tc.repo)
-		if skip != tc.skip {
-			t.Errorf("%s: promotionSkip(%q, %q, %q, %q, %q) = %v, want %v", tc.name, tc.event, tc.base, tc.head, tc.headRepo, tc.repo, skip, tc.skip)
-		}
-		if skip && (!strings.HasPrefix(note, "NOTE: ") || !strings.Contains(note, tc.head+"'s queue")) {
-			t.Errorf("%s: note = %q; want a NOTE naming %s's queue as where the rule ran", tc.name, note, tc.head)
-		}
-		if !skip && note != "" {
-			t.Errorf("%s: note = %q; want none when the comparison runs", tc.name, note)
+		assert.Equal(t, tc.skip, skip, "%s: promotionSkip(%q, %q, %q, %q, %q) = %v, want %v", tc.name, tc.event, tc.base, tc.head, tc.headRepo, tc.repo, skip, tc.skip)
+		if skip {
+			assert.True(t, strings.HasPrefix(note, "NOTE: ") && strings.Contains(note, tc.head+"'s queue"), "%s: note = %q; want a NOTE naming %s's queue as where the rule ran", tc.name, note, tc.head)
+		} else {
+			assert.Empty(t, note, "%s: note = %q; want none when the comparison runs", tc.name, note)
 		}
 	}
 }
@@ -825,9 +810,8 @@ func TestMainRunReadsTheEventRefAndBranch(t *testing.T) {
 		{"a ref with no event", "", "refs/heads/main", "main", false},
 		{"an event with no ref", "push", "", "main", false},
 	} {
-		if got := mainRun(tc.event, tc.ref, tc.branch); got != tc.want {
-			t.Errorf("%s: mainRun(%q, %q, %q) = %v, want %v", tc.name, tc.event, tc.ref, tc.branch, got, tc.want)
-		}
+		got := mainRun(tc.event, tc.ref, tc.branch)
+		assert.Equal(t, tc.want, got, "%s: mainRun(%q, %q, %q) = %v, want %v", tc.name, tc.event, tc.ref, tc.branch, got, tc.want)
 	}
 }
 
@@ -842,16 +826,10 @@ func TestExcuseDevDeletionsReadsHistoryAndDevTree(t *testing.T) {
 	history := map[string]bool{"a_test.go": true, "b_test.go": true, "e_test.go": true, "g.go": true}
 	devTree := map[string]bool{"b_test.go": true, "f_test.go": true}
 	kept, rows, excused, excusedRows := excuseDevDeletions(deleted, declared, history, devTree)
-	if strings.Join(kept, " ") != "b_test.go c_test.go d_test.go" || excused != 1 {
-		t.Errorf("kept = %q, excused = %d; want a_test.go excused (dev deleted it and lacks it), b_test.go kept (dev's tip still has it), c and d kept (dev never deleted them), g.go excused and not counted (not guarded)", kept, excused)
-	}
-	if len(rows) != 1 || rows["f_test.go"] != "moved" || excusedRows != 2 {
-		t.Errorf("rows = %v, excusedRows = %d; want a and e excused (dev's ancestry deleted them), f kept", rows, excusedRows)
-	}
+	assert.True(t, strings.Join(kept, " ") == "b_test.go c_test.go d_test.go" && excused == 1, "kept = %q, excused = %d; want a_test.go excused (dev deleted it and lacks it), b_test.go kept (dev's tip still has it), c and d kept (dev never deleted them), g.go excused and not counted (not guarded)", kept, excused)
+	assert.True(t, len(rows) == 1 && rows["f_test.go"] == "moved" && excusedRows == 2, "rows = %v, excusedRows = %d; want a and e excused (dev's ancestry deleted them), f kept", rows, excusedRows)
 	kept, rows, excused, excusedRows = excuseDevDeletions(deleted, declared, map[string]bool{}, devTree)
-	if len(kept) != 5 || len(rows) != 3 || excused != 0 || excusedRows != 0 {
-		t.Errorf("empty history: kept = %q, rows = %v; want nothing excused", kept, rows)
-	}
+	assert.True(t, len(kept) == 5 && len(rows) == 3 && excused == 0 && excusedRows == 0, "empty history: kept = %q, rows = %v; want nothing excused", kept, rows)
 }
 
 // promotionRepo is the main-run witnesses' repository, Stella's shape: a
@@ -878,16 +856,12 @@ func sharedPromotionRepo(t *testing.T) *promotionRepo {
 	t.Helper()
 	promotionShared.once.Do(func() {
 		dir, err := os.MkdirTemp("", "classtests-promotion-")
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		promotionShared.dir = dir
 		promotionShared.repo = buildPromotionRepo(t, dir)
 	})
 	base := promotionShared.repo
-	if base == nil {
-		t.Fatal("the shared promotion repository was not built")
-	}
+	require.NotNil(t, base, "the shared promotion repository was not built")
 	return &promotionRepo{
 		scratchRepo: &scratchRepo{t: t, root: base.root, index: filepath.Join(t.TempDir(), "index")},
 		base:        base.base, mainTip: base.mainTip, devTip: base.devTip, mainOnly: base.mainOnly,
@@ -952,18 +926,14 @@ func (r *promotionRepo) promotion() {
 func (r *scratchRepo) run(commit, event, ref, branch string) ([]string, string) {
 	r.t.Helper()
 	m, note, err := readCommitDeletions(r.root, commit, event, ref, branch)
-	if err != nil {
-		r.t.Fatal(err)
-	}
+	require.NoError(r.t, err)
 	return m.findings(), note
 }
 
 // exactlyOne fails unless got is one finding naming file's deletion.
 func exactlyOne(t *testing.T, name string, got []string, file string) {
 	t.Helper()
-	if len(got) != 1 || !strings.Contains(got[0], "deletes "+file+",") {
-		t.Errorf("%s: findings = %q; want exactly one, naming %s", name, got, file)
-	}
+	assert.True(t, len(got) == 1 && strings.Contains(got[0], "deletes "+file+","), "%s: findings = %q; want exactly one, naming %s", name, got, file)
 }
 
 // TestMainRunSeesWhatMainAloneHad is Stella's witness over promotionRepo:
@@ -977,14 +947,10 @@ func TestMainRunSeesWhatMainAloneHad(t *testing.T) {
 
 	got, note := r.run(lostMainOnly, "push", "refs/heads/main", "")
 	exactlyOne(t, "dev's tree on main under push", got, "main_only_test.go")
-	if !strings.Contains(note, "since the merge base "+r.base[:9]+", 2 paths deleted) excused 1 guarded deletions and 0 declaration rows") || !strings.Contains(note, "(0 findings)") {
-		t.Errorf("note = %q; want gone_test.go excused, no rows, nothing beyond dev", note)
-	}
+	assert.True(t, strings.Contains(note, "since the merge base "+r.base[:9]+", 2 paths deleted) excused 1 guarded deletions and 0 declaration rows") && strings.Contains(note, "(0 findings)"), "note = %q; want gone_test.go excused, no rows, nothing beyond dev", note)
 	got, note = r.run(lostMainOnly, "", "", "main")
 	exactlyOne(t, "dev's tree on main with no environment", got, "main_only_test.go")
-	if !strings.HasPrefix(note, "NOTE: a local run on main is a main run") {
-		t.Errorf("note = %q; want a local main run", note)
-	}
+	assert.True(t, strings.HasPrefix(note, "NOTE: a local run on main is a main run"), "note = %q; want a local main run", note)
 }
 
 // TestMainRunExcusesOnlyWhatDevDeleted: the true promotion (dev's tree plus
@@ -996,14 +962,11 @@ func TestMainRunExcusesOnlyWhatDevDeleted(t *testing.T) {
 	r := sharedPromotionRepo(t)
 	promotion := r.merge("promotion", r.promotion)
 
-	if got, note := r.run(promotion, "push", "refs/heads/main", ""); len(got) != 0 || !strings.Contains(note, "excused 1 guarded deletions") {
-		t.Errorf("the true promotion: findings = %q, note = %q; want none, gone_test.go excused", got, note)
-	}
-	got, note := r.run(promotion, "", "", "feature")
+	got, note := r.run(promotion, "push", "refs/heads/main", "")
+	assert.True(t, len(got) == 0 && strings.Contains(note, "excused 1 guarded deletions"), "the true promotion: findings = %q, note = %q; want none, gone_test.go excused", got, note)
+	got, note = r.run(promotion, "", "", "feature")
 	exactlyOne(t, "the true promotion on a feature branch with no environment", got, "gone_test.go")
-	if note != "" {
-		t.Errorf("note = %q; want none off main", note)
-	}
+	assert.Empty(t, note, "note = %q; want none off main", note)
 }
 
 // TestMainRunHoldsItsTreeControls pins controls 1 and 2 over promotionRepo:
@@ -1031,15 +994,13 @@ func TestMainRunHoldsItsTreeControls(t *testing.T) {
 
 	got, _ = r.run(lostNew, "workflow_dispatch", "refs/heads/main", "")
 	exactlyOne(t, "control 2: new_test.go, which main never had", got, "new_test.go")
-	if len(got) == 1 && !strings.Contains(got[0], "which its parent "+r.devTip[:9]+" had") {
-		t.Errorf("control 2 finding = %q; want it against the second parent", got[0])
+	if len(got) == 1 {
+		assert.Contains(t, got[0], "which its parent "+r.devTip[:9]+" had", "control 2 finding = %q; want it against the second parent", got[0])
 	}
 
 	got, note := r.run(squash, "schedule", "refs/heads/main", "")
 	exactlyOne(t, "a one-parent squash on main", got, "keep_test.go")
-	if !strings.Contains(note, "one-parent commit") {
-		t.Errorf("note = %q; want the one-parent note", note)
-	}
+	assert.Contains(t, note, "one-parent commit", "note = %q; want the one-parent note", note)
 }
 
 // TestMainRunExcusesOnlyDevsHistory pins control 4 over promotionRepo: a
@@ -1057,10 +1018,8 @@ func TestMainRunExcusesOnlyDevsHistory(t *testing.T) {
 	featureMerge := r.git("commit-tree", r.git("write-tree"), "-p", r.mainTip, "-p", feature, "-m", "feature merged into main")
 	got, note := r.run(featureMerge, "push", "refs/heads/main", "")
 	all := strings.Join(got, "\n")
-	if len(got) != 2 || !strings.Contains(all, "deletes keep_test.go,") || !strings.Contains(all, "second parent "+feature[:9]+" is not an ancestor of refs/remotes/origin/dev ("+r.devTip[:9]+")") ||
-		!strings.Contains(all, devHistoryFetch) || !strings.Contains(note, "could not be read") {
-		t.Errorf("control 4, a feature branch merged into main: findings = %q, note = %q; want keep_test.go red and the second parent outside dev's history", got, note)
-	}
+	assert.True(t, len(got) == 2 && strings.Contains(all, "deletes keep_test.go,") && strings.Contains(all, "second parent "+feature[:9]+" is not an ancestor of refs/remotes/origin/dev ("+r.devTip[:9]+")") &&
+		strings.Contains(all, devHistoryFetch) && strings.Contains(note, "could not be read"), "control 4, a feature branch merged into main: findings = %q, note = %q; want keep_test.go red and the second parent outside dev's history", got, note)
 }
 
 // TestMainRunFailsClosedOnAShallowAncestry pins control 3: the merge in a
@@ -1079,15 +1038,11 @@ func TestMainRunFailsClosedOnAShallowAncestry(t *testing.T) {
 	shallow := filepath.Join(t.TempDir(), "shallow")
 	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "witness-shallow", "file://"+r.root, shallow)
 	m, note, err := readMergeDeletionsFor(shallow, "push", "refs/heads/main")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got := m.findings()
 	all := strings.Join(got, "\n")
-	if len(got) != 3 || !strings.Contains(all, "deletes gone_test.go,") || !strings.Contains(all, "deletes x_test.go,") ||
-		!strings.Contains(all, "ancestry is cut by a shallow graft at") || !strings.Contains(all, devHistoryFetch) || !strings.Contains(note, "could not be read") {
-		t.Errorf("shallow ancestry: findings = %q, note = %q; want the ordinary two and the shallow history, naming the graft and the fetch", got, note)
-	}
+	assert.True(t, len(got) == 3 && strings.Contains(all, "deletes gone_test.go,") && strings.Contains(all, "deletes x_test.go,") &&
+		strings.Contains(all, "ancestry is cut by a shallow graft at") && strings.Contains(all, devHistoryFetch) && strings.Contains(note, "could not be read"), "shallow ancestry: findings = %q, note = %q; want the ordinary two and the shallow history, naming the graft and the fetch", got, note)
 }
 
 // TestMainRunNamesTheFetchWhenDevHasMovedOn is the real CI shape before the
@@ -1110,25 +1065,18 @@ func TestMainRunNamesTheFetchWhenDevHasMovedOn(t *testing.T) {
 	c.git("update-ref", "refs/remotes/origin/dev", devNext)
 
 	m, note, err := readMergeDeletionsFor(shallow, "push", "refs/heads/main")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got := m.findings()
 	all := strings.Join(got, "\n")
-	if len(got) != 2 || !strings.Contains(all, "deletes gone_test.go,") || !strings.Contains(all, devHistoryFetch) || strings.Contains(all, "branch merged into main") || !strings.Contains(note, "could not be read") {
-		t.Errorf("shallow checkout, origin/dev moved on: findings = %q, note = %q; want gone_test.go unexcused and the shallow history naming the fetch", got, note)
-	}
+	assert.True(t, len(got) == 2 && strings.Contains(all, "deletes gone_test.go,") && strings.Contains(all, devHistoryFetch) && !strings.Contains(all, "branch merged into main") && strings.Contains(note, "could not be read"), "shallow checkout, origin/dev moved on: findings = %q, note = %q; want gone_test.go unexcused and the shallow history naming the fetch", got, note)
 
 	// The guarded fetch, as the workflow step runs it (the source's dev is
 	// the moved-on branch here; no blob filter over a file:// remote).
 	c.git("fetch", "-q", "--no-tags", "--unshallow", "origin", "+witness-moved-dev:refs/remotes/origin/dev")
 	m, note, err = readMergeDeletionsFor(shallow, "push", "refs/heads/main")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := m.findings(); len(got) != 0 || !strings.Contains(note, "excused 1 guarded deletions") {
-		t.Errorf("after the fetch: findings = %q, note = %q; want none, gone_test.go excused", got, note)
-	}
+	require.NoError(t, err)
+	got = m.findings()
+	assert.True(t, len(got) == 0 && strings.Contains(note, "excused 1 guarded deletions"), "after the fetch: findings = %q, note = %q; want none, gone_test.go excused", got, note)
 }
 
 // TestMainRunNeverPassesOnAShallowAncestry is Stella's counterexample: a
@@ -1158,15 +1106,11 @@ func TestMainRunNeverPassesOnAShallowAncestry(t *testing.T) {
 	shallow := filepath.Join(t.TempDir(), "shallow")
 	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "main", "file://"+r.root, shallow)
 	m, note, err := readMergeDeletionsFor(shallow, "push", "refs/heads/main")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got = m.findings()
 	all := strings.Join(got, "\n")
-	if len(got) != 2 || !strings.Contains(all, "deletes new_test.go, which its parent "+devTip[:9]+" had") ||
-		!strings.Contains(all, "nothing is excused") || !strings.Contains(all, devHistoryFetch) || !strings.Contains(note, "could not be read") {
-		t.Errorf("shallow clone of the bad merge: findings = %q, note = %q; want new_test.go against the second parent and the unreadable history naming the fetch", got, note)
-	}
+	assert.True(t, len(got) == 2 && strings.Contains(all, "deletes new_test.go, which its parent "+devTip[:9]+" had") &&
+		strings.Contains(all, "nothing is excused") && strings.Contains(all, devHistoryFetch) && strings.Contains(note, "could not be read"), "shallow clone of the bad merge: findings = %q, note = %q; want new_test.go against the second parent and the unreadable history naming the fetch", got, note)
 }
 
 // foundationRepo is the dev landing's witnesses' repository, the shape of
@@ -1255,14 +1199,10 @@ func TestDevLandingExcusesWhatFoundationDeleted(t *testing.T) {
 			branch = "dev"
 		}
 		got, note := r.run(merge, tc.event, tc.ref, branch)
-		if len(got) != 0 || !strings.Contains(note, "is a dev run at a merge commit") || !strings.Contains(note, "excused 1 guarded deletions and 0 declaration rows") || !strings.Contains(note, "(0 findings)") {
-			t.Errorf("%s, the landed merge: findings = %q, note = %q; want none, gone_test.go excused", tc.name, got, note)
-		}
+		assert.True(t, len(got) == 0 && strings.Contains(note, "is a dev run at a merge commit") && strings.Contains(note, "excused 1 guarded deletions and 0 declaration rows") && strings.Contains(note, "(0 findings)"), "%s, the landed merge: findings = %q, note = %q; want none, gone_test.go excused", tc.name, got, note)
 		got, note = r.run(squash, tc.event, tc.ref, branch)
 		exactlyOne(t, tc.name+", the same tree as a squash", got, "gone_test.go")
-		if !strings.Contains(note, "one-parent commit") {
-			t.Errorf("%s: note = %q; want the one-parent note", tc.name, note)
-		}
+		assert.Contains(t, note, "one-parent commit", "%s: note = %q; want the one-parent note", tc.name, note)
 	}
 	// Off dev the same merge is the ordinary comparison: a pull request's
 	// merge ref, a feature branch with no environment.
@@ -1274,9 +1214,7 @@ func TestDevLandingExcusesWhatFoundationDeleted(t *testing.T) {
 	} {
 		got, note := r.run(merge, tc.event, tc.ref, tc.branch)
 		exactlyOne(t, tc.name, got, "gone_test.go")
-		if note != "" {
-			t.Errorf("%s: note = %q; want none off dev", tc.name, note)
-		}
+		assert.Empty(t, note, "%s: note = %q; want none off dev", tc.name, note)
 	}
 }
 
@@ -1318,9 +1256,7 @@ func TestDevLandingExcusesOnlyFoundationsHistory(t *testing.T) {
 	merged := r.git("commit-tree", r.git("write-tree"), "-p", r.devTip, "-p", feature, "-m", "feature merged into dev")
 	got, note := r.run(merged, "push", "refs/heads/dev", "")
 	exactlyOne(t, "a feature branch merged into dev", got, "keep_test.go")
-	if !strings.Contains(note, "not a promotion of sprint/foundation") {
-		t.Errorf("note = %q; want it named as not a promotion", note)
-	}
+	assert.Contains(t, note, "not a promotion of sprint/foundation", "note = %q; want it named as not a promotion", note)
 }
 
 // TestDevLandingFailsClosedOnAnUnreadableHistory is control 3 on dev: the
@@ -1341,32 +1277,21 @@ func TestDevLandingFailsClosedOnAnUnreadableHistory(t *testing.T) {
 	c.git("update-ref", "-d", "refs/remotes/origin/sprint/foundation")
 
 	m, note, err := readMergeDeletionsFor(shallow, "merge_group", ref)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	all := strings.Join(m.findings(), "\n")
-	if !strings.Contains(all, "deletes gone_test.go,") || !strings.Contains(all, "refs/remotes/origin/sprint/foundation is not in this checkout") || !strings.Contains(all, foundationHistoryFetch) || !strings.Contains(note, "could not be read") {
-		t.Errorf("no origin/sprint/foundation: findings = %q, note = %q; want gone_test.go unexcused and the missing ref naming the fetch", all, note)
-	}
+	assert.True(t, strings.Contains(all, "deletes gone_test.go,") && strings.Contains(all, "refs/remotes/origin/sprint/foundation is not in this checkout") && strings.Contains(all, foundationHistoryFetch) && strings.Contains(note, "could not be read"), "no origin/sprint/foundation: findings = %q, note = %q; want gone_test.go unexcused and the missing ref naming the fetch", all, note)
 
 	c.git("update-ref", "refs/remotes/origin/sprint/foundation", r.foundationTip)
 	m, note, err = readMergeDeletionsFor(shallow, "merge_group", ref)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	all = strings.Join(m.findings(), "\n")
-	if !strings.Contains(all, "deletes gone_test.go,") || !strings.Contains(all, "ancestry is cut by a shallow graft at") || !strings.Contains(all, foundationHistoryFetch) {
-		t.Errorf("shallow ancestry: findings = %q, note = %q; want gone_test.go unexcused and the shallow history naming the fetch", all, note)
-	}
+	assert.True(t, strings.Contains(all, "deletes gone_test.go,") && strings.Contains(all, "ancestry is cut by a shallow graft at") && strings.Contains(all, foundationHistoryFetch), "shallow ancestry: findings = %q, note = %q; want gone_test.go unexcused and the shallow history naming the fetch", all, note)
 
 	c.git("fetch", "-q", "--no-tags", "--unshallow", "origin", "+witness-foundation:refs/remotes/origin/sprint/foundation")
 	m, note, err = readMergeDeletionsFor(shallow, "merge_group", ref)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := m.findings(); len(got) != 0 || !strings.Contains(note, "excused 1 guarded deletions") {
-		t.Errorf("after the fetch: findings = %q, note = %q; want none, gone_test.go excused", got, note)
-	}
+	require.NoError(t, err)
+	got := m.findings()
+	assert.True(t, len(got) == 0 && strings.Contains(note, "excused 1 guarded deletions"), "after the fetch: findings = %q, note = %q; want none, gone_test.go excused", got, note)
 }
 
 // TestDevRunReadsTheEventRefAndBranch pins which runs audit what landed on
@@ -1393,9 +1318,8 @@ func TestDevRunReadsTheEventRefAndBranch(t *testing.T) {
 		{"a ref with no event", "", "refs/heads/dev", "dev", false},
 		{"an event with no ref", "push", "", "dev", false},
 	} {
-		if got := devRun(tc.event, tc.ref, tc.branch); got != tc.want {
-			t.Errorf("%s: devRun(%q, %q, %q) = %v, want %v", tc.name, tc.event, tc.ref, tc.branch, got, tc.want)
-		}
+		got := devRun(tc.event, tc.ref, tc.branch)
+		assert.Equal(t, tc.want, got, "%s: devRun(%q, %q, %q) = %v, want %v", tc.name, tc.event, tc.ref, tc.branch, got, tc.want)
 	}
 }
 
@@ -1432,24 +1356,18 @@ func TestPromotionBaseCheckReadsTheAncestry(t *testing.T) {
 		r.git("update-ref", "refs/heads/witness-check", commit)
 		r.git("checkout", "-q", "-f", "witness-check")
 		ok, note, err := promotionBaseCheck(r.root, base)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		return ok, note
 	}
 
-	if ok, note := check(mergeRef(devTip, current), "dev"); !ok || note != "" {
-		t.Errorf("dev's tip an ancestor of the head: ok = %v, note = %q; want ok", ok, note)
-	}
-	if ok, note := check(mergeRef(devTip, stale), "dev"); ok || !strings.Contains(note, "dev's tip "+devTip[:9]+" is not an ancestor") || !strings.Contains(note, "the full comparison runs") {
-		t.Errorf("a stale head: ok = %v, note = %q; want refused naming dev's tip", ok, note)
-	}
-	if ok, note := check(mergeRef(devTip, stale), "main"); !ok || note != "" {
-		t.Errorf("dev to main: ok = %v, note = %q; want no precondition", ok, note)
-	}
-	if ok, note := check(current, "dev"); ok || !strings.Contains(note, "not a pull request's merge ref") {
-		t.Errorf("a one-parent checkout: ok = %v, note = %q; want refused", ok, note)
-	}
+	ok, note := check(mergeRef(devTip, current), "dev")
+	assert.True(t, ok && note == "", "dev's tip an ancestor of the head: ok = %v, note = %q; want ok", ok, note)
+	ok, note = check(mergeRef(devTip, stale), "dev")
+	assert.True(t, !ok && strings.Contains(note, "dev's tip "+devTip[:9]+" is not an ancestor") && strings.Contains(note, "the full comparison runs"), "a stale head: ok = %v, note = %q; want refused naming dev's tip", ok, note)
+	ok, note = check(mergeRef(devTip, stale), "main")
+	assert.True(t, ok && note == "", "dev to main: ok = %v, note = %q; want no precondition", ok, note)
+	ok, note = check(current, "dev")
+	assert.True(t, !ok && strings.Contains(note, "not a pull request's merge ref"), "a one-parent checkout: ok = %v, note = %q; want refused", ok, note)
 
 	good := mergeRef(devTip, current)
 	r.git("update-ref", "refs/heads/witness-good", good)
@@ -1457,17 +1375,12 @@ func TestPromotionBaseCheckReadsTheAncestry(t *testing.T) {
 	shallow := filepath.Join(t.TempDir(), "shallow")
 	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "witness-good", "file://"+r.root, shallow)
 	ok, note, err := promotionBaseCheck(shallow, "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok || !strings.Contains(note, "cut by a shallow graft") || !strings.Contains(note, foundationHistoryFetch) {
-		t.Errorf("a depth-2 checkout: ok = %v, note = %q; want refused naming the fetch", ok, note)
-	}
+	require.NoError(t, err)
+	assert.True(t, !ok && strings.Contains(note, "cut by a shallow graft") && strings.Contains(note, foundationHistoryFetch), "a depth-2 checkout: ok = %v, note = %q; want refused naming the fetch", ok, note)
 	c := &scratchRepo{t: t, root: shallow}
 	c.git("fetch", "-q", "--no-tags", "--unshallow", "origin", "+witness-foundation:refs/remotes/origin/sprint/foundation")
-	if ok, note, err := promotionBaseCheck(shallow, "dev"); err != nil || !ok || note != "" {
-		t.Errorf("after the fetch: ok = %v, note = %q, err = %v; want ok", ok, note, err)
-	}
+	ok, note, err = promotionBaseCheck(shallow, "dev")
+	assert.True(t, err == nil && ok && note == "", "after the fetch: ok = %v, note = %q, err = %v; want ok", ok, note, err)
 }
 
 // scratchRepo is a git repository a test builds, with the identity and hooks
@@ -1497,9 +1410,7 @@ func (r *scratchRepo) git(args ...string) string {
 		env = []string{"GIT_INDEX_FILE=" + r.index}
 	}
 	out, err := gitEnvOut(r.root, env, args...)
-	if err != nil {
-		r.t.Fatal(err)
-	}
+	require.NoError(r.t, err)
 	return strings.TrimSpace(out)
 }
 
@@ -1521,19 +1432,13 @@ func gitEnvOut(root string, env []string, args ...string) (string, error) {
 func (r *scratchRepo) write(rel, text string) {
 	r.t.Helper()
 	p := filepath.Join(r.root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		r.t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
-		r.t.Fatal(err)
-	}
+	require.NoError(r.t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(r.t, os.WriteFile(p, []byte(text), 0o644))
 }
 
 func (r *scratchRepo) remove(rel string) {
 	r.t.Helper()
-	if err := os.Remove(filepath.Join(r.root, filepath.FromSlash(rel))); err != nil {
-		r.t.Fatal(err)
-	}
+	require.NoError(r.t, os.Remove(filepath.Join(r.root, filepath.FromSlash(rel))))
 }
 
 // commit stages everything and commits it, returning the new HEAD.
@@ -1564,9 +1469,8 @@ func TestGuardedByMergeRuleReadsThePath(t *testing.T) {
 		"cmd/nova-sprint/silent.go":                   false,
 		"docs/SPEC-CI.md":                             false,
 	} {
-		if got := guardedByMergeRule(rel); got != want {
-			t.Errorf("guardedByMergeRule(%q) = %v, want %v", rel, got, want)
-		}
+		got := guardedByMergeRule(rel)
+		assert.Equal(t, want, got, "guardedByMergeRule(%q) = %v, want %v", rel, got, want)
 	}
 }
 
@@ -1574,7 +1478,5 @@ func TestDeclaredRowsAddedReadsOnlyTheAddedRows(t *testing.T) {
 	t.Parallel()
 	diff := "--- a/internal/ci/testdata/deleted-tests.txt\n+++ b/internal/ci/testdata/deleted-tests.txt\n@@ -1,2 +1,4 @@\n # the log\n old/one_test.go kept from before\n+# a comment\n+new/two_test.go moved to the functional tier\n+new/three_test.go\n-gone/row_test.go a removed row\n"
 	got := declaredRowsAdded(diff)
-	if len(got) != 2 || got["new/two_test.go"] != "moved to the functional tier" || got["new/three_test.go"] != "" {
-		t.Fatalf("declaredRowsAdded = %v; want the two added rows, the context, the comment and the removed row unread", got)
-	}
+	require.True(t, len(got) == 2 && got["new/two_test.go"] == "moved to the functional tier" && got["new/three_test.go"] == "", "declaredRowsAdded = %v; want the two added rows, the context, the comment and the removed row unread", got)
 }

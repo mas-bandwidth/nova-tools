@@ -30,6 +30,7 @@ func inventoryHarness(t *testing.T, n int) *harness {
 		h.redis.views[config.KindMachine][fmt.Sprintf("bench-%02d", i)] = config.View{"user": "user-a", "seat": "seat-a", "slots": "8", "runners": "0"}
 	}
 	h.redis.revs[config.KindMachine] = 1
+	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}}
 	return h
 }
 
@@ -55,7 +56,7 @@ func TestInventoryPrintsTheAppliedState(t *testing.T) {
 	t.Parallel()
 	h := inventoryHarness(t, 2)
 	h.env["NOVA_MACHINE"] = "bench-01"
-	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"store": "bench-02", "coordinator": "bench-01"}}
+	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"store": "bench-02", "coordinator": "bench-01", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}}
 	h.redis.views["loop"] = map[string]config.View{"member-02": {
 		"name": "member-02", "machine": "bench-02", "argv": `["nova-swarm","member"]`, "seat": "seat-a", "keys": "API_KEY",
 		"every": "0", "keepalive": "true", "width": "2", "enabled": "true", "log": "~/nova-bench/loops/member-02.log",
@@ -72,6 +73,8 @@ func TestInventoryPrintsTheAppliedState(t *testing.T) {
 	assert.Equal(t, []string{"bench-02"}, inv.Store.Hosts)
 	assert.Equal(t, "local", inv.Meta.Hostvars["bench-01"]["ansible_connection"])
 	assert.Equal(t, "linux", inv.Meta.Hostvars["bench-02"]["nova_os"])
+	assert.Equal(t, "bench-02:6380", inv.Meta.Hostvars["bench-01"]["nova_redis_addr"])
+	assert.Equal(t, "postgres://nova_config@localhost:5432/nova", inv.Meta.Hostvars["bench-02"]["nova_pg_dsn"])
 	assert.Len(t, inv.Meta.Hostvars["bench-02"]["nova_loops"], 1)
 	assert.Equal(t, 0, h.opens, "inventory opened Postgres")
 	assert.Equal(t, 1, h.redis.snapshots)
@@ -99,6 +102,21 @@ func TestInventoryFromTheFixtureOpensNoStore(t *testing.T) {
 		assert.Contains(t, inv.Meta.Hostvars[m], "nova_loops", m)
 	}
 	assert.Equal(t, 0, h.redis.opens+h.opens)
+}
+
+func TestInventoryRefusesMissingPortBeforeRewritingALegacyMember(t *testing.T) {
+	t.Parallel()
+	h := inventoryHarness(t, 1)
+	delete(h.redis.views[config.KindFleet][config.KindFleet], "redis_port")
+	const argv = `["/usr/bin/env","NOVA_SPRINT_REDIS=bench-01:6380","nova-swarm","member"]`
+	h.redis.views[config.KindLoop] = map[string]config.View{"member-01": {"machine": "bench-01", "argv": argv}}
+	h.redis.revs[config.KindLoop] = 1
+	code, out, errs := h.run(t, "inventory")
+	require.Equal(t, 1, code, errs)
+	assert.Empty(t, out)
+	assert.Contains(t, errs, "endpoints are unset: redis_port")
+	assert.Contains(t, errs, "fleet set --redis_port <port> --pg_dsn <dsn>")
+	assert.Equal(t, argv, h.redis.views[config.KindLoop]["member-01"]["argv"])
 }
 
 // Every flag problem is refused in one line before any store is opened.
@@ -215,7 +233,7 @@ func TestInventoryTimesOutWaitingForTheStore(t *testing.T) {
 	h := inventoryHarness(t, 2)
 	h.redis.hang = true
 	code, out, errs := h.run(t, "inventory", "--redis", storeAddr, "--host", "bench-01", "--timeout", "50ms")
-	want := "nova-config inventory: timed out after 50ms waiting for the store at " + storeAddr + " while reading the applied state; check that Redis answers there; run: nova-config inventory --redis " + storeAddr + " --host bench-01 --timeout 150ms\n"
+	want := "nova-config inventory REFUSED: timed out after 50ms waiting for the store at " + storeAddr + " while reading the applied state; check that Redis answers there; run: nova-config inventory --redis " + storeAddr + " --host bench-01 --timeout 150ms\n"
 	assert.Equal(t, 2, code)
 	assert.Empty(t, out)
 	require.Equal(t, want, errs)
@@ -273,10 +291,11 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		"first run", "nova-config inventory --fixture fleet/testdata/inventory-fixture.yml",
 		"-i wants an executable", "column one", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list", "a failed inventory is an empty inventory", "unparsed_is_failed = True",
 		"_meta.hostvars", "ansible never calls --host", "the default when neither --list nor --host is given",
-		"store_deployer", "nova_loops", "nova_os", "never Postgres",
+		"store_deployer", "nova_loops", "nova_os", "nova_redis_port", "nova_redis_addr", "nova_pg_dsn", "never Postgres",
 		"matched by exact machine name", "lower-cased first label", "nothing is marked local", "an empty value counts as unset",
 		"this verb exits 0 when it printed, 1 when the applied state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)",
-		"exit codes: 0 done, 1 refused, 2 usage\n",
+		"exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run: ready=no, nothing attempted), 2 could not run (usage, or a store that did not answer)",
+		"effect: inspection: reads Redis",
 	} {
 		assert.Contains(t, help, w)
 	}

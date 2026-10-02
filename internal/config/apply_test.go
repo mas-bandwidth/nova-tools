@@ -107,7 +107,7 @@ func seed(t *testing.T) *Mem {
 	}
 	// rev 5: the fleet's coordinator machine; rev 6: the sprint's
 	// coordinator friend.
-	_, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "studio"}, "rowan")
+	_, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "studio", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, "rowan")
 	require.NoError(t, err)
 	_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "rowan"}, "rowan")
 	require.NoError(t, err)
@@ -233,9 +233,9 @@ func TestAHandoverIsTwoRoleSetsNewCoordinatorFirst(t *testing.T) {
 }
 
 // TestApplyOfASingletonIsASetNeverAnAdd: the fleet and sprint rows exist
-// on both sides, so an empty row applies nothing (the stamp still moves to
-// the revision) and a set is one SET naming the fields; a REMOVE is never
-// planned.
+// on both sides. An undeclared endpoint refuses before any writes, and a
+// declared fleet set is one SET naming the fields;
+// a REMOVE is never planned.
 func TestApplyOfASingletonIsASetNeverAnAdd(t *testing.T) {
 	t.Parallel()
 
@@ -249,20 +249,17 @@ func TestApplyOfASingletonIsASetNeverAnAdd(t *testing.T) {
 	require.NoError(t, err, assertionMsg249...)
 	require.Equal(t, 1, res.Set, assertionMsg249...)
 	require.Equal(t, int64(6), res.Rev, assertionMsg249...)
-	require.Equal(t, "set:sprint:coordinator,reader_tier", strings.Join(reported, " "), assertionMsg249...)
+	require.Equal(t, "set:sprint:coordinator", strings.Join(reported, " "), assertionMsg249...)
 	require.Equal(t, "rowan", ap.views[KindSprint][KindSprint]["coordinator"], "sprint view %v", ap.views[KindSprint])
-	require.Equal(t, "pro", ap.views[KindSprint][KindSprint][FieldReaderTier], "the reader tier is pro unless set: %v", ap.views[KindSprint])
 	reported = nil
 	_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": ""}, "rowan")
 	require.NoError(t, err)
 	empty := NewMem()
-	res, err = Apply(ctx, empty, ap, KindFleet, "rowan", false, report)
-	assertionMsg258 := []any{"empty fleet: %+v %v reported %v", res, err, reported}
-	require.NoError(t, err, assertionMsg258...)
-	require.Equal(t, 0, res.Add+res.Set+res.Remove, assertionMsg258...)
-	require.Equal(t, int64(0), res.Rev, assertionMsg258...)
-	require.Empty(t, reported, assertionMsg258...)
+	_, err = Apply(ctx, empty, ap, KindFleet, "rowan", false, report)
+	require.ErrorContains(t, err, "endpoints are unset: redis_port, pg_dsn")
+	require.Empty(t, reported)
 	require.Equal(t, "set sprint sprint as=rowan idem=config:sprint:6 stamp sprint 6", strings.Join(ap.log, " "), "empty fleet wrote %v", ap.log)
+	reported = nil
 	ap.log = nil
 	_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "hulk", "coordinator": "studio"}, "rowan")
 	require.NoError(t, err)
@@ -274,9 +271,32 @@ func TestApplyOfASingletonIsASetNeverAnAdd(t *testing.T) {
 	require.Equal(t, 0, res.Add, assertionMsg267...)
 	require.Equal(t, int64(8), res.Rev, assertionMsg267...)
 	assertionMsg268 := []any{"fleet set reported %v wrote %v", reported, ap.log}
-	require.Equal(t, "set:fleet:store,coordinator", strings.Join(reported, " "), assertionMsg268...)
+	require.Equal(t, "set:fleet:store,coordinator,redis_port,pg_dsn", strings.Join(reported, " "), assertionMsg268...)
 	require.Equal(t, "set fleet fleet as=rowan idem=config:fleet:8 stamp fleet 8", strings.Join(ap.log, " "), assertionMsg268...)
 	require.Equal(t, "hulk", ap.views[KindFleet][KindFleet]["store"], "fleet view %v", ap.views[KindFleet])
+	require.Equal(t, "6380", ap.views[KindFleet][KindFleet]["redis_port"], "fleet view %v", ap.views[KindFleet])
+}
+
+func TestApplyRefusesMissingFleetEndpointsWithoutRewritingALegacyMember(t *testing.T) {
+	t.Parallel()
+	for _, check := range []bool{false, true} {
+		t.Run(fmt.Sprintf("check=%t", check), func(t *testing.T) {
+			t.Parallel()
+			st, ap := NewMem(), newFake()
+			_, _, err := st.Update(context.Background(), KindFleet, KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova"}, "operator")
+			require.NoError(t, err)
+			const argv = `["/usr/bin/env","NOVA_SPRINT_REDIS=bench-beta:6380","nova-swarm","member"]`
+			legacy := loopView("member-beta", "bench-beta", map[string]string{"argv": argv})
+			ap.views[KindLoop] = map[string]View{"member-beta": legacy}
+			_, err = Apply(context.Background(), st, ap, KindFleet, "operator", check, func(Op) { t.Error("refusal reported an operation") })
+			require.ErrorContains(t, err, "endpoints are unset: redis_port")
+			require.ErrorContains(t, err, "nova-config fleet set --redis_port <port> --pg_dsn <dsn>")
+			require.Empty(t, ap.log)
+			require.Zero(t, ap.prepared)
+			require.Empty(t, ap.revs)
+			require.Equal(t, argv, ap.views[KindLoop]["member-beta"]["argv"])
+		})
+	}
 }
 
 func TestApplyCheckWritesNothing(t *testing.T) {

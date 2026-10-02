@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -342,9 +343,7 @@ func livingTextFiles(t *testing.T) []textScanFile {
 		src := f.Src
 		if src == nil {
 			raw, err := os.ReadFile(f.Path)
-			if err != nil {
-				t.Fatalf("reading %s: %v", f.Rel, err)
-			}
+			require.NoError(t, err, "reading %s: %v", f.Rel, err)
 			src = raw
 		}
 		files = append(files, textScanFile{Rel: f.Rel, Src: src})
@@ -366,7 +365,7 @@ func TestGeneralityText(t *testing.T) {
 		skip, problems := textFixtureFiles(fixtures)
 		problems = append(problems, textDebtShapeViolations(debt)...)
 		for _, problem := range problems {
-			t.Error(problem)
+			assert.Fail(t, problem)
 		}
 		if len(problems) > 0 {
 			return
@@ -381,7 +380,7 @@ func TestGeneralityText(t *testing.T) {
 		return
 	}
 	for _, v := range checkTextGenerality(files, fixtures, debt) {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 
@@ -433,9 +432,7 @@ func TestGeneralityTextFindings(t *testing.T) {
 		sort.Strings(got)
 		want := append([]string(nil), tc.want...)
 		sort.Strings(want)
-		if strings.Join(got, ",") != strings.Join(want, ",") {
-			t.Errorf("generalityTextFindings(%q) = %v, want %v", tc.line, got, want)
-		}
+		assert.Equal(t, strings.Join(want, ","), strings.Join(got, ","), "generalityTextFindings(%q) = %v, want %v", tc.line, got, want)
 	}
 }
 
@@ -445,26 +442,20 @@ func TestGeneralityTextContactDoc(t *testing.T) {
 	t.Parallel()
 
 	line := "Email <glenn@mas-bandwidth.com>."
-	if got := generalityTextFindings(contactDoc, line); len(got) != 0 {
-		t.Errorf("%s: %v, want none", contactDoc, got)
-	}
-	got := generalityTextFindings("docs/CLI.md", line)
+	got := generalityTextFindings(contactDoc, line)
+	assert.Empty(t, got, "%s: %v, want none", contactDoc, got)
+	got = generalityTextFindings("docs/CLI.md", line)
 	sort.Strings(got)
-	if strings.Join(got, ",") != "glenn,mas-bandwidth" {
-		t.Errorf("elsewhere: %v, want the name and the account", got)
-	}
-	if got := generalityTextFindings(contactDoc, "ask rowan or mas-bandwidth/ideas"); len(got) != 2 {
-		t.Errorf("%s: a name and another repository still count, got %v", contactDoc, got)
-	}
+	assert.Equal(t, "glenn,mas-bandwidth", strings.Join(got, ","), "elsewhere: %v, want the name and the account", got)
+	got = generalityTextFindings(contactDoc, "ask rowan or mas-bandwidth/ideas")
+	assert.Len(t, got, 2, "%s: a name and another repository still count, got %v", contactDoc, got)
 	// Only the two published addresses pass, whole.
 	for _, l := range []string{"mail ada@mas-bandwidth.com", "mail xglenn@mas-bandwidth.com", "mail glenn@mas-bandwidth.com.evil"} {
-		if got := generalityTextFindings(contactDoc, l); len(got) == 0 {
-			t.Errorf("%s: %q passed", contactDoc, l)
-		}
+		got := generalityTextFindings(contactDoc, l)
+		assert.NotEmpty(t, got, "%s: %q passed", contactDoc, l)
 	}
-	if got := generalityTextFindings(contactDoc, "to <rowan@mas-bandwidth.com>, <glenn@mas-bandwidth.com>"); len(got) != 0 {
-		t.Errorf("%s: both published addresses: %v", contactDoc, got)
-	}
+	got = generalityTextFindings(contactDoc, "to <rowan@mas-bandwidth.com>, <glenn@mas-bandwidth.com>")
+	assert.Empty(t, got, "%s: both published addresses: %v", contactDoc, got)
 }
 
 // TestGeneralityTextScope pins which files the text scan reads.
@@ -487,9 +478,7 @@ func TestGeneralityTextScope(t *testing.T) {
 		"go.sum":                                        false,
 		"fleet/inventory.container-runtime.example.ini": true,
 	} {
-		if got := isTextScanned(rel); got != want {
-			t.Errorf("isTextScanned(%q) = %v, want %v", rel, got, want)
-		}
+		assert.Equal(t, want, isTextScanned(rel), "isTextScanned(%q) = %v, want %v", rel, isTextScanned(rel), want)
 	}
 }
 
@@ -501,9 +490,7 @@ func TestGeneralityTextWitness(t *testing.T) {
 
 	parse := func(name, text string) *allowlist.List {
 		l, err := allowlist.Parse(name, text, allowlist.Options{Ceiling: true, Counted: name == "debt"})
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		return l
 	}
 	empty := parse("debt", "# ceiling: 0\n")
@@ -511,30 +498,26 @@ func TestGeneralityTextWitness(t *testing.T) {
 	file := func(rel, src string) []textScanFile { return []textScanFile{{Rel: rel, Src: []byte(src)}} }
 
 	t.Run("new-finding-in-a-yml-fails", func(t *testing.T) {
-		if v := checkTextGenerality(file("fleet/a.yml", "store: redis\n"), noFixtures, empty); len(v) != 0 {
-			t.Fatalf("control: %v", v)
-		}
+		v := checkTextGenerality(file("fleet/a.yml", "store: redis\n"), noFixtures, empty)
+		require.Empty(t, v, "control: %v", v)
 		for _, src := range []string{"store: 100.101.102.103\n", "user: rowan\n", "home: /Users/somebody/x\n"} {
-			if v := checkTextGenerality(file("fleet/a.yml", src), noFixtures, empty); len(v) == 0 {
-				t.Errorf("%q passed", src)
-			}
+			v := checkTextGenerality(file("fleet/a.yml", src), noFixtures, empty)
+			assert.NotEmpty(t, v, "%q passed", src)
 		}
 	})
 	t.Run("new-finding-in-a-tsv-and-a-template-fails", func(t *testing.T) {
 		for _, rel := range []string{"fleet/m.tsv", "fleet/t/x.j2", "docs/A.md", "x.lua", "x.sh", "Makefile", ".github/workflows/w.yml"} {
-			if v := checkTextGenerality(file(rel, "host\tstudio\n"), noFixtures, empty); len(v) == 0 {
-				t.Errorf("%s passed", rel)
-			}
+			v := checkTextGenerality(file(rel, "host\tstudio\n"), noFixtures, empty)
+			assert.NotEmpty(t, v, "%s passed", rel)
 		}
 	})
 	t.Run("second-occurrence-fails", func(t *testing.T) {
 		debt := parse("debt", "# ceiling: 1\nfleet/a.yml:studio 1\n")
-		if v := checkTextGenerality(file("fleet/a.yml", "a: studio\n"), noFixtures, debt); len(v) != 0 {
-			t.Fatalf("control: %v", v)
-		}
-		v := checkTextGenerality(file("fleet/a.yml", "a: studio\nb: studio\n"), noFixtures, debt)
-		if len(v) == 0 || !strings.Contains(strings.Join(v, "\n"), "exceeds allowed count 1") {
-			t.Errorf("violations %v", v)
+		v := checkTextGenerality(file("fleet/a.yml", "a: studio\n"), noFixtures, debt)
+		require.Empty(t, v, "control: %v", v)
+		v = checkTextGenerality(file("fleet/a.yml", "a: studio\nb: studio\n"), noFixtures, debt)
+		if assert.NotEmpty(t, v, "violations %v", v) {
+			assert.Contains(t, strings.Join(v, "\n"), "exceeds allowed count 1", "violations %v", v)
 		}
 	})
 	t.Run("text-debt-row-has-exactly-two-fields", func(t *testing.T) {
@@ -551,30 +534,25 @@ func TestGeneralityTextWitness(t *testing.T) {
 	t.Run("a-fixture-row-needs-a-reason-and-a-finding", func(t *testing.T) {
 		src := file("testdata/t.md", "transcript of studio\n")
 		ok := parse("fixtures", "# ceiling: 1\ntestdata/t.md a captured transcript, recorded data\n")
-		if v := checkTextGenerality(src, ok, empty); len(v) != 0 {
-			t.Fatalf("control: %v", v)
-		}
+		v := checkTextGenerality(src, ok, empty)
+		require.Empty(t, v, "control: %v", v)
 		bare := parse("fixtures", "# ceiling: 1\ntestdata/t.md\n")
-		if v := checkTextGenerality(src, bare, empty); len(v) == 0 {
-			t.Error("a fixture row with no reason passed")
-		}
+		v = checkTextGenerality(src, bare, empty)
+		assert.NotEmpty(t, v, "a fixture row with no reason passed")
 		_, badReason := textFixtureFiles(bare)
 		require.NotEmpty(t, badReason)
 		overCeiling := parse("fixtures", "# ceiling: 0\ntestdata/t.md a captured transcript, recorded data\n")
 		_, badCeiling := textFixtureFiles(overCeiling)
 		require.NotEmpty(t, badCeiling)
 		stale := file("testdata/t.md", "nothing here\n")
-		if v := checkTextGenerality(stale, ok, empty); len(v) == 0 {
-			t.Error("a stale fixture row passed")
-		}
+		v = checkTextGenerality(stale, ok, empty)
+		assert.NotEmpty(t, v, "a stale fixture row passed")
 	})
 	t.Run("a-row-that-falls-or-goes-stale-must-shrink", func(t *testing.T) {
 		debt := parse("debt", "# ceiling: 1\nfleet/a.yml:studio 2\n")
-		if v := checkTextGenerality(file("fleet/a.yml", "a: studio\n"), noFixtures, debt); len(v) == 0 {
-			t.Error("a fallen count passed")
-		}
-		if v := checkTextGenerality(file("fleet/a.yml", "a: none\n"), noFixtures, debt); len(v) == 0 {
-			t.Error("a stale row passed")
-		}
+		v := checkTextGenerality(file("fleet/a.yml", "a: studio\n"), noFixtures, debt)
+		assert.NotEmpty(t, v, "a fallen count passed")
+		v = checkTextGenerality(file("fleet/a.yml", "a: none\n"), noFixtures, debt)
+		assert.NotEmpty(t, v, "a stale row passed")
 	})
 }

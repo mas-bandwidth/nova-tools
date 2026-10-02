@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strconv"
 	"syscall"
 )
@@ -366,14 +367,7 @@ func writePaths(p *Policy) []string {
 		if extra == "" {
 			continue
 		}
-		seen := false
-		for _, w := range out {
-			if w == extra {
-				seen = true
-				break
-			}
-		}
-		if !seen {
+		if !slices.Contains(out, extra) {
 			out = append(out, extra)
 		}
 	}

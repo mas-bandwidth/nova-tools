@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -76,20 +78,15 @@ type CardHeaderFinding struct {
 // table shape the twelve older tokens use: a check without a remedy costs a card writer
 // a guess per drift (#1464), and `nova-swarm lint --rules` prints these beside them.
 var CardHeaderRemedies = map[string]string{
-	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one `nova-pulse accept --kinds` names; `cut` writes it from the pool row and a model never does (SPEC-TOOLWORK.md §5 rules 1, 3)",
-	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none` (SPEC-TOOLWORK.md §5 rules 1, 2)",
-	"test-named":     "the card carries `TEST: [-tags <tags>] <package> <TestName>` -- the package repository-relative and the name a Go test name -- or `TEST: none <why>` where the kind declares no gate (SPEC-TOOLWORK.md §5 rule 1; the grammar is cardhdr.ParseTest's)",
-	"paused":         "the coordinator paused this kind, so `cut` cuts no card of it and a card launched before the pause is `ACCEPT ABSTAIN reason=paused` at harvest; the remedy is not a rerun but `nova-pulse trust --set trial --queue <dir> --kind <kind> --who <name> --reason <text>` (SPEC-TOOLWORK.md §5 rule 1, eligibility rule 3, §1's abstain list)",
+	"kind-declared":  "the card carries `KIND: <kind>` as the first typed line under the contract line, and the kind is one the pool's kinds list names; the cutter writes it from the pool row and a model never does",
+	"paths-declared": "the card carries `PATHS: <glob>[, <glob>...]`, repository-relative, every glob holding at least one literal segment and none of them climbing with `..`; a card that changes nothing says `PATHS: none`",
+	"test-named":     "the card carries `TEST: [-tags <tags>] <package> <TestName>` -- the package repository-relative and the name a Go test name -- or `TEST: none <why>` where the kind declares no gate",
+	"paused":         "the coordinator paused this kind, so `cut` cuts no card of it and a card launched before the pause is `ACCEPT ABSTAIN reason=paused` at harvest; the remedy is not a rerun but `nova-pulse trust --set trial --queue <dir> --kind <kind> --who <name> --reason <text>`",
 }
 
 // CardHeaderChecks is every token this file draws, in one byte-stable order.
 func CardHeaderChecks() []string {
-	out := make([]string, 0, len(CardHeaderRemedies))
-	for name := range CardHeaderRemedies {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(CardHeaderRemedies))
 }
 
 // TrustState is the coordinator's per-kind state, keyed by kind: `trial`, `trusted` or
@@ -257,14 +254,12 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	}
 	var out []CardHeaderFinding
 	add := func(check string, line int, excerpt string) {
-		if line < 1 {
-			line = 1
-		}
+		line = max(line, 1)
 		out = append(out, CardHeaderFinding{Check: check, Line: line, Excerpt: excerpt})
 	}
 	// The stranded lines first, in line order, because they are why the rest of this
 	// card's header reads the way it does.
-	for _, k := range sortedKeys(stranded) {
+	for _, k := range slices.Sorted(maps.Keys(stranded)) {
 		add(cardKeyCheck[k], stranded[k], fmt.Sprintf("%s: on line %d is below the header block and the gate will never read it: the typed header is the unbroken run of `KEY: value` lines directly under the contract line", k, stranded[k]))
 	}
 	// A repeated key next: a card with two of one line has no one value for it.
@@ -419,18 +414,8 @@ func ReadTrustFixture(path string) (TrustState, error) {
 	return out, nil
 }
 
-// sortedKeys is the keys of a line-number map, in one byte-stable order so two runs of
+// sortedHeaderKeys is the typed keys of the block, in one byte-stable order so two runs of
 // the lint over the same card print the same lines in the same order.
-func sortedKeys(m map[string]int) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// sortedHeaderKeys is the same, for the block itself.
 func sortedHeaderKeys(m map[string]headerField) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

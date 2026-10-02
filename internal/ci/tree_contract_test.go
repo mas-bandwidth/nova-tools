@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // tree_contract_test.go pins the contract of the shared repository tree that
@@ -38,15 +41,9 @@ func TestSharedRepoTreeListsAndParsesTheRepository(t *testing.T) {
 
 	tree := repoTree(t)
 
-	if tree.Root == "" {
-		t.Fatal("the shared tree carries no root; every finding a class test prints is relative to it")
-	}
-	if len(tree.Files) == 0 {
-		t.Fatal("the shared tree lists no files; a class test filtering an empty tree passes by checking nothing")
-	}
-	if tree.FSet == nil {
-		t.Fatal("the shared tree carries no FileSet; a finding without a line number is a finding nobody can act on")
-	}
+	require.NotEmpty(t, tree.Root, "the shared tree carries no root; every finding a class test prints is relative to it")
+	require.NotEmpty(t, tree.Files, "the shared tree lists no files; a class test filtering an empty tree passes by checking nothing")
+	require.NotNil(t, tree.FSet, "the shared tree carries no FileSet; a finding without a line number is a finding nobody can act on")
 
 	// (a) It is THIS repository: the walk found the two trees every class test
 	// reads, and it found this very file.
@@ -63,57 +60,40 @@ func TestSharedRepoTreeListsAndParsesTheRepository(t *testing.T) {
 			foundSelf = true
 		}
 	}
-	if cmdFiles == 0 || internalFiles == 0 {
-		t.Errorf("the shared tree lists %d files under cmd/ and %d under internal/; the class tests read both trees", cmdFiles, internalFiles)
-	}
-	if !foundSelf {
-		t.Error("the shared tree does not list internal/ci/tree_contract_test.go; a walk that misses the file it is declared in is looking in the wrong place")
-	}
+	assert.Truef(t, cmdFiles > 0 && internalFiles > 0, "the shared tree lists %d files under cmd/ and %d under internal/; the class tests read both trees", cmdFiles, internalFiles)
+	assert.True(t, foundSelf, "the shared tree does not list internal/ci/tree_contract_test.go; a walk that misses the file it is declared in is looking in the wrong place")
 
 	// (b) Every .go file it lists is parsed, and the parse is usable: the file
 	// carries a package clause and its position resolves in the shared FileSet.
 	goFiles := 0
 	for _, f := range tree.Files {
 		if !f.Go {
-			if f.AST != nil {
-				t.Errorf("%s is not a .go file yet carries a syntax tree", f.Rel)
-			}
+			assert.Nilf(t, f.AST, "%s is not a .go file yet carries a syntax tree", f.Rel)
 			continue
 		}
 		goFiles++
-		if f.ParseErr != nil {
-			t.Errorf("%s: the shared tree failed to parse it: %v", f.Rel, f.ParseErr)
+		if !assert.NoErrorf(t, f.ParseErr, "%s: the shared tree failed to parse it: %v", f.Rel, f.ParseErr) {
 			continue
 		}
-		if f.AST == nil {
-			t.Errorf("%s: the shared tree lists a .go file with no syntax tree and no error", f.Rel)
+		if !assert.NotNilf(t, f.AST, "%s: the shared tree lists a .go file with no syntax tree and no error", f.Rel) {
 			continue
 		}
-		if f.AST.Name == nil || f.AST.Name.Name == "" {
-			t.Errorf("%s: the parsed file carries no package clause", f.Rel)
+		if !assert.Truef(t, f.AST.Name != nil && f.AST.Name.Name != "", "%s: the parsed file carries no package clause", f.Rel) {
 			continue
 		}
-		if pos := tree.FSet.Position(f.AST.Package); pos.Line == 0 {
-			t.Errorf("%s: its positions do not resolve in the shared FileSet", f.Rel)
-		}
-		if len(f.Src) == 0 {
-			t.Errorf("%s: the shared tree parsed it but kept no source; the text-only rules read f.Src", f.Rel)
-		}
-		if f.Test != strings.HasSuffix(f.Rel, "_test.go") {
-			t.Errorf("%s: Test is %v; the rules split the tree on the _test.go suffix", f.Rel, f.Test)
-		}
+		pos := tree.FSet.Position(f.AST.Package)
+		assert.NotZerof(t, pos.Line, "%s: its positions do not resolve in the shared FileSet", f.Rel)
+		assert.NotEmptyf(t, f.Src, "%s: the shared tree parsed it but kept no source; the text-only rules read f.Src", f.Rel)
+		assert.Equalf(t, strings.HasSuffix(f.Rel, "_test.go"), f.Test, "%s: Test is %v; the rules split the tree on the _test.go suffix", f.Rel, f.Test)
 	}
-	if goFiles == 0 {
-		t.Fatal("the shared tree lists no .go files at all")
-	}
+	require.NotZero(t, goFiles, "the shared tree lists no .go files at all")
 
 	// (c) One walk, however many callers. Two more calls, and the loader has
 	// still run once.
 	_ = repoTree(t)
 	_ = repoTree(t)
-	if got := repoTreeLoads(); got != 1 {
-		t.Errorf("the shared tree loaded %d times across four calls, want exactly 1; a cache that reloads is a walk with extra bookkeeping", got)
-	}
+	got := repoTreeLoads()
+	assert.Equalf(t, 1, got, "the shared tree loaded %d times across four calls, want exactly 1; a cache that reloads is a walk with extra bookkeeping", got)
 }
 
 // TestSharedRepoTreeSkipsTheGitDirectory: .git is not source, it is tens of
@@ -123,9 +103,7 @@ func TestSharedRepoTreeSkipsTheGitDirectory(t *testing.T) {
 	t.Parallel()
 
 	for _, f := range repoTree(t).Files {
-		if f.Rel == ".git" || strings.HasPrefix(f.Rel, ".git/") {
-			t.Fatalf("the shared tree walked into .git (%s); no rule reads it and the walk is the cost", f.Rel)
-		}
+		require.Falsef(t, f.Rel == ".git" || strings.HasPrefix(f.Rel, ".git/"), "the shared tree walked into .git (%s); no rule reads it and the walk is the cost", f.Rel)
 	}
 }
 
@@ -139,25 +117,15 @@ func TestSharedRepoTreeSkipsAGitFileAsWellAsAGitDirectory(t *testing.T) {
 
 	root := t.TempDir()
 	// The worktree shape: .git is one line naming the real repository.
-	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: /nowhere\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "kept.go"), []byte("package kept\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: /nowhere\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "kept.go"), []byte("package kept\n"), 0o644))
 
 	idx, err := loadRepoTree(root)
-	if err != nil {
-		t.Fatalf("loading a tree whose .git is a file: %v", err)
-	}
+	require.NoErrorf(t, err, "loading a tree whose .git is a file: %v", err)
 	var rels []string
 	for _, f := range idx.Files {
 		rels = append(rels, f.Rel)
-		if f.Rel == ".git" || strings.HasPrefix(f.Rel, ".git/") {
-			t.Errorf("the walk listed %s; .git is skipped by name, whether it is a directory or a worktree's file", f.Rel)
-		}
+		assert.Falsef(t, f.Rel == ".git" || strings.HasPrefix(f.Rel, ".git/"), "the walk listed %s; .git is skipped by name, whether it is a directory or a worktree's file", f.Rel)
 	}
-	if idx.ByRel("kept.go") == nil {
-		t.Errorf("the walk lost the one source file beside .git; it lists %v", rels)
-	}
+	assert.NotNilf(t, idx.ByRel("kept.go"), "the walk lost the one source file beside .git; it lists %v", rels)
 }

@@ -6,7 +6,6 @@ package store
 import (
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,9 +31,8 @@ func TestACrossNeedDoesNotSurviveAReturn(t *testing.T) {
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"x"}}}))
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "x"}))
 	res := h.run(ResumeStep(sprint.ResumeReq{Stream: "s1", Did: "rebased x"}))
-	if len(res.Refused) != 0 || h.snap().StreamCtl("s1").F("state") != sprint.StreamMerging {
-		t.Fatalf("resume after a conflict: %+v", res)
-	}
+	require.Empty(t, res.Refused, "resume after a conflict: %+v", res)
+	require.Equal(t, string(sprint.StreamMerging), h.snap().StreamCtl("s1").F("state"), "resume after a conflict: %+v", res)
 	h.clean("resumed")
 }
 
@@ -43,16 +41,13 @@ func TestACrossNeedDoesNotSurviveAReturn(t *testing.T) {
 func TestReleasingTheOnlyCardLandsItsStream(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	if err := h.m.SetCoordinator(h.ctx, "tester"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.m.SetCoordinator(h.ctx, "tester"))
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"p2"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"p4"}, Sentinel: true, Before: "p2"}))
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"p2"}}, Reason: "gone"}))
 	h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"p4"}, Reason: "done", Coordinator: "tester", Who: "tester"}))
-	if st := h.snap().StreamCtl("s3").F("state"); st != sprint.StreamLanded {
-		t.Fatalf("s3 is %s after its only card landed", st)
-	}
+	st := h.snap().StreamCtl("s3").F("state")
+	require.Equal(t, string(sprint.StreamLanded), st, "s3 is %s after its only card landed", st)
 	h.clean("released")
 }
 
@@ -66,12 +61,12 @@ func TestAnAllDroppedSprintIsDoneAndItsStreamEmpty(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"p1"}}))
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"p1"}}, Reason: "gone"}))
 	res := h.machine()
-	if res.Done != "0 landed, 1 dropped, took 0s from the first start" || len(h.openOf(sprint.NSprintDone)) != 0 || h.written(sprint.NSprintDone) != 1 {
-		t.Fatalf("the sprint is done: %+v", res)
-	}
-	if c := h.snap().StreamCtl("s3"); c.F("state") != sprint.StreamWaiting || c.F("since") != "" {
-		t.Fatalf("the empty stream: %v", c.Fields)
-	}
+	require.Equal(t, "0 landed, 1 dropped, took 0s from the first start", res.Done, "the sprint is done: %+v", res)
+	require.Empty(t, h.openOf(sprint.NSprintDone), "the sprint is done: %+v", res)
+	require.Equal(t, 1, h.written(sprint.NSprintDone), "the sprint is done: %+v", res)
+	c := h.snap().StreamCtl("s3")
+	require.Equal(t, sprint.StreamWaiting, c.F("state"), "the empty stream: %v", c.Fields)
+	require.Equal(t, "", c.F("since"), "the empty stream: %v", c.Fields)
 	h.clean("all dropped")
 }
 
@@ -85,16 +80,14 @@ func TestASecondCIRedOnACardWritesNoSecondJudgment(t *testing.T) {
 	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1", Note: "TestA timed out"}))
 	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r2", Note: "TestB failed"}))
 	open := h.openOf(sprint.NCIRed)
-	if len(open) != 1 {
-		t.Fatalf("ci red open %d times on s1-1", len(open))
-	}
-	if w := open[0].Note.What; !strings.Contains(w, "r2") || !strings.Contains(w, "TestB failed") || strings.Contains(w, "TestA") {
-		t.Fatalf("the open ci red says %q, not the second run", w)
-	}
+	require.Len(t, open, 1, "ci red open %d times on s1-1", len(open))
+	w := open[0].Note.What
+	require.Contains(t, w, "r2", "the open ci red says %q, not the second run", w)
+	require.Contains(t, w, "TestB failed", "the open ci red says %q, not the second run", w)
+	require.NotContains(t, w, "TestA", "the open ci red says %q, not the second run", w)
 	h.must(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "a flaky runner"}))
-	if n := len(h.openOf(sprint.NCIRed)); n != 0 {
-		t.Fatalf("ci red still open after its ack: %d", n)
-	}
+	n := len(h.openOf(sprint.NCIRed))
+	require.Equal(t, 0, n, "ci red still open after its ack: %d", n)
 	h.clean("acked")
 }
 
@@ -111,9 +104,8 @@ func TestAskAnotherIsForItsAttemptOnly(t *testing.T) {
 	rc := h.snap().Readers.Of("s1-1")
 	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "broken", Finding: "f", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
-	if got := h.snap().Work.Card("s1-1").F("asked"); got != pair {
-		t.Fatalf("ask --another changed the primary's asked field: %s, was %s", got, pair)
-	}
+	got := h.snap().Work.Card("s1-1").F("asked")
+	require.Equal(t, pair, got, "ask --another changed the primary's asked field: %s, was %s", got, pair)
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	c := h.snap().Fleet.Card("s1-1.w2")
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
@@ -136,12 +128,10 @@ func TestARefusedAddWritesNothing(t *testing.T) {
 	h := newHarness(t)
 	before := h.m.Revision("t-work")
 	res := h.run(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1"}, Needs: []string{"a1"}}))
-	if len(res.Refused) == 0 {
-		t.Fatalf("add with a need that does not exist: %+v", res)
-	}
+	require.NotEmpty(t, res.Refused, "add with a need that does not exist: %+v", res)
 	s := h.snap()
 	if s.Work.HasRow("s2") || s.Merge.HasRow("s2") || h.m.Revision("t-work") != before {
-		t.Fatalf("the refused add declared s2: work %v merge %v", s.Work.Rows(), s.Merge.Rows())
+		require.Failf(t, "", "the refused add declared s2: work %v merge %v", s.Work.Rows(), s.Merge.Rows())
 	}
 }
 
@@ -153,12 +143,11 @@ func TestAMergeStepWithNothingQueuedIsRefused(t *testing.T) {
 	h.setup(1)
 	before := h.m.Revision("t-merge")
 	res := h.run(MergeStep(sprint.MergeReq{Stream: "s1", Red: true}))
-	if len(res.Refused) != 1 || len(res.Moved) != 0 || !strings.Contains(res.Refused[0].Why, "nothing queued") {
-		t.Fatalf("a merge step with nothing queued: %+v", res)
-	}
-	if h.m.Revision("t-merge") != before || h.snap().StreamCtl("s1").F("state") != sprint.StreamWaiting {
-		t.Fatalf("the refused step wrote")
-	}
+	require.Len(t, res.Refused, 1, "a merge step with nothing queued: %+v", res)
+	require.Empty(t, res.Moved, "a merge step with nothing queued: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "nothing queued", "a merge step with nothing queued: %+v", res)
+	require.Equal(t, before, h.m.Revision("t-merge"), "the refused step wrote")
+	require.Equal(t, string(sprint.StreamWaiting), h.snap().StreamCtl("s1").F("state"), "the refused step wrote")
 }
 
 // A verb that is refused has written nothing: a release naming an answer
@@ -166,20 +155,14 @@ func TestAMergeStepWithNothingQueuedIsRefused(t *testing.T) {
 func TestAReleaseWithABadAnswerReleasesNothing(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	if err := h.m.SetCoordinator(h.ctx, "tester"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.m.SetCoordinator(h.ctx, "tester"))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
-	if h.snap().Work.Card("stop").F("reached") == "" {
-		t.Fatalf("stop is not reached")
-	}
+	require.NotEmpty(t, h.snap().Work.Card("stop").F("reached"), "stop is not reached")
 	res := h.run(ReleaseStep(sprint.ReleaseReq{IDs: []string{"stop"}, Reason: "done", Coordinator: "tester", Who: "tester", Answers: []string{"no-such-note.1"}}))
-	if len(res.Refused) == 0 || len(res.Moved) != 0 {
-		t.Fatalf("a release with a bad answer: %+v", res)
-	}
-	if h.state("stop") != sprint.Waiting || h.snap().Work.Card("stop").F("reached") == "" {
-		t.Fatalf("the refused release moved stop: %s", h.state("stop"))
-	}
+	require.NotEmpty(t, res.Refused, "a release with a bad answer: %+v", res)
+	require.Empty(t, res.Moved, "a release with a bad answer: %+v", res)
+	require.Equal(t, sprint.Waiting, h.state("stop"), "the refused release moved stop: %s", h.state("stop"))
+	require.NotEmpty(t, h.snap().Work.Card("stop").F("reached"), "the refused release moved stop: %s", h.state("stop"))
 }
 
 // persistNeed writes need_card onto a merge card as a store written before
@@ -188,11 +171,10 @@ func (h *harness) persistNeed(id, need, stream string) {
 	h.t.Helper()
 	s := h.snap()
 	m := s.Merge.Card(id)
-	if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-merge", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Merge.Revision),
+	_, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-merge", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Merge.Revision),
 		OperationID: "persisted-need-" + id, Members: []ntable.BatchMemberEntry{{ID: m.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(m.Rev)},
-			Set: map[string]string{"need_card": need, "need_stream": stream}}}}); err != nil {
-		h.t.Fatal(err)
-	}
+			Set: map[string]string{"need_card": need, "need_stream": stream}}}})
+	require.NoError(h.t, err)
 }
 
 // Item 1a, the conflict's guard alone (reader finding 5): a queued card
@@ -207,7 +189,7 @@ func TestAConflictStopClearsANeed(t *testing.T) {
 	h.persistNeed("x", "y", "s2")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "x"}))
 	if m := h.snap().Merge.Card("x"); m.Col != sprint.Stuck || m.F("need_card") != "" {
-		t.Fatalf("x stopped by a conflict: %s need=%q", m.Col, m.F("need_card"))
+		require.Failf(t, "", "x stopped by a conflict: %s need=%q", m.Col, m.F("need_card"))
 	}
 	h.clean("conflict")
 }
@@ -224,18 +206,17 @@ func TestResumeWaitsForANeedOnlyAfterACross(t *testing.T) {
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "x"}))
 	h.persistNeed("x", "y", "s2")
 	res := h.run(ResumeStep(sprint.ResumeReq{Stream: "s1", Did: "rebased x"}))
-	if len(res.Refused) != 0 || h.snap().StreamCtl("s1").F("state") != sprint.StreamMerging {
-		t.Fatalf("resume after a conflict, a need persisted on its card: %+v", res)
-	}
+	require.Empty(t, res.Refused, "resume after a conflict, a need persisted on its card: %+v", res)
+	require.Equal(t, string(sprint.StreamMerging), h.snap().StreamCtl("s1").F("state"), "resume after a conflict, a need persisted on its card: %+v", res)
 	h.clean("resumed")
 }
 
 // The reference model's redeal bound is the engine's.
 func TestTheModelsRedealBoundIsTheEngines(t *testing.T) {
 	t.Parallel()
-	if refmodel.MaxRedeals != sprint.MaxRedeals || refmodel.Width != sprint.DefaultWidth || refmodel.DealAhead != sprint.DealAhead {
-		t.Fatalf("the model's bounds (%d, %d, %d) are not the engine's (%d, %d, %d)", refmodel.MaxRedeals, refmodel.Width, refmodel.DealAhead, sprint.MaxRedeals, sprint.DefaultWidth, sprint.DealAhead)
-	}
+	require.Equal(t, sprint.MaxRedeals, refmodel.MaxRedeals, "the model's bounds (%d, %d, %d) are not the engine's (%d, %d, %d)", refmodel.MaxRedeals, refmodel.Width, refmodel.DealAhead, sprint.MaxRedeals, sprint.DefaultWidth, sprint.DealAhead)
+	require.Equal(t, sprint.DefaultWidth, refmodel.Width, "the model's bounds (%d, %d, %d) are not the engine's (%d, %d, %d)", refmodel.MaxRedeals, refmodel.Width, refmodel.DealAhead, sprint.MaxRedeals, sprint.DefaultWidth, sprint.DealAhead)
+	require.Equal(t, sprint.DealAhead, refmodel.DealAhead, "the model's bounds (%d, %d, %d) are not the engine's (%d, %d, %d)", refmodel.MaxRedeals, refmodel.Width, refmodel.DealAhead, sprint.MaxRedeals, sprint.DefaultWidth, sprint.DealAhead)
 }
 
 // The deal takes one card from each stream's front in turn (2.3 R6, the
@@ -259,9 +240,8 @@ func TestTheDealTakesEachStreamsFrontInTurnAsTheModelDoes(t *testing.T) {
 		h.do(a)
 	}
 	for _, f := range h.findings {
-		if _, known := dClassify(f); !known {
-			t.Fatalf("a difference between the engine and the model on the deal:\n%s", f)
-		}
+		_, known := dClassify(f)
+		require.True(t, known, "a difference between the engine and the model on the deal:\n%s", f)
 	}
 	s := h.observe()
 	var dealt []string
@@ -271,9 +251,8 @@ func TestTheDealTakesEachStreamsFrontInTurnAsTheModelDoes(t *testing.T) {
 		}
 	}
 	slices.Sort(dealt)
-	if want := []string{"a1>m1", "a2>m1", "a3>m1", "a4>m1", "b1>m2", "b2>m2", "b3>m2", "b4>m2"}; !slices.Equal(dealt, want) {
-		t.Fatalf("the tick dealt %v, want %v: each stream's front in turn, round the fleet", dealt, want)
-	}
+	want := []string{"a1>m1", "a2>m1", "a3>m1", "a4>m1", "b1>m2", "b2>m2", "b3>m2", "b4>m2"}
+	require.True(t, slices.Equal(dealt, want), "the tick dealt %v, want %v: each stream's front in turn, round the fleet", dealt, want)
 }
 
 // The deal goes round the fleet and the ask goes round the readers (errata 3,
@@ -307,14 +286,12 @@ func TestTheDealAndTheAskGoRoundAsTheModelDoes(t *testing.T) {
 		h.do(a)
 	}
 	for _, f := range h.findings {
-		if _, known := dClassify(f); !known {
-			t.Fatalf("a difference between the engine and the model on the deal or the ask:\n%s", f)
-		}
+		_, known := dClassify(f)
+		require.True(t, known, "a difference between the engine and the model on the deal or the ask:\n%s", f)
 	}
 	s := h.observe()
-	if w := s.Work["a2.w1"]; w.Member != "m2" {
-		t.Fatalf("a2 was dealt to %q, want m2: past m1, round the fleet", w.Member)
-	}
+	w := s.Work["a2.w1"]
+	require.Equal(t, "m2", w.Member, "a2 was dealt to %q, want m2: past m1, round the fleet", w.Member)
 	var readers []string
 	for _, rc := range s.Reads {
 		if rc.Primary == "a2" {
@@ -322,12 +299,10 @@ func TestTheDealAndTheAskGoRoundAsTheModelDoes(t *testing.T) {
 		}
 	}
 	slices.Sort(readers)
-	if want := []string{"r1", "r3"}; !slices.Equal(readers, want) {
-		t.Fatalf("a2 was asked of %v, want %v: past r2, round the readers", readers, want)
-	}
-	if indexPast(s.Order, s.DealLast) != "m2" || indexPast(s.Readers, s.AskLast) != "r1" {
-		t.Fatalf("the store's indexes are past %q and %q, want m2 and r1", s.DealLast, s.AskLast)
-	}
+	want := []string{"r1", "r3"}
+	require.True(t, slices.Equal(readers, want), "a2 was asked of %v, want %v: past r2, round the readers", readers, want)
+	require.Equal(t, "m2", indexPast(s.Order, s.DealLast), "the store's indexes are past %q and %q, want m2 and r1", s.DealLast, s.AskLast)
+	require.Equal(t, "r1", indexPast(s.Readers, s.AskLast), "the store's indexes are past %q and %q, want m2 and r1", s.DealLast, s.AskLast)
 }
 
 // Every placement of a card on a member goes round the fleet and moves the
@@ -396,17 +371,13 @@ func TestTheRedealsAndTheLevelGoRoundAsTheModelDoes(t *testing.T) {
 				h.do(a)
 			}
 			for _, f := range h.findings {
-				if _, known := dClassify(f); !known {
-					t.Fatalf("a difference between the engine and the model:\n%s", f)
-				}
+				_, known := dClassify(f)
+				require.True(t, known, "a difference between the engine and the model:\n%s", f)
 			}
 			s := h.observe()
-			if w := s.Work[c.card]; w.Member != c.want {
-				t.Fatalf("%s is on %q, want %s: round the fleet from the index", c.card, w.Member, c.want)
-			}
-			if indexPast(s.Order, s.DealLast) != c.want {
-				t.Fatalf("the store's deal index is past %q, want %s: the placement moves it", s.DealLast, c.want)
-			}
+			w := s.Work[c.card]
+			require.Equal(t, c.want, w.Member, "%s is on %q, want %s: round the fleet from the index", c.card, w.Member, c.want)
+			require.Equal(t, c.want, indexPast(s.Order, s.DealLast), "the store's deal index is past %q, want %s: the placement moves it", s.DealLast, c.want)
 		})
 	}
 }

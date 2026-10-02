@@ -17,6 +17,8 @@ import (
 	"testing"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The unit tier of the image: Diff is a pure function, and Image runs against
@@ -555,21 +557,21 @@ func TestImageIsEveryKeyUnderThePrefixReadBySCANInPipelines(t *testing.T) {
 
 	got, err := Image(context.Background(), s.client(t), prefix)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	want := expected(mine)
 	if d := Diff(want, got); len(d) != 0 {
-		t.Fatalf("the image differs from the %d keys under %q in %d places, the first: %v", fakeImageKeys, prefix, len(d), d[:min(len(d), 5)])
+		require.Len(t, d, 0, "the image differs from the %d keys under %q in %d places, the first: %v", fakeImageKeys, prefix, len(d), d[:min(len(d), 5)])
 	}
 
 	// Only SCAN and the commands that read a key were sent: never KEYS.
 	for name := range s.commands {
 		if !slices.Contains([]string{"scan", "type", "pexpiretime", "dump", "hgetall", "hpexpiretime", "smembers", "zrange"}, name) {
-			t.Errorf("Image sent %s; it sends SCAN, TYPE, PEXPIRETIME, the command that reads the type, and HPEXPIRETIME of a hash", name)
+			assert.Failf(t, "", "Image sent %s; it sends SCAN, TYPE, PEXPIRETIME, the command that reads the type, and HPEXPIRETIME of a hash", name)
 		}
 	}
 	if n := s.commands["keys"]; n != 0 {
-		t.Errorf("Image sent KEYS %d times", n)
+		assert.Zero(t, n, "Image sent KEYS %d times", n)
 	}
 
 	// The cursor loop: one call per page, from the start to the end of the
@@ -577,11 +579,11 @@ func TestImageIsEveryKeyUnderThePrefixReadBySCANInPipelines(t *testing.T) {
 	stored := len(s.keys)
 	wantScans := (stored + fakeScanPage - 1) / fakeScanPage
 	if len(s.scans) != wantScans {
-		t.Fatalf("Image sent %d SCAN calls for %d keys in pages of %d; want %d", len(s.scans), stored, fakeScanPage, wantScans)
+		require.Len(t, s.scans, wantScans, "Image sent %d SCAN calls for %d keys in pages of %d; want %d", len(s.scans), stored, fakeScanPage, wantScans)
 	}
 	for i, call := range s.scans {
 		if call.cursor != uint64(i*fakeScanPage) || call.match != prefix+"*" || call.count != imageScanCount {
-			t.Fatalf("SCAN %d was cursor %d MATCH %q COUNT %d; want cursor %d MATCH %q COUNT %d",
+			require.Failf(t, "", "SCAN %d was cursor %d MATCH %q COUNT %d; want cursor %d MATCH %q COUNT %d",
 				i, call.cursor, call.match, call.count, i*fakeScanPage, prefix+"*", imageScanCount)
 		}
 	}
@@ -603,31 +605,31 @@ func TestImageIsEveryKeyUnderThePrefixReadBySCANInPipelines(t *testing.T) {
 			}
 		}
 		if hashes == 0 || next+3 > len(s.pipelines) {
-			t.Fatalf("batch %d of %d keys holds %d hashes, and %d pipelines were sent in all; the test expects hashes in every batch and three pipelines from pipeline %d", b, len(batch), hashes, len(s.pipelines), next)
+			require.Failf(t, "", "batch %d of %d keys holds %d hashes, and %d pipelines were sent in all; the test expects hashes in every batch and three pipelines from pipeline %d", b, len(batch), hashes, len(s.pipelines), next)
 		}
 		kinds, contents, fields := s.pipelines[next], s.pipelines[next+1], s.pipelines[next+2]
 		if len(kinds) != 2*len(batch) || len(contents) != len(batch) || len(fields) != hashes {
-			t.Errorf("batch %d of %d keys was pipelines of %d, %d and %d commands; want %d, %d and %d", b, len(batch), len(kinds), len(contents), len(fields), 2*len(batch), len(batch), hashes)
+			assert.Failf(t, "", "batch %d of %d keys was pipelines of %d, %d and %d commands; want %d, %d and %d", b, len(batch), len(kinds), len(contents), len(fields), 2*len(batch), len(batch), hashes)
 		}
 		for i, name := range kinds {
 			if want := []string{"type", "pexpiretime"}[i%2]; name != want {
-				t.Fatalf("batch %d: command %d of the first pipeline is %s; want %s", b, i, name, want)
+				require.Equal(t, want, name, "batch %d: command %d of the first pipeline is %s; want %s", b, i, name, want)
 			}
 		}
 		for i, name := range contents {
 			if !slices.Contains([]string{"dump", "hgetall", "smembers", "zrange"}, name) {
-				t.Fatalf("batch %d: command %d of the second pipeline is %s; want a content read", b, i, name)
+				require.Failf(t, "", "batch %d: command %d of the second pipeline is %s; want a content read", b, i, name)
 			}
 		}
 		for i, name := range fields {
 			if name != "hpexpiretime" {
-				t.Fatalf("batch %d: command %d of the third pipeline is %s; want hpexpiretime", b, i, name)
+				require.Equal(t, "hpexpiretime", name, "batch %d: command %d of the third pipeline is %s; want hpexpiretime", b, i, name)
 			}
 		}
 		next += 3
 	}
 	if next != len(s.pipelines) {
-		t.Fatalf("Image sent %d pipelines for %d keys; want %d, three for each of %d batches", len(s.pipelines), fakeImageKeys, next, batches)
+		require.Len(t, s.pipelines, next, "Image sent %d pipelines for %d keys; want %d, three for each of %d batches", len(s.pipelines), fakeImageKeys, next, batches)
 	}
 	// Each key is read by the command of its type, once, and each hash has its
 	// fields' expiries read once.
@@ -640,7 +642,7 @@ func TestImageIsEveryKeyUnderThePrefixReadBySCANInPipelines(t *testing.T) {
 	}
 	for name, n := range wantCommands {
 		if s.commands[name] != n {
-			t.Errorf("Image sent %d %s for %d keys; want %d", s.commands[name], name, fakeImageKeys, n)
+			assert.Equal(t, n, s.commands[name], "Image sent %d %s for %d keys; want %d", s.commands[name], name, fakeImageKeys, n)
 		}
 	}
 }
@@ -653,13 +655,13 @@ func TestImageReadsAnyOtherTypeByItsDump(t *testing.T) {
 	s := newFakeStore(map[string]fakeKey{prefix + "doc": module})
 	got, err := Image(context.Background(), s.client(t), prefix)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if d := Diff(expected(map[string]fakeKey{prefix + "doc": module}), got); len(d) != 0 || got[prefix+"doc"].Type != "ReJSON-RL" {
-		t.Fatalf("the image of a key of another type is %v, diff %q; want its type and the sum of its dump", got, d)
+		require.Failf(t, "", "the image of a key of another type is %v, diff %q; want its type and the sum of its dump", got, d)
 	}
 	if s.commands["dump"] != 1 {
-		t.Fatalf("Image sent %d DUMP for the key of another type; want 1", s.commands["dump"])
+		require.EqualValues(t, 1, s.commands["dump"], "Image sent %d DUMP for the key of another type; want 1", s.commands["dump"])
 	}
 }
 
@@ -679,11 +681,11 @@ func TestImagePatternTakesThePrefixLiterally(t *testing.T) {
 		"dash-and^caret": "dash-and^caret*",
 	} {
 		if got := imagePattern(prefix); got != want {
-			t.Errorf("imagePattern(%q) = %q; want %q", prefix, got, want)
+			assert.Equal(t, want, got, "imagePattern(%q) = %q; want %q", prefix, got, want)
 		}
 		// The fake reads the pattern as a store does, and gives the prefix back.
 		if back, err := literalPrefix(imagePattern(prefix)); err != nil || back != prefix {
-			t.Errorf("the pattern of %q reads back as %q, %v", prefix, back, err)
+			assert.Failf(t, "", "the pattern of %q reads back as %q, %v", prefix, back, err)
 		}
 	}
 }
@@ -706,10 +708,10 @@ func TestImageOfAPrefixWithGlobCharactersReadsOnlyItsOwnKeys(t *testing.T) {
 
 	got, err := Image(context.Background(), s.client(t), prefix)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if d := Diff(expected(mine), got); len(d) != 0 {
-		t.Fatalf("the image of %q differs from its own keys: %v", prefix, d)
+		require.Len(t, d, 0, "the image of %q differs from its own keys: %v", prefix, d)
 	}
 }
 
@@ -721,13 +723,13 @@ func TestImageOfTheEmptyPrefixIsEveryKey(t *testing.T) {
 
 	got, err := Image(context.Background(), s.client(t), "")
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if d := Diff(expected(keys), got); len(d) != 0 {
-		t.Fatalf("the image of the empty prefix differs from the whole store: %v", d)
+		require.Len(t, d, 0, "the image of the empty prefix differs from the whole store: %v", d)
 	}
 	if s.scans[0].match != "*" {
-		t.Fatalf("the empty prefix was sent as MATCH %q; want *", s.scans[0].match)
+		require.Equal(t, "*", s.scans[0].match, "the empty prefix was sent as MATCH %q; want *", s.scans[0].match)
 	}
 }
 
@@ -737,13 +739,13 @@ func TestImageOfAnEmptyStoreIsAnEmptyImage(t *testing.T) {
 	s := newFakeStore(map[string]fakeKey{})
 	got, err := Image(context.Background(), s.client(t), "img:")
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if got == nil || len(got) != 0 {
-		t.Fatalf("the image of an empty store is %v; want an empty map that is not nil", got)
+		require.Failf(t, "", "the image of an empty store is %v; want an empty map that is not nil", got)
 	}
 	if len(s.pipelines) != 0 {
-		t.Fatalf("Image sent %d pipelines to a store that named no key", len(s.pipelines))
+		require.Len(t, s.pipelines, 0, "Image sent %d pipelines to a store that named no key", len(s.pipelines))
 	}
 }
 
@@ -757,10 +759,10 @@ func TestImageReadsAKeyOnceWhateverNumberOfTimesSCANNamesIt(t *testing.T) {
 
 	got, err := Image(context.Background(), s.client(t), prefix)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if d := Diff(expected(mine), got); len(d) != 0 {
-		t.Fatalf("the image differs from the store: %v", d)
+		require.Len(t, d, 0, "the image differs from the store: %v", d)
 	}
 	// Three commands for each key, and one more for each hash, each once.
 	hashes := 0
@@ -770,11 +772,11 @@ func TestImageReadsAKeyOnceWhateverNumberOfTimesSCANNamesIt(t *testing.T) {
 		}
 	}
 	if len(s.sent) != 3*len(mine)+hashes {
-		t.Fatalf("Image sent %d distinct commands for %d keys (%d hashes) that SCAN named more than once; want %d", len(s.sent), len(mine), hashes, 3*len(mine)+hashes)
+		require.Len(t, s.sent, 3*len(mine)+hashes, "Image sent %d distinct commands for %d keys (%d hashes) that SCAN named more than once; want %d", len(s.sent), len(mine), hashes, 3*len(mine)+hashes)
 	}
 	for command, n := range s.sent {
 		if n != 1 {
-			t.Errorf("%s was sent %d times", command, n)
+			assert.EqualValues(t, 1, n, "%s was sent %d times", command, n)
 		}
 	}
 }
@@ -804,11 +806,11 @@ func TestImageLeavesOutAKeyThatIsGoneWhenItsTurnComes(t *testing.T) {
 
 	got, err := Image(context.Background(), s.client(t), prefix)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	want := map[string]fakeKey{prefix + "stays": mine[prefix+"stays"]}
 	if d := Diff(expected(want), got); len(d) != 0 {
-		t.Fatalf("the image differs from the keys that were there: %v", d)
+		require.Len(t, d, 0, "the image differs from the keys that were there: %v", d)
 	}
 }
 
@@ -838,10 +840,10 @@ func TestImageRefusesAKeyThatWasWrittenWhileItWasRead(t *testing.T) {
 
 			got, err := Image(context.Background(), s.client(t), prefix)
 			if err == nil || !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "written while the image was taken") || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("Image = %v, %v; want the error that names %s, %s, and says it was written while the image was taken", got, err, key, tc.want)
+				require.Failf(t, "", "Image = %v, %v; want the error that names %s, %s, and says it was written while the image was taken", got, err, key, tc.want)
 			}
 			if got != nil {
-				t.Fatalf("Image answered %d entries with its error; want none, an error is never a partial image", len(got))
+				require.Nil(t, got, "Image answered %d entries with its error; want none, an error is never a partial image", len(got))
 			}
 		})
 	}
@@ -891,13 +893,13 @@ func TestImageReturnsTheErrorOfAFailedCommandAndNoImage(t *testing.T) {
 			tc.spoil(s)
 			got, err := Image(context.Background(), s.client(t), prefix)
 			if err == nil || (tc.err != nil && !errors.Is(err, tc.err)) || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("Image = %v; want an error that is %v and says %q", err, tc.err, tc.want)
+				require.Failf(t, "", "Image = %v; want an error that is %v and says %q", err, tc.err, tc.want)
 			}
 			if !strings.Contains(err.Error(), prefix) {
-				t.Errorf("the error %q does not name the prefix %q", err, prefix)
+				assert.Failf(t, "", "the error %q does not name the prefix %q", err, prefix)
 			}
 			if got != nil {
-				t.Fatalf("Image answered %d entries with its error; want none", len(got))
+				require.Nil(t, got, "Image answered %d entries with its error; want none", len(got))
 			}
 		})
 	}
@@ -915,10 +917,10 @@ func TestImageStopsWhenItsContextEnds(t *testing.T) {
 		cancel()
 		got, err := Image(ctx, s.client(t), prefix)
 		if !errors.Is(err, context.Canceled) || got != nil {
-			t.Fatalf("Image = %v, %v; want no image and context.Canceled", got, err)
+			require.Failf(t, "", "Image = %v, %v; want no image and context.Canceled", got, err)
 		}
 		if len(s.scans) != 0 {
-			t.Fatalf("Image sent %d SCAN calls on a context that had ended", len(s.scans))
+			require.Len(t, s.scans, 0, "Image sent %d SCAN calls on a context that had ended", len(s.scans))
 		}
 	})
 	t.Run("between two SCAN calls", func(t *testing.T) {
@@ -935,10 +937,10 @@ func TestImageStopsWhenItsContextEnds(t *testing.T) {
 		}
 		got, err := Image(ctx, s.client(t), prefix)
 		if !errors.Is(err, context.Canceled) || got != nil {
-			t.Fatalf("Image = %v, %v; want no image and context.Canceled", got, err)
+			require.Failf(t, "", "Image = %v, %v; want no image and context.Canceled", got, err)
 		}
 		if len(s.scans) != stopAfter || len(s.pipelines) != 0 {
-			t.Fatalf("Image sent %d SCAN calls and %d pipelines; want %d and none", len(s.scans), len(s.pipelines), stopAfter)
+			require.Failf(t, "", "Image sent %d SCAN calls and %d pipelines; want %d and none", len(s.scans), len(s.pipelines), stopAfter)
 		}
 	})
 }
@@ -953,11 +955,11 @@ func TestImageRefusesAClientThatReadsOneNode(t *testing.T) {
 	for name, c := range map[string]redis.UniversalClient{"a cluster client": cluster, "a ring": ring, "no client": nil} {
 		got, err := Image(context.Background(), c, "img:")
 		if err == nil || got != nil {
-			t.Errorf("Image of %s = %v, %v; want an error and no image", name, got, err)
+			assert.Failf(t, "", "Image of %s = %v, %v; want an error and no image", name, got, err)
 		}
 	}
 	if _, err := Image(context.Background(), cluster, "img:"); err == nil || !strings.Contains(err.Error(), "one node") {
-		t.Errorf("Image of a cluster client said %v; want the reason, that SCAN reads one node", err)
+		assert.Failf(t, "", "Image of a cluster client said %v; want the reason, that SCAN reads one node", err)
 	}
 }
 
@@ -969,10 +971,10 @@ func TestImageIsForTestsAndNothingElse(t *testing.T) {
 	l.inTest = func() bool { return false }
 	said := panics(func() { _, _ = l.image(context.Background(), s.client(t), "img:") })
 	if msg, _ := said.(string); !strings.Contains(msg, "outside a test binary") {
-		t.Fatalf("image outside a test binary panicked with %v; want the package's refusal", said)
+		require.Contains(t, msg, "outside a test binary", "image outside a test binary panicked with %v; want the package's refusal", said)
 	}
 	if len(s.scans) != 0 {
-		t.Fatalf("a refused image sent %d SCAN calls", len(s.scans))
+		require.Len(t, s.scans, 0, "a refused image sent %d SCAN calls", len(s.scans))
 	}
 }
 
@@ -981,7 +983,7 @@ func imageOf(t *testing.T, s *fakeStore, prefix string) map[string]Entry {
 	t.Helper()
 	got, err := Image(context.Background(), s.client(t), prefix)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return got
 }
@@ -1010,17 +1012,17 @@ func TestImageSumOfAHashSetOrSortedSetDoesNotDependOnItsOrder(t *testing.T) {
 	first := imageOf(t, s, prefix)
 	for i := 0; i < 100; i++ {
 		if d := Diff(first, imageOf(t, s, prefix)); len(d) != 0 {
-			t.Fatalf("the image of the same store differs from one call to the next: %q", d)
+			require.Len(t, d, 0, "the image of the same store differs from one call to the next: %q", d)
 		}
 	}
 	// The same members, and the same fields and scores, in another order.
 	s.keys[prefix+"set"] = fakeSet(reversed...)
 	s.keys[prefix+"zset"] = fakeZSet(shuffled...)
 	if d := Diff(first, imageOf(t, s, prefix)); len(d) != 0 {
-		t.Fatalf("a set and a sorted set in another order are a change: %q", d)
+		require.Len(t, d, 0, "a set and a sorted set in another order are a change: %q", d)
 	}
 	if d := Diff(expected(s.keys), first); len(d) != 0 {
-		t.Fatalf("the image is not what the documented sum is: %q", d)
+		require.Len(t, d, 0, "the image is not what the documented sum is: %q", d)
 	}
 	// And other content is another sum: a field, a member, a score.
 	for name, changed := range map[string]fakeKey{
@@ -1031,7 +1033,7 @@ func TestImageSumOfAHashSetOrSortedSetDoesNotDependOnItsOrder(t *testing.T) {
 		other := newFakeStore(maps.Clone(s.keys))
 		other.keys[prefix+name] = changed
 		if d := Diff(first, imageOf(t, other, prefix)); !slices.Equal(d, []string{"~" + prefix + name}) {
-			t.Errorf("a changed %s gave the diff %q; want %q", name, d, []string{"~" + prefix + name})
+			assert.Equal(t, []string{"~" + prefix + name}, d, "a changed %s gave the diff %q; want %q", name, d, []string{"~" + prefix + name})
 		}
 	}
 }
@@ -1070,7 +1072,7 @@ func TestImageSumFoldsInTheExpiry(t *testing.T) {
 				s.keys[key] = base.expiring(step.ms)
 				next := imageOf(t, s, prefix)
 				if d := Diff(none, next); !slices.Equal(d, step.want) {
-					t.Fatalf("after %s the diff is %q; want %q", step.name, d, step.want)
+					require.Equal(t, step.want, d, "after %s the diff is %q; want %q", step.name, d, step.want)
 				}
 				none = next
 			}
@@ -1107,7 +1109,7 @@ func TestImageSumOfAHashFoldsInEveryFieldsExpiry(t *testing.T) {
 		s.keys[key] = step.hash
 		after := imageOf(t, s, prefix)
 		if d := Diff(before, after); !slices.Equal(d, step.want) {
-			t.Fatalf("after %s the diff is %q; want %q", step.name, d, step.want)
+			require.Equal(t, step.want, d, "after %s the diff is %q; want %q", step.name, d, step.want)
 		}
 		before = after
 	}
@@ -1123,7 +1125,7 @@ func TestImageReadsWithTheBoundsThePinNames(t *testing.T) {
 		"the keys of a batch": {imageBatchKeys, 500},
 	} {
 		if tc.got != tc.want {
-			t.Errorf("%s is %d; the pin says %d", name, tc.got, tc.want)
+			assert.Equal(t, tc.want, tc.got, "%s is %d; the pin says %d", name, tc.got, tc.want)
 		}
 	}
 }
@@ -1155,7 +1157,7 @@ func TestImageSumIsTheLayoutEntryDocuments(t *testing.T) {
 		s := newFakeStore(map[string]fakeKey{prefix + "k": tc.key})
 		got := imageOf(t, s, prefix)[prefix+"k"]
 		if want := sha256.Sum256([]byte(tc.bytes)); got.Sum != want {
-			t.Errorf("%s: the sum is %x; want the SHA256 of %q, %x", name, got.Sum[:6], tc.bytes, want[:6])
+			assert.Equal(t, want, got.Sum, "%s: the sum is %x; want the SHA256 of %q, %x", name, got.Sum[:6], tc.bytes, want[:6])
 		}
 	}
 }
@@ -1175,7 +1177,7 @@ func TestDiffIsEmptyWhenTheImagesAreEqual(t *testing.T) {
 	} {
 		got := Diff(tc.before, tc.after)
 		if got == nil || len(got) != 0 {
-			t.Errorf("Diff of %s = %#v; want an empty slice that is not nil", name, got)
+			assert.Failf(t, "", "Diff of %s = %#v; want an empty slice that is not nil", name, got)
 		}
 	}
 }
@@ -1198,7 +1200,7 @@ func TestDiffNamesTheKeysAddedRemovedAndChanged(t *testing.T) {
 		"a key with a colon and mark": {map[string]Entry{}, map[string]Entry{"+a:~b": one}, []string{"++a:~b"}},
 	} {
 		if got := Diff(tc.before, tc.after); !slices.Equal(got, tc.want) {
-			t.Errorf("Diff of %s = %q; want %q", name, got, tc.want)
+			assert.Equal(t, tc.want, got, "Diff of %s = %q; want %q", name, got, tc.want)
 		}
 	}
 }
@@ -1229,7 +1231,7 @@ func TestDiffIsInKeyOrderWithTheMarksInterleavedAndTheSameEveryTime(t *testing.T
 	// The marks do not sort in this order, so the test tells a sort of the
 	// lines, which groups by mark, from a sort of the keys.
 	if sort.StringsAreSorted(want) {
-		t.Fatalf("the test's own order is the order of the lines as strings, so it would not tell the two sorts apart: %q", want[:6])
+		require.Failf(t, "", "the test's own order is the order of the lines as strings, so it would not tell the two sorts apart: %q", want[:6])
 	}
 	first := Diff(before, after)
 	if !slices.Equal(first, want) {
@@ -1244,11 +1246,11 @@ func TestDiffIsInKeyOrderWithTheMarksInterleavedAndTheSameEveryTime(t *testing.T
 		if at < len(want) {
 			wantAt = want[at]
 		}
-		t.Fatalf("Diff is not the lines of the %d keys that differ in key order: %d lines, want %d, and they first differ at line %d: got %s, want %s", len(want), len(first), len(want), at, got, wantAt)
+		require.Failf(t, "", "Diff is not the lines of the %d keys that differ in key order: %d lines, want %d, and they first differ at line %d: got %s, want %s", len(want), len(first), len(want), at, got, wantAt)
 	}
 	for i := 0; i < keys; i++ {
 		if again := Diff(before, after); !slices.Equal(again, first) {
-			t.Fatalf("Diff of the same two images differs from one call to the next")
+			require.Equal(t, first, again, "Diff of the same two images differs from one call to the next")
 		}
 	}
 }
@@ -1262,6 +1264,6 @@ func TestDiffChangesNeitherImage(t *testing.T) {
 	after := map[string]Entry{"b": two, "c": one}
 	_ = Diff(before, after)
 	if len(before) != 2 || before["a"] != one || before["b"] != one || len(after) != 2 || after["b"] != two || after["c"] != one {
-		t.Fatalf("Diff changed an image: before %v, after %v", before, after)
+		require.Failf(t, "", "Diff changed an image: before %v, after %v", before, after)
 	}
 }

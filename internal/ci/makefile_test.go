@@ -1,11 +1,15 @@
 package ci
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // makefile_test.go is the layout check behind CARD-9019: the Makefile is the one
@@ -69,9 +73,7 @@ func TestCIBuildTestLintCommandsGoThroughMake(t *testing.T) {
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	cmds := runCommands(src)
-	if len(cmds) == 0 {
-		t.Fatal("no run commands parsed from ci.yml; the parser is looking in the wrong place")
-	}
+	require.NotEmpty(t, cmds, "no run commands parsed from ci.yml; the parser is looking in the wrong place")
 	sawMake := false
 	for _, c := range cmds {
 		if c.cmd == "" || strings.HasPrefix(c.cmd, "#") {
@@ -87,11 +89,9 @@ func TestCIBuildTestLintCommandsGoThroughMake(t *testing.T) {
 		if allowlistedCommand(c.cmd) || isMake {
 			continue
 		}
-		t.Errorf("ci.yml:%d: build/test/lint command is not a make invocation: %q", c.line, c.cmd)
+		assert.Fail(t, fmt.Sprintf("ci.yml:%d: build/test/lint command is not a make invocation: %q", c.line, c.cmd))
 	}
-	if !sawMake {
-		t.Error("ci.yml names no make invocation; the Makefile is not the one entry for the CL tier")
-	}
+	assert.True(t, sawMake, "ci.yml names no make invocation; the Makefile is not the one entry for the CL tier")
 }
 
 // TestMakefileIsTheOneEntry pins the Makefile's own shape: the required targets
@@ -122,21 +122,17 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
 
 	for _, want := range requiredTargets {
-		if _, ok := mk.recipes[want]; !ok {
-			if _, dep := mk.deps[want]; !dep {
-				t.Errorf("Makefile declares no %q target", want)
-			}
-		}
-		if !mk.phony[want] {
-			t.Errorf("Makefile .PHONY does not name %q", want)
-		}
+		_, ok := mk.recipes[want]
+		_, dep := mk.deps[want]
+		assert.True(t, ok || dep, "Makefile declares no %q target", want)
+		assert.True(t, mk.phony[want], "Makefile .PHONY does not name %q", want)
 	}
 
 	// clean removes exactly two named directories: one recipe line, an explicit
 	// list, no computed path (the removal rule internal/ci holds elsewhere).
 	clean := mk.recipeFor("clean")
-	if len(clean) != 1 || strings.TrimSpace(clean[0]) != "rm -rf ./bin ./scratch" {
-		t.Errorf("Makefile clean is not the explicit two-directory removal `rm -rf ./bin ./scratch`, it is %q", clean)
+	if assert.Len(t, clean, 1, "Makefile clean is not the explicit two-directory removal `rm -rf ./bin ./scratch`, it is %q", clean) {
+		assert.Equal(t, "rm -rf ./bin ./scratch", strings.TrimSpace(clean[0]), "Makefile clean is not the explicit two-directory removal `rm -rf ./bin ./scratch`, it is %q", clean)
 	}
 
 	// check is the union of the gates CI runs, named as prerequisites.
@@ -147,13 +143,10 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 	// The lisp gate is test-lisp, CI's own lisp verb (tools/ci lisp-test), which
 	// prints "nothing to test" while lisp/ holds no system.
 	for _, want := range []string{"build", "lint", "test", "test-e2e", "test-lisp"} {
-		if !checkDeps[want] {
-			t.Errorf("Makefile check does not run %q; the contract is build, lint, test, test-e2e and test-lisp", want)
-		}
+		assert.True(t, checkDeps[want], "Makefile check does not run %q; the contract is build, lint, test, test-e2e and test-lisp", want)
 	}
-	if got := strings.TrimSpace(strings.Join(mk.recipeFor("test-lisp"), "\n")); got != "go run ./tools/ci lisp-test" {
-		t.Errorf("Makefile test-lisp is %q, want CI's lisp verb go run ./tools/ci lisp-test (CI's lisp job and the merge gate's lisp step both run it)", got)
-	}
+	got := strings.TrimSpace(strings.Join(mk.recipeFor("test-lisp"), "\n"))
+	assert.Equal(t, "go run ./tools/ci lisp-test", got, "Makefile test-lisp is %q, want CI's lisp verb go run ./tools/ci lisp-test (CI's lisp job and the merge gate's lisp step both run it)", got)
 
 	// And the gates themselves: every command `make check` would run, gathered
 	// from check and the transitive closure of its prerequisites, with the
@@ -168,16 +161,12 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 		"go test -count=1 -run TestFriendSequence ./cmd/...",
 		"go run ./tools/ci lisp-test",
 	} {
-		if !strings.Contains(recipes, gate) {
-			t.Errorf("`make check` does not reach %q; the recipes it runs are:\n%s", gate, recipes)
-		}
+		assert.Contains(t, recipes, gate, "`make check` does not reach %q; the recipes it runs are:\n%s", gate, recipes)
 	}
 
 	help := strings.Join(mk.recipeFor("help"), "\n")
 	for _, target := range requiredTargets {
-		if !strings.Contains(help, "make "+target) {
-			t.Errorf("the help target does not list %q:\n%s", target, help)
-		}
+		assert.Contains(t, help, "make "+target, "the help target does not list %q:\n%s", target, help)
 	}
 }
 
@@ -190,20 +179,13 @@ func TestMakefilePreflightTarget(t *testing.T) {
 	root := repoRoot(t)
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
 
-	if _, ok := mk.recipes["preflight"]; !ok {
-		t.Fatalf("Makefile declares no preflight target")
-	}
-	if !mk.phony["preflight"] {
-		t.Errorf("Makefile .PHONY does not name preflight")
-	}
+	_, ok := mk.recipes["preflight"]
+	require.True(t, ok, "Makefile declares no preflight target")
+	assert.True(t, mk.phony["preflight"], "Makefile .PHONY does not name preflight")
 	help := strings.Join(mk.recipeFor("help"), "\n")
-	if !strings.Contains(help, "make preflight") {
-		t.Errorf("help target does not list make preflight:\n%s", help)
-	}
+	assert.Contains(t, help, "make preflight", "help target does not list make preflight:\n%s", help)
 	recipe := strings.Join(mk.recipeFor("preflight"), "\n")
-	if !strings.Contains(recipe, "./tools/preflight") {
-		t.Errorf("preflight recipe does not invoke tools/preflight: %q", recipe)
-	}
+	assert.Contains(t, recipe, "./tools/preflight", "preflight recipe does not invoke tools/preflight: %q", recipe)
 }
 
 // parsedMakefile is what the parser below reads out of a Makefile: its
@@ -253,13 +235,9 @@ func parseMakefile(t *testing.T, path string) *parsedMakefile {
 // includes itself is a failed test and not a hung one.
 func (mk *parsedMakefile) read(t *testing.T, path string, depth int) {
 	t.Helper()
-	if depth > 8 {
-		t.Fatalf("include depth over 8 at %s; a Makefile includes itself", path)
-	}
+	require.LessOrEqual(t, depth, 8, "include depth over 8 at %s; a Makefile includes itself", path)
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("cannot read %s: %v", path, err)
-	}
+	require.NoError(t, err, "cannot read %s: %v", path, err)
 	lines := joinContinuations(strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n"))
 	current := ""
 	for _, line := range lines {

@@ -2,59 +2,48 @@ package swarm
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
 )
 
-// takeFileLock is the body of the bench slot store's lock: an flock on a
-// named file, polled until wait runs out, released by a function that is safe to call twice.
-// It is a file lock rather than a file whose existence means "held" for rule 17's reason --
-// the kernel drops it when the holder dies however it dies.
+// takeFileLock is the body of the bench slot store's lock: a kernel lock on a named file,
+// waited for until wait runs out, released by a function that is safe to call twice. It is
+// a kernel lock rather than a file whose existence means "held" for rule 17's reason --
+// the kernel drops it when the holder dies however it dies. On unix it is
+// internal/filelock's (tla/FileLock.tla), the same flock on the same file the earlier
+// binaries took, so an old and a new nova-swarm still exclude each other during an
+// upgrade (lock_compat_unix_test.go); elsewhere it is still lock_other.go's.
 //
-// The flock is not a queue. A waiter that lost slept for lockPoll, and the goroutine that
-// had just released the file took it again before the sleeper woke. On a busy bench that
-// is not a stuck holder -- eight takes in one process, each critical section slow enough
-// that a sleeper never landed in the gap -- and the sleeper still waited out the whole
-// bound (studio shard, TestConcurrentTakesKeepEveryTake: "waited 10s"). Same-process
-// callers therefore take a turn first. The turn is a queue; the flock is still what keeps
-// another process out, and still what the kernel drops when the holder dies.
+// The kernel lock is not a queue. A waiter that lost slept for its poll, and the
+// goroutine that had just released the file took it again before the sleeper woke. On a
+// busy bench that is not a stuck holder -- eight takes in one process, each critical
+// section slow enough that a sleeper never landed in the gap -- and the sleeper still
+// waited out the whole bound (studio shard, TestConcurrentTakesKeepEveryTake: "waited
+// 10s"). Same-process callers therefore take a turn first. The turn is a queue; the
+// file lock is still what keeps another process out, and still what the kernel drops
+// when the holder dies.
 func takeFileLock(path string, wait time.Duration) (func(), error) {
 	turn := lockTurnFor(path)
 	deadline := time.Now().Add(wait)
 	if !turn.acquire(time.Until(deadline)) {
 		return nil, fmt.Errorf("another nova-swarm holds %s and this run waited %s for it", path, wait)
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
-	if err != nil {
+	unlock, held, err := takeKernelLock(path, deadline)
+	if err != nil || held {
 		turn.release()
-		return nil, fmt.Errorf("the lock at %s could not be opened: %w", path, err)
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("another nova-swarm holds %s and this run waited %s for it", path, wait)
 	}
-	for {
-		ok, lockErr := tryLockFile(f)
-		if lockErr != nil {
-			f.Close()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			unlock()
 			turn.release()
-			return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lockErr)
-		}
-		if ok {
-			var once sync.Once
-			return func() {
-				once.Do(func() {
-					unlockFile(f)
-					f.Close()
-					turn.release()
-				})
-			}, nil
-		}
-		if !time.Now().Before(deadline) {
-			f.Close()
-			turn.release()
-			return nil, fmt.Errorf("another nova-swarm holds %s and this run waited %s for it", path, wait)
-		}
-		time.Sleep(lockPoll)
-	}
+		})
+	}, nil
 }
 
 // lockTurn is one in-process queue for a lock path. Sending takes the turn and
@@ -94,5 +83,3 @@ func (t *lockTurn) acquire(wait time.Duration) bool {
 }
 
 func (t *lockTurn) release() { <-t.ch }
-
-const lockPoll = 15 * time.Millisecond

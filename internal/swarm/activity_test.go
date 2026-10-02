@@ -3,6 +3,9 @@ package swarm
 import (
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestOSProcessTreeCPUNonExistent verifies that TreeCPU returns ok=false for an
@@ -14,9 +17,8 @@ func TestOSProcessTreeCPUNonExistent(t *testing.T) {
 	snap := newProcSnapshot()
 	// Negative PID, zero PID, and a PID exceedingly unlikely to exist:
 	for _, pid := range []int{-1, 0, 999_999} {
-		if _, ok := snap.TreeCPU(pid); ok {
-			t.Fatalf("TreeCPU(%d) = true, want false for non-existent pid", pid)
-		}
+		_, ok := snap.TreeCPU(pid)
+		require.False(t, ok, "TreeCPU(%d) = true, want false for non-existent pid", pid)
 	}
 }
 
@@ -47,9 +49,8 @@ func TestTreeCPUReadsOnlyAKnownSnapshotsLiveTree(t *testing.T) {
 		{"a live child of a pid that is not live", &procSnapshot{live: map[int]bool{self: true}, children: map[int][]int{gone: {self}}, known: true}, gone, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if _, ok := c.snap.TreeCPU(c.pid); ok != c.want {
-				t.Errorf("%s: TreeCPU(%d) ok = %v, want %v", c.name, c.pid, ok, c.want)
-			}
+			_, ok := c.snap.TreeCPU(c.pid)
+			assert.Equal(t, c.want, ok, "%s: TreeCPU(%d) ok = %v, want %v", c.name, c.pid, ok, c.want)
 		})
 	}
 }

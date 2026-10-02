@@ -1,10 +1,10 @@
 package store
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // A cross fact names a card that is placed, in another stream, and not
@@ -28,17 +28,13 @@ func TestCrossFactNeedsAnOpenCardOfAnotherStream(t *testing.T) {
 				h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1"}}))
 				h.through("b1")
 				h.must(MergeStep(sprint.MergeReq{Stream: "s2"}))
-				if h.state("b1") != sprint.Landed {
-					t.Fatalf("b1 is %s", h.state("b1"))
-				}
+				require.Equal(t, sprint.Landed, h.state("b1"), "b1 is %s", h.state("b1"))
 			}
 			res := h.run(MergeStep(sprint.MergeReq{Stream: "s1", Cross: "s1-1=" + tc.other}))
-			if len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, tc.why) || len(res.Moved) != 0 {
-				t.Fatalf("cross s1-1=%s: moved %v refused %v, want refused saying %q", tc.other, res.Moved, res.Refused, tc.why)
-			}
-			if st := h.snap().StreamCtl("s1").F("state"); st == sprint.StreamStopped {
-				t.Fatalf("a refused cross fact stopped the stream")
-			}
+			require.Len(t, res.Refused, 1, "cross s1-1=%s: moved %v refused %v, want refused saying %q", tc.other, res.Moved, res.Refused, tc.why)
+			require.Contains(t, res.Refused[0].Why, tc.why, "cross s1-1=%s: moved %v refused %v, want refused saying %q", tc.other, res.Moved, res.Refused, tc.why)
+			require.Empty(t, res.Moved, "cross s1-1=%s: moved %v refused %v, want refused saying %q", tc.other, res.Moved, res.Refused, tc.why)
+			require.NotEqual(t, string(sprint.StreamStopped), h.snap().StreamCtl("s1").F("state"), "a refused cross fact stopped the stream")
 			h.clean("refused cross")
 		})
 	}
@@ -55,23 +51,18 @@ func TestCrossStopOffersReturnAndDrop(t *testing.T) {
 	h.through("b1")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Cross: "s1-1=b1"}))
 	s := h.snap()
-	if s.StreamCtl("s1").F("state") != sprint.StreamStopped || s.Merge.Placed("s1-1").Col != sprint.Stuck {
-		t.Fatalf("cross on an open card of another stream did not stop the stream")
-	}
+	require.Equal(t, string(sprint.StreamStopped), s.StreamCtl("s1").F("state"), "cross on an open card of another stream did not stop the stream")
+	require.Equal(t, string(sprint.Stuck), s.Merge.Placed("s1-1").Col, "cross on an open card of another stream did not stop the stream")
 	var found bool
 	for _, o := range s.Open {
 		if o.Note.Type == sprint.NCross {
 			found = true
 			for _, d := range []string{"return", "drop"} {
-				if !hasString(o.Note.Decisions, d) {
-					t.Fatalf("the cross notification's decisions %v lack %q", o.Note.Decisions, d)
-				}
+				require.True(t, hasString(o.Note.Decisions, d), "the cross notification's decisions %v lack %q", o.Note.Decisions, d)
 			}
 		}
 	}
-	if !found {
-		t.Fatalf("no open cross notification: %v", s.Open)
-	}
+	require.True(t, found, "no open cross notification: %v", s.Open)
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "waits for b1"}))
 	h.must(ResumeStep(sprint.ResumeReq{Stream: "s1"}))
 	h.clean("returned and resumed")
@@ -87,16 +78,14 @@ func TestResumeAfterRedWantsWhatWasDone(t *testing.T) {
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Red: true}))
 	for _, did := range []string{"", "  "} {
 		res := h.run(ResumeStep(sprint.ResumeReq{Stream: "s1", Did: did}))
-		if len(res.Moved) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "--did") {
-			t.Fatalf("resume after red with did %q: moved %v refused %v", did, res.Moved, res.Refused)
-		}
+		require.Empty(t, res.Moved, "resume after red with did %q: moved %v refused %v", did, res.Moved, res.Refused)
+		require.Len(t, res.Refused, 1, "resume after red with did %q: moved %v refused %v", did, res.Moved, res.Refused)
+		require.Contains(t, res.Refused[0].Why, "--did", "resume after red with did %q: moved %v refused %v", did, res.Moved, res.Refused)
 	}
-	if h.snap().StreamCtl("s1").F("state") != sprint.StreamStopped {
-		t.Fatalf("a refused resume moved the stream")
-	}
+	require.Equal(t, string(sprint.StreamStopped), h.snap().StreamCtl("s1").F("state"), "a refused resume moved the stream")
 	h.must(ResumeStep(sprint.ResumeReq{Stream: "s1", Did: "reverted the suspect"}))
 	if s := h.snap().StreamCtl("s1"); s.F("state") != sprint.StreamMerging || s.F("did") != "reverted the suspect" {
-		t.Fatalf("resume with did: state %s did %q", s.F("state"), s.F("did"))
+		require.Failf(t, "", "resume with did: state %s did %q", s.F("state"), s.F("did"))
 	}
 	h.clean("resumed")
 }
@@ -109,9 +98,9 @@ func TestRankRefusesALandedPrimary(t *testing.T) {
 	h.through("s1-1")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
 	res := h.run(RankStep(sprint.RankReq{IDs: []string{"s1-1"}, First: true}))
-	if len(res.Moved) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "landed") {
-		t.Fatalf("rank of a landed primary: moved %v refused %v", res.Moved, res.Refused)
-	}
+	require.Empty(t, res.Moved, "rank of a landed primary: moved %v refused %v", res.Moved, res.Refused)
+	require.Len(t, res.Refused, 1, "rank of a landed primary: moved %v refused %v", res.Moved, res.Refused)
+	require.Contains(t, res.Refused[0].Why, "landed", "rank of a landed primary: moved %v refused %v", res.Moved, res.Refused)
 	h.must(RankStep(sprint.RankReq{IDs: []string{"s1-2"}, First: true}))
 }
 
@@ -122,14 +111,13 @@ func TestAddRefusesANeedThatDoesNotExist(t *testing.T) {
 	h := newHarness(t)
 	h.setup(2)
 	res := h.run(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1", "b2"}, Needs: []string{"s1-1", "nosuch"}}))
-	if len(res.Moved) != 0 || len(res.Refused) != 2 || !strings.Contains(res.Refused[0].Why, "nosuch") {
-		t.Fatalf("add with a need on no primary: moved %v refused %v", res.Moved, res.Refused)
-	}
+	require.Empty(t, res.Moved, "add with a need on no primary: moved %v refused %v", res.Moved, res.Refused)
+	require.Len(t, res.Refused, 2, "add with a need on no primary: moved %v refused %v", res.Moved, res.Refused)
+	require.Contains(t, res.Refused[0].Why, "nosuch", "add with a need on no primary: moved %v refused %v", res.Moved, res.Refused)
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1", "b2"}, Needs: []string{"s1-1", "s1-2"}}))
-	if h.state("b1") != sprint.Waiting || h.state("b2") != sprint.Waiting {
-		t.Fatalf("b1 is %s, b2 is %s", h.state("b1"), h.state("b2"))
-	}
+	require.Equal(t, sprint.Waiting, h.state("b1"), "b1 is %s, b2 is %s", h.state("b1"), h.state("b2"))
+	require.Equal(t, sprint.Waiting, h.state("b2"), "b1 is %s, b2 is %s", h.state("b1"), h.state("b2"))
 	h.clean("added")
 }
 
@@ -141,18 +129,16 @@ func TestTwoDroppedNeedsGiveOneBlockedNote(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"later"}, Needs: []string{"s1-1", "s1-2"}}))
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}, Reason: "obsolete"}))
 	notes, _, err := h.m.NotesSince(h.ctx, "", 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var blocked []sprint.Note
 	for _, n := range notes {
 		if n.Type == sprint.NBlocked {
 			blocked = append(blocked, n)
 		}
 	}
-	if len(blocked) != 1 || !strings.Contains(blocked[0].What, "s1-1") || !strings.Contains(blocked[0].What, "s1-2") {
-		t.Fatalf("blocked notes: %+v", blocked)
-	}
+	require.Len(t, blocked, 1, "blocked notes: %+v", blocked)
+	require.Contains(t, blocked[0].What, "s1-1", "blocked notes: %+v", blocked)
+	require.Contains(t, blocked[0].What, "s1-2", "blocked notes: %+v", blocked)
 	h.clean("dropped")
 }
 

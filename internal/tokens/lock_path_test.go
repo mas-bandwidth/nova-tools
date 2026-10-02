@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFoldLockSymlinkPreservesTarget(t *testing.T) {
@@ -17,39 +20,27 @@ func TestFoldLockSymlinkPreservesTarget(t *testing.T) {
 			root := t.TempDir()
 			out := filepath.Join(root, "out")
 			target := filepath.Join(root, "unrelated")
-			if err := os.Mkdir(out, 0700); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.Mkdir(out, 0700))
 			const body = "unrelated data must survive\n"
 			if !missing {
-				if err := os.WriteFile(target, []byte(body), 0600); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, os.WriteFile(target, []byte(body), 0600))
 			}
 			link := filepath.Join(out, LockName)
-			if err := os.Symlink(target, link); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.Symlink(target, link))
 			release, err := TakeFoldLock(out, 0)
 			if release != nil {
 				release()
 			}
 			t.Logf("TakeFoldLock err=%v", err)
-			if err == nil {
-				t.Error("expected symlink refusal before touching target")
-			}
+			assert.Error(t, err, "expected symlink refusal before touching target")
 			raw, readErr := os.ReadFile(target)
 			if missing {
-				if !os.IsNotExist(readErr) {
-					t.Errorf("created symlink target: %q (%v)", raw, readErr)
-				}
-			} else if readErr != nil || string(raw) != body {
-				t.Errorf("target changed: %q (%v)", raw, readErr)
+				assert.Truef(t, os.IsNotExist(readErr), "created symlink target: %q (%v)", raw, readErr)
+			} else {
+				assert.Falsef(t, readErr != nil || string(raw) != body, "target changed: %q (%v)", raw, readErr)
 			}
 			info, lstatErr := os.Lstat(link)
-			if lstatErr != nil || info.Mode()&os.ModeSymlink == 0 {
-				t.Errorf("link changed: %v (%v)", info, lstatErr)
-			}
+			assert.Falsef(t, lstatErr != nil || info.Mode()&os.ModeSymlink == 0, "link changed: %v (%v)", info, lstatErr)
 		})
 	}
 }
@@ -58,18 +49,12 @@ func TestFoldLockRefusesDirectory(t *testing.T) {
 	t.Parallel()
 	out := t.TempDir()
 	path := filepath.Join(out, LockName)
-	if err := os.Mkdir(path, 0700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(path, 0700))
 	release, err := TakeFoldLock(out, 0)
 	if release != nil {
 		release()
 	}
-	if err == nil {
-		t.Fatal("directory lock was accepted")
-	}
+	require.Error(t, err, "directory lock was accepted")
 	info, statErr := os.Lstat(path)
-	if statErr != nil || !info.IsDir() {
-		t.Fatalf("directory changed: %v (%v)", info, statErr)
-	}
+	require.Falsef(t, statErr != nil || !info.IsDir(), "directory changed: %v (%v)", info, statErr)
 }

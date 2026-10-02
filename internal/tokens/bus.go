@@ -3,9 +3,11 @@ package tokens
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -438,6 +440,7 @@ func parseBody(n *note, label string, body []string, offset int, rules *Rules) {
 			n.redated++
 		}
 		n.zones[basis] = true
+		rules.SetDay(day)
 		m := Message{Day: day, Basis: basis, Model: model, Repo: rules.Attribute([]string{repo}, ""), Rough: rough}
 		m.Counts.Set(t, v)
 		n.msgs = append(n.msgs, m)
@@ -493,13 +496,7 @@ func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
 	for _, n := range notes {
 		byDay[n.subject.day] = append(byDay[n.subject.day], n)
 	}
-	days := make([]string, 0, len(byDay))
-	for d := range byDay {
-		days = append(days, d)
-	}
-	sort.Strings(days)
-
-	for _, day := range days {
+	for _, day := range slices.Sorted(maps.Keys(byDay)) {
 		var tips []*note
 		for _, n := range byDay[day] {
 			if n.dead != nil {

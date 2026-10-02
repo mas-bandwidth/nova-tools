@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // CARD-8531 nova-tools #182: voluntary tool adoption and upgrade awareness.
@@ -22,23 +25,23 @@ func TestVoluntaryAdoptionMatrix(t *testing.T) {
 		"nova-tokens\trowan\tequivalent\t-\tuses own ledger script instead\n" +
 		"nova-swarm\trowan\tunknown\t-\tunknown version: not installed here\n"
 	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var out, errs bytes.Buffer
 	code := Run("nova-update", []string{"adoption", "--file", path}, "stamp", &out, &errs, Environment{})
 	if code != 0 {
-		t.Fatalf("adoption with declined/equivalent/unknown = exit %d, want 0 (voluntary: none is failure):\n%s\n%s", code, out.String(), errs.String())
+		require.EqualValuesf(t, 0, code, "adoption with declined/equivalent/unknown = exit %d, want 0 (voluntary: none is failure):\n%s\n%s", code, out.String(), errs.String())
 	}
 	got := out.String()
 	for _, want := range []string{
-		"ADOPTION tool=nova-bus friend=rowan state=adopted",
-		"ADOPTION tool=nova-wake friend=rowan state=declined",
-		"ADOPTION tool=nova-tokens friend=rowan state=equivalent",
-		"ADOPTION tool=nova-swarm friend=rowan state=unknown",
-		"ADOPTION OK",
+		"ADOPTION CHOICE tool=nova-bus friend=rowan state=adopted",
+		"ADOPTION CHOICE tool=nova-wake friend=rowan state=declined version=0.12.0: declines upgrade: pins to stable pair",
+		"ADOPTION CHOICE tool=nova-tokens friend=rowan state=equivalent",
+		"ADOPTION CHOICE tool=nova-swarm friend=rowan state=unknown",
+		"ADOPTION OK entries=4 friends=1",
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("adoption output missing %q:\n%s", want, got)
+			assert.Containsf(t, got, want, "adoption output missing %q:\n%s", want, got)
 		}
 	}
 }

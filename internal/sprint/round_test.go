@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The deal goes round the fleet and the ask goes round the readers (errata 3,
@@ -55,9 +57,7 @@ func (w *world) part(fn func(*Snapshot, TickReq) (Plan, int), r TickReq) Plan {
 func (w *world) place(tb *Table, id, row, col string) {
 	w.t.Helper()
 	c := tb.Card(id)
-	if c == nil {
-		w.t.Fatalf("no card %s in %s", id, tb.Name)
-	}
+	require.NotNil(w.t, c, "no card %s in %s", id, tb.Name)
 	c.Row, c.Col = row, col
 	c.Rev++
 	tb.cells, tb.byPrimary = nil, nil
@@ -119,8 +119,9 @@ func evenly(t *testing.T, what string, counts map[string]int, names []string, ro
 		}
 		hi = max(hi, counts[n])
 	}
-	if hi-lo > 1 || (round && hi != lo) {
-		t.Fatalf("%s: %v, want every count within one of the others (equal after a full round)", what, counts)
+	require.LessOrEqual(t, hi-lo, 1, "%s: %v, want every count within one of the others (equal after a full round)", what, counts)
+	if round {
+		require.Equal(t, lo, hi, "%s: %v, want every count within one of the others (equal after a full round)", what, counts)
 	}
 }
 
@@ -152,13 +153,12 @@ func TestTheDealGoesRoundTheFleet(t *testing.T) {
 		evenly(t, fmt.Sprintf("after deal %d", i), dealt, members, i%8 == 0)
 	}
 	for i, m := range order {
-		if want := fmt.Sprintf("m%d", i%8+1); m != want {
-			t.Fatalf("deal %d went to %s, want %s: the deals %v", i+1, m, want, order)
-		}
+		want := fmt.Sprintf("m%d", i%8+1)
+		require.Equal(t, want, m, "deal %d went to %s, want %s: the deals %v", i+1, m, want, order)
 	}
-	if last, ok := w.s.Fleet.Prop(PropDealIndex); !ok || indexPast(w.s.Fleet.Rows(), last) != "m6" {
-		t.Fatalf("the fleet table's deal_index is %q (%v), want m6", last, ok)
-	}
+	last, ok := w.s.Fleet.Prop(PropDealIndex)
+	require.True(t, ok, "the fleet table's deal_index is %q (%v), want m6", last, ok)
+	require.Equal(t, "m6", indexPast(w.s.Fleet.Rows(), last), "the fleet table's deal_index is %q (%v), want m6", last, ok)
 	// every member's done is within one of the others
 	done := map[string]int{}
 	for _, m := range members {
@@ -178,13 +178,10 @@ func TestTheTickDealGoesRoundTheFleet(t *testing.T) {
 		w.must(Add(w.s, AddReq{Stream: "s1", Count: 1}))
 		w.part(TickDeal, TickReq{})
 		cs := w.s.Fleet.Column(Ready)
-		if len(cs) != 1 {
-			t.Fatalf("deal %d: nothing dealt", i)
-		}
+		require.Len(t, cs, 1, "deal %d: nothing dealt", i)
 		wc := cs[0]
-		if want := fmt.Sprintf("m%d", (i-1)%8+1); wc.Row != want {
-			t.Fatalf("deal %d went to %s, want %s", i, wc.Row, want)
-		}
+		want := fmt.Sprintf("m%d", (i-1)%8+1)
+		require.Equal(t, want, wc.Row, "deal %d went to %s, want %s", i, wc.Row, want)
 		dealt[wc.Row]++
 		workIt(w, wc)
 		evenly(t, fmt.Sprintf("after deal %d", i), dealt, members, i%8 == 0)
@@ -211,23 +208,19 @@ func TestTheDealSkipsAFullMemberAndTheQueueDoesNotChoose(t *testing.T) {
 	for _, id := range []string{"s1-1", "s1-2", "s1-3", "s1-4"} {
 		got = append(got, deal(id))
 	}
-	if want := []string{"m1", "m2", "m3", "m1"}; !slices.Equal(got, want) {
-		t.Fatalf("deals %v, want %v", got, want)
-	}
+	want := []string{"m1", "m2", "m3", "m1"}
+	require.Equal(t, want, got, "deals %v, want %v", got, want)
 	// m1 two ready (at its room), m2 one, m3 none ready once it takes its card
 	// (one working): the index is past m1, so m2, though m3's queue is shorter
 	w.must(Take(w.s, TakeReq{As: "m3", Sel: Sel{IDs: []string{"s1-3.w1"}}, Gens: gensOf(w.s, "s1-3.w1")}))
-	if m := deal("s1-5"); m != "m2" {
-		t.Fatalf("s1-5 went to %s, want m2 (the index, not m3's shorter queue)", m)
-	}
-	if m := deal("s1-6"); m != "m3" {
-		t.Fatalf("s1-6 went to %s, want m3", m)
-	}
+	m := deal("s1-5")
+	require.Equal(t, "m2", m, "s1-5 went to %s, want m2 (the index, not m3's shorter queue)", m)
+	m = deal("s1-6")
+	require.Equal(t, "m3", m, "s1-6 went to %s, want m3", m)
 	// past m3: m1 and m2 are at their room, skipped, and m3 (one working, one
 	// ready) is below its room of four
-	if m := deal("s1-7"); m != "m3" {
-		t.Fatalf("s1-7 went to %s, want m3: m1 and m2 are full", m)
-	}
+	m = deal("s1-7")
+	require.Equal(t, "m3", m, "s1-7 went to %s, want m3: m1 and m2 are full", m)
 }
 
 // A member down is skipped and its turn is not given to its neighbour twice:
@@ -249,9 +242,8 @@ func TestTheDealSkipsADownMemberEvenly(t *testing.T) {
 		got = append(got, wc.Row)
 		workIt(w, wc)
 	}
-	if want := []string{"m1", "m3", "m4", "m1", "m3", "m4", "m1", "m3", "m4"}; !slices.Equal(got, want) {
-		t.Fatalf("deals %v, want %v: m2 is down and skipped, the others in turn", got, want)
-	}
+	want := []string{"m1", "m3", "m4", "m1", "m3", "m4", "m1", "m3", "m4"}
+	require.Equal(t, want, got, "deals %v, want %v: m2 is down and skipped, the others in turn", got, want)
 }
 
 // 4 free readers, 40 reads asked one primary at a time (two each): every
@@ -277,9 +269,9 @@ func TestTheAskGoesRoundTheReaders(t *testing.T) {
 		}
 		evenly(t, fmt.Sprintf("after ask %d", i), asked, readers, (2*i)%len(readers) == 0)
 	}
-	if last, ok := w.s.Readers.Prop(PropAskIndex); !ok || indexPast(w.s.Readers.Rows(), last) != "reader-d" {
-		t.Fatalf("the readers table's ask_index is %q (%v), want reader-d", last, ok)
-	}
+	last, ok := w.s.Readers.Prop(PropAskIndex)
+	require.True(t, ok, "the readers table's ask_index is %q (%v), want reader-d", last, ok)
+	require.Equal(t, "reader-d", indexPast(w.s.Readers.Rows(), last), "the readers table's ask_index is %q (%v), want reader-d", last, ok)
 }
 
 // The tick's ask (T2) asks round the readers too: one primary in review at a
@@ -293,9 +285,8 @@ func TestTheTickAskGoesRoundTheReaders(t *testing.T) {
 		id := fmt.Sprintf("s1-%d", i)
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
 		workIt(w, w.s.Fleet.Card(WorkCardID(id, 1)))
-		if p := w.part(TickAsk, TickReq{}); len(p.Units) != 1 {
-			t.Fatalf("ask %d: the tick asked %d primaries, want the one in review", i, len(p.Units))
-		}
+		p := w.part(TickAsk, TickReq{})
+		require.Len(t, p.Units, 1, "ask %d: the tick asked %d primaries, want the one in review", i, len(p.Units))
 		for _, rd := range readers {
 			if w.s.Readers.Card(ReadCardID(id, 1, rd)) != nil {
 				asked[rd]++
@@ -324,9 +315,8 @@ func TestTheDealGoesRoundTheFleetAcrossStreams(t *testing.T) {
 		id := fmt.Sprintf("%s-%d", streams[i%3], i/3+1)
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
 		wc := w.s.Fleet.Card(WorkCardID(id, 1))
-		if want := fmt.Sprintf("m%d", i%8+1); wc.Row != want {
-			t.Fatalf("deal %d (%s) went to %s, want %s", i+1, id, wc.Row, want)
-		}
+		want := fmt.Sprintf("m%d", i%8+1)
+		require.Equal(t, want, wc.Row, "deal %d (%s) went to %s, want %s", i+1, id, wc.Row, want)
 		dealt[wc.Row]++
 		workIt(w, wc)
 		evenly(t, fmt.Sprintf("after deal %d", i+1), dealt, members, (i+1)%8 == 0)
@@ -344,9 +334,7 @@ func TestTheTickDealGoesRoundTheFleetOverTenStreams(t *testing.T) {
 	members := w.s.Fleet.Rows()
 	dealt := map[string]int{}
 	for run := 1; len(w.s.Work.Column(Ready)) > 0; run++ {
-		if run > 10 {
-			t.Fatalf("not dealt in 10 runs")
-		}
+		require.LessOrEqual(t, run, 10, "not dealt in 10 runs")
 		w.part(TickDeal, TickReq{})
 		cs := w.s.Fleet.Column(Ready)
 		for _, wc := range cs {
@@ -361,9 +349,7 @@ func TestTheTickDealGoesRoundTheFleetOverTenStreams(t *testing.T) {
 	for _, n := range dealt {
 		total += n
 	}
-	if total != 30 {
-		t.Fatalf("dealt %d, want 30", total)
-	}
+	require.Equal(t, 30, total, "dealt %d, want 30", total)
 }
 
 // The ask's index is one for the readers: primaries of three streams asked in

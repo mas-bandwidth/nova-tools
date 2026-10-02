@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -52,14 +54,10 @@ func newWakeApp(t *testing.T) *wakeApp {
 func (w *wakeApp) run(n int) {
 	w.t.Helper()
 	st, _, code := w.a.machineVerb("run", nil, &bytes.Buffer{})
-	if st == nil {
-		w.t.Fatalf("run: %d", code)
-	}
+	require.NotNil(w.t, st, "run: %d", code)
 	var out, errb bytes.Buffer
 	w.a.runLoop(context.Background(), st, 20, n, &out, &errb)
-	if errb.Len() > 0 {
-		w.t.Fatalf("run: %s", errb.String())
-	}
+	require.Empty(w.t, errb.String(), "run: %s", errb.String())
 }
 
 // firstTickAfter is the first tick that began at or after at.
@@ -78,9 +76,7 @@ func (w *wakeApp) cardsOf(m string) []queueCard {
 	var q struct {
 		Cards []queueCard `json:"cards"`
 	}
-	if err := json.Unmarshal([]byte(w.ok("queue --as "+m+" --json")), &q); err != nil {
-		w.t.Fatal(err)
-	}
+	require.NoError(w.t, json.Unmarshal([]byte(w.ok("queue --as "+m+" --json")), &q))
 	return q.Cards
 }
 
@@ -108,9 +104,7 @@ func TestAFinishWakesTheLoopAndItsRoomIsDealtWithinTheFloor(t *testing.T) {
 	atFinish := -1
 	w.world = []func(time.Duration){
 		func(time.Duration) {
-			if n := len(w.cardsOf("m1")); n != sprint.DealAhead*4 {
-				t.Fatalf("the first deal gave m1 %d cards, want DealAhead times its width 4", n)
-			}
+			require.Equal(t, sprint.DealAhead*4, len(w.cardsOf("m1")), "the first deal gave m1 cards, want DealAhead times its width 4")
 			w.a.sleep(30 * time.Millisecond)
 			w.ok("take --as m1 --limit 4")
 		},
@@ -122,34 +116,21 @@ func TestAFinishWakesTheLoopAndItsRoomIsDealtWithinTheFloor(t *testing.T) {
 					ids = append(ids, c.ID+"@"+strconv.Itoa(c.Gen))
 				}
 			}
-			if len(ids) != 4 {
-				t.Fatalf("m1 works %d cards, want its width 4", len(ids))
-			}
+			require.Len(t, ids, 4, "m1 works %d cards, want its width 4", len(ids))
 			w.ok("finish --as m1 " + strings.Join(ids, " "))
 			finished, atFinish = w.a.now(), len(w.ticks)
-			if n := len(w.cardsOf("m1")); n != sprint.DealAhead*4-4 {
-				t.Fatalf("after the finish m1 holds %d cards, want the %d ready behind its lanes", n, sprint.DealAhead*4-4)
-			}
+			require.Equal(t, sprint.DealAhead*4-4, len(w.cardsOf("m1")), "after the finish m1 holds cards, want the %d ready behind its lanes", sprint.DealAhead*4-4)
 		},
 	}
 	w.run(8)
-	if atFinish < 0 {
-		t.Fatalf("the world never finished: ticks %v", w.ticks)
-	}
+	require.GreaterOrEqual(t, atFinish, 0, "the world never finished: ticks %v", w.ticks)
 	k, ok := w.firstTickAfter(finished)
-	if !ok {
-		t.Fatalf("no tick after the finish: %v", w.ticks)
-	}
-	if k.n != atFinish+1 || k.why != tickLog {
-		t.Fatalf("the tick after the finish is #%d (%s), want #%d woken by the log: %v", k.n, k.why, atFinish+1, w.ticks)
-	}
-	if gap := k.began.Sub(finished); gap > store.TickFloor {
-		t.Fatalf("the finish waited %s for its tick, over the floor %s", gap, store.TickFloor)
-	}
+	require.True(t, ok, "no tick after the finish: %v", w.ticks)
+	require.Equal(t, atFinish+1, k.n, "the tick after the finish is #%d (%s), want #%d woken by the log: %v", k.n, k.why, atFinish+1, w.ticks)
+	require.Equal(t, tickLog, k.why, "the tick after the finish is #%d (%s), want #%d woken by the log: %v", k.n, k.why, atFinish+1, w.ticks)
+	require.LessOrEqual(t, k.began.Sub(finished), store.TickFloor, "the finish waited for its tick, over the floor %s", store.TickFloor)
 	cs := w.cardsOf("m1")
-	if len(cs) != sprint.DealAhead*4 {
-		t.Fatalf("m1 holds %d cards after the finish's tick, want DealAhead times its width 4: %+v", len(cs), cs)
-	}
+	require.Len(t, cs, sprint.DealAhead*4, "m1 holds %d cards after the finish's tick, want DealAhead times its width 4: %+v", len(cs), cs)
 }
 
 // A line on the log wakes the loop: a line TickFloor or more after the tick
@@ -177,17 +158,15 @@ func TestALineWakesTheLoopWithinTheFloor(t *testing.T) {
 	}
 	w.run(7)
 	k, ok := w.firstTickAfter(soon)
-	if !ok || k.why != tickLog {
-		t.Fatalf("the first line: no tick woken by the log: %v", w.ticks)
-	}
+	require.True(t, ok, "the first line: no tick woken by the log: %v", w.ticks)
+	require.Equal(t, tickLog, k.why, "the first line: no tick woken by the log: %v", w.ticks)
 	before := w.ticks[k.n-2]
-	if k.began.Sub(before.began) != store.TickFloor || k.began.Sub(soon) > store.TickFloor {
-		t.Fatalf("a line 30ms after a tick began: the next began %s after it, want the floor %s: %v", k.began.Sub(before.began), store.TickFloor, w.ticks)
-	}
+	require.Equal(t, store.TickFloor, k.began.Sub(before.began), "a line 30ms after a tick began: the next began %s after it, want the floor %s: %v", k.began.Sub(before.began), store.TickFloor, w.ticks)
+	require.LessOrEqual(t, k.began.Sub(soon), store.TickFloor, "a line 30ms after a tick began: the next began %s after it, want the floor %s: %v", k.began.Sub(before.began), store.TickFloor, w.ticks)
 	k, ok = w.firstTickAfter(late)
-	if !ok || k.why != tickLog || !k.began.Equal(late) {
-		t.Fatalf("a line 500ms after a tick began: want a tick woken by the log at once: %v (line at %s)", w.ticks, late.Format("15:04:05.000"))
-	}
+	require.True(t, ok, "a line 500ms after a tick began: want a tick woken by the log at once: %v (line at %s)", w.ticks, late.Format("15:04:05.000"))
+	require.Equal(t, tickLog, k.why, "a line 500ms after a tick began: want a tick woken by the log at once: %v (line at %s)", w.ticks, late.Format("15:04:05.000"))
+	require.True(t, k.began.Equal(late), "a line 500ms after a tick began: want a tick woken by the log at once: %v (line at %s)", w.ticks, late.Format("15:04:05.000"))
 }
 
 // A quiet log ticks the loop once a second, by the clock. The first tick
@@ -199,13 +178,13 @@ func TestAQuietLogTicksOnceASecond(t *testing.T) {
 	w.ok("init --readers reader-a,reader-b --members m1")
 	w.ok("start")
 	w.run(6)
-	if len(w.ticks) != 6 || w.ticks[0].why != tickStart || w.ticks[1].why != tickLog {
-		t.Fatalf("ticks: %v", w.ticks)
-	}
+	require.Len(t, w.ticks, 6, "ticks: %v", w.ticks)
+	require.Equal(t, tickStart, w.ticks[0].why, "ticks: %v", w.ticks)
+	require.Equal(t, tickLog, w.ticks[1].why, "ticks: %v", w.ticks)
 	for i := 2; i < len(w.ticks); i++ {
-		if w.ticks[i].why != tickClock || w.ticks[i].began.Sub(w.ticks[i-1].began) != store.TickEvery {
-			t.Fatalf("tick #%d on a quiet log: %s %s after the one before, want the clock at %s: %v",
-				i+1, w.ticks[i].why, w.ticks[i].began.Sub(w.ticks[i-1].began), store.TickEvery, w.ticks)
-		}
+		require.Equal(t, tickClock, w.ticks[i].why, "tick #%d on a quiet log: %s %s after the one before, want the clock at %s: %v",
+			i+1, w.ticks[i].why, w.ticks[i].began.Sub(w.ticks[i-1].began), store.TickEvery, w.ticks)
+		require.Equal(t, store.TickEvery, w.ticks[i].began.Sub(w.ticks[i-1].began), "tick #%d on a quiet log: %s %s after the one before, want the clock at %s: %v",
+			i+1, w.ticks[i].why, w.ticks[i].began.Sub(w.ticks[i-1].began), store.TickEvery, w.ticks)
 	}
 }

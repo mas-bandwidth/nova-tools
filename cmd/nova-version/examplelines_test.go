@@ -12,6 +12,9 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // mainDocumentedExamples reads the `example:` block main.go documents in its package
@@ -20,9 +23,7 @@ import (
 func mainDocumentedExamples(t *testing.T) []string {
 	t.Helper()
 	raw, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatalf("main.go: %v", err)
-	}
+	require.NoError(t, err, "main.go: %v", err)
 	var out []string
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "//"))
@@ -42,8 +43,9 @@ func buildBinary(t *testing.T, root, tool string) string {
 	build := exec.Command("go", "build", "-o", bin, "./cmd/"+tool)
 	build.Env = goenv.Clean(os.Environ())
 	build.Dir = root
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building %s: %v\n%s", tool, err, out)
+	{
+		out, err := build.CombinedOutput()
+		require.NoError(t, err, "building %s: %v\n%s", tool, err, out)
 	}
 	return dir
 }
@@ -84,9 +86,7 @@ func checkout(t *testing.T, root string) string {
 		}
 		return os.WriteFile(target, b, 0o644)
 	})
-	if err != nil {
-		t.Fatalf("copying the checkout: %v", err)
-	}
+	require.NoError(t, err, "copying the checkout: %v", err)
 	return dst
 }
 
@@ -106,6 +106,6 @@ func runExample(t *testing.T, work, binDir, line string) {
 		if i := strings.IndexByte(first, '\n'); i >= 0 {
 			first = first[:i]
 		}
-		t.Errorf("example line %q exited non-zero: %v; first output line: %s", line, err, first)
+		assert.NoError(t, err, "example line %q exited non-zero: %v; first output line: %s", line, err, first)
 	}
 }

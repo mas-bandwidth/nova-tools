@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -26,26 +29,20 @@ func TestStagedCloneIgnoresTheBenchGitconfig(t *testing.T) {
 	pool := t.TempDir()
 	writePoolIdentity(t, pool, "rowan", "Rowan Friend", "rowan@example.com")
 	id, err := LoadPoolIdentity(pool)
-	if err != nil {
-		t.Fatalf("a pool with one identity row refuses to load: %v", err)
-	}
-	if id.Name != "Rowan Friend" || id.Email != "rowan@example.com" {
-		t.Fatalf("identity row reads back wrong: %+v", id)
-	}
+	require.NoError(t, err, "a pool with one identity row refuses to load: %v", err)
+	require.Equal(t, "Rowan Friend", id.Name, "identity row reads back wrong: %+v", id)
+	require.Equal(t, "rowan@example.com", id.Email, "identity row reads back wrong: %+v", id)
 
 	job := t.TempDir()
 	repo := filepath.Join(job, "repo")
 	initCloneRepo(t, repo)
-	if err := StageCloneIdentity(repo, id); err != nil {
-		t.Fatalf("staging the clone's identity: %v", err)
-	}
+	err = StageCloneIdentity(repo, id)
+	require.NoError(t, err, "staging the clone's identity: %v", err)
 
 	// The bench's own config says somebody else; the clone still answers the pool.
 	benchHome := t.TempDir()
 	benchConfig := filepath.Join(benchHome, ".gitconfig")
-	if err := os.WriteFile(benchConfig, []byte("[user]\n\tname = Bench Ghost\n\temail = ghost@example.com\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(benchConfig, []byte("[user]\n\tname = Bench Ghost\n\temail = ghost@example.com\n"), 0o644))
 	env := append(os.Environ(),
 		"HOME="+benchHome,
 		"GIT_CONFIG_GLOBAL="+benchConfig,
@@ -61,12 +58,9 @@ func TestStagedCloneIgnoresTheBenchGitconfig(t *testing.T) {
 		cmd.Dir = repo
 		cmd.Env = env
 		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("git config %s in the staged clone: %v", key, err)
-		}
-		if got := strings.TrimSpace(string(out)); got != want {
-			t.Errorf("staged clone %s = %q under the bench's gitconfig, want pool identity %q", key, got, want)
-		}
+		require.NoError(t, err, "git config %s in the staged clone: %v", key, err)
+		got := strings.TrimSpace(string(out))
+		assert.Equal(t, want, got, "staged clone %s = %q under the bench's gitconfig, want pool identity %q", key, got, want)
 	}
 
 	// The launcher exports the bench config away: the exact two assignments, and
@@ -81,25 +75,20 @@ func TestStagedCloneIgnoresTheBenchGitconfig(t *testing.T) {
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_NOSYSTEM=1",
 	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("staging env holds no %q, got %q", want, joined)
-		}
+		assert.Contains(t, joined, want, "staging env holds no %q, got %q", want, joined)
 	}
 }
 
 func initCloneRepo(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", "base"}} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %v: %s", args, err, out)
 	}
 }

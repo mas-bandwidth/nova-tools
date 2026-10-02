@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
@@ -50,9 +51,8 @@ func ciJobs(t *testing.T) map[string]ciJob {
 	var wf struct {
 		Jobs map[string]ciJob `yaml:"jobs"`
 	}
-	if err := yaml.Unmarshal([]byte(raw), &wf); err != nil {
-		t.Fatal(err)
-	}
+	err := yaml.Unmarshal([]byte(raw), &wf)
+	require.NoError(t, err)
 	return wf.Jobs
 }
 
@@ -84,40 +84,27 @@ func TestUnitTierRefusesRedisServer(t *testing.T) {
 
 	test := ciJobs(t)["test"]
 	shim := stepIndex(test, unitShimStep)
-	if shim < 0 {
-		t.Fatalf("ci.yml job test has no step %q", unitShimStep)
-	}
+	require.GreaterOrEqualf(t, shim, 0, "ci.yml job test has no step %q", unitShimStep)
 	goSetup, testStep := -1, stepIndex(test, "test")
 	for i, s := range test.Steps {
 		if strings.Contains(s.Run, unitGoStepMarker) {
 			goSetup = i
 		}
-		if strings.Contains(s.Run, redisInstallCall) {
-			t.Errorf("ci.yml job test step %q installs redis-server; the unit tier refuses one", s.Name)
-		}
+		assert.NotContainsf(t, s.Run, redisInstallCall, "ci.yml job test step %q installs redis-server; the unit tier refuses one", s.Name)
 	}
 	// GITHUB_PATH prepends, so the step written last is first on PATH: after
 	// the Go step (which may add /opt/homebrew/bin, where a real one lives).
-	if !(goSetup >= 0 && goSetup < shim && shim < testStep) {
-		t.Errorf("ci.yml job test: the shim step is step %d, the Go step %d, the test step %d; want Go < shim < test", shim, goSetup, testStep)
-	}
-	if !strings.Contains(test.Steps[shim].Run, ciRunner+" unit-tier-shim") {
-		t.Errorf("ci.yml job test's shim step does not write the shim through `ci unit-tier-shim`: %q", test.Steps[shim].Run)
-	}
-	if !strings.Contains(test.Steps[testStep].Run, ciRunner+" unit-test") {
-		t.Errorf("ci.yml job test's test step does not run `ci unit-test`, which checks that redis-server on PATH is the shim: %q", test.Steps[testStep].Run)
-	}
+	assert.Truef(t, goSetup >= 0 && goSetup < shim && shim < testStep, "ci.yml job test: the shim step is step %d, the Go step %d, the test step %d; want Go < shim < test", shim, goSetup, testStep)
+	assert.Containsf(t, test.Steps[shim].Run, ciRunner+" unit-tier-shim", "ci.yml job test's shim step does not write the shim through `ci unit-tier-shim`: %q", test.Steps[shim].Run)
+	assert.Containsf(t, test.Steps[testStep].Run, ciRunner+" unit-test", "ci.yml job test's test step does not run `ci unit-test`, which checks that redis-server on PATH is the shim: %q", test.Steps[testStep].Run)
 	root := repoRoot(t)
-	if verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_unittest.go")); !strings.Contains(verb, `h.r.LookPath("redis-server")`) || !strings.Contains(verb, "pkgselect.UnitShimDir") || !strings.Contains(verb, "not the refusing shim") {
-		t.Error("tools/ci/sel_unittest.go does not check that redis-server on PATH is the shim before it runs make test")
-	}
+	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_unittest.go"))
+	assert.True(t, strings.Contains(verb, `h.r.LookPath("redis-server")`) && strings.Contains(verb, "pkgselect.UnitShimDir") && strings.Contains(verb, "not the refusing shim"), "tools/ci/sel_unittest.go does not check that redis-server on PATH is the shim before it runs make test")
 
 	dir := unitTierShim(t)
 	out, err := exec.Command(filepath.Join(dir, "redis-server"), "--port", "0").CombinedOutput()
 	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 86 || !strings.Contains(string(out), unitShimMessage) {
-		t.Fatalf("the shim: err %v, output %q; want exit 86 and %q", err, out, unitShimMessage)
-	}
+	require.Truef(t, errors.As(err, &exitErr) && exitErr.ExitCode() == 86 && strings.Contains(string(out), unitShimMessage), "the shim: err %v, output %q; want exit 86 and %q", err, out, unitShimMessage)
 	// testutil.Start failing closed on this shim is
 	// TestStartFailsClosedOnTheUnitTierShim, in the functional-tagged
 	// redis_ci_test.go: a file that calls Start is functional.
@@ -128,12 +115,8 @@ func TestUnitTierRefusesRedisServer(t *testing.T) {
 func unitTierShim(t *testing.T) string {
 	t.Helper()
 	shim, err := pkgselect.WriteUnitShim(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if filepath.Base(filepath.Dir(shim)) != "unit-tier-bin" {
-		t.Fatalf("the shim is at %s, want it under unit-tier-bin", shim)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, "unit-tier-bin", filepath.Base(filepath.Dir(shim)), "the shim is at %s, want it under unit-tier-bin", shim)
 	return filepath.Dir(shim)
 }
 
@@ -149,17 +132,13 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 	for _, name := range []string{"test", "functional"} {
 		job := jobs[name]
 		i := stepIndex(job, share)
-		if i < 0 {
-			t.Errorf("ci.yml job %s has no step %q", name, share)
+		if !assert.GreaterOrEqualf(t, i, 0, "ci.yml job %s has no step %q", name, share) {
 			continue
 		}
-		if got := strings.TrimSpace(job.Steps[i].Run); got != ciRunner+" runner-share" {
-			t.Errorf("ci.yml job %s step %q runs %q, want `%s runner-share`", name, share, got, ciRunner)
-		}
+		got := strings.TrimSpace(job.Steps[i].Run)
+		assert.Equalf(t, ciRunner+" runner-share", got, "ci.yml job %s step %q runs %q, want `%s runner-share`", name, share, got, ciRunner)
 		for _, s := range job.Steps {
-			if strings.Contains(s.Run, "GOTEST_P=") {
-				t.Errorf("ci.yml job %s step %q sets GOTEST_P; the leg's cores are the Makefile's two", name, s.Name)
-			}
+			assert.NotContainsf(t, s.Run, "GOTEST_P=", "ci.yml job %s step %q sets GOTEST_P; the leg's cores are the Makefile's two", name, s.Name)
 		}
 	}
 	// The verb's number: one runner on a box of any size takes at most two
@@ -169,21 +148,17 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 		if cores < 2 {
 			want = 1
 		}
-		if _, got := pkgselect.RunnerShare(cores, "1"); got != want {
-			t.Errorf("one runner on a %d-core box: a leg takes %d cores, want %d (at most two cores a leg)", cores, got, want)
-		}
+		_, got := pkgselect.RunnerShare(cores, "1")
+		assert.Equalf(t, want, got, "one runner on a %d-core box: a leg takes %d cores, want %d (at most two cores a leg)", cores, got, want)
 	}
 
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
-	if got := mk.vars["GOTEST_P"]; got != "2" {
-		t.Errorf("Makefile GOTEST_P = %q, want 2", got)
-	}
-	if recipe := strings.Join(mk.recipeFor("test"), "\n"); !strings.Contains(recipe, " -p 2 -parallel 2 ") {
-		t.Errorf("make test does not pass -p 2 -parallel 2 (GOTEST_P):\n%s", recipe)
-	}
-	if recipe := strings.Join(mk.recipeFor("test-functional"), "\n"); !strings.Contains(recipe, " --p 2 ") {
-		t.Errorf("make test-functional does not pass --p 2 (GOTEST_P) to tools/ci functional-run:\n%s", recipe)
-	}
+	got := mk.vars["GOTEST_P"]
+	assert.Equalf(t, "2", got, "Makefile GOTEST_P = %q, want 2", got)
+	recipe := strings.Join(mk.recipeFor("test"), "\n")
+	assert.Containsf(t, recipe, " -p 2 -parallel 2 ", "make test does not pass -p 2 -parallel 2 (GOTEST_P):\n%s", recipe)
+	recipe = strings.Join(mk.recipeFor("test-functional"), "\n")
+	assert.Containsf(t, recipe, " --p 2 ", "make test-functional does not pass --p 2 (GOTEST_P) to tools/ci functional-run:\n%s", recipe)
 }
 
 // TestFunctionalTierRunsOnlyAsStreamsMerge: the functional job runs on
@@ -195,49 +170,29 @@ func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 
 	jobs := ciJobs(t)
 	job, ok := jobs["functional"]
-	if !ok {
-		t.Fatal("ci.yml has no functional job")
-	}
+	require.True(t, ok, "ci.yml has no functional job")
 	for _, ev := range []string{"merge_group", "schedule", "workflow_dispatch"} {
-		if !strings.Contains(job.If, "github.event_name == '"+ev+"'") {
-			t.Errorf("functional's if does not run on %s: %s", ev, job.If)
-		}
+		assert.Containsf(t, job.If, "github.event_name == '"+ev+"'", "functional's if does not run on %s: %s", ev, job.If)
 	}
-	if strings.Contains(job.If, "pull_request") || strings.Contains(job.If, "!=") && strings.Contains(job.If, "event_name !=") {
-		t.Errorf("functional's if must name the events it runs on, never pull_request: %s", job.If)
-	}
-	if job.TimeoutMinutes != 2 {
-		t.Errorf("functional timeout-minutes = %d, want 2", job.TimeoutMinutes)
-	}
-	if runsOn, _ := yaml.Marshal(job.RunsOn); !strings.Contains(string(runsOn), "space") {
-		t.Errorf("functional runs-on %s, want the space pool", runsOn)
-	}
-	if !strings.Contains(jobs["test-packages"].Outputs["functional"], "steps.list.outputs.functional") {
-		t.Error("test-packages does not output the functional list")
-	}
-	if strings.Contains(jobs["test-packages"].If, "schedule") {
-		t.Errorf("test-packages must run on schedule for the nightly functional list: %s", jobs["test-packages"].If)
-	}
+	assert.Falsef(t, strings.Contains(job.If, "pull_request") || strings.Contains(job.If, "!=") && strings.Contains(job.If, "event_name !="), "functional's if must name the events it runs on, never pull_request: %s", job.If)
+	assert.Equalf(t, 2, job.TimeoutMinutes, "functional timeout-minutes = %d, want 2", job.TimeoutMinutes)
+	runsOn, _ := yaml.Marshal(job.RunsOn)
+	assert.Containsf(t, string(runsOn), "space", "functional runs-on %s, want the space pool", runsOn)
+	assert.Contains(t, jobs["test-packages"].Outputs["functional"], "steps.list.outputs.functional", "test-packages does not output the functional list")
+	assert.NotContainsf(t, jobs["test-packages"].If, "schedule", "test-packages must run on schedule for the nightly functional list: %s", jobs["test-packages"].If)
 	last := job.Steps[len(job.Steps)-1].Run
-	if !strings.Contains(last, "make test-functional") {
-		t.Errorf("functional's last step runs %q, want make test-functional", last)
-	}
-	if needs, _ := yaml.Marshal(jobs["ci-ok"].Needs); !strings.Contains(string(needs), "functional") {
-		t.Error("ci-ok does not need functional")
-	}
+	assert.Containsf(t, last, "make test-functional", "functional's last step runs %q, want make test-functional", last)
+	needs, _ := yaml.Marshal(jobs["ci-ok"].Needs)
+	assert.Contains(t, string(needs), "functional", "ci-ok does not need functional")
 	ciOK := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "ci-ok")
-	if !strings.Contains(ciOK, `functional=${{ needs.functional.result }}`) {
-		t.Error("ci-ok does not read functional's result")
-	}
+	assert.Contains(t, ciOK, `functional=${{ needs.functional.result }}`, "ci-ok does not read functional's result")
 
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
 	recipe := strings.Join(mk.recipeFor("test-functional"), "\n")
 	// The recipe is one call into tools/ci functional-run, with the tier's timeout; the verb
 	// holds the selection (nova-ci functional) and the go test flags.
 	for _, want := range []string{"tools/ci functional-run", "--timeout 100s"} {
-		if !strings.Contains(recipe, want) {
-			t.Errorf("make test-functional lacks %q:\n%s", want, recipe)
-		}
+		assert.Containsf(t, recipe, want, "make test-functional lacks %q:\n%s", want, recipe)
 	}
 	verb := readFile(t, filepath.Join(repoRoot(t), "tools", "ci", "functionalrun.go"))
 	for _, want := range []string{`"./cmd/nova-ci", "functional"`, `"-tags", "functional"`, `"-count=1"`} {
@@ -259,25 +214,18 @@ func TestSlowAllowlistRowsNameTheirMeasurement(t *testing.T) {
 	root := repoRoot(t)
 	const rel = "internal/ci/slow-tests_allowlist.txt"
 	rows, err := slowtests.ParseAllowlist(strings.NewReader(readFile(t, filepath.Join(root, rel))))
-	if err != nil {
-		t.Fatalf("%s: %v", rel, err)
-	}
+	require.NoErrorf(t, err, "%s: %v", rel, err)
 	for _, row := range rows {
 		dir := filepath.Join(root, filepath.FromSlash(row.Package))
 		files, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
-		if len(files) == 0 {
-			t.Errorf("%s lists %s, which has no tests; delete the row", rel, row.Package)
+		if !assert.NotEmptyf(t, files, "%s lists %s, which has no tests; delete the row", rel, row.Package) {
 			continue
 		}
 		if row.Test == "" {
-			if row.Seconds <= 2 {
-				t.Errorf("%s: %s's package row is %gs, not above the 2 s default; delete it", rel, row.Package, row.Seconds)
-			}
+			assert.Greaterf(t, row.Seconds, float64(2), "%s: %s's package row is %gs, not above the 2 s default; delete it", rel, row.Package, row.Seconds)
 			continue
 		}
-		if row.Seconds <= 1 {
-			t.Errorf("%s: %s %s is %gs, not above the 1 s default; delete it", rel, row.Package, row.Test, row.Seconds)
-		}
+		assert.Greaterf(t, row.Seconds, float64(1), "%s: %s %s is %gs, not above the 1 s default; delete it", rel, row.Package, row.Test, row.Seconds)
 		decl := "func " + row.Test + "("
 		found := false
 		for _, f := range files {
@@ -286,17 +234,13 @@ func TestSlowAllowlistRowsNameTheirMeasurement(t *testing.T) {
 				break
 			}
 		}
-		if !found {
-			t.Errorf("%s lists %s %s, but no such test exists any more; delete the row", rel, row.Package, row.Test)
-		}
+		assert.Truef(t, found, "%s lists %s %s, but no such test exists any more; delete the row", rel, row.Package, row.Test)
 	}
 
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
 	flags := mk.vars["SLOWTESTS_FLAGS"]
 	for _, want := range []string{"--package-budget 2", "--test-budget 1", "--allowlist " + rel, "--sleeps " + sleepsLedger} {
-		if !strings.Contains(flags, want) {
-			t.Errorf("Makefile SLOWTESTS_FLAGS = %q, lacks %q", flags, want)
-		}
+		assert.Containsf(t, flags, want, "Makefile SLOWTESTS_FLAGS = %q, lacks %q", flags, want)
 	}
 }
 
@@ -315,12 +259,9 @@ func TestUnitBudgetsJudgeTheTestNotTheLoad(t *testing.T) {
 	t.Parallel()
 
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
-	if got := strings.TrimSpace(mk.vars["SLOWTESTS_ENFORCE"]); got != "0" {
-		t.Errorf("Makefile SLOWTESTS_ENFORCE = %q, want 0: a budget is enforced only where a caller asks (the nightly leg)", got)
-	}
-	if strings.Contains(mk.vars["SLOWTESTS_FLAGS"], "--enforce") || strings.Contains(mk.vars["SLOWTESTS_FLAGS"], "--max-load-per-cpu") {
-		t.Errorf("Makefile SLOWTESTS_FLAGS = %q carries --enforce or a load gate; the verdict never reads the load", mk.vars["SLOWTESTS_FLAGS"])
-	}
+	got := strings.TrimSpace(mk.vars["SLOWTESTS_ENFORCE"])
+	assert.Equalf(t, "0", got, "Makefile SLOWTESTS_ENFORCE = %q, want 0: a budget is enforced only where a caller asks (the nightly leg)", got)
+	assert.Falsef(t, strings.Contains(mk.vars["SLOWTESTS_FLAGS"], "--enforce") || strings.Contains(mk.vars["SLOWTESTS_FLAGS"], "--max-load-per-cpu"), "Makefile SLOWTESTS_FLAGS = %q carries --enforce or a load gate; the verdict never reads the load", mk.vars["SLOWTESTS_FLAGS"])
 	budgets := slowtests.Budgets{Package: 2, Test: 1}
 	slow := `{"Action":"run","Package":"example.com/busy","Test":"TestTakesOnePointFour"}
 {"Action":"pass","Package":"example.com/busy","Test":"TestTakesOnePointFour","Elapsed":1.4}
@@ -338,9 +279,7 @@ func TestUnitBudgetsJudgeTheTestNotTheLoad(t *testing.T) {
 	}
 	judge := func(fixture string, load slowtests.Load, enforce bool) (string, int) {
 		events, err := slowtests.Parse(strings.NewReader(fixture))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		lines, code := slowtests.Verdict(slowtests.Judge(events, budgets), load, enforce, sleepsLedger)
 		return strings.Join(lines, "\n"), code
 	}
@@ -349,16 +288,12 @@ func TestUnitBudgetsJudgeTheTestNotTheLoad(t *testing.T) {
 		for _, enforce := range []bool{false, true} {
 			want := 0
 			if enforce {
-				want = 2
+				want = 1 // the check ran and said no; 2 is input it could not read
 			}
 			out, code := judge(slow, load, enforce)
-			if code != want || !strings.Contains(out, slowLine) || !strings.Contains(out, "CI-LOAD load=") {
-				t.Errorf("a 1.4 s test, %s, enforce %v: exit %d, want %d with its CI-SLOW and CI-LOAD lines:\n%s", name, enforce, code, want, out)
-			}
+			assert.Truef(t, code == want && strings.Contains(out, slowLine) && strings.Contains(out, "CI-LOAD load="), "a 1.4 s test, %s, enforce %v: exit %d, want %d with its CI-SLOW and CI-LOAD lines:\n%s", name, enforce, code, want, out)
 			out, code = judge(sleeps, load, enforce)
-			if code != 2 || !strings.Contains(out, "CI-SLEEPS test=TestWaitsOnTheClock package=example.com/sleepy") {
-				t.Errorf("an unledgered SLEEPS skip, %s, enforce %v: exit %d, want 2:\n%s", name, enforce, code, out)
-			}
+			assert.Truef(t, code == 1 && strings.Contains(out, "CI-SLEEPS test=TestWaitsOnTheClock package=example.com/sleepy"), "an unledgered SLEEPS skip, %s, enforce %v: exit %d, want 1:\n%s", name, enforce, code, out)
 		}
 	}
 }
@@ -374,16 +309,11 @@ func TestSlowAllowlistRatchetRefusesAnUnmeasuredRow(t *testing.T) {
 	const rel = "internal/ci/slow-tests_allowlist.txt"
 	list := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(rel)))
 	rows, err := slowtests.ParseAllowlist(strings.NewReader(list))
-	if err != nil {
-		t.Fatalf("%s: %v", rel, err)
-	}
-	if _, err := slowtests.ParseAllowlist(strings.NewReader(list + "internal/ci\tTestAnUnmeasuredRow\t1.5\n")); err == nil {
-		t.Errorf("%s plus an unmeasured row was read; the count rose without a measurement", rel)
-	}
+	require.NoErrorf(t, err, "%s: %v", rel, err)
+	_, err = slowtests.ParseAllowlist(strings.NewReader(list + "internal/ci\tTestAnUnmeasuredRow\t1.5\n"))
+	assert.Errorf(t, err, "%s plus an unmeasured row was read; the count rose without a measurement", rel)
 	more, err := slowtests.ParseAllowlist(strings.NewReader(list + "internal/ci\tTestAMeasuredRow\t1.5\t0.99s@space\n"))
-	if err != nil || len(more) != len(rows)+1 {
-		t.Errorf("%s plus a measured row: %d rows, err %v; want %d", rel, len(more), err, len(rows)+1)
-	}
+	assert.Truef(t, err == nil && len(more) == len(rows)+1, "%s plus a measured row: %d rows, err %v; want %d", rel, len(more), err, len(rows)+1)
 }
 
 // sleepsSkippers names the top-level Test functions in f whose body calls a
@@ -435,17 +365,11 @@ func TestNightlySpaceLegIsTheOnlyEnforcingLeg(t *testing.T) {
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	test := jobBody(src, "test")
-	if test == "" {
-		t.Fatal("no test job in ci.yml")
-	}
+	require.NotEmpty(t, test, "no test job in ci.yml")
 	for _, line := range strings.Split(test, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "if:") && strings.Contains(line, "!= 'schedule'") {
-			t.Errorf("the test job's if excludes schedule (%s); the nightly space legs are where the budgets are enforced", strings.TrimSpace(line))
-		}
+		assert.Falsef(t, strings.HasPrefix(strings.TrimSpace(line), "if:") && strings.Contains(line, "!= 'schedule'"), "the test job's if excludes schedule (%s); the nightly space legs are where the budgets are enforced", strings.TrimSpace(line))
 	}
-	if !strings.Contains(test, "NIGHTLY_ENFORCE: ${{ github.event_name == 'schedule' && matrix.entry.group == 'space' && '1' || '0' }}") {
-		t.Error("the test step's NIGHTLY_ENFORCE is not 1 exactly on a schedule run's space legs")
-	}
+	assert.Contains(t, test, "NIGHTLY_ENFORCE: ${{ github.event_name == 'schedule' && matrix.entry.group == 'space' && '1' || '0' }}", "the test step's NIGHTLY_ENFORCE is not 1 exactly on a schedule run's space legs")
 	var code []string
 	for _, line := range strings.Split(src, "\n") {
 		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
@@ -454,12 +378,9 @@ func TestNightlySpaceLegIsTheOnlyEnforcingLeg(t *testing.T) {
 	}
 	// The workflow never spells either value: `ci unit-test` passes
 	// SLOWTESTS_ENFORCE=1 from its nightly branch alone (pkgselect.UnitMakeArgs).
-	if strings.Contains(strings.Join(code, "\n"), "SLOWTESTS_ENFORCE") {
-		t.Error("ci.yml spells SLOWTESTS_ENFORCE; the one place it is passed is the nightly branch of pkgselect.UnitMakeArgs")
-	}
-	if verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_unittest.go")); !strings.Contains(verb, `e.getenv("NIGHTLY_ENFORCE") == "1"`) {
-		t.Error("tools/ci/sel_unittest.go does not turn NIGHTLY_ENFORCE=1 into the nightly run")
-	}
+	assert.NotContains(t, strings.Join(code, "\n"), "SLOWTESTS_ENFORCE", "ci.yml spells SLOWTESTS_ENFORCE; the one place it is passed is the nightly branch of pkgselect.UnitMakeArgs")
+	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_unittest.go"))
+	assert.Contains(t, verb, `e.getenv("NIGHTLY_ENFORCE") == "1"`, "tools/ci/sel_unittest.go does not turn NIGHTLY_ENFORCE=1 into the nightly run")
 	enforcing := 0
 	for name, args := range map[string][]string{
 		"the default leg":  pkgselect.UnitMakeArgs("./cmd/a", "", false),
@@ -467,39 +388,25 @@ func TestNightlySpaceLegIsTheOnlyEnforcingLeg(t *testing.T) {
 		"the nightly leg":  pkgselect.UnitMakeArgs("./cmd/a", "", true),
 	} {
 		joined := strings.Join(args, " ")
-		if strings.Contains(joined, "SLOWTESTS_ENFORCE=0") {
-			t.Errorf("%s passes SLOWTESTS_ENFORCE=0; the push leg's CI-SLEEPS exit is red and nothing spells the old swallow", name)
-		}
+		assert.NotContainsf(t, joined, "SLOWTESTS_ENFORCE=0", "%s passes SLOWTESTS_ENFORCE=0; the push leg's CI-SLEEPS exit is red and nothing spells the old swallow", name)
 		if strings.Contains(joined, "SLOWTESTS_ENFORCE=1") {
 			enforcing++
-			if name != "the nightly leg" {
-				t.Errorf("%s enforces the budgets; only the nightly whole-tree run on the Linux shards does", name)
-			}
+			assert.Equalf(t, "the nightly leg", name, "%s enforces the budgets; only the nightly whole-tree run on the Linux shards does", name)
 		}
 	}
-	if enforcing != 1 {
-		t.Errorf("%d runs pass SLOWTESTS_ENFORCE=1, want exactly the nightly leg", enforcing)
-	}
+	assert.Equalf(t, 1, enforcing, "%d runs pass SLOWTESTS_ENFORCE=1, want exactly the nightly leg", enforcing)
 	// The nightly run deals the whole tree onto the Linux legs alone, where the
 	// budgets are enforced.
 	nightly := pkgselect.Fanout("schedule", []string{"./cmd/a", "./cmd/nova-sandbox", "./internal/b"}, pkgselect.DarwinSensitive{}, pkgselect.Groups{Linux: "linux-legs", Mac: "mac-legs"}, true)
-	if len(nightly) == 0 {
-		t.Error("the nightly fan-out is empty")
-	}
+	assert.NotEmpty(t, nightly, "the nightly fan-out is empty")
 	for _, leg := range nightly {
-		if leg.Group != "linux-legs" || strings.Contains(leg.Packages, "nova-sandbox") {
-			t.Errorf("the nightly fan-out has a leg off the Linux group, or one holding a darwin-only package: %+v", leg)
-		}
+		assert.Truef(t, leg.Group == "linux-legs" && !strings.Contains(leg.Packages, "nova-sandbox"), "the nightly fan-out has a leg off the Linux group, or one holding a darwin-only package: %+v", leg)
 	}
 
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
 	recipe := strings.Join(mk.recipes["test"], "\n")
-	if strings.Count(recipe, "SLOWTESTS_ENFORCE") != 1 || !strings.Contains(recipe, "$(if $(filter 1,$(SLOWTESTS_ENFORCE)),--enforce,)") {
-		t.Errorf("the test recipe reads SLOWTESTS_ENFORCE other than to pass --enforce:\n%s", recipe)
-	}
-	if !strings.Contains(recipe, `|| { [ "$$status" -ne 0 ] || status=2; }; exit $$status`) {
-		t.Errorf("the test recipe does not carry slowtests' exit through:\n%s", recipe)
-	}
+	assert.Truef(t, strings.Count(recipe, "SLOWTESTS_ENFORCE") == 1 && strings.Contains(recipe, "$(if $(filter 1,$(SLOWTESTS_ENFORCE)),--enforce,)"), "the test recipe reads SLOWTESTS_ENFORCE other than to pass --enforce:\n%s", recipe)
+	assert.Containsf(t, recipe, `|| { [ "$$status" -ne 0 ] || status=2; }; exit $$status`, "the test recipe does not carry slowtests' exit through:\n%s", recipe)
 }
 
 // TestMeasuredBenchesAreCIRunners: every bench an allowlist row may name as
@@ -510,8 +417,6 @@ func TestMeasuredBenchesAreCIRunners(t *testing.T) {
 
 	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	for _, b := range slowtests.Benches {
-		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(b) + `\b`).MatchString(src) {
-			t.Errorf("slowtests.Benches names %q, which ci.yml never names", b)
-		}
+		assert.Truef(t, regexp.MustCompile(`\b`+regexp.QuoteMeta(b)+`\b`).MatchString(src), "slowtests.Benches names %q, which ci.yml never names", b)
 	}
 }

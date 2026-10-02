@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // A child that spawns a grandchild holding stdout open in its own process group
@@ -63,20 +65,20 @@ func TestDeadlineEscapedPipeGrandchildReturnsInsideBudget(t *testing.T) {
 		// Readiness established before cancellation: verified that the escaped
 		// pipe-holder was spawned and holding the pipe before timeout/cancellation.
 	default:
-		t.Fatalf("escaped pipe-holder was not verified ready before exit; c=%d out=%s errs=%s", c, out, errs)
+		require.Failf(t, "", "escaped pipe-holder was not verified ready before exit; c=%d out=%s errs=%s", c, out, errs)
 	}
 
 	drainMu.Lock()
 	drain := observedDrain
 	drainMu.Unlock()
 	if drain != 50*time.Millisecond {
-		t.Fatalf("drain allowance = %v, want 50ms (drainFloor)", drain)
+		require.Failf(t, "", "drain allowance = %v, want 50ms (drainFloor)", drain)
 	}
 
 	if c != 1 {
-		t.Fatalf("%d %s %s", c, out, errs)
+		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
 	}
 	if took := time.Since(started); took > 30*time.Second {
-		t.Fatalf("a budget with an escaped grandchild took %s", took)
+		require.Failf(t, "", "a budget with an escaped grandchild took %s", took)
 	}
 }

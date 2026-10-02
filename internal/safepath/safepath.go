@@ -23,6 +23,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -306,12 +307,7 @@ func NameOK(s string) bool {
 
 // HasDotDot reports whether any element of p is "..".
 func HasDotDot(p string) bool {
-	for _, e := range strings.Split(filepath.ToSlash(p), "/") {
-		if e == ".." {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(filepath.ToSlash(p), "/"), "..")
 }
 
 // ResolvedUnder returns path with symlinks resolved when it is strictly below

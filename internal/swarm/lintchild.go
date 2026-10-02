@@ -100,7 +100,7 @@ const EmptyCardCheck = "empty"
 const EmptyCardRemedy = "the card is empty, and a card is a child's whole brief: `nova-swarm template --name card` prints one that passes; put it in the file and fill in its <...> lines"
 
 // LibrariesConsideredRemedy is what that token wants, in the remedies' table shape.
-const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>` (docs/STANDARD.md section 7), filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
+const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>`, filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
 
 var (
 	// childLibrariesLine is a `Libraries considered:` line; group 1 is what follows the colon.
@@ -346,13 +346,13 @@ func ParseChildRules(text, source string) ([]ChildRule, error) {
 		}
 		name := "line" + strconv.Itoa(n)
 		if strings.HasPrefix(line, "[") {
-			end := strings.Index(line, "]")
-			if end < 0 {
+			inside, rest, closed := strings.Cut(line[1:], "]")
+			if !closed {
 				problems = append(problems, fmt.Sprintf("line %d opens a [name] and never closes it", n))
 				continue
 			}
-			name = line[1:end]
-			line = strings.TrimSpace(line[end+1:])
+			name = inside
+			line = strings.TrimSpace(rest)
 			if !childRuleName.MatchString(name) {
 				problems = append(problems, fmt.Sprintf("line %d: the name [%s] is not kebab case (letters, digits and single -)", n, name))
 				continue

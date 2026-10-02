@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
@@ -48,7 +49,7 @@ func init() {
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
 		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},
 		{"take", "--as <member> [<card>@<gen>...] [--epoch <n>] [--limit <n>]", "take --as m1 s1-1.w1@1 --epoch 0", (*app).cmdTake},
-		{"finish", "--as <member> <card>@<gen>... --epoch <n> [--failed] [--head <h>] [--report <text>] [--usage <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --report 'tests green'", (*app).cmdFinish},
+		{"finish", "--as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --head 9f3c2e1 --report 'tests green'", (*app).cmdFinish},
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
 		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
@@ -67,6 +68,10 @@ func init() {
 		{"fleet down", "<member>", "fleet down m1", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("down", args, o, e) }},
 		{"fleet sync", "[--check] [--pg <dsn>]", "fleet sync --check", (*app).cmdFleetSync},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
+		{"friend sync", "[--pg <dsn>]", "friend sync", (*app).cmdFriendSync},
+		{"friend beat", "<friend>", "friend beat friend-a", (*app).cmdFriendBeat},
+		{"friend down", "<friend>", "friend down friend-a", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(true, args, o, e) }},
+		{"friend up", "<friend>", "friend up friend-a", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(false, args, o, e) }},
 		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
 		{"reader away", "<reader>...", "reader away reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(true, args, o, e) }},
 		{"reader up", "<reader>...", "reader up reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(false, args, o, e) }},
@@ -102,6 +107,18 @@ func verbNames() []string {
 	return append(out, "help", "version")
 }
 
+// groupVerbs is the verbs of the group word names (fleet, friend, reader, goal, stream):
+// every verb whose name is that word and more; nil for a word that is no group.
+func groupVerbs(word string) []string {
+	var out []string
+	for _, v := range verbs {
+		if strings.HasPrefix(v.name, word+" ") {
+			out = append(out, v.name)
+		}
+	}
+	return out
+}
+
 // opening is the banner's first three answers: what the tool does (line 1,
 // the README's sentence), how it works, and the first run (ONBOARDING.md
 // point 6).
@@ -116,7 +133,10 @@ first run, no Redis (the store is the file sprint.twin):
   export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
 then the card's flow under "trying it without a Redis", ticking by hand; the
 example: block is the coordinator's day on a real store, and "A real fleet"
-below connects the machines (run --listen, NOVA_SPRINT_SERVER, nova-swarm member).`
+below connects the machines (run --listen, NOVA_SPRINT_SERVER, nova-swarm member).
+the rest: this help is long; nova-sprint help <verb> (or <verb> -h) prints one
+verb's usage, examples, flags and exit codes, and nova-sprint help <group>
+(fleet, friend, reader, goal, stream) one group's.`
 
 func banner() string {
 	var b strings.Builder
@@ -130,8 +150,8 @@ NOVA_REDIS_ADDR), --actor <name> (else NOVA_SPRINT_ACTOR; no
 default: a verb that writes wants one), --op <id> (the same id again returns
 the recorded result), --json and --max <n> (listed items; 0 is all). The
 coordinator's verbs are the coordinator's alone (the first init names it:
---coordinator, else the actor); take, finish, read and fleet beat are the
-workers', whose actor is the member or reader named; merge and ci are
+--coordinator, else the actor); take, finish, read, fleet beat and friend
+beat are the workers', whose actor is the member, reader or friend named; merge and ci are
 reports; tick and run are the machine's; the reads need no actor (inbox
 --read, which moves the coordinator's cursor, is the coordinator's). A set is
 ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
@@ -141,9 +161,7 @@ what did not and why (REFUSED, on stderr), its summary line, and the sprint's
 line: landed/all percent -> ETA <estimate> (the cards left, each at the average
 time a card has taken to land, in minutes rounded up; where shows the largest
 of the last 10 s; the word alone until one has landed; a stopped
-
 machine has no ETA: STOPPED, then
-
 landed/all and the percent when there are cards; every card landed, no ETA:
 done in <time from the first start> while it runs, and STOPPED ... done once
 the machine has stopped itself).
@@ -166,15 +184,16 @@ and prints each one's generation.
 ` + machineWords() + `
 ` + serverWords() + `
 ` + fleetWords() + `
+` + friendWords() + `
 ` + readerWords() + `
 ` + streamWords() + `
 ` + goalWords() + `
 ` + twinWords() + `
 ` + landWords() + `
 ` + wordsSection() + `
-exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config, or run: its binary was replaced (its supervisor starts the new one)
+` + exitLine + `
 
-the coordinator's day, in five lines (NOVA_SPRINT_REDIS and NOVA_SPRINT_ACTOR set; brief.txt is a card that passes the lint, from nova-swarm template --name card):
+the coordinator's day, in five lines (NOVA_SPRINT_REDIS and NOVA_SPRINT_ACTOR set; nova-sprint run ticking in a shell of its own; brief.txt is a card that passes the lint, from nova-swarm template --name card, its REPO: and BASE: filled in):
 
 example:
 `)
@@ -190,7 +209,7 @@ var dayLines = []string{
 	"nova-sprint add --stream s1 --count 3 --brief-file brief.txt",
 	"nova-sprint start",
 	"nova-sprint inbox --wait",
-	"nova-sprint merge --stream s1 --batch 3",
+	"nova-sprint land --stream s1 --check 'make test'",
 }
 
 // inboxExample is the worked example of reading the inbox and answering it,
@@ -289,7 +308,7 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	name := strings.Join(path, " ")
-	if name == "fleet" || name == "reader" || name == "stream" || name == "goal" {
+	if len(groupVerbs(name)) > 0 {
 		fmt.Fprintln(stdout, "usage:")
 		for _, v := range verbs {
 			if strings.HasPrefix(v.name, name+" ") {
@@ -302,18 +321,22 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 		if name == "fleet" {
 			fmt.Fprint(stdout, "\n"+fleetWords())
 		}
+		if name == "friend" {
+			fmt.Fprint(stdout, "\n"+friendWords())
+		}
 		if name == "reader" {
 			fmt.Fprint(stdout, "\n"+readerWords())
 		}
 		if name == "stream" {
 			fmt.Fprint(stdout, "\n"+streamWords())
 		}
+		fmt.Fprintf(stdout, "\nnova-sprint help %s <verb> (or nova-sprint %s <verb> -h) prints a verb's flags, examples and exit codes.\n", name, name)
 		return 0
 	}
 	for _, v := range verbs {
 		if v.name == name {
 			code := func() (code int) {
-				defer verbflag.RecoverWith(stdout, prog, banner(), &code, verbExample)
+				defer recoverHelp(stdout, &code)
 				return v.run(newApp(func(string) string { return "" }), []string{"--help"}, stdout, stderr)
 			}()
 			if name == "inbox" && code == 0 {
@@ -377,21 +400,26 @@ func (e *flagError) Error() string { return e.msg }
 
 // flagRefusal words a flag package's parse error once: a flag the verb does not define
 // is `unknown flag --x`, a flag missing its value is `--x wants a value`, each with the
-// verb's help to run; any other parse error (a value that does not parse) keeps the flag
-// package's own words.
+// verb's help to run; a value that does not parse names the flag and what it wants
+// (verbflag.Explain).
 func flagRefusal(fs *flag.FlagSet, err error) error {
-	help := "; run: " + prog + " help"
-	if w := strings.Fields(fs.Name()); len(w) > 0 {
-		help += " " + w[0]
+	name := fs.Name()
+	if w := strings.Fields(name); len(w) > 0 && !slices.ContainsFunc(verbs, func(v verb) bool { return v.name == name }) {
+		name = w[0]
 	}
+	help := "; run: " + prog + " help " + name
 	const undefined, needs = "flag provided but not defined: ", "flag needs an argument: "
 	switch msg := err.Error(); {
 	case strings.HasPrefix(msg, undefined):
-		return &flagError{"unknown flag -" + strings.TrimPrefix(msg, undefined) + help}
+		// the nearest flag and the flags the verb takes, never the flag package's line
+		// (tool ledger X2, the tool-answers rule)
+		return &flagError{verbflag.Explain(fs, err) + help}
 	case strings.HasPrefix(msg, needs):
 		return &flagError{"-" + strings.TrimPrefix(msg, needs) + " wants a value" + help}
 	}
-	return err
+	// a value that does not parse names the flag and what it wants, as its own whole
+	// line: a verb's words are never glued in front of it ("takes no words invalid value")
+	return &flagError{verbflag.Explain(fs, err) + help}
 }
 
 // sel is the set flags of a verb.
@@ -506,7 +534,7 @@ func groupChange(v store.InboxView, g sprint.Group, answers []string) (added, go
 	for _, m := range g.Members {
 		old := false
 		for _, o := range v.Open {
-			if named[o.Note.ID] && in[o.Note.ID] && (o.Subject() == m || o.Note.StreamLevel && contains(o.Note.Primaries, m)) {
+			if named[o.Note.ID] && in[o.Note.ID] && (o.Subject() == m || o.Note.StreamLevel && slices.Contains(o.Note.Primaries, m)) {
 				old = true
 			}
 		}
@@ -527,15 +555,6 @@ func groupChange(v store.InboxView, g sprint.Group, answers []string) (added, go
 		}
 	}
 	return added, gone
-}
-
-func contains(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
 }
 
 const (
@@ -866,16 +885,35 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s init: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
-	fmt.Fprintf(stdout, "INIT OK tables=%s view=%s readers=%s\n", strings.Join([]string{st.Names.Table(sprint.Work), st.Names.Table(sprint.Readers), st.Names.Table(sprint.Merge), st.Names.Table(sprint.Fleet)}, ","), st.Names.View(), dashed(strings.Join(readerRows, ",")))
+	tables := []string{st.Names.Table(sprint.Work), st.Names.Table(sprint.Readers), st.Names.Table(sprint.Merge), st.Names.Table(sprint.Fleet)}
+	// with --json the members' steps print nothing of their own: the one object
+	// names them (tool ledger P8)
+	steps := stdout
+	if c.json {
+		steps = io.Discard
+	} else {
+		fmt.Fprintf(stdout, "INIT OK tables=%s view=%s readers=%s\n", strings.Join(tables, ","), st.Names.View(), dashed(strings.Join(readerRows, ",")))
+	}
+	var memberNames []string
 	for _, m := range specs {
-		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m.Name, c.actor, m.Width), stdout, stderr); code != 0 {
+		if code := a.runStep("fleet up", *c, st, a.fleetStep(st, "up", m.Name, c.actor, m.Width), steps, stderr); code != 0 {
 			return code
 		}
+		memberNames = append(memberNames, m.Name)
 	}
+	notes := []string{}
 	if len(specs) > 0 && a.twinOpen(c.redis) {
 		// a twin beats every member at every verb (beatTwin): a member added
 		// down beats at the next verb and is up from the next tick's presence
-		fmt.Fprintln(stdout, "NOTE a twin beats every member at every verb: each member added is up after the next nova-sprint tick")
+		notes = append(notes, "a twin beats every member at every verb: each member added is up after the next nova-sprint tick")
+	}
+	if c.json {
+		sayOK(stdout, true, "init", "", map[string]any{"tables": tables, "view": st.Names.View(), "readers": nonNil(readerRows),
+			"members": nonNil(memberNames), "coordinator": *coordinator, "notes": notes})
+		return 0
+	}
+	for _, n := range notes {
+		fmt.Fprintln(stdout, "NOTE "+n)
 	}
 	return 0
 }
@@ -899,6 +937,10 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "add", err.Error())
+	}
+	if *count < 0 {
+		// a negative count admitted no card and opened the stream with an OK
+		return refuse(stderr, "add", fmt.Sprintf("--count wants the number of cards to admit, at least 1, got %d", *count))
 	}
 	// The many-brief form: --brief-dir <dir>, or --brief-file given again,
 	// names one brief file per card. One --brief-file alone is the one brief
@@ -966,6 +1008,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if code := a.holdBrief("add", *brief, *rules, c, &st, stderr); code != 0 {
 			return code
 		}
+		c.says = append(c.says, unfilledSays("the brief", *brief)...)
 	}
 	var rs []sprint.AddReq
 	for _, sn := range streams {
@@ -1027,6 +1070,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		if err != nil {
 			return refuse(stderr, "add", fmt.Sprintf("%s: %v", path, err))
 		}
+		// an empty file here is linted, and the lint says it once, naming the file
 		briefText := strings.TrimSuffix(text, "\n")
 		if len(briefText) > store.MaxBriefBytes {
 			return refuse(stderr, "add", fmt.Sprintf("%s: the brief is %d bytes, over the %d bytes a brief may be; a brief is a child's whole brief; shorten it", path, len(briefText), store.MaxBriefBytes))
@@ -1059,6 +1103,9 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		r.Score = &f
 	}
 	c.says = append(c.says, fmt.Sprintf("each card's id is its brief file's name without .md (%s is %s)", files[0], cards[0].ID))
+	for _, cd := range cards {
+		c.says = append(c.says, unfilledSays("the brief of "+cd.ID, cd.Brief)...)
+	}
 	return a.runStep("add", *c, st, store.AddStep(r), stdout, stderr)
 }
 
@@ -1183,7 +1230,7 @@ func lintBriefFiles(cards []sprint.CardAdd, rules []swarm.ChildRule, max int, st
 	if more {
 		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=add --max 0\n", len(all))
 	}
-	return refuse(stderr, "add", fmt.Sprintf("the brief of %s fails the card lint (%d findings); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", strings.Join(failed, ", "), len(all)))
+	return refuse(stderr, "add", fmt.Sprintf("the brief of %s fails the card lint (%s); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", strings.Join(failed, ", "), findingsCount(len(all))))
 }
 
 // briefRules is the rule set an add holds its brief to: the file --rules names, else the
@@ -1232,7 +1279,20 @@ func (a *app) holdBrief(verbName, brief, rules string, c *common, st **store.Sto
 // whole up to briefReadCap, its one trailing newline cut.
 func readBriefFile(path string) (string, error) {
 	text, err := readTextFile(path, briefReadCap)
-	return strings.TrimSuffix(text, "\n"), err
+	if err != nil {
+		return "", err
+	}
+	return briefFromFile(path, text)
+}
+
+// briefFromFile is a brief file's text, its one trailing newline cut; a file
+// that holds nothing but blanks and newlines is refused naming it, since a card
+// admitted with no brief is handed no task and is never linted.
+func briefFromFile(path, text string) (string, error) {
+	if strings.TrimSpace(text) == "" {
+		return "", fmt.Errorf("%s holds no brief (it is empty); write the card's whole brief there (nova-swarm template --name card prints one to start from)", path)
+	}
+	return strings.TrimSuffix(text, "\n"), nil
 }
 
 // lintBrief holds one brief to the card lint's child rules and its model lines
@@ -1258,13 +1318,13 @@ func lintBrief(verbName, brief string, rules []swarm.ChildRule, max int, stderr 
 	if more {
 		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=%s --max 0\n", len(findings), verbName)
 	}
-	return refuse(stderr, verbName, fmt.Sprintf("the brief fails the card lint (%d findings); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", len(findings)))
+	return refuse(stderr, verbName, fmt.Sprintf("the brief fails the card lint (%s); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", findingsCount(len(findings))))
 }
 
 func (a *app) cmdRelease(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("release")
 	reason := fs.String("reason", "", "what you looked at and found: recorded on the sentinel and in its notification")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "release", err.Error())
@@ -1477,10 +1537,15 @@ func takeShort(ctx context.Context, st *store.Store, res store.Result, members [
 				n++
 			}
 		}
-		if n >= asked || !s.Fleet.HasRow(m) {
+		if n >= asked {
 			continue
 		}
 		head := fmt.Sprintf("%s took %d of the %d asked: ", m, n, asked)
+		if !s.Fleet.HasRow(m) {
+			// a name the fleet table lacks takes nothing, and says so rather than an OK alone
+			out = append(out, head+"it is no member of the fleet table (members: "+orDashStr(strings.Join(s.Fleet.Rows(), ","), "none")+"); run: nova-sprint fleet up "+m+" --width <n>")
+			continue
+		}
 		switch status := s.MemberCtl(m).F("status"); {
 		case status != sprint.Up:
 			out = append(out, head+"it is "+orDashStr(status, "-")+", and only a member up takes")
@@ -1527,7 +1592,7 @@ func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
 	var ans, instead *string
 	return a.setVerb("ask", args, stdout, stderr, false, func(fs flagSet) {
 		another = fs.Bool("another", false, "one more reader for a primary already asked")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 		instead = fs.String("instead", "", "take back this reader's read (asked or reading) of the one primary named and ask one other reader, as --another chooses")
 	}, func(ids []string, s *sel) string {
 		if *instead != "" && s.group != "" {
@@ -1541,7 +1606,7 @@ func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("read")
-	as := fs.String("as", "", "the reader; several, comma separated, each reporting its own named cards in one step")
+	as := fs.String("as", "", "the reader; use read-card IDs from queue --as <reader>; several readers, comma separated, each reporting its own named read cards in one step")
 	begin := fs.Bool("begin", false, "asked -> reading")
 	ok := fs.Bool("ok", false, "the read found it good")
 	broken := fs.Bool("broken", false, "the read found it broken")
@@ -1579,16 +1644,50 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "read", err.Error())
 	}
+	if len(ids) == 0 {
+		col := sprint.Reading
+		if *begin {
+			col = sprint.Asked
+		}
+		c.after = func(ctx context.Context, st *store.Store, res store.Result) []string {
+			return readShort(ctx, st, res, sprint.Split(*as), col)
+		}
+	}
 	return a.runStep("read", *c, st, store.ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Begin: *begin,
 		Verdict: verdict, Finding: *finding, Return: *ret != "", Reason: *reason, Usage: *usage, Who: *as}), stdout, stderr)
+}
+
+// readShort is why a read by queue moved nothing, one line per reader named: the
+// name is no row of the readers table, or the reader holds no read card in the
+// column the verb moves from (asked for --begin, reading for a verdict). A read
+// that moved a card says nothing.
+func readShort(ctx context.Context, st *store.Store, res store.Result, readers []string, col sprint.State) []string {
+	if len(res.Moved) > 0 {
+		return nil
+	}
+	rows, err := st.ReaderRows(ctx)
+	if err != nil {
+		return []string{"why the read moved nothing is not known: the readers table did not read: " + err.Error()}
+	}
+	var out []string
+	for _, r := range readers {
+		if !slices.Contains(rows, r) {
+			out = append(out, r+" read nothing: it is no reader of the readers table (readers: "+orDashStr(strings.Join(rows, ","), "none")+"); run: nova-sprint reader add "+r)
+			continue
+		}
+		if cs, err := st.ReadCells(ctx, sprint.Readers, r, col); err == nil && len(cs) == 0 {
+			out = append(out, r+" read nothing: it holds no read card "+col+"; run: nova-sprint queue --as "+r)
+		}
+	}
+	return out
 }
 
 func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 	var readOK *bool
 	var ans *string
 	return a.setVerb("accept", args, stdout, stderr, false, func(fs flagSet) {
-		readOK = fs.Bool("read-ok", false, "every primary in review with ok reads from two different readers")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		readOK = fs.Bool("read-ok", false, "every primary in review with ok reads from two different readers; moves eligible primaries into the merge queue")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" && !*readOK && s.limit == 0 {
 			return "wants ids, --stream <s>, --read-ok or --group <id>"
@@ -1607,7 +1706,7 @@ func (a *app) cmdRework(args []string, stdout, stderr io.Writer) int {
 	var fix, ans *string
 	return a.setVerb("rework", args, stdout, stderr, false, func(fs flagSet) {
 		fix = fs.String("fix", "", "the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" {
 			return "wants ids (or --group, --stream); --fix <text> for all, else each primary's own finding or report"
@@ -1622,7 +1721,7 @@ func (a *app) cmdReturn(args []string, stdout, stderr io.Writer) int {
 	var reason, ans *string
 	return a.setVerb("return", args, stdout, stderr, false, func(fs flagSet) {
 		reason = fs.String("reason", "", "why it goes back to review")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" {
 			return "wants ids, --stream <s> or --group <id>"
@@ -1637,7 +1736,7 @@ func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	var reason, ans *string
 	return a.setVerb("drop", args, stdout, stderr, true, func(fs flagSet) {
 		reason = fs.String("reason", "", "why it leaves the table; kept with its record")
-		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated")
+		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	}, func(ids []string, s *sel) string {
 		if *reason == "" || len(ids) == 0 && s.stream == "" && s.col == "" {
 			return "wants ids (or --stream/--col, --group) and --reason <text>"
@@ -1671,15 +1770,13 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return refuse(stderr, "brief", "--brief-file: "+err.Error())
 		}
-		if text == "" {
-			return refuse(stderr, "brief", "--brief-file "+*briefFile+" holds no brief")
-		}
 		*brief = text
 	}
 	var st *store.Store
 	if code := a.holdBrief("brief", *brief, *rules, c, &st, stderr); code != 0 {
 		return code
 	}
+	c.says = append(c.says, unfilledSays("the brief of "+ids[0], *brief)...)
 	return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Brief: *brief, Who: c.actor}), stdout, stderr)
 }
 
@@ -1721,7 +1818,7 @@ func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("rank")
 	score := fs.String("score", "", "the new score of the first id; the rest follow it")
 	first := fs.Bool("first", false, "ahead of every primary")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "rank", err.Error())
@@ -1746,7 +1843,7 @@ func (a *app) cmdRank(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("merge")
-	stream := fs.String("stream", "", "the stream")
+	stream := fs.String("stream", "", "the stream whose queued batches are selected to merge and land")
 	batch := fs.Int("batch", 10, "the batch: the head n of the stream's queue")
 	conflict := fs.String("conflict", "", "fact: this card of the batch did not merge")
 	cross := fs.String("cross", "", "fact: <card>=<other>: the card needs <other> first; <other> is on the table, in another stream, not landed")
@@ -1786,7 +1883,7 @@ func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("resume")
 	stream := fs.String("stream", "", "the stopped stream")
 	did := fs.String("did", "", "what the coordinator did about the cause; required after a red branch")
-	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "resume", err.Error())
@@ -1854,7 +1951,7 @@ func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s reader add: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
-	fmt.Fprintf(stdout, "READER-ADD OK readers=%s\n", strings.Join(names, ","))
+	sayOK(stdout, c.json, "reader add", "READER-ADD OK readers="+strings.Join(names, ","), map[string]any{"readers": names})
 	return 0
 }
 
@@ -1917,7 +2014,7 @@ func (a *app) cmdReaderHold(away bool, args []string, stdout, stderr io.Writer) 
 			return 1
 		}
 	}
-	fmt.Fprintf(stdout, "%s OK readers=%s\n", token(verbName), strings.Join(names, ","))
+	sayOK(stdout, c.json, verbName, token(verbName)+" OK readers="+strings.Join(names, ","), map[string]any{"readers": names})
 	return 0
 }
 
@@ -1974,7 +2071,7 @@ func (a *app) cmdReaderRemove(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s reader remove: the rows were removed, their records were not: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
-	fmt.Fprintf(stdout, "READER-REMOVE OK readers=%s\n", strings.Join(names, ","))
+	sayOK(stdout, c.json, "reader remove", "READER-REMOVE OK readers="+strings.Join(names, ","), map[string]any{"readers": names})
 	return 0
 }
 
@@ -2116,7 +2213,7 @@ func (a *app) cmdRepair(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("repair")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "repair", argErr("takes no words ", err))
+		return refuse(stderr, "repair", argErr("takes no words ", err, pos...))
 	}
 	st, err := a.store(*c)
 	if err != nil {
@@ -2159,7 +2256,7 @@ func (a *app) cmdTeardown(args []string, stdout, stderr io.Writer) int {
 	confirm := fs.String("confirm", "", "the sprint's name, to confirm: the name of its view, sprint")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "teardown", argErr("takes no words ", err))
+		return refuse(stderr, "teardown", argErr("takes no words ", err, pos...))
 	}
 	want := confirmName()
 	if *confirm != want {
@@ -2174,7 +2271,7 @@ func (a *app) cmdTeardown(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s teardown: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
-	fmt.Fprintf(stdout, "TEARDOWN OK sprint=%s keys=%d\n", oneline.Escape(want), n)
+	sayOK(stdout, c.json, "teardown", fmt.Sprintf("TEARDOWN OK sprint=%s keys=%d", oneline.Escape(want), n), map[string]any{"sprint": want, "keys": n})
 	return 0
 }
 
@@ -2183,7 +2280,7 @@ func (a *app) cmdClear(args []string, stdout, stderr io.Writer) int {
 	confirm := fs.String("confirm", "", "the sprint's name, to confirm: the name of its view, sprint")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "clear", argErr("takes no words ", err))
+		return refuse(stderr, "clear", argErr("takes no words ", err, pos...))
 	}
 	want := confirmName()
 	if *confirm != want {
@@ -2216,8 +2313,18 @@ func (a *app) cmdClear(args []string, stdout, stderr io.Writer) int {
 	if res.Machine != "" {
 		extra += " machine=" + res.Machine + "->" + store.Stopped
 	}
+	line := sprintLine(ctx, st)
+	if c.json {
+		heldN := map[string]int{}
+		for k, v := range res.Held {
+			heldN[strings.ReplaceAll(k, " ", "_")] = v
+		}
+		sayOK(stdout, true, "clear", "", map[string]any{"from": res.From, "to": res.To, "at": res.At.UTC().Format(time.RFC3339), "held": heldN,
+			"finished": res.Finished, "abandoned": res.Abandoned, "restored": res.Restored, "machine_was": res.Machine, "sprint": line})
+		return 0
+	}
 	fmt.Fprintf(stdout, "CLEAR OK epoch=%d->%d at=%s held: %s%s\n", res.From, res.To, res.At.UTC().Format(time.RFC3339), strings.Join(held, " "), extra)
-	if line := sprintLine(ctx, st); line != "" {
+	if line != "" {
 		fmt.Fprintln(stdout, line)
 	}
 	if res.Machine == store.Running {

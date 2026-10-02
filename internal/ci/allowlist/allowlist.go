@@ -80,6 +80,9 @@ type Options struct {
 	// `<repo-relative-package>:<kind>` instead of a file-qualified key.
 	// The row key itself remains unchanged; this only selects its shard.
 	PackageKeys bool
+	// RepeatedKeys permits rows with duplicate keys; by default Parse rejects
+	// a repeated key.
+	RepeatedKeys bool
 }
 
 // FirstField is the default key: the row's first whitespace-separated field.
@@ -162,6 +165,9 @@ func Parse(path, raw string, opt Options) (*List, error) {
 			continue
 		}
 		key := opt.Key(text)
+		if !opt.RepeatedKeys && l.keys[key] {
+			return nil, fmt.Errorf("%s:%d: duplicate key %q", path, i+1, key)
+		}
 		if opt.Counted {
 			f := strings.Fields(text)
 			n := 0
@@ -223,16 +229,6 @@ type CountRow struct {
 	Key      string
 	Listed   int
 	Measured int
-}
-
-// IsStale reports whether a row with this key is stale.
-func (r Result) IsStale(key string) bool {
-	for _, row := range r.Stale {
-		if row.Key == key {
-			return true
-		}
-	}
-	return false
 }
 
 // Check compares the measured keys with the list. Outside an update it only reports:

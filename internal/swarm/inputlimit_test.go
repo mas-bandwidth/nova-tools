@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A PHRASE HAS A FLOOR, AND THE REFUSAL QUOTES IT (Fable's read of #150, finding 4). The
@@ -29,17 +31,13 @@ func TestAProviderPhraseHasAFloor(t *testing.T) {
 		{"  ", false},
 	} {
 		dir := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(dir, "home"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "home"), 0o755))
 		path := filepath.Join(dir, "worker.json")
 		body := `{"name":"w","provider":"p","model":"m","env_var":"P_KEY","key_file":"` +
 			filepath.ToSlash(filepath.Join(dir, "key")) + `","usage":"none","harness":"h",` +
 			`"harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":"` +
 			filepath.ToSlash(filepath.Join(dir, "home")) + `","deadline":"20m","input_limit_phrases":["` + c.phrase + `"]}`
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 		_, problems := LoadWorker(path)
 		switch {
 		case c.ok && len(problems) > 0:
@@ -48,9 +46,7 @@ func TestAProviderPhraseHasAFloor(t *testing.T) {
 			t.Errorf("%q is not a sentence; a phrase this short ends healthy-looking jobs as input-limit and they are never retried", c.phrase)
 		case !c.ok:
 			// AND THE REFUSAL QUOTES THE PHRASE, so the caller reads back what they typed.
-			if !strings.Contains(problems[0].Error(), strconv.Quote(c.phrase)) {
-				t.Errorf("%q: the refusal names the phrase it refused, got %v", c.phrase, problems[0])
-			}
+			assert.Contains(t, problems[0].Error(), strconv.Quote(c.phrase), "%q: the refusal names the phrase it refused, got %v", c.phrase, problems[0])
 		}
 	}
 }

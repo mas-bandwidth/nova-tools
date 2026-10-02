@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A LINT THAT NAMES A RULE AND NO REMEDY COSTS A CARD WRITER A GUESS (issue #1464).
@@ -40,27 +43,20 @@ func TestEveryDriftCarriesItsRemedy(t *testing.T) {
 	}, "\n")
 	card := writeLintCard(t, "byhand.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 1 {
-		t.Fatalf("a drifting card exits 1, got %d\nstdout: %s", exit, stdout)
-	}
+	require.Equal(t, 1, exit, "a drifting card exits 1, got %d\nstdout: %s", exit, stdout)
 	drifts := 0
 	for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
 		if !strings.HasPrefix(line, "LINT DRIFT ") {
 			continue
 		}
 		drifts++
-		if !strings.Contains(line, " remedy=") {
-			t.Errorf("a drift names the rule and no remedy, which is the whole of #1464:\n%s", line)
+		if !assert.Contains(t, line, " remedy=", "a drift names the rule and no remedy, which is the whole of #1464:\n%s", line) {
 			continue
 		}
 		remedy := line[strings.Index(line, " remedy=")+len(" remedy="):]
-		if strings.TrimSpace(remedy) == "" {
-			t.Errorf("a drift's remedy is empty:\n%s", line)
-		}
+		assert.NotEmpty(t, strings.TrimSpace(remedy), "a drift's remedy is empty:\n%s", line)
 	}
-	if drifts == 0 {
-		t.Fatalf("this card drifts; the lint found nothing:\n%s", stdout)
-	}
+	require.NotZero(t, drifts, "this card drifts; the lint found nothing:\n%s", stdout)
 }
 
 // TestLintRulesPrintsEveryRuleAndItsRemedy: the second half of #1464. The rules are written
@@ -72,34 +68,23 @@ func TestLintRulesPrintsEveryRuleAndItsRemedy(t *testing.T) {
 	t.Parallel()
 
 	exit, stdout, stderr := runSwarm(t, "lint", "--rules")
-	if exit != 0 {
-		t.Fatalf("`lint --rules` is a listing, not a refusal: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	if stderr != "" {
-		t.Fatalf("a listing writes nothing to stderr: %q", stderr)
-	}
+	require.Equal(t, 0, exit, "`lint --rules` is a listing, not a refusal: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Empty(t, stderr, "a listing writes nothing to stderr: %q", stderr)
 	seen := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
 		rest, ok := strings.CutPrefix(line, "LINT RULE ")
-		if !ok {
-			t.Fatalf("every line of the listing is one rule: %q", line)
-		}
+		require.True(t, ok, "every line of the listing is one rule: %q", line)
 		name, remedy, ok := strings.Cut(rest, " remedy=")
-		if !ok || strings.TrimSpace(remedy) == "" {
-			t.Errorf("a rule is listed with no remedy: %q", line)
+		if !assert.True(t, ok, "a rule is listed with no remedy: %q", line) || !assert.NotEqual(t, "", strings.TrimSpace(remedy), "a rule is listed with no remedy: %q", line) {
 			continue
 		}
 		seen[strings.TrimSpace(name)] = true
 	}
-	if len(seen) != cardLintChecks {
-		t.Errorf("the listing holds %d rules and the LINT OK line publishes checks=%d; they are one set", len(seen), cardLintChecks)
-	}
+	assert.Len(t, seen, cardLintChecks, "the listing holds %d rules and the LINT OK line publishes checks=%d; they are one set", len(seen), cardLintChecks)
 	// The five tokens of #1464, by name: a card writer who met them on a bench must be able
 	// to look every one of them up in the binary itself.
 	for _, want := range []string{"result-first", "clone-step", "steps-numbered", "deadline", "result-last", "scratch-absolute"} {
-		if !seen[want] {
-			t.Errorf("the listing does not name the rule %s; it named %v", want, seen)
-		}
+		assert.True(t, seen[want], "the listing does not name the rule %s; it named %v", want, seen)
 	}
 }
 
@@ -109,7 +94,6 @@ func TestLintRulesNeedsNoCard(t *testing.T) {
 	t.Parallel()
 
 	exit, stdout, stderr := runSwarm(t, "lint", "--rules")
-	if exit != 0 || !strings.Contains(stdout, "LINT RULE ") {
-		t.Fatalf("`lint --rules` answers without --card: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
+	require.Equal(t, 0, exit, "`lint --rules` answers without --card: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	require.Contains(t, stdout, "LINT RULE ", "`lint --rules` answers without --card: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 }

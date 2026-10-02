@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/stretchr/testify/require"
 )
 
 // The findings of one scenario run over a copy of a real bus, each closed and
@@ -40,9 +41,7 @@ func TestASendThatLostItsPushDoesNotWedgeTheNextOne(t *testing.T) {
 		mustCode(t, 1).
 		mustContain(t, "stderr", "was NOT pushed").
 		mustContain(t, "stderr", "git pull --rebase && git push")
-	if strings.Contains(lost.stdout, "SEND OK") {
-		t.Fatalf("a lost push reported success: %s", lost.stdout)
-	}
+	require.NotContainsf(t, lost.stdout, "SEND OK", "a lost push reported success: %s", lost.stdout)
 
 	// THE NEXT RUN. This is where the tool refused to run at all.
 	invoke(t, draftFrom("Ada", "The one after it", "This one must run."),
@@ -52,8 +51,9 @@ func TestASendThatLostItsPushDoesNotWedgeTheNextOne(t *testing.T) {
 
 	// Both of Ada's notes are on the bus: the second carried the first.
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	if n := strings.Count(files, "from-ada/2026-09-09T1234Z-the-one-"); n != 2 {
-		t.Fatalf("%d of Ada's two notes reached the bus:\n%s", n, files)
+	{
+		n := strings.Count(files, "from-ada/2026-09-09T1234Z-the-one-")
+		require.Equalf(t, 2, n, "%d of Ada's two notes reached the bus:\n%s", n, files)
 	}
 
 	// The other way: a commit a PERSON made is still refused, because a push publishes the
@@ -77,9 +77,7 @@ func TestTheRetryBudgetHasAMeasuredDefault(t *testing.T) {
 	checkout, _ := busDir(t)
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=ada-")
-	if defaultAttempts < 25 {
-		t.Fatalf("the default budget is %d; five lines sending at once consumed nine attempts at the peak and three landed under a budget of three", defaultAttempts)
-	}
+	require.Falsef(t, defaultAttempts < 25, "the default budget is %d; five lines sending at once consumed nine attempts at the peak and three landed under a budget of three", defaultAttempts)
 }
 
 // ---------------------------------------------------------------- 2. no conflict wedges a line
@@ -121,12 +119,8 @@ func TestANoteAddressedToNobodyIsNamed(t *testing.T) {
 		"From: Bo\nTo: Ada, Team\nDate: Tue Sep  8 03:00:00 UTC 2026\nSubject: Partly addressed\n\nThis one reaches Ada.\n")
 	commitAs(t, checkout, "Bo", "bo: partly addressed")
 	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full").mustCode(t, 0)
-	if strings.Contains(r.stdout, "2026-09-08T0300Z-partly.md: ") && strings.Contains(r.stdout, "INBOX UNADDRESSED path=from-bo/2026-09-08T0300Z-partly.md") {
-		t.Fatalf("a note that reaches Ada was reported as reaching nobody:\n%s", r.stdout)
-	}
-	if !strings.Contains(r.stdout, "INBOX NOTE id=- from=Bo addr=to at=2026-09-08T03:00:00Z path=from-bo/2026-09-08T0300Z-partly.md") {
-		t.Fatalf("the partly-addressed note is not in Ada's inbox:\n%s", r.stdout)
-	}
+	require.Falsef(t, strings.Contains(r.stdout, "2026-09-08T0300Z-partly.md: ") && strings.Contains(r.stdout, "INBOX UNADDRESSED path=from-bo/2026-09-08T0300Z-partly.md"), "a note that reaches Ada was reported as reaching nobody:\n%s", r.stdout)
+	require.Containsf(t, r.stdout, "INBOX NOTE id=- from=Bo addr=to at=2026-09-08T03:00:00Z path=from-bo/2026-09-08T0300Z-partly.md", "the partly-addressed note is not in Ada's inbox:\n%s", r.stdout)
 }
 
 // ---------------------------------------------------------------- 5. the output, read by a person
@@ -140,22 +134,16 @@ func TestNamesPrintsSomethingASendWillAccept(t *testing.T) {
 	hermetic(t)
 	checkout, _ := busDir(t)
 	r := invoke(t, "", "names", "--bus", checkout).mustCode(t, 0)
-	if strings.Contains(r.stdout, `\x20`) {
-		t.Fatalf("a name came out with its spaces escaped, which nobody can paste into a To line:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, `\x20`, "a name came out with its spaces escaped, which nobody can paste into a To line:\n%s", r.stdout)
 	// Lift an alias straight out of the output, quotes and all, and send to it.
 	const want = `aliases="Ada Vale"`
-	if !strings.Contains(r.stdout, want) {
-		t.Fatalf("the aliases are not quoted as %s:\n%s", want, r.stdout)
-	}
+	require.Containsf(t, r.stdout, want, "the aliases are not quoted as %s:\n%s", want, r.stdout)
 	invoke(t, "From: Bo\nTo: Ada Vale\nSubject: Pasted from names\n\nThe spelling came out of the names verb.\n",
 		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=bo-")
 	// The one-line guarantee still holds: every line of the output is one line.
 	for _, line := range strings.Split(strings.TrimRight(r.stdout, "\n"), "\n") {
-		if !strings.HasPrefix(line, "NAMES ") {
-			t.Fatalf("a value broke the output into a line that is not an event: %q", line)
-		}
+		require.Truef(t, strings.HasPrefix(line, "NAMES "), "a value broke the output into a line that is not an event: %q", line)
 	}
 }
 
@@ -182,26 +170,16 @@ func TestARebaseConflictPrintsOneActionableLineAndTheTranscriptRaw(t *testing.T)
 	r := invoke(t, theirs, "send", "--bus", second, "--stdin", "--remote", "origin", "--branch", "main").mustCode(t, 1)
 
 	lines := strings.Split(strings.TrimRight(r.stderr, "\n"), "\n")
-	if !strings.HasPrefix(lines[0], "SEND FAIL from-ada/") {
-		t.Fatalf("the first line of stderr is not the event line:\n%s", r.stderr)
-	}
+	require.Truef(t, strings.HasPrefix(lines[0], "SEND FAIL from-ada/"), "the first line of stderr is not the event line:\n%s", r.stderr)
 	for _, want := range []string{"conflicted", "was NOT pushed", "git pull --rebase"} {
-		if !strings.Contains(lines[0], want) {
-			t.Fatalf("the actionable line does not say %q:\n%s", want, lines[0])
-		}
+		require.Containsf(t, lines[0], want, "the actionable line does not say %q:\n%s", want, lines[0])
 	}
 	// The event line is ONE line and carries no transcript.
-	if strings.Contains(lines[0], `\x0d`) || strings.Contains(lines[0], `\x0a`) {
-		t.Fatalf("git's transcript was escaped into the event line:\n%s", lines[0])
-	}
+	require.Falsef(t, strings.Contains(lines[0], `\x0d`) || strings.Contains(lines[0], `\x0a`), "git's transcript was escaped into the event line:\n%s", lines[0])
 	// The transcript is under it, unescaped, and is git's own words.
 	rest := strings.Join(lines[1:], "\n")
-	if !strings.Contains(rest, "CONFLICT") {
-		t.Fatalf("git's own transcript is not on stderr under the event line:\n%s", r.stderr)
-	}
-	if len(lines) < 2 {
-		t.Fatalf("the transcript is one line, so it was folded after all:\n%s", r.stderr)
-	}
+	require.Containsf(t, rest, "CONFLICT", "git's own transcript is not on stderr under the event line:\n%s", r.stderr)
+	require.Falsef(t, len(lines) < 2, "the transcript is one line, so it was folded after all:\n%s", r.stderr)
 }
 
 // A --bus that is a subdirectory of a bigger repository refused with "participants.json:
@@ -212,9 +190,7 @@ func TestASubdirectoryBusIsRefusedByItsRootAndNotByItsRoster(t *testing.T) {
 	hermetic(t)
 	checkout, _ := busDir(t)
 	nested := filepath.Join(checkout, "docs", "bus")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(nested, 0o755))
 	for _, args := range [][]string{
 		{"check", "--bus", nested, "--as", "Ada"},
 		{"inbox", "--bus", nested, "--as", "Ada", "--receipt-max-words", "40"},
@@ -222,9 +198,7 @@ func TestASubdirectoryBusIsRefusedByItsRootAndNotByItsRoster(t *testing.T) {
 		r := invoke(t, "", args...).mustCode(t, 2).
 			mustContain(t, "stderr", "is not its root").
 			mustContain(t, "stderr", "would report an empty change set over unread notes")
-		if strings.Contains(r.stderr, "participants.json") {
-			t.Fatalf("%s: the roster refusal fired first, so the good sentence is not the one seen:\n%s", args[0], r.stderr)
-		}
+		require.NotContainsf(t, r.stderr, "participants.json", "%s: the roster refusal fired first, so the good sentence is not the one seen:\n%s", args[0], r.stderr)
 	}
 	// The other way: a bus that IS a root and has no roster is refused for the roster,
 	// which is then the true reason.
@@ -253,9 +227,7 @@ func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 		"INBOX OPEN carrying=2 heard=1",
 		"INBOX OK as=Ada carrying=2 open=1 notes=0 receipts=1 heard=1 unaddressed=0 unreadable=0",
 	} {
-		if !strings.Contains(r.stdout, want) {
-			t.Fatalf("stdout does not contain %q:\n%s", want, r.stdout)
-		}
+		require.Containsf(t, r.stdout, want, "stdout does not contain %q:\n%s", want, r.stdout)
 	}
 	// All three lines agree about `carrying=`, which is the whole point: one number under
 	// one name, and `open=` beside it saying what it leaves out.
@@ -265,8 +237,9 @@ func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 		if !strings.Contains(line, "carrying=") {
 			continue
 		}
-		if got := field(t, line, "carrying="); got != "2" {
-			t.Fatalf("a line says carrying=%s where the open list holds 2: %q", got, line)
+		{
+			got := field(t, line, "carrying=")
+			require.Equalf(t, "2", got, "a line says carrying=%s where the open list holds 2: %q", got, line)
 		}
 	}
 }
@@ -305,9 +278,7 @@ func TestASecondInvocationOnOneCheckoutRefuses(t *testing.T) {
 	t.Cleanup(func() { checkoutLockWait = real })
 
 	release, err := bus.LockCheckout(checkout, time.Second)
-	if err != nil {
-		t.Fatalf("the first run could not take the lock: %v", err)
-	}
+	require.NoErrorf(t, err, "the first run could not take the lock: %v", err)
 	defer release()
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 1).

@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 	"time"
 )
 
@@ -27,7 +29,7 @@ func TestExecGitReadsLargeRangeWithoutRenameWarningsAsPaths(t *testing.T) {
 		var out, errs bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errs
 		if err := cmd.Run(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, errs.String())
+			require.NoError(t, err, "git %v: %v: %s", args, err, errs.String())
 		}
 		return strings.TrimSpace(out.String()), errs.String()
 	}
@@ -42,7 +44,7 @@ func TestExecGitReadsLargeRangeWithoutRenameWarningsAsPaths(t *testing.T) {
 	write := func(name, body string) {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	want := []string{"old-a.txt", "old-b.txt"}
@@ -53,7 +55,7 @@ func TestExecGitReadsLargeRangeWithoutRenameWarningsAsPaths(t *testing.T) {
 	base, _ := git("rev-parse", "HEAD")
 	for _, name := range want {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	for i := 0; i < 500; i++ {
@@ -66,11 +68,11 @@ func TestExecGitReadsLargeRangeWithoutRenameWarningsAsPaths(t *testing.T) {
 	head, _ := git("rev-parse", "HEAD")
 	raw, warnings := git("diff", "--name-only", base+"..."+head)
 	if len(raw) <= childCap || !strings.Contains(warnings, "rename") {
-		t.Fatalf("fixture did not exercise large stdout and warning stderr: bytes=%d stderr=%q", len(raw), warnings)
+		require.FailNowf(t, "", "fixture did not exercise large stdout and warning stderr: bytes=%d stderr=%q", len(raw), warnings)
 	}
 	files, err := (ExecGit{}).DiffNames(ctx, dir, base, head)
 	sort.Strings(want)
 	if err != nil || !reflect.DeepEqual(files, want) {
-		t.Fatalf("production reader lost paths or included warnings: got=%d want=%d error=%v", len(files), len(want), err)
+		require.FailNowf(t, "", "production reader lost paths or included warnings: got=%d want=%d error=%v", len(files), len(want), err)
 	}
 }

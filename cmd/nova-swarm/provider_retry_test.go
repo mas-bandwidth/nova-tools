@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -34,27 +37,18 @@ func TestNativeRetriesAProvider5xxLaunch(t *testing.T) {
 		card:    []byte("a card that dies at request start\nFAKE-LAUNCHES\nFAKE-5XX-FIRST\n"),
 		slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("native run exits 0, got %d:\n%s", code, errOut.String())
-	}
-	if res.rc != 0 {
-		t.Fatalf("the second attempt succeeds and the run records rc=0, got %d:\n%s", res.rc, errOut.String())
-	}
+	require.Equal(t, 0, code, "native run exits 0, got %d:\n%s", code, errOut.String())
+	require.Equal(t, 0, res.rc, "the second attempt succeeds and the run records rc=0, got %d:\n%s", res.rc, errOut.String())
 	// The harvested result is the second attempt's: the first died before publishing and
 	// the second published, so RESULT.md exists in the job directory.
 	jobDir := filepath.Join(slot, "jobs", label)
-	if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err != nil {
-		t.Errorf("the second attempt's result was not harvested: %v", err)
-	}
+	_, err := os.Stat(filepath.Join(jobDir, "RESULT.md"))
+	assert.NoError(t, err, "the second attempt's result was not harvested")
 	// One usage row per launch, attempt=1 and attempt=2, for the one job.
 	raw, err := os.ReadFile(filepath.Join(jobDir, "usage.tsv"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	rows := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
-	if len(rows) != 3 {
-		t.Fatalf("a retried card wants a header and two rows, got %d:\n%s", len(rows), raw)
-	}
+	require.Len(t, rows, 3, "a retried card wants a header and two rows, got %d:\n%s", len(rows), raw)
 	head := strings.Split(rows[0], "\t")
 	attemptAt := -1
 	usdAt := -1
@@ -66,18 +60,14 @@ func TestNativeRetriesAProvider5xxLaunch(t *testing.T) {
 			usdAt = i
 		}
 	}
-	if attemptAt < 0 || usdAt < 0 {
-		t.Fatalf("the header does not carry attempt and usd:\n%s", rows[0])
-	}
-	if got := strings.Split(rows[1], "\t")[attemptAt]; got != "1" {
-		t.Errorf("the first launch row carries attempt=%s, want 1", got)
-	}
-	if got := strings.Split(rows[2], "\t")[attemptAt]; got != "2" {
-		t.Errorf("the second launch row carries attempt=%s, want 2", got)
-	}
-	if got := strings.Split(rows[1], "\t")[usdAt]; got != "-" {
-		t.Errorf("an unreported usd stays a dash, got %q", got)
-	}
+	require.GreaterOrEqual(t, attemptAt, 0, "the header does not carry attempt and usd:\n%s", rows[0])
+	require.GreaterOrEqual(t, usdAt, 0, "the header does not carry attempt and usd:\n%s", rows[0])
+	got := strings.Split(rows[1], "\t")[attemptAt]
+	assert.Equal(t, "1", got, "the first launch row carries attempt=%s, want 1", got)
+	got = strings.Split(rows[2], "\t")[attemptAt]
+	assert.Equal(t, "2", got, "the second launch row carries attempt=%s, want 2", got)
+	got = strings.Split(rows[1], "\t")[usdAt]
+	assert.Equal(t, "-", got, "an unreported usd stays a dash, got %q", got)
 }
 
 // A lost response is one launch, and the usage row stays unknown. The fake
@@ -96,30 +86,19 @@ func TestNativeLostResponseStaysUnknownAndLaunchesOnce(t *testing.T) {
 		card:    []byte("FAKE-LAUNCHES\nFAKE-LOST-RESPONSE\n"),
 		slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("native run exits 0, got %d:\n%s", code, errOut.String())
-	}
-	if !res.lost || res.end != "unknown" {
-		t.Fatalf("lost=%v end=%s, want a retained unknown", res.lost, res.end)
-	}
+	require.Equal(t, 0, code, "native run exits 0, got %d:\n%s", code, errOut.String())
+	require.True(t, res.lost, "lost=%v end=%s, want a retained unknown", res.lost, res.end)
+	require.Equal(t, "unknown", res.end, "lost=%v end=%s, want a retained unknown", res.lost, res.end)
 	jobDir := filepath.Join(slot, "jobs", label)
 	launches, err := os.ReadFile(filepath.Join(jobDir, "launches"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n := strings.Count(string(launches), "launch"); n != 1 {
-		t.Fatalf("a lost response launched %d times, want 1:\n%s", n, launches)
-	}
+	require.NoError(t, err)
+	n := strings.Count(string(launches), "launch")
+	require.Equal(t, 1, n, "a lost response launched %d times, want 1:\n%s", n, launches)
 	mark, err := os.ReadFile(filepath.Join(jobDir, "provider-acceptance"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(mark) != oneline.Escape("unknown\n") {
-		t.Fatalf("provider-acceptance = %q, want the escaped marker", mark)
-	}
-	if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err == nil {
-		t.Fatal("a lost response must not publish a result")
-	}
+	require.NoError(t, err)
+	require.Equal(t, oneline.Escape("unknown\n"), string(mark), "provider-acceptance = %q, want the escaped marker", mark)
+	_, err = os.Stat(filepath.Join(jobDir, "RESULT.md"))
+	require.Error(t, err, "a lost response must not publish a result")
 }
 
 func TestUnrecordedUnknownIsStillAHarvestHold(t *testing.T) {
@@ -132,21 +111,15 @@ func TestUnrecordedUnknownIsStillAHarvestHold(t *testing.T) {
 	root, slot := aSlot(t)
 	label := "unrecorded"
 	cardPath := filepath.Join(root, label+".md")
-	if err := os.WriteFile(cardPath, []byte("FAKE-LOST-RESPONSE\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("FAKE-LOST-RESPONSE\n"), 0o644))
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1",
 		"--harness", bin, "--model", "fake/fake-model", "--label", label,
 		"--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--no-wall"},
 		strings.NewReader(""), &stdout, &stderr, time.Now())
-	if code == 0 {
-		t.Fatalf("a failed record exited 0:\n%s", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "why=unknown-acceptance") {
-		t.Fatalf("the refusal returned before the unknown verdict:\n%s\n%s", stdout.String(), stderr.String())
-	}
+	require.NotEqual(t, 0, code, "a failed record exited 0:\n%s", stdout.String())
+	require.Contains(t, stdout.String(), "why=unknown-acceptance", "the refusal returned before the unknown verdict:\n%s\n%s", stdout.String(), stderr.String())
 
 	// The nova-pulse harvest hold that followed here left with internal/pulse (deleted 2026-09-25, #3969);
 	// the native refusal above is the property that remains.
@@ -156,45 +129,29 @@ func TestPersistUnknownFallsBackWhenTheMarkerCannotBeWritten(t *testing.T) {
 	t.Parallel()
 
 	job := t.TempDir()
-	if err := os.Mkdir(filepath.Join(job, "provider-acceptance"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(job, "harness-output.log"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := persistUnknown(job); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(filepath.Join(job, "provider-acceptance"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(job, "harness-output.log"), 0o755))
+	require.NoError(t, persistUnknown(job))
 	raw, err := os.ReadFile(filepath.Join(job, "harness.log"))
-	if err != nil || !strings.Contains(string(raw), "why=unknown-acceptance") {
-		t.Fatalf("the fallback log does not hold the unknown: %q, %v", raw, err)
-	}
+	require.NoError(t, err, "the fallback log does not hold the unknown: %q, %v", raw, err)
+	require.Contains(t, string(raw), "why=unknown-acceptance", "the fallback log does not hold the unknown: %q, %v", raw, err)
 }
 
 func TestPersistUnknownFailsWhenNothingCanBeWritten(t *testing.T) {
 	t.Parallel()
 
 	job := t.TempDir()
-	if err := os.Chmod(job, 0o555); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chmod(job, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(job, 0o755) })
-	if err := persistUnknown(job); err == nil {
-		t.Fatal("an unwritable job recorded the unknown")
-	}
+	require.Error(t, persistUnknown(job), "an unwritable job recorded the unknown")
 }
 
 func TestNativeLostResponseLineSaysUnknownAcceptance(t *testing.T) {
 	t.Parallel()
 
 	out := nativeVerdict(t, "lost", "FAKE-LOST-RESPONSE\n")
-	if strings.Contains(out, "NATIVE OK") {
-		t.Fatalf("a lost response said OK:\n%s", out)
-	}
-	if !strings.Contains(out, "why=unknown-acceptance") {
-		t.Fatalf("the verdict did not keep unknown-acceptance:\n%s", out)
-	}
-	if strings.Contains(out, "why=no-result") || strings.Contains(out, "why=rc") {
-		t.Fatalf("a lost response was filed as an ordinary incomplete:\n%s", out)
-	}
+	require.NotContains(t, out, "NATIVE OK", "a lost response said OK:\n%s", out)
+	require.Contains(t, out, "why=unknown-acceptance", "the verdict did not keep unknown-acceptance:\n%s", out)
+	require.NotContains(t, out, "why=no-result", "a lost response was filed as an ordinary incomplete:\n%s", out)
+	require.NotContains(t, out, "why=rc", "a lost response was filed as an ordinary incomplete:\n%s", out)
 }

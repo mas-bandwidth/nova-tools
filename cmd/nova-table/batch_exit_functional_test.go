@@ -3,6 +3,7 @@
 package main
 
 import (
+	"github.com/stretchr/testify/assert"
 	"strings"
 	"testing"
 )
@@ -47,19 +48,19 @@ func TestBatchExitCodesSeparateUnreadableFromRefused(t *testing.T) {
 		}
 		code, stdout, stderr := runTable(args...)
 		if code != tc.exit || stdout != "" {
-			t.Errorf("%s: exit %d (want %d), stdout %q, stderr %q", tc.name, code, tc.exit, stdout, stderr)
+			assert.Equal(t, tc.exit, code, "%s: exit %d (want %d), stdout %q, stderr %q", tc.name, code, tc.exit, stdout, stderr)
+			assert.Empty(t, stdout, "%s: refusal wrote stdout: %s", tc.name, stdout)
 			continue
 		}
 		for _, w := range tc.want {
-			if !strings.Contains(stderr, w) {
-				t.Errorf("%s: stderr lacks %q: %s", tc.name, w, stderr)
-			}
+			assert.Contains(t, stderr, w, "%s: stderr lacks %q: %s", tc.name, w, stderr)
 		}
-		if strings.Contains(stderr, "cannot unmarshal") || strings.Contains(stderr, "Go struct") {
-			t.Errorf("%s: the parser's words: %s", tc.name, stderr)
-		}
+		assert.NotContains(t, stderr, "cannot unmarshal", "%s: the parser's words: %s", tc.name, stderr)
+		assert.NotContains(t, stderr, "Go struct", "%s: the parser's words: %s", tc.name, stderr)
 	}
-	if code, _, stderr := runTable("batch", "--redis", addr, "/no/such/manifest.json"); code != 2 || !strings.Contains(stderr, "/no/such/manifest.json") {
-		t.Errorf("an unreadable file: exit %d %s", code, stderr)
+	{
+		code, _, stderr := runTable("batch", "--redis", addr, "/no/such/manifest.json")
+		assert.EqualValues(t, 2, code, "an unreadable file: exit %d %s", code, stderr)
+		assert.Contains(t, stderr, "/no/such/manifest.json", "an unreadable file: exit %d %s", code, stderr)
 	}
 }

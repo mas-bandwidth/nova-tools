@@ -8,6 +8,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE CLASS RULE: ONE REDIS VERSION EVERYWHERE.
@@ -229,9 +232,7 @@ func TestRedisIsOneVersionEverywhere(t *testing.T) {
 	tree := repoTree(t)
 
 	ref := redisVersionReferenceOf(readFile(t, filepath.Join(tree.Root, filepath.FromSlash(redisVersionRef))))
-	if ref == "" {
-		t.Fatalf("%s carries no `ARG REDIS_VERSION=<major.minor.patch>`; the one Redis version is that ARG", redisVersionRef)
-	}
+	require.NotEmpty(t, ref, "%s carries no `ARG REDIS_VERSION=<major.minor.patch>`; the one Redis version is that ARG", redisVersionRef)
 
 	for _, h := range redisVersionHistory {
 		found := false
@@ -241,9 +242,7 @@ func TestRedisIsOneVersionEverywhere(t *testing.T) {
 				break
 			}
 		}
-		if !found {
-			t.Errorf("redisVersionHistory names %q (%s) and nothing in the tree is there; drop the row", h.Prefix, h.Why)
-		}
+		assert.True(t, found, "redisVersionHistory names %q (%s) and nothing in the tree is there; drop the row", h.Prefix, h.Why)
 	}
 
 	var sites []redisVersionSite
@@ -255,9 +254,7 @@ func TestRedisIsOneVersionEverywhere(t *testing.T) {
 		src := f.Src
 		if src == nil {
 			raw, err := os.ReadFile(f.Path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			src = raw
 		}
 		for _, s := range redisVersionSites(f.Rel, string(src)) {
@@ -268,12 +265,10 @@ func TestRedisIsOneVersionEverywhere(t *testing.T) {
 
 	// A sweep that found nothing checked nothing: each named place is there.
 	for _, rel := range redisVersionNamedFiles {
-		if perFile[rel] == 0 {
-			t.Errorf("%s names no Redis version (a `Redis <major.minor.patch>` phrase, or the installer's redisSourceVersion pin); this file is one of the places the rule holds to the one version", rel)
-		}
+		assert.NotZero(t, perFile[rel], "%s names no Redis version (a `Redis <major.minor.patch>` phrase, or the installer's redisSourceVersion pin); this file is one of the places the rule holds to the one version", rel)
 	}
 	for _, p := range redisVersionProblems(ref, sites) {
-		t.Error(p)
+		assert.Fail(t, p)
 	}
 }
 
@@ -326,9 +321,8 @@ func TestRedisVersionRuleSeesEachShape(t *testing.T) {
 	}
 	for _, c := range seen {
 		got := redisVersionSites(c.rel, c.text)
-		if len(got) != 1 || got[0].Version != c.want {
-			t.Errorf("%s %q: the reader found %v, want one site naming %s", c.rel, c.text, got, c.want)
-		}
+		ok := len(got) == 1 && got[0].Version == c.want
+		assert.True(t, ok, "%s %q: the reader found %v, want one site naming %s", c.rel, c.text, got, c.want)
 	}
 	// The files the sweep reads: the text kinds by extension or by name, and
 	// nothing that is history or captured data.
@@ -338,9 +332,7 @@ func TestRedisVersionRuleSeesEachShape(t *testing.T) {
 		"fleet/land/ruleset.json", "a.json", ".env", "deploy/prod.env", "tools/check.py",
 		"internal/nsprint/read/tmpl/read.tmpl", "tla/Model.tla",
 	} {
-		if !redisVersionReadsFile(rel) {
-			t.Errorf("%s: the sweep must read this file (a version written there is a place the repository names one)", rel)
-		}
+		assert.True(t, redisVersionReadsFile(rel), "%s: the sweep must read this file (a version written there is a place the repository names one)", rel)
 	}
 	for _, rel := range []string{
 		"CHANGELOG.md", "docs/RELEASE-NOTES-1.2.3.md",
@@ -350,9 +342,7 @@ func TestRedisVersionRuleSeesEachShape(t *testing.T) {
 		"tools/.venv/lib/python3/site-packages/redis/version.py", "site-packages/a.py",
 		redisVersionSelf, "a.png", "a.bin", "notes", "tla/Model.cfg", "db/0001.sql", "a.tsv",
 	} {
-		if redisVersionReadsFile(rel) {
-			t.Errorf("%s: the sweep must not read this file (release history, captured data, another's code, or not text)", rel)
-		}
+		assert.False(t, redisVersionReadsFile(rel), "%s: the sweep must not read this file (release history, captured data, another's code, or not text)", rel)
 	}
 	unseen := []struct{ rel, text string }{
 		{"a.go", "go-redis v9.22.0 sends it after HELLO 3"},
@@ -387,27 +377,21 @@ func TestRedisVersionRuleSeesEachShape(t *testing.T) {
 		{"a.sh", "run --redis 10.0.0.2"},
 	}
 	for _, c := range unseen {
-		if got := redisVersionSites(c.rel, c.text); len(got) != 0 {
-			t.Errorf("%s %q: the reader found %v, want none: that is not a Redis version the repository runs", c.rel, c.text, got)
-		}
+		got := redisVersionSites(c.rel, c.text)
+		assert.Empty(t, got, "%s %q: the reader found %v, want none: that is not a Redis version the repository runs", c.rel, c.text, got)
 	}
 
 	same := []redisVersionSite{{"x", 1, "8.10.2"}, {"y", 2, "8.10.2"}}
-	if p := redisVersionProblems("8.10.2", same); len(p) != 0 {
-		t.Errorf("two places naming the reference are one version, got %v", p)
-	}
+	p := redisVersionProblems("8.10.2", same)
+	assert.Empty(t, p, "two places naming the reference are one version, got %v", p)
 	split := []redisVersionSite{{"x", 1, "8.10.2"}, {"y", 2, "8.0.5"}, {"z", 3, "8.0.5"}, {"w", 4, "7.4.11"}}
-	p := redisVersionProblems("8.10.2", split)
-	if len(p) != 2 || !strings.Contains(p[1], "y:2, z:3") && !strings.Contains(p[0], "y:2, z:3") {
-		t.Errorf("a split of three versions must be reported once per differing version, naming every place; got %v", p)
-	}
+	p = redisVersionProblems("8.10.2", split)
+	ok := len(p) == 2 && (strings.Contains(p[1], "y:2, z:3") || strings.Contains(p[0], "y:2, z:3"))
+	assert.True(t, ok, "a split of three versions must be reported once per differing version, naming every place; got %v", p)
 	lone := redisVersionProblems("8.10.2", []redisVersionSite{{"x", 1, "8.0.5"}})
-	if len(lone) != 1 {
-		t.Errorf("a lone place that is not the reference is a difference, got %v", lone)
-	} else if !strings.Contains(lone[0], "write the minimum with one or two parts (`Redis 7 or later`)") {
-		t.Errorf("the remedy must tell an author who means a minimum to write it with one or two parts, got %q", lone[0])
+	if assert.Len(t, lone, 1, "a lone place that is not the reference is a difference, got %v", lone) {
+		assert.Contains(t, lone[0], "write the minimum with one or two parts (`Redis 7 or later`)", "the remedy must tell an author who means a minimum to write it with one or two parts, got %q", lone[0])
 	}
-	if p := redisVersionProblems("8.10.2", nil); len(p) != 0 {
-		t.Errorf("no places is not a difference (the rule's own floor catches an empty read), got %v", p)
-	}
+	p = redisVersionProblems("8.10.2", nil)
+	assert.Empty(t, p, "no places is not a difference (the rule's own floor catches an empty read), got %v", p)
 }

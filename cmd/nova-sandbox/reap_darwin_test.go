@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The wall's child stays in the CALLER's process group, and the caller owns pgid and
@@ -43,22 +45,17 @@ func TestAForkedChildIsReapedWithTheCallersGroup(t *testing.T) {
 	cmd.Env = j.env()
 	// The caller's own group, the way a supervisor starts a job.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("the wrapped command did not run: %v", err)
-	}
+	err := cmd.Run()
+	require.NoError(t, err, "the wrapped command did not run: %v", err)
 	pgid := cmd.Process.Pid
 	raw, err := os.ReadFile(pidFile)
-	if err != nil {
-		t.Fatalf("the wrapped command wrote no background pid: %v", err)
-	}
+	require.NoError(t, err, "the wrapped command wrote no background pid: %v", err)
 	bg, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil || bg <= 0 {
-		t.Fatalf("background pid %q: %v", raw, err)
-	}
+	require.NoError(t, err, "background pid %q: %v", raw, err)
+	require.Positive(t, bg, "background pid %q: %v", raw, err)
 	t.Cleanup(func() { _ = syscall.Kill(bg, syscall.SIGKILL) })
-	if err := syscall.Kill(bg, 0); err != nil {
-		t.Fatalf("control: the background child was already gone before the reap: %v", err)
-	}
+	err = syscall.Kill(bg, 0)
+	require.NoError(t, err, "control: the background child was already gone before the reap: %v", err)
 	// The reap: the caller kills the group IT made, which is the only group it knows.
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	for i := 0; i < 50; i++ {

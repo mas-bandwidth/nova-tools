@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,9 +24,8 @@ func roleTasks(t *testing.T, rel string) []roleTask {
 	t.Helper()
 	var tasks []roleTask
 	text := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(containerRuntimeRole+"/"+rel)))
-	if err := yaml.Unmarshal([]byte(text), &tasks); err != nil {
-		t.Fatalf("%s/%s is not a list of tasks: %v", containerRuntimeRole, rel, err)
-	}
+	err := yaml.Unmarshal([]byte(text), &tasks)
+	require.NoError(t, err, "%s/%s is not a list of tasks: %v", containerRuntimeRole, rel, err)
 	return tasks
 }
 
@@ -73,13 +74,11 @@ func TestContainerRuntimeRefusesRootBeforeItsFirstChange(t *testing.T) {
 			break
 		}
 	}
-	if guard < 0 {
-		t.Fatalf("%s/tasks/main.yml has no task \"the runner user is an ordinary user, never root\"", containerRuntimeRole)
-	}
+	require.GreaterOrEqual(t, guard, 0, "%s/tasks/main.yml has no task \"the runner user is an ordinary user, never root\"", containerRuntimeRole)
 	g := tasks[guard]
 	for key := range g {
 		if key != "name" && key != "ansible.builtin.assert" {
-			t.Errorf("%s/tasks/main.yml: the root guard has a %q key; it takes no when, ignore_errors, failed_when, become or loop", containerRuntimeRole, key)
+			assert.Fail(t, fmt.Sprintf("%s/tasks/main.yml: the root guard has a %q key; it takes no when, ignore_errors, failed_when, become or loop", containerRuntimeRole, key))
 		}
 	}
 	m := g.args("ansible.builtin.assert")
@@ -89,13 +88,9 @@ func TestContainerRuntimeRefusesRootBeforeItsFirstChange(t *testing.T) {
 			got = append(got, fold(e.(string)))
 		}
 	}
-	if len(got) != len(wantThat) {
-		t.Fatalf("%s/tasks/main.yml: the root guard asserts %v, want exactly %v", containerRuntimeRole, got, wantThat)
-	}
+	require.Equal(t, len(wantThat), len(got), "%s/tasks/main.yml: the root guard asserts %v, want exactly %v", containerRuntimeRole, got, wantThat)
 	for i := range wantThat {
-		if got[i] != fold(wantThat[i]) {
-			t.Errorf("%s/tasks/main.yml: guard line %d is %q, want %q", containerRuntimeRole, i+1, got[i], fold(wantThat[i]))
-		}
+		assert.Equal(t, fold(wantThat[i]), got[i], "%s/tasks/main.yml: guard line %d is %q, want %q", containerRuntimeRole, i+1, got[i], fold(wantThat[i]))
 	}
 	allowed := []string{"ansible.builtin.stat", "ansible.builtin.assert", "ansible.builtin.getent", "ansible.builtin.set_fact"}
 	for i, k := range tasks[:guard] {
@@ -109,20 +104,16 @@ func TestContainerRuntimeRefusesRootBeforeItsFirstChange(t *testing.T) {
 					ok = ok || key == a
 				}
 				if !ok {
-					t.Errorf("%s/tasks/main.yml: task %d (%q) before the root guard has %q; only stat, getent, set_fact and assert, with no become, ignore_errors, block, include or import, may come before it", containerRuntimeRole, i+1, k.name(), key)
+					assert.Fail(t, fmt.Sprintf("%s/tasks/main.yml: task %d (%q) before the root guard has %q; only stat, getent, set_fact and assert, with no become, ignore_errors, block, include or import, may come before it", containerRuntimeRole, i+1, k.name(), key))
 				}
 				modules++
 			}
 		}
-		if modules != 1 {
-			t.Errorf("%s/tasks/main.yml: task %d (%q) before the root guard is not one plain read", containerRuntimeRole, i+1, k.name())
-		}
+		assert.Equal(t, 1, modules, "%s/tasks/main.yml: task %d (%q) before the root guard is not one plain read", containerRuntimeRole, i+1, k.name())
 	}
 	defaults := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(containerRuntimeRole+"/defaults/main.yml")))
 	dm := regexp.MustCompile(`(?m)^container_runtime_min_uid:\s*(\d+)\s*$`).FindStringSubmatch(defaults)
-	if dm == nil || dm[1] == "0" {
-		t.Errorf("%s/defaults/main.yml: container_runtime_min_uid is missing or 0; it is the floor for the runner's uid and root is never allowed", containerRuntimeRole)
-	}
+	assert.True(t, dm != nil && dm[1] != "0", "%s/defaults/main.yml: container_runtime_min_uid is missing or 0; it is the floor for the runner's uid and root is never allowed", containerRuntimeRole)
 }
 
 // TestContainerRuntimeSubidsNeverReuseARange: a missing subordinate id row is
@@ -138,31 +129,21 @@ func TestContainerRuntimeSubidsNeverReuseARange(t *testing.T) {
 			included = true
 		}
 		if v, ok := k.module("ansible.builtin.lineinfile"); ok {
-			t.Errorf("%s/tasks/main.yml: %q writes a line itself (%v); subordinate id rows are written by tasks/subid.yml, which checks every range first", containerRuntimeRole, k.name(), v)
+			assert.Fail(t, fmt.Sprintf("%s/tasks/main.yml: %q writes a line itself (%v); subordinate id rows are written by tasks/subid.yml, which checks every range first", containerRuntimeRole, k.name(), v))
 		}
 	}
-	if !included {
-		t.Fatalf("%s/tasks/main.yml does not include subid.yml", containerRuntimeRole)
-	}
+	require.True(t, included, "%s/tasks/main.yml does not include subid.yml", containerRuntimeRole)
 	text := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(containerRuntimeRole+"/tasks/main.yml")))
-	if !strings.Contains(text, "- subuid") || !strings.Contains(text, "- subgid") {
-		t.Errorf("%s/tasks/main.yml: subid.yml is not included for both subuid and subgid", containerRuntimeRole)
-	}
+	assert.True(t, strings.Contains(text, "- subuid") && strings.Contains(text, "- subgid"), "%s/tasks/main.yml: subid.yml is not included for both subuid and subgid", containerRuntimeRole)
 	sub := roleTasks(t, "tasks/subid.yml")
 	var writes, fits, overlaps, parsed int
 	for _, k := range sub {
 		body := k.text()
 		if v, ok := k.module("ansible.builtin.lineinfile"); ok {
 			writes++
-			if strings.Contains(body, "container_runtime_subid_start") || !strings.Contains(body, "container_runtime_subid_new_start") {
-				t.Errorf("%s/tasks/subid.yml: the row is written at the fixed start (%v); it must start at container_runtime_subid_new_start, after every other user's range", containerRuntimeRole, v)
-			}
-			if !strings.Contains(body, "container_runtime_subid.mine | length == 0") {
-				t.Errorf("%s/tasks/subid.yml: the row is written when the user already has one", containerRuntimeRole)
-			}
-			if strings.Contains(body, "regexp") {
-				t.Errorf("%s/tasks/subid.yml: a row is matched by a regexp; the user name is data, never a pattern", containerRuntimeRole)
-			}
+			assert.True(t, !strings.Contains(body, "container_runtime_subid_start") && strings.Contains(body, "container_runtime_subid_new_start"), "%s/tasks/subid.yml: the row is written at the fixed start (%v); it must start at container_runtime_subid_new_start, after every other user's range", containerRuntimeRole, v)
+			assert.Contains(t, body, "container_runtime_subid.mine | length == 0", "%s/tasks/subid.yml: the row is written when the user already has one", containerRuntimeRole)
+			assert.NotContains(t, body, "regexp", "%s/tasks/subid.yml: a row is matched by a regexp; the user name is data, never a pattern", containerRuntimeRole)
 		}
 		if strings.Contains(body, "others_end") && strings.Contains(body, "container_runtime_subid_start") {
 			fits++
@@ -174,12 +155,8 @@ func TestContainerRuntimeSubidsNeverReuseARange(t *testing.T) {
 			parsed++
 		}
 	}
-	if writes != 1 || fits != 1 || overlaps != 1 || parsed != 1 {
-		t.Errorf("%s/tasks/subid.yml: want one row write, one start after others_end, one overlap assert and one row-format assert; have %d, %d, %d, %d", containerRuntimeRole, writes, fits, overlaps, parsed)
-	}
-	if !strings.Contains(readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(containerRuntimeRole+"/tasks/subid.yml"))), "container_runtime_uid | string") {
-		t.Errorf("%s/tasks/subid.yml: rows written by numeric uid are not read as the user's", containerRuntimeRole)
-	}
+	assert.True(t, writes == 1 && fits == 1 && overlaps == 1 && parsed == 1, "%s/tasks/subid.yml: want one row write, one start after others_end, one overlap assert and one row-format assert; have %d, %d, %d, %d", containerRuntimeRole, writes, fits, overlaps, parsed)
+	assert.Contains(t, readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(containerRuntimeRole+"/tasks/subid.yml"))), "container_runtime_uid | string", "%s/tasks/subid.yml: rows written by numeric uid are not read as the user's", containerRuntimeRole)
 }
 
 // The allocation expressions of tasks/subid.yml, pinned as text (whitespace
@@ -226,14 +203,12 @@ func TestContainerRuntimeSubidExpressionsArePinned(t *testing.T) {
 		}
 	}
 	for name, want := range subidPins {
-		if got := facts[name]; got != fold(want) {
-			t.Errorf("%s/tasks/subid.yml: the expression of %s is not the one that was evaluated on constructed files.\n got: %s\nwant: %s\nevaluate the change with ansible's template engine on files where another user holds the fixed start and where ranges touch 2^32, then update subidPins", containerRuntimeRole, name, got, fold(want))
-		}
+		got := facts[name]
+		assert.Equal(t, fold(want), got, "%s/tasks/subid.yml: the expression of %s is not the one that was evaluated on constructed files.\n got: %s\nwant: %s\nevaluate the change with ansible's template engine on files where another user holds the fixed start and where ranges touch 2^32, then update subidPins", containerRuntimeRole, name, got, fold(want))
 	}
 	for name, want := range subidAssertPins {
-		if got := asserts[name]; got != fold(want) {
-			t.Errorf("%s/tasks/subid.yml: the assert %q is %q, want the pinned %q", containerRuntimeRole, name, got, fold(want))
-		}
+		got := asserts[name]
+		assert.Equal(t, fold(want), got, "%s/tasks/subid.yml: the assert %q is %q, want the pinned %q", containerRuntimeRole, name, got, fold(want))
 	}
 }
 
@@ -277,24 +252,22 @@ func TestContainerRuntimeTasksCannotHideAWeakening(t *testing.T) {
 				switch {
 				case roleKeywords[key], strings.HasPrefix(key, "ansible.builtin."):
 				case key == "ignore_errors" || key == "block" || key == "rescue" || key == "always":
-					t.Errorf("%s/%s: task %d (%q) has %q; the role fails or it does not run, and no task hides others", containerRuntimeRole, file, i+1, k.name(), key)
+					assert.Fail(t, fmt.Sprintf("%s/%s: task %d (%q) has %q; the role fails or it does not run, and no task hides others", containerRuntimeRole, file, i+1, k.name(), key))
 				default:
-					t.Errorf("%s/%s: task %d (%q) has the key %q, which is not a keyword or an ansible.builtin.<module>; a short-form module name is a task the class tests cannot read", containerRuntimeRole, file, i+1, k.name(), key)
+					assert.Fail(t, fmt.Sprintf("%s/%s: task %d (%q) has the key %q, which is not a keyword or an ansible.builtin.<module>; a short-form module name is a task the class tests cannot read", containerRuntimeRole, file, i+1, k.name(), key))
 				}
 			}
 			if file == "tasks/subid.yml" {
 				for _, key := range []string{"failed_when", "changed_when", "check_mode", "vars"} {
 					if _, ok := k[key]; ok {
-						t.Errorf("%s/%s: task %d (%q) has %q; the allocation's tasks take no such key", containerRuntimeRole, file, i+1, k.name(), key)
+						assert.Fail(t, fmt.Sprintf("%s/%s: task %d (%q) has %q; the allocation's tasks take no such key", containerRuntimeRole, file, i+1, k.name(), key))
 					}
 				}
 			}
 		}
 	}
 	got := roleTasks(t, "tasks/subid.yml")
-	if len(got) != len(subidTasks) {
-		t.Fatalf("%s/tasks/subid.yml has %d tasks, the pinned list has %d; evaluate the change on constructed files and update subidTasks", containerRuntimeRole, len(got), len(subidTasks))
-	}
+	require.Equal(t, len(subidTasks), len(got), "%s/tasks/subid.yml has %d tasks, the pinned list has %d; evaluate the change on constructed files and update subidTasks", containerRuntimeRole, len(got), len(subidTasks))
 	for i, k := range got {
 		module := ""
 		for key := range k {
@@ -306,15 +279,14 @@ func TestContainerRuntimeTasksCannotHideAWeakening(t *testing.T) {
 		if w, ok := k["when"]; ok {
 			when = fold(fmt.Sprint(w))
 		}
-		if want := subidTasks[i]; k.name() != want[0] || module != want[1] || when != want[2] {
-			t.Errorf("%s/tasks/subid.yml: task %d is (%q, %s, when %q), the pinned task is (%q, %s, when %q)", containerRuntimeRole, i+1, k.name(), module, when, want[0], want[1], want[2])
-		}
+		want := subidTasks[i]
+		assert.True(t, k.name() == want[0] && module == want[1] && when == want[2], "%s/tasks/subid.yml: task %d is (%q, %s, when %q), the pinned task is (%q, %s, when %q)", containerRuntimeRole, i+1, k.name(), module, when, want[0], want[1], want[2])
 	}
 	// main.yml writes only what the role means to write: one drop-in directory
 	// and one drop-in file, no other file, copy, template or line.
 	for _, k := range roleTasks(t, "tasks/main.yml") {
 		if v, ok := k["ansible.builtin.include_tasks"]; ok && v != "subid.yml" {
-			t.Errorf("%s/tasks/main.yml: %q includes %v; the only file the role includes is subid.yml, which is pinned above", containerRuntimeRole, k.name(), v)
+			assert.Fail(t, fmt.Sprintf("%s/tasks/main.yml: %q includes %v; the only file the role includes is subid.yml, which is pinned above", containerRuntimeRole, k.name(), v))
 		}
 	}
 	counts := map[string]int{}
@@ -328,9 +300,7 @@ func TestContainerRuntimeTasksCannotHideAWeakening(t *testing.T) {
 	}
 	want := map[string]int{"ansible.builtin.file": 1, "ansible.builtin.copy": 1}
 	for _, key := range []string{"ansible.builtin.file", "ansible.builtin.copy", "ansible.builtin.template", "ansible.builtin.lineinfile", "ansible.builtin.blockinfile", "ansible.builtin.replace"} {
-		if counts[key] != want[key] {
-			t.Errorf("%s/tasks/main.yml has %d %s tasks, want %d (the drop-in directory and the drop-in file only; subordinate id rows are written by subid.yml)", containerRuntimeRole, counts[key], key, want[key])
-		}
+		assert.Equal(t, want[key], counts[key], "%s/tasks/main.yml has %d %s tasks, want %d (the drop-in directory and the drop-in file only; subordinate id rows are written by subid.yml)", containerRuntimeRole, counts[key], key, want[key])
 	}
 }
 
@@ -354,31 +324,19 @@ func TestContainerRuntimeDropInHasItsDirectory(t *testing.T) {
 			}
 		}
 	}
-	if copyAt < 0 || dirAt < 0 {
-		t.Fatalf("%s/tasks/main.yml: want a directory task and a copy of the drop-in; found directory at %d, copy at %d", containerRuntimeRole, dirAt+1, copyAt+1)
-	}
-	if dirAt > copyAt {
-		t.Errorf("%s/tasks/main.yml: the drop-in directory task (%d) comes after the copy (%d)", containerRuntimeRole, dirAt+1, copyAt+1)
-	}
-	if filepath.Dir(dest) != dirPath {
-		t.Errorf("%s/tasks/main.yml: the drop-in is copied to %q but the directory task makes %q", containerRuntimeRole, dest, dirPath)
-	}
-	if strings.Contains(dest, "user@.service.d") || !strings.Contains(dest, "user@{{ container_runtime_uid }}.service.d") {
-		t.Errorf("%s/tasks/main.yml: the drop-in %q is not for the runner's manager only (user@<uid>.service.d)", containerRuntimeRole, dest)
-	}
+	require.True(t, copyAt >= 0 && dirAt >= 0, "%s/tasks/main.yml: want a directory task and a copy of the drop-in; found directory at %d, copy at %d", containerRuntimeRole, dirAt+1, copyAt+1)
+	assert.LessOrEqual(t, dirAt, copyAt, "%s/tasks/main.yml: the drop-in directory task (%d) comes after the copy (%d)", containerRuntimeRole, dirAt+1, copyAt+1)
+	assert.Equal(t, dirPath, filepath.Dir(dest), "%s/tasks/main.yml: the drop-in is copied to %q but the directory task makes %q", containerRuntimeRole, dest, dirPath)
+	assert.True(t, !strings.Contains(dest, "user@.service.d") && strings.Contains(dest, "user@{{ container_runtime_uid }}.service.d"), "%s/tasks/main.yml: the drop-in %q is not for the runner's manager only (user@<uid>.service.d)", containerRuntimeRole, dest)
 	dm, cm := tasks[dirAt].args("ansible.builtin.file"), tasks[copyAt].args("ansible.builtin.copy")
 	for _, c := range []struct {
 		what string
 		got  map[string]any
 		mode string
 	}{{"directory", dm, "0755"}, {"drop-in", cm, "0644"}} {
-		if c.got["owner"] != "root" || c.got["group"] != "root" || c.got["mode"] != c.mode {
-			t.Errorf("%s/tasks/main.yml: the %s is owner %v group %v mode %v; want root, root, %s (it configures every service of a user's manager, and an existing one with another owner is corrected)", containerRuntimeRole, c.what, c.got["owner"], c.got["group"], c.got["mode"], c.mode)
-		}
+		assert.True(t, c.got["owner"] == "root" && c.got["group"] == "root" && c.got["mode"] == c.mode, "%s/tasks/main.yml: the %s is owner %v group %v mode %v; want root, root, %s (it configures every service of a user's manager, and an existing one with another owner is corrected)", containerRuntimeRole, c.what, c.got["owner"], c.got["group"], c.got["mode"], c.mode)
 	}
-	if !strings.Contains(tasks[dirAt].text(), "container_runtime_controllers") || !strings.Contains(tasks[copyAt].text(), "container_runtime_controllers") {
-		t.Errorf("%s/tasks/main.yml: the directory and the drop-in are made under different conditions", containerRuntimeRole)
-	}
+	assert.True(t, strings.Contains(tasks[dirAt].text(), "container_runtime_controllers") && strings.Contains(tasks[copyAt].text(), "container_runtime_controllers"), "%s/tasks/main.yml: the directory and the drop-in are made under different conditions", containerRuntimeRole)
 }
 
 // probeTask returns the probe container's task, its argv and its script (the
@@ -395,12 +353,10 @@ func probeTask(t *testing.T) (roleTask, []string, string) {
 				argv = append(argv, fmt.Sprint(e))
 			}
 		}
-		if len(argv) == 0 {
-			t.Fatalf("%s/tasks/main.yml: the probe task has no argv", containerRuntimeRole)
-		}
+		require.NotEmpty(t, argv, "%s/tasks/main.yml: the probe task has no argv", containerRuntimeRole)
 		return k, argv, argv[len(argv)-1]
 	}
-	t.Fatalf("%s/tasks/main.yml: no probe container task", containerRuntimeRole)
+	require.Fail(t, fmt.Sprintf("%s/tasks/main.yml: no probe container task", containerRuntimeRole))
 	return nil, nil, ""
 }
 
@@ -423,7 +379,7 @@ func readmeRunCommand(t *testing.T) string {
 		}
 		return fold(strings.Join(cmd, " "))
 	}
-	t.Fatalf("%s: no run command (`podman run --rm --name nova-functional-run ...`)", functionalImageReadme)
+	require.Fail(t, fmt.Sprintf("%s: no run command (`podman run --rm --name nova-functional-run ...`)", functionalImageReadme))
 	return ""
 }
 
@@ -438,9 +394,7 @@ func TestFunctionalImageReadmeRunCommandCarriesEveryFlag(t *testing.T) {
 		"--read-only", "--tmpfs /tmp:", "--timeout ", "--init", "--security-opt no-new-privileges", "--cap-drop all",
 		"-v \"$PWD\":/src:ro", "-v nova-gomod:/gomodcache:ro",
 	} {
-		if !strings.Contains(cmd+" ", want) {
-			t.Errorf("%s: the run command lacks %q: %s", functionalImageReadme, want, cmd)
-		}
+		assert.Contains(t, cmd+" ", want, "%s: the run command lacks %q: %s", functionalImageReadme, want, cmd)
 	}
 }
 
@@ -454,51 +408,32 @@ func TestContainerRuntimeProbeValuesAreNumbers(t *testing.T) {
 	task, argv, script := probeTask(t)
 	wantKeys := map[string]bool{"name": true, "become": true, "become_user": true, "environment": true, "ansible.builtin.command": true, "register": true, "changed_when": true, "when": true}
 	for key := range task {
-		if !wantKeys[key] {
-			t.Errorf("%s/tasks/main.yml: the probe task has the key %q; it takes only %v (no failed_when, loop, ignore_errors or the like that could make a failed probe pass)", containerRuntimeRole, key, wantKeys)
-		}
+		assert.True(t, wantKeys[key], "%s/tasks/main.yml: the probe task has the key %q; it takes only %v (no failed_when, loop, ignore_errors or the like that could make a failed probe pass)", containerRuntimeRole, key, wantKeys)
 	}
-	if w := fold(fmt.Sprint(task["when"])); w != "not ansible_check_mode" {
-		t.Errorf("%s/tasks/main.yml: the probe runs when %q; it runs whenever the play is not in check mode, and always then", containerRuntimeRole, w)
-	}
-	if task["changed_when"] != false {
-		t.Errorf("%s/tasks/main.yml: the probe's changed_when is %v, want false", containerRuntimeRole, task["changed_when"])
-	}
+	w := fold(fmt.Sprint(task["when"]))
+	assert.Equal(t, "not ansible_check_mode", w, "%s/tasks/main.yml: the probe runs when %q; it runs whenever the play is not in check mode, and always then", containerRuntimeRole, w)
+	assert.Equal(t, false, task["changed_when"], "%s/tasks/main.yml: the probe's changed_when is %v, want false", containerRuntimeRole, task["changed_when"])
 	joined := strings.Join(argv[:len(argv)-1], " ")
 	line := regexp.MustCompile(`WANT_CPU=\{\{ (.*?) \}\} 100000`).FindStringSubmatch(joined)
-	if line == nil {
-		t.Fatalf("%s/tasks/main.yml: no WANT_CPU argument", containerRuntimeRole)
-	}
-	if !strings.Contains(line[1], "| float") || !strings.Contains(line[1], "| int") || !strings.Contains(line[1], "round") {
-		t.Errorf("%s/tasks/main.yml: WANT_CPU is %q; a string times 100000 repeats the string and a fraction gives 150000.0, so it must be (cpus | float * 100000) | round | int", containerRuntimeRole, line[1])
-	}
+	require.NotNil(t, line, "%s/tasks/main.yml: no WANT_CPU argument", containerRuntimeRole)
+	assert.True(t, strings.Contains(line[1], "| float") && strings.Contains(line[1], "| int") && strings.Contains(line[1], "round"), "%s/tasks/main.yml: WANT_CPU is %q; a string times 100000 repeats the string and a fraction gives 150000.0, so it must be (cpus | float * 100000) | round | int", containerRuntimeRole, line[1])
 	have := map[string]bool{}
 	for _, a := range argv {
 		have[a] = true
 	}
 	for _, want := range []string{"--security-opt", "no-new-privileges", "--cap-drop", "all", "--memory", "--memory-swap", "--pids-limit", "--cpus", "--read-only", "--network", "--ipc", "--timeout"} {
-		if !have[want] {
-			t.Errorf("%s/tasks/main.yml: the probe's argv lacks %q", containerRuntimeRole, want)
-		}
+		assert.True(t, have[want], "%s/tasks/main.yml: the probe's argv lacks %q", containerRuntimeRole, want)
 	}
 	for _, want := range []string{"pids.max", "memory.max", "memory.swap.max", "cpu.max", "/sys/class/net", "/proc/self/mountinfo", "touch /etc/probe-rootfs", "/tmp/probe-tmp", "NoNewPrivs", "CapBnd"} {
-		if !strings.Contains(script, want) {
-			t.Errorf("%s/tasks/main.yml: the probe's script never reads %q", containerRuntimeRole, want)
-		}
+		assert.Contains(t, script, want, "%s/tasks/main.yml: the probe's script never reads %q", containerRuntimeRole, want)
 	}
-	if strings.Contains(script, "touch /probe-rootfs") {
-		t.Errorf("%s/tasks/main.yml: the probe writes to / to prove the root filesystem read-only; / is refused to root with every capability dropped whatever the mount is, so the check always passes. Read the mount from /proc/self/mountinfo and write to /etc", containerRuntimeRole)
-	}
+	assert.NotContains(t, script, "touch /probe-rootfs", "%s/tasks/main.yml: the probe writes to / to prove the root filesystem read-only; / is refused to root with every capability dropped whatever the mount is, so the check always passes. Read the mount from /proc/self/mountinfo and write to /etc", containerRuntimeRole)
 	for code := 11; code <= 19; code++ {
-		if !strings.Contains(script, fmt.Sprintf("exit %d", code)) {
-			t.Errorf("%s/tasks/main.yml: the probe's script has no `exit %d`; one of its checks was deleted", containerRuntimeRole, code)
-		}
+		assert.Contains(t, script, fmt.Sprintf("exit %d", code), "%s/tasks/main.yml: the probe's script has no `exit %d`; one of its checks was deleted", containerRuntimeRole, code)
 	}
 	cmd := readmeRunCommand(t)
 	for _, want := range []string{"--security-opt no-new-privileges", "--cap-drop all", "--memory-swap "} {
-		if !strings.Contains(cmd, want) {
-			t.Errorf("%s: the run command lacks %s, which the runtime probe proves", functionalImageReadme, want)
-		}
+		assert.Contains(t, cmd, want, "%s: the run command lacks %s, which the runtime probe proves", functionalImageReadme, want)
 	}
 }
 
@@ -509,14 +444,10 @@ func TestFunctionalImageReadmeKeepsTheBuildCachePerTrustDomain(t *testing.T) {
 	t.Parallel()
 	readme := readFile(t, filepath.Join(repoRoot(t), filepath.FromSlash(functionalImageReadme)))
 	for _, m := range regexp.MustCompile(`-v (nova-gocache\S*):/gocache`).FindAllStringSubmatch(readme, -1) {
-		if !strings.HasPrefix(m[1], "nova-gocache-") {
-			t.Errorf("%s: a run mounts %q, one cache name for every run; name it for its trust domain (nova-gocache-<domain>)", functionalImageReadme, m[1])
-		}
+		assert.True(t, strings.HasPrefix(m[1], "nova-gocache-"), "%s: a run mounts %q, one cache name for every run; name it for its trust domain (nova-gocache-<domain>)", functionalImageReadme, m[1])
 	}
 	for _, want := range []string{"trust domain", "one writer at a time", "du -sm /gocache", "podman volume rm", "unreviewed"} {
-		if !strings.Contains(readme, want) {
-			t.Errorf("%s: the build cache section does not say %q", functionalImageReadme, want)
-		}
+		assert.Contains(t, readme, want, "%s: the build cache section does not say %q", functionalImageReadme, want)
 	}
 }
 
@@ -534,7 +465,7 @@ func TestFunctionalImageBuildLeavesNothingBehind(t *testing.T) {
 		case strings.HasPrefix(in, "FROM "):
 			stage++
 		case strings.HasPrefix(in, "ENV ") && strings.Contains(in, "DEBIAN_FRONTEND"):
-			t.Errorf("%s: %q puts DEBIAN_FRONTEND in the image's environment; use ARG DEBIAN_FRONTEND=noninteractive in each stage that runs apt", functionalImageFile, in)
+			assert.Fail(t, fmt.Sprintf("%s: %q puts DEBIAN_FRONTEND in the image's environment; use ARG DEBIAN_FRONTEND=noninteractive in each stage that runs apt", functionalImageFile, in))
 		case strings.HasPrefix(in, "ARG DEBIAN_FRONTEND="):
 			frontend[stage] = true
 		case strings.HasPrefix(in, "RUN ") && strings.Contains(in, "apt-get"):
@@ -544,22 +475,16 @@ func TestFunctionalImageBuildLeavesNothingBehind(t *testing.T) {
 			first := in[:strings.Index(in, "Verify-Peer=false")]
 			after := in[strings.LastIndex(in, "Verify-Peer=false"):]
 			after = after[strings.Index(after, " "):]
-			if !strings.Contains(first, "dpkg-query -W") {
-				t.Errorf("%s: the RUN that reads the snapshot without TLS checks does not record the installed versions before it", functionalImageFile)
-			}
+			assert.Contains(t, first, "dpkg-query -W", "%s: the RUN that reads the snapshot without TLS checks does not record the installed versions before it", functionalImageFile)
 			for _, want := range []string{"apt-get update", "comm -13", "apt-cache policy", "Candidate:", "exit 1"} {
-				if !strings.Contains(after, want) {
-					t.Errorf("%s: after the call without TLS checks the RUN lacks %q; it must refresh the index with TLS on and fail when any package that call installed differs from the verified candidate", functionalImageFile, want)
-				}
+				assert.Contains(t, after, want, "%s: after the call without TLS checks the RUN lacks %q; it must refresh the index with TLS on and fail when any package that call installed differs from the verified candidate", functionalImageFile, want)
 			}
 		}
-		if strings.HasPrefix(in, "RUN ") && strings.Contains(in, "postgresql-16") && !strings.Contains(in, "ssl-cert-snakeoil.key") {
-			t.Errorf("%s: the RUN that installs postgresql-16 leaves the generated snakeoil TLS private key in the layer", functionalImageFile)
+		if strings.HasPrefix(in, "RUN ") && strings.Contains(in, "postgresql-16") {
+			assert.Contains(t, in, "ssl-cert-snakeoil.key", "%s: the RUN that installs postgresql-16 leaves the generated snakeoil TLS private key in the layer", functionalImageFile)
 		}
 	}
 	for st := range runsApt {
-		if !frontend[st] {
-			t.Errorf("%s: stage %d runs apt-get with no ARG DEBIAN_FRONTEND=noninteractive", functionalImageFile, st)
-		}
+		assert.True(t, frontend[st], "%s: stage %d runs apt-get with no ARG DEBIAN_FRONTEND=noninteractive", functionalImageFile, st)
 	}
 }

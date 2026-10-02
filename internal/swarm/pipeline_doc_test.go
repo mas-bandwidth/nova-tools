@@ -3,8 +3,10 @@ package swarm
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // SPEC-SWARM.md, issue #856: a card is a pipeline of stateless model calls, not
@@ -15,9 +17,7 @@ func TestSpecSwarmNamesTheCardPipeline(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
-	if err != nil {
-		t.Fatalf("SPEC-SWARM.md is missing: %s", err)
-	}
+	require.NoError(t, err, "SPEC-SWARM.md is missing: %s", err)
 	doc := string(raw)
 	for _, phrase := range []string{
 		"## The card is a pipeline, not a loop (issue #856)",
@@ -34,8 +34,6 @@ func TestSpecSwarmNamesTheCardPipeline(t *testing.T) {
 		"TestExploreOverTurnBudgetIsStoppedWithTheBudgetNamed",
 		"TestTheFixCardRunsInThreeModelCalls",
 	} {
-		if !strings.Contains(doc, phrase) {
-			t.Errorf("SPEC-SWARM.md does not name the card-pipeline rule keyed by %q", phrase)
-		}
+		assert.Contains(t, doc, phrase, "SPEC-SWARM.md does not name the card-pipeline rule keyed by %q", phrase)
 	}
 }

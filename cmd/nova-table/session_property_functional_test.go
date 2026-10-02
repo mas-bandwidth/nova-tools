@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/redis/go-redis/v9"
 	"io"
 	"math/rand"
 	"regexp"
@@ -16,7 +17,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // This execution trace observes a bounded subset of TableSession: answered and
@@ -78,15 +80,15 @@ func (in *sessionTraceInput) finish() {
 		} else if strings.Contains(step.Stderr, "maximum 1048576 bytes") {
 			step.Code = 2
 		} else {
-			in.t.Fatalf("unclassified shell output at action %d: %q", in.active, step.Stderr)
+			require.FailNowf(in.t, "unclassified shell output", "unclassified shell output at action %d: %q", in.active, step.Stderr)
 		}
 	}
 	all, err := in.admin.XRange(context.Background(), ntable.ChangesKey(in.table), "-", "+").Result()
 	if err != nil {
-		in.t.Fatal(err)
+		require.NoError(in.t, err)
 	}
 	if len(all) < in.seen {
-		in.t.Fatal("receipt ledger shrank")
+		require.GreaterOrEqual(in.t, len(all), in.seen, "receipt ledger shrank")
 	}
 	step.Receipts = append([]redis.XMessage{}, all[in.seen:]...)
 	in.seen = len(all)
@@ -258,13 +260,9 @@ func TestShellRandomSequencesProduceSessionTrace(t *testing.T) {
 				}, &out, &errs)
 				input.finish()
 				raw, err := json.Marshal(tr)
-				if err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, err, "%v", err)
 				t.Logf("SESSION_TRACE %s", raw)
-				if err := checkSessionExecution(tr); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, checkSessionExecution(tr))
 				for _, step := range tr.Steps {
 					kind := step.Action.Kind
 					if step.Action.Lost {
@@ -277,8 +275,6 @@ func TestShellRandomSequencesProduceSessionTrace(t *testing.T) {
 	}
 	t.Logf("SESSION_COVERAGE %v", coverage)
 	for _, kind := range []string{"ok", "no", "usage", "long", "lost", "quit"} {
-		if coverage[kind] == 0 {
-			t.Errorf("generator did not execute %s", kind)
-		}
+		assert.NotEqualValues(t, 0, coverage[kind], "generator did not execute %s", kind)
 	}
 }

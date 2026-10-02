@@ -101,11 +101,15 @@ type landBatch struct {
 	Dir    string   `json:"dir,omitempty"`
 	Tip    string   `json:"tip,omitempty"`
 	// Fact is the merge fact reported for a refusal (conflict, red,
-	// rejected); empty when nothing was reported and the store is unchanged.
-	// In a dry run it is the fact land would report, and nothing was.
-	Fact   string `json:"fact,omitempty"`
-	Reason string `json:"reason,omitempty"`
-	DryRun bool   `json:"dry_run,omitempty"`
+	// rejected); empty when nothing was reported and the store is unchanged,
+	// and always empty in a dry run, which reports nothing.
+	Fact string `json:"fact,omitempty"`
+	// WouldRecord is, in a dry run, the fact land would report for the refusal,
+	// and nothing was: a reader of fact never has to check dry_run to know
+	// whether the store holds it.
+	WouldRecord string `json:"would_record,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	DryRun      bool   `json:"dry_run,omitempty"`
 	// Times is how long each of the batch's steps took; nil for a batch refused before
 	// its git ran, and for a dry run.
 	Times *landTimes `json:"times,omitempty"`
@@ -160,6 +164,9 @@ func (b landBatch) line() string {
 	}
 	if b.Fact != "" {
 		l += " fact=" + b.Fact
+	}
+	if b.WouldRecord != "" {
+		l += " would_record=" + b.WouldRecord
 	}
 	if b.DryRun {
 		l += " dry_run=yes"
@@ -331,8 +338,8 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 		}
 		fmt.Fprintln(w, b.line())
 		switch {
-		case b.Fact != "" && l.dry:
-			fmt.Fprintf(w, "NOTE land would report this as merge --%s and stop stream %s; nothing was reported (dry run)\n", b.Fact, oneline.Field(b.Stream))
+		case b.WouldRecord != "":
+			fmt.Fprintf(w, "NOTE land would report this as merge --%s and stop stream %s; nothing was reported (dry run)\n", b.WouldRecord, oneline.Field(b.Stream))
 		case b.Fact != "":
 			fmt.Fprintf(w, "NOTE the stream is stopped (%s); run: nova-sprint inbox\n", b.Fact)
 		case b.Status == "refused" && !l.dry:
@@ -542,7 +549,7 @@ func (l *lander) placeWhy(stream string, cards []landCard) string {
 	}
 	out := strings.Join(why, ", and ") + "; run: nova-sprint land " + strings.Join(flags, " ")
 	for _, c := range cards {
-		if w := headNotCommit(c); w != "" {
+		if w := headNotCommit(stream, c); w != "" {
 			out += "; " + w
 		}
 	}
@@ -555,7 +562,7 @@ func (l *lander) placeWhy(stream string, cards []landCard) string {
 // batch that lands, that card refused as land reports it, with the conflict
 // fact land would record and the stream stop; nothing is recorded.
 func (l *lander) dryBatch(b landBatch, cards []landCard) (landed, ok bool) {
-	cut := slices.IndexFunc(cards, func(c landCard) bool { return headNotCommit(c) != "" })
+	cut := slices.IndexFunc(cards, func(c landCard) bool { return headNotCommit(b.Stream, c) != "" })
 	if cut < 0 {
 		b.Status = "ok"
 		l.tag(context.Background(), &b, cards)
@@ -569,7 +576,7 @@ func (l *lander) dryBatch(b landBatch, cards []landCard) (landed, ok bool) {
 		l.out = append(l.out, before)
 	}
 	c := cards[cut]
-	l.out = append(l.out, landBatch{Stream: b.Stream, Status: "refused", Cards: 1, IDs: []string{c.id}, Fact: "conflict", Reason: headNotCommit(c), DryRun: true})
+	l.out = append(l.out, landBatch{Stream: b.Stream, Status: "refused", Cards: 1, IDs: []string{c.id}, WouldRecord: "conflict", Reason: headNotCommit(b.Stream, c), DryRun: true})
 	return false, true
 }
 
@@ -577,12 +584,17 @@ func (l *lander) dryBatch(b landBatch, cards []landCard) (landed, ok bool) {
 // it is not a commit id (a finish without --head records the card's id); ""
 // when it is one. land meets it at the card's merge (mergeHead) and its dry
 // run before any git (dryBatch), in these words.
-func headNotCommit(c landCard) string {
+//
+// A land that meets it records the conflict fact, which stops the stream, so the
+// remedy ends with the resume that starts it again: return, rework and resume,
+// in that order.
+func headNotCommit(stream string, c landCard) string {
 	if shaRE.MatchString(c.head) {
 		return ""
 	}
 	return "the head " + dashed(c.head) + " of " + c.id + " is not a commit id (a finish without --head records the card's id); run: nova-sprint return " + c.id +
-		" --reason 'its head is not a commit', then nova-sprint rework " + c.id + " --fix 'finish with --head <commit>'"
+		" --reason 'its head is not a commit', then nova-sprint rework " + c.id + " --fix 'finish with --head <commit>', then (a land that met it stopped the stream) nova-sprint resume --stream " +
+		stream + " --did 'returned " + c.id + " for rework'"
 }
 
 // conflictCard is a card that did not merge, with git's words.
@@ -832,7 +844,7 @@ var notOnOrigin = []string{"not our ref", "couldn't find remote ref", "no such r
 // hook, the disk, the network), with any merge in progress aborted; both ""
 // when it merged. A head the clone lacks is fetched from origin by its id once.
 func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env string) {
-	if why := headNotCommit(c); why != "" {
+	if why := headNotCommit(stream, c); why != "" {
 		return why, ""
 	}
 	merge := func() error {
@@ -878,12 +890,7 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 
 // containsAny says s holds one of words.
 func containsAny(s string, words []string) bool {
-	for _, w := range words {
-		if strings.Contains(s, w) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(words, func(w string) bool { return strings.Contains(s, w) })
 }
 
 // runCheck runs --check in the clone: "" when it passed or there is none.

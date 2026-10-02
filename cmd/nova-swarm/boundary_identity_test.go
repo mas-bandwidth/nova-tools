@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Issue #1665 / PR #2421: Worker Boundary Identity Delivery.
@@ -24,9 +28,7 @@ func TestNativeDrainDeliversPoolIdentityToChild(t *testing.T) {
 	write(t, filepath.Join(root, "identity.tsv"),
 		"owner\tname\temail\npool-owner\tNative Drain Worker\tdrain-worker@example.com\n")
 
-	if err := buildShared(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, buildShared())
 	bin := builtHarness
 	cardPath := filepath.Join(root, "card.md")
 	write(t, cardPath, "native drain card\nFAKE-GIT-COMMIT\nFAKE-FINDINGS 0\n")
@@ -66,26 +68,21 @@ func TestNativeDrainDeliversPoolIdentityToChild(t *testing.T) {
 		"--no-wall",
 	}, strings.NewReader(""), &stdout, &stderr, time.Now())
 
-	if rc != 0 {
-		t.Fatalf("native run exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
-	}
+	require.Equal(t, 0, rc, "native run exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 
 	jobDir := filepath.Join(slot, "jobs", label)
 	commitIdentityPath := filepath.Join(jobDir, "commit-identity")
 	raw, err := os.ReadFile(commitIdentityPath)
 	if err != nil {
 		errRaw, _ := os.ReadFile(filepath.Join(jobDir, "commit-identity-err"))
-		t.Fatalf("failed to read commit-identity: %v; harness git err: %s", err, string(errRaw))
+		require.Fail(t, fmt.Sprintf("failed to read commit-identity: %v; harness git err: %s", err, string(errRaw)))
 	}
 
 	got := strings.TrimSpace(string(raw))
 	want := "Native Drain Worker <drain-worker@example.com> Native Drain Worker <drain-worker@example.com>"
-	if got != want {
-		t.Errorf("native harness commit identity = %q, want %q", got, want)
-	}
-	if strings.Contains(got, "Hostile Ghost") || strings.Contains(got, "ghost@example.com") {
-		t.Errorf("hostile bench gitconfig leaked into native harness commit: %q", got)
-	}
+	assert.Equal(t, want, got, "native harness commit identity = %q, want %q", got, want)
+	assert.NotContains(t, got, "Hostile Ghost", "hostile bench gitconfig leaked into native harness commit: %q", got)
+	assert.NotContains(t, got, "ghost@example.com", "hostile bench gitconfig leaked into native harness commit: %q", got)
 }
 
 func TestBoundaryIdentityNegativeControlFallsBackToBenchConfigOrFails(t *testing.T) {
@@ -104,9 +101,7 @@ func TestBoundaryIdentityNegativeControlFallsBackToBenchConfigOrFails(t *testing
 	// Negative control (unprotected boundary):
 	// A child process inheriting benchConfig without pool identity commits as the bench ghost.
 	repoNegative := filepath.Join(t.TempDir(), "repo-neg")
-	if err := os.MkdirAll(repoNegative, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(repoNegative, 0o755))
 	for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", "init"}} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repoNegative
@@ -115,25 +110,18 @@ func TestBoundaryIdentityNegativeControlFallsBackToBenchConfigOrFails(t *testing
 			"HOME=" + benchHome,
 			"GIT_CONFIG_GLOBAL=" + benchConfig,
 		}
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v: %s", args, err, out)
-		}
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v failed: %s", args, out)
 	}
 	outNeg, err := exec.Command("git", "-C", repoNegative, "log", "-1", "--format=%an <%ae>").CombinedOutput()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	gotNeg := strings.TrimSpace(string(outNeg))
-	if gotNeg != "Hostile Ghost <ghost@example.com>" {
-		t.Fatalf("negative control expected hostile ghost identity %q, got %q", "Hostile Ghost <ghost@example.com>", gotNeg)
-	}
+	require.Equal(t, "Hostile Ghost <ghost@example.com>", gotNeg, "negative control expected hostile ghost identity %q, got %q", "Hostile Ghost <ghost@example.com>", gotNeg)
 
 	// Positive control (protected boundary):
 	// A child process with pool identity and git config isolation commits as pool identity.
 	repoPositive := filepath.Join(t.TempDir(), "repo-pos")
-	if err := os.MkdirAll(repoPositive, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(repoPositive, 0o755))
 	for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", "init"}} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repoPositive
@@ -147,18 +135,13 @@ func TestBoundaryIdentityNegativeControlFallsBackToBenchConfigOrFails(t *testing
 			"GIT_COMMITTER_NAME=Pool Identity",
 			"GIT_COMMITTER_EMAIL=pool@example.com",
 		}
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v: %s", args, err, out)
-		}
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v failed: %s", args, out)
 	}
 	outPos, err := exec.Command("git", "-C", repoPositive, "log", "-1", "--format=%an <%ae>").CombinedOutput()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	gotPos := strings.TrimSpace(string(outPos))
-	if gotPos != "Pool Identity <pool@example.com>" {
-		t.Fatalf("positive control expected pool identity %q, got %q", "Pool Identity <pool@example.com>", gotPos)
-	}
+	require.Equal(t, "Pool Identity <pool@example.com>", gotPos, "positive control expected pool identity %q, got %q", "Pool Identity <pool@example.com>", gotPos)
 }
 
 func restoreEnv(key, val string) {
@@ -176,13 +159,12 @@ func TestNativeRefusesMissingPoolIdentityBeforeHarness(t *testing.T) {
 
 	root, slot := aSlot(t)
 	// Remove identity.tsv so the pool root has no identity file.
-	if err := os.Remove(filepath.Join(root, "identity.tsv")); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
+	err := os.Remove(filepath.Join(root, "identity.tsv"))
+	if !os.IsNotExist(err) {
+		require.NoError(t, err)
 	}
 
-	if err := buildShared(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, buildShared())
 	bin := builtHarness
 	cardPath := filepath.Join(root, "card.md")
 	write(t, cardPath, "native missing identity card\nFAKE-GIT-COMMIT\nFAKE-FINDINGS 0\n")
@@ -230,34 +212,25 @@ func TestNativeRefusesMissingPoolIdentityBeforeHarness(t *testing.T) {
 		"--no-wall",
 	}, strings.NewReader(""), &stdout, &stderr, time.Now())
 
-	if rc != 2 {
-		t.Fatalf("native run exit = %d, want 2 (refusal);\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "NATIVE REFUSED") {
-		t.Fatalf("stderr does not contain NATIVE REFUSED:\n%s", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "refusing to launch under nobody's name") {
-		t.Fatalf("stderr does not contain expected refusal message:\n%s", stderr.String())
-	}
+	require.Equal(t, 2, rc, "native run exit = %d, want 2 (refusal);\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
+	require.Contains(t, stderr.String(), "NATIVE REFUSED", "stderr does not contain NATIVE REFUSED:\n%s", stderr.String())
+	require.Contains(t, stderr.String(), "refusing to launch under nobody's name", "stderr does not contain expected refusal message:\n%s", stderr.String())
 	// #3193: the refusal names identity.tsv and the one remedy, the fleet converge.
-	if line := stderr.String(); !strings.Contains(line, "identity.tsv") || !strings.Contains(line, "make -C fleet converge") {
-		t.Fatalf("the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
-	}
+	line := stderr.String()
+	require.Contains(t, line, "identity.tsv", "the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
+	require.Contains(t, line, "make -C fleet converge", "the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
 
 	// Verify harness was never started: neither native.log nor harness-output.log was created.
 	nativeLog := filepath.Join(slot, "native.log")
-	if _, err := os.Stat(nativeLog); !os.IsNotExist(err) {
-		t.Errorf("native.log exists at %s, want harness never started", nativeLog)
-	}
+	_, err = os.Stat(nativeLog)
+	assert.True(t, os.IsNotExist(err), "native.log exists at %s, want harness never started", nativeLog)
 	jobDir := filepath.Join(slot, "jobs", label)
 	harnessOut := filepath.Join(jobDir, "harness-output.log")
-	if _, err := os.Stat(harnessOut); !os.IsNotExist(err) {
-		t.Errorf("harness-output.log exists at %s, want harness never started", harnessOut)
-	}
+	_, err = os.Stat(harnessOut)
+	assert.True(t, os.IsNotExist(err), "harness-output.log exists at %s, want harness never started", harnessOut)
 	commitIdentity := filepath.Join(jobDir, "commit-identity")
-	if _, err := os.Stat(commitIdentity); !os.IsNotExist(err) {
-		t.Errorf("commit-identity exists at %s, harness should not have run", commitIdentity)
-	}
+	_, err = os.Stat(commitIdentity)
+	assert.True(t, os.IsNotExist(err), "commit-identity exists at %s, harness should not have run", commitIdentity)
 }
 
 func TestNativeRefusesMalformedPoolIdentityBeforeHarness(t *testing.T) {
@@ -269,9 +242,7 @@ func TestNativeRefusesMalformedPoolIdentityBeforeHarness(t *testing.T) {
 	// Overwrite identity.tsv with malformed contents (header only, no rows).
 	write(t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\n")
 
-	if err := buildShared(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, buildShared())
 	bin := builtHarness
 	cardPath := filepath.Join(root, "card.md")
 	write(t, cardPath, "native malformed identity card\nFAKE-GIT-COMMIT\nFAKE-FINDINGS 0\n")
@@ -319,32 +290,23 @@ func TestNativeRefusesMalformedPoolIdentityBeforeHarness(t *testing.T) {
 		"--no-wall",
 	}, strings.NewReader(""), &stdout, &stderr, time.Now())
 
-	if rc != 2 {
-		t.Fatalf("native run exit = %d, want 2 (refusal);\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "NATIVE REFUSED") {
-		t.Fatalf("stderr does not contain NATIVE REFUSED:\n%s", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "refusing to launch under nobody's name") {
-		t.Fatalf("stderr does not contain expected refusal message:\n%s", stderr.String())
-	}
+	require.Equal(t, 2, rc, "native run exit = %d, want 2 (refusal);\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
+	require.Contains(t, stderr.String(), "NATIVE REFUSED", "stderr does not contain NATIVE REFUSED:\n%s", stderr.String())
+	require.Contains(t, stderr.String(), "refusing to launch under nobody's name", "stderr does not contain expected refusal message:\n%s", stderr.String())
 	// #3193: the refusal names identity.tsv and the one remedy, the fleet converge.
-	if line := stderr.String(); !strings.Contains(line, "identity.tsv") || !strings.Contains(line, "make -C fleet converge") {
-		t.Fatalf("the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
-	}
+	line := stderr.String()
+	require.Contains(t, line, "identity.tsv", "the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
+	require.Contains(t, line, "make -C fleet converge", "the refusal does not name identity.tsv and the remedy `make -C fleet converge`:\n%s", line)
 
 	// Verify harness was never started: neither native.log nor harness-output.log was created.
 	nativeLog := filepath.Join(slot, "native.log")
-	if _, err := os.Stat(nativeLog); !os.IsNotExist(err) {
-		t.Errorf("native.log exists at %s, want harness never started", nativeLog)
-	}
+	_, err := os.Stat(nativeLog)
+	assert.True(t, os.IsNotExist(err), "native.log exists at %s, want harness never started", nativeLog)
 	jobDir := filepath.Join(slot, "jobs", label)
 	harnessOut := filepath.Join(jobDir, "harness-output.log")
-	if _, err := os.Stat(harnessOut); !os.IsNotExist(err) {
-		t.Errorf("harness-output.log exists at %s, want harness never started", harnessOut)
-	}
+	_, err = os.Stat(harnessOut)
+	assert.True(t, os.IsNotExist(err), "harness-output.log exists at %s, want harness never started", harnessOut)
 	commitIdentity := filepath.Join(jobDir, "commit-identity")
-	if _, err := os.Stat(commitIdentity); !os.IsNotExist(err) {
-		t.Errorf("commit-identity exists at %s, harness should not have run", commitIdentity)
-	}
+	_, err = os.Stat(commitIdentity)
+	assert.True(t, os.IsNotExist(err), "commit-identity exists at %s, harness should not have run", commitIdentity)
 }

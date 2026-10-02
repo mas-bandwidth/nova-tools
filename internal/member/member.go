@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -718,8 +719,11 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				// JudgedOnlyAfterTheBound). A return refused leaves the
 				// launch spent: the read stays for the lateness rule.
 				why := oneLine(r.Report)
-				if r.End == EndStaging {
+				switch {
+				case r.End == EndStaging:
 					why = EndStaging + ": " + oneLine(r.Staging) // the stage's reason, to the inbox
+				case r.End == EndProvider && r.Provider != "":
+					why = EndProvider + ": " + oneLine(r.Provider) // the provider's cause, as Judge names it
 				}
 				reason := cut(fmt.Sprintf("no verdict (ran=%t verdict=%q): %s", r.Ran, r.Verdict, why))
 				args := append(append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, usageArgs(r)...), launched...)
@@ -994,11 +998,7 @@ func (m *Member) start(p Packet) bool {
 // the pass asks for it when it is not (a test's member: a pass is one step).
 func (m *Member) long(work func()) {
 	if m.cfg.Background {
-		m.longs.Add(1)
-		go func() {
-			defer m.longs.Done()
-			work()
-		}()
+		m.longs.Go(work)
 		return
 	}
 	work()
@@ -1038,12 +1038,7 @@ func (m *Member) collect() (acted int) {
 	posted := m.posted
 	m.posted = map[string]post{}
 	m.postMu.Unlock()
-	cards := make([]string, 0, len(posted))
-	for card := range posted {
-		cards = append(cards, card)
-	}
-	sort.Strings(cards)
-	for _, card := range cards {
+	for _, card := range slices.Sorted(maps.Keys(posted)) {
 		po := posted[card]
 		l, ours := m.running[card]
 		if !ours || !l.busy {

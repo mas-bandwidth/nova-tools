@@ -28,9 +28,7 @@ import (
 
 func nativeHarness(t *testing.T) string {
 	t.Helper()
-	if err := buildShared(); err != nil {
-		t.Fatalf("building the binaries these tests run: %v", err)
-	}
+	require.NoError(t, buildShared(), "building the binaries these tests run")
 	return builtHarness
 }
 
@@ -39,9 +37,7 @@ func nativeHarness(t *testing.T) string {
 // repo allow rule reaches the argv. Its compile is shared by every test that asks.
 func nativeSandbox(t *testing.T) string {
 	t.Helper()
-	if err := buildShared(); err != nil {
-		t.Fatalf("building the binaries these tests run: %v", err)
-	}
+	require.NoError(t, buildShared(), "building the binaries these tests run")
 	return builtFakeSandbox
 }
 
@@ -51,9 +47,7 @@ func nativeSandbox(t *testing.T) string {
 // and linked there, never compiled per test.
 func nativeSandboxOnPath(t *testing.T) string {
 	t.Helper()
-	if err := buildShared(); err != nil {
-		t.Fatalf("building the binaries these tests run: %v", err)
-	}
+	require.NoError(t, buildShared(), "building the binaries these tests run")
 	dir := builtPathBin
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return dir
@@ -63,9 +57,7 @@ func nativeSandboxOnPath(t *testing.T) string {
 func sandboxArgv(t *testing.T, jobDir string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(jobDir, "sandbox-argv"))
-	if err != nil {
-		t.Fatalf("the wall recorded no argv under %s: %v", jobDir, err)
-	}
+	require.NoError(t, err, "the wall recorded no argv under %s", jobDir)
 	return string(raw)
 }
 
@@ -78,20 +70,14 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 	bin := nativeHarness(t)
 	_, slot := aSlot(t)
 	jobDir := filepath.Join(slot, "jobs", "a-label")
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(jobDir, 0o755))
 	argv := nativeSandboxArgv([]string{bin}, nativeRunConfig{slotDir: slot}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	harnessDir := filepath.Dir(bin)
-	if !hasFlagPair(argv, "--read", harnessDir) {
-		t.Errorf("the wall argv does not read the harness directory %s:\n%s", harnessDir, strings.Join(argv, " "))
-	}
+	assert.True(t, hasFlagPair(argv, "--read", harnessDir), "the wall argv does not read the harness directory %s:\n%s", harnessDir, strings.Join(argv, " "))
 	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
-		if !hasFlagPair(argv, "--read", "/opt/homebrew") {
-			t.Errorf("the wall argv does not read /opt/homebrew, which exists:\n%s", strings.Join(argv, " "))
-		}
-	} else if hasFlagPair(argv, "--read", "/opt/homebrew") {
-		t.Errorf("the wall argv reads /opt/homebrew, which is absent:\n%s", strings.Join(argv, " "))
+		assert.True(t, hasFlagPair(argv, "--read", "/opt/homebrew"), "the wall argv does not read /opt/homebrew, which exists:\n%s", strings.Join(argv, " "))
+	} else {
+		assert.False(t, hasFlagPair(argv, "--read", "/opt/homebrew"), "the wall argv reads /opt/homebrew, which is absent:\n%s", strings.Join(argv, " "))
 	}
 }
 
@@ -108,9 +94,7 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 	bin := nativeHarness(t)
 	_, slot := aSlot(t)
 	jobDir := filepath.Join(slot, "jobs", "a-label")
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(jobDir, 0o755))
 	// A home of the test's own, with the standard's shape under it, so the assertion is
 	// about the argv and not about the machine the test happens to run on.
 	// The LINUX list, named rather than taken from the machine, so the assertion is the
@@ -119,22 +103,16 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 	// wall checks the resolved target) and on a Mac a temp dir is under /var, itself a link
 	// to /private/var. Resolving here keeps the assertion about the argv.
 	home, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, name := range swarm.ToolchainRootNames("linux") {
-		if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(name)), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Join(home, filepath.FromSlash(name)), 0o755))
 	}
 	// Paths that are NOT the toolchain, made before the argv so an argv that named the
 	// home or globbed it would carry them.
 	var others []string
 	for _, name := range []string{".config/nova-secrets", ".ssh"} {
 		other := filepath.Join(home, filepath.FromSlash(name))
-		if err := os.MkdirAll(other, 0o700); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(other, 0o700))
 		others = append(others, other)
 	}
 	cfg := nativeRunConfig{slotDir: slot, benchHome: home, benchOS: "linux"}
@@ -150,34 +128,22 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 		if root.Exec {
 			want, wrong = "--read", "--read-noexec"
 		}
-		if !hasFlagPair(argv, want, path) {
-			t.Errorf("the wall argv does not carry the toolchain root %s as %s:\n%s", path, want, strings.Join(argv, " "))
-		}
-		if hasFlagPair(argv, wrong, path) {
-			t.Errorf("the toolchain root %s is on %s, which is the other kind:\n%s", path, wrong, strings.Join(argv, " "))
-		}
-		if hasFlagPair(argv, "--write", path) {
-			t.Errorf("the toolchain root %s is a WRITE; it is read-only:\n%s", path, strings.Join(argv, " "))
-		}
+		assert.True(t, hasFlagPair(argv, want, path), "the wall argv does not carry the toolchain root %s as %s:\n%s", path, want, strings.Join(argv, " "))
+		assert.False(t, hasFlagPair(argv, wrong, path), "the toolchain root %s is on %s, which is the other kind:\n%s", path, wrong, strings.Join(argv, " "))
+		assert.False(t, hasFlagPair(argv, "--write", path), "the toolchain root %s is a WRITE; it is read-only:\n%s", path, strings.Join(argv, " "))
 	}
 	// THE MODULE CACHE BY NAME, because it is the root this argv form was added for: READ
 	// WITHOUT EXECUTE, never read+execute. Every `go mod download` on the bench lands
 	// there and the bench user can write to it, so a card able to execute out of it could
 	// run whatever a dependency shipped.
 	modCache := filepath.Join(home, filepath.FromSlash("go/pkg/mod"))
-	if !hasFlagPair(argv, "--read-noexec", modCache) {
-		t.Errorf("the module cache is not granted read-without-execute:\n%s", strings.Join(argv, " "))
-	}
-	if hasFlagPair(argv, "--read", modCache) {
-		t.Errorf("the module cache is on --read, which CARRIES EXECUTE:\n%s", strings.Join(argv, " "))
-	}
+	assert.True(t, hasFlagPair(argv, "--read-noexec", modCache), "the module cache is not granted read-without-execute:\n%s", strings.Join(argv, " "))
+	assert.False(t, hasFlagPair(argv, "--read", modCache), "the module cache is on --read, which CARRIES EXECUTE:\n%s", strings.Join(argv, " "))
 	// NOTHING ELSE UNDER HOME. The wall gained the toolchain and not the home: the key
 	// store and an ssh directory beside it stay outside every named path, on either flag.
 	for _, other := range append(others, home) {
 		for _, flag := range []string{"--read", "--read-noexec", "--write"} {
-			if hasFlagPair(argv, flag, other) {
-				t.Errorf("the wall argv names %s on %s, and it is not a toolchain root:\n%s", other, flag, strings.Join(argv, " "))
-			}
+			assert.False(t, hasFlagPair(argv, flag, other), "the wall argv names %s on %s, and it is not a toolchain root:\n%s", other, flag, strings.Join(argv, " "))
 		}
 	}
 	// ~/go/bin is granted BY NEITHER KIND (the security read of #1364): every
@@ -185,14 +151,10 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 	// provisioned bench ~/go/bin/go is a symlink into the sdk tree and the kernel checks
 	// the resolved target, so a card's PATH still finds the granted toolchain.
 	goBin := filepath.Join(home, filepath.FromSlash("go/bin"))
-	if err := os.MkdirAll(goBin, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(goBin, 0o755))
 	argv = nativeSandboxArgv([]string{bin}, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	for _, flag := range []string{"--read", "--read-noexec", "--write"} {
-		if hasFlagPair(argv, flag, goBin) {
-			t.Errorf("the wall argv grants ~/go/bin on %s:\n%s", flag, strings.Join(argv, " "))
-		}
+		assert.False(t, hasFlagPair(argv, flag, goBin), "the wall argv grants ~/go/bin on %s:\n%s", flag, strings.Join(argv, " "))
 	}
 }
 
@@ -229,9 +191,7 @@ func TestNativeArgvReadsTheDarwinToolchainRoots(t *testing.T) {
 	bin := nativeHarness(t)
 	_, slot := aSlot(t)
 	jobDir := filepath.Join(slot, "jobs", "a-label")
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(jobDir, 0o755))
 	cfg := nativeRunConfig{slotDir: slot, benchHome: t.TempDir(), benchOS: "darwin"}
 	argv := nativeSandboxArgv([]string{bin}, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	for _, r := range system {
@@ -239,27 +199,18 @@ func TestNativeArgvReadsTheDarwinToolchainRoots(t *testing.T) {
 		// exec-carrying kind -- and each reaches the argv RESOLVED, because the grant is
 		// checked against the resolved target and `/opt/homebrew/opt/openjdk` is itself a
 		// symlink into the Cellar.
-		if !r.Exec {
-			t.Errorf("the darwin system root %s is granted without execute; it is a runtime the card runs", r.Name)
-		}
-		if !filepath.IsAbs(r.Path) || strings.HasSuffix(r.Path, string(filepath.Separator)+"bin") {
-			t.Errorf("the darwin root %s resolved to %s, which is not a toolchain tree", r.Name, r.Path)
-		}
-		if !hasFlagPair(argv, "--read", r.Path) {
-			t.Errorf("the wall argv does not carry the darwin toolchain root %s (%s) as --read:\n%s", r.Name, r.Path, strings.Join(argv, " "))
-		}
-		if hasFlagPair(argv, "--write", r.Path) {
-			t.Errorf("the darwin toolchain root %s is a WRITE; it is read-only:\n%s", r.Path, strings.Join(argv, " "))
-		}
+		assert.True(t, r.Exec, "the darwin system root %s is granted without execute; it is a runtime the card runs", r.Name)
+		assert.True(t, filepath.IsAbs(r.Path), "the darwin root %s resolved to %s, which is not a toolchain tree", r.Name, r.Path)
+		assert.False(t, strings.HasSuffix(r.Path, string(filepath.Separator)+"bin"), "the darwin root %s resolved to %s, which is not a toolchain tree", r.Name, r.Path)
+		assert.True(t, hasFlagPair(argv, "--read", r.Path), "the wall argv does not carry the darwin toolchain root %s (%s) as --read:\n%s", r.Name, r.Path, strings.Join(argv, " "))
+		assert.False(t, hasFlagPair(argv, "--write", r.Path), "the darwin toolchain root %s is a WRITE; it is read-only:\n%s", r.Path, strings.Join(argv, " "))
 	}
 	// AND NEVER A DIRECTORY OF LAUNCHERS. `/opt/homebrew/bin` holds a symlink for every
 	// formula on the machine and brew writes it; the grant is on the Cellar tree the runtime
 	// lives in, and naming the bin directory as a toolchain root is the widening the
 	// security read of #1364 refused on ~/go/bin.
 	for _, r := range swarm.ToolchainRootList("darwin") {
-		if strings.HasSuffix(r.Name, "/bin") {
-			t.Errorf("the darwin list names the launcher directory %s as a toolchain root", r.Name)
-		}
+		assert.False(t, strings.HasSuffix(r.Name, "/bin"), "the darwin list names the launcher directory %s as a toolchain root", r.Name)
 	}
 }
 
@@ -269,17 +220,15 @@ func TestNativeArgvSkipsAToolchainRootThatIsNotThere(t *testing.T) {
 	bin := nativeHarness(t)
 	_, slot := aSlot(t)
 	jobDir := filepath.Join(slot, "jobs", "a-label")
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(jobDir, 0o755))
 	home := t.TempDir() // empty: not one root exists under it
 	argv := nativeSandboxArgv([]string{bin}, nativeRunConfig{slotDir: slot, benchHome: home, benchOS: "linux"}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	for i, a := range argv {
 		if a != "--read" && a != "--read-noexec" {
 			continue
 		}
-		if i+1 < len(argv) && strings.HasPrefix(argv[i+1], home) {
-			t.Errorf("the wall argv names %s under a home with no toolchain:\n%s", argv[i+1], strings.Join(argv, " "))
+		if i+1 < len(argv) {
+			assert.False(t, strings.HasPrefix(argv[i+1], home), "the wall argv names %s under a home with no toolchain:\n%s", argv[i+1], strings.Join(argv, " "))
 		}
 	}
 }
@@ -312,9 +261,7 @@ func aSlot(t *testing.T) (root, slot string) {
 	t.Helper()
 	root = t.TempDir()
 	slot = filepath.Join(root, "slot-1")
-	if err := os.MkdirAll(slot, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(slot, 0o755))
 	write(t, filepath.Join(root, "identity.tsv"),
 		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	return root, slot
@@ -334,9 +281,7 @@ func TestNativeRunRefusesMissingBinary(t *testing.T) {
 		{"missing", filepath.Join(t.TempDir(), "no-such-binary"), "missing"},
 		{"not_executable", func() string {
 			p := filepath.Join(t.TempDir(), "data")
-			if err := os.WriteFile(p, []byte("not a program\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(p, []byte("not a program\n"), 0o644))
 			return p
 		}(), "not executable"},
 	} {
@@ -346,18 +291,11 @@ func TestNativeRunRefusesMissingBinary(t *testing.T) {
 				binary: tc.binary, model: "fake/fake-model", label: "lbl",
 				card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
 			}, &errOut)
-			if code != 2 {
-				t.Fatalf("a bad binary exits 2, got %d:\n%s", code, errOut.String())
-			}
-			if !strings.Contains(errOut.String(), "NATIVE REFUSED") {
-				t.Fatalf("the refusal is one REFUSED line, got:\n%s", errOut.String())
-			}
-			if !strings.Contains(errOut.String(), tc.word) {
-				t.Fatalf("the refusal names its reason (%s):\n%s", tc.word, errOut.String())
-			}
-			if got := strings.Count(strings.TrimSpace(errOut.String()), "\n") + 1; got != 1 {
-				t.Fatalf("exactly one REFUSED line, got %d:\n%s", got, errOut.String())
-			}
+			require.Equal(t, 2, code, "a bad binary exits 2, got %d:\n%s", code, errOut.String())
+			require.Contains(t, errOut.String(), "NATIVE REFUSED", "the refusal is one REFUSED line, got:\n%s", errOut.String())
+			require.Contains(t, errOut.String(), tc.word, "the refusal names its reason (%s):\n%s", tc.word, errOut.String())
+			got := strings.Count(strings.TrimSpace(errOut.String()), "\n") + 1
+			require.Equal(t, 1, got, "exactly one REFUSED line, got %d:\n%s", got, errOut.String())
 		})
 	}
 }
@@ -376,27 +314,15 @@ func TestNativeRunRecordsCardAndBinaryHashes(t *testing.T) {
 		binary: bin, model: "fake/fake-model", label: "a-label",
 		card: card, slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("a finished run exits 0, got %d:\n%s", code, errOut.String())
-	}
-	if res.rc != 0 {
-		t.Fatalf("the child exits 0, recorded %d", res.rc)
-	}
-	if res.wallSeconds <= 0 {
-		t.Fatalf("the wall is positive, recorded %v", res.wallSeconds)
-	}
+	require.Equal(t, 0, code, "a finished run exits 0, got %d:\n%s", code, errOut.String())
+	require.Equal(t, 0, res.rc, "the child exits 0, recorded %d", res.rc)
+	require.Positive(t, res.wallSeconds, "the wall is positive, recorded %v", res.wallSeconds)
 	wantCardSum := sha256.Sum256(card)
 	wantCard := hex.EncodeToString(wantCardSum[:])
-	if res.cardSHA256 != wantCard {
-		t.Errorf("card sha256 is %s, want %s", res.cardSHA256, wantCard)
-	}
+	assert.Equal(t, wantCard, res.cardSHA256, "card sha256 is %s, want %s", res.cardSHA256, wantCard)
 	wantBinary, err := fileSHA256(bin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.binarySHA256 != wantBinary {
-		t.Errorf("binary sha256 is %s, want %s", res.binarySHA256, wantBinary)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, wantBinary, res.binarySHA256, "binary sha256 is %s, want %s", res.binarySHA256, wantBinary)
 }
 
 // TestNativeRunAuthCopyIs0600: the named provider's entry is copied from the auth file into
@@ -408,31 +334,20 @@ func TestNativeRunAuthCopyIs0600(t *testing.T) {
 
 	windowsIsNotABench(t)
 	src := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(src, []byte(`{"fake":"the-fake-secret","other":"the-other-secret"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(src, []byte(`{"fake":"the-fake-secret","other":"the-other-secret"}`), 0o600))
 	dataHome := t.TempDir()
-	if reason := copyAuth(src, "fake", dataHome); reason != "" {
-		t.Fatalf("an 0600 auth source copies, got the refusal: %s", reason)
-	}
+	reason := copyAuth(src, "fake", dataHome)
+	require.Empty(t, reason, "an 0600 auth source copies, got the refusal: %s", reason)
 	for _, copied := range []string{
 		filepath.Join(dataHome, "auth.json"),
 		filepath.Join(dataHome, "opencode", "auth.json"),
 	} {
 		st, err := os.Stat(copied)
-		if err != nil {
-			t.Fatalf("the auth copy was not written: %v", err)
-		}
-		if st.Mode().Perm() != 0o600 {
-			t.Errorf("the auth copy is mode %04o, want 0600", st.Mode().Perm())
-		}
+		require.NoError(t, err, "the auth copy was not written")
+		assert.Equal(t, os.FileMode(0o600), st.Mode().Perm(), "the auth copy is mode %04o, want 0600", st.Mode().Perm())
 		body, err := os.ReadFile(copied)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(body) != `{"fake":"the-fake-secret"}` {
-			t.Errorf("the copy holds only the named provider entry, got %s", body)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, `{"fake":"the-fake-secret"}`, string(body), "the copy holds only the named provider entry, got %s", body)
 	}
 }
 
@@ -455,18 +370,14 @@ func TestNativeCarriesProviderConfig(t *testing.T) {
 	t.Run("without_config", func(t *testing.T) {
 		root, slot := aSlot(t)
 		auth := filepath.Join(t.TempDir(), "auth.json")
-		if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600))
 		var errOut bytes.Buffer
 		_, code := nativeRun(nativeRunConfig{
 			binary: bin, model: "fake/fake-model", label: "lbl",
 			card: []byte("FAKE-RECORD-CONFIG\n"), slotDir: slot, root: root, authFile: auth,
 			deadline: 30 * time.Second, noWall: true,
 		}, &errOut)
-		if code != 0 {
-			t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
-		}
+		require.Equal(t, 0, code, "the run exits 0, got %d:\n%s", code, errOut.String())
 		// The config exists even with no --config: it is where the job's fence rules are.
 		assertConfigRecord(t, slot, "0600", `"external_directory"`)
 	})
@@ -474,49 +385,29 @@ func TestNativeCarriesProviderConfig(t *testing.T) {
 	t.Run("with_config", func(t *testing.T) {
 		root, slot := aSlot(t)
 		auth := filepath.Join(t.TempDir(), "auth.json")
-		if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600))
 		cfgPath := filepath.Join(t.TempDir(), "opencode.json")
-		if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(cfgPath, []byte(config), 0o644))
 		var errOut bytes.Buffer
 		res, code := nativeRun(nativeRunConfig{
 			binary: bin, model: "fake/fake-model", label: "lbl",
 			card: []byte("FAKE-RECORD-CONFIG\n"), slotDir: slot, root: root, authFile: auth,
 			configFile: cfgPath, deadline: 30 * time.Second, noWall: true,
 		}, &errOut)
-		if code != 0 {
-			t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
-		}
+		require.Equal(t, 0, code, "the run exits 0, got %d:\n%s", code, errOut.String())
 		assertConfigRecord(t, slot, "0600", `"baseURL": "http://127.0.0.1:`)
 		copied := filepath.Join(slot, "data", ".config", "opencode", "opencode.json")
 		st, err := os.Stat(copied)
-		if err != nil {
-			t.Fatalf("the config copy was not written: %v", err)
-		}
-		if st.Mode().Perm() != 0o600 {
-			t.Errorf("the config copy is mode %04o, want 0600", st.Mode().Perm())
-		}
+		require.NoError(t, err, "the config copy was not written")
+		assert.Equal(t, os.FileMode(0o600), st.Mode().Perm(), "the config copy is mode %04o, want 0600", st.Mode().Perm())
 		body, err := os.ReadFile(copied)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		wantSum := sha256.Sum256(body)
 		wantSHA := hex.EncodeToString(wantSum[:])[:8]
-		if res.configSHA != wantSHA {
-			t.Errorf("the run records the sha8 of the bytes the child saw: %q, want %q", res.configSHA, wantSHA)
-		}
-		if !strings.Contains(string(body), `"baseURL": "http://127.0.0.1:`) {
-			t.Errorf("the child dials the read-deadline proxy, not the configured upstream:\n%s", body)
-		}
-		if strings.Contains(string(body), "localhost:11434") {
-			t.Errorf("the child still dials the upstream directly:\n%s", body)
-		}
-		if !strings.Contains(string(body), `"external_directory"`) {
-			t.Errorf("the job's fence rules are in the config the child reads:\n%s", body)
-		}
+		assert.Equal(t, wantSHA, res.configSHA, "the run records the sha8 of the bytes the child saw: %q, want %q", res.configSHA, wantSHA)
+		assert.Contains(t, string(body), `"baseURL": "http://127.0.0.1:`, "the child dials the read-deadline proxy, not the configured upstream:\n%s", body)
+		assert.NotContains(t, string(body), "localhost:11434", "the child still dials the upstream directly:\n%s", body)
+		assert.Contains(t, string(body), `"external_directory"`, "the job's fence rules are in the config the child reads:\n%s", body)
 	})
 }
 
@@ -525,22 +416,14 @@ func TestNativeCarriesProviderConfig(t *testing.T) {
 func assertConfigRecord(t *testing.T, slot, wantMode, wantBody string) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(slot, "jobs", "lbl", "config-record"))
-	if err != nil {
-		t.Fatalf("the harness recorded no config-record: %v", err)
-	}
+	require.NoError(t, err, "the harness recorded no config-record")
 	rec := string(raw)
 	if wantMode == "absent" {
-		if rec != "absent\n" {
-			t.Errorf("the harness saw a config where none should be: %q", rec)
-		}
+		assert.Equal(t, "absent\n", rec, "the harness saw a config where none should be: %q", rec)
 		return
 	}
-	if !strings.HasPrefix(rec, "mode="+wantMode+"\n") {
-		t.Errorf("the harness saw %q, want mode %s", rec, wantMode)
-	}
-	if wantBody != "" && !strings.Contains(rec, wantBody) {
-		t.Errorf("the harness saw no %s in the config it read:\n%s", wantBody, rec)
-	}
+	assert.True(t, strings.HasPrefix(rec, "mode="+wantMode+"\n"), "the harness saw %q, want mode %s", rec, wantMode)
+	assert.False(t, wantBody != "" && !strings.Contains(rec, wantBody), "the harness saw no %s in the config it read:\n%s", wantBody, rec)
 }
 
 // TestNativeRefusesConfigProviderWithoutKey: a --config whose entry for THE MODEL'S OWN
@@ -554,13 +437,9 @@ func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600))
 	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
-	if err := os.WriteFile(cfgPath, []byte(`{"provider":{"fake":{},"zeta":{}}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`{"provider":{"fake":{},"zeta":{}}}`), 0o644))
 
 	var errOut bytes.Buffer
 	_, code := nativeRun(nativeRunConfig{
@@ -568,21 +447,12 @@ func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
 		card: []byte("a card\n"), slotDir: slot, root: root, authFile: auth,
 		configFile: cfgPath, deadline: time.Second,
 	}, &errOut)
-	if code != 2 {
-		t.Fatalf("a config whose entry for the model's provider has no key exits 2, got %d:\n%s", code, errOut.String())
-	}
-	if !strings.Contains(errOut.String(), "NATIVE REFUSED") {
-		t.Fatalf("the refusal is one REFUSED line:\n%s", errOut.String())
-	}
-	if !strings.Contains(errOut.String(), "zeta") {
-		t.Fatalf("the refusal names the provider, never the key:\n%s", errOut.String())
-	}
-	if strings.Contains(errOut.String(), "the-fake-secret") {
-		t.Fatalf("the refusal never prints a key:\n%s", errOut.String())
-	}
-	if got := strings.Count(strings.TrimSpace(errOut.String()), "\n") + 1; got != 1 {
-		t.Fatalf("exactly one REFUSED line, got %d:\n%s", got, errOut.String())
-	}
+	require.Equal(t, 2, code, "a config whose entry for the model's provider has no key exits 2, got %d:\n%s", code, errOut.String())
+	require.Contains(t, errOut.String(), "NATIVE REFUSED", "the refusal is one REFUSED line:\n%s", errOut.String())
+	require.Contains(t, errOut.String(), "zeta", "the refusal names the provider, never the key:\n%s", errOut.String())
+	require.NotContains(t, errOut.String(), "the-fake-secret", "the refusal never prints a key:\n%s", errOut.String())
+	got := strings.Count(strings.TrimSpace(errOut.String()), "\n") + 1
+	require.Equal(t, 1, got, "exactly one REFUSED line, got %d:\n%s", got, errOut.String())
 }
 
 // TestNativeConfigChecksOnlyTheModelsProvider: a --config may name every provider a person
@@ -598,14 +468,10 @@ func TestNativeConfigChecksOnlyTheModelsProvider(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600))
 	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}},"inception":{}}}` + "\n"
 	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
-	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cfgPath, []byte(config), 0o644))
 
 	var errOut bytes.Buffer
 	_, code := nativeRun(nativeRunConfig{
@@ -613,15 +479,9 @@ func TestNativeConfigChecksOnlyTheModelsProvider(t *testing.T) {
 		card: []byte("a card\n"), slotDir: slot, root: root, authFile: auth,
 		configFile: cfgPath, deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("a provider the model does not use is not checked, got exit %d:\n%s", code, errOut.String())
-	}
-	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
-		t.Fatalf("no refusal for a provider this run never calls:\n%s", errOut.String())
-	}
-	if strings.Contains(errOut.String(), "inception") {
-		t.Fatalf("the unused provider is not named at all:\n%s", errOut.String())
-	}
+	require.Equal(t, 0, code, "a provider the model does not use is not checked, got exit %d:\n%s", code, errOut.String())
+	require.NotContains(t, errOut.String(), "NATIVE REFUSED", "no refusal for a provider this run never calls:\n%s", errOut.String())
+	require.NotContains(t, errOut.String(), "inception", "the unused provider is not named at all:\n%s", errOut.String())
 }
 
 // TestNativeConfigKeylessProviderAdmitted: a --config that names a provider whose entry is
@@ -635,14 +495,10 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600))
 	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
 	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
-	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cfgPath, []byte(config), 0o644))
 
 	var errOut bytes.Buffer
 	res, code := nativeRun(nativeRunConfig{
@@ -650,25 +506,15 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 		card: []byte("FAKE-RECORD-CONFIG\n"), slotDir: slot, root: root, authFile: auth,
 		configFile: cfgPath, deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("a keyless provider (baseURL, no apiKey) is admitted, got exit %d:\n%s", code, errOut.String())
-	}
-	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
-		t.Fatalf("the keyless provider is not refused, got:\n%s", errOut.String())
-	}
+	require.Equal(t, 0, code, "a keyless provider (baseURL, no apiKey) is admitted, got exit %d:\n%s", code, errOut.String())
+	require.NotContains(t, errOut.String(), "NATIVE REFUSED", "the keyless provider is not refused, got:\n%s", errOut.String())
 	written, err := os.ReadFile(filepath.Join(slot, "data", ".config", "opencode", "opencode.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	wantSum := sha256.Sum256(written)
 	wantSHA := hex.EncodeToString(wantSum[:])[:8]
-	if res.configSHA != wantSHA {
-		t.Errorf("the run records config sha8 %q, want %q", res.configSHA, wantSHA)
-	}
+	assert.Equal(t, wantSHA, res.configSHA, "the run records config sha8 %q, want %q", res.configSHA, wantSHA)
 	assertConfigRecord(t, slot, "0600", `"baseURL": "http://127.0.0.1:`)
-	if strings.Contains(string(written), "localhost:11434") {
-		t.Errorf("the child still dials the upstream directly:\n%s", written)
-	}
+	assert.NotContains(t, string(written), "localhost:11434", "the child still dials the upstream directly:\n%s", written)
 }
 
 // TestNativeOKNamesTheCarriedConfig: the NATIVE OK line itself names the config the CHILD
@@ -699,9 +545,7 @@ func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 	carriedSHA := func(t *testing.T, slot string) string {
 		t.Helper()
 		written, err := os.ReadFile(filepath.Join(slot, "data", ".config", "opencode", "opencode.json"))
-		if err != nil {
-			t.Fatalf("the run carries a config where the harness reads it: %v", err)
-		}
+		require.NoError(t, err, "the run carries a config where the harness reads it")
 		sum := sha256.Sum256(written)
 		return hex.EncodeToString(sum[:])[:8]
 	}
@@ -709,67 +553,44 @@ func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 	t.Run("with_config", func(t *testing.T) {
 		root, slot := aSlot(t)
 		auth := filepath.Join(t.TempDir(), "auth.json")
-		if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600))
 		cfgPath := filepath.Join(t.TempDir(), "opencode.json")
-		if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(cfgPath, []byte(config), 0o644))
 		cardPath := filepath.Join(root, "card.md")
-		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(cardPath, []byte("a card\n"), 0o644))
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--auth", auth, "--config", cfgPath, "--deadline", "30s", "--no-wall"},
 			strings.NewReader(""), &stdout, &stderr, time.Now())
-		if rc != 0 {
-			t.Fatalf("the --config run exits 0, got %d:\n%s", rc, stderr.String())
-		}
+		require.Equal(t, 0, rc, "the --config run exits 0, got %d:\n%s", rc, stderr.String())
 		// The named provider is in the carried bytes -- config= names a config that really
 		// carried --config's provider, not merely some config.
 		written, err := os.ReadFile(filepath.Join(slot, "data", ".config", "opencode", "opencode.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(written), `"baseURL"`) || !strings.Contains(string(written), "fake") {
-			t.Errorf("the carried config keeps --config's provider:\n%s", written)
-		}
+		require.NoError(t, err)
+		assert.Contains(t, string(written), `"baseURL"`, "the carried config keeps --config's provider:\n%s", written)
+		assert.Contains(t, string(written), "fake", "the carried config keeps --config's provider:\n%s", written)
 		wantSHA := carriedSHA(t, slot)
-		if !strings.Contains(stdout.String(), " config="+wantSHA+" ") {
-			t.Fatalf("NATIVE OK names the sha8 %s of the config the child sees:\n%s", wantSHA, stdout.String())
-		}
+		require.Contains(t, stdout.String(), " config="+wantSHA+" ", "NATIVE OK names the sha8 %s of the config the child sees:\n%s", wantSHA, stdout.String())
 	})
 
 	t.Run("without_config", func(t *testing.T) {
 		root, slot := aSlot(t)
 		auth := filepath.Join(t.TempDir(), "auth.json")
-		if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600))
 		cardPath := filepath.Join(root, "card.md")
-		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(cardPath, []byte("a card\n"), 0o644))
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--auth", auth, "--deadline", "30s", "--no-wall"},
 			strings.NewReader(""), &stdout, &stderr, time.Now())
-		if rc != 0 {
-			t.Fatalf("the run without --config exits 0, got %d:\n%s", rc, stderr.String())
-		}
+		require.Equal(t, 0, rc, "the run without --config exits 0, got %d:\n%s", rc, stderr.String())
 		// No --config, but the fence block is still written, so the line still names a sha8
 		// and NEVER a dash: a reader can check the fence the child ran under.
 		wantSHA := carriedSHA(t, slot)
-		if !strings.Contains(stdout.String(), " config="+wantSHA+" ") {
-			t.Fatalf("NATIVE OK names the sha8 %s of the fence config carried without --config:\n%s", wantSHA, stdout.String())
-		}
-		if strings.Contains(stdout.String(), " config=- ") {
-			t.Fatalf("config= is never a dash: the fence block is carried whether or not --config named a file:\n%s", stdout.String())
-		}
+		require.Contains(t, stdout.String(), " config="+wantSHA+" ", "NATIVE OK names the sha8 %s of the fence config carried without --config:\n%s", wantSHA, stdout.String())
+		require.NotContains(t, stdout.String(), " config=- ", "config= is never a dash: the fence block is carried whether or not --config named a file:\n%s", stdout.String())
 	})
 }
 
@@ -784,14 +605,10 @@ func TestFriendSequenceLocalModelCard(t *testing.T) {
 	sandbox := nativeSandbox(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600))
 	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
 	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
-	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cfgPath, []byte(config), 0o644))
 	label := "local-model-card"
 
 	var errOut bytes.Buffer
@@ -800,24 +617,14 @@ func TestFriendSequenceLocalModelCard(t *testing.T) {
 		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, authFile: auth,
 		configFile: cfgPath, deadline: 30 * time.Second, sandbox: sandbox,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("the keyless local provider runs walled, got exit %d:\n%s", code, errOut.String())
-	}
-	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
-		t.Fatalf("the local provider card is admitted, not refused:\n%s", errOut.String())
-	}
-	if res.wall != "fake-wall" {
-		t.Errorf("the run names the wall it ran inside, got %q", res.wall)
-	}
+	require.Equal(t, 0, code, "the keyless local provider runs walled, got exit %d:\n%s", code, errOut.String())
+	require.NotContains(t, errOut.String(), "NATIVE REFUSED", "the local provider card is admitted, not refused:\n%s", errOut.String())
+	assert.Equal(t, "fake-wall", res.wall, "the run names the wall it ran inside, got %q", res.wall)
 	jobDir := filepath.Join(slot, "jobs", label)
 	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
-	if err != nil {
-		t.Fatalf("the card's known answer was not written: %v", err)
-	}
+	require.NoError(t, err, "the card's known answer was not written")
 	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
-	if !sameDir(got, jobDir) {
-		t.Errorf("the card's known answer is %q, want the job directory %q", got, jobDir)
-	}
+	assert.True(t, sameDir(got, jobDir), "the card's known answer is %q, want the job directory %q", got, jobDir)
 }
 
 // TestNativeAllowsProviderLoopback: a keyless provider (baseURL, no apiKey) whose baseURL
@@ -832,9 +639,7 @@ func TestNativeAllowsProviderLoopback(t *testing.T) {
 	root, slot := aSlot(t)
 	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://127.0.0.1:11434/v1"}}}}` + "\n"
 	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
-	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cfgPath, []byte(config), 0o644))
 	label := "a-label"
 
 	var errOut bytes.Buffer
@@ -843,13 +648,9 @@ func TestNativeAllowsProviderLoopback(t *testing.T) {
 		card: []byte("a card\n"), slotDir: slot, root: root,
 		configFile: cfgPath, deadline: 30 * time.Second, sandbox: sandbox,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("the keyless loopback provider runs walled, got exit %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "the keyless loopback provider runs walled, got exit %d:\n%s", code, errOut.String())
 	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
-	if !strings.Contains(argv, "--net-allow 127.0.0.1:11434") {
-		t.Errorf("the wall argv does not carry the loopback allow rule:\n%s", argv)
-	}
+	assert.Contains(t, argv, "--net-allow 127.0.0.1:11434", "the wall argv does not carry the loopback allow rule:\n%s", argv)
 }
 
 // TestNativeRunRefusalsNameTheirReason drives the remaining three refusals -- a model with
@@ -861,9 +662,7 @@ func TestNativeRunRefusalsNameTheirReason(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	looseAuth := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(looseAuth, []byte(`{"fake":"secret"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(looseAuth, []byte(`{"fake":"secret"}`), 0o644))
 	outside := filepath.Join(t.TempDir(), "outside-slot")
 
 	cases := []struct {
@@ -894,12 +693,8 @@ func TestNativeRunRefusalsNameTheirReason(t *testing.T) {
 			}
 			var errOut bytes.Buffer
 			_, code := nativeRun(tc.cfg, &errOut)
-			if code != 2 {
-				t.Fatalf("the refusal exits 2, got %d:\n%s", code, errOut.String())
-			}
-			if !strings.Contains(errOut.String(), tc.word) {
-				t.Fatalf("the refusal names its reason (%s):\n%s", tc.word, errOut.String())
-			}
+			require.Equal(t, 2, code, "the refusal exits 2, got %d:\n%s", code, errOut.String())
+			require.Contains(t, errOut.String(), tc.word, "the refusal names its reason (%s):\n%s", tc.word, errOut.String())
 		})
 	}
 }
@@ -910,19 +705,13 @@ func TestCmdNativeCLI(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("test card line 1\nline 2\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("test card line 1\nline 2\n"), 0o644))
 
 	// Missing flags -> exit 2 with refusal
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"native"}, strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 2 {
-		t.Fatalf("missing flags must exit 2, got %d", rc)
-	}
-	if !strings.Contains(stderr.String(), "--harness is required") {
-		t.Fatalf("expected --harness is required, got:\n%s", stderr.String())
-	}
+	require.Equal(t, 2, rc, "missing flags must exit 2, got %d", rc)
+	require.Contains(t, stderr.String(), "--harness is required", "expected --harness is required, got:\n%s", stderr.String())
 
 	// Success run -> exit 0 with NATIVE OK
 	stdout.Reset()
@@ -942,15 +731,9 @@ func TestCmdNativeCLI(t *testing.T) {
 		"--no-wall",
 	}
 	rc = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("native run must exit 0, got %d:\nstdout: %s\nstderr: %s", rc, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "NATIVE OK") {
-		t.Fatalf("stdout must contain NATIVE OK, got:\n%s", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "label=test-label") {
-		t.Fatalf("stdout must contain label=test-label, got:\n%s", stdout.String())
-	}
+	require.Equal(t, 0, rc, "native run must exit 0, got %d:\nstdout: %s\nstderr: %s", rc, stdout.String(), stderr.String())
+	require.Contains(t, stdout.String(), "NATIVE OK", "stdout must contain NATIVE OK, got:\n%s", stdout.String())
+	require.Contains(t, stdout.String(), "label=test-label", "stdout must contain label=test-label, got:\n%s", stdout.String())
 }
 
 // TestNativeRunChildDirIsJobDir: the child runs in its job directory <slot>/jobs/<label>,
@@ -968,22 +751,14 @@ func TestNativeRunChildDirIsJobDir(t *testing.T) {
 		binary: bin, model: "fake/fake-model", label: label,
 		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "the run exits 0, got %d:\n%s", code, errOut.String())
 	jobDir := filepath.Join(slot, "jobs", label)
 	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
-	if err != nil {
-		t.Fatalf("the child did not write pwd into RESULT.md under the job directory: %v", err)
-	}
+	require.NoError(t, err, "the child did not write pwd into RESULT.md under the job directory")
 	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
 	want, err := filepath.EvalSymlinks(jobDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Errorf("the child's cwd is %q, want the job directory %q", got, want)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, want, got, "the child's cwd is %q, want the job directory %q", got, want)
 }
 
 // TestNativeChildCwdIsJobDirFromForeignCwd: the walled child also runs in the job
@@ -999,12 +774,8 @@ func TestNativeChildCwdIsJobDirFromForeignCwd(t *testing.T) {
 
 	foreign := t.TempDir()
 	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(foreign); err != nil {
-		t.Fatalf("chdir to a foreign directory: %v", err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(foreign), "chdir to a foreign directory")
 	defer func() { _ = os.Chdir(orig) }()
 
 	var errOut bytes.Buffer
@@ -1013,18 +784,12 @@ func TestNativeChildCwdIsJobDirFromForeignCwd(t *testing.T) {
 		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 		sandbox: sandbox,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("the walled run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "the walled run exits 0, got %d:\n%s", code, errOut.String())
 	jobDir := filepath.Join(slot, "jobs", label)
 	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
-	if err != nil {
-		t.Fatalf("the child did not write pwd into RESULT.md under the job directory: %v", err)
-	}
+	require.NoError(t, err, "the child did not write pwd into RESULT.md under the job directory")
 	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
-	if !sameDir(got, jobDir) {
-		t.Errorf("from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, jobDir)
-	}
+	assert.True(t, sameDir(got, jobDir), "from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, jobDir)
 }
 
 // TestWallNamedDecodesTheProducersEscapedCwd is the unit half of issue #572: the wall writes
@@ -1039,15 +804,9 @@ func TestWallNamedDecodesTheProducersEscapedCwd(t *testing.T) {
 	line := "SANDBOX OK backend=sandbox-exec abi=- read=3 write=2 net=nopromise cwd=" +
 		oneline.Field(dir) + " ancestors=17 cmd=opencode\n"
 	backend, cwd, reason := wallNamed(line)
-	if reason != "" {
-		t.Fatalf("wallNamed did not read the SANDBOX OK line (%s): %q", reason, line)
-	}
-	if backend != "sandbox-exec" {
-		t.Errorf("wallNamed's backend is %q, want sandbox-exec", backend)
-	}
-	if cwd != dir {
-		t.Errorf("wallNamed's cwd is %q, want the decoded path %q", cwd, dir)
-	}
+	require.Empty(t, reason, "wallNamed did not read the SANDBOX OK line (%s): %q", reason, line)
+	assert.Equal(t, "sandbox-exec", backend, "wallNamed's backend is %q, want sandbox-exec", backend)
+	assert.Equal(t, dir, cwd, "wallNamed's cwd is %q, want the decoded path %q", cwd, dir)
 }
 
 // TestNativeWalledJobPathWithSpacesCompletes is the regression for issue #572: a job whose
@@ -1063,9 +822,7 @@ func TestNativeWalledJobPathWithSpacesCompletes(t *testing.T) {
 
 	root := filepath.Join(t.TempDir(), "worker 2")
 	slot := filepath.Join(root, "slot-1")
-	if err := os.MkdirAll(slot, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(slot, 0o755))
 	write(t, filepath.Join(root, "identity.tsv"),
 		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	label := "space-cwd"
@@ -1076,29 +833,18 @@ func TestNativeWalledJobPathWithSpacesCompletes(t *testing.T) {
 		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 		sandbox: sandbox,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("a completed job in a path with a space exits 0, got %d:\n%s", code, errOut.String())
-	}
-	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
-		t.Fatalf("a completed job is not a pre-launch refusal:\n%s", errOut.String())
-	}
-	if res.wall != "fake-wall" {
-		t.Errorf("the run keeps the wall's own name, got %q", res.wall)
-	}
+	require.Equal(t, 0, code, "a completed job in a path with a space exits 0, got %d:\n%s", code, errOut.String())
+	require.NotContains(t, errOut.String(), "NATIVE REFUSED", "a completed job is not a pre-launch refusal:\n%s", errOut.String())
+	assert.Equal(t, "fake-wall", res.wall, "the run keeps the wall's own name, got %q", res.wall)
 	jobDir := filepath.Join(slot, "jobs", label)
 	// The child ran in the job directory, proven by the card's own known answer.
 	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
-	if err != nil {
-		t.Fatalf("the card's known answer was not written: %v", err)
-	}
+	require.NoError(t, err, "the card's known answer was not written")
 	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
-	if !sameDir(got, jobDir) {
-		t.Errorf("the child's cwd is %q, want the job directory %q", got, jobDir)
-	}
+	assert.True(t, sameDir(got, jobDir), "the child's cwd is %q, want the job directory %q", got, jobDir)
 	// A completed job retains its usage receipt.
-	if _, err := os.Stat(filepath.Join(jobDir, "usage.tsv")); err != nil {
-		t.Errorf("the completed job wrote no usage.tsv under %s: %v", jobDir, err)
-	}
+	_, err = os.Stat(filepath.Join(jobDir, "usage.tsv"))
+	assert.NoError(t, err, "the completed job wrote no usage.tsv under %s", jobDir)
 }
 
 // TestNativeOKNamesTheWall: NATIVE OK names the wall it ran inside, copied from the wall's
@@ -1111,38 +857,27 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 	t.Run("no_wall", func(t *testing.T) {
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
-		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(cardPath, []byte("a card\n"), 0o644))
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
-		if rc != 0 {
-			t.Fatalf("exit 0, got %d:\n%s", rc, stderr.String())
-		}
-		if !strings.Contains(stdout.String(), "NATIVE OK ") || !strings.Contains(stdout.String(), " sandbox=none-by-flag ") {
-			t.Fatalf("NATIVE OK names the wall none-by-flag when --no-wall runs:\n%s", stdout.String())
-		}
+		require.Equal(t, 0, rc, "exit 0, got %d:\n%s", rc, stderr.String())
+		require.Contains(t, stdout.String(), "NATIVE OK ", "NATIVE OK names the wall none-by-flag when --no-wall runs:\n%s", stdout.String())
+		require.Contains(t, stdout.String(), " sandbox=none-by-flag ", "NATIVE OK names the wall none-by-flag when --no-wall runs:\n%s", stdout.String())
 	})
 
 	t.Run("walled", func(t *testing.T) {
 		t.Setenv("NOVA_FAKE_SANDBOX", "pass")
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
-		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(cardPath, []byte("a card\n"), 0o644))
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--sandbox", sandbox}, strings.NewReader(""), &stdout, &stderr, time.Now())
-		if rc != 0 {
-			t.Fatalf("exit 0, got %d:\n%s", rc, stderr.String())
-		}
-		if !strings.Contains(stdout.String(), " sandbox=fake-wall ") {
-			t.Fatalf("NATIVE OK copies the wall's own name (fake-wall):\n%s", stdout.String())
-		}
+		require.Equal(t, 0, rc, "exit 0, got %d:\n%s", rc, stderr.String())
+		require.Contains(t, stdout.String(), " sandbox=fake-wall ", "NATIVE OK copies the wall's own name (fake-wall):\n%s", stdout.String())
 	})
 }
 
@@ -1169,13 +904,9 @@ func TestNativeRunPassesRepoAllowRule(t *testing.T) {
 		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 		sandbox: sandbox, repos: []string{"mas-bandwidth/nova-tools"},
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("a walled run with a repo rule exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "a walled run with a repo rule exits 0, got %d:\n%s", code, errOut.String())
 	argv := sandboxArgv(t, filepath.Join(slot, "jobs", "a-label"))
-	if !strings.Contains(argv, "--repo mas-bandwidth/nova-tools") {
-		t.Errorf("the wall argv does not carry the repo allow rule:\n%s", argv)
-	}
+	assert.Contains(t, argv, "--repo mas-bandwidth/nova-tools", "the wall argv does not carry the repo allow rule:\n%s", argv)
 }
 
 // TestNativeRunDeniesBusInsideWall: recipients are never turned into an allow rule. The
@@ -1194,14 +925,10 @@ func TestNativeRunDeniesBusInsideWall(t *testing.T) {
 		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 		sandbox: sandbox, recipients: []string{"peer-a", "peer-b"},
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("a walled run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "a walled run exits 0, got %d:\n%s", code, errOut.String())
 	argv := sandboxArgv(t, filepath.Join(slot, "jobs", "a-label"))
 	for _, denied := range []string{"nova-bus", "--recipient"} {
-		if strings.Contains(argv, denied) {
-			t.Errorf("the wall argv grants a bus lane the wall denies (%q):\n%s", denied, argv)
-		}
+		assert.NotContains(t, argv, denied, "the wall argv grants a bus lane the wall denies (%q):\n%s", denied, argv)
 	}
 }
 
@@ -1220,9 +947,7 @@ func TestNativeRefusesWhenWallCannotExpressRule(t *testing.T) {
 			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
 			repos: []string{"mas-bandwidth/nova-tools"}, noWall: true,
 		}, &errOut)
-		if code != 2 {
-			t.Fatalf("the refusal exits 2, got %d:\n%s", code, errOut.String())
-		}
+		require.Equal(t, 2, code, "the refusal exits 2, got %d:\n%s", code, errOut.String())
 		assertRepoRefusal(t, errOut.String())
 	})
 
@@ -1236,24 +961,17 @@ func TestNativeRefusesWhenWallCannotExpressRule(t *testing.T) {
 			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
 			sandbox: sandbox, repos: []string{"mas-bandwidth/nova-tools"},
 		}, &errOut)
-		if code != 2 {
-			t.Fatalf("the refusal exits 2, got %d:\n%s", code, errOut.String())
-		}
+		require.Equal(t, 2, code, "the refusal exits 2, got %d:\n%s", code, errOut.String())
 		assertRepoRefusal(t, errOut.String())
 	})
 }
 
 func assertRepoRefusal(t *testing.T, out string) {
 	t.Helper()
-	if !strings.Contains(out, "NATIVE REFUSED") {
-		t.Fatalf("the refusal is one REFUSED line, got:\n%s", out)
-	}
-	if !strings.Contains(out, "lbl wall cannot express repo rule") {
-		t.Fatalf("the refusal names the label and the reason, got:\n%s", out)
-	}
-	if got := strings.Count(strings.TrimSpace(out), "\n") + 1; got != 1 {
-		t.Fatalf("exactly one REFUSED line, got %d:\n%s", got, out)
-	}
+	require.Contains(t, out, "NATIVE REFUSED", "the refusal is one REFUSED line, got:\n%s", out)
+	require.Contains(t, out, "lbl wall cannot express repo rule", "the refusal names the label and the reason, got:\n%s", out)
+	got := strings.Count(strings.TrimSpace(out), "\n") + 1
+	require.Equal(t, 1, got, "exactly one REFUSED line, got %d:\n%s", got, out)
 }
 
 // TestNativeRefusesWithoutWallUnlessFlagged: the wall is never implied away (SPEC-SANDBOX
@@ -1271,21 +989,12 @@ func TestNativeRefusesWithoutWallUnlessFlagged(t *testing.T) {
 			binary: bin, model: "fake/fake-model", label: "lbl",
 			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
 		}, &errOut)
-		if code != 2 {
-			t.Fatalf("a run with no wall and no --no-wall exits 2, got %d:\n%s", code, errOut.String())
-		}
-		if !strings.Contains(errOut.String(), "NATIVE REFUSED") {
-			t.Fatalf("the refusal is one REFUSED line, got:\n%s", errOut.String())
-		}
-		if !strings.Contains(errOut.String(), "lbl no wall:") {
-			t.Fatalf("the refusal names the label and the missing wall, got:\n%s", errOut.String())
-		}
-		if !strings.Contains(errOut.String(), "nova-sandbox") {
-			t.Fatalf("the refusal names what was looked for, got:\n%s", errOut.String())
-		}
-		if got := strings.Count(strings.TrimSpace(errOut.String()), "\n") + 1; got != 1 {
-			t.Fatalf("exactly one REFUSED line, got %d:\n%s", got, errOut.String())
-		}
+		require.Equal(t, 2, code, "a run with no wall and no --no-wall exits 2, got %d:\n%s", code, errOut.String())
+		require.Contains(t, errOut.String(), "NATIVE REFUSED", "the refusal is one REFUSED line, got:\n%s", errOut.String())
+		require.Contains(t, errOut.String(), "lbl no wall:", "the refusal names the label and the missing wall, got:\n%s", errOut.String())
+		require.Contains(t, errOut.String(), "nova-sandbox", "the refusal names what was looked for, got:\n%s", errOut.String())
+		got := strings.Count(strings.TrimSpace(errOut.String()), "\n") + 1
+		require.Equal(t, 1, got, "exactly one REFUSED line, got %d:\n%s", got, errOut.String())
 	})
 
 	t.Run("no_wall_with_flag", func(t *testing.T) {
@@ -1296,12 +1005,8 @@ func TestNativeRefusesWithoutWallUnlessFlagged(t *testing.T) {
 			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
 			noWall: true,
 		}, &errOut)
-		if code != 0 {
-			t.Fatalf("--no-wall owns the run and exits 0, got %d:\n%s", code, errOut.String())
-		}
-		if res.wall != "none-by-flag" {
-			t.Errorf("--no-wall names the run none-by-flag, got %q", res.wall)
-		}
+		require.Equal(t, 0, code, "--no-wall owns the run and exits 0, got %d:\n%s", code, errOut.String())
+		assert.Equal(t, "none-by-flag", res.wall, "--no-wall names the run none-by-flag, got %q", res.wall)
 	})
 }
 
@@ -1320,16 +1025,10 @@ func TestNativeRunsWalledWithoutHostRulesWhenNoRepos(t *testing.T) {
 		binary: bin, model: "fake/fake-model", label: label,
 		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("a wall without host rules still walls a card naming no repos, got %d:\n%s", code, errOut.String())
-	}
-	if res.wall != "fake-wall" {
-		t.Errorf("the run names the wall it resolved on PATH, got %q", res.wall)
-	}
+	require.Equal(t, 0, code, "a wall without host rules still walls a card naming no repos, got %d:\n%s", code, errOut.String())
+	assert.Equal(t, "fake-wall", res.wall, "the run names the wall it resolved on PATH, got %q", res.wall)
 	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
-	if strings.Contains(argv, "--repo") {
-		t.Errorf("no repo was named, so no --repo rule is built:\n%s", argv)
-	}
+	assert.NotContains(t, argv, "--repo", "no repo was named, so no --repo rule is built:\n%s", argv)
 }
 
 // TestNativeEnvIsCleanAndInsideTheWall: the walled child is handed a clean environment, not
@@ -1356,12 +1055,8 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	t.Setenv("FAKE_KEY", "planted-secret-value")
 
 	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(foreign); err != nil {
-		t.Fatalf("chdir to a foreign directory: %v", err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(foreign), "chdir to a foreign directory")
 	defer func() { _ = os.Chdir(orig) }()
 
 	var errOut bytes.Buffer
@@ -1370,59 +1065,40 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 		sandbox: sandbox,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("the walled run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "the walled run exits 0, got %d:\n%s", code, errOut.String())
 
 	// The child still runs in its job directory even from a foreign cwd.
 	jobDir := filepath.Join(slot, "jobs", label)
 	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
-	if err != nil {
-		t.Fatalf("the child did not write pwd into RESULT.md: %v", err)
-	}
+	require.NoError(t, err, "the child did not write pwd into RESULT.md")
 	if got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd="); got != jobDir {
-		if want, evalErr := filepath.EvalSymlinks(jobDir); evalErr == nil && got != want {
-			t.Errorf("from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, want)
-		}
+		want, evalErr := filepath.EvalSymlinks(jobDir)
+		assert.False(t, evalErr == nil && got != want, "from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, want)
 	}
 
 	// The environment the run recorded is what the wall was handed.
 	rawLog, err := os.ReadFile(filepath.Join(slot, "native-argv.log"))
-	if err != nil {
-		t.Fatalf("the run recorded no native-argv.log: %v", err)
-	}
+	require.NoError(t, err, "the run recorded no native-argv.log")
 	env := nativeLoggedEnv(t, string(rawLog))
 	// The slot admission recorded is symlink-resolved (issue #578), so the expectation is too.
 	dataHome := filepath.Join(resolvedPath(t, slot), "data")
 
-	if got := env["HOME"]; len(got) != 1 {
-		t.Errorf("the child has %d HOME entries, want 1: %v", len(got), got)
-	} else if got[0] != dataHome {
-		t.Errorf("HOME is %q, want the data home %q", got[0], dataHome)
+	if got := env["HOME"]; assert.Len(t, got, 1, "the child has %d HOME entries, want 1: %v", len(got), got) {
+		assert.Equal(t, dataHome, got[0], "HOME is %q, want the data home %q", got[0], dataHome)
 	}
-	if got := env["XDG_DATA_HOME"]; len(got) != 1 {
-		t.Errorf("the child has %d XDG_DATA_HOME entries, want 1: %v", len(got), got)
-	} else if got[0] != dataHome {
-		t.Errorf("XDG_DATA_HOME is %q, want the data home %q", got[0], dataHome)
+	if got := env["XDG_DATA_HOME"]; assert.Len(t, got, 1, "the child has %d XDG_DATA_HOME entries, want 1: %v", len(got), got) {
+		assert.Equal(t, dataHome, got[0], "XDG_DATA_HOME is %q, want the data home %q", got[0], dataHome)
 	}
-	if got := env["XDG_CONFIG_HOME"]; got != nil {
-		t.Errorf("XDG_CONFIG_HOME survived and points outside the wall: %v", got)
-	}
-	if got := env["XDG_CACHE_HOME"]; got != nil {
-		t.Errorf("XDG_CACHE_HOME survived and points outside the wall: %v", got)
-	}
+	assert.Nil(t, env["XDG_CONFIG_HOME"], "XDG_CONFIG_HOME survived and points outside the wall: %v", env["XDG_CONFIG_HOME"])
+	assert.Nil(t, env["XDG_CACHE_HOME"], "XDG_CACHE_HOME survived and points outside the wall: %v", env["XDG_CACHE_HOME"])
 	tmp := env["TMPDIR"]
-	if len(tmp) != 1 {
-		t.Fatalf("the child has %d TMPDIR entries, want 1: %v", len(tmp), tmp)
-	}
+	require.Len(t, tmp, 1, "the child has %d TMPDIR entries, want 1: %v", len(tmp), tmp)
 	// The run symlink-resolves the slot it was handed (#586), so the two spellings of one
 	// directory are compared as directories, not as strings.
-	if want := filepath.Join(slot, "tmp", label); !sameDir(tmp[0], want) {
-		t.Errorf("TMPDIR is %q, want the slot's own tmp dir %q", tmp[0], want)
-	}
-	if got := env["FAKE_KEY"]; len(got) != 1 || got[0] != "<redacted>" {
-		t.Errorf("the secret's value is not redacted in the log: %v", got)
-	}
+	want := filepath.Join(slot, "tmp", label)
+	assert.True(t, sameDir(tmp[0], want), "TMPDIR is %q, want the slot's own tmp dir %q", tmp[0], want)
+	got := env["FAKE_KEY"]
+	assert.Equal(t, []string{"<redacted>"}, got, "the secret's value is not redacted in the log: %v", got)
 }
 
 // TestNativeSharedGoCaches: the Go module and build caches are bench-shared under
@@ -1443,31 +1119,20 @@ func TestNativeSharedGoCaches(t *testing.T) {
 		card: []byte("FAKE-RECORD-CACHES\n"), slotDir: slot, root: root,
 		deadline: 30 * time.Second, sandbox: sandbox,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "the run exits 0, got %d:\n%s", code, errOut.String())
 	jobDir := filepath.Join(slot, "jobs", label)
 	record, err := os.ReadFile(filepath.Join(jobDir, "cache-record"))
-	if err != nil {
-		t.Fatalf("the harness recorded no cache-record: %v", err)
-	}
+	require.NoError(t, err, "the harness recorded no cache-record")
 	got := string(record)
 	cacheDir := filepath.Join(resolvedPath(t, root), "cache")
 	wantMod := filepath.Join(cacheDir, "go-mod")
 	wantBuild := filepath.Join(cacheDir, "go-build")
 
-	if !strings.Contains(got, "GOMODCACHE="+wantMod+"\n") {
-		t.Errorf("GOMODCACHE is not the shared module cache %s:\n%s", wantMod, got)
-	}
-	if !strings.Contains(got, "GOCACHE="+wantBuild+"\n") {
-		t.Errorf("GOCACHE is not the shared build cache %s:\n%s", wantBuild, got)
-	}
-	if !strings.Contains(got, "GOTOOLCHAIN=local\n") {
-		t.Errorf("GOTOOLCHAIN is not local:\n%s", got)
-	}
-	if !strings.Contains(got, "ASDF_OUTPUT_TRANSLATIONS=") || !strings.Contains(got, filepath.Join(jobDir, ".cache", "common-lisp")) {
-		t.Errorf("ASDF_OUTPUT_TRANSLATIONS does not point at the job's private Lisp overlay:\n%s", got)
-	}
+	assert.Contains(t, got, "GOMODCACHE="+wantMod+"\n", "GOMODCACHE is not the shared module cache %s:\n%s", wantMod, got)
+	assert.Contains(t, got, "GOCACHE="+wantBuild+"\n", "GOCACHE is not the shared build cache %s:\n%s", wantBuild, got)
+	assert.Contains(t, got, "GOTOOLCHAIN=local\n", "GOTOOLCHAIN is not local:\n%s", got)
+	assert.Contains(t, got, "ASDF_OUTPUT_TRANSLATIONS=", "ASDF_OUTPUT_TRANSLATIONS does not point at the job's private Lisp overlay:\n%s", got)
+	assert.Contains(t, got, filepath.Join(jobDir, ".cache", "common-lisp"), "ASDF_OUTPUT_TRANSLATIONS does not point at the job's private Lisp overlay:\n%s", got)
 	// Each directory existed before the child ran: the record is written by the child, so
 	// its own stat is the proof the parent made them first. Windows has no POSIX mode bits,
 	// so there the record proves existence and this test proves a file can be created;
@@ -1483,28 +1148,22 @@ func TestNativeSharedGoCaches(t *testing.T) {
 			}
 		}
 		if runtime.GOOS == "windows" {
-			if !strings.Contains(line, "dir=true") {
-				t.Errorf("%s was not an existing directory before the child ran:\n%s", dir.name, got)
+			if !assert.Contains(t, line, "dir=true", "%s was not an existing directory before the child ran:\n%s", dir.name, got) {
 				continue
 			}
 			probe := filepath.Join(dir.path, "writable-probe")
-			if err := os.WriteFile(probe, []byte("probe\n"), 0o644); err != nil {
-				t.Errorf("%s is not writable for the child's caches: %v", dir.path, err)
+			if !assert.NoError(t, os.WriteFile(probe, []byte("probe\n"), 0o644), "%s is not writable for the child's caches", dir.path) {
 				continue
 			}
 			_ = os.Remove(probe)
 			continue
 		}
-		if !strings.Contains(line, "mode=0755 dir=true") {
-			t.Errorf("%s was not an existing 0755 directory before the child ran:\n%s", dir.name, got)
-		}
+		assert.Contains(t, line, "mode=0755 dir=true", "%s was not an existing 0755 directory before the child ran:\n%s", dir.name, got)
 	}
 	// The shared cache is in the wall's write set, so every card of the bench may extract a
 	// module inside the wall.
 	argv := strings.Fields(sandboxArgv(t, jobDir))
-	if !hasFlagPair(argv, "--write", cacheDir) {
-		t.Errorf("the wall argv does not write the shared cache %s:\n%s", cacheDir, strings.Join(argv, " "))
-	}
+	assert.True(t, hasFlagPair(argv, "--write", cacheDir), "the wall argv does not write the shared cache %s:\n%s", cacheDir, strings.Join(argv, " "))
 }
 
 // TestNativeNoSharedCachesRestoresHomeCaches: --no-shared-caches restores today's behaviour
@@ -1523,27 +1182,18 @@ func TestNativeNoSharedCachesRestoresHomeCaches(t *testing.T) {
 		card: []byte("FAKE-RECORD-CACHES\n"), slotDir: slot, root: root,
 		deadline: 30 * time.Second, sandbox: sandbox, noSharedCaches: true,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "the run exits 0, got %d:\n%s", code, errOut.String())
 	jobDir := filepath.Join(slot, "jobs", label)
 	record, err := os.ReadFile(filepath.Join(jobDir, "cache-record"))
-	if err != nil {
-		t.Fatalf("the harness recorded no cache-record: %v", err)
-	}
+	require.NoError(t, err, "the harness recorded no cache-record")
 	got := string(record)
 	for _, name := range []string{"GOMODCACHE", "GOCACHE", "GOTOOLCHAIN", "ASDF_OUTPUT_TRANSLATIONS"} {
-		if !strings.Contains(got, name+"=\n") {
-			t.Errorf("--no-shared-caches set %s; the caches must stay under HOME:\n%s", name, got)
-		}
+		assert.Contains(t, got, name+"=\n", "--no-shared-caches set %s; the caches must stay under HOME:\n%s", name, got)
 	}
-	if _, err := os.Stat(filepath.Join(root, "cache")); !os.IsNotExist(err) {
-		t.Errorf("--no-shared-caches made <root>/cache, want none: err=%v", err)
-	}
+	_, err = os.Stat(filepath.Join(root, "cache"))
+	assert.True(t, os.IsNotExist(err), "--no-shared-caches made <root>/cache, want none: err=%v", err)
 	argv := strings.Fields(sandboxArgv(t, jobDir))
-	if hasFlagPair(argv, "--write", filepath.Join(resolvedPath(t, root), "cache")) {
-		t.Errorf("--no-shared-caches wrote <root>/cache into the wall argv:\n%s", strings.Join(argv, " "))
-	}
+	assert.False(t, hasFlagPair(argv, "--write", filepath.Join(resolvedPath(t, root), "cache")), "--no-shared-caches wrote <root>/cache into the wall argv:\n%s", strings.Join(argv, " "))
 }
 
 // nativeLoggedEnv reads the env lines of a native-argv.log into a name -> values map.
@@ -1586,12 +1236,8 @@ func TestNativeChildCwdIsJobDirUnwalled(t *testing.T) {
 
 			foreign := t.TempDir()
 			orig, err := os.Getwd()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chdir(foreign); err != nil {
-				t.Fatalf("chdir to a foreign directory: %v", err)
-			}
+			require.NoError(t, err)
+			require.NoError(t, os.Chdir(foreign), "chdir to a foreign directory")
 			defer func() { _ = os.Chdir(orig) }()
 
 			var errOut bytes.Buffer
@@ -1600,18 +1246,12 @@ func TestNativeChildCwdIsJobDirUnwalled(t *testing.T) {
 				card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 				sandbox: tc.sandbox, noWall: tc.noWall,
 			}, &errOut)
-			if code != 0 {
-				t.Fatalf("the %s run exits 0, got %d:\n%s", tc.name, code, errOut.String())
-			}
+			require.Equal(t, 0, code, "the %s run exits 0, got %d:\n%s", tc.name, code, errOut.String())
 			jobDir := filepath.Join(slot, "jobs", label)
 			raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
-			if err != nil {
-				t.Fatalf("the child did not write pwd into RESULT.md under the job directory: %v", err)
-			}
+			require.NoError(t, err, "the child did not write pwd into RESULT.md under the job directory")
 			got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
-			if !sameDir(got, jobDir) {
-				t.Errorf("from cwd %s the %s child's cwd is %q, want the job directory %q", foreign, tc.name, got, jobDir)
-			}
+			assert.True(t, sameDir(got, jobDir), "from cwd %s the %s child's cwd is %q, want the job directory %q", foreign, tc.name, got, jobDir)
 		})
 	}
 }
@@ -1631,17 +1271,13 @@ func TestNativeRunWritesUsageInJobDirectory(t *testing.T) {
 		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 		noWall: true,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("native run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "native run exits 0, got %d:\n%s", code, errOut.String())
 	jobUsage := filepath.Join(slot, "jobs", label, "usage.tsv")
-	if _, err := os.Stat(jobUsage); err != nil {
-		t.Fatalf("usage.tsv not found beside RESULT.md in %s: %v", jobUsage, err)
-	}
+	_, err := os.Stat(jobUsage)
+	require.NoError(t, err, "usage.tsv not found beside RESULT.md in %s", jobUsage)
 	slotUsage := filepath.Join(slot, "usage.tsv")
-	if _, err := os.Stat(slotUsage); err != nil {
-		t.Fatalf("usage.tsv not found in slot directory %s: %v", slotUsage, err)
-	}
+	_, err = os.Stat(slotUsage)
+	require.NoError(t, err, "usage.tsv not found in slot directory %s", slotUsage)
 }
 
 // resolvedPath is a path made absolute and symlink-resolved, which is the form admission
@@ -1652,9 +1288,7 @@ func TestNativeRunWritesUsageInJobDirectory(t *testing.T) {
 func resolvedPath(t *testing.T, path string) string {
 	t.Helper()
 	real, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		t.Fatalf("resolving %s: %v", path, err)
-	}
+	require.NoError(t, err, "resolving %s", path)
 	return real
 }
 
@@ -1671,27 +1305,17 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 	foreign := t.TempDir()
 	root := filepath.Join(foreign, "root")
 	slot := filepath.Join(root, "slot-1")
-	if err := os.MkdirAll(slot, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(slot, 0o755))
 	write(t, filepath.Join(root, "identity.tsv"),
 		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(foreign); err != nil {
-		t.Fatalf("chdir to a foreign directory: %v", err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(foreign), "chdir to a foreign directory")
 	defer func() { _ = os.Chdir(orig) }()
 	relRoot, err := filepath.Rel(foreign, root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	relSlot, err := filepath.Rel(foreign, slot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	label := "rel-slot"
 	var errOut bytes.Buffer
 	_, code := nativeRun(nativeRunConfig{
@@ -1699,17 +1323,11 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 		card: []byte("a card\n"), slotDir: relSlot, root: relRoot, deadline: 30 * time.Second,
 		sandbox: sandbox,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "the run exits 0, got %d:\n%s", code, errOut.String())
 	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
 	want, err := filepath.EvalSymlinks(slot)
-	if err != nil {
-		t.Fatalf("resolving the slot %q: %v", slot, err)
-	}
-	if !hasFlagPairResolved(strings.Fields(argv), "--read", want) {
-		t.Errorf("the wall argv does not read the slot by absolute path %s:\n%s", slot, argv)
-	}
+	require.NoError(t, err, "resolving the slot %q", slot)
+	assert.True(t, hasFlagPairResolved(strings.Fields(argv), "--read", want), "the wall argv does not read the slot by absolute path %s:\n%s", slot, argv)
 }
 
 // TestNativeTmpDirIsOutsideAnyRepo: the native run hands the child a TMPDIR that is the slot's
@@ -1727,9 +1345,7 @@ func TestNativeTmpDirIsOutsideAnyRepo(t *testing.T) {
 
 	// git-init the job directory the way native admission does, before the run starts.
 	jobDir := filepath.Join(slot, "jobs", label)
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(jobDir, 0o755))
 	if out, err := exec.Command("git", "init", "-q", jobDir).CombinedOutput(); err != nil {
 		t.Skipf("git init unavailable: %v: %s", err, out)
 	}
@@ -1740,29 +1356,23 @@ func TestNativeTmpDirIsOutsideAnyRepo(t *testing.T) {
 		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
 		noWall: true,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("native run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "native run exits 0, got %d:\n%s", code, errOut.String())
 
 	// The exported TMPDIR is the slot's own tmp/<label>, not under the job directory. The run
 	// symlink-resolves the slot it was handed (#586), so the two spellings of one directory
 	// are compared as directories, not as strings.
 	want := filepath.Join(slot, "tmp", label)
-	if !sameDir(res.tmp, want) {
-		t.Errorf("TMPDIR is %q, want %q", res.tmp, want)
-	}
-	if st, err := os.Stat(res.tmp); err != nil || !st.IsDir() {
-		t.Fatalf("the exported TMPDIR %q is not a made directory: %v", res.tmp, err)
-	}
+	assert.True(t, sameDir(res.tmp, want), "TMPDIR is %q, want %q", res.tmp, want)
+	st, err := os.Stat(res.tmp)
+	require.NoError(t, err, "the exported TMPDIR %q is not a made directory: %v", res.tmp, err)
+	require.True(t, st.IsDir(), "the exported TMPDIR %q is not a made directory: %v", res.tmp, err)
 
 	// A git rev-parse from inside the exported TMPDIR must not resolve into the job's repo.
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = res.tmp
 	out, err := cmd.CombinedOutput()
 	toplevel := strings.TrimSpace(string(out))
-	if err == nil && sameDir(toplevel, jobDir) {
-		t.Errorf("git rev-parse --show-toplevel from TMPDIR %q resolved into the job's repo %q", res.tmp, toplevel)
-	}
+	assert.False(t, err == nil && sameDir(toplevel, jobDir), "git rev-parse --show-toplevel from TMPDIR %q resolved into the job's repo %q", res.tmp, toplevel)
 }
 
 // TestNativeNoWallWritesHarnessLog: the UNWALLED run captures the harness's output to
@@ -1804,35 +1414,24 @@ func TestNativeNoWallWritesHarnessLog(t *testing.T) {
 				card: card, slotDir: slot, root: root, deadline: 30 * time.Second,
 				sandbox: tc.sandbox, noWall: tc.noWall,
 			}, &errOut)
-			if code != 0 {
-				t.Fatalf("the %s run exits 0, got %d:\n%s", tc.name, code, errOut.String())
-			}
+			require.Equal(t, 0, code, "the %s run exits 0, got %d:\n%s", tc.name, code, errOut.String())
 
 			logPath := filepath.Join(slot, "jobs", label, "harness-output.log")
 			raw, err := os.ReadFile(logPath)
-			if err != nil {
-				t.Fatalf("the %s run wrote no harness output log at %s: %v", tc.name, logPath, err)
-			}
+			require.NoError(t, err, "the %s run wrote no harness output log at %s", tc.name, logPath)
 			// The harness's own file is not this process's to write: a capture landing there
 			// would answer `harness=silent` for a harness that said nothing at all (#604).
-			if _, err := os.Stat(filepath.Join(slot, "jobs", label, "harness.log")); err == nil {
-				t.Errorf("the %s run wrote the harness's own harness.log; the capture belongs in harness-output.log", tc.name)
-			}
+			_, err = os.Stat(filepath.Join(slot, "jobs", label, "harness.log"))
+			assert.Error(t, err, "the %s run wrote the harness's own harness.log; the capture belongs in harness-output.log", tc.name)
 			for _, want := range []string{"the-harness-said-this", "touch " + touched} {
-				if !strings.Contains(string(raw), want) {
-					t.Errorf("the %s harness output log %s does not carry %q:\n%s", tc.name, logPath, want, raw)
-				}
+				assert.Contains(t, string(raw), want, "the %s harness output log %s does not carry %q:\n%s", tc.name, logPath, want, raw)
 			}
 			// One capture path: whatever the harness log holds, the run log holds too, so a
 			// reader of either sees the same run.
 			runLog, err := os.ReadFile(filepath.Join(slot, "native.log"))
-			if err != nil {
-				t.Fatalf("the %s run wrote no native.log: %v", tc.name, err)
-			}
+			require.NoError(t, err, "the %s run wrote no native.log", tc.name)
 			for _, want := range []string{"the-harness-said-this", "touch " + touched} {
-				if !strings.Contains(string(runLog), want) {
-					t.Errorf("the %s native.log does not carry %q:\n%s", tc.name, want, runLog)
-				}
+				assert.Contains(t, string(runLog), want, "the %s native.log does not carry %q:\n%s", tc.name, want, runLog)
 			}
 		})
 	}
@@ -1886,17 +1485,11 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 			jobDir := filepath.Join(slot, "jobs", label)
 			if tc.resultInRepo {
 				repo := filepath.Join(jobDir, "repo")
-				if err := os.MkdirAll(repo, 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(repo, "RESULT.md"), []byte("a card line 1\nall green from the clone\n"), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, os.MkdirAll(repo, 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(repo, "RESULT.md"), []byte("a card line 1\nall green from the clone\n"), 0o644))
 			}
 			cardPath := filepath.Join(root, "card.md")
-			if err := os.WriteFile(cardPath, []byte(tc.card), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(cardPath, []byte(tc.card), 0o644))
 			args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 				"--label", label, "--card", cardPath, "--slot", slot, "--root", root,
 				"--deadline", "30s"}
@@ -1907,34 +1500,22 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 			}
 			var stdout, stderr bytes.Buffer
 			rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
-			if rc != 0 {
-				t.Fatalf("the run exits 0, got %d:\n%s", rc, stderr.String())
-			}
-			if !strings.Contains(stdout.String(), tc.want) {
-				t.Fatalf("the NATIVE OK line carries%s:\n%s", tc.want, stdout.String())
-			}
+			require.Equal(t, 0, rc, "the run exits 0, got %d:\n%s", rc, stderr.String())
+			require.Contains(t, stdout.String(), tc.want, "the NATIVE OK line carries%s:\n%s", tc.want, stdout.String())
 			// The capture is the file the token is asked of, so the case that says the
 			// harness spoke proves the bytes are in it.
 			if tc.wantCapture > 0 {
 				raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
-				if err != nil {
-					t.Fatalf("the capture the token reads is missing: %v", err)
-				}
-				if len(raw) != tc.wantCapture {
-					t.Errorf("the capture holds %d bytes of the child's words, want %d:\n%s", len(raw), tc.wantCapture, raw)
-				}
+				require.NoError(t, err, "the capture the token reads is missing")
+				assert.Len(t, raw, tc.wantCapture, "the capture holds %d bytes of the child's words, want %d:\n%s", len(raw), tc.wantCapture, raw)
 			}
 			// A silent run's capture holds no word of the child's: either nothing at all, or
 			// the wall's own header lines.
 			if tc.want == " harness=silent" {
 				raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
-				if err != nil {
-					t.Fatalf("the capture is written even for a silent run: %v", err)
-				}
+				require.NoError(t, err, "the capture is written even for a silent run")
 				for _, line := range strings.Split(string(raw), "\n") {
-					if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "SANDBOX ") {
-						t.Errorf("a silent run's capture carries a line the child wrote: %q", line)
-					}
+					assert.False(t, strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "SANDBOX "), "a silent run's capture carries a line the child wrote: %q", line)
 				}
 			}
 		})
@@ -1954,13 +1535,9 @@ func TestNativeCaptureRefusesSymlink(t *testing.T) {
 	root, slot := aSlot(t)
 	label := "planted-capture"
 	jobDir := filepath.Join(slot, "jobs", label)
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(jobDir, 0o755))
 	victim := filepath.Join(t.TempDir(), "outside")
-	if err := os.WriteFile(victim, []byte("the bytes outside the wall\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(victim, []byte("the bytes outside the wall\n"), 0o644))
 	if err := os.Symlink(victim, filepath.Join(jobDir, "harness-output.log")); err != nil {
 		t.Skipf("this platform will not plant a symlink: %v", err)
 	}
@@ -1971,19 +1548,11 @@ func TestNativeCaptureRefusesSymlink(t *testing.T) {
 		card: []byte("FAKE-SAY planted\n"), slotDir: slot, root: root,
 		deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
-	if code != 2 {
-		t.Fatalf("a planted symlink at the capture path is a refusal (exit 2), got %d:\n%s", code, errOut.String())
-	}
-	if !strings.Contains(errOut.String(), "NATIVE REFUSED") {
-		t.Errorf("the refusal does not name itself:\n%s", errOut.String())
-	}
+	require.Equal(t, 2, code, "a planted symlink at the capture path is a refusal (exit 2), got %d:\n%s", code, errOut.String())
+	assert.Contains(t, errOut.String(), "NATIVE REFUSED", "the refusal does not name itself:\n%s", errOut.String())
 	raw, err := os.ReadFile(victim)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != "the bytes outside the wall\n" {
-		t.Errorf("the run wrote through the planted symlink; the file outside now holds:\n%s", raw)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "the bytes outside the wall\n", string(raw), "the run wrote through the planted symlink; the file outside now holds:\n%s", raw)
 }
 
 // ISSUE #881 (a): a key is authorized for one model only, and the worker description pins
@@ -1997,31 +1566,23 @@ func TestNativeRefusesAModelThatDiffersFromTheWorkerDescription(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("a card\n"), 0o644))
 	desc := nativeWorkerDescription(t, "fake-model", "key_file")
 
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/other-model",
 		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 2 {
-		t.Fatalf("a --model that differs from the description's is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
-	}
+	require.Equal(t, 2, rc, "a --model that differs from the description's is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
 	// THE ONE LINE NAMES BOTH MODELS: the description's fake-model and the --model typed.
 	line := strings.TrimSpace(stderr.String())
 	mustContain(t, "the refusal", line, "fake/other-model")
 	mustContain(t, "the refusal", line, "fake-model")
-	if n := strings.Count(line, "\n") + 1; n != 1 {
-		t.Fatalf("the refusal names both models on ONE line, got %d:\n%s", n, stderr.String())
-	}
-	if strings.Contains(stdout.String(), "NATIVE OK") {
-		t.Errorf("the refusal comes before any child runs:\n%s", stdout.String())
-	}
-	if _, err := os.Stat(filepath.Join(slot, "jobs")); err == nil {
-		t.Errorf("the refusal comes before any job directory is made:\n%s", stderr.String())
-	}
+	n := strings.Count(line, "\n") + 1
+	require.Equal(t, 1, n, "the refusal names both models on ONE line, got %d:\n%s", n, stderr.String())
+	assert.NotContains(t, stdout.String(), "NATIVE OK", "the refusal comes before any child runs:\n%s", stdout.String())
+	_, err := os.Stat(filepath.Join(slot, "jobs"))
+	assert.Error(t, err, "the refusal comes before any job directory is made:\n%s", stderr.String())
 }
 
 // ISSUE #881 (b): a description naming "secret": "<NAME>" takes the key from the
@@ -2032,9 +1593,7 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("a card\nFAKE-FINDINGS 0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("a card\nFAKE-FINDINGS 0\n"), 0o644))
 	desc := nativeWorkerDescription(t, "fake-model", "secret")
 	t.Setenv("FAKE_KEY", fakeKey)
 
@@ -2042,32 +1601,24 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("a secret worker runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
-	}
+	require.Equal(t, 0, rc, "a secret worker runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	jobDir := filepath.Join(slot, "jobs", "card")
 	// THE HARNESS SAW THE NAME: the key reached it by environment, proven by length.
 	capture, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
-	if err != nil {
-		t.Fatalf("the run captured no harness output under the job: %v", err)
-	}
+	require.NoError(t, err, "the run captured no harness output under the job")
 	mustContain(t, "the harness capture", string(capture), "the key is present, length")
 	// NO AUTH FILE IS WRITTEN UNDER THE JOB: neither the carried copy nor the harness's own.
 	for _, p := range []string{
 		filepath.Join(slot, "data", "auth.json"),
 		filepath.Join(slot, "data", "opencode", "auth.json"),
 	} {
-		if _, err := os.Stat(p); err == nil {
-			t.Errorf("a secret worker writes no auth file, but %s exists", p)
-		}
+		_, err := os.Stat(p)
+		assert.Error(t, err, "a secret worker writes no auth file, but %s exists", p)
 	}
 	// The value is in no file under the slot, and in no line this tool printed.
-	if found := grepTree(t, slot, fakeKey); found != "" {
-		t.Errorf("the secret is at rest in a file under the slot: %s", found)
-	}
-	if strings.Contains(stdout.String()+stderr.String(), fakeKey) {
-		t.Error("the secret reached an event line")
-	}
+	found := grepTree(t, slot, fakeKey)
+	assert.Empty(t, found, "the secret is at rest in a file under the slot: %s", found)
+	assert.NotContains(t, stdout.String()+stderr.String(), fakeKey, "the secret reached an event line")
 }
 
 // ISSUE #881 (b), the legacy half: `--auth` with a `--worker` description whose key is a
@@ -2081,30 +1632,23 @@ func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600))
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("a card\nFAKE-FINDINGS 0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("a card\nFAKE-FINDINGS 0\n"), 0o644))
 	desc := nativeWorkerDescription(t, "fake-model", "key_file")
 
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--worker", desc, "--auth", auth, "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("the legacy shape runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
-	}
+	require.Equal(t, 0, rc, "the legacy shape runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	mustContain(t, "the legacy note", stderr.String(), "NATIVE NOTE: --auth")
 	for _, p := range []string{
 		filepath.Join(slot, "data", "auth.json"),
 		filepath.Join(slot, "data", "opencode", "auth.json"),
 	} {
-		if _, err := os.Stat(p); err == nil {
-			t.Errorf("the legacy copy dies with the card, but %s exists after the run", p)
-		}
+		_, err := os.Stat(p)
+		assert.Error(t, err, "the legacy copy dies with the card, but %s exists after the run", p)
 	}
 }
 
@@ -2118,29 +1662,21 @@ func TestNativeAuthCopyIsGoneAfterTheRun(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600))
 	carried := filepath.Join(slot, "data", "auth.json")
 	cardPath := filepath.Join(root, "card.md")
 	card := "a card\nFAKE-CAT " + carried + "\nFAKE-FINDINGS 0\n"
-	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte(card), 0o644))
 
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--auth", auth, "--card", cardPath, "--slot", slot, "--root", root,
 		"--tokens", "unmetered", "--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("the legacy shape runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
-	}
+	require.Equal(t, 0, rc, "the legacy shape runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	// THE CHILD READ THE COPY WHILE IT RAN: its own cat of the carried file is in the
 	// capture.
 	capture, err := os.ReadFile(filepath.Join(slot, "jobs", "card", "harness-output.log"))
-	if err != nil {
-		t.Fatalf("the run captured no harness output under the job: %v", err)
-	}
+	require.NoError(t, err, "the run captured no harness output under the job")
 	mustContain(t, "the harness capture", string(capture), "cat "+carried+": ok len=")
 	// AND NO AUTH.JSON EXISTS AFTER THE CARD: neither the carried copy nor the spelling
 	// beside it.
@@ -2148,9 +1684,8 @@ func TestNativeAuthCopyIsGoneAfterTheRun(t *testing.T) {
 		carried,
 		filepath.Join(slot, "data", "opencode", "auth.json"),
 	} {
-		if _, err := os.Stat(p); err == nil {
-			t.Errorf("no auth.json exists on the bench after a card, but %s exists", p)
-		}
+		_, err := os.Stat(p)
+		assert.Error(t, err, "no auth.json exists on the bench after a card, but %s exists", p)
 	}
 }
 
@@ -2185,9 +1720,8 @@ func TestAuthModeRulesAskThePlatform(t *testing.T) {
 		{"darwin_0604", "darwin", 0o604, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := authModeWiderThanOwner(tc.goos, tc.mode); got != tc.want {
-				t.Fatalf("authModeWiderThanOwner(goos=%s, mode=%04o) = %v, want %v; a file written 0600 reads 0666 on windows, so the bits are not a refusal there (#915)", tc.goos, tc.mode, got, tc.want)
-			}
+			got := authModeWiderThanOwner(tc.goos, tc.mode)
+			require.Equal(t, tc.want, got, "authModeWiderThanOwner(goos=%s, mode=%04o) = %v, want %v; a file written 0600 reads 0666 on windows, so the bits are not a refusal there (#915)", tc.goos, tc.mode, got, tc.want)
 		})
 	}
 	// The copy's own question: did the write end exactly 0600? Windows reports 0666 for
@@ -2205,9 +1739,8 @@ func TestAuthModeRulesAskThePlatform(t *testing.T) {
 		{"linux_0666", "linux", 0o666, true},
 	} {
 		t.Run("copy_"+tc.name, func(t *testing.T) {
-			if got := authModeNotOwnerOnly(tc.goos, tc.mode); got != tc.want {
-				t.Fatalf("authModeNotOwnerOnly(goos=%s, mode=%04o) = %v, want %v (#915)", tc.goos, tc.mode, got, tc.want)
-			}
+			got := authModeNotOwnerOnly(tc.goos, tc.mode)
+			require.Equal(t, tc.want, got, "authModeNotOwnerOnly(goos=%s, mode=%04o) = %v, want %v (#915)", tc.goos, tc.mode, got, tc.want)
 		})
 	}
 }
@@ -2230,13 +1763,9 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 			"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
 		}
 		raw, err := json.MarshalIndent(desc, "", "  ")
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		path := filepath.Join(t.TempDir(), "worker.json")
-		if err := os.WriteFile(path, raw, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(path, raw, 0o644))
 		return path
 	}
 	t.Setenv("CARD881_SECRET", fakeKey)
@@ -2244,33 +1773,25 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 	t.Run("qualified_match_is_accepted", func(t *testing.T) {
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
-		if err := os.WriteFile(cardPath, []byte("a card\nFAKE-FINDINGS 0\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(cardPath, []byte("a card\nFAKE-FINDINGS 0\n"), 0o644))
 		desc := writeSecretOnly(t)
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "opencode/deepseek-v4-flash",
 			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
-		if rc != 0 {
-			t.Fatalf("provider opencode model deepseek-v4-flash under --model opencode/deepseek-v4-flash is accepted, got exit %d:\n%s%s", rc, stdout.String(), stderr.String())
-		}
+		require.Equal(t, 0, rc, "provider opencode model deepseek-v4-flash under --model opencode/deepseek-v4-flash is accepted, got exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	})
 
 	t.Run("model_mismatch_is_refused_naming_both", func(t *testing.T) {
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
-		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(cardPath, []byte("a card\n"), 0o644))
 		desc := writeSecretOnly(t)
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "opencode/other",
 			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
-		if rc != 2 {
-			t.Fatalf("--model opencode/other against model deepseek-v4-flash is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
-		}
+		require.Equal(t, 2, rc, "--model opencode/other against model deepseek-v4-flash is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
 		line := strings.TrimSpace(stderr.String())
 		mustContain(t, "the refusal", line, "opencode/other")
 		mustContain(t, "the refusal", line, "deepseek-v4-flash")
@@ -2279,9 +1800,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 	t.Run("provider_mismatch_is_refused", func(t *testing.T) {
 		root, slot := aSlot(t)
 		cardPath := filepath.Join(root, "card.md")
-		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(cardPath, []byte("a card\n"), 0o644))
 		// A description the CURRENT loader already accepts (env_var present beside
 		// secret), so this subtest isolates the gate: the model half matches, only
 		// the provider half differs, and the gate must still refuse.
@@ -2294,20 +1813,14 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 		}
 		t.Setenv("CARD881_SECRET", fakeKey)
 		raw, err := json.MarshalIndent(desc, "", "  ")
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		descPath := filepath.Join(t.TempDir(), "worker.json")
-		if err := os.WriteFile(descPath, raw, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(descPath, raw, 0o644))
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "other/deepseek-v4-flash",
 			"--worker", descPath, "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
-		if rc != 2 {
-			t.Fatalf("--model other/deepseek-v4-flash against provider opencode is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
-		}
+		require.Equal(t, 2, rc, "--model other/deepseek-v4-flash against provider opencode is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
 	})
 }
 
@@ -2327,19 +1840,13 @@ func nativeWorkerDescription(t *testing.T, model, keyShape string) string {
 		desc["secret"] = "FAKE_KEY"
 	} else {
 		key := filepath.Join(t.TempDir(), "key")
-		if err := os.WriteFile(key, []byte("FAKE_KEY="+fakeKey+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(key, []byte("FAKE_KEY="+fakeKey+"\n"), 0o600))
 		desc["key_file"] = key
 	}
 	raw, err := json.MarshalIndent(desc, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "worker.json")
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, raw, 0o644))
 	return path
 }
 
@@ -2356,29 +1863,20 @@ func TestNativeWalledJobPathWithSpace(t *testing.T) {
 	sandbox := nativeSandbox(t)
 	root := filepath.Join(t.TempDir(), "My Bench")
 	slot := filepath.Join(root, "slot-1")
-	if err := os.MkdirAll(slot, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(slot, 0o755))
 	write(t, filepath.Join(root, "identity.tsv"),
 		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("FAKE-PWD\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("FAKE-PWD\n"), 0o644))
 
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "space-label", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--sandbox", sandbox}, strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("a walled run under a root with a space exits 0, got %d:\nstdout: %s\nstderr: %s", rc, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "NATIVE OK ") {
-		t.Fatalf("the NATIVE OK line is printed for a root with a space:\n%s", stdout.String())
-	}
-	if _, err := os.Stat(filepath.Join(slot, "jobs", "space-label", "RESULT.md")); err != nil {
-		t.Fatalf("RESULT.md is written under a job path with a space: %v", err)
-	}
+	require.Equal(t, 0, rc, "a walled run under a root with a space exits 0, got %d:\nstdout: %s\nstderr: %s", rc, stdout.String(), stderr.String())
+	require.Contains(t, stdout.String(), "NATIVE OK ", "the NATIVE OK line is printed for a root with a space:\n%s", stdout.String())
+	_, err := os.Stat(filepath.Join(slot, "jobs", "space-label", "RESULT.md"))
+	require.NoError(t, err, "RESULT.md is written under a job path with a space")
 }
 
 // TestNativeHoldsAJobLease: the launcher takes <job>/.lease BEFORE the child starts and
@@ -2403,25 +1901,16 @@ func TestNativeHoldsAJobLease(t *testing.T) {
 		card: card, slotDir: slot, root: root, deadline: 30 * time.Second,
 		noWall: true,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "the run exits 0, got %d:\n%s", code, errOut.String())
 
 	raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
-	if err != nil {
-		t.Fatalf("the run wrote no harness output log: %v", err)
-	}
+	require.NoError(t, err, "the run wrote no harness output log")
 	want := "cat " + filepath.Join(jobDir, swarm.JobLeaseName) + ": ok len="
-	if !strings.Contains(string(raw), want) {
-		t.Fatalf("the child could not read a lease at %s while it ran; the capture says:\n%s",
-			filepath.Join(jobDir, swarm.JobLeaseName), raw)
-	}
-	if strings.Contains(string(raw), want+"0\n") {
-		t.Errorf("the lease was empty while the child ran; it must name the launcher's pid:\n%s", raw)
-	}
-	if _, err := os.Lstat(filepath.Join(jobDir, swarm.JobLeaseName)); !os.IsNotExist(err) {
-		t.Errorf("the lease outlived the run (%v); a finished job must leave nothing that claims to be alive", err)
-	}
+	require.Contains(t, string(raw), want, "the child could not read a lease at %s while it ran; the capture says:\n%s",
+		filepath.Join(jobDir, swarm.JobLeaseName), raw)
+	assert.NotContains(t, string(raw), want+"0\n", "the lease was empty while the child ran; it must name the launcher's pid:\n%s", raw)
+	_, err = os.Lstat(filepath.Join(jobDir, swarm.JobLeaseName))
+	assert.True(t, os.IsNotExist(err), "the lease outlived the run (%v); a finished job must leave nothing that claims to be alive", err)
 }
 
 // codex-review's hold on #2806: the card owns the data home while it runs, so it can chmod
@@ -2436,27 +1925,20 @@ func TestRemoveAuthCopySurvivesAReadOnlyDataHome(t *testing.T) {
 	}
 	dataHome := t.TempDir()
 	auth := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if reason := copyAuth(auth, "fake", dataHome); reason != "" {
-		t.Fatalf("copyAuth refused: %s", reason)
-	}
+	require.NoError(t, os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600))
+	reason := copyAuth(auth, "fake", dataHome)
+	require.Empty(t, reason, "copyAuth refused: %s", reason)
 	oc := filepath.Join(dataHome, "opencode")
 	for _, d := range []string{oc, dataHome} {
-		if err := os.Chmod(d, 0o555); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Chmod(d, 0o555))
 	}
 	t.Cleanup(func() { _ = os.Chmod(dataHome, 0o755); _ = os.Chmod(oc, 0o755) })
 	var errOut bytes.Buffer
-	if left := removeAuthCopy(dataHome, &errOut); len(left) != 0 {
-		t.Fatalf("a read-only data home kept the auth copy %v:\n%s", left, errOut.String())
-	}
+	left := removeAuthCopy(dataHome, &errOut)
+	require.Empty(t, left, "a read-only data home kept the auth copy %v:\n%s", left, errOut.String())
 	for _, p := range []string{filepath.Join(dataHome, "auth.json"), filepath.Join(oc, "auth.json")} {
-		if _, err := os.Lstat(p); !os.IsNotExist(err) {
-			t.Errorf("%s survived the cleanup of a read-only data home", p)
-		}
+		_, err := os.Lstat(p)
+		assert.True(t, os.IsNotExist(err), "%s survived the cleanup of a read-only data home", p)
 	}
 }
 
@@ -2467,23 +1949,15 @@ func TestRemoveAuthCopyNamesACopyItCannotRemove(t *testing.T) {
 
 	dataHome := t.TempDir()
 	stuck := filepath.Join(dataHome, "opencode", "auth.json")
-	if err := os.MkdirAll(stuck, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stuck, "key"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataHome, "auth.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(stuck, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(stuck, "key"), []byte("x"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dataHome, "auth.json"), []byte("{}"), 0o600))
 	var errOut bytes.Buffer
 	left := removeAuthCopy(dataHome, &errOut)
-	if len(left) != 1 || left[0] != stuck {
-		t.Fatalf("the cleanup should name exactly %s as left, got %v", stuck, left)
-	}
-	if _, err := os.Lstat(filepath.Join(dataHome, "auth.json")); !os.IsNotExist(err) {
-		t.Errorf("the removable copy was left beside the stuck one")
-	}
+	require.Len(t, left, 1, "the cleanup should name exactly %s as left, got %v", stuck, left)
+	require.Equal(t, stuck, left[0], "the cleanup should name exactly %s as left, got %v", stuck, left)
+	_, err := os.Lstat(filepath.Join(dataHome, "auth.json"))
+	assert.True(t, os.IsNotExist(err), "the removable copy was left beside the stuck one")
 	mustContain(t, "the cleanup's NOTE", errOut.String(), "could not be removed")
 }
 

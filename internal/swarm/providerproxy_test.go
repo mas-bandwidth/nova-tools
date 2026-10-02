@@ -53,51 +53,36 @@ func TestSilentBodyAfterHeadersIsOneUpstreamRequest(t *testing.T) {
 			passed <- time.Unix(0, 1)
 			return passed
 		}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer p.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	client := proxyClient()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.HarnessURL(), strings.NewReader("card"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	_, readErr := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if readErr == nil {
-		t.Fatal("a silent body was delivered as a finished response")
-	}
-	if !p.Lost() {
-		t.Fatal("a silent body was not unknown")
-	}
-	if gap := p.SilenceWall(); gap <= 0 {
-		t.Fatalf("the body gap was not measured: %s", gap)
-	}
+	require.Error(t, readErr, "a silent body was delivered as a finished response")
+	require.True(t, p.Lost(), "a silent body was not unknown")
+	gap := p.SilenceWall()
+	require.Positive(t, gap, "the body gap was not measured: %s", gap)
 
 	again, err := http.NewRequestWithContext(ctx, http.MethodPost, p.HarnessURL(), strings.NewReader("again"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	resp2, err := client.Do(again)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	body2, err := io.ReadAll(resp2.Body)
 	require.NoError(t, err)
 	resp2.Body.Close()
 	assert.Equal(t, http.StatusBadGateway, resp2.StatusCode, "must return 502 Bad Gateway")
 	assert.Equal(t, "lost\n", string(body2), "must return 'lost\n' error message")
 
-	if got, upn := p.Requests(), upstream.Load(); got != 1 || upn != 1 {
-		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got, upn)
-	}
+	got, upn := p.Requests(), upstream.Load()
+	require.Equal(t, int64(1), got, "requests=%d upstream=%d, want 1 and 1", got, upn)
+	require.Equal(t, int32(1), upn, "requests=%d upstream=%d, want 1 and 1", got, upn)
 	t.Logf("CANARY requests=%d silence_ms=%d verdict=unknown", p.Requests(), p.SilenceWall().Milliseconds())
 }
 
@@ -125,35 +110,23 @@ func TestBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
 	defer up.Close()
 
 	p, err := ListenProviderProxy(ProviderProxyConfig{Upstream: up.URL, Silence: 2 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer p.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.HarnessURL(), strings.NewReader("card"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	resp, err := proxyClient().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	body, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if err != nil {
-		t.Fatalf("a body inside the deadline failed: %v", err)
-	}
-	if string(body) != "ok\n" {
-		t.Fatalf("body %q, want ok", body)
-	}
-	if p.Lost() {
-		t.Fatal("a body inside the deadline was marked unknown")
-	}
-	if got, upn := p.Requests(), upstream.Load(); got != 1 || upn != 1 {
-		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got, upn)
-	}
+	require.NoError(t, err, "a body inside the deadline failed: %v", err)
+	require.Equal(t, "ok\n", string(body), "body %q, want ok", body)
+	require.False(t, p.Lost(), "a body inside the deadline was marked unknown")
+	got, upn := p.Requests(), upstream.Load()
+	require.Equal(t, int64(1), got, "requests=%d upstream=%d, want 1 and 1", got, upn)
+	require.Equal(t, int32(1), upn, "requests=%d upstream=%d, want 1 and 1", got, upn)
 }
 
 // TestUnsetSilenceArmsFortyFiveSeconds: a proxy with no silence of its own
@@ -184,33 +157,25 @@ func TestUnsetSilenceArmsFortyFiveSeconds(t *testing.T) {
 			return ch
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer p.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.HarnessURL(), strings.NewReader("card"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	resp, err := proxyClient().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	mu.Lock()
 	got := append([]time.Duration(nil), armed...)
 	mu.Unlock()
-	if len(got) == 0 || got[0] != ProviderBodySilence {
-		t.Fatalf("armed %v, want %s", got, ProviderBodySilence)
-	}
-	if !p.Lost() || p.Requests() != 1 {
-		t.Fatalf("lost=%v requests=%d", p.Lost(), p.Requests())
-	}
+	require.NotEmpty(t, got, "armed %v, want %s", got, ProviderBodySilence)
+	require.Equal(t, ProviderBodySilence, got[0], "armed %v, want %s", got, ProviderBodySilence)
+	require.True(t, p.Lost(), "lost=%v requests=%d", p.Lost(), p.Requests())
+	require.Equal(t, int64(1), p.Requests(), "lost=%v requests=%d", p.Lost(), p.Requests())
 }
 
 func TestPointProviderAtProxyKeepsTheKey(t *testing.T) {
@@ -218,29 +183,20 @@ func TestPointProviderAtProxyKeepsTheKey(t *testing.T) {
 
 	in := []byte(`{"provider":{"fake":{"options":{"apiKey":"k","baseURL":"http://127.0.0.1:9/v1"}}}}`)
 	out, ok := PointProviderAtProxy(in, "fake", "http://127.0.0.1:8/v1")
-	if !ok {
-		t.Fatal("the base URL was not retargeted")
-	}
-	if ProviderBaseURL(out, "fake") != "http://127.0.0.1:8/v1" {
-		t.Fatalf("baseURL = %q", ProviderBaseURL(out, "fake"))
-	}
-	if !strings.Contains(string(out), `"apiKey": "k"`) {
-		t.Fatalf("the key was dropped:\n%s", out)
-	}
-	if _, ok := PointProviderAtProxy([]byte(`{"provider":{"fake":{"options":{}}}}`), "fake", "http://127.0.0.1:8/v1"); ok {
-		t.Fatal("a provider with no base URL was pointed at the proxy")
-	}
+	require.True(t, ok, "the base URL was not retargeted")
+	require.Equal(t, "http://127.0.0.1:8/v1", ProviderBaseURL(out, "fake"), "baseURL = %q", ProviderBaseURL(out, "fake"))
+	require.Contains(t, string(out), `"apiKey": "k"`, "the key was dropped:\n%s", out)
+	_, ok = PointProviderAtProxy([]byte(`{"provider":{"fake":{"options":{}}}}`), "fake", "http://127.0.0.1:8/v1")
+	require.False(t, ok, "a provider with no base URL was pointed at the proxy")
 }
 
 func TestProviderProxyEligibleIsHTTPOnly(t *testing.T) {
 	t.Parallel()
 
-	if !ProviderProxyEligible("http://127.0.0.1:9/v1") {
-		t.Fatal("an http base URL was not eligible")
-	}
-	if ProviderProxyEligible("") || ProviderProxyEligible("not a url") || ProviderProxyEligible("file:///tmp/x") {
-		t.Fatal("a non-http base URL was eligible")
-	}
+	require.True(t, ProviderProxyEligible("http://127.0.0.1:9/v1"), "an http base URL was not eligible")
+	require.False(t, ProviderProxyEligible(""), "a non-http base URL was eligible")
+	require.False(t, ProviderProxyEligible("not a url"), "a non-http base URL was eligible")
+	require.False(t, ProviderProxyEligible("file:///tmp/x"), "a non-http base URL was eligible")
 }
 
 // TestDelayedHeadersInsideTheWaitPassThrough: headers late but inside the
@@ -273,38 +229,28 @@ func TestDelayedHeadersInsideTheWaitPassThrough(t *testing.T) {
 	defer up.Close()
 
 	p, err := ListenProviderProxy(ProviderProxyConfig{Upstream: up.URL, Silence: 2 * time.Second, HeaderWait: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer p.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.HarnessURL(), strings.NewReader("card"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	resp, err := proxyClient().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	body, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if err != nil {
-		t.Fatalf("a body after delayed headers failed: %v", err)
-	}
-	if resp.StatusCode != http.StatusOK || resp.Header.Get("X-Upstream") != "kept" || resp.Header.Get("Content-Type") != "text/event-stream" {
-		t.Fatalf("status %d headers %v", resp.StatusCode, resp.Header)
-	}
-	if want := "data: one\n\ndata: two\n\ndata: [DONE]\n\n"; string(body) != want {
-		t.Fatalf("body %q, want %q", body, want)
-	}
-	if p.Lost() || p.HeaderWall() != 0 {
-		t.Fatalf("delayed headers inside the wait were marked unknown (header wall %s)", p.HeaderWall())
-	}
-	if got, upn := p.Requests(), upstream.Load(); got != 1 || upn != 1 {
-		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got, upn)
-	}
+	require.NoError(t, err, "a body after delayed headers failed: %v", err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "status %d headers %v", resp.StatusCode, resp.Header)
+	require.Equal(t, "kept", resp.Header.Get("X-Upstream"), "status %d headers %v", resp.StatusCode, resp.Header)
+	require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"), "status %d headers %v", resp.StatusCode, resp.Header)
+	want := "data: one\n\ndata: two\n\ndata: [DONE]\n\n"
+	require.Equal(t, want, string(body), "body %q, want %q", body, want)
+	require.False(t, p.Lost(), "delayed headers inside the wait were marked unknown (header wall %s)", p.HeaderWall())
+	require.Zero(t, p.HeaderWall(), "delayed headers inside the wait were marked unknown (header wall %s)", p.HeaderWall())
+	got, upn := p.Requests(), upstream.Load()
+	require.Equal(t, int64(1), got, "requests=%d upstream=%d, want 1 and 1", got, upn)
+	require.Equal(t, int32(1), upn, "requests=%d upstream=%d, want 1 and 1", got, upn)
 }
 
 // TestUnsetHeaderWaitIsFortyFiveSeconds: a proxy with no header wait of its
@@ -315,11 +261,8 @@ func TestUnsetHeaderWaitIsFortyFiveSeconds(t *testing.T) {
 	up := httptest.NewServer(http.NotFoundHandler())
 	defer up.Close()
 	p, err := ListenProviderProxy(ProviderProxyConfig{Upstream: up.URL})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer p.Close()
-	if p.HeaderWait() != ProviderHeaderTimeout || ProviderHeaderTimeout != 45*time.Second {
-		t.Fatalf("header wait %s, want %s (45s)", p.HeaderWait(), ProviderHeaderTimeout)
-	}
+	require.Equal(t, ProviderHeaderTimeout, p.HeaderWait(), "header wait %s, want %s (45s)", p.HeaderWait(), ProviderHeaderTimeout)
+	require.Equal(t, 45*time.Second, ProviderHeaderTimeout, "header wait %s, want %s (45s)", p.HeaderWait(), ProviderHeaderTimeout)
 }

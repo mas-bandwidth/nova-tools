@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAddRefusesDependentsOfAnUnadmittedID(t *testing.T) {
@@ -16,9 +17,9 @@ func TestAddRefusesDependentsOfAnUnadmittedID(t *testing.T) {
 			h := newHarness(t)
 			h.setup(0)
 			r := h.run(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{bad, "waiter"}, Needs: []string{bad}}))
-			if len(r.Refused) != 2 || h.snap().Work.Card("waiter") != nil || h.snap().Work.Card(bad) != nil {
-				t.Fatalf("dependent admitted: %+v", r)
-			}
+			require.Len(t, r.Refused, 2, "dependent admitted: %+v", r)
+			require.Nil(t, h.snap().Work.Card("waiter"), "dependent admitted: %+v", r)
+			require.Nil(t, h.snap().Work.Card(bad), "dependent admitted: %+v", r)
 			h.clean("refused missing dependency")
 		})
 	}
@@ -27,17 +28,14 @@ func TestAddRefusesDependentsOfAnUnadmittedID(t *testing.T) {
 	h := newHarness(t)
 	h.setup(1)
 	r := h.run(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"bad.id", "good"}}))
-	if len(r.Refused) != 2 || h.snap().Work.Card("good") != nil || !strings.Contains(fmt.Sprint(r.Refused), "all or none") {
-		t.Fatalf("partial acceptance: %+v", r)
-	}
+	require.Len(t, r.Refused, 2, "partial acceptance: %+v", r)
+	require.Nil(t, h.snap().Work.Card("good"), "partial acceptance: %+v", r)
+	require.Contains(t, fmt.Sprint(r.Refused), "all or none", "partial acceptance: %+v", r)
 	r = h.run(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"s1-1", "waiter"}, Needs: []string{"s1-1"}}))
-	if len(r.Refused) != 2 || h.snap().Work.Card("waiter") != nil {
-		t.Fatalf("an existing id with a new one: %+v", r)
-	}
+	require.Len(t, r.Refused, 2, "an existing id with a new one: %+v", r)
+	require.Nil(t, h.snap().Work.Card("waiter"), "an existing id with a new one: %+v", r)
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"waiter"}, Needs: []string{"s1-1"}}))
-	if h.state("waiter") != sprint.Waiting {
-		t.Fatalf("waiter: %s", h.state("waiter"))
-	}
+	require.Equal(t, sprint.Waiting, h.state("waiter"), "waiter: %s", h.state("waiter"))
 	h.clean("unrelated refusals")
 }
 
@@ -76,36 +74,30 @@ func TestStoredMissingNeedsHaveOneActionableJudgment(t *testing.T) {
 					h.machine()
 				}
 				notes := h.nOpenOf(missing, "waiter")
-				if len(notes) != 1 || len(h.nAllNotes(missing)) != 1 {
-					t.Fatalf("missing dependency is silent or repeated: %+v", notes)
-				}
+				require.Len(t, notes, 1, "missing dependency is silent or repeated: %+v", notes)
+				require.Len(t, h.nAllNotes(missing), 1, "missing dependency is silent or repeated: %+v", notes)
 				n := notes[0].Note
-				if strings.Join(n.Needs, ",") != "bad.id" || strings.Join(n.Decisions, ",") != "drop,ack" || !strings.Contains(n.What, "bad.id") {
-					t.Fatalf("not actionable: %+v", n)
-				}
+				require.Equal(t, "bad.id", strings.Join(n.Needs, ","), "not actionable: %+v", n)
+				require.Equal(t, "drop,ack", strings.Join(n.Decisions, ","), "not actionable: %+v", n)
+				require.Contains(t, n.What, "bad.id", "not actionable: %+v", n)
 				h.must(AckStep(sprint.AckReq{Notes: []string{n.ID}, Reason: "dependency not required", Who: "tester"}))
 				c := h.snap().Work.Card("waiter")
-				if c.F("waived") != "bad.id" || c.F("waived_by") != "tester" || c.F("waived_at") == "" {
-					t.Fatalf("waiver not recorded: %+v", c)
-				}
+				require.Equal(t, "bad.id", c.F("waived"), "waiver not recorded: %+v", c)
+				require.Equal(t, "tester", c.F("waived_by"), "waiver not recorded: %+v", c)
+				require.NotEmpty(t, c.F("waived_at"), "waiver not recorded: %+v", c)
 				switch {
 				case live:
-					if c.Col != sprint.Waiting || c.F("reached") != "" {
-						t.Fatalf("live dependency bypassed: %+v", c)
-					}
+					require.Equal(t, sprint.Waiting, c.Col, "live dependency bypassed: %+v", c)
+					require.Empty(t, c.F("reached"), "live dependency bypassed: %+v", c)
 				case sentinel:
-					if c.Col != sprint.Waiting || c.F("reached") == "" {
-						t.Fatalf("sentinel not reached: %+v", c)
-					}
+					require.Equal(t, sprint.Waiting, c.Col, "sentinel not reached: %+v", c)
+					require.NotEmpty(t, c.F("reached"), "sentinel not reached: %+v", c)
 				default:
-					if c.Col != sprint.Ready {
-						t.Fatalf("primary not ready: %+v", c)
-					}
+					require.Equal(t, sprint.Ready, c.Col, "primary not ready: %+v", c)
 				}
 				h.machine()
-				if len(h.nOpenOf(missing, "waiter")) != 0 || len(h.nAllNotes(missing)) != 1 {
-					t.Fatal("acknowledged missing need repeated")
-				}
+				require.Empty(t, h.nOpenOf(missing, "waiter"), "acknowledged missing need repeated")
+				require.Len(t, h.nAllNotes(missing), 1, "acknowledged missing need repeated")
 				h.clean("missing need acknowledged")
 			})
 		}
@@ -122,20 +114,16 @@ func TestMissingNeedWaiverDoesNotIncludeLaterMissingNeed(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	notes := h.nOpenOf(missing, "waiter")
-	if len(notes) != 1 {
-		t.Fatalf("missing judgment: %+v", notes)
-	}
+	require.Len(t, notes, 1, "missing judgment: %+v", notes)
 	seedMissingNeeds(h, "waiter", "bad.id,later.bad")
 	h.must(AckStep(sprint.AckReq{Notes: []string{notes[0].Note.ID}, Reason: "only the first", Who: "tester"}))
 	c := h.snap().Work.Card("waiter")
-	if c.F("waived") != "bad.id" || c.Col != sprint.Waiting {
-		t.Fatalf("waived unreviewed need: %+v", c)
-	}
+	require.Equal(t, "bad.id", c.F("waived"), "waived unreviewed need: %+v", c)
+	require.Equal(t, sprint.Waiting, c.Col, "waived unreviewed need: %+v", c)
 	h.machine()
 	notes = h.nOpenOf(missing, "waiter")
-	if len(notes) != 1 || strings.Join(notes[0].Note.Needs, ",") != "later.bad" {
-		t.Fatalf("new missing need not raised: %+v", notes)
-	}
+	require.Len(t, notes, 1, "new missing need not raised: %+v", notes)
+	require.Equal(t, "later.bad", strings.Join(notes[0].Note.Needs, ","), "new missing need not raised: %+v", notes)
 	h.clean("later missing need remains judged")
 }
 
@@ -149,9 +137,7 @@ func TestRestoredMissingNeedIsNotWaivedAndItsJudgmentCloses(t *testing.T) {
 			seedMissingNeeds(h, "waiter", "later")
 			h.must(ResolveStep(sprint.ResolveReq{}))
 			notes := h.nOpenOf(sprint.NMissingNeed, "waiter")
-			if len(notes) != 1 {
-				t.Fatalf("missing judgment: %+v", notes)
-			}
+			require.Len(t, notes, 1, "missing judgment: %+v", notes)
 			h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"later"}}))
 			switch action {
 			case "ack":
@@ -161,13 +147,11 @@ func TestRestoredMissingNeedIsNotWaivedAndItsJudgmentCloses(t *testing.T) {
 			case "dropped":
 				h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"later"}}, Reason: "not needed"}))
 				h.must(ResolveStep(sprint.ResolveReq{}))
-				if len(h.nOpenOf(sprint.NBlocked, "waiter")) != 1 {
-					t.Fatal("dropped need was hidden by former missing judgment")
-				}
+				require.Len(t, h.nOpenOf(sprint.NBlocked, "waiter"), 1, "dropped need was hidden by former missing judgment")
 			}
 			c := h.snap().Work.Card("waiter")
 			if c.Col != sprint.Waiting || c.F("waived") != "" || len(h.nOpenOf(sprint.NMissingNeed, "waiter")) != 0 {
-				t.Fatalf("wrong recovery: card=%+v notes=%+v", c, h.nOpenOf(sprint.NMissingNeed, "waiter"))
+				require.Failf(t, "", "wrong recovery: card=%+v notes=%+v", c, h.nOpenOf(sprint.NMissingNeed, "waiter"))
 			}
 			h.clean("dependency exists again")
 		})
@@ -188,13 +172,11 @@ func TestMissingNeedJudgmentsAllInOneTick(t *testing.T) {
 	}
 	h.startMachine()
 	h.machine()
-	if got := len(h.nOpenOf(sprint.NMissingNeed, "")); got != n {
-		t.Fatalf("first tick: %d", got)
-	}
+	got := len(h.nOpenOf(sprint.NMissingNeed, ""))
+	require.Equal(t, n, got, "first tick: %d", got)
 	h.machine()
 	h.machine()
-	if got := len(h.nAllNotes(sprint.NMissingNeed)); got != n {
-		t.Fatalf("not written once each: %d", got)
-	}
+	got = len(h.nAllNotes(sprint.NMissingNeed))
+	require.Equal(t, n, got, "not written once each: %d", got)
 	h.clean("missing judgments drained")
 }

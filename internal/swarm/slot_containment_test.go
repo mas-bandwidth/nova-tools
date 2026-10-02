@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // caseFoldingTempDir is a temp directory plus the filesystem's own answer about whether two
@@ -24,9 +27,7 @@ func caseFoldingTempDir(t *testing.T) (string, bool) {
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
-	if err := os.WriteFile(filepath.Join(dir, "CaseProbe"), []byte("x\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "CaseProbe"), []byte("x\n"), 0o600))
 	_, err := os.Stat(filepath.Join(dir, "caseprobe"))
 	return dir, err == nil
 }
@@ -39,13 +40,9 @@ func slotDesc(t *testing.T, dir, workerDir, keyFile string) string {
 		"usage": "none", "harness": "h", "worker_dir": workerDir, "deadline": "1m",
 		"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
 	}, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	path := filepath.Join(dir, "worker.json")
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, raw, 0o644))
 	return path
 }
 
@@ -70,62 +67,43 @@ func TestAKeyFileInASlotDirectorySpelledInAnotherCaseIsRefusedWhereTheFilesystem
 		t.Skipf("the filesystem under %s is case-SENSITIVE: caseprobe is not CaseProbe, so <dir>/Worker-1 and <dir>/worker-1 are two directories here and the fold this test is about cannot happen", dir)
 	}
 	home := filepath.Join(dir, "worker")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(home, 0o755))
 	// The slot directory the tool would build is `<dir>/worker-1`. This one is spelled
 	// `<dir>/Worker-1`, which on this filesystem the tool's own `MkdirAll` in `RefreshSlot`
 	// would open as the SAME directory: the key placed here is the key the job reads.
 	folded := filepath.Join(dir, "Worker-1", "jobs", "j1")
-	if err := os.MkdirAll(folded, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(folded, 0o755))
 	key := filepath.Join(dir, "Worker-1", ".key")
-	if err := os.WriteFile(key, []byte("sk-not-a-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(key, []byte("sk-not-a-key\n"), 0o600))
 	_, problems := LoadWorker(slotDesc(t, dir, home, key))
-	if len(problems) != 1 {
-		t.Fatalf("a key file in a slot directory spelled in another case reported %d problems, want 1: %v", len(problems), problems)
-	}
+	require.Len(t, problems, 1, "a key file in a slot directory spelled in another case reported %d problems, want 1: %v", len(problems), problems)
 	said := problems[0].Error()
 	for _, want := range []string{key, filepath.Join(dir, "Worker-1"), "--read", "~/.keys/<provider>"} {
-		if !strings.Contains(said, want) {
-			t.Errorf("the folded-slot refusal does not say %q:\n%s", want, said)
-		}
+		assert.Contains(t, said, want, "the folded-slot refusal does not say %q:\n%s", want, said)
 	}
 	// The same key one level deeper, under the folded slot's own jobs/, is the same hole.
 	deeper := filepath.Join(folded, ".key")
-	if err := os.WriteFile(deeper, []byte("sk-not-a-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, problems := LoadWorker(slotDesc(t, dir, home, deeper)); len(problems) != 1 {
-		t.Fatalf("a key file under a folded slot's jobs/ is not refused: %v", problems)
-	}
+	require.NoError(t, os.WriteFile(deeper, []byte("sk-not-a-key\n"), 0o600))
+	_, problems = LoadWorker(slotDesc(t, dir, home, deeper))
+	require.Len(t, problems, 1, "a key file under a folded slot's jobs/ is not refused: %v", problems)
 	// AND NEITHER THE SLOT NOR THE WORKER DIRECTORY HAS TO BE THERE. This is the case that
 	// has no inode to compare -- `<future>/worker` does not exist, so the name is all there
 	// is -- and the answer comes from the filesystem's MEASURED fold rather than from
 	// `runtime.GOOS`: the probe climbs to the nearest directory that does exist and asks it.
 	future := filepath.Join(dir, "future", "worker")
 	absent := filepath.Join(dir, "future", "Worker-2", ".key")
-	if _, problems := LoadWorker(slotDesc(t, dir, future, absent)); len(problems) != 1 {
-		t.Fatalf("a key file in the slot of a worker_dir that does not exist yet is not refused: %v", problems)
-	}
+	_, problems = LoadWorker(slotDesc(t, dir, future, absent))
+	require.Len(t, problems, 1, "a key file in the slot of a worker_dir that does not exist yet is not refused: %v", problems)
 	// And the placements that are SOUND stay sound: a neighbour whose name merely starts
 	// the same way is not a slot, and the key file the README teaches is outside both lists.
 	for _, sound := range []string{
 		filepath.Join(dir, "Worker-keys", "provider"),
 		filepath.Join(dir, "keys", "provider"),
 	} {
-		if err := os.MkdirAll(filepath.Dir(sound), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(sound, []byte("sk-not-a-key\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, problems := LoadWorker(slotDesc(t, dir, home, sound)); len(problems) != 0 {
-			t.Errorf("a sound key file at %s is refused: %v", sound, problems)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(sound), 0o700))
+		require.NoError(t, os.WriteFile(sound, []byte("sk-not-a-key\n"), 0o600))
+		_, problems = LoadWorker(slotDesc(t, dir, home, sound))
+		assert.Empty(t, problems, "a sound key file at %s is refused: %v", sound, problems)
 	}
 }
 
@@ -158,9 +136,8 @@ func TestSlotDirHoldingJudgesTheSlotName(t *testing.T) {
 		{"above the parent", filepath.Join(dir, ".key"), ""},
 		{"elsewhere entirely", filepath.Join(dir, "a", "b", "c", ".key"), ""},
 	} {
-		if got := slotDirHolding(tc.path, worker); got != tc.want {
-			t.Errorf("%s: slotDirHolding(%s, %s) = %q, want %q", tc.name, tc.path, worker, got, tc.want)
-		}
+		got := slotDirHolding(tc.path, worker)
+		assert.Equal(t, tc.want, got, "%s: slotDirHolding(%s, %s) = %q, want %q", tc.name, tc.path, worker, got, tc.want)
 	}
 }
 
@@ -171,30 +148,20 @@ func TestNamesOneFileAsksTheFilesystem(t *testing.T) {
 	t.Parallel()
 
 	dir, folds := caseFoldingTempDir(t)
-	if err := os.MkdirAll(filepath.Join(dir, "worker"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if got := namesOneFile(dir, "worker", "worker"); !got {
-		t.Error("one name is not itself")
-	}
-	if got := namesOneFile(dir, "worker", "other"); got {
-		t.Error("two different names are one file")
-	}
-	if got := namesOneFile(dir, "Worker", "worker"); got != folds {
-		t.Errorf("namesOneFile(Worker, worker) = %v on a filesystem whose fold is %v", got, folds)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "worker"), 0o755))
+	assert.True(t, namesOneFile(dir, "worker", "worker"), "one name is not itself")
+	assert.False(t, namesOneFile(dir, "worker", "other"), "two different names are one file")
+	got := namesOneFile(dir, "Worker", "worker")
+	assert.Equal(t, folds, got, "namesOneFile(Worker, worker) = %v on a filesystem whose fold is %v", got, folds)
 	// The same question about a name NOTHING has created: the pair cannot be stat'd, so the
 	// answer is the measured fold of the directory rather than a guess.
-	if got := namesOneFile(dir, "Absent", "absent"); got != folds {
-		t.Errorf("namesOneFile(Absent, absent) = %v on a filesystem whose fold is %v", got, folds)
-	}
-	if got := dirFoldsCase(dir); got != folds {
-		t.Errorf("dirFoldsCase = %v, the filesystem folds = %v", got, folds)
-	}
+	got = namesOneFile(dir, "Absent", "absent")
+	assert.Equal(t, folds, got, "namesOneFile(Absent, absent) = %v on a filesystem whose fold is %v", got, folds)
+	got = dirFoldsCase(dir)
+	assert.Equal(t, folds, got, "dirFoldsCase = %v, the filesystem folds = %v", got, folds)
 	// A directory that is not there is answered by the nearest one that is.
-	if got := dirFoldsCase(filepath.Join(dir, "not", "yet", "123")); got != folds {
-		t.Errorf("dirFoldsCase of an absent directory = %v, the filesystem folds = %v", got, folds)
-	}
+	got = dirFoldsCase(filepath.Join(dir, "not", "yet", "123"))
+	assert.Equal(t, folds, got, "dirFoldsCase of an absent directory = %v, the filesystem folds = %v", got, folds)
 }
 
 // measuredFold is the GROUND TRUTH about one directory: a file written INSIDE it and asked
@@ -279,9 +246,8 @@ func TestTheFoldIsMeasuredInsideTheDirectoryNotInItsParent(t *testing.T) {
 	if !found {
 		t.Skip("no case-sensitivity boundary is reachable from this machine's temp directory: every directory on that path answers the same inside as its own name does in its parent, so the inference this test is about cannot be observed here. Run with TMPDIR inside a case-sensitive image mounted under a folding parent")
 	}
-	if got := dirFoldsCase(boundary); got != folds {
-		t.Errorf("dirFoldsCase(%s) = %v, but a file written INSIDE it says %v: the answer is being inferred from the directory's own name in its parent, which is a different filesystem here", boundary, got, folds)
-	}
+	got := dirFoldsCase(boundary)
+	assert.Equal(t, folds, got, "dirFoldsCase(%s) = %v, but a file written INSIDE it says %v: the answer is being inferred from the directory's own name in its parent, which is a different filesystem here", boundary, got, folds)
 	// AND THE FULL SLOT-NAME COMPARISON AT THAT BOUNDARY, which is what the check actually
 	// asks. `<boundary>/<base>-1` is the slot the tool would build; the key sits in a
 	// sibling spelled in another case. Whether that is ONE directory is the boundary's own
@@ -296,14 +262,10 @@ func TestTheFoldIsMeasuredInsideTheDirectoryNotInItsParent(t *testing.T) {
 	// will try, holding a file. The loop must step over it and leave both alone -- which is
 	// what `os.MkdirAll` plus `os.RemoveAll` did not do.
 	decoy := filepath.Join(boundary, fmt.Sprintf("novafold%d-0", os.Getpid()))
-	if err := os.Mkdir(decoy, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(decoy, 0o755))
 	t.Cleanup(func() { os.RemoveAll(decoy) })
 	sentinel := filepath.Join(decoy, "preexisting.txt")
-	if err := os.WriteFile(sentinel, []byte("not this test's\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(sentinel, []byte("not this test's\n"), 0o600))
 	base, home, candidate := "", "", ""
 	for i := 0; i < 64 && candidate == ""; i++ {
 		base = fmt.Sprintf("novafold%d-%d", os.Getpid(), i)
@@ -319,25 +281,16 @@ func TestTheFoldIsMeasuredInsideTheDirectoryNotInItsParent(t *testing.T) {
 		t.Cleanup(func() { os.RemoveAll(c) })
 		home, candidate = h, c
 	}
-	if candidate == "" {
-		t.Fatalf("could not exclusively create a fresh worker_dir and slot pair in %s", boundary)
-	}
-	if home == decoy {
-		t.Fatalf("the test adopted %s, a directory it did not create", decoy)
-	}
-	if _, err := os.Stat(sentinel); err != nil {
-		t.Errorf("a directory this test did not create lost its contents: %v", err)
-	}
+	require.NotEmpty(t, candidate, "could not exclusively create a fresh worker_dir and slot pair in %s", boundary)
+	require.NotEqual(t, decoy, home, "the test adopted %s, a directory it did not create", decoy)
+	_, err := os.Stat(sentinel)
+	assert.NoError(t, err, "a directory this test did not create lost its contents: %v", err)
 	key := filepath.Join(candidate, ".key")
-	if err := os.WriteFile(key, []byte("sk-not-a-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(key, []byte("sk-not-a-key\n"), 0o600))
 	want := 0
 	if folds {
 		want = 1 // one directory under two spellings: the key is in the slot
 	}
 	_, problems := LoadWorker(slotDesc(t, t.TempDir(), home, key))
-	if len(problems) != want {
-		t.Fatalf("a key file at %s with worker_dir %s reported %d problems, want %d on a filesystem that folds=%v: %v", key, home, len(problems), want, folds, problems)
-	}
+	require.Len(t, problems, want, "a key file at %s with worker_dir %s reported %d problems, want %d on a filesystem that folds=%v: %v", key, home, len(problems), want, folds, problems)
 }

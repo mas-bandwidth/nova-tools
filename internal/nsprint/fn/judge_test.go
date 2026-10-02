@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // TestFromListFindsOnlyOurLibrary: FromList reads the nova_sprint entry out of
@@ -12,23 +13,23 @@ import (
 func TestFromListFindsOnlyOurLibrary(t *testing.T) {
 	t.Parallel()
 	if code, found := FromList(nil); found || code != "" {
-		t.Fatalf("FromList(nil) = %q %v; want none", code, found)
+		require.Failf(t, "assertion failed", "FromList(nil) = %q %v; want none", code, found)
 	}
 	libs := []redis.Library{{Name: "other", Code: "x"}, {Name: Library, Code: "ours"}}
 	if code, found := FromList(libs); !found || code != "ours" {
-		t.Fatalf("FromList = %q %v; want ours", code, found)
+		require.Failf(t, "assertion failed", "FromList = %q %v; want ours", code, found)
 	}
 	if _, found := FromList(libs[:1]); found {
-		t.Fatal("FromList found nova_sprint in a reply that holds only another library")
+		require.False(t, found, "FromList found nova_sprint in a reply that holds only another library")
 	}
 }
 
 func TestPingReplyIsTheReplyOrTheError(t *testing.T) {
 	t.Parallel()
 	if got := PingReply("PONG", nil); got != "PONG" {
-		t.Fatalf("PingReply(PONG) = %q", got)
+		require.Equal(t, "PONG", got, "PingReply(PONG) = %q", got)
 	}
 	if got := PingReply(nil, errors.New("ERR Function not found")); got != "ERR Function not found" {
-		t.Fatalf("PingReply(err) = %q", got)
+		require.Equal(t, "ERR Function not found", got, "PingReply(err) = %q", got)
 	}
 }

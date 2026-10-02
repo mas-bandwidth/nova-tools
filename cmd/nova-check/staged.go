@@ -180,6 +180,9 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 		}
 	}
 
+	if out, ok := stdout.(*jsonOutput); ok && *out.enabled {
+		return renderFailures(stdout, "nocode", findings, failMax, "dir", dir, "staged", classified, "deny-list", source)
+	}
 	if len(findings) > 0 {
 		list := bounded.Capped(stderr, failMax, "NOCODE", "path", failMaxRemedy)
 		for _, f := range findings {
@@ -477,10 +480,7 @@ func stagedBlobHeads(root string, recs []stagedRecord) (map[string]stagedBlobHea
 				// declines to trust it.
 				why = "object is a " + f[1] + ", not a blob"
 			}
-			n := int64(2)
-			if size < n {
-				n = size
-			}
+			n := min(int64(2), size)
 			head := make([]byte, n)
 			if _, err := io.ReadFull(r, head); err != nil {
 				return fmt.Errorf("git cat-file --batch: reading %s: %w", oid, err)

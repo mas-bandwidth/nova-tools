@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -25,12 +27,9 @@ func TestAskedEndReadsTheJobTheRunLeftBehind(t *testing.T) {
 		writeCapture(t, job, dogfoodHulkTail)
 
 		got, asked := AskedEnd(job, 0)
-		if !asked {
-			t.Fatal("a job whose capture ends with a question was not read as asking")
-		}
-		if want := "Step 2: May I write RESULT.md?"; got != want {
-			t.Fatalf("the question read off the job is %q, want %q", got, want)
-		}
+		require.True(t, asked, "a job whose capture ends with a question was not read as asking")
+		want := "Step 2: May I write RESULT.md?"
+		require.Equal(t, want, got, "the question read off the job is %q, want %q", got, want)
 	})
 
 	t.Run("a question the card then committed past", func(t *testing.T) {
@@ -38,38 +37,29 @@ func TestAskedEndReadsTheJobTheRunLeftBehind(t *testing.T) {
 		writeCapture(t, job, "Should I also update the docs?\n")
 		aRepoWithACommitPastItsBase(t, filepath.Join(job, "repo"))
 
-		if got, asked := AskedEnd(job, 0); asked {
-			t.Fatalf("a card that asked and then committed the work was read as asking: %q", got)
-		}
+		got, asked := AskedEnd(job, 0)
+		require.False(t, asked, "a card that asked and then committed the work was read as asking: %q", got)
 	})
 
 	t.Run("a question beside a result the card published under repo/", func(t *testing.T) {
 		job := t.TempDir()
 		writeCapture(t, job, dogfoodStudioTail)
-		if err := os.MkdirAll(filepath.Join(job, "repo"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(job, "repo", "RESULT.md"), []byte("RESULT: x sha=1\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Join(job, "repo"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(job, "repo", "RESULT.md"), []byte("RESULT: x sha=1\n"), 0o644))
 
-		if got, asked := AskedEnd(job, 0); asked {
-			t.Fatalf("a card that published under repo/ was read as asking: %q", got)
-		}
+		got, asked := AskedEnd(job, 0)
+		require.False(t, asked, "a card that published under repo/ was read as asking: %q", got)
 	})
 
 	t.Run("a job with no capture at all", func(t *testing.T) {
-		if got, asked := AskedEnd(t.TempDir(), 0); asked {
-			t.Fatalf("a job whose harness said nothing was read as asking: %q", got)
-		}
+		got, asked := AskedEnd(t.TempDir(), 0)
+		require.False(t, asked, "a job whose harness said nothing was read as asking: %q", got)
 	})
 }
 
 func writeCapture(t *testing.T, job, body string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(job, "harness-output.log"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(job, "harness-output.log"), []byte(body), 0o644))
 }
 
 // aRepoWithACommitPastItsBase builds what repoCommits counts, the way wall_test.go already

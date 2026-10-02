@@ -5,6 +5,7 @@ package ci
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
@@ -32,23 +34,17 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	switch os.Getenv("NOVA_REDIS_CI_CHILD") {
 	case "fail":
 		testutil.Absent(t, errors.New("redis-server: executable file not found"))
-		t.Fatal("Absent returned under NOVA_CI=1; a missing redis-server must fail the test")
+		require.Fail(t, "Absent returned under NOVA_CI=1; a missing redis-server must fail the test")
 	case "skip":
 		testutil.Absent(t, errors.New("redis-server: executable file not found"))
-		t.Fatal("Absent returned with NOVA_CI unset; a missing redis-server must skip outside CI")
+		require.Fail(t, "Absent returned with NOVA_CI unset; a missing redis-server must skip outside CI")
 	}
 
 	failOut, failCode := redisCIChild(t, "fail")
-	if failCode == 0 || !strings.Contains(failOut, "redis-server is required under NOVA_CI=1") {
-		t.Fatalf("missing redis-server under NOVA_CI=1: exit %d, want a failure\n%s", failCode, failOut)
-	}
-	if strings.Contains(failOut, "--- SKIP:") {
-		t.Fatalf("missing redis-server under NOVA_CI=1 skipped:\n%s", failOut)
-	}
+	require.True(t, failCode != 0 && strings.Contains(failOut, "redis-server is required under NOVA_CI=1"), "missing redis-server under NOVA_CI=1: exit %d, want a failure\n%s", failCode, failOut)
+	require.NotContains(t, failOut, "--- SKIP:", "missing redis-server under NOVA_CI=1 skipped:\n%s", failOut)
 	skipOut, skipCode := redisCIChild(t, "skip")
-	if skipCode != 0 || !strings.Contains(skipOut, "--- SKIP:") || !strings.Contains(skipOut, "redis-server unavailable") {
-		t.Fatalf("missing redis-server outside CI: exit %d, want a skip\n%s", skipCode, skipOut)
-	}
+	require.True(t, skipCode == 0 && strings.Contains(skipOut, "--- SKIP:") && strings.Contains(skipOut, "redis-server unavailable"), "missing redis-server outside CI: exit %d, want a skip\n%s", skipCode, skipOut)
 
 	// NOVA_CI=1 comes from the functional job's environment (ci.yml), which
 	// is where this file runs: it is behind the functional tag.
@@ -57,63 +53,42 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	defer cancel()
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	defer client.Close()
-	if err := client.Ping(ctx).Err(); err != nil {
-		t.Fatalf("throwaway redis at %s did not answer: %v", addr, err)
-	}
+	err := client.Ping(ctx).Err()
+	require.NoError(t, err, "throwaway redis at %s did not answer: %v", addr, err)
 
 	root := repoRoot(t)
 	helper := readFile(t, filepath.Join(root, "internal", "nsprint", "testutil", "redis.go"))
 	fatalAt := strings.Index(helper, "Fatalf")
 	skipAt := strings.Index(helper, "t.Skip")
 	ciAt := strings.Index(helper, "NOVA_CI")
-	if ciAt < 0 || fatalAt < 0 || skipAt < 0 || !(ciAt < fatalAt && fatalAt < skipAt) {
-		t.Fatalf("helper must check NOVA_CI, fail, then skip; indexes ci=%d fatal=%d skip=%d", ciAt, fatalAt, skipAt)
-	}
-	if !strings.Contains(helper, `"--save", ""`) || !strings.Contains(helper, `"127.0.0.1"`) {
-		t.Fatal("helper must start redis-server on loopback with --save \"\"")
-	}
-	if offenders := redisServerGates(t, root); len(offenders) > 0 {
-		t.Fatalf("redis-server is started or skipped outside internal/nsprint/testutil: %s", strings.Join(offenders, ", "))
-	}
+	require.True(t, ciAt >= 0 && fatalAt >= 0 && skipAt >= 0 && ciAt < fatalAt && fatalAt < skipAt, "helper must check NOVA_CI, fail, then skip; indexes ci=%d fatal=%d skip=%d", ciAt, fatalAt, skipAt)
+	require.True(t, strings.Contains(helper, `"--save", ""`) && strings.Contains(helper, `"127.0.0.1"`), "helper must start redis-server on loopback with --save \"\"")
+	offenders := redisServerGates(t, root)
+	require.Empty(t, offenders, "redis-server is started or skipped outside internal/nsprint/testutil: %s", strings.Join(offenders, ", "))
 
 	ci := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	if !strings.Contains(ci, `NOVA_CI: "1"`) {
-		t.Fatal("ci.yml does not set NOVA_CI=1; a missing redis-server would skip and the run would stay green")
-	}
+	require.Contains(t, ci, `NOVA_CI: "1"`, "ci.yml does not set NOVA_CI=1; a missing redis-server would skip and the run would stay green")
 	// The functional tier installs the server; the unit tier refuses one
 	// (TestUnitTierRefusesRedisServer), so its `test` job must not install it.
 	for _, job := range []string{"functional", "test-hosted"} {
 		body := jobBody(ci, job)
-		if body == "" {
-			t.Fatalf("ci.yml has no job %s", job)
-		}
-		if !strings.Contains(body, redisInstallCall) {
-			t.Errorf("ci.yml job %s does not install redis-server", job)
-		}
+		require.NotEmpty(t, body, "ci.yml has no job %s", job)
+		assert.Contains(t, body, redisInstallCall, "ci.yml job %s does not install redis-server", job)
 	}
-	if strings.Contains(jobBody(ci, "test"), redisInstallCall) {
-		t.Error("ci.yml job test (the unit tier) installs redis-server; the unit tier refuses one")
-	}
+	assert.NotContains(t, jobBody(ci, "test"), redisInstallCall, "ci.yml job test (the unit tier) installs redis-server; the unit tier refuses one")
 	cert := readFile(t, filepath.Join(root, ".github", "workflows", "certification.yml"))
-	if !strings.Contains(cert, `NOVA_CI: "1"`) {
-		t.Fatal("certification.yml does not set NOVA_CI=1")
-	}
+	require.Contains(t, cert, `NOVA_CI: "1"`, "certification.yml does not set NOVA_CI=1")
 	for _, job := range []string{"test", "perf"} {
 		body := jobBody(cert, job)
-		if body == "" || !strings.Contains(body, redisInstallCall) {
-			t.Errorf("certification.yml job %s does not install redis-server", job)
-		}
+		ok := body != "" && strings.Contains(body, redisInstallCall)
+		assert.True(t, ok, "certification.yml job %s does not install redis-server", job)
 	}
 	// The installer is the tools/ci install-redis-server verb; its own tests run the apt
 	// branch (apt-get install -y -qq redis-server) and the Homebrew branch, and this reads
 	// that the two are there.
 	installer := readFile(t, filepath.Join(root, redisInstallerSource))
-	if !strings.Contains(installer, `h.aptInstall("redis-server")`) {
-		t.Fatal("the installer does not apt-get install redis-server for the hosted Linux row")
-	}
-	if !strings.Contains(installer, `"brew", "install", "redis"`) {
-		t.Fatal("the installer does not brew install redis for the Studio")
-	}
+	require.Contains(t, installer, `h.aptInstall("redis-server")`, "the installer does not apt-get install redis-server for the hosted Linux row")
+	require.Contains(t, installer, `"brew", "install", "redis"`, "the installer does not brew install redis for the Studio")
 }
 
 // redisCIChild re-executes this test as the missing-binary case. PATH is not
@@ -140,7 +115,7 @@ func redisCIChild(t *testing.T, mode string) (string, int) {
 	if errors.As(err, &exitErr) {
 		return string(out), exitErr.ExitCode()
 	}
-	t.Fatalf("re-exec %s: %v\n%s", mode, err, out)
+	require.Fail(t, fmt.Sprintf("re-exec %s: %v\n%s", mode, err, out))
 	return string(out), -1
 }
 
@@ -219,9 +194,7 @@ func redisServerGates(t *testing.T, root string) []string {
 		bad = append(bad, redisServerOffenders(rel, string(body))...)
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return bad
 }
 
@@ -338,14 +311,13 @@ func TestStartFailsClosedOnTheUnitTierShim(t *testing.T) {
 	t.Parallel()
 	if os.Getenv("NOVA_UNIT_TIER_SHIM_CHILD") == "1" {
 		testutil.Start(t)
-		t.Fatal("testutil.Start returned with the unit tier's shim first on PATH; it must fail closed")
+		require.Fail(t, "testutil.Start returned with the unit tier's shim first on PATH; it must fail closed")
 	}
 	dir := unitTierShim(t)
 	tmp := t.TempDir()
 	child := exec.Command(os.Args[0], "-test.run", "^TestStartFailsClosedOnTheUnitTierShim$", "-test.count=1", "-test.v")
 	child.Env = []string{"NOVA_UNIT_TIER_SHIM_CHILD=1", "NOVA_CI=1", "PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH"), "HOME=" + tmp, "TMPDIR=" + tmp}
 	got, err := child.CombinedOutput()
-	if err == nil || !strings.Contains(string(got), unitShimMessage) || strings.Contains(string(got), "--- SKIP") {
-		t.Fatalf("testutil.Start under NOVA_CI=1 with the shim first on PATH: err %v; want a failure naming %q\n%s", err, unitShimMessage, got)
-	}
+	ok := err != nil && strings.Contains(string(got), unitShimMessage) && !strings.Contains(string(got), "--- SKIP")
+	require.True(t, ok, "testutil.Start under NOVA_CI=1 with the shim first on PATH: err %v; want a failure naming %q\n%s", err, unitShimMessage, got)
 }

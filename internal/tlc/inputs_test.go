@@ -139,8 +139,11 @@ func TestDigestIsThePathsAndHashesInOrder(t *testing.T) {
 	other := testSource(t, inputsTree(t))
 	a, b := Digest(in), func() string { x, _ := other.Inputs("MCLone.cfg"); return Digest(x) }()
 	require.Equal(t, a, b, "the same files in another directory: %s and %s", a, b)
-	if fp, n, err := src.Fingerprint("MCLone.cfg"); err != nil || fp != Digest(in) || n != 4 {
-		t.Fatalf("fingerprint %s over %d files (%v)", fp, n, err)
+	{
+		fp, n, err := src.Fingerprint("MCLone.cfg")
+		require.NoError(t, err, "fingerprint %s over %d files (%v)", fp, n, err)
+		require.Equal(t, Digest(in), fp, "fingerprint %s over %d files (%v)", fp, n, err)
+		require.Equal(t, 4, n, "fingerprint %s over %d files (%v)", fp, n, err)
 	}
 }
 
@@ -209,8 +212,7 @@ func TestEveryCaseOfTheRepositoryResolvesToItsOwnInputs(t *testing.T) {
 	reads := map[string][]string{}
 	for _, c := range cases {
 		in, err := src.Inputs(c.Config)
-		if err != nil {
-			t.Errorf("%s: %v", c.Config, err)
+		if !assert.NoError(t, err, "%s: %v", c.Config, err) {
 			continue
 		}
 		reads[c.Config] = paths(in)
@@ -224,8 +226,8 @@ func TestEveryCaseOfTheRepositoryResolvesToItsOwnInputs(t *testing.T) {
 			assert.False(t, slicesContains(read, RunnerDir+"/"+name), "%s reads %s, a bookkeeping file: extending it must stale nothing", config, name)
 		}
 	}
-	if strings.Contains(strings.Join(reads["MCFirstConn.cfg"], " "), "MemberTable") || strings.Contains(strings.Join(reads["MCMemberTable.cfg"], " "), "FirstConn") {
-		t.Error("two models that share nothing read each other's files")
+	if assert.NotContains(t, strings.Join(reads["MCFirstConn.cfg"], " "), "MemberTable", "two models that share nothing read each other's files") {
+		assert.NotContains(t, strings.Join(reads["MCMemberTable.cfg"], " "), "FirstConn", "two models that share nothing read each other's files")
 	}
 }
 

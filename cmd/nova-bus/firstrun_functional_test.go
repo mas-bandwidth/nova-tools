@@ -13,6 +13,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE FIRST RUN, at the binary, for the tool the README sends a stranger to first.
@@ -60,13 +62,9 @@ func firstTrialBus(t *testing.T) (dir, busPath string) {
 	t.Helper()
 	hermetic(t)
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	setup, err := documentedSetup(string(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	checkout := filepath.Join(t.TempDir(), "checkout")
 	copyTree(t, filepath.Join("testdata", "example-bus"), filepath.Join(checkout, "cmd", "nova-bus", "testdata", "example-bus"))
 	sh := exec.Command("sh", "-ec", setup+"\npwd")
@@ -76,14 +74,16 @@ func firstTrialBus(t *testing.T) (dir, busPath string) {
 		"GIT_COMMITTER_NAME=Ada", "GIT_COMMITTER_EMAIL=ada@example.com")
 	var out, errOut bytes.Buffer
 	sh.Stdout, sh.Stderr = &out, &errOut
-	if err := sh.Run(); err != nil {
-		t.Fatalf("docs/CLI.md's nova-bus setup block, run as written from a checkout: %v\nstdout: %s\nstderr: %s\nthe block:\n%s", err, out.String(), errOut.String(), setup)
+	{
+		err := sh.Run()
+		require.NoErrorf(t, err, "docs/CLI.md's nova-bus setup block, run as written from a checkout: %v\nstdout: %s\nstderr: %s\nthe block:\n%s", err, out.String(), errOut.String(), setup)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	dir = lines[len(lines)-1]
 	busPath = filepath.Join(dir, "bus")
-	if _, err := os.Stat(filepath.Join(busPath, "participants.json")); err != nil {
-		t.Fatalf("docs/CLI.md's nova-bus setup block leaves the shell in %s, and there is no bus at ./bus there: %v", dir, err)
+	{
+		_, err := os.Stat(filepath.Join(busPath, "participants.json"))
+		require.NoErrorf(t, err, "docs/CLI.md's nova-bus setup block leaves the shell in %s, and there is no bus at ./bus there: %v", dir, err)
 	}
 	return dir, busPath
 }
@@ -138,22 +138,16 @@ func TestUsageBannerExamplesRunAtTheExampleBus(t *testing.T) {
 	dir, busPath := firstTrialBus(t)
 	banner := runAt(t, "", "help").mustCode(t, 0).stdout
 	examples, err := onboarding.ExampleLines(banner, "nova-bus")
-	if err != nil {
-		t.Fatalf("%v\n\nwhat the banner printed:\n%s", err, banner)
-	}
-	if len(examples) < 2 {
-		t.Fatalf("the `example:` block holds %d lines; a first sitting is more than one command: %q", len(examples), examples)
-	}
+	require.NoErrorf(t, err, "%v\n\nwhat the banner printed:\n%s", err, banner)
+	require.Falsef(t, len(examples) < 2, "the `example:` block holds %d lines; a first sitting is more than one command: %q", len(examples), examples)
 	for _, ex := range examples {
 		args := localize(dir, busPath, strings.Fields(ex)[1:])
 		r := runAt(t, "", args...)
 		if r.code == 2 {
-			t.Errorf("the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, r.stderr)
+			assert.Failf(t, "assertion failed", "the usage example %q does not run: exit 2 (could not run)\nstderr: %s", ex, r.stderr)
 			continue
 		}
-		if r.stdout == "" && r.stderr == "" {
-			t.Errorf("the usage example %q printed nothing", ex)
-		}
+		assert.Falsef(t, r.stdout == "" && r.stderr == "", "the usage example %q printed nothing", ex)
 	}
 }
 
@@ -168,32 +162,22 @@ func TestUsageBannerExamplesRunAtTheExampleBus(t *testing.T) {
 func TestTheFirstRunTranscriptIsWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-bus")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	dir, busPath := firstTrialBus(t)
 	// What the writer has beside the bus before the reply line runs: a body they wrote,
 	// and a scratch directory to put the draft in. The tool creates neither, by the same
 	// law that refuses a default bus, so the transcript's own reader makes both too.
-	if err := os.WriteFile(filepath.Join(dir, "reply.md"), []byte("Green on all three platforms.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, "drafts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "reply.md"), []byte("Green on all three platforms.\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "drafts"), 0o755))
 	seen, commands, _ := runFirstRunShapes(t, "docs/TESTS.md", lines, dir, busPath, func(stdout string) string {
 		// What the WRITER does with the file: a body over the placeholder. The send
 		// line after this one is documented as reading a draft somebody finished;
 		// docs/TESTS.md says so in its prose, and this is that sentence done.
 		return strings.Replace(stdout, bus.PlaceholderBody, "Ada, the gate is green on all three platforms.", 1)
 	})
-	if commands < 8 {
-		t.Fatalf("the transcript runs %d commands; the documented sitting is the whole first one", commands)
-	}
+	require.Falsef(t, commands < 8, "the transcript runs %d commands; the documented sitting is the whole first one", commands)
 	// The lines this sitting exists to show, counted rather than merely matched --
 	// every shape above would still pass if the transcript quietly lost half of them.
 	for prefix, want := range map[string]int{
@@ -208,9 +192,7 @@ func TestTheFirstRunTranscriptIsWhatTheToolPrints(t *testing.T) {
 		"INBOX SCOPE":   5, // four full reads and the one that is mode=since
 		"DRAFT OK":      1, // one reply drafted against the bus, outside the checkout
 	} {
-		if seen[prefix] != want {
-			t.Errorf("docs/TESTS.md's nova-bus `### First run` shows %d %s lines, want %d", seen[prefix], prefix, want)
-		}
+		assert.Equalf(t, want, seen[prefix], "docs/TESTS.md's nova-bus `### First run` shows %d %s lines, want %d", seen[prefix], prefix, want)
 	}
 }
 
@@ -233,28 +215,18 @@ func runFirstRunShapes(t *testing.T, doc string, lines []string, dir, busPath st
 			if shape == "" {
 				continue
 			}
-			if printed == nil {
-				t.Fatalf("%s: a transcript line stands before any command: %q", doc, line)
-			}
-			if !printed[shape] {
-				t.Errorf("%s line\n  %s\nhas shape %q, which this tool never printed here. Re-run the command and paste what it said.", doc, line, shape)
-			}
+			require.NotNilf(t, printed, "%s: a transcript line stands before any command: %q", doc, line)
+			assert.Truef(t, printed[shape], "%s line\n  %s\nhas shape %q, which this tool never printed here. Re-run the command and paste what it said.", doc, line, shape)
 			seen[strings.Join(strings.Fields(shape)[:2], " ")]++
 			continue
 		}
 		commands++
 		fields, redirect := splitRedirect(strings.Fields(cmd))
 		r := runAt(t, "", localize(dir, busPath, fields[1:])...)
-		if r.code == 2 {
-			t.Fatalf("%s: the documented command %q does not run: exit 2 (could not run)\nstderr: %s", doc, line, r.stderr)
-		}
+		require.NotEqualf(t, 2, r.code, "%s: the documented command %q does not run: exit 2 (could not run)\nstderr: %s", doc, line, r.stderr)
 		if redirect != "" {
-			if !strings.Contains(r.stdout, bus.PlaceholderBody) {
-				t.Fatalf("%s: the skeleton %q carries no %q placeholder for a writer to replace:\n%s", doc, line, bus.PlaceholderBody, r.stdout)
-			}
-			if err := os.WriteFile(filepath.Join(dir, redirect), []byte(finish(r.stdout)), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			require.Containsf(t, r.stdout, bus.PlaceholderBody, "%s: the skeleton %q carries no %q placeholder for a writer to replace:\n%s", doc, line, bus.PlaceholderBody, r.stdout)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, redirect), []byte(finish(r.stdout)), 0o644))
 		}
 		printed = map[string]bool{}
 		for _, out := range strings.Split(r.stdout+"\n"+r.stderr, "\n") {
@@ -280,37 +252,26 @@ func runFirstRunShapes(t *testing.T, doc string, lines []string, dir, busPath st
 func TestTheCommandReferenceFirstRunRunsAsWritten(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-bus")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	edit, err := documentedDraftEdit(string(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	dir, busPath := firstTrialBus(t)
 	seen, commands, got := runFirstRunShapes(t, "docs/CLI.md", lines, dir, busPath, func(stdout string) string {
 		path := filepath.Join(dir, "draft.md")
-		if err := os.WriteFile(path, []byte(stdout), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(path, []byte(stdout), 0o644))
 		sh := exec.Command("sh", "-c", edit)
 		sh.Dir = dir
-		if out, err := sh.CombinedOutput(); err != nil {
-			t.Fatalf("docs/CLI.md's edit step %q: %v\n%s", edit, err, out)
+		{
+			out, err := sh.CombinedOutput()
+			require.NoErrorf(t, err, "docs/CLI.md's edit step %q: %v\n%s", edit, err, out)
 		}
 		finished, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		return string(finished)
 	})
-	if commands != 5 {
-		t.Errorf("docs/CLI.md's nova-bus `### First run` runs %d commands, want 5: names, draft, send, and Ada's two reads", commands)
-	}
+	assert.Falsef(t, commands != 5, "docs/CLI.md's nova-bus `### First run` runs %d commands, want 5: names, draft, send, and Ada's two reads", commands)
 	for prefix, want := range map[string]int{
 		"NAMES OK":      1,
 		"DRAFT NOTE":    1,
@@ -319,9 +280,7 @@ func TestTheCommandReferenceFirstRunRunsAsWritten(t *testing.T) {
 		"INBOX NOTE":    1, // and Ada is carrying it
 		"INBOX CURSOR":  1,
 	} {
-		if seen[prefix] != want {
-			t.Errorf("docs/CLI.md's nova-bus `### First run` shows %d %s lines, want %d", seen[prefix], prefix, want)
-		}
+		assert.Equalf(t, want, seen[prefix], "docs/CLI.md's nova-bus `### First run` shows %d %s lines, want %d", seen[prefix], prefix, want)
 	}
 
 	runTheDocumentedReply(t, string(raw), lines, got, dir, busPath)
@@ -337,31 +296,26 @@ func TestTheCommandReferenceFirstRunRunsAsWritten(t *testing.T) {
 func runTheDocumentedReply(t *testing.T, md string, firstRun, got []string, dir, busPath string) {
 	t.Helper()
 	body, block, docID, err := documentedReply(md)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var sentID string
 	for _, line := range got {
 		if rest, ok := strings.CutPrefix(line, "SEND OK id="); ok {
 			sentID, _, _ = strings.Cut(rest, " ")
 		}
 	}
-	if sentID == "" {
-		t.Fatal("the first run printed no SEND OK id= for the reply to answer")
-	}
+	require.NotEmpty(t, sentID, "the first run printed no SEND OK id= for the reply to answer")
 	documentedSend := false
 	for _, line := range firstRun {
 		if strings.HasPrefix(line, "SEND OK id="+docID+" ") {
 			documentedSend = true
 		}
 	}
-	if !documentedSend {
-		t.Errorf("docs/CLI.md's reply line answers --re %s, which is not the id on the page's own SEND OK line; the sample has to be the note the page's sitting sent", docID)
-	}
+	assert.Truef(t, documentedSend, "docs/CLI.md's reply line answers --re %s, which is not the id on the page's own SEND OK line; the sample has to be the note the page's sitting sent", docID)
 	sh := exec.Command("sh", "-c", body)
 	sh.Dir = dir
-	if out, err := sh.CombinedOutput(); err != nil {
-		t.Fatalf("docs/CLI.md's reply body step %q: %v\n%s", body, err, out)
+	{
+		out, err := sh.CombinedOutput()
+		require.NoErrorf(t, err, "docs/CLI.md's reply body step %q: %v\n%s", body, err, out)
 	}
 	var steps []string
 	for _, line := range block {
@@ -371,12 +325,8 @@ func runTheDocumentedReply(t *testing.T, md string, firstRun, got []string, dir,
 		steps = append(steps, line)
 	}
 	seen, commands, printed := runFirstRunShapes(t, "docs/CLI.md reply", steps, dir, busPath, nil)
-	if commands != 2 {
-		t.Errorf("docs/CLI.md's reply block runs %d commands, want 2: the reply and Ada's next read", commands)
-	}
-	if seen["REPLY OK"] != 1 || seen["INBOX OK"] != 1 {
-		t.Errorf("docs/CLI.md's reply block shows %d REPLY OK and %d INBOX OK lines, want 1 each", seen["REPLY OK"], seen["INBOX OK"])
-	}
+	assert.Falsef(t, commands != 2, "docs/CLI.md's reply block runs %d commands, want 2: the reply and Ada's next read", commands)
+	assert.Falsef(t, seen["REPLY OK"] != 1 || seen["INBOX OK"] != 1, "docs/CLI.md's reply block shows %d REPLY OK and %d INBOX OK lines, want 1 each", seen["REPLY OK"], seen["INBOX OK"])
 	var replied, after string
 	for _, line := range printed {
 		if strings.HasPrefix(line, "REPLY OK ") {
@@ -386,10 +336,6 @@ func runTheDocumentedReply(t *testing.T, md string, firstRun, got []string, dir,
 			after = line
 		}
 	}
-	if !strings.Contains(replied, " re="+sentID+" ") || !strings.Contains(replied, " pushed=true ") {
-		t.Errorf("the documented reply, run with this sitting's id, printed %q; want re=%s and pushed=true", replied, sentID)
-	}
-	if !strings.Contains(after, " open=1 ") || !strings.Contains(after, " notes=0 ") {
-		t.Errorf("after the documented reply Ada's read printed %q; the page says the reply closed Bo's note (open=1, notes=0)", after)
-	}
+	assert.Falsef(t, !strings.Contains(replied, " re="+sentID+" ") || !strings.Contains(replied, " pushed=true "), "the documented reply, run with this sitting's id, printed %q; want re=%s and pushed=true", replied, sentID)
+	assert.Falsef(t, !strings.Contains(after, " open=1 ") || !strings.Contains(after, " notes=0 "), "after the documented reply Ada's read printed %q; the page says the reply closed Bo's note (open=1, notes=0)", after)
 }

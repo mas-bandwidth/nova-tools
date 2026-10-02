@@ -15,6 +15,7 @@ SPRINT TABLE
 work  | waiting | ready | working | review | merging | landed | cost
 readers | asked | reading | ok | broken
 merge | queued | merged | stuck | ci | state
+friends | status
 fleet | ready | working | width | done | ok% | status | load
 ```
 
@@ -24,6 +25,7 @@ fleet | ready | working | width | done | ok% | status | load
 | readers | readers | read cards | the reads of primaries in review |
 | merge | streams | primaries | merging, made visible |
 | fleet | fleet members | work cards | the swarm across machines |
+| friends | friends | none | who of the friends is here to help |
 
 The work table's last column, `cost` (the owner, 2026-10-01: "can you please
 add a final column to the work stream table, which is "cost". This is the sum of
@@ -42,7 +44,33 @@ stream's control card; `SyncMirrors` shows it in the cell. The sum is set
 from the cards, never added to: a replayed merge writes the same, and `clear`
 empties it with the tables.
 
-The view shows work, readers, merge, fleet in that order. The one line under
+The friends table (the owner, 2026-10-02: "add a friends table, above fleet and
+below merge. friends | status for now. up/down/held"; "friends should be
+configured in nova-config"; "you should use heartbeats from each friend to track
+their state, and sort them alphabetically, and then by status, like with fleet")
+has one row per friend and one column, `status`: `up`, `down` or `held`. Its rows
+are nova-config's friend rows and nothing else: `friend sync` (`--pg`, else
+NOVA_PG_DSN, as nova-config takes it) copies their names into the store's
+`friends` record, adding a friend the record lacks, taking off one nova-config no
+longer has with its beat, and keeping the hold of a friend that stays; a config
+that cannot be read or holds no friend row is refused (exit 3) and changes
+nothing. A friend says it is there with `friend beat <friend>`, which its own
+machinery runs every few seconds beside its harness (it writes
+`friend-beat:<friend>`, the time to the second; a friend not in the record is
+refused, exit 1). Its status is the fleet's rule (`sprint.PresenceStatus`): `held`
+while the coordinator holds it (`friend down`; `friend up` releases the hold),
+whatever it beats; else `up` until it has missed MissedBeatsDown beat windows of
+BeatDeadline in a row; else `down`, and `down` when it has never beaten. The rows
+are in the fleet table's order (`FleetOrder`): up, then held, then down, each by
+name. The table is drawn by `where` from those records when it draws the frame,
+never stored as a table: no tick, step, epoch or clear touches it, `teardown`
+deletes its records, and the stored view `sprint` has the four tables only. Its
+one column is text, so its summary row, under the rule after its rows, has a
+blank label and a blank cell, as the fleet table's status cell is blank in its
+summary row; an empty friends table is its header, its one rule and the summary
+row, as every empty table is.
+
+The view shows work, readers, merge, friends, fleet in that order. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
 line (landed / all primaries, percent, ETA, with no machine text) when it is
 running; a RUNNING machine that has not ticked for 5 s shows
@@ -65,12 +93,17 @@ the people and no coordinator (`where --json` carries them; `check`, `inbox` and
 `goal show` say the same in their own words). The merge table has no `since`
 column. Every table is shown, with its header, empty or not, and every
 stream row is shown in the work table, at zero when it has no cards, with its
-footer. A row's first cell is its identity. The readers table is one row, `all`,
+footer; a table with no row shows its header, the one rule under it and its
+footer, with no second rule (the owner, 2026-10-02: "when the work stream table
+is empty, please just show the summary row"). A row's first cell is its
+identity. The readers table is one row, its first cell blank (the owner,
+2026-10-02: "please remove 'all'"),
 whose four cells are the sums over every reader (readers away or down counted
 too), and it has no footer, which would say the same thing twice (the owner,
 2026-10-01: "If you raise reader widths, I would like you to change the table to
 just be one row, sum of all"; "i don't reallllly need to see all readers, i just
-need to see reader *progress* overall got it?"). The merge table is one row, `all`,
+need to see reader *progress* overall got it?"). The merge table is one row, its
+first cell blank,
 the same way (the owner, 2026-10-01, about 21:00 ET: "Can we please (for next
 sprint) do the same for merge"): queued, merged and stuck are the sums over every
 stream; ci and state, which do not add up, show the value across the streams that
@@ -448,10 +481,11 @@ and it is the coordinator's decision, receipted.
   table match nova-config's machine rows, in one step, and types no machine name
   and no width. The inventory is read through the config package by the config
   tool's own address rules (`--pg`, else `NOVA_PG_DSN`, the password from the
-  variable `NOVA_PG_PASSWORD_ENV` names; the friends' beats from the sprint's
-  Redis). A machine is a member when it has room: its width is its `slots` less
-  the friend slots charged to it (`nova-config machine width`), and a machine
-  with `slots` 0, or whose friends take the whole ceiling, is none. The sync
+  variable `NOVA_PG_PASSWORD_ENV` names). A machine's width is its row's
+  `width` field, set directly (`nova-config machine set <m> --width <n>`;
+  `nova-config machine width` prints it); no friend row, no beat and not the
+  machine's `slots` take part. A machine with width 1 or more is a member, and
+  one with width 0 is none. The sync
   writes only what differs: a member the table lacks is added at its width,
   down until it beats (presence brings it up, as for `fleet up`); a member whose
   width differs has its width set; a row the inventory no longer names is held,
@@ -1020,13 +1054,13 @@ refused), `--json` and `--max`. `--actor` has no default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, brief, move, resume, land, fleet
-up, fleet down, fleet level, reader add, reader away, reader up, reader remove, stream remove, wait, ack, clear, teardown, repair,
+up, fleet down, fleet level, fleet sync, friend sync, friend down, friend up, reader add, reader away, reader up, reader remove, stream remove, wait, ack, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it, and
 another actor is refused (exit 2) with nothing written; a store with no
 coordinator takes init and teardown only. The workers' verbs (take, finish,
-read, fleet beat) are anyone's who names the member or reader, and their
+read, fleet beat, friend beat) are anyone's who names the member, reader or friend, and their
 actor is that name, whatever `--actor` or NOVA_SPRINT_ACTOR say: the record
 names the worker the verb was run as, as the server's does. The reports (merge, ci) want an
 actor; the machine's verbs (tick, run) are recorded as the machine; the reads
@@ -1075,6 +1109,9 @@ command that loads it.
  then `LAND DONE batches= cards= refused=`; `--dry-run` reads the store only and changes nothing, and refuses what land refuses before its git, in land's words: a batch whose card names no base (and no `--base`) or no repository (and no `--repo-dir`) is refused, land and dry run alike, naming every problem at once, with each head of the batch that is not a commit id; a head that is not a commit id stops the dry run where land stops, the cards before it a batch, that card refused with the conflict fact land would record and nothing recorded; `--json`. A batch landed and reported tags the branches its cards' work cards of every attempt record (`branches_queued=<n>` on its line, `prune` on its item; never the base, an empty name, an option-like name or one not under `sprint/`, each said on a NOTE and counted as `branches_kept=<n>`), and the cleanup deletes only canonical successful-attempt branches from origin later, many in one push, each with an explicit lease against its recorded head; advanced or recreated tips, unowned branches and all recorded stream bases stay on origin, and a retry keeps the original lease; then removes the clone's remote-tracking refs of branches origin no longer holds, never while a landing builds or pushes: the one-shot land once after every stream, the land loop (`run --land`) between rounds when a round finds nothing queued or 256 branches wait, a line per clone `PRUNE OK|FAILED branches= refs= dir= took=` (`--json` `prune`); a failed cleanup fails no landing, and the loop keeps its branches and tries again after a minute; the queue is the process's memory, so a crash or a stop loses it and those branches stay on origin; a dry run queues and deletes nothing and says how many it would queue |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` |
+| friend sync | the friends table's rows made nova-config's friend rows (section 1) |
+| friend beat | a friend's beat, `friend beat <friend>`, run by its own machinery every few seconds; through the sprint's server it is `friend beat <friend>` and nothing more |
+| friend down, friend up | hold a friend (status `held`, whatever it beats) and release the hold |
 | reader add | declares readers |
 | reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
 | reader up | releases the hold; the reader's state is then its beat's |
@@ -1334,8 +1371,8 @@ in order. One batch, and one tick, at a time: neither runs during the other. The
 nothing between requests.
 
 The server runs the workers' verbs only: `take`, `finish`, `read` and `queue`, each beginning
-`<verb> --as <worker>` with one worker's name, and `fleet beat <member> --load <percent>` and
-nothing more. No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
+`<verb> --as <worker>` with one worker's name, `fleet beat <member> --load <percent>` and
+nothing more, and `friend beat <friend>` and nothing more. No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
 `actor`: the server gives the store and the actor, and puts them before the worker's words. A
 `take`, a `finish` and a `read` name the epoch their worker holds (`--epoch`). A `queue`'s
 `--packets` is a count from 0 to 1024 and its `--have` card ids, each given once: a worker asks
@@ -1347,8 +1384,8 @@ nothing was changed, and the batch goes on.
 The coordinator's verbs go to the server too. The server listens a second time on the
 loopback address at the same port, and there it runs any verb of the command but the ones it
 runs for nobody: itself (`run`, `tick`), `land` and `play`, which work outside the store for
-seconds or minutes, and `fleet sync`, which reads the config store with its caller's own
-credentials, nor a read that waits for the sprint to move (`where --watch`, `inbox --wait`): the
+seconds or minutes, and `fleet sync` and `friend sync`, which read the config store with their
+caller's own credentials, nor a read that waits for the sprint to move (`where --watch`, `inbox --wait`): the
 server moves the sprint on the one line of control such a verb would hold. With
 `NOVA_SPRINT_SERVER=<host:port>` set (the loopback address `run --listen` prints), every verb the
 server runs, the reads included, is not run where it is typed: its arguments are sent to the

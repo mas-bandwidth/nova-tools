@@ -2,8 +2,9 @@ package ci
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // LESSON 11 of docs/SPEC-RELEASE.md: the windows bench. The Threadripper is a
@@ -28,9 +29,7 @@ func TestTheWindowsBenchIsInTheReleaseSpec(t *testing.T) {
 		// out loud instead of quietly skipped.
 		"self-verify",
 	} {
-		if !strings.Contains(spec, want) {
-			t.Errorf("docs/SPEC-RELEASE.md does not carry %q", want)
-		}
+		assert.Contains(t, spec, want, "docs/SPEC-RELEASE.md does not carry %q", want)
 	}
 }
 
@@ -42,8 +41,6 @@ func TestTheCommandReferenceShowsAWindowsAdopt(t *testing.T) {
 
 	text := readFile(t, filepath.Join(repoRoot(t), "docs", "CLI.md"))
 	for _, want := range []string{"windows-amd64", `C:\Users\nova\.local\bin`} {
-		if !strings.Contains(text, want) {
-			t.Errorf("docs/CLI.md does not name %s; the windows bench is a target like any other", want)
-		}
+		assert.Contains(t, text, want, "docs/CLI.md does not name %s; the windows bench is a target like any other", want)
 	}
 }

@@ -9,6 +9,8 @@ package main
 // reads the #87 section: the spec is the one place the contract is written.
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,9 +21,7 @@ func TestNovaTokensEfficiencyCardNamesItsRules(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-TOKENS.md"))
-	if err != nil {
-		t.Fatalf("the efficiency card's contract is the spec's: %s", err)
-	}
+	require.False(t, err != nil, "the efficiency card's contract is the spec's: %s", err)
 	spec := string(raw)
 	section := tokensEfficiencySection(t, spec)
 	// The contract is prose, so its line wrapping is the spec's; collapse runs
@@ -57,9 +57,7 @@ func TestNovaTokensEfficiencyCardNamesItsRules(t *testing.T) {
 		// the Red tests list.
 		"Red tests",
 	} {
-		if !strings.Contains(section, want) {
-			t.Errorf("SPEC-TOKENS.md nova-tokens efficiency card names %q; the section holds:\n%s", want, section)
-		}
+		assert.False(t, !strings.Contains(section, want), "SPEC-TOKENS.md nova-tokens efficiency card names %q; the section holds:\n%s", want, section)
 	}
 }
 
@@ -71,7 +69,7 @@ func tokensEfficiencySection(t *testing.T, spec string) string {
 	const header = "## The efficiency card (#85), nova-tokens"
 	start := strings.Index(spec, header)
 	if start < 0 {
-		t.Fatalf("the spec has no %q section", header)
+		require.FailNowf(t, "spec section missing", "the spec has no %q section", header)
 		return ""
 	}
 	rest := spec[start+len(header):]

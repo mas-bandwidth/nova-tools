@@ -48,7 +48,11 @@ packet's `why`, `finding` and `fix`, which the rework wrote on the attempt's wor
 change on the branch against its base as a pull request is reviewed, and states the work's change
 exactly: the commit the work started from, a full sha, the two commands that show it
 (`git diff <start>..HEAD`, `git diff --stat <start>..HEAD`), and that the base branch may have
-moved since and is not what to compare against. The packet carries the base's name, never the
+moved since and is not what to compare against: a diff against the tip of `<base>` or
+`origin/<base>` shows every change landed since as a deletion, never the work's and never a
+finding. Its first line is `# JOB: read <card>, attempt <n>` in every profile
+(`cardcontract.ReadTitle`) and a work card's never is, so a brief that speaks to its readers
+names that line (`TestQuackBriefTellsAReadByJobMdsFirstLine`). The packet carries the base's name, never the
 commit the work was staged on, so native finds the start when it stages the read: the merge base
 of the read's head and the base in the staged checkout; the gh shim's `pr diff` and `pr view`
 read from it too. The base is a full sha, else a branch when the checkout holds
@@ -244,7 +248,11 @@ behind and the child can edit (`git remote remove`).
 data home), `TMPDIR`, `LANG`, `LC_*`, `TERM`, `USER`, `LOGNAME`, the `GO*`, `NOVA_SWARM_*`,
 `NOVA_TEST_*`, `XDG_*` and `OPENCODE_*` families, `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`,
 and the secrets `--pass` names (the loop record's nova-secrets keys) with the worker
-description's secret; everything else is dropped. A name matching
+description's secret; everything else is dropped. Native puts the bench's Go first on the
+child's `PATH` after its shell wrappers: the directory the bench's `go` really lives in
+(`swarm.BenchGoBin`: the first `go` in `~/sdk/bin`, `~/go/bin`, then the member's own `PATH`,
+resolved through its links), so a card's bare `go` and `gofmt` resolve whatever `PATH` the loop
+unit started the member with. A name matching
 `TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH` is dropped unless `--pass` names it, even in
 an allowed family. The member keeps the forge credentials for its own push and pull request. A loop record whose harness reads its provider key from the environment carries `--pass <KEY>`; without it the children start with no provider key and fail at the provider, and a member started with no `--pass`, no worker secret and no `--auth` file for a model that is not a local one (`ollama`, `lmstudio`, `llamacpp`, `local`) says so in one `NOTE` line. When the result carries a `title`, the member opens the pull
 request after the push, as itself, from the card's branch into the base ref, with the title and

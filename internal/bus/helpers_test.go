@@ -68,9 +68,7 @@ func loadBus(t *testing.T, root string) *Bus {
 func mustParticipant(t *testing.T, c *Config, name string) Participant {
 	t.Helper()
 	p, ok := c.Lookup(name)
-	if !ok {
-		t.Fatalf("roster has no %q", name)
-	}
+	require.True(t, ok, "roster has no %q", name)
 	return p
 }
 

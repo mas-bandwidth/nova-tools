@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"slices"
 
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -398,7 +398,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "where", argErr("takes no words ", err))
+		return refuse(stderr, "where", argErr("takes no words ", err, pos...))
 	}
 	ctx := context.Background()
 	if *watch && isTwin(c.redis) {
@@ -541,7 +541,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	v.Machine = st.MachineLine(ctx)
 	var b strings.Builder
 	b.WriteString("SPRINT TABLE\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
-	var parts []string
+	parts := map[string]string{}
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]
 		rows := map[string]map[string]string{}
@@ -564,9 +564,22 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 			t = mergeAll(t)
 		}
 		// every table shows, every stream row in it, empty or not
-		parts = append(parts, ntable.Render(t, ntable.RenderOpts{Title: logical}))
+		parts[logical] = ntable.Render(t, ntable.RenderOpts{Title: logical})
 	}
-	b.WriteString(strings.Join(parts, "\n"))
+	friends, err := st.FriendRows(ctx, now)
+	if err != nil {
+		return whereView{}, "", err
+	}
+	v.Tables[sprint.Friends] = map[string]map[string]string{}
+	for _, f := range friends {
+		v.Tables[sprint.Friends][f.Name] = map[string]string{sprint.Status: f.Status}
+	}
+	parts[sprint.Friends] = friendsText(friends)
+	var shown []string
+	for _, t := range sprint.ShownOrder {
+		shown = append(shown, parts[t])
+	}
+	b.WriteString(strings.Join(shown, "\n"))
 	a.goalsView(ctx, st, &v)
 	for _, c := range clocks {
 		if c.Stalled(now, stale) {
@@ -576,11 +589,33 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	return v, b.String(), nil
 }
 
-// allRow is the label of the one row the view draws for the readers and the
-// merge tables.
-const allRow = "all"
+// friendsText is the friends table as the view draws it (sprint.FriendsDef):
+// its header, a rule, a row per friend in the order given, then a rule and the
+// summary row, whose cell is blank, as the fleet table's status cell is (the
+// table's one column is text, which has no fold, so the table layer draws no
+// footer of its own). With no friend it is the header, its one rule and the
+// summary row, as every empty table is (ntable.Render).
+func friendsText(friends []store.FriendRow) string {
+	t := sprint.FriendsDef()
+	for _, f := range friends {
+		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Texts: map[string]string{sprint.Status: f.Status}})
+	}
+	text := ntable.Render(t, ntable.RenderOpts{Title: sprint.Friends})
+	header, rest, _ := strings.Cut(text, "\n")
+	rule, _, _ := strings.Cut(rest, "\n")
+	label, _, _ := strings.Cut(header, " | ")
+	if len(friends) > 0 {
+		text += rule + "\n"
+	}
+	return text + strings.Repeat(" ", len(label)) + " |\n"
+}
 
-// readersAll is the readers table as the view's text draws it: one row, all,
+// allRow is the label of the one row the view draws for the readers and the
+// merge tables: blank, as the work table's footer is (the owner, 2026-10-02:
+// "please remove 'all'").
+const allRow = ""
+
+// readersAll is the readers table as the view's text draws it: one row, unlabelled,
 // whose cells are the sums over every reader (hidden rows, readers away or down,
 // counted as the footer counted them), and no footer, which would say the same
 // thing twice (the owner, 2026-10-01: "change the table to just be one row, sum
@@ -634,7 +669,7 @@ func worst(rows []ntable.Row, col string, order ...string) (string, int) {
 	return w, n
 }
 
-// allOf is the table as one row, all, whose count cells are the sums over every
+// allOf is the table as one row, unlabelled, whose count cells are the sums over every
 // row (an unread set prints "?", as the footer's sum did) and whose text cells
 // are texts, with no footer: the stored table, its rows and where --json are as
 // they were.
@@ -681,7 +716,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	timeout := fs.Duration("timeout", 5*time.Minute, "with --wait, the longest wait; the inbox is shown when it passes")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "inbox", argErr("takes no words ", err))
+		return refuse(stderr, "inbox", argErr("takes no words ", err, pos...))
 	}
 	if *read && *atEpoch >= 0 {
 		return refuse(stderr, "inbox", "--read moves the cursor of the sprint's epoch, and --at-epoch reads an earlier one as it was: give one of them")
@@ -984,7 +1019,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	fields := fs.Bool("fields", false, "every field of the primary and its cards, one record a line, instead of its story")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) != 1 {
-		return refuse(stderr, "card", argErr("wants one primary id ", err))
+		return refuse(stderr, "card", argErr("wants one primary id ", err, pos...))
 	}
 	id := pos[0]
 	st, err := a.storeAt(*c, *atEpoch)
@@ -1095,13 +1130,8 @@ func printCard(w io.Writer, kind string, c *sprint.Card) {
 	if c.Placed() {
 		place = c.Row + ":" + c.Col
 	}
-	keys := make([]string, 0, len(c.Fields))
-	for k := range c.Fields {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 	var fields []string
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(c.Fields)) {
 		fields = append(fields, k+"="+oneline.Field(c.Fields[k]))
 	}
 	fmt.Fprintf(w, "%s %s place=%s score=%s rev=%d %s\n", kind, oneline.Escape(c.ID), oneline.Escape(place),
@@ -1112,7 +1142,7 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("check")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "check", argErr("takes no words ", err))
+		return refuse(stderr, "check", argErr("takes no words ", err, pos...))
 	}
 	st, err := a.store(*c)
 	if err != nil {
@@ -1162,7 +1192,7 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("routes")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
-		return refuse(stderr, "routes", argErr("takes no words ", err))
+		return refuse(stderr, "routes", argErr("takes no words ", err, pos...))
 	}
 	st, err := a.store(*c)
 	if err != nil {

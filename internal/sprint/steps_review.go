@@ -518,12 +518,8 @@ func inReview(pr *Card, set map[string]string) *Card {
 	after := *pr
 	after.Col = Review
 	after.Fields = map[string]string{}
-	for k, v := range pr.Fields {
-		after.Fields[k] = v
-	}
-	for k, v := range set {
-		after.Fields[k] = v
-	}
+	maps.Copy(after.Fields, pr.Fields)
+	maps.Copy(after.Fields, set)
 	return &after
 }
 
@@ -812,6 +808,9 @@ var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, 
 // fixed work is asked round the readers when it returns. With no member up, or none below its width (tla/DirtyTick.tla,
 // WidthRespected), the primary moves review -> ready with the fix and the
 // tick's deal cuts its card when a member has room.
+//
+// A primary that takes no rework is refused with what to run instead, by its
+// state (reworkWhy), as brief is (briefStarted).
 func Rework(s *Snapshot, r ReworkReq) Plan {
 	var p Plan
 	// a primary in review, or one at its redeal bound (ready, its work card
@@ -829,7 +828,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if AtRedealBound(s, c) != nil {
 			return ""
 		}
-		return inState(c, Review)
+		return reworkWhy(c)
 	}, s.primaryCard)
 	up := s.UpMembers()
 	// the room of each member is its width (width.go, errata 3 amendment 9)
@@ -1016,12 +1015,7 @@ type ReturnReq struct {
 var ReturnResolves = []string{NCIRed, NRed, NRejected, NRepairSkipped, NStalled}
 
 func answeredIn(notes []Note, id string) bool {
-	for _, n := range notes {
-		if n.Kind == Decided && n.Answers == id {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(notes, func(n Note) bool { return n.Kind == Decided && n.Answers == id })
 }
 
 // Return moves merging -> review: off the merge queue (or stuck), into the

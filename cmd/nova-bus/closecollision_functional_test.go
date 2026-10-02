@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Issue #1540. On the coordinator's lane, with the cursor ~800 notes behind:
@@ -52,25 +54,20 @@ func TestCloseDoesNotCollideAndIsOneReceiptPerLane(t *testing.T) {
 	r := invoke(t, "", "close", "--bus", checkout, "--as", "Ada", "--before", "2026-09-08T00:00:00Z",
 		"--remote", "origin", "--branch", "main", "--no-push").
 		mustCode(t, 0)
-	if strings.Contains(r.stderr, "file exists") {
-		t.Fatalf("the close collided with itself:\n%s", r.stderr)
-	}
+	require.NotContainsf(t, r.stderr, "file exists", "the close collided with itself:\n%s", r.stderr)
 	// closed= counts NOTES and receipts= counts the files it took: one per sender lane.
 	r.mustContain(t, "stdout", "CLOSE OK closed=4 kept=0 receipts=1 commit=")
 
 	names := mdFiles(t, checkout, "from-ada")
-	if len(names) != 1 {
-		t.Fatalf("one receipt per sender lane, want 1 file, got %d: %v", len(names), names)
-	}
+	require.Equalf(t, 1, len(names), "one receipt per sender lane, want 1 file, got %d: %v", len(names), names)
 	got := read(t, checkout, "from-ada/"+names[0])
 	// Every target is named once, the duplicated one included -- once, not twice.
 	for _, want := range []string{"To: Bo", "Re: bo-abcdef012345", "Re: bo-111111111111", "Re: bo-pong-002", "Kind: receipt"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("the receipt does not carry %q:\n%s", want, got)
-		}
+		require.Containsf(t, got, want, "the receipt does not carry %q:\n%s", want, got)
 	}
-	if n := strings.Count(got, "Re: bo-pong-002"); n != 1 {
-		t.Fatalf("the duplicated target is named %d times, want 1:\n%s", n, got)
+	{
+		n := strings.Count(got, "Re: bo-pong-002")
+		require.Equalf(t, 1, n, "the duplicated target is named %d times, want 1:\n%s", n, got)
 	}
 
 	// And every one of the four is off the open list afterwards, which is the point: one
@@ -115,12 +112,11 @@ func TestCloseThatCannotFinishWritesNothing(t *testing.T) {
 	// `CLOSE FAIL <path>:` and not a bare `CLOSE FAIL:` -- the path is how this asserts the
 	// run reached the WRITE loop and stopped inside it, rather than being turned away
 	// earlier by checkoutReady over a dirty tree, which would prove nothing about rollback.
-	if !strings.Contains(r.stderr, "CLOSE FAIL from-ada/") || !strings.Contains(r.stderr, "INDEX") {
-		t.Fatalf("this close did not stop inside its write loop, so the rollback is untested:\n%s", r.stderr)
-	}
+	require.Falsef(t, !strings.Contains(r.stderr, "CLOSE FAIL from-ada/") || !strings.Contains(r.stderr, "INDEX"), "this close did not stop inside its write loop, so the rollback is untested:\n%s", r.stderr)
 	chmod(t, lane+"/INDEX", 0o644)
-	if names := mdFiles(t, checkout, "from-ada"); len(names) != 0 {
-		t.Fatalf("a close that failed left %d receipts in the tree: %v", len(names), names)
+	{
+		names := mdFiles(t, checkout, "from-ada")
+		require.Emptyf(t, len(names), "a close that failed left %d receipts in the tree: %v", len(names), names)
 	}
 
 	invoke(t, "", "close", "--bus", checkout, "--as", "Ada", "--before", "2026-09-08T00:00:00Z",
@@ -131,14 +127,10 @@ func TestCloseThatCannotFinishWritesNothing(t *testing.T) {
 
 func mkdirAll(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 }
 
 func chmod(t *testing.T, path string, mode os.FileMode) {
 	t.Helper()
-	if err := os.Chmod(path, mode); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chmod(path, mode))
 }

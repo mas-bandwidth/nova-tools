@@ -18,6 +18,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/stretchr/testify/require"
 )
 
 // THE FAKE RUNNER IS AN EXECUTABLE, NOT A SHELL SCRIPT (windows leg, 2026-09-15).
@@ -59,9 +60,8 @@ var (
 // first test to ask for a runner (the studio bench charged it to TestBatchAllocatesSlots).
 func builtFakeRunner(t *testing.T) string {
 	t.Helper()
-	if err := buildFakeRunner(); err != nil {
-		t.Fatalf("building the fake runner these tests drive: %v", err)
-	}
+	err := buildFakeRunner()
+	require.NoError(t, err, "building the fake runner these tests drive: %v", err)
 	return fakeRunnerBin
 }
 
@@ -129,9 +129,7 @@ func runnerDoing(t *testing.T, dir, name string, steps ...runnerStep) string {
 		name += ".exe"
 	}
 	path := filepath.Join(dir, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	// A hard link, not a copy, wherever the filesystem allows it. On macOS every fresh
 	// COPY of an executable is a never-seen binary that the system policy scanner assesses
 	// on its first exec; one is quick, but a package run places dozens at once and they
@@ -140,20 +138,15 @@ func runnerDoing(t *testing.T, dir, name string, steps ...runnerStep) string {
 	// A link shares the inode the scanner has already passed. The copy stays as the
 	// fallback for a temp directory on another filesystem, and for Windows. testbin.Place
 	// is that shared helper, so every fixture here links instead of copying.
-	if err := testbin.Place(src, path); err != nil {
-		t.Fatalf("placing the fake runner at %s: %v", path, err)
-	}
+	err := testbin.Place(src, path)
+	require.NoError(t, err, "placing the fake runner at %s: %v", path, err)
 	if steps == nil {
 		steps = []runnerStep{}
 	}
 	body, err := json.Marshal(struct {
 		Steps []runnerStep `json:"steps"`
 	}{steps})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path+".json", body, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path+".json", body, 0o644))
 	return path
 }

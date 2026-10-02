@@ -1,10 +1,13 @@
 package ci
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -51,13 +54,9 @@ func hostedSteps(t *testing.T) []cacheStep {
 			Steps []cacheStep `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
-	if err := yaml.Unmarshal([]byte(raw), &wf); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, yaml.Unmarshal([]byte(raw), &wf))
 	job, ok := wf.Jobs["test-hosted"]
-	if !ok {
-		t.Fatal("ci.yml has no test-hosted job")
-	}
+	require.True(t, ok, "ci.yml has no test-hosted job")
 	return job.Steps
 }
 
@@ -75,7 +74,7 @@ func TestHostedCacheIsWhereGoKeepsIt(t *testing.T) {
 	for i, s := range steps {
 		switch {
 		case strings.HasPrefix(s.Uses, "actions/cache@"):
-			t.Errorf("test-hosted step %q uses the combined actions/cache: its save is a post step with post-if success(), so a shard the cap cancels never saves; use actions/cache/restore and actions/cache/save", s.Name)
+			assert.Fail(t, fmt.Sprintf("test-hosted step %q uses the combined actions/cache: its save is a post step with post-if success(), so a shard the cap cancels never saves; use actions/cache/restore and actions/cache/save", s.Name))
 		case strings.HasPrefix(s.Uses, "actions/cache/restore@"):
 			restore = i
 		case strings.HasPrefix(s.Uses, "actions/cache/save@"):
@@ -86,32 +85,20 @@ func TestHostedCacheIsWhereGoKeepsIt(t *testing.T) {
 			test = i
 		}
 	}
-	if restore < 0 || save < 0 || build < 0 || test < 0 {
-		t.Fatalf("test-hosted: restore step %d, save step %d, build %d, test %d; want all four", restore, save, build, test)
-	}
-	if !(restore < build && build < save && save < test) {
-		t.Errorf("test-hosted order: restore %d, build %d, save %d, test %d; want restore < build < save < test, so the entry is written before the tests the cap may cancel", restore, build, save, test)
-	}
+	require.False(t, restore < 0 || save < 0 || build < 0 || test < 0, "test-hosted: restore step %d, save step %d, build %d, test %d; want all four", restore, save, build, test)
+	assert.True(t, restore < build && build < save && save < test, "test-hosted order: restore %d, build %d, save %d, test %d; want restore < build < save < test, so the entry is written before the tests the cap may cancel", restore, build, save, test)
 	for _, i := range []int{restore, save} {
 		s := steps[i]
 		path := s.With["path"]
 		for _, want := range []string{hostedMacGoCache, hostedLinuxGoCache, hostedModCache} {
-			if !strings.Contains(path, want) {
-				t.Errorf("test-hosted step %q: path does not carry %q; GOCACHE is ~/Library/Caches/go-build on macOS and ~/.cache/go-build on Linux (run 36357749371). path:\n%s", s.Name, want, path)
-			}
+			assert.Contains(t, path, want, "test-hosted step %q: path does not carry %q; GOCACHE is ~/Library/Caches/go-build on macOS and ~/.cache/go-build on Linux (run 36357749371). path:\n%s", s.Name, want, path)
 		}
 	}
-	if a, b := steps[restore].With["path"], steps[save].With["path"]; a != b {
-		t.Errorf("test-hosted restore and save paths differ; the save would write an entry the restore cannot read:\nrestore: %s\nsave:    %s", a, b)
-	}
+	assert.Equal(t, steps[restore].With["path"], steps[save].With["path"], "test-hosted restore and save paths differ; the save would write an entry the restore cannot read:\nrestore: %s\nsave:    %s", steps[restore].With["path"], steps[save].With["path"])
 	id := steps[restore].ID
-	if id == "" {
-		t.Fatalf("test-hosted restore step %q has no id; the save cannot read its key", steps[restore].Name)
-	}
-	if want := "steps." + id + ".outputs.cache-primary-key"; !strings.Contains(steps[save].With["key"], want) {
-		t.Errorf("test-hosted save key %q does not read %s", steps[save].With["key"], want)
-	}
-	if want := "steps." + id + ".outputs.cache-hit != 'true'"; !strings.Contains(steps[save].If, want) {
-		t.Errorf("test-hosted save if %q does not skip an exact hit (%s)", steps[save].If, want)
-	}
+	require.NotEmpty(t, id, "test-hosted restore step %q has no id; the save cannot read its key", steps[restore].Name)
+	wantKey := "steps." + id + ".outputs.cache-primary-key"
+	assert.Contains(t, steps[save].With["key"], wantKey, "test-hosted save key %q does not read %s", steps[save].With["key"], wantKey)
+	wantIf := "steps." + id + ".outputs.cache-hit != 'true'"
+	assert.Contains(t, steps[save].If, wantIf, "test-hosted save if %q does not skip an exact hit (%s)", steps[save].If, wantIf)
 }

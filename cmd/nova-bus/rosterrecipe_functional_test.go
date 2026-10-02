@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE BANNER'S FIRST-SEND RECIPE RUNS AS PRINTED. `nova-bus help` carries a recipe from
@@ -49,12 +52,8 @@ func TestTheBannersFirstSendRecipeRunsAsPrinted(t *testing.T) {
 			}
 		}
 	}
-	if roster == "" {
-		t.Fatal("the banner's roster paragraph has no roster")
-	}
-	if len(recipe) < 4 {
-		t.Fatalf("the banner's recipe has %d lines, want its five commands: %q", len(recipe), recipe)
-	}
+	require.NotEmpty(t, roster, "the banner's roster paragraph has no roster")
+	require.Falsef(t, len(recipe) < 4, "the banner's recipe has %d lines, want its five commands: %q", len(recipe), recipe)
 
 	root := t.TempDir()
 	cwd := root
@@ -88,14 +87,13 @@ func TestTheBannersFirstSendRecipeRunsAsPrinted(t *testing.T) {
 			case "git":
 				cmd := exec.Command("git", fields[1:]...)
 				cmd.Dir, cmd.Env = cwd, ident
-				if b, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("%q: %v\n%s", part, err, b)
+				{
+					b, err := cmd.CombinedOutput()
+					require.NoErrorf(t, err, "%q: %v\n%s", part, err, b)
 				}
 				if fields[1] == "init" {
 					// the recipe says to save the roster as participants.json in the new directory
-					if err := os.WriteFile(filepath.Join(root, "bus", "participants.json"), []byte(roster), 0o600); err != nil {
-						t.Fatal(err)
-					}
+					require.NoError(t, os.WriteFile(filepath.Join(root, "bus", "participants.json"), []byte(roster), 0o600))
 				}
 			case "nova-bus":
 				args := append([]string(nil), fields[1:]...)
@@ -105,23 +103,20 @@ func TestTheBannersFirstSendRecipeRunsAsPrinted(t *testing.T) {
 					}
 				}
 				var stdout, stderr bytes.Buffer
-				if code := run(args, strings.NewReader(""), &stdout, &stderr, now()); code != 0 {
-					t.Fatalf("%q: exit %d\nstdout: %s\nstderr: %s", part, code, stdout.String(), stderr.String())
+				{
+					code := run(args, strings.NewReader(""), &stdout, &stderr, now())
+					require.Equalf(t, 0, code, "%q: exit %d\nstdout: %s\nstderr: %s", part, code, stdout.String(), stderr.String())
 				}
 				if out != "" {
 					body := strings.ReplaceAll(stdout.String(), "<the note goes here>", "Hello Bo, the recipe runs.")
-					if err := os.WriteFile(out, []byte(body), 0o600); err != nil {
-						t.Fatal(err)
-					}
+					require.NoError(t, os.WriteFile(out, []byte(body), 0o600))
 				}
 				sawSend = sawSend || strings.Contains(stdout.String(), "SEND OK")
 				sawInbox = sawInbox || strings.Contains(stdout.String(), "INBOX OK")
 			default:
-				t.Fatalf("the recipe runs %q, which this test does not know how to run", part)
+				require.FailNowf(t, "assertion failed", "the recipe runs %q, which this test does not know how to run", part)
 			}
 		}
 	}
-	if !sawSend || !sawInbox {
-		t.Errorf("the recipe ran without printing SEND OK (%v) and INBOX OK (%v)", sawSend, sawInbox)
-	}
+	assert.Falsef(t, !sawSend || !sawInbox, "the recipe ran without printing SEND OK (%v) and INBOX OK (%v)", sawSend, sawInbox)
 }

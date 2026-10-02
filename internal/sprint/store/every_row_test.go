@@ -49,9 +49,11 @@ func TestEveryMemberWhoseBeatLapsedGoesDownInOneTick(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 36}))
 	h.startMachine()
 	h.machine()
-	if d := h.dealtTo(); d["m1"] != 9 || d["m2"] != 9 || d["m3"] != 9 || d["m4"] != 9 {
-		t.Fatalf("dealt %v, want nine each", d)
-	}
+	d := h.dealtTo()
+	require.Equal(t, 9, d["m1"], "dealt %v, want nine each", d)
+	require.Equal(t, 9, d["m2"], "dealt %v, want nine each", d)
+	require.Equal(t, 9, d["m3"], "dealt %v, want nine each", d)
+	require.Equal(t, 9, d["m4"], "dealt %v, want nine each", d)
 	// m1 and m2 fall silent together, holding 18; m3 and m4 have room for
 	// seven cards each (DealAhead times the width of 8, less the 9 they hold):
 	// fourteen go to them, the other four are withdrawn for the next deal, and
@@ -61,22 +63,19 @@ func TestEveryMemberWhoseBeatLapsedGoesDownInOneTick(t *testing.T) {
 	res := h.machine()
 	s := h.snap()
 	for _, m := range []string{"m1", "m2"} {
-		if st := s.MemberCtl(m).F("status"); st != sprint.Down {
-			t.Fatalf("%s is %s after one tick, want down with the other", m, st)
-		}
-		if n := h.memberNotes(sprint.NMemberDown, m); len(n) != 1 {
-			t.Fatalf("%s's down notes: %q", m, n)
-		}
+		st := s.MemberCtl(m).F("status")
+		require.Equal(t, string(sprint.Down), st, "%s is %s after one tick, want down with the other", m, st)
+		n := h.memberNotes(sprint.NMemberDown, m)
+		require.Len(t, n, 1, "%s's down notes: %q", m, n)
 	}
-	d := h.dealtTo()
+	d = h.dealtTo()
 	for m, want := range map[string]int{"m1": 0, "m2": 0, "m3": sprint.DealAhead * 8, "m4": sprint.DealAhead * 8} {
 		require.Equal(t, want, d[m], "after one tick: dealt %v, want m3 and m4 at DealAhead times their width of 8 and nothing on m1 and m2", d)
 	}
 	require.Len(t, s.Fleet.Column(sprint.Withdrawn), 4, "%d cards withdrawn, want 4", len(s.Fleet.Column(sprint.Withdrawn)))
 	require.Len(t, s.Work.Column(sprint.Ready), 4, "%d primaries ready again, want the 4 withdrawn cards' primaries", len(s.Work.Column(sprint.Ready)))
-	if got := tableRows(res, sprint.Fleet); !slices.Equal(got, ms) {
-		t.Fatalf("the tick names the fleet rows %v, want every member's", got)
-	}
+	got := tableRows(res, sprint.Fleet)
+	require.True(t, slices.Equal(got, ms), "the tick names the fleet rows %v, want every member's", got)
 	h.clean("two members down in one tick")
 }
 
@@ -91,19 +90,18 @@ func TestAMemberUpAndAMemberDownInTheSameTick(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 12}))
 	h.startMachine()
 	h.machine() // m3 down, the deal over m1 and m2
-	if st := h.snap().MemberCtl("m3").F("status"); st != sprint.Down {
-		t.Fatalf("m3 is %s", st)
-	}
+	st := h.snap().MemberCtl("m3").F("status")
+	require.Equal(t, string(sprint.Down), st, "m3 is %s", st)
 	h.setLive("m1", "m3")
 	h.tick(pastDown)
 	h.machine()
 	s := h.snap()
-	if s.MemberCtl("m2").F("status") != sprint.Down || s.MemberCtl("m3").F("status") != sprint.Up {
-		t.Fatalf("after one tick: m2 %s, m3 %s; want m2 down and m3 up", s.MemberCtl("m2").F("status"), s.MemberCtl("m3").F("status"))
-	}
-	if d := h.dealtTo(); d["m2"] != 0 || d["m1"]+d["m3"] != 12 || d["m3"] == 0 {
-		t.Fatalf("dealt %v, want m2's cards on m1 and m3", d)
-	}
+	require.Equal(t, string(sprint.Down), s.MemberCtl("m2").F("status"), "after one tick: m2 %s, m3 %s; want m2 down and m3 up", s.MemberCtl("m2").F("status"), s.MemberCtl("m3").F("status"))
+	require.Equal(t, string(sprint.Up), s.MemberCtl("m3").F("status"), "after one tick: m2 %s, m3 %s; want m2 down and m3 up", s.MemberCtl("m2").F("status"), s.MemberCtl("m3").F("status"))
+	d := h.dealtTo()
+	require.Equal(t, 0, d["m2"], "dealt %v, want m2's cards on m1 and m3", d)
+	require.Equal(t, 12, d["m1"]+d["m3"], "dealt %v, want m2's cards on m1 and m3", d)
+	require.NotZero(t, d["m3"], "dealt %v, want m2's cards on m1 and m3", d)
 	h.clean("an up and a down in one tick")
 }
 
@@ -117,17 +115,14 @@ func TestTheLevelEvensEveryQueueInOneTick(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 64}))
 	h.startMachine()
 	h.machine()
-	if d := h.dealtTo(); d["m1"] != 64 {
-		t.Fatalf("dealt %v, want every card on m1", d)
-	}
+	d := h.dealtTo()
+	require.Equal(t, 64, d["m1"], "dealt %v, want every card on m1", d)
 	h.setLive(ms...)
 	h.tick(time.Second)
 	h.machine()
-	d := h.dealtTo()
+	d = h.dealtTo()
 	for _, m := range ms {
-		if d[m] != 8 {
-			t.Fatalf("after one tick with the fleet back: dealt %v, want eight each", d)
-		}
+		require.Equal(t, 8, d[m], "after one tick with the fleet back: dealt %v, want eight each", d)
 	}
 	h.clean("the level in one tick")
 }
@@ -156,19 +151,16 @@ func TestTheStreamIndexIsReadBackAfterAStop(t *testing.T) {
 		}
 		if i == 2 {
 			h.stopMachine()
-			if idx2, _ := h.snap().Work.Prop(sprint.PropStreamIndex); idx2 != idx {
-				t.Fatalf("the stop moved the index from %q to %q", idx, idx2)
-			}
+			idx2, _ := h.snap().Work.Prop(sprint.PropStreamIndex)
+			require.Equal(t, idx, idx2, "the stop moved the index from %q to %q", idx, idx2)
 			h.startMachine()
 		}
 		_ = res
 	}
-	if want := []string{"s2", "s3", "s1", "s2", "s3"}; !slices.Equal(served, want) {
-		t.Fatalf("the streams served one a tick, across a stop: %v, want %v", served, want)
-	}
+	want := []string{"s2", "s3", "s1", "s2", "s3"}
+	require.True(t, slices.Equal(served, want), "the streams served one a tick, across a stop: %v, want %v", served, want)
 	// the index is a counter, up by one with every card dealt (errata 3
 	// amendment 5, the owner's form)
-	if want := []string{"2", "3", "4", "5", "6"}; !slices.Equal(counts, want) {
-		t.Fatalf("the stream index's counter a tick, across a stop: %v, want %v", counts, want)
-	}
+	want = []string{"2", "3", "4", "5", "6"}
+	require.True(t, slices.Equal(counts, want), "the stream index's counter a tick, across a stop: %v, want %v", counts, want)
 }

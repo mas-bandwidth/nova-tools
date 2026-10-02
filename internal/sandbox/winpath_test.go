@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The path logic of the two platforms this build does not run on is tested HERE, with the
@@ -41,9 +44,8 @@ func TestWinDirModelsTheVolumeRoot(t *testing.T) {
 		`\a`:                           `\`,
 		`\`:                            `\`,
 	} {
-		if got := winDir(path); got != want {
-			t.Fatalf("winDir(%q) = %q, want %q", path, got, want)
-		}
+		got := winDir(path)
+		require.Equal(t, want, got, "winDir(%q) = %q, want %q", path, got, want)
 	}
 }
 
@@ -66,13 +68,9 @@ func TestAncestorsTerminatesOnAWindowsPath(t *testing.T) {
 			`C:\Users\runneradmin\AppData\Local\Temp`,
 			`C:\Users\runneradmin\AppData\Local\Temp\job`,
 		}
-		if strings.Join(got, " ") != strings.Join(want, " ") {
-			t.Fatalf("ancestors = %v, want %v", got, want)
-		}
+		require.Equal(t, strings.Join(want, " "), strings.Join(got, " "), "ancestors = %v, want %v", got, want)
 		for _, d := range got {
-			if winDir(d) == d {
-				t.Fatalf("the volume root %q is in the ancestor list; the root is granted above, not as an ancestor", d)
-			}
+			require.NotEqual(t, d, winDir(d), "the volume root %q is in the ancestor list; the root is granted above, not as an ancestor", d)
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("ancestors did not return in 30s on a windows path: the walk up the tree has no stop above the volume root")
@@ -103,8 +101,7 @@ func TestPathMetacharactersAreRefusedPerPlatform(t *testing.T) {
 		{"linux", "/home/me/a (paren)", false},
 	} {
 		got := badPathTextFor(tc.goos, tc.path)
-		if refused := got != ""; refused != tc.refused {
-			t.Errorf("badPathTextFor(%q, %q) = %q; refused=%v, want refused=%v", tc.goos, tc.path, got, refused, tc.refused)
-		}
+		refused := got != ""
+		assert.Equal(t, tc.refused, refused, "badPathTextFor(%q, %q) = %q; refused=%v, want refused=%v", tc.goos, tc.path, got, refused, tc.refused)
 	}
 }

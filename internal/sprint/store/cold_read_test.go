@@ -30,11 +30,11 @@ func (p *probe) inv(when string) []sprint.Violation {
 	p.t.Helper()
 	rep, _, err := p.st.Check(p.ctx, 3)
 	if err != nil {
-		p.t.Errorf("%s: check: %v", when, err)
+		assert.Fail(p.t, fmt.Sprintf("%s: check: %v", when, err))
 		return nil
 	}
 	for _, v := range rep.Violations {
-		p.t.Errorf("INVARIANT after %s: %v", when, v)
+		assert.Fail(p.t, fmt.Sprintf("INVARIANT after %s: %v", when, v))
 	}
 	return rep.Violations
 }
@@ -70,9 +70,7 @@ func (p *probe) do(when string, step Step) Result {
 
 func (p *probe) card(table, id string) *sprint.Card {
 	s, err := p.st.Load(p.ctx, All, func(*sprint.Snapshot) map[string][]string { return map[string][]string{table: {id}} })
-	if err != nil {
-		p.t.Fatal(err)
-	}
+	require.NoError(p.t, err)
 	return s.T(table).Card(id)
 }
 
@@ -130,16 +128,14 @@ func TestARedealThenBothFinishes(t *testing.T) {
 		f.Sel = ids("s1-1.w1")
 		f.Head = "first-head"
 		res := p.do("first's finish", FinishStep(f))
-		if len(res.Moved) != 0 {
-			t.Errorf("a stale finish moved: %+v", res)
-		}
+		assert.Empty(t, res.Moved, "a stale finish moved: %+v", res)
 	}
 	res := p.do("second's finish", FinishStep(sprint.FinishReq{As: second, Sel: ids("s1-1.w1"), Gens: map[string]int{"s1-1.w1": 2}, Head: "second-head"}))
 	if len(res.Moved) != 1 || p.card(sprint.Work, "s1-1").F("head") != "second-head" {
-		t.Errorf("the live finish: %+v head=%s", res, p.card(sprint.Work, "s1-1").F("head"))
+		assert.Fail(t, fmt.Sprintf("the live finish: %+v head=%s", res, p.card(sprint.Work, "s1-1").F("head")))
 	}
 	if s := p.snap(); s.Fleet.Count(first, sprint.DoneOK)+s.Fleet.Count(first, sprint.DoneFailed) != 0 || s.Fleet.Count(second, sprint.DoneOK) != 1 {
-		t.Errorf("the first member was credited: first %d ok, second %d ok", s.Fleet.Count(first, sprint.DoneOK), s.Fleet.Count(second, sprint.DoneOK))
+		assert.Fail(t, fmt.Sprintf("the first member was credited: first %d ok, second %d ok", s.Fleet.Count(first, sprint.DoneOK), s.Fleet.Count(second, sprint.DoneOK)))
 	}
 }
 
@@ -162,7 +158,7 @@ func TestAFinishWithoutItsGenerationIsRefused(t *testing.T) {
 	// the old worker (holding generation 1) reports with --as only
 	res := p.do("old worker's finish, --as only", FinishStep(sprint.FinishReq{As: first, Sel: ids("s1-1.w1"), Failed: true, Report: "stale"}))
 	if len(res.Moved) != 0 {
-		t.Errorf("a finish from generation 1 was accepted for a card at generation %s because the request named no generation: %v", c.F("gen"), res.Moved)
+		assert.Failf(t, "", "a finish from generation 1 was accepted for a card at generation %s because the request named no generation: %v", c.F("gen"), res.Moved)
 	}
 	// and by selection (no id at all)
 }
@@ -216,30 +212,24 @@ func TestACutAfterEachWriteIsFinishedByRepair(t *testing.T) {
 				step := c.step(p)
 				step.CallerOp = "caller-" + c.name
 				_, err := p.st.Run(p.ctx, step)
-				if err == nil || p.m.Pending() == nil {
-					t.Fatalf("not cut: %v pending=%v", err, p.m.Pending())
-				}
+				require.Error(t, err, "not cut: %v pending=%v", err, p.m.Pending())
+				require.NotNil(t, p.m.Pending(), "not cut: %v pending=%v", err, p.m.Pending())
 				t.Logf("cut: %v", err)
 				p.inv("cut (pending)")
 				// every mutating verb, the store still unable to write the table
 				before := snapKey(p)
 				for name, st := range everyVerb() {
 					_, err := p.st.Run(p.ctx, st)
-					if err == nil {
-						t.Errorf("%s ran over a pending operation", name)
-					}
+					assert.Error(t, err, "%s ran over a pending operation", name)
 				}
 				p.tick(2 * time.Minute)
 				for name, st := range everyVerb() {
 					_, err := p.st.Run(p.ctx, st)
 					var pe *PendingError
-					if err == nil || !errors.As(err, &pe) {
-						t.Errorf("past the grace, %s over a pending operation that cannot finish: %v", name, err)
-					}
+					assert.ErrorAs(t, err, &pe, "past the grace, %s over a pending operation that cannot finish: %v", name, err)
 				}
-				if after := snapKey(p); after != before {
-					t.Errorf("a verb changed the state while an operation was pending:\n%s\n%s", before, after)
-				}
+				after := snapKey(p)
+				assert.Equal(t, before, after, "a verb changed the state while an operation was pending:\n%s\n%s", before, after)
 				p.m.Fail = nil
 				rr, err := p.st.Repair(p.ctx)
 				t.Logf("repair: %+v %v", rr, err)
@@ -248,10 +238,10 @@ func TestACutAfterEachWriteIsFinishedByRepair(t *testing.T) {
 				t.Logf("notes at repair: %s", fmtNotes(notes))
 				again, err := p.st.Run(p.ctx, step)
 				if err != nil || !again.Replay {
-					t.Errorf("the replay of the caller's op: %+v %v", again, err)
+					assert.Fail(t, fmt.Sprintf("the replay of the caller's op: %+v %v", again, err))
 				}
 				if n := p.newNotes(); len(n) != 0 {
-					t.Errorf("the replay wrote notes: %s", fmtNotes(n))
+					assert.Fail(t, fmt.Sprintf("the replay wrote notes: %s", fmtNotes(n)))
 				}
 				p.inv("replayed")
 			})
@@ -321,11 +311,11 @@ func TestAcceptNamedThenSelection(t *testing.T) {
 	p.read(r3[0].F("reader"), r3[0].ID, "ok")
 	res := p.do("accept named 1,2,3", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1", "s1-2", "s1-3")}))
 	if len(res.Moved) != 0 || len(res.Refused) != 3 {
-		t.Errorf("named all-or-nothing: %+v", res)
+		assert.Fail(t, fmt.Sprintf("named all-or-nothing: %+v", res))
 	}
 	res = p.do("accept stream", AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{Stream: "s1"}}))
 	if len(res.Moved) != 1 || p.state("s1-1") != sprint.Merging || p.state("s1-2") != sprint.Review || p.state("s1-3") != sprint.Review {
-		t.Errorf("selection: %+v", res)
+		assert.Fail(t, fmt.Sprintf("selection: %+v", res))
 	}
 	// Named-twice in a named set.
 	res = p.do("accept named dup", AcceptStep(sprint.AcceptReq{Sel: ids("s1-2", "s1-2")}))
@@ -347,9 +337,7 @@ func TestAcceptRetiresAReadOutstanding(t *testing.T) {
 	p.read(rs[0].F("reader"), rs[0].ID, "ok")
 	p.read(rs[1].F("reader"), rs[1].ID, "ok")
 	p.do("accept", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}))
-	if v := p.inv("accepted with a third read outstanding"); len(v) > 0 {
-		t.Errorf("a legal sequence breaks rule 3")
-	}
+	assert.Empty(t, p.inv("accepted with a third read outstanding"), "a legal sequence breaks rule 3")
 	p.do("merge", MergeStep(sprint.MergeReq{Stream: "s1"}))
 	p.read(rs[2].F("reader"), rs[2].ID, "broken")
 }
@@ -359,9 +347,7 @@ func TestAcceptRetiresAReadOutstanding(t *testing.T) {
 func TestAcceptAfterAskingAnotherTwice(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
-	if err := p.m.RowsAdd(p.ctx, "t-readers", []string{"reader-d"}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, p.m.RowsAdd(p.ctx, "t-readers", []string{"reader-d"}))
 	p.beat()
 	p.setup(1)
 	p.toReview("h", "s1-1")
@@ -398,12 +384,10 @@ func TestReworkTwice(t *testing.T) {
 	p.read(b, rs[1].ID, "broken")
 	nid := p.openOn("s1-1")[0].Note.ID
 	p.do("rework 1", ReworkStep(sprint.ReworkReq{Sel: ids("s1-1"), Fix: "fix1", Answers: []string{nid}}))
-	if len(p.openOn("s1-1")) != 0 {
-		t.Errorf("rework left the broken judgment open")
-	}
+	assert.Empty(t, p.openOn("s1-1"), "rework left the broken judgment open")
 	late := p.read(a, rs[0].ID, "ok")
 	if len(late.Moved) != 0 || len(late.Refused) != 1 || !strings.Contains(late.Refused[0].Why, "retired") {
-		t.Errorf("a late report on a retired card: %+v", late)
+		assert.Fail(t, fmt.Sprintf("a late report on a retired card: %+v", late))
 	}
 	c := p.snap().Fleet.Card("s1-1.w2")
 	p.do("take w2", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
@@ -422,9 +406,7 @@ func TestReworkTwice(t *testing.T) {
 	p.read(who[0], sprint.ReadCardID("s1-1", 2, who[0]), "broken")
 	for _, o := range p.openOn("s1-1") {
 		t.Logf("second broken: marked=%v before=%d decisions=%v", o.Note.Marked, o.Note.Before, o.Note.Decisions)
-		if !o.Note.Marked {
-			t.Errorf("the second broken read for the same cause is not marked")
-		}
+		assert.True(t, o.Note.Marked, "the second broken read for the same cause is not marked")
 	}
 	p.do("rework 2", ReworkStep(sprint.ReworkReq{Sel: ids("s1-1"), Fix: "fix2"}))
 	pr := p.card(sprint.Work, "s1-1")
@@ -438,8 +420,8 @@ func TestReworkTwice(t *testing.T) {
 	p.do("take w4", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 	p.do("finish w4 failed", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Failed: true}))
 	for _, o := range p.openOn("s1-1") {
-		if o.Note.Type == sprint.NWorkFailed && !o.Note.Marked {
-			t.Errorf("second failure not marked")
+		if o.Note.Type == sprint.NWorkFailed {
+			assert.True(t, o.Note.Marked, "second failure not marked")
 		}
 	}
 	// After a failure, the fixed work that comes back ok: who is asked?
@@ -462,7 +444,7 @@ func TestMergeOrderConflictAndCrossNeed(t *testing.T) {
 	p.through("s1-1", "s1-2", "s1-3", "s1-4", "s1-5")
 	p.do("merge batch 2", MergeStep(sprint.MergeReq{Stream: "s1", Batch: 2}))
 	if p.state("s1-1") != sprint.Landed || p.state("s1-2") != sprint.Landed || p.state("s1-3") != sprint.Merging {
-		t.Errorf("batch not in score order")
+		assert.Fail(t, "batch not in score order")
 	}
 	// conflict on the second card of the next batch (s1-4 of s1-3,s1-4)
 	p.do("merge conflict s1-4", MergeStep(sprint.MergeReq{Stream: "s1", Batch: 2, Conflict: "s1-4"}))
@@ -472,9 +454,7 @@ func TestMergeOrderConflictAndCrossNeed(t *testing.T) {
 	p.do("return s1-3", ReturnStep(sprint.ReturnReq{Sel: ids("s1-3")}))
 	p.do("rework s1-3", ReworkStep(sprint.ReworkReq{Sel: ids("s1-3"), Fix: "f"}))
 	p.do("resume (conflict)", ResumeStep(sprint.ResumeReq{Stream: "s1", Did: "rebased"}))
-	if len(p.openOn("stream:s1")) != 0 {
-		t.Errorf("resume left the stream judgment open")
-	}
+	assert.Empty(t, p.openOn("stream:s1"), "resume left the stream judgment open")
 	// s1-3 comes back through review and is accepted again: its place
 	c := p.snap().Fleet.Card("s1-3.w2")
 	p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
@@ -493,7 +473,7 @@ func TestMergeOrderConflictAndCrossNeed(t *testing.T) {
 	}
 	t.Logf("queued order: %v", order)
 	if len(order) == 0 || order[0] != "s1-3" {
-		t.Errorf("the reworked card did not keep its place: %v", order)
+		assert.Fail(t, fmt.Sprintf("the reworked card did not keep its place: %v", order))
 	}
 	// cross-stream: s2's b1 stuck on conflict (stopped); s1-4 needs b1
 	p.do("add s2", AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b1", "b2"}}))
@@ -523,9 +503,7 @@ func TestACrossFactIsChecked(t *testing.T) {
 			p.setup(2)
 			p.through("s1-1", "s1-2")
 			res := p.do("cross s1-1="+other, MergeStep(sprint.MergeReq{Stream: "s1", Cross: "s1-1=" + other}))
-			if len(res.Refused) == 0 {
-				t.Errorf("NOTE: the cross fact s1-1=%s was accepted: %v", other, res.Moved)
-			}
+			assert.NotEmpty(t, res.Refused, "NOTE: the cross fact s1-1=%s was accepted: %v", other, res.Moved)
 			res = p.do("resume", ResumeStep(sprint.ResumeReq{Stream: "s1"}))
 			t.Logf("resume: %+v", res.Refused)
 		})
@@ -540,9 +518,7 @@ func TestResumeAtOnceAfterRedIsRefused(t *testing.T) {
 	p.through("s1-1", "s1-2")
 	p.do("merge red", MergeStep(sprint.MergeReq{Stream: "s1", Red: true}))
 	res := p.do("resume at once", ResumeStep(sprint.ResumeReq{Stream: "s1"}))
-	if len(res.Moved) != 0 {
-		t.Errorf("resume after red without --did moved: %v", res.Moved)
-	}
+	assert.Empty(t, res.Moved, "resume after red without --did moved: %v", res.Moved)
 }
 
 // No member up: withdrawal; members return; order preserved.
@@ -556,9 +532,7 @@ func TestWithdrawAndReturn(t *testing.T) {
 	p.do("down m1", FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
 	p.do("down m2", FleetStep(sprint.FleetReq{Op: "down", Member: "m2"}))
 	for _, id := range []string{"s1-1", "s1-2", "s1-3", "s1-4"} {
-		if p.state(id) != sprint.Ready {
-			t.Errorf("%s is %s after withdrawal", id, p.state(id))
-		}
+		assert.Equal(t, sprint.Ready, p.state(id), "%s is %s after withdrawal", id, p.state(id))
 	}
 	res := p.do("old worker finish", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 2}}))
 	t.Logf("finish on a withdrawn card: %+v", res.Refused)
@@ -601,9 +575,7 @@ func TestAnsweringOneCardOfAGroup(t *testing.T) {
 	t.Logf("open: %d", len(open))
 	nid := open[0].Note.ID
 	p.do("rework one, answers", ReworkStep(sprint.ReworkReq{Sel: ids("s1-2"), Fix: "f", Answers: []string{nid}}))
-	if len(p.open()) != 2 {
-		t.Errorf("answering one card of a group closed %d", 3-len(p.open()))
-	}
+	assert.Len(t, p.open(), 2, "answering one card of a group closed %d", 3-len(p.open()))
 	v, _ := p.st.Inbox(p.ctx, time.Hour, time.Hour, 1000)
 	_ = p.m.SetCursor(p.ctx, v.Last)
 	v, _ = p.st.Inbox(p.ctx, time.Hour, time.Hour, 1000)
@@ -611,7 +583,7 @@ func TestAnsweringOneCardOfAGroup(t *testing.T) {
 		t.Logf("inbox after cursor: %s %q count=%d prim=%v", g.Kind, g.Type, g.Count, g.Primaries)
 	}
 	if len(v.Groups) == 0 || v.Groups[0].Count != 2 {
-		t.Errorf("open judgments hidden by the cursor: %+v", v.Groups)
+		assert.Fail(t, fmt.Sprintf("open judgments hidden by the cursor: %+v", v.Groups))
 	}
 }
 
@@ -630,9 +602,8 @@ func TestALargeFailedGroupKeepsEverySubject(t *testing.T) {
 		cards = append(cards, c.ID)
 	}
 	p.do("finish 60 failed", FinishStep(sprint.FinishReq{Sel: ids(cards...), Gens: gens, Failed: true, Report: "same"}))
-	if n := len(p.open()); n != 60 {
-		t.Errorf("60 failures, %d open judgments", n)
-	}
+	n := len(p.open())
+	assert.Equal(t, 60, n, "60 failures, %d open judgments", n)
 }
 
 // Concurrency at the store level.
@@ -647,16 +618,15 @@ func TestInterleavedWriters(t *testing.T) {
 		p.do("return", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1")}))
 		other := &Store{B: p.m, Names: p.st.Names, Actor: "other", Now: p.st.Now, NewID: func() string { return "o" }}
 		r := &racer{Backend: p.m, at: "acquire", do: func() {
-			if _, err := other.Run(p.ctx, ReworkStep(sprint.ReworkReq{Sel: ids("s1-1"), Fix: "x"})); err != nil {
-				t.Error(err)
-			}
+			_, err := other.Run(p.ctx, ReworkStep(sprint.ReworkReq{Sel: ids("s1-1"), Fix: "x"}))
+			assert.NoError(t, err)
 		}}
 		st := *p.st
 		st.B = r
 		res, err := st.Run(p.ctx, AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}))
 		t.Logf("accept under rework: %+v %v", res, err)
 		if err != nil || len(res.Refused) != 1 || res.Refused[0].Key != "s1-1" {
-			t.Errorf("the refusal does not name the card: %+v %v", res, err)
+			assert.Fail(t, fmt.Sprintf("the refusal does not name the card: %+v %v", res, err))
 		}
 		p.inv("raced")
 	})
@@ -687,11 +657,9 @@ func TestInterleavedWriters(t *testing.T) {
 				fails++
 			}
 		}
-		if fails != 1 {
-			t.Errorf("the failed judgment was written %d times", fails)
-		}
+		assert.Equal(t, 1, fails, "the failed judgment was written %d times", fails)
 		if p.state("s1-1") != sprint.Review || p.state("s1-2") != sprint.Working {
-			t.Errorf("states %s %s", p.state("s1-1"), p.state("s1-2"))
+			assert.Fail(t, fmt.Sprintf("states %s %s", p.state("s1-1"), p.state("s1-2")))
 		}
 		p.inv("interleaved")
 	})
@@ -706,9 +674,7 @@ func TestInterleavedWriters(t *testing.T) {
 			pr := s.Work.Card("s1-1")
 			_, oerr := p.m.Apply(p.ctx, ntable.BatchManifest{Schema: 1, Table: "t-work", Epoch: "0", ExpectedTableRevision: fmt.Sprint(s.Work.Revision),
 				OperationID: "outside", Members: []ntable.BatchMemberEntry{{ID: pr.ID, Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: pr.Row, Col: pr.Col}}, Set: map[string]string{"brief": "x"}}}})
-			if oerr != nil {
-				t.Error(oerr)
-			}
+			assert.NoError(t, oerr)
 		}}
 		st := *p.st
 		st.B = r
@@ -734,14 +700,12 @@ func TestReturnAnswersCIRed(t *testing.T) {
 	p.through("s1-1")
 	p.do("ci red", CIStep(sprint.CIReq{Sel: ids("s1-1"), Red: true, Run: "r1"}))
 	o := p.openOn("s1-1")
-	if len(o) != 1 {
-		t.Fatalf("open: %v", o)
-	}
+	require.Len(t, o, 1, "open: %v", o)
 	t.Logf("decisions: %v", o[0].Note.Decisions)
 	res := p.do("return --answers", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1"), Answers: []string{o[0].Note.ID}}))
 	// ci red is answered; what is open is the returned primary's own judgment.
 	if left := p.openOn("s1-1"); len(left) != 1 || left[0].Note.Type != sprint.NReturned {
-		t.Errorf("return, a listed decision of %q, acted on the card and left open %v; refused: %v", sprint.NCIRed, left, res.Refused)
+		assert.Fail(t, fmt.Sprintf("return, a listed decision of %q, acted on the card and left open %v; refused: %v", sprint.NCIRed, left, res.Refused))
 	}
 }
 
@@ -765,6 +729,6 @@ func TestReadsExhaustedIsAJudgment(t *testing.T) {
 	}
 	o := p.openOn("s1-1")
 	if len(o) != 1 || o[0].Note.Type != sprint.NReadsExhausted {
-		t.Errorf("s1-1 sits in review with one ok, nothing outstanding, and open judgments %v", o)
+		assert.Fail(t, fmt.Sprintf("s1-1 sits in review with one ok, nothing outstanding, and open judgments %v", o))
 	}
 }

@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // AN UNREAD DENIAL CANNOT RETURN OK (issue #1465, as the hold on #1478 reshaped it).
@@ -43,46 +46,31 @@ func TestNativeGateThatCouldNotRunIsNeverOK(t *testing.T) {
 	cardPath := filepath.Join(root, "card.md")
 	// The card publishes a RESULT.md the way the real one did, so this is the SILENT shape
 	// and not a wall death: the harness spoke, the result exists, the child exited 0.
-	if err := os.WriteFile(cardPath, []byte("FAKE-EXEC-REFUSED "+refused+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("FAKE-EXEC-REFUSED "+refused+"\n"), 0o644))
 	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "go-card", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--sandbox", nativeSandbox(t)}
 	var stdout, stderr bytes.Buffer
 	rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
 
-	if strings.Contains(stdout.String(), "NATIVE OK") {
-		t.Errorf("a denial nobody read and the run still reported OK:\n%s", stdout.String())
-	}
-	if rc == 0 {
-		t.Errorf("a run whose gate could not execute exits non-zero, got %d:\n%s%s", rc, stdout.String(), stderr.String())
-	}
+	assert.NotContains(t, stdout.String(), "NATIVE OK", "a denial nobody read and the run still reported OK:\n%s", stdout.String())
+	assert.NotEqual(t, 0, rc, "a run whose gate could not execute exits non-zero, got %d:\n%s%s", rc, stdout.String(), stderr.String())
 	line := stderr.String()
-	if !strings.Contains(line, "NATIVE REFUSED") {
-		t.Fatalf("the run owes one refusal line naming the class:\n%s", line)
-	}
+	require.Contains(t, line, "NATIVE REFUSED", "the run owes one refusal line naming the class:\n%s", line)
 	// What is MEASURED is named, and the one thing that is not measured is named as not
 	// measured. Nothing here claims the path was a program or that a gate did not run.
 	for _, want := range []string{refused, "step=3", "operation=unverified", "Permission denied", "read_roots"} {
-		if !strings.Contains(line, want) {
-			t.Errorf("the refusal names %q; it reads:\n%s", want, line)
-		}
+		assert.Contains(t, line, want, "the refusal names %q; it reads:\n%s", want, line)
 	}
 	for _, forbidden := range []string{"never executed", "nothing compiled", "the gate never"} {
-		if strings.Contains(line, forbidden) {
-			t.Errorf("the refusal asserts %q, which the shell's line cannot establish:\n%s", forbidden, line)
-		}
+		assert.NotContains(t, line, forbidden, "the refusal asserts %q, which the shell's line cannot establish:\n%s", forbidden, line)
 	}
 	// THE WORK IS NOT THROWN AWAY. The child ran and was paid for: the job directory, its
 	// result and its usage row are all still named, so a coordinator can harvest what the
 	// card did manage before the gate died.
-	if !strings.Contains(line, filepath.Join(slot, "jobs", "go-card")) {
-		t.Errorf("the refusal names the job directory so the spend is harvestable; it reads:\n%s", line)
-	}
-	if _, err := os.Stat(filepath.Join(slot, "jobs", "go-card", "RESULT.md")); err != nil {
-		t.Errorf("the card's own result is left where it was published: %v", err)
-	}
+	assert.Contains(t, line, filepath.Join(slot, "jobs", "go-card"), "the refusal names the job directory so the spend is harvestable; it reads:\n%s", line)
+	_, err := os.Stat(filepath.Join(slot, "jobs", "go-card", "RESULT.md"))
+	assert.NoError(t, err, "the card's own result is left where it was published")
 }
 
 // TestNativeOrdinaryRunIsStillOK: the guard above fires on the class and on nothing else. A
@@ -95,19 +83,14 @@ func TestNativeOrdinaryRunIsStillOK(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("FAKE-REFUSE 2\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("FAKE-REFUSE 2\n"), 0o644))
 	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "read-card", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--no-wall"}
 	var stdout, stderr bytes.Buffer
-	if rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now()); rc != 0 {
-		t.Fatalf("a card that was refused a READ and carried on is a finished run, got %d:\n%s%s", rc, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "NATIVE OK ") {
-		t.Fatalf("the NATIVE OK line is printed for a run whose gate did execute:\n%s", stdout.String())
-	}
+	rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	require.Equal(t, 0, rc, "a card that was refused a READ and carried on is a finished run, got %d:\n%s%s", rc, stdout.String(), stderr.String())
+	require.Contains(t, stdout.String(), "NATIVE OK ", "the NATIVE OK line is printed for a run whose gate did execute:\n%s", stdout.String())
 }
 
 // THE READ ROOTS THE DESK NAMED REACH BOTH FENCES (issue #1463).
@@ -129,33 +112,24 @@ func TestNativeWalledRunOpensTheWorkersReadRoots(t *testing.T) {
 	t.Setenv("FAKE_KEY", fakeKey)
 	root, slot := aSlot(t)
 	stage, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	worker := workerWithReadRoots(t, stage)
 	cardPath := filepath.Join(root, "card.md")
-	if err := os.WriteFile(cardPath, []byte("a card line 1\nline 2\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cardPath, []byte("a card line 1\nline 2\n"), 0o644))
 	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--worker", worker,
 		"--label", "staged", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--sandbox", nativeSandbox(t)}
 	var stdout, stderr bytes.Buffer
-	if rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now()); rc != 0 {
-		t.Fatalf("the walled run exits 0, got %d:\n%s%s", rc, stdout.String(), stderr.String())
-	}
+	rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	require.Equal(t, 0, rc, "the walled run exits 0, got %d:\n%s%s", rc, stdout.String(), stderr.String())
 	// THE OS WALL. The read root is a --read, beside the slot directory and the harness's own.
 	argv := sandboxArgv(t, filepath.Join(slot, "jobs", "staged"))
-	if !strings.Contains(argv, "--read "+stage) {
-		t.Errorf("the wall argv does not read the description's read_roots entry %s:\n%s", stage, argv)
-	}
+	assert.Contains(t, argv, "--read "+stage, "the wall argv does not read the description's read_roots entry %s:\n%s", stage, argv)
 	// THE HARNESS'S OWN FENCE. The same root, in the permission block the child reads, on a
 	// WALLED run -- which is the whole of #1463.
 	external := externalDirectoryRules(t, slot)
 	for _, want := range []string{stage, stage + "/*"} {
-		if external[want] != "allow" {
-			t.Errorf("the harness fence does not admit the read root %s on a walled run; it holds %v", want, external)
-		}
+		assert.Equal(t, "allow", external[want], "the harness fence does not admit the read root %s on a walled run; it holds %v", want, external)
 	}
 }
 
@@ -172,12 +146,8 @@ func workerWithReadRoots(t *testing.T, roots ...string) string {
 		"read_roots":   roots,
 	}
 	raw, err := json.MarshalIndent(desc, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "worker.json")
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, raw, 0o644))
 	return path
 }
