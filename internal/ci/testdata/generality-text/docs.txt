@@ -37,7 +37,7 @@ docs/SPEC-RELEASE.md:rowan 1
 docs/SPEC-SANDBOX.md:glenn 1
 docs/SPEC-SANDBOX.md:johnny 1
 docs/SPEC-SANDBOX.md:space 5
-docs/SPEC-SANDBOX.md:studio 3
+docs/SPEC-SANDBOX.md:studio 2
 docs/SPEC-SECRETS.md:emma 1
 docs/SPEC-SECRETS.md:freddy 1
 docs/SPEC-SECRETS.md:glenn 16
