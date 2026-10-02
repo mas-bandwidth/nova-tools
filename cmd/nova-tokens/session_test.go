@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func writeSession(t *testing.T) string {
@@ -165,13 +167,11 @@ func TestSessionRefusesUnreadableDayFile(t *testing.T) {
 	t.Parallel()
 
 	out := t.TempDir()
-	existing := "nova-tokens v1 day=2026-09-11 at=2026-09-11T00:00:00Z build=test turns=- sources=emma\n" +
+	existing := "nova-tokens v1 day=2026-09-11 at=2026-09-11T00:00:00Z build=test turns=- sources=other-source\n" +
 		"date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n" +
-		"2026-09-11\tdeepseek-v4-flash\tnova-tools\t100\t10\t-\t-\t-\t0\tutc\temma\n"
+		"2026-09-11\tdeepseek-v4-flash\tnova-tools\t100\t10\t-\t-\t-\t0\tutc\tother-source\n"
 	dayPath := filepath.Join(out, "2026-09-11.tsv")
-	if err := os.WriteFile(dayPath, []byte(existing), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(dayPath, []byte(existing), 0o644))
 
 	release := makeUnreadable(t, dayPath)
 	r := invoke(t, "session", "--claude-session", writeSession(t), "--out", out)
@@ -181,10 +181,6 @@ func TestSessionRefusesUnreadableDayFile(t *testing.T) {
 
 	release()
 	raw, err := os.ReadFile(dayPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != existing {
-		t.Fatalf("unreadable day file was modified:\ngot:\n%s\nwant:\n%s", string(raw), existing)
-	}
+	require.NoError(t, err)
+	require.Equal(t, existing, string(raw), "unreadable day file was modified:\ngot:\n%s\nwant:\n%s", string(raw), existing)
 }

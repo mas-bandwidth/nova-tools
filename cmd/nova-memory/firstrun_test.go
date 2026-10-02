@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A first run by someone who has never seen this tool hits three refusals in a
@@ -361,9 +363,7 @@ func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
 			t.Errorf("the demonstration query offers %q, a function word, as one of this corpus's own terms", w)
 		}
 	}
-	if want := "QUICKSTART OK done=3"; lines[len(lines)-2] != want {
-		t.Errorf("the line before NOTE is\n  %s\nwant\n  %s", lines[len(lines)-2], want)
-	}
+	assert.Equalf(t, "QUICKSTART OK done=3", lines[len(lines)-2], "the line before NOTE is\n  %s\nwant\n  %s", lines[len(lines)-2], "QUICKSTART OK done=3")
 	if want := "QUICKSTART NOTE " + quickstartChoiceNote; lines[len(lines)-1] != want {
 		t.Errorf("the last line is\n  %s\nwant\n  %s", lines[len(lines)-1], want)
 	}
@@ -454,9 +454,7 @@ func TestQuickstartExitsTwoWhenAStepCouldNotRun(t *testing.T) {
 	if strings.Contains(stdout, quickstartChoiceNote) {
 		t.Error("a quickstart that did not finish printed its closing note anyway")
 	}
-	if strings.Contains(stdout, "QUICKSTART OK") {
-		t.Errorf("a quickstart that failed printed QUICKSTART OK:\n%s", stdout)
-	}
+	assert.NotContainsf(t, stdout, "QUICKSTART OK", "a quickstart that failed printed QUICKSTART OK:\n%s", stdout)
 	if !strings.Contains(stdout, "SEARCH OK") {
 		t.Errorf("the steps that did run must still be on the page: %q", stdout)
 	}
@@ -469,15 +467,9 @@ func TestQuickstartWithMissingDraftDoesNotPrintOK(t *testing.T) {
 
 	missing := filepath.Join(t.TempDir(), "missing-draft.md")
 	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--draft", missing)
-	if exit != 2 {
-		t.Fatalf("exit = %d, want 2; stderr: %s", exit, stderr)
-	}
-	if strings.Contains(stdout, "QUICKSTART OK") {
-		t.Errorf("quickstart with missing draft printed QUICKSTART OK:\n%s", stdout)
-	}
-	if !strings.Contains(stderr, "the check step could not run") {
-		t.Errorf("stderr does not name the step that failed: %q", stderr)
-	}
+	require.Equalf(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
+	assert.NotContainsf(t, stdout, "QUICKSTART OK", "quickstart with missing draft printed QUICKSTART OK:\n%s", stdout)
+	assert.Containsf(t, stderr, "the check step could not run", "stderr does not name the step that failed: %q", stderr)
 }
 
 // The README's quickstart transcript, held to the tool: the first line is RUN,

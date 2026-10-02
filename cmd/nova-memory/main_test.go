@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // corpus is the fixture corpus that ships with the tool: a small invented
@@ -1090,16 +1092,8 @@ func TestEvalRejectsNaNFloorBeforeReads(t *testing.T) {
 	// Use non-existent gold file and non-existent root: if eval read or validated
 	// them before floor checking, stderr would complain about the paths instead.
 	exit, stdout, stderr := runCLI(t, "", "eval", "--root", "/nonexistent/root/dir", "--channels", "bm25", "--k", "3", "--floor", "NaN", "/nonexistent/gold.tsv")
-	if exit != 2 {
-		t.Fatalf("exit = %d, want 2; stdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	if !strings.Contains(stderr, "--floor must be in (0,1] (got NaN)") {
-		t.Errorf("stderr does not name the rejected floor: %q", stderr)
-	}
-	if strings.Contains(stderr, "/nonexistent") {
-		t.Errorf("rejection happened after reading or attempting to read paths: %q", stderr)
-	}
-	if stdout != "" {
-		t.Errorf("expected empty stdout on refusal, got %q", stdout)
-	}
+	require.Equalf(t, 2, exit, "exit = %d, want 2; stdout: %s\nstderr: %s", exit, stdout, stderr)
+	assert.Containsf(t, stderr, "--floor must be in (0,1] (got NaN)", "stderr does not name the rejected floor: %q", stderr)
+	assert.NotContainsf(t, stderr, "/nonexistent", "rejection happened after reading or attempting to read paths: %q", stderr)
+	assert.Equalf(t, "", stdout, "expected empty stdout on refusal, got %q", stdout)
 }

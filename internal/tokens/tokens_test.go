@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The package's own tests: the day file's round trip and its strict parse, the shrink
@@ -350,13 +353,9 @@ func TestTheUnattributedTallyScopesToFilteredDay(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")
-	if err := os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\n"), 0o644))
 	rules, err := LoadRules(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	rules.WatchUnattributed()
 	rules.FilterDay("2026-09-11")
 
@@ -368,13 +367,10 @@ func TestTheUnattributedTallyScopesToFilteredDay(t *testing.T) {
 	rules.SetDay("2026-09-12")
 	rules.AttributeInputs([]string{"/home/nova/day2/b.go"}, "")
 
-	if n := rules.TotalUnattributed(); n != 1 {
-		t.Errorf("unattributed total = %d, want 1", n)
-	}
+	n := rules.TotalUnattributed()
+	assert.Equal(t, 1, n, "unattributed total = %d, want 1", n)
 	got := rules.Unattributed()
-	if len(got) != 1 || got[0].Stem != "/home/nova/day1" || got[0].Count != 1 {
-		t.Errorf("got %v, want 1 stem for day 1", got)
-	}
+	assert.Equal(t, []UnattributedStem{{Stem: "/home/nova/day1", Count: 1}}, got, "got %v, want 1 stem for day 1", got)
 }
 
 // The tally is bounded, and past the ceiling it still counts every token: a listing whose
@@ -551,14 +547,10 @@ func TestValidMonthIsACalendarCheck(t *testing.T) {
 	t.Parallel()
 
 	for _, good := range []string{"2026-01", "2026-09", "2026-12", "1999-02"} {
-		if !ValidMonth(good) {
-			t.Errorf("%s is a month", good)
-		}
+		assert.True(t, ValidMonth(good), "%s is a month", good)
 	}
 	for _, bad := range []string{"2026-13", "2026-00", "2026-9", "2026-99", "not-a-month", "2026/01", "2026-a1"} {
-		if ValidMonth(bad) {
-			t.Errorf("%s is not a month", bad)
-		}
+		assert.False(t, ValidMonth(bad), "%s is not a month", bad)
 	}
 }
 
