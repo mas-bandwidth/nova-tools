@@ -66,7 +66,7 @@ func (p *Pending) ranking(primary string, a, b float64) bool {
 // exactly, member by member, never by their counts. pending is the operation
 // the sprint's fence holds, if any: rules 2, 3, 4, 5 and 9 hold whenever no
 // operation is pending, and are not judged while one is; 1, 6, 7 and 8 always,
-// rule 7 against a pending rank's own new scores.
+// the score check treating a pending rank's own new scores as equal.
 func Check(s *Snapshot, pending *Pending) []Violation {
 	var out []Violation
 	// The work table's queue is between the tables as a pending operation
@@ -223,7 +223,7 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 		}
 	}
 	// 11. The needs make no cycle: add refuses the add that would close one
-	// (errata 3 amendment 7), and a store written before add walked the
+	// , and a store may hold a cycle add does not write, so its
 	// sentinels' needs may still hold one; each is named with the cards it
 	// keeps from ever being reached.
 	for _, f := range Cycles(s) {
