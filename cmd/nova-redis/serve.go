@@ -3,7 +3,7 @@ package main
 // serve.go is the instance-owner verb of docs/SPEC-REDIS.md ("Bind, auth and
 // persistence"; nova-tools #2281, in the instance-owner role #3582 keeps for
 // this binary). `serve` launches the one local redis-server in the foreground
-// under the fleet store's rules (#3879), the one config for the store:
+// under the fleet store's rules, the one config for the store:
 //
 //   - bound to loopback and tailnet addresses only (100.64.0.0/10 and
 //     fd7a:115c:a1e0::/48); a wildcard, public or LAN address, or a hostname,

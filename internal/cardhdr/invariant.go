@@ -533,7 +533,7 @@ func lintWith(c Card, rs []rule) Refusals {
 const remedyStitch = "a stitch is cut with its plan: card cut --parent <plan id> (no other push writes KIND stitch)"
 
 // LintTitleKind is the refusals every task push runs on its --kind and
-// --title (#4396), a card pushed with it (card true) or none: KIND stitch is
+// --title, a card pushed with it (card true) or none: KIND stitch is
 // refused stitch-writer (card cut --parent, which pushes no task push, is its
 // one writer), KIND plan with no card is refused plan-children (no BUILD:
 // names a child), and a title that says "build issue #N as written" is

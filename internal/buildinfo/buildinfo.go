@@ -28,7 +28,7 @@
 // -- and the -X value is the one field in the whole line that comes from outside the
 // toolchain. A tool with more to say says it as `key=value` after the fourth token, and
 // Parse, here, is the one reader of the whole shape: writer and reader are one pair, so a
-// tool that adds a fact cannot break a consumer that has never heard of it (#1297).
+// tool that adds a fact cannot break a consumer that has never heard of it.
 package buildinfo
 
 import (
@@ -125,7 +125,7 @@ func Resolve(stamped string, info *debug.BuildInfo, ok bool) string {
 // token after the fourth -- `build=<12 hex>` from nova-merge, `backend=` and `platform=`
 // from nova-sandbox. Extras are part of the grammar rather than exceptions to it. On
 // 2026-09-18 nova-merge's hand-rolled fifth token made `nova-version snapshot` refuse an
-// entire install (#1297), because each reader had been written against the four tokens it
+// entire install, because each reader had been written against the four tokens it
 // happened to know. So the writer takes extras HERE, where Parse is guaranteed to read
 // them back, and REFUSES one that is not key=value: a writer looser than its reader is a
 // refusal deferred to whoever runs the snapshot.
@@ -235,7 +235,7 @@ type Source struct {
 // build_host -- so the writer and the reader cannot disagree about which field is
 // which. Dirty is ALWAYS emitted (true OR false), because a Source the reader can
 // extract is one the writer wrote whole, and a missing dirty field is a Source the
-// reader is forced to refuse (#2291).
+// reader is forced to refuse.
 func (s Source) Extras() []string {
 	return []string{
 		"repo=" + s.Repository,
@@ -255,7 +255,7 @@ func (s Source) Extras() []string {
 // Writer and reader are the one pair this package has always been, so a Source round-
 // trips through Line and Parse into itself: a tool that adds a fact cannot break a
 // consumer that has never heard of it, and a reader that has never seen the source
-// metadata reads the four tokens it knows and ignores the rest (#1297).
+// metadata reads the four tokens it knows and ignores the rest.
 func LineWithSource(tool, stamped string, src Source, extras ...string) string {
 	all := append(src.Extras(), extras...)
 	return Line(tool, stamped, all...)
@@ -271,7 +271,7 @@ var sourceKeys = map[string]bool{"repo": true, "revision": true, "dirty": true, 
 // install` from a tag never had this, and "no Source" is the honest answer. A version
 // line that carries SOME but not ALL of the four is ALSO reported with ok=false: a
 // partial source is a source the reader cannot verify, and the gate must refuse it
-// rather than guess at the missing field (#2291, SPEC-VERSION item 6).
+// rather than guess at the missing field.
 //
 // A malformed dirty token (anything other than "true" or "false") is refused: a value
 // like `dirty=maybe` is not a clean source and must not be silently accepted as

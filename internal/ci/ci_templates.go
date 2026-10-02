@@ -16,7 +16,7 @@ import (
 // filesystem path concatenated unquoted into a JSON or text/template literal:
 // a backslash in a Windows path begins an escape the literal's grammar does
 // not have, so the file parses on Linux and darwin and fails on Windows
-// (#904, #920). The allowed shape is strconv.Quote(path) -- or oneline.Quote,
+// The allowed shape is strconv.Quote(path) -- or oneline.Quote,
 // its wrapper -- whose escaped output is a string on every platform. It
 // writes nothing. Its only input besides the tree is an allowlist of existing
 // offenders, each with the file, the line, a reason and the date; an entry
