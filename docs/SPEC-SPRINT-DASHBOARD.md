@@ -33,10 +33,14 @@ and the dashboard's output takes one line per new failure. `--logo` names an ima
 served as the logo and the favicon; with none, the slot renders nothing.
 `/healthz` answers `ok`.
 
-The boundary is the fleet's private network (the tailnet), never a public address: the
-page carries no credential, but it shows the sprint. `--listen
-127.0.0.1:7390,<tailnet-address>:7390` serves this machine and the tailnet; an address
-every network reaches (0.0.0.0, ::) and any public address are refused. The dashboard
+The verb itself listens only inside the fleet's private network: `--listen
+127.0.0.1:7390,<tailnet-address>:7390` serves this machine and the tailnet, and an
+address every network reaches (0.0.0.0, ::) or any public address is refused, because
+the page checks no credential. The page itself may be public: it carries no credential,
+and what it shows of the sprint is fine for anyone to see. To publish it, put a reverse
+proxy (Caddy, for example) on a machine of the owner's choosing in front of a loopback
+listener; the proxy holds the public address and the verb never binds one. The sprint's
+server, the verbs and the Television token stay inside the tailnet. The dashboard
 exits 3 when its binary is replaced on disk, so its supervisor starts the new build
 (docs/FLEET.md shows its loop row).
 

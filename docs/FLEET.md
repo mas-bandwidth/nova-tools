@@ -91,8 +91,9 @@ that is a second view of `where --json`, is one more loop record on the coordina
 machine and a client of the server like the others: it reads the sprint at most once
 per `--every` and only while a page is open. It listens on loopback, and on this
 machine's tailnet address when the page is wanted across the fleet's private network;
-an every-network or public address is refused, because the page shows the sprint and
-checks no credential. `--logo` names the image the page shows; the file stays on the
+an every-network or public address is refused, because the page checks no credential
+(a public page is a reverse proxy in front of the loopback listener,
+[SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md)). `--logo` names the image the page shows; the file stays on the
 machine, never in the repository:
 
 ```
