@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"strings"
 	"testing"
@@ -98,7 +99,7 @@ func rolePatterns(t *testing.T, role string) []string {
 		}
 		return out
 	}
-	t.Fatalf("no role %s in redisacl.Roles", role)
+	require.FailNow(t, fmt.Sprintf("no role %s in redisacl.Roles", role))
 	return nil
 }
 

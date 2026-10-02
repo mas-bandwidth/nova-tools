@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/require"
 )
 
 // fieldsIndexAllowlistPath is the shrink-only list of the split-result index and
@@ -75,9 +76,7 @@ func TestNoUncheckedFieldsIndex(t *testing.T) {
 			}
 			return nil
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 	}
 	// The list only shrinks: a row whose unchecked index has left is a red run,
 	// so nobody can quietly widen the exception set and leave it there.

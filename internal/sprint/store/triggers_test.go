@@ -7,7 +7,6 @@ package store
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -115,7 +114,7 @@ func TestTriggerReturnedPrimaryIsAJudgment(t *testing.T) {
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "suspect"}))
 	h.readInbox()
 	if got := h.judgmentsOn("s1-1"); h.state("s1-1") != sprint.Review || len(got) != 1 || got[0] != sprint.NReturned {
-		t.Fatalf("s1-1 is %s with %v open", h.state("s1-1"), got)
+		require.Failf(t, "", "s1-1 is %s with %v open", h.state("s1-1"), got)
 	}
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	got := h.judgmentsOn("s1-1")
@@ -134,15 +133,15 @@ func TestTriggerAckOfFailedWorkIsStranded(t *testing.T) {
 	open, _ := h.m.OpenNotes(h.ctx)
 	require.Len(t, open, 1, "open: %v", open)
 	require.Equal(t, string(sprint.NWorkFailed), open[0].Note.Type, "open: %v", open)
-	if res := h.run(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "looked"})); len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "nova-sprint rework --group") {
-		t.Fatalf("ack of failed work: %+v", res)
-	}
+	res := h.run(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "looked"}))
+	require.Len(t, res.Refused, 1, "ack of failed work: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "nova-sprint rework --group", "ack of failed work: %+v", res)
 	h.readInbox()
-	if got := h.judgmentsOn("s1-1"); len(got) != 1 || got[0] != sprint.NWorkFailed {
-		t.Fatalf("after the refused ack: %v", got)
-	}
-	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "again"}))
 	got := h.judgmentsOn("s1-1")
+	require.Len(t, got, 1, "after the refused ack: %v", got)
+	require.Equal(t, sprint.NWorkFailed, got[0], "after the refused ack: %v", got)
+	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "again"}))
+	got = h.judgmentsOn("s1-1")
 	require.Empty(t, got, "rework left %v", got)
 	h.clean("reworked")
 }

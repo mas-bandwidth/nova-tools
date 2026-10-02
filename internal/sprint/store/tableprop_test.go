@@ -6,7 +6,6 @@ package store
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -42,7 +41,7 @@ func TestAStepWritesATablePropertyWithItsMembers(t *testing.T) {
 	calls := 0
 	h.must(dealWithProp(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}, func(string, bool) string { return "m1" }, &calls))
 	if v, ok := propOf(t, h, "probe_index"); !ok || v != "m1" || h.state("s1-1") != sprint.Working {
-		t.Fatalf("after the deal: deal_index %q %v, s1-1 %s", v, ok, h.state("s1-1"))
+		require.Failf(t, "", "after the deal: deal_index %q %v, s1-1 %s", v, ok, h.state("s1-1"))
 	}
 	// the next deal reads it and moves it on
 	h.must(dealWithProp(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}, func(was string, _ bool) string { return was + "+" }, &calls))
@@ -72,9 +71,9 @@ func TestAMovedPropertyRefusesTheStepAndItIsPlannedAgain(t *testing.T) {
 		}
 		return was + "+1"
 	}, &calls))
-	if v, _ := propOf(t, h, "probe_index"); v != "7+1" || calls != 2 {
-		t.Fatalf("deal_index %q after %d plans, want 7+1 after 2", v, calls)
-	}
+	v, _ := propOf(t, h, "probe_index")
+	require.Equal(t, "7+1", v, "deal_index %q after %d plans, want 7+1 after 2", v, calls)
+	require.Equal(t, 2, calls, "deal_index %q after %d plans, want 7+1 after 2", v, calls)
 }
 
 // The store's abandon-and-repair with the property in the first manifest: a
@@ -101,9 +100,9 @@ func TestAnAbandonedDealLeavesItsPropertyUnwritten(t *testing.T) {
 	require.NoError(t, err)
 	h.tick(2 * time.Minute)
 	res := h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
-	if h.m.Pending() != nil || len(res.Repaired) != 1 || !strings.Contains(res.Repaired[0], "abandoned") {
-		t.Fatalf("past the grace: %+v", res)
-	}
+	require.Nil(t, h.m.Pending(), "past the grace: %+v", res)
+	require.Len(t, res.Repaired, 1, "past the grace: %+v", res)
+	require.Contains(t, res.Repaired[0], "abandoned", "past the grace: %+v", res)
 	v, ok := propOf(t, h, "probe_index")
 	require.False(t, ok, "an abandoned deal wrote deal_index %q", v)
 }
@@ -131,10 +130,10 @@ func TestARepairedDealWritesItsPropertyWhenACardApplied(t *testing.T) {
 	require.NoError(t, err)
 	h.tick(2 * time.Minute)
 	res := h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
-	if h.m.Pending() != nil || len(res.Repaired) != 1 || strings.Contains(res.Repaired[0], "abandoned") {
-		t.Fatalf("past the grace: %+v", res)
-	}
-	if v, ok := propOf(t, h, "probe_index"); !ok || v != "m2" {
-		t.Fatalf("deal_index %q %v, want m2: a card of the deal applied", v, ok)
-	}
+	require.Nil(t, h.m.Pending(), "past the grace: %+v", res)
+	require.Len(t, res.Repaired, 1, "past the grace: %+v", res)
+	require.NotContains(t, res.Repaired[0], "abandoned", "past the grace: %+v", res)
+	v, ok := propOf(t, h, "probe_index")
+	require.True(t, ok, "deal_index %q %v, want m2: a card of the deal applied", v, ok)
+	require.Equal(t, "m2", v, "deal_index %q %v, want m2: a card of the deal applied", v, ok)
 }

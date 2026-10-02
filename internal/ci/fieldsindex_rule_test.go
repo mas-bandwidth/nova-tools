@@ -3,6 +3,9 @@ package ci
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fieldsIndexSource wraps a function body in a compilable file so the rule can
@@ -14,9 +17,7 @@ func fieldsIndexSource(body string) []byte {
 func fieldsIndexFindings(t *testing.T, body string) []string {
 	t.Helper()
 	findings, err := uncheckedSplitIndexes("internal/x/x.go", fieldsIndexSource(body))
-	if err != nil {
-		t.Fatalf("parsing the fixture: %v", err)
-	}
+	require.NoError(t, err, "parsing the fixture: %v", err)
 	var lines []string
 	for _, f := range findings {
 		lines = append(lines, f.line)
@@ -35,13 +36,9 @@ func readCursor(line string) []string {
 	fields := strings.Fields(line)
 	return fields[2:]
 }`)
-	if len(got) != 1 {
-		t.Fatalf("want 1 finding for the pre-fix cursor, got %d: %v", len(got), got)
-	}
+	require.Len(t, got, 1, "want 1 finding for the pre-fix cursor, got %d: %v", len(got), got)
 	for _, want := range []string{"slice expression on fields", "strings.Fields", "len(fields)", "readCursor", fieldsIndexAllowlistPath} {
-		if !strings.Contains(got[0], want) {
-			t.Errorf("the finding does not name %q:\n%s", want, got[0])
-		}
+		assert.Contains(t, got[0], want, "the finding does not name %q:\n%s", want, got[0])
 	}
 }
 
@@ -60,9 +57,7 @@ func readCursor(line string) ([]string, error) {
 }
 
 var errShort error`)
-	if len(got) != 0 {
-		t.Fatalf("the fixed cursor must be clean, got: %v", got)
-	}
+	require.Empty(t, got, "the fixed cursor must be clean, got: %v", got)
 }
 
 // TestFieldsIndexAcceptsTheShapesThatCannotBeShort walks the narrowings one by
@@ -126,9 +121,8 @@ func rest(raw string) []string {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := fieldsIndexFindings(t, c.body); len(got) != 0 {
-				t.Fatalf("%s must be clean, got: %v", c.name, got)
-			}
+			got := fieldsIndexFindings(t, c.body)
+			require.Empty(t, got, "%s must be clean, got: %v", c.name, got)
 		})
 	}
 }
@@ -178,12 +172,8 @@ func firstTwo(raw string) []string {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := fieldsIndexFindings(t, c.body)
-			if len(got) != 1 {
-				t.Fatalf("want 1 finding for %s, got %d: %v", c.name, len(got), got)
-			}
-			if !strings.Contains(got[0], c.want) {
-				t.Fatalf("the finding does not name %q:\n%s", c.want, got[0])
-			}
+			require.Len(t, got, 1, "want 1 finding for %s, got %d: %v", c.name, len(got), got)
+			require.Contains(t, got[0], c.want, "the finding does not name %q:\n%s", c.want, got[0])
 		})
 	}
 }
@@ -200,15 +190,10 @@ func (s *server) spawn() string {
 	fields := strings.Fields(s.onNote)
 	return fields[0]
 }`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(findings) != 1 {
-		t.Fatalf("want 1 finding, got %d", len(findings))
-	}
-	if want := "cmd/nova-wake/serve.go:server.spawn"; findings[0].key != want {
-		t.Fatalf("key = %q, want %q", findings[0].key, want)
-	}
+	require.NoError(t, err)
+	require.Len(t, findings, 1, "want 1 finding, got %d", len(findings))
+	want := "cmd/nova-wake/serve.go:server.spawn"
+	require.Equal(t, want, findings[0].key, "key = %q, want %q", findings[0].key, want)
 }
 
 // TestFieldsIndexAllowlistIsShrinkOnly reads the shipped list: every row must be
@@ -218,12 +203,10 @@ func TestFieldsIndexAllowlistIsShrinkOnly(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range loadAllowlist(t, fieldsIndexAllowlistPath, shrinkOnly).Rows() {
-		if key := row.Key; !strings.Contains(key, ":") || strings.HasSuffix(key, ":") {
-			t.Errorf("%s row %q is not a `file:function` key", fieldsIndexAllowlistPath, key)
-		}
+		key := row.Key
+		assert.Contains(t, key, ":", "%s row %q is not a `file:function` key", fieldsIndexAllowlistPath, key)
+		assert.False(t, strings.HasSuffix(key, ":"), "%s row %q is not a `file:function` key", fieldsIndexAllowlistPath, key)
 		line := row.Text
-		if !strings.Contains(line, " #") {
-			t.Errorf("%s row %q carries no reason; every exception says why the data cannot be short", fieldsIndexAllowlistPath, line)
-		}
+		assert.Contains(t, line, " #", "%s row %q carries no reason; every exception says why the data cannot be short", fieldsIndexAllowlistPath, line)
 	}
 }

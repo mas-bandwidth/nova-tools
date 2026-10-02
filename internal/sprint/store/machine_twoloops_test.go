@@ -11,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCRTwoRunLoopsAtOnce(t *testing.T) {
@@ -48,7 +49,7 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 					cut++
 					return
 				}
-				t.Fatalf("%s: %v", step.Verb, err)
+				require.NoError(t, err, "%s: %v", step.Verb, err)
 			}
 		}
 		w.running = true
@@ -100,9 +101,7 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 					n++
 				}
 			}
-			if n > 2 {
-				t.Errorf("trial %d: %s asked of %d readers at one attempt", trial, c.ID, n)
-			}
+			assert.LessOrEqual(t, n, 2, "trial %d: %s asked of %d readers at one attempt", trial, c.ID, n)
 		}
 	}
 }

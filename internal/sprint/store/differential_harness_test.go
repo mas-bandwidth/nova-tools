@@ -578,7 +578,7 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 		_, err := h.st.Clear(h.ctx)
 		return engineErr(err, nil), cutOK
 	}
-	h.t.Fatalf("unknown action %q", a.Kind)
+	require.FailNow(h.t, fmt.Sprintf("unknown action %q", a.Kind))
 	return "", cutOK
 }
 

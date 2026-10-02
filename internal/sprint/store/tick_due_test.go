@@ -115,12 +115,11 @@ func TestATickThatWentStaleLeavesAFullReadDue(t *testing.T) {
 	_, err := h.st.Tick(h.ctx)
 	require.NoError(t, err)
 	h.st.B = h.m
-	if _, hb, _ = h.st.Machine(h.ctx); !hb.Full.IsZero() {
-		t.Fatalf("a tick whose part lost every attempt left no full read due: %+v", hb)
-	}
+	_, hb, _ = h.st.Machine(h.ctx)
+	require.True(t, hb.Full.IsZero(), "a tick whose part lost every attempt left no full read due: %+v", hb)
 	h.tick(time.Second)
 	if res := h.machine(); res.Idle || len(h.snap().Readers.Of("s1-1")) != 2 {
-		t.Fatalf("the next tick: idle=%v, s1-1 asked of %d", res.Idle, len(h.snap().Readers.Of("s1-1")))
+		require.Failf(t, "", "the next tick: idle=%v, s1-1 asked of %d", res.Idle, len(h.snap().Readers.Of("s1-1")))
 	}
 }
 
@@ -139,16 +138,16 @@ func TestFailuresInARowCount(t *testing.T) {
 	}
 	for i := 1; i <= 3; i++ {
 		_, _ = h.st.Tick(h.ctx)
-		if _, hb, _ := h.st.Machine(h.ctx); hb.Failures != i || !hb.Full.IsZero() {
-			t.Fatalf("after %d failed ticks: failures %d, full %s", i, hb.Failures, hb.Full)
-		}
+		_, hb, _ := h.st.Machine(h.ctx)
+		require.Equal(t, i, hb.Failures, "after %d failed ticks: failures %d, full %s", i, hb.Failures, hb.Full)
+		require.True(t, hb.Full.IsZero(), "after %d failed ticks: failures %d, full %s", i, hb.Failures, hb.Full)
 		h.tick(time.Second)
 	}
 	h.m.Fail = nil
 	h.machine()
-	if _, hb, _ := h.st.Machine(h.ctx); hb.Failures != 0 || hb.Error != "" {
-		t.Fatalf("after a good tick: %+v", hb)
-	}
+	_, hb, _ := h.st.Machine(h.ctx)
+	require.Equal(t, 0, hb.Failures, "after a good tick: %+v", hb)
+	require.Equal(t, "", hb.Error, "after a good tick: %+v", hb)
 }
 
 // An idle tick writes the heartbeat at most once every HeartbeatIdleEvery; a
@@ -166,17 +165,17 @@ func TestIdleTicksWriteTheHeartbeatSeldom(t *testing.T) {
 		h.tick(time.Second)
 		res := h.machine()
 		require.True(t, res.Idle, "tick %d is not idle: %+v", i, res)
-		if _, hb, _ := h.st.Machine(h.ctx); hb.At != first.At || hb.Ticks != first.Ticks {
-			t.Fatalf("idle tick %d wrote the heartbeat: %+v", i, hb)
-		}
+		_, hb, _ := h.st.Machine(h.ctx)
+		require.Equal(t, first.At, hb.At, "idle tick %d wrote the heartbeat: %+v", i, hb)
+		require.Equal(t, first.Ticks, hb.Ticks, "idle tick %d wrote the heartbeat: %+v", i, hb)
 		line := h.st.MachineLine(h.ctx)
 		require.Equal(t, "machine: running", line, "idle tick %d: %q", i, line)
 	}
 	h.tick(time.Second)
 	h.machine()
-	if _, hb, _ := h.st.Machine(h.ctx); !hb.At.Equal(h.now) || hb.Ticks != first.Ticks+1 {
-		t.Fatalf("the idle tick at %s wrote no heartbeat: %+v", HeartbeatIdleEvery, hb)
-	}
+	_, hb, _ := h.st.Machine(h.ctx)
+	require.True(t, hb.At.Equal(h.now), "the idle tick at %s wrote no heartbeat: %+v", HeartbeatIdleEvery, hb)
+	require.Equal(t, first.Ticks+1, hb.Ticks, "the idle tick at %s wrote no heartbeat: %+v", HeartbeatIdleEvery, hb)
 	require.Greater(t, MachineSilence, time.Duration(HeartbeatIdleEvery+TickEvery), "the silence %s is not above the longest gap between heartbeats", MachineSilence)
 	require.Greater(t, MachineSilence, TickBackoffCap, "the silence %s is not above the longest gap between heartbeats", MachineSilence)
 	h.stopMachine()
@@ -185,7 +184,7 @@ func TestIdleTicksWriteTheHeartbeatSeldom(t *testing.T) {
 	_, looked, _ := h.st.Machine(h.ctx)
 	h.tick(time.Second)
 	h.machine()
-	_, hb, _ := h.st.Machine(h.ctx)
+	_, hb, _ = h.st.Machine(h.ctx)
 	require.True(t, hb.Looked.Equal(looked.Looked), "a STOPPED look a second later wrote the heartbeat: %+v", hb)
 }
 
@@ -282,13 +281,12 @@ func TestAWaitedTickJudgmentComesBackAfterItsTime(t *testing.T) {
 	h.machine()
 	o := h.openOf(sprint.NNoMember)
 	require.Len(t, o, 1, "no member: %d", len(o))
-	if res := h.run(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "the fleet is off tonight"})); len(res.Refused) != 1 ||
-		!strings.Contains(res.Refused[0].Why, "nova-sprint wait "+o[0].Note.ID) {
-		t.Fatalf("ack of a condition the tick keeps: %+v", res)
-	}
-	if _, held, err := h.st.Wait(h.ctx, o[0].Note.ID, h.now.Add(10*time.Minute)); err != nil || !held {
-		t.Fatalf("wait: held %v %v", held, err)
-	}
+	res := h.run(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "the fleet is off tonight"}))
+	require.Len(t, res.Refused, 1, "ack of a condition the tick keeps: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "nova-sprint wait "+o[0].Note.ID, "ack of a condition the tick keeps: %+v", res)
+	_, held, err := h.st.Wait(h.ctx, o[0].Note.ID, h.now.Add(10*time.Minute))
+	require.NoError(t, err, "wait: held %v %v", held, err)
+	require.True(t, held, "wait: held %v %v", held, err)
 	for i := 0; i < 5; i++ {
 		h.tick(time.Minute + time.Second)
 		h.machine()
@@ -298,12 +296,12 @@ func TestAWaitedTickJudgmentComesBackAfterItsTime(t *testing.T) {
 	h.tick(time.Hour)
 	h.startMachine()
 	h.machine()
-	if n := h.written(sprint.NNoMember); n != 1 || len(h.openOf(sprint.NNoMember)) != 1 {
-		t.Fatalf("written %d times while waited", n)
-	}
+	n := h.written(sprint.NNoMember)
+	require.Equal(t, 1, n, "written %d times while waited", n)
+	require.Len(t, h.openOf(sprint.NNoMember), 1, "written %d times while waited", n)
 	h.tick(6 * time.Minute)
 	h.machine()
-	n := h.written(sprint.NNoMember)
+	n = h.written(sprint.NNoMember)
 	require.Equal(t, 2, n, "written %d times after the wait ran out, want 2", n)
 	h.clean("waited")
 }

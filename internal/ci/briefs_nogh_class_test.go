@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // THE CLASS RULE: A BRIEF NEVER SAYS gh (nova-tools#3600, umbrella #3594).
@@ -70,33 +72,23 @@ func TestNoGhInAnyBrief(t *testing.T) {
 	var files []string
 	for _, glob := range briefSources {
 		matches, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(glob)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(matches) == 0 {
-			t.Fatalf("brief source %s matches no file; an empty set is not a pass, fix the list", glob)
-		}
+		require.NoError(t, err)
+		require.NotEmpty(t, matches, "brief source %s matches no file; an empty set is not a pass, fix the list", glob)
 		files = append(files, matches...)
 	}
 	sort.Strings(files)
 	var violations []string
 	for _, path := range files {
 		src, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		rel, _ := filepath.Rel(root, path)
 		for _, v := range briefViolations(src) {
 			violations = append(violations, filepath.ToSlash(rel)+":"+v)
 		}
 	}
-	if len(violations) > 0 {
-		t.Fatalf("%d brief line(s) tell a child to call GitHub (#3600: GitHub is a git remote only; use `nova-sprint read brief`, `nova-sprint read post`, `nova-sprint card`, or a clone with --reference ~/nova-bench/mirror/<repo>.git):\n  %s",
-			len(violations), strings.Join(violations, "\n  "))
-	}
-	if len(files) < 4 {
-		t.Fatalf("only %d brief files scanned; the swarm templates and the card fixtures are more than that", len(files))
-	}
+	require.Empty(t, violations, "%d brief line(s) tell a child to call GitHub (#3600: GitHub is a git remote only; use `nova-sprint read brief`, `nova-sprint read post`, `nova-sprint card`, or a clone with --reference ~/nova-bench/mirror/<repo>.git):\n  %s",
+		len(violations), strings.Join(violations, "\n  "))
+	require.GreaterOrEqual(t, len(files), 4, "only %d brief files scanned; the swarm templates and the card fixtures are more than that", len(files))
 }
 
 // TestBriefRuleCatchesEachSpelling is the rule's own control: a brief with each
@@ -110,15 +102,14 @@ func TestBriefRuleCatchesEachSpelling(t *testing.T) {
 		"STEP 1. git clone -q https://example.invalid/o/r.git .",
 		"git clone git@example-alias:o/r repo",
 	} {
-		if v := briefViolations([]byte("ok line\n" + bad + "\n")); len(v) != 1 || !strings.HasPrefix(v[0], "2:") {
-			t.Fatalf("%q: violations %q, want one at line 2", bad, v)
-		}
+		v := briefViolations([]byte("ok line\n" + bad + "\n"))
+		require.Len(t, v, 1, "%q: violations %q, want one at line 2", bad, v)
+		require.True(t, strings.HasPrefix(v[0], "2:"), "%q: violations %q, want one at line 2", bad, v)
 	}
 	good := "read it with nova-sprint read brief --repo r --n 1 --out d\n" +
 		"post it with nova-sprint read post --repo r --n 1 --line \"SCORE ...\"\n" +
 		"git clone -q --depth 50 --single-branch -b dev --reference ~/nova-bench/mirror/r.git https://example.invalid/o/r.git repo\n" +
 		"walk through the high ground\n"
-	if v := briefViolations([]byte(good)); len(v) != 0 {
-		t.Fatalf("clean brief flagged: %q", v)
-	}
+	v := briefViolations([]byte(good))
+	require.Empty(t, v, "clean brief flagged: %q", v)
 }

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The guarantees of atomicfile over arbitrary inputs:
@@ -44,26 +46,17 @@ func TestPropertyContentAndPermRoundTrip(t *testing.T) {
 		data := propertyBytes(r)
 		perm := propertyPerms[r.IntN(len(propertyPerms))]
 
-		if err := Write(target, data, perm); err != nil {
-			t.Fatalf("seed %d case %d: Write failed: %v", seed, i, err)
-		}
+		err := Write(target, data, perm)
+		require.NoError(t, err, "seed %d case %d: Write failed: %v", seed, i, err)
 
 		got, err := os.ReadFile(target)
-		if err != nil {
-			t.Fatalf("seed %d case %d: ReadFile failed: %v", seed, i, err)
-		}
-		if !bytes.Equal(got, data) {
-			t.Fatalf("seed %d case %d: read content does not match written (len got=%d, want=%d)", seed, i, len(got), len(data))
-		}
+		require.NoError(t, err, "seed %d case %d: ReadFile failed: %v", seed, i, err)
+		require.True(t, bytes.Equal(got, data), "seed %d case %d: read content does not match written (len got=%d, want=%d)", seed, i, len(got), len(data))
 
 		info, err := os.Stat(target)
-		if err != nil {
-			t.Fatalf("seed %d case %d: Stat failed: %v", seed, i, err)
-		}
+		require.NoError(t, err, "seed %d case %d: Stat failed: %v", seed, i, err)
 		wantPerm := referencePerm(dir, fmt.Sprintf("prop_roundtrip_%d", i), perm)
-		if gotPerm := info.Mode().Perm(); gotPerm != wantPerm {
-			t.Fatalf("seed %d case %d: perm mismatch: got %04o, want %04o", seed, i, gotPerm, wantPerm)
-		}
+		require.Equal(t, wantPerm, info.Mode().Perm(), "seed %d case %d: perm mismatch: got %04o, want %04o", seed, i, info.Mode().Perm(), wantPerm)
 	}
 }
 
@@ -80,17 +73,12 @@ func TestPropertyArbitraryOverwrite(t *testing.T) {
 		next := propertyBytes(r)
 		perm := propertyPerms[r.IntN(len(propertyPerms))]
 
-		if err := Write(target, next, perm); err != nil {
-			t.Fatalf("seed %d case %d: Write failed: %v", seed, i, err)
-		}
+		err := Write(target, next, perm)
+		require.NoError(t, err, "seed %d case %d: Write failed: %v", seed, i, err)
 
 		got, err := os.ReadFile(target)
-		if err != nil {
-			t.Fatalf("seed %d case %d: ReadFile failed: %v", seed, i, err)
-		}
-		if !bytes.Equal(got, next) {
-			t.Fatalf("seed %d case %d: read mismatch after overwrite (len got=%d, want=%d)", seed, i, len(got), len(next))
-		}
+		require.NoError(t, err, "seed %d case %d: ReadFile failed: %v", seed, i, err)
+		require.True(t, bytes.Equal(got, next), "seed %d case %d: read mismatch after overwrite (len got=%d, want=%d)", seed, i, len(got), len(next))
 
 		current = next
 	}
@@ -109,9 +97,8 @@ func TestPropertyFailureIsolationOverArbitraryData(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		target := filepath.Join(dir, fmt.Sprintf("prop_fail_%d.dat", i))
 		initialData := propertyBytes(r)
-		if err := Write(target, initialData, 0o644); err != nil {
-			t.Fatalf("seed %d case %d: initial Write failed: %v", seed, i, err)
-		}
+		err := Write(target, initialData, 0o644)
+		require.NoError(t, err, "seed %d case %d: initial Write failed: %v", seed, i, err)
 
 		badData := propertyBytes(r)
 		step := failureSteps[r.IntN(len(failureSteps))]
@@ -131,17 +118,11 @@ func TestPropertyFailureIsolationOverArbitraryData(t *testing.T) {
 			h.rename = func(oldpath, newpath string) error { return injectedErr }
 		}
 
-		err := writeWithHooks(target, badData, 0o644, h)
-		if err == nil {
-			t.Fatalf("seed %d case %d: writeWithHooks succeeded at step %s; want error", seed, i, step)
-		}
+		err = writeWithHooks(target, badData, 0o644, h)
+		require.Error(t, err, "seed %d case %d: writeWithHooks succeeded at step %s; want error", seed, i, step)
 
 		got, err := os.ReadFile(target)
-		if err != nil {
-			t.Fatalf("seed %d case %d: ReadFile failed after failure: %v", seed, i, err)
-		}
-		if !bytes.Equal(got, initialData) {
-			t.Fatalf("seed %d case %d: target content modified on %s failure!", seed, i, step)
-		}
+		require.NoError(t, err, "seed %d case %d: ReadFile failed after failure: %v", seed, i, err)
+		require.True(t, bytes.Equal(got, initialData), "seed %d case %d: target content modified on %s failure!", seed, i, step)
 	}
 }

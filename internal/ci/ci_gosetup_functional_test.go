@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -27,9 +29,7 @@ const goSetupMarker = `sdk=$(ls -d "$HOME"/sdk/go*/bin`
 func goSetupRuns(t *testing.T) []string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var wf struct {
 		Jobs map[string]struct {
 			Steps []struct {
@@ -37,9 +37,7 @@ func goSetupRuns(t *testing.T) []string {
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
-	if err := yaml.Unmarshal(raw, &wf); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, yaml.Unmarshal(raw, &wf))
 	var runs []string
 	for _, j := range wf.Jobs {
 		for _, s := range j.Steps {
@@ -71,9 +69,7 @@ func TestCIGoSetupPrefersTheGoModToolchain(t *testing.T) {
 	runs := goSetupRuns(t)
 	// 8: the test-race-queue job, and its copy of the step, went with #4866; the lisp job
 	// carries one because its steps run tools/ci (go run), which needs Go on PATH.
-	if len(runs) != 8 {
-		t.Fatalf("ci.yml has %d Go setup steps carrying %q, want 8 (update this test with the workflow)", len(runs), goSetupMarker)
-	}
+	require.Equal(t, 8, len(runs), "ci.yml has %d Go setup steps carrying %q, want 8 (update this test with the workflow)", len(runs), goSetupMarker)
 	// A step copied verbatim into another job (the functional job's is the
 	// test job's) is the same script: it runs once, so a copy costs the unit
 	// tier's one-second test budget nothing.
@@ -105,47 +101,32 @@ func TestCIGoSetupPrefersTheGoModToolchain(t *testing.T) {
 			home := filepath.Join(dir, "home")
 			work := filepath.Join(dir, "work")
 			for _, d := range []string{home, work, filepath.Join(home, ".local", "bin")} {
-				if err := os.MkdirAll(d, 0o755); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, os.MkdirAll(d, 0o755))
 			}
 			for _, v := range tc.sdks {
 				b := filepath.Join(home, "sdk", v, "bin")
-				if err := os.MkdirAll(b, 0o755); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, os.MkdirAll(b, 0o755))
 				fake := "#!/bin/sh\ncase \"$1\" in version) echo \"go version " + v + " fake\";; env) echo \"/" + v + "/$2\";; esac\n"
-				if err := os.WriteFile(filepath.Join(b, "go"), []byte(fake), 0o755); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, os.WriteFile(filepath.Join(b, "go"), []byte(fake), 0o755))
 			}
 			// the fleet-probe copy also wants an sbcl
-			if err := os.WriteFile(filepath.Join(home, ".local", "bin", "sbcl"), []byte("#!/bin/sh\necho SBCL fake\n"), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".local", "bin", "sbcl"), []byte("#!/bin/sh\necho SBCL fake\n"), 0o755))
 			if tc.gomod != "" {
-				if err := os.WriteFile(filepath.Join(work, "go.mod"), []byte(tc.gomod), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, os.WriteFile(filepath.Join(work, "go.mod"), []byte(tc.gomod), 0o644))
 			}
 			ghPath := filepath.Join(dir, "github_path")
 			cmd := exec.Command(bash, "-e", "-c", script)
 			cmd.Dir = work
 			cmd.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin", "GITHUB_PATH=" + ghPath, "RUNNER_NAME=r"}
 			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("step %d, %s: %v\n%s", i, tc.name, err, out)
-			}
+			require.NoError(t, err, "step %d, %s: %v\n%s", i, tc.name, err, out)
 			added, _ := os.ReadFile(ghPath)
 			wantBin := filepath.Join(home, "sdk", tc.want, "bin")
-			if first, _, _ := strings.Cut(string(added), "\n"); first != wantBin {
-				t.Errorf("step %d, %s: GITHUB_PATH first line %q, want %q", i, tc.name, first, wantBin)
-			}
+			first, _, _ := strings.Cut(string(added), "\n")
+			assert.Equal(t, wantBin, first, "step %d, %s: GITHUB_PATH first line %q, want %q", i, tc.name, first, wantBin)
 			receipt := "GO SETUP want=" + tc.wantName + " go=" + filepath.Join(wantBin, "go") +
 				" gomodcache=/" + tc.want + "/GOMODCACHE gocache=/" + tc.want + "/GOCACHE\n"
-			if !strings.Contains(string(out), receipt) {
-				t.Errorf("step %d, %s: output lacks %q:\n%s", i, tc.name, receipt, out)
-			}
+			assert.Contains(t, string(out), receipt, "step %d, %s: output lacks %q:\n%s", i, tc.name, receipt, out)
 		}
 	}
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -55,9 +56,9 @@ func TestReadCellsReadsAgainWhenTheTableMoves(t *testing.T) {
 		cards, err := st.ReadCells(h.ctx, sprint.Fleet, "m1", sprint.Ready, sprint.Working)
 		switch {
 		case c.ok && (err != nil || len(cards) == 0):
-			t.Fatalf("a table that moved once: %v, %d cards", err, len(cards))
+			require.FailNow(t, fmt.Sprintf("a table that moved once: %v, %d cards", err, len(cards)))
 		case !c.ok && (err == nil || !strings.Contains(err.Error(), "kept changing") || !strings.Contains(err.Error(), sprint.Fleet)):
-			t.Fatalf("a table that moved at every read: %v", err)
+			require.FailNow(t, fmt.Sprintf("a table that moved at every read: %v", err))
 		}
 		t.Logf("moved %d times: %d cards, %v", c.moves, len(cards), err)
 	}

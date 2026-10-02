@@ -111,9 +111,9 @@ func TestRedisTwoWritersReleaseOneOperation(t *testing.T) {
 	require.NoError(t, err)
 	op := OpRecord{ID: "op-1", Verb: "test", At: time.Now(), Notes: []sprint.Note{{ID: "op-1.1", Kind: sprint.Judgment, Type: sprint.NWorkFailed,
 		Stream: "s1", Primaries: []string{"p1"}, Count: 1, At: time.Now()}}}
-	if ok, err := st.B.Acquire(ctx, f.Gen, op); !ok || err != nil {
-		t.Fatalf("acquire: %v %v", ok, err)
-	}
+	ok, err := st.B.Acquire(ctx, f.Gen, op)
+	require.NoError(t, err, "acquire: %v %v", ok, err)
+	require.True(t, ok, "acquire: %v %v", ok, err)
 	errs := make(chan error, 2)
 	for i := 0; i < 2; i++ {
 		go func() { errs <- st.B.Release(ctx, op, true) }()
@@ -147,9 +147,9 @@ func TestRedisClear(t *testing.T) {
 	held := uint64(0)
 	step := MergeStep(sprint.MergeReq{Stream: "s1"})
 	step.Epoch = &held
-	if r, err := st.Run(h.ctx, step); err != nil || len(r.Refused) != 1 {
-		t.Fatalf("a merge holding the old epoch: %+v %v", r, err)
-	}
+	r, err := st.Run(h.ctx, step)
+	require.NoError(t, err, "a merge holding the old epoch: %+v %v", r, err)
+	require.Len(t, r.Refused, 1, "a merge holding the old epoch: %+v %v", r, err)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
 	h.through("s1-1", "s1-2")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))

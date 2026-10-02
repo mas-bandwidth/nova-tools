@@ -1,8 +1,11 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // dKnownDiff is one classified difference between the engine and the
@@ -113,7 +116,7 @@ func dRun(t *testing.T, from, n uint64, steps int) {
 				continue
 			}
 			failed[sig] = true
-			t.Errorf("seed %d: a difference between the engine and the model:\n%s", seed, dShrink(t, f))
+			assert.Fail(t, fmt.Sprintf("seed %d: a difference between the engine and the model:\n%s", seed, dShrink(t, f)))
 		}
 	}
 	for name, c := range known {

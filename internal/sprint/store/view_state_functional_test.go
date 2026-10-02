@@ -3,6 +3,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -75,9 +76,9 @@ func TestTheViewSaysStoppedAloneOnARealStore(t *testing.T) {
 	_, err = ntable.ViewDelete(h.ctx, c, h.st.Names.View())
 	require.NoError(t, err)
 	if _, after, _, err := h.st.SetMachine(h.ctx, true); err != nil || !after.Running() {
-		t.Fatalf("start with no view: %v %+v", err, after)
+		require.Fail(t, fmt.Sprintf("start with no view: %v %+v", err, after))
 	}
 	if _, after, _, err := h.st.SetMachine(h.ctx, false); err != nil || after.Running() {
-		t.Fatalf("stop with no view: %v %+v", err, after)
+		require.Fail(t, fmt.Sprintf("stop with no view: %v %+v", err, after))
 	}
 }

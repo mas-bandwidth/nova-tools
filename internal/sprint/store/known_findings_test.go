@@ -28,9 +28,9 @@ func TestAnAckOfTheOneJudgmentThatHoldsAPrimaryLeavesItSilent(t *testing.T) {
 	open := h.openOf(sprint.NReadyToAccept)
 	require.Len(t, open, 1, "ready to accept: %v", open)
 	h.tick(26 * time.Minute)
-	if res := h.run(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "none"})); len(res.Refused) != 1 || len(res.Moved) != 0 {
-		t.Fatalf("the ack of ready to accept: %+v", res)
-	}
+	res := h.run(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "none"}))
+	require.Len(t, res.Refused, 1, "the ack of ready to accept: %+v", res)
+	require.Empty(t, res.Moved, "the ack of ready to accept: %+v", res)
 	require.Len(t, h.openOf(sprint.NReadyToAccept), 1, "ready to accept closed by a refused ack")
 	h.clean("the ack of ready to accept refused") // rule 12 holds: the judgment still names p1
 }

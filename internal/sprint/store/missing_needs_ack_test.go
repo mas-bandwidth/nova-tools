@@ -46,11 +46,11 @@ func TestAckCombinesDependencyJudgmentsForOnePrimary(t *testing.T) {
 					require.Contains(t, ","+c.F("waived")+",", ","+n+",", "lost waiver %s: %+v", n, c)
 				}
 				if sentinel {
-					if c.Col != sprint.Waiting || c.F("reached") == "" || len(h.nOpenOf(sprint.NSentinelReached, "waiter")) != 1 {
-						t.Fatalf("sentinel: %+v", c)
-					}
-				} else if c.Col != sprint.Ready {
-					t.Fatalf("primary: %+v", c)
+					require.Equal(t, sprint.Waiting, c.Col, "sentinel: %+v", c)
+					require.NotEmpty(t, c.F("reached"), "sentinel: %+v", c)
+					require.Len(t, h.nOpenOf(sprint.NSentinelReached, "waiter"), 1, "sentinel: %+v", c)
+				} else {
+					require.Equal(t, sprint.Ready, c.Col, "primary: %+v", c)
 				}
 				require.Equal(t, 0, len(h.nOpenOf(sprint.NMissingNeed, "waiter"))+len(h.nOpenOf(sprint.NBlocked, "waiter")), "dependency judgment remains")
 				h.clean("combined waiver")

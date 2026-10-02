@@ -16,6 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/tlc"
 )
 
@@ -30,7 +33,7 @@ func TestTLCRecordsCoverCurrentModels(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
 	for _, problem := range tlcRecordProblems(root) {
-		t.Error(problem)
+		assert.Fail(t, problem)
 	}
 	// The runner that writes the records and this class test must compute the
 	// same fingerprint of the same files: a record the runner wrote is stale only
@@ -38,46 +41,32 @@ func TestTLCRecordsCoverCurrentModels(t *testing.T) {
 	// input is. The runner reads its own files from the bytes it was built with;
 	// this test reads them from the checkout.
 	plan, err := readTLCTSV(filepath.Join(root, "tla", "CASES.tsv"), []string{"config", "module", "expected", "property", "deadlock", "group", "gate", "debt"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	disk, err := tlcSource(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	built, err := tlc.SourceAt(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, row := range plan {
 		want, wantFiles, err := disk.Fingerprint(row[0])
-		if err != nil {
-			t.Errorf("TLC %s: %v", row[0], err)
+		if !assert.NoErrorf(t, err, "TLC %s: %v", row[0], err) {
 			continue
 		}
-		if got, files, err := built.Fingerprint(row[0]); err != nil || got != want || files != wantFiles {
-			t.Errorf("TLC %s: internal/tlc computes fingerprint %s over %d files (%v), this class test computes %s over %d: the runner and the class disagree on the inputs", row[0], got, files, err, want, wantFiles)
-		}
+		got, files, err := built.Fingerprint(row[0])
+		assert.Truef(t, err == nil && got == want && files == wantFiles, "TLC %s: internal/tlc computes fingerprint %s over %d files (%v), this class test computes %s over %d: the runner and the class disagree on the inputs", row[0], got, files, err, want, wantFiles)
 	}
 	// A case reads its own models and the ones they extend, and no others: the
 	// point of a per-case fingerprint, held on the real tree.
 	inputs, err := disk.Inputs("MCEpochMemberFixedPoint.cfg")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var paths []string
 	for _, in := range inputs {
 		paths = append(paths, in.Path)
 	}
 	for _, need := range []string{"tla/MCEpochMemberFixedPoint.cfg", "tla/MCEpochMemberTable.tla", "tla/EpochMemberTable.tla", "tla/MemberTable.tla", "tla/TableMachine.tla", "tla/CASES.tsv#MCEpochMemberFixedPoint.cfg", "internal/tlc/run.go", "internal/tlc/outcome.go", "internal/tlc/suite.go"} {
-		if !slices.Contains(paths, need) {
-			t.Errorf("MCEpochMemberFixedPoint.cfg does not read %s; it reads %v", need, paths)
-		}
+		assert.Truef(t, slices.Contains(paths, need), "MCEpochMemberFixedPoint.cfg does not read %s; it reads %v", need, paths)
 	}
 	for _, p := range paths {
-		if strings.HasPrefix(p, "tla/") && !slices.Contains([]string{"tla/MCEpochMemberFixedPoint.cfg", "tla/MCEpochMemberTable.tla", "tla/EpochMemberTable.tla", "tla/MemberTable.tla", "tla/TableMachine.tla", "tla/CASES.tsv#MCEpochMemberFixedPoint.cfg"}, p) {
-			t.Errorf("MCEpochMemberFixedPoint.cfg reads %s, which is not one of its inputs", p)
-		}
+		assert.Falsef(t, strings.HasPrefix(p, "tla/") && !slices.Contains([]string{"tla/MCEpochMemberFixedPoint.cfg", "tla/MCEpochMemberTable.tla", "tla/EpochMemberTable.tla", "tla/MemberTable.tla", "tla/TableMachine.tla", "tla/CASES.tsv#MCEpochMemberFixedPoint.cfg"}, p), "MCEpochMemberFixedPoint.cfg reads %s, which is not one of its inputs", p)
 	}
 	required := map[string]bool{}
 	for _, row := range plan {
@@ -89,9 +78,7 @@ func TestTLCRecordsCoverCurrentModels(t *testing.T) {
 		}
 	}
 	for _, module := range []string{"MCMemberTable.tla", "MCEpochMemberTable.tla", "MCTableEdit.tla", "MCTableOrder.tla", "MCTableSession.tla", "MCTableFirstContact.tla", "MCRedisFn.tla", "MCFirstConn.tla"} {
-		if !required[module] {
-			t.Errorf("TLC required model %s disappeared from the gate", module)
-		}
+		assert.Truef(t, required[module], "TLC required model %s disappeared from the gate", module)
 	}
 }
 
@@ -350,10 +337,10 @@ func (f tlcFixture) write(name, contents string) {
 	f.t.Helper()
 	path := filepath.Join(f.root, filepath.FromSlash(name))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		f.t.Fatal(err)
+		require.FailNowf(f.t, err.Error(), "")
 	}
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
-		f.t.Fatal(err)
+		require.FailNowf(f.t, err.Error(), "")
 	}
 }
 
@@ -361,7 +348,7 @@ func (f tlcFixture) read(name string) string {
 	f.t.Helper()
 	raw, err := os.ReadFile(filepath.Join(f.root, filepath.FromSlash(name)))
 	if err != nil {
-		f.t.Fatal(err)
+		require.FailNowf(f.t, err.Error(), "")
 	}
 	return string(raw)
 }
@@ -373,17 +360,17 @@ func (f tlcFixture) seal(edit func(row []string) []string) {
 	f.t.Helper()
 	plan, err := readTLCTSV(filepath.Join(f.root, "tla", "CASES.tsv"), []string{"config", "module", "expected", "property", "deadlock", "group", "gate", "debt"})
 	if err != nil {
-		f.t.Fatal(err)
+		require.FailNowf(f.t, err.Error(), "")
 	}
 	src, err := tlcSource(f.root)
 	if err != nil {
-		f.t.Fatal(err)
+		require.FailNowf(f.t, err.Error(), "")
 	}
 	out := strings.Join(tlcRunHeader, "\t") + "\n"
 	for _, p := range plan {
 		fp, files, err := src.Fingerprint(p[0])
 		if err != nil {
-			f.t.Fatal(err)
+			require.FailNowf(f.t, err.Error(), "")
 		}
 		row := make([]string, len(tlcRunHeader))
 		for name, v := range map[string]string{"config": p[0], "module": p[1], "input_sha256": fp, "input_files": strconv.Itoa(files), "jar_sha256": strings.Repeat("a", 64), "java_version": "21.0.12.1", "workers": "2", "host": "linux-amd64", "cpus": "8", "started_utc": "2026-01-01T00:00:00Z", "generated": "10", "distinct": "5", "seconds": "1.25", "exit": "0", "result": "PASS", "expected": p[2], "property": p[3], "budget": "110", "mode": "bounded"} {
@@ -425,7 +412,7 @@ func (f tlcFixture) expectStale(want ...string) {
 		stale = []string{}
 	}
 	if len(other) != 0 || strings.Join(stale, ",") != strings.Join(want, ",") {
-		f.t.Fatalf("stale %v and other problems %v; want stale %v and no other", stale, other, want)
+		require.FailNowf(f.t, fmt.Sprintf("stale %v and other problems %v; want stale %v and no other", stale, other, want), "")
 	}
 }
 
@@ -480,20 +467,14 @@ func TestTLCStaleRecordNamesTheCaseAndItsInputFiles(t *testing.T) {
 	f := newTLCFixture(t)
 	f.write("tla/Shared.tla", f.read("tla/Shared.tla")+"\\* edited\n")
 	problems := tlcRecordProblems(f.root)
-	if len(problems) != 2 {
-		t.Fatalf("problems %v", problems)
-	}
+	require.Lenf(t, problems, 2, "problems %v", problems)
 	for i, config := range []string{"MCA.cfg", "MCB.cfg"} {
 		group := map[string]string{"MCA.cfg": "alpha", "MCB.cfg": "beta"}[config]
 		for _, want := range []string{"TLC " + config + " record is stale", "tla/Shared.tla", "tla/" + config, "tlacheck inputs --case " + config, "group " + group + ":", "`tlacheck groups --stale`", "`tlacheck merge --keep tla/RUNS.tsv`", "clean directory"} {
-			if !strings.Contains(problems[i], want) {
-				t.Errorf("%q does not name %q", problems[i], want)
-			}
+			assert.Containsf(t, problems[i], want, "%q does not name %q", problems[i], want)
 		}
 	}
-	if strings.Contains(strings.Join(problems, "\n"), "MCLone") {
-		t.Errorf("the case that does not read the module is named: %v", problems)
-	}
+	assert.NotContainsf(t, strings.Join(problems, "\n"), "MCLone", "the case that does not read the module is named: %v", problems)
 }
 
 func TestTLCRecordsAndCasesMustMatchOneToOne(t *testing.T) {
@@ -524,21 +505,15 @@ func TestTLCRecordsAndCasesMustMatchOneToOne(t *testing.T) {
 			})
 		}, "MCC.cfg has no run record"},
 		{"a record with no configuration", func(f tlcFixture) {
-			if err := os.Remove(filepath.Join(f.root, "tla", "MCLone.cfg")); err != nil {
-				f.t.Fatal(err)
-			}
+			require.NoError(f.t, os.Remove(filepath.Join(f.root, "tla", "MCLone.cfg")))
 		}, "declared case MCLone.cfg has no configuration"},
 		{"a record with no case and no configuration", func(f tlcFixture) {
 			plan := strings.Replace(f.read("tla/CASES.tsv"), "MCLone.cfg\tMCLone.tla\tpass\t-\tcheck\tgamma\trequired\t-\n", "", 1)
-			if err := os.Remove(filepath.Join(f.root, "tla", "MCLone.cfg")); err != nil {
-				f.t.Fatal(err)
-			}
+			require.NoError(f.t, os.Remove(filepath.Join(f.root, "tla", "MCLone.cfg")))
 			f.write("tla/CASES.tsv", plan)
 		}, "unexpected or duplicate run record MCLone.cfg"},
 		{"a module the plan names that is not there", func(f tlcFixture) {
-			if err := os.Remove(filepath.Join(f.root, "tla", "MCLone.tla")); err != nil {
-				f.t.Fatal(err)
-			}
+			require.NoError(f.t, os.Remove(filepath.Join(f.root, "tla", "MCLone.tla")))
 		}, "MCLone.cfg missing module MCLone.tla"},
 		{"a module that extends a module that is not there", func(f tlcFixture) {
 			f.write("tla/MCLone.tla", "---- MODULE MCLone ----\nEXTENDS Sequences, Nowhere\n====\n")
@@ -552,13 +527,12 @@ func TestTLCRecordsAndCasesMustMatchOneToOne(t *testing.T) {
 			t.Parallel()
 			f := newTLCFixture(t)
 			tc.edit(f)
+			problems := tlcRecordProblems(f.root)
 			found := false
-			for _, problem := range tlcRecordProblems(f.root) {
+			for _, problem := range problems {
 				found = found || strings.Contains(problem, tc.want)
 			}
-			if !found {
-				t.Fatalf("no problem names %q: %v", tc.want, tlcRecordProblems(f.root))
-			}
+			require.Truef(t, found, "no problem names %q: %v", tc.want, problems)
 		})
 	}
 }
@@ -572,21 +546,15 @@ func TestTLCEveryFileACaseReadsStalesIt(t *testing.T) {
 	t.Parallel()
 	f := newTLCFixture(t)
 	src, err := tlcSource(f.root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	inputs, err := src.Inputs("MCA.cfg")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var got []string
 	for _, in := range inputs {
 		got = append(got, in.Path)
 	}
 	want := []string{"internal/tlc/outcome.go", "internal/tlc/plan.go", "internal/tlc/run.go", "internal/tlc/suite.go", "tla/CASES.tsv#MCA.cfg", "tla/MCA.cfg", "tla/MCA.tla", "tla/Shared.tla"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("MCA.cfg reads %v, want %v", got, want)
-	}
+	require.Equalf(t, strings.Join(want, ","), strings.Join(got, ","), "MCA.cfg reads %v, want %v", got, want)
 	var hand strings.Builder
 	for _, p := range want {
 		var raw string
@@ -600,9 +568,9 @@ func TestTLCEveryFileACaseReadsStalesIt(t *testing.T) {
 		hand.WriteString(p + "\x00" + hex.EncodeToString(sum[:]) + "\n")
 	}
 	handSum := sha256.Sum256([]byte(hand.String()))
-	if fp, n, _ := src.Fingerprint("MCA.cfg"); fp != hex.EncodeToString(handSum[:]) || n != len(want) {
-		t.Fatalf("fingerprint %s over %d files, worked out by hand %s over %d", fp, n, hex.EncodeToString(handSum[:]), len(want))
-	}
+	wantFP := hex.EncodeToString(handSum[:])
+	fp, n, _ := src.Fingerprint("MCA.cfg")
+	require.Truef(t, fp == wantFP && n == len(want), "fingerprint %s over %d files, worked out by hand %s over %d", fp, n, wantFP, len(want))
 	for _, path := range want {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
@@ -613,14 +581,10 @@ func TestTLCEveryFileACaseReadsStalesIt(t *testing.T) {
 				f.write(path, f.read(path)+"\n\\* one more line\n")
 			}
 			stale, _ := f.stale()
-			if !slices.Contains(stale, "MCA.cfg") {
-				t.Fatalf("changing %s left MCA.cfg's record current", path)
-			}
+			require.Truef(t, slices.Contains(stale, "MCA.cfg"), "changing %s left MCA.cfg's record current", path)
 			// And nothing else: MCLone.cfg reads the runner and no other file
 			// here, so only the runner stales it too.
-			if slices.Contains(stale, "MCLone.cfg") != strings.HasPrefix(path, "internal/tlc/") {
-				t.Fatalf("changing %s left MCLone.cfg's record wrong: stale %v", path, stale)
-			}
+			require.Equalf(t, strings.HasPrefix(path, "internal/tlc/"), slices.Contains(stale, "MCLone.cfg"), "changing %s left MCLone.cfg's record wrong: stale %v", path, stale)
 		})
 	}
 }
@@ -649,9 +613,7 @@ func TestTLCRecordHostIsAPlatformLabel(t *testing.T) {
 			f := newTLCFixture(t)
 			f.seal(func(row []string) []string { row[tc[tc2.column]] = tc2.value; return row })
 			problems := tlcRecordProblems(f.root)
-			if tc2.ok != (len(problems) == 0) {
-				t.Fatalf("%s=%q: problems %v", tc2.column, tc2.value, problems)
-			}
+			require.Equalf(t, tc2.ok, len(problems) == 0, "%s=%q: problems %v", tc2.column, tc2.value, problems)
 		})
 	}
 }
@@ -661,19 +623,16 @@ func TestTLCRecordHostIsAPlatformLabel(t *testing.T) {
 func TestTLCRecordFileHoldsOneJar(t *testing.T) {
 	t.Parallel()
 	f := newTLCFixture(t)
-	if stale, other := f.stale(); len(stale)+len(other) != 0 {
-		t.Fatalf("fixture refused: %v %v", stale, other)
-	}
+	stale, other := f.stale()
+	require.Equalf(t, 0, len(stale)+len(other), "fixture refused: %v %v", stale, other)
 	f.seal(func(row []string) []string {
 		if row[tc["config"]] == "MCB.cfg" {
 			row[tc["jar_sha256"]] = strings.Repeat("b", 64)
 		}
 		return row
 	})
-	stale, other := f.stale()
-	if len(stale) != 0 || len(other) != 1 || !strings.Contains(other[0], "hold 2 jars") || !strings.Contains(other[0], "aaaaaaaaaaaa (2 records)") || !strings.Contains(other[0], "bbbbbbbbbbbb (1 records)") {
-		t.Fatalf("stale %v, other %v", stale, other)
-	}
+	stale, other = f.stale()
+	require.Truef(t, len(stale) == 0 && len(other) == 1 && strings.Contains(other[0], "hold 2 jars") && strings.Contains(other[0], "aaaaaaaaaaaa (2 records)") && strings.Contains(other[0], "bbbbbbbbbbbb (1 records)"), "stale %v, other %v", stale, other)
 }
 
 // The gates that are not about freshness: what the class test refuses about a
@@ -709,11 +668,11 @@ func TestTLCRecordFreshnessAndCoverageWitnesses(t *testing.T) {
 				f.write("tla/MCCardMachine.tla", "changed card\n")
 			}
 			problems := tlcRecordProblems(f.root)
-			if (mutation == "none" || mutation == "declared-debt") && len(problems) != 0 {
-				t.Fatalf("valid fixture refused: %v", problems)
+			if mutation == "none" || mutation == "declared-debt" {
+				require.Emptyf(t, problems, "valid fixture refused: %v", problems)
 			}
-			if mutation != "none" && mutation != "declared-debt" && len(problems) == 0 {
-				t.Fatalf("%s did not invalidate the run evidence", mutation)
+			if mutation != "none" && mutation != "declared-debt" {
+				require.NotEmptyf(t, problems, "%s did not invalidate the run evidence", mutation)
 			}
 		})
 	}

@@ -5,10 +5,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNoReplacePublishesOnlyAfterModeAndSync(t *testing.T) {
@@ -24,8 +25,8 @@ func TestNoReplacePublishesOnlyAfterModeAndSync(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if runtime.GOOS != "windows" && fi.Mode().Perm() != 0644 {
-			t.Errorf("mode at sync=%o", fi.Mode().Perm())
+		if runtime.GOOS != "windows" {
+			assert.Equal(t, os.FileMode(0644), fi.Mode().Perm(), "mode at sync=%o", fi.Mode().Perm())
 		}
 		return sync(f)
 	}
@@ -36,31 +37,23 @@ func TestNoReplacePublishesOnlyAfterModeAndSync(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if string(data) != "complete" {
-			t.Errorf("published bytes=%q", data)
-		}
+		assert.Equal(t, "complete", string(data), "published bytes=%q", data)
 		return link(a, b)
 	}
 	h.remove = func(p string) error { calls = append(calls, "remove"); return remove(p) }
 	h.syncDir = func(p string) error { calls = append(calls, "dir-sync"); return syncDir(p) }
-	if err := writeWithHooks(path, []byte("complete"), 0644, h, ExactMode(), NoReplace()); err != nil {
-		t.Fatal(err)
-	}
+	err := writeWithHooks(path, []byte("complete"), 0644, h, ExactMode(), NoReplace())
+	require.NoError(t, err)
 	want := []string{"chmod", "sync", "close", "link", "remove", "dir-sync"}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls=%v want=%v", calls, want)
-	}
-	if err := WriteFile(path, []byte("replacement"), 0600, NoReplace()); !errors.Is(err, fs.ErrExist) {
-		t.Fatalf("existing entry: %v", err)
-	}
+	require.Equal(t, want, calls, "calls=%v want=%v", calls, want)
+	err = WriteFile(path, []byte("replacement"), 0600, NoReplace())
+	require.ErrorIs(t, err, fs.ErrExist, "existing entry: %v", err)
 	data, err := os.ReadFile(path)
-	if err != nil || string(data) != "complete" {
-		t.Fatalf("retained bytes=%q err=%v", data, err)
-	}
+	require.NoError(t, err, "retained bytes=%q err=%v", data, err)
+	require.Equal(t, "complete", string(data), "retained bytes=%q err=%v", data, err)
 	entries, err := os.ReadDir(filepath.Dir(path))
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("entries=%v err=%v", entries, err)
-	}
+	require.NoError(t, err, "entries=%v err=%v", entries, err)
+	require.Len(t, entries, 1, "entries=%v err=%v", entries, err)
 }
 
 func TestNoReplacePreservesConcurrentWinnerAndReportsFailures(t *testing.T) {
@@ -92,34 +85,27 @@ func TestNoReplacePreservesConcurrentWinnerAndReportsFailures(t *testing.T) {
 			if mode == "concurrent winner" {
 				wantErr = fs.ErrExist
 			}
-			if !errors.Is(err, wantErr) {
-				t.Fatalf("error=%v want=%v", err, wantErr)
-			}
+			require.ErrorIs(t, err, wantErr, "error=%v want=%v", err, wantErr)
 			data, readErr := os.ReadFile(path)
 			wantEntries := 0
 			switch mode {
 			case "concurrent winner":
 				wantEntries = 1
-				if readErr != nil || string(data) != "winner" {
-					t.Fatalf("winner=%q err=%v", data, readErr)
-				}
+				require.NoError(t, readErr, "winner=%q err=%v", data, readErr)
+				require.Equal(t, "winner", string(data), "winner=%q err=%v", data, readErr)
 			case "link fails":
-				if !errors.Is(readErr, fs.ErrNotExist) {
-					t.Fatalf("failed publication left target: %v", readErr)
-				}
+				require.ErrorIs(t, readErr, fs.ErrNotExist, "failed publication left target: %v", readErr)
 			case "cleanup fails":
 				wantEntries = 2
-				if readErr != nil || string(data) != "complete" || !synced {
-					t.Fatalf("published=%q err=%v dirSynced=%v", data, readErr, synced)
-				}
-				if !strings.Contains(err.Error(), "created") || !strings.Contains(err.Error(), "cleanup failed") {
-					t.Fatalf("error hides published state: %v", err)
-				}
+				require.NoError(t, readErr, "published=%q err=%v dirSynced=%v", data, readErr, synced)
+				require.Equal(t, "complete", string(data), "published=%q err=%v dirSynced=%v", data, readErr, synced)
+				require.True(t, synced, "published=%q err=%v dirSynced=%v", data, readErr, synced)
+				require.Contains(t, err.Error(), "created", "error hides published state: %v", err)
+				require.Contains(t, err.Error(), "cleanup failed", "error hides published state: %v", err)
 			}
 			entries, e := os.ReadDir(dir)
-			if e != nil || len(entries) != wantEntries {
-				t.Fatalf("entries=%v err=%v want=%d", entries, e, wantEntries)
-			}
+			require.NoError(t, e, "entries=%v err=%v want=%d", entries, e, wantEntries)
+			require.Len(t, entries, wantEntries, "entries=%v err=%v want=%d", entries, e, wantEntries)
 		})
 	}
 }

@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -84,7 +85,7 @@ func TestStartAndStopAreIdempotentAndRecorded(t *testing.T) {
 	require.Equal(t, "machine: STOPPED", line, "a new sprint: %q", line)
 	before, after, res, err := h.st.SetMachine(h.ctx, true)
 	if err != nil || before.Running() || !after.Running() || res.Notes != 1 {
-		t.Fatalf("start: %+v %+v %+v %v", before, after, res, err)
+		require.Fail(t, fmt.Sprintf("start: %+v %+v %+v %v", before, after, res, err))
 	}
 	line = h.st.MachineLine(h.ctx)
 	require.Equal(t, "machine: running", line, "started: %q", line)
@@ -118,7 +119,7 @@ func TestStartAndStopAreIdempotentAndRecorded(t *testing.T) {
 		seen = append(seen, g.Type)
 	}
 	if got := strings.Join(seen, "|"); !strings.Contains(got, sprint.NMachineStarted) || !strings.Contains(got, sprint.NMachineStopped) {
-		t.Fatalf("the inbox lacks the machine's stops and starts: %s", got)
+		require.Fail(t, fmt.Sprintf("the inbox lacks the machine's stops and starts: %s", got))
 	}
 }
 
@@ -127,7 +128,7 @@ func TestAStoppedMachineMovesNothing(t *testing.T) {
 	h := newHarness(t)
 	h.setup(3)
 	if res := h.machine(); res.State != Stopped || len(res.Parts) > 0 {
-		t.Fatalf("a stopped tick: %+v", res)
+		require.Fail(t, fmt.Sprintf("a stopped tick: %+v", res))
 	}
 	n := h.snap().Work.Count("s1", sprint.Ready)
 	require.Equal(t, 3, n, "ready %d", n)
@@ -210,11 +211,11 @@ func TestAnIdleTickReadsEveryTableAndChangesNothing(t *testing.T) {
 	require.Len(t, res.Tables, len(All), "an idle tick names %d tables, want every one: %+v", len(res.Tables), res.Tables)
 	for i, tb := range res.Tables {
 		if tb.Table != All[i] || len(tb.Rows) != 0 {
-			t.Errorf("an idle tick's table %d: %+v", i, tb)
+			assert.Fail(t, fmt.Sprintf("an idle tick's table %d: %+v", i, tb))
 		}
 	}
 	if h.m.Calls["cells"]-before["cells"] == 0 && h.m.Calls["readset"]-before["readset"] == 0 {
-		t.Errorf("an idle tick read no cards: %v", h.m.Calls)
+		assert.Fail(t, fmt.Sprintf("an idle tick read no cards: %v", h.m.Calls))
 	}
 }
 
@@ -233,7 +234,7 @@ func TestTheDealingKeepsEveryReadyQueueShortInScoreOrder(t *testing.T) {
 	s := h.snap()
 	for _, m := range []string{"m1", "m2"} {
 		if n := s.Fleet.Count(m, sprint.Ready); n != sprint.DealAhead*width || s.Width(m) != width {
-			t.Fatalf("%s holds %d ready, want DealAhead times its width %d", m, n, width)
+			require.Fail(t, fmt.Sprintf("%s holds %d ready, want DealAhead times its width %d", m, n, width))
 		}
 	}
 	for i, c := range s.Work.Column(sprint.Ready) {
@@ -283,7 +284,7 @@ func TestTheInboxCountsRunningTimeOnly(t *testing.T) {
 			continue // the harness moves the clock with no run loop ticking
 		}
 		if g.Kind == sprint.Judgment && (g.Overdue || g.Waited != time.Hour || !g.Due.Equal(t0.Add(5*time.Hour))) {
-			t.Fatalf("stopped hours counted: %+v", g)
+			require.Fail(t, fmt.Sprintf("stopped hours counted: %+v", g))
 		}
 	}
 	h.tick(90 * time.Minute)
@@ -308,7 +309,7 @@ func TestAWaitedConditionIsClosedWhenItClears(t *testing.T) {
 	require.Len(t, open, 1, "no member: open %d written %d", len(open), h.written(sprint.NNoMember))
 	require.Equal(t, 1, h.written(sprint.NNoMember), "no member: open %d written %d", len(open), h.written(sprint.NNoMember))
 	if _, held, err := h.st.Wait(h.ctx, open[0].Note.ID, h.now.Add(time.Hour)); err != nil || !held {
-		t.Fatalf("wait: %v %v", held, err)
+		require.Fail(t, fmt.Sprintf("wait: %v %v", held, err))
 	}
 	for i := 0; i < 3; i++ {
 		h.tick(time.Minute)
@@ -316,12 +317,12 @@ func TestAWaitedConditionIsClosedWhenItClears(t *testing.T) {
 	}
 	require.Equal(t, 1, h.written(sprint.NNoMember), "written again while waited: %d", h.written(sprint.NNoMember))
 	if held := h.openOf(sprint.NNoMember); len(held) != 1 || held[0].Note.Kind != sprint.Acknowledged {
-		t.Fatalf("the hold is not kept: %+v", held)
+		require.Fail(t, fmt.Sprintf("the hold is not kept: %+v", held))
 	}
 	v, _ := h.st.Inbox(h.ctx, time.Hour, 0, 1000)
 	for _, g := range v.Groups {
 		if g.Kind != sprint.Happened && g.Kind != sprint.Decided {
-			t.Fatalf("the inbox while waited: %+v", g)
+			require.Fail(t, fmt.Sprintf("the inbox while waited: %+v", g))
 		}
 	}
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
@@ -351,11 +352,11 @@ func TestAStuckOperationIsReportedOnceByTheFirstWriterAfterRepair(t *testing.T) 
 		return nil
 	}
 	if _, err := h.st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 2}})); err == nil || h.m.Pending() == nil {
-		t.Fatalf("an operation left pending: %v", err)
+		require.Fail(t, fmt.Sprintf("an operation left pending: %v", err))
 	}
 	h.tick(10 * time.Minute)
 	if _, err := h.st.Tick(h.ctx); err == nil || !strings.Contains(err.Error(), "could not finish it") {
-		t.Fatalf("the tick with an operation it cannot finish: %v", err)
+		require.Fail(t, fmt.Sprintf("the tick with an operation it cannot finish: %v", err))
 	}
 	line := h.st.MachineLine(h.ctx)
 	require.Equal(t, "machine: running", line, "the machine line: %s", line)
@@ -378,7 +379,7 @@ func TestAStuckOperationIsReportedOnceByTheFirstWriterAfterRepair(t *testing.T) 
 	v, _ := h.st.Inbox(h.ctx, time.Hour, 0, 1000)
 	for _, g := range v.Groups {
 		if g.Type == sprint.NOpStuck && (len(g.Commands) != 2 || g.Commands[0].Lines[0] != "nova-sprint check") {
-			t.Fatalf("its commands: %+v", g.Commands)
+			require.Fail(t, fmt.Sprintf("its commands: %+v", g.Commands))
 		}
 	}
 	h.clean("after the stuck operation")
@@ -407,7 +408,7 @@ func TestTheTickStopsAtASentinelUntilItIsReleased(t *testing.T) {
 	require.Equal(t, sprint.Landed, h.state("s1-1"), "before the sentinel: %s %s", h.state("s1-1"), h.state("s1-2"))
 	require.Equal(t, sprint.Landed, h.state("s1-2"), "before the sentinel: %s %s", h.state("s1-1"), h.state("s1-2"))
 	if h.state("stop") != sprint.Waiting || h.state("after") != sprint.Waiting || len(h.openOf(sprint.NSentinelReached)) != 1 {
-		t.Fatalf("at the sentinel: stop %s after %s reached %d", h.state("stop"), h.state("after"), len(h.openOf(sprint.NSentinelReached)))
+		require.Fail(t, fmt.Sprintf("at the sentinel: stop %s after %s reached %d", h.state("stop"), h.state("after"), len(h.openOf(sprint.NSentinelReached))))
 	}
 	h.quiet("at the sentinel")
 	h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"stop"}, Reason: "the first two are green", Coordinator: "tester", Who: "tester"}))
@@ -439,7 +440,7 @@ func TestTheLandingStepAndTheTickDoNothingTwice(t *testing.T) {
 	res := h.machine()
 	for _, p := range res.Parts {
 		if p.Name == "resolve" && (len(p.Moved) > 0 || p.Notes > 0) {
-			t.Fatalf("the tick resolved again: %+v", p)
+			require.Fail(t, fmt.Sprintf("the tick resolved again: %+v", p))
 		}
 	}
 	require.Equal(t, before, h.written(sprint.NSentinelReached), "after the tick: reached written %d (was %d), y %s", h.written(sprint.NSentinelReached), before, h.state("y"))
@@ -458,7 +459,7 @@ func TestAStoppedTickSaysItLooked(t *testing.T) {
 	h.machine()
 	_, hb, err := h.st.Machine(h.ctx)
 	if err != nil || hb.Ticks != 0 || !hb.Alive().Equal(h.now) {
-		t.Fatalf("a stopped tick: %+v %v", hb, err)
+		require.Fail(t, fmt.Sprintf("a stopped tick: %+v %v", hb, err))
 	}
 }
 
@@ -600,7 +601,7 @@ func TestARedealtCardAfterATakeIsLateNotTaken(t *testing.T) {
 	}
 	c := h.snap().Fleet.Card(card)
 	if c == nil || c.Col != sprint.Ready || c.Row != other {
-		t.Fatalf("redealt to %s: %+v", other, c)
+		require.Fail(t, fmt.Sprintf("redealt to %s: %+v", other, c))
 	}
 	judged := func(typ, word string) int {
 		n := 0
@@ -628,7 +629,7 @@ func TestARedealtCardAfterATakeIsLateNotTaken(t *testing.T) {
 	notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
 	for _, x := range notes {
 		if x.Type == sprint.NStalled && x.Kind == sprint.Judgment {
-			t.Fatalf("a stalled judgment speaks for the late card: %s", x.What)
+			require.Fail(t, fmt.Sprintf("a stalled judgment speaks for the late card: %s", x.What))
 		}
 	}
 }
@@ -663,7 +664,7 @@ func TestTwoLateReadsOfOnePrimaryAreTwoJudgments(t *testing.T) {
 	h.machine()
 	late = h.openOf(sprint.NReadLate)
 	if len(late) != 1 || late[0].Note.Card != cards[0].ID {
-		t.Fatalf("after %s began: %+v", cards[1].ID, late)
+		require.Fail(t, fmt.Sprintf("after %s began: %+v", cards[1].ID, late))
 	}
 }
 
@@ -692,7 +693,7 @@ func TestACardLateAtItsRedealDoesNotBlameTheNewMember(t *testing.T) {
 	h.machine() // the next pump redeals the card to it
 	c := h.snap().Fleet.Card("s1-1.w1")
 	if c == nil || c.Col != sprint.Ready || c.Row != "m1" {
-		t.Fatalf("redealt: %+v", c)
+		require.Fail(t, fmt.Sprintf("redealt: %+v", c))
 	}
 	h.tick(time.Minute)
 	h.machine()
@@ -718,7 +719,7 @@ func TestAMachineThatNeverTickedIsSilentFromItsStart(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("no machine:silent group: %+v", v.Groups)
+	require.FailNow(t, fmt.Sprintf("no machine:silent group: %+v", v.Groups))
 }
 
 // A part the store refuses whole on a bound moves nothing, so the tick names no
