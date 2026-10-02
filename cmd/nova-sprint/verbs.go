@@ -717,7 +717,7 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	listed(stderr, "REFUSED", why, c.max, verbName)
 	status := "OK"
 	if code != 0 {
-		status = "FAIL"
+		status = "FAILED"
 	}
 	fields := fmt.Sprintf("moved=%d refused=%d notes=%d", len(res.Moved), len(res.Refused), res.Notes)
 	if res.Op != "" {
@@ -1380,7 +1380,7 @@ func (a *app) withGroup(verbName string, fs flagSet, c *common, st *store.Store,
 			listed(stderr, "ADDED", added, c.max, "inbox --open "+g.ID)
 			listed(stderr, "GONE", gone, c.max, "inbox --open "+g.ID)
 		}
-		fmt.Fprintf(stderr, "%s FAIL moved=0 group=%s size=%d expected=%d; run: nova-sprint inbox --open %s\n", token(verbName), oneline.Escape(g.ID), len(g.Members), s.expect, oneline.Escape(g.ID))
+		fmt.Fprintf(stderr, "%s FAILED moved=0 group=%s size=%d expected=%d; run: nova-sprint inbox --open %s\n", token(verbName), oneline.Escape(g.ID), len(g.Members), s.expect, oneline.Escape(g.ID))
 		return nil, 1
 	}
 	if len(g.Members) == 0 {
@@ -2230,7 +2230,7 @@ func (a *app) cmdRepair(args []string, stdout, stderr io.Writer) int {
 	}
 	status := "OK"
 	if code != 0 {
-		status = "FAIL"
+		status = "FAILED"
 	}
 	fmt.Fprintf(stdout, "REPAIR %s operations=%d\n", status, len(rr))
 	return code

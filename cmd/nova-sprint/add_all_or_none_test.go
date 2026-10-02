@@ -25,7 +25,7 @@ func writeBriefDir(t *testing.T, n int) string {
 // resultLine is the result line of a verb: the one that starts with its token and a status.
 func resultLine(out, errs, token string) string {
 	for _, l := range strings.Split(out+errs, "\n") {
-		if strings.HasPrefix(l, token+" OK ") || strings.HasPrefix(l, token+" FAIL ") {
+		if strings.HasPrefix(l, token+" OK ") || strings.HasPrefix(l, token+" FAILED ") {
 			return l
 		}
 	}
@@ -72,7 +72,7 @@ func TestAddResultLineMatchesTheTableWhenTheDisplaySyncFails(t *testing.T) {
 	var w whereView
 	ta.json("where", &w)
 	require.Equal(t, int64(10), w.All, "the table holds the cards")
-	assert.NotContains(t, line, "FAIL", "a FAIL over cards in the table: %s", line)
+	assert.NotContains(t, line, "FAILED", "a FAILED over cards in the table: %s", line)
 	assert.Contains(t, line, "ADD OK moved=10 ")
 	assert.NotContains(t, line, "changed=no")
 	assert.Equal(t, 0, code, out+errs)
@@ -83,7 +83,7 @@ func TestAddResultLineMatchesTheTableWhenTheDisplaySyncFails(t *testing.T) {
 // set: add, drop, release, finish, rework, merge, resume and the fleet verbs; deal
 // is the tick's, which has no verb) reports a committed write whose sync failed as
 // OK, exit 0, with the sync's own error on its own line: the table holds what the
-// step wrote, so the result line never says FAIL or changed=no over it. Each row
+// step wrote, so the result line never says FAILED or changed=no over it. Each row
 // runs its verb once clean (the control) and once with the display read failing
 // after the commit.
 func TestAVerbWhoseDisplaySyncFailsAfterItsWriteReportsOK(t *testing.T) {

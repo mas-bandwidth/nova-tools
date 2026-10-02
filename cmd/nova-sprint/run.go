@@ -207,7 +207,7 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 	}
 	status := "OK"
 	if err != nil {
-		status = "FAIL"
+		status = "FAILED"
 	}
 	idle := "no"
 	if res.Idle {

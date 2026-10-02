@@ -69,7 +69,7 @@ func TestAddTakesABriefUpToTheBriefBound(t *testing.T) {
 			fmt.Sprintf("field brief is %d bytes, over the bound of 16384 bytes", n),
 			"a brief is a child's whole brief, up to 16 KiB, and the card lint advises at most 12000 bytes",
 			"shorten it, or point to a file or a comment",
-			"ADD FAIL moved=0 refused=1 notes=0",
+			"ADD FAILED moved=0 refused=1 notes=0",
 		} {
 			require.Contains(t, errs, want)
 		}
@@ -82,14 +82,14 @@ func TestAddTakesABriefUpToTheBriefBound(t *testing.T) {
 	require.Contains(t, errs, "over the bound of 16384 bytes")
 }
 
-var failLine = regexp.MustCompile(`(?m)^([A-Z][A-Z-]*) FAIL\b`)
+var failLine = regexp.MustCompile(`(?m)^([A-Z][A-Z-]*) FAILED\b`)
 
-// A verb whose work was refused is a failure, and a verb that prints `<TOKEN> FAIL` exits
-// non-zero: no FAIL line with exit 0 (the mirror of TestNoOKOnFailure, over the verbs'
+// A verb whose work was refused is a failure, and a verb that prints `<TOKEN> FAILED` exits
+// non-zero: no FAILED line with exit 0 (the mirror of TestNoOKOnFailure, over the verbs'
 // real fail paths, which the source scan cannot see where the status is a variable). The
 // verbs with a printer of their own (check, repair, tick, accept --group) are driven in
 // TestCheckRepairTickAndGroupFailsExitNonZero.
-// Every row names a verb refused whole; its line says FAIL on stderr, with its own token,
+// Every row names a verb refused whole; its line says FAILED on stderr, with its own token,
 // and the exit is 1. A refusal in --json says it in the exit alone.
 func TestEveryVerbThatPrintsFailExitsNonZero(t *testing.T) {
 	t.Parallel()
@@ -125,7 +125,7 @@ func TestEveryVerbThatPrintsFailExitsNonZero(t *testing.T) {
 		code, out, errs := ta.do(c.line)
 		got := failLine.FindAllStringSubmatch(out+errs, -1)
 		if c.token == "" {
-			require.Empty(t, got, "%s: --json prints no FAIL line", c.line)
+			require.Empty(t, got, "%s: --json prints no FAILED line", c.line)
 		} else {
 			require.Len(t, got, 1, "%s: out %q err %q", c.line, out, errs)
 			require.Equal(t, c.token, got[0][1], c.line)
@@ -170,19 +170,19 @@ func (ta *testApp) bare(line string) (int, string, string) {
 	return code, out.String(), errb.String()
 }
 
-// requireFailExit holds the one rule: a line `<token> FAIL` on the output is an exit that
+// requireFailExit holds the one rule: a line `<token> FAILED` on the output is an exit that
 // is not 0, and the line is the verb's own.
 func requireFailExit(t *testing.T, line, token string, code int, out, errs string) {
 	t.Helper()
 	got := failLine.FindAllStringSubmatch(out+errs, -1)
-	require.NotEmpty(t, got, "%s: no FAIL line: out %q err %q", line, out, errs)
+	require.NotEmpty(t, got, "%s: no FAILED line: out %q err %q", line, out, errs)
 	require.Equal(t, token, got[0][1], line)
-	require.NotZero(t, code, "%s: printed %s FAIL and exited 0 (out %q err %q)", line, token, out, errs)
+	require.NotZero(t, code, "%s: printed %s FAILED and exited 0 (out %q err %q)", line, token, out, errs)
 }
 
-// The verbs that print their own FAIL line, not the step report's: check (a rule broken),
+// The verbs that print their own FAILED line, not the step report's: check (a rule broken),
 // repair (an operation it cannot finish), tick (the store failed under it) and an
-// accept --group the group's size changed under. Each is driven to its FAIL here, and
+// accept --group the group's size changed under. Each is driven to its FAILED here, and
 // exits non-zero.
 func TestCheckRepairTickAndGroupFailsExitNonZero(t *testing.T) {
 	t.Parallel()
@@ -207,7 +207,7 @@ func TestCheckRepairTickAndGroupFailsExitNonZero(t *testing.T) {
 		require.NoError(t, err)
 		code, out, errs := ta.do("check")
 		requireFailExit(t, "check", "CHECK", code, out, errs)
-		require.Contains(t, out+errs, "CHECK FAIL violations=")
+		require.Contains(t, out+errs, "CHECK FAILED violations=")
 	})
 
 	t.Run("repair", func(t *testing.T) {
