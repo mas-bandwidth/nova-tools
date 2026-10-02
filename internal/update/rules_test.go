@@ -19,6 +19,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // treeOf records every file under a directory the way a person checking "did
@@ -41,7 +44,7 @@ func treeOf(t *testing.T, root string) []string {
 		return nil
 	})
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return seen
 }
@@ -60,26 +63,26 @@ func TestRule9CheckWritesNothingAndNeverRunsAnApply(t *testing.T) {
 	before := treeOf(t, filepath.Dir(p))
 	c, out, errs := run(t, Environment{}, "check", "--file", p)
 	if c != 1 {
-		t.Fatalf("%d %s %s", c, out, errs)
+		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
 	}
 	need(t, errs, "CHECK STALE name=x")
 	if _, err := os.Stat(witness); err == nil {
-		t.Fatal("check ran the apply command")
+		require.Error(t, err, "check ran the apply command")
 	}
 	if after := treeOf(t, filepath.Dir(p)); strings.Join(before, "\n") != strings.Join(after, "\n") {
-		t.Fatalf("check wrote to the manifest's directory:\nbefore %v\nafter  %v", before, after)
+		require.Failf(t, "", "check wrote to the manifest's directory:\nbefore %v\nafter  %v", before, after)
 	}
 	log, err := os.ReadFile(calls)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(log)), "\n") {
 		if line != "" && !strings.HasPrefix(line, "print ") {
-			t.Fatalf("check ran something that is not a version read: %q", line)
+			require.Failf(t, "", "check ran something that is not a version read: %q", line)
 		}
 	}
 	if n := strings.Count(string(log), "\n"); n != 2 {
-		t.Fatalf("want exactly the installed and latest reads, got %d calls", n)
+		require.EqualValuesf(t, 2, n, "want exactly the installed and latest reads, got %d calls", n)
 	}
 }
 
@@ -99,25 +102,25 @@ func TestRule16OutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	p := manifest(t, rows...)
 	c, out, errs := run(t, Environment{}, "check", "--file", p, "--max", "3")
 	if c != 1 {
-		t.Fatalf("%d %s %s", c, out, errs)
+		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
 	}
 	lines := strings.Count(strings.TrimSpace(out+errs), "\n") + 1
 	if lines > 12 {
-		t.Fatalf("a 500-entry run printed %d lines", lines)
+		require.LessOrEqualf(t, lines, 12, "a 500-entry run printed %d lines", lines)
 	}
 	need(t, errs, "entries=500", "CHECK MORE kind=unknown shown=3 total=500")
 	c, out, all := run(t, Environment{}, "check", "--file", p, "--max", "0")
 	if c != 1 {
-		t.Fatalf("%d %s %s", c, out, all)
+		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, all)
 	}
 	if shown := strings.Count(all, "CHECK UNKNOWN "); shown != many {
-		t.Fatalf("--max 0 showed %d of %d", shown, many)
+		require.EqualValuesf(t, many, shown, "--max 0 showed %d of %d", shown, many)
 	}
 	if strings.Contains(all, "CHECK MORE") {
-		t.Fatal("--max 0 still elided something")
+		require.Fail(t, fmt.Sprintln("--max 0 still elided something"))
 	}
 	if c, _, errs = run(t, Environment{}, "check", "--file", p, "--max", "-1"); c != 2 {
-		t.Fatalf("--max -1 was not refused: %d %s", c, errs)
+		require.EqualValuesf(t, 2, c, "--max -1 was not refused: %d %s", c, errs)
 	}
 }
 
@@ -141,20 +144,20 @@ func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
 	} {
 		var out, errs bytes.Buffer
 		if c := Run("nova-update", args, "", &out, &errs, Environment{}); c != 2 {
-			t.Errorf("%s: exit %d, not a refusal: %s%s", name, c, out.String(), errs.String())
+			assert.EqualValuesf(t, 2, c, "%s: exit %d, not a refusal: %s%s", name, c, out.String(), errs.String())
 			continue
 		}
 		said := strings.TrimSpace(errs.String())
 		if said == "" {
-			t.Errorf("%s: refused in silence", name)
+			assert.NotEqualValuesf(t, "", said, "%s: refused in silence", name)
 			continue
 		}
 		first := firstLine(said)
 		if !strings.Contains(first, "REFUSED") {
-			t.Errorf("%s: not a REFUSED line: %q", name, first)
+			assert.Containsf(t, first, "REFUSED", "%s: not a REFUSED line: %q", name, first)
 		}
 		if _, run, ok := strings.Cut(first, "; run: nova-update "); !ok || run == "" {
-			t.Errorf("%s: no command to run: %q", name, first)
+			assert.Failf(t, "", "%s: no command to run: %q", name, first)
 		}
 	}
 }
@@ -170,32 +173,32 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, out, errs := run(t, env, "report", "--file", p, "--as", "fixture", "--to", "integrator", "--snapshot", snapshot)
 	if c != 0 {
-		t.Fatalf("%d %s %s", c, out, errs)
+		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
 	}
 	if !strings.Contains(firstLine(out), " at="+fixed.Format(time.RFC3339)) || !strings.Contains(firstLine(out), " took=0s") {
-		t.Fatalf("the printed stamp is not the injected clock's: %s", firstLine(out))
+		require.Failf(t, "", "the printed stamp is not the injected clock's: %s", firstLine(out))
 	}
 	if strings.Contains(out, "REPORT SENT") {
-		t.Fatal("a report with recipients sent without --send")
+		require.Fail(t, fmt.Sprintln("a report with recipients sent without --send"))
 	}
 	// A missing call log is the strongest form of the answer: the fake bus never
 	// ran at all, so it never even opened the file it logs to.
 	if _, err := os.Stat(log); err == nil {
 		if nprep, nsend := calls(t, log); nprep != 0 || nsend != 0 {
-			t.Fatalf("a plain report invoked the bus: %d prepares, %d sends", nprep, nsend)
+			require.Failf(t, "", "a plain report invoked the bus: %d prepares, %d sends", nprep, nsend)
 		}
 	} else if !os.IsNotExist(err) {
-		t.Fatal(err)
+		require.Fail(t, fmt.Sprintln(err))
 	}
 	// Rule 25's injected clock: the snapshot's own stamps are that clock too, so
 	// two runs of one fixture are byte-identical and a diff means a change.
 	state, err := readSnapshot(snapshot)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	for name, o := range state.Observed {
 		if o.At != fixed.Format(time.RFC3339) {
-			t.Fatalf("%s was stamped %q, not by the injected clock", name, o.At)
+			require.Failf(t, "", "%s was stamped %q, not by the injected clock", name, o.At)
 		}
 	}
 	// Ends inside its budget: the children hang, and the run still returns
@@ -204,10 +207,10 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	hanging := manifest(t, row("h", "tool", command(t, "hang"), "npm:unused", "none"))
 	started := time.Now()
 	if c, _, _ = run(t, env, "check", "--file", hanging, "--budget", "50ms", "--timeout", "20ms"); c != 1 {
-		t.Fatalf("a hanging read was not a finding: %d", c)
+		require.EqualValuesf(t, 1, c, "a hanging read was not a finding: %d", c)
 	}
 	if took := time.Since(started); took > 30*time.Second {
-		t.Fatalf("a 50ms budget took %s", took)
+		require.Failf(t, "", "a 50ms budget took %s", took)
 	}
 }
 
@@ -221,23 +224,23 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 	first := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
 	var goodOut bytes.Buffer
 	if rc := Run("nova-update", []string{"report", "--file", first, "--snapshot", snapshot}, "test", &goodOut, &goodOut, Environment{}); rc != 0 {
-		t.Fatalf("exit %d\n%s", rc, goodOut.String())
+		require.EqualValuesf(t, 0, rc, "exit %d\n%s", rc, goodOut.String())
 	}
 	settled, err := os.ReadFile(snapshot)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	foreign := filepath.Join(dir, snapshotTempPrefix+"another-writer")
 	foreignBytes := []byte("another writer's unfinished work\n")
 	if err := os.WriteFile(foreign, foreignBytes, 0600); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 
 	second := manifest(t, row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none"))
 	ready := filepath.Join(dir, "before-rename")
 	input, heldOpen, err := os.Pipe()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	t.Cleanup(func() { _ = input.Close(); _ = heldOpen.Close() })
 	c := exec.Command(os.Args[0], "-test.run=^TestSnapshotRenameBarrierHelper$")
@@ -247,7 +250,7 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 	var output bytes.Buffer
 	c.Stdout, c.Stderr = &output, &output
 	if err := c.Start(); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	done := make(chan struct{})
 	var waitErr error
@@ -262,9 +265,9 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 	for interrupted == "" {
 		select {
 		case <-done:
-			t.Fatalf("reporter exited before its rename barrier: %v\n%s", waitErr, output.String())
+			require.Failf(t, "", "reporter exited before its rename barrier: %v\n%s", waitErr, output.String())
 		case <-deadline.C:
-			t.Fatal("reporter did not reach its rename barrier")
+			require.Fail(t, fmt.Sprintln("reporter did not reach its rename barrier"))
 		case <-tick.C:
 			if name, err := os.ReadFile(ready); err == nil {
 				candidate := string(name)
@@ -278,26 +281,26 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 	}
 	inFlight, err := os.ReadFile(interrupted)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if bytes.Equal(inFlight, settled) {
-		t.Fatal("replacement must differ from the previously committed snapshot")
+		require.Fail(t, fmt.Sprintln("replacement must differ from the previously committed snapshot"))
 	}
 	if err := validateSnapshot(inFlight); err != nil {
-		t.Fatalf("writer reached rename with invalid replacement: %v", err)
+		require.NoErrorf(t, err, "writer reached rename with invalid replacement: %v", err)
 	}
 	if err := c.Process.Kill(); err != nil {
-		t.Fatalf("could not kill the held reporter: %v", err)
+		require.NoErrorf(t, err, "could not kill the held reporter: %v", err)
 	}
 	<-done
 	if _, ok := waitErr.(*exec.ExitError); !ok {
-		t.Fatalf("reporter was not terminated unsuccessfully: %v", waitErr)
+		require.Failf(t, "", "reporter was not terminated unsuccessfully: %v", waitErr)
 	}
 	assertBytes := func(path string, want []byte) {
 		t.Helper()
 		got, err := os.ReadFile(path)
 		if err != nil || !bytes.Equal(got, want) {
-			t.Fatalf("%s did not preserve its exact bytes: %v", filepath.Base(path), err)
+			require.Failf(t, "", "%s did not preserve its exact bytes: %v", filepath.Base(path), err)
 		}
 	}
 	assertBytes(snapshot, settled)
@@ -306,15 +309,15 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 
 	var finalOut bytes.Buffer
 	if rc := Run("nova-update", []string{"report", "--file", second, "--snapshot", snapshot}, "test", &finalOut, &finalOut, Environment{}); rc != 0 {
-		t.Fatalf("a later reporter could not use the surviving snapshot: exit %d\n%s", rc, finalOut.String())
+		require.EqualValuesf(t, 0, rc, "a later reporter could not use the surviving snapshot: exit %d\n%s", rc, finalOut.String())
 	}
 	state, err := readSnapshot(snapshot)
 	if err != nil || len(state.Observed) != 1 {
-		t.Fatalf("later snapshot must contain one readable observation: %v", err)
+		require.Failf(t, "", "later snapshot must contain one readable observation: %v", err)
 	}
 	for _, observation := range state.Observed {
 		if observation.Raw != "v2.0.0" || observation.Status != "known" {
-			t.Fatalf("later reporter did not commit the replacement observation: %+v", observation)
+			require.Failf(t, "", "later reporter did not commit the replacement observation: %+v", observation)
 		}
 	}
 	assertBytes(interrupted, inFlight)
@@ -353,30 +356,30 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-UPDATE.md"))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	// The block is the first fenced code block after the "## The verbs" heading.
 	_, after, ok := strings.Cut(string(doc), "\n## The verbs\n")
 	if !ok {
-		t.Fatal("the spec has no verbs section")
+		require.Fail(t, fmt.Sprintln("the spec has no verbs section"))
 	}
 	_, after, ok = strings.Cut(after, "```\n")
 	if !ok {
-		t.Fatal("the verbs section has no block")
+		require.Fail(t, fmt.Sprintln("the verbs section has no block"))
 	}
 	block, _, ok := strings.Cut(after, "```")
 	if !ok {
-		t.Fatal("the verbs block does not close")
+		require.Fail(t, fmt.Sprintln("the verbs block does not close"))
 	}
 	if want, got := strings.TrimRight(block, "\n"), updateVerbs; want != got {
-		t.Fatalf("help has drifted from the spec's verbs block:\nspec:\n%s\nhelp:\n%s", want, got)
+		require.EqualValuesf(t, want, got, "help has drifted from the spec's verbs block:\nspec:\n%s\nhelp:\n%s", want, got)
 	}
 	var printed bytes.Buffer
 	help("nova-update", &printed)
 	// The banner opens with its three answers (ONBOARDING.md point 6), and the
 	// verbs block follows them whole.
 	if !strings.HasPrefix(printed.String(), updateOpening+"\n\n"+updateVerbs+"\n") {
-		t.Fatalf("help does not open with its opening and then the verbs block:\n%s", printed.String())
+		require.Failf(t, "", "help does not open with its opening and then the verbs block:\n%s", printed.String())
 	}
 	printed.Reset()
 	printed.WriteString(VersionTool("", Environment{}).Banner())
@@ -392,12 +395,12 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	// name, so every flag the report line offers a plain report must appear.
 	for _, flag := range []string{"--file <manifest: " + manifestShape + ">", "--host <label>", "--snapshot <path>", "--max <n>", "--timeout <d>", "--budget <d>", "--kind <k>"} {
 		if !strings.Contains(lines["report"], flag) {
-			t.Errorf("nova-version's report line does not carry %s", flag)
+			assert.Failf(t, "", "nova-version's report line does not carry %s", flag)
 		}
 	}
 	for _, flag := range []string{"--bus <path>", "--remote <r>", "--branch <b>", "--as <friend>", "--to <who,who>"} {
 		if !strings.Contains(lines["send"], flag) {
-			t.Errorf("nova-version's send line does not carry %s", flag)
+			assert.Failf(t, "", "nova-version's send line does not carry %s", flag)
 		}
 	}
 }
@@ -412,10 +415,10 @@ func TestHelpNamesTheSnapshotVerb(t *testing.T) {
 	var printed bytes.Buffer
 	printed.WriteString(VersionTool("", Environment{}).Banner())
 	if !strings.Contains(printed.String(), "nova-version snapshot --bin <dir> --out <file.tsv>") {
-		t.Fatalf("nova-version help omits the snapshot verb:\n%s", printed.String())
+		require.Failf(t, "", "nova-version help omits the snapshot verb:\n%s", printed.String())
 	}
 	if !strings.Contains(printed.String(), "nova-version diff --from <a.tsv> --to <b.tsv>") {
-		t.Fatalf("nova-version help omits the diff verb:\n%s", printed.String())
+		require.Failf(t, "", "nova-version help omits the diff verb:\n%s", printed.String())
 	}
 }
 
@@ -428,15 +431,15 @@ func TestUsageAndRefusalSayWhatTheFileIs(t *testing.T) {
 	var printed bytes.Buffer
 	printed.WriteString(VersionTool("", Environment{}).Banner())
 	if !strings.Contains(printed.String(), manifestShape) {
-		t.Fatalf("nova-version's help does not carry the shape sentence:\n%s", printed.String())
+		require.Failf(t, "", "nova-version's help does not carry the shape sentence:\n%s", printed.String())
 	}
 	var out, err bytes.Buffer
 	c := Main("nova-version", []string{"report", "--file", filepath.Join(t.TempDir(), "missing.tsv")}, "", &out, &err)
 	if c != 2 {
-		t.Fatalf("missing file exit = %d, want 2", c)
+		require.EqualValuesf(t, 2, c, "missing file exit = %d, want 2", c)
 	}
 	if !strings.Contains(err.String(), manifestShape) {
-		t.Fatalf("missing-file refusal does not carry the shape sentence:\n%s", err.String())
+		require.Failf(t, "", "missing-file refusal does not carry the shape sentence:\n%s", err.String())
 	}
 }
 
@@ -453,20 +456,20 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 			path := filepath.Join("..", "..", "cmd", dir, "testdata", name)
 			b, err := os.ReadFile(path)
 			if err != nil {
-				t.Errorf("%s: %v", path, err)
+				assert.NoErrorf(t, err, "%s: %v", path, err)
 				continue
 			}
 			entries, err := Load(strings.NewReader(string(b)))
 			if err != nil {
-				t.Errorf("%s does not load: %v", path, err)
+				assert.NoErrorf(t, err, "%s does not load: %v", path, err)
 				continue
 			}
 			if len(entries) == 0 {
-				t.Errorf("%s carries no entry", path)
+				assert.NotEqualValuesf(t, 0, len(entries), "%s carries no entry", path)
 			}
 			for _, e := range entries {
 				if e.Name == "" || e.Kind == "" || e.Owner == "" || len(e.Installed) == 0 {
-					t.Errorf("%s: an entry is missing a field: %+v", path, e)
+					assert.Failf(t, "", "%s: an entry is missing a field: %+v", path, e)
 				}
 			}
 		}
@@ -474,7 +477,7 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 	// The versions fixture is the spec's own four entries, in its order, then one pin entry.
 	entries, err := Load(strings.NewReader(readFixture(t, "versions.tsv")))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	want := []struct{ name, kind, owner string }{
 		{"gh", "tool", "rowan"},
@@ -484,11 +487,11 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 		{"nova-wake-pin-nova-bus", "pin", "rowan"},
 	}
 	if len(entries) != len(want) {
-		t.Fatalf("the fixture should carry %d entries, it carries %d", len(want), len(entries))
+		require.Lenf(t, entries, len(want), "the fixture should carry %d entries, it carries %d", len(want), len(entries))
 	}
 	for i, w := range want {
 		if entries[i].Name != w.name || entries[i].Kind != w.kind || entries[i].Owner != w.owner {
-			t.Errorf("entry %d is %s/%s/%s, the spec says %s/%s/%s", i, entries[i].Name, entries[i].Kind, entries[i].Owner, w.name, w.kind, w.owner)
+			assert.Failf(t, "", "entry %d is %s/%s/%s, the spec says %s/%s/%s", i, entries[i].Name, entries[i].Kind, entries[i].Owner, w.name, w.kind, w.owner)
 		}
 	}
 }
@@ -496,7 +499,7 @@ func readFixture(t *testing.T, name string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "cmd", "nova-update", "testdata", name))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return string(b)
 }
@@ -512,7 +515,7 @@ func TestTripwiresStayOutOfShippingCode(t *testing.T) {
 	shipping := map[string]string{}
 	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	for _, e := range entries {
 		name := e.Name()
@@ -521,17 +524,17 @@ func TestTripwiresStayOutOfShippingCode(t *testing.T) {
 		}
 		b, err := os.ReadFile(name)
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 		shipping[name] = string(b)
 	}
 	if len(shipping) < 8 {
-		t.Fatalf("only %d shipping files were read; the sweep is not sweeping", len(shipping))
+		require.GreaterOrEqualf(t, len(shipping), 8, "only %d shipping files were read; the sweep is not sweeping", len(shipping))
 	}
 	for _, forbidden := range []string{"os.Getwd", "os.UserHomeDir", "os.Hostname", "11434", `"sh"`, `"bash"`, `"cmd.exe"`, "os/user", "time.Ticker", "time.Tick(", "http.DefaultClient"} {
 		for name, body := range shipping {
 			if strings.Contains(body, forbidden) {
-				t.Errorf("%s carries %s, which rule 26 and the tripwire list keep out of this tool", name, forbidden)
+				assert.NotContainsf(t, body, forbidden, "%s carries %s, which rule 26 and the tripwire list keep out of this tool", name, forbidden)
 			}
 		}
 	}
@@ -540,7 +543,7 @@ func TestTripwiresStayOutOfShippingCode(t *testing.T) {
 	for name, body := range shipping {
 		for _, host := range []string{"api.github.com", "ollama.com", "registry.npmjs.org"} {
 			if strings.Contains(body, host) && name != "latest.go" {
-				t.Errorf("%s names the host %s; the sources belong in latest.go alone", name, host)
+				assert.Failf(t, "", "%s names the host %s; the sources belong in latest.go alone", name, host)
 			}
 		}
 	}
@@ -550,17 +553,17 @@ func TestTripwiresStayOutOfShippingCode(t *testing.T) {
 		n := strings.Count(body, "os.Getenv")
 		reads += n
 		if n > 0 && name != "read.go" {
-			t.Errorf("%s reads the environment; a path comes from a flag (rule 1)", name)
+			assert.Failf(t, "", "%s reads the environment; a path comes from a flag (rule 1)", name)
 		}
 		if n > 0 && !strings.Contains(body, `os.Getenv("PATH")`) {
-			t.Errorf("%s reads an environment variable that is not PATH", name)
+			assert.Failf(t, "", "%s reads an environment variable that is not PATH", name)
 		}
 	}
 	if reads != 1 {
-		t.Errorf("shipping code reads the environment %d times, want exactly the one PATH in a remedy", reads)
+		assert.EqualValuesf(t, 1, reads, "shipping code reads the environment %d times, want exactly the one PATH in a remedy", reads)
 	}
 	if strings.Count(strings.Join(valuesOf(shipping), "\n"), "NOVA_UPDATE_") != 0 {
-		t.Error("shipping code reads a NOVA_UPDATE_ variable; the test seams are not settings")
+		assert.Fail(t, fmt.Sprintln("shipping code reads a NOVA_UPDATE_ variable; the test seams are not settings"))
 	}
 }
 func valuesOf(m map[string]string) []string {
@@ -582,14 +585,14 @@ func TestVerbHelpPrintsUsageRatherThanTheFlagSentinel(t *testing.T) {
 			var out, errs bytes.Buffer
 			code := Main("nova-update", []string{verb, spelling}, "test", &out, &errs)
 			if code != 0 {
-				t.Errorf("%s %s: code=%d errs=%s", verb, spelling, code, errs.String())
+				assert.EqualValuesf(t, 0, code, "%s %s: code=%d errs=%s", verb, spelling, code, errs.String())
 				continue
 			}
 			if strings.Contains(out.String()+errs.String(), "help requested") {
-				t.Errorf("%s %s leaked the flag sentinel: %s%s", verb, spelling, out.String(), errs.String())
+				assert.Failf(t, "", "%s %s leaked the flag sentinel: %s%s", verb, spelling, out.String(), errs.String())
 			}
 			if !strings.Contains(out.String(), "nova-update "+verb+" ") {
-				t.Errorf("%s %s did not print the usage:\n%s", verb, spelling, out.String())
+				assert.Failf(t, "", "%s %s did not print the usage:\n%s", verb, spelling, out.String())
 			}
 		}
 	}
@@ -600,6 +603,6 @@ func TestVerbHelpPrintsUsageRatherThanTheFlagSentinel(t *testing.T) {
 func TestVersionToolMeetsTheStandard(t *testing.T) {
 	t.Parallel()
 	for _, p := range VersionTool("", Environment{}).Problems() {
-		t.Error(p)
+		assert.Fail(t, fmt.Sprintln(p))
 	}
 }

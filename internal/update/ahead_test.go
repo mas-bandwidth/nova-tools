@@ -3,6 +3,8 @@ package update
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // A dev build stamped as a Go pseudo-version vX.Y.Z-0.<stamp>-<sha> whose commit is on
@@ -13,10 +15,10 @@ func TestDevBuildAheadOfReleaseReportsAhead(t *testing.T) {
 	p := manifest(t, row("x", "tool", installed, "local:"+latest, "none"))
 	c, out, errs := run(t, Environment{}, "check", "--file", p)
 	if c != 1 {
-		t.Fatalf("%d %s %s", c, out, errs)
+		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
 	}
 	need(t, errs, "CHECK AHEAD name=x kind=tool installed=0.15.3-0.20260912135226-f7cdb9c latest=0.15.2 ahead=f7cdb9c")
 	if strings.Contains(out+errs, "CHECK DIFFERENT") {
-		t.Fatalf("%q appeared in:\n%s", "CHECK DIFFERENT", out+errs)
+		require.NotContainsf(t, out+errs, "CHECK DIFFERENT", "%q appeared in:\n%s", "CHECK DIFFERENT", out+errs)
 	}
 }

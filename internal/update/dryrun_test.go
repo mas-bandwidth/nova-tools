@@ -8,6 +8,9 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // `status` and `apply --dry-run` (a cold rater's first fix: "no --dry-run on apply; a
@@ -30,11 +33,11 @@ func newDryFixture(t *testing.T, installed string) *dryFixture {
 	f.state = filepath.Join(f.dir, "state")
 	f.calls = filepath.Join(f.dir, "calls")
 	if err := os.WriteFile(f.state, []byte(installed+"\n"), 0o600); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	// The log exists before the first run, so the file set a run is compared by is stable.
 	if err := os.WriteFile(f.calls, nil, 0o600); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return f
 }
@@ -45,7 +48,7 @@ func (f *dryFixture) script(t *testing.T, name, body string) string {
 	p := filepath.Join(f.dir, name)
 	src := "#!/bin/sh\necho \"" + name + " $*\" >> '" + f.calls + "'\n" + body + "\n"
 	if err := testbin.WriteExecutable(p, []byte(src), 0o755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return p
 }
@@ -72,7 +75,7 @@ func (f *dryFixture) manifest(t *testing.T, rows ...string) string {
 	t.Helper()
 	p := filepath.Join(f.dir, "versions.tsv")
 	if err := os.WriteFile(p, []byte(Header+"\n"+strings.Join(rows, "\n")+"\n"), 0o600); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return p
 }
@@ -90,7 +93,7 @@ func dirTree(t *testing.T, dir string) map[string]string {
 		return err
 	})
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return out
 }
@@ -98,7 +101,7 @@ func dirTree(t *testing.T, dir string) map[string]string {
 func sameDir(t *testing.T, what string, before, after map[string]string) {
 	t.Helper()
 	if len(before) != len(after) {
-		t.Errorf("%s changed the file set: %d files before, %d after", what, len(before), len(after))
+		assert.Lenf(t, after, len(before), "%s changed the file set: %d files before, %d after", what, len(before), len(after))
 	}
 	for p, v := range before {
 		// the calls log grows by design: it is the witness of what ran
@@ -106,7 +109,7 @@ func sameDir(t *testing.T, what string, before, after map[string]string) {
 			continue
 		}
 		if after[p] != v {
-			t.Errorf("%s changed %s", what, p)
+			assert.EqualValuesf(t, v, after[p], "%s changed %s", what, p)
 		}
 	}
 }
@@ -128,29 +131,29 @@ func TestStatusPrintsEveryEntryAndExitsByWhetherAnyDiffer(t *testing.T) {
 
 	c, out, errs := run(t, Environment{}, "status", "--file", p)
 	if c != 1 {
-		t.Fatalf("a differing entry exited %d, want 1\n%s\n%s", c, out, errs)
+		require.EqualValuesf(t, 1, c, "a differing entry exited %d, want 1\n%s\n%s", c, out, errs)
 	}
 	need(t, errs, "STATUS FAIL checked=2 current=1 stale=1", " at=", "STATUS EQUAL name=current kind=tool installed=1.0.0 latest=1.0.0", "STATUS STALE name=behind kind=tool installed=1.0.0 latest=2.0.0")
 	if strings.Contains(out, "CHECK ") || strings.Contains(errs, "CHECK ") {
-		t.Errorf("status printed a check line; its own first token is STATUS:\nout: %s\nerr: %s", out, errs)
+		assert.Failf(t, "", "status printed a check line; its own first token is STATUS:\nout: %s\nerr: %s", out, errs)
 	}
 	sameDir(t, "status", before, dirTree(t, f.dir))
 	for _, line := range strings.Split(strings.TrimSpace(f.callLog(t)), "\n") {
 		if !strings.HasPrefix(line, "reader.sh") && !strings.HasPrefix(line, "latest-") {
-			t.Errorf("status ran something that is not a version read: %q", line)
+			assert.Failf(t, "", "status ran something that is not a version read: %q", line)
 		}
 	}
 
 	// check on the same file hides the current entry; status shows it.
 	_, checkOut, checkErrs := run(t, Environment{}, "check", "--file", p)
 	if checkOut += checkErrs; strings.Contains(checkOut, "name=current") {
-		t.Errorf("check printed a current entry; that is the gap status closes:\n%s", checkOut)
+		assert.NotContainsf(t, checkOut, "name=current", "check printed a current entry; that is the gap status closes:\n%s", checkOut)
 	}
 
 	// Only the current entry: exit 0, the verdict on stdout.
 	c, out, errs = run(t, Environment{}, "status", "--file", f.manifest(t, rows[0]))
 	if c != 0 || errs != "" {
-		t.Fatalf("every entry equal exited %d stderr %q\n%s", c, errs, out)
+		require.Failf(t, "", "every entry equal exited %d stderr %q\n%s", c, errs, out)
 	}
 	need(t, out, "STATUS EQUAL name=current", "STATUS OK checked=1 current=1")
 }
@@ -171,16 +174,16 @@ func TestStatusIsBoundedAndKindFiltered(t *testing.T) {
 
 	c, out, errs := run(t, Environment{}, "status", "--file", p, "--max", "2")
 	if c != 0 {
-		t.Fatalf("exit %d\n%s\n%s", c, out, errs)
+		require.EqualValuesf(t, 0, c, "exit %d\n%s\n%s", c, out, errs)
 	}
 	if n := strings.Count(out, "STATUS EQUAL "); n != 2 {
-		t.Errorf("--max 2 showed %d equal lines, want 2:\n%s", n, out)
+		assert.EqualValuesf(t, 2, n, "--max 2 showed %d equal lines, want 2:\n%s", n, out)
 	}
 	need(t, out, "STATUS MORE kind=equal shown=2 total=5", "STATUS OK checked=5 current=5")
 
 	c, out, _ = run(t, Environment{}, "status", "--file", p, "--kind", "harness")
 	if c != 0 || strings.Count(out, "STATUS EQUAL ") != 1 || !strings.Contains(out, "name=h") {
-		t.Errorf("--kind harness: exit %d\n%s", c, out)
+		assert.Failf(t, "", "--kind harness: exit %d\n%s", c, out)
 	}
 }
 
@@ -190,7 +193,7 @@ func TestStatusIsNotNovaVersions(t *testing.T) {
 
 	var out, errs strings.Builder
 	if c := Run("nova-version", []string{"status", "--file", "x"}, "", &out, &errs, Environment{}); c != 2 || !strings.Contains(errs.String(), "unknown verb") {
-		t.Errorf("nova-version status: exit %d %q", c, errs.String())
+		assert.Failf(t, "", "nova-version status: exit %d %q", c, errs.String())
 	}
 }
 
@@ -208,7 +211,7 @@ func TestApplyDryRunPrintsThePlanTheRealApplyTakes(t *testing.T) {
 
 	c, out, errs := run(t, Environment{}, "apply", "--file", p, "x", "--dry-run")
 	if c != 0 || errs != "" {
-		t.Fatalf("apply --dry-run exited %d stderr %q\n%s", c, errs, out)
+		require.Failf(t, "", "apply --dry-run exited %d stderr %q\n%s", c, errs, out)
 	}
 	need(t, out,
 		"APPLY OK name=x dry_run=true from=1.0.0 to=1.2.0 source="+strings.ReplaceAll(latest, " ", `\x20`),
@@ -217,19 +220,19 @@ func TestApplyDryRunPrintsThePlanTheRealApplyTakes(t *testing.T) {
 		"APPLY NOTE dry run: nothing installed, nothing written")
 	sameDir(t, "apply --dry-run", before, dirTree(t, f.dir))
 	if strings.Contains(f.callLog(t), "installer.sh") {
-		t.Fatalf("the dry run started the installer:\n%s", f.callLog(t))
+		require.Failf(t, "", "the dry run started the installer:\n%s", f.callLog(t))
 	}
 	if strings.Contains(out, "APPLY BEFORE") || strings.Contains(out, "APPLY AFTER") {
-		t.Errorf("a dry run printed the real run's BEFORE or AFTER line:\n%s", out)
+		assert.Failf(t, "", "a dry run printed the real run's BEFORE or AFTER line:\n%s", out)
 	}
 
 	c, real, errs := run(t, Environment{}, "apply", "--file", p, "x")
 	if c != 0 {
-		t.Fatalf("apply exited %d\n%s\n%s", c, real, errs)
+		require.EqualValuesf(t, 0, c, "apply exited %d\n%s\n%s", c, real, errs)
 	}
 	need(t, real, "APPLY RUN name=x argv=2 version=1.2.0: "+filepath.Join(f.dir, "installer.sh")+" 1.2.0", "APPLY OK name=x from=1.0.0 to=1.2.0")
 	if !strings.Contains(f.callLog(t), "installer.sh 1.2.0") {
-		t.Errorf("the real apply did not run the planned installer:\n%s", f.callLog(t))
+		assert.Failf(t, "", "the real apply did not run the planned installer:\n%s", f.callLog(t))
 	}
 }
 
@@ -241,11 +244,11 @@ func TestApplyDryRunTakesTheNamedVersion(t *testing.T) {
 	p := f.manifest(t, row("x", "tool", f.reader(t), f.latest(t, "9.9.9"), f.installer(t)))
 	c, out, errs := run(t, Environment{}, "apply", "--file", p, "x", "--version", "1.1.0", "--dry-run")
 	if c != 0 {
-		t.Fatalf("exit %d\n%s\n%s", c, out, errs)
+		require.EqualValuesf(t, 0, c, "exit %d\n%s\n%s", c, out, errs)
 	}
 	need(t, out, "dry_run=true from=1.0.0 to=1.1.0", "version=1.1.0: "+filepath.Join(f.dir, "installer.sh")+" 1.1.0")
 	if strings.Contains(out, "9.9.9") {
-		t.Errorf("the plan names the latest, not the version asked for:\n%s", out)
+		assert.NotContainsf(t, out, "9.9.9", "the plan names the latest, not the version asked for:\n%s", out)
 	}
 }
 
@@ -275,11 +278,11 @@ func TestApplyDryRunRefusesWhereTheRealApplyRefuses(t *testing.T) {
 	} {
 		c, out, errs := run(t, Environment{}, append([]string{"apply", "--file", p}, tc.args...)...)
 		if c != 2 || out != "" || !strings.Contains(errs, tc.want) {
-			t.Errorf("%v: exit %d stdout %q stderr %q, want exit 2 naming %q", tc.args, c, out, errs, tc.want)
+			assert.Failf(t, "", "%v: exit %d stdout %q stderr %q, want exit 2 naming %q", tc.args, c, out, errs, tc.want)
 		}
 	}
 	if strings.Contains(f.callLog(t), "installer.sh") || strings.Contains(f.callLog(t), "fixed.sh") {
-		t.Errorf("a refused dry run started an installer:\n%s", f.callLog(t))
+		assert.Failf(t, "", "a refused dry run started an installer:\n%s", f.callLog(t))
 	}
 }
 
@@ -292,7 +295,7 @@ func TestDryRunIsApplysFlagOnly(t *testing.T) {
 	p := f.manifest(t, row("x", "tool", f.reader(t), f.latest(t, "1.0.0"), "none"))
 	for _, verb := range []string{"check", "status", "report"} {
 		if c, _, errs := run(t, Environment{}, verb, "--file", p, "--dry-run"); c != 2 || !strings.Contains(errs, "dry-run") {
-			t.Errorf("%s --dry-run: exit %d stderr %q, want a refusal naming the flag", verb, c, errs)
+			assert.Failf(t, "", "%s --dry-run: exit %d stderr %q, want a refusal naming the flag", verb, c, errs)
 		}
 	}
 }
@@ -311,11 +314,11 @@ func TestHelpNamesStatusAndDryRun(t *testing.T) {
 		"nova-update apply --file versions.tsv go --dry-run",
 	} {
 		if !strings.Contains(up, want) {
-			t.Errorf("nova-update help is missing %q:\n%s", want, up)
+			assert.Containsf(t, up, want, "nova-update help is missing %q:\n%s", want, up)
 		}
 	}
 	// nova-version has no status and no apply; its own --dry-run is snapshot's and moved's.
 	if v := VersionTool("", Environment{}).Banner(); strings.Contains(v, "nova-version status") || strings.Contains(v, "apply --") {
-		t.Errorf("nova-version's help names a verb it does not have:\n%s", v)
+		assert.Failf(t, "", "nova-version's help names a verb it does not have:\n%s", v)
 	}
 }

@@ -6,12 +6,14 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestRestartOnTheSameDirKeepsTheStore is #3879's DONE-WHEN on the production
@@ -61,12 +63,12 @@ func TestRestartOnTheSameDirKeepsTheStore(t *testing.T) {
 			select {
 			case code := <-done:
 				cancel()
-				t.Fatalf("%s: serve exited %d before the instance answered: %v\nstdout %s\nstderr %s", label, code, err, out.String(), errb.String())
+				require.FailNowf(t, "", "%s: serve exited %d before the instance answered: %v\nstdout %s\nstderr %s", label, code, err, out.String(), errb.String())
 			default:
 			}
 			if time.Now().After(deadline) {
 				cancel()
-				t.Fatalf("%s: the instance did not answer PING: %v", label, err)
+				require.FailNowf(t, "", "%s: the instance did not answer PING: %v", label, err)
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
@@ -80,11 +82,11 @@ func TestRestartOnTheSameDirKeepsTheStore(t *testing.T) {
 			cancel()
 			select {
 			case code := <-done:
-				if code != 0 || !strings.Contains(out.String(), "SERVE STOP ") {
-					t.Errorf("%s: serve exit %d on SIGTERM, want 0 and SERVE STOP; stdout %q stderr %q", label, code, out.String(), errb.String())
+				if assert.Zero(t, code, "%s: serve exit %d on SIGTERM, want 0 and SERVE STOP; stdout %q stderr %q", label, code, out.String(), errb.String()) {
+					assert.Contains(t, out.String(), "SERVE STOP ", "%s: serve exit %d on SIGTERM, want 0 and SERVE STOP; stdout %q stderr %q", label, code, out.String(), errb.String())
 				}
 			case <-time.After(30 * time.Second):
-				t.Fatalf("%s: serve did not exit after SIGTERM", label)
+				require.FailNowf(t, "", "%s: serve did not exit after SIGTERM", label)
 			}
 		}
 		t.Cleanup(stop)
@@ -93,26 +95,24 @@ func TestRestartOnTheSameDirKeepsTheStore(t *testing.T) {
 
 	ctx := context.Background()
 	c, stop := serve("first")
-	if err := c.HSet(ctx, key, want).Err(); err != nil {
-		t.Fatal(err)
+	{
+		err := c.HSet(ctx, key, want).Err()
+		require.NoError(t, err, err)
 	}
 	stop()
 
 	c, stop = serve("restart")
 	defer stop()
 	got, err := c.HGetAll(ctx, key).Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != len(want) {
-		t.Fatalf("after restart on the same --dir %s = %v, want %v intact", key, got, want)
-	}
+	require.NoError(t, err, err)
+	require.Len(t, got, len(want), "after restart on the same --dir %s = %v, want %v intact", key, got, want)
 	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("after restart %s %s = %q, want %q", key, k, got[k], v)
-		}
+		assert.Equal(t, v, got[k], "after restart %s %s = %q, want %q", key, k, got[k], v)
 	}
-	if ttl, err := c.TTL(ctx, key).Result(); err != nil || ttl != -1 {
-		t.Errorf("TTL %s = %v (err %v), want -1: the store sets no TTL", key, ttl, err)
+	{
+		ttl, err := c.TTL(ctx, key).Result()
+		if assert.NoError(t, err, "TTL %s = %v (err %v), want -1: the store sets no TTL", key, ttl, err) {
+			assert.Equal(t, time.Duration(-1), ttl, "TTL %s = %v (err %v), want -1: the store sets no TTL", key, ttl, err)
+		}
 	}
 }

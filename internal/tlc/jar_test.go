@@ -30,15 +30,15 @@ func TestFindJarPrefersTheFlagThenTheEnvironment(t *testing.T) {
 		return ""
 	}
 	got, err := FindJar(flagJar, env)
-	if err != nil || got.Path != flagJar || got.Source != "flag" {
-		t.Fatalf("flag: %+v, %v", got, err)
-	}
+	require.NoError(t, err, "flag: %+v, %v", got, err)
+	require.Equal(t, flagJar, got.Path, "flag: %+v, %v", got, err)
+	require.Equal(t, "flag", got.Source, "flag: %+v, %v", got, err)
 	sum := sha256.Sum256([]byte("flag.jar"))
 	require.Equal(t, hex.EncodeToString(sum[:]), got.SHA256, "digest %s is not the jar's", got.SHA256)
 	got, err = FindJar("", env)
-	if err != nil || got.Path != envJar || got.Source != "env:TLC_JAR" {
-		t.Fatalf("env: %+v, %v", got, err)
-	}
+	require.NoError(t, err, "env: %+v, %v", got, err)
+	require.Equal(t, envJar, got.Path, "env: %+v, %v", got, err)
+	require.Equal(t, "env:TLC_JAR", got.Source, "env: %+v, %v", got, err)
 }
 
 func TestFindJarRefusesWhatIsNotAFile(t *testing.T) {
@@ -60,11 +60,17 @@ func TestFindHelperUsesTheOverrideThenPATH(t *testing.T) {
 	require.NoError(t, os.WriteFile(override, nil, 0o755))
 	onPath := func(name string) (string, error) { return "/usr/bin/" + name, nil }
 	offPath := func(string) (string, error) { return "", errors.New("not found") }
-	if got, err := FindHelper("java", override, offPath); err != nil || got != override {
-		t.Errorf("override: %q, %v", got, err)
+	{
+		got, err := FindHelper("java", override, offPath)
+		if assert.NoError(t, err, "override: %q, %v", got, err) {
+			assert.Equal(t, override, got, "override: %q, %v", got, err)
+		}
 	}
-	if got, err := FindHelper("java", "", onPath); err != nil || got != "/usr/bin/java" {
-		t.Errorf("PATH: %q, %v", got, err)
+	{
+		got, err := FindHelper("java", "", onPath)
+		if assert.NoError(t, err, "PATH: %q, %v", got, err) {
+			assert.Equal(t, "/usr/bin/java", got, "PATH: %q, %v", got, err)
+		}
 	}
 	_, err := FindHelper("java", "", offPath)
 	assert.ErrorContains(t, err, "java is not on PATH", "absent")
@@ -84,8 +90,11 @@ func TestJavaVersionReadsTheQuotedTokenOfTheVersionLine(t *testing.T) {
 		"  openjdk version \"17\" 2021-09-14\n":                                                                                   "17",
 	}
 	for out, want := range ok {
-		if got, err := JavaVersion(out); err != nil || got != want {
-			t.Errorf("%q: %q, %v; want %q", out, got, err, want)
+		{
+			got, err := JavaVersion(out)
+			if assert.NoError(t, err, "%q: %q, %v; want %q", out, got, err, want) {
+				assert.Equal(t, want, got, "%q: %q, %v; want %q", out, got, err, want)
+			}
 		}
 	}
 	for _, out := range []string{"", "no version here\n", "openjdk version \"\"\n", "openjdk version \"21 x\"\n", "Picked up JAVA_TOOL_OPTIONS: -Dfoo=version \"evil\"\n", "NOTE: Picked up JDK_JAVA_OPTIONS: --version \"x\"\n", "openjdk version \"-\"\n", "openjdk version \"21,0\"\n", "java version \"x21\"\n", "openjdk version 21\nsecond \"22\"\n", "Picked up JAVA_TOOL_OPTIONS: -Xmx2g\nno version line\n", "Picked up JAVA_TOOL_OPTIONS: -Xmx2g\nopenjdk version \"\"\n"} {

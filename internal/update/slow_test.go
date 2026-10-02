@@ -11,11 +11,14 @@
 package update
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
@@ -37,38 +40,38 @@ func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
 			t.Setenv("NOVA_UPDATE_BUS_MODE", mode)
 			code, _, errout := run(t, Environment{}, args...)
 			if code != 1 {
-				t.Fatal(code)
+				require.EqualValues(t, 1, code, code)
 			}
 			need(t, errout, "sent=uncertain")
 			s, e := readSnapshot(statePath)
 			if e != nil || len(s.Pending) != 1 || len(s.Delivered) != 0 {
-				t.Fatal(s, e)
+				require.Fail(t, fmt.Sprintln(s, e))
 			}
 			var id string
 			for _, pending := range s.Pending {
 				id = pending.ID
 				if id == "" {
-					t.Fatal("no ID retained")
+					require.NotEqualValues(t, "", id, "no ID retained")
 				}
 			}
 			t.Setenv("NOVA_UPDATE_BUS_MODE", "ok")
 			code, out, errout := run(t, Environment{}, args...)
 			if code != 0 {
-				t.Fatalf("%d %s %s", code, out, errout)
+				require.EqualValuesf(t, 0, code, "%d %s %s", code, out, errout)
 			}
 			need(t, out, "REPORT SENT", "id\\x3d"+id)
 			nprep, nsend := calls(t, log)
 			if nprep != 1 || nsend != 2 {
-				t.Fatal(nprep, nsend)
+				require.Fail(t, fmt.Sprintln(nprep, nsend))
 			}
 			code, out, errout = run(t, Environment{}, args...)
 			if code != 0 {
-				t.Fatalf("%d %s %s", code, out, errout)
+				require.EqualValuesf(t, 0, code, "%d %s %s", code, out, errout)
 			}
 			need(t, out, "nothing sent", "sent=no")
 			np, ns := calls(t, log)
 			if np != nprep || ns != nsend {
-				t.Fatal("unchanged confirmed run invoked bus")
+				require.Fail(t, fmt.Sprintln("unchanged confirmed run invoked bus"))
 			}
 		})
 	}
@@ -81,26 +84,26 @@ func TestJoinRealBusPublishesOneNoteAndOneIndexRow(t *testing.T) {
 	r := newReporter(t, "v1.2.3")
 	code, out, errs := r.send(t, r.bin)
 	if code != 0 {
-		t.Fatalf("%d\n%s\n%s", code, out, errs)
+		require.EqualValuesf(t, 0, code, "%d\n%s\n%s", code, out, errs)
 	}
 	id := r.deliveredID(t)
 	note := r.bus.exactlyOneContribution(t, id)
 	if !strings.Contains(out, "REPORT SENT") {
-		t.Fatalf("no REPORT SENT line: %s", out)
+		require.Containsf(t, out, "REPORT SENT", "no REPORT SENT line: %s", out)
 	}
 	before := git(t, r.bus.bare, "rev-parse", "main")
 	code, out, errs = r.send(t, r.bin)
 	if code != 0 {
-		t.Fatalf("%d\n%s\n%s", code, out, errs)
+		require.EqualValuesf(t, 0, code, "%d\n%s\n%s", code, out, errs)
 	}
 	if !strings.Contains(out, "nothing sent") {
-		t.Fatalf("a confirmed unchanged report was sent again: %s", out)
+		require.Containsf(t, out, "nothing sent", "a confirmed unchanged report was sent again: %s", out)
 	}
 	if after := git(t, r.bus.bare, "rev-parse", "main"); after != before {
-		t.Fatal("a confirmed unchanged report moved the remote")
+		require.EqualValues(t, before, after, "a confirmed unchanged report moved the remote")
 	}
 	if n, _ := r.bus.published(t); len(n) != 1 || n[0] != note {
-		t.Fatalf("the note changed under an unchanged report: %v", n)
+		require.Failf(t, "", "the note changed under an unchanged report: %v", n)
 	}
 }
 
@@ -117,15 +120,15 @@ func TestJoinRefusedPushRecoversToOneNoteWithTheSameID(t *testing.T) {
 	code, out, errs := r.send(t, r.bin)
 	refusedIn := time.Since(started)
 	if code != 1 {
-		t.Fatalf("a refused push was not reported as a failure: %d\n%s\n%s", code, out, errs)
+		require.EqualValuesf(t, 1, code, "a refused push was not reported as a failure: %d\n%s\n%s", code, out, errs)
 	}
 	if !strings.Contains(errs+out, "sent=uncertain") {
-		t.Fatalf("a refused push was not reported as uncertain:\n%s\n%s", out, errs)
+		require.Containsf(t, errs+out, "sent=uncertain", "a refused push was not reported as uncertain:\n%s\n%s", out, errs)
 	}
 	id := r.pendingID(t)
 	restore()
 	if notes, index := r.bus.published(t); len(notes) != 0 || len(index) != 0 {
-		t.Fatalf("a refused push published something: %v %v", notes, index)
+		require.Failf(t, "", "a refused push published something: %v %v", notes, index)
 	}
 	// The reporter hands the bus finite --attempts and --git-timeout out of its
 	// own remaining budget, so a remote that refuses every push costs seconds
@@ -133,14 +136,14 @@ func TestJoinRefusedPushRecoversToOneNoteWithTheSameID(t *testing.T) {
 	// because the seconds are the point.
 	t.Logf("a remote refusing every push was reported uncertain in %s", refusedIn.Round(time.Millisecond))
 	if refusedIn > 30*time.Second {
-		t.Fatalf("a refused push took %s, which is not a bound anybody chose", refusedIn)
+		require.Failf(t, "", "a refused push took %s, which is not a bound anybody chose", refusedIn)
 	}
 	code, out, errs = r.send(t, r.bin)
 	if code != 0 {
-		t.Fatalf("%d\n%s\n%s", code, out, errs)
+		require.EqualValuesf(t, 0, code, "%d\n%s\n%s", code, out, errs)
 	}
 	if got := r.deliveredID(t); got != id {
-		t.Fatalf("the retry delivered %q, not the prepared %q", got, id)
+		require.EqualValuesf(t, id, got, "the retry delivered %q, not the prepared %q", got, id)
 	}
 	r.bus.exactlyOneContribution(t, id)
 }
@@ -174,35 +177,35 @@ func TestJoinLostConfirmationRecoversWithoutASecondNote(t *testing.T) {
 	wrap, record := r.wrapperOnPath(t, killLostResult)
 	code, out, errs := r.send(t, wrap)
 	if code != 1 {
-		t.Fatalf("a lost answer was not reported as a failure: %d\n%s\n%s", code, out, errs)
+		require.EqualValuesf(t, 1, code, "a lost answer was not reported as a failure: %d\n%s\n%s", code, out, errs)
 	}
 	if !strings.Contains(errs+out, "sent=uncertain") {
-		t.Fatalf("a lost answer was not reported as uncertain:\n%s\n%s", out, errs)
+		require.Containsf(t, errs+out, "sent=uncertain", "a lost answer was not reported as uncertain:\n%s\n%s", out, errs)
 	}
 	id := r.pendingID(t)
 	if b, err := os.ReadFile(record); err != nil {
-		t.Fatalf("the wrapper left no record: %v", err)
+		require.NoErrorf(t, err, "the wrapper left no record: %v", err)
 	} else if !strings.Contains(string(b), "boundary="+killLostResult) {
-		t.Fatalf("the wrapper staged something else: %s", b)
+		require.Failf(t, "", "the wrapper staged something else: %s", b)
 	}
 	notes, _ := r.bus.published(t)
 	if len(notes) != 1 {
-		t.Fatalf("the bus was allowed to finish, so the note should be published: %v", notes)
+		require.Lenf(t, notes, 1, "the bus was allowed to finish, so the note should be published: %v", notes)
 	}
 	head := git(t, r.bus.bare, "rev-parse", "main")
 	clearWrapper(t)
 	code, out, errs = r.send(t, r.bin)
 	if code != 0 {
-		t.Fatalf("recovery failed: %d\n%s\n%s\nthe bus, asked directly: %s", code, out, errs, r.busAskedDirectly(t))
+		require.EqualValuesf(t, 0, code, "recovery failed: %d\n%s\n%s\nthe bus, asked directly: %s", code, out, errs, r.busAskedDirectly(t))
 	}
 	if got := r.deliveredID(t); got != id {
-		t.Fatalf("recovery confirmed %q, not the pending %q", got, id)
+		require.EqualValuesf(t, id, got, "recovery confirmed %q, not the pending %q", got, id)
 	}
 	r.bus.exactlyOneContribution(t, id)
 	if after := git(t, r.bus.bare, "rev-parse", "main"); after != head {
-		t.Fatalf("recovery published a second time: %s became %s", head, after)
+		require.EqualValuesf(t, head, after, "recovery published a second time: %s became %s", head, after)
 	}
 	if !strings.Contains(out, "already-published") {
-		t.Fatalf("recovery republished instead of finding its own note: %s", out)
+		require.Containsf(t, out, "already-published", "recovery republished instead of finding its own note: %s", out)
 	}
 }

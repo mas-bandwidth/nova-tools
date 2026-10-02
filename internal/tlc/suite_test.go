@@ -79,9 +79,9 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 	o := suiteOptions(root, cases, out, script(t, &seen), clock)
 	o.OnCase = func(r Record) { reported = append(reported, r) }
 	res, err := RunSuite(o)
-	if err != nil || res.Failed || res.Refused != "" {
-		t.Fatalf("suite = %+v, %v", res, err)
-	}
+	require.NoError(t, err, "suite = %+v, %v", res, err)
+	require.False(t, res.Failed, "suite = %+v, %v", res, err)
+	require.Empty(t, res.Refused, "suite = %+v, %v", res, err)
 	require.Equal(t, reported, res.Records, "reported %d records, kept %d", len(reported), len(res.Records))
 	require.Len(t, res.Records, 3, "reported %d records, kept %d", len(reported), len(res.Records))
 	src, err := SourceAt(root)
@@ -92,12 +92,11 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 	want := Record{Config: "MCA.cfg", Module: "MCA.tla", InputSHA256: fp, InputFiles: files, JarSHA256: strings.Repeat("b", 64), JavaVersion: "21.0.12.1", Workers: 2, Host: "linux-amd64", CPUs: 8,
 		StartedUTC: "2026-09-28T12:00:00.250000+00:00", Generated: "15518", Distinct: "263", Seconds: "0.250",
 		Exit: 0, Result: "PASS", Expected: "pass", Property: "-", Budget: "110", Mode: "bounded"}
-	if first != want {
-		t.Fatalf("first record\n got %+v\nwant %+v", first, want)
-	}
-	if res.Records[1].Exit != 12 || res.Records[2].Exit != 13 || res.Records[1].Result != "PASS" || res.Records[2].Result != "PASS" {
-		t.Fatalf("records = %+v", res.Records)
-	}
+	require.Equal(t, want, first, "first record\n got %+v\nwant %+v", first, want)
+	require.Equal(t, 12, res.Records[1].Exit, "records = %+v", res.Records)
+	require.Equal(t, 13, res.Records[2].Exit, "records = %+v", res.Records)
+	require.Equal(t, "PASS", res.Records[1].Result, "records = %+v", res.Records)
+	require.Equal(t, "PASS", res.Records[2].Result, "records = %+v", res.Records)
 
 	// The commands: two workers only for a case expected to pass, the
 	// terminal-stutter models with -deadlock, final liveness checking, and a
@@ -107,18 +106,23 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 		noDeadlock bool
 	}{{2, false}, {1, true}, {1, false}}
 	for i, r := range seen {
-		if r.Workers != wantFlags[i].workers || r.NoDeadlock != wantFlags[i].noDeadlock || !r.LnCheckFinal {
-			t.Errorf("%s: workers=%d noDeadlock=%v lncheck=%v", r.Config, r.Workers, r.NoDeadlock, r.LnCheckFinal)
+		if assert.Equal(t, wantFlags[i].workers, r.Workers, "%s: workers=%d noDeadlock=%v lncheck=%v", r.Config, r.Workers, r.NoDeadlock, r.LnCheckFinal) {
+			if assert.Equal(t, wantFlags[i].noDeadlock, r.NoDeadlock, "%s: workers=%d noDeadlock=%v lncheck=%v", r.Config, r.Workers, r.NoDeadlock, r.LnCheckFinal) {
+				assert.True(t, r.LnCheckFinal, "%s: workers=%d noDeadlock=%v lncheck=%v", r.Config, r.Workers, r.NoDeadlock, r.LnCheckFinal)
+			}
 		}
 		assert.Equal(t, []string{"-XX:+UseParallelGC", "-XX:ActiveProcessorCount=2", "-Xmx2g"}, r.JVM, "%s: JVM = %v", r.Config, r.JVM)
-		if r.Dir != res.Work || r.Jar != "/j/tla2tools.jar" || r.Java != "/usr/bin/java" {
-			t.Errorf("%s: dir=%s jar=%s java=%s", r.Config, r.Dir, r.Jar, r.Java)
+		if assert.Equal(t, res.Work, r.Dir, "%s: dir=%s jar=%s java=%s", r.Config, r.Dir, r.Jar, r.Java) {
+			if assert.Equal(t, "/j/tla2tools.jar", r.Jar, "%s: dir=%s jar=%s java=%s", r.Config, r.Dir, r.Jar, r.Java) {
+				assert.Equal(t, "/usr/bin/java", r.Java, "%s: dir=%s jar=%s java=%s", r.Config, r.Dir, r.Jar, r.Java)
+			}
 		}
-		if !strings.HasPrefix(r.TmpDir, out) || !strings.HasPrefix(r.MetaDir, r.TmpDir) {
-			t.Errorf("%s: tmp=%s meta=%s are not private under the output", r.Config, r.TmpDir, r.MetaDir)
+		if assert.True(t, strings.HasPrefix(r.TmpDir, out), "%s: tmp=%s meta=%s are not private under the output", r.Config, r.TmpDir, r.MetaDir) {
+			assert.True(t, strings.HasPrefix(r.MetaDir, r.TmpDir), "%s: tmp=%s meta=%s are not private under the output", r.Config, r.TmpDir, r.MetaDir)
 		}
-		if _, err := os.Stat(r.TmpDir); err == nil {
-			t.Errorf("%s: the temporary directory was left behind", r.Config)
+		{
+			_, err := os.Stat(r.TmpDir)
+			assert.Error(t, err, "%s: the temporary directory was left behind", r.Config)
 		}
 	}
 
@@ -133,8 +137,10 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 	recs, err := ReadRecordsFile(filepath.Join(out, RunsFile))
 	require.NoError(t, err, "RUNS.tsv = %v, %v", recs, err)
 	require.Equal(t, recs, res.Records, "RUNS.tsv = %v, %v", recs, err)
-	if raw, err := os.ReadFile(filepath.Join(out, "MCA.cfg.log")); err != nil || string(raw) != fixture(t, "pass.log") {
-		t.Fatalf("the case's log was not kept: %v", err)
+	{
+		raw, err := os.ReadFile(filepath.Join(out, "MCA.cfg.log"))
+		require.NoError(t, err, "the case's log was not kept: %v", err)
+		require.Equal(t, fixture(t, "pass.log"), string(raw), "the case's log was not kept: %v", err)
 	}
 }
 
@@ -154,8 +160,10 @@ func TestRunSuiteFailsACaseThatIsNotWhatItDeclares(t *testing.T) {
 	res, err := RunSuite(suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), wrong, clock))
 	require.NoError(t, err, "suite = %+v, %v", res, err)
 	require.True(t, res.Failed, "suite = %+v, %v", res, err)
-	if got := res.Records[1]; got.Result != "FAIL" || got.Exit != 0 {
-		t.Fatalf("record = %+v", got)
+	{
+		got := res.Records[1]
+		require.Equal(t, "FAIL", got.Result, "record = %+v", got)
+		require.Zero(t, got.Exit, "record = %+v", got)
 	}
 	require.Equal(t, "PASS", res.Records[0].Result, "a failing case failed its neighbours")
 	require.Equal(t, "PASS", res.Records[2].Result, "a failing case failed its neighbours")
@@ -194,9 +202,9 @@ func TestRunSuiteEndsWhenTheBudgetDoes(t *testing.T) {
 	o.Budget = 90 * time.Second
 	res, err := RunSuite(o)
 	require.NoError(t, err)
-	if !res.Failed || len(res.Records) >= len(cases) || len(seen) != len(res.Records) {
-		t.Fatalf("records=%d ran=%d failed=%v", len(res.Records), len(seen), res.Failed)
-	}
+	require.True(t, res.Failed, "records=%d ran=%d failed=%v", len(res.Records), len(seen), res.Failed)
+	require.Less(t, len(res.Records), len(cases), "records=%d ran=%d failed=%v", len(res.Records), len(seen), res.Failed)
+	require.Equal(t, len(res.Records), len(seen), "records=%d ran=%d failed=%v", len(res.Records), len(seen), res.Failed)
 	recs, err := ReadRecordsFile(filepath.Join(out, RunsFile))
 	require.NoError(t, err, "the records of the cases that ran were not kept: %v, %v", recs, err)
 	require.Len(t, recs, len(res.Records), "the records of the cases that ran were not kept: %v, %v", recs, err)
@@ -210,11 +218,14 @@ func TestRunSuiteNeverStartsACaseAfterTheBudget(t *testing.T) {
 	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock)
 	o.Budget = time.Second
 	res, err := RunSuite(o)
-	if err != nil || len(seen) != 0 || !res.Failed {
-		t.Fatalf("ran %d cases, failed=%v, err=%v", len(seen), res.Failed, err)
-	}
-	if got := res.Records[0]; got.Exit != ExitTimeout || got.Result != "FAIL" || got.Generated != "-" {
-		t.Fatalf("record = %+v", got)
+	require.NoError(t, err, "ran %d cases, failed=%v, err=%v", len(seen), res.Failed, err)
+	require.Zero(t, len(seen), "ran %d cases, failed=%v, err=%v", len(seen), res.Failed, err)
+	require.True(t, res.Failed, "ran %d cases, failed=%v, err=%v", len(seen), res.Failed, err)
+	{
+		got := res.Records[0]
+		require.Equal(t, ExitTimeout, got.Exit, "record = %+v", got)
+		require.Equal(t, "FAIL", got.Result, "record = %+v", got)
+		require.Equal(t, "-", got.Generated, "record = %+v", got)
 	}
 	raw, _ := os.ReadFile(filepath.Join(o.Out, "MCA.cfg.log"))
 	require.Contains(t, string(raw), "before starting", "log = %q", raw)
@@ -229,9 +240,10 @@ func TestRunSuiteRecordsAManualRun(t *testing.T) {
 	o.Selection = Selection{Shards: 3, Shard: 0} // the first of three: MCA.cfg
 	o.Manual, o.Budget = true, 1500*time.Millisecond
 	res, err := RunSuite(o)
-	if err != nil || len(res.Records) != 1 || res.Records[0].Mode != "manual" || res.Records[0].Budget != "1.5" {
-		t.Fatalf("records = %+v, %v", res.Records, err)
-	}
+	require.NoError(t, err, "records = %+v, %v", res.Records, err)
+	require.Len(t, res.Records, 1, "records = %+v, %v", res.Records, err)
+	require.Equal(t, "manual", res.Records[0].Mode, "records = %+v, %v", res.Records, err)
+	require.Equal(t, "1.5", res.Records[0].Budget, "records = %+v, %v", res.Records, err)
 }
 
 func TestRunSuiteRefusesModelsEditedBetweenTheDigestAndTheCopy(t *testing.T) {
@@ -248,9 +260,10 @@ func TestRunSuiteRefusesModelsEditedBetweenTheDigestAndTheCopy(t *testing.T) {
 	}
 	res, err := RunSuite(o)
 	require.NoError(t, err)
-	if !res.Failed || res.Refused != "model inputs changed while the models were copied" || ran != 0 || len(res.Records) != 0 {
-		t.Fatalf("suite = %+v, ran %d cases", res, ran)
-	}
+	require.True(t, res.Failed, "suite = %+v, ran %d cases", res, ran)
+	require.Equal(t, "model inputs changed while the models were copied", res.Refused, "suite = %+v, ran %d cases", res, ran)
+	require.Zero(t, ran, "suite = %+v, ran %d cases", res, ran)
+	require.Zero(t, len(res.Records), "suite = %+v, ran %d cases", res, ran)
 	_, err = os.Stat(filepath.Join(out, RunsFile))
 	require.Error(t, err, "records were written for models that were not the digest's")
 }
@@ -266,8 +279,10 @@ func TestACopyOfTheModelsHasTheFingerprintsOfItsSource(t *testing.T) {
 	require.NoError(t, err)
 	copied := src
 	copied.TLADir = work
-	if got, err := fingerprints(copied, cases); err != nil || !sameFingerprints(got, want) {
-		t.Fatalf("copy fingerprints %v (%v), source %v", got, err, want)
+	{
+		got, err := fingerprints(copied, cases)
+		require.NoError(t, err, "copy fingerprints %v (%v), source %v", got, err, want)
+		require.True(t, sameFingerprints(got, want), "copy fingerprints %v (%v), source %v", got, err, want)
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(work, "MCA.tla"), []byte("other\n"), 0o644))
 	got, _ := fingerprints(copied, cases)
@@ -291,9 +306,10 @@ func TestRunSuiteRefusesACasePlanEditedAfterItWasRead(t *testing.T) {
 	res, err := RunSuite(suiteOptions(root, cases, out, func(context.Context, Run, string) int { ran++; return 0 }, clock))
 	require.NoError(t, err)
 	want := "CASES.tsv changed after the cases were read (MCA.cfg is not as it was)"
-	if !res.Failed || res.Refused != want || ran != 0 || len(res.Records) != 0 {
-		t.Fatalf("suite = %+v, ran %d cases", res, ran)
-	}
+	require.True(t, res.Failed, "suite = %+v, ran %d cases", res, ran)
+	require.Equal(t, want, res.Refused, "suite = %+v, ran %d cases", res, ran)
+	require.Zero(t, ran, "suite = %+v, ran %d cases", res, ran)
+	require.Zero(t, len(res.Records), "suite = %+v, ran %d cases", res, ran)
 	_, err = os.Stat(filepath.Join(out, RunsFile))
 	require.Error(t, err, "records were written for a plan that was not the one read")
 	_, err = os.Stat(filepath.Join(out, workDir))
@@ -325,9 +341,10 @@ func TestRunSuiteRunsCasesTheEditedPlanStillHolds(t *testing.T) {
 	o := suiteOptions(root, selected, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock)
 	o.Selection = Selection{Group: "alpha", Shards: 1}
 	res, err := RunSuite(o)
-	if err != nil || res.Failed || len(res.Records) != 2 || len(seen) != 2 {
-		t.Fatalf("suite = %+v, ran %d, %v", res, len(seen), err)
-	}
+	require.NoError(t, err, "suite = %+v, ran %d, %v", res, len(seen), err)
+	require.False(t, res.Failed, "suite = %+v, ran %d, %v", res, len(seen), err)
+	require.Len(t, res.Records, 2, "suite = %+v, ran %d, %v", res, len(seen), err)
+	require.Len(t, seen, 2, "suite = %+v, ran %d, %v", res, len(seen), err)
 }
 
 // What runs is the selection of the plan the digest names. A field of a
@@ -361,8 +378,11 @@ func TestRunSuiteNeverExecutesTheFieldsItWasHanded(t *testing.T) {
 		return res, seen, err
 	}
 	// The control: with no edit the same call runs both cases.
-	if res, seen, err := runIn(alphaTree()); err != nil || res.Failed || len(seen) != 2 {
-		t.Fatalf("the unedited plan: %+v, ran %d, %v", res, len(seen), err)
+	{
+		res, seen, err := runIn(alphaTree())
+		require.NoError(t, err, "the unedited plan: %+v, ran %d, %v", res, len(seen), err)
+		require.False(t, res.Failed, "the unedited plan: %+v, ran %d, %v", res, len(seen), err)
+		require.Len(t, seen, 2, "the unedited plan: %+v, ran %d, %v", res, len(seen), err)
 	}
 	for name, edit := range map[string]func(string) string{
 		"the command-line field (deadlock policy)": func(p string) string {
@@ -385,8 +405,14 @@ func TestRunSuiteNeverExecutesTheFieldsItWasHanded(t *testing.T) {
 		require.NotEqual(t, string(raw), edited, "%s: the edit changed nothing", name)
 		require.NoError(t, os.WriteFile(planPath, []byte(edited), 0o644))
 		res, seen, err := runIn(root, alpha)
-		if err != nil || !res.Failed || !strings.HasPrefix(res.Refused, "CASES.tsv changed after the cases were read") || len(seen) != 0 || len(res.Records) != 0 {
-			t.Errorf("%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err)
+		if assert.NoError(t, err, "%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err) {
+			if assert.True(t, res.Failed, "%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err) {
+				if assert.True(t, strings.HasPrefix(res.Refused, "CASES.tsv changed after the cases were read"), "%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err) {
+					if assert.Zero(t, len(seen), "%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err) {
+						assert.Zero(t, len(res.Records), "%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err)
+					}
+				}
+			}
 		}
 	}
 }
@@ -400,16 +426,21 @@ func TestRunSuiteRunsTheDigestedPlansCases(t *testing.T) {
 	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
 	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock)
 	res, err := RunSuite(o)
-	if err != nil || res.Failed || len(seen) != len(cases) {
-		t.Fatalf("suite = %+v, ran %d, %v", res, len(seen), err)
-	}
+	require.NoError(t, err, "suite = %+v, ran %d, %v", res, len(seen), err)
+	require.False(t, res.Failed, "suite = %+v, ran %d, %v", res, len(seen), err)
+	require.Equal(t, len(cases), len(seen), "suite = %+v, ran %d, %v", res, len(seen), err)
 	plan, err := LoadCases(root)
 	require.NoError(t, err)
 	for i, r := range seen {
 		c := plan[i]
-		if r.Config != c.Config || r.Module != c.Module || r.NoDeadlock != (c.Deadlock == "ignore-terminal") ||
-			res.Records[i].Expected != c.Expected || res.Records[i].Property != c.Property {
-			t.Errorf("case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c)
+		if assert.Equal(t, c.Config, r.Config, "case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c) {
+			if assert.Equal(t, c.Module, r.Module, "case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c) {
+				if assert.Equal(t, (c.Deadlock == "ignore-terminal"), r.NoDeadlock, "case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c) {
+					if assert.Equal(t, c.Expected, res.Records[i].Expected, "case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c) {
+						assert.Equal(t, c.Property, res.Records[i].Property, "case %d ran as %+v / %+v, the plan says %+v", i, r, res.Records[i], c)
+					}
+				}
+			}
 		}
 	}
 }
@@ -462,8 +493,13 @@ func TestRunSuiteRecordsTheWorkersAndTheJavaVersion(t *testing.T) {
 	require.NoError(t, err, "%+v, %v", res, err)
 	require.Len(t, res.Records, 3, "%+v, %v", res, err)
 	for i, want := range []int{2, 1, 1} {
-		if r := res.Records[i]; r.Workers != want || r.JavaVersion != "21.0.12.1" || seen[i].Workers != want {
-			t.Errorf("%s: workers %d (ran with %d), java %q; want %d workers", r.Config, r.Workers, seen[i].Workers, r.JavaVersion, want)
+		{
+			r := res.Records[i]
+			if assert.Equal(t, want, r.Workers, "%s: workers %d (ran with %d), java %q; want %d workers", r.Config, r.Workers, seen[i].Workers, r.JavaVersion, want) {
+				if assert.Equal(t, "21.0.12.1", r.JavaVersion, "%s: workers %d (ran with %d), java %q; want %d workers", r.Config, r.Workers, seen[i].Workers, r.JavaVersion, want) {
+					assert.Equal(t, want, seen[i].Workers, "%s: workers %d (ran with %d), java %q; want %d workers", r.Config, r.Workers, seen[i].Workers, r.JavaVersion, want)
+				}
+			}
 		}
 	}
 	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o2"), script(t, &seen), clock)
@@ -477,11 +513,14 @@ func TestRunSuiteRecordsTheWorkersAndTheJavaVersion(t *testing.T) {
 	} {
 		o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o3"), script(t, &seen), clock)
 		mutate(&o)
-		if _, err := RunSuite(o); err == nil || !strings.Contains(err.Error(), "no platform label and CPU count") {
-			t.Errorf("%s: %v", name, err)
+		{
+			_, err := RunSuite(o)
+			if assert.Error(t, err, "%s: %v", name, err) {
+				assert.Contains(t, err.Error(), "no platform label and CPU count", "%s: %v", name, err)
+			}
 		}
 	}
-	if res.Records[0].Host != "linux-amd64" || res.Records[0].CPUs != 8 {
-		t.Errorf("record host %q, cpus %d", res.Records[0].Host, res.Records[0].CPUs)
+	if assert.Equal(t, "linux-amd64", res.Records[0].Host, "record host %q, cpus %d", res.Records[0].Host, res.Records[0].CPUs) {
+		assert.Equal(t, 8, res.Records[0].CPUs, "record host %q, cpus %d", res.Records[0].Host, res.Records[0].CPUs)
 	}
 }
