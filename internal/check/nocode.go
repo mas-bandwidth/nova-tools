@@ -146,8 +146,8 @@ func parseNameLines(s string) (map[string]bool, []string, error) {
 }
 
 // validName and validPrefix hold the name list to the SAME standard validExt
-// holds the extension list to. A glob, embedded whitespace, a zero-width space
-// or a leading "./" each builds an entry that matches nothing, survives the
+// holds the extension list to. Globs, embedded whitespace, zero-width spaces
+// and a leading "./" each build an entry that matches nothing, survives the
 // emptiness guard because other entries are fine, prints happily in
 // --print-deny-list, and leaves a floor quietly forbidding less than it says:
 // the exact fail-open this check exists against.

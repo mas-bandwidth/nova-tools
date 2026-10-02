@@ -54,7 +54,6 @@ internal/ci/testdata/generality/internal/ci/allowlist.txt the Go scan's ledger: 
 internal/ci/testdata/generality/internal/ci/slowtests.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/ci/timing.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/config.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality/internal/converge.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/dogfood.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/fleet.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/internal/fuse.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts

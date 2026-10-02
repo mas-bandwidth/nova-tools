@@ -60,14 +60,14 @@ binaries or from this file, the runs come from receipts, and the gate is one
 exit code a release lane can call.
 
 ```
-$ nova-check dogfood record --tool nova-check --verb links --by Ada --ok \
+$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
     --notes "ran it over my own self repo before the merge; found nothing" \
     --receipts ./dogfood-receipts
-DOGFOOD RECORD OK tool=nova-check verb=links by=Ada at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-ada-8e9b64a4.json
+DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-stella-8e9b64a4.json
 
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=- open=0
-DOGFOOD tool=nova-check verb=links by=Ada at=2026-09-18T09:00:00Z ok=yes issue=- open=0
+DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- open=0
 DOGFOOD OK verbs=105 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
@@ -99,7 +99,7 @@ finding and the same eight that end the receipt's filename, so a reader with an
 id can find the file:
 
 ```
-DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from Ada at 2026-09-18T09:00:00Z (no issue filed); closed by --closes 8e9b64a4 or by Ada running it again: the verb refused a relative path
+DOGFOOD GATE FAIL tool=nova-check verb=links: open edge receipt=8e9b64a4 from Stella at 2026-09-18T09:00:00Z (no issue filed); closed by --closes 8e9b64a4 or by Stella running it again: the verb refused a relative path
 ```
 
 A `--closes` naming an id nothing carries closes nothing and leaves the edge
@@ -154,9 +154,9 @@ and it should outlive the bench.
 
 The four mechanical checks the accept gate (the check a branch passes before a
 reviewer reads it) runs, on a branch, before you ask for a read: **identity**
-(every commit authored and committed by an identity `--identity` names), **out-of-path** (every changed file inside the `PATHS:` of the card, the task
-brief),
-**stray-file** (no `RESULT.md` and the rest of the stray list), **secret** (no
+(every commit authored and committed by an identity `--identity` names),
+**out-of-path** (every changed file inside the `PATHS:` of the card, the task
+brief), **stray-file** (no `RESULT.md` and the rest of the stray list), **secret** (no
 key-shaped string in the diff). The command reports 0 for clean, 1 for
 findings and 2 when it could not run; the reviewer decides what to do with
 those findings.
@@ -171,17 +171,10 @@ than quietly matched against no one.
 (docs/SPEC-TOOLWORK.md, the hygiene rules). It unlocks an allowlisted stray
 exception and nothing else. A kind the tool does not declare is refused by
 name, listing the kinds there are, rather than answered with a `HYGIENE OK`
-about a shape of work that does not exist:
-
-```
-$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
-nova-check hygiene REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
-```
-
-```
-$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
-HYGIENE OK base=main head=card paths=sign/** findings=0
-```
+about a shape of work that does not exist. A clean branch prints
+`HYGIENE OK base=main head=card paths=sign/** findings=0`; the transcripts of a
+clean run, a capped run and both refusals are in [TESTS.md](TESTS.md#nova-check),
+under `hygiene, on a branch`.
 
 With no `--paths` the line says `paths=-` and out-of-path is SKIPPED — printed
 rather than omitted, because a line that left the field out would read as a
@@ -189,15 +182,8 @@ bound that held.
 
 Findings are capped like every listing here, and the `MORE` line carries the
 command that prints the rest — the same run with the cap lifted, quoted so it
-can be pasted:
-
-```
-$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
-HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE NO base=main head=card paths=sign/** findings=4
-```
+can be pasted, as in `HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene
+--repo "." ... --max 0`.
 
 ### Are we converging
 
@@ -207,7 +193,7 @@ each read from a real source, each printed as a number now, the same number at
 travel.
 
 ```
-$ nova-check convergence --repo example/project \
+$ nova-check convergence --repo mas-bandwidth/nova-tools \
     --ledger ./reports/pitstop.md \
     --receipts ./dogfood-receipts \
     --retired ./bin/retired/README.md \
