@@ -147,8 +147,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// the beat writes from its own goroutine (memberLoop), so what this verb writes to stderr
 	// is one line at a time
 	stderr = &lockedWriter{w: stderr}
-	// CI over work (nova-tools#4293): native refuses every card on an OS with no
-	// setpriority, so a member there would take and fail every card it is dealt
+	// a member only takes a card it can run at CI's priority: native refuses every card on
+	// an OS with no setpriority, so a member there would take and fail every card it is dealt
 	if why := yieldRefusal(yield.Supported, runtime.GOOS); why != "" {
 		return refuse(stderr, " member", why)
 	}
@@ -251,12 +251,12 @@ func loopTicks(once, ticksGiven bool, ticks int) int {
 
 // memberLoop ticks m every `every` (limit > 0: at most limit ticks) and returns the
 // ticks it ran. A loop runs the code it was started with for as long as it runs: a
-// release installed under it would leave the fleet worked by the code before it
-// (2026-10-01: six members kept the binaries they began with until restarted by
-// hand). So before each tick it reads its binary's stamp, and when that changed
-// since it began: with no child running it stops at once, saying so; with children
-// running it drains, taking no new card (said once) and reporting each child as it
-// ends, and stops when the last is reported. replaced is true when it stopped so.
+// release installed under it would leave the fleet worked by the code before it,
+// and only a restart would swap to the new binary. So before each tick it reads its
+// binary's stamp, and when that changed since it began: with no child running it
+// stops at once, saying so; with children running it drains, taking no new card
+// (said once) and reporting each child as it ends, and stops when the last is
+// reported. replaced is true when it stopped so.
 func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() string, stdout, stderr io.Writer) (n int, replaced bool) {
 	began := stamp()
 	// the beat goes on its own clock, apart from the work pass (internal/member BeatLoop): one
@@ -770,7 +770,7 @@ func newestResult(dir string) string {
 // a card whose brief names no repository is never framed, so its child writes
 // what its brief says. A work card's finish never rests on it (member.Judge
 // wants the contract's shape); a read's verdict and report do, until the briefs
-// that say the old shape are gone.
+// that name that shape are gone.
 func readResult(path string) (head, verdict, report string) {
 	if path == "" {
 		return "", "", ""
@@ -882,9 +882,10 @@ func passNote(model string, pass []string, auth string) string {
 }
 
 // yieldRefusal is why a member will not start on an OS with no setpriority
-// (yield.Supported false): native refuses every card there rather than run it at the
-// priority of the CI legs beside it (nova-tools#4293, as nova-ci local refuses), so a
-// member would take and fail every card it is dealt. "" where a launch can step behind CI.
+// (yield.Supported false): native refuses every card there rather than run it at
+// the priority of the CI legs beside it (nova-ci local refuses the same way), so
+// a member would take and fail every card it is dealt. "" where a launch can
+// step behind CI.
 func yieldRefusal(supported bool, goos string) string {
 	if supported {
 		return ""
