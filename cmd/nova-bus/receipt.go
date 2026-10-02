@@ -61,6 +61,10 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "RECEIPT REFUSED: --as %q names no one on this bus (known: %s); run: nova-bus receipt -h\n", *as, oneline.Escape(strings.Join(t.Config.KnownNames(), "; ")))
 		return 2
 	}
+	if err := laneWritable(*busDir, me.Lane); err != nil {
+		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(me.Lane+"/"+bus.ReceiptsName), oneline.Err(err))
+		return 1
+	}
 	plan, err := bus.PlanReceipts(t, me, notes, now)
 	if err != nil {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
@@ -76,7 +80,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// The reader's own BEAT, as in send: `wait` wrote it, so it is this run's own
 	// machinery and not a change that is "not this receipt".
 	beat := bus.BeatPath(me.Lane)
-	if err := checkoutReady(*busDir, *branch, []string{plan.Path, beat}); err != nil {
+	if err := readyToWrite(*busDir, *branch, me.Lane, []string{plan.Path, beat}); err != nil {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}

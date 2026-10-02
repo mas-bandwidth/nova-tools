@@ -133,6 +133,14 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		if *rebuildIndex {
+			// Check every lane before planning or replacing any index. The real run
+			// holds the checkout lock here, so this also checks after exclusion.
+			for _, lane := range c.Lanes() {
+				if err := laneWritable(*busDir, lane); err != nil {
+					fmt.Fprintf(stderr, "BUS FAIL %s: %s\n", oneline.Escape(bus.IndexPath(lane)), oneline.Err(err))
+					return 1
+				}
+			}
 			for _, lane := range c.Lanes() {
 				if *dryRun {
 					n, _ := bus.PlanLaneIndex(c, t, lane)

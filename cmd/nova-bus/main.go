@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -249,6 +250,36 @@ func checkoutReady(busDir, branch string, allow []string) error {
 		return fmt.Errorf("the bus's checkout is on branch %q, not %q", on, branch)
 	}
 	return bus.EnsureClean(busDir, allow)
+}
+
+// readyToWrite shares the checkout guard and the lane's create permission check.
+// Real callers hold the checkout lock; dry callers ask without creating a lock file.
+func readyToWrite(busDir, branch, lane string, allow []string) error {
+	if err := checkoutReady(busDir, branch, allow); err != nil {
+		return err
+	}
+	return laneWritable(busDir, lane)
+}
+
+// laneWritable asks the kernel whether the directory accepts entries, without writing.
+// An absent lane is created by the writer, so its existing parent must accept it.
+func laneWritable(busDir, lane string) error {
+	if lane == "" {
+		return nil // the verb's participant validation supplies the no-lane refusal
+	}
+	dir := filepath.Join(busDir, filepath.FromSlash(lane))
+	fi, err := os.Stat(dir)
+	if os.IsNotExist(err) {
+		dir = filepath.Dir(dir)
+	} else if err != nil {
+		return err
+	} else if !fi.IsDir() {
+		return fmt.Errorf("lane %q is not a directory", lane)
+	}
+	if err := canCreateIn(dir); err != nil {
+		return fmt.Errorf("lane %q does not let this process create files (%w); give this process write permission on the lane", lane, err)
+	}
+	return nil
 }
 
 // levelWithRemote is the second guard, and it runs BEFORE the file is written: a push

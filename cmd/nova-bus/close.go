@@ -58,6 +58,13 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "CLOSE REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus close -h"))
 		return 2
 	}
+	if !*dryRun {
+		release, code := lockCheckout("CLOSE", *busDir, stderr)
+		if code != 0 {
+			return code
+		}
+		defer release()
+	}
 	t, ok := openBus("close", *busDir, stderr)
 	if !ok {
 		return 2
@@ -66,6 +73,10 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !found {
 		fmt.Fprintf(stderr, "CLOSE REFUSED: --as %q names no one on this bus (known: %s); run: nova-bus close -h\n", *as, oneline.Escape(strings.Join(t.Config.KnownNames(), "; ")))
 		return 2
+	}
+	if err := laneWritable(*busDir, me.Lane); err != nil {
+		fmt.Fprintf(stderr, "CLOSE FAIL: %s\n", oneline.Err(err))
+		return 1
 	}
 	plan, err := bus.PlanClose(t, me, before, now)
 	if err != nil {
@@ -81,9 +92,12 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	// The checkout guards are the real run's, in its order, for the dry run too; a dry run
 	// given no --branch (it needs none) holds the tree to clean and names no branch.
-	ready := checkoutReady(*busDir, *branch, nil)
+	ready := readyToWrite(*busDir, *branch, me.Lane, nil)
 	if *dryRun && strings.TrimSpace(*branch) == "" {
 		ready = bus.EnsureClean(*busDir, nil)
+		if ready == nil {
+			ready = laneWritable(*busDir, me.Lane)
+		}
 	}
 	if ready != nil {
 		fmt.Fprintf(stderr, "CLOSE FAIL: %s\n", oneline.Err(ready))

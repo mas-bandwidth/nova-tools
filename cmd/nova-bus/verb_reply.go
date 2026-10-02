@@ -91,7 +91,7 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "REPLY REFUSED: --as %s has no lane on this bus, so has nowhere to send from; run: nova-bus reply -h\n", oneline.Field(me.Name))
 		return 2
 	}
-	if err := checkoutReady(*busDir, *branch, []string{bus.BeatPath(me.Lane)}); err != nil {
+	if err := readyToWrite(*busDir, *branch, me.Lane, []string{bus.BeatPath(me.Lane)}); err != nil {
 		fmt.Fprintf(stderr, "REPLY FAIL: %s\n", oneline.Err(err))
 		return 1
 	}

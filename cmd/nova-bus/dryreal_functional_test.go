@@ -33,6 +33,16 @@ func TestEveryDryRunIsTheRealRunWithoutItsWrites(t *testing.T) {
 		gd := filepath.Join(root, "checkout", ".git")
 		require.NoError(t, os.WriteFile(filepath.Join(gd, bus.LockName), []byte("sentinel holder\n"), 0o644))
 	}
+	readOnlyLane := func(lane string) func(*testing.T, string) {
+		return func(t *testing.T, root string) {
+			if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+				t.Skip("a directory without write permission cannot be made here")
+			}
+			dir := filepath.Join(root, "checkout", lane)
+			testkit.Unwritable(t, dir)
+			require.NoError(t, os.Chmod(dir, 0o555))
+		}
+	}
 	clean := func(*testing.T, string) {}
 	scratch := func(root string) string { return filepath.Join(root, "scratch") }
 	verbs := map[string]func(root string) []string{
@@ -67,6 +77,10 @@ func TestEveryDryRunIsTheRealRunWithoutItsWrites(t *testing.T) {
 			continue
 		}
 		cases = append(cases, tc{verb + "/clean", clean, args}, tc{verb + "/clean, a lock file there", lockSentinel, args})
+		cases = append(cases, tc{verb + "/a read-only lane", readOnlyLane("from-ada"), args})
+		if verb == "check --rebuild-index" {
+			cases = append(cases, tc{verb + "/a later read-only lane", readOnlyLane("from-bo"), args})
+		}
 		if verb != "check --rebuild-index" {
 			cases = append(cases, tc{verb + "/wrong branch", wrongBranch, args}, tc{verb + "/a stray file", dirty, args})
 		}
@@ -122,7 +136,15 @@ func TestEveryDryRunIsTheRealRunWithoutItsWrites(t *testing.T) {
 			dryRoot, realRoot := prepare(), prepare()
 			before := treeBytes(t, dryRoot)
 			dry := invoke(t, "", append(c.args(dryRoot), "--dry-run")...)
+			realBefore := treeBytes(t, filepath.Join(realRoot, "checkout", "from-ada"))
+			realOtherBefore := treeBytes(t, filepath.Join(realRoot, "checkout", "from-bo"))
 			real := invoke(t, "", c.args(realRoot)...)
+			if strings.Contains(c.name, "read-only lane") {
+				assert.Equal(t, 1, dry.code, "a plan must refuse the lane's missing write permission")
+				assert.Contains(t, dry.stderr, "does not let this process create files")
+				assert.Equal(t, realBefore, treeBytes(t, filepath.Join(realRoot, "checkout", "from-ada")), "a refused write must leave the first lane untouched")
+				assert.Equal(t, realOtherBefore, treeBytes(t, filepath.Join(realRoot, "checkout", "from-bo")), "a refused write must leave the other lane untouched")
+			}
 			assert.Equal(t, real.code, dry.code, "dry and real exits differ\ndry stderr: %s\nreal stderr: %s", dry.stderr, real.stderr)
 			if real.code != 0 {
 				assert.Equal(t, normalizeRoot(real.stderr, realRoot), normalizeRoot(dry.stderr, dryRoot), "dry and real refuse differently")

@@ -233,6 +233,19 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	if !ok {
 		return 2
 	}
+	// Resolve the prospective lane before shaping. PrepareWith still validates
+	// the full draft, including any disagreement between --as and From.
+	note, _ := bus.ParseNoteAll("", text)
+	senderName := note.Header.From
+	if strings.TrimSpace(senderName) == "" {
+		senderName = *as
+	}
+	if sender, known := t.Config.ResolveOne(senderName); known {
+		if err := laneWritable(*busDir, sender.Lane); err != nil {
+			fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+			return 1
+		}
+	}
 	prepared, err := bus.PrepareWith(t, text, now, bus.SendOptions{Slug: *slug, As: *as, Host: hostName})
 	if err != nil {
 		// EVERY reason, one line each. A refusal that named the first of three mistakes in
@@ -257,7 +270,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	// into this note's commit below, so the send carries it out rather than stopping on it.
 	// Every other path in the tree is still the refusal it always was.
 	beat := bus.BeatPath(prepared.Sender.Lane)
-	if err := checkoutReady(*busDir, *branch, []string{beat}); err != nil {
+	if err := readyToWrite(*busDir, *branch, prepared.Sender.Lane, []string{beat}); err != nil {
 		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}

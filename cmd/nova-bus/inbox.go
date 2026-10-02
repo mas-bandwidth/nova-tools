@@ -299,6 +299,13 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 		return 2, r
 	}
 
+	if o.advance {
+		if err := laneWritable(o.busDir, me.Lane); err != nil {
+			fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
+			return 1, r
+		}
+	}
+
 	scope := bus.Scope{Full: o.full}
 	var res bus.InboxResult
 	var cursor bus.Cursor
@@ -864,7 +871,7 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 	if !noBeat {
 		paths = append(paths, bus.BeatPath(me.Lane))
 	}
-	if err := checkoutReady(busDir, branch, paths); err != nil {
+	if err := readyToWrite(busDir, branch, me.Lane, paths); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
