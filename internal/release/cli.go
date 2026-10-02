@@ -14,20 +14,21 @@ import (
 
 // Verbs is the usage block `nova-update help` prints for this verb, and the same
 // five lines docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
-// default path: SPEC-UPDATE rule 1 (no search of the cwd, no $HOME) is why a
-// release cut from a laptop and a release cut from a bench are the same release.
-// The one exception is --receipts, and internal/release/dogfoodgate.go says at
-// length why the gate in front of the definition of done is worth it.
+// default path: a path guessed from the cwd or from `$HOME` makes a release cut
+// from a laptop and a release cut from a bench mean different things, so the
+// same command is the same release on either host. The one exception is
+// --receipts, and internal/release/dogfoodgate.go says at length why the gate
+// in front of the definition of done is worth it.
 const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
 nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
 nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]`
 
-// CutNote is the gate in front of a tag, said where a person will meet it
-// (Johnny's decision 1 on SPEC-RELEASE, #1337). It is a var rather than a const
-// because it names the list, and the list has ONE home: composing this from
-// SensitivePaths is why the help cannot fall behind the gate.
+// CutNote is the gate in front of a tag, said where a person will meet it.
+// It is a var rather than a const because it names the list, and the list has
+// ONE home: composing this from SensitivePaths is why the help cannot fall
+// behind the gate.
 var CutNote = "cut classifies the range since the previous tag against the sensitive path list in internal/release/sensitive.go and docs/SPEC-RELEASE.md " +
 	"(" + SensitiveShape + "). A range that touches one of them REFUSES until --security-read names the security reader's read -- a note id or the url of the comment -- " +
 	"and the cut then prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt. " +
@@ -160,9 +161,9 @@ const ExitCodes = "exit codes: 0 the verb did what its line says (a --dry-run pr
 	"1 it ran and a step failed partway, the FAIL or REFUSED line naming what was done and what to do next; " +
 	"2 it refused before acting, naming the command to run."
 
-// progress is the stderr voice. Glenn, 2026-09-17: a program says what it is
-// doing for any step over about a tenth of a second, and every step in this
-// package -- a forge read, a compile, a copy over ssh -- is well over that.
+// progress is the stderr voice. A program says what it is doing for any step
+// over about a tenth of a second, and every step in this package -- a forge
+// read, a compile, a copy over ssh -- is well over that.
 func progress(w io.Writer, format string, a ...any) {
 	fmt.Fprintf(w, "release: "+format+"\n", a...)
 }
@@ -171,7 +172,7 @@ func progress(w io.Writer, format string, a ...any) {
 // the one thing a seam cannot default to -- what THIS binary is stamped with,
 // which lives in main and is handed down. `adopt` is the reader: a coordinator
 // older than the release it is fanning out cannot run that release's install,
-// and the fourth dogfood met that as a Studio that could not adopt at all.
+// and a coordinator far enough behind cannot adopt at all.
 func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 	return Run(name, args, out, errs, Deps{Self: func() string { return stamp }})
 }
@@ -275,9 +276,9 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		// `--help` on a verb is a REASONABLE QUESTION, not a parse failure.
 		// The flag package answers it with the sentinel flag.ErrHelp, and
 		// printing that gave a person who asked for help the words `flag: help
-		// requested` -- the package's own internals, leaked (darwin dogfood,
-		// 2026-09-18). It is answered here with that verb's usage, and exit 0,
-		// because asking is not an error.
+		// requested` -- the package's own internals, leaked. It is answered
+		// here with that verb's usage, and exit 0, because asking is not an
+		// error.
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(out, VerbUsage(verb))
 			fmt.Fprintln(out, "flags:")
@@ -330,14 +331,16 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 			return refusal(errs, token, err)
 		}
 	}
-	// CERTIFICATION AFTER AN ADOPT IS ON BY DEFAULT (Glenn, 2026-09-18: "we want this
-	// certification to be mechanized"). An adopt changes the build on every machine it
-	// touches and so invalidates every certificate those machines held; leaving the renewal
-	// to whoever remembers is how a fleet spends an afternoon uncertified.
+	// CERTIFICATION AFTER AN ADOPT IS ON BY DEFAULT. An adopt changes the build
+	// on every machine it touches and so invalidates every certificate those
+	// machines held; leaving the renewal to whoever remembers is how a fleet
+	// spends an afternoon uncertified.
 	//
-	// "On by default" cannot mean guessed paths -- SPEC-UPDATE rule 1 -- so it means this:
-	// an adopt that names none of the three and does not waive it is REFUSED, with both
-	// roads on the line. Waiving is `--no-certify`, and it is said out loud on the verdict.
+	// "On by default" cannot mean guessed paths (a guessed path makes two
+	// runs of one command mean different things), so it means this: an adopt
+	// that names none of the three and does not waive it is REFUSED, with both
+	// roads on the line. Waiving is `--no-certify`, and it is said out loud on
+	// the verdict.
 	if verb == "adopt" {
 		var half []string
 		for _, x := range []struct{ n, v string }{{"certify", o.certify}, {"certs", o.certs}, {"standard", o.standard}} {

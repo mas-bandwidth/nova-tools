@@ -23,22 +23,20 @@ const SumsFile = "SHA256SUMS"
 
 // DigestFile holds the sha256 OF SumsFile, written beside it by `release build`.
 //
-// It exists because of the fourth release dogfood (2026-09-18). `adopt` fetching
-// a release from another machine must check it against a digest that did NOT
-// travel with the bits, and the two ways to have one -- the annotated tag and
-// the CHANGELOG entry -- both belong to a TAGGED release. A dev build has no
-// tag, so the digest had to be computed on the machine being adopted FROM,
-// which is that machine vouching for its own bytes and is not evidence at all.
-// This file is written where the build ran, on the coordinator, out of the
-// SHA256SUMS the build had just verified; `adopt --expect-sums-from` reads it
-// from there. A digest computed on the machine being adopted from is not
-// evidence about a fetch.
+// `adopt` fetching a release from another machine must check it against a digest that
+// did NOT travel with the bits, and the two ways to have one -- the annotated tag and
+// the CHANGELOG entry -- both belong to a TAGGED release. A dev build has no tag, so
+// the digest must be computed on the machine being adopted FROM, which is that machine
+// vouching for its own bytes and is not evidence at all. This file is written where
+// the build ran, on the coordinator, out of the SHA256SUMS the build had just verified;
+// `adopt --expect-sums-from` reads it from there. A digest computed on the machine
+// being adopted from is not evidence about a fetch.
 const DigestFile = "SUMS.digest"
 
 // Platform is the goos-goarch an artifact directory is named for. A release
-// built here for this host is the fleet's common case -- hulk builds for hulk,
-// the Studio builds for the Studio -- and --platform is the flag for the other
-// one, cross-compiling to a bench from wherever the release was cut.
+// built here for this host is the fleet's common case, and --platform is the
+// flag for the other one: cross-compiling to a bench from wherever the release
+// was cut.
 func Platform(flagValue string) (string, string, error) {
 	if flagValue == "" {
 		return runtime.GOOS, runtime.GOARCH, nil
@@ -54,17 +52,16 @@ func Platform(flagValue string) (string, string, error) {
 // ExeSuffix is what a tool's FILE is called on one platform: `nova-bus` on unix,
 // `nova-bus.exe` on windows. It takes the TARGET's goos, never the host's,
 // because every one of these names is decided for the machine the binary will
-// run on rather than for the machine deciding it -- a release cut on the Studio
-// for a windows bench names windows files, and a release built ON windows names
-// them the same way.
+// run on rather than for the machine deciding it: a release cut for a windows
+// bench names windows files, and a release built ON windows names them the same
+// way.
 //
 // Reading runtime.GOOS at each of these sites instead is the defect this exists
 // to make impossible, and it is a defect that hides: it is right on the host
 // that happens to match and silently wrong on every other, so the artifacts end
 // up called one thing while everything looking for them asks for another. The
-// Windows PR leg found the test half of it (integration-4, 2026-09-18); the
-// product half was `adopt` composing the remote command as a bare `nova-update`,
-// which named a path that does not exist on a windows bench.
+// product half is `adopt` composing the remote command as a bare `nova-update`,
+// which names a path that does not exist on a windows bench.
 func ExeSuffix(goos string) string {
 	if goos == "windows" {
 		return ".exe"
@@ -168,12 +165,13 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// THE STAMP IS COMPOSED ONCE, before the first target, the way
 	// tools/ghrelease's ldflags verb composes it once for the release
 	// workflow: `-X main.version=` with an empty value is a legal linker flag
-	// that stamps nothing, and nothing downstream notices (#118).
+	// that stamps nothing, and nothing downstream notices.
 	args := []string{"-trimpath", "-ldflags", Ldflags(o.version)}
 	// What the summary line names: every platform built, and every platform's
-	// digest, in the order they were asked for. A release half a platform
-	// short used to print one cheerful line and say nothing about the half
-	// that was never made.
+	// digest, in the order they were asked for. The summary must name every
+	// platform or the missing one is silent: a release half a platform short
+	// is a release whose receipt agrees with what was built and disagrees with
+	// what was promised.
 	var names, digests []string
 	for _, tgt := range targets {
 		goos, goarch := tgt.goos, tgt.goarch
@@ -229,7 +227,7 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			field(o.version), field(goos+"-"+goarch), len(tools), verified, field(dir), field(digest), field(digestPath))
 	}
 	// LAST, and never a reason to fail: every platform is built and verified,
-	// and the old version directories under --out are removed by the rule in
+	// and every version directory under --out is removed by the rule in
 	// prune.go. The version just built stays, and so does the version of the
 	// nova-update running this build, which is what this machine has installed.
 	self := ""
@@ -237,10 +235,10 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		self = deps.Self()
 	}
 	pruned, pruneFailed := pruneDefault(o.out, func(name string) bool { return name == o.version || name == self }, errs)
-	// ONE LINE THAT NAMES EVERY PLATFORM. The repeated --platform used to keep
-	// the LAST flag and print one green receipt, which is how a release ends
-	// up half a platform short with nobody the wiser. `platforms=` and `sums=`
-	// are the same list in the same order, one token each.
+	// ONE LINE THAT NAMES EVERY PLATFORM. Every --platform is recorded, in the
+	// order it was given; `platforms=` and `sums=` are the same list in the same
+	// order, one token each, so a summary line with one of them shorter than the
+	// other names the platform that was never built.
 	fmt.Fprintf(out, "RELEASE BUILD OK version=%s platforms=%s tools=%d sums=%s dogfood=%s out=%s pruned=%d prune-failed=%d\n",
 		field(o.version), field(strings.Join(names, ",")), len(tools), field(strings.Join(digests, ",")), gate, field(o.out), pruned, pruneFailed)
 	return 0
