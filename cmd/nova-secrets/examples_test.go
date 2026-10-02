@@ -183,3 +183,83 @@ func TestTheHelpExamplesAreWhatTheSeatsVerbsPrint(t *testing.T) {
 		}},
 	})
 }
+
+// TestTheHelpExamplesRunInOrderFromSeatAddToSeatInject: a reader who types the banner's
+// seat add line and then its seat inject line, with the step the banner states between
+// them, gets both done. seat add commits nothing and seat inject refuses a store with
+// uncommitted changes, so the banner names the commit; this runs the git lines it names
+// (`git -C ./secrets ...`) between the two. sops is a fake whose encrypt writes a file
+// sealed to bo's rule, so no key or value is real.
+func TestTheHelpExamplesRunInOrderFromSeatAddToSeatInject(t *testing.T) {
+	t.Parallel()
+	h := newSittingHome(t)
+	// every encrypt is new ciphertext, as sops's is: the data carries the fake's pid
+	sealed := "GH_TOKEN: ENC[AES256_GCM,data:%s,iv:a,tag:b,type:str]\\nDEEPSEEK_API_KEY: ENC[AES256_GCM,data:y,iv:a,tag:b,type:str]\\n" +
+		"NOVA_REDIS_BENCH_PASSWORD: ENC[AES256_GCM,data:z,iv:a,tag:b,type:str]\\nsops:\\n    age:\\n        - recipient: " + h.bo + "\\n        - recipient: " + agePub('z') + "\\n"
+	writeFakeExe(t, h.sops, "#!/bin/sh\ncase \"$1\" in\n--version) echo 'sops 3.13.3'; exit 0 ;;\n"+
+		"-d) printf 'GH_TOKEN: gh-value\\nDEEPSEEK_API_KEY: ds-value\\nNOVA_REDIS_BENCH_PASSWORD: pw-value\\n'; exit 0 ;;\n"+
+		"-e) cat >/dev/null; printf '"+sealed+"' \"$$\"; exit 0 ;;\nesac\nexit 0\n")
+	out, errOut, code := runNovaSecrets(h.bin, "help")
+	require.Equal(t, 0, code, "`nova-secrets help` exits %d: %s", code, errOut)
+	examples, err := onboarding.ExampleLines(out, "nova-secrets")
+	require.NoError(t, err)
+	var add, inject string
+	for _, ex := range examples {
+		switch {
+		case strings.HasPrefix(ex, "nova-secrets seat add ") && add == "":
+			add = ex
+		case strings.HasPrefix(ex, "nova-secrets seat inject ") && strings.HasSuffix(ex, " --no-pr") && inject == "":
+			inject = ex
+		}
+	}
+	require.NotEmpty(t, add, "the banner's example block holds no seat add line")
+	require.NotEmpty(t, inject, "the banner's example block holds no seat inject --no-pr line")
+	var between []string
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, "git -C ./secrets ") {
+			between = append(between, l)
+		}
+	}
+	shell := func(line string, args ...string) (string, string, int) {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = h.home
+		cmd.Env = []string{"PATH=" + h.path, "HOME=" + h.home}
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		code := 0
+		if err := cmd.Run(); err != nil {
+			exitErr, ok := err.(*exec.ExitError)
+			require.True(t, ok, "%s could not be run: %v", line, err)
+			code = exitErr.ExitCode()
+		}
+		return stdout.String(), stderr.String(), code
+	}
+	secrets := func(line string) (string, string, int) {
+		t.Helper()
+		words, err := onboarding.SplitShell(line)
+		require.NoError(t, err)
+		args := []string{h.bin}
+		for _, a := range words[1:] {
+			switch {
+			case strings.HasPrefix(a, "~/"):
+				a = filepath.Join(h.home, strings.TrimPrefix(a, "~/"))
+			case a == "/opt/homebrew/bin/sops":
+				a = h.sops
+			case a == "$BO_PUB":
+				a = h.bo
+			}
+			args = append(args, a)
+		}
+		return shell(line, args...)
+	}
+	stdout, stderr, code := secrets(add)
+	require.Equal(t, 0, code, "%s\nstdout: %s\nstderr: %s", add, stdout, stderr)
+	for _, l := range between {
+		stdout, stderr, code = shell(l, "/bin/sh", "-c", l)
+		require.Equal(t, 0, code, "%s\nstdout: %s\nstderr: %s", l, stdout, stderr)
+	}
+	stdout, stderr, code = secrets(inject)
+	assert.Equal(t, 0, code, "%s, after the seat add line and the step the banner states (%q)\nstdout: %s\nstderr: %s", inject, between, stdout, stderr)
+	assert.True(t, strings.HasPrefix(stdout, "SECRETS SEAT INJECT OK seat=bo from=ada names=1 committed branch=seal/bo-NOVA_REDIS_BENCH_PASSWORD-"), "stdout: %s\nstderr: %s", stdout, stderr)
+}

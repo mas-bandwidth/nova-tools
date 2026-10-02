@@ -1626,7 +1626,9 @@ It refuses, changing nothing, when the source seat cannot be opened with `--key`
 here, when `<seat>.yaml` already exists, when a rule already matches that file, or
 when `--from` does not carry one of the `--only` names. It prints no value on any
 line. It commits nothing: the receipt names the two changed files, and the store's
-gate reads them in a pull request as it does every other recipient change.
+gate reads them in a pull request as it does every other recipient change. Commit
+them before `seat inject` on that store, which refuses uncommitted changes:
+`git -C ./secrets add .sops.yaml worker.yaml && git -C ./secrets commit -m 'seat worker'`.
 
 ### Re-seal values into an existing seat
 
