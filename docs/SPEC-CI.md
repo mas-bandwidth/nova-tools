@@ -2499,6 +2499,15 @@ the original failed measurement.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
 **Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched.
 
+### `secrets-unit-fakes` — nova-secrets unit tests never spawn real sops or real age-keygen
+
+**The rule.** The unit tier of `cmd/nova-secrets` and `internal/secrets` runs against fast fakes that assert argv, check envelopes, and test invariants in memory without invoking real `sops` or real `age-keygen`. Heavy cryptographic operations in real binaries are reserved for the functional tier (`//go:build functional`). Unit tests run under a refusing PATH that blocks real `sops`, `age-keygen`, and `age`, and non-functional test files carry no direct `LookPath` for those binaries.
+**The mistake it prevents.** Unit tests spawning real `sops` and `age-keygen` ran heavy cryptographic operations (Scrypt, Argon2, AES-GCM, X25519) on every test shard, driving CPU to 800%+ on developer benches during parallel runs (#4301).
+**The test.** `TestSecretsUnitTierRefusesRealSopsAndAgeKeygen` and `TestSecretsUnitTierHasNoDirectLookPathForSopsOrAgeKeygen` (`internal/ci/secrets_unit_tier_class_test.go`).
+**Its allowlist.** None. The unit tier never spawns real crypto binaries.
+**Its remedy lines.** `remedy="use the in-memory fakes in cmd/nova-secrets/testdata/fakes for unit tests, or gate real binary tests behind //go:build functional"`.
+**Its narrowings.** It scans non-functional `_test.go` files in `cmd/nova-secrets` and `internal/secrets`, skipping files tagged `//go:build functional` or ending in `_functional_test.go`.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays

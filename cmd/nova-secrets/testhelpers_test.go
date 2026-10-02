@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 type keyPair struct {
@@ -18,28 +19,92 @@ type keyPair struct {
 	pubKey   string
 }
 
+var (
+	buildOnce          sync.Once
+	builtDir           string
+	builtBin           string
+	builtFakeSops      string
+	builtFakeAgeKeygen string
+	buildErr           error
+	buildOut           []byte
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if builtDir != "" {
+		os.RemoveAll(builtDir)
+	}
+	os.Exit(code)
+}
+
+// The tool is built once per test run, not once per test. Thirty-two tests each ran
+// their own `go build` (about 3.5 s apiece), which put this package at two minutes:
+// the whole budget of the two-minute law spent compiling the same binary (Glenn
+// 2026-09-17). No test writes to the binary, so one shared copy is safe.
+// Fast fake sops and age-keygen are also built here once per test run.
+func ensureBuilt(t *testing.T) {
+	t.Helper()
+	buildOnce.Do(func() {
+		builtDir, buildErr = os.MkdirTemp("", "nova-secrets-testbin-*")
+		if buildErr != nil {
+			return
+		}
+		builtBin = filepath.Join(builtDir, "nova-secrets")
+		fakeBin := filepath.Join(builtDir, "testfakes")
+		builtFakeSops = filepath.Join(builtDir, "sops")
+		builtFakeAgeKeygen = filepath.Join(builtDir, "age-keygen")
+
+		if runtime.GOOS == "windows" {
+			builtBin += ".exe"
+			fakeBin += ".exe"
+			builtFakeSops += ".exe"
+			builtFakeAgeKeygen += ".exe"
+		}
+
+		build := exec.Command("go", "build", "-o", builtBin, ".")
+		build.Env = goenv.Clean(os.Environ())
+		buildOut, buildErr = build.CombinedOutput()
+		if buildErr != nil {
+			return
+		}
+
+		buildFakes := exec.Command("go", "build", "-o", fakeBin, "./testdata/fakes")
+		buildFakes.Env = goenv.Clean(os.Environ())
+		buildOut, buildErr = buildFakes.CombinedOutput()
+		if buildErr != nil {
+			return
+		}
+
+		if err := testbin.Place(fakeBin, builtFakeSops); err != nil {
+			buildErr = err
+			return
+		}
+		if err := testbin.Place(fakeBin, builtFakeAgeKeygen); err != nil {
+			buildErr = err
+			return
+		}
+	})
+	if buildErr != nil {
+		t.Fatalf("failed to build test binaries: %v, out: %s", buildErr, string(buildOut))
+	}
+}
+
+func buildNovaSecrets(t *testing.T) string {
+	t.Helper()
+	ensureBuilt(t)
+	return builtBin
+}
+
 func findSops(t *testing.T) string {
 	t.Helper()
-	if p, err := exec.LookPath("sops"); err == nil {
-		return p
-	}
-	if _, err := os.Stat("/opt/homebrew/bin/sops"); err == nil {
-		return "/opt/homebrew/bin/sops"
-	}
-	t.Skip("sops binary not found")
-	return ""
+	ensureBuilt(t)
+	return builtFakeSops
 }
 
 func findAgeKeygen(t *testing.T) string {
 	t.Helper()
-	if p, err := exec.LookPath("age-keygen"); err == nil {
-		return p
-	}
-	if _, err := os.Stat("/opt/homebrew/bin/age-keygen"); err == nil {
-		return "/opt/homebrew/bin/age-keygen"
-	}
-	t.Skip("age-keygen binary not found")
-	return ""
+	ensureBuilt(t)
+	return builtFakeAgeKeygen
 }
 
 func genKey(t *testing.T, dir, name string) keyPair {
@@ -124,54 +189,6 @@ func sealFileWithSops(t *testing.T, sopsPath string, filePath string, ageKeys []
 	if err := os.WriteFile(filePath, out, 0600); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// The tool is built once per test run, not once per test. Thirty-two tests each ran
-// their own `go build` (about 3.5 s apiece), which put this package at two minutes:
-// the whole budget of the two-minute law spent compiling the same binary (Glenn
-// 2026-09-17). No test writes to the binary, so one shared copy is safe.
-var (
-	buildOnce sync.Once
-	builtDir  string
-	builtBin  string
-	buildErr  error
-	buildOut  []byte
-)
-
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if builtDir != "" {
-		os.RemoveAll(builtDir)
-	}
-	os.Exit(code)
-}
-
-func buildNovaSecrets(t *testing.T) string {
-	t.Helper()
-	buildOnce.Do(func() {
-		builtDir, buildErr = os.MkdirTemp("", "nova-secrets-testbin-*")
-		if buildErr != nil {
-			return
-		}
-		builtBin = filepath.Join(builtDir, "nova-secrets")
-		if runtime.GOOS == "windows" {
-			// `go build -o <file>` writes EXACTLY the name it is handed, and
-			// os/exec resolves a path whose extension is not in PATHEXT through
-			// lookPathExts, which only ever tries <path>.exe, <path>.bat and the
-			// rest. Without this suffix the build succeeds and the binary then
-			// never starts, and because the failure is an *exec.Error and not an
-			// *exec.ExitError it arrived at the caller as exit 1 with two empty
-			// streams -- indistinguishable from a tool that refused without a word.
-			builtBin += ".exe"
-		}
-		build := exec.Command("go", "build", "-o", builtBin, ".")
-		build.Env = goenv.Clean(os.Environ())
-		buildOut, buildErr = build.CombinedOutput()
-	})
-	if buildErr != nil {
-		t.Fatalf("failed to build nova-secrets: %v, out: %s", buildErr, string(buildOut))
-	}
-	return builtBin
 }
 
 func runNovaSecrets(bin string, args ...string) (stdout string, stderr string, exitCode int) {
