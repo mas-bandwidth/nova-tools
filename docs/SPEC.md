@@ -3541,10 +3541,12 @@ reported here rather than re-specified:
   `state=published` or `state=already-published` without ever writing a second
   note — is [docs/SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md).
 
-Everything below is the fourth half: **bounded full checks, with cap, count
-and continuation, and repeated diagnostic remedies aggregated, run on the shared
-collector rather than another fetch clock.** It is proposed and not
-implemented: nothing it describes changes a byte of what `check` prints.
+Everything below is the fourth half: **bounded full checks**. What ships is the
+cap and the count ("The bound — check"): at most `--max` findings of each class,
+a `BUS MORE` line per capped class and a `BUS CHECK` count by class. What was
+proposed beside it and is withdrawn, not built: repeated remedies aggregated
+into `BUS FINDING` lines, a `BUS SUMMARY` line, and `--after` continuation on a
+shared collector. `check` prints none of those.
 
 #### The transaction, stated as a flow
 
