@@ -326,7 +326,7 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 //
 // IT RETURNS THE IDS IT GRANTED, not a count, and that is deliberate: the
 // count was what let a holder release by owner and label instead of by
-// identity, and give away a seat that was never its own. len(ids) is the count for anyone who only
+// identity, and give away a seat that is not its own. len(ids) is the count for anyone who only
 // wanted that; taking a lease without learning which one is now impossible.
 // Hand the ids back to ReleaseSlotLeasesByID.
 func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Duration, label string, now time.Time, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
@@ -511,7 +511,7 @@ func ReleaseSlotLeasesForcing(store, owner, label string, all, force bool) (rele
 // ReleaseSlotLeasesByID removes EXACTLY the leases named, and only while they are still
 // the caller's. It exists because releasing by owner and label is not releasing by
 // identity: an owner is a bench and a label is a card's name, and two runs that share both
-// -- two slots, two benches, a retry -- would each give away the other's seat. A holder that took leases learns their ids
+// -- two slots, two benches, a retry -- would each give away the other's seat. A holder that takes leases learns their ids
 // from TakeSlotLeases and hands exactly those back here.
 //
 // The pid is a fence, not bookkeeping. An id whose lease has since been reaped and remade

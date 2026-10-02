@@ -261,7 +261,7 @@ func WriteStageTimeoutResult(jobDir, bench string, secs int) (string, error) {
 
 // stageWaitDelay bounds how long a staging git call waits for its pipes after the deadline
 // kill. git clone runs helpers (git-remote-https, index-pack) that inherit the output pipe;
-// killing git alone left them holding it. Each call leads its own process group, the deadline kills the group, and
+// killing git alone leaves them holding it. Each call leads its own process group, the deadline kills the group, and
 // WaitDelay closes the pipes a bounded time after that, so the 120 s timeout is hard.
 const stageWaitDelay = 2 * time.Second
 
