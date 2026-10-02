@@ -77,6 +77,38 @@ func TestBriefIsRefusedForAStartedCard(t *testing.T) {
 	}
 }
 
+// A brief refused for a card dealt names what changes it instead, by the
+// lifecycle's moves, and does so on a RUNNING machine too, where stopping it
+// would not help: rework --fix from review (after a return from merging), drop
+// and a new card from any open state, a new card after landing.
+func TestABriefRefusedForAStartedCardNamesItsRemedy(t *testing.T) {
+	t.Parallel()
+	drop := "nova-sprint drop a-1 --reason '<why>', then nova-sprint add --stream a <new id> --brief-file <path>"
+	rework := "nova-sprint rework a-1 --fix '<what changes>'"
+	want := map[string][]string{
+		"ready with an attempt dealt": {"run: " + drop},
+		"working":                     {"run: " + drop, "once it finishes (review), " + rework},
+		"review":                      {"run: " + rework, drop},
+		"merging":                     {"run: nova-sprint return a-1 --reason '<why>', then " + rework, drop},
+		"landed":                      {"run: nova-sprint add --stream a <new id> --brief-file <path> for the change"},
+	}
+	for _, tc := range startedCases {
+		require.NotEmpty(t, want[tc.name], tc.name)
+		for _, running := range []bool{false, true} {
+			w := editWorld(t)
+			w.s.Running = running
+			w.place(w.s.Work, "a-1", "a", tc.col)
+			w.s.Work.Placed("a-1").Fields["attempt"] = tc.attempt
+			p := Brief(w.s, BriefReq{ID: "a-1", Brief: "new", Who: "coordinator"})
+			require.Len(t, p.Refused, 1, tc.name)
+			assert.NotContains(t, p.Refused[0].Why, "the machine is RUNNING", tc.name)
+			for _, s := range want[tc.name] {
+				assert.Contains(t, p.Refused[0].Why, s, tc.name)
+			}
+		}
+	}
+}
+
 func TestBriefIsRefusedForASentinelAndAnUnknownCard(t *testing.T) {
 	t.Parallel()
 	w := editWorld(t)

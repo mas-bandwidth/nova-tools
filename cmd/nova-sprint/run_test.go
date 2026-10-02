@@ -34,7 +34,7 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 		t.Fatalf("start when running: %s", out)
 	}
 	out = ta.ok("tick")
-	if !strings.Contains(out, "MOVED deal: s1-1 ready -> working") || !strings.Contains(out, "TICK OK state=RUNNING idle=no moved=3") {
+	if !strings.Contains(out, "MOVED deal: s1-1 work ready -> working") || !strings.Contains(out, "TICK OK state=RUNNING idle=no moved=3") {
 		t.Fatalf("tick: %s", out)
 	}
 	ta.a.sleep(store.MachineSilence + time.Second)
@@ -67,7 +67,7 @@ func TestRunTicksOnlyWhileRunning(t *testing.T) {
 	ta.ok("start")
 	out.Reset()
 	ta.a.runLoop(context.Background(), st, 20, 3, &out, &errb)
-	if !strings.Contains(out.String(), "machine RUNNING") || !strings.Contains(out.String(), "MOVED deal: s1-1 ready -> working") {
+	if !strings.Contains(out.String(), "machine RUNNING") || !strings.Contains(out.String(), "MOVED deal: s1-1 work ready -> working") {
 		t.Fatalf("run while running:\n%s", out.String())
 	}
 	if out := ta.ok("where"); !strings.Contains(out, "SPRINT TABLE\n\n0/3 0.0% -> ETA\n\n") {

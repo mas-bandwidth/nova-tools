@@ -76,10 +76,19 @@ func statsText(ps sprint.PassStats) string {
 		routes.Rows = append(routes.Rows, row(r.Route, "takes", n(r.Takes), "ok", n(r.OK), "failed", n(r.Failed), "provider", n(r.Provider),
 			"run wall", measureText(r.RunWall)))
 	}
-	return ntable.Render(stages, ntable.RenderOpts{Title: "stages"}) + "\n" +
-		ntable.Render(work, ntable.RenderOpts{Title: "work"}) + "\n" +
-		ntable.Render(reads, ntable.RenderOpts{Title: "reads"}) + "\n" +
-		ntable.Render(routes, ntable.RenderOpts{Title: "routes"}) + "\n"
+	return ntable.Render(stages, ntable.RenderOpts{Title: "stages"}) + statsLegend["stages"] + "\n" +
+		ntable.Render(work, ntable.RenderOpts{Title: "work"}) + statsLegend["work"] + "\n" +
+		ntable.Render(reads, ntable.RenderOpts{Title: "reads"}) + statsLegend["reads"] + "\n" +
+		ntable.Render(routes, ntable.RenderOpts{Title: "routes"}) + statsLegend["routes"] + "\n"
+}
+
+// statsLegend is the line under each stats table saying what its columns
+// count (sprint.Stats): a reader meets the tables cold.
+var statsLegend = map[string]string{
+	"stages": "stages: per primary, admitted to first dealt (deal wait), its last ok finish to accepted (finish to two reads), accepted to landed, admitted to landed (total); seconds as median, max, n primaries\n",
+	"work":   "work: per member, cards is its work cards (one per attempt, counted to the member it was last dealt to), failed those finished failed; take wait is dealt to taken, run wall the child's wall from its usage, report lag taken to finished less the run wall\n",
+	"reads":  "reads: per reader, cards is the read cards asked of it (retired ones too); begin wait is asked to begun, run wall the usage's wall, report lag begun to read less the run wall\n",
+	"routes": "routes: per route, takes is every take on it, work and read alike, each take of a card again counted (the cards' cost records); ok came back with its answer, provider ended by the provider or with no result, failed every other end; run wall the takes' usage walls\n",
 }
 
 // measureText is a measure as its cell prints it: the median and the max in seconds

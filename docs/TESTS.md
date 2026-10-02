@@ -875,14 +875,16 @@ store. Nothing is normalised: every value on every line reproduces.
 
 ```text
 $ nova-sprint init --readers reader-a,reader-b --members m1
-INIT OK tables=work,readers,merge,fleet view=sprint
+INIT OK tables=work,readers,merge,fleet view=sprint readers=reader-a,reader-b
 MOVED m1 added, down until it beats
 FLEET-UP OK moved=1 refused=0 notes=0 op=fleet-release-t1-1
 STOPPED
+NOTE a twin beats every member at every verb: each member added is up after the next nova-sprint tick
 
 $ nova-sprint add --stream s1 --count 1
 MOVED s1-1 -> ready stream=s1 score=1
 ADD OK moved=1 refused=0 notes=0 op=add-t2-1
+NOTE the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>
 STOPPED  0/1 0.0%
 
 $ nova-sprint start
@@ -897,18 +899,18 @@ TICK OK state=RUNNING idle=no moved=1 notes=2
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint tick
-MOVED deal: s1-1 ready -> working card=s1-1.w1 member=m1
+MOVED deal: s1-1 work ready -> working card=s1-1.w1 member=m1 (fleet ready)
 TABLES rows changed: work=1 readers=0 merge=0 fleet=1
 TICK OK state=RUNNING idle=no moved=1 notes=1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint take --as m1 --epoch 0
-MOVED s1-1.w1 ready -> working member=m1 gen=1
+MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
 PACKET s1-1.w1 attempt=1 gen=1 epoch=0
   branch: sprint/s1-1.w1.g1.e0
   base: the stream's base
   notes: none
-  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --report '<what you did>' [--failed]
+  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
 TAKE OK moved=1 refused=0 notes=0 op=take-t23-1
 0/1 0.0% -> ETA  machine: running
 
@@ -918,7 +920,7 @@ FINISH OK moved=1 refused=0 notes=1 op=finish-t24-1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint tick
-MOVED drain: s1-1.w1 working -> done ok; s1-1 working -> review (finish by boss)
+MOVED drain: s1-1.w1 working -> done ok; s1-1 working -> review (finish by m1)
 MOVED ask: s1-1 asked of reader-a, reader-b
 TABLES rows changed: work=1 readers=2 merge=0 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=0
@@ -945,7 +947,7 @@ READ OK moved=1 refused=0 notes=0 op=read-t30-1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint tick
-MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by boss); s1-1.r1.reader-b reading -> ok (read by boss)
+MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by reader-a); s1-1.r1.reader-b reading -> ok (read by reader-b)
 MOVED accept: s1-1 review -> merging queued (ok from reader-a, reader-b)
 TABLES rows changed: work=1 readers=0 merge=1 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=2

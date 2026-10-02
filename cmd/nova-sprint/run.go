@@ -224,8 +224,8 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	var profileTicks int
 	var land bool
 	st, c, code := a.machineVerb("run", args, stderr, func(fs flagSet) {
-		fs.StringVar(&listen, "listen", "", "also serve the workers' verbs on this address, host:port (this machine's address on the fleet's private network): a worker started with nova-swarm member --server sends its verbs here and never reads or writes the store itself")
-		fs.BoolVar(&land, "land", false, "also land what the readers passed, one landing at a time (land's defaults: each card's REPO: and BASE: lines)")
+		fs.StringVar(&listen, "listen", "", "also be the sprint's server: the workers' verbs on this `address:port` (this machine's address on the fleet's private network; 0.0.0.0 and other every-network addresses are refused), where nova-swarm member --server <address>:<port> sends them, and the coordinator's verbs on 127.0.0.1 at the same port, where NOVA_SPRINT_SERVER=127.0.0.1:<port> sends them")
+		fs.BoolVar(&land, "land", false, "also land what the readers passed, every "+LandEvery.String()+", one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); land is then not run by hand")
 		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
 		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
 	})

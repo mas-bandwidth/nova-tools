@@ -213,6 +213,16 @@ func contains(xs []string, x string) bool {
 	return false
 }
 
+// Records reads the named records of a table by identity, placed or kept, in one read
+// set per ntable.LimitReadSetMembers ids; an id with no record is left out.
+func (st *Store) Records(ctx context.Context, logical string, ids []string) ([]*sprint.Card, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return st.records(ctx, logical, ids)
+}
+
 func (st *Store) records(ctx context.Context, logical string, ids []string) ([]*sprint.Card, error) {
 	var out []*sprint.Card
 	for start := 0; start < len(ids); start += ntable.LimitReadSetMembers {

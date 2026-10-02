@@ -41,10 +41,29 @@ func (a *app) landLoop(ctx context.Context, addr string, stdout io.Writer) {
 // a landing refused round after round is said once, not every LandEvery. more is further
 // arguments of land (none from the loop: the clone, the base and the check are land's
 // defaults). It returns land's exit code.
+//
+// After the landing, and never during one, the round runs the cleanup (landprune.go)
+// when it is due: a round with nothing queued to merge, or PruneEvery branches waiting,
+// and no failed cleanup waiting out PruneRetry. Its PRUNE lines are printed as land's.
+// A stop of the loop flushes nothing: what is still queued then stays on origin.
 func (a *app) landRound(ctx context.Context, addr string, more []string, stdout io.Writer) int {
+	code, idle := a.landOnce(ctx, addr, more, stdout)
+	if a.prune.due(idle, a.now()) {
+		at := oneline.Field(a.now().Format("15:04:05"))
+		for _, r := range a.flushPrune(ctx, false) {
+			fmt.Fprintf(stdout, "%s %s\n", at, oneline.Escape(r.line(false)))
+		}
+	}
+	return code
+}
+
+// landOnce is a round's landing: land's exit code, and idle when the merge queue was
+// read and held nothing.
+func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout io.Writer) (int, bool) {
 	a.serial.Lock()
 	queued, coordinator, err := a.queuedToMerge(ctx, addr)
 	a.serial.Unlock()
+	idle := err == nil && !queued
 	var lines []string
 	code := 0
 	switch {
@@ -52,7 +71,9 @@ func (a *app) landRound(ctx context.Context, addr string, more []string, stdout 
 		lines, code = []string{"LAND FAILED the merge queue could not be read: " + oneline.Err(err) + "; nothing was landed, and the next round tries again; run: nova-sprint where"}, 2
 	case queued && coordinator != "":
 		var out, errb bytes.Buffer
+		a.landLazy = true
 		code = a.cmdLand(append([]string{"--redis", addr, "--actor", coordinator}, more...), &out, &errb)
+		a.landLazy = false
 		// what landed (stdout's LAND lines, but its summary), and everything land said
 		// was wrong (stderr: a refused or failed batch, a refusal before any batch, the
 		// remedy)
@@ -71,7 +92,7 @@ func (a *app) landRound(ctx context.Context, addr string, more []string, stdout 
 	if code != 0 {
 		said = strings.Join(lines, "\n")
 		if said == a.landFailed {
-			return code // said when it began
+			return code, idle // said when it began
 		}
 	}
 	a.landFailed = said
@@ -79,7 +100,7 @@ func (a *app) landRound(ctx context.Context, addr string, more []string, stdout 
 	for _, line := range lines {
 		fmt.Fprintf(stdout, "%s %s\n", at, oneline.Escape(line))
 	}
-	return code
+	return code, idle
 }
 
 // queuedToMerge says a stream has a card queued to merge, and names the sprint's

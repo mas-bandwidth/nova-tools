@@ -2,29 +2,35 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
 // The coordinator's verbs go to the sprint's server too (the owner, 2026-10-01: "Let's
 // go and finalize the one client/server path for writing and then this whole system
-// collapses into a tiny core"). With NOVA_SPRINT_SERVER set (the server's loopback
-// address, which `run --listen` prints), a verb that writes the sprint is not run here:
-// its arguments are sent to the server, which runs it beside the store on its one line
-// of control, and what it printed is printed here with its exit code. One process
-// writes the sprint. The reads (queue, inbox, card, log, check, where, routes), the
-// verbs the server runs for nobody (notServed), a verb that waits for the sprint to
-// move (waits), a verb given its own --redis, and a verb's help run here, as before.
-// What a verb's arguments say (its help, its flags, which word is a flag's value) is
-// read by the verb's own flags (readVerb), never by a scan of the words.
+// collapses into a tiny core"; and of the reads: "OK let's close the gap."). With
+// NOVA_SPRINT_SERVER set (the server's loopback address, which `run --listen` prints),
+// a verb the server runs is not run here: its arguments are sent to the server, which
+// runs it beside the store on its one line of control, and what it printed is printed
+// here with its exit code, so the coordinator's side needs no store and no store
+// credentials. One process reads and writes the sprint. The verbs the server runs for
+// nobody (notServed), a verb given its own --redis, and a verb's help run here, as
+// before. A read that waits for the sprint to move (waits) is never run by the server:
+// here it sends the server its plain read, again and again (where --watch: one a
+// frame; inbox --wait: the log's tick-end notes, polled). What a verb's arguments say
+// (its help, its flags, which word is a flag's value) is read by the verb's own flags
+// (readVerb), never by a scan of the words.
 
 // ServerEnv names the sprint's server for the coordinator's verbs: host:port.
 const ServerEnv = "NOVA_SPRINT_SERVER"
@@ -130,46 +136,80 @@ func (v verbArgs) unserved() string {
 	return ""
 }
 
-// writes says the verb writes the sprint: a coordinator's, a report's or a worker's
-// verb, or inbox --read, which moves the coordinator's cursor.
-func (v verbArgs) writes() bool {
-	switch verbClasses[v.name] {
-	case classCoordinator, classReport, classWorker:
-		return true
+// server is the sprint's server this process sends the verb's reads and writes to
+// (NOVA_SPRINT_SERVER), "" when the verb runs on a store here: no server named, this
+// process is the server, or the verb was given its own --redis (fs, as parsed).
+func (a *app) server(fs *flag.FlagSet) string {
+	if a.serveAddr != "" || (verbArgs{fs: fs}).given("redis") {
+		return ""
 	}
-	return v.name == "inbox" && v.on("read")
+	return a.getenv(ServerEnv)
 }
 
-// forwarded sends the verb to the sprint's server when there is one and the verb is
-// one that writes the sprint; sent is false when the verb runs here.
+// forwarded sends the verb to the sprint's server when there is one and the server runs
+// the verb; sent is false when the verb runs here.
 func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent bool) {
-	addr := a.getenv(ServerEnv)
-	if addr == "" || a.serveAddr != "" {
-		return 0, false // no server named, or this process is the server
-	}
 	v := readVerb(args)
-	if v.unserved() != "" || v.help || v.err != nil || !v.writes() {
-		return 0, false // not served, a read, a wait, its help, or flags it refuses: runs here
+	addr := a.server(v.fs)
+	if addr == "" || v.unserved() != "" || v.help || v.err != nil {
+		return 0, false // no server, not served, a wait, its help, or flags it refuses: runs here
 	}
+	res, err := a.ask(context.Background(), addr, args[:v.words], args[v.words:])
+	if err != nil {
+		return a.unanswered(v.name, addr, err, stderr), true
+	}
+	a.answer(res, stdout, stderr)
+	return res.Code, true
+}
+
+// ask sends the server one verb (its words, then what follows them) as this caller:
+// who acts is this caller's alone, said even when it is no one (the server never acts
+// as its own environment names), before the caller's own words so a --actor it gave
+// wins; each file it names is absolute.
+func (a *app) ask(ctx context.Context, addr string, verb, rest []string) (sprintwire.Result, error) {
 	send := a.forward
 	if send == nil {
 		send = func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error) {
 			return sprintwire.Client{Addr: addr}.Do(ctx, verbs...)
 		}
 	}
-	// who acts is this caller's alone, said even when it is no one (the server never
-	// acts as its own environment names), before the caller's own words so a --actor it
-	// gave wins
-	argv := slices.Concat(args[:v.words], []string{"--actor", a.getenv("NOVA_SPRINT_ACTOR")}, args[v.words:])
-	argv = absolutePaths(argv)
-	res, err := send(context.Background(), addr, argv)
+	argv := absolutePaths(slices.Concat(verb, []string{"--actor", a.getenv("NOVA_SPRINT_ACTOR")}, rest))
+	res, err := send(ctx, addr, argv)
 	if err != nil {
-		fmt.Fprintf(stderr, "%s %s: %s; nothing is known of what ran: read the sprint (nova-sprint where, log) before running it again\n", prog, v.name, oneline.Escape(err.Error()))
-		return 2, true
+		return sprintwire.Result{}, err
 	}
-	_, _ = io.WriteString(stdout, res[0].Stdout) // ignored: the caller's own streams
-	_, _ = io.WriteString(stderr, res[0].Stderr)
-	return res[0].Code, true
+	return res[0], nil
+}
+
+// answer prints what the server's run of a verb printed, as it printed it.
+func (a *app) answer(res sprintwire.Result, stdout, stderr io.Writer) {
+	_, _ = io.WriteString(stdout, res.Stdout) // ignored: the caller's own streams
+	_, _ = io.WriteString(stderr, res.Stderr)
+}
+
+// unanswered says the server did not answer the verb, with what to do, and is its exit
+// code: the verb is not run here behind the server's back.
+func (a *app) unanswered(verb, addr string, err error, stderr io.Writer) int {
+	fmt.Fprintf(stderr, "%s %s: %s (NOVA_SPRINT_SERVER=%s); nothing is known of what ran: once it answers, read the sprint (nova-sprint where, log) before running it again; the server is the run loop: run: nova-sprint run --listen <host:port>\n", prog, verb, oneline.Escape(err.Error()), oneline.Field(addr))
+	return 2
+}
+
+// without is the words with the named flags' words taken out, as fs parses them.
+func without(fs *flag.FlagSet, words []string, names ...string) []string {
+	drop := make([]bool, len(words))
+	// ignored: the words the verb has parsed, parsed the same again
+	_, _ = parseEach(fs, words, func(name string, at, n int) {
+		for i := at; i < at+n && slices.Contains(names, name); i++ {
+			drop[i] = true
+		}
+	})
+	var out []string
+	for i, w := range words {
+		if !drop[i] {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 // absolutePaths is the arguments with each file flag's value made absolute from this
@@ -191,9 +231,9 @@ func absolutePaths(argv []string) []string {
 	}
 	words := argv[v.words:]
 	// ignored: the words parsed above (readVerb), and parse the same again
-	_, _ = parseEach(verbFlags(v.name), words, func(at, n int) {
+	_, _ = parseEach(verbFlags(v.name), words, func(name string, at, n int) {
 		w := words[at]
-		name, value, inline := strings.Cut(strings.TrimPrefix(w[1:], "-"), "=")
+		_, value, inline := strings.Cut(w, "=")
 		switch {
 		case !slices.Contains(fileFlags, name):
 		case inline:
@@ -203,4 +243,78 @@ func absolutePaths(argv []string) []string {
 		}
 	})
 	return argv
+}
+
+// tickEndPoll is how often inbox --wait through the server reads the log for a tick end.
+const tickEndPoll = time.Second
+
+// inboxWaitAt is inbox --wait through the sprint's server, which never runs a wait. What
+// inbox --wait waits on is the next tick-end note (store.WaitTickEnd): here the log's
+// tick-end notes (log --json, as far back as the wait and a poll) are read every
+// tickEndPoll on this process's clock, until one comes that the first read did not show
+// or --timeout passes; then the inbox is read, and printed as inbox --wait prints it.
+func (a *app) inboxWaitAt(addr string, fs *flag.FlagSet, args []string, atEpoch int64, timeout time.Duration, asJSON bool, stdout, stderr io.Writer) int {
+	if atEpoch >= 0 || timeout <= 0 {
+		return refuse(stderr, "inbox", "--wait waits on the sprint's epoch for at most a --timeout above zero")
+	}
+	ctx := context.Background()
+	lastTickEnd := func() (last string, code int) {
+		res, err := a.ask(ctx, addr, []string{"log"}, []string{"--json", "--since", (timeout + tickEndPoll).String()})
+		if err != nil {
+			return "", a.unanswered("inbox --wait", addr, err, stderr)
+		}
+		if res.Code != 0 {
+			a.answer(res, stdout, stderr)
+			return "", res.Code
+		}
+		var log struct {
+			Lines []sprint.Line `json:"lines"`
+		}
+		if err := json.Unmarshal([]byte(res.Stdout), &log); err != nil {
+			return "", a.readFailed("inbox --wait", fmt.Errorf("the server's log is not JSON: %w", err), stderr)
+		}
+		for _, l := range log.Lines {
+			if l.Note != nil && l.Note.Type == sprint.NTickEnd {
+				last = l.Note.ID
+			}
+		}
+		return last, 0
+	}
+	from, code := lastTickEnd()
+	if code != 0 {
+		return code
+	}
+	woke := false
+	for end := a.now().Add(timeout); !woke && a.now().Before(end); {
+		a.sleep(min(end.Sub(a.now()), tickEndPoll))
+		var last string
+		last, code = lastTickEnd()
+		if code != 0 {
+			return code
+		}
+		woke = last != "" && last != from
+	}
+	if !woke {
+		// the timeout is said where inbox --wait says it: stdout, or stderr under --json
+		w := stdout
+		if asJSON {
+			w = stderr
+		}
+		fmt.Fprintf(w, "inbox --wait: no tick end in %s\n", timeout)
+	}
+	// The wait woke or timed out: read the inbox itself.
+	res, err := a.ask(ctx, addr, []string{"inbox"}, without(fs, args, "wait", "timeout"))
+	if err != nil {
+		return a.unanswered("inbox", addr, err, stderr)
+	}
+	var out map[string]json.RawMessage
+	if !asJSON || res.Code != 0 || json.Unmarshal([]byte(res.Stdout), &out) != nil {
+		a.answer(res, stdout, stderr)
+		return res.Code
+	}
+	// --json carries woke, as inbox --wait's does
+	out["woke"], _ = json.Marshal(woke) // ignored: a bool always encodes
+	b, _ := json.Marshal(out)           // ignored: a map of raw JSON the server encoded
+	a.answer(sprintwire.Result{Stdout: string(b) + "\n", Stderr: res.Stderr}, stdout, stderr)
+	return 0
 }

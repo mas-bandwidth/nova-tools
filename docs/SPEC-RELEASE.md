@@ -220,10 +220,17 @@ names them all:
 
 ```
 RELEASE BUILT version=<v> platform=<goos-goarch> tools=<n> verified=<n> out=<dir> sums=<sha256> digest=<path>
-RELEASE BUILD OK version=<v> platforms=<a,b,c> tools=<n> sums=<sha256,sha256,sha256> dogfood=<ok|waived|skipped> out=<dir>
+RELEASE BUILD OK version=<v> platforms=<a,b,c> tools=<n> sums=<sha256,sha256,sha256> dogfood=<ok|waived|skipped> out=<dir> pruned=<n> prune-failed=<n>
 ```
 
-`platforms=` and `sums=` are the same list in the same order, one token each.
+`platforms=` and `sums=` are the same list in the same order, one token each. `pruned=` is the
+retention rule (`internal/release/prune.go`), run last by `build` on `--out` and by `install` on
+`--from`: of the directories whose names are versions, it keeps the one just built or installed,
+the one the machine had installed before it, and the `KeepBesides` (3) newest of the rest by
+modification time, and removes the others through `safepath.RemoveUnder`. A removal that fails is
+counted in `prune-failed=` and never fails the verb. Install also preserves any release
+directory containing the bin path or its resolved target, compared by filesystem identity
+so symlinks and case aliases cannot cause newly installed binaries to be pruned.
 
 *Tests: `TestBuildRefusesAnUnsupportedPairBeforeBuildingAnything`,
 `TestBuildBuildsEveryPlatformAndNamesEachInTheReceipt`.*

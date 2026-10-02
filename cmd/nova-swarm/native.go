@@ -737,8 +737,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// STAGE OK (issue #3050): staging returned silently, so the batch launcher
 	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
 	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
-	fmt.Fprintf(os.Stdout, "STAGE OK bench=%s repo=%s base=%s secs=%.0f\n",
-		oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), stageRes.Wall.Seconds())
+	writeStageOK(os.Stdout, bench, stageRes)
 
 	// (4f) THE FRAME (docs/SPEC-CARD-CONTRACT.md layers 2 and 3). A framed launch whose
 	// checkout is staged gets JOB.md in the job directory and its family's shims first on
@@ -747,7 +746,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// A frame that cannot be installed refuses the launch: a child outside its frame is the
 	// defect the frame closes.
 	if cfg.frame != nil && stageRes.Staged {
-		if err := installFrame(cfg, jobDir, stageRes.BaseSha); err != nil {
+		if err := installFrameTimed(cfg, jobDir, stageRes.BaseSha, os.Stdout); err != nil {
+			if errors.Is(err, errReadStart) {
+				// a read whose start cannot be known is refused at staging, as a stage that
+				// failed is: no child ran, and the sprint deals the read again
+				fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
+					oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(stageFailBase(stageRes)), oneline.Escape(err.Error()))
+				refuseNative(errOut, err.Error())
+				return nativeRunResult{}, 2
+			}
 			refuseNative(errOut, fmt.Sprintf("%s the card's frame could not be installed: %s", oneline.Field(cfg.label), oneline.Err(err)))
 			return nativeRunResult{}, 2
 		}
@@ -2285,6 +2292,24 @@ func nativePrompt(cfg nativeRunConfig) string {
 	return cardcontract.Prompt(filepath.Join(cfg.slotDir, "jobs", cfg.label), swarm.CardPrompt(cfg.card))
 }
 
+// writeStageOK names the command phases of staging (docs/SPEC-CARD-CONTRACT.md,
+// staging), while preserving the readiness line before the frame is installed.
+func writeStageOK(w io.Writer, bench string, st swarm.StageResult) {
+	fmt.Fprintf(w, "STAGE OK bench=%s repo=%s base=%s secs=%.0f clone=%.1f fetch=%.1f checkout=%.1f\n",
+		oneline.Field(bench), oneline.Field(st.BaseRepo), oneline.Field(swarm.Version8(st.BaseSha)), st.Wall.Seconds(), st.Clone.Seconds(), st.Fetch.Seconds(), st.Checkout.Seconds())
+}
+
+// installFrameTimed reports the whole successful frame installation, including
+// recipes and shims, separately from staging (docs/SPEC-CARD-CONTRACT.md, staging).
+func installFrameTimed(cfg nativeRunConfig, jobDir, head string, w io.Writer) error {
+	started := time.Now()
+	if err := installFrame(cfg, jobDir, head); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "FRAME OK secs=%.1f\n", time.Since(started).Seconds())
+	return nil
+}
+
 // installFrame records the staged commit in the slot and writes a framed launch's JOB.md
 // and its family's shims into <slot>/shim, the shims handing through to the real git.
 func installFrame(cfg nativeRunConfig, jobDir, head string) error {
@@ -2295,6 +2320,13 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 	if git, err = filepath.Abs(git); err != nil {
 		return err
 	}
+	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
+	if cfg.frame.Kind == "read" {
+		// first, so a read whose start cannot be known leaves nothing of its frame behind
+		if st.Start, err = workStart(git, st.Repo, cfg.frame.ReviewBase); err != nil {
+			return err
+		}
+	}
 	// the commit staged, recorded in the slot (outside the job the child writes): the
 	// member counts the child's commits from it, never from the checkout's own refs
 	if err := atomicfile.Write(filepath.Join(cfg.slotDir, cardcontract.StagedName), []byte(head+"\n"), 0o644); err != nil {
@@ -2303,30 +2335,64 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 	if err := cardcontract.StageRecipes(*cfg.frame, jobDir); err != nil {
 		return err
 	}
-	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
-	if cfg.frame.Kind == "read" {
-		st.Start = workStart(git, st.Repo, cfg.frame.ReviewBase)
-	}
 	return cardcontract.Install(cardcontract.For(cardcontract.FamilyOf(cfg.model)), *cfg.frame, st, nativeShellShimDir(cfg.slotDir))
 }
 
+// errReadStart marks a read refused at staging because the commit its work started from
+// cannot be known: native prints the STAGE FAIL line for it, as for a stage that failed, so
+// no child runs and the sprint deals the read again.
+var errReadStart = errors.New("staging refused: the read's start")
+
 // workStart is the commit the work a read reviews started from, found in the read's staged
 // checkout before the child runs: the merge base of its HEAD (the work's head) and the
-// review base as the clone holds it (origin/<base>, else <base> as written), a full sha;
-// "" when neither gives one. The packet carries the base's name, never the commit the work
-// was staged on, and the base branch moves while the work is read (docs/SPEC-CARD-CONTRACT.md,
-// JOB.md).
-func workStart(git, checkout, base string) string {
+// review base, a full sha; "" when they have none. The packet carries the base's name, never
+// the commit the work was staged on, and the base branch moves while the work is read
+// (docs/SPEC-CARD-CONTRACT.md, JOB.md).
+//
+// The base is one of three, told apart in this order: a full sha (it never moves); a branch,
+// when the checkout holds refs/remotes/origin/<base>; a tag, when it holds refs/tags/<base>
+// and no such branch (a tag never moves); and anything else is taken for a branch. A sha or
+// a tag is used as it is. A branch is fetched from origin into refs/remotes/origin/<base>
+// first, and a fetch that fails is an errReadStart, never the clone's own ref: the checkout
+// is cloned from the bench mirror, whose branch can be older than the commit the work
+// started from, the merge base against it is that older tip, and a diff from it shows every
+// card landed in between as the work's own (the 1000-card load test of 2026-10-01: "diff has
+// 22 files not exactly one"). origin's branch holds the work's start (the work was cut from
+// it) and not the work (a read comes before the land), so the merge base against it is
+// exactly the start, however far the branch has moved since.
+func workStart(git, checkout, base string) (string, error) {
 	if base == "" {
-		return ""
+		return "", nil
 	}
-	for _, ref := range []string{"origin/" + base, base} {
-		res, err := gitrun.Run(context.Background(), gitrun.Options{Bin: git, C: checkout, OwnRepo: true}, "merge-base", "--end-of-options", "HEAD", ref)
-		if sha := strings.TrimSpace(string(res.Stdout)); err == nil && typedrec.IsFullSha(sha) {
-			return sha
+	o := gitrun.Options{Bin: git, C: checkout, OwnRepo: true}
+	has := func(ref string) bool {
+		_, err := gitrun.Output(context.Background(), o, "rev-parse", "-q", "--verify", "--end-of-options", ref+"^{commit}")
+		return err == nil
+	}
+	ref := "refs/remotes/origin/" + base
+	switch {
+	case typedrec.IsFullSha(base):
+		ref = base
+	case !has(ref) && has("refs/tags/"+base):
+		ref = "refs/tags/" + base
+	default:
+		if _, err := gitrun.Output(context.Background(), o, "fetch", "-q", "--no-tags", "--", "origin", "+refs/heads/"+base+":"+ref); err != nil {
+			return "", fmt.Errorf("%w: the base branch %s could not be fetched from origin, and the checkout's own %s may be older than the work's start: %w", errReadStart, base, ref, err)
 		}
 	}
-	return ""
+	sha, err := gitrun.Output(context.Background(), o, "merge-base", "--end-of-options", "HEAD", ref)
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			// Unrelated histories have no merge base: JOB.md names no start.
+			return "", nil
+		}
+		return "", fmt.Errorf("%w: the merge base against %s could not be read: %w", errReadStart, base, err)
+	}
+	if !typedrec.IsFullSha(sha) {
+		return "", fmt.Errorf("%w: the merge base against %s returned no full commit sha: %q", errReadStart, base, sha)
+	}
+	return sha, nil
 }
 
 // providerOf splits a native model id on its single slash and reports whether it
