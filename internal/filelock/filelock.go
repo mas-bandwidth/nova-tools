@@ -362,32 +362,14 @@ func (o options) getSync() func(*os.File) error {
 
 // FileLock represents an acquired, open file lock.
 type FileLock struct {
-	path     string
 	file     *os.File
-	stamp    Stamp
 	previous *Stamp
 	mu       sync.Mutex
-}
-
-// Path returns the path of the locked file.
-func (l *FileLock) Path() string {
-	return l.path
-}
-
-// Stamp returns the stamp written by this holder when taking the lock.
-func (l *FileLock) Stamp() Stamp {
-	return l.stamp
 }
 
 // Previous returns the stamp of the previous unreleased holder (e.g. killed/crashed), or nil.
 func (l *FileLock) Previous() *Stamp {
 	return l.previous
-}
-
-// String returns a description of the held lock.
-func (l *FileLock) String() string {
-	cleanPath := oneline.Escape(oneline.Cap(l.path, 1024))
-	return fmt.Sprintf("filelock %q held by %s", cleanPath, l.stamp)
 }
 
 // Unlock releases the file lock by truncating the file to zero bytes, syncing,

@@ -186,12 +186,7 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 			return nil, fmt.Errorf("filelock %q sync: %w", cleanPath, wrapPathError(err))
 		}
 
-		return &FileLock{
-			path:     path,
-			file:     f,
-			stamp:    stamp,
-			previous: prev,
-		}, nil
+		return &FileLock{file: f, previous: prev}, nil
 	}
 
 	return nil, fmt.Errorf("filelock %q: failed after %d inode collision retries", cleanPath, maxInodeRetries)

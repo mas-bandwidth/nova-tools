@@ -28,15 +28,11 @@ func TestTryLock_Success(t *testing.T) {
 	}
 	defer lock.Unlock()
 
-	if lock.Path() != path {
-		assert.Fail(t, fmt.Sprintf("lock.Path() = %q, want %q", lock.Path(), path))
-	}
-	if lock.Stamp().Label != "worker-1" {
-		assert.Fail(t, fmt.Sprintf("lock.Stamp().Label = %q, want worker-1", lock.Stamp().Label))
-	}
-	if lock.Stamp().PID <= 0 {
-		assert.Fail(t, fmt.Sprintf("lock.Stamp().PID = %d, want > 0", lock.Stamp().PID))
-	}
+	// The file names its holder (tla/FileLock.tla, HolderIsNamed).
+	st, err := ReadStamp(path)
+	require.NoError(t, err)
+	assert.Equal(t, "worker-1", st.Label, "the held file's label")
+	assert.Equal(t, os.Getpid(), st.PID, "the held file's pid")
 	if lock.Previous() != nil {
 		assert.Fail(t, fmt.Sprintf("lock.Previous() = %+v, want nil for fresh lock", lock.Previous()))
 	}
@@ -641,24 +637,6 @@ func TestHeldErrorFormatting(t *testing.T) {
 	}
 }
 
-func TestFileLock_StringMethod(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "str.lock")
-
-	lock, err := TryLock(path, "str-worker")
-	if err != nil {
-		require.NoError(t, err, "TryLock failed: %v", err)
-	}
-	defer lock.Unlock()
-
-	s := lock.String()
-	if !strings.Contains(s, "str-worker") || !strings.Contains(s, path) {
-		assert.Fail(t, fmt.Sprintf("lock.String() = %q, want path and label", s))
-	}
-}
-
 func TestParseStamp_SpecialCases(t *testing.T) {
 	t.Parallel()
 
@@ -1015,11 +993,10 @@ func TestCappedHostileLabelAndPathSanitization(t *testing.T) {
 	}
 	defer lock.Unlock()
 
-	if len(lock.Stamp().Label) > 1024 {
-		require.Fail(t, fmt.Sprintf("lock.Stamp().Label length = %d, want <= 1024", len(lock.Stamp().Label)))
-	}
-	if len(lock.String()) > 4096 {
-		require.Fail(t, fmt.Sprintf("lock.String() length = %d, want <= 4096", len(lock.String())))
+	st, err := ReadStamp(path)
+	require.NoError(t, err)
+	if len(st.Label) > 1024 {
+		require.Fail(t, fmt.Sprintf("the stamp's label length = %d, want <= 1024", len(st.Label)))
 	}
 
 	// Second taker fails with HeldError
