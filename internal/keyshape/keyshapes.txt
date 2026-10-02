@@ -27,9 +27,9 @@ forge-token	gh[pousr]_[A-Za-z0-9]{20,}
 forge-fine-grained-token	github_pat_[A-Za-z0-9_]{20,}
 
 # Provider API keys, by their published prefixes. The bare `sk-` shape is {20,}: the
-# key this fleet's seats actually hold is `sk-` and 32 more (measured length 35,
-# issue #1814), and a shorter bound catches a truncated copy of it without reaching
-# prose, which does not carry twenty unbroken alphanumerics after `sk-`.
+# key this fleet's seats actually hold is `sk-` and 32 more (measured length 35),
+# and a shorter bound catches a truncated copy of it without reaching prose, which
+# does not carry twenty unbroken alphanumerics after `sk-`.
 anthropic-api-key	sk-ant-[A-Za-z0-9_-]{20,}
 openai-api-key	sk-[A-Za-z0-9]{20,}
 xai-api-key	xai-[A-Za-z0-9-]{20,}
