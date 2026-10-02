@@ -82,7 +82,7 @@ func TestNoTestGlobsTheSharedTempDir(t *testing.T) {
 	t.Parallel()
 
 	h := newCIHarness(t)
-	tree := h.repoTree()
+	tree := repoTree(t)
 	allow := loadAllowlist(t, sharedTempAllowlistPath, shrinkOnly)
 	seen := map[string]bool{}
 	var unlisted []string
@@ -114,7 +114,6 @@ func TestNoTestGlobsTheSharedTempDir(t *testing.T) {
 func TestSharedTempReadScannerReadsTheFixtures(t *testing.T) {
 	t.Parallel()
 
-	h := newCIHarness(t)
 	before := testkit.ReadFile(t, filepath.Join("testdata", "sharedtemp", "before.go.txt"))
 	found, err := sharedTempReads("internal/fixture/mutate_test.go", []byte(before))
 	require.NoError(t, err)
@@ -125,24 +124,18 @@ func TestSharedTempReadScannerReadsTheFixtures(t *testing.T) {
 		{"TestReadsTheTempDirThroughAVariable", "os.ReadDir"},
 		{"TestReadsTheTempDirThroughIoutil", "ioutil.ReadDir"},
 	}
-	h.assertFindings(found, want)
+	require.Len(t, found, len(want), "the pre-fix fixture holds %d shared-temp listings, the scanner found %d: %v", len(want), len(found), found)
+	for i, w := range want {
+		got := found[i]
+		assert.Equal(t, w.fn, got.Func, "finding %d = %s %s, want %s %s", i, got.Func, got.Call, w.fn, w.call)
+		assert.Equal(t, w.call, got.Call, "finding %d = %s %s, want %s %s", i, got.Func, got.Call, w.fn, w.call)
+		assert.NotZero(t, got.Line, "finding %d carries no line; a finding a reader cannot open is half a finding", i)
+	}
 
 	after := testkit.ReadFile(t, filepath.Join("testdata", "sharedtemp", "after.go.txt"))
 	found, err = sharedTempReads("internal/fixture/mutate_test.go", []byte(after))
 	require.NoError(t, err)
 	assert.Empty(t, found, "the fixed fixture reads its own t.TempDir() and must pass, the scanner found %v", found)
-}
-
-// assertFindings checks that the scanned shared-temp findings match the expected list.
-func (h *ciHarness) assertFindings(found []sharedTempFinding, want []struct{ fn, call string }) {
-	h.t.Helper()
-	require.Len(h.t, found, len(want), "the pre-fix fixture holds %d shared-temp listings, the scanner found %d: %v", len(want), len(found), found)
-	for i, w := range want {
-		got := found[i]
-		assert.Equal(h.t, w.fn, got.Func, "finding %d = %s %s, want %s %s", i, got.Func, got.Call, w.fn, w.call)
-		assert.Equal(h.t, w.call, got.Call, "finding %d = %s %s, want %s %s", i, got.Func, got.Call, w.fn, w.call)
-		assert.NotZero(h.t, got.Line, "finding %d carries no line; a finding a reader cannot open is half a finding", i)
-	}
 }
 
 // sharedTempReads reads one _test.go and returns every listing of a directory

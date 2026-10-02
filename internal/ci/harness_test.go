@@ -13,32 +13,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ciHarness encapsulates repository tree access, AST parsing, allowlist/ledger
-// verification, and fixture assertions for internal/ci tests.
+// ciHarness encapsulates allowlist/ledger verification, AST parsing,
+// and fixture assertions for internal/ci tests.
 type ciHarness struct {
-	t    *testing.T
-	tree *repoTreeIndex
+	t *testing.T
 }
 
 // newCIHarness returns a new test harness bound to t.
 func newCIHarness(t *testing.T) *ciHarness {
 	t.Helper()
 	return &ciHarness{t: t}
-}
-
-// repoTree returns the shared repository tree, loading it once per test process.
-func (h *ciHarness) repoTree() *repoTreeIndex {
-	h.t.Helper()
-	if h.tree == nil {
-		h.tree = repoTree(h.t)
-	}
-	return h.tree
-}
-
-// newSiteLedger loads a package-sharded counted ledger for the class test.
-func (h *ciHarness) newSiteLedger(path string) *siteLedger {
-	h.t.Helper()
-	return newSiteLedger(h.t, path)
 }
 
 // checkLedger asserts that measured sites satisfy the ledger and reports any violations.

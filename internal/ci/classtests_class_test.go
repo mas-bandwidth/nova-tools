@@ -653,8 +653,7 @@ func (m *mergeDeletions) ordinaryFindings() []string {
 func TestNoMergeDeletesATestFileUndeclared(t *testing.T) {
 	t.Parallel()
 
-	h := newCIHarness(t)
-	tree := h.repoTree()
+	tree := repoTree(t)
 
 	log := loadAllowlist(t, "testdata/deleted-tests.txt", allowlist.Options{RepeatedKeys: true})
 	for _, row := range distinctRows(log.Rows()) {

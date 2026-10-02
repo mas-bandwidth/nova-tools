@@ -45,8 +45,8 @@ func TestNoOKOnFailure(t *testing.T) {
 	t.Parallel()
 
 	h := newCIHarness(t)
-	tree := h.repoTree()
-	ledger := h.newSiteLedger(okOnFailureAllowlistPath)
+	tree := repoTree(t)
+	ledger := newSiteLedger(t, okOnFailureAllowlistPath)
 	for _, files := range goFilesByDir(livingCmdFiles(tree)) {
 		var asts []*ast.File
 		for _, f := range files {
