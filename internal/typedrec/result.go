@@ -1,5 +1,7 @@
 package typedrec
 
+import "slices"
+
 // Defects named in the specification.
 const (
 	DefectMissing   = "missing"
@@ -7,10 +9,5 @@ const (
 )
 
 func isValidKind(k string) bool {
-	for _, valid := range Kinds {
-		if valid == k {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(Kinds, k)
 }

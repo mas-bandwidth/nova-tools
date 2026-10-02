@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -144,7 +145,7 @@ func doStamp(e env, args []string) int {
 			shown = string(r[:shownCap]) + "..."
 		}
 
-		if contains(legacy, name) {
+		if slices.Contains(legacy, name) {
 			// Named and printed rather than skipped in silence, so the day an
 			// exempt tool starts answering the tag is visible on the release log.
 			if rc != 0 {
@@ -200,13 +201,4 @@ func doStamp(e env, args []string) int {
 	fmt.Fprint(e.stdout, notes.String())
 	fmt.Fprintf(e.stdout, "asserted the %s stamp on %d of %d shipped tools (%d exempt until #121)\n", tag, asserted, seen, exempted)
 	return 0
-}
-
-func contains(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }

@@ -63,6 +63,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,12 +140,8 @@ func run(args []string, e env) int {
 		}
 		if err == nil {
 			merged := map[string]string{}
-			for k, v := range process {
-				merged[k] = v
-			}
-			for k, v := range set {
-				merged[k] = v
-			}
+			maps.Copy(merged, process)
+			maps.Copy(merged, set)
 			w.env = merged
 		}
 	}

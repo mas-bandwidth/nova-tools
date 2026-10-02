@@ -20,8 +20,9 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -203,10 +204,7 @@ func ReadClaudeSession(path string) (SessionSum, error) {
 		m.CacheRead += t.cacheRead
 		m.Output += t.output
 	}
-	for m := range named {
-		s.Models = append(s.Models, m)
-	}
-	sort.Strings(s.Models)
+	s.Models = slices.Sorted(maps.Keys(named))
 	return s, nil
 }
 
@@ -249,12 +247,7 @@ func (s SessionSum) Line() string {
 
 // DayList is the days this session touched, sorted.
 func (s SessionSum) DayList() []string {
-	out := make([]string, 0, len(s.Days))
-	for d := range s.Days {
-		out = append(out, d)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(s.Days))
 }
 
 // UnbookableReason is why this session cannot be folded into the ledger, or "" when it can:
@@ -276,14 +269,9 @@ func (s SessionSum) UnbookableReason() string {
 // a measurement; a session that names no model has no rows.
 func (s SessionSum) Rows(day string) []DayRow {
 	byModel := s.DayModels[day]
-	names := make([]string, 0, len(s.Models))
+	names := s.Models
 	if len(byModel) > 0 {
-		for m := range byModel {
-			names = append(names, m)
-		}
-		sort.Strings(names)
-	} else {
-		names = append(names, s.Models...)
+		names = slices.Sorted(maps.Keys(byModel))
 	}
 	rows := make([]DayRow, 0, len(names))
 	for _, m := range names {

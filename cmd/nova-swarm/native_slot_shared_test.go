@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -70,9 +69,8 @@ func TestASecondNativeInOneSlotUnderAnotherLabelIsRefused(t *testing.T) {
 
 	assert.Equal(t, 2, codeB, "a second run in a live slot exits 2, got %d:\n%s", codeB, errB.String())
 	assert.Contains(t, errB.String(), "NATIVE REFUSED", "the refusal is one REFUSED line, got:\n%s", errB.String())
-	if !strings.Contains(errB.String(), "slot") || !strings.Contains(errB.String(), "pid=") {
-		t.Errorf("the refusal does not name the slot and its holder:\n%s", errB.String())
-	}
+	assert.Contains(t, errB.String(), "slot", "the refusal does not name the slot and its holder:\n%s", errB.String())
+	assert.Contains(t, errB.String(), "pid=", "the refusal does not name the slot and its holder:\n%s", errB.String())
 	// B wrote nothing of A's, and did not start its own harness against A's data home.
 	_, err := os.Stat(filepath.Join(slot, "jobs", "card-b", "argv"))
 	assert.Error(t, err, "the refused run's harness ran anyway against %s", filepath.Join(slot, "data"))

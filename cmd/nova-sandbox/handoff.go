@@ -364,9 +364,7 @@ func copyChecked(root *os.File, vr volumeReader, s handoffSource, to string, bud
 // byte into a scratch buffer and never writes it: over is whether src held more
 // than budget.
 func copyBounded(dst io.Writer, src io.Reader, budget int64) (n int64, over bool, err error) {
-	if budget < 0 {
-		budget = 0
-	}
+	budget = max(budget, 0)
 	n, err = io.Copy(dst, io.LimitReader(src, budget))
 	if err != nil {
 		return n, false, err

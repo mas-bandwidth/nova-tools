@@ -202,9 +202,7 @@ func TestFleetSyncHoldsAMemberTheInventoryDropsAndRedealsItsCards(t *testing.T) 
 	ta.ok("tick") // the fleet update, last in the tick, brings the members up
 	ta.ok("tick") // the pump deals to them
 	rows := ta.fleetRows()
-	if rows["m2"]["ready"] == "0" && rows["m2"]["working"] == "0" {
-		t.Fatalf("the test wants cards on m2: %v", rows)
-	}
+	require.False(t, rows["m2"]["ready"] == "0" && rows["m2"]["working"] == "0", "the test wants cards on m2: %v", rows)
 	inv.remove("m2")
 	out := ta.ok("fleet sync")
 	require.Contains(t, out, "m2 held down", "m2 is not held")

@@ -17,9 +17,7 @@ func lintEscapeCard(t *testing.T, name string, header ...string) (string, int) {
 	t.Helper()
 	card := writeLintCard(t, name, typedCardText(t, header...))
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--max", "0")
-	if stderr != "" && exit != 2 {
-		t.Fatalf("stderr on a lint: %q", stderr)
-	}
+	require.False(t, stderr != "" && exit != 2, "stderr on a lint: %q", stderr)
 	return stdout, exit
 }
 

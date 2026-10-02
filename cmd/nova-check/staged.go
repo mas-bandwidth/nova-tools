@@ -480,10 +480,7 @@ func stagedBlobHeads(root string, recs []stagedRecord) (map[string]stagedBlobHea
 				// declines to trust it.
 				why = "object is a " + f[1] + ", not a blob"
 			}
-			n := int64(2)
-			if size < n {
-				n = size
-			}
+			n := min(int64(2), size)
 			head := make([]byte, n)
 			if _, err := io.ReadFull(r, head); err != nil {
 				return fmt.Errorf("git cat-file --batch: reading %s: %w", oid, err)

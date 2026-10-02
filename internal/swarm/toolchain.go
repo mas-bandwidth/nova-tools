@@ -1,10 +1,12 @@
 package swarm
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -190,12 +192,7 @@ func ToolchainRootNames(goos string) []string {
 // ToolchainRootOSes is every operating system the one list speaks for, sorted, so the class
 // test walks the declaration itself rather than a list of its own that could fall behind it.
 func ToolchainRootOSes() []string {
-	out := make([]string, 0, len(toolchainRoots))
-	for goos := range toolchainRoots {
-		out = append(out, goos)
-	}
-	sortNames(out)
-	return out
+	return slices.Sorted(maps.Keys(toolchainRoots))
 }
 
 // ToolchainRoots is the wall's side: this machine's list, absolute, carrying each root's
@@ -286,13 +283,3 @@ func toolchainVersionDir(prefix, tool string) (string, bool) {
 // ThisOS is the operating system whose list the wall is built from: this process's own,
 // because the wall contains a card on THIS bench.
 func ThisOS() string { return runtime.GOOS }
-
-// sortNames is sort.Strings over a handful of names, kept here so the one list's file has
-// no import it needs for nothing else.
-func sortNames(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
-}

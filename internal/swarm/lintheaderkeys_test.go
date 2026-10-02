@@ -148,8 +148,7 @@ func TestCardHeaderBlockRunsToTheFirstLineThatIsNotAKeyLine(t *testing.T) {
 			block, stranded := cardHeaderBlock(tc.card)
 			for key, line := range tc.inBlock {
 				f, ok := block[key]
-				if !ok || !f.found {
-					t.Errorf("%s: not in the header block; the block holds %v", key, blockKeys(block))
+				if !assert.True(t, ok, "%s: not in the header block; the block holds %v", key, blockKeys(block)) || !assert.True(t, f.found, "%s: not in the header block; the block holds %v", key, blockKeys(block)) {
 					continue
 				}
 				assert.Equal(t, line, f.line, "%s: read on line %d, want line %d", key, f.line, line)

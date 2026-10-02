@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -68,7 +69,7 @@ func doBuild(e env, args []string) int {
 		fmt.Fprintf(e.stderr, "%s build: %v\n", tool, err)
 		return 2
 	}
-	if !containsTarget(targets, t) {
+	if !slices.Contains(targets, t) {
 		fmt.Fprintf(e.stderr, "refusing: %s/%s is not a shipped platform (release-targets)\n", t.goos, t.goarch)
 		return 1
 	}
@@ -138,15 +139,6 @@ func doBuild(e env, args []string) int {
 		return 1
 	}
 	return 0
-}
-
-func containsTarget(ts []target, t target) bool {
-	for _, x := range ts {
-		if x == t {
-			return true
-		}
-	}
-	return false
 }
 
 // moveFile renames src to dst, copying across a filesystem boundary when a

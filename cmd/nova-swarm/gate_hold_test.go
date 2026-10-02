@@ -143,9 +143,10 @@ func TestADenialTheCardRewroteStillRefuses(t *testing.T) {
 			rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
 			require.NotContains(t, stdout.String(), "NATIVE OK", "a denial the card hid from its own capture file still returned OK (rc=%d):\n%s%s", rc, stdout.String(), stderr.String())
 			require.NotEqual(t, 0, rc, "a denial the card hid from its own capture file still returned OK (rc=%d):\n%s%s", rc, stdout.String(), stderr.String())
-			if line := stderr.String(); !strings.Contains(line, "NATIVE REFUSED") || !strings.Contains(line, refused) || !strings.Contains(line, "step=3") {
-				t.Errorf("the refusal names the denied path and the step from the parent's copy; it reads:\n%s", line)
-			}
+			line := stderr.String()
+			assert.Contains(t, line, "NATIVE REFUSED", "the refusal names the denied path and the step from the parent's copy; it reads:\n%s", line)
+			assert.Contains(t, line, refused, "the refusal names the denied path and the step from the parent's copy; it reads:\n%s", line)
+			assert.Contains(t, line, "step=3", "the refusal names the denied path and the step from the parent's copy; it reads:\n%s", line)
 		})
 	}
 }

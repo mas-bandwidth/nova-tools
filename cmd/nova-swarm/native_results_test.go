@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,9 +54,8 @@ func controlCardSurvivesSweep(t *testing.T, sweepNow bool) {
 	_, err := os.Stat(job)
 	require.True(t, os.IsNotExist(err), "the job directory must be gone after the sweep, stat=%v", err)
 	attempt := oneRunAttempt(t, resultsRoot, label)
-	if rel, err := filepath.Rel(job, attempt); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		t.Fatalf("results %s sit inside the job directory %s", attempt, job)
-	}
+	rel, err := filepath.Rel(job, attempt)
+	require.False(t, err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), "results %s sit inside the job directory %s", attempt, job)
 	for _, name := range []string{"RESULT.md", "usage.tsv", "report"} {
 		_, err := os.Stat(filepath.Join(attempt, name))
 		require.NoError(t, err, "%s was not published under %s\nstderr:\n%s", name, attempt, stderr.String())
@@ -136,9 +136,10 @@ func TestTwoInvocationsPreserveResults(t *testing.T) {
 			t.Fatalf("run %s RESULT lost its findings line:\n%s", id, result)
 		}
 	}
-	if !seenSay["one"] || !seenSay["two"] || !seenFindings["1"] || !seenFindings["2"] {
-		t.Fatalf("both reports and both results must survive, says=%v findings=%v", seenSay, seenFindings)
-	}
+	require.True(t, seenSay["one"], "both reports and both results must survive, says=%v findings=%v", seenSay, seenFindings)
+	require.True(t, seenSay["two"], "both reports and both results must survive, says=%v findings=%v", seenSay, seenFindings)
+	require.True(t, seenFindings["1"], "both reports and both results must survive, says=%v findings=%v", seenSay, seenFindings)
+	require.True(t, seenFindings["2"], "both reports and both results must survive, says=%v findings=%v", seenSay, seenFindings)
 }
 
 // TestPublicationFailureKeepsTheJob is the capture-failure control. The harness
@@ -163,9 +164,8 @@ func TestPublicationFailureKeepsTheJob(t *testing.T) {
 		strings.NewReader(""), &stdout, &stderr, time.Now())
 	require.Equal(t, 0, rc, "the card still exits 0, got %d\n%s\n%s", rc, stdout.String(), stderr.String())
 	require.Contains(t, stderr.String(), "the report could not be published", "a missing capture must be named:\n%s", stderr.String())
-	if !strings.Contains(stderr.String(), "left") || !strings.Contains(stderr.String(), "in place") {
-		t.Fatalf("--sweep-now must say it left the job in place:\n%s", stderr.String())
-	}
+	require.Contains(t, stderr.String(), "left", "--sweep-now must say it left the job in place:\n%s", stderr.String())
+	require.Contains(t, stderr.String(), "in place", "--sweep-now must say it left the job in place:\n%s", stderr.String())
 	job := filepath.Join(slot, "jobs", label)
 	_, err := os.Stat(job)
 	require.NoError(t, err, "the job directory must be kept when the report cannot be published")
@@ -174,9 +174,7 @@ func TestPublicationFailureKeepsTheJob(t *testing.T) {
 	_, err = os.Stat(filepath.Join(job, "harness-output.log"))
 	require.True(t, os.IsNotExist(err), "the capture was dropped, stat=%v", err)
 	_ = filepath.WalkDir(resultsRoot, func(path string, d os.DirEntry, err error) error {
-		if err == nil && d.Name() == "report" {
-			t.Errorf("a failed publish still wrote %s", path)
-		}
+		assert.False(t, err == nil && d.Name() == "report", "a failed publish still wrote %s", path)
 		return nil
 	})
 }
@@ -185,9 +183,8 @@ func oneRunAttempt(t *testing.T, resultsRoot, label string) string {
 	t.Helper()
 	runs := runDirs(t, resultsRoot, label)
 	require.Len(t, runs, 1, "one run directory under %s, got %v", label, runs)
-	if runs[0] == "1" || !strings.Contains(runs[0], "-") {
-		t.Fatalf("run id %q is the restarting attempt number, not an invocation identity", runs[0])
-	}
+	require.NotEqual(t, "1", runs[0], "run id %q is the restarting attempt number, not an invocation identity", runs[0])
+	require.Contains(t, runs[0], "-", "run id %q is the restarting attempt number, not an invocation identity", runs[0])
 	return filepath.Join(resultsRoot, label, runs[0], "1")
 }
 

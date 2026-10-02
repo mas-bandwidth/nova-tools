@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -31,17 +34,13 @@ func TestLineCarriesTheSpecFieldsAndNoMore(t *testing.T) {
 	l.Msg = "one card launched"
 
 	var buf bytes.Buffer
-	if err := l.Write(&buf); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	err := l.Write(&buf)
+	require.NoError(t, err, "Write: %v", err)
 	raw := buf.String()
-	if strings.Count(raw, "\n") != 1 || !strings.HasSuffix(raw, "\n") {
-		t.Fatalf("one JSON object per line, got %q", raw)
-	}
+	require.False(t, strings.Count(raw, "\n") != 1 || !strings.HasSuffix(raw, "\n"), "one JSON object per line, got %q", raw)
 	var got map[string]any
-	if err := json.Unmarshal([]byte(raw), &got); err != nil {
-		t.Fatalf("not one JSON object: %v\n%s", err, raw)
-	}
+	err = json.Unmarshal([]byte(raw), &got)
+	require.NoError(t, err, "not one JSON object: %v\n%s", err, raw)
 	want := map[string]any{
 		"ts":     "2026-09-17T16:56:03.412Z",
 		"level":  "INFO",
@@ -61,17 +60,12 @@ func TestLineCarriesTheSpecFieldsAndNoMore(t *testing.T) {
 	}
 	for key, value := range want {
 		gv, ok := got[key]
-		if !ok {
-			t.Errorf("field %q is missing from %s", key, raw)
+		if !assert.True(t, ok, "field %q is missing from %s", key, raw) {
 			continue
 		}
-		if gv != value {
-			t.Errorf("field %q = %v, want %v", key, gv, value)
-		}
+		assert.Equal(t, value, gv, "field %q = %v, want %v", key, gv, value)
 	}
-	if len(got) != len(want) {
-		t.Fatalf("the object has %d fields, want the spec's %d: %s", len(got), len(want), raw)
-	}
+	require.Len(t, got, len(want), "the object has %d fields, want the spec's %d: %s", len(got), len(want), raw)
 }
 
 // an-absent-id-is-never-omitted: job, card, pr, run and slot are 0 or "" when they are
@@ -80,14 +74,11 @@ func TestLineWritesAbsentIdsAsEmptyNotOmitted(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	if err := newLine().Write(&buf); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	err := newLine().Write(&buf)
+	require.NoError(t, err, "Write: %v", err)
 	raw := buf.String()
 	for _, pair := range []string{`"job":""`, `"card":""`, `"pr":0`, `"run":""`, `"slot":""`, `"bench":""`, `"err":""`} {
-		if !strings.Contains(raw, pair) {
-			t.Errorf("absent field %s is omitted from %s", pair, raw)
-		}
+		assert.Contains(t, raw, pair, "absent field %s is omitted from %s", pair, raw)
 	}
 }
 
@@ -101,25 +92,18 @@ func TestLineEscapesMsgThroughOnelineField(t *testing.T) {
 	l.Msg = "line one\nline two\twith = and space"
 
 	var buf bytes.Buffer
-	if err := l.Write(&buf); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	err := l.Write(&buf)
+	require.NoError(t, err, "Write: %v", err)
 	raw := buf.String()
-	if strings.Count(raw, "\n") != 1 || !strings.HasSuffix(raw, "\n") {
-		t.Fatalf("a newline in msg split the JSON line: %q", raw)
-	}
+	require.False(t, strings.Count(raw, "\n") != 1 || !strings.HasSuffix(raw, "\n"), "a newline in msg split the JSON line: %q", raw)
 	var got struct {
 		Msg string `json:"msg"`
 	}
-	if err := json.Unmarshal([]byte(raw), &got); err != nil {
-		t.Fatalf("not one JSON object: %v\n%s", err, raw)
-	}
-	if want := oneline.Field(l.Msg); got.Msg != want {
-		t.Fatalf("msg = %q, want the oneline.Field rendering %q", got.Msg, want)
-	}
-	if strings.ContainsAny(got.Msg, "\n\t") {
-		t.Fatalf("msg still holds a raw control character: %q", got.Msg)
-	}
+	err = json.Unmarshal([]byte(raw), &got)
+	require.NoError(t, err, "not one JSON object: %v\n%s", err, raw)
+	want := oneline.Field(l.Msg)
+	require.Equal(t, want, got.Msg, "msg = %q, want the oneline.Field rendering %q", got.Msg, want)
+	require.False(t, strings.ContainsAny(got.Msg, "\n\t"), "msg still holds a raw control character: %q", got.Msg)
 }
 
 // an-err-with-a-newline-is-escaped-too: the same one-line promise covers the error slot.
@@ -130,22 +114,17 @@ func TestLineEscapesErr(t *testing.T) {
 	l.Err = "boom\nsecond line"
 
 	var buf bytes.Buffer
-	if err := l.Write(&buf); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	err := l.Write(&buf)
+	require.NoError(t, err, "Write: %v", err)
 	raw := buf.String()
-	if strings.Count(raw, "\n") != 1 || !strings.HasSuffix(raw, "\n") {
-		t.Fatalf("a newline in err split the JSON line: %q", raw)
-	}
+	require.False(t, strings.Count(raw, "\n") != 1 || !strings.HasSuffix(raw, "\n"), "a newline in err split the JSON line: %q", raw)
 	var got struct {
 		Err string `json:"err"`
 	}
-	if err := json.Unmarshal([]byte(raw), &got); err != nil {
-		t.Fatalf("not one JSON object: %v\n%s", err, raw)
-	}
-	if want := oneline.Escape(l.Err); got.Err != want {
-		t.Fatalf("err = %q, want %q", got.Err, want)
-	}
+	err = json.Unmarshal([]byte(raw), &got)
+	require.NoError(t, err, "not one JSON object: %v\n%s", err, raw)
+	want := oneline.Escape(l.Err)
+	require.Equal(t, want, got.Err, "err = %q, want %q", got.Err, want)
 }
 
 // The level the caller sets is the level the object carries, in the spec's uppercase.
@@ -156,16 +135,11 @@ func TestLineCarriesTheCallersLevel(t *testing.T) {
 	l.Level = "WARN"
 	l.Event = "retry"
 	var buf bytes.Buffer
-	if err := l.Write(&buf); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	err := l.Write(&buf)
+	require.NoError(t, err, "Write: %v", err)
 	var got struct {
 		Level string `json:"level"`
 	}
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Level != "WARN" {
-		t.Fatalf("level = %q, want WARN", got.Level)
-	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	require.Equal(t, "WARN", got.Level, "level = %q, want WARN", got.Level)
 }

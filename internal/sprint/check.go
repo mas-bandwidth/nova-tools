@@ -2,7 +2,8 @@ package sprint
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -24,7 +25,7 @@ func (ps primarySet) add(p, via string) { ps[p] = append(ps[p], via) }
 // the other, and every primary the left side holds more than once.
 func diff(rule int, left, right primarySet, lname, rname string) []Violation {
 	var out []Violation
-	for _, p := range sortedKeys(left) {
+	for _, p := range slices.Sorted(maps.Keys(left)) {
 		if len(left[p]) > 1 {
 			out = append(out, Violation{rule, fmt.Sprintf("%s has %s %d times (%s)", lname, p, len(left[p]), strings.Join(left[p], ","))})
 		}
@@ -32,7 +33,7 @@ func diff(rule int, left, right primarySet, lname, rname string) []Violation {
 			out = append(out, Violation{rule, fmt.Sprintf("%s is in %s and not in %s", p, lname, rname)})
 		}
 	}
-	for _, p := range sortedKeys(right) {
+	for _, p := range slices.Sorted(maps.Keys(right)) {
 		if len(right[p]) > 1 {
 			out = append(out, Violation{rule, fmt.Sprintf("%s has %s %d times (%s)", rname, p, len(right[p]), strings.Join(right[p], ","))})
 		}
@@ -40,15 +41,6 @@ func diff(rule int, left, right primarySet, lname, rname string) []Violation {
 			out = append(out, Violation{rule, fmt.Sprintf("%s is in %s and not in %s", p, rname, lname)})
 		}
 	}
-	return out
-}
-
-func sortedKeys(m primarySet) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
 	return out
 }
 
@@ -198,7 +190,7 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 			out = append(out, Violation{8, fmt.Sprintf("%s is in flight and its primary %s is not on the table", c.ID, orDash(c.F("primary")))})
 		}
 	}
-	for _, p := range sortedKeys(dealt) {
+	for _, p := range slices.Sorted(maps.Keys(dealt)) {
 		if len(dealt[p]) > 1 {
 			out = append(out, Violation{8, fmt.Sprintf("%s has %d live work cards (%s)", p, len(dealt[p]), strings.Join(dealt[p], ","))})
 		}

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
@@ -525,7 +526,7 @@ func groupChange(v store.InboxView, g sprint.Group, answers []string) (added, go
 	for _, m := range g.Members {
 		old := false
 		for _, o := range v.Open {
-			if named[o.Note.ID] && in[o.Note.ID] && (o.Subject() == m || o.Note.StreamLevel && contains(o.Note.Primaries, m)) {
+			if named[o.Note.ID] && in[o.Note.ID] && (o.Subject() == m || o.Note.StreamLevel && slices.Contains(o.Note.Primaries, m)) {
 				old = true
 			}
 		}
@@ -546,15 +547,6 @@ func groupChange(v store.InboxView, g sprint.Group, answers []string) (added, go
 		}
 	}
 	return added, gone
-}
-
-func contains(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
 }
 
 const (

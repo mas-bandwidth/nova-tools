@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestPathFirst(t *testing.T) {
@@ -12,13 +14,9 @@ func TestPathFirst(t *testing.T) {
 	sep := string(os.PathListSeparator)
 	got := PathFirst([]string{"A=1", "PATH=/x", "PATH="}, "/s")
 	want := []string{"A=1", "PATH=/s" + sep + "/x", "PATH=/s"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("PathFirst = %q, want %q", got, want)
-	}
-	if got := PathFirst([]string{"A=1"}, "/s"); strings.Join(got, "|") != "A=1|PATH=/s" {
-		t.Fatalf("no PATH: %q", got)
-	}
-	if got := PathFirst([]string{"PATH=/x"}, ""); got[0] != "PATH=/x" {
-		t.Fatalf("empty dir changed env: %q", got)
-	}
+	require.Equal(t, strings.Join(want, "|"), strings.Join(got, "|"), "PathFirst = %q, want %q", got, want)
+	got = PathFirst([]string{"A=1"}, "/s")
+	require.Equal(t, "A=1|PATH=/s", strings.Join(got, "|"), "no PATH: %q", got)
+	got = PathFirst([]string{"PATH=/x"}, "")
+	require.Equal(t, "PATH=/x", got[0], "empty dir changed env: %q", got)
 }

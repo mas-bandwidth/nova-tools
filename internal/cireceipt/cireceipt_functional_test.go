@@ -11,6 +11,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // TestReceiptWrittenIsReadByTheEventReader writes the row on a throwaway
@@ -25,33 +26,24 @@ func TestReceiptWrittenIsReadByTheEventReader(t *testing.T) {
 	defer rdb.Close()
 
 	ev, err := ghevent.OpenReader(ctx, redisconn.Options{Addr: addr}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer ev.Close()
 	cursor, err := ev.Tip(ctx)
-	if err != nil || cursor != "0-0" {
-		t.Fatalf("tip of an empty stream: %q %v", cursor, err)
-	}
+	require.NoError(t, err, "tip of an empty stream: %q %v", cursor, err)
+	require.Equal(t, "0-0", cursor, "tip of an empty stream: %q %v", cursor, err)
 
 	r := full()
 	id, err := Write(ctx, rdb, r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n, err := rdb.DBSize(ctx).Result(); err != nil || n != 1 {
-		t.Fatalf("the receipt wrote %d keys (%v); want exactly ev:github", n, err)
-	}
+	require.NoError(t, err)
+	n, err := rdb.DBSize(ctx).Result()
+	require.NoError(t, err, "the receipt wrote %d keys (%v); want exactly ev:github", n, err)
+	require.Equal(t, int64(1), n, "the receipt wrote %d keys (%v); want exactly ev:github", n, err)
 	got, err := ev.Read(ctx, cursor, 10, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := ghevent.Event{ID: id, Repo: "mas-bandwidth/nova-tools", Number: "4493", Kind: "workflow_run",
 		Action: "completed", Head: sha, Sender: "runner", At: "2026-09-28T02:00:00Z"}
-	if len(got) != 1 || got[0] != want {
-		t.Fatalf("the reader read %+v, want [%+v]", got, want)
-	}
-	if tip, _ := ev.Tip(ctx); tip != id {
-		t.Fatalf("tip %q, want the receipt %q", tip, id)
-	}
+	require.Len(t, got, 1, "the reader read %+v, want [%+v]", got, want)
+	require.Equal(t, want, got[0], "the reader read %+v, want [%+v]", got, want)
+	tip, _ := ev.Tip(ctx)
+	require.Equal(t, id, tip, "tip %q, want the receipt %q", tip, id)
 }

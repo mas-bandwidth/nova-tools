@@ -69,9 +69,7 @@ func Abstract(o Observed) State {
 		if c.Placed() {
 			p.State = c.Col
 		}
-		if p.Attempt < 1 {
-			p.Attempt = 1
-		}
+		p.Attempt = max(p.Attempt, 1)
 		p.Head = headAttempt(c.F("head"))
 		p.CI, p.CIHead = c.F("ci"), headAttempt(c.F("ci_head"))
 		p.ReturnedAt = c.Int(sprint.FieldReturnedAttempt)
