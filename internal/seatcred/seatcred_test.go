@@ -3,6 +3,8 @@ package seatcred_test
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -133,17 +135,28 @@ func TestActiveResolvesOnceAndOnlyWhenSelected(t *testing.T) {
 	require.True(t, same(c, "air-bench-test-pw-11"), "Active = %v %v %v; want air as bench", c, ok, err)
 }
 
-func TestDefaultResolverGuardsRealEnvironment(t *testing.T) {
+// A Selection given no resolver and no lookup resolves through the process's own
+// environment. The proof runs in a child of this test binary whose environment is set
+// here, HOME a fresh temp dir and no store variables, so the store the default
+// resolver looks for is under that dir: no test reads, lists or stats a real store.
+func TestDefaultResolverReadsTheProcessEnvironment(t *testing.T) {
 	t.Parallel()
-
-	s := new(seatcred.Selection)
-	s.Select("nonexistent-seat-probe-4717")
-	_, ok, err := s.Active()
-	require.True(t, ok, "Active() with nonexistent seat reported ok=%v, err=%v; want ok=true with error", ok, err)
-	require.Error(t, err, "Active() with nonexistent seat reported ok=%v, err=%v; want ok=true with error", ok, err)
-	msg := err.Error()
-	require.Contains(t, msg, "is absent", "Active() error %q does not demonstrate real environment store lookup: want error stating store file is absent", msg)
-	require.NotContains(t, msg, "HOME is unset", "Active() error %q does not demonstrate real environment store lookup: want error stating store file is absent", msg)
+	const marker = "SEATCRED_DEFAULT_RESOLVER_CHILD"
+	if os.Getenv(marker) == "1" {
+		s := new(seatcred.Selection)
+		s.Select("nonexistent-seat-probe-4717")
+		_, ok, err := s.Active()
+		fmt.Printf("\nCHILD ok=%v err=%v\n", ok, err)
+		return
+	}
+	home := t.TempDir()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestDefaultResolverReadsTheProcessEnvironment$", "-test.count=1")
+	cmd.Env = []string{marker + "=1", "HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	assert.Contains(t, string(out), "CHILD ok=true err=seat nonexistent-seat-probe-4717: store "+filepath.Join(home, seatcred.DefaultStore)+" is not a directory",
+		"the default resolver did not look for the store under the process's own HOME")
+	assert.NotContains(t, string(out), "HOME is unset")
 }
 
 func TestSelectClearsLookupFromArgs(t *testing.T) {
