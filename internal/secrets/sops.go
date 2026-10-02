@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -130,13 +131,27 @@ func DecryptFile(sopsPath, keyPath, filePath string) ([]byte, error) {
 
 	err = cmd.Run()
 	if err != nil {
-		exitCode := 1
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
-		// Sanitize sops error: do NOT pass raw stderr through
-		return nil, fmt.Errorf("sops failed: exit %d (transcript withheld: run 'sops -d %s' to inspect)", exitCode, filePath)
+		return nil, sopsFailed(err, sopsPath, keyPath, filePath)
 	}
 
 	return stdoutBuf.Bytes(), nil
+}
+
+// sopsFailed is a failed `sops -d`, its stderr withheld (it may quote the file):
+// when the key's public half is not among the file's recipients that is the
+// cause, named with the recipients that would open it; otherwise the remedy
+// reproduces the decrypt with the key it was given, since a bare `sops -d` has
+// no identity and fails for another reason.
+func sopsFailed(err error, sopsPath, keyPath, filePath string) error {
+	exitCode := 1
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		exitCode = exitErr.ExitCode()
+	}
+	pub, pubErr := ExtractPublicKeyFromKeyFile(keyPath)
+	_, recipients, _, recErr := ParseStoreFileWithoutDecrypting(filePath)
+	if pubErr == nil && recErr == nil && len(recipients) > 0 && !slices.Contains(recipients, pub) {
+		return fmt.Errorf("sops failed: exit %d: --key %s is %s, not a recipient of %s (its recipients: %s); pass --key the private key of one of them",
+			exitCode, keyPath, pub, filePath, strings.Join(recipients, ", "))
+	}
+	return fmt.Errorf("sops failed: exit %d (transcript withheld: run 'SOPS_AGE_KEY_FILE=%s %s -d %s' to inspect)", exitCode, keyPath, sopsPath, filePath)
 }
