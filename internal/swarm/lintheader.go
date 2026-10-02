@@ -30,8 +30,8 @@ import (
 // command) and `test-named`. That is what this file is.
 //
 // THREE READERS, ONE GRAMMAR. `cut` renders the lines, `internal/pulse/cardheader.go`
-// reads them at the gate, and the lint checks them on the bench before spending tokens.
-// bench before a token is spent. A lint that accepted a line the gate refuses would
+// reads them at the gate, and the lint checks them on the bench before a token is
+// spent. A lint that accepted a line the gate refuses would
 // send a card out to die at `accept`; a lint that refused a line the gate reads would
 // stop a card that was fine. So the rules below are the parser's rules, restated with
 // the parser cited beside each one:
@@ -56,9 +56,10 @@ import (
 //
 // KIND: IS THE NAME SET, NOT A SECOND TABLE. `hygiene.KindDeclared` reads
 // internal/hygiene/kinds.txt, which is the names `cut` and `nova-check hygiene`
-// already refuse. The gate TABLE -- steps, control, reject tokens -- is still
-// `TEST: none` on a gated kind needs that table, so that half still waits. Writing
-// a second name list here would be the same mistake `validGlobs` just undid.
+// already refuse. The gate TABLE -- steps, control, reject tokens -- does not exist
+// yet; refusing `TEST: none` on a gated kind needs that table, so that half still
+// waits. Writing a second name list here would be the same mistake `validGlobs` just
+// undid.
 
 // CardHeaderFinding is one typed-header defect: the check's token, the 1-based line it
 // sits on and the line's own text. It is the shape `cmd/nova-swarm/lint.go` prints on a
