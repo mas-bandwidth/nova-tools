@@ -2,13 +2,15 @@ package main
 
 import (
 	"bytes"
-	"math"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,20 +39,25 @@ func grammarTree(t *testing.T) string {
 }
 
 // TestStatusGrammar holds the tool's one status grammar: after the verb's
-// token the first word is OK, REFUSED or FAILED, and the exit code tells the
-// same truth (0 done, 1 the verb ran and said no, 2 could not run). Each row
-// runs one outcome of one verb through run (the tool's Run function) with a
-// fake or a fixture and asserts the status word and the exit together, so a
-// word that moved without its exit (or an exit without its word) fails the
-// row (STANDARD §2).
+// token the first word is OK, REFUSED or FAILED where the line carries a
+// status, and the exit code tells the same truth (0 done, 1 the verb ran and
+// said no, 2 could not run). Each row runs one outcome of one verb through
+// run (the tool's Run function), or through the verb's own function where the
+// fake is a parameter of it, with a fake or a fixture, and asserts the first
+// word after the verb's token and the exit together, so a word that moved
+// without its exit (or an exit without its word) fails the row (STANDARD §2).
 //
-// The rows cover each verb across its OK, REFUSED and FAILED outcomes. Verbs
-// that print finding lines or build information at exit 0 or 1 pin the token
-// on the line their outcome leads; verbs driving failure through their JSON
-// render path test the line that carries the FAILED word. local OK is go test's
-// own lowercase ok, which the PKG line repeats; the scaffold and receipt OK
-// rows close on a NOTE continuation line, which STANDARD §2 names as the shape
-// a continuation opens with.
+// The rows cover each verb across the outcomes its exit table holds.
+// functional, new-rule, new-verb, version and help carry no FAILED row: their
+// table holds no exit 1, and a green row for an outcome the verb cannot have
+// would be a claim no run made. Verbs that print finding lines or build
+// information pin the token on the line their outcome leads; local OK is go
+// test's own lowercase ok, which the PKG line repeats; the scaffold and
+// receipt OK rows close on a NOTE continuation line, which STANDARD §2 names
+// as the shape a continuation opens with. The receipt FAILED row drives the
+// refused write through a fake store that answers the one XADD with WRONGTYPE
+// (the refusal the functional tier drives against a real store), so the
+// exit-1 line the verb prints is pinned by a run of the verb itself.
 func TestStatusGrammar(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -84,14 +91,15 @@ func TestStatusGrammar(t *testing.T) {
 		},
 		{
 			name:  "slowtests FAILED",
-			token: "nova-ci slowtests",
+			token: "CI-SLEEPS",
 			run: func(t *testing.T) (int, string) {
-				var out, errb bytes.Buffer
-				o := &tool.Out{Verb: "slowtests", Status: tool.OK}
-				o.Fact("load", math.NaN())
-				return renderJSON(&out, &errb, o), errb.String()
+				stdin := "{\"Action\":\"output\",\"Package\":\"example.com/pkg\",\"Test\":\"TestNew\",\"Output\":\"SLEEPS: x\\n\"}\n" +
+					"{\"Action\":\"skip\",\"Package\":\"example.com/pkg\",\"Test\":\"TestNew\",\"Elapsed\":0}\n" +
+					"{\"Action\":\"pass\",\"Package\":\"example.com/pkg\",\"Elapsed\":0.1}\n"
+				code, out, _ := runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, stdin)
+				return code, out
 			},
-			word: "FAILED:",
+			word: "test=TestNew",
 			code: 1,
 		},
 		{
@@ -154,18 +162,6 @@ func TestStatusGrammar(t *testing.T) {
 			code: 2,
 		},
 		{
-			name:  "functional FAILED",
-			token: "nova-ci functional",
-			run: func(t *testing.T) (int, string) {
-				var out, errb bytes.Buffer
-				o := &tool.Out{Verb: "functional", Status: tool.OK}
-				o.Fact("load", math.NaN())
-				return renderJSON(&out, &errb, o), errb.String()
-			},
-			word: "FAILED:",
-			code: 1,
-		},
-		{
 			name:  "new-rule OK",
 			token: "nova-ci new-rule",
 			run: func(t *testing.T) (int, string) {
@@ -184,18 +180,6 @@ func TestStatusGrammar(t *testing.T) {
 			},
 			word: "REFUSED:",
 			code: 2,
-		},
-		{
-			name:  "new-rule FAILED",
-			token: "nova-ci new-rule",
-			run: func(t *testing.T) (int, string) {
-				var out, errb bytes.Buffer
-				o := &tool.Out{Verb: "new-rule", Status: tool.OK}
-				o.Fact("load", math.NaN())
-				return renderJSON(&out, &errb, o), errb.String()
-			},
-			word: "FAILED:",
-			code: 1,
 		},
 		{
 			name:  "new-verb OK",
@@ -219,18 +203,6 @@ func TestStatusGrammar(t *testing.T) {
 			},
 			word: "REFUSED:",
 			code: 2,
-		},
-		{
-			name:  "new-verb FAILED",
-			token: "nova-ci new-verb",
-			run: func(t *testing.T) (int, string) {
-				var out, errb bytes.Buffer
-				o := &tool.Out{Verb: "new-verb", Status: tool.OK}
-				o.Fact("load", math.NaN())
-				return renderJSON(&out, &errb, o), errb.String()
-			},
-			word: "FAILED:",
-			code: 1,
 		},
 		{
 			name:  "github receipt OK",
@@ -258,9 +230,8 @@ func TestStatusGrammar(t *testing.T) {
 			token: "nova-ci github receipt",
 			run: func(t *testing.T) (int, string) {
 				var out, errb bytes.Buffer
-				o := &tool.Out{Verb: "github receipt", Status: tool.OK}
-				o.Fact("load", math.NaN())
-				return renderJSON(&out, &errb, o), errb.String()
+				code := cmdReceipt(context.Background(), receiptArgs()[1:], &out, &errb, noEnv, refusedReceiptStore)
+				return code, errb.String()
 			},
 			word: "FAILED:",
 			code: 1,
@@ -286,18 +257,6 @@ func TestStatusGrammar(t *testing.T) {
 			code: 2,
 		},
 		{
-			name:  "version FAILED",
-			token: "nova-ci version",
-			run: func(t *testing.T) (int, string) {
-				var out, errb bytes.Buffer
-				o := &tool.Out{Verb: "version", Status: tool.OK}
-				o.Fact("load", math.NaN())
-				return renderJSON(&out, &errb, o), errb.String()
-			},
-			word: "FAILED:",
-			code: 1,
-		},
-		{
 			name:  "help OK",
 			token: "nova-ci:",
 			run: func(t *testing.T) (int, string) {
@@ -317,18 +276,6 @@ func TestStatusGrammar(t *testing.T) {
 			word: "REFUSED:",
 			code: 2,
 		},
-		{
-			name:  "help FAILED",
-			token: "nova-ci help",
-			run: func(t *testing.T) (int, string) {
-				var out, errb bytes.Buffer
-				o := &tool.Out{Verb: "help", Status: tool.OK}
-				o.Fact("load", math.NaN())
-				return renderJSON(&out, &errb, o), errb.String()
-			},
-			word: "FAILED:",
-			code: 1,
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -339,5 +286,49 @@ func TestStatusGrammar(t *testing.T) {
 			assert.Equal(t, tc.word, word, "first word after %q = %q, want %q (exit %d)\n%s", tc.token, word, tc.word, code, line)
 			assert.Equal(t, tc.code, code, "exit = %d, want %d for status word %q", code, tc.code, tc.word)
 		})
+	}
+}
+
+// storeReply is an error the store itself replied with.
+type storeReply string
+
+func (e storeReply) Error() string { return string(e) }
+func (storeReply) RedisError()     {}
+
+// wrongType is what a store answers when the stream the receipt appends to
+// holds a string: the refusal the functional tier drives against a real
+// store (receipt_functional_test.go).
+var wrongType = storeReply("WRONGTYPE Operation against a key holding the wrong kind of value")
+
+// refusedReceiptStore is the receipt verb's failing store, handed through the
+// receiptOpener seam: a client that answers every command with WRONGTYPE, so
+// the refused write runs the verb's real path to its FAILED line and exit 1.
+// refusedHook answers without calling the next hook, so the client dials
+// nothing (STANDARD §8: unit tests own no sockets).
+func refusedReceiptStore(ctx context.Context, addr string) (*store.Store, error) {
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	c.AddHook(refusedHook{})
+	return store.New(c), nil
+}
+
+// refusedHook answers every command with WRONGTYPE and never passes one on,
+// so no connection is dialed and no command reaches a store.
+type refusedHook struct{}
+
+func (refusedHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (refusedHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		cmd.SetErr(wrongType)
+		return wrongType
+	}
+}
+
+func (refusedHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			cmd.SetErr(wrongType)
+		}
+		return wrongType
 	}
 }
