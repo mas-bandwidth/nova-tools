@@ -40,7 +40,16 @@ ended); then `Do that first; a finish with no new commit is refused.` The three 
 packet's `why`, `finding` and `fix`, which the rework wrote on the attempt's work card
 (`TestReworkCarriesTheFixTheFindingAndWhyInTheNextPacket`; the lines:
 `TestJobTextOfAReworkSaysWhyAndWhatToDoFirst`). A read's `JOB.md` says to review the
-change on the branch against its base as a pull request is reviewed. JOB.md repeats no rules:
+change on the branch against its base as a pull request is reviewed, and states the work's change
+exactly: the commit the work started from, a full sha, the two commands that show it
+(`git diff <start>..HEAD`, `git diff --stat <start>..HEAD`), and that the base branch may have
+moved since and is not what to compare against. The packet carries the base's name, never the
+commit the work was staged on, so native finds the start when it stages the read: the merge base
+of the read's head and `origin/<base>` (else `<base>`) in the staged checkout; the gh shim's
+`pr diff` and `pr view` read from it too. On the 1000-card load test of 2026-10-01 cards landed on
+the base every few seconds, and a reader that ran `git diff origin/dev` saw every file landed
+since the work began as a deletion and sent a correct work card back
+(`TestAReadIsToldTheWorksChangeWhenTheBaseMoved`). JOB.md repeats no rules:
 the card's own RULES paragraph is in the brief, where the add lint holds it, and the child
 reads it once.
 

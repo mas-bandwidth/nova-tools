@@ -24,10 +24,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
 )
 
@@ -2302,7 +2304,29 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 		return err
 	}
 	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
+	if cfg.frame.Kind == "read" {
+		st.Start = workStart(git, st.Repo, cfg.frame.ReviewBase)
+	}
 	return cardcontract.Install(cardcontract.For(cardcontract.FamilyOf(cfg.model)), *cfg.frame, st, nativeShellShimDir(cfg.slotDir))
+}
+
+// workStart is the commit the work a read reviews started from, found in the read's staged
+// checkout before the child runs: the merge base of its HEAD (the work's head) and the
+// review base as the clone holds it (origin/<base>, else <base> as written), a full sha;
+// "" when neither gives one. The packet carries the base's name, never the commit the work
+// was staged on, and the base branch moves while the work is read (docs/SPEC-CARD-CONTRACT.md,
+// JOB.md).
+func workStart(git, checkout, base string) string {
+	if base == "" {
+		return ""
+	}
+	for _, ref := range []string{"origin/" + base, base} {
+		res, err := gitrun.Run(context.Background(), gitrun.Options{Bin: git, C: checkout, OwnRepo: true}, "merge-base", "--end-of-options", "HEAD", ref)
+		if sha := strings.TrimSpace(string(res.Stdout)); err == nil && typedrec.IsFullSha(sha) {
+			return sha
+		}
+	}
+	return ""
 }
 
 // providerOf splits a native model id on its single slash and reports whether it
