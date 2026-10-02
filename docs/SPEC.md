@@ -4926,7 +4926,7 @@ answerable by its path, so an answer written by hand, by path, keeps working.
 - **No sweep verb.** `--legacy-before` is a TOLERANCE and not a repair, in both
   verbs: `check`'s forgives an old note's header, `inbox`'s leaves an old note
   off one reader's open list, and neither fixes anything or touches a note. It is
-  a line drawn once rather than machinery. There is no verb that repairs legacy
+  a line drawn once rather than machinery. There is no verb that repairs
   headers and re-points orphaned `Re:` lines; one would want a person watching it.
 - **It refuses to run over a dirty checkout, so write your drafts elsewhere.**
   `send` needs the bus's working tree clean but for the note it is about to
@@ -5508,7 +5508,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 334. `TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList` — `--legacy-before` leaves notes dated before the line off the open list, not carried and not listed; `TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne` — the line lives in the cursor as `legacy=` exactly as typed.
 335. `TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed` — unreadable files dated behind the line are counted on `INBOX LEGACY unreadable=`.
 336. `TestLegacyNowCannotBeGivenWithTheOtherAnswers` — `--legacy-now` equals `--legacy-before <this run's instant>` and cannot be given with `--legacy-before` or `--carry-history` (exit 2).
-337. `TestAFirstAdvanceOverOldNotesIsRefused` — the FIRST `--advance` on a lane with no cursor is refused (exit 1) when old notes would be carried and no line/`--carry-history` is given, naming the count and the `--legacy-now` command; `TestTheTwoAnswersToTheFirstAdvanceCannotBothBeGiven` — `--carry-history` cannot be given with the legacy flags.
+337. `TestAFirstAdvanceOverOldNotesIsRefused` — the FIRST `--advance` on a lane with no cursor is refused (exit 1) when notes dated before the line would be carried and no line/`--carry-history` is given, naming the count and the `--legacy-now` command; `TestTheTwoAnswersToTheFirstAdvanceCannotBothBeGiven` — `--carry-history` cannot be given with the legacy flags.
 338. `TestAForwardDrawnDateLineSaysSoAndNamesTheCommandThatFixesIt` — a cursor whose switch-day line is a bare DATE at today or later prints `INBOX SWITCH` once, after `INBOX SCOPE`; `TestTheSwitchDayNoteFiresOnAForwardDateAndNothingElse` — it fires on a forward date and not on an instant or a date behind today; the same line comes out of `check --as`.
 339. `TestWaitReturnsWhenANoteArrivesDuringTheWait` — `wait` blocks, fetches every `--interval`, and returns the moment the inbox lists something new; `TestWaitTimesOutQuietlyAndCountsItsPolls` — a timeout is one `WAIT TIMEOUT` line and exit 0.
 340. `TestWaitUntilIsAnAbsoluteDeadlineAndTheEarlierOneWins` / `TestWaitIdleExitGivesATimeoutItsOwnCode` — `--until` is an absolute deadline and `--idle-exit <n>` gives a timeout its own code (1 and 2 refused).
