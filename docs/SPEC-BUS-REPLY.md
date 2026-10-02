@@ -262,13 +262,13 @@ land on one path; the minute is there for a person reading the directory.
 
 **The name is built from the target's id and never from a path.** An id is a
 lane name and hex — `ada-3f9a1c2b8d40` — so it is one path segment by
-construction, while `--reply-to` may resolve a legacy note to a repo-relative
+construction, while `--reply-to` may resolve a note without an `Id:` line to a repo-relative
 path, and a path holds `/`. A filename built from one would put the draft in a
 directory nobody named, or in none at all. **A target with no `Id:` line gets a
-derived id instead**, stated here so nobody has to guess it: the literal
-`legacy-` followed by the first 12 lowercase hex digits of the SHA-256 of the
+derived id instead**, stated here so nobody has to guess it: the literal `legacy-`
+prefix followed by the first 12 lowercase hex digits of the SHA-256 of the
 target's repo-relative path, exactly as the path appears on the `Re:` line the
-draft writes. It is one segment, it is deterministic, and two legacy targets
+draft writes. It is one segment, it is deterministic, and two targets without an `Id:` line
 cannot collide onto one name — which is the whole job of the field. The `Re:`
 line itself is unaffected and still carries the path: the filename is the
 bench's, the header is the bus's.
@@ -983,7 +983,7 @@ receipt is quoted up to `next=` and the token is asserted by decode.
   **Final partial commit:** with `--advance`, page 1's safe frontier is `c1`'s
   parent — the fixture gives `c1` one — and never `c1` itself, because `c1` was
   cut inside, `expected=INBOX CURSOR commit=<c1's parent>`. Repeated with
-  legacy `id=-` notes and with display-group order differing from scan order,
+  notes with `id=-` and with display-group order differing from scan order,
   `expected=` each item's path exactly once across the chain and no `next=` token
   whose item identity is `id=-`.
 - `TestContinuationSurvivesOrdinaryCursorAdvance`: `c1:A`, `c2:B`,
@@ -995,9 +995,9 @@ receipt is quoted up to `next=` and the token is asserted by decode.
 - `TestASingleOversizeBodyIsANamedGapAndNeverALoop`: the only item's body is
   2,097,152 bytes, over the 1048576 ceiling, so no `--max-bytes` carries it. No
   frame is opened and the gap is named once,
-  `expected=INBOX BODY OVERSIZE id=nBig bytes=2097152 max-bytes=65536 path=from-x/2026-09-13-big.md`,
+  `expected=INBOX BODY OVERSIZE id=nBig bytes=2097152 max-bytes=65536 path=from-x/big.md`,
   then the remedy immediately before the receipt,
-  `expected=INBOX BODIES GAP id=nBig kind=over-ceiling retry-max-bytes=- path=from-x/2026-09-13-big.md`,
+  `expected=INBOX BODIES GAP id=nBig kind=over-ceiling retry-max-bytes=- path=from-x/big.md`,
   then
   `expected=INBOX BODIES printed=0 bytes=0 oversize=1 gaps=1 drained=true complete=false next=-`.
   No cursor advance, and no drain call to repeat.
@@ -1095,9 +1095,9 @@ receipt is quoted up to `next=` and the token is asserted by decode.
   switch-day line, the target not on the listing this run can see, and no
   cursor at all. Each refusal names its own reason and its door — `draft --re`
   for the first four, an `inbox` run for the fifth.
-- `TestReplyResolvesAPathForANoteWrittenBeforeIds` — a legacy target is answered
+- `TestReplyResolvesAPathForANoteWrittenBeforeIds` — a target without an `Id:` line is answered
   by path, and the path is what lands on the `Re:` line, while the draft's
-  filename is the derived `legacy-<12 hex>` id and holds no `/`; two legacy
+  filename uses the derived id and holds no `/`; two
   targets in one directory produce two names.
 - `TestAReplyToANoteWhoseIdTheOpenListCannotCarryIsResolvedByPath` — a target
   carrying an `Id:` the open list cannot carry is resolved by PATH, and the
