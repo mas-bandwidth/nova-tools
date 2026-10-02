@@ -2616,7 +2616,7 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 // --model's -- is named by the config and has no entry in the auth file. Only that provider
 // is asked about. A config is the whole of a person's ~/.config/opencode and names every
 // provider they keep; the ones this model does not use are never reached by the child, so
-// their keys are not this run's business, and refusing on them refused good cards (#523).
+// their keys are not this run's business, and refusing on them would refuse good cards.
 //
 // It answers false when the config does not parse into a "provider" object (the copy is
 // still performed verbatim), when the config does not name this provider at all, and when
@@ -2673,7 +2673,7 @@ func keylessProvider(v any) bool {
 // providerLoopback reads the carried config and returns the loopback host:port the model's
 // provider's baseURL names, or "" when the provider carries no baseURL, names no loopback,
 // or the config cannot be read. The wall's --net-allow opens exactly that address back up
-// after a keyless provider on localhost (issue #591).
+// after a keyless provider on localhost.
 func providerLoopback(cfgPath, provider string) string {
 	raw, err := os.ReadFile(cfgPath)
 	if err != nil {
