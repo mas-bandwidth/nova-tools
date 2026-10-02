@@ -115,8 +115,7 @@ func TestLandlockWallRefusesWriteOutsideJob(t *testing.T) {
 
 	code, _, errOut := j.wall(t, "echo escaped > "+outside)
 	require.NotEqual(t, 0, code, "the wrapped command WROTE OUTSIDE THE JOB and exited 0: %s", errOut)
-	_, err = os.Stat(outside)
-	require.Error(t, err, "the file outside the job exists: the wall did not hold")
+	require.Error(t, statErr(outside), "the file outside the job exists: the wall did not hold")
 	// And the wall was announced, on the stream a log keeps.
 	assert.Contains(t, errOut, "SANDBOX OK backend=landlock", "the run did not announce the landlock wall: %q", errOut)
 }

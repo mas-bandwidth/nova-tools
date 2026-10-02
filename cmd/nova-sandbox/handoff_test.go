@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -66,8 +65,7 @@ func TestHandoffTakesTheDefaultsThatArePresent(t *testing.T) {
 		_, err := os.Stat(filepath.Join(out, "card1", name))
 		assert.NoError(t, err, "%s did not arrive: %v", name, err)
 	}
-	_, err = os.Stat(filepath.Join(out, "card1", "notes.txt"))
-	assert.Error(t, err, "a file nobody named left the volume; only named artifacts leave")
+	assert.Error(t, statErr(filepath.Join(out, "card1", "notes.txt")), "a file nobody named left the volume; only named artifacts leave")
 }
 
 // 2. An artifact the CALLER named and did not write is a refusal, not a silent
@@ -176,31 +174,26 @@ func TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted(t *testing.T) {
 	out := t.TempDir()
 	vols := &deletingVolumes{mount: mount}
 
-	oldVols, oldExec, oldSigs := runVolumes, runExec, runSignals
-	t.Cleanup(func() { runVolumes, runExec, runSignals = oldVols, oldExec, oldSigs })
-	runVolumes = vols
-	runSignals = func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} }
+	swap[volumeManager](t, &runVolumes, vols)
+	swap(t, &runSignals, func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} })
 	// The "command": it writes the card's receipt and its bundle on the volume,
 	// which is what a real card's last steps do.
-	runExec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
+	swap(t, &runExec, func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
 		writeOn(t, filepath.Join(mount, "work"), "RESULT.md", "RESULT card1 sha=abc\nDONE\n")
 		writeOn(t, filepath.Join(mount, "work"), "repo.bundle", "PACK\n")
 		done := make(chan int, 1)
 		done <- 0
 		return startedRun{done: done, kill: func(syscall.Signal) {}, pid: 4242}, nil
-	}
+	})
 
 	args := append([]string{"--name", "card1", "--size", "64m", "--out", out, "--"}, shellOf(t)...)
-	var stdout, stderr bytes.Buffer
-	code := runDisposable(parseRun(args), 0, nil, &stdout, &stderr, []string{"PATH=" + os.Getenv("PATH")})
-	errOut := stderr.String()
-	require.Equal(t, 0, code, "exit = %d, want the command's own 0\n%s", code, errOut)
-	require.Contains(t, errOut, "SANDBOX OUT name=card1 files=2 bytes=31", "the OUT receipt is not there or does not count what left:\n%s", errOut)
-	assert.LessOrEqual(t, strings.Index(errOut, "SANDBOX OUT"), strings.Index(errOut, "SANDBOX DONE"), "the OUT line comes after the DONE line; the copy must happen before the delete:\n%s", errOut)
+	r := disposable(t, 0, args...)
+	require.Equal(t, 0, r.Code, "exit = %d, want the command's own 0\n%s", r.Code, r.Stderr)
+	require.Contains(t, r.Stderr, "SANDBOX OUT name=card1 files=2 bytes=31", "the OUT receipt is not there or does not count what left:\n%s", r.Stderr)
+	assert.LessOrEqual(t, strings.Index(r.Stderr, "SANDBOX OUT"), strings.Index(r.Stderr, "SANDBOX DONE"), "the OUT line comes after the DONE line; the copy must happen before the delete:\n%s", r.Stderr)
 	assert.Equal(t, "create delete", strings.Join(vols.calls, " "), "calls = %v", vols.calls)
 	// The proof: the volume is gone and the artifacts are not.
-	_, err := os.Stat(filepath.Join(mount, "work", "RESULT.md"))
-	assert.Error(t, err, "the volume survived the run; this test proves nothing")
+	assert.Error(t, statErr(filepath.Join(mount, "work", "RESULT.md")), "the volume survived the run; this test proves nothing")
 	for _, name := range []string{"RESULT.md", "repo.bundle"} {
 		_, err := os.Stat(filepath.Join(out, "card1", name))
 		assert.NoError(t, err, "%s did not leave the volume: %v", name, err)
@@ -217,24 +210,20 @@ func TestRunRefusesWhenTheHandoffFailsAfterACleanCommand(t *testing.T) {
 	}
 	out := t.TempDir()
 	vols := &deletingVolumes{mount: mount}
-	oldVols, oldExec, oldSigs := runVolumes, runExec, runSignals
-	t.Cleanup(func() { runVolumes, runExec, runSignals = oldVols, oldExec, oldSigs })
-	runVolumes = vols
-	runSignals = func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} }
-	runExec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
+	swap[volumeManager](t, &runVolumes, vols)
+	swap(t, &runSignals, func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} })
+	swap(t, &runExec, func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
 		done := make(chan int, 1)
 		done <- 0
 		return startedRun{done: done, kill: func(syscall.Signal) {}, pid: 4242}, nil
-	}
+	})
 
 	args := append([]string{"--name", "card1", "--size", "64m", "--out", out,
 		"--artifact", "RESULT.md", "--"}, shellOf(t)...)
-	var stdout, stderr bytes.Buffer
-	code := runDisposable(parseRun(args), 0, nil, &stdout, &stderr, []string{"PATH=" + os.Getenv("PATH")})
-	errOut := stderr.String()
-	require.Equal(t, sandbox.ExitRefused, code, "exit = %d, want %d: a clean command whose artifacts did not leave is not a clean run\n%s",
-		code, sandbox.ExitRefused, errOut)
-	assert.Contains(t, errOut, "reason=out_failed", "the refusal does not name itself:\n%s", errOut)
+	r := disposable(t, 0, args...)
+	require.Equal(t, sandbox.ExitRefused, r.Code, "exit = %d, want %d: a clean command whose artifacts did not leave is not a clean run\n%s",
+		r.Code, sandbox.ExitRefused, r.Stderr)
+	assert.Contains(t, r.Stderr, "reason=out_failed", "the refusal does not name itself:\n%s", r.Stderr)
 	assert.Equal(t, "create delete", strings.Join(vols.calls, " "), "a failed handoff left the volume: %v", vols.calls)
 }
 

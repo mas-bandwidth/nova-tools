@@ -87,18 +87,27 @@ func shippedModelHost(t *testing.T) string {
 
 // egressBench puts the three seams in place for one test and puts the production bodies
 // back afterwards, so a test that forgets cannot leave the next one talking to the machine.
-func egressBench(t *testing.T, goos string, priv *fakePriv) {
+// It returns the test's job and the path in it a plan is written to.
+func egressBench(t *testing.T, goos string, priv *fakePriv) (job, string) {
 	t.Helper()
-	oldPriv, oldGOOS, oldLookup := egressPriv, egressGOOS, egressLookup
-	t.Cleanup(func() { egressPriv, egressGOOS, egressLookup = oldPriv, oldGOOS, oldLookup })
-	egressPriv, egressGOOS = priv, goos
+	swap[privilegedCommand](t, &egressPriv, priv)
+	swap(t, &egressGOOS, goos)
 	table := map[string][]netip.Addr{
 		sandbox.EgressBaseNames[0]: {netip.MustParseAddr(testBaseAddr)},
 		sandbox.EgressBaseNames[1]: {netip.MustParseAddr("198.51.100.11"), netip.MustParseAddr(testBaseAddr6)},
 		sandbox.EgressBaseNames[2]: {netip.MustParseAddr("198.51.100.12")},
 		shippedModelHost(t):        {netip.MustParseAddr(testModelAddr)},
 	}
-	egressLookup = func(netip.Addr) sandboxResolver { return fakeLookup{table: table} }
+	swap(t, &egressLookup, func(netip.Addr) sandboxResolver { return fakeLookup{table: table} })
+	j := newJob(t)
+	return j, filepath.Join(j.write, "plan.nft")
+}
+
+// planned writes the plan the apply and check tests start from, and requires it.
+func planned(t *testing.T, j job, out string) {
+	t.Helper()
+	r := j.run(t, planArgs(t, out)...)
+	require.Equal(t, 0, r.Code, "the plan could not be built: %s", r.Stderr)
 }
 
 // planArgs is one good plan invocation against the SHIPPED policy file, which is the
@@ -116,14 +125,12 @@ func planArgs(t *testing.T, out string, extra ...string) []string {
 }
 
 func TestEgressPlanWritesARulesetAndPrintsItsReceipt(t *testing.T) {
-	egressBench(t, "linux", &fakePriv{})
-	j := newJob(t)
-	out := filepath.Join(j.write, "plan.nft")
-	code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...)
-	require.Equal(t, 0, code, "a good plan exited %d: %s", code, errOut)
+	j, out := egressBench(t, "linux", &fakePriv{})
+	r := j.run(t, planArgs(t, out)...)
+	require.Equal(t, 0, r.Code, "a good plan exited %d: %s", r.Code, r.Stderr)
 	wantNames := "names=" + strings.Join(append(append([]string{}, sandbox.EgressBaseNames...), shippedModelHost(t)), ",")
-	assert.Contains(t, errOut, "EGRESS PLAN run=j1 allow=", "the plan's receipt is not the line the spec publishes: %q", errOut)
-	assert.Contains(t, errOut, wantNames, "the plan's receipt is not the line the spec publishes: %q", errOut)
+	assert.Contains(t, r.Stderr, "EGRESS PLAN run=j1 allow=", "the plan's receipt is not the line the spec publishes: %q", r.Stderr)
+	assert.Contains(t, r.Stderr, wantNames, "the plan's receipt is not the line the spec publishes: %q", r.Stderr)
 	raw, err := os.ReadFile(out)
 	require.NoError(t, err, "the plan file was not written: %s", err)
 	text := string(raw)
@@ -139,14 +146,12 @@ func TestEgressPlanWritesARulesetAndPrintsItsReceipt(t *testing.T) {
 	}
 	// And the plan this tool writes passes this tool's own audit — the check verb read
 	// from the file, which is what a reviewer runs.
-	code, _, errOut = j.tool(t, j.env(), "egress", "check", "--plan", out)
-	assert.Equal(t, 0, code, "the plan this tool wrote fails its own check verb: exit %d, %s", code, errOut)
+	r = j.run(t, "egress", "check", "--plan", out)
+	assert.Equal(t, 0, r.Code, "the plan this tool wrote fails its own check verb: exit %d, %s", r.Code, r.Stderr)
 }
 
 func TestEgressPlanRefusesTheInputsThatWouldWidenTheWall(t *testing.T) {
-	egressBench(t, "linux", &fakePriv{})
-	j := newJob(t)
-	out := filepath.Join(j.write, "plan.nft")
+	j, out := egressBench(t, "linux", &fakePriv{})
 	cases := []struct {
 		name, reason string
 		args         []string
@@ -161,47 +166,38 @@ func TestEgressPlanRefusesTheInputsThatWouldWidenTheWall(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			os.Remove(out)
-			code, _, errOut := j.tool(t, j.env(), c.args...)
-			assert.Equal(t, 2, code, "%s exited %d, want 2 (the verb could not run): %s", c.name, code, errOut)
-			assert.Contains(t, errOut, "EGRESS REFUSED reason="+c.reason, "%s did not refuse with reason=%s: %q", c.name, c.reason, errOut)
-			assert.Contains(t, errOut, egressRemedy, "%s refused without the one remedy line: %q", c.name, errOut)
-			_, err := os.Stat(out)
-			assert.Error(t, err, "%s was refused and a plan file was written anyway; a refused plan leaves nothing behind for a later apply to pick up", c.name)
+			r := j.run(t, c.args...)
+			assert.Equal(t, 2, r.Code, "%s exited %d, want 2 (the verb could not run): %s", c.name, r.Code, r.Stderr)
+			assert.Contains(t, r.Stderr, "EGRESS REFUSED reason="+c.reason, "%s did not refuse with reason=%s: %q", c.name, c.reason, r.Stderr)
+			assert.Contains(t, r.Stderr, egressRemedy, "%s refused without the one remedy line: %q", c.name, r.Stderr)
+			assert.Error(t, statErr(out), "%s was refused and a plan file was written anyway; a refused plan leaves nothing behind for a later apply to pick up", c.name)
 		})
 	}
 }
 
 func TestEgressPlanNeedsASelector(t *testing.T) {
-	egressBench(t, "linux", &fakePriv{})
-	j := newJob(t)
-	args := planArgs(t, filepath.Join(j.write, "plan.nft"))
+	j, out := egressBench(t, "linux", &fakePriv{})
+	args := planArgs(t, out)
 	args = replaceFlag(args, "--uid", "")
-	code, _, errOut := j.tool(t, j.env(), args...)
-	require.Equal(t, 2, code, "a plan with neither --uid nor --veth exited %d: %q; an unscoped default deny would firewall the bench itself", code, errOut)
-	require.Contains(t, errOut, "reason=no_selector", "a plan with neither --uid nor --veth exited %d: %q; an unscoped default deny would firewall the bench itself", code, errOut)
+	r := j.run(t, args...)
+	r.ExitErr(2, "reason=no_selector", "a plan with neither --uid nor --veth exited %d: %q; an unscoped default deny would firewall the bench itself", r.Code, r.Stderr)
 }
 
 func TestEgressApplyHandsTheAuditedPlanToNft(t *testing.T) {
 	priv := &fakePriv{}
-	egressBench(t, "linux", priv)
-	j := newJob(t)
-	out := filepath.Join(j.write, "plan.nft")
-	code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...)
-	require.Equal(t, 0, code, "the plan could not be built: %s", errOut)
-	code, _, errOut = j.tool(t, j.env(), "egress", "apply", "--plan", out, "--run", "j1")
-	require.Equal(t, 0, code, "apply exited %d: %s", code, errOut)
+	j, out := egressBench(t, "linux", priv)
+	planned(t, j, out)
+	r := j.run(t, "egress", "apply", "--plan", out, "--run", "j1")
+	require.Equal(t, 0, r.Code, "apply exited %d: %s", r.Code, r.Stderr)
 	got, want := strings.Join(priv.calls, "|"), "nft -f "+out
 	assert.Equal(t, want, got, "apply ran %q, want %q", got, want)
-	assert.Contains(t, errOut, "EGRESS OK verb=apply run=j1 table=nova_egress_j1", "apply printed no receipt: %q", errOut)
+	assert.Contains(t, r.Stderr, "EGRESS OK verb=apply run=j1 table=nova_egress_j1", "apply printed no receipt: %q", r.Stderr)
 }
 
 func TestEgressApplyRefusesAPlanItCannotAudit(t *testing.T) {
 	priv := &fakePriv{}
-	egressBench(t, "linux", priv)
-	j := newJob(t)
-	out := filepath.Join(j.write, "plan.nft")
-	code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...)
-	require.Equal(t, 0, code, "the plan could not be built: %s", errOut)
+	j, out := egressBench(t, "linux", priv)
+	planned(t, j, out)
 	raw, err := os.ReadFile(out)
 	require.NoError(t, err)
 	// The default deny, removed. A plan that lost it is a plan that allows everything the
@@ -209,58 +205,49 @@ func TestEgressApplyRefusesAPlanItCannotAudit(t *testing.T) {
 	broken := strings.Replace(string(raw), "\t\tmeta skuid 10001 drop\n", "", 1)
 	require.NotEqual(t, string(raw), broken, "the test did not break the plan")
 	require.NoError(t, os.WriteFile(out, []byte(broken), 0o600))
-	code, _, errOut = j.tool(t, j.env(), "egress", "apply", "--plan", out, "--run", "j1")
-	assert.NotEqual(t, 0, code, "apply took a plan that fails its own audit: %s", errOut)
-	assert.Contains(t, errOut, "reason=no_default_deny", "apply did not name what was wrong with the plan: %q", errOut)
+	r := j.run(t, "egress", "apply", "--plan", out, "--run", "j1")
+	assert.NotEqual(t, 0, r.Code, "apply took a plan that fails its own audit: %s", r.Stderr)
+	assert.Contains(t, r.Stderr, "reason=no_default_deny", "apply did not name what was wrong with the plan: %q", r.Stderr)
 	assert.Empty(t, priv.calls, "apply ran %v before the audit; a plan is audited BEFORE nft sees it, or the audit is a comment", priv.calls)
 }
 
 func TestEgressApplyRefusesAPlanFromAnotherRun(t *testing.T) {
 	priv := &fakePriv{}
-	egressBench(t, "linux", priv)
-	j := newJob(t)
-	out := filepath.Join(j.write, "plan.nft")
-	code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...)
-	require.Equal(t, 0, code, "the plan could not be built: %s", errOut)
-	code, _, errOut = j.tool(t, j.env(), "egress", "apply", "--plan", out, "--run", "j2")
-	require.NotEqual(t, 0, code, "apply took run j1's plan for run j2: exit %d, %q; the drop that follows names one table and would leave the other standing", code, errOut)
-	require.Contains(t, errOut, "reason=plan_mismatch", "apply took run j1's plan for run j2: exit %d, %q; the drop that follows names one table and would leave the other standing", code, errOut)
+	j, out := egressBench(t, "linux", priv)
+	planned(t, j, out)
+	r := j.run(t, "egress", "apply", "--plan", out, "--run", "j2")
+	require.NotEqual(t, 0, r.Code, "apply took run j1's plan for run j2: exit %d, %q; the drop that follows names one table and would leave the other standing", r.Code, r.Stderr)
+	require.Contains(t, r.Stderr, "reason=plan_mismatch", "apply took run j1's plan for run j2: exit %d, %q; the drop that follows names one table and would leave the other standing", r.Code, r.Stderr)
 	assert.Empty(t, priv.calls, "apply ran %v on a plan that belongs to another run", priv.calls)
 }
 
 func TestEgressRefusesWhenNftIsNotOnTheBench(t *testing.T) {
 	priv := &fakePriv{missing: true}
-	egressBench(t, "linux", priv)
-	j := newJob(t)
-	out := filepath.Join(j.write, "plan.nft")
-	code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...)
-	require.Equal(t, 0, code, "the plan could not be built: %s", errOut)
-	code, _, errOut = j.tool(t, j.env(), "egress", "apply", "--plan", out, "--run", "j1")
-	require.Equal(t, 2, code, "a bench without nft exited %d: %q", code, errOut)
-	require.Contains(t, errOut, "reason=no_nft", "a bench without nft exited %d: %q", code, errOut)
-	assert.Contains(t, errOut, nftRemedy, "the refusal carries no remedy line: %q", errOut)
+	j, out := egressBench(t, "linux", priv)
+	planned(t, j, out)
+	r := j.run(t, "egress", "apply", "--plan", out, "--run", "j1")
+	r.ExitErr(2, "reason=no_nft", "a bench without nft exited %d: %q", r.Code, r.Stderr)
+	assert.Contains(t, r.Stderr, nftRemedy, "the refusal carries no remedy line: %q", r.Stderr)
 	assert.Empty(t, priv.calls, "something was run on a bench with no nft: %v", priv.calls)
 }
 
 func TestEgressDropDeletesExactlyTheRunsTable(t *testing.T) {
 	priv := &fakePriv{}
-	egressBench(t, "linux", priv)
-	j := newJob(t)
-	code, _, errOut := j.tool(t, j.env(), "egress", "drop", "--run", "j1")
-	require.Equal(t, 0, code, "drop exited %d: %s", code, errOut)
+	j, _ := egressBench(t, "linux", priv)
+	r := j.run(t, "egress", "drop", "--run", "j1")
+	require.Equal(t, 0, r.Code, "drop exited %d: %s", r.Code, r.Stderr)
 	got, want := strings.Join(priv.calls, "|"), "nft delete table inet nova_egress_j1"
 	assert.Equal(t, want, got, "drop ran %q, want %q", got, want)
-	assert.Contains(t, errOut, "EGRESS OK verb=drop run=j1 table=nova_egress_j1", "drop printed no receipt: %q", errOut)
+	assert.Contains(t, r.Stderr, "EGRESS OK verb=drop run=j1 table=nova_egress_j1", "drop printed no receipt: %q", r.Stderr)
 }
 
 func TestEgressDropRefusesARunIdThatIsNotATableName(t *testing.T) {
 	priv := &fakePriv{}
-	egressBench(t, "linux", priv)
-	j := newJob(t)
+	j, _ := egressBench(t, "linux", priv)
 	for _, run := range []string{"", "j1; flush ruleset", "../j1"} {
-		code, _, errOut := j.tool(t, j.env(), "egress", "drop", "--run", run)
-		assert.Equal(t, 2, code, "drop --run %q exited %d: %q", run, code, errOut)
-		assert.Contains(t, errOut, "reason=no_name", "drop --run %q exited %d: %q", run, code, errOut)
+		r := j.run(t, "egress", "drop", "--run", run)
+		assert.Equal(t, 2, r.Code, "drop --run %q exited %d: %q", run, r.Code, r.Stderr)
+		assert.Contains(t, r.Stderr, "reason=no_name", "drop --run %q exited %d: %q", run, r.Code, r.Stderr)
 	}
 	assert.Empty(t, priv.calls, "drop ran %v on a name it refused", priv.calls)
 }
@@ -270,16 +257,15 @@ func TestEgressDropRefusesARunIdThatIsNotATableName(t *testing.T) {
 // pretending a plan was enforced.
 func TestEgressApplyAndDropRefuseOffLinux(t *testing.T) {
 	priv := &fakePriv{}
-	egressBench(t, "darwin", priv)
-	j := newJob(t)
+	j, out := egressBench(t, "darwin", priv)
 	for _, args := range [][]string{
-		{"egress", "apply", "--plan", filepath.Join(j.write, "plan.nft"), "--run", "j1"},
+		{"egress", "apply", "--plan", out, "--run", "j1"},
 		{"egress", "drop", "--run", "j1"},
 	} {
-		code, _, errOut := j.tool(t, j.env(), args...)
-		assert.Equal(t, 2, code, "%v on darwin exited %d: %q", args, code, errOut)
-		assert.Contains(t, errOut, "reason=not_linux", "%v on darwin exited %d: %q", args, code, errOut)
-		assert.Contains(t, errOut, "seatbelt", "%v does not say where the wall is on this platform: %q", args, errOut)
+		r := j.run(t, args...)
+		assert.Equal(t, 2, r.Code, "%v on darwin exited %d: %q", args, r.Code, r.Stderr)
+		assert.Contains(t, r.Stderr, "reason=not_linux", "%v on darwin exited %d: %q", args, r.Code, r.Stderr)
+		assert.Contains(t, r.Stderr, "seatbelt", "%v does not say where the wall is on this platform: %q", args, r.Stderr)
 	}
 	assert.Empty(t, priv.calls, "something ran nft on darwin: %v", priv.calls)
 }
@@ -287,28 +273,23 @@ func TestEgressApplyAndDropRefuseOffLinux(t *testing.T) {
 // plan and check run ANYWHERE: a plan is text and an audit is a read, and a reviewer on a
 // Mac has to be able to build and check the ruleset a bench will apply.
 func TestEgressPlanAndCheckRunOffLinux(t *testing.T) {
-	egressBench(t, "darwin", &fakePriv{})
-	j := newJob(t)
-	out := filepath.Join(j.write, "plan.nft")
-	code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...)
-	require.Equal(t, 0, code, "plan on darwin exited %d: %s", code, errOut)
-	code, _, errOut = j.tool(t, j.env(), "egress", "check", "--plan", out)
-	require.Equal(t, 0, code, "check on darwin exited %d: %s", code, errOut)
+	j, out := egressBench(t, "darwin", &fakePriv{})
+	r := j.run(t, planArgs(t, out)...)
+	require.Equal(t, 0, r.Code, "plan on darwin exited %d: %s", r.Code, r.Stderr)
+	r = j.run(t, "egress", "check", "--plan", out)
+	require.Equal(t, 0, r.Code, "check on darwin exited %d: %s", r.Code, r.Stderr)
 }
 
 func TestEgressCheckGoesRedOnABrokenPlan(t *testing.T) {
-	egressBench(t, "linux", &fakePriv{})
-	j := newJob(t)
-	out := filepath.Join(j.write, "plan.nft")
-	code, _, errOut := j.tool(t, j.env(), planArgs(t, out)...)
-	require.Equal(t, 0, code, "the plan could not be built: %s", errOut)
+	j, out := egressBench(t, "linux", &fakePriv{})
+	planned(t, j, out)
 	raw, err := os.ReadFile(out)
 	require.NoError(t, err)
 	broken := strings.Replace(string(raw), "ip daddr "+testModelAddr+" tcp dport 443 accept", "ip daddr 0.0.0.0/0 tcp dport 443 accept", 1)
 	require.NoError(t, os.WriteFile(out, []byte(broken), 0o600))
-	code, _, errOut = j.tool(t, j.env(), "egress", "check", "--plan", out)
-	assert.Equal(t, 1, code, "check exited %d on a plan that allows the whole internet, want 1 (the verb ran and said NO): %s", code, errOut)
-	assert.Contains(t, errOut, "reason=allow_any", "check did not name what it found: %q", errOut)
+	r := j.run(t, "egress", "check", "--plan", out)
+	assert.Equal(t, 1, r.Code, "check exited %d on a plan that allows the whole internet, want 1 (the verb ran and said NO): %s", r.Code, r.Stderr)
+	assert.Contains(t, r.Stderr, "reason=allow_any", "check did not name what it found: %q", r.Stderr)
 }
 
 func TestEgressVerbRefusesAnUnknownSubVerb(t *testing.T) {
@@ -316,9 +297,9 @@ func TestEgressVerbRefusesAnUnknownSubVerb(t *testing.T) {
 
 	j := newJob(t)
 	for _, args := range [][]string{{"egress"}, {"egress", "flush"}} {
-		code, _, errOut := j.tool(t, j.env(), args...)
-		assert.Equal(t, 2, code, "%v exited %d: %q", args, code, errOut)
-		assert.Contains(t, errOut, "EGRESS REFUSED reason=no_command", "%v exited %d: %q", args, code, errOut)
+		r := j.run(t, args...)
+		assert.Equal(t, 2, r.Code, "%v exited %d: %q", args, r.Code, r.Stderr)
+		assert.Contains(t, r.Stderr, "EGRESS REFUSED reason=no_command", "%v exited %d: %q", args, r.Code, r.Stderr)
 	}
 }
 

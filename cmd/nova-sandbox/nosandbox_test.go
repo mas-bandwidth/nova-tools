@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,12 +22,11 @@ func TestThereIsNoWayToRunAnUnwalledCommand(t *testing.T) {
 	sh := j.shell(t)
 	for _, flag := range []string{"--no-sandbox", "--no_sandbox", "--unsandboxed", "--disable-sandbox"} {
 		args := append([]string{"--read", j.read, "--write", j.write, flag, "--"}, sh...)
-		code, _, errOut := j.tool(t, j.env(), append(args, "touch "+marker)...)
-		require.Equal(t, 125, code, "%s: exit %d, want 125; a tool whose reason is containment has no switch that turns it off: %s", flag, code, errOut)
-		assert.Contains(t, errOut, "SANDBOX REFUSED reason=bad_flag: unknown flag "+flag+"; the flags are --read, ", "%s was refused off the grammar the spec fixes, got %q", flag, errOut)
-		assert.Contains(t, errOut, "; run: nova-sandbox help\n", "%s was refused off the grammar the spec fixes, got %q", flag, errOut)
-		assert.NotContains(t, errOut, "UNSANDBOXED", "%s printed an UNSANDBOXED line; that line is nova-swarm's alone: %q", flag, errOut)
-		_, err := os.Stat(marker)
-		require.Error(t, err, "%s RAN THE COMMAND", flag)
+		r := j.run(t, append(args, "touch "+marker)...)
+		require.Equal(t, 125, r.Code, "%s: exit %d, want 125; a tool whose reason is containment has no switch that turns it off: %s", flag, r.Code, r.Stderr)
+		assert.Contains(t, r.Stderr, "SANDBOX REFUSED reason=bad_flag: unknown flag "+flag+"; the flags are --read, ", "%s was refused off the grammar the spec fixes, got %q", flag, r.Stderr)
+		assert.Contains(t, r.Stderr, "; run: nova-sandbox help\n", "%s was refused off the grammar the spec fixes, got %q", flag, r.Stderr)
+		assert.NotContains(t, r.Stderr, "UNSANDBOXED", "%s printed an UNSANDBOXED line; that line is nova-swarm's alone: %q", flag, r.Stderr)
+		require.Error(t, statErr(marker), "%s RAN THE COMMAND", flag)
 	}
 }

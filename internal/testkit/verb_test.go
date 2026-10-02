@@ -115,3 +115,26 @@ func TestRefusalsRunsEachRowAndReportsTheBadOnes(t *testing.T) {
 	runs(rec, func() { testkit.Refusals(rec, demo, nil) })
 	assert.True(t, rec.failed, "Refusals passed a table of no rows")
 }
+
+func TestExitErrFailsWithTheCallersSentenceOrTheRun(t *testing.T) {
+	t.Parallel()
+	echo.Do(t, "fail", "x").ExitErr(2, "err", "held: %d", 2)
+	for _, tc := range []struct {
+		name, want string
+		code       int
+		msg        []any
+		says       string
+	}{
+		{"the exit", "err", 0, []any{"the sentence %d", 7}, "the sentence 7"},
+		{"the stderr", "nowhere", 2, []any{"the sentence %d", 7}, "the sentence 7"},
+		{"no sentence", "nowhere", 2, nil, `run ["fail" "x"]: exit=2`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rec := &recorder{TB: t}
+			runs(rec, func() { echo.Do(rec, "fail", "x").ExitErr(tc.code, tc.want, tc.msg...) })
+			assert.True(t, rec.failed, "ExitErr passed a run that breaks it")
+			assert.Contains(t, rec.msg, tc.says, "the failure does not carry the caller's sentence, or the run when there is none")
+		})
+	}
+}

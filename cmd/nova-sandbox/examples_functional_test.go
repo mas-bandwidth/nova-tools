@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/base64"
 	"os"
 	"os/exec"
@@ -103,7 +102,7 @@ func TestSandboxCLISetupAndCommandsMatchOutput(t *testing.T) {
 				require.True(t, strings.HasPrefix(argv[0], "HOME="), "unsupported command: %s", command)
 				require.Equal(t, "nova-sandbox", argv[1], "unsupported command: %s", command)
 				home := owned(strings.TrimPrefix(argv[0], "HOME="))
-				result.Code, result.Stdout, result.Stderr = j.tool(t, []string{"HOME=" + home, "PATH=/opt/homebrew/bin:/usr/bin:/bin"}, argv[2:]...)
+				result = saw(t, []string{"HOME=" + home, "PATH=/opt/homebrew/bin:/usr/bin:/bin"}, argv[2:]...)
 			}
 			assert.Equal(t, 0, result.Code, "%s exited %d: %s", step.Line, result.Code, result.Stderr)
 			for _, problem := range onboarding.Compare(step, result, norms) {
@@ -140,9 +139,7 @@ func TestHelpCheckExampleMatchesTranscript(t *testing.T) {
 	require.Len(t, steps, 1, "check transcript has %d steps, want one", len(steps))
 	step := steps[0]
 	step.StderrWhole = true
-	var out, errb bytes.Buffer
-	code := run(step.Args, strings.NewReader(""), &out, &errb, os.Environ())
-	for _, problem := range onboarding.Compare(step, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil) {
+	for _, problem := range onboarding.Compare(step, saw(t, os.Environ(), step.Args...), nil) {
 		t.Error(problem)
 	}
 }

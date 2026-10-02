@@ -17,18 +17,16 @@ import (
 // which is true on the Studio and false on the windows runner (run 35367602664).
 func posixDirs(t *testing.T, dirs ...string) {
 	t.Helper()
-	old := denialStat
-	t.Cleanup(func() { denialStat = old })
 	set := map[string]bool{}
 	for _, d := range dirs {
 		set[d] = true
 	}
-	denialStat = func(p string) (fs.FileInfo, error) {
+	swap(t, &denialStat, func(p string) (fs.FileInfo, error) {
 		if set[p] {
 			return fakeDirInfo{}, nil
 		}
 		return nil, os.ErrNotExist
-	}
+	})
 }
 
 // fakeDirInfo is a directory, and remedyDir asks it exactly one question.

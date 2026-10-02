@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bytes"
+	"io"
 	"strings"
 	"testing"
 
@@ -92,19 +92,17 @@ func reapBad(f reapFlags) []string {
 // --write the misspelled flag was meant to be, reported missing) are not printed.
 func TestProbeStopsAtAnUnknownFlag(t *testing.T) {
 	t.Parallel()
-	var out, errb bytes.Buffer
-	code := probeVerb([]string{"--bogus"}, &out, &errb, nil)
-	require.Equal(t, 2, code, "exit %d, want 2", code)
-	got, want := errb.String(), "PROBE REFUSED reason=check: unknown flag --bogus; run: nova-sandbox help probe\n"
+	r := streams(func(args []string, stdout, stderr io.Writer) int { return probeVerb(args, stdout, stderr, nil) }).Do(t, "--bogus")
+	require.Equal(t, 2, r.Code, "exit %d, want 2", r.Code)
+	got, want := r.Stderr, "PROBE REFUSED reason=check: unknown flag --bogus; run: nova-sandbox help probe\n"
 	assert.Equal(t, want, got, "probe --bogus printed %q, want exactly %q", got, want)
 }
 
 // `check` words an unknown flag the same way as every other verb.
 func TestCheckUnknownFlagIsTheSameLine(t *testing.T) {
 	t.Parallel()
-	var out, errb bytes.Buffer
-	code := checkVerb([]string{"--wrte", "./x"}, &out, &errb)
-	require.Equal(t, 2, code, "exit %d, want 2", code)
-	got, want := errb.String(), "CHECK REFUSED reason=bad_flag: unknown flag --wrte; run: nova-sandbox help check\n"
+	r := streams(checkVerb).Do(t, "--wrte", "./x")
+	require.Equal(t, 2, r.Code, "exit %d, want 2", r.Code)
+	got, want := r.Stderr, "CHECK REFUSED reason=bad_flag: unknown flag --wrte; run: nova-sandbox help check\n"
 	assert.Equal(t, want, got, "check --wrte printed %q, want %q", got, want)
 }

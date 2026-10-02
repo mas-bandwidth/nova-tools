@@ -86,6 +86,22 @@ func (r Ran) NotErr(nots ...string) Ran {
 	return r
 }
 
+// ExitErr is Exit then Err(want) failing with the caller's own message:
+// msgAndArgs as testify takes them, or the Ran when there are none. It is the
+// two lines a refusal test repeats, the exit code and the reason, kept as one
+// sentence:
+//
+//	r.ExitErr(125, "reason=volume_exists", "a duplicate name is not refused: exit %d\n%s", r.Code, r.Stderr)
+func (r Ran) ExitErr(code int, want string, msgAndArgs ...any) Ran {
+	r.t.Helper()
+	if len(msgAndArgs) == 0 {
+		msgAndArgs = []any{r}
+	}
+	require.Equal(r.t, code, r.Code, msgAndArgs...)
+	require.Contains(r.t, r.Stderr, want, msgAndArgs...)
+	return r
+}
+
 // The refusal grammar, `<TOKEN> REFUSED: <reason>; run: <remedy>`
 // (docs/STANDARD.md, "The status word leads every line"): its status word and
 // the mark of its remedy.

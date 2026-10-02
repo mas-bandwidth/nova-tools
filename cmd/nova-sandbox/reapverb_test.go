@@ -47,31 +47,24 @@ func newReapBench(t *testing.T) *reapBench {
 		mounts: map[string]string{},
 		vols:   &fakeVolumes{},
 	}
-	oldVols, oldProcs, oldSignal, oldAlive, oldStart, oldGrace :=
-		runVolumes, reapProcs, reapSignal, reapAlive, reapProcStart, reapGraceSleep
-	t.Cleanup(func() {
-		runVolumes, reapProcs, reapSignal, reapAlive, reapProcStart, reapGraceSleep =
-			oldVols, oldProcs, oldSignal, oldAlive, oldStart, oldGrace
-	})
-
-	runVolumes = b.vols
-	reapProcs = func(mount string) ([]int, error) { return b.procs[mount], nil }
-	reapSignal = func(pid int, sig syscall.Signal) error {
+	swap[volumeManager](t, &runVolumes, b.vols)
+	swap(t, &reapProcs, func(mount string) ([]int, error) { return b.procs[mount], nil })
+	swap(t, &reapSignal, func(pid int, sig syscall.Signal) error {
 		b.signals = append(b.signals, fmt.Sprintf("%d:%d", pid, sig))
 		if sig == syscall.SIGKILL {
 			b.alive[pid] = false
 		}
 		return nil
-	}
-	reapAlive = func(pid int) bool { return b.alive[pid] }
-	reapProcStart = func(pid int) (string, error) {
+	})
+	swap(t, &reapAlive, func(pid int) bool { return b.alive[pid] })
+	swap(t, &reapProcStart, func(pid int) (string, error) {
 		if s, ok := b.starts[pid]; ok {
 			return s, nil
 		}
 		return "", fmt.Errorf("no such process %d", pid)
-	}
+	})
 	// The grace is production code's own wait and never a test's.
-	reapGraceSleep = func() {}
+	swap(t, &reapGraceSleep, func() {})
 	return b
 }
 
@@ -193,8 +186,8 @@ func TestReapExitsThreeWhenAVolumeRemains(t *testing.T) {
 // SIGKILL can tell that volume from one a working card is using.
 func TestTheRunVerbWritesAnOwnerMarkerAtTheVolumeRoot(t *testing.T) {
 	b := newRunBench(t, 0)
-	code, errOut := runOnce(t, b, runFlagsFor(t)...)
-	require.Equal(t, 0, code, "exit %d\n%s", code, errOut)
+	r := b.once(t, runFlagsFor(t)...)
+	require.Equal(t, 0, r.Code, "exit %d\n%s", r.Code, r.Stderr)
 	raw, err := os.ReadFile(filepath.Join(b.vols.mount, ownerMarker))
 	require.NoError(t, err, "the run left no %s at its volume root, so a reap cannot tell it from an orphan: %v", ownerMarker, err)
 	got := string(raw)
@@ -231,19 +224,16 @@ func TestReapRefusesWhereThereAreNoDisposableVolumes(t *testing.T) {
 func TestReapHelpIsExitZeroOnStdout(t *testing.T) {
 	t.Parallel()
 
-	var out, errb bytes.Buffer
-	code := reapVerb([]string{"--help"}, &out, &errb)
-	require.Equal(t, 0, code, "`reap --help` exited %d\n%s", code, errb.String())
-	assert.Contains(t, out.String(), "nova-sandbox reap", "`reap --help` does not print the verb's usage:\n%s", out.String())
-	assert.Contains(t, out.String(), "--dry-run", "`reap --help` does not print the verb's usage:\n%s", out.String())
+	r := streams(reapVerb).Do(t, "--help")
+	require.Equal(t, 0, r.Code, "`reap --help` exited %d\n%s", r.Code, r.Stderr)
+	assert.Contains(t, r.Stdout, "nova-sandbox reap", "`reap --help` does not print the verb's usage:\n%s", r.Stdout)
+	assert.Contains(t, r.Stdout, "--dry-run", "`reap --help` does not print the verb's usage:\n%s", r.Stdout)
 }
 
 // A flag the verb does not have is a refusal that names it, not a silent ignore.
 func TestReapRefusesAFlagItDoesNotHave(t *testing.T) {
 	t.Parallel()
 
-	var out, errb bytes.Buffer
-	code := reapVerb([]string{"--force"}, &out, &errb)
-	require.Equal(t, 125, code, "`reap --force` is a refusal naming the flag: got %d\n%s", code, errb.String())
-	require.Contains(t, errb.String(), "--force", "`reap --force` is a refusal naming the flag: got %d\n%s", code, errb.String())
+	r := streams(reapVerb).Do(t, "--force")
+	r.ExitErr(125, "--force", "`reap --force` is a refusal naming the flag: got %d\n%s", r.Code, r.Stderr)
 }

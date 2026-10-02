@@ -20,11 +20,11 @@ package main
 // windows bug green.
 
 import (
-	"bytes"
 	"errors"
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -223,15 +224,13 @@ func newWinBench(t *testing.T, code int) *winBench {
 		scratch: root,
 		sigs:    make(chan os.Signal),
 	}
-	oldPlace, oldSigs, oldGOOS, oldWall := runWinPlace, runSignals, runGOOS, runWinWall
-	t.Cleanup(func() { runWinPlace, runSignals, runGOOS, runWinWall = oldPlace, oldSigs, oldGOOS, oldWall })
 
-	runWinPlace = b.place
-	runGOOS = "windows"
-	runSignals = func() (<-chan os.Signal, func()) { return b.sigs, func() {} }
+	swap[winPlacer](t, &runWinPlace, b.place)
+	swap(t, &runGOOS, "windows")
+	swap(t, &runSignals, func() (<-chan os.Signal, func()) { return b.sigs, func() {} })
 	// The wall is not built (runwin_other.go / wrap_other.go), and every test below is about
 	// the PLACE, so the wall says yes here and exactly one test below turns it off again.
-	runWinWall = func() (string, bool) { return "appcontainer", true }
+	swap(t, &runWinWall, func() (string, bool) { return "appcontainer", true })
 	return b
 }
 
@@ -257,30 +256,28 @@ func (b *winBench) args(t *testing.T, extra ...string) []string {
 // the same seam darwin's runOnce uses on runDisposable, and it is here for the same reason:
 // what is under test below is the sequence over the placer, not the argv, and the two cannot
 // both be judged on a host whose idea of an absolute path is the other platform's.
-func (b *winBench) exec(t *testing.T, args ...string) (int, string) {
+func (b *winBench) exec(t *testing.T, args ...string) testkit.Ran {
 	t.Helper()
-	f := parseRun(args)
-	if f.place == "" {
-		f.place = placeJob
-	}
-	var d time.Duration
-	if f.timeout != "" {
-		d, _ = time.ParseDuration(f.timeout)
-	}
-	var out, errb bytes.Buffer
-	code := runDisposableWindows(f, d, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
-	return code, errb.String()
+	return testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+		f := parseRun(args)
+		if f.place == "" {
+			f.place = placeJob
+		}
+		var d time.Duration
+		if f.timeout != "" {
+			d, _ = time.ParseDuration(f.timeout)
+		}
+		return runDisposableWindows(f, d, stdin, stdout, stderr, hostPath())
+	}).Do(t, args...)
 }
 
 // verb is the whole verb, argv and all, for the refusals that happen BEFORE anything is
 // made. Those use winScratchArg, which is absolute on the platform the tool believes it is on.
-func (b *winBench) verb(t *testing.T, extra ...string) (int, string) {
+func (b *winBench) verb(t *testing.T, extra ...string) testkit.Ran {
 	t.Helper()
 	args := append([]string{"--name", "j1", "--scratch", winScratchArg}, extra...)
 	args = append(args, "--")
-	args = append(args, shellOf(t)...)
-	var out, errb bytes.Buffer
-	return runVerb(args, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")}), errb.String()
+	return withEnv(runVerb, hostPath()).Do(t, append(args, shellOf(t)...)...)
 }
 
 func (b *winBench) order() string { return strings.Join(b.place.snapshot(), " ") }
@@ -294,14 +291,13 @@ func (b *winBench) order() string { return strings.Join(b.place.snapshot(), " ")
 func TestWindowsRunCreatesJobAndScratchRunsAndAlwaysDeletes(t *testing.T) {
 	for _, code := range []int{0, 7, 1} {
 		b := newWinBench(t, code)
-		got, errOut := b.exec(t, b.args(t)...)
-		require.Equal(t, code, got, "the windows run verb returned %d for a command that exited %d; the status belongs to the wrapped command\n%s", got, code, errOut)
+		r := b.exec(t, b.args(t)...)
+		require.Equal(t, code, r.Code, "the windows run verb returned %d for a command that exited %d; the status belongs to the wrapped command\n%s", r.Code, code, r.Stderr)
 		want := "exists:nova-j1 scratch:nova-j1 job:mem=0,cpu=0 start:job-1 close:job-1 used remove:nova-j1"
 		require.Equal(t, want, b.order(), "the windows call order is not look-create-job-run-kill-delete:\n got: %s\nwant: %s", b.order(), want)
-		assert.Contains(t, errOut, "SANDBOX DONE name=j1 exit="+strconv.Itoa(code), "the receipt is not the contract's SANDBOX DONE line:\n%s", errOut)
-		assert.Contains(t, errOut, "freed=4096", "the receipt is not the contract's SANDBOX DONE line:\n%s", errOut)
-		_, err := os.Stat(filepath.Join(b.scratch, "nova-j1"))
-		assert.ErrorIs(t, err, fs.ErrNotExist, "the scratch is still on the disk after the run; the whole verb is that it is not")
+		assert.Contains(t, r.Stderr, "SANDBOX DONE name=j1 exit="+strconv.Itoa(code), "the receipt is not the contract's SANDBOX DONE line:\n%s", r.Stderr)
+		assert.Contains(t, r.Stderr, "freed=4096", "the receipt is not the contract's SANDBOX DONE line:\n%s", r.Stderr)
+		assert.ErrorIs(t, statErr(filepath.Join(b.scratch, "nova-j1")), fs.ErrNotExist, "the scratch is still on the disk after the run; the whole verb is that it is not")
 	}
 }
 
@@ -335,13 +331,12 @@ func TestWindowsTheJobIsClosedBeforeTheScratchIsRemoved(t *testing.T) {
 func TestWindowsAJobThatFailsUnmakesTheScratchBesideIt(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.place.jobErr = errors.New("CreateJobObjectW: access denied")
-	code, errOut := b.exec(t, b.args(t)...)
-	require.Equal(t, 125, code, "a job that could not be made must refuse at 125, got %d\n%s", code, errOut)
+	r := b.exec(t, b.args(t)...)
+	require.Equal(t, 125, r.Code, "a job that could not be made must refuse at 125, got %d\n%s", r.Code, r.Stderr)
 	require.NotContains(t, b.order(), "start:", "the command was started with no job to hold it: %s", b.order())
 	require.Contains(t, b.order(), "remove:nova-j1", "the scratch made beside the failed job was not removed: %s", b.order())
-	_, err := os.Stat(filepath.Join(b.scratch, "nova-j1"))
-	assert.ErrorIs(t, err, fs.ErrNotExist, "the scratch survived a failed job: both or neither is the rule")
-	assert.Contains(t, errOut, "reason=volume_failed", "the refusal does not name the reason:\n%s", errOut)
+	assert.ErrorIs(t, statErr(filepath.Join(b.scratch, "nova-j1")), fs.ErrNotExist, "the scratch survived a failed job: both or neither is the rule")
+	assert.Contains(t, r.Stderr, "reason=volume_failed", "the refusal does not name the reason:\n%s", r.Stderr)
 }
 
 // W5: <scratch>/nova-<n> is the run's ONLY --write, and the working directory and HOME are
@@ -369,9 +364,8 @@ func TestWindowsTheScratchIsTheOnlyWrite(t *testing.T) {
 func TestWindowsAnExistingScratchIsRefusedNotJoined(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.place.exists = true
-	code, errOut := b.exec(t, b.args(t)...)
-	require.Equal(t, 125, code, "an existing <scratch>/nova-<n> must refuse with volume_exists at 125; got %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=volume_exists", "an existing <scratch>/nova-<n> must refuse with volume_exists at 125; got %d\n%s", code, errOut)
+	r := b.exec(t, b.args(t)...)
+	r.ExitErr(125, "reason=volume_exists", "an existing <scratch>/nova-<n> must refuse with volume_exists at 125; got %d\n%s", r.Code, r.Stderr)
 	assert.NotContains(t, b.order(), "scratch:", "something was made before the refusal: %s", b.order())
 	assert.NotContains(t, b.order(), "job:", "something was made before the refusal: %s", b.order())
 }
@@ -431,12 +425,12 @@ func TestWindowsMemoryAndCPUAreAcceptedAndIgnoredOffWindows(t *testing.T) {
 // enforce is a refusal, never a note.
 func TestWindowsSizeIsRefusedNotApproximated(t *testing.T) {
 	b := newWinBench(t, 0)
-	code, errOut := b.verb(t, "--size", "8g")
-	require.Equal(t, 125, code, "--size on windows must refuse at 125, got %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=size_unenforceable", "--size on windows does not refuse with reason=size_unenforceable:\n%s", errOut)
+	r := b.verb(t, "--size", "8g")
+	require.Equal(t, 125, r.Code, "--size on windows must refuse at 125, got %d\n%s", r.Code, r.Stderr)
+	require.Contains(t, r.Stderr, "reason=size_unenforceable", "--size on windows does not refuse with reason=size_unenforceable:\n%s", r.Stderr)
 	// Two remedies on the line, both of them real.
-	assert.Contains(t, errOut, "--place wsb", "the refusal does not carry both remedies -- --place wsb, whose whole disk is discarded, and a --scratch on a volume already sized:\n%s", errOut)
-	assert.Contains(t, errOut, "--scratch", "the refusal does not carry both remedies -- --place wsb, whose whole disk is discarded, and a --scratch on a volume already sized:\n%s", errOut)
+	assert.Contains(t, r.Stderr, "--place wsb", "the refusal does not carry both remedies -- --place wsb, whose whole disk is discarded, and a --scratch on a volume already sized:\n%s", r.Stderr)
+	assert.Contains(t, r.Stderr, "--scratch", "the refusal does not carry both remedies -- --place wsb, whose whole disk is discarded, and a --scratch on a volume already sized:\n%s", r.Stderr)
 	assert.NotContains(t, b.order(), "scratch:", "the refusal came after something was made: %s", b.order())
 	// And on darwin the flag stays REQUIRED, because there the APFS volume quota is real.
 	f := parseRun([]string{"--name", "j1", "--", "/bin/sh"})
@@ -513,15 +507,15 @@ func TestAbsolutePathForNamesThePlatform(t *testing.T) {
 func TestWindowsALeakExitsThreeAndNamesTheOneCommand(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.place.removeErr = errors.New("ERROR_SHARING_VIOLATION")
-	code, errOut := b.exec(t, b.args(t)...)
-	require.Equal(t, exitLeak, code, "a scratch that could not be removed must exit %d whatever the command did, got %d\n%s", exitLeak, code, errOut)
+	r := b.exec(t, b.args(t)...)
+	require.Equal(t, exitLeak, r.Code, "a scratch that could not be removed must exit %d whatever the command did, got %d\n%s", exitLeak, r.Code, r.Stderr)
 	dir := filepath.Join(b.scratch, "nova-j1")
-	assert.Contains(t, errOut, "SANDBOX LEAK name=j1", "the leak line does not name the run and the directory:\n%s", errOut)
-	assert.Contains(t, errOut, "volume="+dir, "the leak line does not name the run and the directory:\n%s", errOut)
-	assert.Contains(t, errOut, `remedy="rmdir /s /q `+dir+`"`, "the leak line does not carry the ONE command that removes it -- rmdir /s /q, not `rm -rf`, and not a sentence:\n%s", errOut)
-	assert.Contains(t, errOut, "SANDBOX DONE name=j1 exit=0", "the receipt is missing: a leak still reports what the command did:\n%s", errOut)
+	assert.Contains(t, r.Stderr, "SANDBOX LEAK name=j1", "the leak line does not name the run and the directory:\n%s", r.Stderr)
+	assert.Contains(t, r.Stderr, "volume="+dir, "the leak line does not name the run and the directory:\n%s", r.Stderr)
+	assert.Contains(t, r.Stderr, `remedy="rmdir /s /q `+dir+`"`, "the leak line does not carry the ONE command that removes it -- rmdir /s /q, not `rm -rf`, and not a sentence:\n%s", r.Stderr)
+	assert.Contains(t, r.Stderr, "SANDBOX DONE name=j1 exit=0", "the receipt is missing: a leak still reports what the command did:\n%s", r.Stderr)
 	// The note names the one windows fact that explains it.
-	assert.Contains(t, errOut, "running .exe", "the leak note does not say why a windows scratch resists removal -- a running image cannot be removed and cannot be replaced in place:\n%s", errOut)
+	assert.Contains(t, r.Stderr, "running .exe", "the leak note does not say why a windows scratch resists removal -- a running image cannot be removed and cannot be replaced in place:\n%s", r.Stderr)
 }
 
 // `a-held-handle-is-retried-before-it-is-a-leak`. The retry is inside the placer, and what
@@ -532,12 +526,10 @@ func TestWindowsTheRemovalIsGivenARetryWindow(t *testing.T) {
 	var got time.Duration
 	b := newWinBench(t, 0)
 	b.place.removeOKAfter = 0
-	old := runWinPlace
-	runWinPlace = &windowRecordingPlace{winPlacer: b.place, window: &got}
-	t.Cleanup(func() { runWinPlace = old })
+	swap[winPlacer](t, &runWinPlace, &windowRecordingPlace{winPlacer: b.place, window: &got})
 
-	code, errOut := b.exec(t, b.args(t)...)
-	require.Equal(t, 0, code, "a clean run returned %d\n%s", code, errOut)
+	r := b.exec(t, b.args(t)...)
+	require.Equal(t, 0, r.Code, "a clean run returned %d\n%s", r.Code, r.Stderr)
 	require.Positive(t, got, "the removal was given no retry window; a leak declared on the first sharing violation names a machine dirty that a second's patience would have left clean")
 	assert.Equal(t, winRemoveWindow, got, "the removal window is %s, want the constant %s", got, winRemoveWindow)
 }
@@ -562,16 +554,14 @@ func (p *windowRecordingPlace) RemoveTree(root, dir string, w time.Duration) err
 func TestWindowsATimeoutClosesTheJobAndExits124(t *testing.T) {
 	b := newWinBench(t, 0)
 	// A start that never finishes: the done channel is never written.
-	old := runWinPlace
 	hang := &hangingPlace{fakeWinPlace: b.place}
-	runWinPlace = hang
-	t.Cleanup(func() { runWinPlace = old })
+	swap[winPlacer](t, &runWinPlace, hang)
 
-	code, errOut := b.exec(t, b.args(t, "--timeout", "20ms")...)
-	require.Equal(t, exitTimeout, code, "a command that outlived --timeout must exit %d, got %d\n%s", exitTimeout, code, errOut)
+	r := b.exec(t, b.args(t, "--timeout", "20ms")...)
+	require.Equal(t, exitTimeout, r.Code, "a command that outlived --timeout must exit %d, got %d\n%s", exitTimeout, r.Code, r.Stderr)
 	require.Contains(t, b.order(), "close:job-1", "the job was not closed on the deadline: %s. The close IS the kill, and it is what reaches a grandchild the harness abandoned", b.order())
-	assert.Contains(t, errOut, "SANDBOX DONE name=j1 exit=124", "the receipt does not carry 124:\n%s", errOut)
-	assert.Contains(t, errOut, "the whole tree", "the timeout note does not say the tree went with the job:\n%s", errOut)
+	assert.Contains(t, r.Stderr, "SANDBOX DONE name=j1 exit=124", "the receipt does not carry 124:\n%s", r.Stderr)
+	assert.Contains(t, r.Stderr, "the whole tree", "the timeout note does not say the tree went with the job:\n%s", r.Stderr)
 }
 
 // hangingPlace starts a command whose status never arrives until the job is closed, which
@@ -613,16 +603,13 @@ func TestWindowsHasNo128PlusN(t *testing.T) {
 	// mocked-clock unit test or a functional program (nova-tools #4221).
 	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	b := newWinBench(t, 0)
-	old := runWinPlace
 	hang := &hangingPlace{fakeWinPlace: b.place}
-	runWinPlace = hang
-	t.Cleanup(func() { runWinPlace = old })
+	swap[winPlacer](t, &runWinPlace, hang)
 
 	done := make(chan struct{})
-	var code int
-	var errOut string
+	var r testkit.Ran
 	go func() {
-		code, errOut = b.exec(t, b.args(t)...)
+		r = b.exec(t, b.args(t)...)
 		close(done)
 	}()
 	// Let the run reach its wait, then ask the tool to stop.
@@ -635,8 +622,8 @@ func TestWindowsHasNo128PlusN(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the verb did not return after the tool was asked to stop; a wait without an end is the thing this verb never does")
 	}
-	assert.LessOrEqual(t, code, 128, "the windows verb returned %d, which reads as 128+N; windows has no signals and there is no such status to give", code)
-	assert.Contains(t, errOut, "windows has none", "the note does not say that the status is TerminateProcess's and not a signal's:\n%s", errOut)
+	assert.LessOrEqual(t, r.Code, 128, "the windows verb returned %d, which reads as 128+N; windows has no signals and there is no such status to give", r.Code)
+	assert.Contains(t, r.Stderr, "windows has none", "the note does not say that the status is TerminateProcess's and not a signal's:\n%s", r.Stderr)
 	assert.True(t, strings.Contains(b.order(), "close:job-1") || strings.Contains(b.order(), "remove:nova-j1"), "an interrupted run left the place behind: %s", b.order())
 }
 
@@ -650,11 +637,10 @@ func TestWindowsHasNo128PlusN(t *testing.T) {
 func TestWSBRefusesOnAnEditionThatHasNoWindowsSandbox(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.place.wsbOK, b.place.wsbEd = false, "Home"
-	code, errOut := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30m")...)
-	require.Equal(t, 125, code, "--place wsb on an edition without it must refuse with no_wsb at 125; got %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=no_wsb", "--place wsb on an edition without it must refuse with no_wsb at 125; got %d\n%s", code, errOut)
-	assert.Contains(t, errOut, "Home", "the refusal does not name the edition:\n%s", errOut)
-	assert.Contains(t, errOut, "Containers-DisposableClientVM", "the refusal does not name the optional feature, so a reader cannot act on it:\n%s", errOut)
+	r := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30m")...)
+	r.ExitErr(125, "reason=no_wsb", "--place wsb on an edition without it must refuse with no_wsb at 125; got %d\n%s", r.Code, r.Stderr)
+	assert.Contains(t, r.Stderr, "Home", "the refusal does not name the edition:\n%s", r.Stderr)
+	assert.Contains(t, r.Stderr, "Containers-DisposableClientVM", "the refusal does not name the optional feature, so a reader cannot act on it:\n%s", r.Stderr)
 	assert.NotContains(t, b.order(), "scratch:", "a mapped folder was made before the refusal: %s", b.order())
 }
 
@@ -664,10 +650,9 @@ func TestWSBRefusesOnAnEditionThatHasNoWindowsSandbox(t *testing.T) {
 func TestASecondWSBRunRefusesRatherThanQueues(t *testing.T) {
 	b := newWinBench(t, 0)
 	b.place.wsbRun, b.place.wsbBusy = true, "windowssandbox.exe pid=904"
-	code, errOut := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30m")...)
-	require.Equal(t, 125, code, "a second --place wsb must refuse with wsb_busy at 125, never wait; got %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=wsb_busy", "a second --place wsb must refuse with wsb_busy at 125, never wait; got %d\n%s", code, errOut)
-	assert.Contains(t, errOut, "pid=904", "the refusal does not name the running instance:\n%s", errOut)
+	r := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30m")...)
+	r.ExitErr(125, "reason=wsb_busy", "a second --place wsb must refuse with wsb_busy at 125, never wait; got %d\n%s", r.Code, r.Stderr)
+	assert.Contains(t, r.Stderr, "pid=904", "the refusal does not name the running instance:\n%s", r.Stderr)
 }
 
 // W9's other half: the DEFAULT on windows is --place job, because a single-instance resource
@@ -685,9 +670,8 @@ func TestTheWindowsDefaultPlaceIsTheJob(t *testing.T) {
 // status file is a wait with no end, and this verb never waits without one.
 func TestWSBRefusesARunWithNoTimeout(t *testing.T) {
 	b := newWinBench(t, 0)
-	code, errOut := b.verb(t, "--place", "wsb")
-	require.Equal(t, 125, code, "--place wsb with no --timeout must refuse with bad_timeout at 125; got %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=bad_timeout", "--place wsb with no --timeout must refuse with bad_timeout at 125; got %d\n%s", code, errOut)
+	r := b.verb(t, "--place", "wsb")
+	r.ExitErr(125, "reason=bad_timeout", "--place wsb with no --timeout must refuse with bad_timeout at 125; got %d\n%s", r.Code, r.Stderr)
 	assert.NotContains(t, b.order(), "wsb-start", "a VM was started for a run with no deadline: %s", b.order())
 }
 
@@ -696,28 +680,24 @@ func TestWSBRefusesARunWithNoTimeout(t *testing.T) {
 func TestAWSBRunWithNoStatusFileTimesOutAt124(t *testing.T) {
 	b := newWinBench(t, 0)
 	tick := make(chan time.Time)
-	oldPoll := runWinPoll
-	runWinPoll = func(time.Duration) <-chan time.Time { return tick }
-	t.Cleanup(func() { runWinPoll = oldPoll })
+	swap(t, &runWinPoll, func(time.Duration) <-chan time.Time { return tick })
 
-	code, errOut := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30ms")...)
-	require.Equal(t, exitTimeout, code, "a wsb run whose guest wrote no status file must exit %d, got %d\n%s", exitTimeout, code, errOut)
-	assert.Contains(t, errOut, wsbExitFile, "the note does not name the status file the host waited for:\n%s", errOut)
+	r := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30ms")...)
+	require.Equal(t, exitTimeout, r.Code, "a wsb run whose guest wrote no status file must exit %d, got %d\n%s", exitTimeout, r.Code, r.Stderr)
+	assert.Contains(t, r.Stderr, wsbExitFile, "the note does not name the status file the host waited for:\n%s", r.Stderr)
 	assert.Contains(t, b.order(), "remove:nova-j1", "the mapped folder was not removed after the VM closed: %s", b.order())
 }
 
 // And the status that DOES come back through the file is the command's own.
 func TestAWSBRunReadsTheGuestsStatusOutOfTheScratch(t *testing.T) {
 	b := newWinBench(t, 0)
-	oldRead := runWinReadExit
-	runWinReadExit = func(path string) (int, bool) {
+	swap(t, &runWinReadExit, func(path string) (int, bool) {
 		assert.Equal(t, wsbExitFile, filepath.Base(path), "the host waited on %q, want the status file in the mapped writable folder", path)
 		return 7, true
-	}
-	t.Cleanup(func() { runWinReadExit = oldRead })
+	})
 
-	code, errOut := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30m")...)
-	require.Equal(t, 7, code, "the guest's own status did not come back: got %d, want 7\n%s", code, errOut)
+	r := b.exec(t, b.args(t, "--place", "wsb", "--timeout", "30m")...)
+	require.Equal(t, 7, r.Code, "the guest's own status did not come back: got %d, want 7\n%s", r.Code, r.Stderr)
 	want := "exists:nova-j1 wsb-available wsb-running scratch:nova-j1 wsb-start:run.wsb used remove:nova-j1"
 	assert.Equal(t, want, b.order(), "the wsb sequence is wrong:\n got: %s\nwant: %s", b.order(), want)
 }
@@ -862,10 +842,9 @@ func goCodeOnly(t *testing.T, path string) string {
 func TestWindowsRefusesWhileTheWallIsNotBuilt(t *testing.T) {
 	b := newWinBench(t, 0)
 	runWinWall = func() (string, bool) { return "appcontainer", false }
-	code, errOut := b.exec(t, b.args(t)...)
-	require.Equal(t, 125, code, "a windows run with no wall must refuse with no_sandbox at 125; got %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=no_sandbox", "a windows run with no wall must refuse with no_sandbox at 125; got %d\n%s", code, errOut)
-	assert.Contains(t, errOut, "appcontainer", "the refusal does not name the missing half, so a reader learns only that `the sandbox failed`:\n%s", errOut)
+	r := b.exec(t, b.args(t)...)
+	r.ExitErr(125, "reason=no_sandbox", "a windows run with no wall must refuse with no_sandbox at 125; got %d\n%s", r.Code, r.Stderr)
+	assert.Contains(t, r.Stderr, "appcontainer", "the refusal does not name the missing half, so a reader learns only that `the sandbox failed`:\n%s", r.Stderr)
 	assert.Empty(t, b.order(), "a machine with no wall had something made on it: %s", b.order())
 }
 
@@ -988,9 +967,9 @@ func TestReadWSBExit(t *testing.T) {
 // A caller writes one argv for three platforms and reads one grammar back.
 func TestTheWindowsReceiptIsTheSameGrammarAsDarwins(t *testing.T) {
 	b := newWinBench(t, 3)
-	_, errOut := b.exec(t, b.args(t)...)
+	r := b.exec(t, b.args(t)...)
 	for _, want := range []string{"SANDBOX OK ", "SANDBOX STEP ", "SANDBOX DONE name=j1 exit=3 wall=", " freed="} {
-		assert.Contains(t, errOut, want, "the windows run does not print %q; the grammar is one grammar for three platforms:\n%s", want, errOut)
+		assert.Contains(t, r.Stderr, want, "the windows run does not print %q; the grammar is one grammar for three platforms:\n%s", want, r.Stderr)
 	}
 	// And the remedy a windows refusal carries is the WINDOWS argv: a reader handed the
 	// darwin one would type --size, which the next line refuses.
@@ -1007,11 +986,10 @@ func TestTheWindowsReceiptIsTheSameGrammarAsDarwins(t *testing.T) {
 func TestTheWindowsHelpNamesTheWindowsFlags(t *testing.T) {
 	t.Parallel()
 
-	var out, errb bytes.Buffer
-	code := runVerb([]string{"help"}, nil, &out, &errb, nil)
-	require.Equal(t, 0, code, "`run help` exited %d", code)
+	r := withEnv(runVerb, nil).Do(t, "help")
+	require.Equal(t, 0, r.Code, "`run help` exited %d", r.Code)
 	for _, want := range []string{"--scratch", "--memory", "--cpu", "--place", "REFUSED on windows"} {
-		assert.Contains(t, out.String(), want, "the run banner does not mention %q:\n%s", want, out.String())
+		assert.Contains(t, r.Stdout, want, "the run banner does not mention %q:\n%s", want, r.Stdout)
 	}
 }
 

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,13 +86,12 @@ func TestHelpFirstRunLinesProveTheWall(t *testing.T) {
 		require.True(t, ok, "the example %q is not a HOME= and a nova-sandbox command", line)
 		require.GreaterOrEqual(t, len(words), 2, "the example %q is not a HOME= and a nova-sandbox command", line)
 		require.Equal(t, "nova-sandbox", words[1], "the example %q is not a HOME= and a nova-sandbox command", line)
-		var out, errb bytes.Buffer
-		code := run(words[2:], strings.NewReader(""), &out, &errb, []string{"HOME=" + home, "PATH=/usr/bin:/bin"})
+		r := saw(t, []string{"HOME=" + home, "PATH=/usr/bin:/bin"}, words[2:]...)
 		step := onboarding.Step{Line: "$ " + line, Want: firstRunWant[line]}
-		for _, p := range onboarding.Compare(step, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, norms) {
+		for _, p := range onboarding.Compare(step, r, norms) {
 			t.Error(p)
 		}
-		assert.Equal(t, 0, code, "the example %q exits %d, want 0\nstdout: %s\nstderr: %s", line, code, out.String(), errb.String())
+		assert.Equal(t, 0, r.Code, "the example %q exits %d, want 0\nstdout: %s\nstderr: %s", line, r.Code, r.Stdout, r.Stderr)
 	}
 	wrote, err := os.ReadFile(filepath.Join(trial, "out"))
 	assert.NoError(t, err, "the walled command wrote %q (%v) inside the wall, want %q", wrote, err, "inside\n")

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -64,11 +63,10 @@ func TestThePlatformLineNamesNoFieldThisBenchAlreadyPrints(t *testing.T) {
 	}
 	require.NotEmpty(t, claims, "the Platform: line makes no bare `name=` claim; this test would pass by checking nothing")
 
-	var out, errb bytes.Buffer
-	code := run([]string{"check"}, strings.NewReader(""), &out, &errb, os.Environ())
-	require.Equal(t, 0, code, "nova-sandbox check exited %d, want 0; stderr: %s", code, errb.String())
+	r := withEnv(run, os.Environ()).Do(t, "check")
+	require.Equal(t, 0, r.Code, "nova-sandbox check exited %d, want 0; stderr: %s", r.Code, r.Stderr)
 	var printed string
-	for _, l := range strings.Split(out.String(), "\n") {
+	for _, l := range strings.Split(r.Stdout, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(l), "CHECK OK ") {
 			printed = strings.TrimSpace(l)
 		}

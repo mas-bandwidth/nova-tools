@@ -22,7 +22,6 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -124,12 +123,9 @@ func benchDiskutil(t *testing.T, usable func(string) error) *fakeDiskutil {
 	f := &fakeDiskutil{}
 	lock := filepath.Join(t.TempDir(), "volume-create.lock")
 
-	oldRun, oldUsable, oldPath := diskutilRun, volumeRootUsable, volumeLockPath
-	t.Cleanup(func() { diskutilRun, volumeRootUsable, volumeLockPath = oldRun, oldUsable, oldPath })
-
-	diskutilRun = f.run
-	volumeRootUsable = usable
-	volumeLockPath = func() (string, error) { return lock, nil }
+	swap(t, &diskutilRun, f.run)
+	swap(t, &volumeRootUsable, usable)
+	swap(t, &volumeLockPath, func() (string, error) { return lock, nil })
 	return f
 }
 
@@ -190,14 +186,12 @@ const realApfsList = `APFS Containers (2 found)
 // so a test that thinks it is reading the tree cannot be reading something else.
 func fakeApfsList(t *testing.T) {
 	t.Helper()
-	old := diskutilRun
-	t.Cleanup(func() { diskutilRun = old })
-	diskutilRun = func(args ...string) (string, error) {
+	swap(t, &diskutilRun, func(args ...string) (string, error) {
 		if strings.Join(args, " ") != "apfs list" {
 			return "", fmt.Errorf("List ran `diskutil %s`", strings.Join(args, " "))
 		}
 		return realApfsList, nil
-	}
+	})
 }
 
 func mustList(t *testing.T) []diskVolume {
@@ -309,40 +303,28 @@ func withDeniedDiskService(t *testing.T) *fakeDiskutil {
 	t.Helper()
 	f := benchDiskutil(t, alwaysUsable)
 	f.frameworkDenied = true
-	old := runVolumes
-	t.Cleanup(func() { runVolumes = old })
-	runVolumes = diskutilVolumes{}
+	swap[volumeManager](t, &runVolumes, diskutilVolumes{})
 	return f
-}
-
-func refuseRun(t *testing.T, args ...string) (int, string) {
-	t.Helper()
-	var out, errb bytes.Buffer
-	f := parseRun(args)
-	code := runDisposable(f, 0, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
-	return code, errb.String()
 }
 
 func TestRunSaysWhoDeniedTheDiskServiceInsteadOfNamingTheContainerFlag(t *testing.T) {
 	withDeniedDiskService(t)
 
-	code, errOut := refuseRun(t, runFlagsFor(t)...)
-	require.Equal(t, 125, code, "a diskutil that cannot reach the disk service is not refused with reason=no_container: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=no_container", "a diskutil that cannot reach the disk service is not refused with reason=no_container: exit %d\n%s", code, errOut)
+	r := disposable(t, 0, runFlagsFor(t)...)
+	r.ExitErr(125, "reason=no_container", "a diskutil that cannot reach the disk service is not refused with reason=no_container: exit %d\n%s", r.Code, r.Stderr)
 	for _, want := range []string{"OS sandbox", "--write", diskutilFrameworkLine} {
-		assert.Contains(t, errOut, want, "the refusal does not carry %q, so a reader is left with single-user mode:\n%s", want, errOut)
+		assert.Contains(t, r.Stderr, want, "the refusal does not carry %q, so a reader is left with single-user mode:\n%s", want, r.Stderr)
 	}
-	assert.NotContains(t, errOut, "--container disk3", "the refusal still advises --container, which cannot help when diskutil reaches nothing:\n%s", errOut)
+	assert.NotContains(t, r.Stderr, "--container disk3", "the refusal still advises --container, which cannot help when diskutil reaches nothing:\n%s", r.Stderr)
 }
 
 func TestRunSaysWhoDeniedTheDiskServiceWhenTheListingFails(t *testing.T) {
 	withDeniedDiskService(t)
 
-	code, errOut := refuseRun(t, runFlagsFor(t, "--container", "disk3")...)
-	require.Equal(t, 125, code, "a listing that cannot reach the disk service is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=volume_failed", "a listing that cannot reach the disk service is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
+	r := disposable(t, 0, runFlagsFor(t, "--container", "disk3")...)
+	r.ExitErr(125, "reason=volume_failed", "a listing that cannot reach the disk service is not refused with reason=volume_failed: exit %d\n%s", r.Code, r.Stderr)
 	for _, want := range []string{"could not be listed", "OS sandbox", "--write", diskutilFrameworkLine} {
-		assert.Contains(t, errOut, want, "the refusal does not carry %q:\n%s", want, errOut)
+		assert.Contains(t, r.Stderr, want, "the refusal does not carry %q:\n%s", want, r.Stderr)
 	}
 }
 
@@ -357,8 +339,8 @@ func TestTheSandboxedCallerSentenceIsWrittenOnce(t *testing.T) {
 	assert.Contains(t, mountErr.Error(), sandboxedCallerRemedy, "the mount-denied refusal does not carry the shared sentence:\n%s", mountErr)
 
 	withDeniedDiskService(t)
-	_, errOut := refuseRun(t, runFlagsFor(t)...)
-	assert.Contains(t, errOut, sandboxedCallerRemedy, "the denied-disk-service refusal does not carry the shared sentence:\n%s", errOut)
+	r := disposable(t, 0, runFlagsFor(t)...)
+	assert.Contains(t, r.Stderr, sandboxedCallerRemedy, "the denied-disk-service refusal does not carry the shared sentence:\n%s", r.Stderr)
 }
 
 // Edge 1, the lock. Eight callers at once, and diskutil sees ONE of them at a time. The
@@ -398,9 +380,7 @@ func TestConcurrentCreatesAreSerialized(t *testing.T) {
 // operating system runs, and it needs no second binary.
 func TestTheCreateLockIsAnExclusiveFlock(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "volume-create.lock")
-	old := volumeLockPath
-	t.Cleanup(func() { volumeLockPath = old })
-	volumeLockPath = func() (string, error) { return path, nil }
+	swap(t, &volumeLockPath, func() (string, error) { return path, nil })
 
 	unlock, err := lockVolumeCreate()
 	require.NoError(t, err, "the create lock could not be taken: %v", err)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -96,12 +97,9 @@ func newRunBench(t *testing.T, code int) *runBench {
 	}
 	b := &runBench{vols: &fakeVolumes{mount: mount, used: 4096}, sigs: make(chan os.Signal)}
 
-	oldVols, oldExec, oldSigs := runVolumes, runExec, runSignals
-	t.Cleanup(func() { runVolumes, runExec, runSignals = oldVols, oldExec, oldSigs })
-
-	runVolumes = b.vols
-	runSignals = func() (<-chan os.Signal, func()) { return b.sigs, func() {} }
-	runExec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
+	swap[volumeManager](t, &runVolumes, b.vols)
+	swap(t, &runSignals, func() (<-chan os.Signal, func()) { return b.sigs, func() {} })
+	swap(t, &runExec, func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
 		done := make(chan int, 1)
 		done <- code
 		return startedRun{
@@ -109,7 +107,7 @@ func newRunBench(t *testing.T, code int) *runBench {
 			kill: func(sig syscall.Signal) { b.killed = append(b.killed, sig) },
 			pid:  4242,
 		}, nil
-	}
+	})
 	return b
 }
 
@@ -128,26 +126,32 @@ func runFlagsFor(t *testing.T, extra ...string) []string {
 	return append(args, shellOf(t)...)
 }
 
-func runOnce(t *testing.T, b *runBench, args ...string) (int, string) {
+// disposable drives the darwin verb from the look onwards, with the argv parsed and the
+// deadline given in the verb's own units; once is that with no deadline, on a bench.
+func disposable(t *testing.T, deadline time.Duration, args ...string) testkit.Ran {
 	t.Helper()
-	var out, errb bytes.Buffer
-	f := parseRun(args)
-	code := runDisposable(f, 0, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
-	return code, errb.String()
+	return testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+		return runDisposable(parseRun(args), deadline, stdin, stdout, stderr, hostPath())
+	}).Do(t, args...)
+}
+
+func (b *runBench) once(t *testing.T, args ...string) testkit.Ran {
+	t.Helper()
+	return disposable(t, 0, args...)
 }
 
 // The contract in one line: whatever the command did, the place it did it in is gone.
 func TestRunCreatesTheVolumeRunsAndAlwaysDeletesIt(t *testing.T) {
 	for _, code := range []int{0, 7, 137} {
 		b := newRunBench(t, code)
-		got, errOut := runOnce(t, b, runFlagsFor(t)...)
-		require.Equal(t, code, got, "the run verb returned %d for a command that exited %d; the status belongs to the wrapped command\n%s", got, code, errOut)
+		r := b.once(t, runFlagsFor(t)...)
+		require.Equal(t, code, r.Code, "the run verb returned %d for a command that exited %d; the status belongs to the wrapped command\n%s", r.Code, code, r.Stderr)
 		order := strings.Join(b.vols.calls, " ")
 		require.True(t, strings.HasPrefix(order, "container exists:nova-j1 create:disk3:nova-j1:64m"), "the calls are not look-create-run-delete: %s", order)
 		require.True(t, strings.HasSuffix(order, "delete:disk3s9"), "the calls are not look-create-run-delete: %s", order)
-		require.Contains(t, errOut, "SANDBOX DONE name=j1 exit="+strconv.Itoa(code), "the receipt does not name the exit and what was freed:\n%s", errOut)
-		require.Contains(t, errOut, "freed=4096", "the receipt does not name the exit and what was freed:\n%s", errOut)
-		require.Contains(t, errOut, "wall=", "the receipt does not carry wall=:\n%s", errOut)
+		require.Contains(t, r.Stderr, "SANDBOX DONE name=j1 exit="+strconv.Itoa(code), "the receipt does not name the exit and what was freed:\n%s", r.Stderr)
+		require.Contains(t, r.Stderr, "freed=4096", "the receipt does not name the exit and what was freed:\n%s", r.Stderr)
+		require.Contains(t, r.Stderr, "wall=", "the receipt does not carry wall=:\n%s", r.Stderr)
 	}
 }
 
@@ -157,10 +161,10 @@ func TestRunDeletesTheVolumeWhenTheWallItselfRefuses(t *testing.T) {
 	b := newRunBench(t, 0)
 	args := []string{"--name", "j1", "--size", "64m", "--read", "/no/such/directory", "--"}
 	args = append(args, shellOf(t)...)
-	code, errOut := runOnce(t, b, args...)
-	require.Equal(t, 125, code, "a --read that does not exist is the tool's own refusal, 125, and got %d\n%s", code, errOut)
+	r := b.once(t, args...)
+	require.Equal(t, 125, r.Code, "a --read that does not exist is the tool's own refusal, 125, and got %d\n%s", r.Code, r.Stderr)
 	require.Contains(t, strings.Join(b.vols.calls, " "), "delete:disk3s9", "a refusal after the volume was made left it on the disk: %s", strings.Join(b.vols.calls, " "))
-	require.Contains(t, errOut, "SANDBOX DONE name=j1", "a refused run printed no receipt:\n%s", errOut)
+	require.Contains(t, r.Stderr, "SANDBOX DONE name=j1", "a refused run printed no receipt:\n%s", r.Stderr)
 }
 
 // A name already on the machine is refused BEFORE anything is made: a run never joins a
@@ -168,9 +172,8 @@ func TestRunDeletesTheVolumeWhenTheWallItselfRefuses(t *testing.T) {
 func TestRunRefusesAVolumeNameThatIsAlreadyThere(t *testing.T) {
 	b := newRunBench(t, 0)
 	b.vols.exists = true
-	code, errOut := runOnce(t, b, runFlagsFor(t)...)
-	require.Equal(t, 125, code, "a duplicate name is not refused with reason=volume_exists: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=volume_exists", "a duplicate name is not refused with reason=volume_exists: exit %d\n%s", code, errOut)
+	r := b.once(t, runFlagsFor(t)...)
+	r.ExitErr(125, "reason=volume_exists", "a duplicate name is not refused with reason=volume_exists: exit %d\n%s", r.Code, r.Stderr)
 	for _, call := range b.vols.calls {
 		require.False(t, strings.HasPrefix(call, "create:"), "a refused run touched the disk: %s", strings.Join(b.vols.calls, " "))
 		require.False(t, strings.HasPrefix(call, "delete:"), "a refused run touched the disk: %s", strings.Join(b.vols.calls, " "))
@@ -181,10 +184,10 @@ func TestRunRefusesAVolumeNameThatIsAlreadyThere(t *testing.T) {
 func TestRunReportsALeakAndPaysForItWithTheExitCode(t *testing.T) {
 	b := newRunBench(t, 0)
 	b.vols.deleteErr = errors.New("Unable to unmount volume for deletion")
-	code, errOut := runOnce(t, b, runFlagsFor(t)...)
-	require.Equal(t, exitLeak, code, "a volume that could not be deleted exited %d, want %d: a caller that reads 0 believes the machine is clean\n%s", code, exitLeak, errOut)
-	require.Contains(t, errOut, `SANDBOX LEAK name=j1 volume=disk3s9 remedy="diskutil apfs deleteVolume disk3s9"`, "the leak line does not name the volume and the one command that removes it:\n%s", errOut)
-	require.Contains(t, errOut, "freed=0", "a leaked volume freed nothing and the receipt should say so:\n%s", errOut)
+	r := b.once(t, runFlagsFor(t)...)
+	require.Equal(t, exitLeak, r.Code, "a volume that could not be deleted exited %d, want %d: a caller that reads 0 believes the machine is clean\n%s", r.Code, exitLeak, r.Stderr)
+	require.Contains(t, r.Stderr, `SANDBOX LEAK name=j1 volume=disk3s9 remedy="diskutil apfs deleteVolume disk3s9"`, "the leak line does not name the volume and the one command that removes it:\n%s", r.Stderr)
+	require.Contains(t, r.Stderr, "freed=0", "a leaked volume freed nothing and the receipt should say so:\n%s", r.Stderr)
 }
 
 // A volume that was made and not mounted is not a volume that could not be made, and the
@@ -195,12 +198,11 @@ func TestRunReportsALeakAndPaysForItWithTheExitCode(t *testing.T) {
 func TestRunSaysTheMountWasDeniedRatherThanTheCreateFailed(t *testing.T) {
 	b := newRunBench(t, 0)
 	b.vols.createErr = fmt.Errorf("%w: the volume disk3s7 was created in disk3 and is not mounted under /Volumes", errVolumeNotMounted)
-	code, errOut := runOnce(t, b, runFlagsFor(t)...)
-	require.Equal(t, 125, code, "a volume that came up unmounted is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=volume_failed", "a volume that came up unmounted is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
-	require.NotContains(t, errOut, "could not be created", "the refusal says the volume could not be created, over an error that says it was:\n%s", errOut)
-	require.Contains(t, errOut, "was created in disk3 and is not mounted under /Volumes", "the refusal drops what the manager said happened:\n%s", errOut)
-	require.Contains(t, errOut, runRemedy, "the refusal carries no remedy line:\n%s", errOut)
+	r := b.once(t, runFlagsFor(t)...)
+	r.ExitErr(125, "reason=volume_failed", "a volume that came up unmounted is not refused with reason=volume_failed: exit %d\n%s", r.Code, r.Stderr)
+	require.NotContains(t, r.Stderr, "could not be created", "the refusal says the volume could not be created, over an error that says it was:\n%s", r.Stderr)
+	require.Contains(t, r.Stderr, "was created in disk3 and is not mounted under /Volumes", "the refusal drops what the manager said happened:\n%s", r.Stderr)
+	require.Contains(t, r.Stderr, runRemedy, "the refusal carries no remedy line:\n%s", r.Stderr)
 }
 
 // Every other create failure keeps the verb's own prefix: the container is where the
@@ -208,20 +210,18 @@ func TestRunSaysTheMountWasDeniedRatherThanTheCreateFailed(t *testing.T) {
 func TestRunNamesTheContainerWhenTheCreateItselfFails(t *testing.T) {
 	b := newRunBench(t, 0)
 	b.vols.createErr = errors.New("diskutil apfs addVolume: exit status 1: quota too small")
-	code, errOut := runOnce(t, b, runFlagsFor(t)...)
-	require.Equal(t, 125, code, "a create that failed is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=volume_failed", "a create that failed is not refused with reason=volume_failed: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "the disposable volume could not be created in disk3", "the refusal does not name the container the volume would have been made in:\n%s", errOut)
+	r := b.once(t, runFlagsFor(t)...)
+	r.ExitErr(125, "reason=volume_failed", "a create that failed is not refused with reason=volume_failed: exit %d\n%s", r.Code, r.Stderr)
+	require.Contains(t, r.Stderr, "the disposable volume could not be created in disk3", "the refusal does not name the container the volume would have been made in:\n%s", r.Stderr)
 }
 
 // A container that cannot be read is a refusal with a remedy, and nothing is made.
 func TestRunRefusesWhenTheContainerCannotBeRead(t *testing.T) {
 	b := newRunBench(t, 0)
 	b.vols.containerErr = errors.New("no such thing")
-	code, errOut := runOnce(t, b, runFlagsFor(t)...)
-	require.Equal(t, 125, code, "an unreadable container is not refused with reason=no_container: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "reason=no_container", "an unreadable container is not refused with reason=no_container: exit %d\n%s", code, errOut)
-	require.Contains(t, errOut, "--container disk3", "the refusal does not name the flag that answers it:\n%s", errOut)
+	r := b.once(t, runFlagsFor(t)...)
+	r.ExitErr(125, "reason=no_container", "an unreadable container is not refused with reason=no_container: exit %d\n%s", r.Code, r.Stderr)
+	require.Contains(t, r.Stderr, "--container disk3", "the refusal does not name the flag that answers it:\n%s", r.Stderr)
 }
 
 // Every independent problem in ONE run, and each one naming the form its flag wants.
@@ -259,13 +259,12 @@ func TestRunNamesEveryBadFlagAtOnce(t *testing.T) {
 	// And end to end, on the platform this test is actually running on: one refusal, exit
 	// 125, and the remedy line is that platform's own — a windows reader handed the darwin
 	// argv would type the very flag the next line refuses.
-	var out, errb bytes.Buffer
-	code := runVerb(badArgv, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
-	require.Equal(t, 125, code, "bad flags are the tool's own refusal, 125, and got %d\n%s", code, errb.String())
+	r := withEnv(runVerb, hostPath()).Do(t, badArgv...)
+	require.Equal(t, 125, r.Code, "bad flags are the tool's own refusal, 125, and got %d\n%s", r.Code, r.Stderr)
 	for _, want := range []string{"reason=no_name", "reason=bad_timeout", "reason=no_container", "reason=no_command"} {
-		assert.Contains(t, errb.String(), want, "the refusal does not carry %s, which every platform shares:\n%s", want, errb.String())
+		assert.Contains(t, r.Stderr, want, "the refusal does not carry %s, which every platform shares:\n%s", want, r.Stderr)
 	}
-	assert.Contains(t, errb.String(), remedyFor(runtime.GOOS), "the refusal carries no remedy line for %s:\n%s", runtime.GOOS, errb.String())
+	assert.Contains(t, r.Stderr, remedyFor(runtime.GOOS), "the refusal carries no remedy line for %s:\n%s", runtime.GOOS, r.Stderr)
 }
 
 // The verb refuses where there is no disposable place, and says where the disposable
@@ -423,8 +422,8 @@ func TestTheChildsHomeIsTheOneOnTheVolume(t *testing.T) {
 // begin with.
 func TestTheTempDirectoryIsOnTheVolume(t *testing.T) {
 	b := newRunBench(t, 0)
-	_, errOut := runOnce(t, b, runFlagsFor(t)...)
-	require.Contains(t, errOut, "SANDBOX OK", "no wall was reported:\n%s", errOut)
+	r := b.once(t, runFlagsFor(t)...)
+	require.Contains(t, r.Stderr, "SANDBOX OK", "no wall was reported:\n%s", r.Stderr)
 	tmp := filepath.Join(b.vols.mount, ".nova-sandbox-tmp")
 	_, err := os.Stat(tmp)
 	require.NoError(t, err, "the one directory this tool makes is not on the volume: %s", err)
@@ -439,12 +438,11 @@ func TestRunAnswersHelpWithItsUsage(t *testing.T) {
 	t.Parallel()
 
 	for _, flag := range []string{"--help", "-h", "help"} {
-		var out, errb bytes.Buffer
-		code := runVerb([]string{flag}, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
-		assert.Equal(t, 0, code, "`run %s` exited %d, want 0: asking how to use a verb is not a mistake\nstderr:\n%s", flag, code, errb.String())
-		assert.NotContains(t, errb.String(), "REFUSED", "`run %s` refused instead of answering:\n%s", flag, errb.String())
-		assert.Contains(t, out.String(), "nova-sandbox run", "`run %s` did not print the verb's usage on stdout:\n%s", flag, out.String())
-		assert.Contains(t, out.String(), "--size", "`run %s` did not print the verb's usage on stdout:\n%s", flag, out.String())
+		r := withEnv(runVerb, hostPath()).Do(t, flag)
+		assert.Equal(t, 0, r.Code, "`run %s` exited %d, want 0: asking how to use a verb is not a mistake\nstderr:\n%s", flag, r.Code, r.Stderr)
+		assert.NotContains(t, r.Stderr, "REFUSED", "`run %s` refused instead of answering:\n%s", flag, r.Stderr)
+		assert.Contains(t, r.Stdout, "nova-sandbox run", "`run %s` did not print the verb's usage on stdout:\n%s", flag, r.Stdout)
+		assert.Contains(t, r.Stdout, "--size", "`run %s` did not print the verb's usage on stdout:\n%s", flag, r.Stdout)
 	}
 }
 
@@ -453,9 +451,7 @@ func TestRunAnswersHelpWithItsUsage(t *testing.T) {
 // that will be forgotten.
 func TestGoAddsTheToolchainRootAndTheModuleCache(t *testing.T) {
 	root, mod := t.TempDir(), t.TempDir()
-	old := runGoEnv
-	t.Cleanup(func() { runGoEnv = old })
-	runGoEnv = func() (goDirs, error) { return goDirs{Root: root, ModCache: mod}, nil }
+	swap(t, &runGoEnv, func() (goDirs, error) { return goDirs{Root: root, ModCache: mod}, nil })
 
 	f := runFlags{useGo: true, reads: []string{"/usr"}}
 	var errb bytes.Buffer
@@ -474,11 +470,9 @@ func TestGoAddsTheToolchainRootAndTheModuleCache(t *testing.T) {
 // caller's own paths.
 func TestGoSkipsAToolchainPathThatIsNotThere(t *testing.T) {
 	root := t.TempDir()
-	old := runGoEnv
-	t.Cleanup(func() { runGoEnv = old })
-	runGoEnv = func() (goDirs, error) {
+	swap(t, &runGoEnv, func() (goDirs, error) {
 		return goDirs{Root: root, ModCache: filepath.Join(root, "not", "there")}, nil
-	}
+	})
 	f := runFlags{useGo: true}
 	var errb bytes.Buffer
 	r := applyGoReads(&f, &errb)
@@ -492,11 +486,9 @@ func TestGoSkipsAToolchainPathThatIsNotThere(t *testing.T) {
 // No go on the PATH is a refusal naming the flag, not a run that fails later inside the
 // wall for a reason nothing explains.
 func TestGoRefusesWhenThereIsNoGoToAsk(t *testing.T) {
-	old := runGoEnv
-	t.Cleanup(func() { runGoEnv = old })
-	runGoEnv = func() (goDirs, error) {
+	swap(t, &runGoEnv, func() (goDirs, error) {
 		return goDirs{}, errors.New("exec: \"go\": executable file not found in $PATH")
-	}
+	})
 	f := runFlags{useGo: true}
 	var errb bytes.Buffer
 	r := applyGoReads(&f, &errb)
@@ -511,14 +503,12 @@ func TestAFailedRunIsToldWhatTheWallDenied(t *testing.T) {
 	// /opt is a directory of the machine the DENIAL came from, not of the machine reading
 	// this test: the windows leg has none and the remedy came out as `--read \` there.
 	posixDirs(t, "/opt")
-	oldDenials := runDenials
-	t.Cleanup(func() { runDenials = oldDenials })
-	runDenials = func(int, int) []deniedPath {
+	swap(t, &runDenials, func(int, int) []deniedPath {
 		return []deniedPath{{Path: "/opt", Op: "read", PID: 999}}
-	}
-	code, errOut := runOnce(t, b, runFlagsFor(t)...)
-	require.Equal(t, 2, code, "the command's status is still the command's: got %d", code)
-	assert.Contains(t, errOut, `SANDBOX DENIED path=/opt op=read remedy="--read /opt"`, "a failed run did not say what the wall denied:\n%s", errOut)
+	})
+	r := b.once(t, runFlagsFor(t)...)
+	require.Equal(t, 2, r.Code, "the command's status is still the command's: got %d", r.Code)
+	assert.Contains(t, r.Stderr, `SANDBOX DENIED path=/opt op=read remedy="--read /opt"`, "a failed run did not say what the wall denied:\n%s", r.Stderr)
 }
 
 // Edge 3 of the 20-run soak, measured on the Studio 2026-09-18. A run that hit its
@@ -532,23 +522,18 @@ func TestAFailedRunIsToldWhatTheWallDenied(t *testing.T) {
 // that was never in the way. The probe is skipped and the one true sentence is printed.
 func TestATimeoutNeverAsksWhatWasDeniedAndSaysItTimedOut(t *testing.T) {
 	newRunBenchNeverFinishes(t, 137)
-	oldDenials := runDenials
-	t.Cleanup(func() { runDenials = oldDenials })
 	asked := false
-	runDenials = func(int, int) []deniedPath { asked = true; return nil }
+	swap(t, &runDenials, func(int, int) []deniedPath { asked = true; return nil })
 
-	var out, errb bytes.Buffer
-	f := parseRun(runFlagsFor(t, "--timeout", "1ns"))
 	// The deadline this verb was given, in the units the verb takes it. The command
 	// under it never finishes, so the deadline is the only thing that can end this run.
-	code := runDisposable(f, time.Nanosecond, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
-	errOut := errb.String()
+	r := disposable(t, time.Nanosecond, runFlagsFor(t, "--timeout", "1ns")...)
 
-	require.Equal(t, exitTimeout, code, "a run that passed its deadline is exit %d: got %d\n%s", exitTimeout, code, errOut)
+	require.Equal(t, exitTimeout, r.Code, "a run that passed its deadline is exit %d: got %d\n%s", exitTimeout, r.Code, r.Stderr)
 	assert.False(t, asked, "a timed-out run asked the operating system what it had denied; that is a bounded two-second query spent on a question nobody asked -- nothing was refused, the deadline passed")
-	assert.Contains(t, errOut, "SANDBOX TIMEOUT after=", "a timed-out run did not say so in one line:\n%s", errOut)
-	assert.NotContains(t, errOut, "add a --read", "a timed-out run printed the no-denials hint; the wall denied nothing and the remedy it names is not the one:\n%s", errOut)
-	assert.Contains(t, errOut, "SANDBOX DONE name=j1", "the timed-out run left no receipt, so its volume's fate is unstated:\n%s", errOut)
+	assert.Contains(t, r.Stderr, "SANDBOX TIMEOUT after=", "a timed-out run did not say so in one line:\n%s", r.Stderr)
+	assert.NotContains(t, r.Stderr, "add a --read", "a timed-out run printed the no-denials hint; the wall denied nothing and the remedy it names is not the one:\n%s", r.Stderr)
+	assert.Contains(t, r.Stderr, "SANDBOX DONE name=j1", "the timed-out run left no receipt, so its volume's fate is unstated:\n%s", r.Stderr)
 }
 
 // newRunBenchNeverFinishes is newRunBench for the one case it cannot express: a command
@@ -578,11 +563,9 @@ func newRunBenchNeverFinishes(t *testing.T, code int) *runBench {
 // has no question to answer.
 func TestACleanRunNeverAsksWhatWasDenied(t *testing.T) {
 	b := newRunBench(t, 0)
-	oldDenials := runDenials
-	t.Cleanup(func() { runDenials = oldDenials })
 	asked := false
-	runDenials = func(int, int) []deniedPath { asked = true; return nil }
-	_, errOut := runOnce(t, b, runFlagsFor(t)...)
-	assert.NotContains(t, errOut, "SANDBOX DENIED", "a clean run printed a denial:\n%s", errOut)
+	swap(t, &runDenials, func(int, int) []deniedPath { asked = true; return nil })
+	r := b.once(t, runFlagsFor(t)...)
+	assert.NotContains(t, r.Stderr, "SANDBOX DENIED", "a clean run printed a denial:\n%s", r.Stderr)
 	assert.False(t, asked, "a clean run asked the operating system what it had denied; that is a process spent on a question nobody has")
 }

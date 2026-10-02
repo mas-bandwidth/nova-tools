@@ -14,7 +14,6 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,14 +31,12 @@ func TestARealRunLeavesNothingBehind(t *testing.T) {
 	name := "e2e" + strconv.Itoa(os.Getpid())
 	volume := "/Volumes/" + volumePrefix + name
 
-	var out, errb bytes.Buffer
-	code := run([]string{"run", "--name", name, "--size", "64m", "--timeout", "2m", "--",
-		"/bin/sh", "-c", "echo hi > out; sleep 1"},
-		nil, &out, &errb, []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"})
-	t.Logf("exit %d\nstdout:\n%s\nstderr:\n%s", code, out.String(), errb.String())
+	r := withEnv(run, []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}).Do(t, "run", "--name", name, "--size", "64m", "--timeout", "2m", "--",
+		"/bin/sh", "-c", "echo hi > out; sleep 1")
+	t.Logf("exit %d\nstdout:\n%s\nstderr:\n%s", r.Code, r.Stdout, r.Stderr)
 
-	require.Equal(t, 0, code, "the real run exited %d, want 0", code)
-	assert.Contains(t, errb.String(), "SANDBOX DONE name="+name+" exit=0", "the run printed no receipt for a clean exit")
+	require.Equal(t, 0, r.Code, "the real run exited %d, want 0", r.Code)
+	assert.Contains(t, r.Stderr, "SANDBOX DONE name="+name+" exit=0", "the run printed no receipt for a clean exit")
 	// The volume is GONE: the mount point, and the machine's own list of volumes.
 	_, err := os.Lstat(volume)
 	assert.Error(t, err, "%s is still mounted after the run; the whole point is that nothing survives", volume)

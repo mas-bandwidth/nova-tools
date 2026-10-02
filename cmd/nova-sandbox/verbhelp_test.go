@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io"
 	"strings"
 	"testing"
 
@@ -15,7 +14,7 @@ import (
 // 125 are not verbs and are not touched.
 func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	t.Parallel()
-	testverbhelp.Check(t, sandboxRun, []testverbhelp.Case{
+	testverbhelp.Check(t, novaSandbox.NoStdin(), []testverbhelp.Case{
 		{Verb: "check"},
 		{Verb: "run", Flags: []string{"--write", "{dir}/w"}},
 		{Verb: "reap"},
@@ -29,20 +28,15 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "probe", Flags: []string{"--write", "{dir}/w"}},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, sandboxRun, "nova-sandbox", "worktree", "egress plan", "probe", "version")
+	testverbhelp.HelpVerb(t, novaSandbox.NoStdin(), "nova-sandbox", "worktree", "egress plan", "probe", "version")
 }
 
 // help names verbs only: `help <anything else>` is the banner, never the bare
 // wrap of a command called <anything else>.
 func TestHelpNeverReachesTheBareWrap(t *testing.T) {
 	t.Parallel()
-	var out, errb strings.Builder
-	code := sandboxRun([]string{"help", "sh", "-c", "exit 7"}, &out, &errb)
-	require.Equal(t, 0, code, "help sh: exit %d stdout %.60q stderr %q", code, out.String(), errb.String())
-	require.True(t, strings.HasPrefix(out.String(), "nova-sandbox:"), "help sh: exit %d stdout %.60q stderr %q", code, out.String(), errb.String())
-	require.Zero(t, errb.Len(), "help sh: exit %d stdout %.60q stderr %q", code, out.String(), errb.String())
-}
-
-func sandboxRun(args []string, stdout, stderr io.Writer) int {
-	return run(args, strings.NewReader(""), stdout, stderr, nil)
+	r := novaSandbox.Do(t, "help", "sh", "-c", "exit 7")
+	require.Equal(t, 0, r.Code, "help sh: exit %d stdout %.60q stderr %q", r.Code, r.Stdout, r.Stderr)
+	require.True(t, strings.HasPrefix(r.Stdout, "nova-sandbox:"), "help sh: exit %d stdout %.60q stderr %q", r.Code, r.Stdout, r.Stderr)
+	require.Zero(t, len(r.Stderr), "help sh: exit %d stdout %.60q stderr %q", r.Code, r.Stdout, r.Stderr)
 }
