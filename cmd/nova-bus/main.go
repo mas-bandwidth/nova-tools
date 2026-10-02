@@ -2171,7 +2171,7 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 	// lane + "/" + name, so a lane-less reader names "/CURSOR" and "/OPEN" -- absolute
 	// paths that land at the checkout ROOT and that git refuses to stage as outside the
 	// repository. Without the early lane check below, a lane-less reader's cursor lands at the
-	// root, the staging failed, and the stray file refused every later run on the bus.
+	// root, the staging fails, and the stray file refuses every later run on the bus.
 	//
 	// A lane-less reader is a shape the roster can hold -- a participant with no lane of
 	// their own is listed so they can be addressed -- so this is a refusal and not a
@@ -2588,11 +2588,11 @@ func countListable(entries []bus.OpenEntry) int {
 // "nothing yet", exit 0, and the caller issues the next one.
 //
 // rearmCommand rebuilds `wait`'s re-arm line from the caller's own argv, shell-quoting each
-// argument so that what is printed is what the caller pasted. The failure it closes: the
-// command joins the raw argv with spaces (without these quotes), so a --bus path holding a space returns
-// split in two -- --bus received the prefix through the space, and the remainder landed as a
-// separate argument -- and pasting it named a bus that does not exist instead of the one it
-// was waiting on.
+// argument so that what is printed is what the caller pasted. The quoting is what keeps the
+// line whole: without it, the shell splits a --bus path holding a space in two -- --bus
+// receives the prefix through the space and the remainder arrives as a separate argument --
+// and the pasted line names a bus that does not exist instead of the one the caller is
+// waiting on.
 func rearmCommand(args []string) string {
 	quoted := make([]string, len(args))
 	for i, a := range args {
