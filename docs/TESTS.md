@@ -784,18 +784,19 @@ nova-redis fn load: --addr is required; refusing to guess; run: nova-redis help
 
 ## nova-ci
 
-Fixture: `cmd/nova-ci/testdata/example-events.jsonl`. The verb reads on stdin and
-writes nothing, so each `$` line below pipes the fixture in; the transcript was
-produced by running the built binary, not written by hand.
+Fixture: `cmd/nova-ci/testdata/example-events.jsonl`, built into the binary:
+`--example` reads it in place of stdin, so the lines below run from the binary
+alone, and they are the usage banner's `example:` block line for line. The
+transcript was produced by running the built binary, not written by hand.
 
 ### First run
 
 ```text
-$ nova-ci slowtests --budget 60 --load 4 --cpus 16 < cmd/nova-ci/testdata/example-events.jsonl
+$ nova-ci slowtests --example --budget 60 --load 4 --cpus 16
 CI-SLOW package=github.com/mas-bandwidth/nova-tools/internal/example seconds=65.1s budget=60s slowest=TestSlowThing:63.4s,TestAlsoSlow:1.5s
 CI-LOAD load=4.00 cpus=16 per-cpu=0.25: measured, not a verdict
 
-$ nova-ci slowtests --budget 120 --load 4 --cpus 16 < cmd/nova-ci/testdata/example-events.jsonl
+$ nova-ci slowtests --example --budget 120 --load 4 --cpus 16
 CI-SLOW OK packages=2 slowest=github.com/mas-bandwidth/nova-tools/internal/example:65.1s
 CI-LOAD load=4.00 cpus=16 per-cpu=0.25: measured, not a verdict
 ```
@@ -807,10 +808,13 @@ tells the reader whether one test or the whole package is the cost. `--budget`
 is whole seconds and defaults to 60. Both runs exit 0: a CI-SLOW line is a
 measurement, and only `--enforce` makes it exit 2. The
 CI-LOAD line is the host's load average, printed and never judged; `--load` and
-`--cpus` hand it in here so the transcript is the same on every machine. The common mistake is forgetting the
-redirect: with an empty stdin the verb reads zero packages and prints
-`CI-SLOW OK packages=0 slowest=none`, which is why the test step always tees
-the stream first (`.github/workflows/ci.yml`).
+`--cpus` hand it in here so the transcript is the same on every machine. On
+your own module the events come on stdin: `go test -json <packages> |
+nova-ci slowtests --budget 60`. The common mistake is forgetting the pipe: with a
+terminal on stdin the verb refuses at once and names both ways in; with an
+empty stream it reads zero packages and prints `CI-SLOW OK packages=0
+slowest=none`, which is why the test step always tees the stream first
+(`.github/workflows/ci.yml`).
 
 
 ## nova-table

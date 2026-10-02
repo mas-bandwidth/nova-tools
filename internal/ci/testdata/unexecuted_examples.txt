@@ -60,8 +60,6 @@ example: nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-rece
 example: nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 example: nova-check quickstart --dir ./self
 example: nova-ci help
-example: nova-ci slowtests --budget 60
-example: nova-ci version
 example: nova-fuse check --box ./fuse-box.json a-forum
 example: nova-fuse check --box ./fuse-box.json a-public-issue-tracker
 example: nova-fuse lift quarantine --box ./fuse-box.json a-forum

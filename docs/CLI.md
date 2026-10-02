@@ -1603,20 +1603,31 @@ OK line succeeded; a `NEXT:` line above it is the next step, not a failure.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
-a budget. It also reports its own build with `nova-ci version`.
+a budget. `slowtests` and `functional` work in any Go module; `local`,
+`new-rule` and `new-verb` need a nova-tools checkout; `github receipt` writes to
+a Redis store. It also reports its own build with `nova-ci version`.
 
 ```sh
-nova-ci slowtests --budget 60 < ./test-events.jsonl
+nova-ci slowtests --example --budget 60
+go test -json ./cmd/mytool | nova-ci slowtests --budget 60
 nova-ci version
 ```
 
-Save `go test -json` output in the input file and check that test run's exit status
-separately. `slowtests` checks timing, not whether the tests passed. The default
-budget is 60 seconds per package; exit 2 means an over-budget package or unusable
-input, and exit 0 means no package exceeded the budget. CI exceptions belong in
-the dated project policy, not in an assumed higher tool default.
+`--example` reads a built-in event stream, so the first line runs from the
+binary alone. On your own module, pipe `go test -json` in and check that test
+run's exit status separately: `slowtests` checks timing, not whether the tests
+passed. The default budget is 60 seconds per package; a package over it is a
+`CI-SLOW` line, and exit 0 still means a measurement unless `--enforce` is given
+(then exit 2). A terminal on stdin or a line that is not a TestEvent is refused
+at exit 2. `--json` prints the same verdict as one JSON object
+(`{"result":{...},"facts":{...},"items":[...]}`). CI exceptions belong in the
+dated project policy, not in an assumed higher tool default.
 
-`nova-ci local [--base origin/dev] [--functional]` runs, on your machine, exactly
+A refusal is one line, `nova-ci <verb> REFUSED: <every problem>; run: <next
+command>`, the next command most often the verb's own `-h`; each verb's `-h`
+ends with that verb's own exit codes.
+
+`nova-ci local [--base origin/dev] [--functional] [--dry-run]` runs, on your machine, exactly
 the unit tier CI runs for your change: the packages
 `go run ./tools/ci select-packages` picks against the merge base of `--base` and
 `HEAD`, through the Makefile's `test` target (its go test flags and slowtests
@@ -1625,7 +1636,8 @@ prints one `PKG` line per package with its seconds and one `RED` line per failin
 test with its output; exit 0 is green, 1 a red test or build, 2 a CI-SLEEPS line
 or a step that could not run. `--functional` adds the functional build tag
 (`GOTEST_TAGS=functional`); CI runs those tests in its `functional` job as a
-stream merges ([TESTING.md](../TESTING.md)).
+stream merges ([TESTING.md](../TESTING.md)). `--dry-run` prints the packages and
+the `make test` line and runs no test.
 
 The unit tier (`make test`) passes `--package-budget 2 --test-budget 1 --allowlist
 internal/ci/slow-tests_allowlist.txt --sleeps internal/ci/sleeps-skips_allowlist.txt`
@@ -1650,11 +1662,19 @@ exits in silence: a flag, and a package pattern that matches no package, are
 refused at exit 2, every problem in the one line:
 
 ```
-nova-ci functional: package pattern "./nope" matches no package (no such directory); run: nova-ci help
-nova-ci functional: unknown flag "--bogus" (functional takes no flags, only package directories such as ./cmd/nova-table or ./internal/...); run: nova-ci help
+nova-ci functional REFUSED: package pattern "./nope" matches no package (no such directory); run: nova-ci functional -h
+nova-ci functional REFUSED: unknown flag "--bogus" (functional takes no flags, only package directories such as ./cmd/nova-table or ./internal/...); run: nova-ci functional -h
 ```
 
 `-h` and `--help` after the verb are not refused: they print the verb's help on stdout at exit 0, which is not silence either.
+
+`nova-ci new-rule [--root <checkout>] [--dry-run] <rule-name>` and `nova-ci
+new-verb [--root <checkout>] [--dry-run] <tool> <verb>` lay down a class rule's
+or a verb's skeleton in a nova-tools checkout and print one `wrote <path>` line
+per file; `--dry-run` prints `would write <path>` for the same files, checked
+against the tree, and writes nothing. A file already there, a bad name, a root
+with no `go.mod` and (for new-verb) a tool with no `func main` are refused at
+exit 2 and nothing is written.
 
 See [SPEC-CI.md](SPEC-CI.md).
 
@@ -1662,7 +1682,7 @@ See [SPEC-CI.md](SPEC-CI.md).
 
 `nova-ci github receipt --from-runner --redis <addr> --repo owner/name --sha <40hex>
 --run-id <n> --workflow <name> --conclusion success|failure|cancelled [--pr <n>]
-[--at <rfc3339>]` is the run receipt the `ci-ok` job of `.github/workflows/ci.yml`
+[--at <rfc3339>] [--dry-run]` is the run receipt the `ci-ok` job of `.github/workflows/ci.yml`
 writes at the end of every run, from this tree (`go run ./cmd/nova-ci`) and as the
 bench seat: one `ev:github` row of the `workflow_run` shape, sender `runner`, action
 and status `completed`, the PR number as `number` (empty for a run that names no
@@ -1673,16 +1693,19 @@ environment's seat (`NOVA_SPRINT_REDIS_USER`, `NOVA_SPRINT_REDIS_PASSWORD_ENV`);
 `CI RECEIPT <owner/name> sha=<sha> run=<id> workflow=<name> conclusion=<word>
 pr=<n|-> ev=<stream id>`, exit 0; a write the store refuses or cannot confirm
 (`XADD ev:github: WRONGTYPE ...`, a NOPERM seat, reply loss, or a store that is
-down) is one line on stderr ending `receipt write could not be confirmed: fix
-the store or the bench seat and rerun ci-ok`, exit 1, which reddens ci-ok (repeat
-receipts from retries or reruns are acceptable wake hints for consumers); a
-refused field is exit 2 before any dial:
+down) is one line on stderr, `nova-ci github receipt FAIL: ...`, ending `receipt
+write could not be confirmed: fix the store or the bench seat and rerun ci-ok`,
+exit 1, which reddens ci-ok (repeat receipts from retries or reruns are
+acceptable wake hints for consumers). `--dry-run` checks the fields and prints
+the receipt line with `ev=-` and a `CI RECEIPT NOTE` line, dialling nothing, so
+the verb can be tried with no store. Every refused field and a missing store
+address are named in one refusal at exit 2, before any dial:
 
 ```
 $ nova-ci github receipt --from-runner --repo nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion success
-nova-ci github receipt: --repo wants owner/name, got "nova-tools"; run: nova-ci help
+nova-ci github receipt REFUSED: --repo wants owner/name, got "nova-tools"; needs --redis <host:port> or NOVA_REDIS_ADDR (or --dry-run, which dials nothing); run: nova-ci github receipt -h
 $ nova-ci github receipt --from-runner --repo mas-bandwidth/nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion skipped
-nova-ci github receipt: --conclusion wants success, failure or cancelled (job.status), got "skipped"; run: nova-ci help
+nova-ci github receipt REFUSED: --conclusion wants success, failure or cancelled (job.status), got "skipped"; needs --redis <host:port> or NOVA_REDIS_ADDR (or --dry-run, which dials nothing); run: nova-ci github receipt -h
 ```
 
 ## nova-config

@@ -60,7 +60,7 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	exit, _, stderr = runCIIn(t, "not json\n", "slowtests")
 	assert.Equal(t, 2, exit, "a malformed stdin exit = %d, want 2", exit)
 	assert.Contains(t, stderr, "line 1", "a malformed stdin stderr = %q, want it to name line 1", stderr)
-	assert.Contains(t, stderr, "run: nova-ci help", "a refusal stderr = %q, want it to name the door", stderr)
+	assert.Contains(t, stderr, "run: go test -json <packages> | nova-ci slowtests --budget 60", "a refusal stderr = %q, want the command that makes the input", stderr)
 }
 
 // (c) The `### First run` block of docs/TESTS.md is EXECUTED: every command in
@@ -99,6 +99,18 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	// reader sees the refusal and the green. A transcript that has lost one of
 	// them still matches line for line and is still short of a first run.
 	assert.Len(t, steps, 2, "the `### First run` block runs %d commands, want 2: one budget the fixture exceeds and one it does not", len(steps))
+	// The banner's example block is this sitting, after `nova-ci help`, so the
+	// lines a reader pastes from the binary alone are the ones compared here.
+	_, banner, _ := runCIIn(t, "", "help")
+	examples, err := onboarding.ExampleLines(banner, "nova-ci")
+	require.NoError(t, err)
+	var documented []string
+	for _, s := range steps {
+		line := strings.TrimPrefix(s.Line, "$ ")
+		require.True(t, strings.HasPrefix(line, "nova-ci slowtests "), "the first run is slowtests only: %q", s.Line)
+		documented = append(documented, line)
+	}
+	assert.Equal(t, append([]string{"nova-ci help"}, documented...), examples, "the banner's example: block is not the documented first run")
 	// The sitting: every documented command, in order, in one temp-free run.
 	// A command that could not be invoked at all stops the sitting, because
 	// every line after it would be compared against a state that never happened.

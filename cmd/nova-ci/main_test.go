@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,10 +32,153 @@ func TestBareCommandNamesTheDoor(t *testing.T) {
 	code, stdout, stderr := runCI(t, nil, "")
 	assert.Equal(t, 2, code, "exit = %d, want 2", code)
 	assert.Empty(t, stdout, "stdout = %q, want empty; a refusal belongs on stderr", stdout)
-	assert.Contains(t, stderr, "run: nova-ci help", "stderr = %q, want it to name `run: nova-ci help`", stderr)
-	if n := len(strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")); n > 2 {
-		t.Errorf("stderr printed %d lines, want at most 2:\n%s", n, stderr)
+	assert.Equal(t, "nova-ci REFUSED: no verb given; the verbs are "+verbs+"; run: nova-ci help\n", stderr)
+}
+
+// An unknown verb, and `help` of one, is named and answered with every verb,
+// so the next call is a pick, not a search.
+func TestAnUnknownVerbIsNamedWithTheVerbs(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{{"cost"}, {"help", "cost"}} {
+		code, stdout, stderr := runCI(t, args, "")
+		assert.Equal(t, 2, code, "%v", args)
+		assert.Empty(t, stdout, "%v", args)
+		assert.Equal(t, `nova-ci REFUSED: unknown verb "cost"; the verbs are `+verbs+"; run: nova-ci help\n", stderr, "%v", args)
 	}
+}
+
+// Every verb the banner and the refusals name exists: its -h answers at exit
+// 0. The banner once named a `cost` verb that had been deleted.
+func TestEveryNamedVerbExists(t *testing.T) {
+	t.Parallel()
+
+	for _, verb := range strings.Split(verbs, ", ") {
+		code, _, stderr := runCI(t, append(strings.Fields(verb), "-h"), "")
+		assert.Equal(t, 0, code, "%s -h: stderr %q", verb, stderr)
+	}
+	_, stdout, _ := runCI(t, []string{"help"}, "")
+	for _, line := range strings.Split(stdout, "\n") {
+		if f := strings.Fields(line); len(f) > 1 && f[0] == "nova-ci" {
+			assert.Contains(t, verbs, f[1], "the banner's line %q names a verb the dispatch does not list", line)
+		}
+	}
+	assert.NotContains(t, stdout, " cost", "the banner names the deleted cost verb")
+}
+
+// A misspelled flag, a bad value and a missing value are each answered in the
+// house refusal, naming the flags the verb does take or the type it wants,
+// and the verb's own help as the next command; never the flag package's words.
+func TestAFlagMistakeNamesWhatTheVerbTakes(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"slowtests", "--budgt", "3"}, "nova-ci slowtests REFUSED: unknown flag --budgt; the flags are --allowlist, --budget, --cpus, --enforce, --example, --json, --load, --package-budget, --sleeps, --test-budget; run: nova-ci slowtests -h\n"},
+		{[]string{"slowtests", "--budget", "abc"}, `nova-ci slowtests REFUSED: --budget wants a whole number, got "abc"; run: nova-ci slowtests -h` + "\n"},
+		{[]string{"slowtests", "--load", "x"}, `nova-ci slowtests REFUSED: --load wants a number, got "x"; run: nova-ci slowtests -h` + "\n"},
+		{[]string{"slowtests", "--enforce=maybe"}, `nova-ci slowtests REFUSED: --enforce wants true or false, got "maybe"; run: nova-ci slowtests -h` + "\n"},
+		{[]string{"slowtests", "--budget"}, "nova-ci slowtests REFUSED: --budget needs a value after it; run: nova-ci slowtests -h\n"},
+		{[]string{"local", "--bse", "x"}, "nova-ci local REFUSED: unknown flag --bse; the flags are --base, --dry-run, --functional; run: nova-ci local -h\n"},
+		{[]string{"new-rule", "--bogus", "x"}, "nova-ci new-rule REFUSED: unknown flag --bogus; the flags are --dry-run, --root; run: nova-ci new-rule -h\n"},
+		{[]string{"new-verb", "--bogus", "x"}, "nova-ci new-verb REFUSED: unknown flag --bogus; the flags are --dry-run, --root; run: nova-ci new-verb -h\n"},
+	} {
+		code, stdout, stderr := runCI(t, c.args, "")
+		assert.Equal(t, 2, code, "%v", c.args)
+		assert.Empty(t, stdout, "%v", c.args)
+		assert.Equal(t, c.want, stderr, "%v", c.args)
+	}
+}
+
+// Each verb's -h quotes its own exit codes and no other verb's: one table
+// quoted for every verb told slowtests' reader about a store write.
+func TestEveryVerbHelpQuotesOnlyItsOwnExitCodes(t *testing.T) {
+	t.Parallel()
+
+	rows := map[string]string{
+		"slowtests":      "slowtests: 0 inside budget",
+		"local":          "local: 0 green",
+		"functional":     "functional: 0 the selection printed",
+		"new-rule":       "new-rule: 0 the files written",
+		"new-verb":       "new-verb: 0 the files written",
+		"github receipt": "github receipt: 0 written",
+		"version":        "version: 0 printed",
+	}
+	for verb, own := range rows {
+		code, stdout, _ := runCI(t, append(strings.Fields(verb), "-h"), "")
+		require.Equal(t, 0, code, verb)
+		assert.Contains(t, stdout, "exit codes: 0 done and 2 usage or could not run", verb)
+		assert.Contains(t, stdout, own, verb)
+		for other, row := range rows {
+			if other != verb {
+				assert.NotContains(t, stdout, row, "%s -h quotes %s's exit codes", verb, other)
+			}
+		}
+	}
+}
+
+// slowtests with a terminal on stdin would wait for events that never come;
+// it refuses at once and names both ways to give it events.
+func TestSlowtestsRefusesATerminalOnStdin(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"slowtests", "--budget", "60"}, terminal{}, &stdout, &stderr)
+	assert.Equal(t, 2, code)
+	assert.Empty(t, stdout.String())
+	assert.Contains(t, stderr.String(), "stdin is a terminal")
+	assert.Contains(t, stderr.String(), "--example")
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"slowtests", "--example", "--budget", "120", "--load", "1", "--cpus", "2"}, terminal{}, &stdout, &stderr)
+	assert.Equal(t, 0, code, "--example reads the built-in stream, not the terminal: %s", stderr.String())
+	assert.Equal(t, "CI-SLOW OK packages=2 slowest=github.com/mas-bandwidth/nova-tools/internal/example:65.1s\n"+loadLine1of2, stdout.String())
+}
+
+// terminal is a reader whose Stat says it is a character device, as a tty is.
+type terminal struct{}
+
+func (terminal) Read([]byte) (int, error)   { return 0, io.EOF }
+func (terminal) Stat() (os.FileInfo, error) { return terminalInfo{}, nil }
+
+type terminalInfo struct{ os.FileInfo }
+
+func (terminalInfo) Mode() os.FileMode { return os.ModeDevice | os.ModeCharDevice }
+
+// --json is the same verdict as one object: the findings typed, the exit the
+// lines' exit, and status failed where the run fails.
+func TestSlowtestsJSONIsTheSameVerdict(t *testing.T) {
+	t.Parallel()
+
+	stdin := `{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
+{"Action":"pass","Package":"example.com/pkg","Elapsed":75.3}
+`
+	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--json"}, stdin)
+	require.Equal(t, 0, code, stderr)
+	assert.JSONEq(t, `{"result":{"verb":"slowtests","status":"ok","exit":0},
+		"facts":{"packages":1,"slowest":"example.com/pkg","slowest_seconds":75.3,"enforce":false,"load":1,"cpus":2},
+		"items":[{"kind":"slow-package","fields":{"package":"example.com/pkg","seconds":75.3,"budget":60,"slowest":"TestA:3.2s"}}]}`, stdout)
+
+	code, stdout, _ = runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--json", "--enforce"}, stdin)
+	assert.Equal(t, 2, code)
+	assert.Contains(t, stdout, `"result":{"verb":"slowtests","status":"failed","exit":2,"why":["1 CI-SLOW finding(s) under --enforce"]}`)
+}
+
+// One run names every problem with the flags and the files they name.
+func TestSlowtestsRefusesEveryProblemAtOnce(t *testing.T) {
+	t.Parallel()
+
+	missing := filepath.Join(t.TempDir(), "absent.txt")
+	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "0", "--cpus", "-1", "--test-budget", "-1", "--allowlist", missing, "--sleeps", missing, "extra"}, "")
+	assert.Equal(t, 2, code)
+	assert.Empty(t, stdout)
+	for _, want := range []string{`unexpected argument "extra"`, "--budget must be", "--test-budget want seconds", "--cpus must not be negative", "--allowlist open", "--sleeps open"} {
+		assert.Contains(t, stderr, want)
+	}
+	assert.Equal(t, 1, strings.Count(stderr, "\n"), "one refusal line: %q", stderr)
 }
 
 // help opens the door on stdout at exit 0, and ends in an example block whose
@@ -90,9 +234,9 @@ func TestSlowtestsMalformedLineRefuses(t *testing.T) {
 	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60"}, "not json\n")
 	assert.Equal(t, 2, code, "exit = %d, want 2", code)
 	assert.Empty(t, stdout, "stdout = %q, want empty on a refusal", stdout)
-	assert.Contains(t, stderr, "nova-ci slowtests", "stderr = %q, want the refusal to name the verb", stderr)
+	assert.Contains(t, stderr, "nova-ci slowtests REFUSED: ", "stderr = %q, want the refusal to name the verb", stderr)
 	assert.Contains(t, stderr, "line 1", "stderr = %q, want it to name the offending line", stderr)
-	assert.Contains(t, stderr, "run: nova-ci help", "stderr = %q, want it to name the door", stderr)
+	assert.Contains(t, stderr, "; run: go test -json <packages> | nova-ci slowtests --budget 60\n", "stderr = %q, want the command that makes the input", stderr)
 }
 
 // A budget of zero or less is refused rather than read as unlimited.
@@ -214,7 +358,7 @@ func TestFunctionalSelectsNothingWithoutTheTag(t *testing.T) {
 	t.Parallel()
 
 	code, _, stderr := runCI(t, []string{"functional"}, "")
-	if code != 2 || !strings.Contains(stderr, "run: nova-ci help") {
+	if code != 2 || !strings.Contains(stderr, "run: nova-ci functional -h") {
 		t.Errorf("bare functional: exit %d stderr %q, want a refusal", code, stderr)
 	}
 	dir := filepath.Join("..", "..", "internal", "ci", "slowtests")
@@ -249,8 +393,8 @@ func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
 		if code != 2 || stdout != "" {
 			t.Errorf("%s: exit %d stdout %q, want 2 and nothing on stdout", tc.name, code, stdout)
 		}
-		if strings.Count(stderr, "\n") != 1 || !strings.HasPrefix(stderr, "nova-ci functional: ") || !strings.HasSuffix(stderr, "; run: nova-ci help\n") {
-			t.Errorf("%s: stderr %q, want one line `nova-ci functional: ...; run: nova-ci help`", tc.name, stderr)
+		if strings.Count(stderr, "\n") != 1 || !strings.HasPrefix(stderr, "nova-ci functional REFUSED: ") || !strings.HasSuffix(stderr, "; run: nova-ci functional -h\n") {
+			t.Errorf("%s: stderr %q, want one line `nova-ci functional REFUSED: ...; run: nova-ci functional -h`", tc.name, stderr)
 		}
 		for _, w := range tc.want {
 			if !strings.Contains(stderr, w) {

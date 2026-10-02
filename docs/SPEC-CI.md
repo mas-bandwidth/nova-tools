@@ -237,8 +237,10 @@ skip, so a truncated pipe cannot read as a clean run.
 **Its refusals (exit 2, one remedy line each).** A malformed line —
 `remedy="stdin is not newline-delimited go test -json"`. A `--budget` of zero or
 less — `remedy="--budget must be a whole number of seconds greater than zero"`. A
-missing or unreadable invocation is the tool’s own one-line refusal ending `run:
-nova-ci help`.
+missing or unreadable invocation is the tool’s own one-line refusal,
+`nova-ci slowtests REFUSED: <every problem>; run: nova-ci slowtests -h`; a line
+that is not a TestEvent ends `run: go test -json <packages> | nova-ci
+slowtests --budget 60`, and a terminal on stdin is refused at once rather than waited on.
 
 **The budget is in one place.** The verb judges a LIVE run against the budgets
 it is handed; there is no second budget and no recorded table a change is judged

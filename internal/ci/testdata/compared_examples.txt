@@ -32,6 +32,8 @@ cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config migrate --print
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine add -h
 cmd/nova-secrets/seat_inject_functional_test.go:TestTheHelpExampleIsWhatSeatInjectPrints example: nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr
+cmd/nova-ci/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-ci slowtests --example --budget 60 --load 4 --cpus 16
+cmd/nova-ci/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-ci slowtests --example --budget 120 --load 4 --cpus 16
 cmd/nova-ci/receipt_test.go:TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints $ nova-ci github receipt --from-runner --repo nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion success
 cmd/nova-ci/receipt_test.go:TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints $ nova-ci github receipt --from-runner --repo mas-bandwidth/nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion skipped
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox check --bogus
