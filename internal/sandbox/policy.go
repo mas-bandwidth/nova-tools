@@ -676,7 +676,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 
 	// The caller points the child's HOME into the write set, and a HOME outside
 	// every --write is a refusal BEFORE the command runs. A wall that lets the job start
-	// and then kills its first git command would fail to protect the job's data.
+	// and then kills its first git command is the silent sandbox this refusal exists to prevent.
 	home := in.Home
 	if strings.TrimSpace(home) == "" {
 		bad = append(bad, refuse("home_outside", "HOME is unset; rule 9 wants HOME set to a data home inside a --write, because almost every tool a worker runs derives a path from it"))
