@@ -128,7 +128,9 @@ func TestHygieneRejectsAForeignCommitter(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "commit: %v\n%s", err, out)
 	f := has(check(t, dir, Options{}), "identity")
-	require.NotNil(t, f, "a foreign COMMITTER drew no identity finding: %v", tokens(check(t, dir, Options{})))
+	if f == nil {
+		require.FailNowf(t, "assertion failed", "a foreign COMMITTER drew no identity finding: %v", tokens(check(t, dir, Options{})))
+	}
 	require.Len(t, f.At, 12, "at=%q, want a sha12", f.At)
 }
 
@@ -203,8 +205,9 @@ func TestHygieneAcceptsAChangeInsideTheDeclaredPaths(t *testing.T) {
 	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n")
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "inside")
-	f := has(check(t, dir, Options{}), "out-of-path")
-	require.Nil(t, f, "a change inside the declared paths drew %v", f)
+	if f := has(check(t, dir, Options{}), "out-of-path"); f != nil {
+		require.FailNowf(t, "assertion failed", "a change inside the declared paths drew %v", *f)
+	}
 }
 
 // A batch member that is a friend's own branch has no card and no PATHS:, so the bound
@@ -218,8 +221,9 @@ func TestHygieneSkipsOutOfPathWhenNoPathsAreDeclared(t *testing.T) {
 	write(t, dir, "other/other.go", "package other\n\nfunc F() {}\n")
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "a friend's own branch")
-	f := has(check(t, dir, Options{Paths: []string{}}), "out-of-path")
-	require.Nil(t, f, "an unbounded member drew %v", f)
+	if f := has(check(t, dir, Options{Paths: []string{}}), "out-of-path"); f != nil {
+		require.FailNowf(t, "assertion failed", "an unbounded member drew %v", *f)
+	}
 }
 
 // hygiene-rejects-result-md-in-the-diff: the worker's own report is not part of its
@@ -233,7 +237,9 @@ func TestHygieneRejectsResultMDInTheDiff(t *testing.T) {
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "ship the report")
 	f := has(check(t, dir, Options{}), "stray-file")
-	require.NotNil(t, f, "RESULT.md drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
+	if f == nil {
+		require.FailNowf(t, "assertion failed", "RESULT.md drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
+	}
 	require.Equal(t, "sign/RESULT.md", f.At, "at=%q, want the path", f.At)
 }
 
@@ -308,7 +314,9 @@ func TestHygieneRejectsAConflictMarker(t *testing.T) {
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "left a marker")
 	f := has(check(t, dir, Options{}), "stray-file")
-	require.NotNil(t, f, "a conflict marker drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
+	if f == nil {
+		require.FailNowf(t, "assertion failed", "a conflict marker drew no stray-file finding: %v", tokens(check(t, dir, Options{})))
+	}
 	require.Contains(t, f.Why, "conflict marker", "why=%q, want it to name the conflict marker", f.Why)
 }
 
@@ -441,8 +449,9 @@ func TestHygieneReadsAddedLinesOnly(t *testing.T) {
 	write(t, dir, "sign/other.go", "package sign\n\nfunc F() {}\n")
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "an innocent change")
-	f := has(check(t, dir, Options{}), "secret")
-	require.Nil(t, f, "a key shape already in the base was charged to this range: %v", f)
+	if f := has(check(t, dir, Options{}), "secret"); f != nil {
+		require.FailNowf(t, "assertion failed", "a key shape already in the base was charged to this range: %v", *f)
+	}
 }
 
 // paths-line-refuses-dotdot-and-bare-doublestar.
@@ -752,8 +761,9 @@ func TestHygieneSizesAddedFilesOnly(t *testing.T) {
 	write(t, dir, "sign/big.txt", strings.Repeat("a", 1024*1024+1)+"\nb\n")
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-q", "-m", "one line into a file that was already big")
-	f := has(check(t, dir, Options{}), "stray-file")
-	require.Nil(t, f, "a file the card did not add was charged to it: %v", f)
+	if f := has(check(t, dir, Options{}), "stray-file"); f != nil {
+		require.FailNowf(t, "assertion failed", "a file the card did not add was charged to it: %v", *f)
+	}
 }
 
 // hygiene-refuses-a-log-row-it-cannot-read: a row that does not carry all six fields
