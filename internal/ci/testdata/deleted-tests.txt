@@ -1222,3 +1222,4 @@ internal/ci/testdata/scripthide_allowlist.txt counted rows move without growth i
 internal/ci/testdata/testify_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
 internal/sprint/route_test.go the weighted draw's salt-parity test goes with the weighted draw and its mixer: the deal takes a tier's route by a rolling index modulo its array, pinned in internal/sprint/store/route_test.go
 cmd/nova-swarm/recovery_test.go no test was left in it: its twelve helpers were reached by nothing (deadcode -test, tags functional,slow, darwin, linux and windows); waitForFile, its one live helper, moves beside its one user, native_idle_test.go
+internal/fleet/parallel_test.go its four tests tested only RunBenchesConcurrently, which no command calls (deadcode, tags functional,slow,perf,swarmtest, darwin and linux); both go
