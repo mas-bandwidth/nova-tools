@@ -66,8 +66,8 @@ func (ta *testApp) friendStatus() map[string]string {
 
 // The table of two friends, one up and one held: the header, a rule, the friend
 // up first and then the one held, a rule and the summary row with its cell blank.
-// The empty store draws the header, the rules and the summary row alone, as an
-// empty fleet table does. Either way it stands after merge and before fleet.
+// The empty store draws the header, its one rule and the summary row, as every
+// empty table does. Either way it stands after merge and before fleet.
 func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -77,7 +77,6 @@ func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 		want    string
 	}{
 		{name: "the empty store", want: "friends | status\n" +
-			"--------+-------\n" +
 			"--------+-------\n" +
 			"        |"},
 		{name: "two friends, one up and one held", friends: []string{"friend-a", "friend-b"},

@@ -65,10 +65,10 @@ are in the fleet table's order (`FleetOrder`): up, then held, then down, each by
 name. The table is drawn by `where` from those records when it draws the frame,
 never stored as a table: no tick, step, epoch or clear touches it, `teardown`
 deletes its records, and the stored view `sprint` has the four tables only. Its
-one column is text, so the summary row under its second rule has a blank label
-and a blank cell, as the fleet table's status cell is blank in its summary row;
-an empty friends table is its header, the two rules and the summary row, as an
-empty fleet table is.
+one column is text, so its summary row, under the rule after its rows, has a
+blank label and a blank cell, as the fleet table's status cell is blank in its
+summary row; an empty friends table is its header, its one rule and the summary
+row, as every empty table is.
 
 The view shows work, readers, merge, friends, fleet in that order. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary

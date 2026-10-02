@@ -185,10 +185,12 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	}
 	// the identity of a row is its first cell; the readers and merge tables are
 	// one row, the sum of all (the owner, 2026-10-01)
-	for name, want := range map[string]string{"work": "s1,s2", "readers": allRow, "merge": allRow, "friends": "", "fleet": "m1,m2"} {
+	for name, want := range map[string]string{"work": "s1,s2", "readers": allRow, "merge": allRow, "fleet": "m1,m2"} {
 		got := strings.Join(rowsOf(tableOf(frame, name)), ",")
 		assert.Equal(t, want, got, "table %s: rows, in the frame:\n%s", name, frame)
 	}
+	// the fixture has no friend: the friends table is its header, one rule and its summary row
+	assert.Equal(t, "friends | status\n--------+-------\n        |", tableOf(frame, "friends"), "the frame:\n%s", frame)
 	// the view for a program keeps all of it
 	var w whereView
 	ta.json("where", &w)

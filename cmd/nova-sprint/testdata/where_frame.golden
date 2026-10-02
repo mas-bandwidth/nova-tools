@@ -19,7 +19,6 @@ merge | queued | merged | stuck | ci | state
 
 friends | status
 --------+-------
---------+-------
         |
 
 fleet | ready | working | width | done | ok%    | status | load

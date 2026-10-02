@@ -593,7 +593,8 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 // its header, a rule, a row per friend in the order given, then a rule and the
 // summary row, whose cell is blank, as the fleet table's status cell is (the
 // table's one column is text, which has no fold, so the table layer draws no
-// footer of its own).
+// footer of its own). With no friend it is the header, its one rule and the
+// summary row, as every empty table is (ntable.Render).
 func friendsText(friends []store.FriendRow) string {
 	t := sprint.FriendsDef()
 	for _, f := range friends {
@@ -603,7 +604,10 @@ func friendsText(friends []store.FriendRow) string {
 	header, rest, _ := strings.Cut(text, "\n")
 	rule, _, _ := strings.Cut(rest, "\n")
 	label, _, _ := strings.Cut(header, " | ")
-	return text + rule + "\n" + strings.Repeat(" ", len(label)) + " |\n"
+	if len(friends) > 0 {
+		text += rule + "\n"
+	}
+	return text + strings.Repeat(" ", len(label)) + " |\n"
 }
 
 // allRow is the label of the one row the view draws for the readers and the
