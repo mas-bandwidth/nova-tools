@@ -23,7 +23,7 @@ import (
 // The control is in the SAME test on purpose: a fix that made every wait stop beating
 // would satisfy "no BEAT written" and would break presence everywhere, so the default
 // must still write and commit its BEAT in the same run of this test.
-func TestIssue1517WaitWithNoBeatWritesNoBeat(t *testing.T) {
+func TestWaitWithNoBeatWritesNoBeat(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)

@@ -15,7 +15,7 @@ import (
 // stderr LINE, not per run, because #1496 prints one line per missing flag. The verbs
 // are read from the usage block so a verb added later is covered without editing this
 // test; they are not listed here.
-func TestIssue1451EveryBareVerbRefusalNamesTheDoor(t *testing.T) {
+func TestEveryBareVerbRefusalNamesItsDoor(t *testing.T) {
 	t.Setenv("NOVA_BUS_RECEIPT_MAX_WORDS", "")
 
 	// Every verb the usage block names, run BARE. A verb that exits 0 or 1 with no

@@ -20,9 +20,9 @@ import (
 // An empty-tick under --on-note prints one WAIT TIMEOUT line, prints no INBOX OPEN frame,
 // and exits with the rearm line so the harness can restart.
 
-// TestIssue2178 is the single anchor test that reproduces nova-tools#2178:
+// TestWaitOnNoteRefusals is the single anchor test that reproduces nova-tools#2178:
 // it fails on base-sha, passes at head, and fails again when the production change is reverted.
-func TestIssue2178(t *testing.T) {
+func TestWaitOnNoteRefusals(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
