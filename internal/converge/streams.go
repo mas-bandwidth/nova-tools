@@ -32,8 +32,8 @@ type Batch struct {
 	HaveRounds bool
 }
 
-// BatchPrefix is what makes a merged pull request a batch. Glenn, 2026-09-18:
-// integration batches only — nothing else enters the queue.
+// BatchPrefix is what makes a merged pull request a batch: only integration
+// batches enter the queue, so only they count.
 const BatchPrefix = "integration-"
 
 // Batches turns merged pull requests into batches, taking each one's rounds
@@ -138,8 +138,8 @@ func Classes(nowSpec string, beforeSpec string, haveBefore bool) Stream {
 // SCRIPTS
 // ---------------------------------------------------------------------------
 
-// Scripts is the sprint's finish line: what is left in bin, against what was
-// left at --since — which is what is left now plus what the window retired.
+// Scripts is the scripts left in bin, against what was left at --since — which
+// is what is left now plus what the window retired.
 func Scripts(remaining int, rows []RetiredRow, since, now time.Time) Stream {
 	s := Stream{Name: "SCRIPTS", Measure: "scripts-left-in-bin", Lower: true}
 	inWindow, undated := RetiredInWindow(rows, since, now)
@@ -190,7 +190,8 @@ func PRs(open, closed []PR, since, now time.Time) Stream {
 
 // Edges is the dogfood gate: the edges nobody has filed an issue for, now and
 // at --since, with the not-ok rate of the rounds inside the window beside it.
-// `by` narrows the rounds to the named friends; empty reads them all.
+// A round is one receipt author (`By`) with a receipt in the window. `by`
+// narrows the rounds to the named authors; empty reads them all.
 func Edges(receipts []dogfood.Receipt, since, now time.Time, by []string) Stream {
 	s := Stream{Name: "EDGES", Measure: "open-edges", Lower: true}
 	wanted := map[string]bool{}
@@ -245,8 +246,9 @@ func Edges(receipts []dogfood.Receipt, since, now time.Time, by []string) Stream
 // FLEET
 // ---------------------------------------------------------------------------
 
-// Fleet is one build across the machines: the units NOT on the majority stamp,
-// so a fleet on one build reads zero. Its `before` can only come from the state
+// Fleet is one build across the units (machines in a roll-up, binaries in one
+// machine's snapshot): the units NOT on the majority stamp, so units all on one
+// build read zero. Its `before` can only come from the state
 // file — a snapshot is a photograph of one instant, and there is no honest way
 // to ask it what yesterday looked like.
 func Fleet(rows []VersionRow, certified, total int, haveCerts bool) Stream {
@@ -284,7 +286,8 @@ func orDash(s string) string {
 // LEDGER
 // ---------------------------------------------------------------------------
 
-// Ledger is what the pit stop still owes: the rows not yet closed. Like FLEET,
+// Ledger is what a ledger of checks still owes — a table whose result cells say
+// PASS, FAIL, PARTIAL or TODO: the rows not yet closed. Like FLEET,
 // its `before` comes from the state file, because the ledger's rows carry a
 // status and not a date.
 func Ledger(md string) Stream {

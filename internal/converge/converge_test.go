@@ -1,8 +1,9 @@
 package converge
 
-// The red tests docs/SPEC-CHECK.md demands, numbered there and named here.
-// Every fake stands where the real thing is a forge, a git, a bench or a clock:
-// nothing in this file opens a socket, and the only clock is the one handed in.
+// The red tests of docs/SPEC-CHECK.md, "Red tests this section demands", by
+// the names the spec gives them. Every fake stands where the real thing is a
+// forge, git or a clock: nothing in this file opens a socket, and the only
+// clock is the one handed in.
 
 import (
 	"context"
@@ -259,7 +260,7 @@ func assertField(t *testing.T, line, key, want, msg string) {
 }
 
 // ---------------------------------------------------------------------------
-// 1
+// the lines
 // ---------------------------------------------------------------------------
 
 func TestConvergencePrintsOneLinePerStream(t *testing.T) {
@@ -283,7 +284,7 @@ func TestConvergencePrintsOneLinePerStream(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 2
+// trend
 // ---------------------------------------------------------------------------
 
 func TestATrendIsTheDirectionTheStreamConverges(t *testing.T) {
@@ -309,7 +310,7 @@ func TestATrendIsTheDirectionTheStreamConverges(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 3
+// ratio
 // ---------------------------------------------------------------------------
 
 func TestRatioIsAlwaysNowOverBefore(t *testing.T) {
@@ -327,15 +328,15 @@ func TestRatioIsAlwaysNowOverBefore(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 4 and 5
+// LANDING
 // ---------------------------------------------------------------------------
 
 func TestLandingReadsRoundsFromTheBodyAndTheLogs(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t)
-	// #3 says round 2 in its body; three logs say it went to round 3, and the
-	// logs win because a body is written by hand.
+	// Pull request 3 says round 2 in its body; three logs say it went to round
+	// 3, and the logs win because a body is written by hand.
 	logs := filepath.Join(f.dir, "logs")
 	for round := 1; round <= 3; round++ {
 		writeFile(t, logs, "3-round-"+strconv.Itoa(round)+".log", "green\n")
@@ -344,7 +345,7 @@ func TestLandingReadsRoundsFromTheBodyAndTheLogs(t *testing.T) {
 	f.opts.BatchLogs = logs
 
 	s := stream(t, f.read(t), "LANDING")
-	// #3 at 3 rounds (logs) and #4 at 4 rounds (body) is a mean of 3.5.
+	// Pull request 3 at 3 rounds (logs) and 4 at 4 rounds (body) is a mean of 3.5.
 	assert.Equal(t, 3.5, s.Now, "rounds per batch now=%v, want 3.5 (logs beat the body)", s.Now)
 	assertField(t, s.Line(), "batches", "2", "batches=%s, want 2")
 }
@@ -355,7 +356,7 @@ func TestLandingComparesTheWindowWithTheOneBefore(t *testing.T) {
 	f := newFixture(t)
 	s := stream(t, f.read(t), "LANDING")
 	assert.Equal(t, float64(3), s.Now, "now=%v, want 3", s.Now) // #3 round 2 and #4 round 4
-	// #5, merged in the twelve hours before --since
+	// Pull request 5, merged in the twelve hours before --since.
 	assert.Equal(t, float64(6), s.Before, "before=%v, want 6 (the batch in the window before --since)", s.Before)
 	assert.Equal(t, Contracting, s.Trend(), "trend %s, want contracting: fewer rounds per batch is landing getting cheaper", s.Trend())
 	line := s.Line()
@@ -364,7 +365,7 @@ func TestLandingComparesTheWindowWithTheOneBefore(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 6
+// CLASSES
 // ---------------------------------------------------------------------------
 
 func TestClassesCountsTheIndexEntriesAtBothRevisions(t *testing.T) {
@@ -379,7 +380,7 @@ func TestClassesCountsTheIndexEntriesAtBothRevisions(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 7 and 8
+// SCRIPTS
 // ---------------------------------------------------------------------------
 
 func TestScriptsCountsWhatIsLeftAndWhatTheWindowRetired(t *testing.T) {
@@ -415,7 +416,7 @@ func TestRetiredRowsInheritTheNearestDateAbove(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 9
+// PRS
 // ---------------------------------------------------------------------------
 
 func TestPRsCountsWhatWasOpenAtSince(t *testing.T) {
@@ -424,7 +425,8 @@ func TestPRsCountsWhatWasOpenAtSince(t *testing.T) {
 	f := newFixture(t)
 	s := stream(t, f.read(t), "PRS")
 	assert.Equal(t, float64(2), s.Now, "now=%v, want 2 open", s.Now)
-	// #1 open and older than --since, plus #6 created before it and closed inside.
+	// Pull request 1, open and older than --since, plus 6, created before it and
+	// closed inside.
 	assert.Equal(t, float64(2), s.Before, "before=%v, want 2", s.Before)
 	line := s.Line()
 	assertField(t, line, "opened", "1", "opened=%s, want 1")
@@ -432,7 +434,7 @@ func TestPRsCountsWhatWasOpenAtSince(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 10
+// EDGES
 // ---------------------------------------------------------------------------
 
 func TestEdgesIsTheGateAndTheRounds(t *testing.T) {
@@ -440,7 +442,7 @@ func TestEdgesIsTheGateAndTheRounds(t *testing.T) {
 
 	f := newFixture(t)
 	s := stream(t, f.read(t), "EDGES")
-	// Stella's Edges: note and Rowan's older one are open; the not-ok receipt
+	// The in-window Edges: note and the older one are open; the not-ok receipt
 	// has an issue and is not.
 	assert.Equal(t, float64(2), s.Now, "now=%v, want 2 open edges", s.Now)
 	assert.Equal(t, float64(1), s.Before, "before=%v, want 1: only the receipt written before --since", s.Before)
@@ -456,7 +458,7 @@ func TestEdgesIsTheGateAndTheRounds(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 11
+// FLEET
 // ---------------------------------------------------------------------------
 
 func TestFleetIsTheUnitsOffTheMajorityStamp(t *testing.T) {
@@ -482,7 +484,7 @@ func TestFleetIsTheUnitsOffTheMajorityStamp(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 12
+// FLEET and LEDGER before, from the state
 // ---------------------------------------------------------------------------
 
 func TestFleetAndLedgerTakeTheirBeforeFromTheState(t *testing.T) {
@@ -511,7 +513,7 @@ func TestFleetAndLedgerTakeTheirBeforeFromTheState(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 13
+// LEDGER
 // ---------------------------------------------------------------------------
 
 func TestLedgerCountsTheRowsNotYetPass(t *testing.T) {
@@ -527,7 +529,7 @@ func TestLedgerCountsTheRowsNotYetPass(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 14
+// absent streams
 // ---------------------------------------------------------------------------
 
 func TestAStreamWithNoSourceIsAbsentNotZero(t *testing.T) {
@@ -558,7 +560,7 @@ func TestAStreamWithNoSourceIsAbsentNotZero(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 15 and 16
+// the widening streak and the state file
 // ---------------------------------------------------------------------------
 
 // widening is a one-stream report that moved the wrong way.
@@ -586,9 +588,8 @@ func TestExitOneOnlyOnTheSecondConsecutiveWidening(t *testing.T) {
 	require.False(t, streak, "after a reset, one widening tick is a WARN again")
 }
 
-// The edge the first real run of this verb found: two invocations over one
-// window are one tick read twice, and counting the second would have gone red
-// on a reading nobody took.
+// Two invocations over one window are one tick read twice; counting the second
+// would go red on a reading nobody took.
 func TestTheSameTickReadTwiceIsNotTwoTicks(t *testing.T) {
 	t.Parallel()
 
@@ -643,7 +644,7 @@ func TestStateSurvivesARoundTrip(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 18
+// --since
 // ---------------------------------------------------------------------------
 
 func TestParseSinceTakesBothSpellingsAndRefusesTheRest(t *testing.T) {
@@ -666,7 +667,7 @@ func TestParseSinceTakesBothSpellingsAndRefusesTheRest(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 19
+// the versions and certs files
 // ---------------------------------------------------------------------------
 
 func TestConvergenceRefusesAVersionsFileItDoesNotKnow(t *testing.T) {
@@ -691,7 +692,7 @@ func TestConvergenceRefusesAVersionsFileItDoesNotKnow(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 20
+// hostile values
 // ---------------------------------------------------------------------------
 
 // hostile is one value holding everything a line must survive: a newline, an
@@ -725,7 +726,7 @@ func TestEveryFieldSurvivesAHostileValue(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 21
+// JSON
 // ---------------------------------------------------------------------------
 
 func TestJSONCarriesTheSameReadingAsTheLines(t *testing.T) {
@@ -756,7 +757,7 @@ func TestJSONCarriesTheSameReadingAsTheLines(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 22
+// bounded children
 // ---------------------------------------------------------------------------
 
 func TestEveryChildIsBounded(t *testing.T) {

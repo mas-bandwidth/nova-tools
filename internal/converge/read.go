@@ -16,9 +16,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// Options is every source of one reading. A path that is empty is a source the
-// caller did not name, and its stream is ABSENT -- never zero, and never
-// guessed from the working directory.
+// Options is every source of one reading. The ledger, receipts and retired
+// paths are required, and one that cannot be read is a refusal. An empty BinDir,
+// RepoDir or VersionsPath is a source the caller did not name, and its stream is
+// ABSENT -- never zero, and never guessed from the working directory.
 type Options struct {
 	Repo        string
 	LedgerPath  string

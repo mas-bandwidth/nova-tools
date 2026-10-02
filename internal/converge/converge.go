@@ -1,15 +1,14 @@
-// Package converge answers one question mechanically: are we converging?
+// Package converge measures convergence: per stream, a number now against the
+// same number at --since, with its ratio and its trend.
 //
-// Glenn, 2026-09-15: convergence is the health metric — the contraction ratio
-// per stream, every tick. Rowan answered it by hand on 2026-09-18 out of six
-// different places, and the answer was a paragraph nobody could diff against
-// the next one. A stream here is one number a converging family drives in one
-// direction, read now and read at --since, with the ratio between them.
+// A stream is one number a converging family drives in one direction. The
+// reading is one line per stream and one verdict line, in a fixed order, so
+// one tick diffs against the next.
 //
-// Everything in this file is PURE: it takes already-fetched data and returns
-// findings. The forge, git, the filesystem and the clock are seams (forge.go,
-// git.go, sources.go), so every test is fake-driven and nothing here reaches a
-// network. See docs/SPEC-CHECK.md.
+// Apart from the state file (LoadState, Save), this file is pure: it takes
+// already-fetched data and returns findings. The forge, git, the filesystem and
+// the clock are seams (forge.go, git.go, sources.go), so every test is
+// fake-driven and nothing here reaches a network. See docs/SPEC-CHECK.md.
 package converge
 
 import (
@@ -276,9 +275,6 @@ func LoadState(path string) (State, error) {
 	return st, nil
 }
 
-// Save writes the state file, whole, through a temporary file in the same
-// directory: a tick killed halfway through leaves the previous tick's memory
-// rather than half of this one's.
 // PlanSave is Save with nothing written: every check the write makes, and the
 // same error.
 func PlanSave(path string) error {
@@ -288,6 +284,9 @@ func PlanSave(path string) error {
 	return atomicfile.Check(filepath.Clean(path), 0o600, atomicfile.ExactMode())
 }
 
+// Save writes the state file, whole, through a temporary file in the same
+// directory: a tick killed halfway through leaves the previous tick's memory
+// rather than half of this one's.
 func (s State) Save(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return nil
@@ -307,8 +306,7 @@ func (s State) Save(path string) error {
 //
 // It is one function because the two halves are one decision: a stream's
 // `before` and its widening streak are read from the same remembered entry, and
-// a version of this that filled one without updating the other is how a streak
-// gets counted twice.
+// filling one without updating the other counts a streak twice.
 func (r Report) Apply(st State, now time.Time) (Report, State, bool) {
 	out := Report{Streams: make([]Stream, 0, len(r.Streams))}
 	next := State{Streams: map[string]StreamState{}}
@@ -331,11 +329,9 @@ func (r Report) Apply(st State, now time.Time) (Report, State, bool) {
 		}
 		entry := StreamState{Now: s.Now, At: now.UTC().Format(time.RFC3339)}
 		// A tick at or before the remembered instant is the SAME tick read
-		// again, not a second one. The first real run of this verb found it:
-		// two runs of one command over one window would have counted one
-		// widening twice and gone red, so a reading nobody took would have
-		// stopped the lane. The streak counts ticks of the clock, not
-		// invocations.
+		// again, not a second one: two runs of one command over one window
+		// count one widening once, so a reading nobody took never goes red.
+		// The streak counts ticks of the clock, not invocations.
 		same := had && !now.After(parseState(prev.At))
 		if same {
 			entry.At = prev.At
@@ -358,8 +354,8 @@ func (r Report) Apply(st State, now time.Time) (Report, State, bool) {
 	return out, next, streak
 }
 
-// parseState reads a remembered instant, answering the zero time for a state
-// file written before this field carried one. A zero time is before every tick,
+// parseState reads a remembered instant, answering the zero time for an entry
+// with no readable instant. A zero time is before every tick,
 // so an unreadable instant makes the next tick a new one -- the safe way round:
 // a streak that is counted is a line a person reads, and one that is silently
 // dropped is a red that never comes.

@@ -177,8 +177,8 @@ func CountScripts(dir string) (int, error) {
 			continue
 		}
 		if !info.Mode().IsRegular() {
-			// A symlink to a built binary is not a script, and following it is
-			// how this count started reading the toolchain.
+			// A symlink to a built binary is not a script, and following it
+			// would count the toolchain.
 			continue
 		}
 		if scriptExts[strings.ToLower(filepath.Ext(e.Name()))] {
@@ -209,9 +209,9 @@ func hasShebang(path string) bool {
 // ---------------------------------------------------------------------------
 
 // batchLogRE is the shape --batch-logs holds: one file per gate round per
-// batch, `<pr>-round-<n>.log`. The hulk logs are linked into that shape rather
-// than guessed at, because a directory of free-form names read as evidence is
-// a number nobody can check.
+// batch, `<pr>-round-<n>.log`. Logs kept under other names are linked into
+// that shape rather than guessed at, because a directory of free-form names
+// read as evidence is a number nobody can check.
 var batchLogRE = regexp.MustCompile(`^([0-9]{1,9})-round-([0-9]{1,4})\.log$`)
 
 // RoundsFromLogs reads the highest round each pull request has a log for.
@@ -263,7 +263,7 @@ func RoundsFromBody(body string) (int, bool) {
 // The version snapshot and the certificates
 // ---------------------------------------------------------------------------
 
-// VersionRow is one unit of the fleet and the build it is on. A unit is a
+// VersionRow is one unit and the build it is on. A unit is a
 // machine in a roll-up and a binary in one machine's snapshot; the measure is
 // the same either way — how many are not on the one build.
 type VersionRow struct {
@@ -274,7 +274,7 @@ type VersionRow struct {
 // snapshotHeader is what `nova-version snapshot --out` writes.
 const snapshotHeader = "name\tstamp\trevision\tplatform"
 
-// rollupHeader is a fleet roll-up of those snapshots, one row per machine.
+// rollupHeader is a roll-up of those snapshots, one row per machine.
 const rollupHeader = "machine\tstamp"
 
 // ParseVersions reads either header and refuses anything else by name. A file
@@ -365,7 +365,7 @@ func nonEmptyLines(text string) []string {
 }
 
 // ---------------------------------------------------------------------------
-// The pit-stop ledger
+// The ledger of checks
 // ---------------------------------------------------------------------------
 
 // openWords are the words that say a ledger row is still owed. A cell holding

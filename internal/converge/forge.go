@@ -17,7 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
-// PR is one pull request, in the four facts convergence reads.
+// PR is one pull request, in the facts convergence reads.
 type PR struct {
 	Number    int
 	Title     string
