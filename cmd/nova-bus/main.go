@@ -742,7 +742,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	if kind, ok := preflightDraft(text); !ok {
 		switch kind {
 		case "id":
-			fmt.Fprintf(stderr, "SEND REFUSED: the tool mints the Id; delete the Id: header from %s\n", oneline.Field(source))
+			fmt.Fprintf(stderr, "SEND REFUSED: the tool mints the Id; delete the Id: header from %s; run: nova-bus send -h\n", oneline.Field(source))
 		case "re":
 			fmt.Fprintf(stderr, "SEND REFUSED: Re: names one thread; name one id in %s; run: nova-bus send -h\n", oneline.Field(source))
 		}
@@ -1429,7 +1429,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	var r inboxReading
 	c, err := bus.LoadConfig(o.busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus inbox -h"))
 		return 2, r
 	}
 	me, found := c.Lookup(o.as)
