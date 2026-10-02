@@ -10,7 +10,7 @@ import (
 
 // The six markers of profiles/darwin.sb.tmpl. A line whose WHOLE content is one of
 // these is replaced; the template's own header says what each becomes, and this file is
-// the only thing that fills them. Rule 15: the policy is generated, never hand-edited,
+// This file fills them, so the policy is generated rather than hand-edited,
 // and the tool never accepts a caller-supplied profile file.
 const (
 	markerOptRoots  = "@@OPTROOTS@@"
@@ -88,18 +88,18 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 		params = append(params, name+"="+w)
 	}
 	// The template names (param "HOME") unconditionally, so HOME is always passed. Build
-	// has already refused a HOME outside every --write (rule 9), so this grants nothing
+	// has already refused a HOME outside every --write, so this grants nothing
 	// the WRITEn grants did not already grant: it is the profile stating the requirement.
 	params = append(params, "HOME="+p.Home)
 
-	// Rule 7: IP only, never (allow network*), which grants every unix-domain socket on
+	// Network access is limited to IP; (allow network*) would also grant every unix-domain socket on
 	// the machine as well — including an inherited SSH agent's. Inbound is not granted
 	// at all unless the caller asks with --net-listen: a job that does not listen cannot
 	// be listened to. Under --net-deny the marker is emitted empty, apart from any
-	// --net-allow grants, which the caller named on purpose (issue #591).
+	// --net-allow grants, which the caller explicitly names.
 	var lines []string
 	if !p.NetDeny {
-		// The mDNSResponder socket is the DNS grant (rule 7): macOS resolves names over
+		// The mDNSResponder socket is needed for DNS because macOS resolves names over
 		// that unix socket, so IP-only outbound without it is a wall with a network and
 		// no name resolution — measured rc=6/000 without, 200 with. It sits inside this
 		// branch so that --net-deny takes the resolver away with the network.
@@ -108,8 +108,8 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 			lines = append(lines, `(allow network-inbound (local ip))`)
 		}
 	}
-	// --net-allow opens one loopback port back up by name — the local-model provider
-	// (ollama on 127.0.0.1) that bare (remote ip) does not reach (issue #591). It is an
+	// --net-allow opens one loopback port back up by name for local-model providers
+	// (ollama on 127.0.0.1) that bare (remote ip) does not reach. It is an
 	// explicit exception the caller named, so it is emitted even under --net-deny.
 	//
 	// THE FORM IS (remote ip "localhost:PORT"), NEVER (local ip (host ..) (port ..))
@@ -169,7 +169,7 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 			return "", nil, fmt.Errorf("the filled profile still carries the marker line %s", strings.TrimSpace(line))
 		}
 	}
-	// Issue #230: the explicit local GPU capability is recorded, never widened
+	// The explicit local GPU capability is recorded, never widened
 	// silently. A metal opt-in adds no mach-lookup service and no blanket
 	// device grant here: the minimum Metal mechanisms are still unmeasured, so
 	// the profile stays closed and the GPU probe classifies the outcome.
