@@ -3,7 +3,7 @@
 // in the fleet.
 //
 // It exists because that mile was a shell script. `fleet-install-tools.sh` built
-// the tools once on hulk; cached them by sha, tarred them to each bench and
+// the tools, cached them by sha, tarred them to each bench and
 // installed them by rename -- 30 lines of nested ssh quoting with a build, a
 // cache, a copy, an install and a verify all in one `for` loop, and no test of
 // any of it. It was written after a pit stop where
@@ -49,7 +49,7 @@ type CheckRun struct {
 }
 
 // Commit is one commit in a range, with the whole message: the subject carries
-// the pull request number a squash merge writes as `(#123)`, and the body of an
+// the pull request number a squash merge writes, and the body of an
 // integration batch carries the members it rolled up. Both are read from this
 // one field, so the whole changelog is one call to the forge rather than one
 // call per pull request.
@@ -128,7 +128,7 @@ type Machine struct {
 // MachinesShape is the one sentence that says what the --machines file holds.
 // The help prints it and docs/SPEC-UPDATE.md carries it, because a file format
 // discoverable only from a refusal is a format nobody can write correctly the
-// first time the source for it.
+// first time, so the shape is stated here rather than learned from the source.
 const MachinesShape = "one machine per line: <name>[TAB<bin>[TAB<dest>]]; blank lines and #-comments skipped; user@host allowed; the optional columns override --bin and --dest for that machine"
 
 // RemotePathsNote says the one thing about --bin and --dest that is easy to get

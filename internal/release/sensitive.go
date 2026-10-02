@@ -49,7 +49,7 @@ var SensitiveShape = strings.Join(SensitivePaths, ", ")
 // SHORT. The classification below reads that list, so a range at this number
 // cannot be classified at all, and a gate that reads a truncated list is a gate
 // that passes the one file it did not see. `cut` refuses such a range with the
-// same remedy as a sensitive one  rather than quietly
+// same remedy as a sensitive one rather than quietly
 // deciding on a prefix of the truth.
 const CompareFileCap = 300
 

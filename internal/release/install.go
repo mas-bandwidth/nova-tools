@@ -89,15 +89,15 @@ func VerifyArtifacts(dir string, arts []Artifact) (int, error) {
 // It exists because the shell script this verb replaces kept ~/go/bin in step
 // with ~/.local/bin, and the verb did not: after the first real adoption every
 // bench held 18 stale ~/go/bin/nova-* from a `go install` months ago, which is
-// worse than the old binary rather than better, because both directories are on
+// worse rather than better, because both directories are on
 // PATH and which one wins is a fact about the PATH order nobody has read.
 //
 // WHAT IT WILL REMOVE IS NARROW, and every clause is load-bearing. Only a name
 // this very run installed into --bin; only a name beginning `nova-`; only a
 // regular file, so a directory or a symlink is left for a person; and only
 // through safepath.RemoveUnder, which refuses a path that is not strictly below
-// the root, refuses the root itself and refuses a link (
-// shouldn't be able to delete arbitrary directories"). --retire naming --bin is
+// the root, refuses the root itself and refuses a link, so it cannot delete an
+// arbitrary directory. --retire naming --bin is
 // refused outright: that is the one argument that would delete the release this
 // verb has just installed.
 func retire(dir, bin, stamp string, arts []Artifact, errs io.Writer) (int, error) {
@@ -236,7 +236,7 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		}
 	}
 	// LAST, and never a reason to fail: the install has succeeded and been
-	// verified, and the old version directories under --from are removed by
+	// verified, and the version directories under --from are removed by
 	// the rule in prune.go. The one being installed and every one the bin
 	// directory answered before it stay.
 	pruned, pruneFailed := pruneInstalled(o.from, o.bin, func(name string) bool {
@@ -308,7 +308,7 @@ func pruneInstalled(root, bin string, keep func(string) bool, errs io.Writer) (i
 // hasToken is the same whole-token match tools/ghrelease's stamp verb
 // makes, and for the same reason: v0.1 must not pass for v0.11, and `=` is a
 // separator so that no tag is matched out of the value half of a version line's
-// `key=value` extra -- the stamp is field two, alone, in every binary (#1297).
+// `key=value` extra -- the stamp is field two, alone, in every binary.
 func hasToken(line, version string) bool {
 	return slices.Contains(strings.Fields(strings.ReplaceAll(line, "=", " ")), version)
 }
@@ -333,16 +333,16 @@ func atomicInstall(src, dst string) error { return installFile(src, dst, os.Rena
 //
 // Windows DOES allow a running file to be renamed ASIDE: the open handle
 // follows the file rather than the name. So the fallback is that platform's own
-// self-replacement -- move the old one out of the way, then rename the new one
+// self-replacement -- move the existing binary aside, then rename the new one
 // into place -- and it is a FALLBACK, taken only after the ordinary rename has
 // failed, so nothing about the unix path changes. The name it moves aside to is
 // dot-prefixed, which is what keeps it out of `nova-version snapshot` and out of
-// `--retire`, both of which take nova-* only: windows will not let the old image
+// `--retire`, both of which take nova-* only: windows will not let a running image
 // be deleted while it is still running, so that file may survive until the
 // process ends and has to be inert while it does.
 //
 // A rename that fails for a REAL reason -- a full disk, a read-only directory --
-// still fails: the old file is put back, the temporary is removed, and the error
+// still fails: the existing file is put back, the temporary is removed, and the error
 // the caller is given is the one the filesystem gave.
 func installFile(src, dst string, rename func(oldpath, newpath string) error) error {
 	body, err := os.ReadFile(src)
@@ -372,7 +372,7 @@ func installFile(src, dst string, rename func(oldpath, newpath string) error) er
 		return renameErr
 	}
 	if err := rename(tmp, dst); err != nil {
-		// Put the old binary back under its own name. A bench left with no
+		// Put the replaced binary back under its own name. A bench left with no
 		// nova-bus at all is worse than one left with the previous nova-bus.
 		if back := rename(aside, dst); back != nil {
 			os.Remove(tmp)
@@ -389,7 +389,7 @@ func installFile(src, dst string, rename func(oldpath, newpath string) error) er
 }
 
 // ExecVersion is the production answer to what the binary at path reports: its
-// own `version` verb, which every tool in this repository answers (#121), under
+// own `version` verb, which every tool in this repository answers, under
 // a short deadline because the binary being replaced may be the broken one.
 func ExecVersion(ctx context.Context, path string) (string, error) {
 	if _, err := os.Stat(path); err != nil {

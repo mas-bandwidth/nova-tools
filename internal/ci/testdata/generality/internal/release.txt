@@ -1,5 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 23
+# ceiling: 18
 internal/release/adopt.go:emma 1
 internal/release/adopt.go:glenn 1
 internal/release/adopt.go:hulk 2
@@ -17,9 +17,4 @@ internal/release/cut.go:johnny 6
 internal/release/dogfoodgate.go:glenn 3
 internal/release/dogfoodgate.go:rowan 1
 internal/release/edges.go:johnny 3
-internal/release/install.go:glenn 1
-internal/release/install.go:johnny 1
-internal/release/pull.go:johnny 1
 internal/release/pull.go:space 1
-internal/release/release.go:hulk 1
-internal/release/sensitive.go:johnny 2

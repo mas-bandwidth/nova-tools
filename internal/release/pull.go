@@ -32,8 +32,7 @@ const PullNote = "pull withdraws a release that should not have shipped (a leak,
 // the release's own checksum file, which ReadSums has already refused a
 // separator in, and this is the second gate: the value is interpolated into a
 // command the far side's shell parses, so it is held to the same narrowness as
-// a remote path (applied to the verb that
-// deletes rather than the one that installs).
+// a remote path.
 var remoteArtifactName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.+-]*$`)
 
 // PulledNote is the line a pulled section carries, composed in one place so the
@@ -60,7 +59,7 @@ func MarkPulled(text, version, note string) (string, error) {
 	lines := strings.Split(text, "\n")
 	heading := -1
 	for i, line := range lines {
-		// `## v0.16.0 — 2026-09-18`, and the space after the version is what
+		// A changelog heading is `## <version>` followed by whitespace, and that space is what
 		// keeps v0.16.0 off v0.16.0-rc1's section.
 		if strings.HasPrefix(line, "## "+version+" ") || strings.TrimRight(line, " \t") == "## "+version {
 			heading = i
