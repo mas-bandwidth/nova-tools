@@ -198,7 +198,8 @@ func TestRunnableIsThePlatformsOwnAnswer(t *testing.T) {
 		"windows, no mode bit needed":     {goos: "windows", file: "nova-check.exe", mode: 0o444, want: true},
 		"windows, mode bits mean nothing": {goos: "windows", file: "nova-notexec", mode: 0o755},
 	} {
-		assert.Equal(t, tc.want, runnableOn(tc.goos, tc.file, tc.mode), "%s: runnable = %v, want %v", name, runnableOn(tc.goos, tc.file, tc.mode), tc.want)
+		got := runnableOn(tc.goos, tc.file, tc.mode)
+		assert.Equal(t, tc.want, got, "%s: runnable = %v, want %v", name, got, tc.want)
 	}
 }
 

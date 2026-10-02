@@ -117,7 +117,7 @@ func TestReaderNeverSeesPartialFile(t *testing.T) {
 	// Final verification
 	finalData, err := os.ReadFile(target)
 	require.NoError(t, err, "ReadFile final failed: %v", err)
-	require.Equal(t, makeVersionPayload(totalWrites), finalData, "final version not %d", totalWrites)
+	require.True(t, bytes.Equal(finalData, makeVersionPayload(totalWrites)), "final version not %d", totalWrites)
 }
 
 func TestConcurrentWriters(t *testing.T) {
@@ -188,7 +188,7 @@ func TestFunctionalPropertyContentAndPermRoundTrip(t *testing.T) {
 
 		got, err := os.ReadFile(target)
 		require.NoError(t, err, "seed %d case %d: ReadFile failed: %v", seed, i, err)
-		require.Equal(t, data, got, "seed %d case %d: read content does not match written (len got=%d, want=%d)", seed, i, len(got), len(data))
+		require.True(t, bytes.Equal(got, data), "seed %d case %d: read content does not match written (len got=%d, want=%d)", seed, i, len(got), len(data))
 
 		info, err := os.Stat(target)
 		require.NoError(t, err, "seed %d case %d: Stat failed: %v", seed, i, err)
@@ -215,7 +215,7 @@ func TestFunctionalPropertyArbitraryOverwrite(t *testing.T) {
 
 		got, err := os.ReadFile(target)
 		require.NoError(t, err, "seed %d case %d: ReadFile failed: %v", seed, i, err)
-		require.Equal(t, next, got, "seed %d case %d: read mismatch after overwrite (len got=%d, want=%d)", seed, i, len(got), len(next))
+		require.True(t, bytes.Equal(got, next), "seed %d case %d: read mismatch after overwrite (len got=%d, want=%d)", seed, i, len(got), len(next))
 
 		current = next
 	}
@@ -260,6 +260,6 @@ func TestFunctionalPropertyFailureIsolationOverArbitraryData(t *testing.T) {
 
 		got, err := os.ReadFile(target)
 		require.NoError(t, err, "seed %d case %d: ReadFile failed after failure: %v", seed, i, err)
-		require.Equal(t, initialData, got, "seed %d case %d: target content modified on %s failure!", seed, i, step)
+		require.True(t, bytes.Equal(got, initialData), "seed %d case %d: target content modified on %s failure!", seed, i, step)
 	}
 }

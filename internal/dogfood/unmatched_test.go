@@ -73,7 +73,9 @@ func TestAnUnmatchedOkReceiptIsCountedAndNotAFailure(t *testing.T) {
 		stranded("nova-sandbox probe", "Stella", "2026-09-18T09:05:00Z", true, "receipts/c.json:1"),
 	}
 	findings, summary := Gate(list, got, nil, false)
-	require.Empty(t, findings, "findings = %d, want 0: %v", len(findings), findings)
+	if len(findings) != 0 {
+		require.FailNowf(t, "assertion failed", "findings = %d, want 0: %v", len(findings), findings[0].Line())
+	}
 	assert.Equal(t, 1, summary.Unmatched, "unmatched = %d, want 1", summary.Unmatched)
 }
 

@@ -293,10 +293,12 @@ func TestANameForTheBareFormSuggestsTheDash(t *testing.T) {
 
 	declared := verbs("nova-sandbox", "nova-sandbox reap", "nova-check nocode")
 	for _, spelled := range []string{"(default)", "default", "bare", "(none)", "no verb", "[bare form]", " Default "} {
-		assert.Equal(t, "nova-sandbox --verb -", Nearest(declared, "nova-sandbox", spelled), "nearest for %q = %q, want nova-sandbox --verb -", spelled, Nearest(declared, "nova-sandbox", spelled))
+		got := Nearest(declared, "nova-sandbox", spelled)
+		assert.Equal(t, "nova-sandbox --verb -", got, "nearest for %q = %q, want nova-sandbox --verb -", spelled, got)
 	}
-	assert.Equal(t, "nova-sandbox reap", Nearest(declared, "nova-sandbox", "raep"), "nearest for a typo = %q, want nova-sandbox reap", Nearest(declared, "nova-sandbox", "raep"))
-	got := Nearest(declared, "nova-check", "(default)")
+	got := Nearest(declared, "nova-sandbox", "raep")
+	assert.Equal(t, "nova-sandbox reap", got, "nearest for a typo = %q, want nova-sandbox reap", got)
+	got = Nearest(declared, "nova-check", "(default)")
 	assert.NotEqual(t, "nova-check --verb -", got, "a tool with no bare form was offered one: %q", got)
 }
 

@@ -1,6 +1,7 @@
 package atomicfile
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -76,7 +77,7 @@ func TestWriteSuccessAndFileModes(t *testing.T) {
 
 			got, err := os.ReadFile(target)
 			require.NoError(t, err, "ReadFile(%q) failed: %v", target, err)
-			require.Equal(t, tc.initial, got, "ReadFile(%q) = %q, want %q", target, got, tc.initial)
+			require.True(t, bytes.Equal(got, tc.initial), "ReadFile(%q) = %q, want %q", target, got, tc.initial)
 
 			info, err := os.Stat(target)
 			require.NoError(t, err, "Stat(%q) failed: %v", target, err)
@@ -88,7 +89,7 @@ func TestWriteSuccessAndFileModes(t *testing.T) {
 				require.NoError(t, err, "second Write(%q) failed: %v", target, err)
 				gotUpdated, err := os.ReadFile(target)
 				require.NoError(t, err, "ReadFile(%q) after update failed: %v", target, err)
-				require.Equal(t, tc.updated, gotUpdated, "ReadFile(%q) = %q, want %q", target, gotUpdated, tc.updated)
+				require.True(t, bytes.Equal(gotUpdated, tc.updated), "ReadFile(%q) = %q, want %q", target, gotUpdated, tc.updated)
 				infoUpdated, err := os.Stat(target)
 				require.NoError(t, err, "Stat(%q) after update failed: %v", target, err)
 				wantPermUpdated := referencePerm(dir, tc.filename+".updated", tc.mode)
@@ -481,10 +482,10 @@ func TestCreateTempCollisionAndExhaustion(t *testing.T) {
 		}
 
 		f, err := createTempFile(dir, "exhaust", 0o600, randFn)
-		if f != nil {
+		if err == nil {
 			_ = f.Close()
+			require.FailNow(t, "createTempFile succeeded despite constant collision; want exhaustion")
 		}
-		require.Error(t, err, "createTempFile succeeded despite constant collision; want exhaustion")
 		wantMsg := fmt.Sprintf("after %d attempts", maxCreateTempAttempts)
 		require.Contains(t, err.Error(), wantMsg, "error %q does not mention %s", err, wantMsg)
 	})
