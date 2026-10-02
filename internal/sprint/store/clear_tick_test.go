@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // C4: a tick in flight at a clear, wherever the clear lands in it, writes
@@ -32,15 +33,11 @@ func TestATickInFlightAtAClearWritesNothing(t *testing.T) {
 				img = withoutMachine(h.image())
 			}}
 			res, err := loop.Tick(h.ctx)
-			if img == "" {
-				t.Fatalf("the clear never landed in the tick: %+v %v", res, err)
-			}
-			if err != nil || res.Stale == "" {
-				t.Fatalf("the tick at a clear: stale %q parts %+v err %v", res.Stale, res.Parts, err)
-			}
-			if got := withoutMachine(h.image()); got != img {
-				t.Fatalf("the tick wrote after the clear:\n%s\nwas\n%s", got, img)
-			}
+			require.NotEmpty(t, img, "the clear never landed in the tick: %+v %v", res, err)
+			require.NoError(t, err, "the tick at a clear: stale %q parts %+v err %v", res.Stale, res.Parts, err)
+			require.NotEmpty(t, res.Stale, "the tick at a clear: stale %q parts %+v err %v", res.Stale, res.Parts, err)
+			got := withoutMachine(h.image())
+			require.Equal(t, img, got, "the tick wrote after the clear:\n%s\nwas\n%s", got, img)
 			if m, _, _ := h.st.Machine(h.ctx); m.Running() || cleared.To != 1 {
 				t.Fatalf("after the clear: machine %s, %+v", m.StateWord(), cleared)
 			}
