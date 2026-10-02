@@ -139,8 +139,8 @@ func CardNamesRepo(card []byte) bool {
 }
 
 // CardStageBranch is the branch the staged checkout is on, so the card commits on a named
-// branch rather than a detached HEAD: rowan/<label> from line 1 (RESULT: <label> sha=...),
-// rowan/card when line 1 names no label.
+// branch rather than a detached HEAD: the branch is named from line 1's label
+// (RESULT: <label> sha=...), or card when line 1 names no label.
 func CardStageBranch(card []byte) string {
 	first, _, _ := strings.Cut(string(card), "\n")
 	first = strings.TrimSpace(first)

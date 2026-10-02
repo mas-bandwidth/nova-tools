@@ -29,7 +29,7 @@ internal/swarm/reap.go:vision 1
 internal/swarm/signature.go:glenn 1
 internal/swarm/signature.go:space 1
 internal/swarm/stage.go:mas-bandwidth 1
-internal/swarm/stage.go:rowan 6
+internal/swarm/stage.go:rowan 4
 internal/swarm/staging.go:rowan 2
 internal/swarm/timeline.go:glenn 1
 internal/swarm/toolchain.go:hulk 2
