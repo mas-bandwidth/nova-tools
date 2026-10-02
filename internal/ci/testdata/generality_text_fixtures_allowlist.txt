@@ -29,7 +29,6 @@ internal/ci/testdata/generality-text/internal/ci.txt this scan's ledger: each ro
 internal/ci/testdata/generality-text/internal/ci/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/ci/testdata/testoutpath.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/ci/timing/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality-text/internal/config/migrations.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/fleet/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/fleet/workloads.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/hygiene.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
