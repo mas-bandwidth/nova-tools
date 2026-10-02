@@ -14,7 +14,7 @@ import (
 // polled until wait runs out, with the holder's pid written into the lock file. This is
 // the loop every platform ran before the unix build moved onto internal/filelock; it stays
 // as it was until a migration in which an old and a new binary on one machine still
-// exclude each other (the old lock is the sibling file, filelock's is LockFileEx on the
+// exclude each other (this build locks the sibling file; filelock's is LockFileEx on the
 // file itself).
 func takeFold(path string, wait time.Duration) (func(), bool, error) {
 	f, err := openFoldLock(path)

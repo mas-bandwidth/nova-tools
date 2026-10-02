@@ -16,8 +16,8 @@ import (
 
 // --provider <label>=<file>: a billing export.
 //
-// For a harness that records nothing a tool can read — Emma's (Antigravity, Gemini),
-// Johnny's (Grok), Stella's (Codex). The account holder downloads the export; the label
+// For a harness that records nothing a tool can read, the provider's billing export is the
+// only record. The account holder downloads the export; the label
 // names the provider and therefore the parser. The repo is the fixed word `unattributed`:
 // the tool never splits a provider total across repos by any proportion, because a split
 // nobody measured is a number nobody can defend.
@@ -39,10 +39,10 @@ func KnownParser(name string) bool {
 const zoneDeclaration = "# timezone:"
 
 // A shape is ONE provider's export, and the parser is chosen by the kind the caller
-// declared: `--provider google:emma=<file>` says this file is Google's export and Emma
+// declared: `--provider google:<name>=<file>` says this file is Google's export, and the account that
 // downloaded it. One union of every provider's column names would accept a Google export
 // declared as xAI and write `provider:xai` beside numbers that parser never read -- the
-// column that makes a number traceable naming the wrong source (measured 2026-09-11).
+// column that makes a number traceable would name the wrong source.
 //
 // The names are the ones this family has seen; a real export that spells a column
 // differently is TOKENS UNREADABLE naming the parser and the column, which is a question
@@ -91,7 +91,7 @@ func ParserColumns(kind string) []string {
 }
 
 // ReadProvider reads one billing export with the parser its kind names. The label on
-// every row it feeds is `<kind>:<name>` -- `google:emma`, as the spec's own day-file
+// every row it feeds is `<kind>:<name>`, a label per account, as the spec's own day-file
 // example writes it -- so two friends' exports from one provider are two sources.
 func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	s := &Source{Label: Label(kind, name), Kind: KindProvider, Path: path, Basis: UTC}
@@ -385,8 +385,8 @@ func readXaiJSON(kind, path, text string, s *Source) *Source {
 			}
 		}
 		// The turn's cost is its costUsdTicks: an integer count of micro-dollar
-		// ticks, the unit the fold's usd= holds (rule 20: the cost is "from the
-		// usage `usd` column or a cost tick the source reported"). A lexeme that
+		// ticks, the unit the fold's usd= holds: the cost comes from the
+		// usage `usd` column or from a cost tick the source reported. A lexeme that
 		// is not a non-negative integer is an absence rather than a guess, and
 		// usd= is 0 where no source reported one.
 		if v, ok := turn["costUsdTicks"].(json.Number); ok {
