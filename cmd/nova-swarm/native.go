@@ -2312,14 +2312,26 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 
 // workStart is the commit the work a read reviews started from, found in the read's staged
 // checkout before the child runs: the merge base of its HEAD (the work's head) and the
-// review base as the clone holds it (origin/<base>, else <base> as written), a full sha;
-// "" when neither gives one. The packet carries the base's name, never the commit the work
-// was staged on, and the base branch moves while the work is read (docs/SPEC-CARD-CONTRACT.md,
-// JOB.md).
+// review base (origin/<base>, else <base> as written), a full sha; "" when neither gives
+// one. The packet carries the base's name, never the commit the work was staged on, and the
+// base branch moves while the work is read (docs/SPEC-CARD-CONTRACT.md, JOB.md).
+//
+// origin/<base> is fetched from origin first. The checkout is cloned from the bench mirror,
+// whose base can be older than the commit the work started from; the merge base against it
+// is that older tip, and a diff from it shows every card landed in between as the work's
+// own (the 1000-card load test of 2026-10-01: "diff has 22 files not exactly one"). origin's
+// base holds the work's start (the work was cut from it) and not the work (a read comes
+// before the land), so the merge base against it is exactly the start, however far the base
+// has moved since.
 func workStart(git, checkout, base string) string {
 	if base == "" {
 		return ""
 	}
+	// A base that is no branch on origin (a tag, a sha), or an origin the stage cannot reach,
+	// leaves the clone's own refs, read next, as they were.
+	// ignored: a failed fetch leaves the clone's refs, the merge base read from them below
+	_, _ = gitrun.Run(context.Background(), gitrun.Options{Bin: git, C: checkout, OwnRepo: true},
+		"fetch", "-q", "--no-tags", "--", "origin", "+refs/heads/"+base+":refs/remotes/origin/"+base)
 	for _, ref := range []string{"origin/" + base, base} {
 		res, err := gitrun.Run(context.Background(), gitrun.Options{Bin: git, C: checkout, OwnRepo: true}, "merge-base", "--end-of-options", "HEAD", ref)
 		if sha := strings.TrimSpace(string(res.Stdout)); err == nil && typedrec.IsFullSha(sha) {
