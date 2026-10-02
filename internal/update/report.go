@@ -131,7 +131,7 @@ var busRefusals = []string{"SEND FAIL ", "SEND REFUSED: ", "SEND OK ", "PREPARE 
 // output_not_closed, the operating system's own words) is about this tool's argv
 // and is never the bus's text.
 //
-// What the bus's own reasons may contain, read at #138 aeb45c9: a note header
+// What the bus's own reasons may contain: a note header
 // VALUE (a From or a Subject, truncated), a roster name, an id, a lane, a path,
 // one remote INDEX line. They do not contain a note body and they cannot contain
 // a version command's output, which reaches the bus only inside the note.
@@ -154,10 +154,10 @@ func busSaid(r ProcessResult) string {
 // busBounds are the finite retry controls the reporter hands the bus, computed
 // from what is LEFT of the reporter's own budget.
 //
-// Rule 23's --timeout bounds one version probe; it was also bounding the bus
-// child, which made a default run kill its own delivery at five seconds. The
-// delivery allowance is the remaining budget instead (rule 25 and
-// SPEC-BUS-DELIVERY both name the budget as the resolution horizon), and these
+// The --timeout flag bounds one version probe, not the bus child: applying that
+// short bound to the child let a default run kill its own delivery at five
+// seconds. The bus child is bounded by the delivery allowance instead -- the
+// remaining budget, the resolution horizon -- and these
 // two flags are what let the bus stop on its own inside that horizon rather than
 // be killed at the end of it: one git operation gets a third of what remains,
 // capped at a minute and never more than remains, and the attempt count is how
