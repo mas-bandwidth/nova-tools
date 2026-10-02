@@ -46,7 +46,7 @@ var bareFlagLineRE = regexp.MustCompile(`(?m)^  --[a-z][a-z0-9-]*( <[^>]+>)?$`)
 
 func TestEveryFlagOfEveryVerbSaysWhatItWants(t *testing.T) {
 	t.Parallel()
-	for _, verb := range [][]string{{"native"}, {"member"}, {"verify"}, {"template"}, {"profile"}, {"doctor"}, {"lint"}} {
+	for _, verb := range [][]string{{"native"}, {"member"}, {"verify"}, {"template"}, {"doctor"}, {"lint"}} {
 		help := swarmHelp(t, append(verb, "-h")...)
 		assert.Contains(t, help, "flags:\n", "%v", verb)
 		assert.Empty(t, bareFlagLineRE.FindAllString(help, -1), "%v -h lists a flag with no description", verb)

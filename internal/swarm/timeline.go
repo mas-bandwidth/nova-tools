@@ -8,8 +8,8 @@ package swarm
 // The harness REPORTS its own events on the child's output, one line each, and this reader
 // timestamps them as they arrive: the harness says what happened, the run says when. One row
 // is written per model turn and per tool call into `<job>/timeline.tsv`, beside the card's
-// `usage.tsv`, so `nova-swarm profile --jobs <glob>` can fold a fleet of cards into seconds
-// per phase without re-reading a transcript.
+// `usage.tsv`, so a fleet of cards can be folded into seconds per phase without re-reading a
+// transcript.
 //
 // The event grammar is the harness adapter's, and it is deliberately two lines per event so
 // both ends of a span are observed rather than guessed:
@@ -23,11 +23,6 @@ package swarm
 
 import (
 	"bytes"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,9 +48,6 @@ type TimelineRow struct {
 	InputTokens  string // empty when the harness reported none
 	OutputTokens string
 }
-
-// phaseOrder is the fixed order the profile line and its summary print their phases.
-var phaseOrder = []string{"clone", "deps", "read", "edit", "test", "retry", "result"}
 
 // Timeline is an io.Writer over the child's output: it timestamps the harness's own
 // NOVA-TIMELINE report lines as they arrive and keeps one row per completed span. It is
@@ -242,190 +234,4 @@ func WriteTimeline(path string, rows []TimelineRow) error {
 
 func scrubCell(v string) string {
 	return strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(strings.TrimSpace(v))
-}
-
-// ReadTimeline reads one card's timeline.tsv, mapping its columns by the header so a reader
-// is not wedded to a column's position. An absent file is an empty timeline and no error,
-// which is how a job that reported nothing phases as nothing rather than failing the fold.
-func ReadTimeline(path string) ([]TimelineRow, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) == "" {
-		return nil, nil
-	}
-	head := strings.Split(lines[0], "\t")
-	at := map[string]int{}
-	for i, c := range head {
-		at[strings.TrimSpace(c)] = i
-	}
-	var rows []TimelineRow
-	for _, line := range lines[1:] {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		cells := strings.Split(line, "\t")
-		row := TimelineRow{
-			Tool:         cell(cells, at, "tool"),
-			InputTokens:  cell(cells, at, "input_tokens"),
-			OutputTokens: cell(cells, at, "output_tokens"),
-		}
-		row.Start, _ = time.Parse(time.RFC3339Nano, cell(cells, at, "t_start"))
-		row.End, _ = time.Parse(time.RFC3339Nano, cell(cells, at, "t_end"))
-		rows = append(rows, row)
-	}
-	return rows, nil
-}
-
-func cell(cells []string, at map[string]int, name string) string {
-	i, ok := at[name]
-	if !ok || i < 0 || i >= len(cells) {
-		return ""
-	}
-	return cells[i]
-}
-
-// JobProfile is one job's folded timeline: its span, how many turns and tool calls it
-// reported, and the seconds each phase spent.
-type JobProfile struct {
-	Label   string
-	Wall    float64
-	Turns   int
-	Tools   int
-	Seconds map[string]float64
-}
-
-// ProfileJobs reads every timeline a job glob names and prints one PROFILE line per job and
-// one PROFILE SUMMARY line with the mean per phase. A glob match may be a job directory (its
-// timeline.tsv is read) or the timeline file itself; a match with no readable timeline is
-// skipped. The command exits 0 even when the glob matches nothing, printing a zero summary,
-// because an empty fleet is a measurement and not a refusal.
-func ProfileJobs(pattern string, stdout, stderr io.Writer) int {
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		fmt.Fprintf(stderr, "nova-swarm profile: --jobs wants a glob, got %q: %s\n", pattern, err)
-		return 2
-	}
-	sort.Strings(matches)
-
-	var jobs []JobProfile
-	for _, m := range matches {
-		path := m
-		label := filepath.Base(m)
-		if fi, statErr := os.Stat(m); statErr == nil && fi.IsDir() {
-			path = filepath.Join(m, TimelineFileName)
-			label = filepath.Base(filepath.Clean(m))
-		} else if statErr == nil {
-			label = filepath.Base(filepath.Dir(m))
-		}
-		rows, readErr := ReadTimeline(path)
-		if readErr != nil || len(rows) == 0 {
-			continue
-		}
-		jobs = append(jobs, profileRows(label, rows))
-	}
-
-	phaseMeans := map[string]float64{}
-	var wallSum float64
-	for _, j := range jobs {
-		fmt.Fprintln(stdout, profileLine(j))
-		wallSum += j.Wall
-		for _, ph := range phaseOrder {
-			phaseMeans[ph] += j.Seconds[ph]
-		}
-	}
-	n := len(jobs)
-	mean := func(total float64) float64 {
-		if n == 0 {
-			return 0
-		}
-		return total / float64(n)
-	}
-	summary := fmt.Sprintf("PROFILE SUMMARY jobs=%d mean_wall=%.1f", n, mean(wallSum))
-	for _, ph := range phaseOrder {
-		summary += fmt.Sprintf(" %s=%.1f", ph, mean(phaseMeans[ph]))
-	}
-	fmt.Fprintln(stdout, summary)
-	return 0
-}
-
-// profileLine renders one job's PROFILE line in the fixed phase order.
-func profileLine(j JobProfile) string {
-	line := fmt.Sprintf("PROFILE job=%s wall=%.1f turns=%d tools=%d",
-		scrubCell(j.Label), j.Wall, j.Turns, j.Tools)
-	for _, ph := range phaseOrder {
-		line += fmt.Sprintf(" %s=%.1f", ph, j.Seconds[ph])
-	}
-	return line
-}
-
-// profileRows folds one job's rows: the wall is the span from the first start to the last
-// end, and each tool call's seconds land in the phase its command names. A test run that
-// follows a failing test run is retry, and only the first `go build` is a deps cost.
-func profileRows(label string, rows []TimelineRow) JobProfile {
-	j := JobProfile{Label: label, Seconds: map[string]float64{}}
-	var first, last time.Time
-	failedTest := false
-	sawBuild := false
-	for _, r := range rows {
-		if first.IsZero() || r.Start.Before(first) {
-			first = r.Start
-		}
-		if r.End.After(last) {
-			last = r.End
-		}
-		if r.Tool == "model" || r.Tool == "" {
-			j.Turns++
-			continue
-		}
-		j.Tools++
-		phase := phaseOfTool(r.Tool, &sawBuild)
-		if phase == "test" && failedTest {
-			phase = "retry"
-		}
-		if phase == "test" {
-			failedTest = strings.Contains(r.Tool, "rc=") && !strings.Contains(r.Tool, "rc=0")
-		}
-		if phase != "" {
-			j.Seconds[phase] += r.End.Sub(r.Start).Seconds()
-		}
-	}
-	if !first.IsZero() && last.After(first) {
-		j.Wall = last.Sub(first).Seconds()
-	}
-	return j
-}
-
-// phaseOfTool names the phase a tool call's command belongs to, or "" when no listed phase
-// owns it. The checks run most-specific first: a RESULT.md write is the result even though
-// it is also an edit, and a test is a test before it is a read.
-func phaseOfTool(tool string, sawBuild *bool) string {
-	s := strings.ToLower(tool)
-	switch {
-	case strings.Contains(s, "result.md"):
-		return "result"
-	case strings.Contains(s, "git clone") || strings.Contains(s, "git fetch"):
-		return "clone"
-	case strings.Contains(s, "go test") || strings.Contains(s, "run-tests.sh") || strings.Contains(s, "make test"):
-		return "test"
-	case strings.Contains(s, "go mod"):
-		return "deps"
-	case strings.Contains(s, "go build"):
-		if !*sawBuild {
-			*sawBuild = true
-			return "deps"
-		}
-		return ""
-	case strings.Contains(s, "grep") || strings.Contains(s, "cat ") || strings.Contains(s, "sed -n") ||
-		strings.HasPrefix(s, "read"):
-		return "read"
-	case strings.HasPrefix(s, "edit") || strings.HasPrefix(s, "write"):
-		return "edit"
-	}
-	return ""
 }

@@ -1326,3 +1326,4 @@ internal/swarm/slots_steal_1902_functional_test.go the file slot store (ReleaseS
 internal/swarm/slots_steal_1902_test.go the file slot store (ReleaseSlotLeasesForcing) went with the slots verb, its one caller
 internal/swarm/slots_test.go the file slot store went with the slots verb, its one caller
 internal/swarm/lock_test.go internal/swarm's file lock (takeFileLock) had one caller, the slot store, which went with the slots verb
+cmd/nova-swarm/profile_test.go the profile verb is retired (no workflow, play, Makefile, tool or binary ran it); its TestProfilePrintsPhases went with it, and TestNativeRunWritesTimeline moved whole to native_timeline_test.go

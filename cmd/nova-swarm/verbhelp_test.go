@@ -22,7 +22,6 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "verify", Flags: []string{"--result", "{dir}/result"}},
 		{Verb: "lint", Flags: []string{"--card", "{dir}/card"}},
 		{Verb: "template", Flags: []string{"--name", "read-pr"}},
-		{Verb: "profile", Flags: []string{"--jobs", "{dir}/jobs/*"}},
 		{Verb: "native", Flags: []string{"--card", "{dir}/card", "--slot", "{dir}/slot", "--root", "{dir}/root"}},
 		{Verb: "worker check"},
 	})

@@ -39,5 +39,4 @@ accounting, and containment details.
 `nova-sprint run --listen`; the member opens no store) and the same harness,
 model and budget flags `native` takes; `--width` is how many cards run at once.
 See `nova-swarm member --help`, and `nova-swarm verify --help` for independent
-verification and receipt flags, and `nova-swarm profile --help` to summarize job
-timelines.
+verification and receipt flags.
