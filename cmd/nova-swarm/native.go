@@ -1858,7 +1858,7 @@ func nativeCacheDir(cfg nativeRunConfig) string {
 }
 
 // nativeReadRoots is what the worker description declared every job of this worker may READ
-// (issue #1463): absolute directories a person named at the desk -- a bench-local mirror, a
+// absolute directories the description names -- a bench-local mirror, a
 // corpus, a toolchain under a user directory. `swarm.LoadWorker` has already refused a
 // relative entry, an empty one, one that does not exist, one that is not a directory and one
 // that would hold the key file (internal/swarm/worker.go:227-268), so nothing is re-checked
@@ -1934,7 +1934,7 @@ func keepNativeSecretName(name string) bool {
 // field WHEN THE WALL PRINTS IT -- the machine-readable receipt, a strict base64url encoding
 // of the raw path bytes the wall applied, so a path holding U+0020, a literal backslash, or
 // a non-ASCII name survives the line exactly. When no receipt is present the readable
-// cwd=<dir> field beside it is decoded instead (decodeField, issue #572): THE cwd TOKEN IS A
+// cwd=<dir> field beside it is decoded instead (decodeField): THE cwd TOKEN IS A
 // PRODUCER'S ONE-LINE FIELD, and a job directory whose path holds U+0020 -- a configured
 // root under `work 2` -- reaches this side as `work\x202`, one token with the whitespace
 // escaped. Taking that token literally made sameDir compare the escaped spelling with the
@@ -1982,7 +1982,7 @@ func wallNamed(out string) (backend, cwd, reason string) {
 }
 
 // decodeField inverts the one-line field encoding of internal/oneline for a token read
-// back out of a producer's record (issue #572). `\xNN` decodes to the byte it spells and
+// back out of a producer's record. `\xNN` decodes to the byte it spells and
 // `\uNNNN` to the code point; every other byte is copied through. The encoding is NOT
 // injective (a literal backslash is not escaped), so a path that literally spells an
 // escape sequence cannot be told from the character it encodes; that limit is SPEC.md's
@@ -2036,12 +2036,12 @@ func sameDir(a, b string) bool {
 // When sqlite3 is missing the columns are dashes and the note is carried to the caller, and
 // the run still finishes rather than failing on a number nobody can see. When no store exists
 // the row keeps its dashes and the returned reason and path name what the NATIVE OK line says.
-// ONE ROW PER LAUNCH (issue #900): a native run that retried a launch appends a row for each
+// ONE ROW PER LAUNCH: a native run that retries a launch appends a row for each
 // attempt, so a retried card's usage.tsv carries attempt=1,2,3 for its one job and each
 // attempt is summed once. A fast failure whose provider reported nothing keeps its dashes,
 // and `usd` stays a dash rather than becoming a zero. The `end` column names how the attempt
-// ended -- done, failed, or wall (issue #644's follow-up).
-// THE ROW IS THE LAUNCH'S (rule 13d, "Two numbers, kept apart"). It returns the usage it
+// ended -- done, failed, or wall.
+// THE ROW IS THE LAUNCH'S: each launch's numbers stay its own. It returns the usage it
 // finally read as well, because the JOB's figure on the NATIVE OK line is the sum of these
 // launches' own final reads -- "a job's rows are disjoint, so that adding them counts each
 // launch once", and two launches reported at 40 and 70 keep 40 and 70 here while the line
@@ -2070,7 +2070,7 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 	if err := swarm.AppendCardUsage(filepath.Join(jobDir, "usage.tsv"), row); err != nil {
 		fmt.Fprintf(errOut, "NATIVE NOTE: the usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
 	}
-	// THE DURABLE COPY (issue #2632). The job file above is the working copy the
+	// THE DURABLE COPY. The job file above is the working copy the
 	// batch still reads. The same row is also appended under this run's own
 	// attempt directory, so a later invocation cannot mix its usage into this
 	// one. An empty results root is the direct-test shape and writes nothing else.
@@ -2201,8 +2201,8 @@ func nativeResultsAttemptDir(cfg nativeRunConfig, attempt int) string {
 // directory usage.tsv was already appended to. It returns that directory only
 // when the copy landed, so a sweep that sees "" leaves the job in place rather
 // than deleting the only copy. A card that published nothing still publishes
-// usage.tsv and the report: the spend and the capture are what a sweep used to
-// eat with the working directory (issue #2632).
+// usage.tsv and the report: the spend and the capture are what a sweep removes
+// along with the working directory.
 func publishNativeResults(cfg nativeRunConfig, jobDir string, attempt int, errOut io.Writer) string {
 	dir := nativeResultsAttemptDir(cfg, attempt)
 	if dir == "" {
@@ -2271,11 +2271,11 @@ func sweepNativeJob(root, job string) error {
 var launchArgvFor = swarm.LaunchArgvFor
 
 // nativeLaunchArgv is the harness argv of one native run, built by the one launcher from
-// the providers table (tools-48, #2646). The table's row for the route's provider gives the
+// the providers table. The table's row for the route's provider gives the
 // shape -- the row swarm.DefaultLaunchRow when the table names no row of its own -- and
 // this run fills it: the binary resolved from --harness, the provider/model the run was
 // routed to, its label as the title, and the card text as the prompt -- followed, for a
-// typed card, by the RESULT-FORMAT paragraph (swarm.CardPrompt, nova-tools#3651). The
+// typed card, by the RESULT-FORMAT paragraph (swarm.CardPrompt). The
 // card's sha256 stays the sha of the card text alone.
 func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]string, error) {
 	return launchArgvFor(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
@@ -2356,8 +2356,8 @@ var errReadStart = errors.New("staging refused: the read's start")
 // first, and a fetch that fails is an errReadStart, never the clone's own ref: the checkout
 // is cloned from the bench mirror, whose branch can be older than the commit the work
 // started from, the merge base against it is that older tip, and a diff from it shows every
-// card landed in between as the work's own (the 1000-card load test of 2026-10-01: "diff has
-// 22 files not exactly one"). origin's branch holds the work's start (the work was cut from
+// card landed in between as the work's own, so the diff names many cards' files and not the
+// one the read reviews. origin's branch holds the work's start (the work was cut from
 // it) and not the work (a read comes before the land), so the merge base against it is
 // exactly the start, however far the branch has moved since.
 func workStart(git, checkout, base string) (string, error) {
@@ -2412,7 +2412,7 @@ func providerOf(model string) (string, bool) {
 
 // strictlyWithin is within with the root itself excluded: a label of ".." makes
 // Join(slot, "jobs", "..") the slot, which is inside the root and is still not a job
-// directory of this run's own (#1923).
+// directory of this run's own.
 func strictlyWithin(root, path string) bool {
 	rel, err := filepath.Rel(root, path)
 	if err != nil || rel == "." {
@@ -2435,7 +2435,7 @@ func within(root, path string) bool {
 // dataHome/auth.json, mode 0600, and returns the refusal reason when the source is
 // looser than 0600 or the copy cannot end 0600. Both mode questions are asked of the
 // platform (authmode.go): windows reports 0666 for every readable file, so neither rule
-// refuses there (#915).
+// refuses there.
 func copyAuth(src, provider, dataHome string) string {
 	st, err := os.Stat(src)
 	if err != nil {
@@ -2515,16 +2515,16 @@ func removeAuthCopy(dataHome string, errOut io.Writer) []string {
 // names -- the sha8 OF THE BYTES THE CHILD SEES, which is the only config any later reader
 // can check the run against.
 //
-// It carries two things. The provider config a caller named with --config (issue #465),
+// It carries two things. The provider config a caller named with --config,
 // whose entry for THE MODEL's provider is refused when its key is absent from the auth file:
 // that provider is exactly the one the harness is about to call, and the refusal names the
-// provider, never the key. And this job's own fence block (issue #644), which is written
+// provider, never the key. And this job's own fence block, which is written
 // WHETHER OR NOT a config was named, because the harness's default fence auto-rejects the
 // card's own `../scratch` and every path it names on a `READ:` line.
 //
-// A WORKER DESCRIPTION THAT NAMES A SECRET IS THE CONFIG (issue #881): its own provider
+// A WORKER DESCRIPTION THAT NAMES A SECRET IS THE CONFIG: its own provider
 // declaration carries `{env:NAME}` -- the variable's NAME, never its value, the exact rule
-// the legacy run path writes by -- and there is no auth file for a key to be absent from,
+// the run path writes by -- and there is no auth file for a key to be absent from,
 // so the missing-auth check does not apply. --config is refused with such a description at
 // the verb, because the description's declaration is the one this run means.
 //
