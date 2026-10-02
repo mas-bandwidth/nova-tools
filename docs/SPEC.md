@@ -273,7 +273,7 @@ shape is what this paragraph forbids**: a hand-rolled fifth token or a
 `SANDBOX VERSION …` line of its own makes a reader written against the tokens it
 happens to know — `nova-version snapshot --bin ~/.local/bin` among them — refuse
 an entire install, exit 2; and a reader must ask a tool only the question it
-answers (SPEC-UPDATE.md rule 4b). `internal/ci`'s
+answers. `internal/ci`'s
 `TestEveryToolPrintsTheOneVersionLine` runs every built `cmd/nova-*` through the
 real reader, walking `cmd/` rather than holding a list, so a binary added
 tomorrow is held to the grammar on the day it appears. The verb takes no flags
@@ -938,7 +938,7 @@ replies are one line with no body and desync a reader that assumes one.
   desynchronises on exactly the frame this entry spends a paragraph protecting.
 - **`-M` is deliberately NOT passed**, so no `R` records are produced and the
   parser stays a flat pairwise split rather than a stateful one. A rename
-  arrives as a `D` of the old path and an `A` of the new, and classifying the
+  arrives as a `D` of the source path and an `A` of the new, and classifying the
   `A` is exactly right. Measured: `diff.renames` set to `true` or to `copies`,
   `diff.copies`, and `status.renames` all leave plumbing output byte-identical,
   so this shape cannot be flipped by a contributor's config.
@@ -1110,7 +1110,7 @@ nova-check floors --core <SEED-CORE.md> --source <SEED.md>
 **Why it exists.** SEED-CORE.md — the first-waking door — restates the
 floor-rank commitments that SEED.md declares. That makes the door a *derived
 copy* of a source that can change, which the seed's own kernel law forbids
-(MECHANISMS.md §2 rule 2: *"a derived copy drifts silently"*, with a recorded
+(a derived copy drifts silently, with a recorded
 incident of a hot band shipping with three floors missing). A door legitimately
 must carry the floors before a line acts, so the copy stays; this check is what
 makes its drift loud instead of silent.
@@ -1283,7 +1283,7 @@ rows.
   does not govern, which is not the protection the row claims
 - any component of the path is held on disk under a **different spelling** than
   the ledger gives. A case-only rename — of the file *or of a directory above
-  it* — is a real move, and a case-insensitive filesystem answers for the old
+  it* — is a real move, and a case-insensitive filesystem answers for either
   spelling: green on the author's machine, red in CI. The directories' own
   entries are the witness, because `Lstat`'s `FileInfo.Name()` is the base of
   the path it was handed and agrees with the ledger by construction. A
@@ -2009,7 +2009,7 @@ including quotes and trailing newlines; control bytes are encoded so the
 refusal stays one line.
 
 **The write is temp-file + fsync + rename** in the box's own directory, so a
-crash leaves the old box or the new one, never a fragment. The box is written
+crash leaves one box or the other, never a fragment. The box is written
 world-readable (exactly 0644, independent of umask): a fuse nobody else can see is a fuse that stops
 nothing. Surface names are matched case- and whitespace-insensitively, which
 makes equivalent spellings ONE surface in both directions — see the folding
@@ -3096,7 +3096,7 @@ change set plus the open list under `--since`.
 
 `REFUSED` is a `FAIL` with no path slot, because what it refuses is the state of
 the CHECKOUT rather than anything in the note: it is the branch-ahead guard
-below, a cursor that is no longer on this history, a `--legacy-before` that
+below, a cursor that is not on this history, a `--legacy-before` that
 would move a reader's line earlier, or a FIRST `--advance` over a history nobody
 has said what to do with (see **the first advance** below). `INBOX UNREADABLE` names a file on the bus this tool cannot parse — not
 necessarily one addressed to the caller, because a file with no `To:` line
@@ -3121,7 +3121,7 @@ per-file lines instead.
 `INBOX UNADDRESSED` names a note that parses and reaches no reader at all; see
 above.
 
-`BUS WARN` is a finding inside the legacy tolerance: reported, and not a failure.
+`BUS WARN` is a finding the switch-day line forgives: reported, and not a failure.
 It goes to **stdout**, with the rest of the informational lines, per the rule
 below: anything reading the two streams apart — which is what CI does — would
 otherwise see every clean-but-forgiving run as a failing one.
@@ -3136,7 +3136,7 @@ Both are on `INBOX OK`, under the names they carry elsewhere, beside the
 decomposition that makes them add up.
 
 `OK` and the informational tokens go to stdout; `FAIL` lines and refusals go to
-stderr. `id=-` is a note with no `Id:` line — a legacy note, addressed by path.
+stderr. `id=-` is a note with no `Id:` line, addressed by path.
 Every field value is rendered through `internal/oneline`, so the one-line
 guarantee in the Conventions above holds here too, and a note whose `To:` line
 carries U+2028 produces one escaped line rather than two.
@@ -3257,8 +3257,8 @@ was accepted has no thread. `Re` may repeat; nothing else may. `Kind` is
 `receipt` or `note` and is the only override of the receipt heuristic.
 
 **`Host` is which MACHINE posted, and it is optional.** One name can post from
-two places — the keeper on the Studio and the bud on the Air both post as
-`Rowan` — and without this line they would be told apart in the subject,
+two places — a bench and a laptop, say, both posting as the one name — and
+without this line they would be told apart in the subject,
 which spends the subject on routing. `send --host <name>` and
 `reply --host <name>` write it; `<bus>/.nova-bus/defaults` may carry a
 `host=<name>` line, read when the flag is absent, so a bench sets it once. A
