@@ -148,7 +148,7 @@ column. Every write names the epoch it read and prints a receipt; a view stacks
 tables into one frame that watch redraws in place.
 first run: needs a Redis 7 or later you may write to; an empty one is enough (the first verb loads
 the functions nova-table calls). With no store at all, help and -h answer, and every verb that writes
-runs under --dry-run: it checks its arguments and prints the call it would send, dialling nothing:
+runs under --dry-run: it makes every check the real run makes before sending, then prints what it would send:
   nova-table create demo --columns ready,working,done --dry-run
 A throwaway store, with redis-server on PATH (stop it: redis-cli -s "$d/redis.sock" shutdown nosave):
   d=$(mktemp -d)
@@ -260,7 +260,8 @@ func printCommandHelp(out io.Writer, c command, fs *flag.FlagSet) {
 }
 
 // dryRunWords is what --dry-run does on every verb that writes.
-const dryRunWords = "--dry-run checks the arguments as the real run does and prints the call instead, dialling nothing; " +
+const dryRunWords = "--dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses " +
+	"before sending, and prints that command instead of sending it, dialling nothing; " +
 	"what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run"
 
 // effectOf is what running a verb does to the world, the last line of its

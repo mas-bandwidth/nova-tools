@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/redis/go-redis/v9"
 )
 
 // The order verbs (Glenn 2026-09-27: "take column y and put it after column
@@ -51,15 +53,19 @@ func placeFlags(fs interface {
 }
 
 // setVerb runs one set change and prints the verb's line.
-func (app *application) setVerb(verb, table, addr string, o ntable.SetOpts, write *ntable.WriteOptions, receipt bool, line string, stdout, stderr io.Writer) int {
+func (app *application) setVerb(fs *flag.FlagSet, pos []string, verb, table, addr string, o ntable.SetOpts, write *ntable.WriteOptions, receipt bool, line string, stdout, stderr io.Writer) int {
 	ctx := context.Background()
+	call := func(c redis.Cmdable) (int, error) { return ntable.Set(ctx, c, table, o, *write) }
+	if code, done := app.preflight(stdout, stderr, fs, verb, addr, pos, sent(call)); done {
+		return code
+	}
 	st, c, code := app.client(ctx, verb, addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	if _, err := ntable.Set(ctx, c, table, o, *write); err != nil {
+	if _, err := call(c); err != nil {
 		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "%s trips=%d\n", line, trips.N())
@@ -88,10 +94,7 @@ func (app *application) cmdColAdd(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
-		return code
-	}
-	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{ColAdd: &col, ColAt: at}, write, *receipt,
+	return app.setVerb(fs, pos, verb, pos[0], *addr, ntable.SetOpts{ColAdd: &col, ColAt: at}, write, *receipt,
 		fmt.Sprintf("TABLE COL ADD table=%s col=%s%s", pos[0], col.Name, placeWord(at)), stdout, stderr)
 }
 
@@ -107,10 +110,7 @@ func (app *application) cmdColDel(args []string, stdout, stderr io.Writer) int {
 	if len(pos) != 2 {
 		return refuse(stderr, verb, "wants a table and a column: col del <table> <col>")
 	}
-	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
-		return code
-	}
-	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{ColDel: pos[1]}, write, *receipt,
+	return app.setVerb(fs, pos, verb, pos[0], *addr, ntable.SetOpts{ColDel: pos[1]}, write, *receipt,
 		fmt.Sprintf("TABLE COL DEL table=%s col=%s", pos[0], pos[1]), stdout, stderr)
 }
 
@@ -131,10 +131,7 @@ func (app *application) cmdColMove(args []string, stdout, stderr io.Writer) int 
 	if len(pos) != 2 || at == nil {
 		return refuse(stderr, verb, "wants a table, a column and a place: col move <table> <col> "+placeUsage)
 	}
-	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
-		return code
-	}
-	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{ColMove: &ntable.Reorder{Item: pos[1], Place: *at}}, write, *receipt,
+	return app.setVerb(fs, pos, verb, pos[0], *addr, ntable.SetOpts{ColMove: &ntable.Reorder{Item: pos[1], Place: *at}}, write, *receipt,
 		fmt.Sprintf("TABLE COL MOVE table=%s col=%s%s", pos[0], pos[1], placeWord(at)), stdout, stderr)
 }
 
@@ -165,10 +162,7 @@ func (app *application) cmdRowMove(args []string, stdout, stderr io.Writer) int 
 	if len(pos) != 2 || at == nil {
 		return refuse(stderr, verb, "wants a table, a row and a place: row move <table> <row> "+placeUsage)
 	}
-	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
-		return code
-	}
-	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{RowMove: &ntable.Reorder{Item: pos[1], Place: *at}}, write, *receipt,
+	return app.setVerb(fs, pos, verb, pos[0], *addr, ntable.SetOpts{RowMove: &ntable.Reorder{Item: pos[1], Place: *at}}, write, *receipt,
 		fmt.Sprintf("TABLE ROW MOVE table=%s row=%s%s", pos[0], field(pos[1]), placeWord(at)), stdout, stderr)
 }
 
@@ -184,10 +178,7 @@ func (app *application) cmdRowOrder(args []string, stdout, stderr io.Writer) int
 	if len(pos) < 2 {
 		return refuse(stderr, verb, "wants a table and the rows that go first, in order; the rest keep their order: row order <table> <row> <row> ...")
 	}
-	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
-		return code
-	}
-	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{RowOrder: pos[1:]}, write, *receipt,
+	return app.setVerb(fs, pos, verb, pos[0], *addr, ntable.SetOpts{RowOrder: pos[1:]}, write, *receipt,
 		fmt.Sprintf("TABLE ROW ORDER table=%s first=%s", pos[0], field(strings.Join(pos[1:], ","))), stdout, stderr)
 }
 
@@ -215,8 +206,5 @@ func (app *application) cmdRowSort(args []string, stdout, stderr io.Writer) int 
 	if *manual {
 		line = fmt.Sprintf("TABLE ROW SORT table=%s manual=true", pos[0])
 	}
-	if code, ok := app.planned(stdout, stderr, fs, verb, *addr, pos); ok {
-		return code
-	}
-	return app.setVerb(verb, pos[0], *addr, o, write, *receipt, line, stdout, stderr)
+	return app.setVerb(fs, pos, verb, pos[0], *addr, o, write, *receipt, line, stdout, stderr)
 }
