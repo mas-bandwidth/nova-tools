@@ -197,7 +197,7 @@ The last run is the whole tool: the wall named, the job's own write landed, the 
 
 `nova-sandbox run --go` is what a card that builds Go uses; a plain `go build` inside a disposable volume was measured working with no flags at all once the optional roots' ancestors were granted (`internal/sandbox`, `TestAnOptionalRootsAncestorsAreGranted`).
 
-The disposable-volume check makes a volume, runs `sh -c 'echo hi > out; sleep 1'` inside the wall with the volume as its only writable directory, and removes the volume from the system afterwards — `SANDBOX DONE name=volume exit=zero wall=duration freed=bytes`.
+The disposable-volume check makes a volume, runs `sh -c 'echo hi > out; sleep 1'` inside the wall with the volume as its only writable directory, and removes the volume from `/Volumes` and `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
 
 ## nova-secrets
 
