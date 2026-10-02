@@ -15,12 +15,11 @@ const exitLine = "exit codes: 0 done, 1 failed or incomplete (including refused)
 
 // verbExit is a verb's own exit codes where they are not the common three.
 var verbExit = map[string]string{
-	"run":          "exit codes: 0 stopped (an interrupt), 2 usage or a store that did not answer, 3 its binary was replaced on disk (its supervisor starts the new one)",
-	"fleet sync":   "exit codes: 0 done (--check: no drift), 1 refused, 2 usage, a store that did not answer, or (--check) there is drift, 3 the config could not be read",
-	"friend sync":  "exit codes: 0 done, 1 refused (a friend row's name), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row",
-	"friend clean": "exit codes: 0 FRIENDS-CLEAN OK, 1 a removal or a read failed (FRIENDS-CLEAN FAILED names each; the summary is FRIENDS-CLEAN INCOMPLETE) or a friend row's name refused, 2 usage, 3 the config could not be read or holds no friend row",
-	"land":         "exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
-	"check":        "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
+	"run":         "exit codes: 0 stopped (an interrupt), 2 usage or a store that did not answer, 3 its binary was replaced on disk (its supervisor starts the new one)",
+	"fleet sync":  "exit codes: 0 done (--check: no drift), 1 refused, 2 usage, a store that did not answer, or (--check) there is drift, 3 the config could not be read",
+	"friend sync": "exit codes: 0 done, 1 refused (a friend row's name), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row",
+	"land":        "exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)",
+	"check":       "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
 }
 
 // commonExit is the codes of every other verb.

@@ -81,6 +81,11 @@ type cleanTarget struct {
 	clone       bool
 }
 
+// friend clean's own exit codes, its -h's line (verbhelp.go).
+func init() {
+	verbExit["friend clean"] = "exit codes: 0 FRIENDS-CLEAN OK, 1 a removal or a read failed (FRIENDS-CLEAN FAILED names each; the summary is FRIENDS-CLEAN INCOMPLETE) or a friend row's name refused, 2 usage, 3 the config could not be read or holds no friend row"
+}
+
 func (a *app) cmdFriendClean(args []string, stdout, stderr io.Writer) int {
 	const name = "friend clean"
 	fs, c := a.verbSetup(name)
