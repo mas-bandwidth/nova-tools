@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// THE CHECK REPORT, CAPPED. A full check over a bus adopted onto an old history
-// is the wall of red #2574 measured: 1,059 FAIL lines, most of them one class
+// THE CHECK REPORT, CAPPED. A full check can produce many FAIL lines, most of them one class
 // of finding repeated. The report a check prints is capped at --max findings
 // (nova-bus does the printing; this file holds what the cap needs): the class
 // each finding belongs to, and the counts that survive the cap -- because the
@@ -123,11 +122,11 @@ func CountCheckFindings(ps []Problem) CheckCounts {
 }
 
 // ResolveSinceCommit turns a --since value into the commit a check diffs from.
-// A revision, in the spelling ResolveCommit takes, wins: a branch or a tag
-// named 2026-09-01 is still itself. A value that is not a revision but IS a
+// A revision, in the spelling ResolveCommit takes, wins over a date-shaped value:
+// a branch or tag with a date-shaped name remains a revision. A value that is not a revision but IS a
 // UTC date or an RFC 3339 instant -- the two spellings --legacy-before takes,
 // read by the same ParseLegacyBefore -- names the last commit written before
-// it, so `check --since 2026-09-01` is "what the bus gained since that day"
+// it, so a date input makes the check compare changes after the last commit before that date
 // in words the tool already speaks.
 func ResolveSinceCommit(dir, value string) (string, error) {
 	sha, revErr := ResolveCommit(dir, value)

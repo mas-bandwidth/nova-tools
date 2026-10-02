@@ -19,7 +19,7 @@ const AttributesName = ".gitattributes"
 // append-only file wants: on a conflict it keeps BOTH sides' lines instead of writing
 // conflict markers. An INDEX is a lane's catalogue and a RECEIPTS is a lane's log; two
 // benches of one line each add a line at the end of one of them over one base, which is an
-// edit/edit at that spot and used to stop the rebase and wedge the bench.
+// edit/edit at that spot, so union merge keeps the rebase from stopping on the append.
 //
 // The pattern is `from-*/INDEX` and not `INDEX`, because a gitattributes pattern holding a
 // slash is anchored at the file's own directory and `*` does not cross one -- so this is

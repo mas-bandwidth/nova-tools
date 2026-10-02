@@ -147,7 +147,7 @@ func inRebase(dir string) (string, bool) {
 // abortRebase takes the checkout out of a rebase, and REFUSES when it could not.
 //
 // THE FAILURE THIS CLOSES, and it is the worst shape a failure in this file can have. The
-// abort's own error used to be wrapped and returned, and nothing checked whether the abort
+// Check the checkout after aborting: an abort error alone does not show whether the abort
 // had actually worked -- so a `git rebase --abort` that failed left the run returning while
 // the checkout was STILL IN A REBASE. Every later verb then refuses for a reason that is
 // true and unhelpful (a dirty checkout, a detached HEAD), and nothing says the real one.
