@@ -9,7 +9,7 @@ nova-ci local --base origin/main
 ```
 
 It runs exactly what the unit tier of `.github/workflows/ci.yml` runs for your
-change (nova-tools#4336), so your answer is CI's answer before the push:
+change, so your answer matches CI before you push:
 
 - **the packages** are `go run ./tools/ci select-packages`'s answer (the same
   selection, `internal/pkgselect`) against the merge base of `--base` (default `origin/dev`) and `HEAD`: the Go packages the

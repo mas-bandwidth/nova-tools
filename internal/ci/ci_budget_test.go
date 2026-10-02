@@ -64,7 +64,8 @@ func TestEveryCIJobIsCappedAtTwoMinutes(t *testing.T) {
 	root := repoRoot(t)
 	// GitHub runs both extensions; a .yaml workflow must not be a way around the cap.
 	files, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yml"))
-	require.False(t, err != nil || len(files) == 0, "no workflow files under .github/workflows: %v", err)
+	require.NoError(t, err, "no workflow files under .github/workflows: %v", err)
+	require.NotEmpty(t, files, "no workflow files under .github/workflows: %v", err)
 	yamls, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yaml"))
 	require.NoError(t, err, "glob .yaml workflows: %v", err)
 	files = append(files, yamls...)
@@ -279,10 +280,12 @@ func TestMacOSShardsRunOnTheStudioForNow(t *testing.T) {
 			continue
 		}
 		found++
-		assert.False(t, leg.Arch != "ARM64" || leg.Group != m[1], "a macOS test shard selects arch %q group %q, want ARM64 on %s (2026-09-25, until the Mac minis): %+v", leg.Arch, leg.Group, m[1], leg)
+		assert.Equal(t, "ARM64", leg.Arch, "a macOS test shard selects arch %q group %q, want ARM64 on %s (2026-09-25, until the Mac minis): %+v", leg.Arch, leg.Group, m[1], leg)
+		assert.Equal(t, m[1], leg.Group, "a macOS test shard selects arch %q group %q, want ARM64 on %s (2026-09-25, until the Mac minis): %+v", leg.Arch, leg.Group, m[1], leg)
 	}
 	assert.NotZero(t, found, "the fan-out emits no macOS shard entry this test can read")
-	assert.False(t, jobBody(src, "test-hosted-merge") != "" || jobBody(src, "plan-merge") != "", "the merge group carries a hosted leg again; since 2026-09-26 its gate is the sharded test legs on our own benches (Glenn: \"Less dependency on github is my bet\")")
+	assert.Equal(t, "", jobBody(src, "test-hosted-merge"), "the merge group carries a hosted leg again; since 2026-09-26 its gate is the sharded test legs on our own benches (Glenn: \"Less dependency on github is my bet\")")
+	assert.Equal(t, "", jobBody(src, "plan-merge"), "the merge group carries a hosted leg again; since 2026-09-26 its gate is the sharded test legs on our own benches (Glenn: \"Less dependency on github is my bet\")")
 }
 
 func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
@@ -349,10 +352,10 @@ func TestFleetProbeRunsTheNetworkProbeInsideNovaSandbox(t *testing.T) {
 	// The verb builds nova-sandbox from the checkout and runs curl inside it.
 	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_sandboxprobe.go"))
 	assert.Contains(t, verb, `"go", "build", "./cmd/nova-sandbox"`, "tools/ci/sel_sandboxprobe.go does not build nova-sandbox from the checkout; a probe that does not run in the sandbox is the host probe #893 killed")
-	assert.False(t, !strings.Contains(verb, `"./nova-sandbox", "--read"`) || !strings.Contains(verb, `"curl", "-s"`), "tools/ci/sel_sandboxprobe.go does not run the network probe inside nova-sandbox (need `nova-sandbox --read` and `curl -s` in one command); a bench enters the loop only after the sandboxed probe is green")
+	assert.True(t, strings.Contains(verb, `"./nova-sandbox", "--read"`) && strings.Contains(verb, `"curl", "-s"`), "tools/ci/sel_sandboxprobe.go does not run the network probe inside nova-sandbox (need `nova-sandbox --read` and `curl -s` in one command); a bench enters the loop only after the sandboxed probe is green")
 	assert.Contains(t, job, "runner.os == 'Linux'", "the sandboxed network probe is not guarded to Linux runners only")
 	mins, ok := jobTimeouts(src)["fleet-probe"]
-	assert.False(t, !ok || mins > twoMinuteCap, "fleet-probe timeout-minutes = %d (declared=%v), want a cap <= %d; the probe must fit the two-minute CL budget", mins, ok, twoMinuteCap)
+	assert.True(t, ok && mins <= twoMinuteCap, "fleet-probe timeout-minutes = %d (declared=%v), want a cap <= %d; the probe must fit the two-minute CL budget", mins, ok, twoMinuteCap)
 }
 
 // jobBody returns the source text of one job, from its two-space key to the
@@ -683,12 +686,12 @@ func TestShardsUseTheGoTestCache(t *testing.T) {
 	} {
 		count, ok := flag(args, "GOTEST_COUNT_FLAG")
 		nightly := strings.Contains(strings.Join(args, " "), "SLOWTESTS_ENFORCE=1")
-		assert.False(t, !ok || (!nightly && count != "") || (nightly && count != "-count=1"), "%s runs the suite with GOTEST_COUNT_FLAG=%q (present %v): only the nightly leg passes -count=1, every other leg lets Go's test cache serve unchanged packages: %v", name, count, ok, args)
+		assert.True(t, ok && ((nightly && count == "-count=1") || (!nightly && count == "")), "%s runs the suite with GOTEST_COUNT_FLAG=%q (present %v): only the nightly leg passes -count=1, every other leg lets Go's test cache serve unchanged packages: %v", name, count, ok, args)
 		v, _ := flag(args, "GOTEST_LDFLAGS")
 		assert.Equal(t, "-ldflags=-w", v, "%s links test binaries with GOTEST_LDFLAGS=%q (DWARF, and a dsymutil per binary on darwin): %v", name, v, args)
 	}
 	mk := readFile(t, filepath.Join(repoRoot(t), "Makefile"))
-	require.False(t, !strings.Contains(mk, "GOTEST_COUNT_FLAG ?= -count=1") || !strings.Contains(mk, "$(GOTEST_COUNT_FLAG)"), "the Makefile's test target does not take GOTEST_COUNT_FLAG (-count=1 by hand, empty in CI)")
+	require.True(t, strings.Contains(mk, "GOTEST_COUNT_FLAG ?= -count=1") && strings.Contains(mk, "$(GOTEST_COUNT_FLAG)"), "the Makefile's test target does not take GOTEST_COUNT_FLAG (-count=1 by hand, empty in CI)")
 }
 
 // TestPushOfAProvedShaSkipsTheShards (Glenn 2026-09-26 9:42 AM ET): a push
@@ -727,5 +730,6 @@ func TestRunnerWorkspacesAreCleanedInPlace(t *testing.T) {
 	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	sweeps := strings.Count(ci, `find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf`)
 	inPlace := strings.Count(ci, `clean -ffdxq; then`)
-	require.False(t, sweeps == 0 || sweeps != inPlace, "%d workspace sweeps, %d of them clean in place first; every sweep resets and cleans the checkout before it may empty the tree", sweeps, inPlace)
+	require.NotZero(t, sweeps, "%d workspace sweeps, %d of them clean in place first; every sweep resets and cleans the checkout before it may empty the tree", sweeps, inPlace)
+	require.Equal(t, inPlace, sweeps, "%d workspace sweeps, %d of them clean in place first; every sweep resets and cleans the checkout before it may empty the tree", sweeps, inPlace)
 }

@@ -775,7 +775,7 @@ func listed(w io.Writer, kind string, lines []string, max int, verbName string) 
 // sprintLine is the summary line: landed / all primaries, percent, ETA. A
 // STOPPED machine has no ETA, so its line is the STOPPED text the header of
 // where shows, then, with cards on the table, landed / all and the percent.
-// Every primary landed, the line has no ETA (errata 3 amendment 6): while the
+// Every primary landed, the line has no ETA: while the
 // machine runs, "N/N 100.0% done in <duration>" from its first start; once it
 // has stopped because the sprint is done, "STOPPED  N/N 100.0% done".
 func sprintLine(ctx context.Context, st *store.Store) string {
@@ -1747,12 +1747,11 @@ func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	})
 }
 
-// cmdBrief replaces the brief of a primary that has not started (the owner,
-// 2026-10-01: "What other things should you be able to do to mutate a stopped
-// sprint" / "I don't want you manually hopping in and working around it and
-// doing manual stuff."): the brief held to the card lint as add's is
-// (holdBrief), then one step (sprint.Brief), refused on a RUNNING machine and
-// for a card dealt; the card keeps its id, stream, score and needs.
+// cmdBrief replaces the brief of a primary that has not started (changing a
+// stopped sprint happens through the verbs, never by hand): the brief held to
+// the card lint as add's is (holdBrief), then one step (sprint.Brief),
+// refused on a RUNNING machine and for a card dealt; the card keeps its id,
+// stream, score and needs.
 func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("brief")
 	brief := fs.String("brief", "", fmt.Sprintf("the new brief: a child's whole brief, at most %d KiB, held to the card lint as add holds one (--rules, else the file init --rules recorded, else the built-in general rules) and refused, exit 2, nothing written, when it fails", cardlimits.MaxBriefBytes>>10))
@@ -1780,12 +1779,10 @@ func (a *app) cmdBrief(args []string, stdout, stderr io.Writer) int {
 	return a.runStep("brief", *c, st, store.BriefStep(sprint.BriefReq{ID: ids[0], Brief: *brief, Who: c.actor}), stdout, stderr)
 }
 
-// cmdMove moves unstarted primaries to another stream (the owner,
-// 2026-10-01: "What other things should you be able to do to mutate a stopped
-// sprint" / "I don't want you manually hopping in and working around it and
-// doing manual stuff."): one step (sprint.MoveCards), on a STOPPED machine,
-// each card waiting or ready with nothing dealt, placed as add places cards,
-// all or none.
+// cmdMove moves unstarted primaries to another stream (changing a stopped
+// sprint happens through the verbs, never by hand): one step (sprint.MoveCards),
+// on a STOPPED machine, each card waiting or ready with nothing dealt, placed
+// as add places cards, all or none.
 func (a *app) cmdMove(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("move")
 	stream := fs.String("stream", "", "the stream the cards move to: one of the sprint's, or a new one, made as add makes it")
@@ -2088,13 +2085,13 @@ for the streams named. A clear does not bring a removed stream back, and its
 name is added again only after the next clear.`) + "\n"
 }
 
-// cmdStreamRemove takes the named streams off the work and merge tables (the
-// owner, 2026-10-01: "you should have a verb to remove work streams" / "they
-// should only succeed on a STOPPED sprint machine"): each stream's row of both
-// tables, with the stream's control card the merge row holds, the one card add
-// made for it. Refused, exit 1 and nothing written, on a RUNNING machine, for
-// a stream that is no row, or for one that holds a card (sprint.StreamRemove),
-// all or none for the streams named.
+// cmdStreamRemove takes the named streams off the work and merge tables:
+// removing a work stream is a verb, one that succeeds only on a STOPPED
+// machine; it removes each stream's row of both tables, with the stream's
+// control card the merge row holds, the one card add made for it. Refused,
+// exit 1 and nothing written, on a RUNNING machine, for a stream that is no
+// row, or for one that holds a card (sprint.StreamRemove), all or none for
+// the streams named.
 func (a *app) cmdStreamRemove(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stream remove")
 	names, err := parse(fs, args)

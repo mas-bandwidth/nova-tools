@@ -157,7 +157,7 @@ The seven rules:
    a directory of atomic mkdir leases each holding owner, pid, card label, until=.
 2. `native` takes no bench capacity lease: it takes only job and slot directory
    leases (.lease, .slot-lease) and reads and writes no bench capacity store, and a
-   lease on the store is held only through the broker verbs (rule 3).
+   lease on the store is held only through the broker verbs.
 3. The broker verbs are the only way to hold a slot:
 
    ```
@@ -196,7 +196,7 @@ A bench holds slot leases: the store is `<store>/slots` with one directory per l
 
 native takes directory leases (.lease, .slot-lease).
 
-## The card is a pipeline, not a loop (issue #856)
+## The card is a pipeline, not a loop
 
 Each model call receives its required context explicitly. In this repository
 a card is a pipeline of stateless model calls, not an agent loop: there is
@@ -275,7 +275,7 @@ P7. **The fix-card shape is three calls, not thirty turns.** Step 1 (model):
 BOUND THE REPORT (issue #74): findings only. No narration of the clone, no
 restated task, no praise, no summary. One line per finding: `file:line`, the
 rule quoted verbatim in at most twelve words (a longer rule by the twelve of its
-own words the finding rests on, never a paraphrase: rule 2 holds), the severity,
+own words the finding rests on, never a paraphrase), the severity,
 and the fix in one clause. Keep RESULT.md
 under 40 lines and every line under 300 characters, and no pipe inside backticks:
 a `|` in a quote broke the table grammar twice (D12), so quote the rule without

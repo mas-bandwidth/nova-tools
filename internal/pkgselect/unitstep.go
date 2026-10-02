@@ -21,7 +21,7 @@ const ShardGoTestTimeout = "110s"
 // DWARF (-ldflags=-w: no dsymutil per binary on darwin, less to scan).
 //
 // wholeTreeSlowtests is slowtests' flags for a run of the whole tree (a push or
-// a manual run), which keeps the old 60 s package budget with the SLEEPS ledger;
+// a manual run), which keeps its package budget with the SLEEPS ledger;
 // when it is not empty it replaces the Makefile's default budgets. nightly is the
 // nightly reference leg: -count=1, so every time is a run and none a cached pass,
 // and the budgets ENFORCED (SLOWTESTS_ENFORCE=1). THE VERDICT IS THE SAME ON ANY
@@ -51,7 +51,7 @@ const (
 	DefaultRunners = 8
 	// ShareCeiling: AT MOST TWO cores a leg. Unit tests "must not be so aggressive
 	// that they fill a whole machine cores": min(share, 2), the Makefile's
-	// GOTEST_P, whatever the box (nova-tools#4328).
+	// GOTEST_P, whatever the box.
 	ShareCeiling = 2
 )
 
@@ -84,7 +84,7 @@ const (
 
 // WriteUnitShim writes the refusing redis-server under tmp and returns its path.
 //
-// THE UNIT TIER STARTS NO SERVER (nova-tools#4328; docs/TESTING.md: unit tests
+// THE UNIT TIER STARTS NO SERVER (docs/TESTING.md: unit tests
 // mock, functional tests carry the build tag). A directory FIRST on PATH holds a
 // redis-server that prints why and exits UnitShimExit, so a redis-backed test left
 // untagged fails closed under NOVA_CI=1 instead of starting a real server on a

@@ -187,7 +187,7 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 		fmt.Fprintf(stdout, "HALTED %s\n", oneline.Escape(res.Halted))
 	}
 	if len(res.Tables) > 0 {
-		// every table, every tick (errata 3 amendment 10): the rows the tick
+		// every table, every tick: the rows the tick
 		// changed in each, none when it had nothing to do
 		words := make([]string, len(res.Tables))
 		for i, tb := range res.Tables {
@@ -202,7 +202,7 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 		fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(n))
 	}
 	if res.Done != "" {
-		// the sprint is done: the machine stopped itself (errata 3 amendment 6)
+		// the sprint is done: the machine stopped itself
 		fmt.Fprintf(stdout, "HAPPENED %s: %s; the machine is STOPPED; %s\n", sprint.NSprintDone, oneline.Escape(res.Done), oneline.Escape(res.Hint))
 	}
 	status := "OK"
@@ -331,21 +331,21 @@ const (
 )
 
 // runLoop ticks n times (0 is for ever), waking on the log, not the clock
-// (the owner's finding of 2026-09-30; store/waitlog.go): after each tick it blocks on the
+// (store/waitlog.go): after each tick it blocks on the
 // epoch's log from the last line it has seen, and a line wakes it, so a step
 // that frees room or makes cards ready (a finish, a merge, a drop, a release,
 // fleet up, start) is ticked on, and its room dealt, at most TickFloor after
 // the tick before began; a quiet log ticks it TickEvery after the tick before
 // began (the sweep, the presence, the lateness). A wake costs the blocked
 // read alone. Every tick of a RUNNING machine is printed, naming every table
-// and the rows it changed in each (errata 3 amendment 10), and every tick that
+// and the rows it changed in each, and every tick that
 // failed; an error is printed always and the loop goes on, waiting longer
 // after each failure in a row, up to TickBackoffCap.
 //
 // A loop runs the code it was started with for as long as it runs: a binary
 // installed under it (a release, a fix) would leave the store ticked by the
-// code before it (the owner's store, 2026-10-01: a loop started before the
-// routes dealt a fresh card with none while the verbs drew them). So before
+// code before it: a loop started before the routes, say, deals a fresh card
+// with none while the verbs draw them. So before
 // each tick it reads its binary's file, and when that changed since it began it
 // stops, saying so, and returns true: its supervisor starts the new binary.
 func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, stderr io.Writer) (replaced bool) {

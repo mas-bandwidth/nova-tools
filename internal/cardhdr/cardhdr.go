@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// The routes a card may carry: the three model types (Glenn 2026-09-26).
+// The routes a card may carry: the three model types.
 // frontier is the most recent Astra or Fable model only; pro and flash are
 // the rungs the bench harness picks its model from (nova-sprint routes --tier <route>, first allowed route). A
 // card with no ROUTE line is flash. Every worker (a friend or a bench)
@@ -50,9 +50,9 @@ func KeyValue(line string) (key, value string, ok bool) {
 	return m[1], strings.TrimSpace(m[2]), true
 }
 
-// A card is a spec (nova-tools#4313, Glenn 2026-09-26: "how can I make the
-// quality of the friends+swarm work as good as, or better than software
-// built yourself?"): its TEST line names the one test the change is proved
+// A card is a spec: the work it asks of the friends+swarm must come out as
+// good as, or better than, software built yourself, so its TEST line names
+// the one test the change is proved
 // by, the class test, and the copy wrapper runs it at BASE (red) and at HEAD
 // (green) before it pushes. A card with no test says why, on the same line,
 // so the reader sees it: `TEST: none <why>`.

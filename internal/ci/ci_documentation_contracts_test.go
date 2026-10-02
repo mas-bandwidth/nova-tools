@@ -158,7 +158,7 @@ func runTranscript(t *testing.T, doc string) {
 // change's base, and a row the change adds fails. The control is the hold's
 // own: a new doc example appended with the same row appended to the list. The
 // half that reads the base's list out of a real git history is
-// TestIssue2218ChangeBaseReadsTheBasesList (issue2218_hold_functional_test.go:
+// TestIssue2218ChangeBaseReadsTheBasesList (change_base_reads_base_list_functional_test.go:
 // it runs git, the functional tier's, nova-tools#4328).
 func TestIssue2218AddedUnexecutedRowFails(t *testing.T) {
 	t.Parallel()

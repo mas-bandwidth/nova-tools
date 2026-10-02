@@ -1,5 +1,5 @@
 // Package scaffold provides the shared write-confinement and template engine
-// for scaffolding verbs across this repository (nova-tools#2498 S5).
+// for scaffolding verbs across this repository.
 //
 // Every output goes through os.OpenRoot(root), so no path resolves outside
 // --root; a preflight walks each output path with Lstat and refuses a symlink

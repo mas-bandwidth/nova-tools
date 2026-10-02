@@ -62,7 +62,7 @@ func TestTestbinsRefusesACopiedBinary(t *testing.T) {
 	root := testbinFixtureTree(t, "copy.go.txt")
 	res, err := CheckTestbins(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "a copied built binary is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 1 && len(res.Findings) == 1, "a copied built binary is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	assert.Equal(t, "copy", f.Kind, "kind = %q, want copy", f.Kind)
 	assert.Equal(t, TestbinRemedyCopy, f.Remedy, "remedy = %q, want %q", f.Remedy, TestbinRemedyCopy)
@@ -79,7 +79,7 @@ func TestTestbinsRefusesAMapHeldCopy(t *testing.T) {
 	root := testbinFixtureTree(t, "indirect.go.txt")
 	res, err := CheckTestbins(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "a map-held built binary copied to a fixture is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 1 && len(res.Findings) == 1, "a map-held built binary copied to a fixture is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	assert.Equal(t, "copy", f.Kind, "kind = %q, want copy", f.Kind)
 	got := testbinLineAt(t, root, f.File, f.Line)
@@ -95,7 +95,7 @@ func TestTestbinsAllowsAShellScript(t *testing.T) {
 	root := testbinFixtureTree(t, "script.go.txt")
 	res, err := CheckTestbins(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 0 || len(res.Findings) != 0, "a shell script written 0o755 is not the offender, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 0 && len(res.Findings) == 0, "a shell script written 0o755 is not the offender, got %d refusals: %+v", res.Refused(), res.Findings)
 	assert.Equal(t, 1, res.Tests, "tests = %d, want 1", res.Tests)
 }
 
@@ -109,7 +109,7 @@ func TestTestbinsTaintIsPerVariableNotPerSpelling(t *testing.T) {
 	root := testbinFixtureTree(t, "shadow.go.txt")
 	res, err := CheckTestbins(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Findings) != 1, "the binary copy is the only offender, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 1 && len(res.Findings) == 1, "the binary copy is the only offender, got %d refusals: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	got := testbinLineAt(t, root, f.File, f.Line)
 	assert.Contains(t, got, `os.WriteFile("placed", raw, 0o755)`, "finding names %q, want the binary copy", got)
@@ -123,7 +123,7 @@ func TestTestbinsAllowsThePlacedHelper(t *testing.T) {
 	root := testbinFixtureTree(t, "helper.go.txt")
 	res, err := CheckTestbins(root, "")
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 0 || len(res.Findings) != 0, "testbin.Place is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
+	require.True(t, res.Refused() == 0 && len(res.Findings) == 0, "testbin.Place is the allowed shape, got %d refusals: %+v", res.Refused(), res.Findings)
 }
 
 // 5. Adding an entry to the allowlist is refused; removing one is allowed. An
@@ -143,7 +143,7 @@ func TestTestbinsAllowlistGrowsRefused(t *testing.T) {
 	require.NoError(t, os.WriteFile(allow, []byte("internal/x/x_test.go:1 copy 2026-09-17 parked here\n"), 0o644))
 	res, err = CheckTestbins(root, allow)
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 1 || len(res.Stale) != 1, "adding an allowlist entry that names no offender must be refused, got %d refusals %+v", res.Refused(), res.Stale)
+	require.True(t, res.Refused() == 1 && len(res.Stale) == 1, "adding an allowlist entry that names no offender must be refused, got %d refusals %+v", res.Refused(), res.Stale)
 	assert.Equal(t, TestbinRemedyAllow, res.Stale[0].Remedy, "allowlist remedy = %q, want %q", res.Stale[0].Remedy, TestbinRemedyAllow)
 
 	require.NoError(t, os.WriteFile(allow, []byte(""), 0o644))
@@ -217,14 +217,15 @@ func TestTestbinsAllowlistSurvivesShiftedLines(t *testing.T) {
 
 	root := testbinFixtureTree(t, "copy.go.txt")
 	first, err := CheckTestbins(root, "")
-	require.False(t, err != nil || len(first.Findings) != 1, "fixture must hold one copied binary: %v %+v", err, first.Findings)
+	require.NoError(t, err, "fixture must hold one copied binary: %v", err)
+	require.Len(t, first.Findings, 1, "fixture must hold one copied binary: %+v", first.Findings)
 	f := first.Findings[0]
 	allow := filepath.Join(t.TempDir(), "fixed-testbins-allowlist.txt")
 	row := fmt.Sprintf("%s:%d copy 2026-09-17 written when the offender stood elsewhere\n", f.File, f.Line+40)
 	require.NoError(t, os.WriteFile(allow, []byte(row), 0o644))
 	res, err := CheckTestbins(root, allow)
 	require.NoError(t, err)
-	require.False(t, res.Refused() != 0 || res.Allowlisted != 1, "a row must allow its offender after the lines shift: refused=%d allowlisted=%d stale=%+v", res.Refused(), res.Allowlisted, res.Stale)
+	require.True(t, res.Refused() == 0 && res.Allowlisted == 1, "a row must allow its offender after the lines shift: refused=%d allowlisted=%d stale=%+v", res.Refused(), res.Allowlisted, res.Stale)
 
 	// A second copy in the same file has no row: the budget is one.
 	path := filepath.Join(root, filepath.FromSlash(f.File))
@@ -234,5 +235,5 @@ func TestTestbinsAllowlistSurvivesShiftedLines(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(more), 0o644))
 	res, err = CheckTestbins(root, allow)
 	require.NoError(t, err)
-	require.False(t, len(res.Findings) != 1 || res.Allowlisted != 1, "one row allows one offender; the second must be refused: findings=%d allowlisted=%d", len(res.Findings), res.Allowlisted)
+	require.True(t, len(res.Findings) == 1 && res.Allowlisted == 1, "one row allows one offender; the second must be refused: findings=%d allowlisted=%d", len(res.Findings), res.Allowlisted)
 }

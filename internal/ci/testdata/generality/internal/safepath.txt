@@ -1,4 +1,2 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
-internal/safepath/safepath.go:glenn 4
-internal/safepath/safepath.go:johnny 1
+# ceiling: 0

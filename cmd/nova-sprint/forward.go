@@ -17,9 +17,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
-// The coordinator's verbs go to the sprint's server too (the owner, 2026-10-01: "Let's
-// go and finalize the one client/server path for writing and then this whole system
-// collapses into a tiny core"; and of the reads: "OK let's close the gap."). With
+// The coordinator's verbs go to the sprint's server too: a single client/server
+// path for writing collapses the system into a tiny core, and the reads close
+// the same gap. With
 // NOVA_SPRINT_SERVER set (the server's loopback address, which `run --listen` prints),
 // a verb the server runs is not run here: its arguments are sent to the server, which
 // runs it beside the store on its one line of control, and what it printed is printed

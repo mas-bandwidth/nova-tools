@@ -35,7 +35,8 @@ type AddArgs struct {
 // Sentinels by position, add --before/--after, a sentinel pulling ready
 // cards back to waiting are from the spec (section 16), not yet in the
 // model. An add opens no sprint-done judgment to close: the sprint done is
-// the tick's (tickDone, errata 3 amendment 6).
+// the tick's judgment tickDone, fired when nothing remains open and a card
+// has landed or dropped — an add neither lands nor drops a card.
 func Add(s State, a AddArgs, scores map[string]float64) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -290,10 +291,11 @@ func Waive(s State, p string, qs []string) (State, error) {
 
 // Start is SprintTables.tla Start(p) (line 310): ready -> working; the work
 // card of the attempt is dealt to m, which must be the next member round the
-// fleet (NextMember, errata 3 amendment 5; the rolling index moved past it): cut at generation 1, or, when it was withdrawn, the
-// same card dealt again at a new generation (G1, D3). limit, when above zero,
-// is the tick's Width (errata 3 amendment 9): only members holding fewer work
-// cards, ready and working, are dealt to.
+// fleet (NextMember; the rolling index moved past it): a new work card is
+// cut at generation 1, or, when the card was withdrawn by a member going
+// down or a levelling, the same card is dealt again at a new generation.
+// limit, when above zero, is the tick's Width: only members
+// holding fewer work cards, ready and working, are dealt to.
 func Start(s State, p, m string, limit int) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -320,7 +322,7 @@ func Start(s State, p, m string, limit int) (State, error) {
 	n := s.Clone()
 	n.DealLast = roundPast(sorted(s.Order), s.DealLast, m)
 	pr := n.Primaries[p]
-	n.StreamLast = roundPast(s.streamOrder(pr.Stream), s.StreamLast, pr.Stream) // the deal's stream index moves past it (errata 3 amendment 10)
+	n.StreamLast = roundPast(s.streamOrder(pr.Stream), s.StreamLast, pr.Stream) // the deal's stream index moves past it
 	id := WC(p, pr.Attempt)
 	if w, ok := n.Work[id]; ok {
 		if w.Place != FWithdrawn {
@@ -404,10 +406,10 @@ func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 
 // Ask is SprintTables.tla Ask(p) (line 375): a primary in review whose work
 // did not fail, with no read card on the table, is dealt to two different
-// readers: the next two round the readers (NextReaders, errata 3 amendment 5),
-// the rolling index moved past them; reworked work too, no reader of an earlier
-// attempt preferred (the owner, 2026-10-01: "yes on the decision."). It closes
-// stranded in review (spec section 6).
+// readers: the next two round the readers (NextReaders), the rolling index
+// moved past them; reworked work is asked the same way, at its new attempt,
+// with no reader of an earlier attempt preferred and none skipped for it.
+// It closes stranded in review (spec section 6).
 func Ask(s State, p string, two []string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -430,7 +432,7 @@ func Ask(s State, p string, two []string) (State, error) {
 	n := s.Clone()
 	order := addSorted(nil, s.Readers...)
 	n.AskLast = roundPast(order, roundPast(order, s.AskLast, next[0]), next[1])
-	n.AskStreamLast = roundPast(s.streamOrder(pr.Stream), s.AskStreamLast, pr.Stream) // the ask's stream index moves past it (errata 3 amendment 10)
+	n.AskStreamLast = roundPast(s.streamOrder(pr.Stream), s.AskStreamLast, pr.Stream) // the ask's stream index moves past it
 	for _, r := range two {
 		id := RC(p, pr.Attempt, r)
 		if _, made := n.Reads[id]; made {
@@ -568,7 +570,7 @@ func Accept(s State, set []string) (State, error) {
 	}
 	n := s.Clone()
 	// the accept's stream index moves past the stream of the last in stream
-	// turns (errata 3 amendment 10)
+	// turns
 	for _, p := range s.streamTurns(set, s.AcceptStreamLast) {
 		st := s.Primaries[p].Stream
 		n.AcceptStreamLast = roundPast(s.streamOrder(st), n.AcceptStreamLast, st)
@@ -594,9 +596,9 @@ func Accept(s State, set []string) (State, error) {
 
 // Rework is SprintTables.tla Rework(p) (line 456): the primary's read cards
 // retire; with a member up the next work card is cut into m, which must be the
-// next member round the fleet (ReworkChoice: errata 3 amendment 5, the member
-// of the attempt's work card avoided unless no other has room; the index moved
-// past it), and the primary goes review -> working; with none up (m is "")
+// next member round the fleet (ReworkChoice: the member of the attempt's
+// work card avoided unless no other has room; the index moved past it), and
+// the primary goes review -> working; with none up (m is "")
 // review -> ready; its card judgments close.
 func Rework(s State, p, m string) (State, error) {
 	if err := free(s); err != nil {
@@ -649,8 +651,9 @@ func Rework(s State, p, m string) (State, error) {
 // unfinished work card is withdrawn, its outstanding read cards retire, its
 // merge place goes (the returned place too, spec section 7); work last. A
 // waiting primary that needs it is blocked. Every judgment on it closes. A
-// sprint it finishes is found done by the tick (tickDone, errata 3 amendment
-// 6).
+// sprint it finishes, by dropping the last open card, is found done by the
+// tick's judgment tickDone: with nothing open and a card dropped, the sprint
+// is done.
 func Drop(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -786,8 +789,9 @@ func Return(s State, p string) (State, error) {
 // green: the batch is the first n of the stream's queued cards in score order
 // (a prefix: section 7, 1), and lands. The same step moves every waiting
 // primary whose needs have all landed to ready and marks reached every
-// sentinel whose needs have all landed (spec section 7). A sprint it finishes
-// is found done by the tick (tickDone, errata 3 amendment 6).
+// sentinel whose needs have all landed (spec section 7). A sprint it finishes,
+// by landing the last open card, is found done by the tick's judgment tickDone:
+// with nothing open and a card landed, the sprint is done.
 func MergeGreen(s State, stream string, batch int) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -937,7 +941,7 @@ func (s State) resumed(stream string) State {
 // generation; with no member up they are withdrawn (a new generation) and
 // their primaries return to ready. dest is the choice, card to member: each
 // card, in work order, must go to the next member round the fleet at that
-// moment (PlaceOn: errata 3 amendment 5, every placement moves the index).
+// moment (PlaceOn: every placement moves the index).
 func FleetDown(s State, m string, dest map[string]string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -1063,10 +1067,10 @@ func floorDiv(a, b int) int {
 	return q
 }
 
-// levelRound levels, once at the start of every tick (the owner, 2026-10-01:
-// "just once before tick, rebalance each table"; spec section 14, T4, with
-// errata 3 amendment 5: the levelling goes round the fleet and moves the
-// index): while the largest backlog of an up member with a ready card and the
+// levelRound levels, once at the start of every tick, rebalancing each
+// table before the tick plans its rows (spec section 14; the levelling
+// goes round the fleet and moves the rolling deal index): while the
+// largest backlog of an up member with a ready card and the
 // smallest of the up members below their Room differ by more than one, the
 // newest ready card of the largest goes to the next member round the fleet
 // past DealLast below its Room whose backlog is below the up members' mean
@@ -1139,8 +1143,8 @@ func (s State) ReaderLoad(r string) int {
 }
 
 // levelReads is the readers' rebalance, once at the start of every tick, the
-// fleet's level in the readers' shape (sprint.TickLevelReads; from the
-// owner's ruling of 2026-10-01, not yet in the model): while the largest load
+// fleet's level in the readers' shape (sprint.TickLevelReads; not yet in
+// the model): while the largest load
 // of a reader with an asked read and the smallest load of a reader differ by
 // more than one, the newest asked read of the largest (by its primary's score,
 // then its id) that has a reader to go to moves to the next reader round the

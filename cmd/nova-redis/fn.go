@@ -23,9 +23,9 @@ package main
 // variable --password-env names, and open the store through connect
 // (internal/redisconn), as every nova-redis verb does.
 //
-// A tool on its way to an FCALL never calls these: it calls redisfn's
-// LoadMissing, which never replaces a library (nova-tools #3620). fn load is
-// for the one place that deploys.
+// A tool preparing for an FCALL uses redisfn.LoadMissing, which loads the
+// library only when it is absent so it does not overwrite a deployed library.
+// fn load is the explicit deployment operation.
 
 import (
 	"context"

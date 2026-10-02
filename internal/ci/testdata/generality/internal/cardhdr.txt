@@ -1,5 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 3
-internal/cardhdr/cardhdr.go:glenn 2
-internal/cardhdr/invariant.go:glenn 1
+# ceiling: 1
 internal/cardhdr/invariant.go:space 3

@@ -178,7 +178,7 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	for _, l := range lines[4:] {
 		// a table's line holds a cell divider or a rule's joint; the friends table's
 		// summary row is a blank label and its blank cell, "<label> |"
-		assert.False(t, l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-") && !strings.HasSuffix(l, " |"), "a line that is not a table's: %q\n%s", l, frame)
+		assert.True(t, l == "" || strings.Contains(l, " | ") || strings.Contains(l, "-+-") || strings.HasSuffix(l, " |"), "a line that is not a table's: %q\n%s", l, frame)
 	}
 	for _, gone := range []string{"pending", "stalled", "REMINDERS", "friend-a", "coordinator", "since", "op-left"} {
 		assert.NotContains(t, frame, gone, "the frame shows %q", gone)

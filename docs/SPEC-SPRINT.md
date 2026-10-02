@@ -784,7 +784,7 @@ the tick would make, no other open judgment on it).
 | an invariant is broken | card (look at the card), repair, wait | no |
 | a judgment has waited past its due time (overdue) | a decision of the judgment, wait | as the judgment |
 | a stream has made no progress past its deadline (stale) | where, queue (look) | no |
-| stalled: nothing holds a card (rule 12) | the decisions its place allows and that would be accepted (ask --another for a primary asked already, never ask), else look at the card; drop; wait | no, while the stall stands |
+| stalled: nothing holds a card | the decisions its place allows and that would be accepted (ask --another for a primary asked already, never ask), else look at the card; drop; wait | no, while the stall stands |
 
 A condition the tick keeps (cannot ask, fewer than two readers up, no member up, a deadline passed, an
 invariant broken; a failing reminder too) is answered for a while by
@@ -797,7 +797,7 @@ deadline does.
 
 The machine's tick writes its own judgments (section 14): cannot ask, fewer than two readers up, no fleet
 member is up, a work card or a read card past its deadline, a stream with no
-merge step past its deadline, an invariant is broken, a stall (rule 12: one
+merge step past its deadline, an invariant is broken, a stall (one
 judgment for each card nothing holds, or for the stall a chain of waiting
 cards ends at; the stall judgment itself holds nothing).
 
@@ -976,7 +976,7 @@ is, 12 judges only the operation); 1, 6, 7, 8 and
 11 always; 5 and 6 skip sentinels, which land by release and are never read or
 merged. A rank is the one step that changes scores: while a rank is pending, a
 copy may carry the rank's own new score, and any other difference breaks
-rule 7. `check` reports a pending operation: in flight while it is younger than
+the rule that every copy has its primary's score. `check` reports a pending operation: in flight while it is younger than
 the grace, cut after it.
 
 ## 10. Steps that touch more than one table
@@ -1019,7 +1019,7 @@ one: a card left half-moved by it is named in the skip judgment. No pending
 operation blocks the sprint for good. rework, return, drop and ack of the
 primary close that judgment. When the skipped entry was accept's work entry,
 the primary is in review with its merge card still queued: rework and return
-take that orphan card off (into returned) in the same step, so rule 4 holds
+take that orphan card off (into returned) in the same step, so the rule that merge queued + stuck equal work merging holds
 again and a later accept moves it back.
 An operation is abandoned only when none of its entries applied and the table
 layer holds no record of its first manifest, after the grace: nothing of it
@@ -1122,7 +1122,7 @@ command that loads it.
 | ack | closes a judgment the coordinator looked at, with the reason |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints; `--wait --timeout <d>` blocks for the next tick end, and `--json` then also carries `woke` (false when the timeout ended the wait, with `inbox --wait: no tick end in <d>` on stderr and stdout still one JSON object; the plain rendering prints that line on stdout) |
 | card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; a COST line per consumer that ended and the COST TOTAL (section 2, What a card cost); `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells, and the cost |
-| queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>.g<gen>.e<epoch>` (the epoch makes it one per epoch, a card id coming back after a clear, and the generation one per launch, a card dealt again within an epoch, withdrawn from a member or redealt after a staging or provider failure, being another launch whose push must not meet the first's), and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it (a work card's names `--head <commit>`: a finish without `--head` records the card's id as its head, which `land` refuses as not a commit id); `queue --as <w> --packets <n> [--have <id,...>]` hands only the packets the worker asks for: the first n cards it may start (asked, ready) and every card in flight (reading, working), each not named in `--have`; every other card is listed with its id, column, attempt and gen, and the answer's epoch, which are its claim, and no packet (a reader of width 8 holding 150 asked reads with 2.5 KB briefs: 445,525 bytes without the flag, 51,623 asking for 8; the fleet load test of 2026-10-01 measured 579,181 bytes a pass); without `--packets` every card carries its packet, as before; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>.g<gen>.e<epoch>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
+| queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>.g<gen>.e<epoch>` (the epoch makes it one per epoch, a card id coming back after a clear, and the generation one per launch, a card dealt again within an epoch, withdrawn from a member or redealt after a staging or provider failure, being another launch whose push must not meet the first's), and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it (a work card's names `--head <commit>`: a finish without `--head` records the card's id as its head, which `land` refuses as not a commit id); `queue --as <w> --packets <n> [--have <id,...>]` hands only the packets the worker asks for: the first n cards it may start (asked, ready) and every card in flight (reading, working), each not named in `--have`; every other card is listed with its id, column, attempt and gen, and the answer's epoch, which are its claim, and no packet (a reader of width 8 holding 150 asked reads with 2.5 KB briefs: 445,525 bytes without the flag, 51,623 asking for 8; the fleet load test measures 579,181 bytes a pass); without `--packets` every card carries its packet; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>.g<gen>.e<epoch>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17); a line's words are printed under it, a brief by its size and the card that shows it (`card <id>`), never whole (`--json` carries it) |
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch` (redrawn in place, section 1); `--json` also carries the pending operation, the stalled streams, the people and the coordinator |
@@ -1208,14 +1208,14 @@ epoch.
 
 `nova-sprint clear` stops the sprint (the machine is set STOPPED first and left
 STOPPED) and clears all work in it: it finishes a
-pending operation, or abandons it with the old epoch, then advances the epoch
+pending operation, or abandons it at the epoch it started at, then advances the epoch
 once, atomically, recording when and the shape to restore. It deletes nothing.
 At the new epoch every table is empty with the same rows (streams, readers,
 members), every stream waiting, every member with its status and no work
 counted; these are written at the new epoch in the same verb, and a clear cut
 before they are is finished by the next clear. The old epoch stays where it is
 and readable (`where`, `card` and `inbox --at-epoch <n>`), and every writer
-still holding it is refused as stale: nothing of the old epoch lands in the
+still holding it is refused as stale: nothing of that epoch lands in the
 new one. Operation ids and notification ids carry their epoch (`~<n>` after
 the first): a caller's operation id recorded at an earlier epoch is refused,
 naming the epoch, and never run again as new work; `ack` and `wait` of a
@@ -1223,7 +1223,7 @@ judgment of another epoch are refused, naming it; and a step given
 `--answers` naming a judgment of another epoch is refused whole: nothing
 moves, and the refusal names the id's epoch and when the sprint was cleared.
 Every command builds its store pinned to the sprint's epoch, so no verb after
-a clear touches the old epoch; a writer caught mid-step by a clear is told the
+a clear touches the epoch before the advance; a writer caught mid-step by a clear is told the
 sprint was cleared. clear reads the shape it restores after the advance, and a
 restore the last clear owes is performed first by the next step that reads
 the sprint. The machine's records (its state, its STOPPED spans, the heartbeat)
@@ -1231,7 +1231,7 @@ and the coordinator are the sprint's, not the epoch's: a clear keeps them. A
 tick in flight at a clear holds the epoch of its read: its next part is refused
 as stale, writes nothing, and the tick stops there; `run` goes on at the new
 epoch, where the machine is STOPPED until `start`. clear prints the epoch
-before and after, what the old epoch held as counts, the machine's state
+before and after, what the epoch before the advance held as counts, the machine's state
 before, and the sprint line.
 
 ## 14. The machine
@@ -1299,7 +1299,7 @@ the note names `land --stream <s>`, which a `run --land` does itself),
 ask (T2: two different readers up for each primary in review with
 fewer than two read cards at its attempt and work not failed; a read asked of a
 reader that is not up is taken back first, section 6), check (T6: section 9, and the
-no-stall rule 12), deadlines, overdue, done (the sprint done: the machine
+no-stall rule), deadlines, overdue, done (the sprint done: the machine
 stops). Each part is
 bounded per tick (200 moves, 50 notes): the rest are due, the next ticks
 catch up, and the machine line says so. A card made ready is dealt in the same
@@ -1328,7 +1328,7 @@ update a line of the log; no judgment is closed by a move that does not
 resolve its cause), a read card past its deadline (30
 minutes asked and not begun, 2 hours begun and not reported), a stream with no
 merge step past its deadline (30 minutes), an invariant is broken (the rule
-and the cards), stalled (rule 12: what nothing holds, and why). Deadlines count running time: time spent STOPPED does not
+and the cards), stalled (what nothing holds, and why). Deadlines count running time: time spent STOPPED does not
 count. A judgment the tick keeps is answered by its decisions or held by `wait`
 (section 8), never by `ack`, except a failing reminder, whose ack is held on
 the condition in no inbox until the condition clears and comes back.
@@ -1492,7 +1492,7 @@ it names that is dropped blocks it like any waiting card; ack waives the need.
 It counts in the sprint line and in waiting and landed, and the sprint is not
 done while one waits. A ready primary whose work card was withdrawn (no member
 up) stays ready when a sentinel is inserted in front of it: it has started,
-and is past the stop; check's rule 2 holds that the primary of a withdrawn card
+and is past the stop; check's bijection rule holds that the primary of a withdrawn card
 is ready.
 
 ## 17. The log

@@ -1,5 +1,5 @@
 // Package keyshape holds the one predicate that says whether an environment NAME carries a
-// secret (nova-tools #1814). It never reads a value: the name is what decides.
+// secret: the env var value is never inspected, only the name.
 package keyshape
 
 import "strings"

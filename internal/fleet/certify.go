@@ -2,27 +2,25 @@ package fleet
 
 // CERTIFICATION: a machine is not what its inventory says, it is what it can DO.
 //
-// Glenn, 2026-09-18: "certify fleet machines". The hurt behind it, the same morning: the
-// first real Go card of the day was launched on hulk and died inside the swarm wall. The
-// wall's readable roots did not include `$HOME/sdk/go1.26.5`, so the only Go the card could
-// reach was `/usr/bin/go` 1.22, which go.mod refuses by name. hulk had been surveyed, it met
-// the provisioning standard, and every check that had ever been run on it passed -- because
-// every check that had ever been run on it ran OUTSIDE the wall, over a plain ssh, as the
-// person who owns the machine. Nothing had ever made the bench do a card's work the way a
-// card does it.
+// The hurt behind it: a bench can meet the provisioning standard and pass every check ever
+// run on it, yet fail its first real card inside the swarm wall. The wall's readable roots
+// may not include `$HOME/sdk/go1.26.5`, so the only Go the card can reach is `/usr/bin/go`
+// 1.22, which go.mod refuses by name. A check run OUTSIDE the wall, over a plain ssh, as
+// the person who owns the machine, never makes the bench do a card's work the way a card
+// does it.
 //
 // `fleet survey` asks a machine what it HAS. Certification makes the machine DO a
 // representative piece of the work its roles imply, under the same containment a card gets,
 // and writes down that it did: one certificate row per machine per workload class, tied to
 // the build that was installed and to the hash of the standard it was held against. When
-// either moves, every certificate written under the old pair stops being current, because a
+// either moves, every certificate written under the superseded pair stops being current, because a
 // certificate for a standard the machine no longer meets is worse than no certificate --
-// it is the same lie the survey told about hulk.
+// it is the same lie a survey tells about a machine it never watched do the work.
 //
 // THE POINT OF THE WALL. A workload marked `wall: yes` is not run by ssh and a shell; it is
 // wrapped in `nova-sandbox` -- the same wall `nova-swarm native` puts a card behind -- with
 // a writable job directory, a HOME inside it, and every root the work needs named as a
-// `--read`. That is exactly the shape that failed on hulk, so a bench that cannot build and
+// `--read`. A card runs in exactly this shape, so a bench that cannot build and
 // test a two-file Go module inside the wall now says so BEFORE a card is spent finding out.
 //
 // Everything that reaches a machine or the forge is an interface. The production ones are
@@ -51,7 +49,7 @@ import (
 )
 
 // DefaultGo is the toolchain a bench's Go workloads ask for. It tracks go.mod's `go` line;
-// when go.mod moves, this moves with it and every certificate written under the old
+// when go.mod moves, this moves with it and every certificate written under the superseded
 // workloads expires on its own, because the workload bytes are in the standard hash.
 const DefaultGo = "go1.26.5"
 
@@ -62,7 +60,7 @@ const DefaultCertifyTimeout = 10 * time.Minute
 
 // DefaultMaxAge is how long a certificate stands before it is stale even though nothing
 // moved. Twenty-four hours: a machine drifts by the hand of whoever last logged into it, and
-// the whole fleet was found drifted on the morning of 2026-09-18 with nothing in the tools
+// an entire fleet can be found drifted with nothing in the tools
 // having changed at all.
 const DefaultMaxAge = 24 * time.Hour
 
@@ -73,8 +71,8 @@ const EvidenceCap = 240
 // The verdicts a certificate may carry. They are tokens, not prose.
 //
 // WARN is a NOTE ON A PASS, not a failure: a workload marked `report: yes` measures
-// something worth watching that has never stopped a card -- the runners' `_diag` logs were
-// 15.7 GB across the fleet on 2026-09-18 and nothing was broken by it. A WARN is written,
+// something worth watching that has never stopped a card -- the runners' `_diag` logs can
+// reach 15.7 GB across the fleet and nothing is broken by it. A WARN is written,
 // counted and printed, and it neither fails the run nor withholds the certificate, because
 // a check that cries wolf is a check people learn to pass over.
 const (
@@ -86,9 +84,9 @@ const (
 // The two workloads that are not questions for a machine at all. Whether the forge says a
 // runner host's runners are online, and whether the registry's roles match what the forge is
 // actually running, are questions for the forge and the registry; asking the machine would
-// only tell us what the machine believes. On 2026-09-18 space was serving sixteen
-// merge-group runners while machines.tsv said it was `bench,services` -- the machine knew,
-// the forge knew, and the file that decides where cards go did not.
+// only tell us what the machine believes. A host serving merge-group runners while
+// machines.tsv still calls it `bench,services` is the failure mode: the machine knows,
+// the forge knows, and the file that decides where cards go does not.
 const (
 	ForgeRunners  = "runners"
 	ForgeRegistry = "registry"
@@ -334,7 +332,7 @@ type Certificate struct {
 
 // certificateFields is the shape of one row, and it is FIXED: every field is written every
 // time, `-` for one nobody could fill, so a reader sees a column was answered and not
-// forgotten (Glenn: fixed tables, no elision).
+// forgotten: the table is fixed, and no field is elided.
 const certificateFields = 7
 
 // Row renders one certificate as the tab-separated line the file holds. Evidence goes
@@ -446,7 +444,7 @@ type CertifyInput struct {
 }
 
 // Certify runs every workload of every named machine's roles, writes one certificate row
-// each, and answers 0 when all passed, 1 when any failed, 2 when it refused to start.
+// each, and answers 0 when all pass, 1 when any fail, 2 when it refuses to start.
 func Certify(in CertifyInput) int {
 	if in.Stdout == nil {
 		in.Stdout = io.Discard
@@ -676,7 +674,7 @@ func certifyRefusal(w io.Writer, err error) int {
 
 // workloadsFor is every workload that applies to at least one of the machine's roles, in
 // class order, each once. A machine that is both bench and runner runs both sets, which is
-// the point: hulk is both, and it was the bench half that was never certified.
+// the point: each half of the machine's work is certified on its own.
 func workloadsFor(loads []Workload, m Machine) []Workload {
 	var out []Workload
 	for _, w := range loads {
@@ -715,8 +713,8 @@ const BuildScript = "# nova-certify workload build\nnova-merge version 2>&1 || t
 // accepts a build identity from. A diagnostic line names no tool of its own -- or names
 // the wrong one, when a workload also prints a version line on the way to a failure --
 // and requiring the field one identity here is what keeps "field two happens to be a
-// hex-shaped word" from being mistaken for "nova-merge said this is its build" (Stella's
-// HOLD 6 on #2478: a two-field diagnostic like `fatal deadbeef1234` has no tool field
+// hex-shaped word" from being mistaken for "nova-merge said this is its build": a
+// two-field diagnostic like `fatal deadbeef1234` has no tool field
 // matching this at all).
 const buildTool = "nova-merge"
 
@@ -778,7 +776,7 @@ func isHex(s string) bool {
 // third field. "Contains a slash" alone accepted diagnostics like a path fragment; this
 // requires both sides to actually be present the way a real platform token always is,
 // and exactly one slash: `linux/amd64/extra` and `linux//amd64` are not a goos/goarch
-// pair (Stella's hold 7 on #2478 at f5fb27dc), so a goarch that itself contains a slash
+// pair, so a goarch that itself contains a slash
 // is rejected.
 func validPlatform(s string) bool {
 	goos, goarch, found := strings.Cut(s, "/")
@@ -799,9 +797,9 @@ func validPlatform(s string) bool {
 // recognized shapes is rejected outright, regardless of what its words spell. Requiring
 // the tool field closes the shorter shapes too: a two-field diagnostic like
 // `fatal deadbeef1234` has no tool field naming nova-merge at all, and a three-field one
-// like `fatal deadbeef1234 x` was previously accepted on nothing more than "the third
-// field contains a slash" -- `x` has none, but a diagnostic that happened to print
-// `error: bad/ref` would have (Stella's HOLD 6 on #2478). SSH banners, diagnostic
+// like `fatal deadbeef1234 x` is not accepted on "the third
+// field contains a slash" alone -- `x` has none, and a diagnostic that prints
+// `error: bad/ref` is held to the full goos/goarch shape, not the slash alone. SSH banners, diagnostic
 // messages, and error text are rejected the same way. If no line matches a recognized
 // shape naming buildTool, it returns "".
 func BuildVersion(out string) string {
@@ -838,9 +836,9 @@ func BuildVersion(out string) string {
 // runWorkload runs one workload against one machine and answers the verdict and the one
 // line of evidence that goes on the line and into the row.
 //
-// THE VERDICT COMES FROM WHAT THE MACHINE SAID, never from the exit code alone. The hulk
-// card exited non-zero for a reason no exit code could name, and a tool that reported
-// `exit status 1` would have sent a person back to the machine to find out what this run
+// THE VERDICT COMES FROM WHAT THE MACHINE SAID, never from the exit code alone. A workload
+// can exit non-zero for a reason no exit code can name, and a tool that reports
+// `exit status 1` sends a person back to the machine to find out what this run
 // already knows.
 func runWorkload(in CertifyInput, reg *Registry, m Machine, w Workload) (string, string) {
 	verdict, evidence := answer(in, reg, m, w)
@@ -876,9 +874,9 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 
 // registryTruth holds the registry against what the forge is ACTUALLY running. A machine
 // serving merge-group shards that the registry does not call a runner is the lock broken in
-// the only direction the lock cannot see: on 2026-09-18 space had sixteen online
-// `space-nova-*` runners and roles `bench,services`, so every guard in the tools was happy
-// to put cards on a machine that was serving the merge group.
+// the only direction the lock cannot see: a host serving online merge-group
+// runners while its roles say `bench,services` passes every guard in the tools,
+// and the tools keep putting cards on a machine that is serving the merge group.
 //
 // It is also where a registration with no machine behind it is caught: `vision-nova-\u25cf`,
 // a literal bullet, sat offline on the forge with no runner directory anywhere.
@@ -956,8 +954,8 @@ func runnersOnline(in CertifyInput, m Machine) (string, string) {
 // denies the first config write), a `--cwd` inside it (without it getcwd is denied and
 // every git command dies before it reads anything), and each declared root as a `--read`.
 //
-// The job directory is made for the run and taken away after it, on every exit path: Glenn,
-// 2026-09-17, hygiene -- a job lives in working/tmp, is read, and is deleted.
+// The job directory is made for the run and taken away after it, on every exit path: the
+// hygiene rule is that a job lives in working/tmp, is read, and is deleted.
 func certifyScript(in CertifyInput, w Workload) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# nova-certify workload %s\n", w.Class)

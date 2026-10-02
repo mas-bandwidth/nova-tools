@@ -341,7 +341,8 @@ func landed(w where) bool {
 
 func (d *Driver) tick(tick int, c Config, w where) {
 	// Every verb that writes holds the driver's epoch: a clear since refuses
-	// it, naming the clear, and nothing of the old epoch lands in the new one.
+	// it, naming the clear, so a write naming any other epoch cannot reach
+	// the table.
 	held := []string{"--epoch", strconv.FormatUint(d.held, 10)}
 	// Members up and down, as the facts say. A member's machine beats while
 	// it is alive: its status follows its beat. The facts' downs are a
@@ -405,15 +406,15 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		}
 	}
 	// The workers and the readers move in one batch a world tick, all of them
-	// at once (the owner's rulings of 2026-09-30: "we batch"; "you should
-	// update each row in workers in fleet table, per-tick"; errata 3
-	// amendment 10): one finish of every card every member took last tick (a
-	// card's simulated work is one tick), the failed in one call for each
-	// report, then one take of every member's ready queue, up to each one's
-	// width; one report of every read begun last tick, then one begin of every
-	// read asked. Each call names every member (reader) it acts for, so every
-	// row of the table moves in the one step, never one member's after
-	// another's. A batch larger than Most is cut at it.
+	// at once (the design batches every move and updates each row of the
+	// workers field in the fleet table per-tick): one finish of every card
+	// every member took last tick (a card's simulated work is one tick), the
+	// failed in one call for each report, then one take of every member's
+	// ready queue, up to each one's width; one report of every read begun last
+	// tick, then one begin of every read asked. Each call names every member
+	// (reader) it acts for, so every row of the table moves in the one step,
+	// never one member's after another's. A batch larger than Most is cut at
+	// it.
 	var finishers []string
 	var good []string
 	bad := map[string][]string{}

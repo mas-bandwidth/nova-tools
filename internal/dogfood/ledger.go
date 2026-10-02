@@ -73,12 +73,12 @@ type Summary struct {
 	Unfiled     int // of those, the ones with no issue anybody can act on
 
 	// Unmatched is the receipts naming a verb the list does not declare. It is
-	// a COUNT ON THE LINE, not a note beside it: on 2026-09-18 the gate
-	// reported open-edges=0 at exit 0 with not-ok receipts sitting in the
-	// directory it had just read, and findings=1 while three more sat
-	// unmatched, because a receipt that matched nothing simply left the
-	// arithmetic. A count that silently leaves evidence out is worse than no
-	// count, so every read prints this one whether it is zero or not.
+	// a COUNT ON THE LINE, not a note beside it: a receipt that matched nothing
+	// leaves the arithmetic silently, so a lane that did not look at the
+	// receipts sitting in the directory it just read would let a bench pass
+	// when the only thing anybody found is unreadable. A count that silently
+	// leaves evidence out is worse than no count, so every read prints this
+	// one whether it is zero or not.
 	Unmatched int
 }
 
@@ -187,13 +187,11 @@ func yesNo(ok bool) string {
 // number is one nobody else can act on at all, which the summary counts
 // separately.
 //
-// DOGFOOD ROUND 5, EDGE 2: AN EDGE IS ANSWERED, NOT OUTLIVED. It used to be
-// cleared by "somebody runs the verb again, later, and records neither" —
-// ANYBODY. So a second dogfooder who ran the same verb an hour after the first
-// one found something, and for whom it worked, silently closed a finding nobody
-// had read: the gate said open-edges=0 and the ledger row showed that second
-// person's ok=yes over it. A pass is evidence about the passer's run, not an
-// answer to somebody else's.
+// An edge is answered by an explicit response, not merely outlived. A clean
+// re-run by somebody other than the finder is evidence about that re-run, not
+// an answer to the original finding, and a ledger that let it close the
+// finding would let a release pass on work the original finder never saw
+// answered.
 //
 // Two things answer a finding, and each is somebody taking responsibility for
 // it:
@@ -239,9 +237,10 @@ func openEdges(got []Receipt) []Receipt {
 
 // Strand is one receipt that named a verb the reference does not declare: the
 // file it is in, what it said, and the declared verb it was probably meant to
-// be. The 2026-09-18 dogfood pass was told "receipts=9 name a verb docs/CLI.md
-// does not declare" and nothing else, so nine real runs were invisible and
-// nobody could tell which nine or how to spell them.
+// be. Each strand is named so a reader can find the receipt, read what it
+// recorded, and pick the declared verb that matches; a receipt that matched
+// nothing would otherwise leave the summary's arithmetic and the gate's
+// verdict untouched, and nobody could tell which run went where.
 type Strand struct {
 	Receipt Receipt
 	File    string // where the stranded receipt lives
@@ -301,9 +300,9 @@ func Nearest(verbs []Verb, tool, verb string) string {
 	want := NormalizeKey(tool, verb)
 	// A verb that is written down INSIDE a declared one is not a near miss, it
 	// is the sub-verb somebody dropped a word from: `--verb ledger` for
-	// `dogfood ledger`, which is exactly what stranded the receipts on
-	// 2026-09-18. The shortest declared verb of the same tool that carries
-	// these words wins, ahead of any edit distance.
+	// `dogfood ledger`, and the wrong verb is exactly what stranded the
+	// receipt. The shortest declared verb of the same tool that carries these
+	// words wins, ahead of any edit distance.
 	if words := strings.Fields(verb); len(words) > 0 {
 		best := ""
 		for _, v := range verbs {
@@ -410,18 +409,18 @@ func (f GateFinding) Line() string {
 //
 //   - an UNMATCHED not-ok receipt: somebody ran something, it did not do what
 //     they needed, and the verb they named is not one the list declares. The
-//     gate used to drop it entirely — `open-edges=0` at exit 0 with not-ok
-//     receipts sitting in the very directory it had just read, and `findings=1`
-//     while three more sat unmatched beside it. A lane must not be able to pass
-//     on a bench where the only thing anybody found is unreadable. An unmatched
-//     receipt that says OK is counted and named and is NOT a failure: a wrong
-//     spelling or a stale document is not a reason to stop a release nobody
-//     found anything wrong with.
+//     gate names it, counts it, and includes it in the findings — a receipt
+//     that sits in the directory the gate just read but contributed nothing
+//     to the verdict would let a release pass on a bench where the only thing
+//     anybody found is unreadable. An unmatched receipt that says OK is
+//     counted and named and is NOT a failure: a wrong spelling or a stale
+//     document is not a reason to stop a release nobody found anything
+//     wrong with.
 //   - an open edge: somebody ran the verb, it did not do what they needed, and
 //     nobody has run it since and said it did. Feedback filed is not feedback
 //     applied.
 //   - with requireAll, a verb no non-author has run and passed. This is the
-//     definition of done as Glenn wrote it on 2026-09-18, made mechanical:
+//     definition of done made mechanical:
 //     the author's own pass is not evidence the tool works for anybody else.
 //
 // The unmatched findings come FIRST — a lane reads what was thrown away before

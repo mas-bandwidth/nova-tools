@@ -801,8 +801,8 @@ func (a *RedisApplier) writeSingleton(ctx context.Context, kind string, key func
 // --- the live, measured facts ------------------------------------------------
 
 // Beat is what a machine reported last, read from BeatKey: never stored in
-// Postgres, never typed (Glenn 2026-09-27: measured facts coming live is
-// "more robust"). Cores is the beat's ncpu; OS, Arch and MemoryGB are ""
+// Postgres or typed configuration because measured facts come from the live
+// beat. Cores is the beat's ncpu; OS, Arch and MemoryGB are ""
 // until the beat carries them; At is the beat's time as RFC 3339 UTC.
 type Beat struct {
 	OS, Arch, Cores, MemoryGB, At string

@@ -10,15 +10,14 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
-// The card decides the model it runs on (the owner, 2026-10-01: "the card should
-// determine the model used"). Its brief's line 1 names a tier, and the deal resolves
+// The card decides the model it runs on.
+// Its brief's line 1 names a tier, and the deal resolves
 // the tier through the routes nova-config applies to the store (the route kind,
 // docs/nova-config/README.md) and the tier's route array (the tier kind: an ordered
 // list of route names, a name repeated for more turns). The deal takes the array's
 // entry at the tier's rolling index, a uint64 counter modulo the array's length,
 // exactly as the deal takes a member (round.go), and moves the index by one for
-// each card dealt (the owner, 2026-10-01: "model routing to use the same uint64
-// modulo"); the route is written on the work card, so the packet hands the member
+// each card dealt. The route is written on the work card, so the packet hands the member
 // the provider, model, budget and deadline it launches with. A `model:` header line
 // pins the card, bypasses the array and leaves the index where it is. A redeal or a
 // later attempt leaves out the routes already taken for the card while another
@@ -30,8 +29,8 @@ import (
 //   - a pinned card runs on its pin (route "pin");
 //   - a store with no route at all deals as before, with no route: the member runs
 //     its own --model (a twin, a one-machine test);
-//   - a frontier card with no pin is not dealt: it is the coordinator's (the owner,
-//     2026-09-30), one judgment for the tier;
+//   - a frontier card with no pin is not dealt: it is the coordinator's, one
+//     judgment for the tier;
 //   - a card whose tier (flash when line 1 names none) has no enabled route in its
 //     array is not dealt, one judgment for the tier.
 
@@ -203,10 +202,8 @@ func tierOf(m cardhdr.Model) string {
 }
 
 // readTierOf is the tier a primary's reads are drawn from: the tier of the work
-// being read, as the deal draws it (tierOf; the owner, 2026-10-01: "i think
-// readers being conservatively the same tier as the work being done seems
-// fine?"). A card that pins a model and names no tier is read on flash; a
-// frontier card, a tier no route serves, is read on pro.
+// being read, as the deal draws it (tierOf). A card that pins a model and names
+// no tier is read on flash; a frontier card, a tier no route serves, is read on pro.
 func readTierOf(pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
 	if t := tierOf(m); t != cardhdr.RouteFrontier {

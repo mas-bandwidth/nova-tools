@@ -9,8 +9,7 @@ import (
 )
 
 // DeprecatedFile is the list of deprecated packages, relative to the
-// repository root. It was deprecated/PACKAGES until the deprecated/ folder was
-// removed (2026-10-01).
+// repository root.
 const DeprecatedFile = "internal/pkgselect/DEPRECATED"
 
 // Deprecated is DeprecatedFile read: the packages that are deprecated and

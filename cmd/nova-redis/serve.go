@@ -1,9 +1,8 @@
 package main
 
-// serve.go is the instance-owner verb of docs/SPEC-REDIS.md ("Bind, auth and
-// persistence"; nova-tools #2281, in the instance-owner role #3582 keeps for
-// this binary). `serve` launches the one local redis-server in the foreground
-// under the fleet store's rules (#3879), the one config for the store:
+// serve.go owns the local Redis instance. `serve` launches one redis-server in
+// the foreground under the store's binding, authentication, and persistence
+// rules, keeping one config for the store:
 //
 //   - bound to loopback and tailnet addresses only (100.64.0.0/10 and
 //     fd7a:115c:a1e0::/48); a wildcard, public or LAN address, or a hostname,
@@ -187,9 +186,8 @@ func storeDir(text string) (string, error) {
 	return dir, nil
 }
 
-// redisConfig is the whole config redis-server reads on stdin: the fleet
-// store's rules (#3879), which the rowan-tools nova-redis.conf.j2 template
-// carried before nova-redis owned them.
+// redisConfig is the complete config redis-server reads on stdin. It applies
+// the store's binding, authentication, persistence, and eviction rules.
 // Every value that could hold a blank or a quote is a quoted redis string.
 func redisConfig(binds []string, port int, password, dir string) []byte {
 	var b strings.Builder

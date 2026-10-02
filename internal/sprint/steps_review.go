@@ -42,12 +42,12 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 
 // Ask deals every primary in review that lacks reads to TWO DIFFERENT readers
 // up (readers.go), in work order, each the next reader round the readers
-// (round.go, errata 3 amendment 5: from the rolling index, wrapping, each the
+// (round.go: from the rolling index, wrapping, each the
 // first that has no read card at the attempt, the index moved past it: the
 // readers table's ask_index, written with the ask). Reworked work is asked by
 // the same rotation: a read is a fresh child on a freshly drawn route, so the
-// readers of an earlier attempt are not preferred (the owner, 2026-10-01:
-// "yes on the decision."). A read its reader handed back with no verdict is not a read: it is asked of a reader
+// readers of an earlier attempt are not preferred. A read its reader handed
+// back with no verdict is not a read: it is asked of a reader
 // free at the attempt, or of the same reader again when none is
 // (tla/DirtyTick.tla, JudgedOnlyAfterTheBound). With Another, a primary already asked is dealt to
 // one more reader, the next round the readers.
@@ -144,8 +144,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		// in reasked and retires the one past MaxReadReasks, and the refusal
 		// below is then the "cannot ask" judgment). Every read the unit asks
 		// draws its route leaving out the routes the primary's returned reads
-		// ran on while the tier has another (the owner, 2026-10-01: "We can't
-		// get stuck on the last card."), and draws only once the unit is kept.
+		// ran on while the tier has another route, so a read is not stuck with
+		// the one route left, and draws only once the unit is kept.
 		var again, retiredFrom, failed []string
 		var inPlace []*Card
 		for _, rc := range returned {
@@ -218,7 +218,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	if !another {
 		// one more reader of a primary named is not a turn round the streams:
 		// the ask's stream index moves with the asks of the streams' cards
-		// (errata 3 amendment 10; the reference model's AskAnother moves no
+		// (the reference model's AskAnother moves no
 		// stream index)
 		streamIndexWrite(&p, srr, s.Work.Placed)
 	}
@@ -286,8 +286,8 @@ type ReadReq struct {
 // ReadReturn, JudgedOnlyAfterTheBound). A broken read is a judgment; the second different reader's
 // ok at the primary's head is the judgment ready to accept, which accept,
 // rework and drop close. As may name several readers, comma separated: every
-// card named is one of theirs, each read as its own reader's, in the one plan
-// (errata 3 amendment 10); a read by selection names one reader.
+// card named is one of theirs, each read as its own reader's, in the one plan;
+// a read by selection names one reader.
 func Read(s *Snapshot, r ReadReq) Plan {
 	var p Plan
 	sel := r.Sel
@@ -348,7 +348,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		col = Broken
 	}
 	// every report of the plan, by primary: two readers' reports of one
-	// primary in the one step (several readers, errata 3 amendment 10) are
+	// primary in the one step (several readers) are
 	// judged together, the primary's judgment after the last of them
 	moved := map[string]map[string]string{}
 	last := map[string]int{}
@@ -654,7 +654,7 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 	// in stream turns from the accept's stream index on the work table
 	// (streamTurns, as the deal's), so a limit accepts of every stream alike
 	// and the merge queues fill together; the index moves past the stream of
-	// the last accepted (errata 3 amendment 10)
+	// the last accepted
 	srr := streamRound(s, PropAcceptStreamIndex)
 	eligible := func(c *Card) string {
 		if why := inState(c, Review); why != "" {
@@ -800,7 +800,7 @@ type ReworkReq struct {
 var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded, NStalled, NBound}
 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
-// cut into the next member round the fleet (round.go, errata 3 amendment 5:
+// cut into the next member round the fleet (round.go:
 // from the deal's rolling index, the first up with room other than the member
 // of the attempt's work card, that member only when no other has room; the
 // index moved past it and written with the step) and the primary moves
@@ -831,7 +831,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		return reworkWhy(c)
 	}, s.primaryCard)
 	up := s.UpMembers()
-	// the room of each member is its width (width.go, errata 3 amendment 9)
+	// the room of each member is its width (width.go)
 	q, room := memberLoads(s, up), memberWidths(s, up)
 	rr, ri := dealRound(s), routeIndexesOf(s)
 	moves := roundMoves{}

@@ -566,7 +566,7 @@ func TestNoCodeCLI(t *testing.T) {
 			require.EqualValues(t, 0, got, "exit = %d, want 0", got)
 		}
 		out := stdout.String()
-		assert.False(t, !strings.Contains(out, "--deny-ext") || !strings.Contains(out, ".foo"), "does not report the replacement: %s", out)
+		assert.True(t, strings.Contains(out, "--deny-ext") && strings.Contains(out, ".foo"), "does not report the replacement: %s", out)
 		assert.NotContains(t, out, ".py", "floor list leaked into a wholesale replacement: %s", out)
 	})
 
@@ -660,13 +660,13 @@ func TestEffectiveDenyList(t *testing.T) {
 		got, src, err := effectiveDenyList(".foo", "")
 		require.NoError(t, err)
 		assert.EqualValues(t, check.DenyReplaced, src, "source = %q, want %q", src, check.DenyReplaced)
-		assert.False(t, len(got) != 1 || got[0] != ".foo", "got %v, want exactly [.foo]", got)
+		assert.True(t, len(got) == 1 && got[0] == ".foo", "got %v, want exactly [.foo]", got)
 	})
 
 	t.Run("no flags is the floor, named as the floor", func(t *testing.T) {
 		got, src, err := effectiveDenyList("", "")
 		require.NoError(t, err)
-		assert.False(t, src != check.DenyFloor || len(got) != len(floor), "got %d entries from %q, want %d from %q", len(got), src, len(floor), check.DenyFloor)
+		assert.True(t, src == check.DenyFloor && len(got) == len(floor), "got %d entries from %q, want %d from %q", len(got), src, len(floor), check.DenyFloor)
 	})
 
 	t.Run("adding a duplicate does not double it", func(t *testing.T) {
@@ -944,7 +944,7 @@ func TestTheDenyListFieldIsOneToken(t *testing.T) {
 			assert.Contains(t, line, "source="+floor+" ", "%s line does not name its source as one token: %q", token, line)
 			{
 				n := fieldCount(line)
-				assert.False(t, n != 2 && n != 3, "a scanner reads %d fields on %q, want the ones the tool wrote", n, line)
+				assert.True(t, n == 2 || n == 3, "a scanner reads %d fields on %q, want the ones the tool wrote", n, line)
 			}
 		}
 	})

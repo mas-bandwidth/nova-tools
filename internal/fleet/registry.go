@@ -19,7 +19,7 @@
 //
 // A line whose fields do not parse refuses the file: a truncated or unknown-role row is
 // not a machine, and guessing the rest would let a card through. The runner/bench lock is
-// per row (#2031): a machine that is both runner and bench without
+// per row: a machine that is both runner and bench without
 // `allow-shared=<YYYY-MM-DD> <why>` is recorded as lock-failed, not as a bench, and does
 // not stop its neighbours.
 package fleet
@@ -194,7 +194,7 @@ func dash(s string) string {
 // ReadRegistry reads the machines file. A line whose fields do not parse refuses the whole
 // file -- that is not a machine, and the half that parsed is the half that would let a card
 // through. The runner/bench lock is per row: a shared machine without the dated note is
-// recorded as lock-failed and its neighbours still load (#2031).
+// recorded as lock-failed and its neighbours still load.
 func ReadRegistry(path string) (*Registry, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

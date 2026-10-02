@@ -312,14 +312,14 @@ func TestEmptyCmdlineDeadProcessDoesNotBlockLockCleanup(t *testing.T) {
 
 	unused, unusedLock := oldIndexLock(t)
 	deadProcs, deadErr := classifyViews([]procView{{comm: "git\n", dead: true}}, 501)
-	require.False(t, deadErr != nil || len(deadProcs) != 0, "dead cmdline stayed in the scan: procs=%+v err=%v", deadProcs, deadErr)
+	require.True(t, deadErr == nil && len(deadProcs) == 0, "dead cmdline stayed in the scan: procs=%+v err=%v", deadProcs, deadErr)
 	cleared, cerr := clearStaleIndexLock(unused, time.Now(), func() ([]gitProc, error) {
 		return deadProcs, deadErr
 	})
-	require.False(t, cerr != nil || !cleared, "unused lock blocked by a dead cmdline: cleared=%v err=%v", cleared, cerr)
+	require.True(t, cerr == nil && cleared, "unused lock blocked by a dead cmdline: cleared=%v err=%v", cleared, cerr)
 	{
 		_, statErr := os.Lstat(unusedLock)
-		require.False(t, !os.IsNotExist(statErr), "unused lock still present: %v", statErr)
+		require.True(t, os.IsNotExist(statErr), "unused lock still present: %v", statErr)
 	}
 
 	live, liveLock := oldIndexLock(t)
@@ -335,10 +335,10 @@ func TestProcOwnsRequiresAPathBoundary(t *testing.T) {
 	t.Parallel()
 
 	names := []string{"/bus"}
-	require.False(t, !procOwns(names, gitProc{command: "git -C /bus status"}), "git -C /bus should own /bus")
+	require.True(t, procOwns(names, gitProc{command: "git -C /bus status"}), "git -C /bus should own /bus")
 	require.False(t, procOwns(names, gitProc{command: "git -C /bus2 status"}), "/bus2 must not count as owning /bus")
-	require.False(t, !procOwns(names, gitProc{command: "git -C /bus/lane status"}), "a git inside the checkout should count as owning it")
-	require.False(t, !procOwns(names, gitProc{cwd: "/bus", command: "git status"}), "a git whose cwd is the checkout should own it")
+	require.True(t, procOwns(names, gitProc{command: "git -C /bus/lane status"}), "a git inside the checkout should count as owning it")
+	require.True(t, procOwns(names, gitProc{cwd: "/bus", command: "git status"}), "a git whose cwd is the checkout should own it")
 	require.False(t, procOwns(names, gitProc{cwd: "/bus2", command: "git status"}), "a git in /bus2 must not own /bus")
 }
 
@@ -350,11 +350,11 @@ func TestDiscardPathRemovesASymlinkedBeatWithoutFollowingIt(t *testing.T) {
 	link := filepath.Join(root, "from-ada", BeatName)
 	plant(t, v, link)
 	discarded, err := DiscardPath(root, "from-ada/"+BeatName)
-	require.False(t, err != nil || !discarded, "discarded=%v err=%v, want the symlink removed", discarded, err)
+	require.True(t, err == nil && discarded, "discarded=%v err=%v, want the symlink removed", discarded, err)
 	unchanged(t, v)
 	{
 		_, err := os.Lstat(link)
-		require.False(t, !os.IsNotExist(err), "the symlink is still there: %v", err)
+		require.True(t, os.IsNotExist(err), "the symlink is still there: %v", err)
 	}
 }
 
@@ -383,7 +383,7 @@ func TestRecoverWaitFastForwardLeavesADirtyCursor(t *testing.T) {
 	require.False(t, err == nil || !strings.Contains(err.Error(), "from-ada/CURSOR") || !strings.Contains(err.Error(), "not this tool's to discard"), "want a plain refusal naming CURSOR, got %v", err)
 	got, err := os.ReadFile(filepath.Join(reader, "from-ada", "CURSOR"))
 	require.NoError(t, err)
-	require.False(t, string(got) != sentinel, "CURSOR was touched: %q", got)
+	require.Equal(t, sentinel, string(got), "CURSOR was touched: %q", got)
 	after, err := HeadCommit(reader)
 	require.NoError(t, err)
 	require.Equal(t, before, after, "HEAD moved over a dirty CURSOR: %s -> %s", before, after)
@@ -412,7 +412,7 @@ func TestVanishingProcessESRCHDoesNotBlockLockCleanup(t *testing.T) {
 	} {
 		{
 			_, skip, err := gitProcFromView(v)
-			require.False(t, err != nil || !skip, "a process gone mid-read (%+v): skip=%v err=%v, want skipped and no error", v, skip, err)
+			require.True(t, err == nil && skip, "a process gone mid-read (%+v): skip=%v err=%v, want skipped and no error", v, skip, err)
 		}
 	}
 
@@ -421,10 +421,10 @@ func TestVanishingProcessESRCHDoesNotBlockLockCleanup(t *testing.T) {
 		return classifyViews([]procView{{commErr: esrch("comm")}, {comm: "bash\n"}}, 501)
 	}
 	cleared, err := clearStaleIndexLock(dir, time.Now(), scan)
-	require.False(t, err != nil || !cleared, "a stale lock with only a vanishing process in the scan: cleared=%v err=%v, want removed", cleared, err)
+	require.True(t, err == nil && cleared, "a stale lock with only a vanishing process in the scan: cleared=%v err=%v, want removed", cleared, err)
 	{
 		_, statErr := os.Lstat(lock)
-		require.False(t, !os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
+		require.True(t, os.IsNotExist(statErr), "stale index.lock still present: %v", statErr)
 	}
 
 	// ESRCH is not a licence for every errno: a live process that denies the read
@@ -447,7 +447,7 @@ func TestGitScanSkipsAnotherAccountsGitLinux(t *testing.T) {
 	foreign := procView{comm: "git\n", cmdline: []byte("git\x00status"), cwdErr: denied, owner: 502, ownerKnown: true, account: 502, accountKnown: true}
 	own := procView{comm: "git\n", cmdline: []byte("git\x00fetch"), cwd: "/home/nova/bus", owner: 501, ownerKnown: true, account: 501, accountKnown: true}
 	procs, err := classifyViews([]procView{foreign, own}, 501)
-	require.False(t, err != nil || len(placed(procs)) != 1 || placed(procs)[0].cwd != "/home/nova/bus" || len(procs) != 2 || !procs[0].foreign, "another account's git beside our own: procs=%+v err=%v, want our one placed, theirs flagged foreign, and no error", procs, err)
+	require.True(t, err == nil && len(placed(procs)) == 1 && placed(procs)[0].cwd == "/home/nova/bus" && len(procs) == 2 && procs[0].foreign, "another account's git beside our own: procs=%+v err=%v, want our one placed, theirs flagged foreign, and no error", procs, err)
 	{
 		_, err := classifyViews([]procView{foreign}, 502)
 		require.False(t, err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown), "our own git with an unreadable cwd: err=%v, want %q", err, ownershipUnknown)
@@ -456,7 +456,7 @@ func TestGitScanSkipsAnotherAccountsGitLinux(t *testing.T) {
 	unowned.ownerKnown, unowned.accountKnown = false, false
 	{
 		procs, err := classifyViews([]procView{unowned}, 501)
-		require.False(t, err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) || len(procs) != 1 || !procs[0].unknown, "a git whose account could not be read: procs=%+v err=%v, want one unknown and %q", procs, err, ownershipUnknown)
+		require.True(t, err != nil && strings.HasPrefix(err.Error(), ownershipUnknown) && len(procs) == 1 && procs[0].unknown, "a git whose account could not be read: procs=%+v err=%v, want one unknown and %q", procs, err, ownershipUnknown)
 	}
 }
 
@@ -506,7 +506,7 @@ func TestReadProcViewRecordsTheOwner(t *testing.T) {
 	}
 
 	v := readProcView("18772", fake(502, true, nil, "git\x00status", denied))
-	require.False(t, !v.ownerKnown || v.owner != 502 || !v.accountKnown || v.account != 502 || strings.TrimSpace(v.comm) != "git" || v.cwdErr == nil, "another account's entry: %+v, want owner and account 502 and comm, cmdline and cwd read", v)
+	require.True(t, v.ownerKnown && v.owner == 502 && v.accountKnown && v.account == 502 && strings.TrimSpace(v.comm) == "git" && v.cwdErr != nil, "another account's entry: %+v, want owner and account 502 and comm, cmdline and cwd read", v)
 	{
 		procs, err := classifyViews([]procView{v}, 501)
 		require.False(t, err != nil || len(procs) != 1 || !procs[0].foreign, "another account's unplaced git: procs=%+v err=%v, want one flagged foreign and no error", procs, err)

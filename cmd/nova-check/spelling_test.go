@@ -41,7 +41,7 @@ func TestSpellingCLICleanPass(t *testing.T) {
 
 	code, stdout, stderr := runSpelling(t, "--dir", dir)
 	require.EqualValues(t, 0, code, "exit = %d, want 0; stderr = %q", code, stderr)
-	assert.False(t, !strings.Contains(stdout, "SPELLING OK") || !strings.Contains(stdout, "misspellings=0"), "stdout = %q", stdout)
+	assert.True(t, strings.Contains(stdout, "SPELLING OK") && strings.Contains(stdout, "misspellings=0"), "stdout = %q", stdout)
 }
 
 func TestSpellingCLIFindingsReadOnly(t *testing.T) {
@@ -53,7 +53,7 @@ func TestSpellingCLIFindingsReadOnly(t *testing.T) {
 
 	code, stdout, stderr := runSpelling(t, "--file", f)
 	require.EqualValues(t, 1, code, "exit = %d, want 1; stdout = %q, stderr = %q", code, stdout, stderr)
-	assert.False(t, !strings.Contains(stderr, "SPELLING FAIL") || !strings.Contains(stderr, "recieve -> receive"), "stderr = %q", stderr)
+	assert.True(t, strings.Contains(stderr, "SPELLING FAIL") && strings.Contains(stderr, "recieve -> receive"), "stderr = %q", stderr)
 	// Verify file was NOT modified.
 	cur, _ := os.ReadFile(f)
 	assert.EqualValues(t, content, string(cur), "file modified in read-only mode: %q", string(cur))
@@ -104,7 +104,7 @@ func TestSpellingCLIWriteMode(t *testing.T) {
 
 	code, stdout, stderr := runSpelling(t, "--file", f, "--write")
 	require.EqualValues(t, 0, code, "exit = %d, want 0; stderr = %q", code, stderr)
-	assert.False(t, !strings.Contains(stdout, "SPELLING FIXED") || !strings.Contains(stdout, "written=1"), "stdout = %q", stdout)
+	assert.True(t, strings.Contains(stdout, "SPELLING FIXED") && strings.Contains(stdout, "written=1"), "stdout = %q", stdout)
 
 	updated, err := os.ReadFile(f)
 	require.NoError(t, err)
@@ -338,7 +338,7 @@ func TestSpellingRevisedWitnesses(t *testing.T) {
 		after, e := os.ReadFile(filepath.Join(docsDir, "note.md"))
 		require.NoError(t, e)
 		t.Logf("exit=%d out=%q err=%q after=%q", code, out, errStr, after)
-		assert.False(t, code != 0 || string(after) != "receive\n", "relative root joined twice or valid target not corrected")
+		assert.True(t, code == 0 && string(after) == "receive\n", "relative root joined twice or valid target not corrected")
 	})
 	t.Run("excluded-directory-target", func(t *testing.T) {
 		t.Parallel()
@@ -366,7 +366,7 @@ func TestSpellingRevisedWitnesses(t *testing.T) {
 			after, e := os.ReadFile(path)
 			require.NoError(t, e)
 			t.Logf("exit=%d out=%q err=%q after=%q", code, out, err, after)
-			assert.False(t, code != 0 || string(after) != tc.want, "code/prose boundary changed: want %q", tc.want)
+			assert.True(t, code == 0 && string(after) == tc.want, "code/prose boundary changed: want %q", tc.want)
 		})
 	}
 }
@@ -386,7 +386,7 @@ func TestReviewSpellingLooseListContainers(t *testing.T) {
 			after, e := os.ReadFile(p)
 			require.NoError(t, e)
 			t.Logf("exit=%d out=%q err=%q after=%q", code, out, err, after)
-			assert.False(t, code != 0 || string(after) != tc.want, "CommonMark container boundary mismatch: want %q", tc.want)
+			assert.True(t, code == 0 && string(after) == tc.want, "CommonMark container boundary mismatch: want %q", tc.want)
 		})
 	}
 }
@@ -403,7 +403,7 @@ func TestStellaQuotedListTabFence(t *testing.T) {
 			after, e := os.ReadFile(p)
 			require.NoError(t, e)
 			t.Logf("exit=%d out=%q err=%q after=%q", code, out, err, after)
-			assert.False(t, code != 0 || string(after) != before, "quoted list fence rewritten: want %q", before)
+			assert.True(t, code == 0 && string(after) == before, "quoted list fence rewritten: want %q", before)
 		})
 	}
 	t.Run("varying-indent-preserve-code", func(t *testing.T) {
@@ -415,7 +415,7 @@ func TestStellaQuotedListTabFence(t *testing.T) {
 		after, e := os.ReadFile(p)
 		require.NoError(t, e)
 		t.Logf("exit=%d out=%q err=%q after=%q", code, out, err, after)
-		assert.False(t, code != 0 || string(after) != before, "quoted list fence with shorter quote prefix rewritten: want %q, got %q", before, after)
+		assert.True(t, code == 0 && string(after) == before, "quoted list fence with shorter quote prefix rewritten: want %q, got %q", before, after)
 	})
 
 	t.Run("varying-indent-correct-prose", func(t *testing.T) {
@@ -428,6 +428,6 @@ func TestStellaQuotedListTabFence(t *testing.T) {
 		after, e := os.ReadFile(p)
 		require.NoError(t, e)
 		t.Logf("exit=%d out=%q err=%q after=%q", code, out, err, after)
-		assert.False(t, code != 0 || string(after) != want, "quoted list prose typo with longer quote prefix not corrected: want %q, got %q", want, after)
+		assert.True(t, code == 0 && string(after) == want, "quoted list prose typo with longer quote prefix not corrected: want %q, got %q", want, after)
 	})
 }

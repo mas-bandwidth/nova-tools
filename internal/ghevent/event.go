@@ -1,5 +1,4 @@
-// Package ghevent appends entries to the Redis stream ev:github and reads them
-// back (nova-tools #2657, #2685).
+// Package ghevent appends entries to the Redis stream ev:github and reads them back.
 //
 // Every entry has the fields repo, kind, number, head, action, at, sender,
 // comment_id. Four kinds add their own fields, always all of them, empty included:
@@ -7,8 +6,8 @@
 // issues adds labels (a JSON array of the issue's label names after the
 // change), body, state and state_reason; workflow_run adds run_id, workflow,
 // status and conclusion; check_run adds check (check_run.name), check_run_id
-// (check_run.id), status and conclusion (nova-tools #3040: pr-to-read keys
-// runner rows by the check name and orders attempts by id and status).
+// (check_run.id), status and conclusion; runner rows are keyed by check name
+// and ordered by attempt id and status.
 package ghevent
 
 import (

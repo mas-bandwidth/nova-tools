@@ -29,8 +29,8 @@ type Store struct {
 // bench that exports the bench password for other tools are unaffected; only
 // when that unauthenticated connection is refused NOAUTH while the password is
 // already in the environment does the refusal name the missing variable and
-// the pair (#3520) instead of passing the raw NOAUTH through. Open sends
-// nothing (#3277), so that refusal is the first command's error.
+// the pair instead of passing the raw NOAUTH through. Open sends
+// nothing, so that refusal is the first command's error.
 const (
 	UserEnv            = redisauth.UserEnv
 	PasswordEnvEnv     = redisauth.PasswordEnvEnv
@@ -38,7 +38,7 @@ const (
 )
 
 func authFromEnv(sel *seatcred.Selection) (user, password string, err error) {
-	// A seat given by --seat or NOVA_SEAT (nova-tools#4052) is read through
+	// A seat given by --seat or NOVA_SEAT is read through
 	// nova-secrets' library in this process: its login wins, and the password
 	// goes to the client in memory, never into this process's environment.
 	if c, ok, err := sel.Active(); ok {
@@ -52,16 +52,16 @@ func authFromEnv(sel *seatcred.Selection) (user, password string, err error) {
 	return Auth("", "")
 }
 
-// Auth is the environment seat (internal/nsprint/redisauth, #3461): user is the
+// Auth is the environment seat (internal/nsprint/redisauth): user is the
 // ACL user, else UserEnv; passwordEnv the variable holding its password, else
 // PasswordEnvEnv, else DefaultPasswordEnv.
 func Auth(user, passwordEnv string) (string, string, error) { return redisauth.Auth(user, passwordEnv) }
 
-// NoUserHint is the #3520 refusal: password in the environment, ACL user unset.
+// NoUserHint is the NOAUTH refusal: password in the environment, ACL user unset.
 func NoUserHint() string { return redisauth.NoUserHint() }
 
-// noUserHook adds NoUserHint to a NOAUTH refusal (#3520). Open sends nothing
-// (#3277), so the refusal arrives on the caller's first command or batch; the
+// noUserHook adds NoUserHint to a NOAUTH refusal. Open sends nothing
+// so the refusal arrives on the caller's first command or batch; the
 // hook costs no round trip and is installed only when the user is unset while
 // the bench password is in the environment.
 type noUserHook struct{ addr string }
@@ -108,7 +108,7 @@ func Open(ctx context.Context, addr string) (*Store, error) {
 }
 
 // open dials as sel's seat, else the environment's. With no addr it dials the
-// address sel's seat profile row names (nova-tools#4330).
+// address sel's seat profile row names.
 func open(ctx context.Context, addr string, poolSize int, sel *seatcred.Selection) (*Store, error) {
 	return openWith(ctx, addr, sel, func(o *redis.Options) { o.PoolSize = poolSize })
 }
@@ -124,10 +124,10 @@ func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune fu
 	if err != nil {
 		return nil, err
 	}
-	// No PING (#3277): go-redis dials on the first command, so the caller's
+	// No PING: go-redis dials on the first command, so the caller's
 	// first pipeline is the probe and an unreachable store fails there.
-	// No CLIENT SETINFO either (2026-09-27, Glenn: "You always need to
-	// batch redis"): go-redis sends the library name and version in a
+	// No CLIENT SETINFO either: Redis commands must be batched, and
+	// go-redis sends the library name and version in a
 	// round trip of its own after HELLO, and the store is 128 ms away, so
 	// every one-shot verb paid it for nothing. No CLIENT MAINT_NOTIFICATIONS
 	// either: go-redis v9.22.0 sends it after HELLO 3 unless told not to,

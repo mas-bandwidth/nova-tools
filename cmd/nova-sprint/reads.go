@@ -28,7 +28,7 @@ import (
 // the average time a card has taken to land (since, the time from the machine's
 // first start, over the cards landed), in whole minutes rounded up, with no
 // seconds ("47m", "1h12m"); before that, or with no start known, the word
-// alone. Every primary landed, it has no ETA: it is done (errata 3 amendment 6).
+// alone. Every primary landed, it has no ETA: it is done.
 // eta is the minutes left (etaMinutes, or the view's held value), 0 when there
 // is no estimate.
 func summary(t ntable.Table, eta int64) string {
@@ -335,8 +335,8 @@ func packetsWanted(packets, have string) (wanted, error) {
 // --packets was given; else the first n it may start (asked, ready) and every one in flight
 // (reading, working), skipping the cards --have names. A worker starts a card from its
 // packet, or recovers an in-flight card it holds no launch for; a card it already runs, or
-// a read past its free lanes, needs none (the fleet load test of 2026-10-01: one reader's
-// answer, its 150 asked reads each with its brief, was 579,181 bytes every pass).
+// a read past its free lanes, needs none: every packet carries its brief, and
+// a reader's full answer already runs to hundreds of kilobytes a pass.
 func (w wanted) of(cards []*sprint.Card) []int {
 	var at []int
 	left := w.n
@@ -618,14 +618,14 @@ const allRow = ""
 // readersAll is the readers table as the view's text draws it: one row, unlabelled,
 // whose cells are the sums over every reader (hidden rows, readers away or down,
 // counted as the footer counted them), and no footer, which would say the same
-// thing twice (the owner, 2026-10-01: "change the table to just be one row, sum
-// of all"; "i just need to see reader *progress* overall"). A cell some reader's
+// thing twice: one row summing every reader is enough, since the view shows
+// reader progress overall. A cell some reader's
 // set did not come back for prints "?", as the footer's sum did. Display only:
 // the stored table, its rows and where --json are as they were.
 func readersAll(t ntable.Table) ntable.Table { return allOf(t, nil) }
 
-// mergeAll is the merge table as the view's text draws it, the same way (the
-// owner, 2026-10-01: "Can we please (for next sprint) do the same for merge"):
+// mergeAll is the merge table as the view's text draws it, the same way as
+// readers, one summed row:
 // queued, merged and stuck are the sums over every stream; ci and state, which
 // do not add up, show the value across the streams that most needs the
 // coordinator's eye (worst), and a stopped state the count of streams stopped,
@@ -694,8 +694,8 @@ func allOf(t ntable.Table, texts map[string]string) ntable.Table {
 
 // whereHeader is the one line under the title of the where view: STOPPED when
 // the machine is stopped (or a RUNNING machine has not ticked), DONE when it
-// stopped because the sprint is done (the view's state text, errata 3
-// amendment 6), and the progress line, with no machine text, when it is
+// stopped because the sprint is done, matching the view's state text, and the
+// progress line, with no machine text, when it is
 // running. Nothing follows any of them.
 func whereHeader(summary, machine string) string {
 	state := strings.TrimPrefix(machine, "machine: ")
@@ -756,7 +756,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	}
 	woke := false
 	if *wait {
-		// the coordinator's one wake a tick (errata 3 amendment 8): the next
+		// the coordinator's one wake a tick: the next
 		// tick-end note after the notes as they stand now
 		if *atEpoch >= 0 || *timeout <= 0 {
 			return refuse(stderr, "inbox", "--wait waits on the sprint's epoch for at most a --timeout above zero")
@@ -1003,7 +1003,7 @@ type cardView struct {
 	Open     []sprint.Open      `json:"open,omitempty"`
 	Needs    []sprint.NeedState `json:"needs,omitempty"`
 	NeededBy []string           `json:"needed_by,omitempty"`
-	Held     *sprint.Hold       `json:"held,omitempty"` // what holds it now (check rule 12)
+	Held     *sprint.Hold       `json:"held,omitempty"` // what holds it now
 	// What it cost: each consumer (a work card's take, a read) with its record, and
 	// the totals, computed from the consumers' records (sprint.CardCost).
 	Cost sprint.CardCostView `json:"cost"`
@@ -1035,7 +1035,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s card: no primary %s; run: nova-sprint where\n", prog, oneline.Escape(id))
 		return 1
 	}
-	// What holds it (the no-stall rule, check rule 12): an outside actor, the
+	// What holds it, so nothing stalls without a named reason: an outside actor, the
 	// next tick, an open judgment, what it waits on, or the machine STOPPED.
 	var held *sprint.Hold
 	if *atEpoch < 0 {

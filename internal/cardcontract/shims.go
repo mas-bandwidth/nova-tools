@@ -299,11 +299,10 @@ func (plain) JobText(f Frame, s Staged) string {
 
 // writeReadDiff is what a read's JOB.md says the work changed (docs/SPEC-CARD-CONTRACT.md,
 // JOB.md): the commit the work started from and the one command that shows its change, and
-// that the base branch is not what to compare against. On a 1000-card load test (2026-10-01)
-// a reader ran `git diff origin/dev` while cards landed on dev every few seconds, saw every
-// file landed since as a deletion, and sent a correct work card back; on the 5000-card one
-// readers still did ("numerous deletions and one rename"), so it names origin/<base> too and
-// says such deletions are never a finding. Nothing when the start is unknown.
+// that the base branch is not what to compare against. A reader that diffs against the tip
+// of the base sees every card landed since as a deletion and can send a correct work card
+// back, so the text names origin/<base> too and says such deletions are never a finding.
+// Nothing when the start is unknown.
 func writeReadDiff(b *strings.Builder, f Frame, s Staged) {
 	if s.Start == "" {
 		return

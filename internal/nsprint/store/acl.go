@@ -8,12 +8,12 @@ import (
 
 // ACLRules are the baseline permissions for each actor in the fleet Redis.
 // The bench and friend seats run consumer copies through the table moves
-// (#3998: card work --fill, card beat, card end, and the session's give-back,
+// (card work --fill, card beat, card end, and the session's give-back,
 // card cancel), whose moves read and write task:*, ws:*, q:*, sprint:*, pr:*
 // (a read's line on the PR record), consumers and readers, with HDEL, LPOS and
 // RPUSH; the bench's copy ledger reads cfg:card
 // (TestACLSeatsRunTheCardVerbs). Every reader of a table set keys it by the
-// sprint epoch (nova-tools#4238): the consumer, table and coordinator seats
+// sprint epoch: the consumer, table and coordinator seats
 // read sprint:epoch (the friend seat's ~sprint:* holds it), the friend seat's
 // take and width count their working set through ns_cell_zcard, its beat
 // reads the copies it holds through ns_cell_zrange, and the

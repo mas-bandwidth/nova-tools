@@ -29,11 +29,13 @@ func TestParseNoteReadsTheHeaderAndStopsAtTheBlankLine(t *testing.T) {
 	h := n.Header
 	require.Equal(t, "Ada (day shift, the west host, the shared account)", h.From, "From = %q", h.From)
 	if h.To != "Bo" || h.Cc != "Dana" {
-		require.False(t, h.To != "Bo" || h.Cc != "Dana", "To = %q Cc = %q", h.To, h.Cc)
+		require.Equal(t, "Bo", h.To, "To = %q Cc = %q", h.To, h.Cc)
+		require.Equal(t, "Dana", h.Cc, "To = %q Cc = %q", h.To, h.Cc)
 	}
 	require.Equal(t, "ada-0123456789ab", h.ID, "Id = %q", h.ID)
 	if len(h.Re) != 2 || h.Re[0] != "bo-fedcba987654" {
-		require.False(t, len(h.Re) != 2 || h.Re[0] != "bo-fedcba987654", "Re = %v; both an id and a legacy path are Re lines", h.Re)
+		require.Equal(t, 2, len(h.Re), "Re = %v; both an id and a legacy path are Re lines", h.Re)
+		require.Equal(t, "bo-fedcba987654", h.Re[0], "Re = %v; both an id and a legacy path are Re lines", h.Re)
 	}
 	require.Equal(t, "Cold read of #624", h.Subject, "Subject = %q", h.Subject)
 	require.True(t, strings.HasPrefix(n.Body, "Bo,"), "Body = %q; the body is everything after the first blank line", n.Body)
@@ -79,7 +81,7 @@ func TestParseNoteToleratesCRLFAndABOM(t *testing.T) {
 		require.Equal(t, b.Header.Subject, a.Header.Subject, "subjects differ: %q vs %q", a.Header.Subject, b.Header.Subject)
 	}
 	if NormalizeBody(a.Body) != NormalizeBody(b.Body) {
-		require.False(t, NormalizeBody(a.Body) != NormalizeBody(b.Body), "bodies differ after normalization:\n%q\n%q", a.Body, b.Body)
+		require.Equal(t, NormalizeBody(b.Body), NormalizeBody(a.Body), "bodies differ after normalization:\n%q\n%q", a.Body, b.Body)
 	}
 }
 
@@ -156,7 +158,7 @@ func TestIDIsDeterministicNamespacedAndSensitiveToEveryFieldThatMakesANoteDiffer
 	again, err := AssignID(c, ada, base, body, date)
 	require.NoError(t, err)
 	require.Equal(t, again, id, "the id is not deterministic: %q then %q", id, again)
-	require.False(t, !strings.HasPrefix(id, "ada-"), "id %q is not namespaced by the sender's lane slug", id)
+	require.True(t, strings.HasPrefix(id, "ada-"), "id %q is not namespaced by the sender's lane slug", id)
 	{
 		err := ValidID(id)
 		require.NoError(t, err, "assigned id %q is not a valid id: %v", id, err)
@@ -166,7 +168,7 @@ func TestIDIsDeterministicNamespacedAndSensitiveToEveryFieldThatMakesANoteDiffer
 	// This is the property that makes two lines racing unable to collide at all.
 	other, err := AssignID(c, bo, Header{From: "Bo", To: "Ada", Subject: "A finding"}, body, date)
 	require.NoError(t, err)
-	require.False(t, SlugOfID(other) != "bo", "id %q is not in Bo's namespace", other)
+	require.Equal(t, "bo", SlugOfID(other), "id %q is not in Bo's namespace", other)
 
 	// Every field that makes a note a different note changes the id.
 	seen := map[string]string{id: "the base note"}
@@ -311,19 +313,21 @@ func TestRenderPutsTheHeaderInCanonicalOrderAndKeepsTheAuthorsWords(t *testing.T
 	out := n.Render()
 	reparsed, err := ParseNote("from-ada/x.md", out)
 	require.NoError(t, err, "a rendered note did not parse: %v\n%s", err, out)
-	require.False(t, reparsed.Header.From != n.Header.From || reparsed.Header.To != n.Header.To || reparsed.Header.Subject != n.Header.Subject, "Render did not round-trip the author's own lines")
+	require.Equal(t, n.Header.From, reparsed.Header.From, "Render did not round-trip the author's own lines")
+	require.Equal(t, n.Header.To, reparsed.Header.To, "Render did not round-trip the author's own lines")
+	require.Equal(t, n.Header.Subject, reparsed.Header.Subject, "Render did not round-trip the author's own lines")
 	if len(reparsed.Header.Re) != len(n.Header.Re) {
-		require.False(t, len(reparsed.Header.Re) != len(n.Header.Re), "Re lines: %v, want %v", reparsed.Header.Re, n.Header.Re)
+		require.Equal(t, len(n.Header.Re), len(reparsed.Header.Re), "Re lines: %v, want %v", reparsed.Header.Re, n.Header.Re)
 	}
 	lines := strings.Split(out, "\n")
 	wantOrder := []string{"From: ", "To: ", "Cc: ", "Date: ", "Id: ", "Re: ", "Re: ", "Subject: "}
 	for i, prefix := range wantOrder {
 		if !strings.HasPrefix(lines[i], prefix) {
-			require.False(t, !strings.HasPrefix(lines[i], prefix), "line %d = %q, want it to start with %q", i+1, lines[i], prefix)
+			require.True(t, strings.HasPrefix(lines[i], prefix), "line %d = %q, want it to start with %q", i+1, lines[i], prefix)
 		}
 	}
 	if lines[len(wantOrder)] != "" {
-		require.False(t, lines[len(wantOrder)] != "", "the header is not closed by a blank line: %q", lines[len(wantOrder)])
+		require.Equal(t, "", lines[len(wantOrder)], "the header is not closed by a blank line: %q", lines[len(wantOrder)])
 	}
 }
 

@@ -1,6 +1,6 @@
-# DirtyTick: the sprint machine's tick, the owner's shape of 2026-09-30
+# DirtyTick: the sprint machine's tick
 
-`DirtyTick.tla` is the tick of the sprint machine as the owner shaped it on 2026-09-30, written before the tick is built. `MCDirtyTick.tla` holds the small instances, each `MCDirtyTick*.cfg` is one case of `CASES.tsv`, and `dirtytick-bench/MCDirtyTickFull.cfg` is the larger run outside the plan. Rule names are those of `design/EVENT-DRIVEN-TICK-v2.1.md` sections 2 and 3 (R2, R6, R8, R9, R10).
+`DirtyTick.tla` is the tick of the sprint machine, written before the tick is built. `MCDirtyTick.tla` holds the small instances, each `MCDirtyTick*.cfg` is one case of `CASES.tsv`, and `dirtytick-bench/MCDirtyTickFull.cfg` is the larger run outside the plan. Rule names are those of `design/EVENT-DRIVEN-TICK-v2.1.md` sections 2 and 3 (R2, R6, R8, R9, R10).
 
 ## The shape
 
@@ -95,7 +95,7 @@ Each witness turns on one broken rule (`Broken`); its control is the unbroken co
 
 | case | the rule broken | fails | states |
 |---|---|---|---|
-| W1 | the old per-row tick: the pump deals one card | `EveryRowWithWorkMoves` | 5 |
+| W1 | per-row tick: the pump deals one card | `EveryRowWithWorkMoves` | 5 |
 | W2 | a second work pump inside the tick | `WorkPumpedOnce` | 6 |
 | W3 | a queue left for the next tick (a deferred dirty bit) | `ThreeQueuesEmptyAtTickEnd` | 18 |
 | W4 | placement in name order | `PlacementsRound` | 31 |
@@ -120,7 +120,7 @@ Each witness turns on one broken rule (`Broken`); its control is the unbroken co
 | W21 | the ask has no guard on the reader being up: a read is placed on a reader away (the readers row with no reader process) | `ReadsStandOnReadersUp` | 30 |
 | W22 | a reader that goes away keeps its reads (a read sat asked of it) | `ReadsStandOnReadersUp` | 66 |
 | W24 | a read returned is asked again and kept by its reader (the read that sat held for two hours) | `NothingLost` | 49 |
-| W25 | a read returned is counted as a read: the reader that returned it, the only one, is judged "cannot ask" with no re-ask (93 cards stranded in review on 2026-10-01) | `JudgedOnlyAfterTheBound` | 25 |
+| W25 | a read returned is counted as a read: the reader that returned it, the only one, is judged "cannot ask" with no re-ask | `JudgedOnlyAfterTheBound` | 25 |
 | W26 | a returned read is asked again in place with no bound (a reader that never launches returns it every few seconds for ever, no judgment) | `ReasksBounded` | 589 |
 | W27 | a card no reader may be asked of is left waiting with no judgment | `StrandingIsJudged` | 680 |
 | W28 | a read once returned is judged only when every reader is in `seen` of it: r1 returns it, is asked it again in place, its machine lapses, and the read waits with no reader up, silently | `StrandingIsJudged` | 2,295 |

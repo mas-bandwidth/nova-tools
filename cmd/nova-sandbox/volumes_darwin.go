@@ -142,7 +142,7 @@ func (diskutilVolumes) Exists(name string) (bool, error) {
 }
 
 // volumeCreateAttempts is how many volumes Create will make and throw away before it
-// refuses. Measured on the Studio: a contended addVolume produced an unusable root every
+// refuses. Measured: a contended addVolume produced an unusable root every
 // time and an uncontended one never did, so under the lock the first attempt is the
 // answer — the retries are for the machine that is contended by something that is not
 // this tool, and three is enough to say so without grinding.
@@ -156,11 +156,11 @@ const volumeCreateAttempts = 3
 //
 // Two processes may not be in here at once. `diskutil apfs addVolume` run concurrently
 // leaves the new volume's root `root:wheel drwxr-xr-x` rather than the caller's, and it
-// never settles — measured in a 20-run soak, 2026-09-18, where three of four concurrent
+// never settles — measured in a 20-run soak where three of four concurrent
 // runs died at `mkdir /Volumes/nova-conc-N/work: permission denied` before their card ran.
 // The same four runs staggered twelve seconds apart all passed with their EXECUTION
 // overlapping, so it is creation alone that cannot be shared. There is no repair to apply
-// after the fact: `chown` on someone else's directory needs root, which rule 2 does not
+// after the fact: `chown` on someone else's directory needs root, which an unprivileged tool does not
 // have. So the lock, and then the question.
 func (d diskutilVolumes) Create(container, name, size string) (diskVolume, error) {
 	unlock, err := lockVolumeCreate()
@@ -221,7 +221,7 @@ func (d diskutilVolumes) createOnce(container, name, size string) (diskVolume, e
 	return diskVolume{Name: name, Disk: disk, Mount: mount}, nil
 }
 
-// rootOwnedAndWritable is the question the old Create assumed the answer to: a mount
+// rootOwnedAndWritable is the question a mounted root would assume the answer to: a mount
 // point is not the same thing as a place this user may work. It is asked twice, because
 // the two answers differ — the OWNER is what went wrong (root:wheel instead of the
 // caller), and a WRITE is what the run needs — and a check that only stats can be
@@ -333,7 +333,7 @@ func defaultVolumeLockPath() (string, error) {
 // trimmed to `> Volume disk3s7`, nothing ever opened a record, and `reap` answered
 // `SANDBOX REAP OK volumes=0` on a machine that was holding one. A reaper that reports a
 // dirty machine clean is worse than no reaper — so the fixture this is tested against is
-// the real `diskutil apfs list`, copied off the Studio, and never a shape assumed here.
+// the real `diskutil apfs list`, copied verbatim from real output, and never a shape assumed here.
 const treeChars = "|+-<> "
 
 func (diskutilVolumes) List() ([]diskVolume, error) {
