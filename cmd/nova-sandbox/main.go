@@ -250,11 +250,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 			return sandbox.ExitCannotRun
 		}
 		// The same four tokens every other binary prints, then the two facts a
-		// sandbox is judged by as named extras.
-		// own -- `SANDBOX VERSION tool=... version=...` -- and a shape of its own is
-		// a shape every reader has to be taught: `nova-version snapshot` could not
-		// The backend and the platform are not lost; they
-		// are now said in the grammar the whole set shares.
+		// sandbox is judged by as named extras. A shape of its own — `SANDBOX VERSION
+		// tool=... version=...` — is a shape every reader has to be taught, so the
+		// backend and the platform are said in the grammar the whole set shares.
 		fmt.Fprintln(stdout, buildinfo.Line("nova-sandbox", version,
 			"backend="+sandbox.Backend, "platform="+runtime.GOOS))
 		return 0
@@ -415,8 +413,8 @@ func bareFlagText(text string) string {
 	return head + "; the flags are " + verbflag.List(bareFlags) + near + "; run: " + run
 }
 
-// refuseAll prints one SANDBOX REFUSED line per independent problem — this
-// every problem at once, and one line per problem is how a scanner reads them — and
+// refuseAll prints one SANDBOX REFUSED line per independent problem — every problem
+// at once, and one line per problem is how a scanner reads them — and
 // returns 125 unless EVERY problem is not_found, in which case it returns 127. Returning
 // the first problem's code made the status depend on the order the flags were typed: two
 // problems, one of them a missing command, exited 127 or 125 by argv order. 125 is the
@@ -623,12 +621,12 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	f.bad = append(f.bad, notForThisVerb("probe", "nova-sandbox probe -h", map[string]bool{
 		"--acl": f.acl != "", "--name": f.name != "", "--cwd": f.cwd != "", "--tmp": f.tmp != "", "--net-allow": len(f.netAllow) > 0,
 	}, ownerOf)...)
-	// The tool reports every independent problem in one run. Earlier versions required
-	// a bare `probe` named the missing --secret, and named the missing --write only on
-	// the NEXT run, once --secret had been supplied -- a first run sequenced into as many
-	// runs as it had mistakes. `nova-wake serve` names all nine of its missing flags at
-	// once and that is the shape here too: the checks below are gathered and printed
-	// together, and the probe runs only when none of them spoke.
+	// The tool reports every independent problem in one run. A probe that reports one
+	// problem at a time names the missing --secret first, then the missing --write only
+	// on the NEXT run once --secret is supplied -- a first run sequences into as many
+	// runs as it has mistakes. `nova-wake serve` names all nine of its missing
+	// flags at once and that is the shape here too: the checks below are gathered and
+	// printed together, and the probe runs only when none of them spoke.
 	var bad []sandbox.Refusal
 	bad = append(bad, f.bad...)
 	// A flag this verb does not have is refused alone, at the first refusal: the flags that
@@ -688,8 +686,8 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 			// searching for home_outside or bad_write still finds it and the grammar
 			// stays the one the spec publishes.
 			// The refusal reason includes bad_write, home_outside,
-			// bad_read and no_command into reason=, tokens the grammar does not list.
-			// the token goes before a remedy the text carries, so the remedy stays a paste
+			// bad_read and no_command, tokens the grammar does not list; the token
+			// goes before a remedy the text carries, so the remedy stays a paste
 			text, next, hasNext := strings.Cut(r.Text, "; run: ")
 			if r.Reason != "" && r.Reason != "check" {
 				text += " (" + r.Reason + ")"
@@ -713,8 +711,8 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		}
 	}
 
-	// The outside path is named explicitly, not os.TempDir(), because
-	// TMPDIR inside the wall and a probe built on it would fail on a working wall.
+	// The outside path is named explicitly, not os.TempDir(), because TMPDIR
+	// points inside the wall, and a probe built on it would fail on a working wall.
 	outside := filepath.Join(filepath.Dir(p.Writes[0]), fmt.Sprintf(".nova-sandbox-probe-%d", os.Getpid()))
 	for _, d := range append(append([]string{}, p.Reads...), p.Writes...) {
 		if sandbox.Inside(outside, d) {
@@ -750,7 +748,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	}
 	nonce := hex.EncodeToString(rawNonce[:])
 
-	// The probe runs five checks, or four if no --secret is named. If a caller's key
+	// The probe runs five checks, or four if no --secret is named. A caller whose key
 	// arrives by environment has no key file, so there is no read_secret to prove. The
 	// order is the spec's own.
 	type step struct{ name, path, expect string }
