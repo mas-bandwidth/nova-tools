@@ -32,3 +32,10 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 func redisRun(args []string, stdout, stderr io.Writer) int {
 	return run(args, stdout, stderr, realDeps())
 }
+
+// `help <verb>` is that verb's help whatever follows the verb, for every verb the
+// tool's help names, `fn load` and `acl apply` included.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+	testverbhelp.HelpWhateverFollows(t, redisRun, usage, "nova-redis")
+}
