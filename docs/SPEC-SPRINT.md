@@ -1257,7 +1257,8 @@ between its commands, so there a RUNNING machine says `machine: running`
 however long since its last tick, and the inbox's judgment that it is not
 ticking names `nova-sprint tick` (a twin refuses `run`). The sprint line of every
 verb says the same of a running machine after the progress
-(`3/10 30.0% -> ETA  machine: running`); a STOPPED machine has no ETA, so its
+(`3/10 30.0% -> ETA -  machine: running`, the ETA a dash until five cards have
+landed); a STOPPED machine has no ETA, so its
 line is `STOPPED`, followed with cards on the
 table by the progress alone (`STOPPED  3/10 30.0%`); the STOPPED text is the
 one the header of `where` shows, which carries no progress; a failed tick keeps
