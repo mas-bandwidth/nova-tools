@@ -24,11 +24,12 @@ import (
 // object for a program; the driver reads the sprint through them.
 
 // summary is the sprint's line: landed / all primaries on the table, percent,
-// ETA. The ETA is an estimate once a card has landed: the cards left, each at
-// the average time a card has taken to land (since, the time from the machine's
-// first start, over the cards landed), in whole minutes rounded up, with no
-// seconds ("47m", "1h12m"); before that, or with no start known, the word
-// alone. Every primary landed, it has no ETA: it is done (errata 3 amendment 6).
+// ETA. The ETA is an estimate once five cards have landed: the cards left, each
+// at the average time a card has taken to land (since, the time from the
+// machine's first start, over the cards landed), in whole minutes rounded up,
+// with no seconds ("47m", "1h12m"); before five have landed, or with no start
+// known, the ETA reads a dash. Every primary landed, it has no ETA: it is done
+// (errata 3 amendment 6).
 // eta is the minutes left (etaMinutes, or the view's held value), 0 when there
 // is no estimate.
 func summary(t ntable.Table, eta int64) string {
@@ -41,15 +42,15 @@ func summary(t ntable.Table, eta int64) string {
 	case eta > 0:
 		return fmt.Sprintf("%s -> ETA %dm", progress(t), eta)
 	}
-	return progress(t) + " -> ETA"
+	return progress(t) + " -> ETA -"
 }
 
 // etaMinutes is the estimate of the minutes left, rounded up: the cards left,
-// each at since over the cards landed; 0 when there is none (nothing landed,
-// nothing left, or no first start known).
+// each at since over the cards landed; 0 when there is none (fewer than five
+// landed, nothing left, or no first start known).
 func etaMinutes(t ntable.Table, since time.Duration, started bool) int64 {
 	landed, all := counts(t)
-	if !started || landed <= 0 || landed >= all {
+	if !started || landed < 5 || landed >= all {
 		return 0
 	}
 	return int64(math.Ceil(float64(since) * float64(all-landed) / float64(landed) / float64(time.Minute)))
@@ -166,10 +167,12 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed("queue", err, stderr)
 	}
 	epoch := st.PinnedEpoch()
+	isReader := false
 	if *as != "" {
 		// the reader's own queue is its beat (docs/SPEC-SPRINT.md section 6):
-		// a name that is no reader's row writes none
-		if _, err := st.ReaderBeat(ctx, *as); err != nil {
+		// a name that is no reader's row writes none, and the answer says so
+		// (reader), for the reader loop to say whose verb makes the row
+		if isReader, err = st.ReaderBeat(ctx, *as); err != nil {
 			return a.readFailed("queue", err, stderr)
 		}
 	}
@@ -242,6 +245,9 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		out := map[string]any{"as": *as, "stream": *stream, "epoch": epoch, "cards": cards}
 		if width > 0 {
 			out["width"] = width // the member runs this many: the fleet row is the truth
+		}
+		if *as != "" {
+			out["reader"] = isReader // --as is a row of the readers table
 		}
 		b, _ := json.Marshal(out)
 		fmt.Fprintln(stdout, string(b))
@@ -1050,7 +1056,7 @@ func groupLine(g sprint.Group, now time.Time) string {
 		}
 		l += "  (" + strings.Join(ps, ",") + more + ")"
 	}
-	if g.What != "" {
+	if g.What != "" && g.Kind != sprint.Judgment {
 		l += "  " + g.What
 	}
 	if len(g.Commands) > 0 {
@@ -1069,12 +1075,18 @@ func groupLine(g sprint.Group, now time.Time) string {
 	return oneline.Escape(l)
 }
 
-// groupText is one inbox group as inbox prints it: its line, its hint, each
+// groupText is one inbox group as inbox prints it: its line, a judgment's
+// finding in full under it (one line per line of the finding), its hint, each
 // decision with the command lines that make it, and, opened (inbox --open),
 // every member, every need and its notes.
 func groupText(g sprint.Group, now time.Time, opened bool) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, groupLine(g, now))
+	if g.Kind == sprint.Judgment && g.What != "" {
+		for _, l := range strings.Split(g.What, "\n") {
+			fmt.Fprintf(&b, "  %s\n", oneline.Escape(l))
+		}
+	}
 	if g.Hint != "" {
 		fmt.Fprintf(&b, "  %s\n", oneline.Escape(g.Hint))
 	}

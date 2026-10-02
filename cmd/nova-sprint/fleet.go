@@ -47,8 +47,11 @@ be read.`) + "\n"
 // nova-sprint help reader.
 func readerWords() string {
 	return strings.TrimSpace(`
-The readers: a reader says it is there by asking for its own queue (queue --as
-<reader> is its beat). A reader is up while its last beat is under `+sprint.ReaderBeatBound.String()+` old, away
+The readers: a reader is a row of the readers table, which the coordinator
+declares (init --readers, reader add); no beat and no loop record makes one. A
+reader with its row says it is there by asking for its own queue (queue --as
+<reader> is its beat); the queue of a name with no row writes none and answers
+reader false, and the reader loop says MEMBER NOT A READER. A reader is up while its last beat is under `+sprint.ReaderBeatBound.String()+` old, away
 when it beat and has lapsed, down when it has never beaten; reader away holds
 one away whatever it beats and reader up releases the hold. The ask deals a
 read to a reader up only: a read asked of a reader that is not up is asked of

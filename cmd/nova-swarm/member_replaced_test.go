@@ -29,6 +29,7 @@ type replaceRig struct {
 	taken    map[string]bool
 	started  []string
 	childEnd bool
+	deadline int // the packets' route deadline, seconds (0: none)
 }
 
 func (r *replaceRig) Run(args ...string) (int, []byte) {
@@ -69,7 +70,7 @@ func (r *replaceRig) Run(args ...string) (int, []byte) {
 }
 
 func (r *replaceRig) pkt(id string) member.Packet {
-	return member.Packet{Card: id, Kind: "work", As: "m1", Attempt: 1, Gen: 1, Epoch: 1, Branch: "work/" + id}
+	return member.Packet{Card: id, Kind: "work", As: "m1", Attempt: 1, Gen: 1, Epoch: 1, Branch: "work/" + id, Deadline: r.deadline}
 }
 
 func (r *replaceRig) Start(p member.Packet) (member.Child, error) {
@@ -111,7 +112,7 @@ func TestMemberStopsAtOnceWhenItsBinaryIsReplacedAndNothingRuns(t *testing.T) {
 	r.empty = true
 	var errb bytes.Buffer
 
-	n, replaced := memberLoop(m, time.Millisecond, 3, stamp, out, &errb)
+	n, replaced := memberLoop(m, loopRun{every: time.Millisecond, limit: 3, stamp: stamp}, out, &errb)
 	assert.False(t, replaced, "an unchanged binary ticks on")
 	assert.Equal(t, 3, n)
 	assert.NotContains(t, out.String(), "MEMBER STOP")
@@ -122,7 +123,7 @@ func TestMemberStopsAtOnceWhenItsBinaryIsReplacedAndNothingRuns(t *testing.T) {
 			r.install(t)
 		}
 	}
-	n, replaced = memberLoop(m, time.Millisecond, 10, stamp, out, &errb)
+	n, replaced = memberLoop(m, loopRun{every: time.Millisecond, limit: 10, stamp: stamp}, out, &errb)
 	assert.True(t, replaced)
 	assert.Equal(t, 1, n, "no tick after the replacement")
 	assert.Equal(t, 1, r.queues)
@@ -144,7 +145,7 @@ func TestMemberDrainsItsChildrenThenStopsWhenItsBinaryIsReplaced(t *testing.T) {
 		}
 	}
 	// the loop is bounded by 20 ticks: a drain that never stopped would hit it
-	n, replaced := memberLoop(m, time.Millisecond, 20, stamp, out, &errb)
+	n, replaced := memberLoop(m, loopRun{every: time.Millisecond, limit: 20, stamp: stamp}, out, &errb)
 	assert.True(t, replaced)
 	assert.Equal(t, []string{"c1"}, r.started, "c2 was ready and room was left, and it was not taken after the replacement")
 	assert.Equal(t, 1, r.takes, "no take once the binary was replaced")

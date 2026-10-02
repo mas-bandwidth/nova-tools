@@ -361,6 +361,14 @@ func commands(g Group, first Note, prefix string) []Command {
 	const cmd = "nova-sprint "
 	grp := " --group " + g.ID + " --expect " + itoa(g.Size)
 	ans := " --answers " + strings.Join(g.Notes, ",")
+	// A judgment about exactly one card is answered by naming the card, so the
+	// coordinator pastes no group token; a group of several keeps the group
+	// form. Only the per-card verbs below use it (a stream-level decision still
+	// names its group, and --answers still records its answer).
+	subj, subjAns := grp, ans
+	if g.Size == 1 && len(g.Members) == 1 {
+		subj, subjAns = " "+g.Members[0], ""
+	}
 	s := g.Stream
 	resume := func(did string) string { return cmd + "resume --stream " + s + " --did " + did + ans }
 	look := func() []string {
@@ -455,17 +463,17 @@ func commands(g Group, first Note, prefix string) []Command {
 				add(d, cmd+"drop"+grp+" --reason "+whyText+ans, resume("'dropped the batch'"))
 			}
 		case d == "rework with the finding" || d == "rework with a fix" && g.Type == NWorkFailed:
-			add(d, cmd+"rework"+grp+ans) // each takes its own finding or report
+			add(d, cmd+"rework"+subj+subjAns) // each takes its own finding or report
 		case d == "rework with a fix" || d == "rework":
-			add(d, cmd+"rework"+grp+" --fix "+fixText+ans)
+			add(d, cmd+"rework"+subj+" --fix "+fixText+subjAns)
 		case d == "ask":
 			add(d, cmd+"ask"+grp+ans)
 		case d == "accept":
 			add(d, cmd+"accept"+grp+ans)
 		case d == "ask another reader":
-			add(d, cmd+"ask"+grp+" --another"+ans)
+			add(d, cmd+"ask"+subj+" --another"+subjAns)
 		case d == "drop":
-			add(d, cmd+"drop"+grp+" --reason "+whyText+ans)
+			add(d, cmd+"drop"+subj+" --reason "+whyText+subjAns)
 		case d == "return":
 			add(d, cmd+"return"+grp+" --reason "+whyText+ans)
 		case d == "look":
@@ -493,7 +501,7 @@ func commands(g Group, first Note, prefix string) []Command {
 		case d == "fleet beat":
 			add(d, cmd+"fleet beat '<member>'")
 		case d == "ask --another":
-			add(d, cmd+"ask"+grp+" --another"+ans)
+			add(d, cmd+"ask"+subj+" --another"+subjAns)
 		case strings.HasPrefix(d, "merge --stream "):
 			// a merge step is a report: it names its epoch, the judgment's
 			add(d, cmd+d+" --epoch "+strconv.FormatUint(IDEpoch(g.ID), 10))

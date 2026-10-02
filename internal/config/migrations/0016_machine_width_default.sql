@@ -1,4 +1,4 @@
--- 0015: a machine's width is optional (internal/config/kind.go: Kinds,
+-- 0016: a machine's width is optional (internal/config/kind.go: Kinds,
 -- "machine"; internal/config/width.go). NULL, an unset width, is the default:
 -- half the machine's cores as its beat reports them, resolved by nova-sprint
 -- fleet sync (the owner, 2026-10-02: "width=-1 in config means default and

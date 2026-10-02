@@ -143,6 +143,13 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		assert.Contains(t, loops, w)
 	}
 	assert.NotContains(t, loops, "WOULD-RETIRE member-local")
+	// --check says which units a run restarts and why: a member's restart drains it
+	// (nova-tools#5096 item 25); a disabled loop is stopped, not restarted
+	assert.Contains(t, loops, "WOULD-RESTART member-local on localhost: its unit file changed; a member: the restart drains it (SIGTERM: it takes no new card, lets its running cards finish and reports them), waiting up to 7260 s, then the new unit starts")
+	assert.NotContains(t, loops, "WOULD-RESTART tick-local")
+	// the member's unit stops it by draining it; the periodic loop's is as it was
+	assert.Equal(t, 1, strings.Count(loops, "+KillMode=mixed"), "the member's unit alone")
+	assert.Equal(t, 1, strings.Count(loops, "+TimeoutStopSec=7260"))
 	assert.NotContains(t, loops, `\u0001`)
 	plist := play("loops.yml", append(check, "-e", "ansible_system=Darwin", "-e", "nova_launchd_domain=gui")...)
 	for _, w := range []string{
@@ -159,6 +166,8 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	} {
 		assert.Contains(t, plist, w)
 	}
+	assert.Equal(t, 1, strings.Count(plist, "+<key>ExitTimeOut</key>"), "the member's plist alone")
+	assert.Contains(t, plist, "+<integer>7260</integer>")
 	assert.NotContains(t, loops+plist, "NOVA_SPRINT_REDIS=old-store:6379")
 	_, err := os.Stat(filepath.Join(home, ".config", "nova"))
 	assert.True(t, os.IsNotExist(err), "--check wrote the build fact")
@@ -266,6 +275,41 @@ func TestToolsPlayNamesTheDogfoodReceipts(t *testing.T) {
 	assert.NotContains(t, out, "WOULD-BUILD")
 	out = r.play(t, "tools.yml", append(vars, "-e", `{"nova_release_gate_args": ["--no-dogfood-gate", "--reason", "the test"]}`)...)
 	assert.Contains(t, out, "WOULD-BUILD version=v0.0.0-check")
+}
+
+// TestLoopsPlayRecordFilter: nova_loop_only names the records a run renders and
+// restarts (nova-tools#5096 item 24, the readers-only pass of 2026-10-02); every
+// other unit on the machine is left as it is, and none is retired, not even a
+// marked unit no record names. A name no record on the run's machines carries is
+// refused before anything is written.
+func TestLoopsPlayRecordFilter(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "check-fixture.yml")
+	units := filepath.Join(r.home, ".config", "systemd", "user")
+	require.NoError(t, os.MkdirAll(units, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(units, "nova-loop-old.service"), []byte("# written by fleet/loops.yml from the loop record old\n[Service]\n"), 0o644))
+	check := []string{"--check", "--diff", "-e", "ansible_system=Linux", "-e", "nova_home=" + r.home, "-e", "nova_sops=/usr/bin/sops-of-the-fixture"}
+
+	plain := r.play(t, "loops.yml", check...)
+	assert.Contains(t, plain, "WOULD-RETIRE old on localhost")
+	assert.Contains(t, plain, "nova-loop-tick-local.timer")
+
+	only := r.play(t, "loops.yml", append(check, "-e", "nova_loop_only=member-local")...)
+	assert.Contains(t, only, "nova-loop-member-local.service")
+	assert.NotContains(t, only, "nova-loop-tick-local", "a record not named is not rendered")
+	assert.NotContains(t, only, "WOULD-RETIRE", "a filtered run retires nothing")
+	assert.Contains(t, only, "WOULD-RESTART member-local on localhost")
+	assert.Contains(t, only, "LOOPS host=localhost place="+units+" records=1 enabled=1 written=1 retired=0 only=member-local (check: nothing changed)")
+	assert.False(t, strings.Contains(only, "FAILED!"), "a task failed")
+
+	list := r.play(t, "loops.yml", append(check, "-e", `{"nova_loop_only": ["member-local", "tick-local"]}`)...)
+	assert.Contains(t, list, "records=2 enabled=1 written=")
+	assert.Contains(t, list, "only=member-local,tick-local")
+
+	out, err := r.playResult(t, "loops.yml", append(check, "-e", "nova_loop_only=member-locl")...)
+	require.Error(t, err)
+	assert.Contains(t, out, "nova_loop_only names member-locl, which no loop record of this run's machines is")
+	assert.NotContains(t, out, "LOOPS host=")
 }
 
 // TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks runs tools.yml for

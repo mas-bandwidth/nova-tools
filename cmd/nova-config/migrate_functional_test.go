@@ -68,11 +68,11 @@ func ledger(t *testing.T, dsn string) int {
 
 // The measured case on a real Postgres, built as the fleet's store was: an
 // admin role made the early tables (1 to 5) and later altered its own (10 to
-// 12), a config role with full row rights on them made and changed the rest
-// (6 to 9, 13), so the ledger is at 13. The config role runs migrate: 0014
-// alters config.fleet, the admin role's, and migrate refuses before applying
-// it, the ledger unchanged; the ALTER lines it prints, run once by a role
-// with the owners' rights, let the same migrate apply it.
+// 12, 14), a config role with full row rights on them made and changed the rest
+// (6 to 9, 13), so the ledger is at 14. The config role runs migrate: 0015
+// and 0016 alter config.machines, the admin role's, and migrate refuses before
+// applying either, the ledger unchanged; the ALTER lines it prints, run once by
+// a role with the owners' rights, let the same migrate apply them.
 func TestMigrateRefusesMixedOwnershipUntilTheAlterLinesAreRun(t *testing.T) {
 	t.Parallel()
 
@@ -95,9 +95,10 @@ func TestMigrateRefusesMixedOwnershipUntilTheAlterLinesAreRun(t *testing.T) {
 	applyAs(t, cfgDSN, 6, 9)
 	applyAs(t, adminDSN, 10, 12)
 	applyAs(t, cfgDSN, 13, 13)
+	applyAs(t, adminDSN, 14, 14)
 	all, err := config.Migrations()
 	require.NoError(t, err)
-	require.Len(t, all, 15, "the measured case is the ledger at 13, with 0014 and 0015 pending")
+	require.Len(t, all, 16, "the measured case is the ledger at 14, with 0015 and 0016 pending")
 
 	r := &real{env: map[string]string{"NOVA_PG_DSN": cfgDSN}}
 	_, errs := r.run(t, 1, "migrate")
@@ -107,13 +108,13 @@ func TestMigrateRefusesMixedOwnershipUntilTheAlterLinesAreRun(t *testing.T) {
 	for _, tb := range []string{"loops", "routes", "tiers"} {
 		require.NotContains(t, errs, "config."+tb, "refusal: %q", errs)
 	}
-	require.Contains(t, errs, "nova-config migrate REFUSED: role "+cfg+" cannot apply migrations 14 to 15 and applied none", "refusal: %q", errs)
+	require.Contains(t, errs, "nova-config migrate REFUSED: role "+cfg+" cannot apply migrations 15 to 16 and applied none", "refusal: %q", errs)
 	require.Contains(t, errs, admin+" owns ", "refusal: %q", errs)
-	require.Equal(t, 13, ledger(t, super), "the refusal applied a migration")
+	require.Equal(t, 14, ledger(t, super), "the refusal applied a migration")
 
 	out, _ := r.run(t, 1, "migrate", "--dry-run")
 	require.Contains(t, out, " ready=no\n", "dry-run: %q", out)
-	require.Equal(t, 13, ledger(t, super), "the dry run applied a migration")
+	require.Equal(t, 14, ledger(t, super), "the dry run applied a migration")
 
 	_, remedy, found := strings.Cut(strings.TrimSuffix(errs, "\n"), "; run: ")
 	require.True(t, found, "refusal names no remedy: %q", errs)
@@ -121,6 +122,6 @@ func TestMigrateRefusesMixedOwnershipUntilTheAlterLinesAreRun(t *testing.T) {
 	out, _ = r.run(t, 0, "migrate", "--dry-run")
 	require.Contains(t, out, " ready=yes\n", "dry-run after the remedy: %q", out)
 	out, _ = r.run(t, 0, "migrate")
-	require.True(t, strings.HasSuffix(out, " from=13 to=15 applied=2\n"), "migrate after the remedy: %q", out)
+	require.True(t, strings.HasSuffix(out, " from=14 to=16 applied=2\n"), "migrate after the remedy: %q", out)
 	require.Equal(t, len(all), ledger(t, super))
 }

@@ -22,8 +22,8 @@ func etaWork(ready, landed int64) ntable.Table {
 // ET: "an estimate, based on the number of cards remaining, and the average time per-card
 // to land"): the cards left, each at the time from the first start over the cards landed,
 // in whole minutes rounded up, never seconds ("i don't need seconds. round up to minute").
-// With none landed, or no start known, there is no rate and the word stands alone; with
-// every card landed there is no ETA.
+// With fewer than five landed, or no start known, there is no rate and the ETA reads a
+// dash; with every card landed there is no ETA.
 func TestTheSprintLineEstimatesItsETAFromTheCardsLeftAndTheAverageTimeToLand(t *testing.T) {
 	t.Parallel()
 	line := func(ready, landed int64, since time.Duration, started bool) string {
@@ -32,12 +32,24 @@ func TestTheSprintLineEstimatesItsETAFromTheCardsLeftAndTheAverageTimeToLand(t *
 	}
 	// 250 of 1000 landed in 5 minutes is 1.2 s a card: the 750 left take 15 minutes
 	assert.Equal(t, "250/1000 25.0% -> ETA 15m", line(750, 250, 5*time.Minute, true))
-	assert.Equal(t, "1/3 33.3% -> ETA 1m", line(2, 1, 10*time.Second, true), "20 s left is 1m")
-	assert.Equal(t, "1/3 33.3% -> ETA 2m", line(2, 1, 31*time.Second, true), "62 s left is 2m")
+	assert.Equal(t, "1/3 33.3% -> ETA -", line(2, 1, 10*time.Second, true), "one landed is under the five-card threshold: no estimate")
+	assert.Equal(t, "1/3 33.3% -> ETA -", line(2, 1, 31*time.Second, true), "one landed is under the five-card threshold: no estimate")
 	assert.Equal(t, "100/1000 10.0% -> ETA 1h12m", line(900, 100, 8*time.Minute, true))
-	assert.Equal(t, "0/3 0.0% -> ETA", line(3, 0, time.Minute, true), "nothing landed: no rate to estimate from")
-	assert.Equal(t, "1/3 33.3% -> ETA", line(2, 1, 0, false), "no first start known: no estimate")
+	assert.Equal(t, "0/3 0.0% -> ETA -", line(3, 0, time.Minute, true), "nothing landed: no rate to estimate from")
+	assert.Equal(t, "1/3 33.3% -> ETA -", line(2, 1, 0, false), "no first start known: no estimate")
 	assert.Equal(t, "3/3 100.0% done", line(0, 3, time.Minute, true), "every card landed: done, no ETA")
+}
+
+// The ETA reads a dash until five cards have landed in the epoch: four landed
+// give no rate to estimate from, five do.
+func TestTheETAReadsDashUntilFiveCardsHaveLanded(t *testing.T) {
+	t.Parallel()
+	line := func(ready, landed int64) string {
+		w := etaWork(ready, landed)
+		return summary(w, etaMinutes(w, time.Minute, true))
+	}
+	assert.Equal(t, "4/10 40.0% -> ETA -", line(6, 4))
+	assert.Equal(t, "5/10 50.0% -> ETA 1m", line(5, 5))
 }
 
 // The view shows the largest estimate of the last 10 s, so the value is stable (Glenn,
