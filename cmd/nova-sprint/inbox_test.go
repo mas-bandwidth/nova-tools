@@ -72,7 +72,7 @@ func TestAGroupIsNamedByItsIDNeverItsPosition(t *testing.T) {
 		t.Fatalf("inbox --open 2: %d %s", code, errs)
 	}
 	out = ta.ok("rework --group " + first.ID + " --fix 'the fix'")
-	if !strings.Contains(out, "MOVED s1-1 review -> working (rework)") || strings.Contains(out, "s2-1") {
+	if !strings.Contains(out, "MOVED s1-1 work review -> working (rework)") || strings.Contains(out, "s2-1") {
 		t.Fatalf("rework by id: %s", out)
 	}
 	if code, _, errs := ta.do("rework --group " + first.ID + " --fix 'the fix'"); code != 1 || !strings.Contains(errs, "no inbox group "+first.ID+" now") {
@@ -157,7 +157,7 @@ func TestReworkTakesTheFindingOrTheReport(t *testing.T) {
 		t.Fatalf("the refused rework answered the judgment: %+v", g)
 	}
 	out = ta.ok("rework s1-1 s1-2 --answers " + broken.ID)
-	if !strings.Contains(out, "MOVED s1-1 review -> working (rework)") || !strings.Contains(out, "MOVED s1-2 review -> working (rework)") {
+	if !strings.Contains(out, "MOVED s1-1 work review -> working (rework)") || !strings.Contains(out, "MOVED s1-2 work review -> working (rework)") {
 		t.Fatalf("rework with the finding and the report: %s", out)
 	}
 	for id, want := range map[string]string{"s1-1": `fix=the\x20empty\x20case\x20is\x20not\x20handled`, "s1-2": `fix=the\x20tests\x20went\x20red`} {

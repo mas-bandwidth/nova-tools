@@ -899,13 +899,13 @@ TICK OK state=RUNNING idle=no moved=1 notes=2
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint tick
-MOVED deal: s1-1 ready -> working card=s1-1.w1 member=m1
+MOVED deal: s1-1 work ready -> working card=s1-1.w1 member=m1 (fleet ready)
 TABLES rows changed: work=1 readers=0 merge=0 fleet=1
 TICK OK state=RUNNING idle=no moved=1 notes=1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint take --as m1 --epoch 0
-MOVED s1-1.w1 ready -> working member=m1 gen=1
+MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
 PACKET s1-1.w1 attempt=1 gen=1 epoch=0
   branch: sprint/s1-1.w1.g1.e0
   base: the stream's base
