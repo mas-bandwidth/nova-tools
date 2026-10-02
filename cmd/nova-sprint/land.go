@@ -634,8 +634,24 @@ func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 // identity, a hook, the disk), nothing to report.
 func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard) (merged []string, failed conflictCard, why string) {
 	base := cards[0].base
-	if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin"); err != nil {
-		return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
+	// THE FETCH BRINGS WHAT THE BATCH NEEDS AND NOTHING ELSE: the base, and the cards'
+	// heads by their ids, in one exchange. A fetch of every branch of origin costs a
+	// negotiation over all of them, once a stream a round: on a repository with two
+	// thousand card branches it was 15 s a fetch and landing fell to a third of the
+	// fleet's rate (the fleet pass of 2026-10-01 20:18 ET, 1000 cards). A head origin
+	// does not hold fails the one fetch; then the base alone is fetched and each head at
+	// its merge (mergeHead), which names the card.
+	baseRef := "+refs/heads/" + base + ":refs/remotes/origin/" + base
+	fetch := []string{"fetch", "--no-tags", "origin", baseRef}
+	for _, c := range cards {
+		if shaRE.MatchString(c.head) {
+			fetch = append(fetch, c.head)
+		}
+	}
+	if _, err := l.git(ctx, dir, fetch...); err != nil {
+		if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin", baseRef); err != nil {
+			return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
+		}
 	}
 	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {
 		return nil, failed, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
@@ -766,7 +782,9 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 	if err := os.MkdirAll(l.root, 0o755); err != nil {
 		return "", "the land directory " + l.root + " could not be made: " + oneline.Err(err)
 	}
-	if _, err := l.git(ctx, "", "clone", "--no-tags", "--", repo, dir); err != nil {
+	// one branch, never every branch: the landing fetches the base and the heads it needs
+	// itself (build), and a clone of a card repository's thousands of branches was 80 s
+	if _, err := l.git(ctx, "", "clone", "--no-tags", "--single-branch", "--", repo, dir); err != nil {
 		return "", "the clone of " + repo + " into " + dir + " failed: " + firstLine("", err)
 	}
 	return dir, ""
