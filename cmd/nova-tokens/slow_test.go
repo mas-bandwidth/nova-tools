@@ -36,7 +36,7 @@ func TestASecondFoldWaitsAndThenRefusesNamingTheHolder(t *testing.T) {
 	b.fold("--claude", "g="+b.tr).Exit(2).Err("fold.lock", "pid ")
 	// fixed-waits-allowlist.txt names this measurement as slow_test.go:38; keep it there.
 	waited := time.Since(start)
-	assert.GreaterOrEqual(t, waited, 500*time.Millisecond, "the second fold refused after %s; it is supposed to wait for the first", waited)
+	assert.True(t, waited >= 500*time.Millisecond, "the second fold refused after %s; it is supposed to wait for the first", waited)
 	assert.NoFileExists(t, filepath.Join(b.out, "2026-09-11.tsv"), "the refused fold wrote a day file")
 }
 
