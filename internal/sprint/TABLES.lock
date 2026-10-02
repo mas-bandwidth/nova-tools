@@ -32,6 +32,14 @@
 # (hidden) count her jobs done, done and ok% are the same formulas as the fleet's with
 # the footer pooling ok%, and status stays up, down or held by the fleet's rule. Held by
 # TestSprintTablesAreLocked.
+#
+# Change, 2026-10-02, the where view's title line, not a table: Glenn, 5:15 PM: "We need
+# to make handover MORE SMOOTH."; 5:20 PM: "you can be given coordinator status, or you
+# can take it (with my permission only)". The seat's holder shows beside the title,
+# "SPRINT TABLE  coordinator rowan", and after a take "(taken 5:21 PM)" until the next
+# handover is given (Rowan's brief of that hour, nova-tools#5096 item 28). The progress
+# line under it and every table are as they were; no column changed, so the lines below
+# are unchanged. Held by TestTheSeatIsTakenWithTheOwnersName and the where goldens.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown

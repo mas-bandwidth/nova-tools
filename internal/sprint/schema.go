@@ -204,6 +204,9 @@ func noJudgment(s *Snapshot, id string) string {
 	if e := IDEpoch(id); e != s.Epoch {
 		return OtherEpoch(id, e, s.Epoch)
 	}
+	if _, ok := StaleStream(id); ok {
+		return id + " is a stream that has not moved, read when the inbox is read, not a stored judgment: nothing answers it but its stream moving; run: nova-sprint wait " + id + " --for 30m"
+	}
 	return "no open judgment " + id + "; run: nova-sprint inbox"
 }
 

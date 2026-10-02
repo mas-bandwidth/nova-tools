@@ -15,6 +15,8 @@ import (
 
 // A failed log poll cannot satisfy inbox --wait: a subsequent ordinary inbox
 // read may succeed, but says nothing about whether the requested tick ended.
+// The one inbox read before any poll fails is the wait's own first look (what
+// is open when it begins), not a fallback.
 func TestAnInboxWaitSurfacesItsFailedLogPoll(t *testing.T) {
 	t.Parallel()
 	for _, failure := range []string{"transport", "refused", "malformed"} {
@@ -35,11 +37,13 @@ func TestAnInboxWaitSurfacesItsFailedLogPoll(t *testing.T) {
 				now := time.Unix(100, 0)
 				a.now = func() time.Time { return now }
 				a.sleep = func(d time.Duration) { now = now.Add(d) }
-				polls, inboxes := 0, 0
+				polls, inboxes, failed := 0, 0, false
 				a.forward = func(_ context.Context, _ string, verbs ...[]string) ([]sprintwire.Result, error) {
 					require.Len(t, verbs, 1)
 					if verbs[0][0] == "inbox" {
-						inboxes++
+						if failed {
+							inboxes++
+						}
 						return []sprintwire.Result{{Stdout: "{\"groups\":[]}\n"}}, nil
 					}
 					require.Equal(t, "log", verbs[0][0])
@@ -47,6 +51,7 @@ func TestAnInboxWaitSurfacesItsFailedLogPoll(t *testing.T) {
 					if !initial && polls == 1 {
 						return []sprintwire.Result{{Stdout: "{\"lines\":[]}\n"}}, nil
 					}
+					failed = true
 					switch failure {
 					case "transport":
 						return nil, errors.New("log poll unavailable")

@@ -55,7 +55,7 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	}
 	w.must(Ask(w.s, AskReq{}))
 	reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
-	w.must(Read(w.s, ReadReq{As: reads[0].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{reads[0].ID}}}))
+	w.must(Read(w.s, ReadReq{As: reads[0].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{reads[0].ID}}}))
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "the fix"}))
 	pr := w.s.Work.Card("s1-1")
 	card := w.s.Fleet.Placed(pr.F("work"))
@@ -91,7 +91,7 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m2"}))
 	r2 := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
-	w.must(Read(w.s, ReadReq{As: r2[0].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r2[0].ID}}}))
+	w.must(Read(w.s, ReadReq{As: r2[0].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r2[0].ID}}}))
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-2"}}, Fix: "later"}))
 	require.Equal(t, Ready, w.state("s1-2"), "rework with nobody up: %s", w.state("s1-2"))
 	require.Nil(t, w.s.Fleet.Card("s1-2.w2"), "rework with nobody up: %s", w.state("s1-2"))
@@ -292,11 +292,13 @@ func TestD7InboxDueTimesAndStalledStreams(t *testing.T) {
 	require.Len(t, g, 3, "groups: %+v", g)
 	require.True(t, g[0].Overdue, "overdue judgment: %+v", g[0])
 	require.True(t, g[0].Due.Equal(t0.Add(10*time.Minute)), "overdue judgment: %+v", g[0])
-	require.False(t, g[1].Overdue, "a waited judgment is hidden or overdue: %+v", g[1])
-	require.True(t, g[1].Due.Equal(waited.Review), "a waited judgment is hidden or overdue: %+v", g[1])
-	require.Equal(t, NReadBroken, g[1].Type, "a waited judgment is hidden or overdue: %+v", g[1])
-	require.Equal(t, NStreamStale, g[2].Type, "stalled stream: %+v", g[2])
-	require.Equal(t, "s1", g[2].Stream, "stalled stream: %+v", g[2])
+	// a waited judgment is quiet for its period: listed after every judgment that is not
+	require.False(t, g[2].Overdue, "a waited judgment is hidden or overdue: %+v", g[2])
+	require.True(t, g[2].Quiet, "a waited judgment is quiet: %+v", g[2])
+	require.True(t, g[2].Due.Equal(waited.Review), "a waited judgment is hidden or overdue: %+v", g[2])
+	require.Equal(t, NReadBroken, g[2].Type, "a waited judgment is hidden or overdue: %+v", g[2])
+	require.Equal(t, NStreamStale, g[1].Type, "stalled stream: %+v", g[1])
+	require.Equal(t, "s1", g[1].Stream, "stalled stream: %+v", g[1])
 }
 
 // D8: ci records head, run, status and source on a primary in any state,
@@ -397,8 +399,8 @@ func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 	w.must(Ask(w.s, AskReq{}))
 	// s1-1: both broken; ask another closes both; the third says ok.
 	r1 := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
-	w.must(Read(w.s, ReadReq{As: r1[0].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r1[0].ID}}}))
-	w.must(Read(w.s, ReadReq{As: r1[1].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r1[1].ID}}}))
+	w.must(Read(w.s, ReadReq{As: r1[0].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r1[0].ID}}}))
+	w.must(Read(w.s, ReadReq{As: r1[1].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r1[1].ID}}}))
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
 	third := readsAt(w.s, w.s.Work.Card("s1-1"), 1)[2]
 	w.must(Read(w.s, ReadReq{As: third.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{third.ID}}}))
@@ -410,7 +412,7 @@ func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 	// and the broken judgment stays open.
 	r2 := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{As: r2[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{r2[0].ID}}}))
-	w.must(Read(w.s, ReadReq{As: r2[1].F("reader"), Verdict: "broken", Sel: Sel{IDs: []string{r2[1].ID}}}))
+	w.must(Read(w.s, ReadReq{As: r2[1].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r2[1].ID}}}))
 	broken := w.openOn("s1-2")[0].Note.ID
 	p := w.do(Ack(w.s, AckReq{Notes: []string{broken}, Reason: "not a defect"}))
 	require.Len(t, p.Refused, 1, "ack of a broken read: %+v", p)

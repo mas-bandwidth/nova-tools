@@ -102,7 +102,7 @@ func (p *probe) toReview(head string, xs ...string) {
 }
 
 func (p *probe) read(reader, card, verdict string) Result {
-	return p.do("read "+card+" "+verdict, ReadStep(sprint.ReadReq{As: reader, Verdict: verdict, Sel: ids(card)}))
+	return p.do("read "+card+" "+verdict, ReadStep(sprint.ReadReq{As: reader, Verdict: verdict, Finding: "f:1", Sel: ids(card)}))
 }
 
 // A member goes down, its work card is redealt and taken by another, the

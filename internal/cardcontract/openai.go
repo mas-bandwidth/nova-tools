@@ -110,9 +110,10 @@ func (openai) JobText(f Frame, s Staged) string {
 	if f.Kind == "read" {
 		fmt.Fprintf(&b, "%s %s, attempt %d\n\n", ReadTitle, f.Card, f.Attempt)
 		fmt.Fprintf(&b, "The staged checkout %s holds %s on branch %s at %s, for review against %s.\n\n", s.Repo, f.Repo, f.Branch, s.Head, orDash(f.ReviewBase))
-		b.WriteString("Review the staged change with `gh pr diff`, `gh pr view` and `gh pr checks`, and run the card's gate. These commands read the staged checkout, not a live forge. Change nothing and commit nothing.\n\n")
+		b.WriteString("Review the staged change with `gh pr diff`, `gh pr view` and `gh pr checks`, and run " + gateWords(s) + ". These commands read the staged checkout, not a live forge. Change nothing and commit nothing.\n\n")
 		writeReadDiff(&b, f, s)
 		b.WriteString("Write your review into a file and finish with `gh pr review --approve --body-file <file>` or `gh pr review --request-changes --body-file <file>`. Put each finding at file:line. The review is recorded for this card; a PR number, URL or other target is unsupported.\n\n")
+		b.WriteString(BrokenFindingText + "\n\n")
 		b.WriteString("If you write " + s.Job + "/RESULT.md yourself, use this read shape and report only a verdict the review supports:\n\n")
 		b.WriteString(ShapeText("read") + "\n")
 	} else {
