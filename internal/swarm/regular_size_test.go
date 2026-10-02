@@ -2,14 +2,14 @@ package swarm
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // security#30 finding 4 residue, issue #234: readRegular had no size cap,
@@ -30,17 +30,11 @@ func TestReadRegularOrdinaryFile(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "ordinary.txt")
 	content := []byte("hello world, ordinary record contents\n")
-	if err := os.WriteFile(p, content, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(p, content, 0o644))
 
 	got, err := readRegular(p)
-	if err != nil {
-		t.Fatalf("readRegular failed on ordinary file: %v", err)
-	}
-	if !bytes.Equal(got, content) {
-		t.Fatalf("got %q, want %q", got, content)
-	}
+	require.NoError(t, err, "readRegular failed on ordinary file: %v", err)
+	require.Equal(t, content, got, "got %q, want %q", got, content)
 }
 
 func TestReadRegularBoundedExactBoundaryAccepted(t *testing.T) {
@@ -49,17 +43,11 @@ func TestReadRegularBoundedExactBoundaryAccepted(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "exact.txt")
 	content := bytes.Repeat([]byte("a"), 64)
-	if err := os.WriteFile(p, content, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(p, content, 0o644))
 
 	got, err := readRegularBounded(p, 64)
-	if err != nil {
-		t.Fatalf("readRegularBounded(64) on 64-byte file failed: %v", err)
-	}
-	if !bytes.Equal(got, content) {
-		t.Fatalf("got len %d, want len 64", len(got))
-	}
+	require.NoError(t, err, "readRegularBounded(64) on 64-byte file failed: %v", err)
+	require.Equal(t, content, got, "got len %d, want len 64", len(got))
 }
 
 func TestReadRegularBoundedBoundaryPlusOneRefused(t *testing.T) {
@@ -68,23 +56,13 @@ func TestReadRegularBoundedBoundaryPlusOneRefused(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "plusone.txt")
 	content := bytes.Repeat([]byte("a"), 65)
-	if err := os.WriteFile(p, content, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(p, content, 0o644))
 
 	got, err := readRegularBounded(p, 64)
-	if err == nil {
-		t.Fatalf("readRegularBounded(64) on 65-byte file succeeded, returned %d bytes", len(got))
-	}
-	if got != nil {
-		t.Fatalf("expected nil bytes on error, got %d bytes", len(got))
-	}
-	if !errors.Is(err, fs.ErrInvalid) {
-		t.Fatalf("expected fs.ErrInvalid wrapper, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "passes ceiling") {
-		t.Fatalf("expected error mentioning passes ceiling, got %v", err)
-	}
+	require.Error(t, err, "readRegularBounded(64) on 65-byte file succeeded, returned %d bytes", len(got))
+	require.Nil(t, got, "expected nil bytes on error, got %d bytes", len(got))
+	require.ErrorIs(t, err, fs.ErrInvalid, "expected fs.ErrInvalid wrapper, got %v", err)
+	require.Contains(t, err.Error(), "passes ceiling", "expected error mentioning passes ceiling, got %v", err)
 }
 
 func TestReadRegularHugeSparseFileRefusedWithoutHugeAllocation(t *testing.T) {
@@ -93,9 +71,7 @@ func TestReadRegularHugeSparseFileRefusedWithoutHugeAllocation(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "huge_sparse.log")
 	f, err := os.Create(p)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// 100 GiB sparse file: takes 0 bytes of disk blocks, but fi.Size() is 100 GiB.
 	const hugeSize = 100 * 1024 * 1024 * 1024 // 100 GiB
 	if err := f.Truncate(hugeSize); err != nil {
@@ -108,22 +84,12 @@ func TestReadRegularHugeSparseFileRefusedWithoutHugeAllocation(t *testing.T) {
 	got, err := readRegular(p)
 	elapsed := time.Since(start)
 
-	if err == nil {
-		t.Fatalf("readRegular on 100 GiB sparse file unexpectedly succeeded with %d bytes", len(got))
-	}
-	if got != nil {
-		t.Fatalf("expected nil slice on oversized error, got %d bytes", len(got))
-	}
-	if !errors.Is(err, fs.ErrInvalid) {
-		t.Fatalf("expected fs.ErrInvalid wrapper, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "passes ceiling") {
-		t.Fatalf("expected error mentioning passes ceiling, got %v", err)
-	}
+	require.Error(t, err, "readRegular on 100 GiB sparse file unexpectedly succeeded with %d bytes", len(got))
+	require.Nil(t, got, "expected nil slice on oversized error, got %d bytes", len(got))
+	require.ErrorIs(t, err, fs.ErrInvalid, "expected fs.ErrInvalid wrapper, got %v", err)
+	require.Contains(t, err.Error(), "passes ceiling", "expected error mentioning passes ceiling, got %v", err)
 	// Verify it refused instantaneously (at stat time) without reading or allocating.
-	if elapsed > 30*time.Second {
-		t.Fatalf("readRegular took %v on sparse file; stat-time refusal should be near instantaneous", elapsed)
-	}
+	require.LessOrEqual(t, elapsed, 30*time.Second, "readRegular took %v on sparse file; stat-time refusal should be near instantaneous", elapsed)
 }
 
 func TestReadRegularMaxRecordBoundary(t *testing.T) {
@@ -132,9 +98,7 @@ func TestReadRegularMaxRecordBoundary(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "max_plus_one.log")
 	f, err := os.Create(p)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if err := f.Truncate(int64(MaxRegularRecord + 1)); err != nil {
 		f.Close()
 		t.Fatal(err)
@@ -142,15 +106,9 @@ func TestReadRegularMaxRecordBoundary(t *testing.T) {
 	f.Close()
 
 	got, err := readRegular(p)
-	if err == nil {
-		t.Fatalf("readRegular on MaxRegularRecord+1 succeeded with %d bytes", len(got))
-	}
-	if got != nil {
-		t.Fatalf("expected nil slice on error, got %d bytes", len(got))
-	}
-	if !errors.Is(err, fs.ErrInvalid) {
-		t.Fatalf("expected fs.ErrInvalid, got %v", err)
-	}
+	require.Error(t, err, "readRegular on MaxRegularRecord+1 succeeded with %d bytes", len(got))
+	require.Nil(t, got, "expected nil slice on error, got %d bytes", len(got))
+	require.ErrorIs(t, err, fs.ErrInvalid, "expected fs.ErrInvalid, got %v", err)
 }
 
 type countingReader struct {
@@ -184,22 +142,12 @@ func TestReadBoundedDeterministicStreamLimit(t *testing.T) {
 	cr := &countingReader{r: infiniteByteReader{b: 'z'}}
 
 	got, err := readBounded(cr, limit)
-	if err == nil {
-		t.Fatalf("readBounded on infinite stream succeeded with %d bytes", len(got))
-	}
-	if got != nil {
-		t.Fatalf("expected nil bytes on error, got %d bytes", len(got))
-	}
-	if !errors.Is(err, fs.ErrInvalid) {
-		t.Fatalf("expected fs.ErrInvalid wrapper, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "passes ceiling") {
-		t.Fatalf("expected error mentioning passes ceiling, got %v", err)
-	}
+	require.Error(t, err, "readBounded on infinite stream succeeded with %d bytes", len(got))
+	require.Nil(t, got, "expected nil bytes on error, got %d bytes", len(got))
+	require.ErrorIs(t, err, fs.ErrInvalid, "expected fs.ErrInvalid wrapper, got %v", err)
+	require.Contains(t, err.Error(), "passes ceiling", "expected error mentioning passes ceiling, got %v", err)
 	// Proves deterministically that at most limit+1 bytes were consumed.
-	if cr.count != limit+1 {
-		t.Fatalf("expected exactly %d bytes consumed from stream, got %d", limit+1, cr.count)
-	}
+	require.Equal(t, limit+1, cr.count, "expected exactly %d bytes consumed from stream, got %d", limit+1, cr.count)
 }
 
 // Proves that readBounded accepts a stream that matches the limit exactly and consumes exact bytes.
@@ -211,15 +159,9 @@ func TestReadBoundedDeterministicExactStreamAccepted(t *testing.T) {
 	cr := &countingReader{r: bytes.NewReader(data)}
 
 	got, err := readBounded(cr, limit)
-	if err != nil {
-		t.Fatalf("readBounded failed on exact stream: %v", err)
-	}
-	if !bytes.Equal(got, data) {
-		t.Fatalf("got %d bytes, want %d", len(got), len(data))
-	}
-	if cr.count != limit {
-		t.Fatalf("expected exactly %d bytes consumed, got %d", limit, cr.count)
-	}
+	require.NoError(t, err, "readBounded failed on exact stream: %v", err)
+	require.Equal(t, data, got, "got %d bytes, want %d", len(got), len(data))
+	require.Equal(t, limit, cr.count, "expected exactly %d bytes consumed, got %d", limit, cr.count)
 }
 
 // Proves that readBounded and readRegularBounded reject non-positive limits.
@@ -227,13 +169,10 @@ func TestReadBoundedRejectsNonPositiveLimit(t *testing.T) {
 	t.Parallel()
 
 	cr := &countingReader{r: bytes.NewReader([]byte("test"))}
-	if _, err := readBounded(cr, 0); err == nil {
-		t.Fatal("readBounded accepted limit=0")
-	}
-	if _, err := readBounded(cr, -1); err == nil {
-		t.Fatal("readBounded accepted limit=-1")
-	}
-	if _, err := readRegularBounded("nonexistent", 0); err == nil {
-		t.Fatal("readRegularBounded accepted maxBytes=0")
-	}
+	_, err := readBounded(cr, 0)
+	require.Error(t, err, "readBounded accepted limit=0")
+	_, err = readBounded(cr, -1)
+	require.Error(t, err, "readBounded accepted limit=-1")
+	_, err = readRegularBounded("nonexistent", 0)
+	require.Error(t, err, "readRegularBounded accepted maxBytes=0")
 }
