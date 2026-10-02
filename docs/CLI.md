@@ -85,9 +85,9 @@ naming a tool that is not under that `cmd/` is set aside and counted on
 `DOGFOOD NOTE shipped=<n> outside=<n> cmd=<dir>`, and judges nothing.
 
 **An edge is answered, not outlived.** It is not cleared by somebody else running
-the verb again later and finding nothing — so where two people dogfood the same
-verb, the second one's pass silently closed the first one's finding, unread and
-unfiled, and the row printed that second person's `ok=yes` over it. A finding is
+the verb again later and finding nothing: where two people dogfood the same
+verb, the second one's clean pass would otherwise close the first one's finding,
+unread and unfiled, with the row printing that second person's `ok=yes` over it. A finding is
 closed by a receipt that **names** it — `dogfood record --closes <id>`, which
 anybody may write — or by **the person who found it** running the verb again and
 finding nothing. The id is the eight hex characters the gate prints beside the
