@@ -1234,3 +1234,16 @@ internal/nsprint/store/reach_test.go its one test drove OpenProbe, Reach and Unr
 cmd/nova-ci/issue2255_test.go no test was left in it: its one helper, makeFlakes, was reached by nothing (deadcode -test, tags functional,slow,perf,swarmtest,shippedsmoke, darwin, linux and windows)
 internal/bounded/issue2209_test.go it tested only bounded.Receipt, which goes with it: the receipt was for the nova-test verb, now under deprecated/, and nothing living builds one
 internal/log/slog_test.go it tested only log.LongVerb, which goes with it: the long-running verbs it was built for (nova-pulse harvest, the pull worker) are gone and nothing living builds one; docs/SPEC-LOGS.md drops its part and test 10
+internal/swarm/cardbudget_functional_test.go its one test drove the pool route's harness.log turn count and RESULT.md PROMPT-DEFECT append (CountCardTurns, AppendPromptDefect), which no command reaches; the native route's CountCardTurnsIn and OverCardBudget keep their own tests
+internal/swarm/batch_helpers_test.go no test was left in it: its three card fixture helpers (itoa, writeCard, writeCards) were reached by nothing (deadcode -test, tags functional,swarmtest,slow, darwin, linux and windows)
+internal/swarm/benchpull_test.go no test was left in it: stepClock, its one type, was reached by nothing (deadcode -test, tags functional,swarmtest,slow, darwin, linux and windows)
+internal/swarm/slot_race_test.go its one test (skipped since #4221) drove the pool's slot files (OpenPool, Reserve, claimFree, Free), which no command reaches; the pool and its slot files are deleted
+internal/swarm/reap_test.go its tests drove ReapSlots and ReapAtTaskEnd, the pool's slot reaper, which no command reaches; both are deleted
+internal/swarm/prewarm_functional_test.go its one test drove CacheEnv, which no command reaches; native builds the child's cache environment itself, and cmd/nova-swarm native_test.go holds the private Lisp overlay it carries
+internal/swarm/f2_forged_exit_test.go its one test marshalled PidRecord, a record no command writes or reads; the type is deleted
+internal/swarm/d5_ratelimit_test.go its one test drove rateLimitedOutcome, the pool's finish-step 429 rewrite, which no command reaches; it is deleted
+internal/swarm/delta2_ratelimit_reap_test.go its one test drove rateLimitedOutcome and reapEnd, which no command reaches; both are deleted
+cmd/nova-swarm/fixture_guards_test.go its tests guarded the bench's add and run helpers, which drove the `add` and `run` verbs nova-swarm no longer has; the helpers and the slow tests that used them are deleted
+internal/swarm/benchsize_test.go its tests drove the bench-size doubling and launch headroom (SizeRoundHolds, MeasureWidthFromRounds, Headroom, PlanBenchLaunch), which no command reaches; they are deleted, Version8 stays
+internal/swarm/d13_refusals_test.go its one test drove CountRefusals and its refusal marks, the pool's refusals= diagnosis, which no command reaches; both are deleted
+internal/swarm/slot_holdings_test.go its one test drove SlotHoldings, the read a status verb printed, which no command reaches; it is deleted

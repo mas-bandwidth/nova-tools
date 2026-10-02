@@ -484,15 +484,6 @@ func contains(xs []string, x string) bool {
 	return false
 }
 
-func containsStep(xs []string) bool {
-	for _, x := range xs {
-		if strings.HasPrefix(x, "step-") {
-			return true
-		}
-	}
-	return false
-}
-
 // LIBRARIES CONSIDERED (docs/STANDARD.md section 7, library first): a card that builds code
 // carries the line, filled; a card that builds none is not asked for it.
 func TestChildCardThatBuildsCodeCarriesLibrariesConsidered(t *testing.T) {

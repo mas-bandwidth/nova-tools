@@ -41,22 +41,6 @@ func reapLeftoverSupervise(b *bench) {
 			return nil
 		})
 	}
-	if b.pool == "" {
-		return
-	}
-	entries, err := os.ReadDir(filepath.Join(b.pool, "slots"))
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		var sf swarm.SlotFile
-		if swarm.ReadJSON(filepath.Join(b.pool, "slots", e.Name()), &sf) != nil {
-			continue
-		}
-		reap(sf.Pid)
-		reap(sf.Pgid)
-		reap(sf.JobPgid)
-	}
 }
 
 func reapLeftoverPID(pid int) {
