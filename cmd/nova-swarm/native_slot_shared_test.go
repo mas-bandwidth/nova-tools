@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -65,38 +68,24 @@ func TestASecondNativeInOneSlotUnderAnotherLabelIsRefused(t *testing.T) {
 		slotDir: slot, root: root, deadline: 2 * time.Minute, noWall: true,
 	}, &errB)
 
-	if codeB != 2 {
-		t.Errorf("a second run in a live slot exits 2, got %d:\n%s", codeB, errB.String())
-	}
-	if !strings.Contains(errB.String(), "NATIVE REFUSED") {
-		t.Errorf("the refusal is one REFUSED line, got:\n%s", errB.String())
-	}
+	assert.Equal(t, 2, codeB, "a second run in a live slot exits 2, got %d:\n%s", codeB, errB.String())
+	assert.Contains(t, errB.String(), "NATIVE REFUSED", "the refusal is one REFUSED line, got:\n%s", errB.String())
 	if !strings.Contains(errB.String(), "slot") || !strings.Contains(errB.String(), "pid=") {
 		t.Errorf("the refusal does not name the slot and its holder:\n%s", errB.String())
 	}
 	// B wrote nothing of A's, and did not start its own harness against A's data home.
-	if _, err := os.Stat(filepath.Join(slot, "jobs", "card-b", "argv")); err == nil {
-		t.Errorf("the refused run's harness ran anyway against %s", filepath.Join(slot, "data"))
-	}
+	_, err := os.Stat(filepath.Join(slot, "jobs", "card-b", "argv"))
+	assert.Error(t, err, "the refused run's harness ran anyway against %s", filepath.Join(slot, "data"))
 	held, err := os.ReadFile(slotLease)
-	if err != nil {
-		t.Fatalf("the live run holds no slot lease at %s: %v", slotLease, err)
-	}
-	if !strings.Contains(string(held), "label=card-a\n") {
-		t.Errorf("the slot lease does not name the card holding it:\n%s", held)
-	}
+	require.NoError(t, err, "the live run holds no slot lease at %s", slotLease)
+	assert.Contains(t, string(held), "label=card-a\n", "the slot lease does not name the card holding it:\n%s", held)
 
 	// Let A finish on its own terms; its release takes the slot lease with it.
-	if err := os.WriteFile(filepath.Join(slot, "jobs", "card-a", "note"), []byte("go on\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(slot, "jobs", "card-a", "note"), []byte("go on\n"), 0o644))
 	got := <-first
-	if got.code != 0 {
-		t.Fatalf("the first run did not finish cleanly: exit %d\n%s", got.code, got.err)
-	}
-	if _, err := os.Lstat(slotLease); !os.IsNotExist(err) {
-		t.Errorf("the finished run left its slot lease behind: %v", err)
-	}
+	require.Equal(t, 0, got.code, "the first run did not finish cleanly: exit %d\n%s", got.code, got.err)
+	_, err = os.Lstat(slotLease)
+	assert.True(t, os.IsNotExist(err), "the finished run left its slot lease behind: %v", err)
 
 	// And the slot is takeable again, by another label: the refusal is about a LIVE
 	// holder, not about the slot having been used once.
@@ -106,9 +95,7 @@ func TestASecondNativeInOneSlotUnderAnotherLabelIsRefused(t *testing.T) {
 		card:    []byte("a third card\n"),
 		slotDir: slot, root: root, deadline: time.Minute, noWall: true,
 	}, &errC)
-	if codeC != 0 {
-		t.Fatalf("a freed slot did not take a new run: exit %d\n%s", codeC, errC.String())
-	}
+	require.Equal(t, 0, codeC, "a freed slot did not take a new run: exit %d\n%s", codeC, errC.String())
 }
 
 // TestASecondNativeInOneSlotControlWithoutTheSlotLeaseIsAdmitted is the control for the
@@ -134,9 +121,7 @@ func TestASecondNativeInOneSlotControlWithoutTheSlotLeaseIsAdmitted(t *testing.T
 		first <- code
 	}()
 	awaitNativeFile(t, filepath.Join(slot, "jobs", "card-a", "argv"))
-	if err := os.Remove(filepath.Join(slot, swarm.SlotLeaseName)); err != nil {
-		t.Fatalf("the running holder had no slot lease to take away: %v", err)
-	}
+	require.NoError(t, os.Remove(filepath.Join(slot, swarm.SlotLeaseName)), "the running holder had no slot lease to take away")
 
 	var errB bytes.Buffer
 	_, codeB := nativeRun(nativeRunConfig{
@@ -144,17 +129,13 @@ func TestASecondNativeInOneSlotControlWithoutTheSlotLeaseIsAdmitted(t *testing.T
 		card:    []byte("a second card\n"),
 		slotDir: slot, root: root, deadline: 2 * time.Minute, noWall: true,
 	}, &errB)
-	if err := os.WriteFile(filepath.Join(slot, "jobs", "card-a", "note"), []byte("go on\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(slot, "jobs", "card-a", "note"), []byte("go on\n"), 0o644))
 	<-first
 
-	if codeB == 2 || strings.Contains(errB.String(), "NATIVE REFUSED") {
-		t.Fatalf("with the holder's slot lease gone, B was refused anyway -- the test above cannot tell the refusal from its absence:\n%s", errB.String())
-	}
-	if _, err := os.Stat(filepath.Join(slot, "jobs", "card-b", "argv")); err != nil {
-		t.Fatalf("with the holder's slot lease gone, B's harness never ran: %v\n%s", err, errB.String())
-	}
+	require.NotEqual(t, 2, codeB, "with the holder's slot lease gone, B was refused anyway -- the test above cannot tell the refusal from its absence:\n%s", errB.String())
+	require.NotContains(t, errB.String(), "NATIVE REFUSED", "with the holder's slot lease gone, B was refused anyway -- the test above cannot tell the refusal from its absence:\n%s", errB.String())
+	_, err := os.Stat(filepath.Join(slot, "jobs", "card-b", "argv"))
+	require.NoError(t, err, "with the holder's slot lease gone, B's harness never ran:\n%s", errB.String())
 }
 
 // awaitNativeFile waits for a file a run is expected to write. The bound is a safety net

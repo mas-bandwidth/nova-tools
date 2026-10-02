@@ -28,7 +28,7 @@ func TestTheAttemptBranchRoundTripsAndIsNewAfterAClear(t *testing.T) {
 	h.setup(1)
 	h.must(DealStep(sprint.DealReq{}))
 	first := h.packetOf("s1-1.w1")
-	assert.Equal(t, "sprint/t-s1-1.w1.e"+strconv.FormatUint(first.Epoch, 10), first.Branch)
+	assert.Equal(t, "sprint/t-s1-1.w1.g"+strconv.Itoa(first.Gen)+".e"+strconv.FormatUint(first.Epoch, 10), first.Branch)
 	wc := h.snap().Fleet.Card("s1-1.w1")
 	gens := map[string]int{wc.ID: wc.Int("gen")}
 	h.must(TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: gens, Who: wc.Row}))
@@ -41,6 +41,34 @@ func TestTheAttemptBranchRoundTripsAndIsNewAfterAClear(t *testing.T) {
 	h.must(DealStep(sprint.DealReq{}))
 	second := h.packetOf("s1-1.w1")
 	assert.Greater(t, second.Epoch, first.Epoch)
-	assert.Equal(t, "sprint/t-s1-1.w1.e"+strconv.FormatUint(second.Epoch, 10), second.Branch)
+	assert.Equal(t, "sprint/t-s1-1.w1.g"+strconv.Itoa(second.Gen)+".e"+strconv.FormatUint(second.Epoch, 10), second.Branch)
 	assert.NotEqual(t, first.Branch, second.Branch, "pass 2 pushes to a branch of its own")
+}
+
+// A card dealt again within one epoch (here refused at staging by the first member, then run by
+// another) is another generation of the same attempt, and its branch is its own: the second
+// launch's push never meets the first's (the quack sprint, pass 3, epoch 4, 2026-10-01). The
+// work card's branch field shows the last launch's.
+func TestARedealInOneEpochIsAnotherBranchAndTheCardKeepsTheLastLaunchs(t *testing.T) {
+	t.Parallel()
+	h := fourMembers(t)
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.startMachine()
+	h.machine()
+	one := h.packetOf("s1-1.w1")
+	h.failTake("s1-1.w1", stagingLine)
+	h.machine()
+	w := h.snap().Fleet.Card("s1-1.w1")
+	require.Equal(t, sprint.Ready, w.Col, "dealt again by the tick")
+	two := h.packetOf("s1-1.w1")
+	assert.Equal(t, one.Epoch, two.Epoch, "the same epoch")
+	assert.Equal(t, one.Attempt, two.Attempt, "the same attempt")
+	assert.Greater(t, two.Gen, one.Gen)
+	assert.NotEqual(t, one.Branch, two.Branch, "the second launch pushes to a branch of its own")
+	assert.Equal(t, "sprint/t-s1-1.w1.g"+strconv.Itoa(two.Gen)+".e"+strconv.FormatUint(two.Epoch, 10), two.Branch)
+
+	gens := map[string]int{w.ID: w.Int("gen")}
+	h.must(TakeStep(sprint.TakeReq{As: w.Row, Sel: sprint.Sel{IDs: []string{w.ID}}, Gens: gens, Who: w.Row}))
+	h.must(FinishStep(sprint.FinishReq{As: w.Row, Sel: sprint.Sel{IDs: []string{w.ID}}, Gens: gens, Head: "abc123", Branch: two.Branch, Report: "ok", Who: w.Row}))
+	assert.Equal(t, two.Branch, h.snap().Fleet.Card("s1-1.w1").F("branch"), "the card shows the last launch's branch")
 }

@@ -29,14 +29,9 @@ type GateInput struct {
 // "GATE REFUSE rule=<n> file=<f>: <why>" at exit 2.
 func RunGate(in GateInput) (string, int) {
 	storeDir, base, head := in.StoreDir, in.Base, in.Head
-	if storeDir == "" {
-		return "SECRETS REFUSED: missing --store <dir>", 2
-	}
-	if base == "" {
-		return "SECRETS REFUSED: missing --base <git ref>", 2
-	}
-	if head == "" {
-		return "SECRETS REFUSED: missing --head <git ref>", 2
+	// The flags only: the gate judges any working copy, a store with no seat yet included.
+	if err := preflight("", need{storeDir, "--store <dir>", false}, need{base, "--base <git ref>", false}, need{head, "--head <git ref>", false}); err != nil {
+		return "SECRETS REFUSED: " + oneline.WithRemedy(err.Error(), "nova-secrets gate -h"), 2
 	}
 	// The two refs become commits before anything reads them. A ref is handed to git as an
 	// argument, and one beginning with "-" is read by git as an OPTION: --head=--diff-filter=U

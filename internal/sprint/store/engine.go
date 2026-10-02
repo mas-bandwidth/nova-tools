@@ -87,11 +87,16 @@ type Store struct {
 	// harness whose other writers write from inside a part's plan (a writer
 	// that would wait on the lock its own caller holds) leaves it off.
 	LockAfterLoss bool
-	root          Backend   // the backend before pinning
-	epoch         uint64    // the epoch the store is pinned to
-	cleared       time.Time // when the pinned epoch began
-	pinned        bool
-	old           bool // pinned to an earlier epoch, for reading
+	// ByHand says no machine runs between commands (a twin, mem:<file>): a
+	// RUNNING machine that has not ticked waits for the next tick by hand and
+	// is not stopped, so its line stays running and the inbox's not-ticking
+	// judgment names nova-sprint tick (docs/SPEC-SPRINT.md section 14).
+	ByHand  bool
+	root    Backend   // the backend before pinning
+	epoch   uint64    // the epoch the store is pinned to
+	cleared time.Time // when the pinned epoch began
+	pinned  bool
+	old     bool // pinned to an earlier epoch, for reading
 }
 
 // Step is one verb's step: the tables its plan reads, any records it reads
@@ -141,6 +146,12 @@ type Step struct {
 	// Acquire; through RouteCache when one is given (a tick's, read once).
 	Routes     bool
 	RouteCache *RouteCache
+	// Prices says the step prices what a worker reports (finish, read with usage:
+	// internal/sprint/cost.go): it plans with the routes alone, the routes set and
+	// each route's record (routes.go, PriceRoutes), read before its tables. It reads
+	// no tier array: a worker's ACL reads routes and route:*
+	// only (internal/redisacl, the member role), and pricing needs no more.
+	Prices bool
 	// Readers says the step asks, or reads what the ask would do: it plans
 	// with the readers' states (sprint.Snapshot.ReaderStates), read after its
 	// tables, or ReaderStates when given: a tick reads them once and every
@@ -395,6 +406,12 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, err
 		}
 	}
+	var priced []sprint.Route
+	if step.Prices {
+		if priced, err = st.priceRoutes(ctx); err != nil {
+			return res, err
+		}
+	}
 	for res.Attempts < st.attempts() {
 		res.Attempts++
 		if wantLock && lock == nil && !locked {
@@ -486,6 +503,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		if step.Routes {
 			routes.into(snap)
+		}
+		if step.Prices {
+			snap.Routes = priced
 		}
 		if step.Readers && step.ReaderStates != nil {
 			snap.ReaderStates = step.ReaderStates
@@ -593,9 +613,14 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			ok, err = st.B.Acquire(ctx, gen, op)
 		}
 		if err != nil {
-			// A write the store did not take leaves the fence without this
-			// operation: nothing was changed, and the store's reason says why.
-			if f, ferr := st.B.ReadFence(ctx); ferr == nil && (f.Pending == nil || f.Pending.ID != op.ID) {
+			if rec, confirmed := st.committed(ctx, step, op); confirmed {
+				return st.after(ctx, step, rec)
+			}
+			// An ordinary acquire that did not advance the generation wrote
+			// nothing. A moved or empty fence alone is ambiguous: another
+			// writer may already have committed this operation. Relock does
+			// not advance the generation and needs its exact receipt.
+			if f, ferr := st.B.ReadFence(ctx); ferr == nil && lock == nil && f.Gen == gen && f.Pending == nil {
 				res.Op = ""
 				return refuseWhole(res, plan, fmt.Sprintf("the store did not take the step's record (%d bytes): %v; nothing was changed", recordSize(op), err))
 			}
@@ -618,12 +643,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		applied, receipts, err := st.apply(ctx, op)
 		var bound *boundError
-		var cut *CutError
-		if (errors.As(err, &cut) || err == nil && !applied) && st.finishedElsewhere(ctx, op) {
+		if err != nil || !applied {
 			// Another writer (the tick, another verb, repair) finished this
 			// operation: its recorded result is this step's, as a replay.
-			raw, _, _ := st.B.Done(ctx, op.CallerOp)
-			if rec, rerr := replay(step, raw); rerr == nil {
+			if rec, confirmed := st.committed(ctx, step, op); confirmed {
 				return st.after(ctx, step, rec)
 			}
 		}
@@ -645,6 +668,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			continue
 		}
 		if err := st.B.Release(ctx, op, true); err != nil {
+			if rec, confirmed := st.committed(ctx, step, op); confirmed {
+				return st.after(ctx, step, rec)
+			}
 			res.Pending = op.ID
 			return res, fmt.Errorf("%w: the commit of %s: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
 		}
@@ -783,16 +809,17 @@ func (st *Store) callerOp(ctx context.Context, step Step, res Result) (Result, b
 	return res, true, nil
 }
 
-// finishedElsewhere says the fence no longer holds the operation and its
-// result is recorded: another writer finished it. An operation released
-// without a record was abandoned: nothing of it happened.
-func (st *Store) finishedElsewhere(ctx context.Context, op OpRecord) bool {
-	f, err := st.B.ReadFence(ctx)
-	if err != nil || f.Pending != nil && f.Pending.ID == op.ID {
-		return false
+// committed confirms this exact operation from the receipt written atomically
+// with its release (Redis.commit). A planned move or another operation's
+// receipt cannot confirm a lost reply; unreadable proof leaves it unknown.
+func (st *Store) committed(ctx context.Context, step Step, op OpRecord) (Result, bool) {
+	raw, ok, err := st.B.Done(ctx, op.CallerOp)
+	if err != nil || !ok {
+		return Result{}, false
 	}
-	_, ok, err := st.B.Done(ctx, op.CallerOp)
-	return err == nil && ok
+	step.CallerOp = op.CallerOp
+	rec, err := replay(step, raw)
+	return rec, err == nil && rec.Op == op.ID
 }
 
 // after brings the display cells up to date after a step. A step finished at

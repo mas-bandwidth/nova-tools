@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // `--host` end to end. The bench it is for: the keeper on the Studio and the bud on the Air
@@ -23,9 +25,7 @@ func TestSendHostWritesTheHostLineAndInboxShowsIt(t *testing.T) {
 		mustCode(t, 0).
 		mustContain(t, "stdout", "SEND OK id=ada-").
 		mustContain(t, "stdout", "SEND NOTE this draft had no Host line; --host says you are posting from \"air\"")
-	if !strings.Contains(laneNoteText(t, checkout, "from-ada"), "From: Ada\nHost: air\nTo: Bo\n") {
-		t.Fatalf("the note on the bus carries no Host line:\n%s", laneNoteText(t, checkout, "from-ada"))
-	}
+	require.Containsf(t, laneNoteText(t, checkout, "from-ada"), "From: Ada\nHost: air\nTo: Bo\n", "the note on the bus carries no Host line:\n%s", laneNoteText(t, checkout, "from-ada"))
 	// And Bo's listing says which machine it came from, beside the sender.
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Bo", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).
@@ -43,9 +43,7 @@ func TestHostComesFromTheDefaultsFileWhenTheFlagIsAbsent(t *testing.T) {
 	invoke(t, "", "send", "--bus", checkout, "--file", draft,
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0)
-	if !strings.Contains(laneNoteText(t, checkout, "from-ada"), "Host: studio\n") {
-		t.Fatalf("the defaults file's host did not reach the note:\n%s", laneNoteText(t, checkout, "from-ada"))
-	}
+	require.Containsf(t, laneNoteText(t, checkout, "from-ada"), "Host: studio\n", "the defaults file's host did not reach the note:\n%s", laneNoteText(t, checkout, "from-ada"))
 }
 
 func TestTheHostFlagBeatsTheDefaultsFile(t *testing.T) {
@@ -58,9 +56,7 @@ func TestTheHostFlagBeatsTheDefaultsFile(t *testing.T) {
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0)
 	note := laneNoteText(t, checkout, "from-ada")
-	if !strings.Contains(note, "Host: air\n") || strings.Contains(note, "studio") {
-		t.Fatalf("the flag did not beat the defaults file:\n%s", note)
-	}
+	require.Falsef(t, !strings.Contains(note, "Host: air\n") || strings.Contains(note, "studio"), "the flag did not beat the defaults file:\n%s", note)
 }
 
 // A host that is given and unusable is a refusal by name, from the flag and from the
@@ -92,9 +88,7 @@ func TestReplyHostWritesTheHostLine(t *testing.T) {
 		"--host", "air", "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "REPLY OK id=ada-")
-	if !strings.Contains(laneNoteText(t, checkout, "from-ada"), "From: Ada\nHost: air\nTo: ") {
-		t.Fatalf("the reply carries no Host line under From:\n%s", laneNoteText(t, checkout, "from-ada"))
-	}
+	require.Containsf(t, laneNoteText(t, checkout, "from-ada"), "From: Ada\nHost: air\nTo: ", "the reply carries no Host line under From:\n%s", laneNoteText(t, checkout, "from-ada"))
 }
 
 // THE COMPATIBILITY CLAIM at the command line: a send with no --host writes the note it
@@ -108,15 +102,11 @@ func TestASendWithNoHostIsTheLineItAlwaysWas(t *testing.T) {
 	invoke(t, "", "send", "--bus", checkout, "--file", draft,
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0)
-	if strings.Contains(laneNoteText(t, checkout, "from-ada"), "Host:") {
-		t.Fatalf("a send with no --host wrote a Host line:\n%s", laneNoteText(t, checkout, "from-ada"))
-	}
+	require.NotContainsf(t, laneNoteText(t, checkout, "from-ada"), "Host:", "a send with no --host wrote a Host line:\n%s", laneNoteText(t, checkout, "from-ada"))
 	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Bo", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "from=Ada addr=to")
-	if strings.Contains(r.stdout, "host=") {
-		t.Fatalf("a listing with no hosted note printed a host= field:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "host=", "a listing with no hosted note printed a host= field:\n%s", r.stdout)
 }
 
 // laneNoteText is the bytes of the one note in a lane, read back off the checkout.
@@ -125,19 +115,15 @@ func laneNoteText(t *testing.T, checkout, lane string) string {
 	t.Helper()
 	dir := filepath.Join(checkout, lane)
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".md") && e.Name() != "README.md" {
 			raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			return string(raw)
 		}
 	}
-	t.Fatalf("no note in %s", dir)
+	require.FailNowf(t, "assertion failed", "no note in %s", dir)
 	return ""
 }
 
@@ -147,10 +133,6 @@ func laneNoteText(t *testing.T, checkout, lane string) string {
 func writeBusFile(t *testing.T, checkout, rel, content string) {
 	t.Helper()
 	full := filepath.Join(checkout, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+	require.NoError(t, os.WriteFile(full, []byte(content), 0o644))
 }

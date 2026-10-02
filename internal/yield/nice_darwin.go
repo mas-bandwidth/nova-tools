@@ -2,9 +2,19 @@ package yield
 
 import "syscall"
 
-// setNice is setpriority(PRIO_PROCESS, 0, n) on this process.
-func setNice(n int) error { return syscall.Setpriority(syscall.PRIO_PROCESS, 0, n) }
+// Supported: darwin has setpriority, and a nice belongs to the process.
+const Supported = true
 
-// currentNice is getpriority(PRIO_PROCESS, 0): darwin returns the nice value
-// as it is.
-func currentNice() (int, error) { return syscall.Getpriority(syscall.PRIO_PROCESS, 0) }
+// setNice is setpriority(PRIO_PROCESS, 0, n) on this process. A darwin nice
+// belongs to the process, so a refusal to raise it is judged by the one
+// reading of the process's nice (alreadyBehind), which covers every thread.
+func setNice(n int) error {
+	err := syscall.Setpriority(syscall.PRIO_PROCESS, 0, n)
+	if err == nil {
+		return nil
+	}
+	if now, err2 := syscall.Getpriority(syscall.PRIO_PROCESS, 0); err2 == nil && alreadyBehind(err, now, n) {
+		return nil
+	}
+	return err
+}

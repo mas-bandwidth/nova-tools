@@ -91,7 +91,7 @@ func TestMemberEndpointComesFromTheFleetAndNotItsPersistedArgv(t *testing.T) {
 	inv, err := BuildInventory(s, "")
 	require.NoError(t, err)
 	member := inv.Meta.Hostvars["bench-beta"]["nova_loops"].([]InventoryLoop)[0]
-	assert.Equal(t, []string{"/usr/bin/env", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", "~/.local/bin/nova-swarm", "member", "--reader"}, member.Argv)
+	assert.Equal(t, []string{"/usr/bin/env", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", "~/.local/bin/nova-swarm", "member", "--reader", "--width", "2"}, member.Argv)
 	other := inv.Meta.Hostvars["bench-alpha"]["nova_loops"].([]InventoryLoop)[0]
 	assert.Contains(t, other.Argv, "NOVA_SPRINT_REDIS=keep-me:6379", "a non-member command stays word-for-word")
 	for _, host := range inv.All.Hosts {
@@ -112,6 +112,33 @@ func TestInventoryRefusesMissingEndpointsBeforeRewritingALegacyMember(t *testing
 			assert.Contains(t, err.Error(), "nova-config fleet set --redis_port <port> --pg_dsn <dsn>")
 			assert.Nil(t, inv)
 			assert.Equal(t, argv, s.Loops["member-beta"]["argv"])
+		})
+	}
+}
+
+// nova_loops' argv is the command the unit runs: a width field above 0 is the
+// argv's --width (LoopCommand), so the plays render the field's value and a
+// reader's width is set as one value, never by editing the argv.
+func TestNovaLoopsArgvRunsWithTheWidthField(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		argv  string
+		width string
+		want  []string
+	}{
+		{"the field replaces the argv's", `["nova-swarm","member","--reader","--width","8"]`, "16", []string{"nova-swarm", "member", "--reader", "--width", "16"}},
+		{"the field is appended", `["nova-swarm","member","--reader"]`, "4", []string{"nova-swarm", "member", "--reader", "--width", "4"}},
+		{"width 0 keeps the argv's", `["nova-swarm","member","--reader","--width","8"]`, "0", []string{"nova-swarm", "member", "--reader", "--width", "8"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			inv, err := BuildInventory(snapshot(map[string]View{"r": loopView("r", "bench-beta", map[string]string{"argv": tc.argv, "width": tc.width})}), "")
+			require.NoError(t, err)
+			loops := inv.Meta.Hostvars["bench-beta"]["nova_loops"].([]InventoryLoop)
+			require.Len(t, loops, 1)
+			assert.Equal(t, tc.want, loops[0].Argv)
 		})
 	}
 }
@@ -250,4 +277,18 @@ loops:
 	}
 	_, err = LoadFixture(filepath.Join(dir, "absent.yml"))
 	assert.ErrorContains(t, err, "--fixture")
+}
+
+// A fixture that is not the fixture's shape is refused in one line naming
+// what it wants, with the YAML reader's words quoted, never its newlines.
+func TestAFixtureOfTheWrongShapeIsRefusedInOneLine(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "fx.yml")
+	require.NoError(t, os.WriteFile(path, []byte("- one\n- two\n"), 0o600))
+	_, err := LoadFixture(path)
+	require.Error(t, err)
+	msg := err.Error()
+	assert.NotContains(t, msg, "\n")
+	assert.Contains(t, msg, "is not the fixture's shape: \"yaml: unmarshal errors: line 1: cannot unmarshal !!seq into config.fixture\"")
+	assert.Contains(t, msg, "want a mapping with machines")
 }

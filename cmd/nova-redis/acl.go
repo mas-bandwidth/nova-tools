@@ -30,6 +30,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
@@ -172,13 +173,18 @@ type aclOpener func(ctx context.Context, store login) (aclServer, func() error, 
 
 func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) int {
 	if len(args) == 0 {
-		return refuse(stderr, " acl", "no subverb given; render prints this build's users, check compares the store's with them, apply writes the ones that differ")
+		return refuse(stderr, "acl", "no subverb given; render prints this build's users, check compares the store's with them, apply writes the ones that differ")
 	}
 	sub := args[0]
+	if verbflag.IsHelp(sub) {
+		// Help for the group is never a refusal: its subverbs and their effects.
+		panic(verbflag.Help{FS: flag.NewFlagSet("acl", flag.ContinueOnError)})
+	}
 	if sub != "render" && sub != "check" && sub != "apply" {
-		return refuse(stderr, " acl", fmt.Sprintf("unknown subverb %q; want render, check or apply", sub))
+		return refuse(stderr, "acl", fmt.Sprintf("unknown subverb %q; want render, check or apply", sub))
 	}
 	fs := flag.NewFlagSet("acl "+sub, flag.ContinueOnError)
+	r := newReport("acl "+sub, fs, args[1:], stdout, stderr)
 	var store login
 	var dryRun *bool
 	required := []string{}
@@ -191,42 +197,44 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 		dryRun = fs.Bool("dry-run", false, "print the users apply would set (ACL WOULD-SET) and write nothing")
 		fs.Var(&sources, "password-env-for", "<user>=<VARIABLE>, repeatable: the variable holding the password a user apply creates gets; a user the store lacks is created only with one")
 	}
-	if !parse(fs, args[1:], stderr, required...) {
-		return 2
+	if problems, _ := parse(fs, args[1:], required...); len(problems) > 0 {
+		return r.refuse(problems...)
 	}
 	lib := library()
 	digest, err := lib.Digest()
 	if err != nil {
-		return refuse(stderr, " acl "+sub, fmt.Sprintf("this binary's library does not build: %s; fix the Lua and rebuild", err))
+		return r.refuse(fmt.Sprintf("this binary's library does not build: %s; fix the Lua and rebuild", err))
 	}
 	users, err := redisacl.Render(lib)
 	if err != nil {
-		return refuse(stderr, " acl "+sub, fmt.Sprintf("this build's roles do not render: %s; fix internal/redisacl and rebuild", err))
+		return r.refuse(fmt.Sprintf("this build's roles do not render: %s; fix internal/redisacl and rebuild", err))
 	}
 	if sub == "render" {
+		// A family is what an operator reads: its name and its key patterns.
 		for _, f := range redisacl.Families {
-			fmt.Fprintf(stdout, "ACL FAMILY name=%s keys=%s from=%q\n", f.Name, strings.Join(f.Patterns, ","), f.From)
+			r.line(false, "ACL FAMILY", "name", f.Name, "keys", free(strings.Join(f.Patterns, ",")))
 		}
 		fns := 0
 		for _, u := range users {
-			fmt.Fprintln(stdout, u.Line())
+			// The user's pasteable command (redisacl.User.Line): its rules follow its name.
+			r.line(false, "ACL SETUSER", "user", bare{u.Name, u.Name}, "rules", bare{strings.TrimPrefix(u.Line(), "ACL SETUSER "+u.Name+" "), u.Rules})
 			fns = max(fns, u.Functions)
 		}
-		fmt.Fprintf(stdout, "ACL RENDER OK users=%d functions=%d library=%s\n", len(users), fns, digest)
-		return 0
+		r.line(false, "ACL RENDER OK", "users", len(users), "functions", fns, "library", digest)
+		return r.done(0)
 	}
 	if err := store.check(d); err != nil {
-		return refuse(stderr, " acl "+sub, err.Error())
+		return r.refuse(err.Error())
 	}
-	at := oneline.Field(*store.addr)
+	at := *store.addr
 	failed := func(err error) int {
 		cause, _, _ := strings.Cut(oneline.Err(err), "; next: ")
-		fmt.Fprintf(stderr, "ACL %s FAILED store=%s err=%s remedy=%q\n", strings.ToUpper(sub), at, cause,
-			"log in as a user that may run ACL GETUSER, ACL CAT and ACL SETUSER: check --user ("+UserEnv+") and the password in "+*store.passwordEnv+", then nova-redis acl "+sub+" "+store.flags())
+		r.line(true, "ACL "+strings.ToUpper(sub)+" FAILED", "store", at, "err", free(cause), "remedy",
+			quoted("log in as a user that may run ACL GETUSER, ACL CAT and ACL SETUSER: check --user ("+UserEnv+") and the password in "+*store.passwordEnv+", then nova-redis acl "+sub+" "+store.flags()))
 		if answered(err) {
-			return 1
+			return r.done(1)
 		}
-		return 2
+		return r.done(2)
 	}
 	ctx := context.Background()
 	srv, closeStore, err := open(ctx, store)
@@ -252,12 +260,13 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 		dr := redisacl.Compare(u, live[u.Name], cat)
 		switch {
 		case dr.None():
-			fmt.Fprintf(stdout, "ACL OK user=%s role=%s\n", oneline.Field(u.Name), u.Role)
+			r.line(false, "ACL OK", "user", u.Name, "role", u.Role)
 		case dr.Missing:
-			fmt.Fprintf(stdout, "ACL MISSING user=%s role=%s\n", oneline.Field(u.Name), u.Role)
+			r.line(false, "ACL MISSING", "user", u.Name, "role", u.Role)
 			differ = append(differ, u)
 		default:
-			fmt.Fprintf(stdout, "ACL DRIFT user=%s role=%s%s\n", oneline.Field(u.Name), u.Role, dr.Fields())
+			// Fields is the drift as the line spells it; --json carries every name.
+			r.line(false, "ACL DRIFT", "user", u.Name, "role", u.Role, "drift", bare{strings.TrimPrefix(dr.Fields(), " "), dr})
 			differ = append(differ, u)
 		}
 	}
@@ -265,20 +274,20 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 	sort.Strings(everyone)
 	for _, n := range everyone {
 		if !rendered[n] {
-			fmt.Fprintf(stdout, "NOTE ACL EXTRA user=%s: no role renders it; acl apply leaves it as it is\n", oneline.Field(n))
+			r.note(fmt.Sprintf("ACL EXTRA user=%s: no role renders it; acl apply leaves it as it is", oneline.Field(n)))
 		}
 	}
 	if def := live["default"]; def.Exists {
-		fmt.Fprintf(stdout, "NOTE ACL DEFAULT on=%t nopass=%t\n", def.On, def.NoPass)
+		r.note(fmt.Sprintf("ACL DEFAULT on=%t nopass=%t", def.On, def.NoPass))
 	}
 	if sub == "check" {
 		if len(differ) == 0 {
-			fmt.Fprintf(stdout, "ACL CHECK OK users=%d library=%s store=%s\n", len(users), digest, at)
-			return 0
+			r.line(false, "ACL CHECK OK", "users", len(users), "library", digest, "store", at)
+			return r.done(0)
 		}
-		fmt.Fprintf(stdout, "ACL CHECK DRIFT users=%d differ=%d library=%s store=%s remedy=%q\n", len(users), len(differ), digest, at,
-			"nova-redis acl apply "+store.flags()+" sets the users that differ")
-		return 1
+		r.line(false, "ACL CHECK DRIFT", "users", len(users), "differ", len(differ), "library", digest, "store", at,
+			"remedy", quoted("nova-redis acl apply "+store.flags()+" sets the users that differ"))
+		return r.done(1)
 	}
 	// A user the store lacks is created only with a password from the
 	// variable --password-env-for names: never on with none.
@@ -292,16 +301,17 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 		}
 	}
 	if len(unsourced) > 0 {
-		fmt.Fprintf(stdout, "ACL APPLY REFUSED users=%d missing=%s: a user the store lacks is created only with a password; run: nova-redis acl apply %s --password-env-for %s=<VARIABLE> (the variable set, under nova-secrets exec --only <VARIABLE>)\n",
-			len(users), strings.Join(unsourced, ","), store.flags(), unsourced[0])
-		return 1
+		r.line(false, "ACL APPLY REFUSED", "users", len(users), "missing", free(strings.Join(unsourced, ",")),
+			"", why("a user the store lacks is created only with a password"),
+			"", next("nova-redis acl apply "+store.flags()+" --password-env-for "+unsourced[0]+"=<VARIABLE> (the variable set, under nova-secrets exec --only <VARIABLE>)"))
+		return r.done(1)
 	}
 	if *dryRun {
 		for _, u := range differ {
-			fmt.Fprintf(stdout, "ACL WOULD-SET user=%s role=%s\n", oneline.Field(u.Name), u.Role)
+			r.line(false, "ACL WOULD-SET", "user", u.Name, "role", u.Role)
 		}
-		fmt.Fprintf(stdout, "ACL APPLY OK dry-run=true users=%d set=0 would=%d library=%s store=%s\n", len(users), len(differ), digest, at)
-		return 0
+		r.line(false, "ACL APPLY OK", "dry-run", true, "users", len(users), "set", 0, "would", len(differ), "library", digest, "store", at)
+		return r.done(0)
 	}
 	for i, u := range differ {
 		rules := u.Rules
@@ -310,10 +320,10 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 			rules = append([]string{">" + d.getenv(sources[u.Name])}, rules...)
 		}
 		if err := srv.SetUser(ctx, u.Name, rules); err != nil {
-			fmt.Fprintf(stdout, "ACL APPLY FAILED users=%d set=%d user=%s\n", len(users), i, oneline.Field(u.Name))
+			r.line(false, "ACL APPLY FAILED", "users", len(users), "set", i, "user", u.Name)
 			return failed(err)
 		}
-		fmt.Fprintf(stdout, "ACL SET user=%s role=%s\n", oneline.Field(u.Name), u.Role)
+		r.line(false, "ACL SET", "user", u.Name, "role", u.Role)
 	}
 	saved := "none"
 	if len(differ) > 0 {
@@ -326,6 +336,6 @@ func aclVerb(args []string, stdout, stderr io.Writer, d deps, open aclOpener) in
 			saved = "acl-file"
 		}
 	}
-	fmt.Fprintf(stdout, "ACL APPLY OK users=%d set=%d saved=%s library=%s store=%s\n", len(users), len(differ), saved, digest, at)
-	return 0
+	r.line(false, "ACL APPLY OK", "users", len(users), "set", len(differ), "saved", saved, "library", digest, "store", at)
+	return r.done(0)
 }

@@ -300,12 +300,10 @@ func watchLoop(ctx context.Context, w, stderr io.Writer, read func(context.Conte
 		}
 		if out == "" {
 			if _, err := io.WriteString(w, clearScreen+text); err != nil {
-				fmt.Fprintf(stderr, "nova-table watch: stdout: %s; next: repair or replace the stdout consumer, then rerun this watch\n", oneline.Escape(err.Error()))
-				return 1
+				return watchSinkFailure(stderr, "", err)
 			}
 		} else if err := writeAtomic(out, text); err != nil {
-			fmt.Fprintf(stderr, "nova-table watch: %s; next: make --out %q writable (and its parent directory present and writable), then rerun this watch\n", oneline.Escape(err.Error()), out)
-			return 1
+			return watchSinkFailure(stderr, out, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -315,15 +313,32 @@ func watchLoop(ctx context.Context, w, stderr io.Writer, read func(context.Conte
 	}
 }
 
+// watchSinkFailure is terminal for a failed output sink. A store read failure
+// remains recoverable in watchLoop; this helper is only for publishing.
+func watchSinkFailure(stderr io.Writer, out string, err error) int {
+	if out == "" {
+		fmt.Fprintf(stderr, "nova-table watch: stdout: %s; next: repair or replace the stdout consumer, or rerun this watch with --out <file>\n", oneline.Escape(err.Error()))
+	} else {
+		fmt.Fprintf(stderr, "nova-table watch: %s; next: make --out %q writable (and its parent directory present and writable), then rerun this watch\n", oneline.Escape(err.Error()), out)
+	}
+	return 1
+}
+
 // publish prints text, or writes it to out by rename (--once).
 func publish(out, text string, stdout, stderr io.Writer, verb string) int {
 	if out == "" {
 		if _, err := io.WriteString(stdout, text); err != nil {
+			if verb == "watch" {
+				return watchSinkFailure(stderr, "", err)
+			}
 			return refuse(stderr, verb, "stdout: "+err.Error())
 		}
 		return 0
 	}
 	if err := writeAtomic(out, text); err != nil {
+		if verb == "watch" {
+			return watchSinkFailure(stderr, out, err)
+		}
 		return refuse(stderr, verb, err.Error())
 	}
 	return 0
@@ -331,7 +346,7 @@ func publish(out, text string, stdout, stderr io.Writer, verb string) int {
 
 // writeAtomic writes body to <path>.tmp.<pid> in path's own directory,
 // fsyncs it, and renames it over path, the publish the sprint table used
-// (deprecated/cmd/nova-sprint/table_live.go): a reader sees the old text or
+// (the old nova-sprint's table_live.go): a reader sees the old text or
 // the new one, never half of one.
 func writeAtomic(path, body string) error {
 	if err := atomicfile.Write(filepath.Clean(path), []byte(body), 0o644); err != nil {

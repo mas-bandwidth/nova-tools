@@ -12,7 +12,11 @@
 # SHA256SUMS whole and skips a tool already answering the version, and every
 # tool nova-tools once shipped and ships no more (fleet/retired-tools.txt, by
 # exact name) is removed from the bin directory; --check lists each as
-# WOULD-REMOVE. A platform already built at the version is not built again. The configuration store is
+# WOULD-REMOVE. A platform already built at the version is not built again.
+# The build and the install each remove, last, the old version directories of
+# their own root (the build's out, the machine's release directory), keeping
+# the version just made, the one installed before it and the 3 newest besides;
+# a removal that fails never fails the play (internal/release/prune.go). The configuration store is
 # migrated to the build's schema (`nova-config migrate`) before the library
 # is loaded by the store_deployer machine (the fleet's coordinator) with
 # `nova-redis fn load`, under the seat that holds the deploy user's password;
@@ -147,11 +151,15 @@
       {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
           '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops] }}
   tasks:
-    - name: the fleet declares its Postgres DSN
+    - name: the fleet declares both store endpoints
       ansible.builtin.assert:
-        that: nova_pg_dsn | default('') != ''
+        that:
+          - nova_pg_dsn | default('') != ''
+          - nova_redis_port | default(0) | int >= 1
+          - nova_redis_port | default(0) | int <= 65535
+          - nova_redis_addr | default('') == (nova_store | default('')) ~ ':' ~ (nova_redis_port | default('') | string)
         fail_msg: >-
-          the applied fleet row has no pg_dsn; bootstrap once with nova-config migrate
+          the applied fleet row needs redis_port and pg_dsn; bootstrap once with nova-config migrate
           --pg postgres://user@localhost:5432/database, then nova-config fleet set
           --redis_port <port> --pg_dsn postgres://user@localhost:5432/database --as <actor>,
           then nova-config apply --kind fleet --as <actor>
@@ -187,7 +195,7 @@
       ansible.builtin.debug: { msg: "WOULD-MIGRATE {{ nova_pg_dsn }} with {{ nova_bin_dir }}/nova-config {{ nova_version }}" }
       when: ansible_check_mode
 
-    - name: fn check (--check) or fn load, under the deploy user's seat
+    - name: fn check (--check) or fn load at the declared Redis port, under the deploy user's seat
       ansible.builtin.command:
         argv: "{{ tools_seat + ['--only', nova_redis_deploy_password_key, '--require=' ~ nova_redis_deploy_password_key, '--',
                    nova_bin_dir ~ '/nova-redis', 'fn', 'check' if ansible_check_mode else 'load', '--addr', nova_redis_addr,

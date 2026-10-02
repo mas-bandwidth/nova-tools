@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
@@ -27,25 +30,15 @@ func TestTheFirstRunTranscriptRunsOverATwin(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines, err := onboarding.FirstRun(string(raw), "nova-sprint")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-sprint", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// the transcript is the help's flow, verb for verb, to the card merged
-	if want := len(twinSteps) - 2; len(steps) != want {
-		t.Fatalf("the transcript holds %d commands; the help's flow to the merge is %d", len(steps), want)
-	}
+	require.Len(t, steps, len(twinSteps)-2, "the transcript holds %d commands; the help's flow to the merge is %d", len(steps), len(twinSteps)-2)
 	for i, s := range steps {
-		if want := "$ " + twinSteps[i]; s.Line != want {
-			t.Errorf("command %d of the transcript is %q, the help's flow has %q", i+1, s.Line, want)
-		}
+		assert.Equal(t, "$ "+twinSteps[i], s.Line, "command %d of the transcript", i+1)
 	}
 	file := filepath.Join(t.TempDir(), "sprint.twin")
 	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:" + file, "NOVA_SPRINT_ACTOR": "boss"}

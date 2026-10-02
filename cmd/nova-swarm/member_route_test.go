@@ -28,7 +28,7 @@ func argsRunner(t *testing.T, model, tokens string, deadline time.Duration) *nat
 	self := filepath.Join(dir, "self.sh")
 	script := "#!/bin/sh\nfor a in \"$@\"; do echo \"$a\"; done > '" + slots + "'/\"$(echo \"$@\" | sed 's/.*--label \\([^ ]*\\).*/\\1/')\".args\n"
 	require.NoError(t, testbin.WriteExecutable(self, []byte(script), 0o755))
-	return &nativeRunner{self: self, sprintBin: "nova-sprint", harness: "/bin/true", model: model, root: dir, slots: slots,
+	return &nativeRunner{self: self, harness: "/bin/true", model: model, root: dir, slots: slots,
 		resultsRoot: filepath.Join(dir, "results"), deadline: deadline, tokens: tokens, stderr: &bytes.Buffer{}}
 }
 
@@ -210,11 +210,11 @@ func TestATakenCardTheMemberCannotLaunchIsFinishedFailed(t *testing.T) {
 func TestTheMemberLineSaysTheOverride(t *testing.T) {
 	t.Parallel()
 	for args, want := range map[string]string{
-		"--model ov/m --tokens 5 --deadline 9s": "width=row every=3s sprint=/usr/bin/false harness=/bin/true model=card,override:ov/m",
-		"--width 3":                             "width=override:3 every=3s sprint=/usr/bin/false harness=/bin/true model=card",
+		"--model ov/m --tokens 5 --deadline 9s": "width=row every=3s server=sprint.test:6390 harness=/bin/true model=card,override:ov/m",
+		"--width 3":                             "width=override:3 every=3s server=sprint.test:6390 harness=/bin/true model=card",
 	} {
 		var out, errb bytes.Buffer
-		cmdMember(append([]string{"--as", "m1", "--harness", "/bin/true", "--root", t.TempDir(), "--once", "--sprint", "/usr/bin/false"}, strings.Fields(args)...), &out, &errb)
+		cmdMember(append([]string{"--as", "m1", "--harness", "/bin/true", "--root", t.TempDir(), "--once", "--server", "sprint.test:6390"}, strings.Fields(args)...), &out, &errb, noServer)
 		assert.Contains(t, out.String(), "MEMBER member as=m1 "+want, args)
 	}
 }

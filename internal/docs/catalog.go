@@ -20,7 +20,6 @@ var DefaultCatalog = []Entry{
 	Page("internal", "packages and libraries", "nova-ci local", "make test"),
 	E("tla", "the TLA+ models of the state machines and their runners", "go test ./internal/tlc", "make tlc-test"),
 	E("profiles", "the darwin sandbox profile template internal/sandbox embeds, and the check that measures it (tools/sandboxcheck)", "go test ./internal/sandbox", "go test ./internal/sandbox"),
-	E("deprecated", "tools and modules not in use, kept for reference only; never built, tested or maintained", "none", "none"),
 	E("testdata", "shared test fixtures and data", "go test ./internal/ci", "make test"),
 	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
 
@@ -65,8 +64,7 @@ var DefaultCatalog = []Entry{
 	E("internal/dogfood", "dogfood self-test gates", "go test ./internal/dogfood", "go test ./internal/dogfood"),
 	E("internal/fleet", "runner fleet discovery and status", "go test ./internal/fleet", "go test ./internal/fleet"),
 	E("internal/fuse", "workspace isolation boundaries", "go test ./internal/fuse", "go test ./internal/fuse"),
-	Page("internal/ghevent", "GitHub webhook to Redis stream", "go test ./internal/ghevent", "go test ./internal/ghevent"),
-	E("internal/ghevent/testdata", "GitHub delivery fixtures for the decoder", "go test ./internal/ghevent", "go test ./internal/ghevent"),
+	Page("internal/ghevent", "the GitHub event Redis stream: append and read", "go test ./internal/ghevent", "go test ./internal/ghevent"),
 	E("internal/ghevent/wire", "shared GitHub event stream identity without ingestion dependencies", "go test ./internal/ci", "go test ./internal/ci"),
 	E("internal/gitrun", "the one runner for a one-shot git child: a deadline, WaitDelay and the caller's environment choice", "go test ./internal/gitrun", "go test ./internal/gitrun"),
 	E("internal/goenv", "Go environment scrubber for child processes", "go test ./internal/goenv", "go test ./internal/goenv"),
@@ -95,6 +93,7 @@ var DefaultCatalog = []Entry{
 	E("internal/shippedsmoke", "the smoke test of a shipped nova-check binary, behind the shippedsmoke build tag, run by the certification workflow", "go test -tags shippedsmoke ./internal/shippedsmoke", "NOVA_SHIPPED_BIN=<binary> go test -tags shippedsmoke -v ./internal/shippedsmoke"),
 	E("internal/sprint", "the sprint table's pure core (lifecycle, steps, check, inbox) and its binding to the table layer (store) and its driver (play)", "go test ./internal/sprint/...", "go test ./internal/sprint/..."),
 	E("internal/member", "a sprint fleet member's loop: beat, queue, push and judge the finish, take to width, each card a child", "go test ./internal/member", "go test ./internal/member"),
+	E("internal/sprintwire", "how a worker talks to the sprint's server (nova-sprint run --listen): the request and reply of a batch of verbs, the client, and the member's sprint over it", "go test ./internal/sprintwire", "go test ./internal/sprintwire"),
 	E("internal/subproc", "the one door a child process goes through: a named deadline per kind, WaitDelay, and a cancellable context for long-lived children", "go test ./internal/subproc", "go test ./internal/subproc"),
 	E("internal/swarm", "the native card runner: staging, the wall, budgets, slot leases and card lint", "go test ./internal/swarm", "go test ./internal/swarm"),
 	E("internal/testbin", "places a built program into a test dir", "go test ./internal/testbin", "go test ./internal/testbin"),
@@ -113,7 +112,7 @@ var DefaultCatalog = []Entry{
 	E("internal/workfile", "nova-work tree file: the model, its canonical writer, strict reader and field-for-field diff", "go test ./internal/workfile", "go test ./internal/workfile"),
 	E("internal/workgh", "nova-work read-only GitHub issue capture over GraphQL, every call counted", "go test ./internal/workgh", "go test ./internal/workgh"),
 	E("internal/worklang", "bounded reader for nova-work's restricted s-expression tree file", "go test ./internal/worklang", "go test ./internal/worklang"),
-	E("internal/yield", "CI over work: a copy or local test run steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
+	E("internal/yield", "CI over work: a copy, a local test run or a sprint card's native launch steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
 
 	// docs/
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),

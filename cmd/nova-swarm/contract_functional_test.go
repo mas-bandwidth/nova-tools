@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -117,6 +118,18 @@ func realWallBackend(t *testing.T) string {
 	return backend
 }
 
+// receiptPusher observes the completed native run before the member reports its
+// finish and removes the checkout. It delegates the actual push unchanged.
+type receiptPusher struct {
+	member.Pusher
+	before func(member.Packet)
+}
+
+func (p receiptPusher) Push(packet member.Packet, result member.Result) member.Push {
+	p.before(packet)
+	return p.Pusher.Push(packet, result)
+}
+
 // scriptedChild runs one family's scripted child through the member loop and
 // native, walled or not, and asserts the finish (TestTheScriptedChildEndToEnd).
 func scriptedChild(t *testing.T, family string, walled bool) {
@@ -155,18 +168,44 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 	root := filepath.Join(dir, "m1")
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "slots"), 0o755))
 	write(t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
-	sp := &execSprint{bin: bin, actor: "m1", env: []string{"NOVA_SPRINT_REDIS=" + d.addr}}
-	rn := &nativeRunner{self: builtTool, sprintBin: bin, harness: harness, model: familyModel[family], root: root,
+	sp := d.worker()
+	rn := &nativeRunner{self: builtTool, harness: harness, model: familyModel[family], root: root,
 		slots: filepath.Join(root, "slots"), resultsRoot: filepath.Join(root, "results"), deadline: time.Minute,
 		tokens: "unmetered", noWall: !walled, stderr: io.Discard}
 	if walled {
 		require.NotEmpty(t, builtSandbox, "TestMain builds the wall binary for the walled profile run")
 		rn.env = []string{"PATH=" + filepath.Dir(builtSandbox) + string(os.PathListSeparator) + os.Getenv("PATH")}
 	}
-	pu := newGitPusher(root, rn.slots, bin)
+	pu := newGitPusher(root, rn.slots)
 	pu.gh = gh
 	out := &lockedBuf{}
-	m := member.New(member.Config{As: "m1", Width: 1}, sp, rn, pu, out)
+	var receiptMu sync.Mutex
+	var receipt []byte
+	var receiptErr error
+	var receiptJob, receiptCwd os.FileInfo
+	var receiptJobPath string
+	var pusher member.Pusher = pu
+	if walled {
+		pusher = receiptPusher{Pusher: pu, before: func(packet member.Packet) {
+			receiptMu.Lock()
+			defer receiptMu.Unlock()
+			launchDir := filepath.Join(root, "slots", launchName(packet))
+			receiptJobPath = filepath.Join(launchDir, "jobs", packet.Card)
+			receipt, receiptErr = os.ReadFile(filepath.Join(launchDir, "native.log"))
+			if receiptErr != nil {
+				return
+			}
+			receiptJob, receiptErr = os.Stat(receiptJobPath)
+			if receiptErr != nil {
+				return
+			}
+			_, cwd, reason := wallNamed(string(receipt))
+			if reason == "" {
+				receiptCwd, receiptErr = os.Stat(cwd)
+			}
+		}}
+	}
+	m := member.New(member.Config{As: "m1", Width: 1}, sp, rn, pusher, out)
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("member output:\n%s", out.String())
@@ -183,23 +222,23 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	assert.NotContains(t, story, "FAILED", story)
-	pushed := strings.TrimSpace(runGit(t, origin, "rev-parse", "--verify", "-q", "refs/heads/sprint/a-1.w1.e0"))
+	pushed := strings.TrimSpace(runGit(t, origin, "rev-parse", "--verify", "-q", "refs/heads/sprint/a-1.w1.g1.e0"))
 	require.Len(t, pushed, 40, "the card's branch is on origin:\n%s", story)
 	assert.Equal(t, "the change", strings.TrimSpace(runGit(t, origin, "log", "-1", "--format=%s", pushed)), "origin holds the child's commit")
-	assert.Contains(t, story, "pushed="+pushed+" to sprint/a-1.w1.e0")
+	assert.Contains(t, story, "pushed="+pushed+" to sprint/a-1.w1.g1.e0")
 	if walled {
-		logs, err := filepath.Glob(filepath.Join(root, "slots", "*.native.log"))
-		require.NoError(t, err)
-		require.Len(t, logs, 1, "the wall run writes one native log")
-		launch := strings.TrimSuffix(filepath.Base(logs[0]), ".native.log")
-		runLog := filepath.Join(root, "slots", launch, "native.log")
-		raw, err := os.ReadFile(runLog)
-		require.NoError(t, err)
+		receiptMu.Lock()
+		raw, readErr, jobInfo, cwdInfo, jobDir := receipt, receiptErr, receiptJob, receiptCwd, receiptJobPath
+		receiptMu.Unlock()
+		require.NotEmpty(t, raw, "the pusher captured the inner native log before cleanup")
+		require.NoError(t, readErr)
 		backend, cwd, reason := wallNamed(string(raw))
-		require.Empty(t, reason, "launch native log %s contains no valid SANDBOX OK receipt: %s", runLog, raw)
+		require.Empty(t, reason, "native log contains no valid SANDBOX OK receipt: %s", raw)
 		require.Equal(t, wallBackend, backend, "the framed child ran under the checked real backend")
-		jobDir := filepath.Join(root, "slots", launch, "jobs", "a-1.w1")
-		require.True(t, sameDir(cwd, jobDir), "SANDBOX OK cwd %q must name job %q", cwd, jobDir)
+		require.NotNil(t, jobInfo)
+		require.NotNil(t, cwdInfo)
+		require.True(t, os.SameFile(cwdInfo, jobInfo), "SANDBOX OK cwd %q must name job %q", cwd, jobDir)
+		assert.NoDirExists(t, jobDir, "a successful launch leaves no checkout behind")
 	}
 
 	args, err := os.ReadFile(filepath.Join(dir, "gh.args"))
@@ -208,7 +247,7 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 		return
 	}
 	require.NoError(t, err, "the member opened the pull request")
-	assert.Equal(t, []string{"pr", "create", "--repo", origin, "--head", "sprint/a-1.w1.e0", "--title", "The change", "--body-file", "-", "--base", "main"},
+	assert.Equal(t, []string{"pr", "create", "--repo", origin, "--head", "sprint/a-1.w1.g1.e0", "--title", "The change", "--body-file", "-", "--base", "main"},
 		strings.Split(strings.TrimSpace(string(args)), "\n"))
 	body, err := os.ReadFile(filepath.Join(dir, "gh.body"))
 	require.NoError(t, err)

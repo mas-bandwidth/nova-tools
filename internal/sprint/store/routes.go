@@ -13,31 +13,87 @@ import (
 )
 
 // RouteReader is a store that holds the model tiers' routes and route arrays
-// nova-config applies (config.RoutesKey, config.RouteKey, config.TierKey) and the
-// sprint row's reader tier (config.SprintKey("reader_tier")): a step that deals or
-// asks reads them with its tables (Step.Routes; internal/sprint/route.go). A store
+// nova-config applies (config.RoutesKey, config.RouteKey, config.TierKey): a step
+// that deals or asks reads them with its tables (Step.Routes; internal/sprint/route.go). A store
 // that is not one has no route, and the deal deals as before.
 type RouteReader interface {
-	// Routes is every route, each tier's route array and the reader tier, and
-	// the round trips the read made.
+	// Routes is every route and each tier's route array, and the round trips
+	// the read made.
 	Routes(ctx context.Context) (RouteSet, int64, error)
 }
 
-// RouteSet is what a step that deals or asks plans with: the routes, the tiers'
-// arrays, and the tier a read card's route is drawn from ("" is the default).
+// PriceReader is a store that holds the routes a worker's step prices with: the
+// routes set and each route's record, and nothing else (Step.Prices). A store that
+// is not one has no route, and nothing is priced.
+type PriceReader interface {
+	// PriceRoutes is every route, read from the set and the routes' records alone,
+	// and the round trips the read made.
+	PriceRoutes(ctx context.Context) ([]sprint.Route, int64, error)
+}
+
+// priceRoutes is the routes a worker's step prices with, by name; an empty list when
+// the store holds none.
+func (st *Store) priceRoutes(ctx context.Context) ([]sprint.Route, error) {
+	pr, ok := st.B.(PriceReader)
+	if !ok {
+		return []sprint.Route{}, nil
+	}
+	rs, _, err := pr.PriceRoutes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("the routes to price with (%s, %s): %w", config.RoutesKey, config.RouteKey("<name>"), err)
+	}
+	sort.Slice(rs, func(i, j int) bool { return rs[i].Name < rs[j].Name })
+	return append([]sprint.Route{}, rs...), nil
+}
+
+// PriceRoutes reads the set, then every route's record in one pipeline: two round
+// trips, the second only when the set names a route. It touches the keys
+// config.RoutesKey and config.RouteKey alone, which every role reads
+// (internal/redisacl, the routes family): never a tier's array or the sprint row.
+func (r *Redis) PriceRoutes(ctx context.Context) ([]sprint.Route, int64, error) {
+	names, err := r.C.SMembers(ctx, config.RoutesKey).Result()
+	if err != nil || len(names) == 0 {
+		return nil, 1, err
+	}
+	pipe := r.C.Pipeline()
+	hs := make(map[string]interface{ Val() map[string]string }, len(names))
+	for _, n := range names {
+		hs[n] = pipe.HGetAll(ctx, config.RouteKey(n))
+	}
+	if err := redisconn.Exec(ctx, pipe); err != nil {
+		return nil, 2, err
+	}
+	out := make([]sprint.Route, 0, len(names))
+	for _, n := range names {
+		out = append(out, RouteOf(n, hs[n].Val()))
+	}
+	return out, 2, nil
+}
+
+// PriceRoutes is the routes SetRoutes gave the store.
+func (m *Mem) PriceRoutes(context.Context) ([]sprint.Route, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.fail("routes"); err != nil {
+		return nil, 0, err
+	}
+	return append([]sprint.Route(nil), m.routes...), 0, nil
+}
+
+// RouteSet is what a step that deals or asks plans with: the routes and the
+// tiers' arrays.
 type RouteSet struct {
-	Routes     []sprint.Route
-	Tiers      map[string][]string
-	ReaderTier string
+	Routes []sprint.Route
+	Tiers  map[string][]string
 }
 
 // into is the set as the snapshot carries it.
 func (rs RouteSet) into(s *sprint.Snapshot) {
-	s.Routes, s.Tiers, s.ReaderTier = rs.Routes, rs.Tiers, rs.ReaderTier
+	s.Routes, s.Tiers = rs.Routes, rs.Tiers
 }
 
-// routes is the routes a dealing step plans with, by name, the tiers' arrays and
-// the reader tier; an empty, non-nil list when the store holds none (read: the
+// routes is the routes a dealing step plans with, by name, and the tiers'
+// arrays; an empty, non-nil list when the store holds none (read: the
 // no-stall rule reads none again).
 func (st *Store) routes(ctx context.Context) (RouteSet, error) {
 	rs, _, err := st.routesTrips(ctx)
@@ -88,9 +144,9 @@ func (st *Store) cached(ctx context.Context, c *RouteCache) (RouteSet, error) {
 	return c.set, nil
 }
 
-// Routes reads the set, then every route's hash, each tier's array and the
-// reader tier in one pipeline: two round trips, the second only when the set
-// names a route (the arrays and the reader tier ride in it, so the tick's trips
+// Routes reads the set, then every route's hash and each tier's array in one
+// pipeline: two round trips, the second only when the set names a route (the
+// arrays ride in it, so the tick's trips
 // do not rise; with no route a read card has none to draw).
 func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 	names, err := r.C.SMembers(ctx, config.RoutesKey).Result()
@@ -106,7 +162,6 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 	for _, t := range config.RouteTiers {
 		arrays[t] = pipe.HGet(ctx, config.TierKey(t), "routes")
 	}
-	readerTier := pipe.Get(ctx, config.SprintKey(config.FieldReaderTier))
 	if err := redisconn.Exec(ctx, pipe); err != nil {
 		return RouteSet{}, 2, err
 	}
@@ -120,7 +175,7 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 			tiers[t] = a
 		}
 	}
-	return RouteSet{Routes: out, Tiers: tiers, ReaderTier: readerTier.Val()}, 2, nil
+	return RouteSet{Routes: out, Tiers: tiers}, 2, nil
 }
 
 // RouteOf is a route from its hash as nova-config's apply writes it: a field
@@ -132,8 +187,7 @@ func RouteOf(name string, h map[string]string) sprint.Route {
 		Deadline: n("deadline"), Enabled: enabled, Prices: cardcost.PricesOf(h)}
 }
 
-// Routes is the routes SetRoutes gave the store, the arrays SetTiers gave it and
-// the reader tier SetReaderTier gave it.
+// Routes is the routes SetRoutes gave the store and the arrays SetTiers gave it.
 func (m *Mem) Routes(context.Context) (RouteSet, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -144,15 +198,7 @@ func (m *Mem) Routes(context.Context) (RouteSet, int64, error) {
 	for t, a := range m.tiers {
 		tiers[t] = append([]string(nil), a...)
 	}
-	return RouteSet{Routes: append([]sprint.Route(nil), m.routes...), Tiers: tiers, ReaderTier: m.readerTier}, 0, nil
-}
-
-// SetReaderTier gives the store the sprint row's reader tier, as nova-config's
-// apply does a live one (sprint:reader_tier).
-func (m *Mem) SetReaderTier(tier string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.readerTier = tier
+	return RouteSet{Routes: append([]sprint.Route(nil), m.routes...), Tiers: tiers}, 0, nil
 }
 
 // SetRoutes gives the store its routes, as nova-config's apply does a live one.

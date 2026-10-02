@@ -8,30 +8,31 @@ import (
 )
 
 // The duties of today's tick, by name, in the order the machine runs them: the
-// parts of sprint.TickParts in the order of the four tables' updates (the work
-// pump's resolve, deal and accept, the readers' ask, the merge's resume, the
-// fleet's presence and level, then the end), the unknown machines it tells of
+// parts of sprint.TickParts in their order (the start's level and level reads,
+// then the four tables' updates: the work pump's resolve, deal and accept, the
+// readers' ask, the merge's resume, the fleet's presence; then the end), the unknown machines it tells of
 // (with the fleet's update), and the reminders. The machine's repair of an operation the fence holds is not one:
 // it decides nothing from the tables (Decide's doc says what is left out).
 const (
-	DutyStrangers = "strangers" // tell of a machine that beats and is no member
-	DutyPresence  = "presence"  // a member's status follows its beats
-	DutyResolve   = "resolve"   // waiting primaries whose needs landed go ready; sentinels are reached
-	DutyResume    = "resume"    // a stream stopped on another's card goes on when it landed
-	DutyDeal      = "deal"      // ready primaries are dealt to the members up
-	DutyLevel     = "level"     // the members' ready queues are evened
-	DutyAccept    = "accept"    // primaries in review with two ok reads are accepted and queued to merge
-	DutyAsk       = "ask"       // primaries in review are asked of two readers
-	DutyCheck     = "check"     // a broken rule and a stall are judgments
-	DutyDeadlines = "deadlines" // a late card or stream is a judgment
-	DutyOverdue   = "overdue"   // a judgment past its due time is marked
-	DutyDone      = "done"      // the sprint done is said to the coordinator, and the machine stops
-	DutyRemind    = "remind"    // each person due is pushed their goal
+	DutyStrangers  = "strangers"   // tell of a machine that beats and is no member
+	DutyPresence   = "presence"    // a member's status follows its beats
+	DutyResolve    = "resolve"     // waiting primaries whose needs landed go ready; sentinels are reached
+	DutyResume     = "resume"      // a stream stopped on another's card goes on when it landed
+	DutyDeal       = "deal"        // ready primaries are dealt to the members up
+	DutyLevel      = "level"       // the members' backlogs are evened, at the tick's start
+	DutyLevelReads = "level reads" // the readers' loads are evened, at the tick's start
+	DutyAccept     = "accept"      // primaries in review with two ok reads are accepted and queued to merge
+	DutyAsk        = "ask"         // primaries in review are asked of two readers
+	DutyCheck      = "check"       // a broken rule and a stall are judgments
+	DutyDeadlines  = "deadlines"   // a late card or stream is a judgment
+	DutyOverdue    = "overdue"     // a judgment past its due time is marked
+	DutyDone       = "done"        // the sprint done is said to the coordinator, and the machine stops
+	DutyRemind     = "remind"      // each person due is pushed their goal
 )
 
 // dutyNames is the duties' names in the tick's order, which the canonical order
 // of moves follows. Duties lists the same names, and a test holds them equal.
-var dutyNames = []string{DutyResolve, DutyDeal, DutyAccept, DutyAsk, DutyResume, DutyStrangers, DutyPresence, DutyLevel, DutyCheck, DutyDeadlines, DutyOverdue, DutyDone, DutyRemind}
+var dutyNames = []string{DutyLevel, DutyLevelReads, DutyResolve, DutyDeal, DutyAccept, DutyAsk, DutyResume, DutyStrangers, DutyPresence, DutyCheck, DutyDeadlines, DutyOverdue, DutyDone, DutyRemind}
 
 // Duty is one duty of the tick: its name and the function that decides it.
 type Duty struct {
@@ -44,6 +45,8 @@ type Duty struct {
 
 // Duties is every duty of today's tick in the order the machine runs them.
 var Duties = []Duty{
+	{DutyLevel, LevelMoves},
+	{DutyLevelReads, LevelReadsMoves},
 	{DutyResolve, ResolveMoves},
 	{DutyDeal, DealMoves},
 	{DutyAccept, AcceptMoves},
@@ -51,7 +54,6 @@ var Duties = []Duty{
 	{DutyResume, ResumeMoves},
 	{DutyStrangers, StrangerMoves},
 	{DutyPresence, PresenceMoves},
-	{DutyLevel, LevelMoves},
 	{DutyCheck, CheckMoves},
 	{DutyDeadlines, DeadlineMoves},
 	{DutyOverdue, OverdueMoves},
@@ -117,9 +119,14 @@ func DealMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyDe
 // merge is the coordinator's.
 func AcceptMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyAccept) }
 
-// LevelMoves is the newest ready cards moved from the longest queue round the
-// fleet while two queues differ by more than one (T4).
+// LevelMoves is the newest ready cards moved from the largest backlog round
+// the fleet while two backlogs differ by more than one, at the tick's start (T4).
 func LevelMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyLevel) }
+
+// LevelReadsMoves is the newest asked reads moved from the reader with the
+// largest load round the readers while two loads differ by more than one, at
+// the tick's start.
+func LevelReadsMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyLevelReads) }
 
 // AskMoves is the primaries in review asked of two different readers, and the
 // judgment for one that cannot be (T2).
@@ -166,6 +173,8 @@ type dutyOn struct {
 // silence.
 func decisions() []dutyOn {
 	return []dutyOn{
+		{DutyLevel, partOn(DutyLevel)},
+		{DutyLevelReads, partOn(DutyLevelReads)},
 		{DutyResolve, partOn(DutyResolve)},
 		{DutyDeal, partOn(DutyDeal)},
 		{DutyAccept, partOn(DutyAccept)},
@@ -173,7 +182,6 @@ func decisions() []dutyOn {
 		{DutyResume, partOn(DutyResume)},
 		{DutyStrangers, strangersOn},
 		{DutyPresence, partOn(DutyPresence)},
-		{DutyLevel, partOn(DutyLevel)},
 		{DutyCheck, partOn(DutyCheck)},
 		{DutyDeadlines, partOn(DutyDeadlines)},
 		{DutyOverdue, partOn(DutyOverdue)},

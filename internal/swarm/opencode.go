@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // THE USAGE SOURCE IS THE DATABASE THE HARNESS WRITES (SPEC-SWARM rule 12, rule 13).
@@ -59,12 +57,6 @@ func OpenCodeStoreLocations(dataHome string) []string {
 		filepath.Join(dataHome, filepath.FromSlash(OpenCodeDB)),
 		filepath.Join(dataHome, ".local", "share", "opencode", "opencode.db"),
 	}
-}
-
-// UsageRefusalLine is the one line a usage read that did not answer leaves on the record, so
-// that a row of dashes is never silent about the reader it needed.
-func UsageRefusalLine(id string, err error) string {
-	return fmt.Sprintf("%s id=%s", oneline.Escape(redactedReason(err)), oneline.Field(id))
 }
 
 // usageTimeout is how long this tool waits for one query before saying so. It is a property

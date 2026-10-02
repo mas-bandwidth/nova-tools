@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // SPEC CARD #880 ITEM 18 (docs/SPEC-SWARM.md, Bench slot leases): the bench
@@ -16,9 +19,7 @@ func TestBenchSlotLeasesSectionNamesItsRules(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
-	if err != nil {
-		t.Fatalf("the bench slot lease contract is the spec's: %s", err)
-	}
+	require.NoError(t, err, "the bench slot lease contract is the spec's: %s", err)
 	spec := string(raw)
 	section := benchSlotLeasesSection(t, spec)
 	for _, want := range []string{
@@ -47,9 +48,7 @@ func TestBenchSlotLeasesSectionNamesItsRules(t *testing.T) {
 		"a live-until lease whose pid is gone is stranded with its label",
 		"Card kinds carry a weight",
 	} {
-		if !strings.Contains(section, want) {
-			t.Errorf("SPEC-SWARM.md Bench slot leases names %q; the section holds:\n%s", want, section)
-		}
+		assert.Contains(t, section, want, "SPEC-SWARM.md Bench slot leases names %q; the section holds:\n%s", want, section)
 	}
 }
 

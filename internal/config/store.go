@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -30,9 +31,6 @@ type Store interface {
 	Delete(ctx context.Context, kind, name string, actor string) (int64, error)
 	// History reads the change rows of one row, oldest first.
 	History(ctx context.Context, kind, name string) ([]Change, error)
-	// MachinesAndFleet reads every machine row and the fleet row from one
-	// snapshot: one transaction on Postgres, one lock hold on Mem.
-	MachinesAndFleet(ctx context.Context) (machines []Row, fleet Row, err error)
 	// Rev is the kind's revision: the greatest history id of the kind, 0
 	// when it has none. apply stamps it into Redis.
 	Rev(ctx context.Context, kind string) (int64, error)
@@ -144,7 +142,7 @@ func checkReferenced(ctx context.Context, st Store, kind, name string) error {
 	}
 	for _, other := range Kinds {
 		for _, f := range other.Fields {
-			if f.Type != TypeRef || f.Ref != kind {
+			if (f.Type != TypeRef && f.Type != TypeSeq) || f.Ref != kind {
 				continue
 			}
 			rows, err := st.List(ctx, other.Name)
@@ -153,9 +151,13 @@ func checkReferenced(ctx context.Context, st Store, kind, name string) error {
 			}
 			var names []string
 			for _, r := range rows {
-				if r.Fields[f.Name] == name {
+				// a ref names one row; a seq (a tier's routes) is a comma list of them
+				if r.Fields[f.Name] == name || (f.Type == TypeSeq && slices.Contains(strings.Split(r.Fields[f.Name], ","), name)) {
 					names = append(names, r.Name)
 				}
+			}
+			if len(names) > 0 && f.Type == TypeSeq {
+				return &RefusedError{Err: ErrReferenced, Detail: fmt.Sprintf("%s %s is in the --%s of %s %s; set it out of the list first (%s set %s --%s <the rest>)", kind, name, f.Name, other.Name, strings.Join(names, ","), other.Name, names[0], f.Name)}
 			}
 			if len(names) > 0 && other.Singleton {
 				return &RefusedError{Err: ErrReferenced, Detail: fmt.Sprintf("%s %s is the --%s of the %s", kind, name, f.Name, other.Name)}
@@ -166,6 +168,59 @@ func checkReferenced(ctx context.Context, st Store, kind, name string) error {
 		}
 	}
 	return nil
+}
+
+// PlanWrite is the history row a write would add, worked out from the store as it
+// stands and written nowhere: the dry run of Insert (OpAdd, row), Update
+// (OpSet, row.Name and changes) and Delete (OpRemove, row.Name), with the
+// refusals both stores make before they write (a name taken or missing, the
+// kind's Check, a ref naming no row, a row another names or the migration
+// made), from the same checks. The change has no id and no instant: nothing
+// was recorded.
+func PlanWrite(ctx context.Context, st Store, op, kind string, row Row, changes map[string]string) (Change, error) {
+	k, ok := Lookup(kind)
+	if !ok {
+		return Change{}, fmt.Errorf("unknown kind %q", kind)
+	}
+	cur, found, err := st.Get(ctx, kind, row.Name)
+	if err != nil {
+		return Change{}, err
+	}
+	c := Change{Kind: kind, Name: row.Name, Op: op}
+	missing := &RefusedError{Err: ErrNotFound, Detail: fmt.Sprintf("%s %s not found", kind, row.Name)}
+	switch op {
+	case OpAdd:
+		if err := checkRefs(ctx, st, k, row); err != nil {
+			return Change{}, err
+		}
+		if found {
+			return Change{}, &RefusedError{Err: ErrExists, Detail: fmt.Sprintf("%s %s exists", kind, row.Name)}
+		}
+		c.After = row.Clone().Fields
+	case OpSet:
+		if !found {
+			return Change{}, missing
+		}
+		next := cur.Clone()
+		for f, v := range changes {
+			next.Fields[f] = v
+		}
+		if err := checkRefs(ctx, st, k, next); err != nil {
+			return Change{}, err
+		}
+		c.Before, c.After = cur.Fields, next.Fields
+	case OpRemove:
+		if !found {
+			return Change{}, missing
+		}
+		if err := checkReferenced(ctx, st, kind, row.Name); err != nil {
+			return Change{}, err
+		}
+		c.Before = cur.Fields
+	default:
+		return Change{}, fmt.Errorf("plan: unknown op %q", op)
+	}
+	return c, nil
 }
 
 // Mem is the in-memory Store the unit tests use. It is strict like PG: the
@@ -227,21 +282,6 @@ func (m *Mem) List(_ context.Context, kind string) ([]Row, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
-}
-
-func (m *Mem) MachinesAndFleet(_ context.Context) ([]Row, Row, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var machines []Row
-	for _, r := range m.rows[KindMachine] {
-		machines = append(machines, r.Clone())
-	}
-	sort.Slice(machines, func(i, j int) bool { return machines[i].Name < machines[j].Name })
-	var fleet Row
-	if r, ok := m.rows[KindFleet][KindFleet]; ok {
-		fleet = r.Clone()
-	}
-	return machines, fleet, nil
 }
 
 func (m *Mem) Insert(ctx context.Context, kind string, row Row, actor string) (int64, error) {

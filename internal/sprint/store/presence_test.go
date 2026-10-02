@@ -7,6 +7,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // downAfter is how long a member goes without a beat and is still up: the
@@ -21,9 +22,7 @@ const (
 func (h *harness) fleetRow(member string) map[string]string {
 	h.t.Helper()
 	shapes, err := h.m.Shapes(h.ctx, []string{h.st.Names.Table(sprint.Fleet)})
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	for _, r := range shapes[0].Rows {
 		if r.Key == member {
 			return r.Texts
@@ -44,9 +43,7 @@ func (h *harness) setLive(members ...string) {
 func (h *harness) beatAt(member string, pct float64) sprint.Beat {
 	h.t.Helper()
 	b, err := h.st.Beat(h.ctx, member, &pct, hostload.Source{})
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	return b
 }
 
@@ -54,9 +51,7 @@ func (h *harness) beatAt(member string, pct float64) sprint.Beat {
 func (h *harness) memberNotes(typ, member string) []string {
 	h.t.Helper()
 	notes, _, err := h.m.NotesSince(h.ctx, "", 100000)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	var out []string
 	for _, n := range notes {
 		if n.Type == typ && strings.HasPrefix(n.What, member+" ") {
@@ -92,9 +87,8 @@ func TestABeatIsOneRecordMeasuredOrGiven(t *testing.T) {
 	src.ProcStat = func() (string, error) { return stat, nil }
 	h.tick(time.Second)
 	stat = "cpu  400 0 200 900 100 0 0 0 0 0\n"
-	if _, err := h.st.Beat(h.ctx, "m3", nil, src); err != nil {
-		t.Fatal(err)
-	}
+	_, err = h.st.Beat(h.ctx, "m3", nil, src)
+	require.NoError(t, err)
 	h.tick(time.Second)
 	stat = "cpu  500 0 300 1700 100 0 0 0 0 0\n"
 	b, err = h.st.Beat(h.ctx, "m3", nil, src)
@@ -112,15 +106,12 @@ func TestABeatIsOneRecordMeasuredOrGiven(t *testing.T) {
 		t.Fatalf("the same beat twice in one second:\n%s\n%s", raw1, raw2)
 	}
 	bad := -1.0
-	if _, err := h.st.Beat(h.ctx, "m4", &bad, hostload.Source{}); err == nil {
-		t.Fatal("a negative load must be refused")
-	}
-	if _, err := h.st.Beat(h.ctx, "m4", nil, hostload.Source{}); err == nil || !strings.Contains(err.Error(), "--load") {
-		t.Fatalf("a machine that cannot measure: %v, want a refusal naming --load", err)
-	}
-	if _, err := h.st.Beat(h.ctx, "no such", nil, src); err == nil {
-		t.Fatal("a member name with a blank must be refused")
-	}
+	_, err = h.st.Beat(h.ctx, "m4", &bad, hostload.Source{})
+	require.Error(t, err, "a negative load must be refused")
+	_, err = h.st.Beat(h.ctx, "m4", nil, hostload.Source{})
+	require.ErrorContains(t, err, "--load", "a machine that cannot measure: %v, want a refusal naming --load", err)
+	_, err = h.st.Beat(h.ctx, "no such", nil, src)
+	require.Error(t, err, "a member name with a blank must be refused")
 }
 
 // TestASilentMemberGoesDownAndItsCardsAreDealt: a member whose last beat is
@@ -147,26 +138,23 @@ func TestASilentMemberGoesDownAndItsCardsAreDealt(t *testing.T) {
 	if d := h.dealtTo(); d["m1"] != 0 || d["m2"] != 4 {
 		t.Fatalf("after the deadline: dealt %v, want every card on m2", d)
 	}
-	if st := h.snap().MemberCtl("m1").F("status"); st != sprint.Down {
-		t.Fatalf("m1 %s, want down", st)
-	}
-	if n := h.memberNotes(sprint.NMemberDown, "m1"); len(n) != 1 || !strings.Contains(n[0], "no beat for 45s") {
-		t.Fatalf("down notifications: %q, want one saying why", n)
-	}
+	st := h.snap().MemberCtl("m1").F("status")
+	require.Equal(t, string(sprint.Down), st, "m1 %s, want down", st)
+	n := h.memberNotes(sprint.NMemberDown, "m1")
+	require.Len(t, n, 1, "down notifications: %q, want one saying why", n)
+	require.Contains(t, n[0], "no beat for 45s", "down notifications: %q, want one saying why", n)
 	if row := h.fleetRow("m1"); row[sprint.Status] != sprint.Down || row[sprint.Load] != "" {
 		t.Fatalf("m1's row: %v, want down with no load", row)
 	}
 	h.machine()
-	if n := h.memberNotes(sprint.NMemberDown, "m1"); len(n) != 1 {
-		t.Fatalf("a second tick wrote again: %q", n)
-	}
+	n = h.memberNotes(sprint.NMemberDown, "m1")
+	require.Len(t, n, 1, "a second tick wrote again: %q", n)
 
 	h.setLive("m1", "m2")
 	h.tick(time.Second)
 	h.machine()
-	if st := h.snap().MemberCtl("m1").F("status"); st != sprint.Up {
-		t.Fatalf("m1 beats again and is %s, want up", st)
-	}
+	st = h.snap().MemberCtl("m1").F("status")
+	require.Equal(t, string(sprint.Up), st, "m1 beats again and is %s, want up", st)
 	if d := h.dealtTo(); d["m1"] != 2 || d["m2"] != 2 {
 		t.Fatalf("after m1 came up: dealt %v, want the queues levelled", d)
 	}
@@ -217,9 +205,8 @@ func TestTheHoldKeepsABeatingMemberDown(t *testing.T) {
 	if ctl := s.MemberCtl("m1"); ctl.F("status") != sprint.Down || ctl.F("held") == "" {
 		t.Fatalf("m1 held: %v", ctl.Fields)
 	}
-	if d := h.dealtTo(); d["m1"] != 0 {
-		t.Fatalf("a held member holds cards: %v", d)
-	}
+	d := h.dealtTo()
+	require.Equal(t, 0, d["m1"], "a held member holds cards: %v", d)
 	if row := h.fleetRow("m1"); row[sprint.Status] != sprint.Held || row[sprint.Load] != "0.0%" {
 		t.Fatalf("m1's row: %v, want held and its load", row)
 	}
@@ -230,9 +217,8 @@ func TestTheHoldKeepsABeatingMemberDown(t *testing.T) {
 	if ctl := h.snap().MemberCtl("m1"); ctl.F("status") != sprint.Up || ctl.F("held") != "" {
 		t.Fatalf("released with a fresh beat: %v, want up at once", ctl.Fields)
 	}
-	if d := h.dealtTo(); d["m1"] != 2 {
-		t.Fatalf("after the release: dealt %v, want the queues levelled", d)
-	}
+	d = h.dealtTo()
+	require.Equal(t, 2, d["m1"], "after the release: dealt %v, want the queues levelled", d)
 
 	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m2"}))
 	h.must(FleetStep(sprint.FleetReq{Op: "release", Member: "m2"}))
@@ -241,9 +227,8 @@ func TestTheHoldKeepsABeatingMemberDown(t *testing.T) {
 	}
 	h.tick(time.Second)
 	h.machine()
-	if st := h.snap().MemberCtl("m2").F("status"); st != sprint.Up {
-		t.Fatalf("m2 released and beating is %s after a tick, want up", st)
-	}
+	st := h.snap().MemberCtl("m2").F("status")
+	require.Equal(t, string(sprint.Up), st, "m2 released and beating is %s after a tick, want up", st)
 	h.clean("after the holds")
 }
 
@@ -264,12 +249,10 @@ func TestAMemberThatNeverBeatIsDown(t *testing.T) {
 	if row := h.fleetRow("m3"); row[sprint.Status] != sprint.Down || row[sprint.Load] != "" {
 		t.Fatalf("m3's row: %v, want down with an empty load, not a zero", row)
 	}
-	if n := h.memberNotes(sprint.NMemberUp, "m3"); len(n) != 0 {
-		t.Fatalf("m3 came up: %q", n)
-	}
-	if d := h.dealtTo(); d["m3"] != 0 {
-		t.Fatalf("m3 was dealt: %v", d)
-	}
+	n := h.memberNotes(sprint.NMemberUp, "m3")
+	require.Empty(t, n, "m3 came up: %q", n)
+	d := h.dealtTo()
+	require.Equal(t, 0, d["m3"], "m3 was dealt: %v", d)
 }
 
 // TestAStoppedMachineTakesBeatsAndMovesNothing: while STOPPED a member's
@@ -286,15 +269,13 @@ func TestAStoppedMachineTakesBeatsAndMovesNothing(t *testing.T) {
 	h.tick(pastDown + 5*time.Second)
 	h.beatAt("m2", 64)
 	res := h.machine()
-	if res.State != Stopped || len(res.Parts) > 0 {
-		t.Fatalf("a STOPPED tick: %+v", res)
-	}
+	require.Equal(t, Stopped, res.State, "a STOPPED tick: %+v", res)
+	require.Empty(t, res.Parts, "a STOPPED tick: %+v", res)
 	if d := h.dealtTo(); d["m1"] != 2 || h.snap().MemberCtl("m1").F("status") != sprint.Up {
 		t.Fatalf("while STOPPED m1's cards moved: %v", d)
 	}
-	if row := h.fleetRow("m1"); row[sprint.Status] != sprint.Down {
-		t.Fatalf("while STOPPED m1's row: %v, want the derived status down", row)
-	}
+	row := h.fleetRow("m1")
+	require.Equal(t, string(sprint.Down), row[sprint.Status], "while STOPPED m1's row: %v, want the derived status down", row)
 	if row := h.fleetRow("m2"); row[sprint.Status] != sprint.Up || row[sprint.Load] != "64.0%" {
 		t.Fatalf("while STOPPED m2's row: %v, want up at 64.0%%", row)
 	}
@@ -303,9 +284,8 @@ func TestAStoppedMachineTakesBeatsAndMovesNothing(t *testing.T) {
 	if d := h.dealtTo(); d["m1"] != 0 || d["m2"] != 4 {
 		t.Fatalf("the first tick after start: dealt %v, want m1's cards on m2", d)
 	}
-	if n := h.memberNotes(sprint.NMemberDown, "m1"); len(n) != 1 {
-		t.Fatalf("down notifications: %q", n)
-	}
+	n := h.memberNotes(sprint.NMemberDown, "m1")
+	require.Len(t, n, 1, "down notifications: %q", n)
 	h.clean("after start")
 }
 
@@ -320,15 +300,12 @@ func TestAnIdleTickShowsTheLoadAndStaysIdle(t *testing.T) {
 	h.machine()
 	h.machine()
 	h.beatAt("m1", 50)
-	if res := h.machine(); !res.Idle {
-		t.Fatalf("a new load: the tick is not idle: %+v", res)
-	}
-	if row := h.fleetRow("m1"); row[sprint.Load] != "50.0%" {
-		t.Fatalf("m1's load: %q, want 50.0%%", row[sprint.Load])
-	}
-	if res := h.machine(); !res.Idle {
-		t.Fatalf("the tick after the load was shown is not idle: %+v", res)
-	}
+	res := h.machine()
+	require.True(t, res.Idle, "a new load: the tick is not idle: %+v", res)
+	row := h.fleetRow("m1")
+	require.Equal(t, "50.0%", row[sprint.Load], "m1's load: %q, want 50.0%%", row[sprint.Load])
+	res = h.machine()
+	require.True(t, res.Idle, "the tick after the load was shown is not idle: %+v", res)
 }
 
 // A beat from a machine the sprint does not know writes one happened
@@ -341,9 +318,8 @@ func TestAnUnknownMachineBeatingIsToldOnce(t *testing.T) {
 	h.machine()
 	zero := 0.0
 	for i := 0; i < 3; i++ {
-		if _, err := h.st.Beat(h.ctx, "m9", &zero, hostload.Source{}); err != nil {
-			t.Fatal(err)
-		}
+		_, err := h.st.Beat(h.ctx, "m9", &zero, hostload.Source{})
+		require.NoError(t, err)
 		h.tick(time.Second)
 		h.machine()
 	}
@@ -352,18 +328,13 @@ func TestAnUnknownMachineBeatingIsToldOnce(t *testing.T) {
 	for _, n := range notes {
 		if n.Type == sprint.NUnknownMachine {
 			told++
-			if !strings.Contains(n.What, "m9") || !strings.Contains(n.What, "nova-sprint fleet up m9") {
-				t.Fatalf("the note: %+v", n)
-			}
+			require.Contains(t, n.What, "m9", "the note: %+v", n)
+			require.Contains(t, n.What, "nova-sprint fleet up m9", "the note: %+v", n)
 		}
 	}
-	if told != 1 {
-		t.Fatalf("told %d times", told)
-	}
-	if _, err := h.st.Teardown(h.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if keys := h.m.Keys(h.st.Names); len(keys) != 0 {
-		t.Fatalf("teardown left %v", keys)
-	}
+	require.Equal(t, 1, told, "told %d times", told)
+	_, err := h.st.Teardown(h.ctx)
+	require.NoError(t, err)
+	keys := h.m.Keys(h.st.Names)
+	require.Empty(t, keys, "teardown left %v", keys)
 }

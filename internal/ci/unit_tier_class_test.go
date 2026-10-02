@@ -66,28 +66,6 @@ func stepIndex(job ciJob, name string) int {
 	return -1
 }
 
-// runStep runs one step's script under bash with a scrubbed environment and
-// the extra variables given; ${{ }} expressions become x.
-func runStep(t *testing.T, script string, env ...string) string {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the step runs under bash on the self-hosted Linux and macOS runners")
-	}
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("no bash")
-	}
-	script = regexp.MustCompile(`\$\{\{[^}]*\}\}`).ReplaceAllString(script, "x")
-	cmd := exec.Command(bash, "-e", "-c", script)
-	cmd.Dir = t.TempDir()
-	cmd.Env = append([]string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + t.TempDir()}, env...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("the step failed: %v\n%s", err, out)
-	}
-	return string(out)
-}
-
 const unitShimStep = "the unit tier refuses redis-server"
 
 // unitGoStepMarker names ci.yml's Go toolchain step (the same text
@@ -371,15 +349,15 @@ func TestUnitBudgetsJudgeTheTestNotTheLoad(t *testing.T) {
 		for _, enforce := range []bool{false, true} {
 			want := 0
 			if enforce {
-				want = 2
+				want = 1 // the check ran and said no; 2 is input it could not read
 			}
 			out, code := judge(slow, load, enforce)
 			if code != want || !strings.Contains(out, slowLine) || !strings.Contains(out, "CI-LOAD load=") {
 				t.Errorf("a 1.4 s test, %s, enforce %v: exit %d, want %d with its CI-SLOW and CI-LOAD lines:\n%s", name, enforce, code, want, out)
 			}
 			out, code = judge(sleeps, load, enforce)
-			if code != 2 || !strings.Contains(out, "CI-SLEEPS test=TestWaitsOnTheClock package=example.com/sleepy") {
-				t.Errorf("an unledgered SLEEPS skip, %s, enforce %v: exit %d, want 2:\n%s", name, enforce, code, out)
+			if code != 1 || !strings.Contains(out, "CI-SLEEPS test=TestWaitsOnTheClock package=example.com/sleepy") {
+				t.Errorf("an unledgered SLEEPS skip, %s, enforce %v: exit %d, want 1:\n%s", name, enforce, code, out)
 			}
 		}
 	}

@@ -11,12 +11,12 @@ import (
 //   - coordinator: the sprint's coordinator alone (init --coordinator, set
 //     once by the first init); another actor is refused and nothing written.
 //   - worker: a fleet member or a reader, named by --as (fleet beat: the
-//     member); its actor is --actor, else NOVA_SPRINT_ACTOR, else that name.
+//     member); its actor is that name, whatever --actor says.
 //   - report: an outside actor's report (merge, ci), anyone's who names it.
 //   - machine: the run loop's (tick, run), recorded as the machine.
 //   - read: changes nothing and needs no actor.
 //
-// Every class but read and machine wants an actor: --actor or
+// Every class but read, machine and worker wants an actor: --actor or
 // NOVA_SPRINT_ACTOR; there is no default.
 const (
 	classCoordinator = "coordinator"
@@ -27,11 +27,11 @@ const (
 )
 
 var verbClasses = map[string]string{
-	"init": classCoordinator, "add": classCoordinator, "release": classCoordinator, "resolve": classCoordinator,
+	"init": classCoordinator, "add": classCoordinator, "quack": classCoordinator, "release": classCoordinator, "resolve": classCoordinator,
 	"start": classCoordinator, "stop": classCoordinator, "ask": classCoordinator, "accept": classCoordinator,
-	"rework": classCoordinator, "return": classCoordinator, "drop": classCoordinator, "rank": classCoordinator,
-	"resume": classCoordinator, "fleet up": classCoordinator, "fleet down": classCoordinator,
-	"fleet level": classCoordinator, "fleet sync": classCoordinator, "reader add": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "wait": classCoordinator,
+	"rework": classCoordinator, "return": classCoordinator, "drop": classCoordinator, "rank": classCoordinator, "brief": classCoordinator, "move": classCoordinator,
+	"resume": classCoordinator, "land": classCoordinator, "fleet up": classCoordinator, "fleet down": classCoordinator,
+	"fleet level": classCoordinator, "fleet sync": classCoordinator, "reader add": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "stream remove": classCoordinator, "wait": classCoordinator,
 	"ack": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
 
@@ -41,16 +41,15 @@ var verbClasses = map[string]string{
 
 	"tick": classMachine, "run": classMachine,
 
-	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "routes": classRead,
+	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "routes": classRead, "stats": classRead,
 	"goal show": classRead,
 }
 
-// orActor is a worker's actor: --actor, else NOVA_SPRINT_ACTOR, else the
-// member or reader it names.
+// orActor is a worker's actor: the member or reader it names, whatever
+// --actor or NOVA_SPRINT_ACTOR say, so the record names the worker the verb
+// was run as, as the server records a worker's verb (serve.go).
 func (c *common) orActor(name string) {
-	if c.actor == "" {
-		c.actor = name
-	}
+	c.actor = name
 }
 
 // needsActor is why the verb may not run with no actor: "" is may.

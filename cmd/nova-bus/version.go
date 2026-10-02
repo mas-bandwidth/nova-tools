@@ -45,11 +45,6 @@ import (
 // only write a string var, and it is package-level and unexported for the same reason.
 var version string
 
-// buildVersion is resolveVersion over this binary's own build information.
-func buildVersion() string {
-	return buildVersionWith(version)
-}
-
 func buildVersionWith(stamped string) string {
 	info, ok := debug.ReadBuildInfo()
 	return resolveVersion(stamped, info, ok)

@@ -203,34 +203,6 @@ func TestStripCodePreservesLengthAndLines(t *testing.T) {
 	}
 }
 
-func TestSpellingWriteMode(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "doc.md")
-	content := "Start line.\nWe recieve data and `seperate` it, but colour is real.\n"
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("writing file: %v", err)
-	}
-
-	opts := check.SpellingOptions{Write: true}
-	findings, err := check.CheckSpellingFile(path, opts)
-	if err != nil {
-		t.Fatalf("CheckSpellingFile: %v", err)
-	}
-	if len(findings) != 2 {
-		t.Fatalf("got %d findings, want 2: %+v", len(findings), findings)
-	}
-
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading after write: %v", err)
-	}
-	want := "Start line.\nWe receive data and `seperate` it, but color is real.\n"
-	if string(after) != want {
-		t.Errorf("file content = %q, want %q", string(after), want)
-	}
-}
-
 func TestSpellingCheckDirAndExclude(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -380,19 +352,13 @@ func TestSpellingSymlinkWriteRefusal(t *testing.T) {
 
 	opts := check.SpellingOptions{Write: true}
 
-	// 1. CheckSpellingFile refuses symlink
-	_, err := check.CheckSpellingFile(link, opts)
-	if err == nil || !strings.Contains(err.Error(), "is a symlink") {
-		t.Fatalf("CheckSpellingFile did not refuse symlink: %v", err)
-	}
-
-	// 2. CheckSpellingDir refuses symlink
-	_, err = check.CheckSpellingDir(scan, opts)
+	// 1. CheckSpellingDir refuses symlink
+	_, err := check.CheckSpellingDir(scan, opts)
 	if err == nil || !strings.Contains(err.Error(), "is a symlink") {
 		t.Fatalf("CheckSpellingDir did not refuse symlink: %v", err)
 	}
 
-	// 3. CheckSpellingFiles refuses symlink
+	// 2. CheckSpellingFiles refuses symlink
 	_, err = check.CheckSpellingFiles(scan, []string{"link.md"}, opts)
 	if err == nil || !strings.Contains(err.Error(), "is a symlink") {
 		t.Fatalf("CheckSpellingFiles did not refuse symlink: %v", err)

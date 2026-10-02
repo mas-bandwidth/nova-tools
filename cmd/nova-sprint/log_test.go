@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // log prints every line of the epoch in local time, filtered by card,
@@ -23,29 +24,23 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 	out := ta.ok("log --card s1-1")
 	for _, want := range []string{
 		"03:04:05  2 cards: s1-1 added to s1 by coordinator (with s1-2)",
-		"    brief: handle the empty case",
+		" bytes, shown by nova-sprint card s1-1", // a brief is said, not printed (log_brief_test.go)
 		"attempt 1 dealt to m1",
 		"m1 took attempt 1",
 		"m1 finished attempt 1: FAILED",
 		"    report: the tests went red",
 		"judgment: work came back failed",
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("log --card s1-1 has no %q:\n%s", want, out)
-		}
+		assert.Contains(t, out, want, "log --card s1-1 has no %q", want)
 	}
-	if strings.Contains(out, "s1-2.w1") {
-		t.Errorf("log --card s1-1 shows s1-2's work:\n%s", out)
-	}
+	assert.NotContains(t, out, "s1-2.w1", "log --card s1-1 shows s1-2's work")
 	if out := ta.ok("log --member m1"); !strings.Contains(out, "s1-2.w1: attempt 2") && !strings.Contains(out, "attempt 1 dealt to m1") {
 		t.Errorf("log --member m1:\n%s", out)
 	}
 	ta.mu.Lock()
 	ta.now = ta.now.Add(time.Hour)
 	ta.mu.Unlock()
-	if out := ta.ok("log --since 10m"); !strings.Contains(out, "LOG OK lines=0") {
-		t.Errorf("log --since 10m an hour later:\n%s", out)
-	}
+	assert.Contains(t, ta.ok("log --since 10m"), "LOG OK lines=0", "log --since 10m an hour later")
 	var j struct {
 		Lines []struct {
 			Kind, Card string
@@ -57,12 +52,8 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 		t.Errorf("log --json: %+v", j)
 	}
 	ta.ok("clear --confirm sprint")
-	if out := ta.ok("log --at-epoch 0 --card s1-1"); !strings.Contains(out, "m1 finished attempt 1: FAILED") {
-		t.Errorf("the old epoch's log after a clear:\n%s", out)
-	}
-	if out := ta.ok("log --card s1-1"); !strings.Contains(out, "LOG OK lines=0") {
-		t.Errorf("the new epoch's log of s1-1:\n%s", out)
-	}
+	assert.Contains(t, ta.ok("log --at-epoch 0 --card s1-1"), "m1 finished attempt 1: FAILED", "the old epoch's log after a clear")
+	assert.Contains(t, ta.ok("log --card s1-1"), "LOG OK lines=0", "the new epoch's log of s1-1")
 }
 
 // card tells the card's story: a card in flight says first what holds it
@@ -81,9 +72,11 @@ func TestCardTellsTheStory(t *testing.T) {
 	out := ta.ok("card s1-1")
 	now := strings.Index(out, "now:")
 	brief := strings.Index(out, "brief:")
-	if now < 0 || brief < 0 || now > brief || !strings.Contains(out, "waits on your judgment: work came back failed") || !strings.Contains(out, "rework with a fix: nova-sprint rework") {
-		t.Fatalf("a card in flight, what holds it first:\n%s", out)
-	}
+	require.GreaterOrEqual(t, now, 0, "a card in flight, what holds it first:\n%s", out)
+	require.GreaterOrEqual(t, brief, 0, "a card in flight, what holds it first:\n%s", out)
+	require.LessOrEqual(t, now, brief, "a card in flight, what holds it first:\n%s", out)
+	require.Contains(t, out, "waits on your judgment: work came back failed", "a card in flight, what holds it first")
+	require.Contains(t, out, "rework with a fix: nova-sprint rework", "a card in flight, what holds it first")
 	ta.ok("rework s1-1")
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w2@1")
@@ -107,14 +100,10 @@ func TestCardTellsTheStory(t *testing.T) {
 		"attempt 1, report by m1 (failed):\n    the tests went red",
 		"now:\n  landed; nothing waits",
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("the story has no %q:\n%s", want, out)
-		}
+		assert.Contains(t, out, want, "the story has no %q", want)
 	}
 	for _, not := range []string{"work came back ok", "the fix this attempt was given", "score"} {
-		if strings.Contains(out, not) {
-			t.Errorf("the story of a landed card says %q:\n%s", not, out)
-		}
+		assert.NotContains(t, out, not, "the story of a landed card says %q", not)
 	}
 }
 
@@ -130,11 +119,9 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "handle the empty case"))
 	ta.deal(1)
 	out := ta.ok("take --as m1 s1-1.w1@1")
-	for _, want := range []string{"PACKET s1-1.w1 attempt=1 gen=1 epoch=0", "  branch: sprint/s1-1.w1.e0", "  brief:\n    handle the empty case", "  notes: none",
-		"  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.e0"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("take has no %q:\n%s", want, out)
-		}
+	for _, want := range []string{"PACKET s1-1.w1 attempt=1 gen=1 epoch=0", "  branch: sprint/s1-1.w1.g1.e0", "  brief:\n    handle the empty case", "  notes: none",
+		"  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0"} {
+		assert.Contains(t, out, want, "take has no %q", want)
 	}
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --branch feature/empty --report 'the tests went red'")
 	ta.ok("rework s1-1 --fix 'check the nil slice too'")
@@ -146,12 +133,13 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 		} `json:"packets"`
 	}
 	ta.json("take --as m1 s1-1.w2@1", &j)
-	if len(j.Packets) != 1 || j.Packets[0].Fix != "check the nil slice too" || j.Packets[0].Base != "feature/empty" || !strings.HasPrefix(j.Packets[0].Brief, "handle the empty case") {
-		t.Fatalf("take --json packets: %+v", j)
-	}
-	if out := ta.ok("queue --as m1"); !strings.Contains(out, "  fix (this attempt):\n    check the nil slice too") || !strings.Contains(out, "  base: feature/empty") {
-		t.Fatalf("queue --as m1:\n%s", out)
-	}
+	require.Len(t, j.Packets, 1, "take --json packets: %+v", j)
+	require.Equal(t, "check the nil slice too", j.Packets[0].Fix, "take --json packets: %+v", j)
+	require.Equal(t, "feature/empty", j.Packets[0].Base, "take --json packets: %+v", j)
+	require.True(t, strings.HasPrefix(j.Packets[0].Brief, "handle the empty case"), "take --json packets: %+v", j)
+	out = ta.ok("queue --as m1")
+	require.Contains(t, out, "  fix (this attempt):\n    check the nil slice too", "queue --as m1")
+	require.Contains(t, out, "  base: feature/empty", "queue --as m1")
 	// the packet says why the attempt exists, and card tells it per attempt
 	assert.Contains(t, ta.ok("queue --as m1"), "  why this attempt exists:\n    attempt 1 failed: the tests went red")
 	assert.Equal(t, 1, strings.Count(ta.ok("card s1-1"), "check the nil slice too"), "card says the fix once")
@@ -161,9 +149,7 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 	out = ta.ok("queue --as reader-a")
 	for _, want := range []string{"PACKET s1-1.r2.reader-a attempt=2", "  work: attempt 2 by m1", "  head: h2", "  branch: feature/empty-2", "  base: feature/empty",
 		"  report:\n    handled; tests green", "  report it: nova-sprint read --as reader-a (--ok | --broken) s1-1.r2.reader-a --epoch 0"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("the reader's queue has no %q:\n%s", want, out)
-		}
+		assert.Contains(t, out, want, "the reader's queue has no %q", want)
 	}
 }
 
@@ -175,10 +161,6 @@ func TestWhereHidesTheMergeTablesSince(t *testing.T) {
 	ta := whereFixture(t)
 	out := ta.ok("where")
 	block := tableOf(out, "merge")
-	if block == "" {
-		t.Fatalf("no merge table:\n%s", out)
-	}
-	if strings.Contains(block, "since") {
-		t.Fatalf("where shows since:\n%s", out)
-	}
+	require.NotEmpty(t, block, "no merge table:\n%s", out)
+	require.NotContains(t, block, "since", "where shows since:\n%s", out)
 }

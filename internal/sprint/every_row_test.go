@@ -2,6 +2,8 @@ package sprint
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The world's workers and readers move in one batch a tick (errata 3
@@ -17,12 +19,12 @@ func TestATakeOfSeveralMembersTakesEachOnesQueue(t *testing.T) {
 	for _, u := range p.Units {
 		by[w.s.Fleet.Card(u.Key).Row]++
 	}
-	if by["m1"] != 3 || by["m2"] != 3 || by["m3"] != 3 {
-		t.Fatalf("taken by member %v, want three of each", by)
-	}
-	if q := Take(w.s, TakeReq{As: "m1,m2", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}}); len(q.Refused) != 1 || len(q.Units) != 0 {
-		t.Fatalf("a take by id of several members: %+v", q)
-	}
+	require.Equal(t, 3, by["m1"], "taken by member %v, want three of each", by)
+	require.Equal(t, 3, by["m2"], "taken by member %v, want three of each", by)
+	require.Equal(t, 3, by["m3"], "taken by member %v, want three of each", by)
+	q := Take(w.s, TakeReq{As: "m1,m2", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}})
+	require.Len(t, q.Refused, 1, "a take by id of several members: %+v", q)
+	require.Empty(t, q.Units, "a take by id of several members: %+v", q)
 }
 
 // Two readers' oks of one primary in one read: the primary is ready to
@@ -45,10 +47,8 @@ func TestTwoReadersOksInOneReadMakeOneJudgment(t *testing.T) {
 			}
 		}
 	}
-	if len(p.Units) != 2 || n != 1 {
-		t.Fatalf("two oks in one read: %d units, %d ready-to-accept judgments, want 2 and 1", len(p.Units), n)
-	}
-	if q := Read(w.s, ReadReq{As: "reader-a,reader-b", Verdict: "ok"}); len(q.Refused) != 1 {
-		t.Fatalf("a read by selection of several readers: %+v", q)
-	}
+	require.Len(t, p.Units, 2, "two oks in one read: %d units, %d ready-to-accept judgments, want 2 and 1", len(p.Units), n)
+	require.Equal(t, 1, n, "two oks in one read: %d units, %d ready-to-accept judgments, want 2 and 1", len(p.Units), n)
+	q := Read(w.s, ReadReq{As: "reader-a,reader-b", Verdict: "ok"})
+	require.Len(t, q.Refused, 1, "a read by selection of several readers: %+v", q)
 }

@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -56,12 +59,10 @@ func TestSentinelsByPositionStoreNothing(t *testing.T) {
 	if w := sprint.WaitsFor(s, g1, nil); len(w) != 100 || w[0] != "a-1" || w[99] != "a-100" {
 		t.Fatalf("a-gate-1 waits for %d cards", len(w))
 	}
-	if w := sprint.WaitsFor(s, s.Work.Card("a-150"), nil); strings.Join(w, ",") != "a-gate-1" {
-		t.Fatalf("a-150 waits for %v", w)
-	}
-	if n := len(h.lines()) - before; n > 12 {
-		t.Fatalf("the add of 900 cards and 9 stops wrote %d log lines", n)
-	}
+	w := sprint.WaitsFor(s, s.Work.Card("a-150"), nil)
+	require.Equal(t, "a-gate-1", strings.Join(w, ","), "a-150 waits for %v", w)
+	n := len(h.lines()) - before
+	require.LessOrEqual(t, n, 12, "the add of 900 cards and 9 stops wrote %d log lines", n)
 	h.clean("three streams in stops")
 	// dropping the cards before a stop frees it: reached, released, and what
 	// is behind it goes to ready as one set, up to the next stop
@@ -71,9 +72,7 @@ func TestSentinelsByPositionStoreNothing(t *testing.T) {
 	}
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: first}, Reason: "done elsewhere"}))
 	h.must(SentinelsDueStep("tester"))
-	if h.snap().Work.Card("a-gate-1").F("reached") == "" {
-		t.Fatalf("a-gate-1 not reached with the cards before it dropped")
-	}
+	require.NotEmpty(t, h.snap().Work.Card("a-gate-1").F("reached"), "a-gate-1 not reached with the cards before it dropped")
 	mark := len(h.lines())
 	res := h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"a-gate-1"}, Reason: "go", Coordinator: "tester", Who: "tester"}))
 	s = h.snap()
@@ -86,9 +85,7 @@ func TestSentinelsByPositionStoreNothing(t *testing.T) {
 			moves++
 		}
 	}
-	if moves > 3 {
-		t.Fatalf("the release wrote %d work lines for its set", moves)
-	}
+	require.LessOrEqual(t, moves, 3, "the release wrote %d work lines for its set", moves)
 	h.clean("released")
 }
 
@@ -112,8 +109,22 @@ func TestAStopInsertedIntoTheMiddleOfALine(t *testing.T) {
 			sets = append(sets, l)
 		}
 	}
-	if len(sets) != 2 || len(sets[1].Cards) != 500 {
-		t.Fatalf("the insert wrote %d work lines (%v)", len(sets), sets)
-	}
+	require.Len(t, sets, 2, "the insert wrote %d work lines (%v)", len(sets), sets)
+	require.Len(t, sets[1].Cards, 500, "the insert wrote %d work lines (%v)", len(sets), sets)
 	h.clean("inserted")
+}
+
+// Cards named with their briefs in several streams are all or none: one stream's
+// card refused (its id already on the table) refuses every stream's, and nothing
+// is written (AddEachStep is named, as AddStep is).
+func TestAddEachOfNamedCardsIsAllOrNone(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.must(AddStep(sprint.AddReq{Stream: "s2", Cards: []sprint.CardAdd{{ID: "b-1", Brief: "b-1: x (s2)"}}}))
+	res := h.run(AddEachStep([]sprint.AddReq{
+		{Stream: "s1", Cards: []sprint.CardAdd{{ID: "a-1", Brief: "a-1: x (s1)"}}},
+		{Stream: "s2", Cards: []sprint.CardAdd{{ID: "b-1", Brief: "b-1: again (s2)"}}},
+	}))
+	require.NotEmpty(t, res.Refused, "b-1 is on the table")
+	assert.Nil(t, h.snap().Work.Card("a-1"), "the other stream's card is not written")
 }

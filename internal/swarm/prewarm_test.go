@@ -3,8 +3,9 @@ package swarm
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestPrepareLispJobCacheRefusesSymlinkOverlay(t *testing.T) {
@@ -13,14 +14,12 @@ func TestPrepareLispJobCacheRefusesSymlinkOverlay(t *testing.T) {
 	root := t.TempDir()
 	job := filepath.Join(root, "job")
 	source := filepath.Join(job, JobRepo)
-	if err := os.MkdirAll(source, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(source, 0o755))
 	external := t.TempDir()
 	if err := os.Symlink(external, filepath.Join(job, ".cache")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	if err := PrepareLispJobCache(root, source); err == nil || !strings.Contains(err.Error(), "not a directory") {
-		t.Fatalf("PrepareLispJobCache through symlink error = %v, want refusal", err)
-	}
+	err := PrepareLispJobCache(root, source)
+	require.Error(t, err, "PrepareLispJobCache through symlink error = %v, want refusal", err)
+	require.Contains(t, err.Error(), "not a directory", "PrepareLispJobCache through symlink error = %v, want refusal", err)
 }

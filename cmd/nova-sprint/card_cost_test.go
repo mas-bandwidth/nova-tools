@@ -89,7 +89,7 @@ func TestTheProducerCardCarriesWhatEachConsumerCostAndTheTotal(t *testing.T) {
 		"COST kind=read card=s1-1.r2.reader-a attempt=2 who=reader-a route=pro-a model=opencode/deepseek-v4-pro end=ok input=2000 cache_read=1000 cache_write=- output=100 reasoning=50 requests=2 wait=3s run=20s predicted_usd=0.0014 actual_usd=0.0015 actual_by=harness cost=both",
 		// no route runs its model: no prediction, never a zero; the harness's cost stands
 		"COST kind=read card=s1-1.r2.reader-b attempt=2 who=reader-b route=- model=other/unrouted end=ok input=100 cache_read=- cache_write=- output=10 reasoning=- requests=- wait=30s run=0s predicted_usd=- actual_usd=0.002 actual_by=harness cost=actual",
-		"COST TOTAL consumers=4 input=7100 cache_read=9000 cache_write=- output=910 reasoning=250 requests=10 wait=39s run=60s predicted_usd=0.002604 predicted_of=3/4 actual_usd=0.0049 actual_by=harness actual_of=4/4",
+		"COST TOTAL consumers=4 input=7100 cache_read=9000 cache_write=- output=910 reasoning=250 requests=10 wait=39s run=60s predicted_usd=0.002604 predicted_of=3/4 actual_usd=0.0049 actual_by=harness actual_of=4/4 charged_usd=0.0049",
 	}
 	assert.Equal(t, want, lines, out)
 
@@ -128,7 +128,7 @@ func TestACardWithNoConsumerRecordPrintsDashes(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 1")
 	out := ta.ok("card s1-1")
-	assert.Contains(t, out, "COST TOTAL consumers=0 input=- cache_read=- cache_write=- output=- reasoning=- requests=- wait=- run=- predicted_usd=- predicted_of=0/0 actual_usd=- actual_by=- actual_of=0/0\n")
+	assert.Contains(t, out, "COST TOTAL consumers=0 input=- cache_read=- cache_write=- output=- reasoning=- requests=- wait=- run=- predicted_usd=- predicted_of=0/0 actual_usd=- actual_by=- actual_of=0/0 charged_usd=-\n")
 }
 
 // costLines are the COST lines of a card's story.

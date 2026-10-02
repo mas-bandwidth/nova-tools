@@ -1,20 +1,20 @@
 package sprint
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestValidSyncRefusesWhatTheFleetRefuses: a name or width fleet up would
 // refuse, and a name twice, are refused whole.
 func TestValidSyncRefusesWhatTheFleetRefuses(t *testing.T) {
 	t.Parallel()
-	if why := ValidSync([]SyncMember{{"m1", 4}, {"m2", MaxWidth}}); why != "" {
-		t.Fatalf("a valid sync: %s", why)
-	}
-	if why := ValidSync(nil); why != "" {
-		t.Fatalf("an empty sync holds the fleet and is valid: %s", why)
-	}
+	why := ValidSync([]SyncMember{{"m1", 4}, {"m2", MaxWidth}})
+	require.Empty(t, why, "a valid sync: %s", why)
+	why = ValidSync(nil)
+	require.Empty(t, why, "an empty sync holds the fleet and is valid: %s", why)
 	for _, c := range []struct {
 		want []SyncMember
 		say  string
@@ -24,9 +24,8 @@ func TestValidSyncRefusesWhatTheFleetRefuses(t *testing.T) {
 		{[]SyncMember{{"m1", MaxWidth + 1}}, "a width wants a whole number from 1"},
 		{[]SyncMember{{"m1", 1}, {"m1", 2}}, "m1 is named twice"},
 	} {
-		if why := ValidSync(c.want); !strings.Contains(why, c.say) {
-			t.Errorf("%v: %q, want %q", c.want, why, c.say)
-		}
+		why = ValidSync(c.want)
+		assert.Contains(t, why, c.say, "%v: %q, want %q", c.want, why, c.say)
 	}
 }
 
@@ -41,9 +40,8 @@ func TestDriftSaysWhatASyncWouldWrite(t *testing.T) {
 		{Drift{Member: "m1", Kind: DriftWidth, From: 4, To: 6}, "m1 has width 4 and the inventory says 6"},
 		{Drift{Member: "m1", Kind: DriftHold}, "m1 is a member of the fleet and not of the inventory: hold it down"},
 	} {
-		if got := c.d.Line(); got != c.say {
-			t.Errorf("%q, want %q", got, c.say)
-		}
+		got := c.d.Line()
+		assert.Equal(t, c.say, got, "%q, want %q", got, c.say)
 	}
 }
 
@@ -56,9 +54,8 @@ func syncHeld(t *testing.T) *world {
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "sync", Who: "sync", Sync: []SyncMember{{"m1", DefaultWidth}}}))
 	ctl := w.s.MemberCtl("m2")
-	if ctl.F("held") == "" || ctl.F(FieldHeldBy) != HeldBySync {
-		t.Fatalf("m2 is not held by the sync: %v", ctl.Fields)
-	}
+	require.NotEmpty(t, ctl.F("held"), "m2 is not held by the sync: %v", ctl.Fields)
+	require.Equal(t, HeldBySync, ctl.F(FieldHeldBy), "m2 is not held by the sync: %v", ctl.Fields)
 	return w
 }
 
@@ -70,13 +67,10 @@ func TestACoordinatorsHoldOnAMemberTheSyncHoldsClearsTheMark(t *testing.T) {
 	w := syncHeld(t)
 	w.must(FleetStep(w.s, FleetReq{Op: "hold", Member: "m2", Who: "coordinator"}))
 	ctl := w.s.MemberCtl("m2")
-	if ctl.F("held") == "" || ctl.F(FieldHeldBy) != "" {
-		t.Fatalf("m2 after the coordinator's hold: %v", ctl.Fields)
-	}
+	require.NotEmpty(t, ctl.F("held"), "m2 after the coordinator's hold: %v", ctl.Fields)
+	require.Empty(t, ctl.F(FieldHeldBy), "m2 after the coordinator's hold: %v", ctl.Fields)
 	for _, d := range FleetDrift(w.s, []SyncMember{{"m1", DefaultWidth}, {"m2", DefaultWidth}}) {
-		if d.Kind == DriftRelease {
-			t.Fatalf("the sync would release the coordinator's hold: %+v", d)
-		}
+		require.NotEqual(t, DriftRelease, d.Kind, "the sync would release the coordinator's hold: %+v", d)
 	}
 }
 
@@ -86,9 +80,9 @@ func TestFleetUpClearsTheSyncsMark(t *testing.T) {
 	t.Parallel()
 	w := syncHeld(t)
 	w.must(FleetStep(w.s, FleetReq{Op: "release", Member: "m2", Who: "coordinator"}))
-	if ctl := w.s.MemberCtl("m2"); ctl.F("held") != "" || ctl.F(FieldHeldBy) != "" {
-		t.Fatalf("m2 after fleet up: %v", ctl.Fields)
-	}
+	ctl := w.s.MemberCtl("m2")
+	require.Empty(t, ctl.F("held"), "m2 after fleet up: %v", ctl.Fields)
+	require.Empty(t, ctl.F(FieldHeldBy), "m2 after fleet up: %v", ctl.Fields)
 }
 
 // TestTheSyncsReleaseClearsItsMark.
@@ -96,9 +90,9 @@ func TestTheSyncsReleaseClearsItsMark(t *testing.T) {
 	t.Parallel()
 	w := syncHeld(t)
 	w.must(FleetStep(w.s, FleetReq{Op: "sync", Who: "sync", Sync: []SyncMember{{"m1", DefaultWidth}, {"m2", DefaultWidth}}}))
-	if ctl := w.s.MemberCtl("m2"); ctl.F("held") != "" || ctl.F(FieldHeldBy) != "" {
-		t.Fatalf("m2 after the sync's release: %v", ctl.Fields)
-	}
+	ctl := w.s.MemberCtl("m2")
+	require.Empty(t, ctl.F("held"), "m2 after the sync's release: %v", ctl.Fields)
+	require.Empty(t, ctl.F(FieldHeldBy), "m2 after the sync's release: %v", ctl.Fields)
 }
 
 // TestAHoldClearsAStaleMark: a member with a mark and no hold (a card written
@@ -110,11 +104,10 @@ func TestAHoldClearsAStaleMark(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
 	ctl := w.s.MemberCtl("m1")
 	w.must(Plan{Units: []Unit{{Key: CtlID("m1"), Changes: []Change{change(Fleet, setEntry(ctl, map[string]string{FieldHeldBy: HeldBySync}))}}}})
-	if w.s.MemberCtl("m1").F(FieldHeldBy) != HeldBySync || w.s.MemberCtl("m1").F("held") != "" {
-		t.Fatalf("the stale mark is not set: %v", w.s.MemberCtl("m1").Fields)
-	}
+	require.Equal(t, HeldBySync, w.s.MemberCtl("m1").F(FieldHeldBy), "the stale mark is not set: %v", w.s.MemberCtl("m1").Fields)
+	require.Empty(t, w.s.MemberCtl("m1").F("held"), "the stale mark is not set: %v", w.s.MemberCtl("m1").Fields)
 	w.must(FleetStep(w.s, FleetReq{Op: "hold", Member: "m1", Who: "coordinator"}))
-	if ctl := w.s.MemberCtl("m1"); ctl.F("held") == "" || ctl.F(FieldHeldBy) != "" {
-		t.Fatalf("m1 after the coordinator's hold: %v", ctl.Fields)
-	}
+	ctl = w.s.MemberCtl("m1")
+	require.NotEmpty(t, ctl.F("held"), "m1 after the coordinator's hold: %v", ctl.Fields)
+	require.Empty(t, ctl.F(FieldHeldBy), "m1 after the coordinator's hold: %v", ctl.Fields)
 }

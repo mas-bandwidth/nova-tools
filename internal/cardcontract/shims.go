@@ -24,7 +24,7 @@ func prelude(name, family string, f Frame, s Staged) string {
 	b.WriteString("# met through the commands the child knows; nothing reaches a forge from inside the wall.\n")
 	for _, kv := range [][2]string{
 		{"NOVA_GIT", s.Git}, {"NOVA_JOB", s.Job}, {"NOVA_STAGED", s.Repo}, {"NOVA_HEAD", s.Head},
-		{"NOVA_REPO", f.Repo}, {"NOVA_BRANCH", f.Branch}, {"NOVA_BASE", base}, {"NOVA_KIND", f.Kind}, {"NOVA_CARD", f.Card},
+		{"NOVA_REPO", f.Repo}, {"NOVA_BRANCH", f.Branch}, {"NOVA_BASE", base}, {"NOVA_START", s.Start}, {"NOVA_KIND", f.Kind}, {"NOVA_CARD", f.Card},
 	} {
 		fmt.Fprintf(&b, "%s=%s\n", kv[0], shq(kv[1]))
 	}
@@ -148,15 +148,17 @@ exit 2
 // `nothing:` says there is nothing to do), pr review finishes a read, pr diff/view/checks
 // answer from the staged checkout, and everything else is refused: the wall holds no forge
 // credential and no network. The finish is recorded in <job>/.sprint/finish.md, which the
-// child is never told to write.
+// child is never told to write. The record's report is the body's own report: line when it
+// has one (a read that hands its RESULT.md over as the body), else its first line: a body
+// that begins head: <sha> would otherwise give the inbox a commit id for the finding.
 const ghClaude = `nova_here() { if "$NOVA_GIT" rev-parse --git-dir >/dev/null 2>&1; then "$NOVA_GIT" "$@"; else "$NOVA_GIT" -C "$NOVA_STAGED" "$@"; fi; }
 nova_refuse() { echo "gh: REFUSED $1: the wall holds no GitHub credential and no network; this card's change is in the staged checkout (gh pr diff, gh pr view) and the sprint opens its pull request when it finishes" >&2; exit 2; }
 nova_need() { [ "$1" -ge 2 ] || { echo "gh: flag needs an argument: $2" >&2; exit 1; }; }
-nova_base() { if "$NOVA_GIT" -C "$NOVA_STAGED" rev-parse -q --verify "origin/$NOVA_BASE^{commit}" >/dev/null 2>&1; then echo "origin/$NOVA_BASE"; else echo "$NOVA_BASE"; fi; }
+nova_base() { if [ -n "$NOVA_START" ]; then echo "$NOVA_START"; elif "$NOVA_GIT" -C "$NOVA_STAGED" rev-parse -q --verify "origin/$NOVA_BASE^{commit}" >/dev/null 2>&1; then echo "origin/$NOVA_BASE"; else echo "$NOVA_BASE"; fi; }
 nova_result() {
 	nova_h=$(nova_here rev-parse HEAD 2>/dev/null)
 	nova_br=$(nova_here symbolic-ref -q --short HEAD 2>/dev/null); [ -n "$nova_br" ] || nova_br="$NOVA_BRANCH"
-	nova_rep=$(printf '%s\n' "$2" | awk 'NF { print; exit }')
+	nova_rep=$(printf '%s\n' "$2" | awk '!r && /^[ \t]*report:/ { r = $0; sub(/^[ \t]*report:[ \t]*/, "", r) } NF && f == "" { f = $0 } END { print (r != "" ? r : f) }')
 	[ -n "$nova_rep" ] || nova_rep="$1"
 	{
 		printf 'head: %s\nbranch: %s\nverdict: %s\ngate: -\noutput: -\nreport: %s\n' "${nova_h:--}" "$nova_br" "$1" "$nova_rep"
@@ -244,9 +246,10 @@ func (claude) Shims(f Frame, s Staged) []Shim {
 func (claude) JobText(f Frame, s Staged) string {
 	var b strings.Builder
 	if f.Kind == "read" {
-		fmt.Fprintf(&b, "# JOB: read %s, attempt %d\n\n", f.Card, f.Attempt)
+		fmt.Fprintf(&b, "%s %s, attempt %d\n\n", ReadTitle, f.Card, f.Attempt)
 		fmt.Fprintf(&b, "You are in a checkout of %s on branch %s at %s: the change under review, against %s. The checkout is %s.\n\n", f.Repo, f.Branch, s.Head, orDash(f.ReviewBase), s.Repo)
 		fmt.Fprintf(&b, "Review the change on this branch against %s as you would a pull request: `gh pr diff`, `gh pr view` and `gh pr checks` show it. Run the card's gate. Change nothing and commit nothing.\n\n", orDash(f.ReviewBase))
+		writeReadDiff(&b, f, s)
 		b.WriteString("Approve or request changes with gh pr review; that ends the read:\n\n")
 		b.WriteString("    gh pr review --approve --body \"<what you checked>\"\n")
 		b.WriteString("    gh pr review --request-changes --body \"<findings, each with file:line>\"\n\n")
@@ -275,8 +278,13 @@ func (p plain) Shims(f Frame, s Staged) []Shim {
 func (plain) JobText(f Frame, s Staged) string {
 	var b strings.Builder
 	if f.Kind == "read" {
-		fmt.Fprintf(&b, "# JOB: read %s, attempt %d\n\n", f.Card, f.Attempt)
-		fmt.Fprintf(&b, "The checkout %s holds %s on branch %s at %s: the change under review, against %s. Review it (`git diff %s...HEAD`), run the card's gate, change nothing and commit nothing.\n\n", s.Repo, f.Repo, f.Branch, s.Head, orDash(f.ReviewBase), orDash(f.ReviewBase))
+		fmt.Fprintf(&b, "%s %s, attempt %d\n\n", ReadTitle, f.Card, f.Attempt)
+		review := fmt.Sprintf("`git diff %s...HEAD`", orDash(f.ReviewBase))
+		if s.Start != "" {
+			review = "the commands below"
+		}
+		fmt.Fprintf(&b, "The checkout %s holds %s on branch %s at %s: the change under review, against %s. Review it (%s), run the card's gate, change nothing and commit nothing.\n\n", s.Repo, f.Repo, f.Branch, s.Head, orDash(f.ReviewBase), review)
+		writeReadDiff(&b, f, s)
 		b.WriteString("End by writing " + s.Job + "/RESULT.md in this shape (verdict ok, or broken with your findings):\n\n")
 		b.WriteString(ShapeText("read") + "\n")
 	} else {
@@ -287,6 +295,23 @@ func (plain) JobText(f Frame, s Staged) string {
 	}
 	writeCommon(&b, f, s)
 	return b.String()
+}
+
+// writeReadDiff is what a read's JOB.md says the work changed (docs/SPEC-CARD-CONTRACT.md,
+// JOB.md): the commit the work started from and the one command that shows its change, and
+// that the base branch is not what to compare against. On a 1000-card load test (2026-10-01)
+// a reader ran `git diff origin/dev` while cards landed on dev every few seconds, saw every
+// file landed since as a deletion, and sent a correct work card back; on the 5000-card one
+// readers still did ("numerous deletions and one rename"), so it names origin/<base> too and
+// says such deletions are never a finding. Nothing when the start is unknown.
+func writeReadDiff(b *strings.Builder, f Frame, s Staged) {
+	if s.Start == "" {
+		return
+	}
+	base := orDash(f.ReviewBase)
+	fmt.Fprintf(b, "The work's change is exactly %s..HEAD: %s is the commit the work started from (the merge base of this head and %s when this checkout was staged). See it with:\n\n", s.Start, s.Start, base)
+	fmt.Fprintf(b, "    git diff %s..HEAD\n    git diff --stat %s..HEAD\n\n", s.Start, s.Start)
+	fmt.Fprintf(b, "%s may have moved since the work began (other cards land on it); it is not what to compare against: a diff against the tip of %s or origin/%s shows every change landed since as a deletion. Those deletions are never the work's and never a finding: judge the work by the diff above alone.\n\n", base, base, base)
 }
 
 // writeCommon is what every JOB.md ends with: the files staged for the child, the test

@@ -25,10 +25,10 @@ run it as `</dev/null 2>&1 | cat`, or it may stop with "Non-blocking file
 handles".
 
 ```
-nova-config machine add bench-a --user nova --seat bench-a --slots 2 --as ada
+nova-config machine add bench-a --user nova --seat bench-a --slots 2 --width 2 --as ada
 nova-config fleet set --store bench-a --coordinator bench-a --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova --as ada
-nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --width 2 --as ada
-nova-config loop add reader-1 --machine bench-a --argv '["nova-swarm","member","--as","reader-1","--reader","--width","8","--harness","opencode","--root","nova-bench/reader-1","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --as ada
+nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--server","bench-a:6390","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --as ada
+nova-config loop add reader-1 --machine bench-a --argv '["nova-swarm","member","--as","reader-1","--server","bench-a:6390","--reader","--harness","opencode","--root","nova-bench/reader-1","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --width 8 --as ada
 nova-config route add flash-a --tier flash --provider deepseek --model deepseek-v4-flash --tokens 200000 --deadline 900 --as ada
 nova-config route add pro-a --tier pro --provider openrouter --model x-ai/grok-4 --tokens 400000 --deadline 1800 --as ada
 nova-config apply --as ada
@@ -45,8 +45,13 @@ nova-sprint fleet sync --check --actor ada
 nova-sprint fleet sync --actor ada
 ```
 
-The member loop names no width and no model. Its width is its fleet row's
-(`nova-config machine` slots, made the row by `fleet sync`; `nova-sprint fleet
+The member and reader loops name the sprint's server, `--server`: the run loop
+the coordinator starts with `nova-sprint run --listen bench-a:6390`, the one
+writer; a member sends its verbs there and opens no store. The member loop
+names no width and no model. Its width is its fleet row's
+(`nova-config machine` width, set directly with `nova-config machine set <m>
+--width <n>` and made the row by `fleet sync`; nothing else, no friend row and
+not the machine's slots, takes part; `nova-sprint fleet
 up <m> --width n` changes it live), read every tick; each card's model, budget
 and deadline are the route the deal drew for it from the routes `apply` writes
 (here one flash and one pro: a pro card runs on `openrouter/x-ai/grok-4`, a
@@ -57,9 +62,11 @@ did.
 A reader is a loop record the same as a member: `nova-swarm member --reader`
 under the readers row of its `--as` name (`nova-sprint init --readers reader-1`,
 or `nova-sprint reader add reader-1`), with its width, the most reads it runs at
-once. It names no model either: the ask draws each read card's route from the
-reader tier, the sprint row's `reader_tier` (`nova-config sprint set
---reader_tier flash|pro --as <friend>`, then `apply`, pro unless set), at that tier's rolling index, and
+once: the loop row's `--width`, which the inventory renders as the command's
+`--width` (`nova-config loop set reader-1 --width 16 --as ada`, then `apply`
+and `loops.yml`; the argv is never edited for it). It names no model either: the ask draws each read card's route from the
+tier of the card it reads, the tier its work was dealt on (flash when line 1
+names none), at that tier's rolling index, and
 the packet hands the reader its model, budget and deadline; a reader started
 with `--model`, `--tokens` and `--deadline` runs its reads on those instead.
 Both loops name the identity every child commits under, `--identity
@@ -135,8 +142,8 @@ password reaches the tool's environment and no file, line or log. That the
 ## tools.yml
 
 1. Every machine's platform: its beat's `nova_os`-`nova_arch`, else the gathered facts.
-2. On the machine running the play, one `nice -n 19 nova-update release build` (`GOMAXPROCS=4`, its own Go cache) for every platform that has no `SHA256SUMS` under `nova_release_out/<version>/` yet; a platform already built is not built again. `--check` prints `WOULD-BUILD ... built=<platforms> missing=<platforms>`.
-3. On every machine: the platform's directory copied to `~/nova-bench/release/<version>/<platform>/` (only files that differ), then that release's own `nova-update release install`, which verifies the `SHA256SUMS` whole and skips a tool that already answers the version; the tools named in `fleet/retired-tools.txt` (tools nova-tools once shipped and ships no more, by exact name) are removed from the bin directory, and nothing else is: a binary the list does not name (a credential helper, a loop wrapper of the fleet's own, a `.prev` copy) is never touched, whatever its name; the build fact (`~/.config/nova/build`) holds the version. `--check` prints `TOOLS host=<m> ... UP-TO-DATE` or `WOULD-INSTALL` from the installed `nova-update version`, and `WOULD-REMOVE <path>` for each retired tool present.
+2. On the machine running the play, one `nice -n 19 nova-update release build` (`GOMAXPROCS=4`, its own Go cache) for every platform that has no `SHA256SUMS` under `nova_release_out/<version>/` yet; a platform already built is not built again. `--check` prints `WOULD-BUILD ... built=<platforms> missing=<platforms>`. After a successful build it removes the old version directories in `nova_release_out`: it keeps the version just built, the version of the `nova-update` running it, and the 3 newest of the rest (`pruned=<n>` on its `RELEASE BUILD OK` line). The Go cache (`nova_release_gocache`) is the build's own `GOCACHE`, trimmed by Go itself of entries unused for five days, and is not pruned here.
+3. On every machine: the platform's directory copied to `~/nova-bench/release/<version>/<platform>/` (only files that differ), then that release's own `nova-update release install`, which verifies the `SHA256SUMS` whole and skips a tool that already answers the version, then, last, removes the old version directories under `~/nova-bench/release/`: it keeps the version installed, every version the bin directory's binaries answered before it (so a bad build can be put back), and the 3 newest of the rest; only names that parse as a version are touched, and a removal that fails is counted (`prune-failed=<n>` on the `RELEASE INSTALLED` line) and never fails the install; the tools named in `fleet/retired-tools.txt` (tools nova-tools once shipped and ships no more, by exact name) are removed from the bin directory, and nothing else is: a binary the list does not name (a credential helper, a loop wrapper of the fleet's own, a `.prev` copy) is never touched, whatever its name; the build fact (`~/.config/nova/build`) holds the version. `--check` prints `TOOLS host=<m> ... UP-TO-DATE` or `WOULD-INSTALL` from the installed `nova-update version`, and `WOULD-REMOVE <path>` for each retired tool present.
 4. On `store_deployer`: `nova-config migrate` (the schema a kind the build adds needs: run before any `nova-config loop add`), then `nova-redis fn load` as the deploy user; `--check` runs `nova-redis fn check` instead.
 
 ## redis.yml
@@ -156,7 +163,8 @@ names none. `docs/CLI.md` ("The store's ACL") has the verbs' lines.
 ## loops.yml
 
 One unit per record of `nova_loops`, from the record's fields and the host's
-layout: the command is the record's `argv` (a bare program is the installed
+layout: the command is the record's `argv`, which the inventory renders with
+the loop row's width as its `--width` when the width is above 0 (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
 record's log under `~/nova-bench/loops/`, which the play creates. Every unit

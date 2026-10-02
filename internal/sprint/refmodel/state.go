@@ -104,6 +104,16 @@ const (
 // tick deals a member.
 const Width = 64
 
+// DealAhead is how many widths of work cards a member holds, ready and working
+// together: its width working and as many again ready behind them (the owner,
+// 2026-10-01: "deal at most 2X width ahead per-machine in fleet"; the engine's
+// sprint.DealAhead).
+const DealAhead = 2
+
+// Room is the most work cards a placement leaves on a member, ready and
+// working together: DealAhead times its Width.
+const Room = DealAhead * Width
+
 // MaxRedeals is the spec's redeal bound (section 2): an attempt's work card
 // is dealt again at most this many times after a take of it ended without a
 // finish, its member down while it was working; a card that was ready keeps
@@ -150,7 +160,7 @@ type Primary struct {
 	Score   float64
 	Attempt int      // the attempt of its current or next work card, from 1
 	Head    int      // the attempt whose finished work is its head; 0 before
-	Pair    []string // sorted: the readers kept on it (D2)
+	Pair    []string // sorted: the two readers of its latest ask (the work table's asked field)
 	Reached bool     // a sentinel whose needs have all landed or been waived
 	// CI and CIHead are its last CI observation: "", "red" or "green", and
 	// the attempt whose head it was for (0: no head yet).
@@ -500,13 +510,13 @@ func (s State) NextMember(set []string) string {
 // amendment 5: every placement, first attempts and redeals and levelling
 // alike, goes round the fleet and moves the index; the engine's round.next):
 // the next member round the fleet among set holding fewer work cards, ready
-// and working, than its Width (errata 3 amendment 9), avoid only when no
+// and working, than its Room (errata 3 amendment 9; DealAhead), avoid only when no
 // other has room; with none having room, the next of set, avoid only when it
 // is the only one. "" when set is empty.
 func (s State) PlaceOn(set []string, avoid string) string {
 	var room []string
 	for _, m := range set {
-		if s.Held(m) < Width {
+		if s.Held(m) < Room {
 			room = append(room, m)
 		}
 	}
@@ -596,19 +606,6 @@ func (s State) LiveReadsOf(p string) []string {
 	var out []string
 	for id, c := range s.Reads {
 		if c.Primary == p && c.Place != Retired {
-			out = append(out, id)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// Unfinished is p's work cards on a member's ready or working cell
-// (SprintTables.tla Unfinished restricted to p).
-func (s State) UnfinishedOf(p string) []string {
-	var out []string
-	for id, w := range s.Work {
-		if w.Primary == p && (w.Place == FReady || w.Place == FWorking) {
 			out = append(out, id)
 		}
 	}

@@ -68,10 +68,6 @@ func checkout(t *testing.T, root string) string {
 			}
 			return nil
 		}
-		// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-		if rel == "deprecated" && d.IsDir() {
-			return fs.SkipDir
-		}
 		if rel == "." {
 			return nil
 		}

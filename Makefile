@@ -12,7 +12,7 @@ GO ?= go
 PKGS ?= ./...
 # CL_PKGS IS THE LIVING TREE, read the way ci.yml's test-packages job reads it:
 # `go run ./tools/ci select-packages --all` lists every package under cmd/,
-# internal/ and tools/ and drops the ones deprecated/PACKAGES names (a
+# internal/ and tools/ and drops the ones internal/pkgselect/DEPRECATED names (a
 # deprecated package is never tested), or fails loudly when `go list` fails; it
 # never selects nothing in silence. Recursive (`=`), and the `test` and
 # `test-functional` lines that take it are recursive too, so the go list runs
@@ -149,7 +149,6 @@ new-verb:
 build:
 	$(GO) build ./...
 
-# deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
 fmt:
 	@$(GO) run ./tools/ci gofmt
 
@@ -256,7 +255,8 @@ preflight:
 # 2026-09-26). What is ENFORCED on every leg is static: no unit test waits on
 # the wall clock (internal/ci: TestNoUnitTestWaitsOnTheWallClock), and a test
 # skipped with the SLEEPS marker that internal/ci/sleeps-skips_allowlist.txt does
-# not name is a CI-SLEEPS line and exit 2 here, whatever SLOWTESTS_ENFORCE says.
+# not name is a CI-SLEEPS line (slowtests exits 1) and fails the target here,
+# whatever SLOWTESTS_ENFORCE says.
 # The wall times are MEASUREMENTS: slowtests prints every CI-SLOW line and a
 # CI-LOAD line (the host's load, never read by the verdict) and exits 0 on
 # them, unless SLOWTESTS_ENFORCE=1 passes --enforce, which one caller does: the
@@ -381,9 +381,9 @@ test-prewarm-done:
 	$(GO) test -count=1 ./tools/testmanifest
 	$(GO) run ./tools/testmanifest --go "$(GO)" --package ./internal/swarm -- TestASDFMappingReusesCompiledOutputAcrossFreshJobClone TestPrewarmFailedRerunInvalidatesPriorReceipt TestPrewarmGitChildrenDropSecrets
 
-# The Lisp tier. nova-work, the one Lisp system, is PARKED under
-# deprecated/lisp/nova-work (Glenn 2026-09-27: deprecated code is not tested, not
-# built and never blocks CI), so lisp/ holds no system: test-lisp runs CI's
+# The Lisp tier. The old nova-work's Lisp kernel, the one Lisp system, lives in
+# the repository nova-work-old, for reference only (the deprecated/
+# folder that parked it was removed on 2026-10-01), so lisp/ holds no system: test-lisp runs CI's
 # verb (tools/ci lisp-test), which prints "nothing to test" and exits 0, and
 # compile-lisp (the swarm prewarm's lisp phase) prints "nothing to compile".
 # verify-roadmap and measure-roadmap ran cmd/nova-work's verification verb and went with it.
@@ -392,7 +392,7 @@ test-lisp:
 
 compile-lisp:
 	@if [ -e lisp ]; then echo "compile-lisp: lisp/ exists and no compile step names it; write one" >&2; exit 1; fi
-	@echo "compile-lisp: nothing to compile: lisp/ holds no system (nova-work is parked under deprecated/lisp/nova-work)"
+	@echo "compile-lisp: nothing to compile: lisp/ holds no system (the old nova-work kernel lives in the nova-work-old repository)"
 
 # What CI runs on a pull request: the self-hosted lint job, the sharded test
 # job, the friend sequences and the lisp tier (test-lisp; nothing to test while

@@ -85,7 +85,7 @@ func TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertL
 	release, err := lockFile(lockPath, 60*time.Millisecond, try, clk)
 	if err == nil {
 		release()
-		t.Fatal("lockFile succeeded despite permanent collision, want error")
+		require.FailNow(t, "lockFile succeeded despite permanent collision, want error")
 	}
 
 	// Must have waited out the budget, in virtual time the fake advanced.
@@ -98,9 +98,7 @@ func TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertL
 	require.True(t, errors.Is(err, errAccessDenied), "err does not wrap expected access denied error (%v)", err)
 	require.False(t, errors.Is(err, ErrLockHeld), "err wraps ErrLockHeld (%v); permanent failure must not falsely report lock held", err)
 	require.NotContains(t, err.Error(), "is held by process", "err falsely asserts live process holder: %v", err)
-	if !strings.Contains(err.Error(), "the lock at") || !strings.Contains(err.Error(), "could not be taken") {
-		t.Fatalf("err does not carry expected failure sentence: %v", err)
-	}
+	require.False(t, !strings.Contains(err.Error(), "the lock at") || !strings.Contains(err.Error(), "could not be taken"), "err does not carry expected failure sentence: %v", err)
 }
 
 // TestLockFileImmediateNonblockingRejectsCollisionImmediately verifies that with wait=0,

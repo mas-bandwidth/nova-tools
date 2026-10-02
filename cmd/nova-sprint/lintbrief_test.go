@@ -22,9 +22,7 @@ func passingBrief(lead string) string { return lead + "\n\n" + swarm.ChildRulesP
 func writeBrief(t *testing.T, lead string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "brief.md")
-	if err := os.WriteFile(path, []byte(passingBrief(lead)), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(passingBrief(lead)), 0o600))
 	return path
 }
 
@@ -38,13 +36,9 @@ func TestAddRefusesABriefThatFailsTheCardLint(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	dir := t.TempDir()
 	bare := filepath.Join(dir, "bare.md")
-	if err := os.WriteFile(bare, []byte("handle the empty case\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(bare, []byte("handle the empty case\n"), 0o600))
 	forbidden := filepath.Join(dir, "forbidden.md")
-	if err := os.WriteFile(forbidden, []byte(passingBrief("handle the empty case")+"\nSTEP 2. redis-server --port 7000 && git push --force origin HEAD\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(forbidden, []byte(passingBrief("handle the empty case")+"\nSTEP 2. redis-server --port 7000 && git push --force origin HEAD\n"), 0o600))
 	before := ta.applies()
 	for _, c := range []struct {
 		name, line string
@@ -58,18 +52,13 @@ func TestAddRefusesABriefThatFailsTheCardLint(t *testing.T) {
 			[]string{"LINT DRIFT brief step-redis-server: ", "LINT DRIFT brief step-force-push: ", "remedy=no line starts a redis-server"}},
 	} {
 		code, out, errs := ta.do(c.line)
-		if code != 2 || strings.Contains(out, "MOVED") {
-			t.Errorf("%s: exit %d, out %q; want exit 2 and nothing moved", c.name, code, out)
-		}
+		assert.Equal(t, 2, code, "%s: exit %d, out %q; want exit 2 and nothing moved", c.name, code, out)
+		assert.NotContains(t, out, "MOVED", "%s: exit %d, out %q; want exit 2 and nothing moved", c.name, code, out)
 		for _, w := range c.want {
-			if !strings.Contains(errs, w) {
-				t.Errorf("%s: stderr has no %q:\n%s", c.name, w, errs)
-			}
+			assert.Contains(t, errs, w, "%s: stderr has no %q", c.name, w)
 		}
 	}
-	if ta.applies() != before {
-		t.Fatal("a refused add wrote")
-	}
+	require.Equal(t, before, ta.applies(), "a refused add wrote")
 	// no brief, no lint: a count card, an id card and a sentinel are admitted as before
 	ta.ok("add --stream s1 --count 2")
 	ta.ok("add --stream s1 s1-x")
@@ -86,13 +75,11 @@ func TestAddBriefLintLinesAreBounded(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	code, _, errs := ta.do("add --stream s1 --count 1 --max 3 --brief 'handle the empty case'")
-	if code != 2 || strings.Count(errs, "LINT DRIFT brief ") != 3 || !strings.Contains(errs, "LINT MORE brief findings=") {
-		t.Fatalf("exit %d; want three drifts and a MORE line:\n%s", code, errs)
-	}
+	require.Equal(t, 2, code, "exit %d; want three drifts and a MORE line:\n%s", code, errs)
+	require.Equal(t, 3, strings.Count(errs, "LINT DRIFT brief "), "exit %d; want three drifts and a MORE line:\n%s", code, errs)
+	require.Contains(t, errs, "LINT MORE brief findings=", "exit %d; want three drifts and a MORE line:\n%s", code, errs)
 	_, _, all := ta.do("add --stream s1 --count 1 --max 0 --brief 'handle the empty case'")
-	if got := strings.Count(all, "LINT DRIFT brief "); got != len(swarm.DefaultChildRules) {
-		t.Fatalf("--max 0 prints every finding: %d, want %d (every rule missing)", got, len(swarm.DefaultChildRules))
-	}
+	require.Equal(t, len(swarm.DefaultChildRules), strings.Count(all, "LINT DRIFT brief "), "--max 0 prints every finding (every rule missing)")
 }
 
 // A sentinel carries no brief and is exempt from the card lint: a sentinel given a brief
@@ -103,22 +90,19 @@ func TestAddSentinelWithABriefIsNotLinted(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	code, out, errs := ta.do("add --stream s1 --sentinel gate-1 --brief 'stop here'")
-	if code != 0 || strings.Contains(errs, "LINT") {
-		t.Fatalf("a sentinel with a brief that fails the lint: exit %d, out %q, err %q; want admitted, not linted", code, out, errs)
-	}
+	require.Equal(t, 0, code, "a sentinel with a brief that fails the lint: exit %d, out %q, err %q; want admitted, not linted", code, out, errs)
+	require.NotContains(t, errs, "LINT", "a sentinel with a brief that fails the lint: exit %d, out %q, err %q; want admitted, not linted", code, out, errs)
 	// the same brief on a card that carries one is refused
-	if code, _, errs := ta.do("add --stream s1 --count 1 --brief 'stop here'"); code != 2 || !strings.Contains(errs, "LINT DRIFT brief ") {
-		t.Fatalf("the same brief on a --count card: exit %d, err %q; want the lint's refusal", code, errs)
-	}
+	code, _, errs = ta.do("add --stream s1 --count 1 --brief 'stop here'")
+	require.Equal(t, 2, code, "the same brief on a --count card: exit %d, err %q; want the lint's refusal", code, errs)
+	require.Contains(t, errs, "LINT DRIFT brief ", "the same brief on a --count card: exit %d, err %q; want the lint's refusal", code, errs)
 }
 
 // writeRules writes a rules file under t.TempDir() and returns its path.
 func writeRules(t *testing.T, text string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "rules.txt")
-	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(text), 0o600))
 	return path
 }
 
@@ -133,13 +117,12 @@ func TestAddAdmitsAnyProjectsBriefUnderTheDefaultRules(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1")
 	brief := "Fix the typo in site/index.html, then run npm test and push the branch.\n\n" + swarm.ChildRulesParagraph()
-	if code, _, errs := ta.do("add --stream web --count 1 --brief '" + strings.ReplaceAll(brief, "'", "") + "'"); code != 0 {
-		t.Fatalf("a non-Go brief with the general rules: exit %d\n%s", code, errs)
-	}
-	code, _, errs := ta.do("add --stream web2 --count 1 --max 0 --rules " + ourRulesFile + " --brief '" + strings.ReplaceAll(brief, "'", "") + "'")
-	if code != 2 || !strings.Contains(errs, "LINT DRIFT brief rule-gocache: 1: missing: Export a private GOCACHE") || !strings.Contains(errs, "LINT DRIFT brief rule-commit-trailer: ") {
-		t.Fatalf("the same brief under this repository's file: exit %d\n%s", code, errs)
-	}
+	code, _, errs := ta.do("add --stream web --count 1 --brief '" + strings.ReplaceAll(brief, "'", "") + "'")
+	require.Equal(t, 0, code, "a non-Go brief with the general rules: exit %d\n%s", code, errs)
+	code, _, errs = ta.do("add --stream web2 --count 1 --max 0 --rules " + ourRulesFile + " --brief '" + strings.ReplaceAll(brief, "'", "") + "'")
+	require.Equal(t, 2, code, "the same brief under this repository's file: exit %d\n%s", code, errs)
+	require.Contains(t, errs, "LINT DRIFT brief rule-gocache: 1: missing: Export a private GOCACHE", "the same brief under this repository's file: exit %d\n%s", code, errs)
+	require.Contains(t, errs, "LINT DRIFT brief rule-commit-trailer: ", "the same brief under this repository's file: exit %d\n%s", code, errs)
 }
 
 // This repository's own file admits a card that carries its rules, and refuses one that
@@ -149,23 +132,17 @@ func TestAddHoldsABriefToTheRulesFileItIsGiven(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1")
 	ours, err := swarm.ReadChildRules(ourRulesFile)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	body := "handle the empty case\n\n" + swarm.RulesParagraph(ours)
 	brief := filepath.Join(t.TempDir(), "brief.md")
-	if err := os.WriteFile(brief, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(brief, []byte(body), 0o600))
 	ta.ok("add --stream s1 --count 1 --rules " + ourRulesFile + " --brief-file " + brief)
 	without := strings.Replace(body, "Every new test opens with `t.Parallel()`.\n", "", 1)
-	if err := os.WriteFile(brief, []byte(without), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(brief, []byte(without), 0o600))
 	code, _, errs := ta.do("add --stream s2 --count 1 --rules " + ourRulesFile + " --brief-file " + brief)
-	if code != 2 || strings.Count(errs, "LINT DRIFT brief ") != 1 || !strings.Contains(errs, "LINT DRIFT brief rule-parallel: 1: missing: Every new test opens with `t.Parallel()`.") {
-		t.Fatalf("a brief missing one named rule: exit %d\n%s", code, errs)
-	}
+	require.Equal(t, 2, code, "a brief missing one named rule: exit %d\n%s", code, errs)
+	require.Equal(t, 1, strings.Count(errs, "LINT DRIFT brief "), "a brief missing one named rule: exit %d\n%s", code, errs)
+	require.Contains(t, errs, "LINT DRIFT brief rule-parallel: 1: missing: Every new test opens with `t.Parallel()`.", "a brief missing one named rule: exit %d\n%s", code, errs)
 }
 
 // init --rules records the file for the sprint, add holds every brief to it without being
@@ -174,41 +151,39 @@ func TestInitRulesIsTheSprintsRuleSet(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	rules := writeRules(t, "# docs project\n[ticket] Quote the ticket number.\n[tone] Write in the present tense.\n")
-	if code, _, errs := ta.do("init --readers reader-a --members m1 --rules " + filepath.Join(t.TempDir(), "absent.txt")); code != 2 || !strings.Contains(errs, "--rules: ") || !strings.Contains(errs, "absent.txt") {
-		t.Fatalf("init with an unreadable rules file: exit %d, %q", code, errs)
-	}
-	if code, _, errs := ta.do("init --readers reader-a --members m1 --rules " + writeRules(t, "# nothing\n")); code != 2 || !strings.Contains(errs, "holds no rule") {
-		t.Fatalf("init with an empty rules file: exit %d, %q", code, errs)
-	}
+	code, _, errs := ta.do("init --readers reader-a --members m1 --rules " + filepath.Join(t.TempDir(), "absent.txt"))
+	require.Equal(t, 2, code, "init with an unreadable rules file: exit %d, %q", code, errs)
+	require.Contains(t, errs, "--rules: ", "init with an unreadable rules file: exit %d, %q", code, errs)
+	require.Contains(t, errs, "absent.txt", "init with an unreadable rules file: exit %d, %q", code, errs)
+	code, _, errs = ta.do("init --readers reader-a --members m1 --rules " + writeRules(t, "# nothing\n"))
+	require.Equal(t, 2, code, "init with an empty rules file: exit %d, %q", code, errs)
+	require.Contains(t, errs, "holds no rule", "init with an empty rules file: exit %d, %q", code, errs)
 	ta.ok("init --readers reader-a --members m1 --rules " + rules)
 	st, err := ta.a.store(common{redis: "mem:0", actor: "coordinator"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, err := st.RulesPath(context.Background()); err != nil || got != rules {
-		t.Fatalf("the recorded rules path is %q, %v; want %q", got, err, rules)
-	}
-	code, _, errs := ta.do("add --stream s1 --count 1 --max 0 --brief 'Fix the footer.'")
-	if code != 2 || !strings.Contains(errs, "LINT DRIFT brief rule-ticket: 1: missing: Quote the ticket number.") || !strings.Contains(errs, "rule-tone") || strings.Contains(errs, "rule-worktree") {
-		t.Fatalf("a brief under the recorded file: exit %d\n%s", code, errs)
-	}
+	require.NoError(t, err)
+	got, err := st.RulesPath(context.Background())
+	require.NoError(t, err, "the recorded rules path is %q, %v; want %q", got, err, rules)
+	require.Equal(t, rules, got, "the recorded rules path is %q, %v; want %q", got, err, rules)
+	code, _, errs = ta.do("add --stream s1 --count 1 --max 0 --brief 'Fix the footer.'")
+	require.Equal(t, 2, code, "a brief under the recorded file: exit %d\n%s", code, errs)
+	require.Contains(t, errs, "LINT DRIFT brief rule-ticket: 1: missing: Quote the ticket number.", "a brief under the recorded file: exit %d\n%s", code, errs)
+	require.Contains(t, errs, "rule-tone", "a brief under the recorded file: exit %d\n%s", code, errs)
+	require.NotContains(t, errs, "rule-worktree", "a brief under the recorded file: exit %d\n%s", code, errs)
 	ta.ok("add --stream s1 --count 1 --brief 'Quote the ticket number. Write in the present tense.'")
 	// --rules on the add overrides the recorded file
 	other := writeRules(t, "Keep it short.\n")
 	ta.ok("add --stream s2 --count 1 --rules " + other + " --brief 'Keep it short.'")
 	// a recorded file that is gone is named, and the add says how to go on
-	if err := os.Remove(rules); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Remove(rules))
 	code, _, errs = ta.do("add --stream s3 --count 1 --brief 'Keep it short.'")
-	if code != 2 || !strings.Contains(errs, "the sprint's rules file") || !strings.Contains(errs, "give --rules <file>") {
-		t.Fatalf("a recorded file that is gone: exit %d, %q", code, errs)
-	}
+	require.Equal(t, 2, code, "a recorded file that is gone: exit %d, %q", code, errs)
+	require.Contains(t, errs, "the sprint's rules file", "a recorded file that is gone: exit %d, %q", code, errs)
+	require.Contains(t, errs, "give --rules <file>", "a recorded file that is gone: exit %d, %q", code, errs)
 	ta.ok("add --stream s3 --count 1 --rules " + other + " --brief 'Keep it short.'")
 	// a rules file with no brief to hold is a mistake, not a silent no-op
-	if code, _, errs := ta.do("add --stream s4 --count 1 --rules " + other); code != 2 || !strings.Contains(errs, "gives no brief") {
-		t.Fatalf("--rules with no brief: exit %d, %q", code, errs)
-	}
+	code, _, errs = ta.do("add --stream s4 --count 1 --rules " + other)
+	require.Equal(t, 2, code, "--rules with no brief: exit %d, %q", code, errs)
+	require.Contains(t, errs, "gives no brief", "--rules with no brief: exit %d, %q", code, errs)
 }
 
 // The model lines are part of the brief's lint: a brief that pins its model under line 1

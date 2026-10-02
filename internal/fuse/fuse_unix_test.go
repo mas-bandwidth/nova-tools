@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestPreserveUnreadablePreservesModeUnderUmask asserts that an existing 0600 destination
@@ -27,45 +29,46 @@ func TestPreserveUnreadablePreservesModeUnderUmask(t *testing.T) {
 		}
 		dir := t.TempDir()
 		path := filepath.Join(dir, "fuses.json")
-		if err := os.WriteFile(path, []byte(`{"lockdown":{"corrupt":`), 0o644); err != nil {
-			t.Fatalf("write box: %v", err)
+		{
+			err := os.WriteFile(path, []byte(`{"lockdown":{"corrupt":`), 0o644)
+			require.NoError(t, err, "write box: %v", err)
 		}
 
 		dst := path + UnreadableSuffix
-		if err := os.WriteFile(dst, []byte("existing backup\n"), 0o600); err != nil {
-			t.Fatalf("write dst: %v", err)
+		{
+			err := os.WriteFile(dst, []byte("existing backup\n"), 0o600)
+			require.NoError(t, err, "write dst: %v", err)
 		}
-		if err := os.Chmod(dst, wantExisting); err != nil {
-			t.Fatalf("chmod dst: %v", err)
+		{
+			err := os.Chmod(dst, wantExisting)
+			require.NoError(t, err, "chmod dst: %v", err)
 		}
 
-		if _, err := PreserveUnreadable(path); err != nil {
-			t.Fatalf("PreserveUnreadable: %v", err)
+		{
+			_, err := PreserveUnreadable(path)
+			require.NoError(t, err, "PreserveUnreadable: %v", err)
 		}
 
 		fi, err := os.Stat(dst)
-		if err != nil {
-			t.Fatalf("stat dst: %v", err)
-		}
-		if perm := fi.Mode().Perm(); perm != wantExisting {
-			t.Fatalf("destination mode under umask %s = %04o, want %04o", mask, perm, wantExisting)
+		require.NoError(t, err, "stat dst: %v", err)
+		{
+			perm := fi.Mode().Perm()
+			require.Equal(t, wantExisting, perm, "destination mode under umask %s = %04o, want %04o", mask, perm, wantExisting)
 		}
 
 		// A newly created destination still honors the current umask.
 		path2 := filepath.Join(dir, "fuses2.json")
-		if err := os.WriteFile(path2, []byte(`{"lockdown":{"corrupt2":`), 0o644); err != nil {
-			t.Fatalf("write box2: %v", err)
+		{
+			err := os.WriteFile(path2, []byte(`{"lockdown":{"corrupt2":`), 0o644)
+			require.NoError(t, err, "write box2: %v", err)
 		}
 		dst2, err := PreserveUnreadable(path2)
-		if err != nil {
-			t.Fatalf("PreserveUnreadable 2: %v", err)
-		}
+		require.NoError(t, err, "PreserveUnreadable 2: %v", err)
 		fi2, err := os.Stat(dst2)
-		if err != nil {
-			t.Fatalf("stat dst2: %v", err)
-		}
-		if perm := fi2.Mode().Perm(); perm != wantNew {
-			t.Fatalf("new destination mode under umask %s = %04o, want %04o", mask, perm, wantNew)
+		require.NoError(t, err, "stat dst2: %v", err)
+		{
+			perm := fi2.Mode().Perm()
+			require.Equal(t, wantNew, perm, "new destination mode under umask %s = %04o, want %04o", mask, perm, wantNew)
 		}
 		return
 	}
@@ -74,9 +77,7 @@ func TestPreserveUnreadablePreservesModeUnderUmask(t *testing.T) {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestPreserveUnreadablePreservesModeUnderUmask$")
 		cmd.Env = append(os.Environ(), "GO_TEST_SUBPROCESS_PRESERVE_UMASK="+mask)
 		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("umask %s subprocess failed: %v\n%s", mask, err, string(out))
-		}
+		require.NoError(t, err, "umask %s subprocess failed: %v\n%s", mask, err, string(out))
 	}
 }
 
@@ -92,16 +93,16 @@ func TestWriteBoxUnderUmask077Is0644(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "fuses.json")
 
-		if err := WriteBox(path, Box{}); err != nil {
-			t.Fatalf("WriteBox failed: %v", err)
+		{
+			err := WriteBox(path, Box{})
+			require.NoError(t, err, "WriteBox failed: %v", err)
 		}
 
 		fi, err := os.Stat(path)
-		if err != nil {
-			t.Fatalf("stat box: %v", err)
-		}
-		if perm := fi.Mode().Perm(); perm != 0o644 {
-			t.Fatalf("box perm with umask 077 = %04o, want 0644", perm)
+		require.NoError(t, err, "stat box: %v", err)
+		{
+			perm := fi.Mode().Perm()
+			require.Equal(t, os.FileMode(0o644), perm, "box perm with umask 077 = %04o, want 0644", perm)
 		}
 		return
 	}
@@ -109,7 +110,5 @@ func TestWriteBoxUnderUmask077Is0644(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestWriteBoxUnderUmask077Is0644$")
 	cmd.Env = append(os.Environ(), "GO_TEST_SUBPROCESS_WRITEBOX_UMASK=077")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("subprocess failed: %v\n%s", err, string(out))
-	}
+	require.NoError(t, err, "subprocess failed: %v\n%s", err, string(out))
 }

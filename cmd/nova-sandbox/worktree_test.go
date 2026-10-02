@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeGit is the tool's `git` for one test: it materialises a linked worktree as
@@ -150,9 +152,7 @@ func newWJob(t *testing.T) wjob {
 	}
 	j := wjob{base: base, repo: filepath.Join(base, "repo"), scratch: filepath.Join(base, "scratch")}
 	for _, d := range []string{j.repo, j.scratch} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(d, 0o755))
 	}
 	return j
 }
@@ -167,9 +167,7 @@ func (j wjob) tool(t *testing.T, env []string, args ...string) (int, string, str
 func recordGUID(t *testing.T, scratch string, id int) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(scratch, fmt.Sprintf("%d.pr", id)))
-	if err != nil {
-		t.Fatalf("the record file is not there: %s", err)
-	}
+	require.NoError(t, err, "the record file is not there: %s", err)
 	for _, line := range strings.Split(string(raw), "\n") {
 		if v, ok := strings.CutPrefix(line, "guid="); ok {
 			return v
@@ -186,22 +184,17 @@ func okLine(scratch, guid, sha string) string {
 func createTree(t *testing.T, j wjob, sha, id string) string {
 	t.Helper()
 	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", id)
-	if code != 0 {
-		t.Fatalf("creating the tree for --pr %s: exit %d, stderr %q", id, code, errb)
-	}
+	require.Equal(t, 0, code, "creating the tree for --pr %s: exit %d, stderr %q", id, code, errb)
 	expect := "WORKTREE OK path=" + filepath.Join(j.scratch, recordGUID(t, j.scratch, atoi(t, id))) + " head=" + sha + "\n"
-	if out != expect {
-		t.Fatalf("creating the tree for --pr %s: stdout %q, want %q", id, out, expect)
-	}
+	require.Equal(t, expect, out, "creating the tree for --pr %s: stdout %q, want %q", id, out, expect)
 	return filepath.Join(j.scratch, recordGUID(t, j.scratch, atoi(t, id)))
 }
 
 func atoi(t *testing.T, s string) int {
 	t.Helper()
 	var n int
-	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
-		t.Fatalf("%q is not a number", s)
-	}
+	_, err := fmt.Sscanf(s, "%d", &n)
+	require.NoError(t, err, "%q is not a number", s)
 	return n
 }
 
@@ -215,16 +208,12 @@ func TestWorktreeMaterialisesThePRHead(t *testing.T) {
 	useForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
 
 	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "7")
-	if code != 0 {
-		t.Fatalf("exit %d, want 0; stderr %q", code, errb)
-	}
+	require.Equal(t, 0, code, "exit %d, want 0; stderr %q", code, errb)
 	guid := recordGUID(t, j.scratch, 7)
-	if want := okLine(j.scratch, guid, sha); out != want {
-		t.Fatalf("stdout %q, want %q", out, want)
-	}
-	if _, err := os.Stat(filepath.Join(j.scratch, guid, ".git")); err != nil {
-		t.Fatalf("the worktree's .git file is not there: %s", err)
-	}
+	want := okLine(j.scratch, guid, sha)
+	require.Equal(t, want, out, "stdout %q, want %q", out, want)
+	_, err := os.Stat(filepath.Join(j.scratch, guid, ".git"))
+	require.NoError(t, err, "the worktree's .git file is not there: %s", err)
 }
 
 // 2. A second call for the same --pr reuses the first path, prints the same
@@ -237,20 +226,13 @@ func TestWorktreeSecondCallReusesTheTree(t *testing.T) {
 	useForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
 
 	code, first, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "7")
-	if code != 0 {
-		t.Fatalf("exit %d, want 0; stderr %q", code, errb)
-	}
+	require.Equal(t, 0, code, "exit %d, want 0; stderr %q", code, errb)
 	g.log = nil
 	code, second, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "7")
-	if code != 0 {
-		t.Fatalf("second exit %d, want 0; stderr %q", code, errb)
-	}
-	if second != first {
-		t.Fatalf("the second call printed %q, want the first line %q", second, first)
-	}
-	if n := g.addCount(); n != 0 {
-		t.Fatalf("the reuse ran %d git worktree add calls, want 0", n)
-	}
+	require.Equal(t, 0, code, "second exit %d, want 0; stderr %q", code, errb)
+	require.Equal(t, first, second, "the second call printed %q, want the first line %q", second, first)
+	n := g.addCount()
+	require.Equal(t, 0, n, "the reuse ran %d git worktree add calls, want 0", n)
 }
 
 // 3. A record whose tree the test deletes is rebuilt on the next call with
@@ -263,23 +245,16 @@ func TestWorktreeDeletedTreeIsRebuilt(t *testing.T) {
 	useForge(t, &fakeForge{byID: map[int]worktreePR{7: {Head: sha, Base: "main", State: "open"}}})
 
 	path := createTree(t, j, sha, "7")
-	if err := os.RemoveAll(path); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.RemoveAll(path))
 	g.log = nil
 	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "7")
-	if code != 0 {
-		t.Fatalf("exit %d, want 0; stderr %q", code, errb)
-	}
-	if n := g.addCount(); n != 1 {
-		t.Fatalf("the rebuild ran %d git worktree add calls, want exactly 1", n)
-	}
-	if want := okLine(j.scratch, recordGUID(t, j.scratch, 7), sha); out != want {
-		t.Fatalf("stdout %q, want %q", out, want)
-	}
-	if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
-		t.Fatalf("the rebuilt tree has no .git file: %s", err)
-	}
+	require.Equal(t, 0, code, "exit %d, want 0; stderr %q", code, errb)
+	n := g.addCount()
+	require.Equal(t, 1, n, "the rebuild ran %d git worktree add calls, want exactly 1", n)
+	want := okLine(j.scratch, recordGUID(t, j.scratch, 7), sha)
+	require.Equal(t, want, out, "stdout %q, want %q", out, want)
+	_, err := os.Stat(filepath.Join(path, ".git"))
+	require.NoError(t, err, "the rebuilt tree has no .git file: %s", err)
 }
 
 // 4. --prune with a fake forge reporting one PR merged and one closed prints
@@ -304,26 +279,16 @@ func TestWorktreePruneRemovesMergedAndClosedAndKeepsOpen(t *testing.T) {
 	ff.byID[2] = worktreePR{Head: sha, Base: "main", State: "closed"}
 
 	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
-	if code != 0 {
-		t.Fatalf("exit %d, want 0; stderr %q", code, errb)
-	}
-	if !strings.Contains(out, "WORKTREE REMOVED path="+paths[1]+" reason=pr_merged\n") {
-		t.Fatalf("no pr_merged line for %s in %q", paths[1], out)
-	}
-	if !strings.Contains(out, "WORKTREE REMOVED path="+paths[2]+" reason=pr_closed\n") {
-		t.Fatalf("no pr_closed line for %s in %q", paths[2], out)
-	}
-	if !strings.HasSuffix(strings.TrimSpace(out), "WORKTREE OK removed=2 kept=1") {
-		t.Fatalf("the prune summary is not removed=2 kept=1: %q", out)
-	}
+	require.Equal(t, 0, code, "exit %d, want 0; stderr %q", code, errb)
+	require.Contains(t, out, "WORKTREE REMOVED path="+paths[1]+" reason=pr_merged\n", "no pr_merged line for %s in %q", paths[1], out)
+	require.Contains(t, out, "WORKTREE REMOVED path="+paths[2]+" reason=pr_closed\n", "no pr_closed line for %s in %q", paths[2], out)
+	require.True(t, strings.HasSuffix(strings.TrimSpace(out), "WORKTREE OK removed=2 kept=1"), "the prune summary is not removed=2 kept=1: %q", out)
 	for _, id := range []int{1, 2} {
-		if _, err := os.Stat(paths[id]); !os.IsNotExist(err) {
-			t.Fatalf("the tree for --pr %d is still there", id)
-		}
+		_, err := os.Stat(paths[id])
+		require.ErrorIs(t, err, fs.ErrNotExist, "the tree for --pr %d is still there", id)
 	}
-	if _, err := os.Stat(paths[3]); err != nil {
-		t.Fatalf("the open PR's tree (%s) was removed: %s", paths[3], err)
-	}
+	_, err := os.Stat(paths[3])
+	require.NoError(t, err, "the open PR's tree (%s) was removed: %s", paths[3], err)
 }
 
 // 5. --prune with a fake clock one day and one minute past a tree's guid mtime
@@ -357,9 +322,7 @@ func TestWorktreePruneStaleUsesTheClockAndTheProbe(t *testing.T) {
 
 	touch := func(path string, age time.Duration) {
 		stamp := now.Add(-age)
-		if err := os.Chtimes(path, stamp, stamp); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Chtimes(path, stamp, stamp))
 	}
 	touch(paths[1], 24*time.Hour+time.Minute) // stale, not in use -> removed
 	touch(paths[2], 24*time.Hour-time.Minute) // under a day -> kept
@@ -367,21 +330,11 @@ func TestWorktreePruneStaleUsesTheClockAndTheProbe(t *testing.T) {
 	inUse[paths[3]] = true
 
 	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
-	if code != 0 {
-		t.Fatalf("exit %d, want 0; stderr %q", code, errb)
-	}
-	if !strings.Contains(out, "WORKTREE REMOVED path="+paths[1]+" reason=stale\n") {
-		t.Fatalf("no stale removal for %s in %q", paths[1], out)
-	}
-	if strings.Contains(out, paths[2]) {
-		t.Fatalf("the under-a-day tree %s was named in %q", paths[2], out)
-	}
-	if strings.Contains(out, paths[3]) {
-		t.Fatalf("the in-use tree %s was named in %q", paths[3], out)
-	}
-	if !strings.HasSuffix(strings.TrimSpace(out), "WORKTREE OK removed=1 kept=2") {
-		t.Fatalf("the prune summary is not removed=1 kept=2: %q", out)
-	}
+	require.Equal(t, 0, code, "exit %d, want 0; stderr %q", code, errb)
+	require.Contains(t, out, "WORKTREE REMOVED path="+paths[1]+" reason=stale\n", "no stale removal for %s in %q", paths[1], out)
+	require.NotContains(t, out, paths[2], "the under-a-day tree %s was named in %q", paths[2], out)
+	require.NotContains(t, out, paths[3], "the in-use tree %s was named in %q", paths[3], out)
+	require.True(t, strings.HasSuffix(strings.TrimSpace(out), "WORKTREE OK removed=1 kept=2"), "the prune summary is not removed=1 kept=2: %q", out)
 }
 
 // 6. --prune over a fake git worktree list holding a hand-made worktree no
@@ -390,28 +343,19 @@ func TestWorktreePruneLeavesTheHandMadeWorktree(t *testing.T) {
 	j := newWJob(t)
 	g := newFakeGit(j.repo)
 	hand := filepath.Join(j.scratch, "hand-made")
-	if err := os.MkdirAll(hand, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(hand, 0o755))
 	keep := filepath.Join(hand, "keep.txt")
-	if err := os.WriteFile(keep, []byte("hello\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(keep, []byte("hello\n"), 0o644))
 	g.trees[hand] = strings.Repeat("f", 40)
 	useFakeGit(t, g)
 	useForge(t, &fakeForge{byID: map[int]worktreePR{}})
 
 	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
-	if code != 0 {
-		t.Fatalf("a prune that removed nothing is the verb doing its job and must exit 0, got %d; stderr %q", code, errb)
-	}
-	if !strings.Contains(out, "WORKTREE OK removed=0 kept=1\n") {
-		t.Fatalf("stdout %q, want a removed=0 kept=1 summary", out)
-	}
+	require.Equal(t, 0, code, "a prune that removed nothing is the verb doing its job and must exit 0, got %d; stderr %q", code, errb)
+	require.Contains(t, out, "WORKTREE OK removed=0 kept=1\n", "stdout %q, want a removed=0 kept=1 summary", out)
 	got, err := os.ReadFile(keep)
-	if err != nil || string(got) != "hello\n" {
-		t.Fatalf("the hand-made worktree was touched: %q, %v", got, err)
-	}
+	require.NoError(t, err, "the hand-made worktree was touched: %q, %v", got, err)
+	require.Equal(t, "hello\n", string(got), "the hand-made worktree was touched: %q, %v", got, err)
 }
 
 // 7. No --repo, no --scratch, --repo <tmp>/not-a-repo, --scratch <tmp>/absent,
@@ -443,26 +387,17 @@ func TestWorktreeRefusals(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			code, out, errb := j.tool(t, nil, c.args...)
-			if code != 2 {
-				t.Fatalf("exit %d, want 2; stderr %q", code, errb)
+			require.Equal(t, 2, code, "exit %d, want 2; stderr %q", code, errb)
+			require.Empty(t, out, "a refusal wrote to stdout: %q", out)
+			require.Contains(t, errb, "WORKTREE REFUSED reason="+c.reason+":", "stderr %q does not refuse reason=%s", errb, c.reason)
+			if c.says != "" {
+				require.Contains(t, errb, c.says, "stderr %q does not say %q", errb, c.says)
 			}
-			if out != "" {
-				t.Fatalf("a refusal wrote to stdout: %q", out)
-			}
-			if !strings.Contains(errb, "WORKTREE REFUSED reason="+c.reason+":") {
-				t.Fatalf("stderr %q does not refuse reason=%s", errb, c.reason)
-			}
-			if c.says != "" && !strings.Contains(errb, c.says) {
-				t.Fatalf("stderr %q does not say %q", errb, c.says)
-			}
-			if !strings.Contains(errb, remedy) {
-				t.Fatalf("stderr %q carries no remedy line %q", errb, remedy)
-			}
+			require.Contains(t, errb, remedy, "stderr %q carries no remedy line %q", errb, remedy)
 		})
 	}
-	if _, err := os.Stat(absent); !os.IsNotExist(err) {
-		t.Fatalf("a refusal created the scratch dir %s", absent)
-	}
+	_, err := os.Stat(absent)
+	require.ErrorIs(t, err, fs.ErrNotExist, "a refusal created the scratch dir %s", absent)
 }
 
 // 9. --prune over a scratch holding one open-PR worktree and nothing prunable
@@ -476,12 +411,8 @@ func TestWorktreePruneKeptOpenExitsZero(t *testing.T) {
 	createTree(t, j, sha, "7")
 
 	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
-	if code != 0 {
-		t.Fatalf("a prune that kept an open PR must exit 0, got %d; stderr %q", code, errb)
-	}
-	if !strings.Contains(out, "WORKTREE OK removed=0 kept=1\n") {
-		t.Fatalf("stdout %q, want a removed=0 kept=1 summary", out)
-	}
+	require.Equal(t, 0, code, "a prune that kept an open PR must exit 0, got %d; stderr %q", code, errb)
+	require.Contains(t, out, "WORKTREE OK removed=0 kept=1\n", "stdout %q, want a removed=0 kept=1 summary", out)
 }
 
 // 10. --prune over an empty scratch is the verb doing its job: it prints
@@ -493,12 +424,8 @@ func TestWorktreePruneEmptyScratchExitsZero(t *testing.T) {
 	useForge(t, &fakeForge{byID: map[int]worktreePR{}})
 
 	code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--prune")
-	if code != 0 {
-		t.Fatalf("a prune of an empty scratch must exit 0, got %d; stderr %q", code, errb)
-	}
-	if !strings.Contains(out, "WORKTREE OK removed=0 kept=0\n") {
-		t.Fatalf("stdout %q, want a removed=0 kept=0 summary", out)
-	}
+	require.Equal(t, 0, code, "a prune of an empty scratch must exit 0, got %d; stderr %q", code, errb)
+	require.Contains(t, out, "WORKTREE OK removed=0 kept=0\n", "stdout %q, want a removed=0 kept=0 summary", out)
 }
 
 // 8. A fake forge token in the environment appears on no line, scanned over
@@ -512,12 +439,8 @@ func TestWorktreeNeverPrintsTheToken(t *testing.T) {
 	const token = "sekret-forge-token-do-not-print"
 
 	code, out, errb := j.tool(t, []string{"GH_TOKEN=" + token}, "--repo", j.repo, "--scratch", j.scratch, "--pr", "5")
-	if code != 0 {
-		t.Fatalf("exit %d, want 0; stderr %q", code, errb)
-	}
-	if strings.Contains(out+errb, token) {
-		t.Fatalf("the token leaked into the verb's output: %q", out+errb)
-	}
+	require.Equal(t, 0, code, "exit %d, want 0; stderr %q", code, errb)
+	require.NotContains(t, out+errb, token, "the token leaked into the verb's output: %q", out+errb)
 }
 
 // 9. The owner and name the forge client names come out of the origin remote's
@@ -548,9 +471,8 @@ func TestWorktreeParseOwnerRepo(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := parseOwnerRepo(c.url); got != c.want {
-				t.Fatalf("parseOwnerRepo(%q) = %q, want %q", c.url, got, c.want)
-			}
+			got := parseOwnerRepo(c.url)
+			require.Equal(t, c.want, got, "parseOwnerRepo(%q) = %q, want %q", c.url, got, c.want)
 		})
 	}
 }
@@ -578,14 +500,10 @@ func TestGhForgeBadOriginIsNotAnOutage(t *testing.T) {
 			t.Cleanup(func() { worktreeGit = old })
 
 			_, err := ghForge{repo: t.TempDir()}.PR(7)
-			if !errors.Is(err, errBadOrigin) {
-				t.Fatalf("PR error %v, want errBadOrigin", err)
-			}
-			if errors.Is(err, errNoForge) {
-				t.Fatalf("PR error %v reads as a forge that could not be reached", err)
-			}
-			if c.says != "" && !strings.Contains(err.Error(), c.says) {
-				t.Fatalf("PR error %v does not name the origin it read (%q)", err, c.says)
+			require.ErrorIs(t, err, errBadOrigin, "PR error %v, want errBadOrigin", err)
+			require.NotErrorIs(t, err, errNoForge, "PR error %v reads as a forge that could not be reached", err)
+			if c.says != "" {
+				require.Contains(t, err.Error(), c.says, "PR error %v does not name the origin it read (%q)", err, c.says)
 			}
 		})
 	}
@@ -618,25 +536,15 @@ func TestWorktreeForgeRefusalsSayWhichFailureItWas(t *testing.T) {
 			useForge(t, errForge{err: c.err})
 
 			code, out, errb := j.tool(t, nil, "--repo", j.repo, "--scratch", j.scratch, "--pr", "9")
-			if code != 2 {
-				t.Fatalf("exit %d, want 2; stderr %q", code, errb)
-			}
-			if out != "" {
-				t.Fatalf("a refusal wrote to stdout: %q", out)
-			}
-			if !strings.Contains(errb, "WORKTREE REFUSED reason="+c.reason+":") {
-				t.Fatalf("stderr %q does not refuse reason=%s", errb, c.reason)
-			}
+			require.Equal(t, 2, code, "exit %d, want 2; stderr %q", code, errb)
+			require.Empty(t, out, "a refusal wrote to stdout: %q", out)
+			require.Contains(t, errb, "WORKTREE REFUSED reason="+c.reason+":", "stderr %q does not refuse reason=%s", errb, c.reason)
 			for _, says := range c.says {
-				if !strings.Contains(errb, says) {
-					t.Fatalf("stderr %q does not say %q", errb, says)
-				}
+				require.Contains(t, errb, says, "stderr %q does not say %q", errb, says)
 			}
-			if !strings.Contains(errb, c.wants) {
-				t.Fatalf("stderr %q carries no %q", errb, c.wants)
-			}
-			if c.wants == remedy && strings.Contains(errb, retry) {
-				t.Fatalf("stderr %q tells the reader to retry a bad origin", errb)
+			require.Contains(t, errb, c.wants, "stderr %q carries no %q", errb, c.wants)
+			if c.wants == remedy {
+				require.NotContains(t, errb, retry, "stderr %q tells the reader to retry a bad origin", errb)
 			}
 		})
 	}
@@ -652,11 +560,10 @@ func TestFetchHeadReportsATimeoutAndToleratesTheRest(t *testing.T) {
 	}
 	err := fetchHead(timedOut, "/repo", "abc")
 	var te *subproc.TimeoutError
-	if err == nil || !errors.As(err, &te) || !strings.Contains(err.Error(), "fetching abc from origin") {
-		t.Fatalf("a timed-out fetch was reported as %v", err)
-	}
+	require.Error(t, err, "a timed-out fetch was reported as %v", err)
+	require.ErrorAs(t, err, &te, "a timed-out fetch was reported as %v", err)
+	require.Contains(t, err.Error(), "fetching abc from origin", "a timed-out fetch was reported as %v", err)
 	refused := func(string, ...string) (string, error) { return "", errors.New("fatal: couldn't find remote ref") }
-	if err := fetchHead(refused, "/repo", "abc"); err != nil {
-		t.Fatalf("an ordinary fetch failure was reported: %v", err)
-	}
+	err = fetchHead(refused, "/repo", "abc")
+	require.NoError(t, err, "an ordinary fetch failure was reported: %v", err)
 }

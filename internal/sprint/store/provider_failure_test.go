@@ -148,3 +148,76 @@ func TestAFailedFinishWithoutTheProviderKindStaysFailedWork(t *testing.T) {
 		assert.Equal(t, 1, h.notesOf(sprint.NWorkFailed), report)
 	}
 }
+
+// noResultLine is a member's report of a take whose child left no result at all.
+const noResultLine = cardhdr.EndNoResult + ": no RESULT.md shape; quack"
+
+// A take whose child left no result is an ended take too (the owner, 2026-10-01, on six
+// such failed-work judgments in one fleet pass: "that's fine with me."): no work came
+// back, so nothing is judged; the card is withdrawn and the next deal places it again on
+// another route, counting the take; its record says which kind of end it was.
+func TestATakeThatLeftNoResultIsRedealtAndNeverAFailedWorkJudgment(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"))
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.startMachine()
+	h.machine()
+	first := h.snap().Fleet.Card("s1-1.w1").F(sprint.FieldRoute)
+
+	h.failTake("s1-1.w1", noResultLine)
+	w := h.snap().Fleet.Card("s1-1.w1")
+	assert.Equal(t, sprint.Withdrawn, w.Col, "the take ended: the card is withdrawn for the deal")
+	pr := h.snap().Work.Card("s1-1")
+	assert.Equal(t, sprint.Ready, pr.Col, "its primary is ready to be dealt again, not in review")
+	assert.Equal(t, 0, pr.Int("failed"), "the card's failure count does not move")
+	assert.Empty(t, h.openOf(sprint.NWorkFailed), "no failed-work judgment")
+	assert.Zero(t, h.notesOf(sprint.NWorkFailed))
+
+	h.machine()
+	w = h.snap().Fleet.Card("s1-1.w1")
+	assert.Equal(t, sprint.Ready, w.Col, "dealt again by the tick at once")
+	assert.Equal(t, 1, w.Int("redeals"), "the ended take counts toward the bound")
+	assert.NotEqual(t, first, w.F(sprint.FieldRoute), "another route remains: the redeal leaves the one that left no result out")
+	lines := sprint.AttemptLines(w)
+	require.Len(t, lines, 2)
+	assert.Contains(t, lines[0], "end=no result: no RESULT.md shape; quack", "the take's line names its own kind")
+	assert.NotContains(t, lines[0], cardhdr.EndProvider, "and not the provider's")
+	h.clean("redealt after a take that left no result")
+}
+
+// The redeal bound holds for takes that left no result as for takes the provider failed:
+// the fourth retires the card with one judgment, the bound's, never a failed-work one.
+func TestAFourthTakeWithNoResultRetiresTheCardWithTheBoundsJudgment(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("pro-a", "pro"))
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.startMachine()
+	h.machine()
+	for i := 1; i <= sprint.MaxRedeals; i++ {
+		h.failTake("s1-1.w1", noResultLine)
+		h.machine()
+		require.Equal(t, i, h.snap().Fleet.Card("s1-1.w1").Int("redeals"))
+	}
+	h.failTake("s1-1.w1", noResultLine)
+	h.machine()
+	h.machine()
+	assert.Equal(t, sprint.Withdrawn, h.snap().Fleet.Card("s1-1.w1").Col, "retired: not dealt again")
+	open := h.openOf(sprint.NBound)
+	require.Len(t, open, 1, "one judgment")
+	assert.Contains(t, open[0].Note.What, "no result", "it says how the takes ended")
+	assert.Zero(t, h.notesOf(sprint.NWorkFailed), "never a failed-work judgment")
+}
+
+// A run its budget or its deadline ended with no result is still the card's to be judged:
+// the member says the end first, so the report is not of the no-result kind.
+func TestARunItsBudgetEndedWithNoResultStaysFailedWork(t *testing.T) {
+	t.Parallel()
+	for _, report := range []string{"budget: no RESULT.md shape; r", "deadline: no RESULT.md shape; r", "no RESULT.md shape; r"} {
+		h := routeHarness(t, route("pro-a", "pro"))
+		h.addReady("s1", 1, briefOf("pro", ""))
+		h.must(DealStep(sprint.DealReq{}))
+		h.failTake("s1-1.w1", report)
+		assert.Equal(t, sprint.DoneFailed, h.snap().Fleet.Card("s1-1.w1").Col, report)
+		assert.Equal(t, 1, h.notesOf(sprint.NWorkFailed), report)
+	}
+}

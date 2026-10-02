@@ -208,7 +208,7 @@ func (c *held) dealTurn(id string) int {
 
 // heldParts is the tick's parts the rule asks what the next tick does: every
 // part but the check, whose duty the rule is.
-var heldParts = []TickPartFn{TickResolve, TickResume, TickDeal, TickAccept, TickLevel, TickAsk, TickDeadlines, TickOverdue}
+var heldParts = []TickPartFn{TickLevel, TickLevelReads, TickResolve, TickResume, TickDeal, TickAccept, TickAsk, TickDeadlines, TickOverdue}
 
 func newHeld(h HeldState, now time.Time) *held {
 	s := *h.Snap
@@ -506,18 +506,24 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		if len(up) == 0 {
 			return "no fleet member is up, and no judgment says so", "", false
 		}
-		// The members' free places (each one's width less its ready and
-		// working cards, width.go) go to the ready primaries in the
+		// The members' free places (each one's room, DealAhead times its width,
+		// less its ready and working cards, width.go) go to the ready primaries in the
 		// deal's order: one with as many ahead of it as there are places waits
-		// for the members to finish work.
+		// for the members to finish work. The places are counted on the members
+		// the deal may give it (dealPlan): a withdrawn card is never dealt to a
+		// member that refused it at staging (StagingRefusers), so that member's
+		// free places hold nothing for it.
+		if wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
+			up = without(up, StagingRefusers(wc))
+		}
 		room := widthRoom(s, up)
 		// The deal's order is streamTurns from the deal's stream index (a
 		// stream at a time, in turn), so what is ahead is counted in that order.
 		ahead := c.dealTurn(pr.ID)
 		if ahead < room {
-			return "a member is below its width, and nothing deals it", "", false
+			return "a member is below its room (DealAhead times its width), and nothing deals it", "", false
 		}
-		return fmt.Sprintf("waits for a member below its width: %d free, %d ready ahead of it", room, ahead), "", true
+		return fmt.Sprintf("waits for a member below its room (DealAhead times its width): %d free, %d ready ahead of it", room, ahead), "", true
 	case Working:
 		return "no live work card of an up member holds it before its deadline, and no judgment is open on it", "", false
 	case Review:

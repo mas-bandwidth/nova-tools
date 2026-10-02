@@ -249,9 +249,8 @@ func TestApplyOfASingletonIsASetNeverAnAdd(t *testing.T) {
 	require.NoError(t, err, assertionMsg249...)
 	require.Equal(t, 1, res.Set, assertionMsg249...)
 	require.Equal(t, int64(6), res.Rev, assertionMsg249...)
-	require.Equal(t, "set:sprint:coordinator,reader_tier", strings.Join(reported, " "), assertionMsg249...)
+	require.Equal(t, "set:sprint:coordinator", strings.Join(reported, " "), assertionMsg249...)
 	require.Equal(t, "rowan", ap.views[KindSprint][KindSprint]["coordinator"], "sprint view %v", ap.views[KindSprint])
-	require.Equal(t, "pro", ap.views[KindSprint][KindSprint][FieldReaderTier], "the reader tier is pro unless set: %v", ap.views[KindSprint])
 	reported = nil
 	_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": ""}, "rowan")
 	require.NoError(t, err)

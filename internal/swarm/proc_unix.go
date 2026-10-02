@@ -59,11 +59,3 @@ func GroupAlive(pgid int, started string) bool {
 	err := syscall.Kill(-pgid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
-
-// pgidOf is the process group a pid is in.
-func pgidOf(pid int) int {
-	if pgid, err := syscall.Getpgid(pid); err == nil {
-		return pgid
-	}
-	return pid
-}

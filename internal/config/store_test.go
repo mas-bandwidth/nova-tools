@@ -23,38 +23,6 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		return row
 	}
 
-	t.Run("machines and fleet come from one read", func(t *testing.T) {
-		t.Parallel()
-		st := open(t)
-		machines, fleet, err := st.MachinesAndFleet(ctx)
-		assertionMsg32 := []any{"empty store: %+v %+v %v", machines, fleet, err}
-		require.NoError(t, err, assertionMsg32...)
-		require.Empty(t, machines, assertionMsg32...)
-		require.Equal(t, "", fleet.Fields["store"], assertionMsg32...)
-		require.Equal(t, "", fleet.Fields["coordinator"], assertionMsg32...)
-		require.Empty(t, fleet.Fields["redis_port"], assertionMsg32...)
-		require.Equal(t, "", fleet.Fields["pg_dsn"], assertionMsg32...)
-		for _, n := range []string{"bench-b", "bench-a"} {
-			_, setupErr1192 := st.Insert(ctx, KindMachine, mk(machine, n, map[string]string{"user": "user-x", "seat": "seat-x", "slots": "4"}), "operator")
-			require.NoError(t, setupErr1192)
-		}
-		_, _, setupErr1373 := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "bench-b", "coordinator": "bench-a"}, "operator")
-		require.NoError(t, setupErr1373)
-		machines, fleet, err = st.MachinesAndFleet(ctx)
-		assertionMsg44 := []any{"machines: %+v %v", machines, err}
-		require.NoError(t, err, assertionMsg44...)
-		require.Len(t, machines, 2, assertionMsg44...)
-		require.Equal(t, "bench-a", machines[0].Name, assertionMsg44...)
-		require.Equal(t, "bench-b", machines[1].Name, assertionMsg44...)
-		require.Equal(t, "4", machines[0].Fields["slots"], assertionMsg44...)
-		assertionMsg45 := []any{"fleet row: %+v", fleet}
-		require.Equal(t, "bench-b", fleet.Fields["store"], assertionMsg45...)
-		require.Equal(t, "bench-a", fleet.Fields["coordinator"], assertionMsg45...)
-		require.Empty(t, fleet.Fields["redis_port"], assertionMsg45...)
-		listed, _ := st.List(ctx, KindMachine)
-		require.Len(t, listed, len(machines), "List sees %d machines, MachinesAndFleet %d", len(listed), len(machines))
-	})
-
 	t.Run("add, get, list, set, history, remove", func(t *testing.T) {
 		t.Parallel()
 		st := open(t)

@@ -174,13 +174,3 @@ func (t *Tree) Count() Counts {
 	}
 	return c
 }
-
-// Repo returns the repository named owner/name.
-func (t *Tree) Repo(name string) (*Repo, bool) {
-	for i := range t.Repos {
-		if t.Repos[i].Name == name {
-			return &t.Repos[i], true
-		}
-	}
-	return nil, false
-}

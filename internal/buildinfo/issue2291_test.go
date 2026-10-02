@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 )
 
@@ -58,20 +61,12 @@ func TestIssue2291(t *testing.T) {
 			// break every reader in the tree that builds its answer on
 			// strings.Cut(line, "\n"), and the source fields are not
 			// exempted from that.
-			if strings.ContainsAny(line, "\n\r") {
-				t.Fatalf("the line carries a newline:\n%s", line)
-			}
+			require.False(t, strings.ContainsAny(line, "\n\r"), "the line carries a newline:\n%s", line)
 			fields, ok := buildinfo.Parse(line)
-			if !ok {
-				t.Fatalf("Parse refused a line that obeys the four-token grammar with source extras:\n%s", line)
-			}
+			require.True(t, ok, "Parse refused a line that obeys the four-token grammar with source extras:\n%s", line)
 			got, ok := fields.FindSource()
-			if !ok {
-				t.Fatalf("FindSource returned !ok for a line carrying source metadata:\n%s", line)
-			}
-			if got != tc.src {
-				t.Errorf("Source did not round-trip:\n  got  %+v\n  want %+v", got, tc.src)
-			}
+			require.True(t, ok, "FindSource returned !ok for a line carrying source metadata:\n%s", line)
+			assert.Equal(t, tc.src, got, "Source did not round-trip")
 		})
 	}
 
@@ -83,12 +78,9 @@ func TestIssue2291(t *testing.T) {
 	t.Run("a version line without source metadata has no Source", func(t *testing.T) {
 		plain := buildinfo.Line("nova-bus", stamp)
 		fields, ok := buildinfo.Parse(plain)
-		if !ok {
-			t.Fatalf("Parse refused a plain version line:\n%s", plain)
-		}
-		if _, ok := fields.FindSource(); ok {
-			t.Errorf("FindSource returned ok=true for a line that carries no source metadata:\n%s", plain)
-		}
+		require.True(t, ok, "Parse refused a plain version line:\n%s", plain)
+		_, ok = fields.FindSource()
+		assert.False(t, ok, "FindSource returned ok=true for a line that carries no source metadata:\n%s", plain)
 	})
 
 	// A partial source is a source the reader cannot verify — repository
@@ -107,12 +99,9 @@ func TestIssue2291(t *testing.T) {
 		} {
 			line := buildinfo.Line("nova-bus", stamp, partial...)
 			fields, ok := buildinfo.Parse(line)
-			if !ok {
-				t.Fatalf("Parse refused a line with partial source: %v\n%s", partial, line)
-			}
-			if _, ok := fields.FindSource(); ok {
-				t.Errorf("FindSource returned ok=true for a partial source %v:\n%s", partial, line)
-			}
+			require.True(t, ok, "Parse refused a line with partial source: %v\n%s", partial, line)
+			_, ok = fields.FindSource()
+			assert.False(t, ok, "FindSource returned ok=true for a partial source %v:\n%s", partial, line)
 		}
 	})
 
@@ -129,18 +118,13 @@ func TestIssue2291(t *testing.T) {
 		}
 		other := want
 		other.Repository = "github.com/other/repo"
-		if other == want {
-			t.Fatal("the disagreeing Source was not disagreeing; this case is broken")
-		}
+		require.NotEqual(t, want, other, "the disagreeing Source was not disagreeing; this case is broken")
 		line := buildinfo.LineWithSource("nova-bus", stamp, other)
 		fields, ok := buildinfo.Parse(line)
-		if !ok {
-			t.Fatalf("Parse refused: %s", line)
-		}
+		require.True(t, ok, "Parse refused: %s", line)
 		got, ok := fields.FindSource()
-		if !ok || got == want {
-			t.Fatalf("FindSource accepted the disagreeing line as the wanted source: got=%+v want=%+v", got, want)
-		}
+		require.True(t, ok, "FindSource accepted the disagreeing line as the wanted source: got=%+v want=%+v", got, want)
+		require.NotEqual(t, want, got, "FindSource accepted the disagreeing line as the wanted source: got=%+v want=%+v", got, want)
 	})
 
 	// A malformed dirty token -- anything other than "true" or "false" -- is
@@ -160,12 +144,9 @@ func TestIssue2291(t *testing.T) {
 			}
 			line := buildinfo.Line("nova-bus", stamp, extras...)
 			fields, ok := buildinfo.Parse(line)
-			if !ok {
-				t.Fatalf("Parse refused a well-formed line with dirty=%q: %s", bad, line)
-			}
-			if _, ok := fields.FindSource(); ok {
-				t.Errorf("FindSource accepted dirty=%q as a valid source", bad)
-			}
+			require.True(t, ok, "Parse refused a well-formed line with dirty=%q: %s", bad, line)
+			_, ok = fields.FindSource()
+			assert.False(t, ok, "FindSource accepted dirty=%q as a valid source", bad)
 		}
 		// The empty-value case cannot be produced by Line (it panics), but
 		// FindSource must still refuse it. Test Fields directly.
@@ -180,9 +161,8 @@ func TestIssue2291(t *testing.T) {
 				"build_host=studio",
 			},
 		}
-		if _, ok := fields.FindSource(); ok {
-			t.Errorf("FindSource accepted dirty= (empty value) as a valid source")
-		}
+		_, ok := fields.FindSource()
+		assert.False(t, ok, "FindSource accepted dirty= (empty value) as a valid source")
 	})
 
 	// Duplicate source keys are refused: two `repo=` entries in the same line
@@ -198,12 +178,9 @@ func TestIssue2291(t *testing.T) {
 		} {
 			line := buildinfo.Line("nova-bus", stamp, dups...)
 			fields, ok := buildinfo.Parse(line)
-			if !ok {
-				t.Fatalf("Parse refused a well-formed line with duplicate keys: %v\n%s", dups, line)
-			}
-			if _, ok := fields.FindSource(); ok {
-				t.Errorf("FindSource accepted duplicate source keys: %v\n%s", dups, line)
-			}
+			require.True(t, ok, "Parse refused a well-formed line with duplicate keys: %v\n%s", dups, line)
+			_, ok = fields.FindSource()
+			assert.False(t, ok, "FindSource accepted duplicate source keys: %v\n%s", dups, line)
 		}
 	})
 }

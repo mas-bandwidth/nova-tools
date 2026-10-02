@@ -35,7 +35,7 @@ func TestSnapshotIsTheAppliedStateInTwoRoundTrips(t *testing.T) {
 	sprintRow, _, sprintErr := st.Get(ctx, KindSprint, KindSprint)
 	require.NoError(t, sprintErr)
 	applyKinds(t, st, ap, sprintRow.Fields["coordinator"])
-	machines, _, err := st.MachinesAndFleet(ctx)
+	machines, err := st.List(ctx, KindMachine)
 	require.NoError(t, err)
 	beatOf := machines[0].Name
 	require.NoError(t, c.HSet(ctx, BeatKey(beatOf), "os", "linux", "arch", "amd64", "ncpu", "8").Err())

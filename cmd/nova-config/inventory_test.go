@@ -233,7 +233,7 @@ func TestInventoryTimesOutWaitingForTheStore(t *testing.T) {
 	h := inventoryHarness(t, 2)
 	h.redis.hang = true
 	code, out, errs := h.run(t, "inventory", "--redis", storeAddr, "--host", "bench-01", "--timeout", "50ms")
-	want := "nova-config inventory: timed out after 50ms waiting for the store at " + storeAddr + " while reading the applied state; check that Redis answers there; run: nova-config inventory --redis " + storeAddr + " --host bench-01 --timeout 150ms\n"
+	want := "nova-config inventory REFUSED: timed out after 50ms waiting for the store at " + storeAddr + " while reading the applied state; check that Redis answers there; run: nova-config inventory --redis " + storeAddr + " --host bench-01 --timeout 150ms\n"
 	assert.Equal(t, 2, code)
 	assert.Empty(t, out)
 	require.Equal(t, want, errs)
@@ -294,7 +294,8 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		"store_deployer", "nova_loops", "nova_os", "nova_redis_port", "nova_redis_addr", "nova_pg_dsn", "never Postgres",
 		"matched by exact machine name", "lower-cased first label", "nothing is marked local", "an empty value counts as unset",
 		"this verb exits 0 when it printed, 1 when the applied state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)",
-		"exit codes: 0 done, 1 refused, 2 usage\n",
+		"exit codes: 0 done, 1 refused (the verb ran and the store said no), 2 could not run (usage, or a store that did not answer)",
+		"effect: inspection: reads Redis",
 	} {
 		assert.Contains(t, help, w)
 	}

@@ -1,7 +1,6 @@
 package fuse
 
 import (
-	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -9,6 +8,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCreateBoxRefusesSymlinkParent(t *testing.T) {
@@ -19,22 +21,21 @@ func TestCreateBoxRefusesSymlinkParent(t *testing.T) {
 	root := t.TempDir()
 	real := filepath.Join(root, "real")
 	link := filepath.Join(root, "link")
-	if err := os.Mkdir(real, 0700); err != nil {
-		t.Fatal(err)
+	{
+		err := os.Mkdir(real, 0700)
+		require.NoError(t, err)
 	}
-	if err := os.Symlink(real, link); err != nil {
-		t.Fatal(err)
+	{
+		err := os.Symlink(real, link)
+		require.NoError(t, err)
 	}
-	if err := CreateBox(filepath.Join(link, "box.json")); err == nil {
-		t.Error("CreateBox accepted a symlink parent")
+	{
+		err := CreateBox(filepath.Join(link, "box.json"))
+		assert.Error(t, err, "CreateBox accepted a symlink parent")
 	}
 	entries, err := os.ReadDir(real)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Errorf("refusal left entries in the linked directory: %v", entries)
-	}
+	require.NoError(t, err)
+	assert.Len(t, entries, 0, "refusal left entries in the linked directory: %v", entries)
 }
 
 func TestConcurrentCreateBoxHasOneWinner(t *testing.T) {
@@ -47,27 +48,21 @@ func TestConcurrentCreateBoxHasOneWinner(t *testing.T) {
 			err := CreateBox(path)
 			if err == nil {
 				wins.Add(1)
-			} else if !errors.Is(err, fs.ErrExist) {
-				t.Errorf("create: %v", err)
+			} else {
+				assert.ErrorIs(t, err, fs.ErrExist, "create: %v", err)
 			}
 		})
 	}
 	wg.Wait()
-	if n := wins.Load(); n != 1 {
-		t.Fatalf("successful creators=%d, want1", n)
+	{
+		n := wins.Load()
+		require.Equal(t, int32(1), n, "successful creators=%d, want1", n)
 	}
 	box, err := ReadBox(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if box.Lockdown != nil || len(box.Quarantine) != 0 {
-		t.Fatalf("created box not empty: %+v", box)
-	}
+	require.NoError(t, err)
+	require.Nil(t, box.Lockdown, "created box not empty: %+v", box)
+	require.Empty(t, box.Quarantine, "created box not empty: %+v", box)
 	entries, err := os.ReadDir(filepath.Dir(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("creation left temp files: %v", entries)
-	}
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "creation left temp files: %v", entries)
 }

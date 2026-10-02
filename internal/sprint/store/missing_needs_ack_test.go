@@ -2,10 +2,10 @@ package store
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // Inbox recovery can acknowledge several judgments about the same primary
@@ -38,16 +38,12 @@ func TestAckCombinesDependencyJudgmentsForOnePrimary(t *testing.T) {
 					wants = []string{"first.bad", "s1-2"}
 				}
 				notes := append(h.nOpenOf(sprint.NMissingNeed, "waiter"), h.nOpenOf(sprint.NBlocked, "waiter")...)
-				if len(notes) != 2 {
-					t.Fatalf("need two distinct judgments: %+v", notes)
-				}
+				require.Len(t, notes, 2, "need two distinct judgments: %+v", notes)
 				ids := []string{notes[0].Note.ID, notes[1].Note.ID}
 				h.must(AckStep(sprint.AckReq{Notes: ids, Reason: "both unnecessary", Who: "tester"}))
 				c := h.snap().Work.Card("waiter")
 				for _, n := range wants {
-					if !strings.Contains(","+c.F("waived")+",", ","+n+",") {
-						t.Fatalf("lost waiver %s: %+v", n, c)
-					}
+					require.Contains(t, ","+c.F("waived")+",", ","+n+",", "lost waiver %s: %+v", n, c)
 				}
 				if sentinel {
 					if c.Col != sprint.Waiting || c.F("reached") == "" || len(h.nOpenOf(sprint.NSentinelReached, "waiter")) != 1 {
@@ -56,9 +52,7 @@ func TestAckCombinesDependencyJudgmentsForOnePrimary(t *testing.T) {
 				} else if c.Col != sprint.Ready {
 					t.Fatalf("primary: %+v", c)
 				}
-				if len(h.nOpenOf(sprint.NMissingNeed, "waiter"))+len(h.nOpenOf(sprint.NBlocked, "waiter")) != 0 {
-					t.Fatal("dependency judgment remains")
-				}
+				require.Equal(t, 0, len(h.nOpenOf(sprint.NMissingNeed, "waiter"))+len(h.nOpenOf(sprint.NBlocked, "waiter")), "dependency judgment remains")
 				h.clean("combined waiver")
 			})
 		}

@@ -22,8 +22,7 @@ import (
 const discardedAllowlistPath = "testdata/discarded"
 
 // discardedDirs are the directories of the living, non-test Go this rule reads.
-// deprecated/ is never walked (the shared tree skips it) and testdata/ holds
-// fixtures, not code that runs.
+// testdata/ holds fixtures, not code that runs.
 var discardedDirs = []string{"cmd", "internal", "tools"}
 
 // ignoredMarker is the house form of a reason: `// ignored: <reason>` on the

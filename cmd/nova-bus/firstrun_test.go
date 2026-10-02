@@ -10,6 +10,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The exemption is gone, and it stays gone: a `### First run` for nova-bus exists in
@@ -20,24 +22,17 @@ import (
 func TestNovaBusIsNotExemptFromTheOnboardingStandard(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := onboarding.FirstRun(string(raw), "nova-bus"); err != nil {
-		t.Fatalf("%v\n(docs/STANDARD.md, onboarding point 5(c))", err)
+	require.NoError(t, err)
+	{
+		_, err := onboarding.FirstRun(string(raw), "nova-bus")
+		require.NoErrorf(t, err, "%v\n(docs/STANDARD.md, onboarding point 5(c))", err)
 	}
 	// The walk is a functional test since #4372 (it builds and runs every command).
 	walk, err := os.ReadFile(filepath.Join("..", "..", "internal", "ci", "onboarding_functional_test.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	body, _, ok := strings.Cut(string(walk), "func TestEveryCommandMeetsTheOnboardingStandard")
-	if !ok {
-		t.Fatal("internal/ci/onboarding_functional_test.go no longer holds the walk this test is about")
-	}
-	if strings.Contains(body, `"nova-bus"`) {
-		t.Error("internal/ci/onboarding_functional_test.go's skip list names nova-bus again; the first run it was waiting for is in docs/TESTS.md and is executed by firstrun_functional_test.go")
-	}
+	require.True(t, ok, "internal/ci/onboarding_functional_test.go no longer holds the walk this test is about")
+	assert.NotContains(t, body, `"nova-bus"`, "internal/ci/onboarding_functional_test.go's skip list names nova-bus again; the first run it was waiting for is in docs/TESTS.md and is executed by firstrun_functional_test.go")
 }
 
 // The documented first sitting's draft line and send line, as docs/CLI.md writes them.
@@ -83,11 +78,10 @@ func documentedDraftEdit(md string) (string, error) {
 func TestTheCommandReferenceFirstRunWritesTheNoteBeforeSend(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := documentedDraftEdit(string(raw)); err != nil {
-		t.Fatal(err)
+	require.NoError(t, err)
+	{
+		_, err := documentedDraftEdit(string(raw))
+		require.NoError(t, err)
 	}
 }
 
@@ -190,13 +184,13 @@ func documentedReply(md string) (body string, lines []string, re string, err err
 func TestTheCommandReferenceFirstRunWritesItsSetupAndReply(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
-	if err != nil {
-		t.Fatal(err)
+	require.NoError(t, err)
+	{
+		_, err := documentedSetup(string(raw))
+		require.NoError(t, err)
 	}
-	if _, err := documentedSetup(string(raw)); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, err := documentedReply(string(raw)); err != nil {
-		t.Fatal(err)
+	{
+		_, _, _, err := documentedReply(string(raw))
+		require.NoError(t, err)
 	}
 }
