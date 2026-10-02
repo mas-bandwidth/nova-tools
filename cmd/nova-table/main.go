@@ -19,7 +19,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -116,10 +115,20 @@ func refused(stderr io.Writer, verb, what string) int { return refuseWith(stderr
 // has (docs/STANDARD.md section 2, internal/tool): `<VERB> REFUSED: <what
 // was wrong>; run: <remedy>`, the verb upper case with its words joined by
 // dashes, TABLE for the tool itself. A line naming no next step of its own
-// points at the verb's help, or the tool's.
+// points at the verb's help, or the tool's. A verb asked for --json gets the
+// same reason and remedy as JSON (jsonRefusals).
 func refuseWith(stderr io.Writer, verb, what string, code int) int {
 	if !remedied(what) {
 		what += "; run: " + helpFor(verb)
+	}
+	if j, ok := stderr.(*jsonRefusals); ok {
+		why, remedy := what, ""
+		if i := strings.LastIndex(what, "; run: "); i >= 0 {
+			why, remedy = what[:i], what[i+len("; run: "):]
+		}
+		j.out.Why = append(j.out.Why, why)
+		j.out.Remedy = cmp.Or(remedy, j.out.Remedy)
+		return code
 	}
 	fmt.Fprintf(stderr, "%s REFUSED: %s\n", token(verb), oneline.Escape(what))
 	return code
@@ -166,16 +175,38 @@ func (app *application) run(args []string, stdout, stderr io.Writer) (code int) 
 		}
 	}
 	if verb := jsonVerb(args); verb != "" && verbflag.BoolAsked(args, "json") {
-		// a verb that answers in JSON answers a refusal in JSON too
-		var refusal bytes.Buffer
-		if code = app.seated(args, stdout, &refusal); code == 0 {
-			_, err := stderr.Write(refusal.Bytes())
+		// A verb that answers in JSON answers a refusal in JSON too: the one JSON
+		// object every nova tool's result is (internal/tool's Out, docs/STANDARD.md
+		// section 2), {"result":{"verb","status":"refused","exit","remedy","why"}},
+		// on stdout, the exit the refusal carried (2 could not run, 1 the store said
+		// no). refuseWith fills it; anything else said on stderr is a note.
+		j := &jsonRefusals{out: tool.Out{Verb: verb, Status: tool.Refused}}
+		if code = app.seated(args, stdout, j); code == 0 {
+			_, err := stderr.Write(j.said.Bytes())
 			return exitOf(err)
 		}
-		return jsonRefusal(stdout, verb, code, refusal.String())
+		j.out.Exit = code
+		for _, l := range strings.Split(strings.TrimSpace(j.said.String()), "\n") {
+			if l != "" {
+				j.out.Notes = append(j.out.Notes, l)
+			}
+		}
+		if j.out.Render(stdout, true) != code {
+			return 1
+		}
+		return code
 	}
 	return app.seated(args, stdout, stderr)
 }
+
+// jsonRefusals stands in for stderr while a verb asked for --json runs: the
+// refusals refuseWith prints go into out, whatever else is written into said.
+type jsonRefusals struct {
+	out  tool.Out
+	said bytes.Buffer
+}
+
+func (j *jsonRefusals) Write(p []byte) (int, error) { return j.said.Write(p) }
 
 // seated is the verb run as the seat the line or the environment selects.
 func (app *application) seated(args []string, stdout, stderr io.Writer) int {
@@ -199,32 +230,6 @@ func jsonVerb(args []string) string {
 		return "member read"
 	}
 	return ""
-}
-
-// refusalLine reads a refusal refuseWith printed: its reason and its remedy.
-var refusalLine = regexp.MustCompile(`^[A-Z][A-Z0-9-]* REFUSED: (.*?)(?:; run: (.*))?$`)
-
-// jsonRefusal prints, on stdout, the refusal of a verb asked for --json as the
-// one JSON object every nova tool's result is (internal/tool's Out, docs/
-// STANDARD.md section 2): {"result":{"verb","status":"refused","exit",
-// "remedy","why"}}, the exit the line carried (2 could not run, 1 the store
-// said no). A line that is no refusal (a warning) is a note.
-func jsonRefusal(stdout io.Writer, verb string, code int, lines string) int {
-	o := &tool.Out{Verb: verb, Status: tool.Refused, Exit: code}
-	for _, l := range strings.Split(strings.TrimSuffix(lines, "\n"), "\n") {
-		m := refusalLine.FindStringSubmatch(l)
-		switch {
-		case m != nil:
-			o.Why = append(o.Why, m[1])
-			o.Remedy = cmp.Or(m[2], o.Remedy)
-		case l != "":
-			o.Notes = append(o.Notes, l)
-		}
-	}
-	if o.Render(stdout, true) != code {
-		return 1
-	}
-	return code
 }
 
 // exitOf is 0, or 1 when what a verb printed did not reach its reader.

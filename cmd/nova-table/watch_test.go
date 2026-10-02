@@ -175,7 +175,9 @@ func TestWatchPublishesToAFileByRename(t *testing.T) {
 	table := ntable.Render(demoTable(4), ntable.RenderOpts{})
 	read := func(context.Context) (string, error) { return table, nil }
 	done := make(chan int, 1)
-	go func() { done <- watchLoop(ctx, &stdout, &errOut, read, ticks, func() time.Time { return time.Time{} }, out) }()
+	go func() {
+		done <- watchLoop(ctx, &stdout, &errOut, read, ticks, func() time.Time { return time.Time{} }, out)
+	}()
 	ticks <- time.Time{}
 	cancel()
 	{
