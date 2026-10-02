@@ -321,9 +321,10 @@ func TestEveryProfileKeepsTheContract(t *testing.T) {
 		assert.Equal(t, head, got, family)
 		job, err := os.ReadFile(filepath.Join(r.job, JobName))
 		require.NoError(t, err)
-		for _, want := range []string{r.repo, "sprint/c1", r.base, "RESULT.md", "verdict: ok | not-done | nothing", "-count=1", "-timeout 600s", "GOCACHE=" + r.job + "/gocache"} {
+		for _, want := range []string{r.repo, "sprint/c1", r.base, "RESULT.md", "verdict: ok | not-done | nothing", "-count=1", "-timeout 600s"} {
 			assert.Contains(t, string(job), want, family)
 		}
+		assert.NotContains(t, string(job), r.job+"/gocache", "%s: no job has a build cache of its own", family)
 	}
 }
 

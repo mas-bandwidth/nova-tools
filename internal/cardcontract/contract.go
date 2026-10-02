@@ -51,7 +51,9 @@ type Staged struct {
 	// merge base of Head and the review base, found when the checkout was staged), so the
 	// read sees exactly the work's change however far the base branch has moved since;
 	// "" for work, or when no merge base was found.
-	Start string
+	Start   string
+	GoCache string // the machine's shared build cache the child's GOCACHE names; "" when it has none
+	Gate    *Gate  // a read's gate (ReadGate); nil: the card's
 }
 
 // Shim is one script a profile writes first on the child's PATH.

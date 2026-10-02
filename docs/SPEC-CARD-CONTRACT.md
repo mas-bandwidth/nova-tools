@@ -33,7 +33,11 @@ shims and the read base refresh.
 first.` and then carries the card. It says, in the profile's words: the repository, the branch
 and the commit the checkout is at, the base it came from, that the child works there and
 commits as usual, how its commit and its pull request leave (the sprint does both), the test
-environment (`GOCACHE=<job>/gocache`, niced, `-count=1 -timeout`), the attempt, and for attempt
+environment (the child's `GOCACHE` is the machine's shared, warm build cache `<root>/cache/go-build`,
+already set and named, never a cold one of its own under the job: `go help cache` says "The cache
+is safe for concurrent invocations of the go command.", and sixteen reads each compiling the
+repository from nothing kept a 36-thread bench 85% in the kernel on 2026-10-02; niced, `-count=1 -timeout`;
+`TestJobTextNamesTheSharedBuildCache`), the attempt, and for attempt
 2 and later the attempt it continues and its head (`This checkout continues attempt <n>: its head,
 <sha>, is the last pushed by any attempt before this one, and the checkout starts from it.`; left
 out when no earlier attempt pushed, and the checkout is the base) and, right after the attempt
@@ -73,7 +77,23 @@ the checkout is cloned from the bench mirror, whose base can be older than the w
 merge base against it was that older tip, and readers judged correct work broken because the diff
 held every card landed in between ("diff has 22 files not exactly one"). origin's base holds the
 work's start and not the work, so the merge base against it is the start however far the base
-has moved (`TestAReadsDiffIsExactlyTheWorkWhereverTheBaseIs`). JOB.md repeats no rules:
+has moved (`TestAReadsDiffIsExactlyTheWorkWhereverTheBaseIs`).
+
+**The read's gate.** A read's JOB.md names the gate it runs, as commands, in place of the card's
+and of any rule that asks for more (`cardcontract.ReadGate`, `TestAReadIsGatedOnThePackagesItsDiffTouches`,
+`TestAReadsGateIsReadOffItsDiff`): `go vet` and `go test` of the packages the work's change
+touches (`git diff --name-only <start>..HEAD`: the directory of a changed `.go` file that still
+holds one, and the package whose `testdata/` holds a changed file), and of the packages whose
+tests read a changed `docs/*.md` (a `_test.go` that names its path in a string, `"docs/<name>.md"` or
+`"../../docs/<name>.md"`, or as `filepath.Join`'s `"docs", "<name>.md"`; nova-tools#5111); `go build ./...`
+when `go.mod` or `go.sum` changed. The class-test packages the pull request's CI runs whole on
+every change (`pkgselect.EveryRun`: `internal/ci`, `internal/docs`) are never run whole by a read:
+of them it runs only the Test functions of a test file the change touches or of one that reads a
+changed doc, with `-run`. A change that reaches nothing says the read runs no go command. On
+a 36-thread bench, 2026-10-02, sixteen reads each ran `go test ./internal/ci/`, whose tests fork thousands
+of processes and build every command, and the machine spent 85% of its CPU in the kernel; the
+work's own gate ran those tests, and CI runs them again. A checkout with no `go.mod` has no gate
+of its own, and its JOB.md says to run the card's. JOB.md repeats no rules:
 the card's own RULES paragraph is in the brief, where the add lint holds it, and the child
 reads it once.
 

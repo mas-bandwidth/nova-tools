@@ -190,7 +190,7 @@ func TestSelectChangeIsTheTouchedPackagesTheirDependentsAndTheClassTestPackages(
 	}{
 		{"a leaf edit selects its dependent", "internal/bar/bar.go\nREADME.md\n", []string{"./cmd/foo", "./internal/bar", "./internal/ci", "./internal/docs"}},
 		{"a cmd edit selects it alone with the two class-test packages", "cmd/foo/foo.go\n", []string{"./cmd/foo", "./internal/ci", "./internal/docs"}},
-		{"a docs-only change selects the two class-test packages", "docs/CLI.md\n.github/workflows/ci.yml\n", []string{"./internal/ci", "./internal/docs"}},
+		{"a docs-only change selects the two class-test packages, EveryRun", "docs/CLI.md\n.github/workflows/ci.yml\n", EveryRun},
 		{"an edit under deprecated is not selected", "deprecated/cmd/old/main.go\n", []string{"./internal/ci", "./internal/docs"}},
 	}
 	for _, tc := range cases {
