@@ -91,7 +91,7 @@ func usageVerbs(tool, banner string) []string {
 func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) {
 	t.Helper()
 	if !loadLiveTree(t, root).Package("cmd/" + tool) {
-		return // deprecated: never tested (deprecated/PACKAGES)
+		return // deprecated: never tested (internal/pkgselect/DEPRECATED)
 	}
 	verbs := usageVerbs(tool, banner)
 	if len(verbs) == 0 {
