@@ -2,7 +2,7 @@ package swarm
 
 // THE CARD THAT STOPS IS ENDED WHEN IT STOPS, NOT AT ITS DEADLINE.
 //
-// A card is idle when NEITHER its log NOR its process tree has moved for --idle (issue #593),
+// A card is idle when NEITHER its log NOR its process tree has moved for --idle,
 // so a `go test` that prints nothing for minutes is not mistaken for a dead one. Without this
 // watch, `nova-swarm native`'s wait has exactly three ends: the child exits, the deadline
 // fires, or a TERM arrives from outside, and nothing looks at the card in between.
@@ -38,9 +38,9 @@ const NoIdleWindow = time.Duration(0)
 // nativeBusyShare is the divisor of the sample interval a tree must spend to count as
 // WORKING: one tenth of it, measured rather than chosen.
 //
-// batch asks for one hundredth (issue #916), on the reasoning that "a tree that is working
-// spends a large fraction of the interval; one percent separates the two by orders of
-// magnitude". Measured on hulk on 2026-09-19 against the harness the cards actually run
+// batch asks for one hundredth, on the reasoning that a tree that is working spends a large
+// fraction of the interval and one percent separates the two by orders of magnitude.
+// Measured against the harness the cards actually run
 // (`opencode` v1.18.20, deepseek-flash), that is no longer true: a harness SITTING STILL --
 // blocked on a tool call that never returns, and by the same token on a model turn that
 // never answers -- charged 103 clock ticks in 95 seconds, a steady 1.03% of one core,
@@ -59,13 +59,11 @@ const nativeBusyShare = 10
 // nativeLogDribble is how many bytes a card's own log must gain WITHIN ONE IDLE WINDOW
 // before the log alone counts as progress.
 //
-// The watch used to read any change in the file's size as work (`size != lastSize`), and
-// the job directory is `--write`: what lands in harness-output.log is chosen by the card's
-// own harness. So a child that appended one character a minute, or that rewrote the file,
-// reset the still-clock forever and held its slot to the deadline with nothing behind it
-// (johnny-b9716b436e56, HOLD #1831: "A child that writes one byte a minute, or truncates
-// `harness-output.log` (job dir is `--write`), never looks idle"). A signal the watched
-// thing can feed for free is not a signal.
+// The watch does not read any change in the file's size as work: the job directory is
+// `--write`, so what lands in harness-output.log is chosen by the card's own harness, and a
+// child that appends one character a minute, or that rewrites the file, would reset the
+// still-clock forever and hold its slot to the deadline with nothing behind it. A signal
+// the watched thing can feed for free is not a signal.
 //
 // Four kilobytes per window is the same shape of floor as nativeBusyShare: a card that is
 // really stepping writes its banners, its model turn and its tool output by the page, which
@@ -168,7 +166,7 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 				switch size := logSize(w.Log); {
 				case size < lastSize:
 					// A SHORTER LOG IS NOT A BUSIER CARD. A truncation or a rewrite is a
-					// change, and the old test read every change as work. The new length
+					// change, and a change is not work. The new length
 					// becomes the floor the next window's progress is measured from, and
 					// the still-clock keeps running through it.
 					lastSize, growFrom = size, size
@@ -181,9 +179,9 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 					// answer the tree's CPU reading below like any other quiet card.
 					lastSize = size
 				}
-				// A silent log is not a silent card (issue #593). The tree's CPU is read on
+				// A silent log is not a silent card. The tree's CPU is read on
 				// the coarse poll batch uses, and the same one-percent-of-the-interval share
-				// separates a working tree from a sleeping one's bookkeeping (issue #916).
+				// separates a working tree from a sleeping one's bookkeeping.
 				if at.Sub(lastSample) >= activityInterval(w.Idle) {
 					span := at.Sub(lastSample)
 					lastSample = at
@@ -205,7 +203,7 @@ func WatchIdle(w IdleWatch, stop <-chan struct{}) <-chan IdleEnd {
 				if at.Sub(lastGrow) < w.Idle {
 					continue
 				}
-				// A CARD THAT ALREADY PUBLISHED IS FINISHING, NOT IDLE (issue #916): its
+				// A CARD THAT ALREADY PUBLISHED IS FINISHING, NOT IDLE: its
 				// report is on disk and the end would only race the write.
 				if _, published := FindCardResult(w.Job); published {
 					continue
