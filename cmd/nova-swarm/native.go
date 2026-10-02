@@ -793,6 +793,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 		return nativeRunResult{}, 2
 	}
+	// THE CHILD'S PRIORITY, where the wall forbids the child to lower its own (the darwin
+	// wall denies setpriority): native lowers the group after the start, and the card's own
+	// `nice -n 19` resolves to the shim's, which runs the command without the wall's warning.
+	niced := nativeNicesChild(runtime.GOOS, wall != "")
+	if niced && shimDir != "" {
+		if err := writeNativeNiceShim(shimDir); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: %s; a card's nice inside the wall warns setpriority and runs its command anyway\n", oneline.Err(err))
+		}
+	}
 
 	// THE CHILD. The deadline is a context, so the process (and any it started in its
 	// own group) is killed when the wall runs out, not merely handed a suggestion.
@@ -1013,6 +1022,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			return nativeRunResult{}, 2
 		}
 		pgid := cmd.Process.Pid
+		if niced {
+			if err := lowerChildPriority(pgid); err != nil {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the child's priority could not be lowered: %s\n", oneline.Err(err))
+			}
+		}
 		started := swarm.StartStamp(pgid)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()

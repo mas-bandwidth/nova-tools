@@ -14,3 +14,6 @@ func ownChildGroup(cmd *exec.Cmd) {}
 func nativeTermCh() chan os.Signal { return make(chan os.Signal) }
 
 func stopNativeTerm(ch chan os.Signal) {}
+
+// lowerChildPriority is nothing on windows, which is not a bench.
+func lowerChildPriority(pgid int) error { return nil }

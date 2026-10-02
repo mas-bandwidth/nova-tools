@@ -254,7 +254,10 @@ description's secret; everything else is dropped. Native puts the bench's Go fir
 child's `PATH` after its shell wrappers: the directory the bench's `go` really lives in
 (`swarm.BenchGoBin`: the first `go` in `~/sdk/bin`, `~/go/bin`, then the member's own `PATH`,
 resolved through its links), so a card's bare `go` and `gofmt` resolve whatever `PATH` the loop
-unit started the member with. A name matching
+unit started the member with. Under the darwin wall, which denies `setpriority`, native
+starts the child's process group at nice 19 and the wrappers' directory carries a `nice` that
+runs its command without asking for a priority the group already has, so a gate's
+`nice -n 19` prints no warning. A name matching
 `TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH` is dropped unless `--pass` names it, even in
 an allowed family. The member keeps the forge credentials for its own push and pull request. A loop record whose harness reads its provider key from the environment carries `--pass <KEY>`; without it the children start with no provider key and fail at the provider, and a member started with no `--pass`, no worker secret and no `--auth` file for a model that is not a local one (`ollama`, `lmstudio`, `llamacpp`, `local`) says so in one `NOTE` line. When the result carries a `title`, the member opens the pull
 request after the push, as itself, from the card's branch into the base ref, with the title and

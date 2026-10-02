@@ -35,6 +35,8 @@ The wall grants the platform toolchain roots where a reader looks for them:
 - Darwin: `~/sdk`, `~/go/pkg/mod`, `/opt/homebrew/Cellar/go`, `/opt/homebrew/Cellar/sbcl`, `/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`, `/usr/local/share/dotnet`.
 - Linux: `~/sdk`, `~/go/pkg/mod`.
 
+The darwin wall denies `setpriority` (its `system-sched` operation), so on darwin a walled child cannot lower its own priority and a card's `nice -n 19` printed `nice: setpriority: Operation not permitted`. There native lowers the child's whole process group to nice 19 itself, from outside the wall, right after the start, and writes a `nice` beside the shell wrappers that drops the adjustment and runs the command, so a gate line's `nice -n 19` runs at 19 and says nothing. Linux's wall leaves `setpriority` alone, and a card's own `nice` works there as written.
+
 The child's `PATH` carries the bench's Go right after the shell wrappers: the directory the first `go` in `~/sdk/bin`, `~/go/bin` and then the member's own `PATH` resolves into (`swarm.BenchGoBin`), so `go` and `gofmt` are found inside the wall whatever `PATH` the loop unit gave the member.
 
 ## The living verbs
