@@ -157,8 +157,8 @@ func TestFoldRefusesParentSymlinkCreatesNoFiles(t *testing.T) {
 				assert.False(t, !os.IsNotExist(err), "day file created in referent child: %v", err)
 			}
 			entries, err := os.ReadDir(child)
-			require.False(t, err != nil, err)
-			require.False(t, len(entries) != 0, "referent child has %d entries, want 0: %v", len(entries), entries)
+			require.NoError(t, err, err)
+			require.Equal(t, 0, len(entries), "referent child has %d entries, want 0: %v", len(entries), entries)
 		})
 	}
 }
@@ -184,15 +184,15 @@ func TestRule2EveryRowNamesItsSources(t *testing.T) {
 	require.False(t, row == "", "no row for fable/schema:\n%s", day)
 	// The sources column is the ELEVENTH, read by position.
 	cols := strings.Split(row, "\t")
-	require.False(t, len(cols) != len(tokens.Columns), "the row has %d columns, want %d: %q", len(cols), len(tokens.Columns), row)
+	require.Equal(t, len(tokens.Columns), len(cols), "the row has %d columns, want %d: %q", len(cols), len(tokens.Columns), row)
 	{
 		got := cols[10]
-		assert.False(t, got != "bus:emma,claude:glenn", "sources column is %q, want both labels sorted", got)
+		assert.Equal(t, "bus:emma,claude:glenn", got, "sources column is %q, want both labels sorted", got)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(day), "\n")[2:] {
 		{
 			c := strings.Split(line, "\t")
-			assert.False(t, len(c) != len(tokens.Columns) || c[10] == "", "a row has an empty sources column: %q", line)
+			assert.True(t, len(c) == len(tokens.Columns) && c[10] != "", "a row has an empty sources column: %q", line)
 		}
 	}
 
@@ -226,14 +226,14 @@ func TestRule3AnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "unreadable=1")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
-		assert.False(t, err != nil, "the day file from the readable file was not written: %v", err)
+		assert.NoError(t, err, "the day file from the readable file was not written: %v", err)
 	}
 
 	// Without the unreadable file the same run is TOKENS OK, exit 0.
 	release() // windows holds the file open to make it unreadable, and an open file is undeletable
 	{
 		err := os.Remove(bad)
-		require.False(t, err != nil, err)
+		require.NoError(t, err, err)
 	}
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr)
 	wantExit(t, r, 0)
@@ -299,7 +299,8 @@ func TestRule4AMessageIsCountedOnceByItsID(t *testing.T) {
 	wantContains(t, r.stdout, "noid=1")
 	row := lineWith(read(t, filepath.Join(out, "2026-09-11.tsv")), "fable\tschema")
 	cols := strings.Split(row, "\t")
-	assert.False(t, cols[3] != "55" || cols[4] != "110", "the row carries %q/%q, want the LAST line's usage 55/110", cols[3], cols[4])
+	assert.Equal(t, "55", cols[3], "the row carries %q/%q, want the LAST line's usage 55/110", cols[3], cols[4])
+	assert.Equal(t, "110", cols[4], "the row carries %q/%q, want the LAST line's usage 55/110", cols[3], cols[4])
 }
 
 // ---------------------------------------------------------------- rule 5: repo attribution, unknown and other
@@ -367,7 +368,7 @@ func TestRule6TheSubjectIsExactAndAnUnparsedLineIsPrinted(t *testing.T) {
 	wantContains(t, r.stdout, "TOKENS TOUCHED label=bus:emma day=2026-09-11 repos=schema,serialize")
 	{
 		n := strings.Count(r.stderr, "TOKENS UNPARSED")
-		assert.False(t, n != 5, "%d TOKENS UNPARSED lines, want 5 -- three body lines and the two near-miss subjects:\n%s", n, r.stderr)
+		assert.Equal(t, 5, n, "%d TOKENS UNPARSED lines, want 5 -- three body lines and the two near-miss subjects:\n%s", n, r.stderr)
 	}
 	wantContains(t, r.stderr, "note=emma-00000000000c")
 	wantContains(t, r.stdout, "unparsed=5")
@@ -439,7 +440,7 @@ func TestRule6ABadDateRefusesTheWholeNote(t *testing.T) {
 			wantExit(t, r, 1)
 			{
 				n := strings.Count(r.stderr, "TOKENS UNPARSED")
-				assert.False(t, n != 1, "%d UNPARSED lines, want exactly one for the whole note:\n%s", n, r.stderr)
+				assert.Equal(t, 1, n, "%d UNPARSED lines, want exactly one for the whole note:\n%s", n, r.stderr)
 			}
 			wantContains(t, r.stderr, tc.want)
 			wantContains(t, r.stdout, "unparsed=1")
@@ -485,7 +486,7 @@ func TestRule6SupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 		wantExit(t, r, 0)
 		{
 			n := strings.Count(r.stdout, "TOKENS SUPERSEDED")
-			assert.False(t, n != 2, "%d SUPERSEDED lines, want 2:\n%s", n, r.stdout)
+			assert.Equal(t, 2, n, "%d SUPERSEDED lines, want 2:\n%s", n, r.stdout)
 		}
 		wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "\t300\t")
 	})
@@ -506,7 +507,7 @@ func TestRule6SupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 		wantContains(t, r.stderr, "conflict=1")
 		{
 			got := read(t, filepath.Join(out, "2026-09-11.tsv"))
-			assert.False(t, got != before, "the day file changed under a conflict:\nbefore:\n%s\nafter:\n%s", before, got)
+			assert.Equal(t, before, got, "the day file changed under a conflict:\nbefore:\n%s\nafter:\n%s", before, got)
 		}
 
 		// A correction naming only one tip leaves the other, and the remedy names both.
@@ -526,7 +527,7 @@ func TestRule6SupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 		// had already superseded. Every predecessor of a valid successor is one line.
 		{
 			n := strings.Count(r.stdout, "TOKENS SUPERSEDED")
-			assert.False(t, n != 3, "%d SUPERSEDED lines, want 3 (the two tips and the note already superseded):\n%s", n, r.stdout)
+			assert.Equal(t, 3, n, "%d SUPERSEDED lines, want 3 (the two tips and the note already superseded):\n%s", n, r.stdout)
 		}
 		for _, tip := range []string{"emma-000000000002", "emma-000000000003"} {
 			wantContains(t, r.stdout, "note="+tip+" by=emma-000000000004")
@@ -614,8 +615,8 @@ func TestRule7ARoughLineFoldsAsItsNumberAndIsCountedApart(t *testing.T) {
 	wantExit(t, r, 0)
 	row := lineWith(read(t, filepath.Join(out, "2026-09-11.tsv")), "g\tschema")
 	cols := strings.Split(row, "\t")
-	assert.False(t, cols[3] != "100000", "~100000 folded as %q, want 100000", cols[3])
-	assert.False(t, cols[8] != "2", "rough column is %q, want 2", cols[8])
+	assert.Equal(t, "100000", cols[3], "~100000 folded as %q, want 100000", cols[3])
+	assert.Equal(t, "2", cols[8], "rough column is %q, want 2", cols[8])
 	wantContains(t, lineWith(r.stdout, "TOKENS DAY"), "rough=2")
 
 	s := invoke(t, "sum", "--out", out, "--month", "2026-09")
