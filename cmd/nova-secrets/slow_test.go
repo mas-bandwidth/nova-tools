@@ -128,7 +128,11 @@ func TestASeatOpensTheFilesItsRulesNameAndNoOther(t *testing.T) {
 	commitAndPush(t, storeDir)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "a", "--key", aAdmin.privPath, "--sops", sopsPath)
 	assert.Equal(t, 1, code, "expected invariant 2 error: %s", errOut)
-	assert.Contains(t, errOut, "recipients differ from .sops.yaml; run: sops updatekeys a.yaml", "expected invariant 2 error: %s", errOut)
+	// A rule of three is invariant 1's to name, and the file under it is held to it: sops
+	// updatekeys alone would seal the file to the bad rule, so the rule is fixed first.
+	assert.Contains(t, errOut, "SECRETS CHECK FAIL .sops.yaml: rule for ^a\\.yaml$ has 3 recipients", "expected invariant 1 error: %s", errOut)
+	assert.Contains(t, errOut, "SECRETS CHECK FAIL a.yaml: is under a rule that has 3 recipients", "expected invariant 2 error: %s", errOut)
+	assert.Contains(t, errOut, "the rule is fixed first in .sops.yaml, then run: sops updatekeys a.yaml", "expected invariant 2 error: %s", errOut)
 	// Restore config
 	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsConfig), 0644)
 	commitAndPush(t, storeDir)
