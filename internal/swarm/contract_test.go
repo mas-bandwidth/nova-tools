@@ -76,9 +76,7 @@ func TestResultBoundsEvidenceLines(t *testing.T) {
 		writeResult(t, path, many(50)...)
 		got, err := CheckResult(path, Contract{Label: "card-142", ContractLine: contractLine, MaxLines: 3})
 		require.NoError(t, err)
-		if got.OK && len(got.Evidence) != 3 {
-			t.Errorf("evidence is bounded to --max; got %d lines want 3", len(got.Evidence))
-		}
+		assert.False(t, got.OK && len(got.Evidence) != 3, "evidence is bounded to --max; got %d lines want 3", len(got.Evidence))
 	})
 
 	t.Run("default bound", func(t *testing.T) {

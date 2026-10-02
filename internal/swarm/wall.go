@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -209,19 +210,18 @@ func wallPathToken(line string) string {
 	for _, q := range []string{"'", `"`} {
 		rest := line
 		for {
-			i := strings.Index(rest, q)
-			if i < 0 {
+			_, after, found := strings.Cut(rest, q)
+			if !found {
 				break
 			}
-			j := strings.Index(rest[i+1:], q)
-			if j < 0 {
+			cand, next, found := strings.Cut(after, q)
+			if !found {
 				break
 			}
-			cand := rest[i+1 : i+1+j]
 			if strings.Contains(cand, "/") {
 				return cand
 			}
-			rest = rest[i+1+j+1:]
+			rest = next
 		}
 	}
 	for _, f := range strings.Fields(line) {
@@ -412,12 +412,12 @@ func (r *ShellDenialReader) Write(p []byte) (int, error) {
 	defer r.mu.Unlock()
 	r.buf = append(r.buf, p...)
 	for {
-		i := strings.IndexByte(string(r.buf), '\n')
-		if i < 0 {
+		raw, rest, found := bytes.Cut(r.buf, []byte{'\n'})
+		if !found {
 			break
 		}
-		r.line(string(r.buf[:i]))
-		r.buf = r.buf[i+1:]
+		r.line(string(raw))
+		r.buf = rest
 	}
 	return len(p), nil
 }

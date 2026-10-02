@@ -12,6 +12,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -41,18 +44,14 @@ func TestNoKeychainAndNoCryptoDependency(t *testing.T) {
 		}
 
 		pkgsMap, err := parser.ParseDir(fset, dir, nil, parser.ImportsOnly)
-		if err != nil {
-			t.Fatalf("failed to parse package in %s: %v", dir, err)
-		}
+		require.NoError(t, err, "failed to parse package in %s: %v", dir, err)
 
 		for _, p := range pkgsMap {
 			for fileName, f := range p.Files {
 				for _, imp := range f.Imports {
 					pathVal := strings.Trim(imp.Path.Value, `"`)
 					for _, forb := range forbiddenImports {
-						if strings.Contains(pathVal, forb) {
-							t.Errorf("%s imports %s; forbidden cryptography or keychain dependency", fileName, pathVal)
-						}
+						assert.NotContains(t, pathVal, forb, "%s imports %s; forbidden cryptography or keychain dependency", fileName, pathVal)
 					}
 				}
 			}
@@ -65,9 +64,7 @@ func TestNoKeychainAndNoCryptoDependency(t *testing.T) {
 			}
 			content, _ := os.ReadFile(path)
 			sContent := string(content)
-			if strings.Contains(sContent, `"security"`) {
-				t.Errorf("%s contains reference to security binary", path)
-			}
+			assert.NotContains(t, sContent, `"security"`, "%s contains reference to security binary", path)
 			return nil
 		})
 	}
@@ -96,18 +93,13 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 
 	// 1. keygen
 	out, errOut, code := runNovaSecrets(bin, "keygen", "--as", "rowan", "--key", keyPath, "--age-keygen", ageKeygen, "--store", storeDir)
-	if code != 0 {
-		t.Fatalf("keygen failed: code %d, err: %s", code, errOut)
-	}
-	if !strings.Contains(out, "SECRETS KEYGEN OK as=rowan") {
-		t.Errorf("expected KEYGEN OK line: %s", out)
-	}
+	require.Equal(t, 0, code, "keygen failed: code %d, err: %s", code, errOut)
+	assert.Contains(t, out, "SECRETS KEYGEN OK as=rowan", "expected KEYGEN OK line: %s", out)
 
 	// 2. check on seat with no file of its own: exit 2 listing names
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyPath, "--sops", sopsPath)
-	if code != 2 || !strings.Contains(errOut, "seat file rowan.yaml is absent") {
-		t.Errorf("expected exit 2 when seat file absent: code %d, err: %s", code, errOut)
-	}
+	assert.Equal(t, 2, code, "expected exit 2 when seat file absent: code %d, err: %s", code, errOut)
+	assert.Contains(t, errOut, "seat file rowan.yaml is absent", "expected exit 2 when seat file absent: code %d, err: %s", code, errOut)
 
 	// 3. once a foreign file exists: green mine=0
 	otherKey := genKey(t, td, "other")
@@ -120,9 +112,8 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	commitAndPush(t, storeDir)
 
 	out, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "other", "--key", keyPath, "--sops", sopsPath)
-	if code != 0 || !strings.Contains(out, "mine=0") {
-		t.Errorf("expected green mine=0: code %d, out: %s, err: %s", code, out, errOut)
-	}
+	assert.Equal(t, 0, code, "expected green mine=0: code %d, out: %s, err: %s", code, out, errOut)
+	assert.Contains(t, out, "mine=0", "expected green mine=0: code %d, out: %s, err: %s", code, out, errOut)
 
 	// 4. between the two pull requests state: rule merged, file not yet updatekeys-ed -> exit 1 on invariant 2
 	sopsCfgBoth := fmt.Sprintf(`creation_rules:
@@ -137,9 +128,8 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	commitAndPush(t, storeDir)
 
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "recipients differ from .sops.yaml; run: sops updatekeys rowan.yaml") {
-		t.Errorf("expected between PRs invariant 2 failure: code %d, err: %s", code, errOut)
-	}
+	assert.Equal(t, 1, code, "expected between PRs invariant 2 failure: code %d, err: %s", code, errOut)
+	assert.Contains(t, errOut, "recipients differ from .sops.yaml; run: sops updatekeys rowan.yaml", "expected between PRs invariant 2 failure: code %d, err: %s", code, errOut)
 }
 
 // Test 18: TestOutputSizeAtTheLargestPlausibleState
@@ -173,24 +163,16 @@ func TestOutputSizeAtTheLargestPlausibleState(t *testing.T) {
 
 	// Test output size on green run
 	out, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "seat_00", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 0 {
-		t.Fatalf("check failed: code %d, err: %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "check failed: code %d, err: %s", code, errOut)
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 1 {
-		t.Errorf("check green run expected exactly 1 line, got %d", len(lines))
-	}
+	assert.Len(t, lines, 1, "check green run expected exactly 1 line, got %d", len(lines))
 
 	// exec green run
 	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "seat_00", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "all", "--", "true")
-	if code != 0 {
-		t.Fatalf("exec failed: code %d, err: %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "exec failed: code %d, err: %s", code, errOut)
 	errLines := strings.Split(strings.TrimSpace(errOut), "\n")
-	if len(errLines) != 1 {
-		t.Errorf("exec green run expected exactly 1 stderr line, got %d", len(errLines))
-	}
+	assert.Len(t, errLines, 1, "exec green run expected exactly 1 stderr line, got %d", len(errLines))
 }
 
 // Test 19: TestNoFileContentOrCallerArgumentCanForgeALine
@@ -258,24 +240,21 @@ func TestNoFileContentOrCallerArgumentCanForgeALine(t *testing.T) {
 		t.Helper()
 		for _, r := range runs {
 			out, errOut, code := runNovaSecrets(bin, r...)
-			if code == 0 && r[0] != "names" && !(r[0] == "check" && r[2] == "evil") {
-				t.Errorf("run %q: a forging input was accepted green: %s%s", r, out, errOut)
+			if code == 0 {
+				assert.True(t, r[0] == "names" || (r[0] == "check" && r[2] == "evil"), "run %q: a forging input was accepted green: %s%s", r, out, errOut)
 			}
 			for streamName, stream := range map[string]string{"stdout": out, "stderr": errOut} {
-				if i := strings.IndexFunc(stream, func(c rune) bool {
+				i := strings.IndexFunc(stream, func(c rune) bool {
 					return c == '\r' || c == 0x1b || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069) || c == 0x2028 || c == 0x2029
-				}); i >= 0 {
-					t.Errorf("run %q: %s carries a raw repaint or bidi control at byte %d: %q", r, streamName, i, stream)
-				}
+				})
+				assert.Less(t, i, 0, "run %q: %s carries a raw repaint or bidi control at byte %d: %q", r, streamName, i, stream)
 				for _, line := range strings.Split(stream, "\n") {
 					if line == "" {
 						continue
 					}
-					if !strings.HasPrefix(line, "SECRETS ") {
-						t.Errorf("run %q: %s has a line this tool did not author: %q", r, streamName, line)
-					}
-					if strings.HasPrefix(line, "SECRETS CHECK OK") && strings.Contains(line, "forged") {
-						t.Errorf("run %q: %s carries a forged OK line: %q", r, streamName, line)
+					assert.True(t, strings.HasPrefix(line, "SECRETS "), "run %q: %s has a line this tool did not author: %q", r, streamName, line)
+					if strings.HasPrefix(line, "SECRETS CHECK OK") {
+						assert.NotContains(t, line, "forged", "run %q: %s carries a forged OK line: %q", r, streamName, line)
 					}
 				}
 			}
@@ -324,25 +303,21 @@ func TestADecryptedFileLeftInTheStoreIsRed(t *testing.T) {
 
 	// Clean store passes check
 	_, _, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 0 {
-		t.Fatalf("expected clean store to pass, got %d", code)
-	}
+	require.Equal(t, 0, code, "expected clean store to pass, got %d", code)
 
 	// 1. Untracked file with plaintext secret -> exit 1 on invariant 7
 	leakedFile := filepath.Join(storeDir, "decrypted.yaml")
 	_ = os.WriteFile(leakedFile, []byte("GH_TOKEN: ghp_notarealvalue\n"), 0644)
 
 	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "decrypted.yaml") || strings.Contains(errOut, "ghp_notarealvalue") {
-		t.Errorf("expected invariant 7 failure without leaking secret value: code %d, err: %s", code, errOut)
-	}
+	assert.Equal(t, 1, code, "expected invariant 7 failure without leaking secret value: code %d, err: %s", code, errOut)
+	assert.Contains(t, errOut, "decrypted.yaml", "expected invariant 7 failure without leaking secret value: code %d, err: %s", code, errOut)
+	assert.NotContains(t, errOut, "ghp_notarealvalue", "expected invariant 7 failure without leaking secret value: code %d, err: %s", code, errOut)
 
 	// 2. Same file with ENC[...] values is green
 	_ = os.WriteFile(leakedFile, []byte("GH_TOKEN: ENC[AES256_GCM,data:xyz]\n"), 0644)
 	_, _, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 0 {
-		t.Errorf("untracked file with ENC[...] values should not trigger invariant 7, got %d", code)
-	}
+	assert.Equal(t, 0, code, "untracked file with ENC[...] values should not trigger invariant 7, got %d", code)
 
 	// 3. Mutation: .gitignore covering it must NOT turn it green
 	_ = os.WriteFile(leakedFile, []byte("GH_TOKEN: ghp_notarealvalue\n"), 0644)
@@ -350,9 +325,8 @@ func TestADecryptedFileLeftInTheStoreIsRed(t *testing.T) {
 	commitAndPush(t, storeDir)
 
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "decrypted.yaml") {
-		t.Errorf("expected .gitignore not to bypass invariant 7: code %d, err: %s", code, errOut)
-	}
+	assert.Equal(t, 1, code, "expected .gitignore not to bypass invariant 7: code %d, err: %s", code, errOut)
+	assert.Contains(t, errOut, "decrypted.yaml", "expected .gitignore not to bypass invariant 7: code %d, err: %s", code, errOut)
 }
 
 func TestChildEnvironmentCollisionsAreDropped(t *testing.T) {
@@ -362,9 +336,7 @@ func TestChildEnvironmentCollisionsAreDropped(t *testing.T) {
 
 	td := t.TempDir()
 	storeDir := filepath.Join(td, "store")
-	if err := os.MkdirAll(storeDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(storeDir, 0755))
 	initGitStore(t, storeDir)
 
 	keyA := genKey(t, td, "rowan")
@@ -382,16 +354,10 @@ func TestChildEnvironmentCollisionsAreDropped(t *testing.T) {
 	cmd := exec.Command(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "GH_TOKEN", "--require", "GH_TOKEN", "--", "printenv", "GH_TOKEN")
 	cmd.Env = append(os.Environ(), "GH_TOKEN=ATTACKER_CONTROLLED_VALUE")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("exec failed: %v, out: %s", err, string(out))
-	}
+	require.NoError(t, err, "exec failed: %v, out: %s", err, string(out))
 	outputStr := string(out)
-	if !strings.Contains(outputStr, "ghp_REALSTOREVALUE_12345") {
-		t.Errorf("expected store value in output, got: %s", outputStr)
-	}
-	if strings.Contains(outputStr, "ATTACKER_CONTROLLED_VALUE") {
-		t.Errorf("caller environment variable took precedence over store value: %s", outputStr)
-	}
+	assert.Contains(t, outputStr, "ghp_REALSTOREVALUE_12345", "expected store value in output, got: %s", outputStr)
+	assert.NotContains(t, outputStr, "ATTACKER_CONTROLLED_VALUE", "caller environment variable took precedence over store value: %s", outputStr)
 }
 
 func TestExecLookPathFailureDoesNotPrintOK(t *testing.T) {
@@ -401,9 +367,7 @@ func TestExecLookPathFailureDoesNotPrintOK(t *testing.T) {
 
 	td := t.TempDir()
 	storeDir := filepath.Join(td, "store")
-	if err := os.MkdirAll(storeDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(storeDir, 0755))
 	initGitStore(t, storeDir)
 
 	keyA := genKey(t, td, "rowan")
@@ -419,24 +383,17 @@ func TestExecLookPathFailureDoesNotPrintOK(t *testing.T) {
 	commitAndPush(t, storeDir)
 
 	stdout, stderr, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "/no/such/binary/exists")
-	if code != 125 {
-		t.Errorf("expected exit 125 on missing binary, got %d", code)
-	}
-	if strings.Contains(stdout, "SECRETS EXEC OK") || strings.Contains(stderr, "SECRETS EXEC OK") {
-		t.Errorf("failed exec must never print SECRETS EXEC OK line: stdout=%s stderr=%s", stdout, stderr)
-	}
+	assert.Equal(t, 125, code, "expected exit 125 on missing binary, got %d", code)
+	assert.NotContains(t, stdout, "SECRETS EXEC OK", "failed exec must never print SECRETS EXEC OK line: stdout=%s stderr=%s", stdout, stderr)
+	assert.NotContains(t, stderr, "SECRETS EXEC OK", "failed exec must never print SECRETS EXEC OK line: stdout=%s stderr=%s", stdout, stderr)
 }
 
 func TestAsPathTraversalRefused(t *testing.T) {
 	t.Parallel()
 	bin := buildNovaSecrets(t)
 	_, stderr, code := runNovaSecrets(bin, "names", "--store", "/any/path", "--as", "../outside")
-	if code != 2 {
-		t.Errorf("expected exit 2 on path traversal in --as, got %d", code)
-	}
-	if !strings.Contains(stderr, "invalid seat name") {
-		t.Errorf("expected invalid seat name refusal, got: %s", stderr)
-	}
+	assert.Equal(t, 2, code, "expected exit 2 on path traversal in --as, got %d", code)
+	assert.Contains(t, stderr, "invalid seat name", "expected invalid seat name refusal, got: %s", stderr)
 }
 
 func TestExecRejectsUncommittedModificationAgainstHEADTree(t *testing.T) {
@@ -446,9 +403,7 @@ func TestExecRejectsUncommittedModificationAgainstHEADTree(t *testing.T) {
 
 	td := t.TempDir()
 	storeDir := filepath.Join(td, "store")
-	if err := os.MkdirAll(storeDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(storeDir, 0755))
 	initGitStore(t, storeDir)
 
 	keyA := genKey(t, td, "rowan")
@@ -465,9 +420,7 @@ func TestExecRejectsUncommittedModificationAgainstHEADTree(t *testing.T) {
 
 	// Clean passes
 	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 0 {
-		t.Fatalf("expected check to pass, code %d: %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "expected check to pass, code %d: %s", code, errOut)
 
 	// Modify rowan.yaml and stage with git add (working tree matches index, but differs from HEAD tree!)
 	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: staged_uncommitted\n")
@@ -475,15 +428,13 @@ func TestExecRejectsUncommittedModificationAgainstHEADTree(t *testing.T) {
 
 	// Exec must refuse with 125
 	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "true")
-	if code != 125 || !strings.Contains(errOut, "differs from HEAD tree") {
-		t.Errorf("expected exec exit 125 citing HEAD tree diff, got code %d: %s", code, errOut)
-	}
+	assert.Equal(t, 125, code, "expected exec exit 125 citing HEAD tree diff, got code %d: %s", code, errOut)
+	assert.Contains(t, errOut, "differs from HEAD tree", "expected exec exit 125 citing HEAD tree diff, got code %d: %s", code, errOut)
 
 	// Check must fail with 1
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "differs from HEAD commit tree") {
-		t.Errorf("expected check exit 1 citing HEAD commit tree diff, got code %d: %s", code, errOut)
-	}
+	assert.Equal(t, 1, code, "expected check exit 1 citing HEAD commit tree diff, got code %d: %s", code, errOut)
+	assert.Contains(t, errOut, "differs from HEAD commit tree", "expected check exit 1 citing HEAD commit tree diff, got code %d: %s", code, errOut)
 }
 
 func TestCheckFailsClosedOnUnreadableIndex(t *testing.T) {
@@ -493,9 +444,7 @@ func TestCheckFailsClosedOnUnreadableIndex(t *testing.T) {
 
 	td := t.TempDir()
 	storeDir := filepath.Join(td, "store")
-	if err := os.MkdirAll(storeDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(storeDir, 0755))
 	initGitStore(t, storeDir)
 
 	keyA := genKey(t, td, "rowan")
@@ -515,9 +464,8 @@ func TestCheckFailsClosedOnUnreadableIndex(t *testing.T) {
 	_ = os.WriteFile(indexPath, []byte("NOT_A_VALID_DIRC_HEADER"), 0644)
 
 	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "failed to read git index") {
-		t.Errorf("expected check exit 1 on corrupt index, got code %d: %s", code, errOut)
-	}
+	assert.Equal(t, 1, code, "expected check exit 1 on corrupt index, got code %d: %s", code, errOut)
+	assert.Contains(t, errOut, "failed to read git index", "expected check exit 1 on corrupt index, got code %d: %s", code, errOut)
 }
 
 func TestExecFailsOnUntrackedSealedYAML(t *testing.T) {
@@ -527,9 +475,7 @@ func TestExecFailsOnUntrackedSealedYAML(t *testing.T) {
 
 	td := t.TempDir()
 	storeDir := filepath.Join(td, "store")
-	if err := os.MkdirAll(storeDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(storeDir, 0755))
 	initGitStore(t, storeDir)
 
 	keyA := genKey(t, td, "rowan")
@@ -548,9 +494,8 @@ func TestExecFailsOnUntrackedSealedYAML(t *testing.T) {
 	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "other.yaml"), []string{keyA.pubKey, recKey.pubKey}, "OTHER_KEY: secret\n")
 
 	_, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "true")
-	if code != 125 || !strings.Contains(errOut, "uncommitted or untracked yaml file in store root") {
-		t.Errorf("expected exec exit 125 on untracked yaml file, got code %d: %s", code, errOut)
-	}
+	assert.Equal(t, 125, code, "expected exec exit 125 on untracked yaml file, got code %d: %s", code, errOut)
+	assert.Contains(t, errOut, "uncommitted or untracked yaml file in store root", "expected exec exit 125 on untracked yaml file, got code %d: %s", code, errOut)
 }
 
 func TestChildEnvironmentDropsOmittedStoreSecrets(t *testing.T) {
@@ -560,9 +505,7 @@ func TestChildEnvironmentDropsOmittedStoreSecrets(t *testing.T) {
 
 	td := t.TempDir()
 	storeDir := filepath.Join(td, "store")
-	if err := os.MkdirAll(storeDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(storeDir, 0755))
 	initGitStore(t, storeDir)
 
 	keyA := genKey(t, td, "rowan")
@@ -580,20 +523,10 @@ func TestChildEnvironmentDropsOmittedStoreSecrets(t *testing.T) {
 	cmd := exec.Command(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "GH_TOKEN", "--require", "GH_TOKEN", "--", "printenv")
 	cmd.Env = append(os.Environ(), "SECRET_OMITTED=ATTACKER_INJECTED_OMITTED_VAL", "SOPS_AGE_KEY=AGE-SECRET-KEY-DUMMY", "SOPS_AGE_KEY_FILE=/some/path")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("exec failed: %v, out: %s", err, string(out))
-	}
+	require.NoError(t, err, "exec failed: %v, out: %s", err, string(out))
 	outputStr := string(out)
-	if strings.Contains(outputStr, "ATTACKER_INJECTED_OMITTED_VAL") {
-		t.Errorf("SECRET_OMITTED leaked through from caller environment: %s", outputStr)
-	}
-	if strings.Contains(outputStr, "AGE-SECRET-KEY-DUMMY") {
-		t.Errorf("SOPS_AGE_KEY leaked through to child environment: %s", outputStr)
-	}
-	if strings.Contains(outputStr, "SOPS_AGE_KEY_FILE") {
-		t.Errorf("SOPS_AGE_KEY_FILE leaked through to child environment: %s", outputStr)
-	}
-	if !strings.Contains(outputStr, "GH_TOKEN=ghp_token") {
-		t.Errorf("expected GH_TOKEN in output, got: %s", outputStr)
-	}
+	assert.NotContains(t, outputStr, "ATTACKER_INJECTED_OMITTED_VAL", "SECRET_OMITTED leaked through from caller environment: %s", outputStr)
+	assert.NotContains(t, outputStr, "AGE-SECRET-KEY-DUMMY", "SOPS_AGE_KEY leaked through to child environment: %s", outputStr)
+	assert.NotContains(t, outputStr, "SOPS_AGE_KEY_FILE", "SOPS_AGE_KEY_FILE leaked through to child environment: %s", outputStr)
+	assert.Contains(t, outputStr, "GH_TOKEN=ghp_token", "expected GH_TOKEN in output, got: %s", outputStr)
 }

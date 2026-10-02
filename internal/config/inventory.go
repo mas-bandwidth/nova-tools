@@ -3,8 +3,10 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -95,11 +97,7 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(snap.Machines))
-	for m := range snap.Machines {
-		names = append(names, m)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(snap.Machines))
 
 	loops, err := hostLoops(snap)
 	if err != nil {
@@ -161,9 +159,7 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 		vars["nova_store"] = s
 	}
 	revs := map[string]int64{}
-	for k, r := range snap.Revs {
-		revs[k] = r
-	}
+	maps.Copy(revs, snap.Revs)
 	vars["nova_config_rev"] = revs
 	if runnerHosts == nil {
 		runnerHosts = []string{}
@@ -216,12 +212,7 @@ func hostLoops(snap *Snapshot) (map[string][]InventoryLoop, error) {
 	for m := range snap.Machines {
 		out[m] = []InventoryLoop{}
 	}
-	names := make([]string, 0, len(snap.Loops))
-	for n := range snap.Loops {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
+	for _, n := range slices.Sorted(maps.Keys(snap.Loops)) {
 		v := snap.Loops[n]
 		m := v["machine"]
 		if _, ok := out[m]; !ok {

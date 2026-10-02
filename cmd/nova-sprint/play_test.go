@@ -65,9 +65,7 @@ func TestPlayWithACoordinatorLandsEveryStream(t *testing.T) {
 			return
 		}
 		out := ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --fail 0.1 --broken 0.05 --stuck 0.1 --cross 0 --batch 10 --take 20 --reads 20", round))
-		if round == 1 && !strings.Contains(out, "tick 1") {
-			t.Fatalf("the first tick:\n%s", out)
-		}
+		require.False(t, round == 1 && !strings.Contains(out, "tick 1"), "the first tick:\n%s", out)
 		for _, bad := range []string{"nova-sprint accept", "nova-sprint rework", "nova-sprint resume", "nova-sprint drop", "nova-sprint rank",
 			"nova-sprint start", "nova-sprint resolve", "nova-sprint ask", "nova-sprint tick"} {
 			require.NotContains(t, out, bad, "the driver ran a coordinator verb")

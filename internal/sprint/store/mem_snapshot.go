@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -111,9 +112,7 @@ func snapTable(t *memTable) *tableSnapshot {
 	for e, ep := range t.epochs {
 		s.Epochs[e] = &epochSnapshot{Rows: ep.rows, Texts: ep.texts, Props: ep.props}
 	}
-	for e, w := range t.wrote {
-		s.Wrote[e] = w
-	}
+	maps.Copy(s.Wrote, t.wrote)
 	for id, m := range t.members {
 		s.Members[id] = &memberSnapshot{Epoch: m.epoch, Placed: m.placed, Row: m.row, Col: m.col, Score: m.score, Rev: m.rev, Fields: m.fields}
 	}
@@ -135,9 +134,7 @@ func (s *tableSnapshot) table() *memTable {
 		}
 		t.epochs[e] = me
 	}
-	for e, w := range s.Wrote {
-		t.wrote[e] = w
-	}
+	maps.Copy(t.wrote, s.Wrote)
 	for id, m := range s.Members {
 		t.members[id] = &memMember{epoch: m.Epoch, placed: m.Placed, row: m.Row, col: m.Col, score: m.Score, rev: m.Rev, fields: m.Fields}
 	}

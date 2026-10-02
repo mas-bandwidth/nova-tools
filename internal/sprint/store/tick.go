@@ -573,12 +573,7 @@ func changesRow(e ntable.BatchMemberEntry) bool {
 // staleRefusal says a step holding epoch at was refused because the sprint
 // left it.
 func staleRefusal(refused []sprint.Refusal, at uint64) bool {
-	for _, r := range refused {
-		if r.Key == "epoch "+strconv.FormatUint(at, 10) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(refused, func(r sprint.Refusal) bool { return r.Key == "epoch "+strconv.FormatUint(at, 10) })
 }
 
 // Tick runs one tick when the machine is RUNNING, and records it on the

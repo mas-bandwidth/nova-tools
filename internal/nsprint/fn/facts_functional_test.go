@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // TestFactF1NoRollback verifies that a function that errors keeps its earlier writes.
@@ -34,21 +35,21 @@ redis.register_function('fct_f1_seterr', function(keys, args)
     error('deliberate error after SET')
 end)`
 	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		t.Fatalf("load: %v", err)
+		require.NoError(t, err, "load: %v", err)
 	}
 
 	key := "dev-facts-f1"
 	err := c.FCall(ctx, "fct_f1_seterr", []string{key}, "1").Err()
 	if err == nil || !strings.Contains(err.Error(), "deliberate error after SET") {
-		t.Fatalf("expected deliberate error from fct_f1_seterr, got: %v", err)
+		require.Failf(t, "assertion failed", "expected deliberate error from fct_f1_seterr, got: %v", err)
 	}
 
 	val, err := c.Get(ctx, key).Result()
 	if err != nil {
-		t.Fatalf("get %s: %v", key, err)
+		require.NoError(t, err, "get %s: %v", key, err)
 	}
 	if val != "1" {
-		t.Fatalf("expected write to persist with value '1', got %q", val)
+		require.Equal(t, "1", val, "expected write to persist with value '1', got %q", val)
 	}
 }
 
@@ -69,26 +70,26 @@ func TestFactF2KillOnlyBeforeWrite(t *testing.T) {
 	// Verify default busy-reply-threshold is 5000 ms
 	cfg, err := c.ConfigGet(ctx, "busy-reply-threshold").Result()
 	if err != nil {
-		t.Fatalf("config get busy-reply-threshold: %v", err)
+		require.NoError(t, err, "config get busy-reply-threshold: %v", err)
 	}
 	if cfg["busy-reply-threshold"] != "5000" {
-		t.Fatalf("expected default busy-reply-threshold 5000, got %s", cfg["busy-reply-threshold"])
+		require.Equal(t, "5000", cfg["busy-reply-threshold"], "expected default busy-reply-threshold 5000, got %s", cfg["busy-reply-threshold"])
 	}
 
 	// Lower threshold to 1000 ms for test execution
 	if err := c.ConfigSet(ctx, "busy-reply-threshold", "1000").Err(); err != nil {
-		t.Fatalf("config set busy-reply-threshold 1000: %v", err)
+		require.NoError(t, err, "config set busy-reply-threshold 1000: %v", err)
 	}
 	t.Cleanup(func() {
 		if err := c.ConfigSet(ctx, "busy-reply-threshold", "5000").Err(); err != nil {
-			t.Fatalf("config set busy-reply-threshold 5000: %v", err)
+			require.NoError(t, err, "config set busy-reply-threshold 5000: %v", err)
 		}
 		cfgRestored, err := c.ConfigGet(ctx, "busy-reply-threshold").Result()
 		if err != nil {
-			t.Fatalf("config get busy-reply-threshold: %v", err)
+			require.NoError(t, err, "config get busy-reply-threshold: %v", err)
 		}
 		if cfgRestored["busy-reply-threshold"] != "5000" {
-			t.Fatalf("expected restored busy-reply-threshold 5000, got %s", cfgRestored["busy-reply-threshold"])
+			require.Equal(t, "5000", cfgRestored["busy-reply-threshold"], "expected restored busy-reply-threshold 5000, got %s", cfgRestored["busy-reply-threshold"])
 		}
 	})
 
@@ -107,7 +108,7 @@ redis.register_function('fct_f2_readloop', function(keys, args)
     return 'done'
 end)`
 	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		t.Fatalf("load: %v", err)
+		require.NoError(t, err, "load: %v", err)
 	}
 
 	// Case 1: Writing function -> FUNCTION KILL answers UNKILLABLE
@@ -144,15 +145,15 @@ end)`
 		}
 
 		if killErr == nil || !strings.Contains(killErr.Error(), "UNKILLABLE") {
-			t.Fatalf("expected UNKILLABLE for writing function, got: %v", killErr)
+			require.Failf(t, "assertion failed", "expected UNKILLABLE for writing function, got: %v", killErr)
 		}
 
 		wg.Wait()
 		if runnerErr != nil {
-			t.Fatalf("writing function should run to end, but failed: %v", runnerErr)
+			require.NoError(t, runnerErr, "writing function should run to end, but failed: %v", runnerErr)
 		}
 		if runnerRes != "done" {
-			t.Fatalf("expected 'done', got %q", runnerRes)
+			require.Equal(t, "done", runnerRes, "expected 'done', got %q", runnerRes)
 		}
 	}
 
@@ -190,12 +191,12 @@ end)`
 		}
 
 		if killErr != nil {
-			t.Fatalf("expected OK (nil error) for killing no-write function, got: %v", killErr)
+			require.NoError(t, killErr, "expected OK (nil error) for killing no-write function, got: %v", killErr)
 		}
 
 		wg.Wait()
 		if runnerErr == nil || !strings.Contains(runnerErr.Error(), "Script killed by user") {
-			t.Fatalf("expected 'Script killed by user' error, got res=%q err=%v", runnerRes, runnerErr)
+			require.Failf(t, "assertion failed", "expected 'Script killed by user' error, got res=%q err=%v", runnerRes, runnerErr)
 		}
 	}
 }
@@ -223,25 +224,25 @@ redis.register_function('fct_f3_unpack', function(keys, args)
     return sink(unpack(t))
 end)`
 	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		t.Fatalf("load: %v", err)
+		require.NoError(t, err, "load: %v", err)
 	}
 
 	// unpack of 7,999 values works
 	res, err := c.FCall(ctx, "fct_f3_unpack", nil, 7999).Int()
 	if err != nil {
-		t.Fatalf("unpack of 7,999 values failed: %v", err)
+		require.NoError(t, err, "unpack of 7,999 values failed: %v", err)
 	}
 	if res != 7999 {
-		t.Fatalf("expected 7999, got %d", res)
+		require.Equal(t, 7999, res, "expected 7999, got %d", res)
 	}
 
 	// unpack of 8,000 values fails
 	err = c.FCall(ctx, "fct_f3_unpack", nil, 8000).Err()
 	if err == nil {
-		t.Fatalf("unpack of 8,000 values unexpectedly succeeded")
+		require.Error(t, err, "unpack of 8,000 values unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "too many results to unpack") {
-		t.Fatalf("expected 'too many results to unpack', got: %v", err)
+		require.Contains(t, err.Error(), "too many results to unpack", "expected 'too many results to unpack', got: %v", err)
 	}
 }
 
@@ -257,7 +258,7 @@ func TestFactF4OOMInsideStartedFunction(t *testing.T) {
 	ctx := context.Background()
 
 	if err := c.ConfigSet(ctx, "maxmemory-policy", "noeviction").Err(); err != nil {
-		t.Fatalf("config set maxmemory-policy noeviction: %v", err)
+		require.NoError(t, err, "config set maxmemory-policy noeviction: %v", err)
 	}
 
 	code := `#!lua name=facts_test
@@ -278,68 +279,68 @@ redis.register_function{
     end
 }`
 	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		t.Fatalf("load: %v", err)
+		require.NoError(t, err, "load: %v", err)
 	}
 
 	info, err := c.Info(ctx, "memory").Result()
 	if err != nil {
-		t.Fatalf("info memory: %v", err)
+		require.NoError(t, err, "info memory: %v", err)
 	}
 	used := parseUsedMemory(info)
 	if used == 0 {
-		t.Fatalf("could not parse used_memory from info:\n%s", info)
+		require.NotZero(t, used, "could not parse used_memory from info:\n%s", info)
 	}
 
 	// Set maxmemory to used + 300 KiB.
 	// The function will write 2,000 records of 1 KiB (~2 MB+ of data), crossing maxmemory.
 	maxMem := used + 300*1024
 	if err := c.ConfigSet(ctx, "maxmemory", strconv.FormatInt(maxMem, 10)).Err(); err != nil {
-		t.Fatalf("config set maxmemory: %v", err)
+		require.NoError(t, err, "config set maxmemory: %v", err)
 	}
 	t.Cleanup(func() {
 		if err := c.ConfigSet(ctx, "maxmemory", "0").Err(); err != nil {
-			t.Fatalf("config set maxmemory 0: %v", err)
+			require.NoError(t, err, "config set maxmemory 0: %v", err)
 		}
 		cfg, err := c.ConfigGet(ctx, "maxmemory").Result()
 		if err != nil {
-			t.Fatalf("config get maxmemory: %v", err)
+			require.NoError(t, err, "config get maxmemory: %v", err)
 		}
 		if cfg["maxmemory"] != "0" {
-			t.Fatalf("expected restored maxmemory 0, got %s", cfg["maxmemory"])
+			require.Equal(t, "0", cfg["maxmemory"], "expected restored maxmemory 0, got %s", cfg["maxmemory"])
 		}
 	})
 
 	// Started function runs to end and writes everything
 	res, err := c.FCall(ctx, "fct_f4_write", []string{"dev-facts-f4"}, 2000).Int()
 	if err != nil {
-		t.Fatalf("fct_f4_write failed: %v", err)
+		require.NoError(t, err, "fct_f4_write failed: %v", err)
 	}
 	if res != 2000 {
-		t.Fatalf("expected 2000, got %d", res)
+		require.Equal(t, 2000, res, "expected 2000, got %d", res)
 	}
 
 	infoAfter, err := c.Info(ctx, "memory").Result()
 	if err != nil {
-		t.Fatalf("info memory after: %v", err)
+		require.NoError(t, err, "info memory after: %v", err)
 	}
 	usedAfter := parseUsedMemory(infoAfter)
 	if usedAfter <= maxMem {
-		t.Fatalf("expected used_memory (%d) > maxmemory (%d)", usedAfter, maxMem)
+		require.Greater(t, usedAfter, maxMem, "expected used_memory (%d) > maxmemory (%d)", usedAfter, maxMem)
 	}
 
 	// Next write over maxmemory is refused at start with raw OOM error
 	oomErr := c.FCall(ctx, "fct_f4_write", []string{"dev-facts-f4-next"}, 1).Err()
 	if oomErr == nil || !strings.Contains(oomErr.Error(), "OOM command not allowed") {
-		t.Fatalf("expected OOM error at start of next write, got: %v", oomErr)
+		require.Failf(t, "assertion failed", "expected OOM error at start of next write, got: %v", oomErr)
 	}
 
 	// Read (FCALL_RO) still works while over maxmemory
 	val, err := c.FCallRO(ctx, "fct_f4_read", []string{"dev-facts-f4:1"}).Text()
 	if err != nil {
-		t.Fatalf("fct_f4_read failed while over maxmemory: %v", err)
+		require.NoError(t, err, "fct_f4_read failed while over maxmemory: %v", err)
 	}
 	if len(val) != 1024 {
-		t.Fatalf("expected 1024 bytes, got %d", len(val))
+		require.Equal(t, 1024, len(val), "expected 1024 bytes, got %d", len(val))
 	}
 }
 
@@ -358,49 +359,49 @@ func TestFactF5GlobalNamesAndReplaceWhole(t *testing.T) {
 	code1 := `#!lua name=facts_test
 redis.register_function('fct_f5_step', function() return 1 end)`
 	if err := c.FunctionLoad(ctx, code1).Err(); err != nil {
-		t.Fatalf("load facts_test: %v", err)
+		require.NoError(t, err, "load facts_test: %v", err)
 	}
 
 	codeProbe := `#!lua name=facts_test_probe
 redis.register_function('fct_f5_step', function() return 2 end)`
 	err := c.FunctionLoad(ctx, codeProbe).Err()
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Fatalf("expected 'already exists' for duplicate function name across libraries, got: %v", err)
+		require.Failf(t, "assertion failed", "expected 'already exists' for duplicate function name across libraries, got: %v", err)
 	}
 
 	// 2. A library is replaced whole: functions from previous version not in new version disappear
 	codeReplace1 := `#!lua name=facts_test_replace
 redis.register_function('fct_f5_only', function() return 'first' end)`
 	if err := c.FunctionLoad(ctx, codeReplace1).Err(); err != nil {
-		t.Fatalf("load facts_test_replace: %v", err)
+		require.NoError(t, err, "load facts_test_replace: %v", err)
 	}
 
 	res1, err := c.FCall(ctx, "fct_f5_only", nil).Text()
 	if err != nil || res1 != "first" {
-		t.Fatalf("fct_f5_only: res=%s err=%v", res1, err)
+		require.Failf(t, "assertion failed", "fct_f5_only: res=%s err=%v", res1, err)
 	}
 
 	codeReplace2 := `#!lua name=facts_test_replace
 redis.register_function('fct_f5_other', function() return 'second' end)`
 	if err := c.FunctionLoadReplace(ctx, codeReplace2).Err(); err != nil {
-		t.Fatalf("load replace facts_test_replace: %v", err)
+		require.NoError(t, err, "load replace facts_test_replace: %v", err)
 	}
 
 	// fct_f5_only should no longer exist
 	err = c.FCall(ctx, "fct_f5_only", nil).Err()
 	if err == nil || !strings.Contains(err.Error(), "Function not found") {
-		t.Fatalf("expected 'Function not found' for old function after library replacement, got: %v", err)
+		require.Failf(t, "assertion failed", "expected 'Function not found' for old function after library replacement, got: %v", err)
 	}
 
 	// fct_f5_other should exist
 	res2, err := c.FCall(ctx, "fct_f5_other", nil).Text()
 	if err != nil || res2 != "second" {
-		t.Fatalf("fct_f5_other: res=%s err=%v", res2, err)
+		require.Failf(t, "assertion failed", "fct_f5_other: res=%s err=%v", res2, err)
 	}
 
 	// Clean up replace library
 	if err := c.FunctionDelete(ctx, "facts_test_replace").Err(); err != nil {
-		t.Fatalf("function delete: %v", err)
+		require.NoError(t, err, "function delete: %v", err)
 	}
 }
 
@@ -417,10 +418,10 @@ func TestFactF6UndeclaredKeys(t *testing.T) {
 	// Verify standalone server (cluster_enabled:0)
 	clusterInfo, err := c.Info(ctx, "cluster").Result()
 	if err != nil {
-		t.Fatalf("info cluster: %v", err)
+		require.NoError(t, err, "info cluster: %v", err)
 	}
 	if !strings.Contains(clusterInfo, "cluster_enabled:0") {
-		t.Fatalf("expected cluster_enabled:0, got:\n%s", clusterInfo)
+		require.Contains(t, clusterInfo, "cluster_enabled:0", "expected cluster_enabled:0, got:\n%s", clusterInfo)
 	}
 
 	code := `#!lua name=facts_test
@@ -429,24 +430,24 @@ redis.register_function('fct_f6_undeclared', function(keys, args)
     return redis.call('GET', 'dev-facts-f6')
 end)`
 	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		t.Fatalf("load: %v", err)
+		require.NoError(t, err, "load: %v", err)
 	}
 
 	// Call with 0 KEYS
 	res, err := c.FCall(ctx, "fct_f6_undeclared", nil).Text()
 	if err != nil {
-		t.Fatalf("fct_f6_undeclared: %v", err)
+		require.NoError(t, err, "fct_f6_undeclared: %v", err)
 	}
 	if res != "x" {
-		t.Fatalf("expected 'x', got %q", res)
+		require.Equal(t, "x", res, "expected 'x', got %q", res)
 	}
 
 	val, err := c.Get(ctx, "dev-facts-f6").Result()
 	if err != nil {
-		t.Fatalf("get: %v", err)
+		require.NoError(t, err, "get: %v", err)
 	}
 	if val != "x" {
-		t.Fatalf("expected 'x', got %q", val)
+		require.Equal(t, "x", val, "expected 'x', got %q", val)
 	}
 }
 
@@ -469,10 +470,10 @@ func TestFactF7StreamIDsAndReset(t *testing.T) {
 		Values: []string{"field", "val"},
 	}).Result()
 	if err != nil {
-		t.Fatalf("xadd 5-0: %v", err)
+		require.NoError(t, err, "xadd 5-0: %v", err)
 	}
 	if id != "5-0" {
-		t.Fatalf("expected 5-0, got %s", id)
+		require.Equal(t, "5-0", id, "expected 5-0, got %s", id)
 	}
 
 	// 2. 5-0 again and 4-0 are refused "equal or smaller than the target stream top item"
@@ -482,7 +483,7 @@ func TestFactF7StreamIDsAndReset(t *testing.T) {
 		Values: []string{"field", "val"},
 	}).Err()
 	if err == nil || !strings.Contains(err.Error(), "equal or smaller than the target stream top item") {
-		t.Fatalf("expected 'equal or smaller than the target stream top item', got: %v", err)
+		require.Failf(t, "assertion failed", "expected 'equal or smaller than the target stream top item', got: %v", err)
 	}
 
 	err = c.XAdd(ctx, &redis.XAddArgs{
@@ -491,7 +492,7 @@ func TestFactF7StreamIDsAndReset(t *testing.T) {
 		Values: []string{"field", "val"},
 	}).Err()
 	if err == nil || !strings.Contains(err.Error(), "equal or smaller than the target stream top item") {
-		t.Fatalf("expected 'equal or smaller than the target stream top item', got: %v", err)
+		require.Failf(t, "assertion failed", "expected 'equal or smaller than the target stream top item', got: %v", err)
 	}
 
 	// 3. 0-0 is refused "must be greater than 0-0"
@@ -501,26 +502,26 @@ func TestFactF7StreamIDsAndReset(t *testing.T) {
 		Values: []string{"field", "val"},
 	}).Err()
 	if err == nil || !strings.Contains(err.Error(), "must be greater than 0-0") {
-		t.Fatalf("expected 'must be greater than 0-0', got: %v", err)
+		require.Failf(t, "assertion failed", "expected 'must be greater than 0-0', got: %v", err)
 	}
 
 	// 4. After XTRIM MAXLEN 0, XINFO shows last-generated-id 5-0 and entries-added 1, and XADD 5-0 is still refused
 	if err := c.XTrimMaxLen(ctx, streamKey, 0).Err(); err != nil {
-		t.Fatalf("xtrim: %v", err)
+		require.NoError(t, err, "xtrim: %v", err)
 	}
 
 	info, err := c.XInfoStream(ctx, streamKey).Result()
 	if err != nil {
-		t.Fatalf("xinfo: %v", err)
+		require.NoError(t, err, "xinfo: %v", err)
 	}
 	if info.LastGeneratedID != "5-0" {
-		t.Fatalf("expected last-generated-id 5-0, got %s", info.LastGeneratedID)
+		require.Equal(t, "5-0", info.LastGeneratedID, "expected last-generated-id 5-0, got %s", info.LastGeneratedID)
 	}
 	if info.EntriesAdded != 1 {
-		t.Fatalf("expected entries-added 1, got %d", info.EntriesAdded)
+		require.Equal(t, int64(1), info.EntriesAdded, "expected entries-added 1, got %d", info.EntriesAdded)
 	}
 	if info.Length != 0 {
-		t.Fatalf("expected length 0, got %d", info.Length)
+		require.Equal(t, int64(0), info.Length, "expected length 0, got %d", info.Length)
 	}
 
 	err = c.XAdd(ctx, &redis.XAddArgs{
@@ -529,7 +530,7 @@ func TestFactF7StreamIDsAndReset(t *testing.T) {
 		Values: []string{"field", "val"},
 	}).Err()
 	if err == nil || !strings.Contains(err.Error(), "equal or smaller than the target stream top item") {
-		t.Fatalf("expected XADD 5-0 refused after XTRIM, got: %v", err)
+		require.Failf(t, "assertion failed", "expected XADD 5-0 refused after XTRIM, got: %v", err)
 	}
 
 	// 5. After XDEL 6-0, XADD 6-0 is refused
@@ -539,12 +540,12 @@ func TestFactF7StreamIDsAndReset(t *testing.T) {
 		Values: []string{"field", "val"},
 	}).Result()
 	if err != nil || id6 != "6-0" {
-		t.Fatalf("xadd 6-0: id=%s err=%v", id6, err)
+		require.Failf(t, "assertion failed", "xadd 6-0: id=%s err=%v", id6, err)
 	}
 
 	delCount, err := c.XDel(ctx, streamKey, "6-0").Result()
 	if err != nil || delCount != 1 {
-		t.Fatalf("xdel 6-0: count=%d err=%v", delCount, err)
+		require.Failf(t, "assertion failed", "xdel 6-0: count=%d err=%v", delCount, err)
 	}
 
 	err = c.XAdd(ctx, &redis.XAddArgs{
@@ -553,12 +554,12 @@ func TestFactF7StreamIDsAndReset(t *testing.T) {
 		Values: []string{"field", "val"},
 	}).Err()
 	if err == nil || !strings.Contains(err.Error(), "equal or smaller than the target stream top item") {
-		t.Fatalf("expected XADD 6-0 refused after XDEL, got: %v", err)
+		require.Failf(t, "assertion failed", "expected XADD 6-0 refused after XDEL, got: %v", err)
 	}
 
 	// 6. After DEL of the stream, XADD 1-0 works: deleting the key resets the seq
 	if err := c.Del(ctx, streamKey).Err(); err != nil {
-		t.Fatalf("del: %v", err)
+		require.NoError(t, err, "del: %v", err)
 	}
 
 	id1, err := c.XAdd(ctx, &redis.XAddArgs{
@@ -567,10 +568,10 @@ func TestFactF7StreamIDsAndReset(t *testing.T) {
 		Values: []string{"field", "val"},
 	}).Result()
 	if err != nil {
-		t.Fatalf("xadd 1-0 after DEL failed: %v", err)
+		require.NoError(t, err, "xadd 1-0 after DEL failed: %v", err)
 	}
 	if id1 != "1-0" {
-		t.Fatalf("expected 1-0, got %s", id1)
+		require.Equal(t, "1-0", id1, "expected 1-0, got %s", id1)
 	}
 }
 
@@ -607,35 +608,35 @@ redis.register_function{
     end
 }`
 	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		t.Fatalf("load: %v", err)
+		require.NoError(t, err, "load: %v", err)
 	}
 
 	// 1. Plain / writing function
 	res, err := c.FCall(ctx, "fct_f8_time", nil).Slice()
 	if err != nil {
-		t.Fatalf("fct_f8_time: %v", err)
+		require.NoError(t, err, "fct_f8_time: %v", err)
 	}
 	if len(res) != 4 {
-		t.Fatalf("expected 4 elements, got %v", res)
+		require.Equal(t, 4, len(res), "expected 4 elements, got %v", res)
 	}
 	sec1, usec1 := res[0], res[1]
 	sec2, usec2 := res[2], res[3]
 	if sec1 != sec2 || usec1 != usec2 {
-		t.Fatalf("time was not frozen in fct_f8_time: start=%v.%v end=%v.%v", sec1, usec1, sec2, usec2)
+		require.Failf(t, "assertion failed", "time was not frozen in fct_f8_time: start=%v.%v end=%v.%v", sec1, usec1, sec2, usec2)
 	}
 
 	// 2. Read-only / no-writes function
 	resRo, err := c.FCallRO(ctx, "fct_f8_time_ro", nil).Slice()
 	if err != nil {
-		t.Fatalf("fct_f8_time_ro: %v", err)
+		require.NoError(t, err, "fct_f8_time_ro: %v", err)
 	}
 	if len(resRo) != 4 {
-		t.Fatalf("expected 4 elements, got %v", resRo)
+		require.Equal(t, 4, len(resRo), "expected 4 elements, got %v", resRo)
 	}
 	secRo1, usecRo1 := resRo[0], resRo[1]
 	secRo2, usecRo2 := resRo[2], resRo[3]
 	if secRo1 != secRo2 || usecRo1 != usecRo2 {
-		t.Fatalf("time was not frozen in fct_f8_time_ro: start=%v.%v end=%v.%v", secRo1, usecRo1, secRo2, usecRo2)
+		require.Failf(t, "assertion failed", "time was not frozen in fct_f8_time_ro: start=%v.%v end=%v.%v", secRo1, usecRo1, secRo2, usecRo2)
 	}
 }
 
@@ -654,7 +655,7 @@ func TestFactF9ZMSCOREAndXINFO(t *testing.T) {
 	ctx := context.Background()
 
 	if err := c.ConfigSet(ctx, "slowlog-log-slower-than", "0").Err(); err != nil {
-		t.Fatalf("config set slowlog-log-slower-than 0: %v", err)
+		require.NoError(t, err, "config set slowlog-log-slower-than 0: %v", err)
 	}
 
 	code := `#!lua name=facts_test
@@ -679,7 +680,7 @@ redis.register_function('fct_f9_fill', function(keys, args)
     return n
 end)`
 	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		t.Fatalf("load: %v", err)
+		require.NoError(t, err, "load: %v", err)
 	}
 
 	// Part 1: ZMSCORE of 2,000 members inside a function
@@ -687,7 +688,7 @@ end)`
 	const numMembers = 2000
 	added, err := c.FCall(ctx, "fct_f9_zadd", []string{zsetKey}, numMembers).Int()
 	if err != nil || added != numMembers {
-		t.Fatalf("fct_f9_zadd: added=%d err=%v", added, err)
+		require.Failf(t, "assertion failed", "fct_f9_zadd: added=%d err=%v", added, err)
 	}
 
 	var memberArgs []any
@@ -696,16 +697,16 @@ end)`
 	}
 	scores, err := c.FCall(ctx, "fct_f9_zmscore", []string{zsetKey}, memberArgs...).Slice()
 	if err != nil {
-		t.Fatalf("fct_f9_zmscore: %v", err)
+		require.NoError(t, err, "fct_f9_zmscore: %v", err)
 	}
 	if len(scores) != numMembers {
-		t.Fatalf("expected %d scores, got %d", numMembers, len(scores))
+		require.Equal(t, numMembers, len(scores), "expected %d scores, got %d", numMembers, len(scores))
 	}
 	for i := 0; i < numMembers; i++ {
 		wantScore := fmt.Sprintf("%d", i+1)
 		gotScore, ok := scores[i].(string)
 		if !ok || gotScore != wantScore {
-			t.Fatalf("score[%d]: got %v, want %s", i, scores[i], wantScore)
+			require.Failf(t, "assertion failed", "score[%d]: got %v, want %s", i, scores[i], wantScore)
 		}
 	}
 
@@ -713,24 +714,24 @@ end)`
 	streamKey := "dev-facts-f9-stream"
 	// 10 entries
 	if _, err := c.FCall(ctx, "fct_f9_fill", []string{streamKey}, 10).Result(); err != nil {
-		t.Fatalf("fill 10: %v", err)
+		require.Failf(t, "assertion failed", "fill 10: %v", err)
 	}
 
 	sampleXInfo := func(samples int) time.Duration {
 		var durations []time.Duration
 		for i := 0; i < samples; i++ {
 			if err := c.SlowLogReset(ctx).Err(); err != nil {
-				t.Fatalf("slowlog reset: %v", err)
+				require.NoError(t, err, "slowlog reset: %v", err)
 			}
 			if _, err := c.XInfoStream(ctx, streamKey).Result(); err != nil {
-				t.Fatalf("xinfo: %v", err)
+				require.NoError(t, err, "xinfo: %v", err)
 			}
 			entries, err := c.SlowLogGet(ctx, 1).Result()
 			if err != nil {
-				t.Fatalf("slowlog get: %v", err)
+				require.NoError(t, err, "slowlog get: %v", err)
 			}
 			if len(entries) == 0 {
-				t.Fatalf("slowlog empty")
+				require.NotEqual(t, 0, len(entries), "slowlog empty")
 			}
 			durations = append(durations, entries[0].Duration)
 		}
@@ -746,17 +747,17 @@ end)`
 	res, err := c.FCall(ctx, "fct_f9_fill", []string{streamKey}, largeSize).Int()
 	elapsedSec := float64(time.Now().Sub(fillStart).Milliseconds()) / 1000.0
 	if err != nil || res != largeSize {
-		t.Fatalf("fill %d failed in %.3fs: res=%d err=%v", largeSize, elapsedSec, res, err)
+		require.Failf(t, "assertion failed", "fill %d failed in %.3fs: res=%d err=%v", largeSize, elapsedSec, res, err)
 	}
 	if elapsedSec > 20.0 {
-		t.Fatalf("fill %d took %.3fs (> 20s bound)", largeSize, elapsedSec)
+		require.LessOrEqual(t, elapsedSec, 20.0, "fill %d took %.3fs (> 20s bound)", largeSize, elapsedSec)
 	}
 
 	medLarge := sampleXInfo(20)
 
 	// Assert XINFO STREAM time does not grow by more than ten times
 	if medLarge > 10*med10 {
-		t.Fatalf("XINFO STREAM time scaled with stream size: 10 entries=%v, 5000000 entries=%v (> 10x)", med10, medLarge)
+		require.LessOrEqual(t, medLarge, 10*med10, "XINFO STREAM time scaled with stream size: 10 entries=%v, 5000000 entries=%v (> 10x)", med10, medLarge)
 	}
 	t.Logf("XINFO STREAM SLOWLOG: 10 entries=%v, 5000000 entries=%v", med10, medLarge)
 }
@@ -784,41 +785,41 @@ redis.register_function('fct_f10_cmds', function(keys, args)
     return 1
 end)`
 	if err := c.FunctionLoadReplace(ctx, code).Err(); err != nil {
-		t.Fatalf("load: %v", err)
+		require.NoError(t, err, "load: %v", err)
 	}
 
 	if err := c.ConfigResetStat(ctx).Err(); err != nil {
-		t.Fatalf("config resetstat: %v", err)
+		require.NoError(t, err, "config resetstat: %v", err)
 	}
 
 	res, err := c.FCall(ctx, "fct_f10_cmds", []string{"dev-facts-f10"}).Int()
 	if err != nil {
-		t.Fatalf("fcall: %v", err)
+		require.NoError(t, err, "fcall: %v", err)
 	}
 	if res != 1 {
-		t.Fatalf("expected 1, got %d", res)
+		require.Equal(t, 1, res, "expected 1, got %d", res)
 	}
 
 	info, err := c.Info(ctx, "commandstats").Result()
 	if err != nil {
-		t.Fatalf("info commandstats: %v", err)
+		require.NoError(t, err, "info commandstats: %v", err)
 	}
 	stats := parseCommandStats(info)
 
 	if stats["set"] != 100 {
-		t.Fatalf("expected 100 SET calls, got %d (info: %s)", stats["set"], info)
+		require.Equal(t, 100, stats["set"], "expected 100 SET calls, got %d (info: %s)", stats["set"], info)
 	}
 	if stats["get"] != 100 {
-		t.Fatalf("expected 100 GET calls, got %d (info: %s)", stats["get"], info)
+		require.Equal(t, 100, stats["get"], "expected 100 GET calls, got %d (info: %s)", stats["get"], info)
 	}
 	if stats["lpush"] != 1 {
-		t.Fatalf("expected 1 LPUSH call, got %d", stats["lpush"])
+		require.Equal(t, 1, stats["lpush"], "expected 1 LPUSH call, got %d", stats["lpush"])
 	}
 	if stats["rpop"] != 1 {
-		t.Fatalf("expected 1 RPOP call, got %d", stats["rpop"])
+		require.Equal(t, 1, stats["rpop"], "expected 1 RPOP call, got %d", stats["rpop"])
 	}
 	if stats["fcall"] != 1 {
-		t.Fatalf("expected 1 FCALL call, got %d", stats["fcall"])
+		require.Equal(t, 1, stats["fcall"], "expected 1 FCALL call, got %d", stats["fcall"])
 	}
 }
 
@@ -846,16 +847,16 @@ func TestFactF12LoadTimeSandboxHasNoSetmetatable(t *testing.T) {
 		code := "#!lua name=f12probe\n" + tc.call
 		err := c.FunctionLoadReplace(ctx, code).Err()
 		if err == nil || !strings.Contains(err.Error(), tc.global) {
-			t.Fatalf("expected FUNCTION LOAD of a library calling %s at load to be refused naming %q, got: %v", tc.call, tc.global, err)
+			require.Failf(t, "assertion failed", "expected FUNCTION LOAD of a library calling %s at load to be refused naming %q, got: %v", tc.call, tc.global, err)
 		}
 		t.Logf("%s at load: %v", tc.global, err)
 
 		libs, err := c.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: "f12probe"}).Result()
 		if err != nil {
-			t.Fatalf("function list: %v", err)
+			require.NoError(t, err, "function list: %v", err)
 		}
 		if len(libs) != 0 {
-			t.Fatalf("expected no f12probe library after the refused load of %s, got %+v", tc.call, libs)
+			require.Equal(t, 0, len(libs), "expected no f12probe library after the refused load of %s, got %+v", tc.call, libs)
 		}
 	}
 }
@@ -900,7 +901,7 @@ func logRedisVersion(t *testing.T, c *redis.Client) {
 	t.Helper()
 	info, err := c.Info(context.Background(), "server").Result()
 	if err != nil {
-		t.Fatalf("info server: %v", err)
+		require.NoError(t, err, "info server: %v", err)
 	}
 	scanner := bufio.NewScanner(strings.NewReader(info))
 	for scanner.Scan() {
@@ -911,5 +912,5 @@ func logRedisVersion(t *testing.T, c *redis.Client) {
 			return
 		}
 	}
-	t.Fatalf("redis_version not found in INFO server:\n%s", info)
+	require.Failf(t, "assertion failed", "redis_version not found in INFO server:\n%s", info)
 }

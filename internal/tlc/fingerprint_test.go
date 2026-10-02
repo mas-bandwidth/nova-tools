@@ -44,7 +44,7 @@ func TestEveryRunnerFileIsClassified(t *testing.T) {
 		delete(listed, n)
 	}
 	for n := range listed {
-		t.Errorf("%s is listed in fingerprint.go and is not a non-test file of the package", n)
+		assert.Failf(t, "", "%s is listed in fingerprint.go and is not a non-test file of the package", n)
 	}
 }
 
@@ -55,20 +55,22 @@ func TestEmbeddedSourcesAreTheCheckedFiles(t *testing.T) {
 	t.Parallel()
 	files, err := CheckedSources()
 	require.NoError(t, err)
-	if runner, err := RunnerFiles(); err != nil || len(runner) != len(ResultFiles) {
-		t.Fatalf("the fingerprint takes %d runner files, %d are result files (%v)", len(runner), len(ResultFiles), err)
+	{
+		runner, err := RunnerFiles()
+		require.NoError(t, err, "the fingerprint takes %d runner files, %d are result files (%v)", len(runner), len(ResultFiles), err)
+		require.Equal(t, len(ResultFiles), len(runner), "the fingerprint takes %d runner files, %d are result files (%v)", len(runner), len(ResultFiles), err)
 	}
 	for _, n := range InputListFiles {
-		if !slices.Contains(BookkeepingFiles, n) || slices.Contains(ResultFiles, n) {
-			t.Errorf("%s is an input-list file: it is bookkeeping and no result file", n)
+		if assert.True(t, slices.Contains(BookkeepingFiles, n), "%s is an input-list file: it is bookkeeping and no result file", n) {
+			assert.False(t, slices.Contains(ResultFiles, n), "%s is an input-list file: it is bookkeeping and no result file", n)
 		}
 	}
 	var got, want []string
 	for name, raw := range files {
 		got = append(got, name)
 		disk, err := os.ReadFile(filepath.Join(".", filepath.Base(name)))
-		if err != nil || string(disk) != string(raw) {
-			t.Errorf("%s: the embedded bytes are not the file's", name)
+		if assert.NoError(t, err, "%s: the embedded bytes are not the file's", name) {
+			assert.Equal(t, string(raw), string(disk), "%s: the embedded bytes are not the file's", name)
 		}
 	}
 	for _, n := range CheckedFiles() {
@@ -143,8 +145,7 @@ func TestTheFileThatReadsAPlanRowIsAResultFile(t *testing.T) {
 	}
 	for _, what := range []string{"ParseCases", "Case", "Case.check"} {
 		file, ok := where[what]
-		if !ok {
-			t.Errorf("%s is not declared in the package", what)
+		if !assert.True(t, ok, "%s is not declared in the package", what) {
 			continue
 		}
 		assert.True(t, slices.Contains(ResultFiles, file), "%s is declared in %s, which is not a result file: it reads a plan row into the case a run is judged by", what, file)

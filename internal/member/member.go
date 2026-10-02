@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -994,11 +995,7 @@ func (m *Member) start(p Packet) bool {
 // the pass asks for it when it is not (a test's member: a pass is one step).
 func (m *Member) long(work func()) {
 	if m.cfg.Background {
-		m.longs.Add(1)
-		go func() {
-			defer m.longs.Done()
-			work()
-		}()
+		m.longs.Go(work)
 		return
 	}
 	work()
@@ -1038,12 +1035,7 @@ func (m *Member) collect() (acted int) {
 	posted := m.posted
 	m.posted = map[string]post{}
 	m.postMu.Unlock()
-	cards := make([]string, 0, len(posted))
-	for card := range posted {
-		cards = append(cards, card)
-	}
-	sort.Strings(cards)
-	for _, card := range cards {
+	for _, card := range slices.Sorted(maps.Keys(posted)) {
 		po := posted[card]
 		l, ours := m.running[card]
 		if !ours || !l.busy {

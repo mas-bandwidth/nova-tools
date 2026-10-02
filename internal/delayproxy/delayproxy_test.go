@@ -14,6 +14,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // These tests wait on no clock, bar one marked below. The proxy is given a
@@ -97,9 +100,7 @@ type echo struct {
 func startEcho(t *testing.T) *echo {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	e := &echo{ln: ln}
 	t.Cleanup(func() {
 		_ = ln.Close()
@@ -202,13 +203,11 @@ func serveTo(t *testing.T, target string, opts Options) *Proxy {
 func serveAfter(t *testing.T, target string, after time.Duration, opts Options) *Proxy {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	p, err := Serve(ln, target, after, opts)
 	if err != nil {
 		_ = ln.Close()
-		t.Fatalf("Serve: %v", err)
+		require.NoError(t, err, "Serve: %v", err)
 	}
 	t.Cleanup(p.Stop)
 	return p
@@ -217,11 +216,10 @@ func serveAfter(t *testing.T, target string, after time.Duration, opts Options) 
 func dial(t *testing.T, addr string) net.Conn {
 	t.Helper()
 	c, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := c.SetDeadline(time.Now().Add(ceiling)); err != nil {
-		t.Fatal(err)
+	require.NoError(t, err, err)
+	{
+		err := c.SetDeadline(time.Now().Add(ceiling))
+		require.NoError(t, err, err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
 	return c
@@ -230,12 +228,14 @@ func dial(t *testing.T, addr string) net.Conn {
 // roundTrip writes send in one write and reads that many bytes back.
 func roundTrip(t *testing.T, c net.Conn, send string) string {
 	t.Helper()
-	if _, err := io.WriteString(c, send); err != nil {
-		t.Fatalf("write: %v", err)
+	{
+		_, err := io.WriteString(c, send)
+		require.NoError(t, err, "write: %v", err)
 	}
 	got := make([]byte, len(send))
-	if _, err := io.ReadFull(c, got); err != nil {
-		t.Fatalf("read %d bytes back: %v", len(send), err)
+	{
+		_, err := io.ReadFull(c, got)
+		require.NoError(t, err, "read %d bytes back: %v", len(send), err)
 	}
 	return string(got)
 }
@@ -253,22 +253,24 @@ func TestEachWriteIsHeldOnceAndAPipelinePaysOnce(t *testing.T) {
 
 	separate := []string{"one", "two", "three"} // each waits for its reply
 	for i, send := range separate {
-		if got := roundTrip(t, c, send); got != send {
-			t.Fatalf("command %d came back as %q", i, got)
+		{
+			got := roundTrip(t, c, send)
+			require.Equal(t, send, got, "command %d came back as %q", i, got)
 		}
 	}
-	if got := fake.asked(); !onlyDelays(got, len(separate)) {
-		t.Fatalf("%d commands, each waiting for its reply, asked the clock for %v; want the delay once each", len(separate), got)
+	{
+		got := fake.asked()
+		require.True(t, onlyDelays(got, len(separate)), "%d commands, each waiting for its reply, asked the clock for %v; want the delay once each", len(separate), got)
 	}
-	if got := roundTrip(t, c, pipeline); got != pipeline {
-		t.Fatal("the pipeline did not come back whole")
+	{
+		got := roundTrip(t, c, pipeline)
+		require.Equal(t, pipeline, got, "the pipeline did not come back whole")
 	}
-	if got := fake.asked(); !onlyDelays(got, len(separate)+1) {
-		t.Fatalf("%d commands in one write brought the clock's waits to %v; want one more delay, not %d", pipelined, got, pipelined)
+	{
+		got := fake.asked()
+		require.True(t, onlyDelays(got, len(separate)+1), "%d commands in one write brought the clock's waits to %v; want one more delay, not %d", pipelined, got, pipelined)
 	}
-	if p.Writes() != len(separate)+1 {
-		t.Fatalf("the proxy counts %d writes; want %d", p.Writes(), len(separate)+1)
-	}
+	require.Equal(t, len(separate)+1, p.Writes(), "the proxy counts %d writes; want %d", p.Writes(), len(separate)+1)
 }
 
 // Nothing reaches the target before its delay is over. The proxy is the only
@@ -282,24 +284,24 @@ func TestNothingIsForwardedBeforeItsDelayIsOver(t *testing.T) {
 	p := serveTo(t, target.addr(), Options{Clock: fake.clock()})
 	c := dial(t, p.Addr())
 
-	if _, err := io.WriteString(c, "hello"); err != nil {
-		t.Fatal(err)
+	{
+		_, err := io.WriteString(c, "hello")
+		require.NoError(t, err, err)
 	}
 	<-fake.waiting // the write is held
-	if n := target.received.Load(); n != 0 {
-		t.Fatalf("the target has received %d bytes while the write is still held", n)
+	{
+		n := target.received.Load()
+		require.Zero(t, n, "the target has received %d bytes while the write is still held", n)
 	}
-	if p.Writes() != 0 {
-		t.Fatalf("the proxy counts %d writes while the first is still held", p.Writes())
-	}
+	require.Zero(t, p.Writes(), "the proxy counts %d writes while the first is still held", p.Writes())
 	close(fake.gate)
 	got := make([]byte, len("hello"))
-	if _, err := io.ReadFull(c, got); err != nil || string(got) != "hello" {
-		t.Fatalf("after the delay the reply is %q, %v; want hello", got, err)
+	{
+		_, err := io.ReadFull(c, got)
+		require.NoError(t, err, "after the delay the reply is %q, %v; want hello", got, err)
+		require.Equal(t, "hello", string(got), "after the delay the reply is %q, %v; want hello", got, err)
 	}
-	if p.Writes() != 1 {
-		t.Fatalf("the proxy counts %d writes; want 1", p.Writes())
-	}
+	require.Equal(t, 1, p.Writes(), "the proxy counts %d writes; want 1", p.Writes())
 }
 
 // A write larger than one read comes in as several, each of them held the delay,
@@ -316,21 +318,19 @@ func TestALargeWriteComesOutWholeAndInOrder(t *testing.T) {
 	p := serveTo(t, target.addr(), Options{Clock: fake.clock()})
 	c := dial(t, p.Addr())
 
-	if got := roundTrip(t, c, string(send)); !bytes.Equal([]byte(got), send) {
-		t.Fatal("the large write did not come back whole and in order")
+	{
+		got := roundTrip(t, c, string(send))
+		require.True(t, bytes.Equal([]byte(got), send), "the large write did not come back whole and in order")
 	}
 	asked := fake.asked()
-	if least := (largeWrite + ChunkBytes - 1) / ChunkBytes; len(asked) < least {
-		t.Fatalf("%d bytes came in as %d reads; want at least %d", largeWrite, len(asked), least)
+	{
+		least := (largeWrite + ChunkBytes - 1) / ChunkBytes
+		require.GreaterOrEqual(t, len(asked), least, "%d bytes came in as %d reads; want at least %d", largeWrite, len(asked), least)
 	}
 	for i, d := range asked {
-		if d != delay {
-			t.Fatalf("read %d waited %v; want the delay, %v", i, d, delay)
-		}
+		require.Equal(t, delay, d, "read %d waited %v; want the delay, %v", i, d, delay)
 	}
-	if p.Writes() != len(asked) {
-		t.Fatalf("the proxy counts %d writes for %d reads", p.Writes(), len(asked))
-	}
+	require.Equal(t, len(asked), p.Writes(), "the proxy counts %d writes for %d reads", p.Writes(), len(asked))
 }
 
 // The delay is a line and not a queue: reads that arrive one after another are
@@ -362,8 +362,9 @@ func TestReadsThatArriveTogetherPayTheDelayOnce(t *testing.T) {
 	}()
 	const payload = "abc" // one byte for each of the reads
 	for _, b := range payload {
-		if _, err := io.WriteString(peer, string(b)); err != nil {
-			t.Fatal(err)
+		{
+			_, err := io.WriteString(peer, string(b))
+			require.NoError(t, err, err)
 		}
 	}
 	_ = peer.Close()
@@ -372,13 +373,10 @@ func TestReadsThatArriveTogetherPayTheDelayOnce(t *testing.T) {
 	for h := range queue {
 		stamped = append(stamped, h)
 	}
-	if len(stamped) != len(arrivals) {
-		t.Fatalf("%d writes were read as %d", reads, len(stamped))
-	}
+	require.Equal(t, len(arrivals), len(stamped), "%d writes were read as %d", reads, len(stamped))
 	for i, h := range stamped {
-		if !h.at.Equal(arrivals[i]) || !h.due.Equal(arrivals[i].Add(delay)) {
-			t.Fatalf("read %d is stamped at %v, due %v; want its own arrival %v and that plus the delay", i, h.at, h.due, arrivals[i])
-		}
+		require.True(t, h.at.Equal(arrivals[i]), "read %d is stamped at %v, due %v; want its own arrival %v and that plus the delay", i, h.at, h.due, arrivals[i])
+		require.True(t, h.due.Equal(arrivals[i].Add(delay)), "read %d is stamped at %v, due %v; want its own arrival %v and that plus the delay", i, h.at, h.due, arrivals[i])
 	}
 
 	// Forwarding: the clock stands at the first arrival, and a wait moves it on
@@ -412,8 +410,10 @@ func TestReadsThatArriveTogetherPayTheDelayOnce(t *testing.T) {
 		p.forward(up, queue, never, none)
 	}()
 	got := make([]byte, len(stamped))
-	if _, err := io.ReadFull(sink, got); err != nil || string(got) != payload {
-		t.Fatalf("forwarded %q, %v; want %s in order", got, err, payload)
+	{
+		_, err := io.ReadFull(sink, got)
+		require.NoError(t, err, "forwarded %q, %v; want %s in order", got, err, payload)
+		require.Equal(t, payload, string(got), "forwarded %q, %v; want %s in order", got, err, payload)
 	}
 	<-forwarding
 	_ = up.Close()
@@ -422,12 +422,9 @@ func TestReadsThatArriveTogetherPayTheDelayOnce(t *testing.T) {
 	for len(want) < reads {
 		want = append(want, apart)
 	}
-	if !slices.Equal(waits, want) {
-		t.Fatalf("the %d reads waited %v; want the delay and then only what was left of each one's own: %v", reads, waits, want)
-	}
-	if p.Writes() != reads || p.Shortest() != delay {
-		t.Fatalf("the proxy counts %d writes, shortest %v; want %d, exactly the delay", p.Writes(), p.Shortest(), reads)
-	}
+	require.True(t, slices.Equal(waits, want), "the %d reads waited %v; want the delay and then only what was left of each one's own: %v", reads, waits, want)
+	require.Equal(t, reads, p.Writes(), "the proxy counts %d writes, shortest %v; want %d, exactly the delay", p.Writes(), p.Shortest(), reads)
+	require.Equal(t, delay, p.Shortest(), "the proxy counts %d writes, shortest %v; want %d, exactly the delay", p.Writes(), p.Shortest(), reads)
 }
 
 // A client that has sent all it will and closes its sending side still gets the
@@ -440,16 +437,20 @@ func TestAClientThatStopsSendingStillGetsTheRepliesToWhatWasHeld(t *testing.T) {
 	p := serveTo(t, target.addr(), Options{Clock: fake.clock()})
 	c := dial(t, p.Addr()).(*net.TCPConn)
 
-	if _, err := io.WriteString(c, "abc"); err != nil {
-		t.Fatal(err)
+	{
+		_, err := io.WriteString(c, "abc")
+		require.NoError(t, err, err)
 	}
-	if err := c.CloseWrite(); err != nil {
-		t.Fatal(err)
+	{
+		err := c.CloseWrite()
+		require.NoError(t, err, err)
 	}
 	<-fake.waiting
 	close(fake.gate)
-	if got, err := io.ReadAll(c); err != nil || string(got) != "abc" {
-		t.Fatalf("read after the client stopped sending: %q, %v; want abc", got, err)
+	{
+		got, err := io.ReadAll(c)
+		require.NoError(t, err, "read after the client stopped sending: %q, %v; want abc", got, err)
+		require.Equal(t, "abc", string(got), "read after the client stopped sending: %q, %v; want abc", got, err)
 	}
 }
 
@@ -461,41 +462,40 @@ func TestStopEndsEveryGoroutineWhileWritesAreHeld(t *testing.T) {
 	target := startEcho(t)
 	fake := &fakeClock{gate: make(chan struct{}), waiting: make(chan struct{}, heldClients)}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	p, err := Serve(ln, target.addr(), delay, Options{Clock: fake.clock()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	t.Cleanup(p.Stop)
 	conns := make([]net.Conn, heldClients)
 	for i := range conns {
 		conns[i] = dial(t, p.Addr())
-		if _, err := io.WriteString(conns[i], "held"); err != nil {
-			t.Fatal(err)
+		{
+			_, err := io.WriteString(conns[i], "held")
+			require.NoError(t, err, err)
 		}
 		<-fake.waiting
 	}
-	if got, want := p.Live(), acceptLoop+GoroutinesPerConn*heldClients; got != want {
-		t.Fatalf("Live = %d with %d connections held; want %d: one to accept and %d each", got, heldClients, want, GoroutinesPerConn)
+	{
+		got, want := p.Live(), acceptLoop+GoroutinesPerConn*heldClients
+		require.Equal(t, want, got, "Live = %d with %d connections held; want %d: one to accept and %d each", got, heldClients, want, GoroutinesPerConn)
 	}
 	p.Stop()
-	if got := p.Live(); got != 0 {
-		t.Fatalf("Live = %d after Stop returned; want 0", got)
+	{
+		got := p.Live()
+		require.Zero(t, got, "Live = %d after Stop returned; want 0", got)
 	}
 	p.Stop() // a second call only waits
 	for i, c := range conns {
-		if got, err := io.ReadAll(c); len(got) != 0 {
-			t.Fatalf("client %d read %q, %v after Stop; want it hung up on with nothing", i, got, err)
+		{
+			got, err := io.ReadAll(c)
+			require.Zero(t, len(got), "client %d read %q, %v after Stop; want it hung up on with nothing", i, got, err)
 		}
 	}
-	if n := target.received.Load(); n != 0 {
-		t.Fatalf("the target received %d bytes of writes that were held when Stop ran", n)
+	{
+		n := target.received.Load()
+		require.Zero(t, n, "the target received %d bytes of writes that were held when Stop ran", n)
 	}
-	if p.Writes() != 0 {
-		t.Fatalf("the proxy counts %d writes; want 0", p.Writes())
-	}
+	require.Zero(t, p.Writes(), "the proxy counts %d writes; want 0", p.Writes())
 }
 
 // The bound is on open connections: with one allowed, a second client waits in
@@ -509,28 +509,36 @@ func TestAClientPastTheBoundWaitsForASlot(t *testing.T) {
 	const slots = 1
 	p := serveTo(t, target.addr(), Options{Clock: fake.clock(), MaxConns: slots})
 	first := dial(t, p.Addr())
-	if got := roundTrip(t, first, "first"); got != "first" {
-		t.Fatalf("first came back as %q", got)
+	{
+		got := roundTrip(t, first, "first")
+		require.Equal(t, "first", got, "first came back as %q", got)
 	}
 	second := dial(t, p.Addr())
-	if _, err := io.WriteString(second, "second"); err != nil {
-		t.Fatal(err)
+	{
+		_, err := io.WriteString(second, "second")
+		require.NoError(t, err, err)
 	}
-	if n := target.accepted.Load(); n != slots {
-		t.Fatalf("the target has taken %d connections with %d slot and the first still open; want %d", n, slots, slots)
+	{
+		n := target.accepted.Load()
+		require.Equal(t, int64(slots), n, "the target has taken %d connections with %d slot and the first still open; want %d", n, slots, slots)
 	}
-	if got, want := p.Live(), acceptLoop+GoroutinesPerConn*slots; got != want {
-		t.Fatalf("Live = %d; want %d: the accept loop and the one connection", got, want)
+	{
+		got, want := p.Live(), acceptLoop+GoroutinesPerConn*slots
+		require.Equal(t, want, got, "Live = %d; want %d: the accept loop and the one connection", got, want)
 	}
-	if err := first.Close(); err != nil {
-		t.Fatal(err)
+	{
+		err := first.Close()
+		require.NoError(t, err, err)
 	}
 	got := make([]byte, len("second"))
-	if _, err := io.ReadFull(second, got); err != nil || string(got) != "second" {
-		t.Fatalf("the second client, once a slot was free, read %q, %v; want second", got, err)
+	{
+		_, err := io.ReadFull(second, got)
+		require.NoError(t, err, "the second client, once a slot was free, read %q, %v; want second", got, err)
+		require.Equal(t, "second", string(got), "the second client, once a slot was free, read %q, %v; want second", got, err)
 	}
-	if n := target.accepted.Load(); n != slots+1 {
-		t.Fatalf("the target has taken %d connections; want %d", n, slots+1)
+	{
+		n := target.accepted.Load()
+		require.Equal(t, int64(slots+1), n, "the target has taken %d connections; want %d", n, slots+1)
 	}
 }
 
@@ -552,28 +560,25 @@ func TestATargetThatRefusesHangsUpTheClient(t *testing.T) {
 		Dial: func(context.Context, string, string) (net.Conn, error) { return nil, refused },
 		Logf: func(format string, args ...any) { told <- fmt.Sprintf(format, args...) },
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	t.Cleanup(p.Stop)
 	c := ln.client(t)
 	got, err := io.ReadAll(c) // nil when the proxy closed the client: end of stream
 	switch {
 	case errors.Is(err, os.ErrDeadlineExceeded):
-		t.Fatalf("a client of a target that refuses was not hung up on before the ceiling (%v); want the proxy to close it", err)
+		require.NotErrorIs(t, err, os.ErrDeadlineExceeded, "a client of a target that refuses was not hung up on before the ceiling (%v); want the proxy to close it", err)
 	case err != nil || len(got) != 0:
-		t.Fatalf("a client of a target that refuses read %q, %v; want a hang-up: end of stream with nothing", got, err)
+		require.NoError(t, err, "a client of a target that refuses read %q, %v; want a hang-up: end of stream with nothing", got, err)
+		require.Empty(t, got, "a client of a target that refuses read %q, %v; want a hang-up: end of stream with nothing", got, err)
 	}
 	// The proxy says so before it hangs up, so what it said is already here.
 	select {
 	case said := <-told:
 		for _, want := range []string{"dialling", target, refused.Error()} {
-			if !strings.Contains(said, want) {
-				t.Fatalf("Logf said %q; want it to name %q", said, want)
-			}
+			require.Contains(t, said, want, "Logf said %q; want it to name %q", said, want)
 		}
 	default:
-		t.Fatal("the client was hung up on and Logf said nothing")
+		require.FailNow(t, "the client was hung up on and Logf said nothing")
 	}
 }
 
@@ -596,12 +601,10 @@ func TestServeRefusesWhatItCannotServe(t *testing.T) {
 		"a negative bound":            {"127.0.0.1:7000", delay, -1},
 	} {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err, err)
 		if p, err := Serve(ln, c.target, c.delay, Options{MaxConns: c.max}); err == nil {
 			p.Stop()
-			t.Errorf("%s: Serve accepted it", name)
+			assert.Error(t, err, "%s: Serve accepted it", name)
 		}
 		_ = ln.Close()
 	}
@@ -624,8 +627,9 @@ func TestLoopbackAcceptsOnlyTheMachinesOwn(t *testing.T) {
 		"127.0.0.1:65536":  false,
 		"127.0.0.1:port":   false,
 	} {
-		if err := Loopback(addr); (err == nil) != ok {
-			t.Errorf("Loopback(%q) = %v; want accepted %v", addr, err, ok)
+		{
+			err := Loopback(addr)
+			assert.Equal(t, ok, (err == nil), "Loopback(%q) = %v; want accepted %v", addr, err, ok)
 		}
 	}
 }
@@ -639,16 +643,15 @@ func TestTheRealClockHoldsAWriteForAtLeastTheDelay(t *testing.T) {
 
 	target := startEcho(t)
 	p := serveAfter(t, target.addr(), realDelay, Options{})
-	if p.Writes() != 0 || p.Shortest() != 0 {
-		t.Fatalf("a new proxy counts %d writes, shortest %v; want none", p.Writes(), p.Shortest())
-	}
+	require.Zero(t, p.Writes(), "a new proxy counts %d writes, shortest %v; want none", p.Writes(), p.Shortest())
+	require.Zero(t, p.Shortest(), "a new proxy counts %d writes, shortest %v; want none", p.Writes(), p.Shortest())
 	c := dial(t, p.Addr())
-	if got := roundTrip(t, c, "real clock"); got != "real clock" {
-		t.Fatalf("came back as %q", got)
+	{
+		got := roundTrip(t, c, "real clock")
+		require.Equal(t, "real clock", got, "came back as %q", got)
 	}
-	if p.Writes() != 1 || p.Shortest() < realDelay {
-		t.Fatalf("after one write through the real clock: %d writes, shortest %v; want 1, at least %v", p.Writes(), p.Shortest(), realDelay)
-	}
+	require.Equal(t, 1, p.Writes(), "after one write through the real clock: %d writes, shortest %v; want 1, at least %v", p.Writes(), p.Shortest(), realDelay)
+	require.GreaterOrEqual(t, p.Shortest(), realDelay, "after one write through the real clock: %d writes, shortest %v; want 1, at least %v", p.Writes(), p.Shortest(), realDelay)
 }
 
 // Serve takes every delay the help documents, both ends of the range.
@@ -657,8 +660,7 @@ func TestServeAcceptsEveryDelayItDocuments(t *testing.T) {
 
 	for name, d := range map[string]time.Duration{"no delay": 0, "the longest delay, MaxDelay": MaxDelay} {
 		p, err := Serve(newPipeListener(), "127.0.0.1:7000", d, Options{})
-		if err != nil {
-			t.Errorf("%s: Serve refused %v: %v", name, d, err)
+		if !assert.NoError(t, err, "%s: Serve refused %v: %v", name, d, err) {
 			continue
 		}
 		p.Stop()
@@ -677,27 +679,32 @@ func TestOneClientsHoldDoesNotDelayAnother(t *testing.T) {
 	p := serveTo(t, target.addr(), Options{Clock: fake.clock()})
 
 	first := dial(t, p.Addr())
-	if _, err := io.WriteString(first, "a"); err != nil {
-		t.Fatal(err)
+	{
+		_, err := io.WriteString(first, "a")
+		require.NoError(t, err, err)
 	}
 	<-fake.waiting // the first client's write is held, and its wait does not end
 
 	second := dial(t, p.Addr())
-	if _, err := io.WriteString(second, "b"); err != nil {
-		t.Fatal(err)
+	{
+		_, err := io.WriteString(second, "b")
+		require.NoError(t, err, err)
 	}
 	got := make([]byte, 1)
-	if _, err := io.ReadFull(second, got); err != nil {
-		t.Fatalf("a client that came while another client's write was held was not answered: %v; the clients share the delay", err)
-	} else if string(got) != "b" {
-		t.Fatalf("a client that came while another client's write was held read %q; want b", got)
+	{
+		_, err := io.ReadFull(second, got)
+		require.NoError(t, err, "a client that came while another client's write was held was not answered: %v; the clients share the delay", err)
 	}
-	if n := target.received.Load(); n != 1 {
-		t.Fatalf("the target has received %d bytes; want the second client's one, for the first is still held", n)
+	require.Equal(t, "b", string(got), "a client that came while another client's write was held read %q; want b", got)
+	{
+		n := target.received.Load()
+		require.Equal(t, int64(1), n, "the target has received %d bytes; want the second client's one, for the first is still held", n)
 	}
 	close(fake.gate)
-	if _, err := io.ReadFull(first, got); err != nil || string(got) != "a" {
-		t.Fatalf("the first client, once its hold was over, read %q, %v; want a", got, err)
+	{
+		_, err := io.ReadFull(first, got)
+		require.NoError(t, err, "the first client, once its hold was over, read %q, %v; want a", got, err)
+		require.Equal(t, "a", string(got), "the first client, once its hold was over, read %q, %v; want a", got, err)
 	}
 }
 
@@ -713,21 +720,15 @@ func TestAListenerThatFailsIsClosedSoClientsAreRefused(t *testing.T) {
 	p, err := Serve(ln, "127.0.0.1:7000", delay, Options{Logf: func(format string, args ...any) {
 		told <- fmt.Sprintf(format, args...)
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	t.Cleanup(p.Stop)
-	if !ln.closed.wait() {
-		t.Fatal("Accept failed and the proxy left its listener open: a client would wait in the backlog and never be served")
-	}
+	require.True(t, ln.closed.wait(), "Accept failed and the proxy left its listener open: a client would wait in the backlog and never be served")
 	// The proxy says so before it closes, so what it said is already here.
 	select {
 	case said := <-told:
-		if !strings.Contains(said, errAccept.Error()) {
-			t.Fatalf("Logf said %q; want the error Accept returned, %q", said, errAccept)
-		}
+		require.Contains(t, said, errAccept.Error(), "Logf said %q; want the error Accept returned, %q", said, errAccept)
 	default:
-		t.Fatal("the listener was closed and Logf said nothing")
+		require.FailNow(t, "the listener was closed and Logf said nothing")
 	}
 }
 
@@ -752,9 +753,7 @@ func TestTheWindowIsTheSizeTheDocsSay(t *testing.T) {
 		{"inFlight", inFlight, 256, "256 reads", "delayproxy.go"},
 		{"WindowBytes", WindowBytes, 4 << 20, "4 MiB", "delayproxy.go and far.go"},
 	} {
-		if c.got != c.want {
-			t.Errorf("%s is %d, want %d: the docs say %q in %s; change the words with the number, or put the number back", c.name, c.got, c.want, c.said, c.where)
-		}
+		assert.Equal(t, c.want, c.got, "%s is %d, want %d: the docs say %q in %s; change the words with the number, or put the number back", c.name, c.got, c.want, c.said, c.where)
 	}
 }
 
@@ -793,9 +792,7 @@ func payForWindows(t *testing.T, windows int) {
 			return proxySide, nil
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	t.Cleanup(p.Stop)
 	client := ln.client(t)
 
@@ -832,9 +829,7 @@ drive:
 			select {
 			case <-step.ticked:
 			case err := <-ended:
-				if err != nil {
-					t.Fatalf("the client's write was not read before the ceiling: %v; the proxy took %d reads while holding one, want %d", err, step.stamps(sent), want)
-				}
+				require.NoError(t, err, "the client's write was not read before the ceiling: %v; the proxy took %d reads while holding one, want %d", err, step.stamps(sent), want)
 				ended = nil
 			case got = <-target:
 				break drive
@@ -849,11 +844,11 @@ drive:
 	if got == (sunk{}) {
 		got = <-target // the target's own read gives up at the ceiling
 	}
-	if got.err != nil || got.n != total {
-		t.Fatalf("the target received %d of %d bytes: %v", got.n, total, got.err)
-	}
-	if asked := step.asked(); !onlyDelays(asked, windows) {
-		t.Fatalf("%d reads, %d windows of %d, asked the clock for %v; want the delay %d times, once for each window", chunks, windows, inFlight, asked, windows)
+	require.NoError(t, got.err, "the target received %d of %d bytes: %v", got.n, total, got.err)
+	require.Equal(t, total, got.n, "the target received %d of %d bytes: %v", got.n, total, got.err)
+	{
+		asked := step.asked()
+		require.True(t, onlyDelays(asked, windows), "%d reads, %d windows of %d, asked the clock for %v; want the delay %d times, once for each window", chunks, windows, inFlight, asked, windows)
 	}
 }
 
@@ -987,14 +982,15 @@ func (l *pipeListener) client(t *testing.T) net.Conn {
 	client, server := net.Pipe()
 	// The deadline is set before the proxy has the other end: a pipe refuses a
 	// deadline once either end is closed, and a proxy that hangs up at once closes it.
-	if err := client.SetDeadline(time.Now().Add(ceiling)); err != nil {
-		t.Fatal(err)
+	{
+		err := client.SetDeadline(time.Now().Add(ceiling))
+		require.NoError(t, err, err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	select {
 	case l.conns <- server:
 	case <-l.done:
-		t.Fatal("the listener is closed")
+		require.FailNow(t, "the listener is closed")
 	}
 	return client
 }
@@ -1026,8 +1022,9 @@ type event struct{ fired, watch net.Conn }
 func newEvent(t *testing.T) *event {
 	t.Helper()
 	fired, watch := net.Pipe()
-	if err := watch.SetReadDeadline(time.Now().Add(ceiling)); err != nil {
-		t.Fatal(err)
+	{
+		err := watch.SetReadDeadline(time.Now().Add(ceiling))
+		require.NoError(t, err, err)
 	}
 	t.Cleanup(func() {
 		_ = fired.Close()

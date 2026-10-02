@@ -73,8 +73,8 @@ func TestExecutePassesTheExitStatusAndKeepsTheOutput(t *testing.T) {
 		got := Execute(context.Background(), run, log)
 		assert.Equal(t, want, got, "exit = %d, want %d", got, want)
 		raw, err := os.ReadFile(log)
-		if err != nil || !strings.Contains(string(raw), "helper output") {
-			t.Errorf("log for exit %d = %q, %v", want, raw, err)
+		if assert.NoError(t, err, "log for exit %d = %q, %v", want, raw, err) {
+			assert.Contains(t, string(raw), "helper output", "log for exit %d = %q, %v", want, raw, err)
 		}
 	}
 }

@@ -239,9 +239,7 @@ func (app *application) readCommands(in io.Reader, stdout, stderr io.Writer, kee
 				fmt.Fprintf(stderr, "nova-table shell: line %d failed (exit %d)\n", line, code)
 			}
 		}
-		if code > result {
-			result = code
-		}
+		result = max(result, code)
 		if code != 0 && !keepGoing {
 			return result
 		}

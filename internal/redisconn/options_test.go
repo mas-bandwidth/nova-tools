@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestResolvePrecedence is every way a field can be resolved: what was
@@ -85,14 +88,14 @@ func TestResolvePrecedence(t *testing.T) {
 	} {
 		got, err := Resolve(c.explicit, environment(c.env))
 		if err != nil || got != c.want {
-			t.Errorf("%s: Resolve(%+v, %v) = %+v, %v; want %+v", c.name, c.explicit, c.env, got, err, c.want)
+			assert.Failf(t, "", "%s: Resolve(%+v, %v) = %+v, %v; want %+v", c.name, c.explicit, c.env, got, err, c.want)
 			continue
 		}
 		// What was resolved is ready: resolving it again, with no environment
 		// at all, changes nothing.
 		env := map[string]string{c.want.PasswordEnv: c.env[c.want.PasswordEnv]}
 		if again, err := Resolve(got, environment(env)); err != nil || again != got {
-			t.Errorf("%s: resolved again = %+v, %v; want it unchanged", c.name, again, err)
+			assert.Failf(t, "", "%s: resolved again = %+v, %v; want it unchanged", c.name, again, err)
 		}
 	}
 }
@@ -107,13 +110,13 @@ func TestTheZeroEnvReadsNothing(t *testing.T) {
 		return "store.test:6379"
 	}
 	if _, err := Resolve(Options{}, full); err == nil || !strings.Contains(err.Error(), "no address: none was given;") {
-		t.Errorf("Resolve with nothing given and no names = %v; want the refusal for no address, naming no variable", err)
+		assert.Failf(t, "", "Resolve with nothing given and no names = %v; want the refusal for no address, naming no variable", err)
 	}
 	if got, err := Resolve(Options{Addr: "given.test:1"}, full); err != nil || got != (Options{Addr: "given.test:1"}) {
-		t.Errorf("Resolve with an address and no names = %+v, %v", got, err)
+		assert.Failf(t, "", "Resolve with an address and no names = %+v, %v", got, err)
 	}
 	if len(asked) != 0 {
-		t.Errorf("the environment was asked for %q; want nothing", asked)
+		assert.Len(t, asked, 0, "the environment was asked for %q; want nothing", asked)
 	}
 }
 
@@ -176,26 +179,26 @@ func TestResolveRefusals(t *testing.T) {
 	} {
 		got, err := Resolve(c.explicit, environment(c.env))
 		if err == nil {
-			t.Errorf("%s: Resolve = %+v, nil; want a refusal", c.name, got)
+			assert.Error(t, err, "%s: Resolve = %+v, nil; want a refusal", c.name, got)
 			continue
 		}
 		if got != (Options{}) {
-			t.Errorf("%s: the refusal came with options %+v; want none", c.name, got)
+			assert.EqualValues(t, (Options{}), got, "%s: the refusal came with options %+v; want none", c.name, got)
 		}
 		if class := Classify(err); class != c.class {
-			t.Errorf("%s: class %v; want %v (%v)", c.name, class, c.class, err)
+			assert.EqualValues(t, c.class, class, "%s: class %v; want %v (%v)", c.name, class, c.class, err)
 		}
 		text := err.Error()
 		if !strings.Contains(text, c.want) {
-			t.Errorf("%s:\n got %s\nwant %s", c.name, text, c.want)
+			assert.Contains(t, text, c.want, "%s:\n got %s\nwant %s", c.name, text, c.want)
 		}
 		if !strings.Contains(text, "; next: ") || strings.ContainsAny(text, "\n\r") {
-			t.Errorf("%s: %q is not one line that ends in the next thing to do", c.name, text)
+			assert.Failf(t, "", "%s: %q is not one line that ends in the next thing to do", c.name, text)
 		}
 		for _, secret := range []string{"hunter2", "Tr0ub4dor&3"} {
 			for _, shown := range errorsText(err) {
 				if strings.Contains(shown, secret) {
-					t.Errorf("%s: %q shows %q", c.name, shown, secret)
+					assert.NotContains(t, shown, secret, "%s: %q shows %q", c.name, shown, secret)
 				}
 			}
 		}
@@ -208,10 +211,10 @@ func TestResolveRefusals(t *testing.T) {
 func TestResolveReadsOnlyTheEnvironmentItIsHanded(t *testing.T) {
 	t.Parallel()
 	if _, err := Resolve(Options{Env: GeneralEnv}, nil); err == nil || !strings.Contains(err.Error(), "no address") {
-		t.Errorf("Resolve with nothing given and a nil environment = %v; want the refusal for no address", err)
+		assert.Failf(t, "", "Resolve with nothing given and a nil environment = %v; want the refusal for no address", err)
 	}
 	if got, err := Resolve(Options{Addr: "store.test:6379", Env: GeneralEnv}, nil); err != nil || got != (Options{Addr: "store.test:6379", Env: GeneralEnv}) {
-		t.Errorf("Resolve with an address and a nil environment = %+v, %v", got, err)
+		assert.Failf(t, "", "Resolve with an address and a nil environment = %+v, %v", got, err)
 	}
 	var asked []string
 	env := map[string]string{GeneralEnv.PasswordEnv: "NOVA_TEST_PW", "NOVA_TEST_PW": "x", GeneralEnv.User: "bench", GeneralEnv.Addr: "store.test:6379"}
@@ -219,20 +222,20 @@ func TestResolveReadsOnlyTheEnvironmentItIsHanded(t *testing.T) {
 		asked = append(asked, name)
 		return env[name]
 	}); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if got, want := fmt.Sprint(asked), fmt.Sprint([]string{GeneralEnv.Addr, GeneralEnv.User, GeneralEnv.PasswordEnv, "NOVA_TEST_PW"}); got != want {
-		t.Errorf("variables read: %s; want %s", got, want)
+		assert.EqualValues(t, want, got, "variables read: %s; want %s", got, want)
 	}
 	asked = nil
 	if _, err := Resolve(Options{Addr: "store.test:6379", Env: GeneralEnv}, func(name string) string {
 		asked = append(asked, name)
 		return ""
 	}); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if got, want := fmt.Sprint(asked), fmt.Sprint([]string{GeneralEnv.User, GeneralEnv.PasswordEnv}); got != want {
-		t.Errorf("variables read with only an address given: %s; want %s", got, want)
+		assert.EqualValues(t, want, got, "variables read with only an address given: %s; want %s", got, want)
 	}
 }
 
@@ -250,15 +253,15 @@ func TestAddressShapes(t *testing.T) {
 		"/":                    "unix",
 	} {
 		if fault := addrFault(addr); fault != "" {
-			t.Errorf("addrFault(%q) = %q; want an address", addr, fault)
+			assert.Empty(t, fault, "addrFault(%q) = %q; want an address", addr, fault)
 		}
 		if got := network(addr); got != want {
-			t.Errorf("network(%q) = %q; want %q", addr, got, want)
+			assert.EqualValues(t, want, got, "network(%q) = %q; want %q", addr, got, want)
 		}
 	}
 	for _, addr := range []string{"", "store.test", "::1:6379", "[::1]", "store.test:-1", "store.test:6379 ", " store.test:6379", "store.test:63\t79", "tmp/store.sock", "./store.sock", "~/store.sock", "/tmp/store\n.sock"} {
 		if fault := addrFault(addr); fault == "" {
-			t.Errorf("addrFault(%q) = \"\"; want a fault", addr)
+			assert.NotEmpty(t, fault, "addrFault(%q) = \"\"; want a fault", addr)
 		}
 	}
 }
@@ -269,12 +272,12 @@ func TestEnvNameShape(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"A", "_", "PW", "NOVA_REDIS_BENCH_PASSWORD", "_X9", "A1_"} {
 		if !envName(name) {
-			t.Errorf("envName(%q) = false; want a name", name)
+			assert.True(t, envName(name), "envName(%q) = false; want a name", name)
 		}
 	}
 	for _, name := range []string{"", "9A", "pw", "Pw", "NOVA-REDIS", "NOVA REDIS", "PW=", "PW\n", "ÅNGSTRÖM", "hunter2", "$PW", "PW;"} {
 		if envName(name) {
-			t.Errorf("envName(%q) = true; want it refused", name)
+			assert.False(t, envName(name), "envName(%q) = true; want it refused", name)
 		}
 	}
 }
@@ -292,11 +295,11 @@ func TestOptionsString(t *testing.T) {
 	} {
 		for _, got := range []string{c.o.String(), fmt.Sprint(c.o), fmt.Sprintf("%v", c.o), fmt.Sprintf("%+v", c.o), fmt.Sprintf("%s", c.o)} {
 			if got != c.want {
-				t.Errorf("%#v renders %q; want %q", c.o, got, c.want)
+				assert.EqualValues(t, c.want, got, "%#v renders %q; want %q", c.o, got, c.want)
 			}
 		}
 		if n := len(strings.Fields(c.o.String())); n != 3 {
-			t.Errorf("%q is %d fields; want 3", c.o.String(), n)
+			assert.EqualValues(t, 3, n, "%q is %d fields; want 3", c.o.String(), n)
 		}
 	}
 }
@@ -307,12 +310,12 @@ func TestRefusalsAreThisPackagesErrors(t *testing.T) {
 	t.Parallel()
 	_, err := Resolve(Options{Addr: "store.test:6379", User: "bench", PasswordEnv: "PW"}, nothing)
 	if !isFailure(err) || !isFailure(fmt.Errorf("verb: %w", err)) {
-		t.Fatalf("%v is not this package's error", err)
+		require.FailNowf(t, "", "%v is not this package's error", err)
 	}
 	if cause := errors.Unwrap(err); cause == nil || cause.Error() != "PW is empty" {
-		t.Errorf("the refusal unwraps to %v; want its cause", cause)
+		assert.Failf(t, "", "the refusal unwraps to %v; want its cause", cause)
 	}
 	if got := Classify(fmt.Errorf("verb: %w", err)); got != AuthRefused {
-		t.Errorf("wrapped, its class is %v; want %v", got, AuthRefused)
+		assert.EqualValues(t, AuthRefused, got, "wrapped, its class is %v; want %v", got, AuthRefused)
 	}
 }

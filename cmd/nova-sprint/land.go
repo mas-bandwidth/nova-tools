@@ -890,12 +890,7 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 
 // containsAny says s holds one of words.
 func containsAny(s string, words []string) bool {
-	for _, w := range words {
-		if strings.Contains(s, w) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(words, func(w string) bool { return strings.Contains(s, w) })
 }
 
 // runCheck runs --check in the clone: "" when it passed or there is none.

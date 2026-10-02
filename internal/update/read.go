@@ -239,14 +239,9 @@ func drainAllowance(ctx context.Context) time.Duration {
 	}
 	drain := killGrace
 	if deadline, ok := ctx.Deadline(); ok {
-		if remaining := time.Until(deadline); remaining < drain {
-			drain = remaining
-		}
+		drain = min(drain, time.Until(deadline))
 	}
-	if drain < drainFloor {
-		drain = drainFloor
-	}
-	return drain
+	return max(drain, drainFloor)
 }
 
 type drainTimerKey struct{}

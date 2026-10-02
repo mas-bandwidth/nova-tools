@@ -84,9 +84,7 @@ func TestWaitAfterClear(t *testing.T) {
 	// ack of the OLD judgment id after clear
 	code, out, errs = ta.do("ack " + oldNote + " --reason x")
 	t.Logf("ack old judgment after clear: %d %s%s", code, out, errs)
-	if code == 0 && !strings.Contains(out+errs, "refused=1") {
-		t.Errorf("ack of an old judgment after clear: %s", out)
-	}
+	assert.False(t, code == 0 && !strings.Contains(out+errs, "refused=1"), "ack of an old judgment after clear: %s", out)
 }
 
 func TestInboxReadRefusesAnEarlierEpoch(t *testing.T) {

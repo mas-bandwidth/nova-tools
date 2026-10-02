@@ -6,6 +6,7 @@ package cardhdr
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -32,12 +33,7 @@ const RouteList = "frontier, pro or flash"
 
 // IsRoute reports whether s is one of the three model types.
 func IsRoute(s string) bool {
-	for _, r := range Routes {
-		if r == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(Routes, s)
 }
 
 // KeyRE is the header line's shape: a key word at column 0, then a colon.
@@ -126,12 +122,7 @@ func ParseTest(v string) (TestLine, string) {
 }
 
 func hasDotDot(p string) bool {
-	for _, seg := range strings.Split(p, "/") {
-		if seg == ".." {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(p, "/"), "..")
 }
 
 // isNone is the first word of `none <why>`: none, or none with a separator
