@@ -1,5 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 67
+# ceiling: 64
 docs/CLI.md:emma 2
 docs/CLI.md:freddy 1
 docs/CLI.md:johnny 2
@@ -51,15 +51,12 @@ docs/SPEC-TOKENS.md:glenn 2
 docs/SPEC-TOKENS.md:johnny 2
 docs/SPEC-TOKENS.md:space 2
 docs/SPEC-TOKENS.md:stella 2
-docs/SPEC-UPDATE.md:emma 1
 docs/SPEC-UPDATE.md:freddy 1
-docs/SPEC-UPDATE.md:glenn 2
-docs/SPEC-UPDATE.md:hulk 3
+docs/SPEC-UPDATE.md:glenn 1
 docs/SPEC-UPDATE.md:johnny 1
-docs/SPEC-UPDATE.md:rowan 5
+docs/SPEC-UPDATE.md:rowan 3
 docs/SPEC-UPDATE.md:space 1
-docs/SPEC-UPDATE.md:stella 6
-docs/SPEC-UPDATE.md:studio 6
+docs/SPEC-UPDATE.md:stella 1
 docs/SPEC.md:rowan 4
 docs/SPEC.md:space 16
 docs/SPEC.md:studio 1
