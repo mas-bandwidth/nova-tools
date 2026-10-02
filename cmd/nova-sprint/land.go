@@ -100,6 +100,7 @@ type landBatch struct {
 	Tip    string   `json:"tip,omitempty"`
 	// Fact is the merge fact reported for a refusal (conflict, red,
 	// rejected); empty when nothing was reported and the store is unchanged.
+	// In a dry run it is the fact land would report, and nothing was.
 	Fact   string `json:"fact,omitempty"`
 	Reason string `json:"reason,omitempty"`
 	DryRun bool   `json:"dry_run,omitempty"`
@@ -282,6 +283,8 @@ func (l *lander) report(failed bool, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintln(w, b.line())
 		switch {
+		case b.Fact != "" && l.dry:
+			fmt.Fprintf(w, "NOTE land would report this as merge --%s and stop stream %s; nothing was reported (dry run)\n", b.Fact, oneline.Field(b.Stream))
 		case b.Fact != "":
 			fmt.Fprintf(w, "NOTE the stream is stopped (%s); run: nova-sprint inbox\n", b.Fact)
 		case b.Status == "refused" && !l.dry:
@@ -382,11 +385,8 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		l.out = append(l.out, b)
 		return false, true
 	}
-	switch {
-	case b.Base == "":
-		return refuse("card " + ids[0] + " names no BASE: line and no --base was given; run: nova-sprint land --stream " + stream + " --base <branch>")
-	case strings.HasPrefix(b.Base, "-"):
-		return refuse("card " + ids[0] + " names the base " + b.Base + ", which is not a branch name; run: nova-sprint card " + ids[0])
+	if why := l.placeWhy(stream, cards); why != "" {
+		return refuse(why)
 	}
 	dir, why := l.clone(ctx, b.Repo)
 	if why != "" {
@@ -394,9 +394,7 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 	}
 	b.Dir = dir
 	if l.dry {
-		b.Status = "ok"
-		l.out = append(l.out, b)
-		return true, true
+		return l.dryBatch(b, cards)
 	}
 	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" {
 		return refuse("the clone " + dir + " is not clean (" + firstLine(out, err) + "); commit or discard its changes, then run land again")
@@ -450,6 +448,71 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 	}
 	l.conflict(stream, failed)
 	return false, true
+}
+
+// placeWhy is why land cannot place a batch before any git, "" when it can:
+// every problem of the batch at once (a base missing, a repository missing with
+// no clone given, and with them every head that is not a commit id, which land
+// would meet next), so one run names all of them (docs/STANDARD.md, a refusal
+// names every problem at once). A base that is not a branch name is refused alone.
+func (l *lander) placeWhy(stream string, cards []landCard) string {
+	id, base := cards[0].id, cards[0].base
+	if strings.HasPrefix(base, "-") {
+		return "card " + id + " names the base " + base + ", which is not a branch name; run: nova-sprint card " + id
+	}
+	var why, flags []string
+	if base == "" {
+		why = append(why, "card "+id+" names no BASE: line and no --base was given")
+		flags = append(flags, "--stream "+stream+" --base <branch>")
+	}
+	if cards[0].repo == "" && l.repoDir == "" {
+		why = append(why, "the card names no REPO: line and no --repo-dir was given")
+		flags = append(flags, "--repo-dir <clone>")
+	}
+	if len(why) == 0 {
+		return ""
+	}
+	out := strings.Join(why, ", and ") + "; run: nova-sprint land " + strings.Join(flags, " ")
+	for _, c := range cards {
+		if w := headNotCommit(c); w != "" {
+			out += "; " + w
+		}
+	}
+	return out
+}
+
+// dryBatch is the dry run's outcome of a batch land can place: it stops where
+// land stops before any git, at the first head that is not a commit id
+// (headNotCommit, mergeHead's own check and words): the cards before it a
+// batch that lands, that card refused as land reports it, with the conflict
+// fact land would record and the stream stop; nothing is recorded.
+func (l *lander) dryBatch(b landBatch, cards []landCard) (landed, ok bool) {
+	cut := slices.IndexFunc(cards, func(c landCard) bool { return headNotCommit(c) != "" })
+	if cut < 0 {
+		b.Status = "ok"
+		l.out = append(l.out, b)
+		return true, true
+	}
+	if cut > 0 {
+		before := b
+		before.Status, before.Cards, before.IDs = "ok", cut, b.IDs[:cut]
+		l.out = append(l.out, before)
+	}
+	c := cards[cut]
+	l.out = append(l.out, landBatch{Stream: b.Stream, Status: "refused", Cards: 1, IDs: []string{c.id}, Fact: "conflict", Reason: headNotCommit(c), DryRun: true})
+	return false, true
+}
+
+// headNotCommit is why a card's head cannot be merged whatever origin holds:
+// it is not a commit id (a finish without --head records the card's id); ""
+// when it is one. land meets it at the card's merge (mergeHead) and its dry
+// run before any git (dryBatch), in these words.
+func headNotCommit(c landCard) string {
+	if shaRE.MatchString(c.head) {
+		return ""
+	}
+	return "the head " + dashed(c.head) + " of " + c.id + " is not a commit id (a finish without --head records the card's id); run: nova-sprint return " + c.id +
+		" --reason 'its head is not a commit', then nova-sprint rework " + c.id + " --fix 'finish with --head <commit>'"
 }
 
 // conflictCard is a card that did not merge, with git's words.
@@ -685,8 +748,8 @@ var notOnOrigin = []string{"not our ref", "couldn't find remote ref", "no such r
 // hook, the disk, the network), with any merge in progress aborted; both ""
 // when it merged. A head the clone lacks is fetched from origin by its id once.
 func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env string) {
-	if !shaRE.MatchString(c.head) {
-		return "the head " + dashed(c.head) + " of " + c.id + " is not a commit id; run: nova-sprint card " + c.id, ""
+	if why := headNotCommit(c); why != "" {
+		return why, ""
 	}
 	merge := func() error {
 		_, err := l.git(ctx, dir, "merge", "--no-ff", "--no-edit", "-m", "land "+c.id+" (sprint stream "+stream+")", c.head)
@@ -767,17 +830,15 @@ func checkTail(out string) string {
 // a clone kept under the land root, made on first use. Every clone reused,
 // given or kept, has its origin read and held to the repository the card
 // names before any git touches it, so a batch is never pushed to another
-// repository's remote (a card naming none takes --repo-dir's as it is). why
-// is a refusal.
+// repository's remote (a card naming none takes --repo-dir's as it is; one
+// naming none with no --repo-dir is refused before, by placeWhy). why is a
+// refusal.
 func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 	if l.repoDir != "" {
 		if l.dry {
 			return l.repoDir, ""
 		}
 		return l.repoDir, l.originIs(ctx, l.repoDir, repo)
-	}
-	if repo == "" {
-		return "", "the card names no REPO: line and no --repo-dir was given; run: nova-sprint land --repo-dir <clone>"
 	}
 	if l.root == "" {
 		root, err := l.a.landRoot()
