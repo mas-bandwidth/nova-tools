@@ -24,12 +24,8 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 	t.Parallel()
 
 	providers, err := readProvidersTSV(providersTSV)
-	if err != nil {
-		t.Fatalf("read providers.tsv: %v", err)
-	}
-	if len(providers) == 0 {
-		t.Fatal("providers.tsv has no rows")
-	}
+	require.NoError(t, err, "read providers.tsv: %v", err)
+	require.NotEmpty(t, providers, "providers.tsv has no rows")
 
 	// The standard launcher binaries that a providers table entry must use.
 	// A bespoke launcher on a bench is the fault that cost the Studio a night
@@ -51,20 +47,12 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 	for _, p := range providers {
 		t.Run(p.Name+"/linux", func(t *testing.T) {
 			argv, err := LaunchArgv(p.Name, "linux")
-			if err != nil {
-				t.Fatalf("LaunchArgv(%q, linux): %v", p.Name, err)
-			}
-			if len(argv) == 0 {
-				t.Fatalf("LaunchArgv(%q, linux) returned empty argv", p.Name)
-			}
+			require.NoError(t, err, "LaunchArgv(%q, linux): %v", p.Name, err)
+			require.NotEmpty(t, argv, "LaunchArgv(%q, linux) returned empty argv", p.Name)
 
 			harness := argv[0]
-			if isBespokeScript(harness) {
-				t.Errorf("LaunchArgv(%q, linux) harness %q is a bespoke per-provider script; want the one launcher", p.Name, harness)
-			}
-			if !standardLaunchers[harness] {
-				t.Errorf("LaunchArgv(%q, linux) harness %q is not a recognized standard launcher", p.Name, harness)
-			}
+			assert.False(t, isBespokeScript(harness), "LaunchArgv(%q, linux) harness %q is a bespoke per-provider script; want the one launcher", p.Name, harness)
+			assert.True(t, standardLaunchers[harness], "LaunchArgv(%q, linux) harness %q is not a recognized standard launcher", p.Name, harness)
 
 			args := argv[1:]
 			argsJSON, _ := json.Marshal(args)
@@ -72,9 +60,8 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 
 			if p.HarnessArgs != "" {
 				var expectedArgs []string
-				if err := json.Unmarshal([]byte(p.HarnessArgs), &expectedArgs); err != nil {
-					t.Fatalf("parse harness_args for %q: %v", p.Name, err)
-				}
+				err = json.Unmarshal([]byte(p.HarnessArgs), &expectedArgs)
+				require.NoError(t, err, "parse harness_args for %q: %v", p.Name, err)
 				// The model placeholder should be expanded to the table's model.
 				for _, a := range expectedArgs {
 					if a == "{model}" {
@@ -85,9 +72,7 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 								break
 							}
 						}
-						if !found {
-							t.Errorf("LaunchArgv(%q, linux) args %v do not contain model %q (placeholder {model} not expanded)", p.Name, args, p.Model)
-						}
+						assert.True(t, found, "LaunchArgv(%q, linux) args %v do not contain model %q (placeholder {model} not expanded)", p.Name, args, p.Model)
 					}
 				}
 			}
@@ -95,20 +80,12 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 
 		t.Run(p.Name+"/darwin", func(t *testing.T) {
 			argv, err := LaunchArgv(p.Name, "darwin")
-			if err != nil {
-				t.Fatalf("LaunchArgv(%q, darwin): %v", p.Name, err)
-			}
-			if len(argv) == 0 {
-				t.Fatalf("LaunchArgv(%q, darwin) returned empty argv", p.Name)
-			}
+			require.NoError(t, err, "LaunchArgv(%q, darwin): %v", p.Name, err)
+			require.NotEmpty(t, argv, "LaunchArgv(%q, darwin) returned empty argv", p.Name)
 
 			harness := argv[0]
-			if isBespokeScript(harness) {
-				t.Errorf("LaunchArgv(%q, darwin) harness %q is a bespoke per-provider script; want the one launcher", p.Name, harness)
-			}
-			if !standardLaunchers[harness] {
-				t.Errorf("LaunchArgv(%q, darwin) harness %q is not a recognized standard launcher", p.Name, harness)
-			}
+			assert.False(t, isBespokeScript(harness), "LaunchArgv(%q, darwin) harness %q is a bespoke per-provider script; want the one launcher", p.Name, harness)
+			assert.True(t, standardLaunchers[harness], "LaunchArgv(%q, darwin) harness %q is not a recognized standard launcher", p.Name, harness)
 
 			args := argv[1:]
 			argsJSON, _ := json.Marshal(args)
@@ -116,9 +93,8 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 
 			if p.HarnessArgs != "" {
 				var expectedArgs []string
-				if err := json.Unmarshal([]byte(p.HarnessArgs), &expectedArgs); err != nil {
-					t.Fatalf("parse harness_args for %q: %v", p.Name, err)
-				}
+				err = json.Unmarshal([]byte(p.HarnessArgs), &expectedArgs)
+				require.NoError(t, err, "parse harness_args for %q: %v", p.Name, err)
 				for _, a := range expectedArgs {
 					if a == "{model}" {
 						found := false
@@ -128,9 +104,7 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 								break
 							}
 						}
-						if !found {
-							t.Errorf("LaunchArgv(%q, darwin) args %v do not contain model %q (placeholder {model} not expanded)", p.Name, args, p.Model)
-						}
+						assert.True(t, found, "LaunchArgv(%q, darwin) args %v do not contain model %q (placeholder {model} not expanded)", p.Name, args, p.Model)
 					}
 				}
 			}
@@ -139,11 +113,9 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 		t.Run(p.Name+"/os-diff", func(t *testing.T) {
 			linuxArgv, errL := LaunchArgv(p.Name, "linux")
 			darwinArgv, errD := LaunchArgv(p.Name, "darwin")
-			if errL != nil || errD != nil {
-				t.Fatalf("LaunchArgv(%q, linux/darwin): linux=%v darwin=%v", p.Name, errL, errD)
-			}
-			if len(linuxArgv) != len(darwinArgv) {
-				t.Errorf("LaunchArgv(%q) linux argv len %d != darwin argv len %d", p.Name, len(linuxArgv), len(darwinArgv))
+			require.NoError(t, errL, "LaunchArgv(%q, linux/darwin): linux=%v darwin=%v", p.Name, errL, errD)
+			require.NoError(t, errD, "LaunchArgv(%q, linux/darwin): linux=%v darwin=%v", p.Name, errL, errD)
+			if !assert.Len(t, linuxArgv, len(darwinArgv), "LaunchArgv(%q) linux argv len %d != darwin argv len %d", p.Name, len(linuxArgv), len(darwinArgv)) {
 				return
 			}
 			// The two OS argvs must differ only in the harness path (the table
@@ -154,47 +126,33 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 			}
 			// Different launcher: every other field must be identical.
 			for i := 1; i < len(linuxArgv); i++ {
-				if linuxArgv[i] != darwinArgv[i] {
-					t.Errorf("LaunchArgv(%q) linux[%d]=%q != darwin[%d]=%q (non-OS field differs)", p.Name, i, linuxArgv[i], i, darwinArgv[i])
-				}
+				assert.Equal(t, linuxArgv[i], darwinArgv[i], "LaunchArgv(%q) linux[%d]=%q != darwin[%d]=%q (non-OS field differs)", p.Name, i, linuxArgv[i], i, darwinArgv[i])
 			}
 			// If the harness paths differ, both must be standard launchers.
-			if isBespokeScript(linuxArgv[0]) {
-				t.Errorf("LaunchArgv(%q) linux harness %q is a bespoke script", p.Name, linuxArgv[0])
-			}
-			if isBespokeScript(darwinArgv[0]) {
-				t.Errorf("LaunchArgv(%q) darwin harness %q is a bespoke script", p.Name, darwinArgv[0])
-			}
+			assert.False(t, isBespokeScript(linuxArgv[0]), "LaunchArgv(%q) linux harness %q is a bespoke script", p.Name, linuxArgv[0])
+			assert.False(t, isBespokeScript(darwinArgv[0]), "LaunchArgv(%q) darwin harness %q is a bespoke script", p.Name, darwinArgv[0])
 		})
 	}
 
 	// An unknown provider returns an error rather than a guessed argv.
 	t.Run("unknown", func(t *testing.T) {
 		argv, err := LaunchArgv("nonexistent-provider-xyz", runtime.GOOS)
-		if err == nil {
-			t.Errorf("LaunchArgv(%q, %s) returned argv %v with no error; want an error for an unknown provider", "nonexistent-provider-xyz", runtime.GOOS, argv)
-		}
+		assert.Error(t, err, "LaunchArgv(%q, %s) returned argv %v with no error; want an error for an unknown provider", "nonexistent-provider-xyz", runtime.GOOS, argv)
 	})
 
 	// Unsupported GOOS values return an error rather than falling back to Linux.
 	t.Run("unsupported-goos", func(t *testing.T) {
 		for _, unsupported := range []string{"windows", "freebsd", "openbsd", "netbsd", "plan9", "solaris", "unknown"} {
 			argv, err := LaunchArgv(providers[0].Name, unsupported)
-			if err == nil {
-				t.Errorf("LaunchArgv(%q, %q) returned argv %v with no error; want error for unsupported GOOS", providers[0].Name, unsupported, argv)
-			}
+			assert.Error(t, err, "LaunchArgv(%q, %q) returned argv %v with no error; want error for unsupported GOOS", providers[0].Name, unsupported, argv)
 		}
 	})
 
 	// Every provider in the table is actually reachable.
 	t.Run("table-not-empty", func(t *testing.T) {
-		if len(providers) == 0 {
-			t.Error("providers table is empty")
-		}
+		assert.NotEmpty(t, providers, "providers table is empty")
 		for _, p := range providers {
-			if p.Name == "" {
-				t.Error("providers table has a row with an empty name")
-			}
+			assert.NotEmpty(t, p.Name, "providers table has a row with an empty name")
 		}
 	})
 }

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -61,9 +63,7 @@ func TestStorePullUsesBenchOwnedKey(t *testing.T) {
 	copyFile(t, personOpenSSH, swappedOpenSSH)
 	benchOpenSSH := writeThrowawayOpenSSHKey(t, filepath.Join(seatHome, ".ssh", "id_openssh"), seat+"@testbench")
 	linkedKey := filepath.Join(seatHome, ".ssh", "id_link")
-	if err := os.Symlink(personKey, linkedKey); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Symlink(personKey, linkedKey))
 
 	base := StorePullOptions{
 		StoreDir: store,
@@ -91,15 +91,10 @@ func TestStorePullUsesBenchOwnedKey(t *testing.T) {
 			o := base
 			o.Key, o.SeatHome = c.key, c.home
 			_, err := PullStore(o)
-			if err == nil {
-				t.Fatalf("PullStore accepted %s (%s); rule 7 says the store is pulled only over the bench's own key", c.name, c.key)
-			}
-			if !strings.Contains(err.Error(), c.want) {
-				t.Fatalf("PullStore refused %s but the refusal does not say %q: %v", c.name, c.want, err)
-			}
-			if _, statErr := os.Stat(sshLog); statErr == nil {
-				t.Fatalf("PullStore refused %s but ssh was already started; the refusal must stand before any credential is offered", c.name)
-			}
+			require.Error(t, err, "PullStore accepted %s (%s); rule 7 says the store is pulled only over the bench's own key", c.name, c.key)
+			require.Contains(t, err.Error(), c.want, "PullStore refused %s but the refusal does not say %q: %v", c.name, c.want, err)
+			_, statErr := os.Stat(sshLog)
+			require.Error(t, statErr, "PullStore refused %s but ssh was already started; the refusal must stand before any credential is offered", c.name)
 		})
 	}
 
@@ -113,22 +108,14 @@ func TestStorePullUsesBenchOwnedKey(t *testing.T) {
 			o := base
 			o.Key = c.key
 			head, err := PullStore(o)
-			if err != nil {
-				t.Fatalf("PullStore refused %s: %v", c.name, err)
-			}
+			require.NoError(t, err, "PullStore refused %s: %v", c.name, err)
 			want := strings.TrimSpace(gitOut(t, gitBin, origin, "rev-parse", "HEAD"))
-			if head != want {
-				t.Fatalf("store head after the pull is %s, want the origin head %s", head, want)
-			}
+			require.Equal(t, want, head, "store head after the pull is %s, want the origin head %s", head, want)
 			logged, err := os.ReadFile(sshLog)
-			if err != nil {
-				t.Fatalf("the pull never ran the seat's ssh: %v", err)
-			}
+			require.NoError(t, err, "the pull never ran the seat's ssh: %v", err)
 			argv := strings.Split(strings.TrimSpace(string(logged)), "\n")
 			for _, w := range []string{"-i", c.key, "IdentitiesOnly=yes", "IdentityAgent=none", "agent=unset"} {
-				if !containsLine(argv, w) {
-					t.Fatalf("ssh argv/env %q does not carry %q; the pull must offer exactly the bench's key and nothing an agent holds", argv, w)
-				}
+				require.True(t, containsLine(argv, w), "ssh argv/env %q does not carry %q; the pull must offer exactly the bench's key and nothing an agent holds", argv, w)
 			}
 		})
 	}
@@ -144,9 +131,7 @@ func storePullFixture(t *testing.T, gitBin, root string) (origin, store string) 
 	gitOut(t, gitBin, root, "init", "-q", "--bare", "-b", "main", origin)
 	gitOut(t, gitBin, root, "init", "-q", "-b", "main", work)
 	commit := func(msg string) {
-		if err := os.WriteFile(filepath.Join(work, "rowan.yaml"), []byte(msg+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(work, "rowan.yaml"), []byte(msg+"\n"), 0o600))
 		gitOut(t, gitBin, work, "add", "rowan.yaml")
 		gitOut(t, gitBin, work, "-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-q", "-m", msg)
 	}
@@ -164,18 +149,14 @@ func storePullFixture(t *testing.T, gitBin, root string) (origin, store string) 
 func writeFakeSSH(t *testing.T, root, logPath string) string {
 	t.Helper()
 	p := filepath.Join(root, "bin", "ssh")
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
 	script := "#!/bin/sh\n" +
 		"log=" + shellQuote(logPath) + "\n" +
 		"printf '%s\\n' \"$@\" > \"$log\"\n" +
 		"if [ -n \"$SSH_AUTH_SOCK\" ]; then echo agent=set >> \"$log\"; else echo agent=unset >> \"$log\"; fi\n" +
 		"for a; do last=$a; done\n" +
 		"exec sh -c \"$last\"\n"
-	if err := testbin.WriteExecutable(p, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(p, []byte(script), 0o755))
 	return p
 }
 
@@ -184,28 +165,18 @@ func writeFakeSSH(t *testing.T, root, logPath string) string {
 func writeThrowawayKey(t *testing.T, path, comment string) string {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	der, err := x509.MarshalPKCS8PrivateKey(priv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600))
 	var wire []byte
 	for _, part := range [][]byte{[]byte("ssh-ed25519"), pub} {
 		wire = binary.BigEndian.AppendUint32(wire, uint32(len(part)))
 		wire = append(wire, part...)
 	}
 	line := "ssh-ed25519 " + base64.StdEncoding.EncodeToString(wire) + " " + comment + "\n"
-	if err := os.WriteFile(path+".pub", []byte(line), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path+".pub", []byte(line), 0o644))
 	return path
 }
 
@@ -215,14 +186,11 @@ func writeThrowawayKey(t *testing.T, path, comment string) string {
 func writeThrowawayOpenSSHKey(t *testing.T, path, comment string) string {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	pubBlob := testWire([]byte("ssh-ed25519"), pub)
 	var check [4]byte
-	if _, err := rand.Read(check[:]); err != nil {
-		t.Fatal(err)
-	}
+	_, err = rand.Read(check[:])
+	require.NoError(t, err)
 	section := append(append([]byte{}, check[:]...), check[:]...)
 	section = append(section, testWire([]byte("ssh-ed25519"), pub, priv, []byte(comment))...)
 	for i := byte(1); len(section)%8 != 0; i++ {
@@ -232,16 +200,10 @@ func writeThrowawayOpenSSHKey(t *testing.T, path, comment string) string {
 	body = append(body, testWire([]byte("none"), []byte("none"), nil)...)
 	body = binary.BigEndian.AppendUint32(body, 1)
 	body = append(body, testWire(pubBlob, section)...)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: body}), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: body}), 0o600))
 	line := "ssh-ed25519 " + base64.StdEncoding.EncodeToString(pubBlob) + " " + comment + "\n"
-	if err := os.WriteFile(path+".pub", []byte(line), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path+".pub", []byte(line), 0o644))
 	return path
 }
 
@@ -260,12 +222,8 @@ func testWire(parts ...[]byte) []byte {
 func copyFile(t *testing.T, src, dst string) {
 	t.Helper()
 	b, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dst, b, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(dst, b, 0o600))
 }
 
 func gitOut(t *testing.T, gitBin, dir string, args ...string) string {
@@ -274,9 +232,7 @@ func gitOut(t *testing.T, gitBin, dir string, args ...string) string {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
-	}
+	require.NoError(t, err, "git %s: %v: %s", strings.Join(args, " "), err, out)
 	return string(out)
 }
 
@@ -326,15 +282,12 @@ func TestStorePullKeyRefusesAMalformedKeyWithoutPanicking(t *testing.T) {
 			var err error
 			func() {
 				defer func() {
-					if r := recover(); r != nil {
-						t.Fatalf("a malformed %s key panicked the parser instead of being refused: %v", c.typ, r)
-					}
+					r := recover()
+					require.True(t, r == nil, "a malformed %s key panicked the parser instead of being refused: %v", c.typ, r)
 				}()
 				_, err = privateKeyPublicBlob(path)
 			}()
-			if err == nil {
-				t.Fatalf("a malformed %s key was accepted", c.typ)
-			}
+			require.Error(t, err, "a malformed %s key was accepted", c.typ)
 		})
 	}
 }
@@ -352,7 +305,5 @@ func writeOpenSSHKeyFile(t *testing.T, path, typ string, fields ...[]byte) {
 	body = append(body, testWire([]byte("none"), []byte("none"), nil)...)
 	body = binary.BigEndian.AppendUint32(body, 1)
 	body = append(body, testWire(testWire([]byte(typ)), section)...)
-	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: body}), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: body}), 0o600))
 }

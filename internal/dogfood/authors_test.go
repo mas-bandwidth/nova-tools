@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseAuthorsReadsAMapping(t *testing.T) {
@@ -16,22 +18,15 @@ func TestParseAuthorsReadsAMapping(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "authors.txt")
 	body := "# who wrote what\n\nnova-check links = Rowan\nnova-fuse lift quarantine =  Stella \n"
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	authors, err := ParseAuthors(path)
-	if err != nil {
-		t.Fatalf("ParseAuthors: %v", err)
-	}
-	if got := authors.Author("nova-check links"); got != "Rowan" {
-		t.Fatalf("author = %q, want Rowan", got)
-	}
-	if got := authors.Author("nova-fuse lift quarantine"); got != "Stella" {
-		t.Fatalf("a two-word verb mapped to %q, want Stella", got)
-	}
-	if got := authors.Author("nova-fuse  lift   quarantine"); got != "Stella" {
-		t.Fatalf("spacing changed the key: %q", got)
-	}
+	require.NoError(t, err, "ParseAuthors: %v", err)
+	got := authors.Author("nova-check links")
+	require.Equal(t, "Rowan", got, "author = %q, want Rowan", got)
+	got = authors.Author("nova-fuse lift quarantine")
+	require.Equal(t, "Stella", got, "a two-word verb mapped to %q, want Stella", got)
+	got = authors.Author("nova-fuse  lift   quarantine")
+	require.Equal(t, "Stella", got, "spacing changed the key: %q", got)
 }
 
 func TestParseAuthorsRefusesALineItCannotRead(t *testing.T) {
@@ -45,19 +40,11 @@ func TestParseAuthorsRefusesALineItCannotRead(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "authors.txt")
-			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o644))
 			_, err := ParseAuthors(path)
-			if err == nil {
-				t.Fatal("a mapping that is half wrong was accepted")
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("refusal %q does not say %q", err, tc.want)
-			}
-			if !strings.Contains(err.Error(), ":1") && !strings.Contains(err.Error(), ":2") {
-				t.Fatalf("refusal %q names no line", err)
-			}
+			require.Error(t, err, "a mapping that is half wrong was accepted")
+			require.ErrorContains(t, err, tc.want, "refusal %q does not say %q", err, tc.want)
+			require.True(t, strings.Contains(err.Error(), ":1") || strings.Contains(err.Error(), ":2"), "refusal %q names no line", err)
 		})
 	}
 }
@@ -72,20 +59,13 @@ func TestAuthorsFromGitTakesTheCommitThatIntroducedTheVerb(t *testing.T) {
 		return "Rowan Claude\nSomebody Later\n", nil
 	}
 	authors, err := AuthorsFromGit(context.Background(), "/repo", verbs("nova-check links"), run, nil)
-	if err != nil {
-		t.Fatalf("AuthorsFromGit: %v", err)
-	}
-	if got := authors.Author("nova-check links"); got != "Rowan Claude" {
-		t.Fatalf("author = %q, want the first commit's author", got)
-	}
-	if len(asked) != 1 {
-		t.Fatalf("git was asked %d times, want once per verb", len(asked))
-	}
+	require.NoError(t, err, "AuthorsFromGit: %v", err)
+	got := authors.Author("nova-check links")
+	require.Equal(t, "Rowan Claude", got, "author = %q, want the first commit's author", got)
+	require.Len(t, asked, 1, "git was asked %d times, want once per verb", len(asked))
 	joined := strings.Join(asked[0], " ")
 	for _, want := range []string{"log", "--reverse", "-S", "cmd/nova-check"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("git call %q is missing %q", joined, want)
-		}
+		require.Contains(t, joined, want, "git call %q is missing %q", joined, want)
 	}
 }
 
@@ -96,20 +76,16 @@ func TestAuthorsFromGitLeavesAVerbItCannotPlaceUnowned(t *testing.T) {
 		return "", exec.ErrNotFound
 	}
 	authors, err := AuthorsFromGit(context.Background(), "/repo", verbs("nova-check links"), run, nil)
-	if err != nil {
-		t.Fatalf("one unplaceable verb failed the whole run: %v", err)
-	}
-	if got := authors.Author("nova-check links"); got != "" {
-		t.Fatalf("author = %q, want none", got)
-	}
+	require.NoError(t, err, "one unplaceable verb failed the whole run: %v", err)
+	got := authors.Author("nova-check links")
+	require.Empty(t, got, "author = %q, want none", got)
 }
 
 func TestAuthorsFromGitRefusesWithNoRepo(t *testing.T) {
 	t.Parallel()
 
-	if _, err := AuthorsFromGit(context.Background(), " ", verbs("nova-check links"), nil, nil); err == nil {
-		t.Fatal("an empty --repo was accepted; every path comes from a flag")
-	}
+	_, err := AuthorsFromGit(context.Background(), " ", verbs("nova-check links"), nil, nil)
+	require.Error(t, err, "an empty --repo was accepted; every path comes from a flag")
 }
 
 func TestAuthorsFromGitStopsOnADeadline(t *testing.T) {
@@ -118,9 +94,8 @@ func TestAuthorsFromGitStopsOnADeadline(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	run := func(ctx context.Context, dir string, args ...string) (string, error) { return "Rowan\n", nil }
-	if _, err := AuthorsFromGit(ctx, "/repo", verbs("nova-check links"), run, nil); err == nil {
-		t.Fatal("a cancelled read ran on; a wait with no deadline is a line that is stuck")
-	}
+	_, err := AuthorsFromGit(ctx, "/repo", verbs("nova-check links"), run, nil)
+	require.Error(t, err, "a cancelled read ran on; a wait with no deadline is a line that is stuck")
 }
 
 func TestAuthorsFromGitReportsProgress(t *testing.T) {
@@ -132,12 +107,8 @@ func TestAuthorsFromGitReportsProgress(t *testing.T) {
 		verbs("nova-check links", "nova-check nocode"), run,
 		func(done, total int) { last = done },
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if last != 2 {
-		t.Fatalf("progress stopped at %d of 2", last)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 2, last, "progress stopped at %d of 2", last)
 }
 
 // One end-to-end read against a real git repository built here, so the flags
@@ -159,21 +130,16 @@ func TestAuthorsFromGitAgainstARealRepository(t *testing.T) {
 			"GIT_AUTHOR_DATE=2026-09-18T09:00:00Z", "GIT_COMMITTER_DATE=2026-09-18T09:00:00Z",
 			"GIT_COMMITTER_NAME=Rowan Claude", "GIT_COMMITTER_EMAIL=rowan@mas-bandwidth.com",
 		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %v\n%s", args, err, out)
 	}
 	git("init", "-q", "-b", "main")
 	git("config", "user.name", "Rowan Claude")
 	git("config", "user.email", "rowan@mas-bandwidth.com")
-	if err := os.MkdirAll(filepath.Join(repo, "cmd", "nova-check"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "cmd", "nova-check"), 0o755))
 	write := func(body string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(repo, "cmd", "nova-check", "main.go"), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(repo, "cmd", "nova-check", "main.go"), []byte(body), 0o644))
 	}
 	write("package main\n\nfunc dispatch(v string) {\n\tswitch v {\n\tcase \"links\":\n\t}\n}\n")
 	git("add", "-A")
@@ -185,15 +151,11 @@ func TestAuthorsFromGitAgainstARealRepository(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	authors, err := AuthorsFromGit(ctx, repo, verbs("nova-check links", "nova-check nocode"), nil, nil)
-	if err != nil {
-		t.Fatalf("AuthorsFromGit: %v", err)
-	}
-	if got := authors.Author("nova-check links"); got != "Rowan Claude" {
-		t.Fatalf("links author = %q, want Rowan Claude", got)
-	}
-	if got := authors.Author("nova-check nocode"); got != "Somebody Later" {
-		t.Fatalf("nocode author = %q, want Somebody Later", got)
-	}
+	require.NoError(t, err, "AuthorsFromGit: %v", err)
+	got := authors.Author("nova-check links")
+	require.Equal(t, "Rowan Claude", got, "links author = %q, want Rowan Claude", got)
+	got = authors.Author("nova-check nocode")
+	require.Equal(t, "Somebody Later", got, "nocode author = %q, want Somebody Later", got)
 }
 
 // A fake clock, so the progress policy is tested and the suite waits for
@@ -213,9 +175,7 @@ func TestProgressSaysNothingOnARunThatAnswersAtOnce(t *testing.T) {
 	progress(1, 2)
 	clock.tick(10 * time.Millisecond)
 	progress(2, 2)
-	if said != 0 {
-		t.Fatalf("a run that answered at once printed %d progress lines", said)
-	}
+	require.Equal(t, 0, said, "a run that answered at once printed %d progress lines", said)
 }
 
 func TestProgressSpeaksUpOnARunThatLooksLikeAHangAndThenHoldsItsPace(t *testing.T) {
@@ -235,13 +195,9 @@ func TestProgressSpeaksUpOnARunThatLooksLikeAHangAndThenHoldsItsPace(t *testing.
 	clock.tick(10 * time.Millisecond)
 	progress(4, 4) // the last one always speaks
 	want := [][2]int{{1, 4}, {3, 4}, {4, 4}}
-	if len(said) != len(want) {
-		t.Fatalf("progress lines %v, want %v", said, want)
-	}
+	require.Len(t, said, len(want), "progress lines %v, want %v", said, want)
 	for i := range want {
-		if said[i] != want[i] {
-			t.Fatalf("progress lines %v, want %v", said, want)
-		}
+		require.Equal(t, want[i], said[i], "progress lines %v, want %v", said, want)
 	}
 }
 
@@ -258,29 +214,18 @@ func TestAuthorsFromGitBareKey(t *testing.T) {
 	}
 	verbs := []Verb{{Tool: "nova-fix"}, {Tool: "nova-fix", Verb: "links"}}
 	authors, err := AuthorsFromGit(context.Background(), "/repo", verbs, run, nil)
-	if err != nil {
-		t.Fatalf("AuthorsFromGit: %v", err)
-	}
-	if len(calls) != 2 {
-		t.Fatalf("%d git calls, want 2: %q", len(calls), calls)
-	}
+	require.NoError(t, err, "AuthorsFromGit: %v", err)
+	require.Len(t, calls, 2, "%d git calls, want 2: %q", len(calls), calls)
 	want := "log --reverse --diff-filter=A --format=%an -- cmd/nova-fix"
-	if got := strings.Join(calls[0], " "); got != want {
-		t.Fatalf("bare key read %q, want %q", got, want)
-	}
+	got := strings.Join(calls[0], " ")
+	require.Equal(t, want, got, "bare key read %q, want %q", got, want)
 	for _, a := range calls[0] {
-		if a == "-S" {
-			t.Fatalf("bare key read carries -S: %q", calls[0])
-		}
+		require.NotEqual(t, "-S", a, "bare key read carries -S: %q", calls[0])
 	}
-	if got := authors.Author("nova-fix"); got != "Ada" {
-		t.Fatalf("Author(nova-fix) = %q, want Ada", got)
-	}
+	got = authors.Author("nova-fix")
+	require.Equal(t, "Ada", got, "Author(nova-fix) = %q, want Ada", got)
 	words := strings.Join(calls[1], " ")
-	if !strings.Contains(words, "-S") || !strings.HasSuffix(words, "-- cmd/nova-fix") {
-		t.Fatalf("nova-fix links read %q, want the -S read under cmd/nova-fix", words)
-	}
-	if got := authors.Author("nova-fix links"); got != "Ada" {
-		t.Fatalf("Author(nova-fix links) = %q, want Ada", got)
-	}
+	require.True(t, strings.Contains(words, "-S") && strings.HasSuffix(words, "-- cmd/nova-fix"), "nova-fix links read %q, want the -S read under cmd/nova-fix", words)
+	got = authors.Author("nova-fix links")
+	require.Equal(t, "Ada", got, "Author(nova-fix links) = %q, want Ada", got)
 }

@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -63,7 +66,7 @@ func TestCutNamesTheTruncationBeforeTheHitsItFoundInIt(t *testing.T) {
 	code := Run("nova-update", []string{"cut", "--repo", "o/n", "--from", "main",
 		"--version", "v0.16.0", "--changelog", path}, &out, &errs, cutDeps(t, f))
 	if code != 2 {
-		t.Fatalf("a truncated file list was classified anyway: code=%d out=%s", code, out.String())
+		require.Equal(t, 2, code, "a truncated file list was classified anyway: code=%d out=%s", code, out.String())
 	}
 	for _, want := range []string{
 		"RELEASE CUT REFUSED",
@@ -74,11 +77,11 @@ func TestCutNamesTheTruncationBeforeTheHitsItFoundInIt(t *testing.T) {
 		"v0.15.10...abc123abc123def",
 	} {
 		if !strings.Contains(errs.String(), want) {
-			t.Errorf("the truncation refusal does not carry %q:\n%s", want, errs.String())
+			assert.Contains(t, errs.String(), want, "the truncation refusal does not carry %q:\n%s", want, errs.String())
 		}
 	}
 	if len(f.tagged) != 0 {
-		t.Fatalf("a refused cut tagged %v", f.tagged)
+		require.Len(t, f.tagged, 0, "a refused cut tagged %v", f.tagged)
 	}
 }
 
@@ -96,13 +99,13 @@ func TestCutRefusesATruncatedRangeEvenWithASecurityRead(t *testing.T) {
 		"--version", "v0.16.0", "--changelog", path,
 		"--security-read", "johnny-4b9200ddc994"}, &out, &errs, cutDeps(t, f))
 	if code != 2 {
-		t.Fatalf("a read got past a truncated list: code=%d out=%s", code, out.String())
+		require.Equal(t, 2, code, "a read got past a truncated list: code=%d out=%s", code, out.String())
 	}
 	if !strings.Contains(errs.String(), "reason=compare-truncated") {
-		t.Fatalf("the refusal is not the truncation one: %s", errs.String())
+		require.Contains(t, errs.String(), "reason=compare-truncated", "the refusal is not the truncation one: %s", errs.String())
 	}
 	if len(f.tagged) != 0 {
-		t.Fatalf("a refused cut tagged %v", f.tagged)
+		require.Len(t, f.tagged, 0, "a refused cut tagged %v", f.tagged)
 	}
 }
 
@@ -134,18 +137,18 @@ func TestCutLocalDiffClassifiesTheCompleteListItProduced(t *testing.T) {
 	// Still a refusal -- the complete list is sensitive -- but for the RIGHT
 	// reason, and naming the path the truncated list could not see.
 	if code != 2 {
-		t.Fatalf("code=%d out=%s", code, out.String())
+		require.Equal(t, 2, code, "code=%d out=%s", code, out.String())
 	}
 	if strings.Contains(errs.String(), "compare-truncated") {
-		t.Fatalf("the local list was still treated as truncated: %s", errs.String())
+		require.NotContains(t, errs.String(), "compare-truncated", "the local list was still treated as truncated: %s", errs.String())
 	}
 	for _, want := range []string{"internal/sandbox/run.go", "--security-read", "3 paths"} {
 		if !strings.Contains(errs.String(), want) {
-			t.Errorf("the refusal does not carry %q:\n%s", want, errs.String())
+			assert.Contains(t, errs.String(), want, "the refusal does not carry %q:\n%s", want, errs.String())
 		}
 	}
 	if len(g.asked) != 1 || g.asked[0] != dir+" v0.15.10...abc123abc123def" {
-		t.Fatalf("git was asked %v, want one three-dot range in %s", g.asked, dir)
+		require.FailNowf(t, "", "git was asked %v, want one three-dot range in %s", g.asked, dir)
 	}
 }
 
@@ -168,13 +171,13 @@ func TestCutLocalDiffWithAReadSaysWhereTheListCameFrom(t *testing.T) {
 		"--version", "v0.16.0", "--changelog", path, "--local-diff", dir,
 		"--security-read", "johnny-4b9200ddc994"}, &out, &errs, deps)
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, errs.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, errs.String())
 	}
 	if !strings.Contains(out.String(), "RELEASE CUT PATHS source=local-diff files=2") {
-		t.Fatalf("no paths receipt in:\n%s", out.String())
+		require.Contains(t, out.String(), "RELEASE CUT PATHS source=local-diff files=2", "no paths receipt in:\n%s", out.String())
 	}
 	if !strings.Contains(out.String(), "RELEASE CUT SENSITIVE paths=1 read=johnny-4b9200ddc994") {
-		t.Fatalf("no sensitive line in:\n%s", out.String())
+		require.Contains(t, out.String(), "RELEASE CUT SENSITIVE paths=1 read=johnny-4b9200ddc994", "no sensitive line in:\n%s", out.String())
 	}
 }
 
@@ -197,15 +200,15 @@ func TestCutLocalDiffWritesThePathsFileItClassified(t *testing.T) {
 		"--version", "v0.16.0", "--changelog", filepath.Join(dir, "CHANGELOG.md"),
 		"--local-diff", dir, "--paths-from", paths}, &out, &errs, deps)
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, errs.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, errs.String())
 	}
 	written, err := os.ReadFile(paths)
 	if err != nil {
-		t.Fatalf("--local-diff --paths-from wrote no file: %v", err)
+		require.NoError(t, err, "--local-diff --paths-from wrote no file: %v", err)
 	}
 	for _, want := range []string{PathsHeaderPrefix, "v0.15.10...abc123abc123def", "README.md", "docs/SPEC-UPDATE.md"} {
 		if !strings.Contains(string(written), want) {
-			t.Errorf("the written list does not carry %q:\n%s", want, string(written))
+			assert.Contains(t, string(written), want, "the written list does not carry %q:\n%s", want, string(written))
 		}
 	}
 	// And it reads back on a second cut, with no git and no forge file list.
@@ -214,10 +217,10 @@ func TestCutLocalDiffWritesThePathsFileItClassified(t *testing.T) {
 	if code := Run("nova-update", []string{"cut", "--repo", "o/n", "--from", "main",
 		"--version", "v0.16.1", "--changelog", filepath.Join(dir, "CHANGELOG.md"),
 		"--paths-from", paths}, &out2, &errs2, cutDeps(t, f2)); code != 0 {
-		t.Fatalf("reading back the list refused: code=%d errs=%s", code, errs2.String())
+		require.Equal(t, 0, code, "reading back the list refused: code=%d errs=%s", code, errs2.String())
 	}
 	if !strings.Contains(out2.String(), "RELEASE CUT PATHS source=paths-from files=2") {
-		t.Fatalf("no paths receipt in:\n%s", out2.String())
+		require.Contains(t, out2.String(), "RELEASE CUT PATHS source=paths-from files=2", "no paths receipt in:\n%s", out2.String())
 	}
 }
 
@@ -238,7 +241,7 @@ func TestCutRefusesAPathsFileNobodyProduced(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			paths := filepath.Join(dir, tc.name+".txt")
 			if err := os.WriteFile(paths, []byte(tc.body), 0o644); err != nil {
-				t.Fatal(err)
+				require.NoError(t, err, err)
 			}
 			f := truncatedForge()
 			var out, errs bytes.Buffer
@@ -246,13 +249,13 @@ func TestCutRefusesAPathsFileNobodyProduced(t *testing.T) {
 				"--version", "v0.16.0", "--changelog", filepath.Join(dir, "CHANGELOG.md"),
 				"--paths-from", paths}, &out, &errs, cutDeps(t, f))
 			if code != 2 {
-				t.Fatalf("code=%d out=%s", code, out.String())
+				require.Equal(t, 2, code, "code=%d out=%s", code, out.String())
 			}
 			if !strings.Contains(errs.String(), tc.wants) {
-				t.Fatalf("the refusal does not say why: %s", errs.String())
+				require.Contains(t, errs.String(), tc.wants, "the refusal does not say why: %s", errs.String())
 			}
 			if len(f.tagged) != 0 {
-				t.Fatalf("a refused cut tagged %v", f.tagged)
+				require.Len(t, f.tagged, 0, "a refused cut tagged %v", f.tagged)
 			}
 		})
 	}
@@ -274,23 +277,23 @@ func TestBuildRefusesAnUnsupportedPairBeforeBuildingAnything(t *testing.T) {
 		"--platform", "darwin-arm64,darwin-amd64", "--platform", "plan9-vax"},
 		&out, &errs, Deps{Toolchain: tc})
 	if code != 2 {
-		t.Fatalf("an unsupported pair built anyway: code=%d out=%s", code, out.String())
+		require.Equal(t, 2, code, "an unsupported pair built anyway: code=%d out=%s", code, out.String())
 	}
 	if !strings.Contains(errs.String(), "plan9-vax") {
-		t.Fatalf("the refusal does not name the pair: %s", errs.String())
+		require.Contains(t, errs.String(), "plan9-vax", "the refusal does not name the pair: %s", errs.String())
 	}
 	if len(tc.calls) != 0 {
-		t.Fatalf("a refused build compiled %d packages", len(tc.calls))
+		require.Len(t, tc.calls, 0, "a refused build compiled %d packages", len(tc.calls))
 	}
 	// NOTHING IS LEFT BEHIND: not the bad platform's directory, and not the
 	// good ones' either. A half-made release root is a root somebody reasons
 	// about.
 	entries, err := os.ReadDir(out1)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if len(entries) != 0 {
-		t.Fatalf("a refused build left %v in the release root", entries)
+		require.Len(t, entries, 0, "a refused build left %v in the release root", entries)
 	}
 }
 
@@ -309,19 +312,19 @@ func TestBuildBuildsEveryPlatformAndNamesEachInTheReceipt(t *testing.T) {
 		"--platform", "darwin-arm64,darwin-amd64", "--platform", "linux-amd64"},
 		&out, &errs, Deps{Toolchain: tc})
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, errs.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, errs.String())
 	}
 	for _, platform := range []string{"darwin-arm64", "darwin-amd64", "linux-amd64"} {
 		if !strings.Contains(out.String(), "RELEASE BUILT version=v0.16.0 platform="+platform+" ") {
-			t.Errorf("no receipt line for %s:\n%s", platform, out.String())
+			assert.Contains(t, out.String(), "RELEASE BUILT version=v0.16.0 platform="+platform+" ", "no receipt line for %s:\n%s", platform, out.String())
 		}
 		if _, err := os.Stat(filepath.Join(root, "v0.16.0", platform, SumsFile)); err != nil {
-			t.Errorf("%s has no %s: %v", platform, SumsFile, err)
+			assert.NoError(t, err, "%s has no %s: %v", platform, SumsFile, err)
 		}
 	}
 	// And one line that names them all, so a reader does not have to count.
 	if !strings.Contains(out.String(), "RELEASE BUILD OK version=v0.16.0 platforms=darwin-arm64,darwin-amd64,linux-amd64") {
-		t.Fatalf("no summary line naming every platform:\n%s", out.String())
+		require.Contains(t, out.String(), "RELEASE BUILD OK version=v0.16.0 platforms=darwin-arm64,darwin-amd64,linux-amd64", "no summary line naming every platform:\n%s", out.String())
 	}
 }
 
@@ -339,36 +342,36 @@ func TestBuildWritesTheSumsDigestBesideTheArtifacts(t *testing.T) {
 	if code := Run("nova-update", []string{"build", "--version", "v0.16.0",
 		"--out", root, "--source", buildSource(t), "--platform", "linux-amd64"},
 		&out, &errs, Deps{Toolchain: tc}); code != 0 {
-		t.Fatalf("code=%d errs=%s", code, errs.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, errs.String())
 	}
 	dir := ArtifactDir(root, "v0.16.0", "linux", "amd64")
 	want, err := fileSum(filepath.Join(dir, SumsFile))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	body, err := os.ReadFile(filepath.Join(dir, DigestFile))
 	if err != nil {
-		t.Fatalf("build wrote no %s: %v", DigestFile, err)
+		require.NoError(t, err, "build wrote no %s: %v", DigestFile, err)
 	}
 	if strings.TrimSpace(string(body)) != want {
-		t.Fatalf("%s says %q, the %s hashes to %s", DigestFile, strings.TrimSpace(string(body)), SumsFile, want)
+		require.Equal(t, want, strings.TrimSpace(string(body)), "%s says %q, the %s hashes to %s", DigestFile, strings.TrimSpace(string(body)), SumsFile, want)
 	}
 	for _, line := range []string{"RELEASE BUILT version=v0.16.0 platform=linux-amd64", "RELEASE BUILD OK version=v0.16.0"} {
 		if !strings.Contains(out.String(), line) {
-			t.Fatalf("no %q in:\n%s", line, out.String())
+			require.Contains(t, out.String(), line, "no %q in:\n%s", line, out.String())
 		}
 	}
 	if !strings.Contains(out.String(), "sums="+want) {
-		t.Fatalf("no receipt carries the digest %s:\n%s", want, out.String())
+		require.Contains(t, out.String(), "sums="+want, "no receipt carries the digest %s:\n%s", want, out.String())
 	}
 	// The digest file is NOT in the checksum file it is the digest of, and a
 	// second build over the same directory answers the same digest.
 	sums, err := os.ReadFile(filepath.Join(dir, SumsFile))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if strings.Contains(string(sums), DigestFile) {
-		t.Fatalf("%s lists %s, so its own digest depends on itself:\n%s", SumsFile, DigestFile, string(sums))
+		require.NotContains(t, string(sums), DigestFile, "%s lists %s, so its own digest depends on itself:\n%s", SumsFile, DigestFile, string(sums))
 	}
 }
 
@@ -381,12 +384,12 @@ func TestAdoptExpectSumsFromReadsTheCoordinatorsDigestFile(t *testing.T) {
 	built, version := stagedRelease(t)
 	digest, err := fileSum(filepath.Join(built, SumsFile))
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	dir := t.TempDir()
 	digestPath := filepath.Join(dir, DigestFile)
 	if err := os.WriteFile(digestPath, []byte(digest+"\n"), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	s := &fakeSSH{
 		answer:  map[string]string{"hulk": "nova-update " + version + " linux/amd64 go1.26.5\nRELEASE INSTALLED version=" + version + " tools=3 skipped=0 retired=0"},
@@ -397,7 +400,7 @@ func TestAdoptExpectSumsFromReadsTheCoordinatorsDigestFile(t *testing.T) {
 	}
 	machines := filepath.Join(dir, "machines.tsv")
 	if err := os.WriteFile(machines, []byte("hulk\n"), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var out, errs bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", version,
@@ -406,7 +409,7 @@ func TestAdoptExpectSumsFromReadsTheCoordinatorsDigestFile(t *testing.T) {
 		"--bin", "~/.local/bin", "--dest", "~/nova-release", "--platform", "linux-amd64"},
 		&out, &errs, Deps{SSH: s, Self: func() string { return version }})
 	if code != 0 {
-		t.Fatalf("code=%d errs=%s out=%s", code, errs.String(), out.String())
+		require.Equal(t, 0, code, "code=%d errs=%s out=%s", code, errs.String(), out.String())
 	}
 	// THE FETCH SOURCE NEVER HASHES. Decision 2: a digest computed where the
 	// bits live is not evidence about the bits. Destination `sha256sum -c` of
@@ -415,12 +418,12 @@ func TestAdoptExpectSumsFromReadsTheCoordinatorsDigestFile(t *testing.T) {
 		if strings.HasPrefix(run, "build-host:") {
 			for _, banned := range []string{"sha256sum", "shasum", "openssl", "md5"} {
 				if strings.Contains(run, banned) {
-					t.Fatalf("adopt asked the machine holding the bits to hash them: %s", run)
+					require.NotContains(t, run, banned, "adopt asked the machine holding the bits to hash them: %s", run)
 				}
 			}
 		}
 		if strings.Contains(run, "sha256sum") && strings.Contains(run, SumsFile) && !strings.Contains(run, "-c") {
-			t.Fatalf("adopt asked a machine to hash %s as if that were --expect-sums: %s", SumsFile, run)
+			require.FailNowf(t, "", "adopt asked a machine to hash %s as if that were --expect-sums: %s", SumsFile, run)
 		}
 	}
 }
@@ -433,7 +436,7 @@ func TestAdoptRefusesADigestFileOnTheFarSide(t *testing.T) {
 	dir := t.TempDir()
 	machines := filepath.Join(dir, "machines.tsv")
 	if err := os.WriteFile(machines, []byte("hulk\n"), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var out, errs bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
@@ -442,10 +445,10 @@ func TestAdoptRefusesADigestFileOnTheFarSide(t *testing.T) {
 		"--bin", "~/.local/bin", "--dest", "~/nova-release", "--platform", "linux-amd64"},
 		&out, &errs, Deps{SSH: &fakeSSH{}, Self: func() string { return "v0.16.0" }})
 	if code != 2 {
-		t.Fatalf("a far-side digest file was accepted: code=%d out=%s", code, out.String())
+		require.Equal(t, 2, code, "a far-side digest file was accepted: code=%d out=%s", code, out.String())
 	}
 	if !strings.Contains(errs.String(), "--expect-sums-from") || !strings.Contains(errs.String(), "build-host") {
-		t.Fatalf("the refusal does not name the file: %s", errs.String())
+		require.FailNowf(t, "", "the refusal does not name the file: %s", errs.String())
 	}
 }
 
@@ -461,7 +464,7 @@ func TestAdoptRefusesWhenTheLocalToolPredatesTheRelease(t *testing.T) {
 	dir := t.TempDir()
 	machines := filepath.Join(dir, "machines.tsv")
 	if err := os.WriteFile(machines, []byte("hulk\n"), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	s := &fakeSSH{}
 	var out, errs bytes.Buffer
@@ -470,15 +473,15 @@ func TestAdoptRefusesWhenTheLocalToolPredatesTheRelease(t *testing.T) {
 		"--bin", "~/.local/bin", "--dest", "~/nova-release", "--platform", "linux-amd64"},
 		&out, &errs, Deps{SSH: s, Self: func() string { return "v0.16.0" }})
 	if code != 2 {
-		t.Fatalf("a stale coordinator adopted anyway: code=%d out=%s", code, out.String())
+		require.Equal(t, 2, code, "a stale coordinator adopted anyway: code=%d out=%s", code, out.String())
 	}
 	for _, want := range []string{"v0.16.0", "v0.17.0", "release install"} {
 		if !strings.Contains(errs.String(), want) {
-			t.Errorf("the refusal does not carry %q: %s", want, errs.String())
+			assert.Contains(t, errs.String(), want, "the refusal does not carry %q: %s", want, errs.String())
 		}
 	}
 	if len(s.runs) != 0 || len(s.sends) != 0 {
-		t.Fatalf("a refused adopt touched a machine: runs=%v sends=%v", s.runs, s.sends)
+		require.FailNowf(t, "", "a refused adopt touched a machine: runs=%v sends=%v", s.runs, s.sends)
 	}
 }
 
@@ -494,17 +497,17 @@ func TestPullDeletesTheDigestFileToo(t *testing.T) {
 	root := filepath.Dir(filepath.Dir(built))
 	changelog := filepath.Join(t.TempDir(), "CHANGELOG.md")
 	if err := os.WriteFile(changelog, []byte("# nova-tools changelog\n\n## "+version+" — 2026-09-18\n\n- #1 x\n"), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	var out, errs bytes.Buffer
 	if code := Run("nova-update", []string{"pull", "--version", version, "--out", root,
 		"--changelog", changelog, "--platform", "linux-amd64", "--reason", "a test"},
 		&out, &errs, Deps{}); code != 0 {
-		t.Fatalf("code=%d errs=%s", code, errs.String())
+		require.Equal(t, 0, code, "code=%d errs=%s", code, errs.String())
 	}
 	if _, err := os.Stat(built); !os.IsNotExist(err) {
 		left, _ := os.ReadDir(built)
-		t.Fatalf("the artifact directory survived the pull, holding %v", left)
+		require.FailNowf(t, "", "the artifact directory survived the pull, holding %v", left)
 	}
 }
 
@@ -515,7 +518,7 @@ func buildSource(t *testing.T) string {
 	source := t.TempDir()
 	for _, tool := range []string{"nova-bus", "nova-update", "nova-work"} {
 		if err := os.MkdirAll(filepath.Join(source, "cmd", tool), 0o755); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	return source
@@ -531,7 +534,7 @@ func stagedRelease(t *testing.T) (string, string) {
 	if code := Run("nova-update", []string{"build", "--version", version,
 		"--out", root, "--source", buildSource(t), "--platform", "linux-amd64"},
 		&out, &errs, Deps{Toolchain: &fakeToolchain{}}); code != 0 {
-		t.Fatalf("staging a release refused: %s", errs.String())
+		require.Equal(t, 0, code, "staging a release refused: %s", errs.String())
 	}
 	return ArtifactDir(root, version, "linux", "amd64"), version
 }

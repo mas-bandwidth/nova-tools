@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -35,18 +37,15 @@ func TestReadResultTakesTheHeadFromRevAndTheReportFromOneLine(t *testing.T) {
 	t.Parallel()
 	p := resultFixture(t, "# Result\n\nrev: 0a1b2c3d\n\n## One line\n\n  landed the member loop  \nsecond line of it\n\n## Details\n\nnot this\n")
 	head, _, report := readResult(p)
-	if head != "0a1b2c3d" || report != "landed the member loop" {
-		t.Fatalf("readResult = (%q, %q), want (0a1b2c3d, landed the member loop)", head, report)
-	}
+	require.Equal(t, "0a1b2c3d", head, "readResult = (%q, %q), want (0a1b2c3d, landed the member loop)", head, report)
+	require.Equal(t, "landed the member loop", report, "readResult = (%q, %q), want (0a1b2c3d, landed the member loop)", head, report)
 }
 
 // TestReadResultOneLineHeadingIsCaseInsensitive pins the section's name.
 func TestReadResultOneLineHeadingIsCaseInsensitive(t *testing.T) {
 	t.Parallel()
 	_, _, report := readResult(resultFixture(t, "## ONE line\nshouted\n"))
-	if report != "shouted" {
-		t.Fatalf("report = %q, want shouted", report)
-	}
+	require.Equal(t, "shouted", report, "report = %q, want shouted", report)
 }
 
 // TestReadResultWithoutAOneLineUsesTheFirstProse pins the fallback: the
@@ -55,12 +54,8 @@ func TestReadResultOneLineHeadingIsCaseInsensitive(t *testing.T) {
 func TestReadResultWithoutAOneLineUsesTheFirstProse(t *testing.T) {
 	t.Parallel()
 	head, _, report := readResult(resultFixture(t, "# Result\n\nrev: cafe0123\nstatus: done\n\nDid the thing.\nAnd then more.\n"))
-	if head != "cafe0123" {
-		t.Fatalf("head = %q, want cafe0123", head)
-	}
-	if report != "Did the thing." {
-		t.Fatalf("report = %q, want the first prose line", report)
-	}
+	require.Equal(t, "cafe0123", head, "head = %q, want cafe0123", head)
+	require.Equal(t, "Did the thing.", report, "report = %q, want the first prose line", report)
 }
 
 // TestReadResultRefusesARevThatIsNotASha pins that a rev with spaces (prose,
@@ -73,16 +68,11 @@ func TestReadResultRefusesARevThatIsNotASha(t *testing.T) {
 		"too long": strings.Repeat("a", 65),
 	} {
 		head, _, report := readResult(resultFixture(t, "rev: "+rev+"\n## One line\nthe line\n"))
-		if head != "" {
-			t.Errorf("%s: head = %q, want empty", name, head)
-		}
-		if report != "the line" {
-			t.Errorf("%s: report = %q, the report is kept when the head is refused", name, report)
-		}
+		assert.Empty(t, head, "%s: head = %q, want empty", name, head)
+		assert.Equal(t, "the line", report, "%s: report = %q, the report is kept when the head is refused", name, report)
 	}
-	if head, _, _ := readResult(resultFixture(t, "rev: "+strings.Repeat("b", 64)+"\n")); head != strings.Repeat("b", 64) {
-		t.Errorf("a 64-byte rev is kept, got %q", head)
-	}
+	head, _, _ := readResult(resultFixture(t, "rev: "+strings.Repeat("b", 64)+"\n"))
+	assert.Equal(t, strings.Repeat("b", 64), head, "a 64-byte rev is kept, got %q", head)
 }
 
 // TestReadResultOfNothing pins the two ways there is no result: no path and a
@@ -90,9 +80,9 @@ func TestReadResultRefusesARevThatIsNotASha(t *testing.T) {
 func TestReadResultOfNothing(t *testing.T) {
 	t.Parallel()
 	for _, p := range []string{"", filepath.Join(t.TempDir(), "absent", "RESULT.md")} {
-		if head, _, report := readResult(p); head != "" || report != "" {
-			t.Errorf("readResult(%q) = (%q, %q), want empty", p, head, report)
-		}
+		head, _, report := readResult(p)
+		assert.Equal(t, "", head, "readResult(%q) = (%q, %q), want empty", p, head, report)
+		assert.Equal(t, "", report, "readResult(%q) = (%q, %q), want empty", p, head, report)
 	}
 }
 
@@ -109,19 +99,14 @@ func TestNewestResultPicksTheNewestOfTwo(t *testing.T) {
 	}
 	now := time.Now()
 	for p, at := range map[string]time.Time{old: now.Add(-time.Hour), recent: now.Add(-time.Minute), decoy: now} {
-		if err := os.Chtimes(p, at, at); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Chtimes(p, at, at))
 	}
-	if got := newestResult(dir); got != recent {
-		t.Fatalf("newestResult = %q, want %q", got, recent)
-	}
-	if got := newestResult(filepath.Join(dir, "absent")); got != "" {
-		t.Fatalf("newestResult of a directory that is not there = %q, want empty", got)
-	}
-	if got := newestResult(t.TempDir()); got != "" {
-		t.Fatalf("newestResult of an empty directory = %q, want empty", got)
-	}
+	got := newestResult(dir)
+	require.Equal(t, recent, got, "newestResult = %q, want %q", got, recent)
+	got = newestResult(filepath.Join(dir, "absent"))
+	require.Empty(t, got, "newestResult of a directory that is not there = %q, want empty", got)
+	got = newestResult(t.TempDir())
+	require.Empty(t, got, "newestResult of an empty directory = %q, want empty", got)
 }
 
 // fullSha and pushedSha are two commits a result or the git shim names.
@@ -168,54 +153,54 @@ func TestNativeChildReadsHowItEnded(t *testing.T) {
 		write(t, filepath.Join(job, cardcontract.PushedName), tc.pushed)
 		write(t, filepath.Join(job, cardcontract.FinishName), tc.finish)
 		c := &nativeChild{card: "c1", logPath: logPath, results: results, job: job, done: done}
-		if !c.Done() {
-			t.Fatalf("%s: a child whose done channel is closed is done", tc.name)
-		}
+		require.True(t, c.Done(), "%s: a child whose done channel is closed is done", tc.name)
 		r := c.Result()
 		wantReport := strings.ReplaceAll(tc.report, "LOG", logPath)
 		if tc.finish != "" {
 			assert.Equal(t, "the body\n\n## RESULT.md\n\nRESULT: c1 sha=0123\n## One line\ngate green", r.Body, "the child's RESULT.md rides in the body")
 		}
-		if r.OK != tc.ok || r.Head != tc.head || r.Report != wantReport {
-			t.Errorf("%s: Result = %+v, want ok=%t head=%q report=%q", tc.name, r, tc.ok, tc.head, wantReport)
-		}
+		assert.Equal(t, tc.ok, r.OK, "%s: Result = %+v, want ok=%t head=%q report=%q", tc.name, r, tc.ok, tc.head, wantReport)
+		assert.Equal(t, tc.head, r.Head, "%s: Result = %+v, want ok=%t head=%q report=%q", tc.name, r, tc.ok, tc.head, wantReport)
+		assert.Equal(t, wantReport, r.Report, "%s: Result = %+v, want ok=%t head=%q report=%q", tc.name, r, tc.ok, tc.head, wantReport)
 	}
 }
 
 // memberFull is every flag of `member` the verb requires, valid.
 func memberFull(root string) []string {
-	return []string{"member", "--as", "m1", "--width", "2", "--harness", "/bin/true", "--model", "p/m",
+	return []string{"member", "--as", "m1", "--server", "sprint.test:6390", "--width", "2", "--harness", "/bin/true", "--model", "p/m",
 		"--root", root, "--tokens", "unmetered", "--deadline", "30s", "--once"}
+}
+
+// noServer is a sprint server that never answers, handed to cmdMember as its send: a
+// member run in a test sends no verb anywhere (no socket), and each verb of its tick
+// fails as it does when the server is down.
+func noServer(context.Context, ...[]string) ([]sprintwire.Result, error) {
+	return nil, errors.New("no sprint server in this test")
 }
 
 // TestMemberWithNoFlagsRefusesAndNamesEachMissingOne pins refusing to guess:
 // exit 2, nothing on stdout, and one line for each required flag (all of them
 // in one run, not one a run). The width, the model, the budget and the deadline
 // are not among them: the fleet row names the width and the card's route the
-// rest; the flags are an override.
+// rest; the flags are an override. --server is among them, naming the server's own
+// verb: a member has no sprint but the server.
 func TestMemberWithNoFlagsRefusesAndNamesEachMissingOne(t *testing.T) {
 	t.Parallel()
 	var out, errb bytes.Buffer
-	if code := run([]string{"member"}, strings.NewReader(""), &out, &errb, time.Now()); code != 2 {
-		t.Fatalf("exit %d, want 2", code)
-	}
-	if out.Len() != 0 {
-		t.Fatalf("stdout %q, want empty", out.String())
-	}
+	code := run([]string{"member"}, strings.NewReader(""), &out, &errb, time.Now())
+	require.Equal(t, 2, code, "exit %d, want 2", code)
+	require.Zero(t, out.Len(), "stdout %q, want empty", out.String())
 	lines := strings.Split(strings.TrimSpace(errb.String()), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("%d lines, want 3 (one per missing flag):\n%s", len(lines), errb.String())
-	}
-	for _, flag := range []string{"--as", "--harness", "--root"} {
+	require.Len(t, lines, 4, "%d lines, want 4 (one per missing flag):\n%s", len(lines), errb.String())
+	assert.Contains(t, errb.String(), "nova-swarm member: --server is required; it wants the sprint server's host:port, the run loop started with nova-sprint run --listen")
+	for _, flag := range []string{"--as", "--server", "--harness", "--root"} {
 		n := 0
 		for _, l := range lines {
 			if strings.HasPrefix(l, "nova-swarm member: "+flag+" is required") && strings.Contains(l, "refusing to guess") {
 				n++
 			}
 		}
-		if n != 1 {
-			t.Errorf("%s is named on %d lines, want 1:\n%s", flag, n, errb.String())
-		}
+		assert.Equal(t, 1, n, "%s is named on %d lines, want 1:\n%s", flag, n, errb.String())
 	}
 }
 
@@ -240,9 +225,9 @@ func TestMemberWithAWidthOfZeroRefuses(t *testing.T) {
 		}
 		args = append(args, c.extra...)
 		var out, errb bytes.Buffer
-		if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), c.want) {
-			t.Fatalf("--width %s %v: exit %d, stderr %q", c.width, c.extra, code, errb.String())
-		}
+		code := run(args, strings.NewReader(""), &out, &errb, time.Now())
+		require.Equal(t, 2, code, "--width %s %v: exit %d, stderr %q", c.width, c.extra, code, errb.String())
+		require.Contains(t, errb.String(), c.want, "--width %s %v: exit %d, stderr %q", c.width, c.extra, code, errb.String())
 	}
 }
 
@@ -259,43 +244,41 @@ func TestMemberRefusesANameWithASlashBeforeItMakesAnything(t *testing.T) {
 			}
 		}
 		var out, errb bytes.Buffer
-		if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 {
-			t.Errorf("--as %q: exit %d, want 2", as, code)
-		}
-		if !strings.Contains(errb.String(), "is not a name") {
-			t.Errorf("--as %q: stderr %q does not say it is not a name", as, errb.String())
-		}
-		if out.Len() != 0 {
-			t.Errorf("--as %q: stdout %q, want empty", as, out.String())
-		}
+		code := run(args, strings.NewReader(""), &out, &errb, time.Now())
+		assert.Equal(t, 2, code, "--as %q: exit %d, want 2", as, code)
+		assert.Contains(t, errb.String(), "is not a name", "--as %q: stderr %q does not say it is not a name", as, errb.String())
+		assert.Zero(t, out.Len(), "--as %q: stdout %q, want empty", as, out.String())
 		for _, d := range []string{"slots", "results"} {
-			if _, err := os.Stat(filepath.Join(root, d)); !os.IsNotExist(err) {
-				t.Errorf("--as %q made %s before refusing: %v", as, d, err)
-			}
+			_, err := os.Stat(filepath.Join(root, d))
+			assert.True(t, os.IsNotExist(err), "--as %q made %s before refusing: %v", as, d, err)
 		}
 	}
 }
 
-// TestExecSprintReturnsTheVerbsExitAndBody pins the seam to nova-sprint: the
-// actor rides in the environment, stdout is the success body, a failed verb
-// keeps both its stderr and any stdout receipt, diagnostics are redacted and
-// bounded, and a binary that will not start is exit 2.
-func TestExecSprintReturnsTheVerbsExitAndBody(t *testing.T) {
+// A verb the server ran and that did not exit 0 reaches the member's log as one bounded
+// line: stderr first, then any stdout receipt, secret-shaped values redacted, each half
+// keeping room for the other (sprintFailureOutput, the member's sprintwire.Worker Failed);
+// a verb that succeeded hands its stdout back whole.
+func TestAFailedVerbsWordsAreOneRedactedBoundedLine(t *testing.T) {
 	t.Parallel()
-	windowsIsNotABench(t)
-	bin := filepath.Join(t.TempDir(), "sprint")
 	secret := "sk-" + strings.Repeat("Ab1", 8)
-	script := "#!/bin/sh\ncase \"$1\" in\nok) echo \"actor=$NOVA_SPRINT_ACTOR args=$*\";;\nrefuse) echo \"refused: $2\" >&2; exit 1;;\nmixed) echo body; echo noise >&2; exit 1;;\nsecret) echo receipt; echo \"token=" + secret + "\" >&2; exit 2;;\nlarge) printf '%0600d\\n' 0; echo 'actual failure' >&2; exit 2;;\ncontrol) printf 'receipt\\nsecond\\tline\\n'; printf 'store\\nfailed\\tbad\\n' >&2; exit 2;;\nesac\n"
-	if err := testbin.WriteExecutable(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+	answers := map[string]sprintwire.Result{
+		"ok":      {Stdout: "body\n"},
+		"refuse":  {Code: 1, Stderr: "refused: why\n"},
+		"mixed":   {Code: 1, Stdout: "body\n", Stderr: "noise\n"},
+		"secret":  {Code: 2, Stdout: "receipt\n", Stderr: "token=" + secret + "\n"},
+		"large":   {Code: 2, Stdout: strings.Repeat("0", 600) + "\n", Stderr: "actual failure\n"},
+		"control": {Code: 2, Stdout: "receipt\nsecond\tline\n", Stderr: "store\nfailed\tbad\n"},
 	}
-	s := &execSprint{bin: bin, actor: "m1"}
-	if code, out := s.Run("ok", "--json"); code != 0 || strings.TrimSpace(string(out)) != "actor=m1 args=ok --json" {
-		t.Fatalf("ok: (%d, %q)", code, out)
-	}
-	if code, out := s.Run("refuse", "why"); code != 1 || strings.TrimSpace(string(out)) != "refused: why" {
-		t.Fatalf("refuse: (%d, %q)", code, out)
-	}
+	w := &sprintwire.Worker{Failed: sprintFailureOutput, Send: func(_ context.Context, verbs ...[]string) ([]sprintwire.Result, error) {
+		return []sprintwire.Result{answers[verbs[0][0]]}, nil
+	}}
+	code, out := w.Run("ok")
+	require.Equal(t, 0, code)
+	require.Equal(t, "body\n", string(out))
+	code, out = w.Run("refuse")
+	require.Equal(t, 1, code)
+	require.Equal(t, "refused: why", string(out))
 	for _, c := range []struct {
 		name, want string
 		code       int
@@ -309,7 +292,8 @@ func TestExecSprintReturnsTheVerbsExitAndBody(t *testing.T) {
 		{name: "control", code: 2, want: `stderr: store\x0afailed\x09bad; stdout: receipt\x0asecond\x09line`, excludes: []string{"\n", "\t"}, bounded: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			code, out := s.Run(c.name)
+			t.Parallel()
+			code, out := w.Run(c.name)
 			assert.Equal(t, c.code, code, c.name)
 			if c.want != "" {
 				assert.Equal(t, c.want, string(out), c.name)
@@ -328,10 +312,6 @@ func TestExecSprintReturnsTheVerbsExitAndBody(t *testing.T) {
 	controlHeavy := sprintFailureOutput([]byte(strings.Repeat("a\n", oneline.TailBytes)), []byte("actual failure"))
 	assert.LessOrEqual(t, len(controlHeavy), oneline.TailBytes, "escaping many controls stays inside the final bound")
 	assert.Contains(t, string(controlHeavy), "stderr: actual failure", "bounding stdout keeps the failure")
-	gone := &execSprint{bin: filepath.Join(t.TempDir(), "absent"), actor: "m1"}
-	if code, _ := gone.Run("queue"); code != 2 {
-		t.Fatalf("a binary that will not start: exit %d, want 2 (the store did not answer)", code)
-	}
 }
 
 // TestMemberRefusesAModelAndATokenBudgetThatEveryCardWouldRefuse pins that
@@ -351,12 +331,11 @@ func TestMemberRefusesAModelAndATokenBudgetThatEveryCardWouldRefuse(t *testing.T
 			}
 		}
 		var out, errb bytes.Buffer
-		if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), tc.want) {
-			t.Errorf("%s %s: exit %d, stderr %q, want exit 2 naming %q", tc.flag, tc.value, code, errb.String(), tc.want)
-		}
-		if _, err := os.Stat(filepath.Join(root, "slots")); !os.IsNotExist(err) {
-			t.Errorf("%s %s: a directory was made before the refusal: %v", tc.flag, tc.value, err)
-		}
+		code := run(args, strings.NewReader(""), &out, &errb, time.Now())
+		assert.Equal(t, 2, code, "%s %s: exit %d, stderr %q, want exit 2 naming %q", tc.flag, tc.value, code, errb.String(), tc.want)
+		assert.Contains(t, errb.String(), tc.want, "%s %s: exit %d, stderr %q, want exit 2 naming %q", tc.flag, tc.value, code, errb.String(), tc.want)
+		_, err := os.Stat(filepath.Join(root, "slots"))
+		assert.True(t, os.IsNotExist(err), "%s %s: a directory was made before the refusal: %v", tc.flag, tc.value, err)
 	}
 }
 
@@ -368,21 +347,16 @@ func TestLaunchNameIsTheCardAtItsGenerationInItsEpoch(t *testing.T) {
 	t.Parallel()
 	// Removing the `.g` + Gen part of the work name in launchName, or the
 	// `.a` + Attempt part of the read name, makes this fail.
-	if got := launchName(member.Packet{Card: "c", Kind: "work", Gen: 2, Attempt: 1, Epoch: 7}); got != "c.g2.e7" {
-		t.Errorf("work launch name = %q, want c.g2.e7", got)
-	}
-	if got := launchName(member.Packet{Card: "r", Kind: "read", Gen: 0, Attempt: 1, Epoch: 7}); got != "r.a1.e7" {
-		t.Errorf("read launch name = %q, want r.a1.e7", got)
-	}
-	if a, b := launchName(member.Packet{Card: "c", Kind: "work", Gen: 1, Epoch: 7}), launchName(member.Packet{Card: "c", Kind: "work", Gen: 2, Epoch: 7}); a == b {
-		t.Errorf("one card at two generations is one launch name %q", a)
-	}
-	if a, b := launchName(member.Packet{Card: "c", Kind: "work", Gen: 1, Epoch: 7}), launchName(member.Packet{Card: "c", Kind: "work", Gen: 1, Epoch: 8}); a == b {
-		t.Errorf("one card at one generation in two epochs is one launch name %q", a)
-	}
-	if a, b := launchName(member.Packet{Card: "r", Kind: "read", Attempt: 1, Epoch: 7}), launchName(member.Packet{Card: "r", Kind: "read", Attempt: 2, Epoch: 7}); a == b {
-		t.Errorf("one read at two attempts is one launch name %q", a)
-	}
+	got := launchName(member.Packet{Card: "c", Kind: "work", Gen: 2, Attempt: 1, Epoch: 7})
+	assert.Equal(t, "c.g2.e7", got, "work launch name = %q, want c.g2.e7", got)
+	got = launchName(member.Packet{Card: "r", Kind: "read", Gen: 0, Attempt: 1, Epoch: 7})
+	assert.Equal(t, "r.a1.e7", got, "read launch name = %q, want r.a1.e7", got)
+	a, b := launchName(member.Packet{Card: "c", Kind: "work", Gen: 1, Epoch: 7}), launchName(member.Packet{Card: "c", Kind: "work", Gen: 2, Epoch: 7})
+	assert.NotEqual(t, a, b, "one card at two generations is one launch name %q", a)
+	a, b = launchName(member.Packet{Card: "c", Kind: "work", Gen: 1, Epoch: 7}), launchName(member.Packet{Card: "c", Kind: "work", Gen: 1, Epoch: 8})
+	assert.NotEqual(t, a, b, "one card at one generation in two epochs is one launch name %q", a)
+	a, b = launchName(member.Packet{Card: "r", Kind: "read", Attempt: 1, Epoch: 7}), launchName(member.Packet{Card: "r", Kind: "read", Attempt: 2, Epoch: 7})
+	assert.NotEqual(t, a, b, "one read at two attempts is one launch name %q", a)
 }
 
 // TestReadResultReadsTheVerdictLine pins a read's verdict: the `verdict:`
@@ -400,13 +374,10 @@ func TestReadResultReadsTheVerdictLine(t *testing.T) {
 		// Removing the strings.ToLower in readResult makes "shouted" fail;
 		// removing the `verdict:` branch makes every case but "absent" fail.
 		_, verdict, _ := readResult(resultFixture(t, tc.body))
-		if verdict != tc.want {
-			t.Errorf("%s: verdict = %q, want %q", tc.name, verdict, tc.want)
-		}
+		assert.Equal(t, tc.want, verdict, "%s: verdict = %q, want %q", tc.name, verdict, tc.want)
 	}
-	if _, verdict, _ := readResult(""); verdict != "" {
-		t.Errorf("no result file: verdict = %q, want empty", verdict)
-	}
+	_, verdict, _ := readResult("")
+	assert.Empty(t, verdict, "no result file: verdict = %q, want empty", verdict)
 }
 
 // markerRunner is a nativeRunner whose own executable is a script that writes
@@ -418,15 +389,11 @@ func markerRunner(t *testing.T) (r *nativeRunner, slots, marker string) {
 	dir := t.TempDir()
 	marker = filepath.Join(dir, "marker")
 	self := filepath.Join(dir, "self.sh")
-	if err := testbin.WriteExecutable(self, []byte("#!/bin/sh\necho started > '"+marker+"'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(self, []byte("#!/bin/sh\necho started > '"+marker+"'\n"), 0o755))
 	slots = filepath.Join(dir, "slots")
-	if err := os.MkdirAll(slots, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(slots, 0o755))
 	r = &nativeRunner{
-		self: self, sprintBin: "nova-sprint", harness: "/bin/true", model: "p/m", root: dir, slots: slots,
+		self: self, harness: "/bin/true", model: "p/m", root: dir, slots: slots,
 		resultsRoot: filepath.Join(dir, "results"), deadline: 30 * time.Second, tokens: "unmetered", stderr: &bytes.Buffer{},
 	}
 	return r, slots, marker
@@ -449,23 +416,16 @@ func TestALiveChildIsAdoptedNotRunTwice(t *testing.T) {
 	// nativeRunner.Start makes this fail: a second child is started over the
 	// first (the slot and card file appear, the pid file is overwritten).
 	ch, err := r.Start(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ch.Done() {
-		t.Fatal("the adopted child is done while its pid is alive")
-	}
-	if b, _ := os.ReadFile(pidPath); string(b) != self {
-		t.Fatalf("the pid file was rewritten: %q", b)
-	}
+	require.NoError(t, err)
+	require.False(t, ch.Done(), "the adopted child is done while its pid is alive")
+	b, _ := os.ReadFile(pidPath)
+	require.Equal(t, self, string(b), "the pid file was rewritten: %q", b)
 	for _, name := range []string{name, name + ".card.md", name + ".native.log"} {
-		if _, err := os.Stat(filepath.Join(slots, name)); !os.IsNotExist(err) {
-			t.Errorf("%s exists: a launch was begun over a live one (%v)", name, err)
-		}
+		_, err := os.Stat(filepath.Join(slots, name))
+		assert.True(t, os.IsNotExist(err), "%s exists: a launch was begun over a live one (%v)", name, err)
 	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("the harness path ran: %v", err)
-	}
+	_, err = os.Stat(marker)
+	require.True(t, os.IsNotExist(err), "the harness path ran: %v", err)
 }
 
 // TestADeadPidFileIsIgnored pins the other half: a pid file that names a
@@ -476,9 +436,7 @@ func TestADeadPidFileIsIgnored(t *testing.T) {
 	t.Parallel()
 	r, slots, marker := markerRunner(t)
 	gone := exec.Command("/bin/sh", "-c", "exit 0")
-	if err := gone.Run(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, gone.Run())
 	if processAlive(gone.Process.Pid) {
 		t.Skip("the pid of the finished process was reused")
 	}
@@ -488,43 +446,36 @@ func TestADeadPidFileIsIgnored(t *testing.T) {
 	// Removing the `!processAlive(pid)` test in livePID makes this fail: the
 	// dead pid is adopted, and nothing is ever started.
 	ch, err := r.Start(p)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// the child ends by itself (the script is one echo; an adopted dead pid
 	// closes the channel at once), so no timer is needed here
 	<-ch.(*nativeChild).done
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("a dead pid file led to no fresh start: %v", err)
-	}
+	_, err = os.Stat(marker)
+	require.NoError(t, err, "a dead pid file led to no fresh start")
 }
 
 // TestEveryIsBoundedUnderTheBeatDeadline pins --every at 5s, under the beat's
 // 15s deadline in the fleet: 6s is refused with exit 2 naming 5s and nothing
-// is made; 5s is accepted. The sprint binary is a path that does not exist,
-// so a run that gets past the refusal asks no store anything.
+// is made; 5s is accepted. Its sprint server never answers (noServer), so a run
+// that gets past the refusal sends nothing anywhere.
 func TestEveryIsBoundedUnderTheBeatDeadline(t *testing.T) {
 	t.Parallel()
 	with := func(root, every string) []string {
-		return append(memberFull(root), "--every", every, "--sprint", filepath.Join(root, "absent-sprint"))
+		return append(memberFull(root), "--every", every)
 	}
 	root := t.TempDir()
 	var out, errb bytes.Buffer
 	// Removing the `every.d > 5*time.Second` bound in cmdMember makes this fail.
-	if code := run(with(root, "6s"), strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), "5s") {
-		t.Fatalf("--every 6s: exit %d, stderr %q, want exit 2 naming 5s", code, errb.String())
-	}
-	if out.Len() != 0 {
-		t.Fatalf("--every 6s: stdout %q, want empty", out.String())
-	}
-	if _, err := os.Stat(filepath.Join(root, "slots")); !os.IsNotExist(err) {
-		t.Fatalf("--every 6s made the slots before refusing: %v", err)
-	}
+	code := run(with(root, "6s"), strings.NewReader(""), &out, &errb, time.Now())
+	require.Equal(t, 2, code, "--every 6s: exit %d, stderr %q, want exit 2 naming 5s", code, errb.String())
+	require.Contains(t, errb.String(), "5s", "--every 6s: exit %d, stderr %q, want exit 2 naming 5s", code, errb.String())
+	require.Zero(t, out.Len(), "--every 6s: stdout %q, want empty", out.String())
+	_, err := os.Stat(filepath.Join(root, "slots"))
+	require.True(t, os.IsNotExist(err), "--every 6s made the slots before refusing: %v", err)
 	out.Reset()
 	errb.Reset()
-	if code := run(with(t.TempDir(), "5s"), strings.NewReader(""), &out, &errb, time.Now()); code != 0 {
-		t.Fatalf("--every 5s: exit %d, stderr %q, want it accepted", code, errb.String())
-	}
+	code = cmdMember(with(t.TempDir(), "5s")[1:], &out, &errb, noServer)
+	require.Equal(t, 0, code, "--every 5s: exit %d, stderr %q, want it accepted", code, errb.String())
 }
 
 // memberWithoutOnce returns the required member flags without --once.
@@ -591,9 +542,9 @@ func TestMemberRefusesBothOnceAndNonPositiveTicksNamesBothPins(t *testing.T) {
 func TestMemberAcceptsPositiveTicks(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	args := append(memberWithoutOnce(root), "--ticks", "2", "--every", "1ms", "--sprint", filepath.Join(root, "absent-sprint"))
+	args := append(memberWithoutOnce(root), "--ticks", "2", "--every", "1ms")
 	var out, errb bytes.Buffer
-	require.Equal(t, 0, run(args, strings.NewReader(""), &out, &errb, time.Now()), "stderr %q", errb.String())
+	require.Equal(t, 0, cmdMember(args[1:], &out, &errb, noServer), "stderr %q", errb.String())
 	require.Contains(t, out.String(), "MEMBER OK as=m1 ticks=2 running=0")
 }
 
@@ -619,15 +570,4 @@ func TestAMemberWithNoPassSaysSo(t *testing.T) {
 	assert.Empty(t, passNote("anthropic/claude-x", []string{"ANTHROPIC_API_KEY"}, ""))
 	assert.Empty(t, passNote("anthropic/claude-x", nil, "/auth.json"))
 	assert.Empty(t, passNote("ollama/qwen3", nil, ""))
-}
-
-// The member's sprint verbs (beat, queue) run as nova-sprint, whose store
-// client bounds each command by redisconn's read and write timeouts: at least
-// five seconds, the least a tailnet round trip with jitter needs
-// (docs/SPEC-SPRINT.md section 5, the rule that one timed-out round trip is
-// one missed beat and never a down member). Shortening either fails this.
-func TestAMemberVerbsStoreDeadlineIsAtLeastFiveSeconds(t *testing.T) {
-	t.Parallel()
-	assert.GreaterOrEqual(t, redisconn.ReadTimeout, 5*time.Second)
-	assert.GreaterOrEqual(t, redisconn.WriteTimeout, 5*time.Second)
 }

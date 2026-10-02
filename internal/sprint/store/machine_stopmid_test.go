@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -41,8 +43,8 @@ func TestCRPartsRunAfterStop(t *testing.T) {
 		}
 	}
 	t.Logf("machine %s; parts that ran after the stop: %v; moved %d", m.StateWord(), after, len(res.Moved()))
-	if !m.Running() && len(after) > 0 {
-		t.Errorf("C: the machine was STOPPED (stop returned) and the tick went on to run %v", after)
+	if !m.Running() {
+		assert.Empty(t, after, "C: the machine was STOPPED (stop returned) and the tick went on to run %v", after)
 	}
 	_ = sprint.Work
 }

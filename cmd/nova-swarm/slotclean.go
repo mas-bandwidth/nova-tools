@@ -45,20 +45,87 @@ const leftoverIdle = 10 * time.Minute
 // attempt), then its epoch.
 var launchDirRE = regexp.MustCompile(`^[A-Za-z0-9._-]+\.[ga][0-9]+\.e[0-9]+$`)
 
-// Ended is the member done with a launch (member.Ender): an ok one's directory is removed at
-// once, a failed one's is kept, and the pool is pruned to the newest keepFailed.
+// Ended is the member done with a launch (member.Ender): it is tagged, and its directory is
+// removed by clean: an ok one's at once, a failed one's kept, the pool pruned to the newest
+// keepFailed. Removing a job directory is long (a staged clone and its caches, made
+// writable and then removed), so a runner with a cleaner (cleaner) only tags here, and the
+// member's pass never waits on a removal (the owner, 2026-10-01: "You can tag for cleanup,
+// but don't do that cleanup inline."); a runner with none (a test's) cleans here.
 func (r *nativeRunner) Ended(p member.Packet, failed bool) {
 	name := launchName(p)
+	r.mu.Lock()
 	delete(r.live, name)
 	if failed {
 		if r.kept == nil {
 			r.kept = map[string]bool{}
 		}
 		r.kept[name] = true
-	} else if err := r.removeLaunch(name); err != nil {
-		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE the directory of launch %s was not removed: %s\n", oneline.Field(name), oneline.Err(err))
+	}
+	r.mu.Unlock()
+	if r.tagged == nil {
+		r.clean(ended{name: name, failed: failed})
+		return
+	}
+	select {
+	case r.tagged <- ended{name: name, failed: failed}:
+	default:
+		// the queue is full: this one is left for a later prune, which removes every ended
+		// directory that has been still for leftoverIdle
+	}
+}
+
+// ended is one launch tagged for cleaning.
+type ended struct {
+	name   string
+	failed bool
+	at     time.Time // prune's: its last activity
+}
+
+// cleanQueue is how many tagged launches wait for the cleaner at once.
+const cleanQueue = 1024
+
+// cleaner starts the runner's queue of launches to clean and the one goroutine that works
+// it, for as long as the process lives; with no tagged launch waiting, every lazyEvery it
+// does a bounded round of its lazy work (lazyclean.go).
+func (r *nativeRunner) cleaner() {
+	r.tagged = make(chan ended, cleanQueue)
+	go func() {
+		lazy := time.NewTicker(lazyEvery)
+		for {
+			select {
+			case e := <-r.tagged:
+				r.clean(e)
+			case now := <-lazy.C:
+				r.lazy(now)
+			}
+		}
+	}()
+}
+
+// clean removes a tagged launch's directory (an ok one's) and prunes the pool.
+func (r *nativeRunner) clean(e ended) {
+	if !e.failed {
+		if err := r.removeEnded(e.name); err != nil {
+			fmt.Fprintf(r.stderr, "nova-swarm member: NOTE the directory of launch %s was not removed: %s\n", oneline.Field(e.name), oneline.Err(err))
+		}
 	}
 	r.prune(time.Now())
+}
+
+// removeEnded removes a launch's directory unless a launch of that name is live: the member
+// starts a card again under the same name when its report was refused and the sprint still
+// has it working, and that launch's checkout is never removed under it. The removal and a
+// start's claim of the name exclude each other (removing), so one always sees the other.
+func (r *nativeRunner) removeEnded(name string) error {
+	r.removing.Lock()
+	defer r.removing.Unlock()
+	r.mu.Lock()
+	live := r.live[name]
+	r.mu.Unlock()
+	if live {
+		return nil
+	}
+	return r.removeLaunch(name)
 }
 
 // prune removes every ended launch directory under the slots but the newest keepFailed
@@ -69,22 +136,24 @@ func (r *nativeRunner) prune(now time.Time) (removed, kept int) {
 		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE the slots directory could not be listed to remove ended launches: %s\n", oneline.Err(err))
 		return 0, 0
 	}
-	type ended struct {
-		name string
-		at   time.Time
-	}
 	var all []ended
 	for _, e := range entries {
 		name := e.Name()
 		// a link is never a launch directory: DirEntry.IsDir is false for one
-		if !e.IsDir() || !launchDirRE.MatchString(name) || r.live[name] || livePID(filepath.Join(r.slots, name+".pid")) > 0 {
+		if !e.IsDir() || !launchDirRE.MatchString(name) {
+			continue
+		}
+		r.mu.Lock()
+		live, kept := r.live[name], r.kept[name]
+		r.mu.Unlock()
+		if live || livePID(filepath.Join(r.slots, name+".pid")) > 0 {
 			continue
 		}
 		at := lastActivity(r.slots, name)
-		if !r.kept[name] && now.Sub(at) < leftoverIdle {
+		if !kept && now.Sub(at) < leftoverIdle {
 			continue // not this process's to judge yet: still starting, or another's still finishing
 		}
-		all = append(all, ended{name, at})
+		all = append(all, ended{name: name, at: at})
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].at.After(all[j].at) })
 	for i, e := range all {
@@ -92,11 +161,14 @@ func (r *nativeRunner) prune(now time.Time) (removed, kept int) {
 			kept++
 			continue
 		}
-		if err := r.removeLaunch(e.name); err != nil {
+		if err := r.removeEnded(e.name); err != nil {
 			fmt.Fprintf(r.stderr, "nova-swarm member: NOTE the directory of ended launch %s was not removed: %s\n", oneline.Field(e.name), oneline.Err(err))
 			continue
 		}
+
+		r.mu.Lock()
 		delete(r.kept, e.name)
+		r.mu.Unlock()
 		removed++
 	}
 	return removed, kept

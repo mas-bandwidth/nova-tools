@@ -18,12 +18,16 @@ package main
 // programs in the caller's environment.
 //
 // The push and the report are two operations on two systems, so land fences
-// them as tla/Land.tla models: the caller's --epoch is checked before any git;
-// the queue head and the epoch are read again just before each push (Push's
-// Fresh); the report is one store step that lands the batch only while the
-// queue still starts with it at the epoch land read (Report's guard, landStep);
+// them: the caller's --epoch is checked before any git; the queue and the epoch
+// are read again just before each push; the report is one store step that lands
+// the batch, its cards by name, only while the queue still holds each of them at
+// the head and attempt land built, at the epoch land read (landStep; the cards
+// are looked for wherever they stand, so a card accepted or ranked ahead of them
+// since changes nothing);
 // a batch pushed and not reported is left in the base and recovered by running
-// land again (Recovers).
+// land again (Recovers). Only a batch pushed and reported has its cards' branches
+// tagged for the cleanup, which deletes them from origin outside every batch
+// (landprune.go).
 
 import (
 	"context"
@@ -69,9 +73,10 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     reads the store only: no git, no push, no report. The window: land pins
     each card's head and attempt as it reads them; a caller's --epoch is held
     before any git, the queue, the heads and the epoch again just before the
-    push, and the report lands the batch only while the queue starts with those
-    heads at that epoch (one store step). A clear, an accept ahead, a return,
-    a rework or a crash after the check leaves the push unreported (LAND
+    push, and the report lands the batch, its cards by name, only while the queue
+    holds each of them at that head at that epoch (one store step); a card
+    accepted or ranked ahead since changes nothing. A clear, a return, a
+    rework or a crash after the check leaves the push unreported (LAND
     FAILED, exit 2; run land again, never a bare merge, and its own checks
     decide: an unchanged card is recorded with no new push, a reworked one
     merged at its new head or met in conflict); a clear there pushes for an epoch
@@ -96,11 +101,38 @@ type landBatch struct {
 	Dir    string   `json:"dir,omitempty"`
 	Tip    string   `json:"tip,omitempty"`
 	// Fact is the merge fact reported for a refusal (conflict, red,
-	// rejected); empty when nothing was reported and the store is unchanged.
-	Fact   string `json:"fact,omitempty"`
-	Reason string `json:"reason,omitempty"`
-	DryRun bool   `json:"dry_run,omitempty"`
+	// rejected); empty when nothing was reported and the store is unchanged,
+	// and always empty in a dry run, which reports nothing.
+	Fact string `json:"fact,omitempty"`
+	// WouldRecord is, in a dry run, the fact land would report for the refusal,
+	// and nothing was: a reader of fact never has to check dry_run to know
+	// whether the store holds it.
+	WouldRecord string `json:"would_record,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	DryRun      bool   `json:"dry_run,omitempty"`
+	// Times is how long each of the batch's steps took; nil for a batch refused before
+	// its git ran, and for a dry run.
+	Times *landTimes `json:"times,omitempty"`
+	// Prune is the cards' branches on origin a landed batch put on the cleanup queue
+	// (landprune.go; a dry run: would put); nil for a batch that did not land, or
+	// whose cards recorded no branch.
+	Prune *landPrune `json:"prune,omitempty"`
 }
+
+// landTimes is a batch's steps, in seconds: the fetch, the merges (with any head
+// fetched at its merge), the check, the queue read again before the push, the push and
+// the report. A rebuild on a moved base adds its fetch, merges, check and push.
+type landTimes struct {
+	Fetch  float64 `json:"fetch"`
+	Merge  float64 `json:"merge"`
+	Check  float64 `json:"check"`
+	Queue  float64 `json:"queue"`
+	Push   float64 `json:"push"`
+	Report float64 `json:"report"`
+}
+
+// since adds the seconds from start to now to *to.
+func since(to *float64, start time.Time) { *to += time.Since(start).Seconds() }
 
 // line is the batch's output line.
 func (b landBatch) line() string {
@@ -116,8 +148,25 @@ func (b landBatch) line() string {
 	if b.Dir != "" {
 		l += " dir=" + oneline.Field(b.Dir)
 	}
+	if t := b.Times; t != nil {
+		l += fmt.Sprintf(" fetch=%.1fs merge=%.1fs check=%.1fs queue=%.1fs push=%.1fs report=%.1fs", t.Fetch, t.Merge, t.Check, t.Queue, t.Push, t.Report)
+	}
+	if p := b.Prune; p != nil {
+		switch {
+		case p.Why != "":
+			l += " branches_queued=-"
+		default:
+			l += " branches_queued=" + strconv.Itoa(p.Queued)
+		}
+		if len(p.Kept) > 0 {
+			l += " branches_kept=" + strconv.Itoa(len(p.Kept))
+		}
+	}
 	if b.Fact != "" {
 		l += " fact=" + b.Fact
+	}
+	if b.WouldRecord != "" {
+		l += " would_record=" + b.WouldRecord
 	}
 	if b.DryRun {
 		l += " dry_run=yes"
@@ -188,7 +237,13 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if len(bad) > 0 {
 		return refuse(stderr, "land", strings.Join(bad, "; "))
 	}
+	// land's reads and its report are steps of the sprint: each takes the server's one
+	// line of control (a.serial) when this process is the server (run --land), so none
+	// runs during a tick or a worker's batch; its git runs outside it, for as long as
+	// git takes. A land by itself holds a lock nothing else wants.
+	a.serial.Lock()
 	st, err := a.store(*c)
+	a.serial.Unlock()
 	if err != nil {
 		return refuse(stderr, "land", err.Error())
 	}
@@ -205,7 +260,9 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	ctx := context.Background()
+	a.serial.Lock()
 	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
+	a.serial.Unlock()
 	if err != nil {
 		return a.readFailed("land", err, stderr)
 	}
@@ -229,12 +286,19 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 			failed = true
 		}
 	}
-	return l.report(failed, stdout, stderr)
+	// the cleanup, after every stream and outside every batch: the land loop's own
+	// (landRound) when the loop runs this land, else once here, as the command ends
+	var pruned []pruneResult
+	if !a.landLazy && !l.dry {
+		pruned = a.flushPrune(ctx, true)
+	}
+	return l.report(failed, pruned, stdout, stderr)
 }
 
-// report prints the batches and the summary: exit 0 when every batch
-// landed, 1 when one was refused, 2 when a push landed and its report did not.
-func (l *lander) report(failed bool, stdout, stderr io.Writer) int {
+// report prints the batches, the cleanup and the summary: exit 0 when every batch
+// landed, 1 when one was refused, 2 when a push landed and its report did not. A
+// cleanup that failed changes no exit: its batches landed.
+func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Writer) int {
 	batches, cards, refused := 0, 0, 0
 	for _, b := range l.out {
 		switch b.Status {
@@ -258,9 +322,12 @@ func (l *lander) report(failed bool, stdout, stderr io.Writer) int {
 		if out == nil {
 			out = []landBatch{}
 		}
+		if pruned == nil {
+			pruned = []pruneResult{}
+		}
 		// ignored: a map of strings, numbers and plain structs of strings always encodes
 		b, _ := json.Marshal(map[string]any{"verb": "land", "status": status, "exit": code, "batches": batches, "cards": cards,
-			"refused": refused, "dry_run": l.dry, "items": out})
+			"refused": refused, "dry_run": l.dry, "items": out, "prune": pruned})
 		fmt.Fprintln(stdout, string(b))
 		return code
 	}
@@ -271,11 +338,24 @@ func (l *lander) report(failed bool, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintln(w, b.line())
 		switch {
+		case b.WouldRecord != "":
+			fmt.Fprintf(w, "NOTE land would report this as merge --%s and stop stream %s; nothing was reported (dry run)\n", b.WouldRecord, oneline.Field(b.Stream))
 		case b.Fact != "":
 			fmt.Fprintf(w, "NOTE the stream is stopped (%s); run: nova-sprint inbox\n", b.Fact)
 		case b.Status == "refused" && !l.dry:
 			fmt.Fprintf(w, "NOTE nothing was pushed or reported for stream %s; its cards stay queued\n", oneline.Field(b.Stream))
 		}
+		if p := b.Prune; p != nil {
+			if p.Why != "" {
+				fmt.Fprintf(w, "NOTE %s\n", oneline.Escape(p.Why))
+			}
+			for _, k := range p.Kept {
+				fmt.Fprintf(w, "NOTE no branch queued for deletion for %s\n", oneline.Escape(k))
+			}
+		}
+	}
+	for _, p := range pruned {
+		fmt.Fprintln(stdout, p.line(true))
 	}
 	dry := ""
 	if l.dry {
@@ -371,11 +451,8 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		l.out = append(l.out, b)
 		return false, true
 	}
-	switch {
-	case b.Base == "":
-		return refuse("card " + ids[0] + " names no BASE: line and no --base was given; run: nova-sprint land --stream " + stream + " --base <branch>")
-	case strings.HasPrefix(b.Base, "-"):
-		return refuse("card " + ids[0] + " names the base " + b.Base + ", which is not a branch name; run: nova-sprint card " + ids[0])
+	if why := l.placeWhy(stream, cards); why != "" {
+		return refuse(why)
 	}
 	dir, why := l.clone(ctx, b.Repo)
 	if why != "" {
@@ -383,33 +460,44 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 	}
 	b.Dir = dir
 	if l.dry {
-		b.Status = "ok"
-		l.out = append(l.out, b)
-		return true, true
+		return l.dryBatch(b, cards)
 	}
 	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" {
 		return refuse("the clone " + dir + " is not clean (" + firstLine(out, err) + "); commit or discard its changes, then run land again")
 	}
-	merged, failed, why := l.build(ctx, dir, stream, cards)
+	b.Times = &landTimes{}
+	merged, failed, why := l.build(ctx, dir, stream, cards, b.Times)
 	if why != "" {
 		return refuse(why)
 	}
 	for attempt := 1; len(merged) > 0; attempt++ {
-		if why := l.runCheck(ctx, dir); why != "" {
+		// the batch as built: this commit is what is pushed and reported, whatever the
+		// clone's checkout becomes after (another landing sharing the clone cuts its own
+		// branch there; pushing HEAD then pushed the other job's and reported this one
+		// landed with its work nowhere on the base)
+		tip, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return refuse("the batch branch has no tip: " + firstLine("", err))
+		}
+		start := time.Now()
+		why := l.runCheck(ctx, dir)
+		since(&b.Times.Check, start)
+		if why != "" {
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
 			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, cards[:len(merged)], "red", why)
 		}
-		if why := l.queueHead(ctx, stream, cards[:len(merged)]); why != "" {
+		start = time.Now()
+		why = l.queueHead(ctx, stream, cards[:len(merged)])
+		since(&b.Times.Queue, start)
+		if why != "" {
 			return refuse(why)
 		}
 		if l.a.beforePush != nil {
 			l.a.beforePush(attempt)
 		}
-		tip, err := l.git(ctx, dir, "rev-parse", "HEAD")
-		if err != nil {
-			return refuse("the batch branch has no tip: " + firstLine("", err))
-		}
-		_, err = l.git(ctx, dir, "push", "--porcelain", "origin", "HEAD:refs/heads/"+b.Base)
+		start = time.Now()
+		_, err = l.git(ctx, dir, "push", "--porcelain", "origin", tip+":refs/heads/"+b.Base)
+		since(&b.Times.Push, start)
 		if err == nil {
 			b.Tip = tip
 			if !l.landed(b, stream, cards[:len(merged)]) {
@@ -428,7 +516,7 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
 			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Rejected: true, Note: firstLine("", err)}, cards[:len(merged)], "rejected", "the push to "+b.Base+" was rejected again after a rebuild on the moved base: "+firstLine("", err))
 		}
-		merged, failed, why = l.build(ctx, dir, stream, cards)
+		merged, failed, why = l.build(ctx, dir, stream, cards, b.Times)
 		if why != "" {
 			return refuse(why)
 		}
@@ -437,15 +525,87 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 	return false, true
 }
 
+// placeWhy is why land cannot place a batch before any git, "" when it can:
+// every problem of the batch at once (a base missing, a repository missing with
+// no clone given, and with them every head that is not a commit id, which land
+// would meet next), so one run names all of them (docs/STANDARD.md, a refusal
+// names every problem at once). A base that is not a branch name is refused alone.
+func (l *lander) placeWhy(stream string, cards []landCard) string {
+	id, base := cards[0].id, cards[0].base
+	if strings.HasPrefix(base, "-") {
+		return "card " + id + " names the base " + base + ", which is not a branch name; run: nova-sprint card " + id
+	}
+	var why, flags []string
+	if base == "" {
+		why = append(why, "card "+id+" names no BASE: line and no --base was given")
+		flags = append(flags, "--stream "+stream+" --base <branch>")
+	}
+	if cards[0].repo == "" && l.repoDir == "" {
+		why = append(why, "the card names no REPO: line and no --repo-dir was given")
+		flags = append(flags, "--repo-dir <clone>")
+	}
+	if len(why) == 0 {
+		return ""
+	}
+	out := strings.Join(why, ", and ") + "; run: nova-sprint land " + strings.Join(flags, " ")
+	for _, c := range cards {
+		if w := headNotCommit(stream, c); w != "" {
+			out += "; " + w
+		}
+	}
+	return out
+}
+
+// dryBatch is the dry run's outcome of a batch land can place: it stops where
+// land stops before any git, at the first head that is not a commit id
+// (headNotCommit, mergeHead's own check and words): the cards before it a
+// batch that lands, that card refused as land reports it, with the conflict
+// fact land would record and the stream stop; nothing is recorded.
+func (l *lander) dryBatch(b landBatch, cards []landCard) (landed, ok bool) {
+	cut := slices.IndexFunc(cards, func(c landCard) bool { return headNotCommit(b.Stream, c) != "" })
+	if cut < 0 {
+		b.Status = "ok"
+		l.tag(context.Background(), &b, cards)
+		l.out = append(l.out, b)
+		return true, true
+	}
+	if cut > 0 {
+		before := b
+		before.Status, before.Cards, before.IDs = "ok", cut, b.IDs[:cut]
+		l.tag(context.Background(), &before, cards[:cut])
+		l.out = append(l.out, before)
+	}
+	c := cards[cut]
+	l.out = append(l.out, landBatch{Stream: b.Stream, Status: "refused", Cards: 1, IDs: []string{c.id}, WouldRecord: "conflict", Reason: headNotCommit(b.Stream, c), DryRun: true})
+	return false, true
+}
+
+// headNotCommit is why a card's head cannot be merged whatever origin holds:
+// it is not a commit id (a finish without --head records the card's id); ""
+// when it is one. land meets it at the card's merge (mergeHead) and its dry
+// run before any git (dryBatch), in these words.
+//
+// A land that meets it records the conflict fact, which stops the stream, so the
+// remedy ends with the resume that starts it again: return, rework and resume,
+// in that order.
+func headNotCommit(stream string, c landCard) string {
+	if shaRE.MatchString(c.head) {
+		return ""
+	}
+	return "the head " + dashed(c.head) + " of " + c.id + " is not a commit id (a finish without --head records the card's id); run: nova-sprint return " + c.id +
+		" --reason 'its head is not a commit', then nova-sprint rework " + c.id + " --fix 'finish with --head <commit>', then (a land that met it stopped the stream) nova-sprint resume --stream " +
+		stream + " --did 'returned " + c.id + " for rework'"
+}
+
 // conflictCard is a card that did not merge, with git's words.
 type conflictCard struct {
 	landCard
 	why string
 }
 
-// conflict reports the card that ended its batch with the conflict fact: it
-// is the head of the queue now, so the step's batch is that one card, at the
-// head that did not merge (a replacement attempt is never blamed).
+// conflict reports the card that ended its batch with the conflict fact: the
+// step's batch is that one card, by name, at the head that did not merge (a
+// replacement attempt is never blamed).
 func (l *lander) conflict(stream string, f conflictCard) {
 	b := landBatch{Stream: stream, Status: "refused", Cards: 1, IDs: []string{f.id}}
 	l.fact(b, sprint.MergeReq{Stream: stream, Batch: 1, Conflict: f.id, Note: f.why}, []landCard{f.landCard}, "conflict", f.why)
@@ -482,7 +642,11 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 		ids[i] = c.id
 	}
 	b.Cards, b.IDs = len(ids), ids
+	start := time.Now()
 	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
+	if b.Times != nil {
+		since(&b.Times.Report, start)
+	}
 	if code := stepExit(res, err); code != 0 || !movedExactly(res.Moved, ids) {
 		b.Status, b.Reason = "failed", "the batch was pushed to "+b.Base+" at "+b.Tip+" and NOT reported ("+stepWhy(res, err)+
 			"); "+againRemedy(stream)
@@ -490,33 +654,52 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 		return false
 	}
 	b.Status = "ok"
+	// pushed AND reported: only now are its cards' branches tagged for the cleanup (a
+	// batch pushed and not reported keeps them: land is run again and may need the heads)
+	l.tag(context.Background(), &b, pins)
 	l.out = append(l.out, b)
 	return true
 }
 
-// movedExactly says the step's moved lines are the landings of ids, each
-// once and no other (a replayed receipt of another batch is not this one).
+// movedExactly says the step's moved lines are the landings of ids, each once and no
+// other (a replayed receipt of another batch is not this one), in whatever order: the
+// step lands the named cards in the queue's order at the report, which a rank between
+// the push and the report can change, and the cards landed are the same cards.
 func movedExactly(moved, ids []string) bool {
 	if len(moved) != len(ids) {
 		return false
 	}
-	for i, id := range ids {
-		if !strings.HasPrefix(moved[i], id+" merging -> landed") {
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+	if len(want) != len(ids) {
+		return false // a card named twice is not a batch
+	}
+	for _, line := range moved {
+		id, rest, _ := strings.Cut(line, " ")
+		if !want[id] || rest != "merging -> landed" && !strings.HasPrefix(rest, "merging -> landed") {
 			return false
 		}
+		delete(want, id) // each once
 	}
-	return true
+	return len(want) == 0
 }
 
 // step runs one merge step, as `merge --stream` runs it, fenced to the epoch
 // land read and guarded in the same store step: it plans only while the
-// stream's queue starts with exactly the pinned cards, each at the head and
-// attempt land read and pushed (tla/Land.tla, Report and Fresh), so a queue
-// changed since the push, or a card reworked to another head, refuses the
-// report and nothing is recorded that was not pushed. The pins are part of
+// stream's queue holds every pinned card, each at the head and attempt land
+// read and pushed, and the batch it records is those cards by name (MergeReq.
+// Cards), so a card gone from the queue since the push, or reworked to another
+// head, refuses the report and nothing is recorded that was not pushed. The pins are part of
 // the step's arguments, and under the caller's --op its op id is the op and
 // those arguments, so a replay returns only the receipt of this very batch.
 func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) {
+	// the batch is the pinned cards by name, never the first n of the queue
+	r.Cards = make([]string, len(pins))
+	for i, c := range pins {
+		r.Cards[i] = c.id
+	}
 	step := store.MergeStep(r)
 	plan := step.Plan
 	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
@@ -538,6 +721,8 @@ func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) 
 	if l.c.op != "" {
 		step.CallerOp = l.c.op + "." + r.Stream + "." + step.Args
 	}
+	l.a.serial.Lock()
+	defer l.a.serial.Unlock()
 	return l.st.Run(context.Background(), step)
 }
 
@@ -557,27 +742,38 @@ func stepWhy(res store.Result, err error) string {
 }
 
 // queueHead is why the stream's merge queue, read again at the epoch land
-// read, no longer starts with the pinned cards at their heads; "" when it
-// does (tla/Land.tla, Check).
+// read, no longer holds the pinned cards at their heads; "" when it does.
 func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) string {
+	l.a.serial.Lock()
 	s, err := l.st.Load(ctx, []string{sprint.Merge, sprint.Work}, nil)
+	l.a.serial.Unlock()
 	if err != nil {
 		return "the merge queue could not be read again at epoch " + strconv.FormatUint(l.epoch, 10) + ": " + oneline.Err(err)
 	}
 	return headWhy(s, stream, pins)
 }
 
-// headWhy is why the stream's queue does not start with exactly the pinned
-// cards, each at the head and attempt pinned; "" when it does (tla/Land.tla,
-// Fresh: heads, not ids).
+// headWhy is why the stream's queue no longer holds every pinned card at the
+// head and attempt pinned; "" when it does. The cards are looked for by name,
+// wherever they stand: the tick's accepts put cards in the queue by their order
+// of work while a landing builds, often ahead of the batch, and that is no
+// change to the batch (the fleet pass of 2026-10-01 18:31 ET: with cards
+// accepted every second a landing was refused almost every round, 49 queued and
+// 2 landed, and one batch was pushed and could not be reported). A pinned card
+// gone from the queue, or reworked to another head, still refuses.
 func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
-	q := landQueue(s, stream)
-	if len(q) < len(pins) {
-		return fmt.Sprintf("the merge queue of %s holds %d cards now, fewer than the batch of %d; run land again", stream, len(q), len(pins))
+	// a stream stopped since land read it (a red recorded while an earlier stream of the
+	// same run landed) is not pushed: a stopped stream moves only after resume
+	if ctl := s.StreamCtl(stream); ctl != nil && ctl.F("state") == sprint.StreamStopped {
+		return "stopped (" + ctl.F("cause") + ") since it was read; run: nova-sprint resume --stream " + stream
 	}
-	for i, c := range pins {
-		if q[i].ID != c.id {
-			return fmt.Sprintf("the merge queue of %s changed since it was read (%s is now where %s was); run land again", stream, q[i].ID, c.id)
+	queued := map[string]bool{}
+	for _, c := range landQueue(s, stream) {
+		queued[c.ID] = true
+	}
+	for _, c := range pins {
+		if !queued[c.id] {
+			return fmt.Sprintf("the merge queue of %s no longer holds %s (landed, stuck or returned since it was read); run land again", stream, c.id)
 		}
 		pr := s.Work.Placed(c.id)
 		if pr == nil || pr.F("head") != c.head || pr.F("attempt") != c.attempt {
@@ -592,12 +788,36 @@ func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 // a commit on origin, or a merge that left unmerged paths): merged is the
 // cards merged, failed the card that ended the batch, why a refusal of the
 // whole batch that blames no card (git's own failure: the fetch, the cut, an
-// identity, a hook, the disk), nothing to report.
-func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard) (merged []string, failed conflictCard, why string) {
+// identity, a hook, the disk), nothing to report. The fetch's seconds and the
+// merges' are added to t.
+func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard, t *landTimes) (merged []string, failed conflictCard, why string) {
 	base := cards[0].base
-	if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin"); err != nil {
+	// THE FETCH BRINGS WHAT THE BATCH NEEDS AND NOTHING ELSE: the base, and the cards'
+	// heads by their ids, in one exchange. A fetch of every branch of origin costs a
+	// negotiation over all of them, once a stream a round: on a repository with two
+	// thousand card branches it was 15 s a fetch and landing fell to a third of the
+	// fleet's rate (the fleet pass of 2026-10-01 20:18 ET, 1000 cards). A head origin
+	// does not hold fails the one fetch; then the base alone is fetched and each head at
+	// its merge (mergeHead), which names the card.
+	baseRef := "+refs/heads/" + base + ":refs/remotes/origin/" + base
+	fetch := []string{"fetch", "--no-tags", "origin", baseRef}
+	for _, c := range cards {
+		// a fetch by id wants the whole id; a short head is found at its merge
+		if shaRE.MatchString(c.head) && (len(c.head) == 40 || len(c.head) == 64) {
+			fetch = append(fetch, c.head)
+		}
+	}
+	start := time.Now()
+	_, err := l.git(ctx, dir, fetch...)
+	if err != nil {
+		_, err = l.git(ctx, dir, "fetch", "--no-tags", "origin", baseRef)
+	}
+	since(&t.Fetch, start)
+	if err != nil {
 		return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
 	}
+	start = time.Now()
+	defer since(&t.Merge, start)
 	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {
 		return nil, failed, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
 	}
@@ -624,8 +844,8 @@ var notOnOrigin = []string{"not our ref", "couldn't find remote ref", "no such r
 // hook, the disk, the network), with any merge in progress aborted; both ""
 // when it merged. A head the clone lacks is fetched from origin by its id once.
 func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env string) {
-	if !shaRE.MatchString(c.head) {
-		return "the head " + dashed(c.head) + " of " + c.id + " is not a commit id; run: nova-sprint card " + c.id, ""
+	if why := headNotCommit(stream, c); why != "" {
+		return why, ""
 	}
 	merge := func() error {
 		_, err := l.git(ctx, dir, "merge", "--no-ff", "--no-edit", "-m", "land "+c.id+" (sprint stream "+stream+")", c.head)
@@ -639,7 +859,15 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 		_, ferr := l.git(ctx, dir, "fetch", "--no-tags", "origin", c.head)
 		switch {
 		case ferr != nil && containsAny(ferr.Error(), notOnOrigin):
-			return "the head " + c.head + " of " + c.id + " is missing: origin holds no such commit (" + firstLine("", ferr) + ")", ""
+			// before the card is blamed, every branch is fetched once: a head given
+			// short (a fetch by id wants the whole id) or one behind its branch's tip on
+			// a remote that serves only advertised refs is on origin all the same
+			if _, all := l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/*:refs/remotes/origin/*"); all != nil {
+				return "", "the fetch of origin's branches for the head " + c.head + " of " + c.id + " failed: " + firstLine("", all)
+			}
+			if _, still := l.git(ctx, dir, "cat-file", "-e", c.head+"^{commit}"); still != nil {
+				return "the head " + c.head + " of " + c.id + " is missing: origin holds no such commit (" + firstLine("", ferr) + ")", ""
+			}
 		case ferr != nil:
 			return "", "the fetch of the head " + c.head + " of " + c.id + " failed: " + firstLine("", ferr)
 		}
@@ -662,12 +890,7 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 
 // containsAny says s holds one of words.
 func containsAny(s string, words []string) bool {
-	for _, w := range words {
-		if strings.Contains(s, w) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(words, func(w string) bool { return strings.Contains(s, w) })
 }
 
 // runCheck runs --check in the clone: "" when it passed or there is none.
@@ -698,17 +921,15 @@ func checkTail(out string) string {
 // a clone kept under the land root, made on first use. Every clone reused,
 // given or kept, has its origin read and held to the repository the card
 // names before any git touches it, so a batch is never pushed to another
-// repository's remote (a card naming none takes --repo-dir's as it is). why
-// is a refusal.
+// repository's remote (a card naming none takes --repo-dir's as it is; one
+// naming none with no --repo-dir is refused before, by placeWhy). why is a
+// refusal.
 func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 	if l.repoDir != "" {
 		if l.dry {
 			return l.repoDir, ""
 		}
 		return l.repoDir, l.originIs(ctx, l.repoDir, repo)
-	}
-	if repo == "" {
-		return "", "the card names no REPO: line and no --repo-dir was given; run: nova-sprint land --repo-dir <clone>"
 	}
 	if l.root == "" {
 		root, err := l.a.landRoot()
@@ -727,7 +948,9 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 	if err := os.MkdirAll(l.root, 0o755); err != nil {
 		return "", "the land directory " + l.root + " could not be made: " + oneline.Err(err)
 	}
-	if _, err := l.git(ctx, "", "clone", "--no-tags", "--", repo, dir); err != nil {
+	// one branch, never every branch: the landing fetches the base and the heads it needs
+	// itself (build), and a clone of a card repository's thousands of branches was 80 s
+	if _, err := l.git(ctx, "", "clone", "--no-tags", "--single-branch", "--", repo, dir); err != nil {
 		return "", "the clone of " + repo + " into " + dir + " failed: " + firstLine("", err)
 	}
 	return dir, ""

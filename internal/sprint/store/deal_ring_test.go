@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // The deal's and the ask's rolling indexes through the machine's tick (errata
@@ -122,9 +123,8 @@ func dealRingOwnersRun(t *testing.T, h *harness) {
 		h.tick(time.Second)
 	}
 	want := append(append([]string(nil), ringMembers...), ringMembers...)
-	if len(deals) < 16 || !slices.Equal(deals[:16], want) {
-		t.Fatalf("the first 16 deals %v, want %v: eight members up are dealt round the fleet", deals, want)
-	}
+	require.GreaterOrEqual(t, len(deals), 16, "the first 16 deals %v, want %v: eight members up are dealt round the fleet", deals, want)
+	require.True(t, slices.Equal(deals[:16], want), "the first 16 deals %v, want %v: eight members up are dealt round the fleet", deals, want)
 }
 
 // dealRingAcrossTicks deals one card a tick, and asks one primary a tick: the
@@ -160,19 +160,13 @@ func dealRingAcrossTicks(t *testing.T, h *harness) {
 		h.tick(time.Second)
 	}
 	want := append(append([]string(nil), ringMembers...), ringMembers...)
-	if !slices.Equal(deals, want) {
-		t.Fatalf("deals across ticks %v, want %v: each tick's deal starts past the member the last one dealt to", deals, want)
-	}
+	require.True(t, slices.Equal(deals, want), "deals across ticks %v, want %v: each tick's deal starts past the member the last one dealt to", deals, want)
 	readers := []string{"reader-a", "reader-b", "reader-c"}
 	for i, a := range asks {
 		w := []string{readers[(2*i)%3], readers[(2*i+1)%3]}
-		if !slices.Equal(a, w) {
-			t.Fatalf("ask %d of %v asked %v, want %v: each tick's ask starts past the reader the last one asked", i+1, asks, a, w)
-		}
+		require.True(t, slices.Equal(a, w), "ask %d of %v asked %v, want %v: each tick's ask starts past the reader the last one asked", i+1, asks, a, w)
 	}
-	if len(asks) < 2*len(ringMembers)-1 {
-		t.Fatalf("asks %v: want one a tick", asks)
-	}
+	require.GreaterOrEqual(t, len(asks), 2*len(ringMembers)-1, "asks %v: want one a tick", asks)
 }
 
 func TestTheDealGoesRoundTheFleetThroughTheTick(t *testing.T) {
@@ -240,9 +234,7 @@ func within(t *testing.T, what string, counts map[string]int, most int) {
 		}
 		hi = max(hi, counts[m])
 	}
-	if hi-lo > most {
-		t.Fatalf("%s by member %v: want every member within %d of the others", what, counts, most)
-	}
+	require.LessOrEqual(t, hi-lo, most, "%s by member %v: want every member within %d of the others", what, counts, most)
 }
 
 // dealRingWithFailures is a run with failures (errata 3 amendment 5: every
@@ -286,9 +278,7 @@ func dealRingWithFailures(t *testing.T, h *harness) {
 			failed = append(failed, c.ID)
 		}
 	}
-	if len(failed) != 16 {
-		t.Fatalf("%d primaries came back failed, want 16", len(failed))
-	}
+	require.Len(t, failed, 16, "%d primaries came back failed, want 16", len(failed))
 	// one rework at a time, each worked at once: every queue is empty at every
 	// rework, where the shortest queue with its ties by name gives each to m1
 	skips := 0
@@ -306,9 +296,7 @@ func dealRingWithFailures(t *testing.T, h *harness) {
 			want = ringMembers[(slices.Index(ringMembers, next)+1)%len(ringMembers)]
 			skips++
 		}
-		if to != want {
-			t.Fatalf("%s (failed on %s) was redealt to %s, want %s: the next member round the fleet past %s, the member that failed it skipped", id, failedOn, to, want, past)
-		}
+		require.Equal(t, want, to, "%s (failed on %s) was redealt to %s, want %s: the next member round the fleet past %s, the member that failed it skipped", id, failedOn, to, want, past)
 		for _, m := range ringMembers {
 			workFailing(h, m, func(string) bool { return false })
 		}
@@ -316,9 +304,8 @@ func dealRingWithFailures(t *testing.T, h *harness) {
 	first, again := attemptsBy(h)
 	t.Logf("first attempts by member: %v", first)
 	t.Logf("redeals by member:        %v (the member that failed a card skipped %d times)", again, skips)
-	if sum(first) != 32 || sum(again) != 16 {
-		t.Fatalf("%d first attempts and %d redeals, want 32 and 16", sum(first), sum(again))
-	}
+	require.Equal(t, 32, sum(first), "%d first attempts and %d redeals, want 32 and 16", sum(first), sum(again))
+	require.Equal(t, 16, sum(again), "%d first attempts and %d redeals, want 32 and 16", sum(first), sum(again))
 	within(t, "first attempts", first, 1)
 	// a skip of the member that failed the card gives its turn to the next, and
 	// the index moves past that one: each skip can put one member a card behind
@@ -326,9 +313,9 @@ func dealRingWithFailures(t *testing.T, h *harness) {
 	for _, id := range failed {
 		was := h.snap().Fleet.Card(sprint.WorkCardID(id, 1))
 		now := h.snap().Fleet.Card(sprint.WorkCardID(id, 2))
-		if was == nil || now == nil || now.Row == was.Row {
-			t.Fatalf("%s's redeal is on %v, its failed attempt on %v: the member that failed it is avoided while another has room", id, now, was)
-		}
+		require.NotNil(t, was, "%s's redeal is on %v, its failed attempt on %v: the member that failed it is avoided while another has room", id, now, was)
+		require.NotNil(t, now, "%s's redeal is on %v, its failed attempt on %v: the member that failed it is avoided while another has room", id, now, was)
+		require.NotEqual(t, was.Row, now.Row, "%s's redeal is on %v, its failed attempt on %v: the member that failed it is avoided while another has room", id, now, was)
 	}
 }
 
@@ -373,9 +360,8 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 		h.tick(time.Second)
 	}
 	for _, m := range ringMembers {
-		if st := h.snap().MemberCtl(m).F("status"); st != sprint.Up {
-			t.Fatalf("member %s status %q, want up", m, st)
-		}
+		st := h.snap().MemberCtl(m).F("status")
+		require.Equal(t, string(sprint.Up), st, "member %s status %q, want up", m, st)
 	}
 
 	// 1. Add 12 cards to s1 and tick to deal them
@@ -384,13 +370,11 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	}
 	r := ringMachineTick(h)
 	t.Logf("deal tick: %s", r)
-	if len(r.deals) != 12 {
-		t.Fatalf("dealt %d cards, want 12", len(r.deals))
-	}
+	require.Len(t, r.deals, 12, "dealt %d cards, want 12", len(r.deals))
 	s := h.snap()
 	dealAt, _ := s.Fleet.Prop(sprint.PropDealIndex)
 	if dealAt != "12" {
-		t.Fatalf("deal_index after 12 deals: %q, want 12 (past %s)", dealAt, indexPast(ringMembers, dealAt))
+		require.Failf(t, "", "deal_index after 12 deals: %q, want 12 (past %s)", dealAt, indexPast(ringMembers, dealAt))
 	}
 
 	// 2. m2..m8 take and finish their cards; m1 keeps its 2 ready cards
@@ -398,18 +382,14 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 		h.work(m)
 	}
 	s = h.snap()
-	if n := s.Fleet.Count("m1", sprint.Ready); n != 2 {
-		t.Fatalf("m1 ready count: %d, want 2", n)
-	}
+	n := s.Fleet.Count("m1", sprint.Ready)
+	require.Equal(t, 2, n, "m1 ready count: %d, want 2", n)
 	for _, m := range ringMembers[1:] {
-		if n := s.Fleet.Count(m, sprint.Ready); n != 0 {
-			t.Fatalf("%s ready count: %d, want 0", m, n)
-		}
+		n := s.Fleet.Count(m, sprint.Ready)
+		require.Equal(t, 0, n, "%s ready count: %d, want 0", m, n)
 	}
 	dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
-	if dealAt != "12" {
-		t.Fatalf("deal_index before down: %q, want 12", dealAt)
-	}
+	require.Equal(t, "12", dealAt, "deal_index before down: %q, want 12", dealAt)
 
 	// 3. m1 goes down: stop its beat and advance past BeatDeadline
 	h.setLive("m2", "m3", "m4", "m5", "m6", "m7", "m8")
@@ -418,26 +398,21 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 
 	// Verify m1 is down and its cards were redealt past deal_index (counter 12, past m4) to m5 and m6
 	s = h.snap()
-	if st := s.MemberCtl("m1").F("status"); st != sprint.Down {
-		t.Fatalf("m1 status: %q, want down", st)
-	}
-	if n := s.Fleet.Count("m1", sprint.Ready); n != 0 {
-		t.Fatalf("m1 ready count: %d, want 0", n)
-	}
-	if n := s.Fleet.Count("m5", sprint.Ready); n != 1 {
-		t.Fatalf("m5 ready count: %d, want 1 (rolling index past m4)", n)
-	}
-	if n := s.Fleet.Count("m6", sprint.Ready); n != 1 {
-		t.Fatalf("m6 ready count: %d, want 1 (rolling index past m4)", n)
-	}
+	st := s.MemberCtl("m1").F("status")
+	require.Equal(t, string(sprint.Down), st, "m1 status: %q, want down", st)
+	n = s.Fleet.Count("m1", sprint.Ready)
+	require.Equal(t, 0, n, "m1 ready count: %d, want 0", n)
+	n = s.Fleet.Count("m5", sprint.Ready)
+	require.Equal(t, 1, n, "m5 ready count: %d, want 1 (rolling index past m4)", n)
+	n = s.Fleet.Count("m6", sprint.Ready)
+	require.Equal(t, 1, n, "m6 ready count: %d, want 1 (rolling index past m4)", n)
 	for _, m := range []string{"m2", "m3", "m4", "m7", "m8"} {
-		if n := s.Fleet.Count(m, sprint.Ready); n != 0 {
-			t.Fatalf("%s ready count: %d, want 0 (shortest queue by name would have chosen m2/m3)", m, n)
-		}
+		n := s.Fleet.Count(m, sprint.Ready)
+		require.Equal(t, 0, n, "%s ready count: %d, want 0 (shortest queue by name would have chosen m2/m3)", m, n)
 	}
 	dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
 	if dealAt != "14" {
-		t.Fatalf("deal_index after member down redeals: %q, want 14 (past %s)", dealAt, indexPast(ringMembers, dealAt))
+		require.Failf(t, "", "deal_index after member down redeals: %q, want 14 (past %s)", dealAt, indexPast(ringMembers, dealAt))
 	}
 
 	// 4. While m1 is down, deal 9 cards across the 7 up members (m2..m8)
@@ -452,14 +427,12 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	s = h.snap()
 	dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
 	if dealAt != "24" {
-		t.Fatalf("deal_index after 9 deals: %q, want 24 (past %s)", dealAt, indexPast(ringMembers, dealAt))
+		require.Failf(t, "", "deal_index after 9 deals: %q, want 24 (past %s)", dealAt, indexPast(ringMembers, dealAt))
 	}
-	if n := s.Fleet.Count("m7", sprint.Ready); n != 2 {
-		t.Fatalf("m7 ready count: %d, want 2", n)
-	}
-	if n := s.Fleet.Count("m8", sprint.Ready); n != 2 {
-		t.Fatalf("m8 ready count: %d, want 2", n)
-	}
+	n = s.Fleet.Count("m7", sprint.Ready)
+	require.Equal(t, 2, n, "m7 ready count: %d, want 2", n)
+	n = s.Fleet.Count("m8", sprint.Ready)
+	require.Equal(t, 2, n, "m8 ready count: %d, want 2", n)
 
 	// 5. m1 beats again and comes up. Levelling (T4 / R7) triggers because m7/m8
 	// have 2 cards and m1 has 0 (differ by 2 > 1).
@@ -472,15 +445,13 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	h.machine()
 
 	s = h.snap()
-	if st := s.MemberCtl("m1").F("status"); st != sprint.Up {
-		t.Fatalf("m1 status: %q, want up", st)
-	}
-	if n := s.Fleet.Count("m1", sprint.Ready); n != 1 {
-		t.Fatalf("m1 ready count after levelling: %d, want 1", n)
-	}
+	st = s.MemberCtl("m1").F("status")
+	require.Equal(t, string(sprint.Up), st, "m1 status: %q, want up", st)
+	n = s.Fleet.Count("m1", sprint.Ready)
+	require.Equal(t, 1, n, "m1 ready count after levelling: %d, want 1", n)
 	dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
 	if dealAt != "25" {
-		t.Fatalf("deal_index after levelling: %q, want 25 (past %s)", dealAt, indexPast(ringMembers, dealAt))
+		require.Failf(t, "", "deal_index after levelling: %q, want 25 (past %s)", dealAt, indexPast(ringMembers, dealAt))
 	}
 }
 

@@ -25,6 +25,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -37,6 +38,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 const usage = `nova-memory: search your own markdown notes, and check a draft against what they already say
@@ -46,15 +48,17 @@ memory (bm25 words, trigrams); nothing is written. search prints the k best
 passages with file:line and the quoted text; check names the notes a draft
 repeats; verify gates links and frontmatter. The CAL line is the score a fixed
 unrelated probe gets here: a hit scoring at or below it is no better than noise.
-first run: quickstart --root on any folder of .md files, or copy the included
-corpus (the setup line above example:) and run the lines under example:.
+first run: quickstart --root on any folder of .md files, or create the small
+corpus in setup: and run the lines under example:.
+class is the top-level directory ("." for root files); name/type are frontmatter
+values, with "-" meaning absent.
 
 usage:
   nova-memory version    print this build identity (--version also accepted)
   nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
   nova-memory stats  --root <dir>... [--exclude <glob>]...
-  nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <words>...
-  nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <file|->
+  nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <words>...
+  nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
   nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                      [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
                      [--fail-max <n>]
@@ -69,6 +73,7 @@ default channel or a default k — it names both on every line it prints, and
 says so again at the end.
 
 flags:
+  --json                search/check: JSON of the same retrieval evidence.
   --root <dir>          the corpus root. Required, always: there is no
                         environment variable and no discovery from the working
                         directory. Repeatable (--root <dir> --root <dir> ...):
@@ -125,7 +130,10 @@ sentences and one run, not two runs.
 exit codes: 0 ran and passed, 1 ran and failed, 2 could not run (bad invocation).
 
 setup:
-  cp -R cmd/nova-memory/testdata/corpus ./corpus && cp cmd/nova-memory/testdata/corpus/HANDBOOK.md ./draft.md
+  mkdir -p ./corpus/notes
+  printf 'The lantern glazing needs clean cloths for brass and glass.\n' > ./corpus/notes/lantern.md
+  printf '[Lantern care](lantern.md) keeps the glazing clean.\n' > ./corpus/notes/index-notes.md
+  cp ./corpus/notes/lantern.md ./draft.md
 
 example:
   nova-memory quickstart --root ./corpus
@@ -407,18 +415,6 @@ func checkK(k int, verb string, stderr io.Writer) bool {
 	return true
 }
 
-// calibration scores the fixed unrelated probe once per run and returns the
-// band: the top hit's native score and the channel that produced it. An empty
-// channel name means the probe surfaced nothing at all — which is a different
-// fact from "the probe scored zero", and must not print as one.
-func calibration(c *memindex.Corpus, chans []memindex.Channel) (float64, string) {
-	hits := memindex.Retrieve(c, chans, calibrationProbe, 1)
-	if len(hits) == 0 {
-		return 0, ""
-	}
-	return hits[0].Native, hits[0].NativeChan
-}
-
 // scoreFields renders the native-score pair. The score is the chunk's score in
 // the channel that ACTUALLY surfaced it, and that channel is named on the same
 // line, because a fused hit in a multi-channel run need not have been scored
@@ -451,7 +447,7 @@ func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
 		root = "-"
 	}
 	return fmt.Sprintf("%s HIT %srank=%d %s fused=%.5f class=%s name=%s type=%s root=%s: %s:%d %q\n",
-		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Field(root), oneline.Escape(h.File), h.Para, h.Snippet)
+		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Field(root), oneline.Escape(h.File), h.Line, h.Snippet)
 }
 
 // ---------------------------------------------------------------------------
@@ -669,7 +665,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	for _, e := range rf.excludes {
 		common = append(common, "--exclude", e)
 	}
-	fmt.Fprintf(stdout, "QUICKSTART OK root=%s steps=3 channels=bm25 k=%s/%s words=%s words-source=%s candidate=%s\n",
+	fmt.Fprintf(stdout, "QUICKSTART RUN root=%s steps=3 channels=bm25 k=%s/%s words=%s words-source=%s candidate=%s\n",
 		oneline.Field(strings.Join(rf.root, " ")), quickstartSearchK, quickstartCheckK,
 		oneline.Field(strings.Join(words, " ")), oneline.Field(wordsSource), oneline.Field(candidate))
 
@@ -702,14 +698,15 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 		// looks like when it is true, and can compare it against the
 		// calibration band on the same screen.
 		checkArgs = append(checkArgs, "-")
-		checkIn = strings.NewReader(c.Chunks[0].Text)
+		checkIn = strings.NewReader(c.Chunks[0].Original)
 		fmt.Fprintf(stdout, "QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: %s:%d\n",
-			oneline.Escape(c.Chunks[0].File), c.Chunks[0].Para)
+			oneline.Escape(c.Chunks[0].File), c.Chunks[0].Line)
 	}
 	if code := step(checkArgs, checkIn, stdout, stderr); code != 0 {
 		return stepFailed("check", code, stderr)
 	}
 
+	fmt.Fprintf(stdout, "QUICKSTART OK done=3\n")
 	fmt.Fprintf(stdout, "QUICKSTART NOTE %s\n", quickstartChoiceNote)
 	return 0
 }
@@ -864,6 +861,23 @@ func readPin(name string) ([]string, error) {
 
 func cmdSearch(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "render the retrieval result as JSON")
+	var problems strings.Builder
+	errors := stderr
+	stderr = &problems
+	defer func() {
+		if problems.Len() == 0 {
+			return
+		}
+		if *asJSON {
+			out := tool.Refuse(strings.TrimSpace(problems.String()))
+			out.Verb = "search"
+			out.Remedy = "nova-memory help"
+			out.Render(stdout, true)
+		} else {
+			fmt.Fprint(errors, problems.String())
+		}
+	}()
 	rf := addRootFlags(fs)
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per query, positive (required)")
@@ -897,16 +911,8 @@ func cmdSearch(args []string, stdout, stderr io.Writer) int {
 	}
 	chans := newChannels(c, names)
 	hits := memindex.Retrieve(c, chans, query, *k)
-	fmt.Fprintf(stdout, "SEARCH OK query=%s hits=%d k=%d channels=%s files=%d chunks=%d\n",
-		oneline.Field(query), len(hits), *k, chanNames(chans), len(c.Files), len(c.Chunks))
-	fmt.Fprintf(stdout, "SEARCH CAL %s probe=unrelated-control\n", scoreFields(calibration(c, chans)))
-	if len(hits) == 0 {
-		fmt.Fprintln(stdout, "SEARCH MISS every query term is out of vocabulary for this corpus")
-	}
-	for i, h := range hits {
-		fmt.Fprint(stdout, hitLine("SEARCH", "", i+1, h))
-	}
-	fmt.Fprintf(stdout, "SEARCH NOTE %s\n", noteLexical)
+	result := retrievalResult{Verb: "search", Query: query, K: *k, Channels: chanNames(chans), Files: len(c.Files), Chunks: len(c.Chunks), Calibration: calibrationHits(c, chans), Candidates: []retrievalCandidate{{Hits: hits}}, Notes: []string{noteLexical}}
+	result.render(stdout, *asJSON)
 	return 0
 }
 
@@ -915,6 +921,23 @@ func cmdSearch(args []string, stdout, stderr io.Writer) int {
 
 func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "render the retrieval result as JSON")
+	var problems strings.Builder
+	errors := stderr
+	stderr = &problems
+	defer func() {
+		if problems.Len() == 0 {
+			return
+		}
+		if *asJSON {
+			out := tool.Refuse(strings.TrimSpace(problems.String()))
+			out.Verb = "check"
+			out.Remedy = "nova-memory help"
+			out.Render(stdout, true)
+		} else {
+			fmt.Fprint(errors, problems.String())
+		}
+	}()
 	rf := addRootFlags(fs)
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per candidate, positive (required)")
@@ -976,27 +999,11 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	chans := newChannels(c, names)
 
-	fmt.Fprintf(stdout, "MEMORY OK candidates=%d source=%s k=%d channels=%s files=%d chunks=%d\n",
-		len(candidates), oneline.Field(name), *k, chanNames(chans), len(c.Files), len(c.Chunks))
-	fmt.Fprintf(stdout, "MEMORY CAL %s probe=unrelated-control\n", scoreFields(calibration(c, chans)))
-	for i, cand := range candidates {
-		fmt.Fprintf(stdout, "MEMORY CAND n=%d: %q\n", i+1, memindex.Truncate(memindex.Normalize(cand), 100))
-		hits := memindex.Retrieve(c, chans, cand, *k)
-		if len(hits) == 0 {
-			fmt.Fprintf(stdout, "MEMORY MISS cand=%d every query term is out of vocabulary for this corpus\n", i+1)
-			continue
-		}
-		for j, h := range hits {
-			fmt.Fprint(stdout, hitLine("MEMORY", fmt.Sprintf("cand=%d ", i+1), j+1, h))
-		}
+	result := retrievalResult{Verb: "check", Source: name, K: *k, Channels: chanNames(chans), Files: len(c.Files), Chunks: len(c.Chunks), Calibration: calibrationHits(c, chans), Notes: []string{noteLexical, "this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours", "a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction"}}
+	for _, cand := range candidates {
+		result.Candidates = append(result.Candidates, retrievalCandidate{Text: memindex.Truncate(strings.TrimSpace(cand), 100), Hits: memindex.Retrieve(c, chans, cand, *k)})
 	}
-	fmt.Fprintf(stdout, "MEMORY NOTE %s\n", noteLexical)
-	fmt.Fprintln(stdout, "MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours")
-	// Class-relative, deliberately: the corpus classifies itself by top-level
-	// directory and this tool assumes nothing whatever about layout, so the
-	// NOTE must not talk as if every adopter's tree has one canonical memory
-	// directory the way the line this was written on does.
-	fmt.Fprintln(stdout, "MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction")
+	result.render(stdout, *asJSON)
 	return 0
 }
 
@@ -1150,7 +1157,7 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 			bad = true
 		}
 	}
-	if given["floor"] && (*floor <= 0 || *floor > 1) {
+	if given["floor"] && (math.IsNaN(*floor) || math.IsInf(*floor, 0) || *floor <= 0 || *floor > 1) {
 		refuse(stderr, " eval", fmt.Sprintf("--floor must be in (0,1] (got %g); a harness that cannot fail is not a measurement", *floor))
 		bad = true
 	}

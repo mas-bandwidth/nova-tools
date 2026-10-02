@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
 // The member's width is its fleet row's (the owner, 2026-10-01: the row and the
@@ -18,24 +18,17 @@ import (
 // lowered mid-run takes nothing new until the running fall under it.
 func TestAMemberRunsTheWidthOfItsFleetRow(t *testing.T) {
 	t.Parallel()
-	file := filepath.Join(t.TempDir(), "sprint.twin")
-	twin := func(line string) {
-		t.Helper()
-		code, o, e := twinProcess(t, file, line)
-		require.Equal(t, 0, code, "%s\n%s%s", line, o, e)
-	}
-	for _, line := range []string{
+	r := newServerRig(t,
 		"nova-sprint init --readers reader-a,reader-b --members m1:2",
 		"nova-sprint add --stream s1 --count 3",
 		"nova-sprint start",
 		"nova-sprint tick",
 		"nova-sprint tick",
-	} {
-		twin(line)
-	}
+	)
+	twin := func(line string) { t.Helper(); r.boss(line) }
 	rn := &twinRunner{children: map[string]*twinChild{}}
 	var log bytes.Buffer
-	m := member.New(member.Config{As: "m1"}, twinSprint{file: file, actor: "m1"}, rn, &twinPusher{push: member.Push{Sha: "0123456789abcdef0123456789abcdef01234567"}}, &log)
+	m := member.New(member.Config{As: "m1"}, &sprintwire.Worker{Send: r.send}, rn, &twinPusher{push: member.Push{Sha: "0123456789abcdef0123456789abcdef01234567"}}, &log)
 	tick := func() {
 		t.Helper()
 		_, err := m.Tick(time.Unix(0, 0))

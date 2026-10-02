@@ -26,23 +26,11 @@ type scriptSprint struct {
 	mu      sync.Mutex
 	calls   [][]string
 	answers map[string]answer
-	first   map[string]answer // the answer of a verb's next call only (failOnce)
 }
 
 type answer struct {
 	code int
 	out  string
-}
-
-// failOnce makes the verb's next call answer code and its calls after it
-// answer as set: a store that timed out once.
-func (s *scriptSprint) failOnce(verb string, code int, out string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.first == nil {
-		s.first = map[string]answer{}
-	}
-	s.first[verb] = answer{code, out}
 }
 
 func newScript() *scriptSprint { return &scriptSprint{answers: map[string]answer{}} }
@@ -66,10 +54,6 @@ func (s *scriptSprint) Run(args ...string) (int, []byte) {
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, slices.Clone(args))
 	a := s.answers[verbOf(args)]
-	if f, ok := s.first[verbOf(args)]; ok {
-		delete(s.first, verbOf(args))
-		a = f
-	}
 	return a.code, []byte(a.out)
 }
 
@@ -183,18 +167,14 @@ func (r *fakeRunner) child(card string) *fakeChild {
 func queueJSON(t *testing.T, epoch uint64, cards ...queueCard) string {
 	t.Helper()
 	b, err := json.Marshal(queueOut{As: "m", Epoch: epoch, Cards: cards})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(b)
 }
 
 func takeJSON(t *testing.T, ps ...Packet) string {
 	t.Helper()
 	b, err := json.Marshal(takeOut{Packets: ps})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(b)
 }
 
@@ -235,21 +215,12 @@ func TestTickWithTwoReadyAndWidthTwoTakesTwoInOneVerb(t *testing.T) {
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1"), ready("c2")))
 	g.s.set("take", 0, takeJSON(t, pk("c1"), pk("c2")))
 	acted, err := g.tick(t)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if acted != 2 || g.m.Running() != 2 {
-		t.Fatalf("acted=%d running=%d, want 2 and 2", acted, g.m.Running())
-	}
-	if got := g.s.lines("take"); !slices.Equal(got, []string{"take --as m --limit 2 --json --epoch 7"}) {
-		t.Fatalf("take lines: %q, want exactly one, for limit 2", got)
-	}
-	if got := g.r.started(); !slices.Equal(got, []string{"c1", "c2"}) {
-		t.Fatalf("started %v, want c1 c2", got)
-	}
-	if !strings.Contains(g.out.String(), "start c1 attempt=1 gen=1 running=1/2") {
-		t.Fatalf("the start line is missing: %q", g.out.String())
-	}
+	require.NoError(t, err)
+	require.Equal(t, 2, acted, "acted=%d running=%d, want 2 and 2", acted, g.m.Running())
+	require.Equal(t, 2, g.m.Running(), "acted=%d running=%d, want 2 and 2", acted, g.m.Running())
+	require.Equal(t, []string{"take --as m --limit 2 --json --epoch 7"}, g.s.lines("take"), "take lines: want exactly one, for limit 2")
+	require.Equal(t, []string{"c1", "c2"}, g.r.started(), "started: want c1 c2")
+	require.Contains(t, g.out.String(), "start c1 attempt=1 gen=1 running=1/2", "the start line is missing")
 }
 
 // TestEndedOkCardIsFinishedWithItsHeadBranchAndEpoch pins the report verb:
@@ -263,26 +234,18 @@ func TestEndedOkCardIsFinishedWithItsHeadBranchAndEpoch(t *testing.T) {
 	p := pk("c1")
 	p.Gen = 3 // the take hands the card at its generation; the queue says the same
 	g.s.set("take", 0, takeJSON(t, p))
-	if _, err := g.tick(t); err != nil {
-		t.Fatal(err)
-	}
+	_, err := g.tick(t)
+	require.NoError(t, err)
 	g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "abc123", Report: "# Result\n\nlanded the thing\nsecond line"})
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 3, &p)))
 	g.s.reset()
 	acted, err := g.tick(t)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := "finish --as m c1@3 --report pushed=" + fullSha + " to work/c1: landed the thing --head " + fullSha + " --branch work/c1 --epoch 7"
-	if got := g.s.lines("finish"); !slices.Equal(got, []string{want}) {
-		t.Fatalf("finish lines: %q, want %q", got, want)
-	}
-	if acted != 1 || g.m.Running() != 0 {
-		t.Fatalf("acted=%d running=%d, want 1 and 0", acted, g.m.Running())
-	}
-	if len(g.s.lines("take")) != 0 {
-		t.Fatalf("nothing was ready and nothing was taken: %q", g.s.lines("take"))
-	}
+	require.Equal(t, []string{want}, g.s.lines("finish"), "finish lines, want %q", want)
+	require.Equal(t, 1, acted, "acted=%d running=%d, want 1 and 0", acted, g.m.Running())
+	require.Equal(t, 0, g.m.Running(), "acted=%d running=%d, want 1 and 0", acted, g.m.Running())
+	require.Empty(t, g.s.lines("take"), "nothing was ready and nothing was taken")
 }
 
 // TestEndedNotOkCardIsFinishedFailed pins --failed, placed before the epoch,
@@ -293,18 +256,14 @@ func TestEndedNotOkCardIsFinishedFailed(t *testing.T) {
 	p := pk("c1")
 	p.Gen = 2
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &p)))
-	if _, err := g.tick(t); err != nil { // restart: the child is ours now
-		t.Fatal(err)
-	}
+	_, err := g.tick(t) // restart: the child is ours now
+	require.NoError(t, err)
 	g.r.child("c1").end(Result{Ran: true, OK: false, Report: "the harness fell over"})
 	g.s.reset()
-	if _, err := g.tick(t); err != nil {
-		t.Fatal(err)
-	}
-	want := "finish --as m c1@2 --report no RESULT.md shape; the harness fell over --failed --epoch 7"
-	if got := g.s.lines("finish"); !slices.Equal(got, []string{want}) {
-		t.Fatalf("finish lines: %q, want %q", got, want)
-	}
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	want := "finish --as m c1@2 --report no result: no RESULT.md shape; the harness fell over --failed --epoch 7"
+	require.Equal(t, []string{want}, g.s.lines("finish"), "finish lines, want %q", want)
 }
 
 // A run the provider failed that left no result is finished failed with the kind
@@ -344,7 +303,7 @@ func TestJudgeNamesTheProviderOnlyForTheRunItFailedWithNoResult(t *testing.T) {
 		"a refused push is git's, said first":                  {Result{End: EndProvider, Provider: "provider: x"}, Push{Refused: "rejected"}, "push refused: rejected"},
 		"a result with nothing to do is the card's":            {Result{End: EndProvider, Provider: "provider: x", Shaped: true, Verdict: "nothing", Report: "nothing: done already"}, Push{None: "no commit"}, "nothing to do: done already"},
 		"a result not done is the card's":                      {Result{End: EndProvider, Provider: "provider: x", Shaped: true, Verdict: "not-done"}, Push{None: "no commit"}, "verdict not-done"},
-		"no provider end: the shape's reason":                  {Result{Provider: "provider: x"}, Push{None: "nothing"}, "no RESULT.md shape"},
+		"no provider end: the child left no result":            {Result{Provider: "provider: x"}, Push{None: "nothing"}, "no result: no RESULT.md shape"},
 		"a budget still names itself first":                    {Result{End: EndBudget}, Push{None: "nothing"}, "budget: no RESULT.md shape"},
 	} {
 		fin, why := Judge(c.r, c.pu)
@@ -394,19 +353,15 @@ func TestFinishWithoutABranchInThePacketCarriesNone(t *testing.T) {
 	p := pk("c1")
 	p.Branch = "" // the branch is the launch's packet's; none here
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
-	if _, err := g.tick(t); err != nil {
-		t.Fatal(err)
-	}
+	_, err := g.tick(t)
+	require.NoError(t, err)
 	g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "h1", Report: "done"})
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, nil)))
 	g.s.reset()
-	if _, err := g.tick(t); err != nil {
-		t.Fatal(err)
-	}
+	_, err = g.tick(t)
+	require.NoError(t, err)
 	want := "finish --as m c1@1 --report no commit: the packet names no branch to push to; done --failed --epoch 7"
-	if got := g.s.lines("finish"); !slices.Equal(got, []string{want}) {
-		t.Fatalf("finish lines: %q, want %q", got, want)
-	}
+	require.Equal(t, []string{want}, g.s.lines("finish"), "finish lines, want %q", want)
 }
 
 // TestAWorkingCardWithNoChildOfOursIsRestartedFromItsPacket pins the
@@ -419,23 +374,18 @@ func TestAWorkingCardWithNoChildOfOursIsRestartedFromItsPacket(t *testing.T) {
 	p.Attempt, p.Gen = 2, 4
 	g.s.set("queue", 0, queueJSON(t, 7, working("c9", 4, &p), working("c8", 4, nil)))
 	acted, err := g.tick(t)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if acted != 1 || !slices.Equal(g.r.started(), []string{"c9"}) {
-		t.Fatalf("acted=%d started=%v, want c9 only (c8 has no packet to run)", acted, g.r.started())
-	}
-	if g.r.packets[0].Attempt != 2 || g.r.packets[0].Gen != 4 {
-		t.Fatalf("restarted with %+v, want the queue's own packet", g.r.packets[0])
-	}
-	if len(g.s.lines("finish")) != 0 || len(g.s.lines("take")) != 0 {
-		t.Fatalf("a restart finishes and takes nothing: %q %q", g.s.lines("finish"), g.s.lines("take"))
-	}
+	require.NoError(t, err)
+	require.Equal(t, 1, acted, "acted=%d started=%v, want c9 only (c8 has no packet to run)", acted, g.r.started())
+	require.Equal(t, []string{"c9"}, g.r.started(), "acted=%d started=%v, want c9 only (c8 has no packet to run)", acted, g.r.started())
+	require.Equal(t, 2, g.r.packets[0].Attempt, "restarted with %+v, want the queue's own packet", g.r.packets[0])
+	require.Equal(t, 4, g.r.packets[0].Gen, "restarted with %+v, want the queue's own packet", g.r.packets[0])
+	require.Empty(t, g.s.lines("finish"), "a restart finishes and takes nothing: %q %q", g.s.lines("finish"), g.s.lines("take"))
+	require.Empty(t, g.s.lines("take"), "a restart finishes and takes nothing: %q %q", g.s.lines("finish"), g.s.lines("take"))
 	// The next pass finds the child ours and starts nothing more.
 	g.s.reset()
-	if acted, _ = g.tick(t); acted != 0 || len(g.r.started()) != 1 {
-		t.Fatalf("second pass acted=%d started=%v, want 0 and one start in all", acted, g.r.started())
-	}
+	acted, _ = g.tick(t)
+	require.Equal(t, 0, acted, "second pass acted=%d started=%v, want 0 and one start in all", acted, g.r.started())
+	require.Len(t, g.r.started(), 1, "second pass acted=%d started=%v, want 0 and one start in all", acted, g.r.started())
 }
 
 // TestRecoveryWithExcessInFlightPacketsDoesNotExceedWidth pins that recovery
@@ -506,23 +456,18 @@ func TestNoTakeWhenWidthIsFullOrNothingIsReady(t *testing.T) {
 		g := newRig(Config{As: "m", Width: 1})
 		p := pk("c1")
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p), ready("c2")))
-		if _, err := g.tick(t); err != nil {
-			t.Fatal(err)
-		}
-		if got := g.s.lines("take"); len(got) != 0 {
-			t.Fatalf("width 1 with one child running took: %q", got)
-		}
+		_, err := g.tick(t)
+		require.NoError(t, err)
+		require.Empty(t, g.s.lines("take"), "width 1 with one child running took")
 	})
 	t.Run("nothing ready", func(t *testing.T) {
 		t.Parallel()
 		g := newRig(Config{As: "m", Width: 4})
 		g.s.set("queue", 0, queueJSON(t, 7))
-		if acted, err := g.tick(t); err != nil || acted != 0 {
-			t.Fatalf("acted=%d err=%v on an empty queue", acted, err)
-		}
-		if got := g.s.lines("take"); len(got) != 0 {
-			t.Fatalf("an empty queue took: %q", got)
-		}
+		acted, err := g.tick(t)
+		require.NoError(t, err, "acted=%d err=%v on an empty queue", acted, err)
+		require.Equal(t, 0, acted, "acted=%d err=%v on an empty queue", acted, err)
+		require.Empty(t, g.s.lines("take"), "an empty queue took")
 	})
 }
 
@@ -537,36 +482,25 @@ func TestReaderLoopBeginsAskedCardsAndReportsEndedReads(t *testing.T) {
 	asked := func(id string, p *Packet) queueCard { return queueCard{ID: id, Col: "asked", Packet: p} }
 	g.s.set("queue", 0, queueJSON(t, 7, asked("r1", &a1), asked("r2", &a2)))
 	acted, err := g.tick(t)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := g.s.lines("begin"); !slices.Equal(got, []string{"read --as r --begin r1 r2 --epoch 7"}) {
-		t.Fatalf("begin lines: %q", got)
-	}
-	if acted != 2 || !slices.Equal(g.r.started(), []string{"r1", "r2"}) {
-		t.Fatalf("acted=%d started=%v", acted, g.r.started())
-	}
-	if got := g.s.lines("beat"); len(got) != 0 {
-		t.Fatalf("a reader beats no fleet row: %q", got)
-	}
+	require.NoError(t, err)
+	require.Equal(t, []string{"read --as r --begin r1 r2 --epoch 7"}, g.s.lines("begin"), "begin lines")
+	require.Equal(t, 2, acted, "acted=%d started=%v", acted, g.r.started())
+	require.Equal(t, []string{"r1", "r2"}, g.r.started(), "acted=%d started=%v", acted, g.r.started())
+	require.Empty(t, g.s.lines("beat"), "a reader beats no fleet row")
 	g.r.child("r1").end(Result{Ran: true, OK: true, Verdict: "ok", Report: "clean\nsecond"})
 	g.r.child("r2").end(Result{Ran: true, OK: false, Verdict: "broken", Report: "## Finding\nthe merge is wrong"})
 	reading := func(id string, p *Packet) queueCard { return queueCard{ID: id, Col: "reading", Packet: p} }
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &a1), reading("r2", &a2)))
 	g.s.reset()
-	if acted, err = g.tick(t); err != nil || acted != 2 {
-		t.Fatalf("acted=%d err=%v", acted, err)
-	}
+	acted, err = g.tick(t)
+	require.NoError(t, err, "acted=%d err=%v", acted, err)
+	require.Equal(t, 2, acted, "acted=%d err=%v", acted, err)
 	want := []string{
 		"read --as r --ok r1 --finding clean --epoch 7",
 		"read --as r --broken r2 --finding the merge is wrong --epoch 7",
 	}
-	if got := g.s.lines("report"); !slices.Equal(got, want) {
-		t.Fatalf("report lines: %q, want %q", got, want)
-	}
-	if g.m.Running() != 0 {
-		t.Fatalf("running=%d after both reads were reported", g.m.Running())
-	}
+	require.Equal(t, want, g.s.lines("report"), "report lines")
+	require.Equal(t, 0, g.m.Running(), "running=%d after both reads were reported", g.m.Running())
 }
 
 // TestAStoreThatDoesNotAnswerStopsTheTickActingOnNothing pins exit 2 as an
@@ -580,16 +514,11 @@ func TestAStoreThatDoesNotAnswerStopsTheTickActingOnNothing(t *testing.T) {
 		g.s.set("queue", 2, queueJSON(t, 7, ready("c1")))
 		g.s.set("take", 0, takeJSON(t, pk("c1")))
 		acted, err := g.tick(t)
-		if err == nil || !strings.Contains(err.Error(), "queue: exit 2") {
-			t.Fatalf("err = %v, want a queue exit 2 error", err)
-		}
-		if acted != 0 || len(g.r.started()) != 0 {
-			t.Fatalf("acted=%d started=%v on a store that did not answer", acted, g.r.started())
-		}
+		require.ErrorContains(t, err, "queue: exit 2", "err = %v, want a queue exit 2 error", err)
+		require.Equal(t, 0, acted, "acted=%d started=%v on a store that did not answer", acted, g.r.started())
+		require.Empty(t, g.r.started(), "acted=%d started=%v on a store that did not answer", acted, g.r.started())
 		for _, verb := range []string{"take", "finish", "begin", "report"} {
-			if got := g.s.lines(verb); len(got) != 0 {
-				t.Fatalf("%s was issued after queue failed: %q", verb, got)
-			}
+			require.Empty(t, g.s.lines(verb), "%s was issued after queue failed", verb)
 		}
 	})
 	t.Run("beat", func(t *testing.T) {
@@ -602,28 +531,25 @@ func TestAStoreThatDoesNotAnswerStopsTheTickActingOnNothing(t *testing.T) {
 		g.s.set("queue", 0, queueJSON(t, 7))
 		_, err = g.tick(t)
 		require.NoError(t, err, "the work pass sends no beat, so a beat that fails stops nothing")
-		assert.Len(t, g.s.lines("beat"), 2, "the beat was asked again once, and the pass sent none")
+		assert.Len(t, g.s.lines("beat"), 1, "the beat was sent once, and the pass sent none")
 	})
 	t.Run("finish keeps the child for the next pass", func(t *testing.T) {
 		t.Parallel()
 		g := newRig(Config{As: "m", Width: 2})
 		p := pk("c1")
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
-		if _, err := g.tick(t); err != nil {
-			t.Fatal(err)
-		}
+		_, err := g.tick(t)
+		require.NoError(t, err)
 		g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "r"})
 		g.s.set("finish", 2, "no route to the store")
-		if _, err := g.tick(t); err == nil {
-			t.Fatal("a finish the store never answered is an error")
-		}
-		if g.m.Running() != 1 {
-			t.Fatalf("running=%d: the unreported child is still ours", g.m.Running())
-		}
+		_, err = g.tick(t)
+		require.Error(t, err, "a finish the store never answered is an error")
+		require.Equal(t, 1, g.m.Running(), "running=%d: the unreported child is still ours", g.m.Running())
 		g.s.set("finish", 0, "")
-		if acted, err := g.tick(t); err != nil || acted != 1 || g.m.Running() != 0 {
-			t.Fatalf("retry: acted=%d err=%v running=%d", acted, err, g.m.Running())
-		}
+		acted, err := g.tick(t)
+		require.NoError(t, err, "retry: acted=%d err=%v running=%d", acted, err, g.m.Running())
+		require.Equal(t, 1, acted, "retry: acted=%d err=%v running=%d", acted, err, g.m.Running())
+		require.Equal(t, 0, g.m.Running(), "retry: acted=%d err=%v running=%d", acted, err, g.m.Running())
 	})
 }
 
@@ -636,27 +562,21 @@ func TestARefusedTakeIsPrintedAndTheTickContinues(t *testing.T) {
 	p := pk("c1")
 	p.Gen = 1
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
-	if _, err := g.tick(t); err != nil {
-		t.Fatal(err)
-	}
+	_, err := g.tick(t)
+	require.NoError(t, err)
 	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "r"})
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p), ready("c2")))
 	g.s.set("take", 1, "the sprint is stopped")
 	acted, err := g.tick(t)
-	if err != nil {
-		t.Fatalf("a refusal is not an error: %v", err)
-	}
-	if acted != 1 {
-		t.Fatalf("acted=%d, want the one finish", acted)
-	}
-	if !strings.Contains(g.out.String(), "take refused: the sprint is stopped") {
-		t.Fatalf("the refusal was not printed: %q", g.out.String())
-	}
+	require.NoError(t, err, "a refusal is not an error: %v", err)
+	require.Equal(t, 1, acted, "acted=%d, want the one finish", acted)
+	require.Contains(t, g.out.String(), "take refused: the sprint is stopped", "the refusal was not printed")
 	g.s.set("take", 0, takeJSON(t, pk("c2")))
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c2")))
-	if acted, err = g.tick(t); err != nil || acted != 1 || !slices.Equal(g.r.started(), []string{"c1", "c2"}) {
-		t.Fatalf("next pass acted=%d err=%v started=%v", acted, err, g.r.started())
-	}
+	acted, err = g.tick(t)
+	require.NoError(t, err, "next pass acted=%d err=%v started=%v", acted, err, g.r.started())
+	require.Equal(t, 1, acted, "next pass acted=%d err=%v started=%v", acted, err, g.r.started())
+	require.Equal(t, []string{"c1", "c2"}, g.r.started(), "next pass acted=%d err=%v started=%v", acted, err, g.r.started())
 }
 
 // TestBeatCarriesNoLoadOfItsOwn pins the beat as `fleet beat <member>` alone, however
@@ -675,9 +595,8 @@ func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 				cards = append(cards, working(p.Card, 1, &p))
 			}
 			g.s.set("queue", 0, queueJSON(t, 7, cards...))
-			if _, err := g.tick(t); err != nil { // restarts: running is now tc.running
-				t.Fatal(err)
-			}
+			_, err := g.tick(t) // restarts: running is now tc.running
+			require.NoError(t, err)
 			require.Equal(t, tc.running, g.m.Running())
 			g.s.reset()
 			require.NoError(t, g.m.Beat())
@@ -696,26 +615,17 @@ func TestACardTheQueueNoLongerListsIsReapedWhenItsChildEnds(t *testing.T) {
 	p := pk("c1")
 	p.Gen = 1
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
-	if _, err := g.tick(t); err != nil {
-		t.Fatal(err)
-	}
+	_, err := g.tick(t)
+	require.NoError(t, err)
 	g.s.set("queue", 0, queueJSON(t, 8))
-	if _, err := g.tick(t); err != nil {
-		t.Fatal(err)
-	}
-	if g.m.Running() != 1 {
-		t.Fatalf("running=%d: a child still running is left alone", g.m.Running())
-	}
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 1, g.m.Running(), "running=%d: a child still running is left alone", g.m.Running())
 	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "r"})
-	if _, err := g.tick(t); err != nil {
-		t.Fatal(err)
-	}
-	if g.m.Running() != 0 {
-		t.Fatalf("running=%d: an ended child of a card the queue dropped still holds a place of the width", g.m.Running())
-	}
-	if got := g.s.lines("finish"); len(got) != 0 {
-		t.Fatalf("a card the queue dropped is not finished: %q", got)
-	}
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 0, g.m.Running(), "running=%d: an ended child of a card the queue dropped still holds a place of the width", g.m.Running())
+	require.Empty(t, g.s.lines("finish"), "a card the queue dropped is not finished")
 }
 
 // TestAStartThatFailsIsPrintedAndLeavesNoChild pins the runner's error as a
@@ -727,12 +637,10 @@ func TestAStartThatFailsIsPrintedAndLeavesNoChild(t *testing.T) {
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1"), ready("c2")))
 	g.s.set("take", 0, takeJSON(t, pk("c1"), pk("c2")))
 	acted, err := g.tick(t)
-	if err != nil || acted != 1 || g.m.Running() != 1 {
-		t.Fatalf("acted=%d err=%v running=%d, want 1 nil 1", acted, err, g.m.Running())
-	}
-	if !strings.Contains(g.out.String(), "start c1: no slot for c1") {
-		t.Fatalf("the failed start was not printed: %q", g.out.String())
-	}
+	require.NoError(t, err, "acted=%d err=%v running=%d, want 1 nil 1", acted, err, g.m.Running())
+	require.Equal(t, 1, acted, "acted=%d err=%v running=%d, want 1 nil 1", acted, err, g.m.Running())
+	require.Equal(t, 1, g.m.Running(), "acted=%d err=%v running=%d, want 1 nil 1", acted, err, g.m.Running())
+	require.Contains(t, g.out.String(), "start c1: no slot for c1", "the failed start was not printed")
 }
 
 // TestCardTextForAWorkPacket pins what a child reads: the brief verbatim and
@@ -745,10 +653,8 @@ func TestCardTextForAWorkPacket(t *testing.T) {
 		Brief: "Build the thing.\nsecond line\n\n", Fix: " Mind the edge. ", Notes: []string{"first note", "  ", "second note"},
 		Branch: "work/c1", Base: "sprint/base",
 	}
-	got := CardText(p, "nova-sprint")
-	if !strings.HasPrefix(got, "Build the thing.\nsecond line\n\n## From the sprint\n\n") {
-		t.Fatalf("the brief is not verbatim and first:\n%s", got)
-	}
+	got := CardText(p)
+	require.True(t, strings.HasPrefix(got, "Build the thing.\nsecond line\n\n## From the sprint\n\n"), "the brief is not verbatim and first:\n%s", got)
 	for _, want := range []string{
 		"This is c1: attempt 2 of p1 (stream a).",
 		"The checkout is on branch work/c1;",
@@ -757,16 +663,11 @@ func TestCardTextForAWorkPacket(t *testing.T) {
 		"Note:\n\nsecond note\n",
 		"    nova-sprint finish --as m1 c1@5 --epoch 9 --branch work/c1 --head <sha> --report '<one line>' [--failed]\n",
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("the work card lacks %q:\n%s", want, got)
-		}
+		require.Contains(t, got, want, "the work card lacks %q", want)
 	}
-	if n := strings.Count(got, "Note:\n"); n != 2 {
-		t.Fatalf("%d notes, want 2 (a blank note is dropped):\n%s", n, got)
-	}
-	if strings.Contains(got, " read --as ") {
-		t.Fatalf("a work card names the read verb:\n%s", got)
-	}
+	n := strings.Count(got, "Note:\n")
+	require.Equal(t, 2, n, "%d notes, want 2 (a blank note is dropped):\n%s", n, got)
+	require.NotContains(t, got, " read --as ", "a work card names the read verb")
 }
 
 // TestCardTextForAWorkPacketWithNoBaseNamesTheJob pins the other branch of
@@ -774,18 +675,12 @@ func TestCardTextForAWorkPacket(t *testing.T) {
 // branch, and the finish line names it too.
 func TestCardTextForAWorkPacketWithNoBaseNamesTheJob(t *testing.T) {
 	t.Parallel()
-	got := CardText(Packet{Card: "c2", Kind: "work", As: "m1", Primary: "p2", Stream: "b", Attempt: 1, Gen: 1, Epoch: 3, Branch: "work/c2"}, "nova-sprint")
-	if !strings.HasPrefix(got, "## From the sprint\n\n") {
-		t.Fatalf("a packet with no brief starts at the sprint's part:\n%s", got)
-	}
+	got := CardText(Packet{Card: "c2", Kind: "work", As: "m1", Primary: "p2", Stream: "b", Attempt: 1, Gen: 1, Epoch: 3, Branch: "work/c2"})
+	require.True(t, strings.HasPrefix(got, "## From the sprint\n\n"), "a packet with no brief starts at the sprint's part:\n%s", got)
 	for _, want := range []string{"The checkout is on branch work/c2; JOB.md", "finish --as m1 c2@1 --epoch 3 --branch work/c2 "} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("the card lacks %q:\n%s", want, got)
-		}
+		require.Contains(t, got, want, "the card lacks %q", want)
 	}
-	if strings.Contains(got, "The work is branch") {
-		t.Fatalf("a card with no base names a branch to start from:\n%s", got)
-	}
+	require.NotContains(t, got, "The work is branch", "a card with no base names a branch to start from")
 }
 
 // TestCardTextForAReadPacket pins a read card: the brief, the head, the work
@@ -796,22 +691,16 @@ func TestCardTextForAReadPacket(t *testing.T) {
 		Card: "r1", Kind: "read", As: "rd", Primary: "p1", Attempt: 1, Epoch: 4, Worker: "m2", Brief: "Read it well.",
 		Head: "deadbeef", WorkBranch: "work/c1", WorkBase: "sprint/base", Report: " landed it ",
 	}
-	got := CardText(p, "/bin/nova-sprint")
-	if !strings.HasPrefix(got, "Read it well.\n\n## From the sprint\n\n") {
-		t.Fatalf("the brief is not verbatim and first:\n%s", got)
-	}
+	got := CardText(p)
+	require.True(t, strings.HasPrefix(got, "Read it well.\n\n## From the sprint\n\n"), "the brief is not verbatim and first:\n%s", got)
 	for _, want := range []string{
 		"This is read r1: attempt 1 of p1, worked by m2, at head deadbeef on branch work/c1 (base sprint/base).",
 		"The worker's report:\n\nlanded it\n",
-		"    /bin/nova-sprint read --as rd (--ok | --broken) r1 --epoch 4 --finding '<one line>'\n",
+		"    nova-sprint read --as rd (--ok | --broken) r1 --epoch 4 --finding '<one line>'\n",
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("the read card lacks %q:\n%s", want, got)
-		}
+		require.Contains(t, got, want, "the read card lacks %q", want)
 	}
-	if strings.Contains(got, " finish --as ") {
-		t.Fatalf("a read card names the finish verb:\n%s", got)
-	}
+	require.NotContains(t, got, " finish --as ", "a read card names the finish verb")
 }
 
 // TestOneLine pins the report as one line: the first non-empty line that is
@@ -827,9 +716,7 @@ func TestOneLine(t *testing.T) {
 		{"cut at 500 bytes", long, strings.Repeat("x", 500)},
 		{"exactly 500 kept", strings.Repeat("y", 500), strings.Repeat("y", 500)},
 	} {
-		if got := oneLine(tc.in); got != tc.want {
-			t.Errorf("%s: oneLine = %q, want %q", tc.name, got, tc.want)
-		}
+		assert.Equal(t, tc.want, oneLine(tc.in), "%s: oneLine", tc.name)
 	}
 }
 
@@ -846,21 +733,19 @@ func TestAReadBeginThatIsRefusedOrUnansweredStartsNothing(t *testing.T) {
 		g.s.set("queue", 0, body)
 		g.s.set("begin", 1, "stale epoch")
 		acted, err := g.tick(t)
-		if err != nil || acted != 0 || len(g.r.started()) != 0 {
-			t.Fatalf("acted=%d err=%v started=%v", acted, err, g.r.started())
-		}
-		if !strings.Contains(g.out.String(), "read --begin refused: stale epoch") {
-			t.Fatalf("the refusal was not printed: %q", g.out.String())
-		}
+		require.NoError(t, err, "acted=%d err=%v started=%v", acted, err, g.r.started())
+		require.Equal(t, 0, acted, "acted=%d err=%v started=%v", acted, err, g.r.started())
+		require.Empty(t, g.r.started(), "acted=%d err=%v started=%v", acted, err, g.r.started())
+		require.Contains(t, g.out.String(), "read --begin refused: stale epoch", "the refusal was not printed")
 	})
 	t.Run("unanswered", func(t *testing.T) {
 		t.Parallel()
 		g := newRig(Config{As: "r", Width: 1, Reader: true})
 		g.s.set("queue", 0, body)
 		g.s.set("begin", 2, "no route")
-		if _, err := g.tick(t); err == nil || len(g.r.started()) != 0 {
-			t.Fatalf("err=%v started=%v, want an error and no start", err, g.r.started())
-		}
+		_, err := g.tick(t)
+		require.Error(t, err, "err=%v started=%v, want an error and no start", err, g.r.started())
+		require.Empty(t, g.r.started(), "err=%v started=%v, want an error and no start", err, g.r.started())
 	})
 }
 
@@ -883,109 +768,92 @@ func TestAMovedClaimIsReapedNotReported(t *testing.T) {
 		g := newRig(Config{As: "m", Width: 2})
 		old := pk("c1") // gen 1, epoch 7
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
-		if _, err := g.tick(t); err != nil {
-			t.Fatal(err)
-		}
+		_, err := g.tick(t)
+		require.NoError(t, err)
 		g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "done"})
 		moved := pk("c1")
 		moved.Gen = 2
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &moved)))
 		g.s.reset()
 		acted, err := g.tick(t)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		// Removing the `l.gen != c.Packet.Gen` term of the moved-claim test in
 		// Member.Tick makes this fail: the old child is finished as c1@1.
-		if got := g.s.lines("finish"); len(got) != 0 {
-			t.Fatalf("a moved claim was reported: %q", got)
-		}
-		if acted != 1 || g.m.Running() != 1 {
-			t.Fatalf("acted=%d running=%d, want the one start of the new claim", acted, g.m.Running())
-		}
-		if ps := g.r.packets; len(ps) != 2 || ps[1].Gen != 2 || ps[1].Epoch != 7 {
-			t.Fatalf("started %+v, want the old launch then the gen-2 packet", ps)
-		}
-		if !strings.Contains(g.out.String(), "reaped c1: the claim moved") {
-			t.Fatalf("the reap was not printed: %q", g.out.String())
-		}
+		require.Empty(t, g.s.lines("finish"), "a moved claim was reported")
+		require.Equal(t, 1, acted, "acted=%d running=%d, want the one start of the new claim", acted, g.m.Running())
+		require.Equal(t, 1, g.m.Running(), "acted=%d running=%d, want the one start of the new claim", acted, g.m.Running())
+		ps := g.r.packets
+		require.Len(t, ps, 2, "started %+v, want the old launch then the gen-2 packet", ps)
+		require.Equal(t, 2, ps[1].Gen, "started %+v, want the old launch then the gen-2 packet", ps)
+		require.Equal(t, uint64(7), ps[1].Epoch, "started %+v, want the old launch then the gen-2 packet", ps)
+		require.Contains(t, g.out.String(), "reaped c1: the claim moved", "the reap was not printed")
 	})
 	t.Run("a clear: the epoch moved, the generation did not", func(t *testing.T) {
 		t.Parallel()
 		g := newRig(Config{As: "m", Width: 2})
 		old := pk("c1") // gen 1, epoch 7
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
-		if _, err := g.tick(t); err != nil {
-			t.Fatal(err)
-		}
+		_, err := g.tick(t)
+		require.NoError(t, err)
 		g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "done"})
 		moved := pk("c1")
 		moved.Epoch = 8
 		g.s.set("queue", 0, queueJSON(t, 8, working("c1", 1, &moved)))
 		g.s.reset()
 		acted, err := g.tick(t)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		// Removing the `l.epoch != c.Packet.Epoch` term of the moved-claim test
 		// in Member.Tick makes this fail: the old child is finished under
 		// epoch 7 against a card of epoch 8.
-		if got := g.s.lines("finish"); len(got) != 0 {
-			t.Fatalf("a claim of another epoch was reported: %q", got)
-		}
-		if acted != 1 || g.m.Running() != 1 {
-			t.Fatalf("acted=%d running=%d, want the one start of the new claim", acted, g.m.Running())
-		}
-		if ps := g.r.packets; len(ps) != 2 || ps[1].Epoch != 8 || ps[1].Gen != 1 {
-			t.Fatalf("started %+v, want the old launch then the epoch-8 packet", ps)
-		}
+		require.Empty(t, g.s.lines("finish"), "a claim of another epoch was reported")
+		require.Equal(t, 1, acted, "acted=%d running=%d, want the one start of the new claim", acted, g.m.Running())
+		require.Equal(t, 1, g.m.Running(), "acted=%d running=%d, want the one start of the new claim", acted, g.m.Running())
+		ps := g.r.packets
+		require.Len(t, ps, 2, "started %+v, want the old launch then the epoch-8 packet", ps)
+		require.Equal(t, uint64(8), ps[1].Epoch, "started %+v, want the old launch then the epoch-8 packet", ps)
+		require.Equal(t, 1, ps[1].Gen, "started %+v, want the old launch then the epoch-8 packet", ps)
 	})
 	t.Run("a read re-asked: the attempt moved", func(t *testing.T) {
 		t.Parallel()
 		g := newRig(Config{As: "r", Width: 2, Reader: true})
 		old := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 		g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &old)))
-		if _, err := g.tick(t); err != nil {
-			t.Fatal(err)
-		}
+		_, err := g.tick(t)
+		require.NoError(t, err)
 		g.r.child("r1").end(Result{Ran: true, Verdict: "ok", Report: "clean"})
 		moved := old
 		moved.Attempt = 2
 		g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &moved)))
 		g.s.reset()
-		if _, err := g.tick(t); err != nil {
-			t.Fatal(err)
-		}
+		_, err = g.tick(t)
+		require.NoError(t, err)
 		// Removing the `l.attempt != c.Packet.Attempt` term of the moved-claim
 		// test in Member.Tick makes this fail: attempt 1's verdict is filed
 		// against attempt 2.
-		if got := g.s.lines("report"); len(got) != 0 {
-			t.Fatalf("a read of another attempt was reported: %q", got)
-		}
-		if ps := g.r.packets; len(ps) != 2 || ps[1].Attempt != 2 || g.m.Running() != 1 {
-			t.Fatalf("started %+v running=%d, want the old launch then attempt 2", ps, g.m.Running())
-		}
+		require.Empty(t, g.s.lines("report"), "a read of another attempt was reported")
+		ps := g.r.packets
+		require.Len(t, ps, 2, "started %+v running=%d, want the old launch then attempt 2", ps, g.m.Running())
+		require.Equal(t, 2, ps[1].Attempt, "started %+v running=%d, want the old launch then attempt 2", ps, g.m.Running())
+		require.Equal(t, 1, g.m.Running(), "started %+v running=%d, want the old launch then attempt 2", ps, g.m.Running())
 	})
 	t.Run("a child still running is left alone and not started over", func(t *testing.T) {
 		t.Parallel()
 		g := newRig(Config{As: "m", Width: 2})
 		old := pk("c1")
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
-		if _, err := g.tick(t); err != nil {
-			t.Fatal(err)
-		}
+		_, err := g.tick(t)
+		require.NoError(t, err)
 		moved := pk("c1")
 		moved.Gen = 2
 		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &moved)))
-		if acted, err := g.tick(t); err != nil || acted != 0 {
-			t.Fatalf("acted=%d err=%v", acted, err)
-		}
+		acted, err := g.tick(t)
+		require.NoError(t, err, "acted=%d err=%v", acted, err)
+		require.Equal(t, 0, acted, "acted=%d err=%v", acted, err)
 		// Removing the `continue` after `!l.child.Done()` in the moved-claim
 		// branch makes this fail: the card is reaped while its child runs, and
 		// a second child starts beside the first.
-		if len(g.r.packets) != 1 || g.m.Running() != 1 {
-			t.Fatalf("started %d, running %d: a moved claim's live child is reaped only when it ends", len(g.r.packets), g.m.Running())
-		}
+		require.Len(t, g.r.packets, 1, "started %d, running %d: a moved claim's live child is reaped only when it ends", len(g.r.packets), g.m.Running())
+		require.Equal(t, 1, g.m.Running(), "started %d, running %d: a moved claim's live child is reaped only when it ends", len(g.r.packets), g.m.Running())
 	})
 }
 
@@ -1010,15 +878,19 @@ func TestAReadWithNoVerdictIsReturnedForTheSprintToAskAgain(t *testing.T) {
 			`read --as r --return r1 --reason no verdict (ran=false verdict=""): STAGE FAIL no bench mirror --epoch 7`},
 		{"did not run, a stale verdict line", Result{Ran: false, Verdict: "ok", Report: "the child ended without a result"},
 			`read --as r --return r1 --reason no verdict (ran=false verdict="ok"): the child ended without a result --epoch 7`},
+		// names-05.r1.reader-superman, epoch 15, 2026-10-02: the provider refused every
+		// request (429) and native's log said so; the return named only the absence
+		{"the provider failed the run", Result{Ran: false, End: EndProvider, Report: "the child ended without a result (see LOG)",
+			Provider: "provider: class=rate-limited status=429 msg=[Alibaba] qwen/qwen3.8-flash is temporarily rate-limited upstream. Please retry shortly, or add your own key [redacted]"},
+			`read --as r --return r1 --reason no verdict (ran=false verdict=""): provider failure: provider: class=rate-limited status=429 msg=[Alibaba] qwen/qwen3.8-flash is temporarily rate-limited upstream. Please retry shortly, or add your own key [redacted] --epoch 7`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			g := newRig(Config{As: "r", Width: 1, Reader: true})
 			p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 			g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
-			if _, err := g.tick(t); err != nil {
-				t.Fatal(err)
-			}
+			_, err := g.tick(t)
+			require.NoError(t, err)
 			g.r.child("r1").end(tc.res)
 			g.s.reset()
 			acted, err := g.tick(t)
@@ -1094,6 +966,44 @@ func TestAReadItReturnedIsNotBegunAgainBeforeTheRetry(t *testing.T) {
 	assert.Equal(t, []string{"read --as r --begin r1 --epoch 7"}, g.s.lines("begin"), "begun once the retry has passed")
 }
 
+// TestAReaderHandsBackAReadItCannotStart pins the reader's side of a launch refused (commit
+// 255180e2; fleet pass 7, 2026-10-01): a read whose start fails is returned at once with the
+// reason, `read --as <reader> --return <card> --reason launch refused: ... --epoch <n>`, and
+// this reader does not begin it again before ReadStageRetry, however the queue lists it. Before,
+// it printed the error and began the read again every pass, for the read's whole deadline.
+func TestAReaderHandsBackAReadItCannotStart(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 2, Reader: true})
+	p1 := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	p2 := Packet{Card: "r2", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	g.r.failFor["r1"] = true
+	g.s.set("queue", 0, queueJSON(t, 7, asked("r1", &p1), asked("r2", &p2)))
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"r2"}, g.r.started(), "the read that can start is started")
+	assert.Equal(t, []string{"read --as r --return r1 --reason launch refused: no slot for r1 --epoch 7"}, g.s.lines("return"),
+		"returned once, at once, with the reason")
+	assert.Equal(t, 1, g.m.Running(), "the read returned holds no lane")
+
+	// the sprint asked it of this reader again, in place, in the same second
+	g.s.set("queue", 0, queueJSON(t, 7, asked("r1", &p1), reading("r2", &p2)))
+	g.s.reset()
+	_, err = g.tickAt(t, 0)
+	require.NoError(t, err)
+	assert.Empty(t, g.s.lines("begin"), "not begun again inside ReadStageRetry")
+	assert.Empty(t, g.s.lines("return"), "not returned again inside ReadStageRetry")
+	assert.Equal(t, []string{"r2"}, g.r.started())
+
+	// once ReadStageRetry has passed it may be begun again
+	g.r.failFor["r1"] = false
+	g.s.reset()
+	_, err = g.tickAt(t, int64(ReadStageRetry/time.Second))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"read --as r --begin r1 --epoch 7"}, g.s.lines("begin"), "begun once the retry has passed")
+	assert.Empty(t, g.s.lines("return"))
+	assert.Equal(t, []string{"r2", "r1"}, g.r.started())
+}
+
 // TestAReadReportsOnlyItsVerdict pins that the verdict flag is the reader's
 // own word, never the harness's ok: `broken` files --broken even when the
 // child ran ok, and `ok` files --ok even when OK is false.
@@ -1112,19 +1022,15 @@ func TestAReadReportsOnlyItsVerdict(t *testing.T) {
 			g := newRig(Config{As: "r", Width: 1, Reader: true})
 			p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 			g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
-			if _, err := g.tick(t); err != nil {
-				t.Fatal(err)
-			}
+			_, err := g.tick(t)
+			require.NoError(t, err)
 			g.r.child("r1").end(tc.res)
 			g.s.reset()
-			if _, err := g.tick(t); err != nil {
-				t.Fatal(err)
-			}
+			_, err = g.tick(t)
+			require.NoError(t, err)
 			// Replacing `r.Verdict == "broken"` with `!r.OK` in the read's
 			// report makes this fail in both cases.
-			if got := g.s.lines("report"); !slices.Equal(got, []string{tc.want}) {
-				t.Fatalf("report lines: %q, want %q", got, tc.want)
-			}
+			require.Equal(t, []string{tc.want}, g.s.lines("report"), "report lines, want %q", tc.want)
 		})
 	}
 }
@@ -1139,17 +1045,13 @@ func TestReadBeginNamesTheCards(t *testing.T) {
 	second := Packet{Card: "ar", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
 	g.s.set("queue", 0, queueJSON(t, 7, asked("zr", &first), asked("ar", &second)))
 	acted, err := g.tick(t)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// Dropping the `len(ids) < room` bound of the named reads in Member.Tick
 	// makes this fail: both are named and both started, past the width.
-	if got := g.s.lines("begin"); !slices.Equal(got, []string{"read --as r --begin zr --epoch 7"}) {
-		t.Fatalf("begin lines: %q, want the first asked only", got)
-	}
-	if acted != 1 || !slices.Equal(g.r.started(), []string{"zr"}) || g.m.Running() != 1 {
-		t.Fatalf("acted=%d started=%v running=%d, want zr only", acted, g.r.started(), g.m.Running())
-	}
+	require.Equal(t, []string{"read --as r --begin zr --epoch 7"}, g.s.lines("begin"), "begin lines, want the first asked only")
+	require.Equal(t, 1, acted, "acted=%d started=%v running=%d, want zr only", acted, g.r.started(), g.m.Running())
+	require.Equal(t, []string{"zr"}, g.r.started(), "acted=%d started=%v running=%d, want zr only", acted, g.r.started(), g.m.Running())
+	require.Equal(t, 1, g.m.Running(), "acted=%d started=%v running=%d, want zr only", acted, g.r.started(), g.m.Running())
 }
 
 // TestTakeAsksForTheRoom pins the limit as the member's whole room, whatever
@@ -1178,15 +1080,12 @@ func TestTakeAsksForTheRoom(t *testing.T) {
 			}
 			g.s.set("queue", 0, queueJSON(t, 7, cards...))
 			g.s.set("take", 0, takeJSON(t))
-			if _, err := g.tick(t); err != nil {
-				t.Fatal(err)
-			}
+			_, err := g.tick(t)
+			require.NoError(t, err)
 			// Replacing `strconv.Itoa(room)` with the ready count in the take
 			// verb's --limit makes the "ready 5" cases fail.
 			want := "take --as m --limit " + strconv.Itoa(tc.limit) + " --json --epoch 7"
-			if got := g.s.lines("take"); !slices.Equal(got, []string{want}) {
-				t.Fatalf("take lines: %q, want %q", got, want)
-			}
+			require.Equal(t, []string{want}, g.s.lines("take"), "take lines, want %q", want)
 		})
 	}
 }
@@ -1202,26 +1101,18 @@ func TestASpentReadStaysSpentAcrossTicks(t *testing.T) {
 	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
 	g.s.set("return", 1, "refused")
-	if _, err := g.tick(t); err != nil {
-		t.Fatal(err)
-	}
+	_, err := g.tick(t)
+	require.NoError(t, err)
 	g.r.child("r1").end(Result{Ran: true, Verdict: ""})
 	starts := len(g.r.started())
 	for i := 0; i < 3; i++ {
 		g.s.reset()
-		if _, err := g.tick(t); err != nil {
-			t.Fatal(err)
-		}
-		if got := g.s.lines("report"); len(got) != 0 {
-			t.Fatalf("tick %d issued %q, want no ok or broken for a spent read", i+2, got)
-		}
+		_, err = g.tick(t)
+		require.NoError(t, err)
+		require.Empty(t, g.s.lines("report"), "tick %d issued %q, want no ok or broken for a spent read", i+2, g.s.lines("report"))
 	}
-	if len(g.r.started()) != starts {
-		t.Fatalf("a spent read was started again (%d starts, was %d)", len(g.r.started()), starts)
-	}
-	if g.m.Running() != 0 {
-		t.Fatalf("a spent read holds a place: running=%d", g.m.Running())
-	}
+	require.Len(t, g.r.started(), starts, "a spent read was started again (%d starts, was %d)", len(g.r.started()), starts)
+	require.Equal(t, 0, g.m.Running(), "a spent read holds a place: running=%d", g.m.Running())
 }
 
 // TestAnEndedLaunchWhoseCardCameBackReadyIsReapedAndTheWidthFreed pins the
@@ -1498,31 +1389,8 @@ func TestAReaderBeatsNothing(t *testing.T) {
 	require.Empty(t, g.s.lines("beat"))
 	require.NoError(t, g.m.Beat())
 	require.Empty(t, g.s.lines("beat"))
-	require.Equal(t, []string{"queue --as r --json", "queue --as r --json"}, g.s.lines("queue"), "the pass's queue, then the beat's")
-}
-
-// A store that times out once on the beat or the queue is asked again once
-// before the member reports a miss (docs/SPEC-SPRINT.md section 5; the model's
-// Lapse needs MissedBeatsDown misses): the tick succeeds, the verb was asked
-// twice, and nothing was reported. Asked twice and failing twice is the error
-// the member already reported.
-func TestAStoreThatTimesOutOnceIsAskedAgain(t *testing.T) {
-	t.Parallel()
-	for _, verb := range []string{"beat", "queue"} {
-		t.Run(verb, func(t *testing.T) {
-			t.Parallel()
-			g := newRig(Config{As: "m", Width: 2})
-			g.s.set("queue", 0, queueJSON(t, 7))
-			g.s.failOnce(verb, 2, "i/o timeout")
-			if verb == "beat" {
-				require.NoError(t, g.m.Beat())
-			} else {
-				_, err := g.tick(t)
-				require.NoError(t, err)
-			}
-			require.Len(t, g.s.lines(verb), 2, "the verb is asked again once")
-		})
-	}
+	require.Equal(t, []string{"queue --as r --json --packets 1", "queue --as r --json --packets 0"}, g.s.lines("queue"),
+		"the pass's queue, asking a packet for its free lane, then the beat's, asking none")
 }
 
 // TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch pins Ender: each launch the member is

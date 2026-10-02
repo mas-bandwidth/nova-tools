@@ -67,9 +67,6 @@ func threads() ([]int, error) {
 	return tids, nil
 }
 
-// currentNice is the calling thread's nice.
-func currentNice() (int, error) { return threadNice(0) }
-
 // threadNice is getpriority(PRIO_PROCESS, tid) for one thread (0: the calling
 // one). The raw Linux system call answers 20 minus the nice value (so it never
 // returns a negative), and Go's syscall.Getpriority hands that back

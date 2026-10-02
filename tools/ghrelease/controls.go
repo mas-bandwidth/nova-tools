@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -222,10 +223,5 @@ func mutateVersionSource(src, how string) (string, bool) {
 }
 
 func containsLine(s, line string) bool {
-	for _, l := range strings.Split(s, "\n") {
-		if l == line {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(s, "\n"), line)
 }

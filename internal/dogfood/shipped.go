@@ -2,14 +2,16 @@ package dogfood
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
 
 // Shipped is the set of tools a release ships: the nova-* directories under
-// cmd/ at the release commit, which is the list `release build` compiles. A tool parked under deprecated/
+// cmd/ at the release commit, which is the list `release build` compiles. A tool not under cmd/
 // is not built, not tested and not shipped, so no receipt about it can speak
 // for or against the release.
 //
@@ -85,12 +87,7 @@ func (s Shipped) Has(tool string) bool { return s.tools[strings.TrimSpace(tool)]
 
 // Tools is the set, sorted.
 func (s Shipped) Tools() []string {
-	out := make([]string, 0, len(s.tools))
-	for t := range s.tools {
-		out = append(out, t)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(s.tools))
 }
 
 // Scope keeps the verbs and receipts of shipped tools and returns the receipts

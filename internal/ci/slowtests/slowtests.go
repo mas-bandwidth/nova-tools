@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -230,15 +231,14 @@ var Benches = []string{"space", "studio", "superman", "batman", "air"}
 // CI run (`run<id>`, the digits of a GitHub Actions run id) or a bench in
 // Benches. Free text is refused: `2s@guess` names nothing a reader can open.
 func parseMeasured(field string) (float64, string, error) {
-	at := strings.Index(field, "s@")
-	if at <= 0 || at+2 >= len(field) {
+	before, where, found := strings.Cut(field, "s@")
+	if !found || before == "" || where == "" {
 		return 0, "", fmt.Errorf("measured %q is not <seconds>s@<where>; a row names the time it was cut from and where", field)
 	}
-	secs, err := strconv.ParseFloat(field[:at], 64)
+	secs, err := strconv.ParseFloat(before, 64)
 	if err != nil || secs <= 0 {
 		return 0, "", fmt.Errorf("measured %q is not a positive number of seconds", field)
 	}
-	where := field[at+2:]
 	if !measuredWhere(where) {
 		return 0, "", fmt.Errorf("measured %q: where %q is neither run<id> (a CI run) nor a bench (%s)", field, where, strings.Join(Benches, ", "))
 	}
@@ -255,12 +255,7 @@ func measuredWhere(where string) bool {
 		}
 		return true
 	}
-	for _, b := range Benches {
-		if where == b {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(Benches, where)
 }
 
 // ParseSleeps reads the SLEEPS ledger: `pkg<TAB>test<TAB>where` rows, blank
@@ -312,12 +307,7 @@ func (b Budgets) budgetFor(pkg, test string, def float64) float64 {
 
 // ledgered reports whether the SLEEPS ledger names (pkg, test).
 func (b Budgets) ledgered(pkg, test string) bool {
-	for _, row := range b.Sleeps {
-		if row.Test == test && matches(row.Package, pkg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(b.Sleeps, func(row SleepRow) bool { return row.Test == test && matches(row.Package, pkg) })
 }
 
 // topLevel is a test name's top-level test: a subtest's skip is its parent's.
@@ -431,12 +421,13 @@ func budgetText(seconds float64) string {
 	return strconv.FormatFloat(seconds, 'f', -1, 64) + "s"
 }
 
-// ExitCode is the enforced verdict (the nightly leg's): 2 when any package or
-// test is over budget or any test is an unledgered SLEEPS skip, 0 when none
-// is. Verdict is what a leg exits with.
+// ExitCode is the enforced verdict (the nightly leg's): 1, the check ran and
+// said no, when any package or test is over budget or any test is an
+// unledgered SLEEPS skip, 0 when none is; 2 is left to a run that could not
+// read its input. Verdict is what a leg exits with.
 func (r Report) ExitCode() int {
 	if len(r.Over) > 0 || len(r.OverTests) > 0 || len(r.Sleepers) > 0 {
-		return 2
+		return 1
 	}
 	return 0
 }
@@ -505,11 +496,12 @@ func (l Load) LoadLine() string {
 
 // Verdict is what the check prints and its exit code. Every CI-SLOW line and
 // the CI-LOAD line are printed on every leg, so the time is always measured.
-// The exit code never reads the load:
+// The exit code never reads the load, and a no is 1 (the check ran and said
+// no), apart from the 2 of a run that could not read its input:
 //
-//   - an unledgered SLEEPS skip (a CI-SLEEPS line) is 2 on every leg: it is
+//   - an unledgered SLEEPS skip (a CI-SLEEPS line) is 1 on every leg: it is
 //     what the test does, a static fact;
-//   - a CI-SLOW line is 2 only when enforce is set, which one caller does: the
+//   - a CI-SLOW line is 1 only when enforce is set, which one caller does: the
 //     nightly whole-tree run on the idle reference leg (ci.yml's schedule
 //     branch of the test step, `make test SLOWTESTS_ENFORCE=1`). Everywhere
 //     else it is a printed measurement and exit 0.
@@ -525,7 +517,7 @@ func Verdict(r Report, load Load, enforce bool, ledger string) ([]string, int) {
 	lines = append(lines, load.LoadLine())
 	code := 0
 	if len(sleeps) > 0 || (enforce && len(slow) > 0) {
-		code = 2
+		code = 1
 	}
 	return lines, code
 }

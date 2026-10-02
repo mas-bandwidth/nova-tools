@@ -176,9 +176,7 @@ func workWrites(ws []holeWrite) map[string]int {
 func (h *harness) queueLen() int {
 	h.t.Helper()
 	q, err := h.st.B.QueueRead(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	return len(q)
 }
 
@@ -186,9 +184,7 @@ func (h *harness) queueLen() int {
 func (h *harness) notesOf(typ string) int {
 	h.t.Helper()
 	notes, _, err := h.st.B.NotesSince(h.ctx, "", 100000)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	n := 0
 	for _, x := range notes {
 		if x.Type == typ && x.Kind != sprint.Decided && x.Kind != sprint.Acknowledged {
@@ -292,7 +288,7 @@ func holesRun(x *holeTick, n int, lapse bool, after func(round int, res TickResu
 			return
 		}
 	}
-	t.Fatalf("not landed after 120 rounds")
+	require.FailNow(t, "not landed after 120 rounds")
 }
 
 // ---- G1 ----------------------------------------------------------------------

@@ -25,8 +25,7 @@ var version string
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
 	verbflag.HelpIfAsked(args, "version")
 	if len(args) > 0 {
-		fmt.Fprintf(stderr, "nova-ci version: takes no flags and no arguments, got %d; run: nova-ci version -h\n", len(args))
-		return 2
+		return refuse(stderr, " version", fmt.Sprintf("takes no flags and no arguments, got %d", len(args)))
 	}
 	fmt.Fprintln(stdout, buildinfo.Line("nova-ci", version))
 	return 0

@@ -254,9 +254,7 @@ func RoundsFromBody(body string) (int, bool) {
 		if err != nil {
 			continue
 		}
-		if n > best {
-			best = n
-		}
+		best = max(best, n)
 	}
 	return best, best > 0
 }

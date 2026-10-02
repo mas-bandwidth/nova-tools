@@ -22,6 +22,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // a2Inbox is the inbox as nova-sprint inbox computes it (its default deadline
@@ -29,9 +31,7 @@ import (
 func (h *harness) a2Inbox() InboxView {
 	h.t.Helper()
 	v, err := h.st.Inbox(h.ctx, 10*time.Minute, 30*time.Minute, 100000)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	return v
 }
 
@@ -57,9 +57,8 @@ func (h *harness) a2Named(id string) []string {
 // a2Silent fails when the inbox names id: the gap is closed.
 func (h *harness) a2Silent(id, when string) {
 	h.t.Helper()
-	if got := h.a2Named(id); len(got) != 0 {
-		h.t.Fatalf("%s: the inbox names %s (the gap is closed?): %v", when, id, got)
-	}
+	got := h.a2Named(id)
+	require.Empty(h.t, got, "%s: the inbox names %s (the gap is closed?): %v", when, id, got)
 }
 
 // a2Stale is the stream-stale lines the inbox shows: the one backstop left,
@@ -106,9 +105,7 @@ func (h *harness) a2Ack(typ string) {
 			ids = append(ids, o.Note.ID)
 		}
 	}
-	if len(ids) == 0 {
-		h.t.Fatalf("no open %q to acknowledge", typ)
-	}
+	require.NotEmpty(h.t, ids, "no open %q to acknowledge", typ)
 	h.must(AckStep(sprint.AckReq{Notes: ids, Reason: "looked", Who: "tester"}))
 }
 
@@ -123,21 +120,17 @@ func (h *harness) a2AckRefused(typ string) {
 			ids = append(ids, o.Note.ID)
 		}
 	}
-	if len(ids) == 0 {
-		h.t.Fatalf("no open %q to acknowledge", typ)
-	}
+	require.NotEmpty(h.t, ids, "no open %q to acknowledge", typ)
 	res := h.run(AckStep(sprint.AckReq{Notes: ids, Reason: "looked", Who: "tester"}))
 	if len(res.Moved) != 0 || len(res.Refused) != len(ids) || !strings.Contains(res.Refused[0].Why, "ack does not answer") || !strings.Contains(res.Refused[0].Why, "nova-sprint ") {
-		h.t.Fatalf("ack of %q: %+v", typ, res)
+		require.Fail(h.t, fmt.Sprintf("ack of %q: %+v", typ, res))
 	}
 }
 
 // a2Names fails unless the inbox names id.
 func (h *harness) a2Names(id, when string) {
 	h.t.Helper()
-	if got := h.a2Named(id); len(got) == 0 {
-		h.t.Fatalf("%s: the inbox names nothing about %s", when, id)
-	}
+	require.NotEmpty(h.t, h.a2Named(id), "%s: the inbox names nothing about %s", when, id)
 }
 
 // a2ToReview deals, takes and finishes the primary (ok or failed), by hand.
@@ -159,9 +152,7 @@ func (h *harness) a2ToReview(id string, failed bool) {
 func TestAudit2ClosedAckedSentinelStopsItsStreamForEver(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	if err := h.m.SetCoordinator(h.ctx, "tester"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.m.SetCoordinator(h.ctx, "tester"))
 	h.setup(1)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"after"}}))
@@ -172,9 +163,8 @@ func TestAudit2ClosedAckedSentinelStopsItsStreamForEver(t *testing.T) {
 	h.machine()
 	h.readAll()
 	h.landAll("s1")
-	if h.state("s1-1") != sprint.Landed || len(h.a2Open(sprint.NSentinelReached)) != 1 {
-		t.Fatalf("s1-1 %s, reached %d", h.state("s1-1"), len(h.a2Open(sprint.NSentinelReached)))
-	}
+	require.Equal(t, sprint.Landed, h.state("s1-1"), "s1-1 %s, reached %d", h.state("s1-1"), len(h.a2Open(sprint.NSentinelReached)))
+	require.Len(t, h.a2Open(sprint.NSentinelReached), 1, "s1-1 %s, reached %d", h.state("s1-1"), len(h.a2Open(sprint.NSentinelReached)))
 	h.a2AckRefused(sprint.NSentinelReached)
 	h.readInbox()
 	h.a2Run(10*time.Hour, 5*time.Minute)
@@ -245,9 +235,9 @@ func TestAudit2ClosedAckedTickJudgmentHoldsForEver(t *testing.T) {
 	h.a2Run(2*time.Hour+5*time.Minute, 5*time.Minute)
 	h.a2AckRefused(sprint.NWorkLate)
 	late := h.a2Open(sprint.NWorkLate)
-	if _, held, err := h.st.Wait(h.ctx, late[0].Note.ID, h.now.Add(30*time.Minute)); err != nil || !held {
-		t.Fatalf("wait on the deadline: %v %v", held, err)
-	}
+	_, held, err := h.st.Wait(h.ctx, late[0].Note.ID, h.now.Add(30*time.Minute))
+	require.NoError(t, err, "wait on the deadline: %v %v", held, err)
+	require.True(t, held, "wait on the deadline: %v %v", held, err)
 	h.readInbox()
 	// the rest of the stream moves, so the stale line is masked
 	for i := 0; i < 30; i++ {
@@ -256,12 +246,11 @@ func TestAudit2ClosedAckedTickJudgmentHoldsForEver(t *testing.T) {
 		h.readInbox()
 	}
 	if s := h.snap(); s.StateOf("s1-1") != sprint.Working || s.Fleet.Placed(c.ID).Col != sprint.Working {
-		t.Fatalf("s1-1 %s", s.StateOf("s1-1"))
+		require.Failf(t, "", "s1-1 %s", s.StateOf("s1-1"))
 	}
 	h.a2Names("s1-1", "work card taken twelve hours ago, its deadline waited on for 30 minutes")
-	if n := h.written(sprint.NWorkLate); n < 2 {
-		t.Fatalf("the deadline was not raised again after the wait: written %d", n)
-	}
+	n := h.written(sprint.NWorkLate)
+	require.GreaterOrEqual(t, n, 2, "the deadline was not raised again after the wait: written %d", n)
 }
 
 // A6, as decided: a reminder's failure lists ack. Acked, it is not judged
@@ -272,29 +261,22 @@ func TestAudit2ClosedAckedReminderFailureStaysOnTheGoal(t *testing.T) {
 	h.setup(1)
 	dir := t.TempDir()
 	blocker := dir + "/file"
-	if err := writeFileA2(blocker); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, writeFileA2(blocker))
 	// the route's directory is a file: every delivery fails
-	if _, _, err := h.st.SetGoal(h.ctx, "rowan", strp("keep going"), "file:"+blocker+"/reminder"); err != nil {
-		t.Fatal(err)
-	}
+	_, _, err := h.st.SetGoal(h.ctx, "rowan", strp("keep going"), "file:"+blocker+"/reminder")
+	require.NoError(t, err)
 	h.startMachine()
 	h.machine()
-	if len(h.a2Open(sprint.NRemindFailed)) != 1 {
-		t.Fatalf("no reminder judgment")
-	}
+	require.Len(t, h.a2Open(sprint.NRemindFailed), 1, "no reminder judgment")
 	h.a2Ack(sprint.NRemindFailed)
 	h.readInbox()
 	h.a2Run(2*time.Hour, 5*time.Minute)
-	if g := h.goalA2("rowan"); g.Fail == "" {
-		t.Fatalf("the route recovered")
-	}
+	g := h.goalA2("rowan")
+	require.NotEmpty(t, g.Fail, "the route recovered")
 	// A reminder's failure is information: ack lists it, and the failure
 	// stays on the person's goal, which goal show shows, until a delivery arrives.
-	if n := len(h.a2Open(sprint.NRemindFailed)); n != 0 {
-		t.Fatalf("the acknowledged failure is judged again while the route fails: %d", n)
-	}
+	n := len(h.a2Open(sprint.NRemindFailed))
+	require.Equal(t, 0, n, "the acknowledged failure is judged again while the route fails: %d", n)
 }
 
 // GAP B (not ack). After a clear, a repair's skip judgment names the stored
@@ -305,41 +287,37 @@ func TestAudit2ClosedRepairSkipNamesAStoredIDAfterAClear(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
-	if _, err := h.st.Clear(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err := h.st.Clear(h.ctx)
+	require.NoError(t, err)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"s1-1"}}))
 	outside := &a2Racer{racer: &racer{Backend: h.m, at: "apply t-work"}}
 	outside.do = func() {
 		s := h.snap()
 		p := s.Work.Card("s1-1")
-		if _, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-work", Epoch: fmt.Sprint(s.Epoch), ExpectedTableRevision: fmt.Sprint(s.Work.Revision),
-			OperationID: "outside", Members: []ntable.BatchMemberEntry{{ID: sprint.StoredID(p.ID, s.Epoch), Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: p.Row, Col: p.Col}}, Set: map[string]string{"brief": "outside"}}}}); err != nil {
-			t.Error(err)
-		}
+		_, err := h.m.Apply(h.ctx, ntable.BatchManifest{Schema: 1, Table: "t-work", Epoch: fmt.Sprint(s.Epoch), ExpectedTableRevision: fmt.Sprint(s.Work.Revision),
+			OperationID: "outside", Members: []ntable.BatchMemberEntry{{ID: sprint.StoredID(p.ID, s.Epoch), Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: p.Row, Col: p.Col}}, Set: map[string]string{"brief": "outside"}}}})
+		assert.NoError(t, err)
 	}
 	st := *h.st
 	st.B = outside
 	var cut *CutError
-	if _, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}})); !errors.As(err, &cut) {
-		t.Fatalf("not cut: %v", err)
-	}
+	_, err = st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	require.ErrorAs(t, err, &cut, "not cut: %v", err)
 	h.tick(time.Hour)
-	if rr, err := h.st.Repair(h.ctx); err != nil || len(rr) != 1 || rr[0].Done != RepairSkipped {
-		t.Fatalf("repair %+v %v", rr, err)
-	}
+	rr, err := h.st.Repair(h.ctx)
+	require.NoError(t, err, "repair %+v %v", rr, err)
+	require.Len(t, rr, 1, "repair %+v %v", rr, err)
+	require.Equal(t, RepairSkipped, rr[0].Done, "repair %+v %v", rr, err)
 	var subjects []string
 	for _, o := range h.a2Open(sprint.NRepairSkipped) {
 		subjects = append(subjects, o.Subject())
 	}
-	if !contains(subjects, "s1-1") || contains(subjects, "s1-1~1") {
-		t.Fatalf("skip judgment subjects %v", subjects)
-	}
+	require.True(t, contains(subjects, "s1-1"), "skip judgment subjects %v", subjects)
+	require.False(t, contains(subjects, "s1-1~1"), "skip judgment subjects %v", subjects)
 	noStoredIDs(t, h.a2Inbox())
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "gone"}))
-	if n := len(h.a2Open(sprint.NRepairSkipped)); n != 0 {
-		t.Fatalf("drop of the primary left the skip judgment open: %d", n)
-	}
+	n := len(h.a2Open(sprint.NRepairSkipped))
+	require.Equal(t, 0, n, "drop of the primary left the skip judgment open: %d", n)
 }
 
 // noStoredIDs is the class rule: no group's members or primaries, and no
@@ -349,9 +327,7 @@ func noStoredIDs(t *testing.T, v InboxView) {
 	t.Helper()
 	for _, g := range v.Groups {
 		for _, x := range append(append([]string(nil), g.Members...), g.Primaries...) {
-			if strings.Contains(x, "~") {
-				t.Fatalf("group %s (%s) names the stored id %s", g.ID, g.Type, x)
-			}
+			require.NotContains(t, x, "~", "group %s (%s) names the stored id %s", g.ID, g.Type, x)
 		}
 		ok := map[string]bool{g.ID: true}
 		for _, n := range g.Notes {
@@ -364,18 +340,14 @@ func noStoredIDs(t *testing.T, v InboxView) {
 						continue
 					}
 					for _, part := range strings.Split(strings.Trim(w, "'"), ",") {
-						if !ok[part] {
-							t.Fatalf("group %s (%s) prints the stored id %s: %s", g.ID, g.Type, part, line)
-						}
+						require.True(t, ok[part], "group %s (%s) prints the stored id %s: %s", g.ID, g.Type, part, line)
 					}
 				}
 			}
 		}
 	}
 	for _, o := range v.Open {
-		if strings.Contains(o.Subject(), "~") {
-			t.Fatalf("an open judgment's subject is the stored id %s", o.Subject())
-		}
+		require.NotContains(t, o.Subject(), "~", "an open judgment's subject is the stored id %s", o.Subject())
 	}
 }
 
@@ -390,18 +362,16 @@ func TestAudit2ClosedDeadRunLoopIsNoJudgment(t *testing.T) {
 	h.startMachine()
 	h.readInbox()
 	h.tick(time.Hour)
-	if h.state("s1-1") != sprint.Ready {
-		t.Fatalf("s1-1 %s", h.state("s1-1"))
-	}
+	require.Equal(t, sprint.Ready, h.state("s1-1"), "s1-1 %s", h.state("s1-1"))
 	var silent *sprint.Group
 	for _, g := range h.a2Inbox().Groups {
 		if g.Type == sprint.NMachineSilent {
 			silent = &g
 		}
 	}
-	if silent == nil || len(silent.Commands) == 0 || silent.Commands[0].Lines[0] != "nova-sprint run" {
-		t.Fatalf("a RUNNING machine an hour without a tick: %+v", silent)
-	}
+	require.NotNil(t, silent, "a RUNNING machine an hour without a tick: %+v", silent)
+	require.NotEmpty(t, silent.Commands, "a RUNNING machine an hour without a tick: %+v", silent)
+	require.Equal(t, "nova-sprint run", silent.Commands[0].Lines[0], "a RUNNING machine an hour without a tick: %+v", silent)
 	// three failed ticks in a row are a group too
 	h.m.Fail = func(p string) error {
 		if p == "fence" {
@@ -418,9 +388,7 @@ func TestAudit2ClosedDeadRunLoopIsNoJudgment(t *testing.T) {
 	for _, g := range h.a2Inbox().Groups {
 		failing = failing || g.Type == sprint.NTickFailing && strings.Contains(g.What, "the store went away")
 	}
-	if !failing {
-		t.Fatalf("three failed ticks: no group")
-	}
+	require.True(t, failing, "three failed ticks: no group")
 }
 
 // GAP D (not ack, clear). clear leaves the machine STOPPED; its "machine
@@ -433,21 +401,18 @@ func TestAudit2ClosedClearLeavesTheMachineStoppedSilently(t *testing.T) {
 	h.setup(1)
 	h.startMachine()
 	h.machine()
-	if _, err := h.st.Clear(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err := h.st.Clear(h.ctx)
+	require.NoError(t, err)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 3}))
 	h.a2Run(6*time.Hour, 10*time.Minute)
-	if h.state("s1-1") != sprint.Ready {
-		t.Fatalf("s1-1 %s", h.state("s1-1"))
-	}
+	require.Equal(t, sprint.Ready, h.state("s1-1"), "s1-1 %s", h.state("s1-1"))
 	var due, note bool
 	for _, g := range h.a2Inbox().Groups {
 		due = due || g.Type == sprint.NStoppedWithDue && strings.Contains(g.What, "3 moves are due") && g.Commands[0].Lines[0] == "nova-sprint start"
 		note = note || g.Type == sprint.NMachineStopped
 	}
 	if !due || !note {
-		t.Fatalf("the new epoch's inbox: moves due %v, stopped note %v: %+v", due, note, h.a2Inbox().Groups)
+		require.Failf(t, "", "the new epoch's inbox: moves due %v, stopped note %v: %+v", due, note, h.a2Inbox().Groups)
 	}
 }
 
@@ -465,14 +430,11 @@ func TestAudit2ClosedSetupTimeCountsAsRunning(t *testing.T) {
 	for _, g := range h.a2Inbox().Groups {
 		overdue = overdue || g.Type == sprint.NCIRed && g.Overdue
 	}
-	if overdue || len(h.a2Stale()) != 0 {
-		t.Fatalf("setup time counted as running: overdue %v stale %v", overdue, h.a2Stale())
-	}
+	require.False(t, overdue, "setup time counted as running: overdue %v stale %v", overdue, h.a2Stale())
+	require.Empty(t, h.a2Stale(), "setup time counted as running: overdue %v stale %v", overdue, h.a2Stale())
 	h.startMachine()
 	h.machine()
-	if h.written(sprint.NOverdue) != 0 {
-		t.Fatalf("the first tick marked a setup judgment overdue")
-	}
+	require.Equal(t, 0, h.written(sprint.NOverdue), "the first tick marked a setup judgment overdue")
 }
 
 // DEFECT F. wait's review time is a clock time: a judgment put off for 30
@@ -486,16 +448,12 @@ func TestAudit2ClosedWaitCountsStoppedTime(t *testing.T) {
 	h.machine()
 	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1"}))
 	id := h.a2Open(sprint.NCIRed)[0].Note.ID
-	if err := h.st.SetReview(h.ctx, id, h.st.now().Add(30*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.st.SetReview(h.ctx, id, h.st.now().Add(30*time.Minute)))
 	h.stopMachine()
 	h.tick(2 * time.Hour)
 	h.startMachine()
 	h.machine()
-	if h.written(sprint.NOverdue) != 0 {
-		t.Fatalf("overdue after 0 minutes of running time: STOPPED time counted")
-	}
+	require.Equal(t, 0, h.written(sprint.NOverdue), "overdue after 0 minutes of running time: STOPPED time counted")
 	h.a2Run(31*time.Minute, time.Minute)
 	notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
 	lines := 0
@@ -504,9 +462,7 @@ func TestAudit2ClosedWaitCountsStoppedTime(t *testing.T) {
 			lines++
 		}
 	}
-	if lines != 1 {
-		t.Fatalf("the waited judgment after 31 minutes of running time: %d overdue lines", lines)
-	}
+	require.Equal(t, 1, lines, "the waited judgment after 31 minutes of running time: %d overdue lines", lines)
 }
 
 // DEFECT G. A stream with no open primary that has not landed (every
@@ -519,21 +475,18 @@ func TestAudit2ClosedEmptyStreamIsStaleForEver(t *testing.T) {
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "not needed"}))
 	h.startMachine()
 	h.a2Run(10*time.Hour, 30*time.Minute)
-	if st := h.a2Stale(); len(st) != 0 {
-		t.Fatalf("an empty stream is stale: %v", st)
-	}
-	if c := h.snap().StreamCtl("s1"); c.F("state") != sprint.StreamWaiting || c.F("since") != "" {
-		t.Fatalf("the empty stream: %v", c.Fields)
-	}
+	st := h.a2Stale()
+	require.Empty(t, st, "an empty stream is stale: %v", st)
+	c := h.snap().StreamCtl("s1")
+	require.Equal(t, sprint.StreamWaiting, c.F("state"), "the empty stream: %v", c.Fields)
+	require.Equal(t, "", c.F("since"), "the empty stream: %v", c.Fields)
 	// a clear restores every stream empty: never stale either
-	if _, err := h.st.Clear(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err := h.st.Clear(h.ctx)
+	require.NoError(t, err)
 	h.startMachine()
 	h.a2Run(2*time.Hour, 30*time.Minute)
-	if st := h.a2Stale(); len(st) != 0 {
-		t.Fatalf("a restored stream is stale: %v", st)
-	}
+	st = h.a2Stale()
+	require.Empty(t, st, "a restored stream is stale: %v", st)
 }
 
 // DEFECT H. The reminder judgment's decisions (goal set, goal drop) have no
@@ -542,23 +495,18 @@ func TestAudit2ClosedReminderDecisionsHaveNoCommands(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	blocker := t.TempDir() + "/file"
-	if err := writeFileA2(blocker); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := h.st.SetGoal(h.ctx, "rowan", strp("keep going"), "file:"+blocker+"/reminder"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, writeFileA2(blocker))
+	_, _, err := h.st.SetGoal(h.ctx, "rowan", strp("keep going"), "file:"+blocker+"/reminder")
+	require.NoError(t, err)
 	h.startMachine()
 	h.machine()
 	for _, g := range h.a2Inbox().Groups {
 		if g.Type == sprint.NRemindFailed {
-			if len(g.Commands) != len(g.Decisions) {
-				t.Fatalf("decisions %v commands %v", g.Decisions, g.Commands)
-			}
+			require.Len(t, g.Commands, len(g.Decisions), "decisions %v commands %v", g.Decisions, g.Commands)
 			return
 		}
 	}
-	t.Fatalf("no reminder group")
+	require.FailNow(t, "no reminder group")
 }
 
 // DEFECT I. ask --another after accept retired a slow reader's card and the
@@ -583,16 +531,14 @@ func TestAudit2ClosedAskAnotherHitsARetiredCard(t *testing.T) {
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))
 	res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
-	if len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "already read attempt") || !strings.Contains(res.Refused[0].Why, "reader add") || res.Attempts != 1 {
-		t.Fatalf("ask --another: %+v", res)
-	}
-	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-d"}); err != nil {
-		t.Fatal(err)
-	}
+	require.Len(t, res.Refused, 1, "ask --another: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "already read attempt", "ask --another: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "reader add", "ask --another: %+v", res)
+	require.Equal(t, 1, res.Attempts, "ask --another: %+v", res)
+	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-d"}))
 	h.beat()
-	if res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true})); len(res.Moved) != 1 {
-		t.Fatalf("ask --another with a new reader: %+v", res)
-	}
+	res = h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
+	require.Len(t, res.Moved, 1, "ask --another with a new reader: %+v", res)
 }
 
 // DEFECT J. The tick marked "the sprint is done" overdue, which the inbox and
@@ -606,13 +552,11 @@ func TestAudit2ClosedSprintDoneIsMarkedOverdue(t *testing.T) {
 	h.startMachine()
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "done"}))
 	h.machine()
-	if len(h.a2Open(sprint.NSprintDone)) != 0 || h.written(sprint.NSprintDone) != 1 {
-		t.Fatalf("not done once, or done as a judgment: open %d, written %d", len(h.a2Open(sprint.NSprintDone)), h.written(sprint.NSprintDone))
-	}
+	require.Empty(t, h.a2Open(sprint.NSprintDone), "not done once, or done as a judgment: open %d, written %d", len(h.a2Open(sprint.NSprintDone)), h.written(sprint.NSprintDone))
+	require.Equal(t, 1, h.written(sprint.NSprintDone), "not done once, or done as a judgment: open %d, written %d", len(h.a2Open(sprint.NSprintDone)), h.written(sprint.NSprintDone))
 	h.a2Run(15*time.Minute, 5*time.Minute)
-	if h.written(sprint.NOverdue) != 0 || h.written(sprint.NSprintDone) != 1 {
-		t.Fatalf("the sprint is done marked overdue (%d lines) or said again (%d)", h.written(sprint.NOverdue), h.written(sprint.NSprintDone))
-	}
+	require.Equal(t, 0, h.written(sprint.NOverdue), "the sprint is done marked overdue (%d lines) or said again (%d)", h.written(sprint.NOverdue), h.written(sprint.NSprintDone))
+	require.Equal(t, 1, h.written(sprint.NSprintDone), "the sprint is done marked overdue (%d lines) or said again (%d)", h.written(sprint.NOverdue), h.written(sprint.NSprintDone))
 }
 
 func writeFileA2(path string) error { return os.WriteFile(path, []byte("x"), 0o644) }
@@ -620,9 +564,7 @@ func writeFileA2(path string) error { return os.WriteFile(path, []byte("x"), 0o6
 func (h *harness) goalA2(name string) sprint.Goal {
 	h.t.Helper()
 	g, err := h.st.Goals(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	if i := g.Find(name); i >= 0 {
 		return g.People[i]
 	}
@@ -642,13 +584,10 @@ func (r *a2Racer) AtEpoch(epoch uint64, old bool) Backend {
 func TestNoStoredIDReachesTheCoordinator(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	if err := h.m.SetCoordinator(h.ctx, "tester"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, h.m.SetCoordinator(h.ctx, "tester"))
 	h.setup(1)
-	if _, err := h.st.Clear(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err := h.st.Clear(h.ctx)
+	require.NoError(t, err)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 6}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"w"}, Needs: []string{"s1-6"}}))
@@ -669,9 +608,7 @@ func TestNoStoredIDReachesTheCoordinator(t *testing.T) {
 		types[g.Type] = true
 	}
 	for _, want := range []string{sprint.NWorkFailed, sprint.NReadBroken, sprint.NBlocked, sprint.NConflict, sprint.NCIRed} {
-		if !types[want] {
-			t.Fatalf("no %q group: %v", want, types)
-		}
+		require.True(t, types[want], "no %q group: %v", want, types)
 	}
 	noStoredIDs(t, v)
 }
@@ -694,9 +631,7 @@ func TestTheTickAsksNoReaderWhoAlreadyReadTheAttempt(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		res := h.machine()
 		for _, p := range res.Parts {
-			if p.Lost {
-				t.Fatalf("the %s part lost every attempt: %+v", p.Name, p.Result)
-			}
+			require.False(t, p.Lost, "the %s part lost every attempt: %+v", p.Name, p.Result)
 		}
 		h.tick(time.Second)
 	}

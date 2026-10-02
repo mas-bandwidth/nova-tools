@@ -498,7 +498,11 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		source = inherited
 	}
 	final := entryPath(store, session, id)
-	if raw, err := os.ReadFile(final); err == nil {
+	raw, err := os.ReadFile(final)
+	if err != nil && !os.IsNotExist(err) {
+		return res, err
+	}
+	if err == nil {
 		var prev entryFile
 		if err := json.Unmarshal(raw, &prev); err != nil {
 			return res, fmt.Errorf("stored entry %q is corrupt: %v", id, err)
@@ -541,26 +545,58 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Source: source}, nil
 }
 
-// readEntry loads one stored entry or explains its absence.
-func readEntry(store, session, id string) (entryFile, error) {
+// readEntry loads one stored entry or explains its absence. It validates that
+// the entry is valid JSON and that its stored stamp parses as RFC 3339 nano.
+func readEntry(store, session, id string) (entryFile, time.Time, error) {
 	var ef entryFile
 	if store == "" {
-		return ef, errors.New("no store given; refusing to guess")
+		return ef, time.Time{}, errors.New("no store given; refusing to guess")
 	}
 	raw, err := os.ReadFile(entryPath(store, session, id))
 	if err != nil {
-		return ef, &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
+		if os.IsNotExist(err) {
+			return ef, time.Time{}, &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
+		}
+		return ef, time.Time{}, err
 	}
 	if err := json.Unmarshal(raw, &ef); err != nil {
-		return ef, fmt.Errorf("stored entry %q is corrupt: %v", id, err)
+		return ef, time.Time{}, fmt.Errorf("stored entry %q is corrupt: %v", id, err)
 	}
-	return ef, nil
+	stamp, err := time.Parse(time.RFC3339Nano, ef.Stamp)
+	if err != nil {
+		return ef, time.Time{}, fmt.Errorf("stored entry %q is corrupt: invalid stamp: %w", id, err)
+	}
+	return ef, stamp, nil
 }
 
-// EntryText returns the friend's words byte-for-byte: the store never
-// rewrites, grades or consolidates what was appended.
+// EntryText returns the friend's words byte-for-byte for nested entries. A
+// flat bench record returns the section body in the form its reader indexes.
 func EntryText(store, session, id string) (string, error) {
-	ef, err := readEntry(store, session, id)
+	if store == "" {
+		return "", errors.New("no store given; refusing to guess")
+	}
+	if !validID(id) {
+		return "", fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
+	}
+	path, bench, err := recordForRead(store, session)
+	if err != nil {
+		return "", err
+	}
+	if bench {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("cannot read session %q: %w", session, err)
+		}
+		if _, err := benchReceiptsFrom(raw, session); err != nil {
+			return "", err
+		}
+		body, _, found := benchSection(raw, id)
+		if !found {
+			return "", &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
+		}
+		return body, nil
+	}
+	ef, _, err := readEntry(store, session, id)
 	if err != nil {
 		return "", err
 	}
@@ -594,11 +630,10 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 		}
 		return rc, &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
 	}
-	ef, err := readEntry(store, session, id)
+	ef, stamp, err := readEntry(store, session, id)
 	if err != nil {
 		return rc, err
 	}
-	stamp, _ := time.Parse(time.RFC3339Nano, ef.Stamp)
 	return ReceiptInfo{
 		Session:   ef.Session,
 		ID:        ef.ID,
@@ -647,11 +682,10 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 			if f.IsDir() || !strings.HasSuffix(name, ".json") {
 				continue // partials (*.tmp) and anything else are not rows
 			}
-			ef, err := readEntry(store, sess.Name(), strings.TrimSuffix(name, ".json"))
+			ef, stamp, err := readEntry(store, sess.Name(), strings.TrimSuffix(name, ".json"))
 			if err != nil {
 				return nil, 0, err
 			}
-			stamp, _ := time.Parse(time.RFC3339Nano, ef.Stamp)
 			rows = append(rows, IndexRow{
 				Session: ef.Session,
 				ID:      ef.ID,

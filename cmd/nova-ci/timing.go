@@ -33,7 +33,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/timing"
@@ -111,21 +113,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, fmt.Sprintf("%s is not a log the table can use: %s", oneline.Field(*logPath), oneline.Err(err)))
 	}
-	rows, err := timing.Rows(timing.Select(events, keys(want), *last))
+	rows, err := timing.Rows(timing.Select(events, slices.Collect(maps.Keys(want)), *last))
 	if err != nil {
 		return refuse(stderr, oneline.Err(err))
 	}
 	fmt.Fprint(stdout, timing.Render(rows))
 	return 0
-}
-
-// keys flattens the set of wanted repositories back to a slice for Select.
-func keys(want map[string]bool) []string {
-	var out []string
-	for r := range want {
-		out = append(out, r)
-	}
-	return out
 }
 
 // refuse prints this script's one-line refusal and names its door.

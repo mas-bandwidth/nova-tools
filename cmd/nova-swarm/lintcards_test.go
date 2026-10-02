@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // THE CARDS THE SHIFT ACTUALLY WROTE ARE THE FIXTURES (2026-09-19).
@@ -43,14 +45,11 @@ import (
 func lintCardFile(t *testing.T, name string) (string, int) {
 	t.Helper()
 	path := filepath.Join("testdata", "cards", name)
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("the fixture card is missing: %v", err)
-	}
+	_, err := os.Stat(path)
+	require.NoError(t, err, "the fixture card is missing")
 	var stdout, stderr bytes.Buffer
 	code := cmdLint([]string{"--card", path, "--max", "0"}, &stdout, &stderr)
-	if stderr.Len() > 0 {
-		t.Fatalf("lint --card %s wrote to stderr: %s", name, stderr.String())
-	}
+	require.Zero(t, stderr.Len(), "lint --card %s wrote to stderr: %s", name, stderr.String())
 	return stdout.String(), code
 }
 
@@ -63,15 +62,9 @@ func TestTheShiftsOwnCardsLintClean(t *testing.T) {
 	t.Run("queue-1282-bench-hygiene-home-guard.md", func(t *testing.T) {
 		name := "queue-1282-bench-hygiene-home-guard.md"
 		stdout, code := lintCardFile(t, name)
-		if code != 0 {
-			t.Fatalf("the control card lints clean; exit=%d\n%s", code, stdout)
-		}
-		if !strings.Contains(stdout, "LINT OK card="+name) {
-			t.Fatalf("a clean card prints one LINT OK line naming itself:\n%s", stdout)
-		}
-		if strings.Contains(stdout, "LINT DRIFT") {
-			t.Fatalf("a clean card prints no DRIFT line:\n%s", stdout)
-		}
+		require.Equal(t, 0, code, "the control card lints clean; exit=%d\n%s", code, stdout)
+		require.Contains(t, stdout, "LINT OK card="+name, "a clean card prints one LINT OK line naming itself:\n%s", stdout)
+		require.NotContains(t, stdout, "LINT DRIFT", "a clean card prints no DRIFT line:\n%s", stdout)
 	})
 	for _, name := range []string{
 		"tools11-c1-links-specpulse.md",
@@ -79,16 +72,12 @@ func TestTheShiftsOwnCardsLintClean(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			stdout, code := lintCardFile(t, name)
-			if strings.Contains(stdout, "no-parent-path") {
-				t.Fatalf("a quoted ../ is not a walk:\n%s", stdout)
-			}
-			if code != 1 || !strings.Contains(stdout, "kind-declared") || !strings.Contains(stdout, "dogfood") {
-				t.Fatalf("KIND: dogfood is not a kind kinds.txt declares; exit=%d\n%s", code, stdout)
-			}
+			require.NotContains(t, stdout, "no-parent-path", "a quoted ../ is not a walk:\n%s", stdout)
+			require.Equal(t, 1, code, "KIND: dogfood is not a kind kinds.txt declares; exit=%d\n%s", code, stdout)
+			require.Contains(t, stdout, "kind-declared", "KIND: dogfood is not a kind kinds.txt declares; exit=%d\n%s", code, stdout)
+			require.Contains(t, stdout, "dogfood", "KIND: dogfood is not a kind kinds.txt declares; exit=%d\n%s", code, stdout)
 			for _, line := range strings.Split(stdout, "\n") {
-				if strings.Contains(line, "LINT DRIFT") && !strings.Contains(line, "kind-declared") {
-					t.Fatalf("the only drift on this fixture is kind-declared:\n%s", stdout)
-				}
+				require.False(t, strings.Contains(line, "LINT DRIFT") && !strings.Contains(line, "kind-declared"), "the only drift on this fixture is kind-declared:\n%s", stdout)
 			}
 		})
 	}
@@ -102,15 +91,9 @@ func TestACardOverTheCeilingIsAdvisedNotRefused(t *testing.T) {
 
 	const name = "tools11-c2-links-toplevel.md"
 	stdout, _ := lintCardFile(t, name)
-	if !strings.Contains(stdout, "LINT NOTE card="+name+" size: ") {
-		t.Fatalf("over the ceiling is said, on a NOTE line and never a DRIFT line:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "advisory") {
-		t.Fatalf("the word a manager needs is in the line: advisory, not a limit:\n%s", stdout)
-	}
+	require.Contains(t, stdout, "LINT NOTE card="+name+" size: ", "over the ceiling is said, on a NOTE line and never a DRIFT line:\n%s", stdout)
+	require.Contains(t, stdout, "advisory", "the word a manager needs is in the line: advisory, not a limit:\n%s", stdout)
 	for _, line := range strings.Split(stdout, "\n") {
-		if strings.Contains(line, "LINT DRIFT") && strings.Contains(line, " size:") {
-			t.Fatalf("over the ceiling is not a DRIFT:\n%s", stdout)
-		}
+		require.False(t, strings.Contains(line, "LINT DRIFT") && strings.Contains(line, " size:"), "over the ceiling is not a DRIFT:\n%s", stdout)
 	}
 }

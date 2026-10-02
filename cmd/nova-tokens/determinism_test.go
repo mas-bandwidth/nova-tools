@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,8 +30,9 @@ func fakeGit(t *testing.T) (logPath string) {
 	dir := t.TempDir()
 	logPath = filepath.Join(dir, "git-argv.log")
 	bin := mkdir(t, filepath.Join(dir, "bin"))
-	if err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho \"$@\" >> "+logPath+"\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
+	{
+		err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho \"$@\" >> "+logPath+"\nexit 0\n"), 0o755)
+		require.False(t, err != nil, err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return logPath
@@ -52,8 +55,9 @@ func reversedHistory(t *testing.T, git, dir string, files ...string) {
 		}, args...)...)
 		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 			"GIT_AUTHOR_DATE=2026-09-11T20:00:00Z", "GIT_COMMITTER_DATE=2026-09-11T20:00:00Z")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
+		{
+			out, err := cmd.CombinedOutput()
+			require.False(t, err != nil, "git %v: %v: %s", args, err, out)
 		}
 	}
 	run("init", "-q")
@@ -92,11 +96,13 @@ func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
 	// The mtimes swapped, so the successor looks older than what it replaces.
 	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	newer := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
-	if err := os.Chtimes(filepath.Join(bus, "from-emma", "aaa-second.md"), old, old); err != nil {
-		t.Fatal(err)
+	{
+		err := os.Chtimes(filepath.Join(bus, "from-emma", "aaa-second.md"), old, old)
+		require.False(t, err != nil, err)
 	}
-	if err := os.Chtimes(filepath.Join(bus, "from-emma", "zzz-first.md"), newer, newer); err != nil {
-		t.Fatal(err)
+	{
+		err := os.Chtimes(filepath.Join(bus, "from-emma", "zzz-first.md"), newer, newer)
+		require.False(t, err != nil, err)
 	}
 	// An INDEX sorted by path, the way `nova-bus check --rebuild-index` writes it: a
 	// derived catalogue, and never a statement about which number the friend meant.
@@ -110,11 +116,12 @@ func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
 	after := fold(t, mkdir(t, filepath.Join(dir, "out2")))
 	a := strings.SplitN(before, "\n", 2)[1]
 	b := strings.SplitN(after, "\n", 2)[1]
-	if a != b {
-		t.Errorf("the rows moved when the checkout was rearranged:\n%s\n%s", a, b)
-	}
-	if _, err := os.Stat(gitLog); err == nil {
-		t.Errorf("git was invoked: %s", read(t, gitLog))
+	assert.False(t, a != b, "the rows moved when the checkout was rearranged:\n%s\n%s", a, b)
+	{
+		_, err := os.Stat(gitLog)
+		if err == nil {
+			assert.Failf(t, "git was invoked", "git was invoked: %s", read(t, gitLog))
+		}
 	}
 }
 
@@ -136,8 +143,9 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 		"--provider", "xai:johnny="+export, "--note", note)
 	wantExit(t, r, 0)
 	for _, line := range lines(r.stdout) {
-		if f := strings.Split(line, "\t"); len(f) != 7 || f[6] != "day_basis=America/Los_Angeles" {
-			t.Errorf("a zoned report line is %q; it wants seven fields ending day_basis=<zone>", line)
+		{
+			f := strings.Split(line, "\t")
+			assert.False(t, len(f) != 7 || f[6] != "day_basis=America/Los_Angeles", "a zoned report line is %q; it wants seven fields ending day_basis=<zone>", line)
 		}
 	}
 	subject := lineWith(r.stderr, "REPORT OK")
@@ -164,9 +172,7 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 		return strings.Join(keep, "\n")
 	}
 	got, want := cells(read(t, filepath.Join(viaBus, "2026-09-11.tsv"))), cells(read(t, filepath.Join(direct, "2026-09-11.tsv")))
-	if got != want {
-		t.Errorf("the note's row is not the export's row:\nbus:    %s\ndirect: %s", got, want)
-	}
+	assert.False(t, got != want, "the note's row is not the export's row:\nbus:    %s\ndirect: %s", got, want)
 	// A hand-written seventh field that spells utc, one that is not day_basis=, and an
 	// eighth field are each unparsed: two spellings of one fact would be two grammars.
 	for _, bad := range []string{
@@ -209,8 +215,9 @@ func TestVersionSaysWhichBuildIsRunning(t *testing.T) {
 
 	r := invoke(t, "version")
 	wantExit(t, r, 0)
-	if n := len(strings.Fields(strings.TrimSpace(r.stdout))); n != 4 {
-		t.Errorf("`nova-tokens version` printed %q, want four tokens", r.stdout)
+	{
+		n := len(strings.Fields(strings.TrimSpace(r.stdout)))
+		assert.False(t, n != 4, "`nova-tokens version` printed %q, want four tokens", r.stdout)
 	}
 	wantContains(t, r.stdout, "nova-tokens ")
 	wantExit(t, invoke(t, "version", "--anything"), 2)

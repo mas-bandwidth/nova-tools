@@ -26,6 +26,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
 )
 
 // propConfig is one random sprint's shape.
@@ -1233,7 +1234,7 @@ func propSeeds(t *testing.T, from, to uint64, shrinkBudget int) {
 		t.Logf("  %s: %d", name, stats[name])
 	}
 	for _, s := range sigs {
-		t.Errorf("%d seeds fail with %s; the first:\n%s", classes[s], s, first[s])
+		assert.Fail(t, fmt.Sprintf("%d seeds fail with %s; the first:\n%s", classes[s], s, first[s]))
 	}
 }
 

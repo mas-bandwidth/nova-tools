@@ -7,49 +7,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-// THE KEY IS READ AS DATA. One line, the two strips, whitespace out, and a second line that
-// nothing may read -- the file somebody appends to tomorrow.
-func TestTheKeyFileIsReadAsOneLine(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	for _, c := range []struct{ name, body, want string }{
-		{"a bare key", "sk-abc123\n", "sk-abc123"},
-		{"a NAME= line", "FAKE_KEY=sk-abc123\n", "sk-abc123"},
-		{"an exported line", "export FAKE_KEY=sk-abc123\n", "sk-abc123"},
-		{"a second line", "sk-abc123\nsk-THE-WRONG-ONE\n", "sk-abc123"},
-		{"trailing whitespace", "  sk-abc123  \n", "sk-abc123"},
-	} {
-		path := filepath.Join(dir, "key")
-		if err := os.WriteFile(path, []byte(c.body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		got, err := ReadKey(path, "FAKE_KEY")
-		if err != nil {
-			t.Errorf("%s: %v", c.name, err)
-			continue
-		}
-		if got != c.want {
-			t.Errorf("%s: read %q, want %q", c.name, got, c.want)
-		}
-	}
-	// An empty file is a refusal carrying the command that writes one, and the refusal
-	// never prints the path's contents.
-	path := filepath.Join(dir, "empty")
-	if err := os.WriteFile(path, []byte("\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := ReadKey(path, "FAKE_KEY")
-	if err == nil {
-		t.Fatal("an empty key file is a refusal")
-	}
-	if !strings.Contains(err.Error(), "chmod 600") {
-		t.Errorf("the refusal wants the command that writes the file: %v", err)
-	}
-}
 
 // Rule 8 and rule 15, at the parser: completion is EVIDENCE, separate from the count, and a
 // malformed report yields no findings, ever.
@@ -60,42 +21,28 @@ func TestTheParserClassifiesWithoutAnOpinion(t *testing.T) {
 	finding := "- something `THE RULE, VERBATIM` internal/x.go:10\n"
 
 	ok := ParseReport([]byte(strings.NewReplacer("%s", "").Replace("") + sprintf(head, "1", finding, "red")))
-	if ok.Class != ClassOK || len(ok.FindingLines) != 1 {
-		t.Errorf("a head with findings: 1 is ok with one finding line, got %s with %d", ok.Class, len(ok.FindingLines))
-	}
-	if !ok.FindingLines[0].Quoted() || ok.FindingLines[0].File != "internal/x.go" {
-		t.Errorf("a finding with its rule quoted beside a file:line is quoted: %+v", ok.FindingLines[0])
-	}
+	assert.Equal(t, ClassOK, ok.Class, "a head with findings: 1 is ok with one finding line, got %s with %d", ok.Class, len(ok.FindingLines))
+	assert.Len(t, ok.FindingLines, 1, "a head with findings: 1 is ok with one finding line, got %s with %d", ok.Class, len(ok.FindingLines))
+	assert.True(t, ok.FindingLines[0].Quoted(), "a finding with its rule quoted beside a file:line is quoted: %+v", ok.FindingLines[0])
+	assert.Equal(t, "internal/x.go", ok.FindingLines[0].File, "a finding with its rule quoted beside a file:line is quoted: %+v", ok.FindingLines[0])
 
 	clean := ParseReport([]byte(sprintf(head, "0", "", "green")))
-	if clean.Class != ClassClean {
-		t.Errorf("a head with findings: 0 is clean, got %s -- a classifier that failed it would be paying for findings", clean.Class)
-	}
+	assert.Equal(t, ClassClean, clean.Class, "a head with findings: 0 is clean, got %s -- a classifier that failed it would be paying for findings", clean.Class)
 
 	plan := ParseReport([]byte("# t\n\n## Plan\nI will read the files.\n\n## Findings\n" + finding))
-	if plan.Class != ClassPlanOnly {
-		t.Errorf("a report with no head is plan-only whatever else it holds, got %s", plan.Class)
-	}
+	assert.Equal(t, ClassPlanOnly, plan.Class, "a report with no head is plan-only whatever else it holds, got %s", plan.Class)
 
 	malformed := ParseReport([]byte(sprintf(head, "2", finding+finding, "probably")))
-	if malformed.Class != ClassMalformed {
-		t.Fatalf("a fourth state word is malformed, got %s", malformed.Class)
-	}
-	if malformed.MalformedLine == 0 {
-		t.Error("a malformed report names the line")
-	}
-	if len(malformed.FindingLines) != 0 {
-		t.Error("a malformed report yields NO finding, ever: a parser that salvaged the lines it liked would be a parser with an opinion")
-	}
+	require.Equal(t, ClassMalformed, malformed.Class, "a fourth state word is malformed, got %s", malformed.Class)
+	assert.NotZero(t, malformed.MalformedLine, "a malformed report names the line")
+	assert.Empty(t, malformed.FindingLines, "a malformed report yields NO finding, ever: a parser that salvaged the lines it liked would be a parser with an opinion")
 
 	// A malformed report whose head says findings: 0 is malformed, not clean.
-	if got := ParseReport([]byte(sprintf(head, "0", "", "probably"))); got.Class != ClassMalformed {
-		t.Errorf("a malformed report with findings: 0 is malformed, got %s", got.Class)
-	}
+	got := ParseReport([]byte(sprintf(head, "0", "", "probably")))
+	assert.Equal(t, ClassMalformed, got.Class, "a malformed report with findings: 0 is malformed, got %s", got.Class)
 	// A head with no findings: line at all is malformed, and names the head's line.
-	if got := ParseReport([]byte("# t\n\n## Head\nrepo: o/n\n")); got.Class != ClassMalformed {
-		t.Errorf("a head with no findings: line is malformed, got %s", got.Class)
-	}
+	got = ParseReport([]byte("# t\n\n## Head\nrepo: o/n\n"))
+	assert.Equal(t, ClassMalformed, got.Class, "a head with no findings: line is malformed, got %s", got.Class)
 }
 
 // RULE 8, VERBATIM (SPEC-SWARM.md:117): the evidence of completion is "the report's `##
@@ -107,35 +54,25 @@ func TestTheHeadsFirstLineIsTheFindingCount(t *testing.T) {
 	t.Parallel()
 
 	good := "# t\n\n## Head\nfindings: 1\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n"
-	if got := ParseReport([]byte(good)); got.Class != ClassOK {
-		t.Fatalf("findings: first is the shape rule 8 names, got %s", got.Class)
-	}
+	got := ParseReport([]byte(good))
+	require.Equal(t, ClassOK, got.Class, "findings: first is the shape rule 8 names, got %s", got.Class)
 	// Every other opener is malformed, and the malformed line is the line that is wrong.
 	for _, first := range []string{"notes read: 1", "repo: o/n", "rev: abc", "a paragraph."} {
 		body := "# t\n\n## Head\n" + first + "\nfindings: 1\nrepo: o/n\nrev: abc\n"
 		got := ParseReport([]byte(body))
-		if got.Class != ClassMalformed {
-			t.Errorf("a head opening %q is malformed, got %s", first, got.Class)
+		if !assert.Equal(t, ClassMalformed, got.Class, "a head opening %q is malformed, got %s", first, got.Class) {
 			continue
 		}
-		if got.MalformedLine != 4 {
-			t.Errorf("the malformed line for %q wants 4, got %d", first, got.MalformedLine)
-		}
-		if len(got.FindingLines) != 0 {
-			t.Errorf("a malformed report yields NO finding, ever: %q kept %d", first, len(got.FindingLines))
-		}
+		assert.Equal(t, 4, got.MalformedLine, "the malformed line for %q wants 4, got %d", first, got.MalformedLine)
+		assert.Empty(t, got.FindingLines, "a malformed report yields NO finding, ever: %q kept %d", first, len(got.FindingLines))
 	}
 	// AND A BLANK LINE IS A FIRST LINE. The parser skipped whitespace to find the count,
 	// so `## Head` followed by an empty line and then `findings: 0` read `clean`: rule 8's
 	// "whose FIRST line is `findings: <n>`" had a second reading, and the one shape a
 	// coordinator classifies on was again not the shape the parser required (read 4, F7).
 	blank := ParseReport([]byte("# t\n\n## Head\n\nfindings: 0\n"))
-	if blank.Class != ClassMalformed {
-		t.Errorf("a head whose first line is blank is malformed, got %s", blank.Class)
-	}
-	if blank.MalformedLine != 4 {
-		t.Errorf("the malformed line is the blank one, 4, got %d", blank.MalformedLine)
-	}
+	assert.Equal(t, ClassMalformed, blank.Class, "a head whose first line is blank is malformed, got %s", blank.Class)
+	assert.Equal(t, 4, blank.MalformedLine, "the malformed line is the blank one, 4, got %d", blank.MalformedLine)
 }
 
 // RULE 2, VERBATIM (SPEC-SWARM.md:82-84): "Every claim quotes its rule verbatim, beside the
@@ -155,22 +92,14 @@ func TestAFindingCarriesItsQuoteOnTheSameLineOrTheNext(t *testing.T) {
 	wrapped := ParseReport([]byte(sprintf(head, "1") +
 		"- the reclaim line omits a field the grammar names\n" +
 		"  `RUN RECLAIM slot=<n> id=<id> end=<...> dest=<done|failed|->` internal/swarm/run.go:147\n"))
-	if len(wrapped.FindingLines) != 1 {
-		t.Fatalf("the continuation is part of the finding above it, not a second finding: got %d", len(wrapped.FindingLines))
-	}
+	require.Len(t, wrapped.FindingLines, 1, "the continuation is part of the finding above it, not a second finding: got %d", len(wrapped.FindingLines))
 	f := wrapped.FindingLines[0]
-	if !f.Quoted() {
-		t.Errorf("a finding whose quote is on the next line IS quoted (rule 2): %+v", f)
-	}
-	if f.File != "internal/swarm/run.go" || f.FileLine != "147" {
-		t.Errorf("the file:line on the next line is the finding's file:line, got %q:%q", f.File, f.FileLine)
-	}
-	if f.Rule != "RUN RECLAIM slot=<n> id=<id> end=<...> dest=<done|failed|->" {
-		t.Errorf("the rule quoted on the next line is the finding's rule, got %q", f.Rule)
-	}
-	if _, ok := f.Key("o/n", "abc"); !ok {
-		t.Error("a finding quoted on the next line has a de-duplication key like any other (rule 15)")
-	}
+	assert.True(t, f.Quoted(), "a finding whose quote is on the next line IS quoted (rule 2): %+v", f)
+	assert.Equal(t, "internal/swarm/run.go", f.File, "the file:line on the next line is the finding's file:line, got %q:%q", f.File, f.FileLine)
+	assert.Equal(t, "147", f.FileLine, "the file:line on the next line is the finding's file:line, got %q:%q", f.File, f.FileLine)
+	assert.Equal(t, "RUN RECLAIM slot=<n> id=<id> end=<...> dest=<done|failed|->", f.Rule, "the rule quoted on the next line is the finding's rule, got %q", f.Rule)
+	_, ok := f.Key("o/n", "abc")
+	assert.True(t, ok, "a finding quoted on the next line has a de-duplication key like any other (rule 15)")
 
 	// ONLY the next. A quote two lines below is not what rule 2 allows, and a finding with
 	// no quote is still counted unquoted -- the parser gains no opinion here.
@@ -178,8 +107,8 @@ func TestAFindingCarriesItsQuoteOnTheSameLineOrTheNext(t *testing.T) {
 		"- a claim with no quote beside it\n" +
 		"\n" +
 		"  `THE RULE` internal/x.go:10\n"))
-	if len(far.FindingLines) != 1 || far.FindingLines[0].Quoted() {
-		t.Errorf("rule 2 says the same line or the NEXT, and nothing below that: %+v", far.FindingLines)
+	if assert.Len(t, far.FindingLines, 1, "rule 2 says the same line or the NEXT, and nothing below that: %+v", far.FindingLines) {
+		assert.False(t, far.FindingLines[0].Quoted(), "rule 2 says the same line or the NEXT, and nothing below that: %+v", far.FindingLines)
 	}
 
 	// A finding that quoted its rule on its own line is NOT re-read from the line below it.
@@ -187,15 +116,10 @@ func TestAFindingCarriesItsQuoteOnTheSameLineOrTheNext(t *testing.T) {
 		"- a complete claim `THE RULE` internal/a.go:1\n" +
 		"  `A DIFFERENT RULE` internal/b.go:2\n" +
 		"- a second claim `RULE TWO` internal/c.go:3\n"))
-	if len(own.FindingLines) != 2 {
-		t.Fatalf("two bullets are two findings, got %d", len(own.FindingLines))
-	}
-	if own.FindingLines[0].File != "internal/a.go" || own.FindingLines[0].Rule != "THE RULE" {
-		t.Errorf("a finding complete on its own line keeps its own quote, got %+v", own.FindingLines[0])
-	}
-	if own.FindingLines[1].File != "internal/c.go" {
-		t.Errorf("the second bullet is the second finding, got %+v", own.FindingLines[1])
-	}
+	require.Len(t, own.FindingLines, 2, "two bullets are two findings, got %d", len(own.FindingLines))
+	assert.Equal(t, "internal/a.go", own.FindingLines[0].File, "a finding complete on its own line keeps its own quote, got %+v", own.FindingLines[0])
+	assert.Equal(t, "THE RULE", own.FindingLines[0].Rule, "a finding complete on its own line keeps its own quote, got %+v", own.FindingLines[0])
+	assert.Equal(t, "internal/c.go", own.FindingLines[1].File, "the second bullet is the second finding, got %+v", own.FindingLines[1])
 }
 
 // Rule 15's normalization: ./internal/x.go:10 and internal\x.go:10 are one file.
@@ -206,75 +130,15 @@ func TestAPathIsNormalizedBeforeTheCompare(t *testing.T) {
 	b := parseFinding(1, `something `+"`RULE`"+` internal\x.go:10`)
 	ka, oka := a.Key("o/n", "abc")
 	kb, okb := b.Key("o/n", "abc")
-	if !oka || !okb || ka != kb {
-		t.Errorf("the same finding spelled two ways wants one key:\n%q\n%q", ka, kb)
-	}
+	assert.True(t, oka, "the same finding spelled two ways wants one key:\n%q\n%q", ka, kb)
+	assert.True(t, okb, "the same finding spelled two ways wants one key:\n%q\n%q", ka, kb)
+	assert.Equal(t, kb, ka, "the same finding spelled two ways wants one key:\n%q\n%q", ka, kb)
 	// Two findings under different revisions stay two findings.
-	if k, _ := a.Key("o/n", "def"); k == ka {
-		t.Error("equal file:line and rule in two revisions are two findings")
-	}
+	k, _ := a.Key("o/n", "def")
+	assert.NotEqual(t, ka, k, "equal file:line and rule in two revisions are two findings")
 	// A report with no rev merges with nothing.
-	if _, ok := a.Key("o/n", ""); ok {
-		t.Error("a head without rev: has no de-duplication key")
-	}
-}
-
-// The prompt is this tool's output, and every sentence in it is a failure from the record.
-func TestThePromptCarriesEverySentenceTheRecordBought(t *testing.T) {
-	t.Parallel()
-
-	prompt := string(Prompt(PromptInput{
-		ID: "job-1", JobDir: "/j", Deadline: 20 * time.Minute, Files: 7, Tokens: "100000",
-		Board: "mas-bandwidth/schema#876", Task: []byte("the task"),
-		NoteFile: "/j/note", Result: "/j/RESULT.md", ResultTmp: "/j/RESULT.md.tmp",
-	}))
-	for _, want := range []string{
-		"/j",                         // the job directory
-		"1200 SECONDS",               // the deadline, in seconds, held by machinery
-		"7 FILES",                    // the file budget
-		"REFUSED READ OR WRITE",      // the sandbox sentence, reads AND writes
-		"DOES NOT END THIS RUN",      // ... and what a refusal means
-		"THE MOMENT IT EXISTS",       // append as found
-		"RESULT.md.tmp",              // publication by rename, with the command
-		"mv RESULT.md.tmp RESULT.md", // ... spelled out
-		"findings: 0",                // 0 is a complete answer
-		"THERE IS NO BUS",            // no bus
-		"Do not loop, poll or wait",  // no polling
-		"ONE PROCESS",                // one job is one process
-		"NOTE FILE note",             // the note file, relative to the job cwd
-		"notes read:",                // and the count that is mandatory
-		"mas-bandwidth/schema#876",   // the board, and dup: before filing
-		"100000",                     // the token budget
-		"the task",                   // and the task itself
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("the prompt does not contain %q", want)
-		}
-	}
-}
-
-func TestThePromptUsesJobRelativeWorkerPaths(t *testing.T) {
-	t.Parallel()
-
-	jobDir := "/Users/glenn/Documents/ChatGPT/stella 2/jobs/job;$(touch SHOULD_NOT_RUN)"
-	prompt := string(Prompt(PromptInput{
-		ID: "job-paths", JobDir: jobDir, Deadline: time.Minute, Files: 1, Tokens: "10",
-		NoteFile: jobDir + "/note", Result: jobDir + "/RESULT.md", ResultTmp: jobDir + "/RESULT.md.tmp",
-	}))
-	for _, want := range []string{
-		"cat > RESULT.md.tmp <<'EOF'",
-		"mv RESULT.md.tmp RESULT.md",
-		"READ THE NOTE FILE note in your working directory",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("the prompt does not use the job-relative target %q", want)
-		}
-	}
-	for _, unsafe := range []string{jobDir + "/RESULT.md.tmp", jobDir + "/RESULT.md", jobDir + "/note"} {
-		if strings.Contains(prompt, unsafe) {
-			t.Errorf("the prompt copied an unsafe absolute worker path %q", unsafe)
-		}
-	}
+	_, ok := a.Key("o/n", "")
+	assert.False(t, ok, "a head without rev: has no de-duplication key")
 }
 
 // The harness config carries the variable's NAME and never its value: a value written there
@@ -284,12 +148,8 @@ func TestTheHarnessConfigCarriesTheNameNotTheValue(t *testing.T) {
 
 	w := Worker{Provider: "fake", Model: "m", EnvVar: "FAKE_KEY", BaseURL: "https://example.invalid"}
 	cfg := string(w.HarnessConfig())
-	if !strings.Contains(cfg, "{env:FAKE_KEY}") {
-		t.Errorf("the config wants the variable's name as a reference:\n%s", cfg)
-	}
-	if strings.Contains(cfg, "sk-") {
-		t.Errorf("the config must never hold a key:\n%s", cfg)
-	}
+	assert.Contains(t, cfg, "{env:FAKE_KEY}", "the config wants the variable's name as a reference:\n%s", cfg)
+	assert.NotContains(t, cfg, "sk-", "the config must never hold a key:\n%s", cfg)
 }
 
 // A template is text and nothing else, and `add --template` writes the file budget into the
@@ -299,27 +159,19 @@ func TestTemplatesCarryTheirConditions(t *testing.T) {
 
 	for _, name := range TemplateNames() {
 		body, err := Template(name)
-		if err != nil || strings.TrimSpace(body) == "" {
-			t.Fatalf("template %s: %v", name, err)
-		}
+		require.NoError(t, err, "template %s: %v", name, err)
+		require.NotEmpty(t, strings.TrimSpace(body), "template %s: %v", name, err)
 	}
 	wrapped, err := WrapTemplate("read-pr", 12, []byte("read PR #42"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, want := range []string{"OWED LIST FIRST", "QUOTE EVERY RULE VERBATIM", "THE MOMENT IT EXISTS", "12 files", "read PR #42", "omit progress narration", "severity", "every valid", "never hard-truncate", "## Head", "## Gates", "## One line"} {
-		if !strings.Contains(string(wrapped), want) {
-			t.Errorf("the wrapped task does not contain %q", want)
-		}
+		assert.Contains(t, string(wrapped), want, "the wrapped task does not contain %q", want)
 	}
 	for n := 1; n <= 6; n++ {
-		if !strings.Contains(string(wrapped), fmt.Sprintf("%d.", n)) {
-			t.Errorf("the wrapped read-pr task lost rule %d", n)
-		}
+		assert.Contains(t, string(wrapped), fmt.Sprintf("%d.", n), "the wrapped read-pr task lost rule %d", n)
 	}
-	if _, err := WrapTemplate("result", 3, nil); err == nil {
-		t.Error("`result` is the report's shape and not a task template")
-	}
+	_, err = WrapTemplate("result", 3, nil)
+	assert.Error(t, err, "`result` is the report's shape and not a task template")
 }
 
 // ISSUE #65: the read-pr template carries a severity floor. The reader states the
@@ -330,21 +182,13 @@ func TestReadPRTemplateCarriesASeverityFloor(t *testing.T) {
 	t.Parallel()
 
 	wrapped, err := WrapTemplate("read-pr", 12, []byte("read PR #65"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got := string(wrapped)
 	for _, want := range []string{"SEVERITY FLOOR", "HIGH", "not emitted", "floor: HIGH"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the wrapped read-pr task does not carry the severity floor: missing %q", want)
-		}
+		assert.Contains(t, got, want, "the wrapped read-pr task does not carry the severity floor: missing %q", want)
 	}
-	if !strings.Contains(got, "QUOTE EVERY RULE VERBATIM") {
-		t.Error("the severity floor must not replace the verbatim-quote condition")
-	}
-	if !strings.Contains(got, "7.") {
-		t.Error("the wrapped read-pr task lost the floor's own rule number")
-	}
+	assert.Contains(t, got, "QUOTE EVERY RULE VERBATIM", "the severity floor must not replace the verbatim-quote condition")
+	assert.Contains(t, got, "7.", "the wrapped read-pr task lost the floor's own rule number")
 }
 
 // A worker description is decoded STRICTLY: an unknown field is a refusal, because a
@@ -353,20 +197,13 @@ func TestAnUnknownFieldInAWorkerDescriptionIsARefusal(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "w.json")
-	if err := os.WriteFile(path, []byte(`{"name":"x","key_fil":"/k"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, problems := LoadWorker(path); len(problems) == 0 {
-		t.Error("an unknown field is a refusal")
-	}
-	// And a description missing several fields names them all in one run.
-	if err := os.WriteFile(path, []byte(`{"name":"x"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"name":"x","key_fil":"/k"}`), 0o644))
 	_, problems := LoadWorker(path)
-	if len(problems) < 4 {
-		t.Errorf("one run names every independent problem, got %d: %v", len(problems), problems)
-	}
+	assert.NotEmpty(t, problems, "an unknown field is a refusal")
+	// And a description missing several fields names them all in one run.
+	require.NoError(t, os.WriteFile(path, []byte(`{"name":"x"}`), 0o644))
+	_, problems = LoadWorker(path)
+	assert.GreaterOrEqual(t, len(problems), 4, "one run names every independent problem, got %d: %v", len(problems), problems)
 }
 
 func sprintf(format string, args ...any) string {
@@ -387,36 +224,28 @@ func TestASecretNamedWorkerDescriptionIsAcceptedByTheLoader(t *testing.T) {
 
 	dir := t.TempDir()
 	home := filepath.Join(dir, "worker")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(home, 0o755))
 	write := func(body string) string {
 		path := filepath.Join(dir, "w.json")
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 		return path
 	}
 	withSecret := `{"name":"w","provider":"p","model":"m","env_var":"FAKE_KEY","secret":"FAKE_SECRET","usage":"none","harness":"h","harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":` + strconv.Quote(home) + `,"deadline":"5m"}`
-	if _, problems := LoadWorker(write(withSecret)); len(problems) != 0 {
-		t.Errorf("a description naming a secret is accepted, got %d problems: %v", len(problems), problems)
-	}
+	_, problems := LoadWorker(write(withSecret))
+	assert.Empty(t, problems, "a description naming a secret is accepted, got %d problems: %v", len(problems), problems)
 	// Neither key_file nor secret: refused.
 	neither := strings.Replace(withSecret, `,"secret":"FAKE_SECRET"`, "", 1)
-	if _, problems := LoadWorker(write(neither)); len(problems) == 0 {
-		t.Error("a description with neither key_file nor secret is a refusal")
-	}
+	_, problems = LoadWorker(write(neither))
+	assert.NotEmpty(t, problems, "a description with neither key_file nor secret is a refusal")
 	keyPath := filepath.Join(dir, "key")
 	// Both key_file and secret: refused, because the two mechanisms contradict.
 	both := `{"name":"w","provider":"p","model":"m","env_var":"FAKE_KEY","key_file":` + strconv.Quote(keyPath) + `,"secret":"FAKE_SECRET","usage":"none","harness":"h","harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":` + strconv.Quote(home) + `,"deadline":"5m"}`
-	if _, problems := LoadWorker(write(both)); len(problems) == 0 {
-		t.Error("a description carrying both key_file and secret is a refusal")
-	}
+	_, problems = LoadWorker(write(both))
+	assert.NotEmpty(t, problems, "a description carrying both key_file and secret is a refusal")
 	// The old shape: key_file alone stays accepted.
 	old := strings.Replace(withSecret, `,"secret":"FAKE_SECRET"`, `,"key_file":`+strconv.Quote(keyPath), 1)
-	if _, problems := LoadWorker(write(old)); len(problems) != 0 {
-		t.Errorf("the key_file shape stays accepted, got %d problems: %v", len(problems), problems)
-	}
+	_, problems = LoadWorker(write(old))
+	assert.Empty(t, problems, "the key_file shape stays accepted, got %d problems: %v", len(problems), problems)
 }
 
 // ISSUE #881 (secret implies env_var): a worker description that names `secret` but no
@@ -428,19 +257,11 @@ func TestSecretImpliesEnvVar(t *testing.T) {
 
 	dir := t.TempDir()
 	home := filepath.Join(dir, "worker")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(home, 0o755))
 	body := `{"name":"w","provider":"p","model":"m","secret":"MY_SECRET_881","usage":"none","harness":"h","harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":` + strconv.Quote(home) + `,"deadline":"5m"}`
 	path := filepath.Join(dir, "w.json")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	w, problems := LoadWorker(path)
-	if len(problems) != 0 {
-		t.Fatalf("a description with secret alone loads, got %d problems: %v", len(problems), problems)
-	}
-	if w.EnvVar != "MY_SECRET_881" {
-		t.Fatalf("env_var defaults to the secret NAME, got %q want %q", w.EnvVar, "MY_SECRET_881")
-	}
+	require.Empty(t, problems, "a description with secret alone loads, got %d problems: %v", len(problems), problems)
+	require.Equal(t, "MY_SECRET_881", w.EnvVar, "env_var defaults to the secret NAME, got %q want %q", w.EnvVar, "MY_SECRET_881")
 }

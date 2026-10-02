@@ -1,6 +1,8 @@
 package sprint
 
 import (
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,17 +95,11 @@ func (t *Table) Frozen() *Table {
 	}
 	c := *t
 	c.cards = make(map[string]*Card, len(t.cards))
-	for id, card := range t.cards {
-		c.cards[id] = card
-	}
+	maps.Copy(c.cards, t.cards)
 	c.props = make(map[string]string, len(t.props))
-	for k, v := range t.props {
-		c.props[k] = v
-	}
+	maps.Copy(c.props, t.props)
 	c.Texts = make(map[string]map[string]string, len(t.Texts))
-	for k, v := range t.Texts {
-		c.Texts[k] = v
-	}
+	maps.Copy(c.Texts, t.Texts)
 	c.rows = append([]string(nil), t.rows...)
 	c.cells, c.byPrimary, c.lines, c.stops = nil, nil, nil, nil
 	return &c
@@ -131,9 +127,7 @@ func (t *Table) SetProp(name, value string) {
 // Props is the table's properties: a copy.
 func (t *Table) Props() map[string]string {
 	out := make(map[string]string, len(t.props))
-	for k, v := range t.props {
-		out[k] = v
-	}
+	maps.Copy(out, t.props)
 	return out
 }
 
@@ -181,9 +175,7 @@ func (t *Table) SetRows(rows []string) { t.rows = rows }
 // SetProps sets the table's properties as read (a copy).
 func (t *Table) SetProps(p map[string]string) {
 	t.props = make(map[string]string, len(p))
-	for k, v := range p {
-		t.props[k] = v
-	}
+	maps.Copy(t.props, p)
 }
 
 // Prop is the table's property name and whether it is present.
@@ -197,12 +189,7 @@ func (t *Table) Prop(name string) (string, bool) {
 
 // HasRow says the table declares the row.
 func (t *Table) HasRow(row string) bool {
-	for _, r := range t.rows {
-		if r == row {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(t.rows, row)
 }
 
 // Card is the card with the id, nil when the table has none.
@@ -313,10 +300,6 @@ type Snapshot struct {
 	// tier, read with the routes; a tier with none deals from its enabled routes
 	// in name order (tierArray).
 	Tiers map[string][]string
-	// ReaderTier is the tier a read card's route is drawn from, the sprint
-	// row's reader_tier as nova-config applied it, read with the routes; ""
-	// is the default, pro (route.go, ReadTier).
-	ReaderTier string
 	// ReaderStates is each reader's state as the store derives it (ReaderState:
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.

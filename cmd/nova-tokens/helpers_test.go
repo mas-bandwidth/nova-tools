@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"io"
 	"os"
 	"path/filepath"
@@ -42,23 +44,17 @@ func invokeAt(t *testing.T, now time.Time, args ...string) result {
 
 func wantExit(t *testing.T, r result, want int) {
 	t.Helper()
-	if r.exit != want {
-		t.Errorf("exit %d, want %d\nstdout:\n%s\nstderr:\n%s", r.exit, want, r.stdout, r.stderr)
-	}
+	assert.False(t, r.exit != want, "exit %d, want %d\nstdout:\n%s\nstderr:\n%s", r.exit, want, r.stdout, r.stderr)
 }
 
 func wantContains(t *testing.T, got, want string) {
 	t.Helper()
-	if !strings.Contains(got, want) {
-		t.Errorf("output does not contain %q:\n%s", want, got)
-	}
+	assert.False(t, !strings.Contains(got, want), "output does not contain %q:\n%s", want, got)
 }
 
 func wantNotContains(t *testing.T, got, want string) {
 	t.Helper()
-	if strings.Contains(got, want) {
-		t.Errorf("output contains %q and should not:\n%s", want, got)
-	}
+	assert.False(t, strings.Contains(got, want), "output contains %q and should not:\n%s", want, got)
 }
 
 // lineWith returns the first line of s holding every one of the substrings.
@@ -80,11 +76,13 @@ func lineWith(s string, subs ...string) string {
 
 func write(t *testing.T, path, content string) string {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
+	{
+		err := os.MkdirAll(filepath.Dir(path), 0o755)
+		require.False(t, err != nil, err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(path, []byte(content), 0o644)
+		require.False(t, err != nil, err)
 	}
 	return path
 }
@@ -92,16 +90,15 @@ func write(t *testing.T, path, content string) string {
 func read(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.False(t, err != nil, err)
 	return string(raw)
 }
 
 func mkdir(t *testing.T, path string) string {
 	t.Helper()
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		t.Fatal(err)
+	{
+		err := os.MkdirAll(path, 0o755)
+		require.False(t, err != nil, err)
 	}
 	return path
 }
@@ -200,16 +197,15 @@ const (
 func fakeSqlite3OnPath(t *testing.T, mode string) {
 	t.Helper()
 	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.False(t, err != nil, err)
 	bin := mkdir(t, filepath.Join(t.TempDir(), "bin"))
 	name := "sqlite3"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	if err := testbin.Place(self, filepath.Join(bin, name)); err != nil {
-		t.Fatal(err)
+	{
+		err := testbin.Place(self, filepath.Join(bin, name))
+		require.False(t, err != nil, err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv(fakeSqlite3Env, mode)

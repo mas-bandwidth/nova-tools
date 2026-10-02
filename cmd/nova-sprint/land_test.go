@@ -22,6 +22,9 @@ type landRig struct {
 	*testApp
 	dir, remote, worker, clone string
 	env                        []string
+	// branch, when set, is the branch each card's finish records (--branch), as a
+	// member's does; nil records none
+	branch func(id string) string
 }
 
 func newLandRig(t *testing.T) *landRig {
@@ -84,7 +87,11 @@ func (r *landRig) queued(heads map[string]string, order ...string) {
 	r.deal(len(order))
 	r.ok("take --as m1 --limit 100")
 	for _, id := range order {
-		r.ok("finish --as m1 " + id + ".w1@1 --head " + heads[id])
+		finish := "finish --as m1 " + id + ".w1@1 --head " + heads[id]
+		if r.branch != nil {
+			finish += " --branch " + r.branch(id)
+		}
+		r.ok(finish)
 	}
 	r.ok("ask")
 	r.ok("read --as reader-a --ok --limit 100")
@@ -143,9 +150,36 @@ func TestLandMergesAStreamInQueueOrderAsOneBatch(t *testing.T) {
 	r.clean()
 }
 
+// The landing fetches the base and the batch's heads, and no other branch of origin: a
+// repository a thousand cards have worked in holds thousands of card branches, and a fetch
+// of them all, once a stream a round, was 15 s a fetch (the fleet pass of 2026-10-01
+// 20:18 ET: landing at a third of the fleet's rate).
+func TestLandFetchesTheBaseAndTheBatchsHeadsAndNoOtherBranch(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 2")
+	heads := map[string]string{}
+	for _, id := range []string{"s1-1", "s1-2"} {
+		heads[id] = r.head(id, "main", id+".txt", id+"\n")
+	}
+	r.queued(heads, "s1-1", "s1-2")
+	// a branch that is no card of this batch, pushed after the clone was made
+	r.git(r.worker, "switch", "-q", "--no-track", "-c", "other", "refs/remotes/origin/main")
+	r.commit("other.txt", "other\n", "not of this batch")
+	r.git(r.worker, "push", "-q", "origin", "other")
+	out := r.ok("land --repo-dir " + r.clone + " --base main")
+	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
+	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
+	refs := r.git(r.clone, "for-each-ref", "--format=%(refname)", "refs/remotes/origin")
+	assert.NotContains(t, refs, "refs/remotes/origin/other", "a branch that is no card of the batch is not fetched")
+	assert.NotContains(t, refs, "refs/remotes/origin/sprint/", "the batch's heads are fetched by their ids, not as branches")
+	r.clean()
+}
+
 // A head that does not merge ends its batch: the cards before it land, it is
 // reported with the merge step's conflict fact carrying git's words, and the
 // card behind it stays queued.
+
 func TestLandStopsAtAHeadThatDoesNotMerge(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -218,8 +252,50 @@ func TestLandRebuildsOnceOnAMovedBase(t *testing.T) {
 	}
 }
 
+// A card accepted while a landing builds stands in the queue by its order of
+// work, often ahead of the batch: that is no change to the batch. The landing
+// reports the cards it pushed, by name, and the newcomer stays queued for the
+// next landing (the fleet pass of 2026-10-01 18:31 ET: with cards accepted
+// every second, landings were refused round after round, 49 queued, 2 landed).
+func TestLandReportsItsCardsWhenAnotherIsQueuedAheadUnderThePush(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 3")
+	heads := map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n"), "s1-2": r.head("s1-2", "main", "b.txt", "b\n"), "s1-3": r.head("s1-3", "main", "c.txt", "c\n")}
+	// all three are taken; s1-2 and s1-3 finish, are read and accepted: the queue. s1-1,
+	// first in the order of work, finishes and is accepted under the push
+	r.git(r.worker, "push", "-q", "origin", "refs/heads/sprint/*:refs/heads/sprint/*")
+	r.deal(3)
+	r.ok("take --as m1 --limit 100")
+	accept := func(ids ...string) {
+		for _, id := range ids {
+			r.ok("finish --as m1 " + id + ".w1@1 --head " + heads[id])
+		}
+		r.ok("ask")
+		r.ok("read --as reader-a --ok --limit 100")
+		r.ok("read --as reader-b --ok --limit 100")
+		r.ok("accept --read-ok")
+	}
+	accept("s1-2", "s1-3")
+	once := false
+	r.a.beforePush = func(int) {
+		if !once {
+			once = true
+			accept("s1-1")
+		}
+	}
+	code, out, errs := r.do("land --stream s1 --repo-dir " + r.clone + " --base main")
+	assert.Equal(t, 0, code, out+errs)
+	assert.Contains(t, out, "LAND OK stream=s1 cards=2")
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "landed/merged", "s1-3": "landed/merged"}, r.places("s1-1", "s1-2", "s1-3"), "the batch pushed is the batch recorded, and the card accepted since waits for the next landing")
+	code, out, errs = r.do("land --stream s1 --repo-dir " + r.clone + " --base main")
+	assert.Equal(t, 0, code, out+errs)
+	assert.Equal(t, "landed/merged", r.places("s1-1")["s1-1"])
+	r.clean()
+}
+
 // The landing and the report are one operation: a batch pushed whose report
-// the store cannot take (the queue changed under the push) is LAND FAILED,
+// the store cannot take (a card of it left the queue under the push) is LAND FAILED,
 // exit 2, with the exact merge command to run.
 func TestLandSaysLoudlyWhenAPushedBatchIsNotReported(t *testing.T) {
 	t.Parallel()
@@ -231,7 +307,7 @@ func TestLandSaysLoudlyWhenAPushedBatchIsNotReported(t *testing.T) {
 	assert.Equal(t, 2, code)
 	tip := r.git(r.remote, "rev-parse", "main")
 	assert.Contains(t, errs, "LAND FAILED stream=s1 cards=2 base=main tip="+tip+" ids=s1-1..s1-2")
-	assert.Contains(t, errs, "and NOT reported (s1: the merge queue of s1 holds 1 cards now, fewer than the batch of 2")
+	assert.Contains(t, errs, "and NOT reported (s1: the merge queue of s1 no longer holds s1-1 (landed, stuck or returned since it was read)")
 	assert.Contains(t, errs, "run land again, which rereads the queue and lets its checks decide")
 	assert.Contains(t, errs, ": nova-sprint land --stream s1\n")
 	assert.NotContains(t, errs, "merge --stream", "a bare merge step would pass the head guard")

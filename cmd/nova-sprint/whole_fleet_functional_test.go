@@ -15,6 +15,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
@@ -76,9 +77,7 @@ func fleetReady(t *testing.T, do func(args ...string) string, member string) int
 			Col string `json:"col"`
 		} `json:"cards"`
 	}
-	if err := json.Unmarshal([]byte(do("queue", "--as", member, "--json")), &q); err != nil {
-		t.Fatalf("queue of %s: %v", member, err)
-	}
+	require.NoError(t, json.Unmarshal([]byte(do("queue", "--as", member, "--json")), &q), "queue of %s", member)
 	n := 0
 	for _, c := range q.Cards {
 		if c.Col == "ready" {
@@ -93,8 +92,9 @@ func fleetReady(t *testing.T, do func(args ...string) string, member string) int
 // update."): eight machines of width 64, three streams of 1,000. The machine
 // ticks and the world plays in turn, so every deal sees every member's room
 // freed by the world's whole batch before it: the tick deals, the world takes
-// what was dealt (every member up takes, in the one step, in the tick after
-// the deal reaches it), the world finishes it, the tick deals again. Every
+// up to its running width (every member up takes in the one step after the
+// deal reaches it), retaining the dealt-ahead backlog. The world finishes
+// its running batch, and the tick deals again. Every
 // tick that deals reaches every machine (the whole fleet in one update), never
 // part of the fleet one tick and the rest the next; over the run no member is
 // dealt more than one card more than another (the rolling index, errata 3
@@ -114,18 +114,15 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
 	ctx := context.Background()
-	if err := fn.Load(ctx, c); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, fn.Load(ctx, c))
 	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
 	world := newApp(func(k string) string { return env[k] })
 	defer world.close()
 	do := func(args ...string) string {
 		t.Helper()
 		var out, errb bytes.Buffer
-		if code := world.run(args, &out, &errb); code != 0 {
-			t.Fatalf("%v: %d %s", args, code, errb.String())
-		}
+		code := world.run(args, &out, &errb)
+		require.Equal(t, 0, code, "%v: %d %s", args, code, errb.String())
 		return out.String()
 	}
 	var members, spec []string
@@ -149,13 +146,11 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		return nil
 	}
 	st, _, code := loop.machineVerb("run", nil, &bytes.Buffer{})
-	if st == nil {
-		t.Fatalf("run: %d", code)
-	}
+	require.NotNil(t, st, "run: %d", code)
 	var out, errb lockedBuffer
 	// Each round is one machine tick and one world tick; the world takes
-	// (and, the round after, finishes) every card the tick dealt, so the next
-	// deal that has cards to give has the whole fleet's room. A round is
+	// its width (and, the round after, finishes it), so the next deal that
+	// has cards to give has room across the whole fleet. A round is
 	// 1 ms of world time, and the rounds are bounded, never timed.
 	const rounds = 16
 	dealing := 0
@@ -163,19 +158,25 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		loop.runLoop(ctx, st, 0, 1, &out, &errb)
 		dealt := len(loopDeals(out.String())) > dealing
 		dealing = len(loopDeals(out.String()))
-		var pout, perr bytes.Buffer
-		if code := world.run([]string{"play", "--every", "1ms", "--ticks", "1"}, &pout, &perr); code != 0 {
-			t.Fatalf("play: %d %s%s", code, pout.String(), perr.String())
+		beforeReady := map[string]int{}
+		if dealt {
+			for _, m := range members {
+				beforeReady[m] = fleetReady(t, do, m)
+			}
 		}
+		var pout, perr bytes.Buffer
+		code = world.run([]string{"play", "--every", "1ms", "--ticks", "1"}, &pout, &perr)
+		require.Equal(t, 0, code, "play: %d %s%s", code, pout.String(), perr.String())
 		if !dealt {
 			continue
 		}
-		// the tick dealt: the world's tick took every member's ready cards,
-		// none left behind for a tick after
+		// Every member takes its running width; the dealt-ahead remainder
+		// stays ready. The world finishes the previous batch before taking.
+		snap, err := st.Load(ctx, store.All, nil)
+		require.NoError(t, err)
 		for _, m := range members {
-			if n := fleetReady(t, do, m); n != 0 {
-				t.Fatalf("round %d: %s has %d ready cards after the tick that followed the deal: every member up takes in that tick\n%s", i+1, m, n, out.String())
-			}
+			assert.Equal(t, max(0, beforeReady[m]-64), fleetReady(t, do, m), "round %d: %s takes its width in this tick", i+1, m)
+			assert.Equal(t, min(64, beforeReady[m]), snap.Fleet.Count(m, sprint.Working), "round %d: %s fills its running width", i+1, m)
 		}
 	}
 
@@ -186,9 +187,7 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		}
 	}
 	ticks := loopDeals(out.String())
-	if len(ticks) < 3 {
-		t.Fatalf("%d ticks dealt in %d rounds, want at least 3: %s", len(ticks), rounds, out.String())
-	}
+	require.GreaterOrEqual(t, len(ticks), 3, "%d ticks dealt in %d rounds, want at least 3: %s", len(ticks), rounds, out.String())
 	dealt := 0
 	perMember := map[string]int{}
 	for i, d := range ticks {
@@ -202,25 +201,18 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		slices.Sort(set)
 		t.Logf("tick %d: %d dealt to %v", i+1, len(d), set)
 		dealt += len(d)
-		if len(d) >= len(members) && !slices.Equal(set, members) {
-			t.Fatalf("tick %d dealt %d cards to %v only: every tick's deal reaches the whole fleet", i+1, len(d), set)
-		}
+		require.False(t, len(d) >= len(members) && !slices.Equal(set, members), "tick %d dealt %d cards to %v only: every tick's deal reaches the whole fleet", i+1, len(d), set)
 	}
 	least, most := dealt, 0
 	for _, m := range members {
 		least, most = min(least, perMember[m]), max(most, perMember[m])
 	}
-	if most-least > 1 {
-		t.Fatalf("members were dealt from %d to %d cards over the run (%v): the deal goes round the fleet a card a member, so no member is more than one card ahead", least, most, perMember)
-	}
+	require.LessOrEqual(t, most-least, 1, "members were dealt from %d to %d cards over the run (%v): the deal goes round the fleet a card a member, so no member is more than one card ahead", least, most, perMember)
 	snap, err := st.Load(ctx, store.All, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	at, _ := snap.Fleet.Prop(sprint.PropDealIndex)
 	n, err := strconv.ParseUint(at, 10, 64)
-	if err != nil || n < uint64(dealt) {
-		t.Fatalf("deal_index %q after %d cards dealt: want a counter, up by at least one a placement", at, dealt)
-	}
+	require.NoError(t, err, "deal_index %q after %d cards dealt: want a counter, up by at least one a placement", at, dealt)
+	require.GreaterOrEqual(t, n, uint64(dealt), "deal_index %q after %d cards dealt: want a counter, up by at least one a placement", at, dealt)
 	t.Logf("deal_index %s after %d cards dealt in %d ticks", at, dealt, len(ticks))
 }

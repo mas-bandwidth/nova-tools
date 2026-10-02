@@ -8,6 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE CLASS RULE: NO DOC AND NO CARD TELLS ANYONE TO RUN `go test ./...`, OR
@@ -67,17 +70,11 @@ func wholeTreeSources(t *testing.T) []string {
 	}
 	for _, glob := range briefSources {
 		matches, err := filepath.Glob(filepath.Join(tree.Root, filepath.FromSlash(glob)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(matches) == 0 {
-			t.Fatalf("brief source %s matches no file; an empty set is not a pass, fix briefSources", glob)
-		}
+		require.NoError(t, err)
+		require.NotEmptyf(t, matches, "brief source %s matches no file; an empty set is not a pass, fix briefSources", glob)
 		for _, m := range matches {
 			rel, err := filepath.Rel(tree.Root, m)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			seen[filepath.ToSlash(rel)] = true
 		}
 	}
@@ -99,9 +96,7 @@ func TestNoWholeTreeGoTestInDocs(t *testing.T) {
 	docs := 0
 	for _, rel := range files {
 		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		if strings.HasSuffix(rel, ".md") {
 			docs++
 		}
@@ -109,13 +104,9 @@ func TestNoWholeTreeGoTestInDocs(t *testing.T) {
 			bad = append(bad, rel+":"+v)
 		}
 	}
-	if docs < 50 {
-		t.Fatalf("read %d Markdown files; the tree ships more than a hundred, so the rule is reading the wrong tree", docs)
-	}
-	if len(bad) > 0 {
-		t.Fatalf("%d line(s) tell a reader to test the whole tree (nova-tools#4336; CPU is for real work); %s:\n  %s",
-			len(bad), wholeTreeRemedy, strings.Join(bad, "\n  "))
-	}
+	require.GreaterOrEqualf(t, docs, 50, "read %d Markdown files; the tree ships more than a hundred, so the rule is reading the wrong tree", docs)
+	require.Emptyf(t, bad, "%d line(s) tell a reader to test the whole tree (nova-tools#4336; CPU is for real work); %s:\n  %s",
+		len(bad), wholeTreeRemedy, strings.Join(bad, "\n  "))
 }
 
 // TestWholeTreeRuleSeesEachSpelling is the rule's control: each whole-tree
@@ -135,9 +126,8 @@ func TestWholeTreeRuleSeesEachSpelling(t *testing.T) {
 		"go test ./internal/...",
 		"go test -count=1 ./tools/...",
 	} {
-		if v := wholeTreeViolations([]byte("fine\n" + bad + "\n")); len(v) != 1 || !strings.HasPrefix(v[0], "2: ") {
-			t.Errorf("%q: violations %q, want one at line 2", bad, v)
-		}
+		v := wholeTreeViolations([]byte("fine\n" + bad + "\n"))
+		assert.Truef(t, len(v) == 1 && strings.HasPrefix(v[0], "2: "), "%q: violations %q, want one at line 2", bad, v)
 	}
 	for _, good := range []string{
 		"nova-ci local",
@@ -148,8 +138,7 @@ func TestWholeTreeRuleSeesEachSpelling(t *testing.T) {
 		"go test on the touched packages, never ./... on a shared bench",
 		"go test ./cmd/nova-ci/...",
 	} {
-		if v := wholeTreeViolations([]byte(good + "\n")); len(v) != 0 {
-			t.Errorf("%q flagged: %q", good, v)
-		}
+		v := wholeTreeViolations([]byte(good + "\n"))
+		assert.Emptyf(t, v, "%q flagged: %q", good, v)
 	}
 }

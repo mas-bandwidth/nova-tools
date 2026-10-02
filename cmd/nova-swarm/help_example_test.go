@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func swarmHelp(t *testing.T, args ...string) string {
 	t.Helper()
 	var out, errb bytes.Buffer
-	if code := swarmRun(args, &out, &errb); code != 0 || errb.Len() != 0 {
-		t.Fatalf("nova-swarm %s: exit %d, stderr %q", strings.Join(args, " "), code, errb.String())
-	}
+	code := swarmRun(args, &out, &errb)
+	require.Equal(t, 0, code, "nova-swarm %s: exit %d, stderr %q", strings.Join(args, " "), code, errb.String())
+	require.Zero(t, errb.Len(), "nova-swarm %s: exit %d, stderr %q", strings.Join(args, " "), code, errb.String())
 	return out.String()
 }
 
@@ -22,25 +25,16 @@ func TestTheLaunchVerbsShowAnExampleMadeOfTheirOwnFlags(t *testing.T) {
 	for _, verb := range []string{"native", "member"} {
 		help := swarmHelp(t, verb, "-h")
 		ex, ok := verbExamples[verb]
-		if !ok {
-			t.Fatalf("%s has no example", verb)
-		}
-		if !strings.Contains(help, "example:\n  "+ex+"\n") {
-			t.Errorf("%s -h lacks its example %q:\n%s", verb, ex, help)
+		require.True(t, ok, "%s has no example", verb)
+		if !assert.Contains(t, help, "example:\n  "+ex+"\n", "%s -h lacks its example %q:\n%s", verb, ex, help) {
 			continue
 		}
 		flags := help[strings.Index(help, "flags:\n"):]
-		if strings.Index(help, "example:") > strings.Index(help, "flags:") {
-			t.Errorf("%s -h shows the example after the flags", verb)
-		}
+		assert.LessOrEqual(t, strings.Index(help, "example:"), strings.Index(help, "flags:"), "%s -h shows the example after the flags", verb)
 		for _, w := range strings.Fields(ex) {
-			if strings.HasPrefix(w, "--") && !strings.Contains(flags, "\n  "+w+" ") && !strings.Contains(flags, "\n  "+w+"\n") {
-				t.Errorf("%s: the example uses %s, which %s -h does not list", verb, w, verb)
-			}
+			assert.False(t, strings.HasPrefix(w, "--") && !strings.Contains(flags, "\n  "+w+" ") && !strings.Contains(flags, "\n  "+w+"\n"), "%s: the example uses %s, which %s -h does not list", verb, w, verb)
 		}
-		if !strings.HasPrefix(ex, "nova-swarm "+verb+" ") {
-			t.Errorf("the %s example does not run %s: %q", verb, verb, ex)
-		}
+		assert.True(t, strings.HasPrefix(ex, "nova-swarm "+verb+" "), "the %s example does not run %s: %q", verb, verb, ex)
 	}
 }
 
@@ -51,17 +45,11 @@ func TestTemplateHelpListsTheCardsRequiredLines(t *testing.T) {
 	help := swarmHelp(t, "template", "-h")
 	card := swarmHelp(t, "template", "--name", "card")
 	for _, anchor := range []string{"RESULT: <label> sha=<sha12>", "Deadline: finish within <n> minutes.", "RULES.", "THE TASK.", "STEP 1.", "RESULT.md"} {
-		if !strings.Contains(help, anchor) {
-			t.Errorf("template -h does not list %q", anchor)
-		}
-		if !strings.Contains(card, anchor) {
-			t.Errorf("template --name card does not write %q, which template -h lists", anchor)
-		}
+		assert.Contains(t, help, anchor, "template -h does not list %q", anchor)
+		assert.Contains(t, card, anchor, "template --name card does not write %q, which template -h lists", anchor)
 	}
 	for _, typed := range []string{"KIND:", "PATHS:", "TEST:", "DEPENDS-ON:", "DONE-WHEN:"} {
-		if !strings.Contains(help, typed) {
-			t.Errorf("template -h does not name the typed line %s", typed)
-		}
+		assert.Contains(t, help, typed, "template -h does not name the typed line %s", typed)
 	}
 }
 
@@ -70,7 +58,5 @@ func TestTemplateHelpListsTheCardsRequiredLines(t *testing.T) {
 func TestTheBannerNamesTheExampleCard(t *testing.T) {
 	t.Parallel()
 	help := swarmHelp(t, "help")
-	if !strings.Contains(help, "nova-swarm template --name card prints one that passes") {
-		t.Errorf("the banner does not name template --name card as the way to an example card")
-	}
+	assert.Contains(t, help, "nova-swarm template --name card prints one that passes", "the banner does not name template --name card as the way to an example card")
 }

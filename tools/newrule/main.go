@@ -26,7 +26,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	written, err := scaffold.Rule(abs, fs.Arg(0))
+	written, err := rule(abs, fs.Arg(0))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "newrule: %v\n", err)
 		os.Exit(1)
@@ -35,4 +35,12 @@ func main() {
 	for _, p := range written {
 		fmt.Println("wrote " + p)
 	}
+}
+
+func rule(root, name string) ([]string, error) {
+	outs, err := scaffold.RuleFiles(root, name)
+	if err != nil {
+		return nil, err
+	}
+	return scaffold.Write(root, outs)
 }

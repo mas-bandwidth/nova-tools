@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 241
+# ceiling: 240
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -185,10 +185,10 @@ internal/update/process_functional_test.go:TestJoinReporterDeathAfterRemoteConfi
 internal/update/process_functional_test.go:TestJoinReporterDeathWithPendingSavedFinishesTheSameReport serial: swaps package var update.jobMap, t.Setenv
 internal/update/process_functional_test.go:TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers serial: t.Setenv
 internal/update/rules_test.go:TestRule18EveryRefusalNamesARemedy serial: t.Setenv
-internal/update/rules_test.go:TestRule25SnapshotSurvivesAReporterKilledWhileWriting serial: t.Setenv
+internal/update/snapshot_crash_functional_test.go:TestRule25SnapshotSurvivesAReporterKilledWhileWriting serial: t.Setenv
 internal/update/rules_test.go:TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked serial: t.Setenv
 internal/update/rules_test.go:TestRule9CheckWritesNothingAndNeverRunsAnApply serial: t.Setenv
-internal/update/rules_test.go:TestSnapshotRenameBarrierHelper serial: swaps package var update.renameSnapshot
+internal/update/snapshot_crash_functional_test.go:TestSnapshotRenameBarrierHelper serial: swaps package var update.renameSnapshot
 internal/update/slow_test.go:TestJoinChildDeathAtWriteBoundariesRecoversOneContribution serial: t.Setenv
 internal/update/slow_test.go:TestJoinLostConfirmationRecoversWithoutASecondNote serial: t.Setenv
 internal/update/slow_test.go:TestJoinRealBusPublishesOneNoteAndOneIndexRow serial: t.Setenv
@@ -196,20 +196,18 @@ internal/update/slow_test.go:TestJoinRefusedPushRecoversToOneNoteWithTheSameID s
 internal/update/slow_test.go:TestPendingBeforeDispatchAndQuietRetry serial: t.Setenv
 internal/update/stella_deadline_test.go:TestDeadlineHealthyChildUnderLoadIsFullyDrained serial: t.Setenv
 internal/update/stella_deadline_unix_test.go:TestDeadlineEscapedPipeGrandchildReturnsInsideBudget serial: t.Setenv
-internal/update/stella_snapshot_test.go:TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp serial: swaps package var update.jobMap, t.Setenv
+internal/update/stella_snapshot_functional_test.go:TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp serial: swaps package var update.jobMap, t.Setenv
 internal/update/update_test.go:TestApplyOnlyNamedEntryAndExactTarget serial: t.Setenv
 internal/update/update_test.go:TestCheckCapsAndFilterActuallyAvoidsReads serial: t.Setenv
-internal/update/update_test.go:TestFourReadLimitAndOverallBudget serial: t.Setenv
-internal/update/update_test.go:TestHealthyCommandWithLingeringGrandchildStillReads serial: t.Setenv
+internal/update/process_transport_functional_test.go:TestHealthyCommandWithLingeringGrandchildStillReads serial: t.Setenv
 internal/update/process_functional_test.go:TestHeldPipePastGraceIsNamedAndEchoesNoContent serial: t.Setenv
 internal/update/update_test.go:TestProcessFailuresAreDistinguishable serial: t.Setenv
-internal/update/update_test.go:TestProcessesAreBoundedAndRawSurvivesFailure serial: t.Setenv
+internal/update/process_transport_functional_test.go:TestProcessesAreBoundedAndRawSurvivesFailure serial: t.Setenv
 internal/update/update_test.go:TestReportLocalLocatorWithVersionStringInstalled serial: t.Setenv
 internal/update/update_test.go:TestReportNeverReadsLatestAndPartialIsVisible serial: t.Setenv
 internal/update/update_test.go:TestSnapshotObservationDoesNotSuppressDelivery serial: t.Setenv
 cmd/nova-tokens/token_ledger_test.go:TestLedgerAndReportDialAsTheAclUser serial: t.Setenv
 internal/nsprint/store/issue3277_test.go:TestOpenSendsNoCommand3277 serial: t.Setenv
-internal/nsprint/store/reach_test.go:TestUnreachable3277 serial: t.Setenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeDrainDeliversPoolIdentityToChild serial: os.Setenv, os.Unsetenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMalformedPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
 cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMissingPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv

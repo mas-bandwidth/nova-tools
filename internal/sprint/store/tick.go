@@ -268,11 +268,16 @@ func (st *Store) Machine(ctx context.Context) (Machine, Heartbeat, error) {
 }
 
 // MachineLine reads the machine and says its line at the clock's reading;
-// "" when the store keeps no machine records.
+// "" when the store keeps no machine records. A store ticked by hand (ByHand)
+// has no silence: nothing ticks between its commands, so a RUNNING machine
+// is running however long since its last tick.
 func (st *Store) MachineLine(ctx context.Context) string {
 	m, hb, err := st.Machine(ctx)
 	if err != nil {
 		return ""
+	}
+	if st.ByHand && m.Running() {
+		return "machine: running"
 	}
 	return MachineLine(st.now(), m, hb)
 }
@@ -568,12 +573,7 @@ func changesRow(e ntable.BatchMemberEntry) bool {
 // staleRefusal says a step holding epoch at was refused because the sprint
 // left it.
 func staleRefusal(refused []sprint.Refusal, at uint64) bool {
-	for _, r := range refused {
-		if r.Key == "epoch "+strconv.FormatUint(at, 10) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(refused, func(r sprint.Refusal) bool { return r.Key == "epoch "+strconv.FormatUint(at, 10) })
 }
 
 // Tick runs one tick when the machine is RUNNING, and records it on the
@@ -1035,7 +1035,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		if view != nil && view.Routes == nil && routesPart(part.Name) {
 			// a part that plans with the routes asks what it would do with them: the
-			// deal's judgment of a reader tier no route serves (route.go,
+			// deal's judgment of reads whose tier no route serves (route.go,
 			// readRouteMissing) has nothing else to show it; read once a tick, the
 			// cache the parts share
 			set, err := t.st.cached(t.ctx, &t.routes)

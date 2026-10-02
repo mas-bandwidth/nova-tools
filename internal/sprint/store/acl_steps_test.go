@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ import (
 // role that runs the step (internal/redisacl, Roles). The table layer's keys are
 // read through the library's functions, which the Lua class tests hold; what a
 // step adds beside them is the route reads its flags turn on (Step.Routes: the
-// routes, the tiers' arrays and the sprint row's reader tier; Step.Prices: the
+// routes and the tiers' arrays; Step.Prices: the
 // routes set and the routes' records alone). A worker's finish or read that read
 // the tiers' arrays was refused NOPERM on the fleet (2026-10-01), every finish of
 // every member; this table is what holds that from coming back. A new step a worker
@@ -98,7 +99,7 @@ func rolePatterns(t *testing.T, role string) []string {
 		}
 		return out
 	}
-	t.Fatalf("no role %s in redisacl.Roles", role)
+	require.FailNow(t, fmt.Sprintf("no role %s in redisacl.Roles", role))
 	return nil
 }
 

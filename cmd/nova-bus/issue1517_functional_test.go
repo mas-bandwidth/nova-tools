@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // THE DEFECT THIS IS FOR. `nova-wake serve --as Johnny` is a process started BESIDE a
@@ -28,14 +30,16 @@ func TestIssue1517WaitWithNoBeatWritesNoBeat(t *testing.T) {
 	settled(t, checkout)
 
 	beat := filepath.Join(checkout, "from-ada", "BEAT")
-	if _, err := os.Stat(beat); !os.IsNotExist(err) {
-		t.Fatalf("the fixture already holds a BEAT (%v); this test needs a line with none", err)
+	{
+		_, err := os.Stat(beat)
+		require.Truef(t, os.IsNotExist(err), "the fixture already holds a BEAT (%v); this test needs a line with none", err)
 	}
 	beatCommits := func() string {
 		return strings.TrimSpace(gitIn(t, checkout, "log", "--format=%H", "--", "from-ada/BEAT"))
 	}
-	if before := beatCommits(); before != "" {
-		t.Fatalf("a BEAT commit already exists before the wait: %s", before)
+	{
+		before := beatCommits()
+		require.Emptyf(t, before, "a BEAT commit already exists before the wait: %s", before)
 	}
 
 	poll := func(extra ...string) result {
@@ -44,32 +48,35 @@ func TestIssue1517WaitWithNoBeatWritesNoBeat(t *testing.T) {
 
 	// THE FLAG: no entry beat, no tick beat, no beat commit, no beat file.
 	quiet := poll("--no-beat").mustCode(t, 0).mustContain(t, "stdout", "WAIT TIMEOUT")
-	if _, err := os.Stat(beat); !os.IsNotExist(err) {
-		t.Fatalf("wait --no-beat wrote from-ada/BEAT: %v", err)
+	{
+		_, err := os.Stat(beat)
+		require.Truef(t, os.IsNotExist(err), "wait --no-beat wrote from-ada/BEAT: %v", err)
 	}
-	if after := beatCommits(); after != "" {
-		t.Fatalf("wait --no-beat committed a BEAT: %s", after)
+	{
+		after := beatCommits()
+		require.Emptyf(t, after, "wait --no-beat committed a BEAT: %s", after)
 	}
 
 	// THE CONTROL, flipped by #3144: the default writes no BEAT either. The bus carries
 	// notes, never beats; presence is friend:<name> in Redis.
 	control := poll().mustCode(t, 0).mustContain(t, "stdout", "WAIT TIMEOUT")
-	if _, err := os.Stat(beat); !os.IsNotExist(err) {
-		t.Fatalf("the control wait (no --no-beat) wrote from-ada/BEAT: %v", err)
+	{
+		_, err := os.Stat(beat)
+		require.Truef(t, os.IsNotExist(err), "the control wait (no --no-beat) wrote from-ada/BEAT: %v", err)
 	}
-	if after := beatCommits(); after != "" {
-		t.Fatalf("the control wait (no --no-beat) committed a BEAT: %s\n%s", after, control.stdout)
+	{
+		after := beatCommits()
+		require.Emptyf(t, after, "the control wait (no --no-beat) committed a BEAT: %s\n%s", after, control.stdout)
 	}
 
 	// THE SAME CALL OTHERWISE: the exit code and the terminal WAIT line's cursor are the
 	// same with the flag as without -- the flag turns off the beat and nothing else.
-	if quiet.code != control.code {
-		t.Fatalf("exit with --no-beat = %d, without = %d", quiet.code, control.code)
-	}
+	require.Equalf(t, control.code, quiet.code, "exit with --no-beat = %d, without = %d", quiet.code, control.code)
 	cursor := func(out string) string {
 		return field(t, out[strings.Index(out, "WAIT TIMEOUT"):], "cursor=")
 	}
-	if got, want := cursor(quiet.stdout), cursor(control.stdout); got != want {
-		t.Fatalf("the WAIT TIMEOUT cursor differs: --no-beat %q, default %q", got, want)
+	{
+		got, want := cursor(quiet.stdout), cursor(control.stdout)
+		require.Equalf(t, want, got, "the WAIT TIMEOUT cursor differs: --no-beat %q, default %q", got, want)
 	}
 }

@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -126,6 +127,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 	}
 	if !ValidID(r.Stream) {
 		return refuseAll(fmt.Sprintf("stream %q wants letters, digits, _ and -", r.Stream))
+	}
+	if RemovedStream(s, r.Stream) {
+		return refuseAll(fmt.Sprintf("stream %s was removed in this epoch (stream remove), and the table layer never places its control card again; nothing was changed; add under another stream, or run: nova-sprint clear --confirm sprint, then add", r.Stream))
 	}
 	if r.Sentinel && len(ids) != 1 {
 		return refuseAll("a sentinel is admitted one at a time: add --stream <s> --sentinel <id>")
@@ -293,8 +297,8 @@ func Add(s *Snapshot, r AddReq) Plan {
 		roots = append(roots, a.id)
 	}
 	var changed []string
-	for id, m := range mods {
-		edges[id] = m.needs
+	for id := range mods {
+		edges[id] = Split(s.Work.Card(id).F("needs"))
 		changed = append(changed, id)
 	}
 	sort.Strings(changed)
@@ -807,14 +811,12 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 			fields[k] = v
 		}
 	}
-	for k, v := range primary {
-		set[k] = v
-	}
+	maps.Copy(set, primary)
 	set["attempt"], set["work"] = itoa(attempt), card
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, createEntry(card, m, Ready, c.Score, fields)),
 		change(Work, moveEntry(c, c.Row, Working, set, append(unset, "result")...)),
-	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s", c.ID, c.Col, card, m)}, ""
+	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s (fleet ready)", c.ID, c.Col, card, m)}, ""
 }
 
 // redeal deals a withdrawn work card again, into the ready queue of the up
@@ -848,7 +850,7 @@ func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexe
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, moveEntry(wc, m, Ready, set, unset...)),
 		change(Work, moveEntry(c, c.Row, Working, primary, "result")),
-	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}, ""
+	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s gen=%d (fleet ready, dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}, ""
 }
 
 // TakeReq is a worker taking its work cards. Gens names the generation the
@@ -928,6 +930,20 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		return p
 	}
 	byID := named(sel)
+	// THE WIDTH IS HARD: a member's working cards never pass its width, held here, at the
+	// sprint's one writer, whatever the member asks (the owner, 2026-10-01: "this
+	// \"squishiness\" of having > width in the working set has me concerned."). A take by
+	// count is cut to the room; a take by id past it is refused.
+	room := max(s.Width(r.As)-len(s.Fleet.Cell(r.As, Working)), 0)
+	if !byID {
+		if room == 0 {
+			return p
+		}
+		// a limit under zero asks for every ready card (pick): that too is the room
+		if sel.Limit < 0 || sel.Limit > room {
+			sel.Limit = room
+		}
+	}
 	// the member's ready cards in stream turns (takeTurns), as the deal dealt
 	// them: a member holding DealAhead times its width takes its width of them
 	// from every stream alike, never one stream's lowest scores first (errata 3
@@ -941,11 +957,17 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		if !c.Placed() || c.Row != r.As || c.Col != Ready {
 			return "not in " + r.As + " ready (it is " + placeWord(c) + ")"
 		}
+		if byID {
+			if room == 0 {
+				return fmt.Sprintf("member %s is at its width (%d working of %d): a card is taken when one is reported", r.As, len(s.Fleet.Cell(r.As, Working)), s.Width(r.As))
+			}
+			room--
+		}
 		return ""
 	}, s.Fleet.Card)
 	for _, c := range chosen {
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, takenStamps(c, s.Now), "untaken_since"))},
-			Moved: fmt.Sprintf("%s ready -> working member=%s gen=%s", c.ID, r.As, c.F("gen"))})
+			Moved: fmt.Sprintf("%s fleet ready -> working member=%s gen=%s", c.ID, r.As, c.F("gen"))})
 	}
 	return p
 }
@@ -972,7 +994,8 @@ type FinishReq struct {
 }
 
 // Finish moves work cards working -> done and their primaries working ->
-// review. Fixed work that comes back ok is asked of the same readers again.
+// review. Fixed work that comes back ok is asked by the machine's ask, as
+// any work is.
 // A finish always names the generation it holds for every card it finishes:
 // a card without one is refused, naming the live generation, and a finish
 // by selection without --as is refused outright. As may name several
@@ -1033,7 +1056,11 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		}
 		pr := s.Work.Placed(c.F("primary"))
 		if r.Failed && IsProviderFailure(r.Report) {
-			p.Units = append(p.Units, providerEnded(s, c, pr, r))
+			p.Units = append(p.Units, takeEnded(s, c, pr, r, cardhdr.EndProvider))
+			continue
+		}
+		if r.Failed && IsNoResult(r.Report) {
+			p.Units = append(p.Units, takeEnded(s, c, pr, r, cardhdr.EndNoResult))
 			continue
 		}
 		if r.Failed && IsStagingRefusal(r.Report) {
@@ -1073,22 +1100,13 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
+		// ONE PATH ASKS: the finish asks no reader. The machine's ask does, in the tick the
+		// finish wakes, the earlier pair first (Ask, the primary's asked field), each read
+		// with the route it draws. A read the finish created itself carried no route (a
+		// finish loads none) and no reader could start it (fleet pass 7, 2026-10-01: two
+		// such reads held a card twelve minutes)
 		asked := map[string]string{}
 		if !r.Failed {
-			var again []string
-			for _, reader := range Split(pr.F("asked")) {
-				id := ReadCardID(pr.ID, attempt, reader)
-				if !s.Readers.HasRow(reader) || s.Readers.Card(id) != nil {
-					continue
-				}
-				u.Changes = append(u.Changes, change(Readers, createEntry(id, reader, Asked, pr.Score,
-					map[string]string{"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": reader, "attempt": itoa(attempt), "head": head, "asked": stamp(s.Now)})))
-				again = append(again, reader)
-				asked[id] = Asked
-			}
-			if len(again) > 0 {
-				u.Moved += "; asked again of " + strings.Join(again, ", ")
-			}
 			n := happened(NWorkOK, pr.Row, s.Now, pr.ID)
 			n.Who, n.Attempt = who, attempt
 			u.Notes = append(u.Notes, n)
@@ -1116,18 +1134,31 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 // section 4).
 func IsProviderFailure(report string) bool { return strings.HasPrefix(report, cardhdr.EndProvider) }
 
-// providerEnded is the unit of a take the provider failed (tla/CardContract.tla,
-// ProviderFailure): the take ended, so the work card is withdrawn with FieldTakeEnded
-// and its primary goes back to ready, exactly as a member that went down leaves a
-// working card (downPlan); the tick's deal places it again, counting the take against
-// the redeal bound, on a route the card has not been drawn when another remains
-// (routeOf). No failed-work judgment is written and the primary's failed count does
-// not move: a provider failure is never the card's. The card keeps a record of the
-// take that failed (ProviderTake: the route, the member, the line).
-func providerEnded(s *Snapshot, c, pr *Card, r FinishReq) Unit {
+// IsNoResult says a failed finish's report names no result as the cause: it begins with
+// the finish kind `no result` (cardhdr.EndNoResult), the member's word when its child
+// ended by itself having written no result at all.
+func IsNoResult(report string) bool { return strings.HasPrefix(report, cardhdr.EndNoResult+":") }
+
+// takeEnded is the unit of a take that ended with no work to judge: the provider failed
+// it (tla/CardContract.tla, ProviderFailure), or its child left no result at all (kind
+// is which: cardhdr.EndProvider or cardhdr.EndNoResult). The take ended, so the work
+// card is withdrawn with FieldTakeEnded and its primary goes back to ready, exactly as a
+// member that went down leaves a working card (downPlan); the tick's deal places it
+// again, counting the take against the redeal bound, on a route the card has not been
+// drawn when another remains (routeOf). No failed-work judgment is written and the
+// primary's failed count does not move: such a take is never the card's. At the redeal
+// bound the card stays withdrawn and the bound's judgment names it. The card keeps a
+// record of the take that ended (ProviderTake: the route, the member, the line).
+func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"], set[FieldTakeEnded] = stamp(s.Now), stamp(s.Now)
-	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, cardhdr.EndProvider), ":")), MaxProviderErrorBytes)
+	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, kind), ":")), MaxProviderErrorBytes)
+	why := "the provider failed the take"
+	if kind == cardhdr.EndNoResult {
+		// the record's line says which kind it was: the routes' count of a route's ended
+		// takes holds both, and a reader of the card tells them apart
+		line, why = cutText(kind+": "+line, MaxProviderErrorBytes), "the child left no result"
+	}
 	set[FieldProviderError] = line
 	// what the take cost, timed and priced before its stamps go (cost.go): it still cost
 	// tokens and time. The take's record is its one place: the card's usage field is
@@ -1139,17 +1170,17 @@ func providerEnded(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 	if r.Usage != "" {
 		usage = rec
 	}
-	// the failed take's own record, kept through the redeals: its route, member, usage and line
+	// the ended take's own record, kept through the redeals: its route, member, usage and line
 	take := c.Int("redeals") + 1
 	set[FieldProviderTake+itoa(take)] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
 		Finished: stamp(s.Now), Usage: usage, Error: line}.String()
 	// and the producer's record of it (cost.go): it still cost tokens and time
 	prSet := map[string]string{}
-	addConsumer(pr, prSet, workConsumer(s, c, take, "provider failure", rec))
+	addConsumer(pr, prSet, workConsumer(s, c, take, kind, rec))
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
-	}, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, the provider failed the take; %s working -> ready", c.ID, c.Int("gen")+1, pr.ID)}
+	}, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s; %s working -> ready", c.ID, c.Int("gen")+1, why, pr.ID)}
 }
 
 // IsStagingRefusal says a failed finish's report names its member's staging as the cause:

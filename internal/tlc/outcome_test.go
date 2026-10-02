@@ -51,17 +51,16 @@ func TestParseReadsTheStatisticsAndTheViolation(t *testing.T) {
 	for _, c := range cases {
 		o := Parse(fixture(t, c.file))
 		assert.Equal(t, c.completed, o.Completed, "%s: completed = %v, want %v", c.file, o.Completed, c.completed)
-		if c.generated != "" && (o.Generated != c.generated || o.Distinct != c.distinct) {
-			t.Errorf("%s: stats = %s/%s, want %s/%s", c.file, o.Generated, o.Distinct, c.generated, c.distinct)
+		if c.generated != "" {
+			if assert.Equal(t, c.generated, o.Generated, "%s: stats = %s/%s, want %s/%s", c.file, o.Generated, o.Distinct, c.generated, c.distinct) {
+				assert.Equal(t, c.distinct, o.Distinct, "%s: stats = %s/%s, want %s/%s", c.file, o.Generated, o.Distinct, c.generated, c.distinct)
+			}
 		}
-		if len(o.Violations) != len(c.violations) {
-			t.Errorf("%s: violations = %v, want %v", c.file, o.Violations, c.violations)
+		if !assert.Len(t, o.Violations, len(c.violations), "%s: violations = %v, want %v", c.file, o.Violations, c.violations) {
 			continue
 		}
 		for i, v := range c.violations {
-			if o.Violations[i] != v {
-				t.Errorf("%s: violation %d = %v, want %v", c.file, i, o.Violations[i], v)
-			}
+			assert.Equal(t, v, o.Violations[i], "%s: violation %d = %v, want %v", c.file, i, o.Violations[i], v)
 		}
 	}
 }
@@ -143,8 +142,8 @@ func TestBudgetNotesAreNeverAResult(t *testing.T) {
 		"TLC suite budget exhausted before starting this case\n",
 		"TLC suite budget exhausted during this case\n",
 	} {
-		if Accepts(Case{Expected: "pass", Property: "-"}, ExitTimeout, note, "") || Parse(note).HasStats() {
-			t.Errorf("%q was read as a result", strings.TrimSpace(note))
+		if assert.False(t, Accepts(Case{Expected: "pass", Property: "-"}, ExitTimeout, note, ""), "%q was read as a result", strings.TrimSpace(note)) {
+			assert.False(t, Parse(note).HasStats(), "%q was read as a result", strings.TrimSpace(note))
 		}
 	}
 }

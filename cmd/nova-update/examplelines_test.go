@@ -13,6 +13,9 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestHelpExampleLinesRunAsPrinted: every line of this tool's `example:` block runs, as printed,
@@ -39,20 +42,13 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	bin := buildUpdate(t)
 
 	exit, banner, stderr := runBinary(t, bin, "help")
-	if exit != 0 {
-		t.Fatalf("`nova-update help` exits %d, want 0; stderr: %s", exit, stderr)
-	}
+	require.Equal(t, 0, exit, "`nova-update help` exits %d, want 0; stderr: %s", exit, stderr)
 	lines, err := onboarding.ExampleLines(banner, "nova-update")
-	if err != nil {
-		t.Fatalf("%v\n\nwhat the banner printed:\n%s", err, banner)
-	}
-	if len(lines) == 0 {
-		t.Fatal("the `example:` block holds no nova-update command; this test would pass by running nothing")
-	}
+	require.NoError(t, err, "%v\n\nwhat the banner printed:\n%s", err, banner)
+	require.NotEmpty(t, lines, "the `example:` block holds no nova-update command; this test would pass by running nothing")
 
-	// work is the root of a checkout as a stranger meets it: a copy of this tree, so the fixture the
-	// block names (`cmd/nova-update/testdata/example.tsv`) resolves at the path it is written with,
-	// and nothing the block runs can write into the checkout under test.
+	// work is the root of a checkout as a stranger meets it: a copy of this tree, so nothing the block
+	// runs (its first line writes ./versions.tsv) can write into the checkout under test.
 	work := checkoutCopy(t)
 
 	ran := 0
@@ -63,13 +59,9 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 		}
 		code, out := runPastedLine(t, bin, work, line)
 		ran++
-		if code != 0 {
-			t.Errorf("the help example %q does not run: exit %d\nfirst output line: %s", line, code, firstLine(out))
-		}
+		assert.Equal(t, 0, code, "the help example %q does not run: exit %d\nfirst output line: %s", line, code, firstLine(out))
 	}
-	if ran == 0 {
-		t.Fatal("every line of the `example:` block was skipped; this bench proved nothing about the block")
-	}
+	require.NotZero(t, ran, "every line of the `example:` block was skipped; this bench proved nothing about the block")
 }
 
 // skippedExampleLines are the lines this test does NOT run, by name, each with the reason. They are
@@ -83,15 +75,14 @@ var skippedExampleLines = map[string]string{}
 func buildUpdate(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	bin := filepath.Join(t.TempDir(), "nova-update")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-update")
 	build.Dir = root
 	build.Env = goenv.Clean(os.Environ())
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building nova-update: %v\n%s", err, out)
+	{
+		out, err := build.CombinedOutput()
+		require.NoError(t, err, "building nova-update: %v\n%s", err, out)
 	}
 	return bin
 }
@@ -102,12 +93,11 @@ func buildUpdate(t *testing.T) string {
 func checkoutCopy(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	dst := t.TempDir()
-	if err := copyTree(root, dst); err != nil {
-		t.Fatalf("copying the checkout: %v", err)
+	{
+		err := copyTree(root, dst)
+		require.NoError(t, err, "copying the checkout: %v", err)
 	}
 	return dst
 }
@@ -125,10 +115,6 @@ func copyTree(src, dst string) error {
 			return err
 		}
 		if d.IsDir() && d.Name() == ".git" {
-			return fs.SkipDir
-		}
-		// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-		if d.IsDir() && rel == "deprecated" {
 			return fs.SkipDir
 		}
 		target := filepath.Join(dst, rel)
@@ -188,7 +174,7 @@ func exitOf(t *testing.T, cmd *exec.Cmd) int {
 	case errors.As(err, &exitErr):
 		return exitErr.ExitCode()
 	default:
-		t.Fatalf("running %s: %v", cmd.Path, err)
+		require.NoError(t, err, "running %s: %v", cmd.Path, err)
 		return 0
 	}
 }

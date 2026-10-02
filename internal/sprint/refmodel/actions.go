@@ -1,6 +1,7 @@
 package refmodel
 
 import (
+	"slices"
 	"sort"
 )
 
@@ -366,7 +367,8 @@ func Take(s State, m, c string, gen int) (State, error) {
 // FinishRefused (line 364) when the generation is not live: accepted only
 // for the live generation in its member's working cell (D3); the card to
 // done, its primary to review at the head the card produced; failed opens
-// the failed judgment; ok asks the readers kept on the primary again (G2).
+// the failed judgment. ok asks no reader: one path asks (the engine's commit 255180e2), the
+// machine's Ask, which asks round the readers.
 func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -394,14 +396,6 @@ func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 	n.Primaries[p] = pr
 	if !ok {
 		n.open(JFailed, p)
-		return n, nil
-	}
-	for _, r := range pr.Pair {
-		id := RC(p, w.Attempt, r)
-		if _, made := n.Reads[id]; made {
-			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
-		}
-		n.Reads[id] = ReadCard{Primary: p, Attempt: w.Attempt, Reader: r, Place: Asked}
 	}
 	return n, nil
 }
@@ -410,8 +404,10 @@ func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 
 // Ask is SprintTables.tla Ask(p) (line 375): a primary in review whose work
 // did not fail, with no read card on the table, is dealt to two different
-// readers: the two kept on it (D2), or the next two round the readers
-// (NextReaders, errata 3 amendment 5), the rolling index moved past them. It closes stranded in review (spec section 6).
+// readers: the next two round the readers (NextReaders, errata 3 amendment 5),
+// the rolling index moved past them; reworked work too, no reader of an earlier
+// attempt preferred (the owner, 2026-10-01: "yes on the decision."). It closes
+// stranded in review (spec section 6).
 func Ask(s State, p string, two []string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -427,22 +423,13 @@ func Ask(s State, p string, two []string) (State, error) {
 	}
 	pr := s.Primaries[p]
 	sorted := addSorted(nil, two...)
-	if len(pr.Pair) > 0 {
-		if Join(sorted) != Join(pr.Pair) {
-			return s, badChoice("%s asked of %v, not the readers kept on it %v", p, sorted, pr.Pair)
-		}
-	}
-	var next []string
-	if len(pr.Pair) == 0 {
-		if next = s.NextReaders(p, 2); Join(sorted) != Join(addSorted(nil, next...)) {
-			return s, badChoice("%s asked of %v, not the next two readers round the readers, %v (past %q)", p, two, next, s.AskLast)
-		}
+	next := s.NextReaders(p, 2)
+	if Join(sorted) != Join(addSorted(nil, next...)) {
+		return s, badChoice("%s asked of %v, not the next two readers round the readers, %v (past %q)", p, two, next, s.AskLast)
 	}
 	n := s.Clone()
-	if len(next) == 2 {
-		order := addSorted(nil, s.Readers...)
-		n.AskLast = roundPast(order, roundPast(order, s.AskLast, next[0]), next[1])
-	}
+	order := addSorted(nil, s.Readers...)
+	n.AskLast = roundPast(order, roundPast(order, s.AskLast, next[0]), next[1])
 	n.AskStreamLast = roundPast(s.streamOrder(pr.Stream), s.AskStreamLast, pr.Stream) // the ask's stream index moves past it (errata 3 amendment 10)
 	for _, r := range two {
 		id := RC(p, pr.Attempt, r)
@@ -480,7 +467,7 @@ func AskAnother(s State, p, r string) (State, error) {
 		return s, refuse("every reader has read %s at attempt %d", p, pr.Attempt)
 	}
 	id := RC(p, pr.Attempt, r)
-	if !has(s.Readers, r) {
+	if !slices.Contains(s.Readers, r) {
 		return s, badChoice("%s is not a reader", r)
 	}
 	if _, made := s.Reads[id]; made {
@@ -610,8 +597,7 @@ func Accept(s State, set []string) (State, error) {
 // next member round the fleet (ReworkChoice: errata 3 amendment 5, the member
 // of the attempt's work card avoided unless no other has room; the index moved
 // past it), and the primary goes review -> working; with none up (m is "")
-// review -> ready. The readers are kept (D2);
-// its card judgments close.
+// review -> ready; its card judgments close.
 func Rework(s State, p, m string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -695,7 +681,7 @@ func Drop(s State, p string) (State, error) {
 	n.Streams[st] = x
 	for _, q := range Keys(n.Primaries) {
 		qp := n.Primaries[q]
-		if qp.State == Waiting && has(qp.Needs, p) && !has(qp.Waived, p) {
+		if qp.State == Waiting && slices.Contains(qp.Needs, p) && !slices.Contains(qp.Waived, p) {
 			n.open(JBlocked, q)
 		}
 	}
@@ -714,16 +700,16 @@ func (s State) streamAfter(stream, was string, landing, leaving []string) string
 		return SStopped
 	}
 	for id, m := range s.Merge {
-		if m.Place == Queued && s.Primaries[id].Stream == stream && !has(landing, id) && !has(leaving, id) {
+		if m.Place == Queued && s.Primaries[id].Stream == stream && !slices.Contains(landing, id) && !slices.Contains(leaving, id) {
 			return SMerging
 		}
 	}
 	landed := false
 	for id, p := range s.Primaries {
-		if p.Stream != stream || p.State == Off || has(leaving, id) {
+		if p.Stream != stream || p.State == Off || slices.Contains(leaving, id) {
 			continue
 		}
-		if p.State == Landed || has(landing, id) {
+		if p.State == Landed || slices.Contains(landing, id) {
 			landed = true
 			continue
 		}
@@ -813,9 +799,7 @@ func MergeGreen(s State, stream string, batch int) (State, error) {
 	if len(q) == 0 || batch < 1 {
 		return s, refuse("stream %s has nothing queued", stream)
 	}
-	if batch > len(q) {
-		batch = len(q)
-	}
+	batch = min(batch, len(q))
 	b := q[:batch]
 	for _, x := range s.MergeCell(stream, Stuck) {
 		if s.Primaries[x].Score < s.Primaries[b[len(b)-1]].Score {
@@ -871,10 +855,8 @@ func MergeStop(s State, stream string, batch int, p, cause, q string) (State, er
 		return s, refuse("stream %s is not merging", stream)
 	}
 	queued := s.MergeCell(stream, Queued)
-	if batch > len(queued) {
-		batch = len(queued)
-	}
-	if !has(queued[:batch], p) {
+	batch = min(batch, len(queued))
+	if !slices.Contains(queued[:batch], p) {
 		return s, refuse("%s is not in the batch %v", p, queued[:batch])
 	}
 	note := JConflict
@@ -1253,7 +1235,7 @@ func (s State) nextReader(set []string) string {
 	order := sorted(s.Readers)
 	at := roundFrom(order, s.AskLast)
 	for i := range order {
-		if r := order[(at+i)%len(order)]; has(set, r) {
+		if r := order[(at+i)%len(order)]; slices.Contains(set, r) {
 			return r
 		}
 	}
@@ -1330,14 +1312,14 @@ func Ack(s State, typ string, subjects []string, waive []string) (State, error) 
 	if len(subjects) == 0 {
 		return s, refuse("ack names no judgment")
 	}
-	if !has(ackable, typ) {
+	if !slices.Contains(ackable, typ) {
 		return s, refuse("ack does not answer %s: its decisions do not list ack", typ)
 	}
 	for _, sub := range subjects {
 		if !s.Open[Judgment{typ, sub}] {
 			return s, refuse("no open judgment %s on %s", typ, sub)
 		}
-		if has(stopTypes, typ) {
+		if slices.Contains(stopTypes, typ) {
 			if st := s.Streams[sub[len("stream:"):]]; st.State == SStopped {
 				return s, refuse("the judgment of stopped stream %s stays open", sub)
 			}
@@ -1350,7 +1332,7 @@ func Ack(s State, typ string, subjects []string, waive []string) (State, error) 
 		case JBlocked:
 			var named []string
 			for _, q := range waive {
-				if has(n.DroppedNeeds(sub), q) {
+				if slices.Contains(n.DroppedNeeds(sub), q) {
 					named = append(named, q)
 				}
 			}

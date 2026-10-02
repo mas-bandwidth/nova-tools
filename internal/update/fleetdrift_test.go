@@ -10,6 +10,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+
+	"github.com/stretchr/testify/require"
 )
 
 // #3880 DONE-WHEN: two fake benches beating different nova-sprint stamps make
@@ -26,7 +28,7 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 	for _, tool := range []string{"ssh", "git", "gh"} {
 		script := "#!/bin/sh\necho " + tool + " >> " + mark + "\nexit 1\n"
 		if err := testbin.WriteExecutable(filepath.Join(trap, tool), []byte(script), 0o755); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
 	}
 	t.Setenv("PATH", trap)
@@ -45,7 +47,7 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 	code := Run("nova-update", []string{"report", "--store", mr.Addr()}, "test", &out, &errs, Environment{})
 	all := out.String() + errs.String()
 	if code != 1 {
-		t.Fatalf("exit %d, want 1 (drift found)\n%s", code, all)
+		require.EqualValuesf(t, 1, code, "exit %d, want 1 (drift found)\n%s", code, all)
 	}
 	var drift []string
 	for _, l := range strings.Split(all, "\n") {
@@ -54,19 +56,19 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 		}
 	}
 	if len(drift) != 1 {
-		t.Fatalf("want exactly one DRIFT line, got %d:\n%s", len(drift), all)
+		require.Lenf(t, drift, 1, "want exactly one DRIFT line, got %d:\n%s", len(drift), all)
 	}
 	if !strings.Contains(drift[0], "bench=stale") || !strings.Contains(drift[0], "build=20260924090000-bbbbbbbbbbbb") || !strings.Contains(drift[0], "want=20260925120000-aaaaaaaaaaaa") {
-		t.Fatalf("the DRIFT line does not name the stale bench and both stamps: %s", drift[0])
+		require.Failf(t, "", "the DRIFT line does not name the stale bench and both stamps: %s", drift[0])
 	}
 	if !strings.Contains(errs.String(), "REPORT FAIL benches=3 beating=2 current=1 drift=1 unknown=0") {
-		t.Fatalf("receipt line missing or wrong:\n%s", all)
+		require.Failf(t, "", "receipt line missing or wrong:\n%s", all)
 	}
 	if strings.Contains(all, "From:") || strings.Contains(all, "NOTE") || strings.Contains(all, "sent=") {
-		t.Fatalf("a bus note was written:\n%s", all)
+		require.Failf(t, "", "a bus note was written:\n%s", all)
 	}
 	if b, err := os.ReadFile(mark); err == nil {
-		t.Fatalf("report --store ran %s", strings.TrimSpace(string(b)))
+		require.Errorf(t, err, "report --store ran %s", strings.TrimSpace(string(b)))
 	}
 
 	// The stale bench updates: one beat later the fleet is current and the
@@ -75,10 +77,10 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 	out.Reset()
 	errs.Reset()
 	if code := Run("nova-update", []string{"report", "--store", mr.Addr()}, "test", &out, &errs, Environment{}); code != 0 {
-		t.Fatalf("exit %d after the stale bench caught up\n%s%s", code, out.String(), errs.String())
+		require.EqualValuesf(t, 0, code, "exit %d after the stale bench caught up\n%s%s", code, out.String(), errs.String())
 	}
 	if strings.Contains(out.String()+errs.String(), "DRIFT") || !strings.Contains(out.String(), "REPORT OK benches=3 beating=2 current=2 drift=0 unknown=0") {
-		t.Fatalf("a current fleet printed:\n%s%s", out.String(), errs.String())
+		require.Failf(t, "", "a current fleet printed:\n%s%s", out.String(), errs.String())
 	}
 }
 
@@ -94,7 +96,7 @@ func TestReportStoreRefusesANote(t *testing.T) {
 	} {
 		var out, errs bytes.Buffer
 		if code := Run("nova-update", args, "test", &out, &errs, Environment{}); code != 2 || !strings.Contains(errs.String(), "REPORT REFUSED") {
-			t.Fatalf("%v: exit %d, want 2 with a refusal\n%s%s", args, code, out.String(), errs.String())
+			require.Failf(t, "", "%v: exit %d, want 2 with a refusal\n%s%s", args, code, out.String(), errs.String())
 		}
 	}
 }

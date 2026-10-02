@@ -1,0 +1,3 @@
+# tool-answers: the mistakes this tool does not yet answer with the way forward; each row's count only falls
+# ceiling: 1
+cmd/nova-cairn:dry-run 2 open and append write and take no --dry-run yet (tool ledger X12); set Verb.DryRun and honour Call.DryRun

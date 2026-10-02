@@ -43,7 +43,7 @@ func ReadRecoveryPub(storeDir string) (string, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("recovery.pub is absent")
+			return "", fmt.Errorf("recovery.pub is absent: it holds the store's recovery key, the one age1… public key every seat file is also sealed to; a new store makes one: run: age-keygen -o <a key file kept off this machine>, then write the public key it prints into %s", path)
 		}
 		return "", fmt.Errorf("recovery.pub is unreadable: %w", err)
 	}
@@ -689,29 +689,6 @@ func VerifyFileMatchesIndex(storeDir, filePath string, index *GitIndexData) erro
 	actual := GitBlobSHA1(data)
 	if actual != entry.BlobSHA1 {
 		return fmt.Errorf("%s has uncommitted modifications (working copy blob differs from git index)", rel)
-	}
-	return nil
-}
-
-// VerifyFileMatchesHEADTree checks that filePath matches the blob committed in HEAD commit tree.
-func VerifyFileMatchesHEADTree(storeDir, filePath string, headBlobs map[string]string) error {
-	rel, err := filepath.Rel(storeDir, filePath)
-	if err != nil {
-		rel = filePath
-	}
-	cleanRel := filepath.Clean(filepath.ToSlash(rel))
-	expectedSHA, ok := headBlobs[cleanRel]
-	if !ok {
-		return fmt.Errorf("%s is not committed in HEAD tree", rel)
-	}
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("unable to read %s: %w", rel, err)
-	}
-	actual := GitBlobSHA1(data)
-	actualSHA := hex.EncodeToString(actual[:])
-	if actualSHA != expectedSHA {
-		return fmt.Errorf("%s has uncommitted modifications (working copy blob differs from HEAD tree)", rel)
 	}
 	return nil
 }

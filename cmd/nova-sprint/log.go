@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"time"
 
@@ -14,7 +15,8 @@ import (
 
 // cmdLog prints the epoch's log: every change of every card and every
 // notification, in the order written, filtered by card, stream, member and
-// time. The inbox's cursor never hides a line.
+// time. The inbox's cursor never hides a line. A brief given on a line is
+// said by its size and the card that shows it, not printed (--json has it).
 func (a *app) cmdLog(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("log")
 	card := fs.String("card", "", "the lines about this card (a primary: its work, read and merge cards too)")
@@ -24,7 +26,7 @@ func (a *app) cmdLog(args []string, stdout, stderr io.Writer) int {
 	atEpoch := fs.Int64("at-epoch", -1, "the log of an earlier epoch (before a clear), as it was")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "log", argErr("takes no words ", err))
+		return refuse(stderr, "log", argErr("takes no words ", err, pos...))
 	}
 	var from time.Time
 	if *since != "" {
@@ -62,8 +64,18 @@ func (a *app) cmdLog(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, l := range out {
 		fmt.Fprintln(stdout, a.logLine(l, *card == ""))
+		// a brief is a child's whole brief: the line says it was given and where
+		// it is shown, never the brief itself (--json carries it whole)
+		brief := l.Text["brief"]
+		if brief != "" {
+			l.Text = maps.Clone(l.Text)
+			delete(l.Text, "brief")
+		}
 		for _, p := range sprint.RenderText(l) {
 			fmt.Fprintln(stdout, "    "+oneline.Escape(p))
+		}
+		if strings.TrimSpace(brief) != "" {
+			fmt.Fprintf(stdout, "    brief: %d bytes, shown by nova-sprint card %s\n", len(brief), oneline.Field(l.Card))
 		}
 	}
 	fmt.Fprintf(stdout, "LOG OK lines=%d of=%d\n", len(out), len(lines))

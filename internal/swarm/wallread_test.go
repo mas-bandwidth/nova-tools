@@ -3,8 +3,9 @@ package swarm
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // THE LOG THAT COST A CARD, in its own shape. `js-under-20-bytes` (2026-09-19, rc=-1,
@@ -25,12 +26,10 @@ const bannerRefusalLog = "\n> build · deepseek-v4-pro\n" +
 func TestWallStoppedIgnoresARefusalTheCardMovedPast(t *testing.T) {
 	t.Parallel()
 
-	if _, ok := WallRefused([]byte(bannerRefusalLog)); !ok {
-		t.Fatal("the fixture must hold a refusal WallRefused finds, or this test proves nothing")
-	}
-	if w, ok := WallStopped([]byte(bannerRefusalLog)); ok {
-		t.Fatalf("a refusal the card made sixteen more steps past is not what stopped it, got %+v", w)
-	}
+	_, ok := WallRefused([]byte(bannerRefusalLog))
+	require.True(t, ok, "the fixture must hold a refusal WallRefused finds, or this test proves nothing")
+	w, ok := WallStopped([]byte(bannerRefusalLog))
+	require.False(t, ok, "a refusal the card made sixteen more steps past is not what stopped it, got %+v", w)
 }
 
 // TestWallStoppedNamesARefusalWithNothingAfterIt: the other half. A refusal the card never
@@ -41,12 +40,9 @@ func TestWallStoppedNamesARefusalWithNothingAfterIt(t *testing.T) {
 	log := "STEP 2: build\n$ cc -o probe probe.c\n" +
 		"cc: error: unable to read data link at '/var/db/xcode_select_link' (Operation not permitted)\n"
 	w, ok := WallStopped([]byte(log))
-	if !ok {
-		t.Fatal("a refusal with no tool call after it is what stopped the card")
-	}
-	if w.Path != "/var/db/xcode_select_link" || w.Step != "2" {
-		t.Fatalf("the refusal names the path and the step it reached, got %+v", w)
-	}
+	require.True(t, ok, "a refusal with no tool call after it is what stopped the card")
+	require.Equal(t, "/var/db/xcode_select_link", w.Path, "the refusal names the path and the step it reached, got %+v", w)
+	require.Equal(t, "2", w.Step, "the refusal names the path and the step it reached, got %+v", w)
 }
 
 // TestPermissionDeniedOnAPathIsARefusal: measured inside the swarm's own wall on hulk
@@ -59,19 +55,13 @@ func TestPermissionDeniedOnAPathIsARefusal(t *testing.T) {
 	log := "STEP 1\n$ sh -c 'echo probe > /tmp/nova-wall-probe-swarm'\n" +
 		"sh: 1: cannot create /tmp/nova-wall-probe-swarm: Permission denied\n"
 	w, ok := WallStopped([]byte(log))
-	if !ok {
-		t.Fatal("landlock refuses with EACCES, which the C library spells `Permission denied`")
-	}
-	if w.Path != "/tmp/nova-wall-probe-swarm" {
-		t.Fatalf("the refused path is named, got %q", w.Path)
-	}
-	if got := WallKind("sh: 1: cannot create /tmp/x: Permission denied"); got != "write" {
-		t.Fatalf("a refused create is a write, got %q", got)
-	}
+	require.True(t, ok, "landlock refuses with EACCES, which the C library spells `Permission denied`")
+	require.Equal(t, "/tmp/nova-wall-probe-swarm", w.Path, "the refused path is named, got %q", w.Path)
+	got := WallKind("sh: 1: cannot create /tmp/x: Permission denied")
+	require.Equal(t, "write", got, "a refused create is a write, got %q", got)
 	// A bare permission failure about something that is not a path is not the wall.
-	if _, ok := WallStopped([]byte("kill: Operation not permitted\n")); ok {
-		t.Fatal("a refusal that names no path is not the wall refusing a read or a write")
-	}
+	_, ok = WallStopped([]byte("kill: Operation not permitted\n"))
+	require.False(t, ok, "a refusal that names no path is not the wall refusing a read or a write")
 }
 
 // TestWallReaderAnnouncesTheRefusalAsItArrives: the point of the reader. RED WITHOUT THE
@@ -82,26 +72,18 @@ func TestWallReaderAnnouncesTheRefusalAsItArrives(t *testing.T) {
 
 	var said []string
 	r := NewWallReader("card-8311", func(line string) { said = append(said, line) })
-	if _, err := r.Write([]byte("STEP 2: write the file\n")); err != nil {
-		t.Fatal(err)
-	}
-	if len(said) != 0 {
-		t.Fatalf("nothing is announced before a refusal, got %v", said)
-	}
-	if _, err := r.Write([]byte("sh: 1: cannot create /etc/hosts: Permission denied\n")); err != nil {
-		t.Fatal(err)
-	}
+	_, err := r.Write([]byte("STEP 2: write the file\n"))
+	require.NoError(t, err)
+	require.Empty(t, said, "nothing is announced before a refusal, got %v", said)
+	_, err = r.Write([]byte("sh: 1: cannot create /etc/hosts: Permission denied\n"))
+	require.NoError(t, err)
 	want := "WALL REFUSED write /etc/hosts task=card-8311 step=2"
-	if len(said) != 1 || said[0] != want {
-		t.Fatalf("the typed line is announced once, as it arrives:\nwant %q\ngot  %v", want, said)
-	}
+	require.Len(t, said, 1, "the typed line is announced once, as it arrives:\nwant %q\ngot  %v", want, said)
+	require.Equal(t, want, said[0], "the typed line is announced once, as it arrives:\nwant %q\ngot  %v", want, said)
 	// A SECOND refusal is not a second announcement: one line per card, the first one.
-	if _, err := r.Write([]byte("sh: 1: cannot create /etc/passwd: Permission denied\n")); err != nil {
-		t.Fatal(err)
-	}
-	if len(said) != 1 {
-		t.Fatalf("one announcement per card, got %v", said)
-	}
+	_, err = r.Write([]byte("sh: 1: cannot create /etc/passwd: Permission denied\n"))
+	require.NoError(t, err)
+	require.Len(t, said, 1, "one announcement per card, got %v", said)
 }
 
 // TestWallReaderHoldsAPartialLine: the child's stdout and stderr arrive in whatever pieces
@@ -112,13 +94,10 @@ func TestWallReaderHoldsAPartialLine(t *testing.T) {
 	var said []string
 	r := NewWallReader("c", func(line string) { said = append(said, line) })
 	_, _ = r.Write([]byte("sh: 1: cannot create /etc/ho"))
-	if len(said) != 0 {
-		t.Fatalf("a line with no newline yet is not a line, got %v", said)
-	}
+	require.Empty(t, said, "a line with no newline yet is not a line, got %v", said)
 	_, _ = r.Write([]byte("sts: Permission denied\n"))
-	if len(said) != 1 || !strings.Contains(said[0], "/etc/hosts") {
-		t.Fatalf("the two halves are one refusal, got %v", said)
-	}
+	require.Len(t, said, 1, "the two halves are one refusal, got %v", said)
+	require.Contains(t, said[0], "/etc/hosts", "the two halves are one refusal, got %v", said)
 }
 
 // TestWallReaderForgetsARefusalTheCardMovedPast: the live half of WallStopped. A reader
@@ -129,13 +108,11 @@ func TestWallReaderForgetsARefusalTheCardMovedPast(t *testing.T) {
 
 	r := NewWallReader("c", nil)
 	_, _ = r.Write([]byte("xcode-select: error: unable to read data link at '/var/db/xcode_select_link' (Operation not permitted)\n"))
-	if _, _, ok := r.Stopped(); !ok {
-		t.Fatal("a refusal with nothing after it is the refusal that stopped the card")
-	}
+	_, _, ok := r.Stopped()
+	require.True(t, ok, "a refusal with nothing after it is the refusal that stopped the card")
 	_, _ = r.Write([]byte("$ grep -n needHome internal/codegen/jstable/fixedmodule.go\n"))
-	if w, _, ok := r.Stopped(); ok {
-		t.Fatalf("a card that made another tool call moved past the refusal, got %+v", w)
-	}
+	w, _, ok := r.Stopped()
+	require.False(t, ok, "a card that made another tool call moved past the refusal, got %+v", w)
 }
 
 // TestWriteBlockedResultNeverOverwritesAPublishedReport: a card that published owns its
@@ -145,16 +122,13 @@ func TestWriteBlockedResultNeverOverwritesAPublishedReport(t *testing.T) {
 
 	job := t.TempDir()
 	mine := filepath.Join(job, "RESULT.md")
-	if err := os.WriteFile(mine, []byte("RESULT: mine\nfindings: 0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, wrote, err := WriteBlockedResult(job, "c", "write", "/etc/hosts", "2", "still"); err != nil || wrote {
-		t.Fatalf("a published report is never overwritten: wrote=%v err=%v", wrote, err)
-	}
+	require.NoError(t, os.WriteFile(mine, []byte("RESULT: mine\nfindings: 0\n"), 0o644))
+	_, wrote, err := WriteBlockedResult(job, "c", "write", "/etc/hosts", "2", "still")
+	require.NoError(t, err, "a published report is never overwritten: wrote=%v err=%v", wrote, err)
+	require.False(t, wrote, "a published report is never overwritten: wrote=%v err=%v", wrote, err)
 	raw, err := os.ReadFile(mine)
-	if err != nil || !strings.Contains(string(raw), "RESULT: mine") {
-		t.Fatalf("the worker's own report is untouched: %q %v", raw, err)
-	}
+	require.NoError(t, err, "the worker's own report is untouched: %q %v", raw, err)
+	require.Contains(t, string(raw), "RESULT: mine", "the worker's own report is untouched: %q %v", raw, err)
 }
 
 // TestWriteBlockedResultNamesTheBlockAndCannotBeGreen: the report a card that published
@@ -165,20 +139,14 @@ func TestWriteBlockedResultNamesTheBlockAndCannotBeGreen(t *testing.T) {
 
 	job := t.TempDir()
 	path, wrote, err := WriteBlockedResult(job, "card-8311", "write", "/etc/hosts", "2", "the card wrote nothing for 300s")
-	if err != nil || !wrote {
-		t.Fatalf("a card with no report of its own is given one: %v %v", wrote, err)
-	}
+	require.NoError(t, err, "a card with no report of its own is given one: %v %v", wrote, err)
+	require.True(t, wrote, "a card with no report of its own is given one: %v %v", wrote, err)
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	body := string(raw)
 	for _, want := range []string{"RESULT: BLOCKED card-8311", "WALL REFUSED write /etc/hosts task=card-8311 step=2", "written-by: nova-swarm native"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("the blocked report carries %q:\n%s", want, body)
-		}
+		require.Contains(t, body, want, "the blocked report carries %q:\n%s", want, body)
 	}
-	if rep := ParseReport(raw); rep.Class != ClassPlanOnly {
-		t.Fatalf("a report the machinery wrote must never be scored as a worker's work, got class %q", rep.Class)
-	}
+	rep := ParseReport(raw)
+	require.Equal(t, ClassPlanOnly, rep.Class, "a report the machinery wrote must never be scored as a worker's work, got class %q", rep.Class)
 }

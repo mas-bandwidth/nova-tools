@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -104,18 +106,18 @@ func TestAWriterCaughtMidStepIsToldTheSprintWasCleared(t *testing.T) {
 	h.setup(2)
 	st := *h.st
 	st.B = &clearOnCall{Backend: h.m, kv: h.m, kind: "release", n: 1, clear: func() {
-		if _, err := h.st.Clear(h.ctx); err != nil {
-			t.Errorf("clear: %v", err)
-		}
+		_, err := h.st.Clear(h.ctx)
+		assert.NoError(t, err, "clear: %v", err)
 	}}
 	_, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	var ce *ClearedError
-	if !errors.As(err, &ce) || !ce.Finished || !strings.Contains(err.Error(), "the sprint was cleared at") || !strings.Contains(err.Error(), "stand at epoch 0") {
-		t.Fatalf("the writer was told: %v", err)
-	}
-	if s, _ := h.st.At(0).Load(h.ctx, All, nil); s == nil || s.StateOf("s1-1") != sprint.Working {
-		t.Fatalf("the step did not finish at epoch 0")
-	}
+	require.ErrorAs(t, err, &ce, "the writer was told: %v", err)
+	require.True(t, ce.Finished, "the writer was told: %v", err)
+	require.Contains(t, err.Error(), "the sprint was cleared at", "the writer was told: %v", err)
+	require.Contains(t, err.Error(), "stand at epoch 0", "the writer was told: %v", err)
+	s, _ := h.st.At(0).Load(h.ctx, All, nil)
+	require.NotNil(t, s, "the step did not finish at epoch 0")
+	require.Equal(t, sprint.Working, s.StateOf("s1-1"), "the step did not finish at epoch 0")
 	h.clean("after")
 }
 
@@ -129,7 +131,8 @@ func TestAStepAheadOfTheSprintIsNotToldCleared(t *testing.T) {
 	step := FleetStep(sprint.FleetReq{Op: "down", Member: "m1"})
 	step.Epoch = &ahead
 	res, err := h.st.Run(h.ctx, step)
-	if err != nil || len(res.Refused) != 1 || strings.Contains(res.Refused[0].Why, "cleared at") || !strings.Contains(res.Refused[0].Why, "unknown to this sprint") {
-		t.Fatalf("a step ahead: %+v %v", res, err)
-	}
+	require.NoError(t, err, "a step ahead: %+v %v", res, err)
+	require.Len(t, res.Refused, 1, "a step ahead: %+v %v", res, err)
+	require.NotContains(t, res.Refused[0].Why, "cleared at", "a step ahead: %+v %v", res, err)
+	require.Contains(t, res.Refused[0].Why, "unknown to this sprint", "a step ahead: %+v %v", res, err)
 }

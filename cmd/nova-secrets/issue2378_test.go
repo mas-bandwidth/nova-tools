@@ -2,8 +2,9 @@ package main
 
 import (
 	"os/exec"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestIssue2378(t *testing.T) {
@@ -11,21 +12,14 @@ func TestIssue2378(t *testing.T) {
 	bin := buildNovaSecrets(t)
 
 	dir := t.TempDir()
-	if out, err := exec.Command("git", "-C", dir, "init", "-b", "main").CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v, out: %s", err, out)
-	}
+	out, err := exec.Command("git", "-C", dir, "init", "-b", "main").CombinedOutput()
+	require.NoError(t, err, "git init: %v, out: %s", err, out)
 
 	stdout, stderr, code := runNovaSecrets(bin, "gate", "--store", dir, "--base", "HEAD", "--head", "HEAD")
 
-	if code != 2 {
-		t.Fatalf("unborn store: expected exit code 2 (REFUSE), got %d (stdout=%q, stderr=%q)", code, stdout, stderr)
-	}
+	require.Equal(t, 2, code, "unborn store: expected exit code 2 (REFUSE), got %d (stdout=%q, stderr=%q)", code, stdout, stderr)
 
-	if stdout != "" {
-		t.Fatalf("unborn store: gate wrote to stdout: %q", stdout)
-	}
+	require.Empty(t, stdout, "unborn store: gate wrote to stdout: %q", stdout)
 
-	if !strings.Contains(stderr, "GATE REFUSE") {
-		t.Fatalf("unborn store: gate stderr does not contain GATE REFUSE: %q", stderr)
-	}
+	require.Contains(t, stderr, "GATE REFUSE", "unborn store: gate stderr does not contain GATE REFUSE: %q", stderr)
 }

@@ -2,11 +2,11 @@ package store
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // The property test's finding of seed 7, its shortest sequence as a test; and
@@ -27,25 +27,20 @@ func TestAckOfTwoBlockedJudgmentsOnOnePrimaryWaivesBoth(t *testing.T) {
 	for _, o := range h.openOf(sprint.NBlocked) {
 		notes = append(notes, o.Note.ID)
 	}
-	if len(notes) != 2 {
-		t.Fatalf("two blocked judgments: %v", notes)
-	}
+	require.Len(t, notes, 2, "two blocked judgments: %v", notes)
 	var ack string
 	for _, c := range h.commandsOf(sprint.NBlocked) {
 		if c.Decision == "ack" {
 			ack = c.Lines[0]
 		}
 	}
-	if !strings.Contains(ack, notes[0]) || !strings.Contains(ack, notes[1]) {
-		t.Fatalf("the printed ack does not name both: %q", ack)
-	}
+	require.Contains(t, ack, notes[0], "the printed ack does not name both: %q", ack)
+	require.Contains(t, ack, notes[1], "the printed ack does not name both: %q", ack)
 	h.must(AckStep(sprint.AckReq{Notes: notes, Reason: "none"}))
-	if got := h.state("p5"); got != sprint.Ready {
-		t.Fatalf("p5 is %s", got)
-	}
-	if w := h.snap().Work.Card("p5").F("waived"); w != "p3,p4" && w != "p4,p3" {
-		t.Fatalf("waived %q", w)
-	}
+	got := h.state("p5")
+	require.Equal(t, sprint.Ready, got, "p5 is %s", got)
+	w := h.snap().Work.Card("p5").F("waived")
+	require.True(t, w == "p3,p4" || w == "p4,p3", "waived %q", w)
 	h.clean("acked")
 }
 
@@ -69,15 +64,14 @@ func TestTwoChangesOfOneCardInOneStep(t *testing.T) {
 		}}
 	}
 	h.must(two(map[string]string{"x": "1"}, map[string]string{"y": "2"}))
-	if c := h.snap().Work.Card("s1-1"); c.F("x") != "1" || c.F("y") != "2" {
-		t.Fatalf("the agreeing changes: %v", c.Fields)
-	}
+	c := h.snap().Work.Card("s1-1")
+	require.Equal(t, "1", c.F("x"), "the agreeing changes: %v", c.Fields)
+	require.Equal(t, "2", c.F("y"), "the agreeing changes: %v", c.Fields)
 	before := h.revisions()
 	res := h.run(two(map[string]string{"x": "3"}, map[string]string{"x": "4"}))
-	if len(res.Refused) != 2 || !strings.Contains(res.Refused[0].Why, "by first (the first) and by second (the second)") ||
-		!strings.Contains(res.Refused[0].Why, "they set x to 3 and to 4") {
-		t.Fatalf("the disagreeing changes: %+v", res)
-	}
+	require.Len(t, res.Refused, 2, "the disagreeing changes: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "by first (the first) and by second (the second)", "the disagreeing changes: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "they set x to 3 and to 4", "the disagreeing changes: %+v", res)
 	h.nothingWritten(before)
 }
 

@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 )
@@ -88,23 +90,13 @@ func TestSelectPackagesNeverSilentlySelectsNothing(t *testing.T) {
 			tc.opts.Root = repo
 			out, err := pkgselect.Select(fakeGoList(tc.fake), tc.opts)
 			if tc.wantErr != "" {
-				if err == nil {
-					t.Fatalf("Select exited clean with %v; a go list failure must fail the job, never select nothing silently", out.Packages)
-				}
-				if !strings.Contains(err.Error(), tc.wantErr) || len(out.Packages) != 0 {
-					t.Errorf("Select = %v, %v; want no packages and an error containing %q", out.Packages, err, tc.wantErr)
-				}
+				require.Errorf(t, err, "Select exited clean with %v; a go list failure must fail the job, never select nothing silently", out.Packages)
+				assert.Truef(t, strings.Contains(err.Error(), tc.wantErr) && len(out.Packages) == 0, "Select = %v, %v; want no packages and an error containing %q", out.Packages, err, tc.wantErr)
 				return
 			}
-			if err != nil {
-				t.Fatalf("Select: %v; want the whole tree with a warning", err)
-			}
-			if !slices.Equal(out.Packages, wholeTree) {
-				t.Errorf("packages = %v, want %v", out.Packages, wholeTree)
-			}
-			if out.Warning != tc.wantWarn {
-				t.Errorf("warning = %q, want %q", out.Warning, tc.wantWarn)
-			}
+			require.NoErrorf(t, err, "Select: %v; want the whole tree with a warning", err)
+			assert.Equalf(t, wholeTree, out.Packages, "packages = %v, want %v", out.Packages, wholeTree)
+			assert.Equalf(t, tc.wantWarn, out.Warning, "warning = %q, want %q", out.Warning, tc.wantWarn)
 		})
 	}
 }
@@ -117,7 +109,7 @@ func selectFixture(t *testing.T) string {
 	repo := t.TempDir()
 	files := map[string]string{
 		"go.mod":                       "module example.com/m\n",
-		"deprecated/PACKAGES":          "# the fixture's list\ncmd/gone\n",
+		pkgselect.DeprecatedFile:       "# the fixture's list\ncmd/gone\n",
 		"cmd/foo/foo.go":               "package main\n",
 		"internal/bar/bar.go":          "package bar\n",
 		"internal/ci/ci.go":            "package ci\n",
@@ -127,12 +119,8 @@ func selectFixture(t *testing.T) string {
 	}
 	for name, body := range files {
 		p := filepath.Join(repo, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
 	}
 	return repo
 }
@@ -148,23 +136,15 @@ func TestCIReadsSelectionExitStatus(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	if selectConsumedByProcessSubstitution.MatchString(src) {
-		t.Errorf("ci.yml reads the selection through `< <(...)`, which discards its exit status: a go list failure became `test (nothing)` on PR #4370; run the verb as the step")
-	}
+	assert.False(t, selectConsumedByProcessSubstitution.MatchString(src), "ci.yml reads the selection through `< <(...)`, which discards its exit status: a go list failure became `test (nothing)` on PR #4370; run the verb as the step")
 	block := jobBody(src, "test-packages")
-	if !strings.Contains(block, ciRunner+" test-matrix --event") {
-		t.Errorf("test-packages does not run `ci test-matrix` as the step itself, so its exit status is the step's")
-	}
+	assert.Contains(t, block, ciRunner+" test-matrix --event", "test-packages does not run `ci test-matrix` as the step itself, so its exit status is the step's")
 	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_matrix.go"))
 	for _, want := range []string{
 		`WholeTreeOnError: *event != "pull_request"`,
 		`select-packages failed; see its error above`,
 	} {
-		if !strings.Contains(verb, want) {
-			t.Errorf("tools/ci/sel_matrix.go does not contain %q: pull_request fails the job on a go list failure, merge_group and push fall back to the whole tree", want)
-		}
+		assert.Containsf(t, verb, want, "tools/ci/sel_matrix.go does not contain %q: pull_request fails the job on a go list failure, merge_group and push fall back to the whole tree", want)
 	}
-	if !strings.Contains(verb, "return 1") {
-		t.Error("tools/ci/sel_matrix.go never exits 1 on a failed selection")
-	}
+	assert.Contains(t, verb, "return 1", "tools/ci/sel_matrix.go never exits 1 on a failed selection")
 }

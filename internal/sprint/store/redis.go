@@ -237,7 +237,8 @@ func (r *Redis) RowsAdd(ctx context.Context, table string, rows []string) error 
 }
 
 // RowsDel removes each row through the table layer's row delete, one write
-// each; the caller checked that none holds a card.
+// each; the caller checked that none holds a card but a stream's control
+// card.
 func (r *Redis) RowsDel(ctx context.Context, table string, rows []string) error {
 	for _, row := range rows {
 		if _, err := ntable.RowDel(ctx, r.C, table, row, r.writeOpts()); err != nil {
@@ -905,3 +906,13 @@ func (r *Redis) ReadView(ctx context.Context, tables []string) (View, error) {
 }
 
 var _ ViewReader = (*Redis)(nil)
+
+// RowsOrder puts the named rows first, in that order, through the table
+// layer's row order, ending any standing sort in the same call (the table
+// layer refuses a row order under one: SORTED).
+func (r *Redis) RowsOrder(ctx context.Context, table string, rows []string) error {
+	_, err := ntable.Set(ctx, r.C, table, ntable.SetOpts{RowSort: &ntable.Sort{Manual: true}, RowOrder: rows}, r.writeOpts())
+	return err
+}
+
+var _ RowsOrderer = (*Redis)(nil)

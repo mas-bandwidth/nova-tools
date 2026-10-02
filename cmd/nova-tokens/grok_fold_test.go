@@ -3,6 +3,9 @@ package main
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestGrokUsageFileFoldsToLedgerRow is the red test issue #626 asks for: a fixture `grok
@@ -43,11 +46,9 @@ func TestGrokUsageFileFoldsToLedgerRow(t *testing.T) {
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "day_basis=utc")
 
 	body := read(t, filepath.Join(out, "2026-09-12.tsv"))
-	if line := lineWith(body, "grok-model-example"); line == "" {
-		t.Fatalf("no Grok ledger row in the day file:\n%s", body)
-	} else if line != "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t0\t800\t40\t0\tutc\txai:johnny" {
-		t.Errorf("Grok row is %q, want input/output/cost columns filled", line)
-	}
+	line := lineWith(body, "grok-model-example")
+	require.NotEmpty(t, line, "no Grok ledger row in the day file:\n%s", body)
+	assert.Equal(t, "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t0\t800\t40\t0\tutc\txai:johnny", line, "Grok row is %q, want input/output/cost columns filled", line)
 
 	c := invoke(t, "check", "--out", out)
 	wantExit(t, c, 0)

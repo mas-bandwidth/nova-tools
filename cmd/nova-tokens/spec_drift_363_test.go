@@ -8,6 +8,8 @@ package main
 // SESSION lines the spec never promises.
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,13 +19,9 @@ import (
 func specTokensText(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.False(t, err != nil, err)
 	raw, err := os.ReadFile(filepath.Join(root, "docs", "SPEC-TOKENS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.False(t, err != nil, err)
 	return string(raw)
 }
 
@@ -32,13 +30,9 @@ func TestSpec363PromisesEveryVerbAndTokenItPrints(t *testing.T) {
 
 	spec := specTokensText(t)
 	for _, verb := range []string{"nova-tokens profiles", "nova-tokens session"} {
-		if !strings.Contains(spec, verb) {
-			t.Errorf("the binary accepts `%s` but docs/SPEC-TOKENS.md promises no such verb (spec-versus-code drift, #363)", verb)
-		}
+		assert.False(t, !strings.Contains(spec, verb), "the binary accepts `%s` but docs/SPEC-TOKENS.md promises no such verb (spec-versus-code drift, #363)", verb)
 	}
 	for _, token := range []string{"PROFILES OK", "PROFILES MODEL", "SESSION turns="} {
-		if !strings.Contains(spec, token) {
-			t.Errorf("the binary prints %q but docs/SPEC-TOKENS.md output grammar has no line for it (printed-not-promised, #363)", token)
-		}
+		assert.False(t, !strings.Contains(spec, token), "the binary prints %q but docs/SPEC-TOKENS.md output grammar has no line for it (printed-not-promised, #363)", token)
 	}
 }

@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Defect #1451: every refusal of an invocation this tool cannot run must end with the
@@ -19,9 +22,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 	t.Parallel()
 
 	exit, helpOut, helpErr := runCheck(t, "help")
-	if exit != 0 {
-		t.Fatalf("nova-check help: exit %d, want 0; stderr: %s", exit, helpErr)
-	}
+	require.EqualValues(t, 0, exit, "nova-check help: exit %d, want 0; stderr: %s", exit, helpErr)
 
 	// The verbs come from the tool's own `help` output, not from a list typed here: a
 	// usage line starts with `  nova-check `, the first word is the verb, and a second
@@ -47,9 +48,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 			verbs = append(verbs, verb)
 		}
 	}
-	if len(verbs) < 8 {
-		t.Fatalf("only %d verbs parsed from help, the parse is not reaching them: %v\n%s", len(verbs), verbs, helpOut)
-	}
+	require.GreaterOrEqual(t, len(verbs), 8, "only %d verbs parsed from help, the parse is not reaching them: %v\n%s", len(verbs), verbs, helpOut)
 
 	const door = "; run: nova-check help"
 	refused := 0
@@ -60,8 +59,7 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 			// The one bare verb with nothing to ask for (version); it is not a refusal.
 			continue
 		}
-		if exit != 2 {
-			t.Errorf("%s: bare verb exit %d, want 2; stderr: %s", verb, exit, stderr)
+		if !assert.EqualValues(t, 2, exit, "%s: bare verb exit %d, want 2; stderr: %s", verb, exit, stderr) {
 			continue
 		}
 		refused++
@@ -71,12 +69,8 @@ func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
 				// line: the door belongs on the refusal line, before the hint.
 				continue
 			}
-			if !strings.HasSuffix(line, door) {
-				t.Errorf("%s: refusal line without the door: %q", verb, line)
-			}
+			assert.True(t, strings.HasSuffix(line, door), "%s: refusal line without the door: %q", verb, line)
 		}
 	}
-	if refused == 0 {
-		t.Fatal("no bare verb refused; this test proved nothing")
-	}
+	require.NotEqualValues(t, 0, refused, "no bare verb refused; this test proved nothing")
 }

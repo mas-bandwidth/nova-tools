@@ -185,9 +185,10 @@ $ HOME=/path/to/pool/jobs/j1/home nova-sandbox --read /path/to/pool/ref --write 
 SANDBOX NOTE dropped from the child's environment: GPG_AGENT_INFO SSH_AGENT_PID SSH_AUTH_SOCK; an agent socket speaks for a key the wall denies
 SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=sh gpu=none
 cat: /path/to/.config/anthropic/env: Operation not permitted
+SANDBOX DONE exit=1 cmd=sh
 ```
 
-The last run is the whole tool in three lines: the job's own write landed, and the same command could not read the key that was in neither list. Its exit status is the wrapped command's, which is 1 here because `cat` failed.
+The last run is the whole tool: the wall named, the job's own write landed, the same command could not read the key that was in neither list, and the closing line gives the wrapped command's own status, 1 here because `cat` failed, which is the status the tool exits with.
 
 ### The disposable volume, and the one test that touches a disk
 
@@ -225,7 +226,7 @@ Done. Your new key is at /path/to/home/.config/nova-secrets/example.key. Nothing
 Next: send this public key to whoever seals your seat: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
 
 $ nova-secrets check --store ./secrets --as reader --key /path/to/home/.config/nova-secrets/reader.key --sops /path/to/bin/sops
-SECRETS CHECK OK  as=reader recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=9750ba9
+SECRETS CHECK OK as=reader recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=9750ba9
 
 $ nova-secrets names --store ./secrets --as reader
 SECRETS NAME key=GH_TOKEN clear=false
@@ -319,8 +320,8 @@ nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares;
 
 ## nova-self-talk
 
-Fixture: `cmd/nova-self-talk/testdata/example-pages`.
-The test's copy of it is `./pages`, which is what the lines below type.
+Fixture: `cmd/nova-self-talk/testdata/example-pages`, built into the binary:
+`nova-self-talk example ./pages` writes it to `./pages`, which is what the lines below type.
 
 A line below opening `! ` is one this tool writes to standard ERROR: the
 findings go there and the protocol lines go to standard output, and the order a
@@ -335,28 +336,28 @@ lost one would be hiding the thing the tool exists to say.
 
 ```
 $ nova-self-talk ./pages/journal.md   # Stderr: whole
-! SELFTALK FAIL ./pages/journal.md:4: STANDING: I cannot check my own work, so the second read went to someone else.
-! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
+! SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
 SELFTALK DATED n=1 files=1
 SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
-SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 
 $ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
 SELFTALK RULEDOC ./pages/RULES.md: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule
-! SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM: A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
-! SELFTALK FAIL ./pages/journal.md:4: STANDING: I cannot check my own work, so the second read went to someone else.
-! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
+! SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM match="dead as a practice": A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
+! SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
 SELFTALK DATED n=1 files=2
 SELFTALK FAIL files=2 claims=2 standing=1 installations=2 dated=1 shown=3
-SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 
 $ nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
 SELFTALK SKIP ./pages/RULES.md (--skip)
-! SELFTALK FAIL ./pages/journal.md:4: STANDING: I cannot check my own work, so the second read went to someone else.
-! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
+! SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
 SELFTALK DATED n=1 files=1
 SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
-SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 ```
 
 ## nova-fuse
@@ -392,48 +393,49 @@ Fixture: `cmd/nova-memory/testdata/corpus`.
 
 ```
 $ nova-memory quickstart --root ./corpus
-QUICKSTART OK root=./corpus steps=3 channels=bm25 k=3/2 words=glazing\x20signal\x20tide words-source=corpus-top-terms candidate=corpus-first-paragraph
+QUICKSTART RUN root=./corpus steps=3 channels=bm25 k=3/2 words=glazing\x20signal\x20tide words-source=corpus-top-terms candidate=corpus-first-paragraph
 $ nova-memory stats --root ./corpus
-STATS OK schema=nova-memory/1 files=6 chunks=23 bytes=4866 vocab=382 avg-terms=34.8 build=384.875µs
+STATS OK schema=nova-memory/1 files=6 chunks=23 bytes=4866 vocab=382 avg-terms=34.8 build=520.916µs
 STATS OK class=. chunks=3
 STATS OK class=log chunks=4
 STATS OK class=notes chunks=16
 $ nova-memory search --root ./corpus --channels bm25 --k 3 glazing signal tide
-SEARCH OK query=glazing\x20signal\x20tide hits=3 k=3 channels=bm25 files=6 chunks=23
+SEARCH OK hits=3 k=3 channels=bm25 files=6 chunks=23: query="glazing signal tide"
 SEARCH CAL score=4.41 score-channel=bm25 probe=unrelated-control
-SEARCH HIT rank=1 score=4.57 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:1 "- lantern-carelantern.md — the glazing, the brass, and the two cloths - tide-tablestides.md — the jetty's eighteen m…"
-SEARCH HIT rank=2 score=2.81 score-channel=bm25 fused=0.01639 class=log name=- type=- root=./corpus: log/1974-03-11.md:1 "onshore gale most of the day, easing after dark. washed the glazing at first light before the wind got up again — see …"
-SEARCH HIT rank=3 score=2.35 score-channel=bm25 fused=0.01613 class=notes name=fog-signal type=measured root=./corpus: notes/fog-signal.md:1 "the fog signal"
+SEARCH HIT rank=1 score=4.57 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:8 "- [lantern-care](lantern.md) — the glazing, the brass, and the two cloths\n- [tide-tables](tides.md) — the jetty's ei…"
+SEARCH HIT rank=2 score=2.81 score-channel=bm25 fused=0.01639 class=log name=- type=- root=./corpus: log/1974-03-11.md:3 "Onshore gale most of the day, easing after dark. Washed the glazing at first\nlight before the wind got up again — see …"
+SEARCH HIT rank=3 score=2.35 score-channel=bm25 fused=0.01613 class=notes name=fog-signal type=measured root=./corpus: notes/fog-signal.md:6 "# The fog signal"
 SEARCH NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
-QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: HANDBOOK.md:0
+QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: HANDBOOK.md:3
 $ nova-memory check --root ./corpus --channels bm25 --k 2 -
 MEMORY OK candidates=1 source=- k=2 channels=bm25 files=6 chunks=23
 MEMORY CAL score=4.41 score-channel=bm25 probe=unrelated-control
-MEMORY CAND n=1: "this fixture corpus belongs to an invented lighthouse station. it exists so that nova-memory's verbs…"
-MEMORY HIT cand=1 rank=1 score=90.38 score-channel=bm25 fused=0.01667 class=. name=- type=- root=./corpus: HANDBOOK.md:0 "this fixture corpus belongs to an invented lighthouse station. it exists so that nova-memory's verbs can be exercised …"
-MEMORY HIT cand=1 rank=2 score=15.70 score-channel=bm25 fused=0.01639 class=log name=- type=- root=./corpus: log/1974-03-11.md:3 "left a note to write up the storm-glass readings against the barometer one day, because the two disagree in a way that m…"
+MEMORY CAND n=1: "This fixture corpus belongs to an invented lighthouse station. It exists so\nthat nova-memory's verbs…"
+MEMORY HIT cand=1 rank=1 score=90.38 score-channel=bm25 fused=0.01667 class=. name=- type=- root=./corpus: HANDBOOK.md:3 "This fixture corpus belongs to an invented lighthouse station. It exists so\nthat nova-memory's verbs can be exercised …"
+MEMORY HIT cand=1 rank=2 score=15.70 score-channel=bm25 fused=0.01639 class=log name=- type=- root=./corpus: log/1974-03-11.md:11 "Left a note to write up the [[storm-glass]] readings against the barometer\none day, because the two disagree in a way th…"
 MEMORY NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
 MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours
 MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
+QUICKSTART OK done=3
 QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults: see --channels and --k
 ```
 
 ```
 $ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
-SEARCH OK query=lantern\x20glazing\x20brass hits=3 k=3 channels=bm25 files=6 chunks=23
+SEARCH OK hits=3 k=3 channels=bm25 files=6 chunks=23: query="lantern glazing brass"
 SEARCH CAL score=4.41 score-channel=bm25 probe=unrelated-control
-SEARCH HIT rank=1 score=5.25 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:1 "- lantern-carelantern.md — the glazing, the brass, and the two cloths - tide-tablestides.md — the jetty's eighteen m…"
-SEARCH HIT rank=2 score=4.95 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:1 "the lantern glazing collects a salt haze on every onshore wind, and the haze is not visible from inside the lightroom at…"
-SEARCH HIT rank=3 score=3.00 score-channel=bm25 fused=0.01587 class=log name=- type=- root=./corpus: log/1974-03-11.md:1 "onshore gale most of the day, easing after dark. washed the glazing at first light before the wind got up again — see …"
+SEARCH HIT rank=1 score=5.25 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:8 "- [lantern-care](lantern.md) — the glazing, the brass, and the two cloths\n- [tide-tables](tides.md) — the jetty's ei…"
+SEARCH HIT rank=2 score=4.95 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:8 "The lantern glazing collects a salt haze on every onshore wind, and the haze\nis not visible from inside the lightroom at…"
+SEARCH HIT rank=3 score=3.00 score-channel=bm25 fused=0.01587 class=log name=- type=- root=./corpus: log/1974-03-11.md:3 "Onshore gale most of the day, easing after dark. Washed the glazing at first\nlight before the wind got up again — see …"
 SEARCH NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
 
 $ nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
 MEMORY OK candidates=1 source=draft.md k=3 channels=bm25 files=6 chunks=23
 MEMORY CAL score=4.41 score-channel=bm25 probe=unrelated-control
-MEMORY CAND n=1: "the lantern glazing is cleaned with two cloths, one for the brass and one for the glass, before the …"
-MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:1 "- lantern-carelantern.md — the glazing, the brass, and the two cloths - tide-tablestides.md — the jetty's eighteen m…"
-MEMORY HIT cand=1 rank=2 score=11.97 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:1 "the lantern glazing collects a salt haze on every onshore wind, and the haze is not visible from inside the lightroom at…"
-MEMORY HIT cand=1 rank=3 score=7.89 score-channel=bm25 fused=0.01587 class=log name=- type=- root=./corpus: log/1974-03-11.md:1 "onshore gale most of the day, easing after dark. washed the glazing at first light before the wind got up again — see …"
+MEMORY CAND n=1: "The lantern glazing is cleaned with two cloths, one for the brass and one for the glass, before the …"
+MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:8 "- [lantern-care](lantern.md) — the glazing, the brass, and the two cloths\n- [tide-tables](tides.md) — the jetty's ei…"
+MEMORY HIT cand=1 rank=2 score=11.97 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:8 "The lantern glazing collects a salt haze on every onshore wind, and the haze\nis not visible from inside the lightroom at…"
+MEMORY HIT cand=1 rank=3 score=7.89 score-channel=bm25 fused=0.01587 class=log name=- type=- root=./corpus: log/1974-03-11.md:3 "Onshore gale most of the day, easing after dark. Washed the glazing at first\nlight before the wind got up again — see …"
 MEMORY NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
 MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours
 MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
@@ -595,13 +597,14 @@ shape and its mandatory `## Head`, `## Findings`, `## Per item`, `## Gates`,
 In Gates, distinguish source checks from tests and report-writing commands.
 Mark only checks actually performed as pass; no tests run does not mean no commands run.
 
-BOUND THE REPORT (issue #74): findings only. No narration of the clone, no
-restated task, no praise, no summary. One line per finding: `file:line`, the
-rule in twelve words, the severity, and the fix in one clause. Keep RESULT.md
-under 40 lines and every line under 300 characters, and no pipe inside backticks:
-a `|` in a quote broke the table grammar twice (D12), so quote the rule without
-it. Put the verdict line last. When there is nothing to report, write
-`findings: 0`.
+BOUND THE REPORT: findings only. No narration of the clone, no restated
+task, no praise, no summary. One line per finding: `file:line`, the rule
+quoted verbatim in at most twelve words (a longer rule by the twelve of its
+own words the finding rests on, never a paraphrase: rule 2 holds), the
+severity, and the fix in one clause. Keep RESULT.md under 40 lines and
+every line under 300 characters, and no pipe inside backticks: a `|` in a
+quote breaks the report's table grammar, so quote the rule without it. Put
+the verdict line last. When there is nothing to report, write `findings: 0`.
 ```
 
 ## nova-tokens
@@ -647,14 +650,17 @@ SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
 
 ### First run
 
-From the nova-tools checkout, using the declared Go-version fixture. This reads
-local stdout only and performs no update or bus action.
+With the binary alone, in an empty directory: `example` writes the one-tool Go
+manifest and `report` reads it. This writes `versions.tsv` and performs no update
+or bus action.
 
 ```text
-$ nova-update report --file cmd/nova-update/testdata/example.tsv
-REPORT at=2026-09-12T17:29:33Z file=cmd/nova-update/testdata/example.tsv host=- as=- entries=1 kinds=engine,harness,model,pin,tool timeout=5s budget=1m0s max=20 snapshot=-
+$ nova-update example --out versions.tsv
+EXAMPLE OK wrote=versions.tsv entries=1 unchanged=false
+EXAMPLE NOTE next: nova-update report --file versions.tsv
+$ nova-update report --file versions.tsv
+REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=23ms file=versions.tsv host=- as=- entries=1 kinds=tool at=2026-10-02T02:55:03Z timeout=5s budget=1m0s max=20 snapshot=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
-REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-update/testdata/example.tsv
 ```
 
 
@@ -662,67 +668,59 @@ REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-up
 
 ### First run
 
-From the nova-tools checkout, using the declared Go-version fixture. This reads
-local stdout only and performs no update or bus action.
+With the binary alone, in an empty directory: `example` writes the one-tool Go
+manifest and `report` reads it. This writes `versions.tsv` and performs no update
+or bus action.
 
 ```text
-$ nova-version report --file cmd/nova-version/testdata/example.tsv
-REPORT at=2026-09-12T17:29:33Z file=cmd/nova-version/testdata/example.tsv host=- as=- entries=1 kinds=engine,harness,model,pin,tool timeout=5s budget=1m0s max=20 snapshot=-
+$ nova-version example --out versions.tsv
+EXAMPLE OK wrote=versions.tsv entries=1 unchanged=false
+EXAMPLE NOTE next: nova-version report --file versions.tsv
+$ nova-version report --file versions.tsv
+REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=24ms file=versions.tsv host=- as=- entries=1 kinds=tool at=2026-10-02T02:55:03Z timeout=5s budget=1m0s max=20 snapshot=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
-REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-version/testdata/example.tsv
 ```
 
 
 ## nova-config
 
-No fixture and no store: the first run reads the kind descriptors and the
-migrations compiled into the binary, so every value below reproduces on
-every bench. The real runs need a Postgres (`nova-config migrate`) and a
-Redis (`nova-config apply`); `docs/nova-config/README.md` walks them, and
+No database: the first run keeps its rows in `./try.json` (`--file`), the
+same kinds, refusals and history as PostgreSQL, and
+`cmd/nova-config/firstrun_test.go` runs each `$` line in `t.TempDir()`. The
+history's `at=` is the instant of the run, the one value that differs on a
+second run. The real runs need a Postgres (`nova-config migrate`) and a Redis
+(`nova-config apply`); `docs/nova-config/README.md` walks them, and
 `cmd/nova-config/config_functional_test.go` runs them against a throwaway
 Postgres and a throwaway Redis.
 
 ### First run
 
 ```text
-$ nova-config kinds
-CONFIG KIND name=machine table=config.machines fields=user,seat,slots,runners required=user,seat,slots rows=many
-CONFIG KIND name=fleet table=config.fleet fields=store,coordinator required=- rows=one
-CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many
-CONFIG KIND name=sprint table=config.sprint fields=coordinator,reader_tier required=- rows=one
-CONFIG KIND name=loop table=config.loops fields=machine,argv,seat,keys,every,keepalive,width,enabled required=machine,argv rows=many
-CONFIG KIND name=route table=config.routes fields=tier,provider,model,tokens,deadline,enabled,price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of required=tier,provider,model,deadline rows=many
-CONFIG KIND name=tier table=config.tiers fields=routes required=- rows=many
-CONFIG KINDS count=7
+$ nova-config migrate --file try.json
+CONFIG MIGRATE file=try.json from=0 to=14 applied=14
 
-$ nova-config migrate --print
-MIGRATION version=1 file=0001_schema.sql lines=23
-MIGRATION version=2 file=0002_machine.sql lines=16
-MIGRATION version=3 file=0003_friend.sql lines=13
-MIGRATION version=4 file=0004_fleet.sql lines=14
-MIGRATION version=5 file=0005_sprint.sql lines=12
-MIGRATION version=6 file=0006_loop.sql lines=27
-MIGRATION version=7 file=0007_route.sql lines=24
-MIGRATION version=8 file=0008_tier.sql lines=18
-MIGRATION version=9 file=0009_route_prices.sql lines=23
-MIGRATION version=10 file=0010_sprint_reader_tier.sql lines=6
-CONFIG MIGRATE print=10 pg=-
+$ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
+CONFIG ADD kind=machine name=m1 rev=1
 
-$ nova-config machine add -h
-usage: nova-config machine add [flags]
-from `nova-config help`:
-  nova-config machine add -h
-flags:
-  --as <string>  the friend making the change (env NOVA_FRIEND); every write records it in config.history
-  --pg <string>  Postgres DSN postgres://user@host:port/db with no password (env NOVA_PG_DSN); the password comes from the variable NOVA_PG_PASSWORD_ENV names
-  --runners <string>  how many CI runners it hosts; 0 (the default) hosts none
-  --seat <string>  its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store
-  --slots <string>  how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none
-  --user <string>  the login the plays and seals use on it (ssh <user>@<name>)
-exit codes: 0 done, 1 refused, 2 usage
+$ nova-config machine set m1 --width 6 --as a1 --file try.json
+CONFIG SET kind=machine name=m1 rev=2 changed=width
+
+$ nova-config machine list --file try.json
+MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6
+CONFIG LIST kind=machine rows=1
+
+$ nova-config machine history m1 --file try.json
+HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z runners=0 seat=s1 slots=8 user=nova width=4
+HISTORY id=2 kind=machine name=m1 op=set actor=a1 at=2026-10-02T03:18:20Z width=4>6
+CONFIG HISTORY kind=machine name=m1 changes=2
 ```
 
-`kinds` is one line per kind: its table under schema `config`, its fields in
+`migrate --file` makes the file at this binary's schema; each write prints
+its history id (`rev=`); `list` is one typed line per row and a count;
+`history` is every change, who made it and when, a set as
+`<field>=<before>><after>`.
+
+`kinds` (no store) is one line per kind: its table under schema `config`, its fields in
 the order every line prints them, the fields `add` requires, and whether the
 kind is many rows or one (`rows=one`: the fleet and the sprint, a row
 `migrate` creates and `set` changes, with no add, remove or list). `migrate --print` lists the
@@ -773,29 +771,35 @@ redis-server, in `cmd/nova-redis/fn_functional_test.go`.
 
 ```text
 $ nova-redis spill --addr 127.0.0.1:6379 --name note --ttl 10m --value hi
-nova-redis spill: --owner is required; refusing to guess; run: nova-redis help
+nova-redis spill REFUSED: --owner is required and may not be empty or hold ':' or whitespace; every key carries an owner prefix; run: nova-redis help spill
 
-$ nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 0s --value hi
-nova-redis spill: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help
+$ nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 0s --value hi
+nova-redis spill REFUSED: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help spill
 
 $ nova-redis fn load
-nova-redis fn load: --addr is required; refusing to guess; run: nova-redis help
+nova-redis fn load REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help fn load
 ```
+
+Each refusal names every problem with the line, one line each, and the
+help to read next. `spill --dry-run` with a good line needs no store either: it
+prints `SPILL OK dry-run=true ... written=0` and dials nothing (the banner's
+`example:` block runs it, `cmd/nova-redis/examples_test.go`).
 
 ## nova-ci
 
-Fixture: `cmd/nova-ci/testdata/example-events.jsonl`. The verb reads on stdin and
-writes nothing, so each `$` line below pipes the fixture in; the transcript was
-produced by running the built binary, not written by hand.
+Fixture: `cmd/nova-ci/testdata/example-events.jsonl`, built into the binary:
+`--example` reads it in place of stdin, so the lines below run from the binary
+alone, and they are the usage banner's `example:` block line for line. The
+transcript was produced by running the built binary, not written by hand.
 
 ### First run
 
 ```text
-$ nova-ci slowtests --budget 60 --load 4 --cpus 16 < cmd/nova-ci/testdata/example-events.jsonl
+$ nova-ci slowtests --example --budget 60 --load 4 --cpus 16
 CI-SLOW package=github.com/mas-bandwidth/nova-tools/internal/example seconds=65.1s budget=60s slowest=TestSlowThing:63.4s,TestAlsoSlow:1.5s
 CI-LOAD load=4.00 cpus=16 per-cpu=0.25: measured, not a verdict
 
-$ nova-ci slowtests --budget 120 --load 4 --cpus 16 < cmd/nova-ci/testdata/example-events.jsonl
+$ nova-ci slowtests --example --budget 120 --load 4 --cpus 16
 CI-SLOW OK packages=2 slowest=github.com/mas-bandwidth/nova-tools/internal/example:65.1s
 CI-LOAD load=4.00 cpus=16 per-cpu=0.25: measured, not a verdict
 ```
@@ -807,10 +811,13 @@ tells the reader whether one test or the whole package is the cost. `--budget`
 is whole seconds and defaults to 60. Both runs exit 0: a CI-SLOW line is a
 measurement, and only `--enforce` makes it exit 2. The
 CI-LOAD line is the host's load average, printed and never judged; `--load` and
-`--cpus` hand it in here so the transcript is the same on every machine. The common mistake is forgetting the
-redirect: with an empty stdin the verb reads zero packages and prints
-`CI-SLOW OK packages=0 slowest=none`, which is why the test step always tees
-the stream first (`.github/workflows/ci.yml`).
+`--cpus` hand it in here so the transcript is the same on every machine. On
+your own module the events come on stdin: `go test -json <packages> |
+nova-ci slowtests --budget 60`. The common mistake is forgetting the pipe: with a
+terminal on stdin the verb refuses at once and names both ways in; with an
+empty stream it reads zero packages and prints `CI-SLOW OK packages=0
+slowest=none`, which is why the test step always tees the stream first
+(`.github/workflows/ci.yml`).
 
 
 ## nova-table
@@ -875,14 +882,16 @@ store. Nothing is normalised: every value on every line reproduces.
 
 ```text
 $ nova-sprint init --readers reader-a,reader-b --members m1
-INIT OK tables=work,readers,merge,fleet view=sprint
+INIT OK tables=work,readers,merge,fleet view=sprint readers=reader-a,reader-b
 MOVED m1 added, down until it beats
 FLEET-UP OK moved=1 refused=0 notes=0 op=fleet-release-t1-1
 STOPPED
+NOTE a twin beats every member at every verb: each member added is up after the next nova-sprint tick
 
 $ nova-sprint add --stream s1 --count 1
 MOVED s1-1 -> ready stream=s1 score=1
 ADD OK moved=1 refused=0 notes=0 op=add-t2-1
+NOTE the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>
 STOPPED  0/1 0.0%
 
 $ nova-sprint start
@@ -897,18 +906,18 @@ TICK OK state=RUNNING idle=no moved=1 notes=2
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint tick
-MOVED deal: s1-1 ready -> working card=s1-1.w1 member=m1
+MOVED deal: s1-1 work ready -> working card=s1-1.w1 member=m1 (fleet ready)
 TABLES rows changed: work=1 readers=0 merge=0 fleet=1
 TICK OK state=RUNNING idle=no moved=1 notes=1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint take --as m1 --epoch 0
-MOVED s1-1.w1 ready -> working member=m1 gen=1
+MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
 PACKET s1-1.w1 attempt=1 gen=1 epoch=0
   branch: sprint/s1-1.w1.g1.e0
   base: the stream's base
   notes: none
-  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --report '<what you did>' [--failed]
+  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
 TAKE OK moved=1 refused=0 notes=0 op=take-t23-1
 0/1 0.0% -> ETA  machine: running
 
@@ -918,7 +927,7 @@ FINISH OK moved=1 refused=0 notes=1 op=finish-t24-1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint tick
-MOVED drain: s1-1.w1 working -> done ok; s1-1 working -> review (finish by boss)
+MOVED drain: s1-1.w1 working -> done ok; s1-1 working -> review (finish by m1)
 MOVED ask: s1-1 asked of reader-a, reader-b
 TABLES rows changed: work=1 readers=2 merge=0 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=0
@@ -945,7 +954,7 @@ READ OK moved=1 refused=0 notes=0 op=read-t30-1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint tick
-MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by boss); s1-1.r1.reader-b reading -> ok (read by boss)
+MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by reader-a); s1-1.r1.reader-b reading -> ok (read by reader-b)
 MOVED accept: s1-1 review -> merging queued (ok from reader-a, reader-b)
 TABLES rows changed: work=1 readers=0 merge=1 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=2

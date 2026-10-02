@@ -7,10 +7,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -30,12 +31,8 @@ func TestTheOpenCodeSourceSumsTheMessageRows(t *testing.T) {
 	writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\ndeepseek\tdeepseek-chat\t7\t3\t\t20\t\n")
 
 	usage, err := ReadProviderUsage(UsageOpenCode, dataHome)
-	if err != nil {
-		t.Fatalf("a readable database is not an error: %v", err)
-	}
-	if !usage.Observed {
-		t.Fatal("a database with message rows has been observed")
-	}
+	require.NoError(t, err, "a readable database is not an error: %v", err)
+	require.True(t, usage.Observed, "a database with message rows has been observed")
 	for _, c := range []struct{ column, want string }{
 		{"tokens_in", "107"},
 		{"tokens_out", "53"},
@@ -47,14 +44,13 @@ func TestTheOpenCodeSourceSumsTheMessageRows(t *testing.T) {
 		// The message table holds no repository, and this reader never invents one.
 		{"repo", Dash},
 	} {
-		if got := usage.Values[c.column]; got != c.want {
-			t.Errorf("%s is %q, want %q", c.column, got, c.want)
-		}
+		got := usage.Values[c.column]
+		assert.Equal(t, c.want, got, "%s is %q, want %q", c.column, got, c.want)
 	}
 	sum, seen, partial := usage.Sum()
-	if sum != 180 || seen != 3 || !partial {
-		t.Errorf("the sum of the observed columns is %d over %d columns (partial=%t), want 180 over 3 (partial=true)", sum, seen, partial)
-	}
+	assert.Equal(t, 180, sum, "the sum of the observed columns is %d over %d columns (partial=%t), want 180 over 3 (partial=true)", sum, seen, partial)
+	assert.Equal(t, 3, seen, "the sum of the observed columns is %d over %d columns (partial=%t), want 180 over 3 (partial=true)", sum, seen, partial)
+	assert.True(t, partial, "the sum of the observed columns is %d over %d columns (partial=%t), want 180 over 3 (partial=true)", sum, seen, partial)
 }
 
 // A DATABASE THAT IS NOT THERE YET IS NOT AN ERROR: it is the provider having reported
@@ -63,15 +59,9 @@ func TestTheOpenCodeSourceSumsTheMessageRows(t *testing.T) {
 func TestAnAbsentOpenCodeDatabaseIsNotAnError(t *testing.T) {
 	fakeSQLite3(t)
 	usage, err := ReadProviderUsage(UsageOpenCode, t.TempDir())
-	if err != nil {
-		t.Fatalf("a database the harness has not written yet is not an error: %v", err)
-	}
-	if usage.Observed {
-		t.Error("nothing was observed, and the reader says so")
-	}
-	if len(usage.Values) != 0 {
-		t.Errorf("nothing was observed, so there are no values: %v", usage.Values)
-	}
+	require.NoError(t, err, "a database the harness has not written yet is not an error: %v", err)
+	assert.False(t, usage.Observed, "nothing was observed, and the reader says so")
+	assert.Empty(t, usage.Values, "nothing was observed, so there are no values: %v", usage.Values)
 }
 
 // A SOURCE THAT FAILS TO READ IS AN ERROR, so rule 13's third sample ends the job RUN
@@ -82,12 +72,8 @@ func TestAnUnreadableOpenCodeDatabaseIsAnError(t *testing.T) {
 	path := writeDB(t, dataHome, "not a database\n")
 
 	usage, err := ReadProviderUsage(UsageOpenCode, dataHome)
-	if err == nil {
-		t.Fatalf("a database that cannot be read is an error, got %+v", usage)
-	}
-	if !strings.Contains(err.Error(), path) {
-		t.Errorf("the refusal names the database: %v", err)
-	}
+	require.Error(t, err, "a database that cannot be read is an error, got %+v", usage)
+	assert.Contains(t, err.Error(), path, "the refusal names the database: %v", err)
 }
 
 // THE STORE IS UNDER THE JOB'S DATA HOME, WHICHEVER NAME OPENCODE GAVE IT (rule 12).
@@ -105,18 +91,12 @@ func TestOpenCodeSourceFindsTheLocalShareStore(t *testing.T) {
 	writeDBAt(t, fallback, "deepseek\tdeepseek-chat\t100\t50\t\t\t\n")
 
 	usage, err := ReadProviderUsage(UsageOpenCode, dataHome)
-	if err != nil {
-		t.Fatalf("a store under the data home's .local/share is readable: %v", err)
-	}
-	if !usage.Observed {
-		t.Fatal("a store with message rows has been observed")
-	}
-	if got := usage.Values["tokens_in"]; got != "100" {
-		t.Errorf("tokens_in is %q, want 100 read from %s", got, fallback)
-	}
-	if got := usage.Values["tokens_out"]; got != "50" {
-		t.Errorf("tokens_out is %q, want 50 read from %s", got, fallback)
-	}
+	require.NoError(t, err, "a store under the data home's .local/share is readable: %v", err)
+	require.True(t, usage.Observed, "a store with message rows has been observed")
+	got := usage.Values["tokens_in"]
+	assert.Equal(t, "100", got, "tokens_in is %q, want 100 read from %s", got, fallback)
+	got = usage.Values["tokens_out"]
+	assert.Equal(t, "50", got, "tokens_out is %q, want 50 read from %s", got, fallback)
 }
 
 // A WRITE-AHEAD LOG THE HARNESS HAS NOT FLUSHED IS WAITED OUT, up to five seconds (rule 13).
@@ -130,23 +110,16 @@ func TestOpenCodeSourceWaitsOutAWriteAheadLog(t *testing.T) {
 	dataHome := t.TempDir()
 	db := writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\n")
 	wal := db + "-wal"
-	if err := os.WriteFile(wal, []byte("unflushed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(wal, []byte("unflushed\n"), 0o644))
 	// The flush lands on the reader's first refusal, not after a sleep: the fake takes the
 	// -wal with it when it answers `database is locked`, so the retry reads a checkpointed
 	// database. The test turns on no clock of its own.
-	if err := os.WriteFile(wal+fakeFlushMarker, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(wal+fakeFlushMarker, nil, 0o644))
 
 	usage, err := ReadProviderUsage(UsageOpenCode, dataHome)
-	if err != nil {
-		t.Fatalf("the read waits out the flush instead of failing: %v", err)
-	}
-	if got := usage.Values["tokens_in"]; got != "100" {
-		t.Errorf("tokens_in is %q, want 100 read after the -wal was flushed", got)
-	}
+	require.NoError(t, err, "the read waits out the flush instead of failing: %v", err)
+	got := usage.Values["tokens_in"]
+	assert.Equal(t, "100", got, "tokens_in is %q, want 100 read after the -wal was flushed", got)
 }
 
 func fakeSQLite3(t *testing.T) string {
@@ -158,9 +131,8 @@ func fakeSQLite3(t *testing.T) string {
 	}
 	cmd := exec.Command("go", "build", "-o", bin, "./testdata/fakesqlite")
 	cmd.Env = goenv.Clean(os.Environ())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building the fake sqlite3: %v\n%s", err, out)
-	}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "building the fake sqlite3: %v\n%s", err, out)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return dir
 }
@@ -169,11 +141,7 @@ func fakeSQLite3(t *testing.T) string {
 // test can plant the store at each location OpenCode may choose.
 func writeDBAt(t *testing.T, path, body string) string {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	return path
 }

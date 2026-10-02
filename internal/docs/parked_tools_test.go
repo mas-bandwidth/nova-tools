@@ -17,26 +17,19 @@ import (
 
 var documentedToolName = regexp.MustCompile(`(?i)\bnova-[a-z][a-z0-9]*(?:-[a-z0-9]+)*\b`)
 
-// Read directory names only: archived code is never built or tested. A tool
-// returned to cmd/ is living again; its former archive location is not a ban.
-// The deleted tool below has no directory left and is also pinned by the
-// README catalogue test. Historical records outside active docs are not read.
+// Read directory names only. A tool returned to cmd/ is living again; its
+// former retirement is not a ban. The deleted tool below has no directory left
+// and is also pinned by the README catalogue test. Historical records outside
+// active docs are not read.
 func parkedDocumentationReferences(tree fs.FS) ([]string, error) {
 	parked := map[string]bool{"nova-pulse": true}
-	for _, dir := range []string{"deprecated/cmd", "cmd"} {
-		entries, err := fs.ReadDir(tree, dir)
-		if err != nil {
-			return nil, err
-		}
-		for _, entry := range entries {
-			if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "nova-") {
-				continue
-			}
-			if dir == "cmd" {
-				delete(parked, entry.Name())
-			} else {
-				parked[entry.Name()] = true
-			}
+	entries, err := fs.ReadDir(tree, "cmd")
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "nova-") {
+			delete(parked, entry.Name())
 		}
 	}
 
@@ -84,13 +77,12 @@ func TestParkedDocumentationReferences(t *testing.T) {
 	t.Parallel()
 	fixture := func() fstest.MapFS {
 		return fstest.MapFS{
-			"cmd/nova-active":                 {Mode: fs.ModeDir},
-			"deprecated/cmd/nova-retired":     {Mode: fs.ModeDir},
-			"README.md":                       {Data: []byte("nova-active help\n")},
-			"docs/CLI.md":                     {Data: []byte("nova-active help\n")},
-			"docs/guide/nested.md":            {Data: []byte("nova-active help\n")},
-			"CHANGELOG.md":                    {Data: []byte("nova-retired historical record\n")},
-			"deprecated/docs/old-contract.md": {Data: []byte("nova-retired historical contract\n")},
+			"cmd/nova-active":       {Mode: fs.ModeDir},
+			"README.md":             {Data: []byte("nova-active help\n")},
+			"docs/CLI.md":           {Data: []byte("nova-active help\n")},
+			"docs/guide/nested.md":  {Data: []byte("nova-active help\n")},
+			"CHANGELOG.md":          {Data: []byte("nova-pulse historical record\n")},
+			"notes/old-contract.md": {Data: []byte("nova-pulse historical contract\n")},
 		}
 	}
 	cases := []struct {
@@ -98,14 +90,13 @@ func TestParkedDocumentationReferences(t *testing.T) {
 		want             int
 	}{
 		{"living", "docs/CLI.md", "nova-active help", 0},
-		{"readme", "README.md", "nova-retired help", 1},
-		{"command", "docs/CLI.md", "`nova-retired run`", 1},
-		{"notice", "docs/CLI.md", "Retired: nova-retired; use nova-active.", 1},
-		{"capitalized", "docs/CLI.md", "Nova-Retired is parked.", 1},
-		{"link", "docs/guide/nested.md", "[guide](../nova-retired.md)", 1},
-		{"nested", "docs/guide/nested.md", "nova-retired help\nnova-retired run", 2},
-		{"distinct-name", "docs/CLI.md", "nova-retired-helper help", 0},
-		{"fully-deleted", "docs/CLI.md", "nova-pulse help", 1},
+		{"readme", "README.md", "nova-pulse help", 1},
+		{"command", "docs/CLI.md", "`nova-pulse run`", 1},
+		{"notice", "docs/CLI.md", "Retired: nova-pulse; use nova-active.", 1},
+		{"capitalized", "docs/CLI.md", "Nova-Pulse is parked.", 1},
+		{"link", "docs/guide/nested.md", "[guide](../nova-pulse.md)", 1},
+		{"nested", "docs/guide/nested.md", "nova-pulse help\nnova-pulse run", 2},
+		{"distinct-name", "docs/CLI.md", "nova-pulse-helper help", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,8 +114,8 @@ func TestParkedDocumentationReferences(t *testing.T) {
 	t.Run("returned-tool", func(t *testing.T) {
 		t.Parallel()
 		tree := fixture()
-		tree["cmd/nova-retired"] = &fstest.MapFile{Mode: fs.ModeDir}
-		tree["docs/CLI.md"] = &fstest.MapFile{Data: []byte("nova-retired help")}
+		tree["cmd/nova-pulse"] = &fstest.MapFile{Mode: fs.ModeDir}
+		tree["docs/CLI.md"] = &fstest.MapFile{Data: []byte("nova-pulse help")}
 		findings, err := parkedDocumentationReferences(tree)
 		require.NoError(t, err)
 		require.Empty(t, findings, "returned tool refused: %v / %v", findings, err)

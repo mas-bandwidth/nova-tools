@@ -10,6 +10,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
@@ -47,22 +50,15 @@ fi
 echo "Fatal error: %s" >&2
 exit 1
 `, fakeSecret)
-	if err := testbin.WriteExecutable(fakeSops, []byte(fakeScript), 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(fakeSops, []byte(fakeScript), 0755))
 
 	out, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath,
 		"--sops", fakeSops, "--only", "GH_TOKEN", "--", "true")
 
-	if code != 125 {
-		t.Fatalf("expected code 125, got %d", code)
-	}
-	if strings.Contains(out, fakeSecret) || strings.Contains(errOut, fakeSecret) {
-		t.Fatalf("leaked fakeSecret in stdout or stderr: %s, %s", out, errOut)
-	}
-	if !strings.Contains(errOut, "transcript withheld") {
-		t.Errorf("expected 'transcript withheld' in stderr: %s", errOut)
-	}
+	require.Equal(t, 125, code, "expected code 125, got %d", code)
+	require.NotContains(t, out, fakeSecret, "leaked fakeSecret in stdout or stderr: %s, %s", out, errOut)
+	require.NotContains(t, errOut, fakeSecret, "leaked fakeSecret in stdout or stderr: %s, %s", out, errOut)
+	assert.Contains(t, errOut, "transcript withheld", "expected 'transcript withheld' in stderr: %s", errOut)
 }
 
 // Test 7: TestTheKeyFileModeIsARefusalOnEveryVerbThatTakesOne
@@ -91,34 +87,29 @@ func TestTheKeyFileModeIsARefusalOnEveryVerbThatTakesOne(t *testing.T) {
 	// 1. 0644 mode
 	_ = os.Chmod(keyA.privPath, 0644)
 	_, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "true")
-	if code != 125 || !strings.Contains(errOut, "chmod 600") {
-		t.Errorf("exec 0644 mode expected 125 with chmod 600, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 125, code, "exec 0644 mode expected 125 with chmod 600, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "chmod 600", "exec 0644 mode expected 125 with chmod 600, got %d: %s", code, errOut)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 2 || !strings.Contains(errOut, "chmod 600") {
-		t.Errorf("check 0644 mode expected 2 with chmod 600, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 2, code, "check 0644 mode expected 2 with chmod 600, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "chmod 600", "check 0644 mode expected 2 with chmod 600, got %d: %s", code, errOut)
 	// names takes no --key and succeeds beside it
 	out, _, code := runNovaSecrets(bin, "names", "--store", storeDir, "--as", "rowan")
-	if code != 0 || !strings.Contains(out, "GH_TOKEN") {
-		t.Errorf("names should succeed regardless of key file mode: code %d, out: %s", code, out)
-	}
+	assert.Equal(t, 0, code, "names should succeed regardless of key file mode: code %d, out: %s", code, out)
+	assert.Contains(t, out, "GH_TOKEN", "names should succeed regardless of key file mode: code %d, out: %s", code, out)
 
 	// 2. 0640 mode
 	_ = os.Chmod(keyA.privPath, 0640)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 2 || !strings.Contains(errOut, "chmod 600") {
-		t.Errorf("check 0640 mode expected 2: %s", errOut)
-	}
+	assert.Equal(t, 2, code, "check 0640 mode expected 2: %s", errOut)
+	assert.Contains(t, errOut, "chmod 600", "check 0640 mode expected 2: %s", errOut)
 
 	// 3. 0600 in 0755 directory
 	_ = os.Chmod(keyA.privPath, 0600)
 	keyDir := filepath.Dir(keyA.privPath)
 	_ = os.Chmod(keyDir, 0755)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 2 || !strings.Contains(errOut, "chmod 700") {
-		t.Errorf("check 0755 dir expected 2 with chmod 700: %s", errOut)
-	}
+	assert.Equal(t, 2, code, "check 0755 dir expected 2 with chmod 700: %s", errOut)
+	assert.Contains(t, errOut, "chmod 700", "check 0755 dir expected 2 with chmod 700: %s", errOut)
 
 	// Restore 0700 on key directory
 	_ = os.Chmod(keyDir, 0700)
@@ -127,9 +118,8 @@ func TestTheKeyFileModeIsARefusalOnEveryVerbThatTakesOne(t *testing.T) {
 	storeKey := filepath.Join(storeDir, "planted.key")
 	_ = os.WriteFile(storeKey, []byte("AGE-SECRET-KEY-1XYZ\n"), 0600)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "private key found in store") {
-		t.Errorf("expected invariant 5 failure when key inside store: code %d, err: %s", code, errOut)
-	}
+	assert.Equal(t, 1, code, "expected invariant 5 failure when key inside store: code %d, err: %s", code, errOut)
+	assert.Contains(t, errOut, "private key found in store", "expected invariant 5 failure when key inside store: code %d, err: %s", code, errOut)
 	_ = os.Remove(storeKey)
 
 	// 5. Stripped # public key: comment in key file
@@ -144,16 +134,13 @@ func TestTheKeyFileModeIsARefusalOnEveryVerbThatTakesOne(t *testing.T) {
 
 	// Refusal on check naming age-keygen -y
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 2 || !strings.Contains(errOut, "age-keygen -y") {
-		t.Errorf("expected check refusal naming age-keygen -y, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 2, code, "expected check refusal naming age-keygen -y, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "age-keygen -y", "expected check refusal naming age-keygen -y, got %d: %s", code, errOut)
 
 	// But NOT on exec (exec never reads public key)
 	_, _, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "all", "--", "true")
-	if code != 0 {
-		t.Errorf("exec should succeed with stripped comment, got code %d", code)
-	}
+	assert.Equal(t, 0, code, "exec should succeed with stripped comment, got code %d", code)
 }
 
 // Test 8: TestTheVersionProbeMakesNoNetworkCall
@@ -181,25 +168,22 @@ func TestTheVersionProbeMakesNoNetworkCall(t *testing.T) {
 	oldSops := filepath.Join(td, "old-sops")
 	_ = testbin.WriteExecutable(oldSops, []byte("#!/bin/sh\necho 'sops 3.9.0'\n"), 0755)
 	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", oldSops)
-	if code != 2 || !strings.Contains(errOut, "brew upgrade sops") {
-		t.Errorf("expected brew upgrade refusal, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 2, code, "expected brew upgrade refusal, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "brew upgrade sops", "expected brew upgrade refusal, got %d: %s", code, errOut)
 
 	// 2. banana is refused as unparseable
 	bananaSops := filepath.Join(td, "banana-sops")
 	_ = testbin.WriteExecutable(bananaSops, []byte("#!/bin/sh\necho 'banana'\n"), 0755)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", bananaSops)
-	if code != 2 || !strings.Contains(errOut, "unable to parse sops version") {
-		t.Errorf("expected unparseable version refusal, got %d: %s", code, errOut)
-	}
+	assert.Equal(t, 2, code, "expected unparseable version refusal, got %d: %s", code, errOut)
+	assert.Contains(t, errOut, "unable to parse sops version", "expected unparseable version refusal, got %d: %s", code, errOut)
 
 	// 3. Absent vs non-executable
 	nonExecSops := filepath.Join(td, "nonexec-sops")
 	_ = os.WriteFile(nonExecSops, []byte("echo hi\n"), 0644)
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", nonExecSops)
-	if code != 2 || !strings.Contains(errOut, "absent or not executable") {
-		t.Errorf("expected absent or not executable refusal: %s", errOut)
-	}
+	assert.Equal(t, 2, code, "expected absent or not executable refusal: %s", errOut)
+	assert.Contains(t, errOut, "absent or not executable", "expected absent or not executable refusal: %s", errOut)
 
 	// 4. The probe itself: every call of sops' version probe carries
 	// --disable-version-check (sops otherwise asks GitHub for the latest release) and an
@@ -217,19 +201,15 @@ func TestTheVersionProbeMakesNoNetworkCall(t *testing.T) {
 	} {
 		_ = os.Remove(probeLog)
 		_, errOut, code, _ := runWithEnv(bin, callerEnv, verb...)
-		if code != 0 {
-			t.Fatalf("%s through the recording sops: exit %d: %s", verb[0], code, errOut)
-		}
+		require.Equal(t, 0, code, "%s through the recording sops: exit %d: %s", verb[0], code, errOut)
 		logged, err := os.ReadFile(probeLog)
-		if err != nil {
-			t.Fatalf("%s ran no version probe: %v", verb[0], err)
-		}
+		require.NoError(t, err, "%s ran no version probe: %v", verb[0], err)
 		for _, line := range strings.Split(strings.TrimSpace(string(logged)), "\n") {
-			if strings.HasPrefix(line, "ARGS ") && !strings.Contains(line, "--disable-version-check") {
-				t.Errorf("%s: the version probe can reach the network: %s", verb[0], line)
+			if strings.HasPrefix(line, "ARGS ") {
+				assert.Contains(t, line, "--disable-version-check", "%s: the version probe can reach the network: %s", verb[0], line)
 			}
-			if strings.HasPrefix(line, "ENV ") && strings.Contains(strings.ToUpper(line), "PROXY") {
-				t.Errorf("%s: the version probe inherited an egress helper: %s", verb[0], line)
+			if strings.HasPrefix(line, "ENV ") {
+				assert.NotContains(t, strings.ToUpper(line), "PROXY", "%s: the version probe inherited an egress helper: %s", verb[0], line)
 			}
 		}
 	}
@@ -252,9 +232,7 @@ func TestTheVersionProbeMakesNoNetworkCall(t *testing.T) {
 		{"exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "true"},
 	} {
 		out, errOut, code := inWall(sb, home, reads, true, append([]string{bin}, verb...)...)
-		if code != 0 {
-			t.Errorf("%s with egress blocked: exit %d, want 0\nstdout: %s\nstderr: %s", verb[0], code, out, errOut)
-		}
+		assert.Equal(t, 0, code, "%s with egress blocked: exit %d, want 0\nstdout: %s\nstderr: %s", verb[0], code, out, errOut)
 	}
 }
 
@@ -280,9 +258,7 @@ func buildNovaSandbox(t *testing.T) string {
 		build.Env = goenv.Clean(os.Environ())
 		sandboxOut, sandboxErr = build.CombinedOutput()
 	})
-	if sandboxErr != nil {
-		t.Fatalf("failed to build nova-sandbox: %v, out: %s", sandboxErr, sandboxOut)
-	}
+	require.NoError(t, sandboxErr, "failed to build nova-sandbox: %v, out: %s", sandboxErr, sandboxOut)
 	return sandboxBin
 }
 
@@ -351,15 +327,10 @@ func TestARequireThatIsMissingRefusesBeforeTheCommandStarts(t *testing.T) {
 	_, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "all", "--require", "MISSING_Z", "--require", "MISSING_A", "--", "touch", sentinel)
 
-	if code != 125 {
-		t.Fatalf("expected code 125, got %d", code)
-	}
-	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
-		t.Fatalf("sentinel was created despite missing required keys!")
-	}
-	if !strings.Contains(errOut, "MISSING_A, MISSING_Z") {
-		t.Errorf("expected missing keys to be reported sorted, got: %s", errOut)
-	}
+	require.Equal(t, 125, code, "expected code 125, got %d", code)
+	_, err := os.Stat(sentinel)
+	require.True(t, os.IsNotExist(err), "sentinel was created despite missing required keys!")
+	assert.Contains(t, errOut, "MISSING_A, MISSING_Z", "expected missing keys to be reported sorted, got: %s", errOut)
 }
 
 // Test 10: TestAMultiLineValueIsRefusedWithGenerateItWhereItIsUsed
@@ -390,22 +361,15 @@ func TestAMultiLineValueIsRefusedWithGenerateItWhereItIsUsed(t *testing.T) {
 	// exec refuses naming key and printing remedy
 	_, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
 		"--only", "all", "--", "true")
-	if code != 125 {
-		t.Fatalf("expected code 125, got %d", code)
-	}
-	if !strings.Contains(errOut, "key=SPACE_KEY: value is multi-line; a file-shaped secret is not an environment variable.") ||
-		!strings.Contains(errOut, "generate it where it is used: this store holds no file-shaped secrets.") {
-		t.Errorf("expected multi-line refusal text, got: %s", errOut)
-	}
+	require.Equal(t, 125, code, "expected code 125, got %d", code)
+	assert.Contains(t, errOut, "key=SPACE_KEY: value is multi-line; a file-shaped secret is not an environment variable.", "expected multi-line refusal text, got: %s", errOut)
+	assert.Contains(t, errOut, "generate it where it is used: this store holds no file-shaped secrets.", "expected multi-line refusal text, got: %s", errOut)
 
 	// names lists it with NO --key, NO --sops, and no sops process started
 	badSops := filepath.Join(td, "bad-sops-would-fail")
 	out, _, code := runNovaSecrets(bin, "names", "--store", storeDir, "--as", "rowan")
-	if code != 0 {
-		t.Fatalf("names failed: %d", code)
-	}
-	if !strings.Contains(out, "key=SPACE_KEY") || !strings.Contains(out, "key=GH_TOKEN") {
-		t.Errorf("names missing SPACE_KEY or GH_TOKEN: %s", out)
-	}
+	require.Equal(t, 0, code, "names failed: %d", code)
+	assert.Contains(t, out, "key=SPACE_KEY", "names missing SPACE_KEY or GH_TOKEN: %s", out)
+	assert.Contains(t, out, "key=GH_TOKEN", "names missing SPACE_KEY or GH_TOKEN: %s", out)
 	_ = badSops
 }

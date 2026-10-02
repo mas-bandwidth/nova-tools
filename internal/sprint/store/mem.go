@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -57,11 +58,10 @@ type memState struct {
 	// after its cursor: it is handed the time the wait may take and returns
 	// when it has passed (a test's clock steps by it, or appends a line). Nil
 	// waits on the wall clock for a line or the time, whichever comes first.
-	LogWait    func(d time.Duration)
-	logged     chan struct{}       // closed, and replaced, by every commit that appends to a log
-	routes     []sprint.Route      // the model tiers' routes (routes.go)
-	tiers      map[string][]string // the tiers' route arrays (routes.go)
-	readerTier string              // the sprint row's reader tier (routes.go)
+	LogWait func(d time.Duration)
+	logged  chan struct{}       // closed, and replaced, by every commit that appends to a log
+	routes  []sprint.Route      // the model tiers' routes (routes.go)
+	tiers   map[string][]string // the tiers' route arrays (routes.go)
 }
 
 // memLog is one epoch's sprint keys.
@@ -278,16 +278,12 @@ func (m *Mem) Shapes(_ context.Context, tables []string) ([]ntable.Table, error)
 		s.Props = nil
 		if len(ep.props) > 0 {
 			s.Props = make(map[string]string, len(ep.props))
-			for k, v := range ep.props {
-				s.Props[k] = v
-			}
+			maps.Copy(s.Props, ep.props)
 		}
 		for _, r := range ep.rows {
 			row := ntable.NewRow(s, r)
 			row.Texts = map[string]string{}
-			for k, v := range ep.texts[r] {
-				row.Texts[k] = v
-			}
+			maps.Copy(row.Texts, ep.texts[r])
 			for j, c := range s.Columns {
 				if c.HasSet() {
 					for _, mm := range t.members {
@@ -357,9 +353,7 @@ func (m *Mem) ReadSet(_ context.Context, table string, ids []string) (ntable.Rea
 			continue
 		}
 		f := map[string]string{}
-		for k, v := range mm.fields {
-			f[k] = v
-		}
+		maps.Copy(f, mm.fields)
 		rm := ntable.ReadSetMember{ID: id, Revision: mm.rev, Placed: mm.placed, Fields: f}
 		if mm.placed {
 			rm.Row, rm.Col, rm.Score = mm.row, mm.col, mm.score
@@ -371,7 +365,7 @@ func (m *Mem) ReadSet(_ context.Context, table string, ids []string) (ntable.Rea
 }
 
 func (t *memTable) owned(e uint64, row, col string) bool {
-	if !containsStr(t.at(e).rows, row) {
+	if !slices.Contains(t.at(e).rows, row) {
 		return false
 	}
 	for _, c := range t.def.Columns {
@@ -470,9 +464,7 @@ func (m *Mem) Apply(_ context.Context, man ntable.BatchManifest) (ntable.Receipt
 		if ep.props == nil {
 			ep.props = map[string]string{}
 		}
-		for name, v := range changedProps {
-			ep.props[name] = v
-		}
+		maps.Copy(ep.props, changedProps)
 		delta.Props = changedProps
 	}
 	for _, e := range man.Members {
@@ -535,7 +527,7 @@ func (t *memTable) judge(active uint64, e ntable.BatchMemberEntry) error {
 			switch {
 			case g.Equals != nil && (!ok || v != *g.Equals),
 				g.Absent != nil && ok,
-				g.OneOf != nil && (!ok || !containsStr(g.OneOf, v)):
+				g.OneOf != nil && (!ok || !slices.Contains(g.OneOf, v)):
 				return refusal("FIELDGUARD", "member "+e.ID+" field "+name)
 			}
 		}
@@ -547,15 +539,6 @@ func (t *memTable) judge(active uint64, e ntable.BatchMemberEntry) error {
 		return refusal("NOCOL", "member "+e.ID+": no owned cell "+e.Move.Row+":"+e.Move.Col)
 	}
 	return nil
-}
-
-func containsStr(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
 }
 
 func place(mm *memMember) string {
@@ -645,7 +628,7 @@ func (m *Mem) RowsAdd(_ context.Context, table string, rows []string) error {
 	}
 	ep := t.at(m.active(t))
 	for _, r := range rows {
-		if !containsStr(ep.rows, r) {
+		if !slices.Contains(ep.rows, r) {
 			ep.rows = append(ep.rows, r)
 		}
 	}
@@ -669,6 +652,10 @@ func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
 		return err
 	}
 	ep := t.at(m.active(t))
+	// unplaced is the members the delete took off the table: the change names
+	// them, as the table layer's change stream does (a twin catching up reads
+	// them again)
+	var unplaced []string
 	for _, r := range rows {
 		i := slices.Index(ep.rows, r)
 		if i < 0 {
@@ -676,16 +663,18 @@ func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
 		}
 		ep.rows = slices.Delete(ep.rows, i, i+1)
 		delete(ep.texts, r)
-		for _, mm := range t.members {
+		for id, mm := range t.members {
 			if mm.placed && mm.epoch == m.active(t) && mm.row == r {
 				mm.placed, mm.row, mm.col = false, "", ""
 				mm.rev++
+				unplaced = append(unplaced, id)
 			}
 		}
 	}
+	slices.Sort(unplaced)
 	t.rev++
 	t.wrote[m.active(t)] = true
-	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_del"})
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_del", ids: unplaced})
 	return nil
 }
 
@@ -715,7 +704,7 @@ func (m *Mem) RowSet(_ context.Context, table, row string, texts map[string]stri
 		return err
 	}
 	ep := t.at(m.active(t))
-	if !containsStr(ep.rows, row) {
+	if !slices.Contains(ep.rows, row) {
 		return refusal("NOROW", "no row "+row)
 	}
 	// as the store's ns_table_row_set: a column the table lacks, or one that is no
@@ -732,9 +721,7 @@ func (m *Mem) RowSet(_ context.Context, table, row string, texts map[string]stri
 	if ep.texts[row] == nil {
 		ep.texts[row] = map[string]string{}
 	}
-	for k, v := range texts {
-		ep.texts[row][k] = v
-	}
+	maps.Copy(ep.texts[row], texts)
 	t.rev++
 	t.wrote[m.active(t)] = true
 	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_set"})
@@ -955,9 +942,7 @@ func (m *Mem) Progress(context.Context) (map[string]time.Time, error) {
 	defer m.mu.Unlock()
 	l := m.log()
 	out := map[string]time.Time{}
-	for k, v := range l.progress {
-		out[k] = v
-	}
+	maps.Copy(out, l.progress)
 	return out, nil
 }
 
@@ -1151,3 +1136,37 @@ func (m *Mem) Trips() int64 {
 }
 
 var _ Tripper = (*Mem)(nil)
+
+// RowsOrder puts the named rows first, in that order, the rest after them as
+// they stood: the table layer's row order, under RowsAdd's epoch check.
+func (m *Mem) RowsOrder(_ context.Context, table string, rows []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["roworder"]++
+	t, err := m.table(table)
+	if err != nil {
+		return err
+	}
+	if err := m.writeEpoch(t); err != nil {
+		return err
+	}
+	ep := t.at(m.active(t))
+	var order []string
+	for _, r := range rows {
+		if slices.Contains(ep.rows, r) && !slices.Contains(order, r) {
+			order = append(order, r)
+		}
+	}
+	for _, r := range ep.rows {
+		if !slices.Contains(order, r) {
+			order = append(order, r)
+		}
+	}
+	ep.rows = order
+	t.rev++
+	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_order"})
+	return nil
+}
+
+var _ RowsOrderer = (*Mem)(nil)

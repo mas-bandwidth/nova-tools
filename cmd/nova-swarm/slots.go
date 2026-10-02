@@ -47,10 +47,10 @@ func cmdSlots(args []string, stdout, stderr io.Writer) int {
 // a live store is a hand edit of shares.tsv, which is a two-column TSV a person can read.
 func cmdSlotsInit(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("slots init")
-	store := f.fs.String("store", "", "")
-	owner := f.fs.String("owner", "", "")
-	capacity := f.fs.Int("capacity", 0, "")
-	share := f.fs.Int("share", 0, "")
+	store := f.fs.String("store", "", "required: the store `dir` to create, to hold shares.tsv and slots/")
+	owner := f.fs.String("owner", "", "required: the one `owner` the store starts with")
+	capacity := f.fs.Int("capacity", 0, "required: how many leases the bench grants at once, at least 1")
+	share := f.fs.Int("share", 0, "required: how many of those the owner may hold at once, at least 1 and at most --capacity")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -118,12 +118,12 @@ func slotsSubdir(store string) string { return filepath.Join(store, "slots") }
 
 func cmdSlotsTake(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("slots take")
-	store := f.fs.String("store", "", "")
-	owner := f.fs.String("owner", "", "")
-	n := f.fs.Int("n", 0, "")
-	forDur := f.fs.String("for", "", "")
-	label := f.fs.String("label", "", "")
-	kind := f.fs.String("kind", "", "")
+	store := f.fs.String("store", "", "required: the store `dir` holding shares.tsv and slots/")
+	owner := f.fs.String("owner", "", "required: whose share the leases count against")
+	n := f.fs.Int("n", 0, "required: how many leases to grant, at least 1")
+	forDur := f.fs.String("for", "", "required: how long the leases last, a positive `duration` such as 30m")
+	label := f.fs.String("label", "", "a `label` the leases carry, which slots release --label frees")
+	kind := f.fs.String("kind", "", "the card's `kind`, charged at its admission weight")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -159,16 +159,16 @@ func cmdSlotsTake(args []string, stdout, stderr io.Writer) int {
 
 func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("slots release")
-	store := f.fs.String("store", "", "")
-	owner := f.fs.String("owner", "", "")
-	label := f.fs.String("label", "", "")
-	all := f.fs.Bool("all", false, "")
+	store := f.fs.String("store", "", "required: the store `dir` holding shares.tsv and slots/")
+	owner := f.fs.String("owner", "", "required: whose leases are freed")
+	label := f.fs.String("label", "", "free the owner's leases carrying this `label` (or --all)")
+	all := f.fs.Bool("all", false, "free every lease of the owner (or --label)")
 	// --force is the loud way to free a seat whose holder is still running (#1902). It
 	// exists because a person can know something the store cannot -- a holder on another
 	// host, a pid the kernel has since handed to somebody else -- and it is a flag rather
 	// than the default because freeing a live seat without stopping its holder is how two
 	// cards end up on a one-seat bench.
-	force := f.fs.Bool("force", false, "")
+	force := f.fs.Bool("force", false, "free a lease whose holder is still running too: an operator's act, which can oversubscribe the bench")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -200,13 +200,17 @@ func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 
 func cmdSlotsList(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("slots list")
-	store := f.fs.String("store", "", "")
+	store := f.fs.String("store", "", "required: the store `dir` holding shares.tsv and slots/")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.want(*store, "store", "the directory holding shares.tsv and slots/")
 	if f.refused(stderr) {
 		return 2
+	}
+	// a directory that is no store is refused, never listed as empty (tool ledger W13)
+	if _, err := os.Stat(filepath.Join(*store, "shares.tsv")); err != nil {
+		return refuse(stderr, " slots list", fmt.Sprintf("--store %s is no slot store (it holds no shares.tsv); run: nova-swarm slots init --store %s --owner <name> --capacity <n> --share <n>", oneline.Field(*store), oneline.Field(*store)))
 	}
 	now := time.Now().UTC()
 	leases, err := swarm.ListSlotLeases(*store, now)
@@ -217,5 +221,7 @@ func cmdSlotsList(args []string, stdout, stderr io.Writer) int {
 	for _, l := range leases {
 		fmt.Fprintln(stdout, l.Line(now))
 	}
+	// the count closes the listing, so an empty store says so rather than printing nothing
+	fmt.Fprintf(stdout, "SLOTS OK store=%s leases=%d\n", oneline.Field(*store), len(leases))
 	return 0
 }

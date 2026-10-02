@@ -481,7 +481,7 @@ func TestGeneralityGuardrail(t *testing.T) {
 
 	var files []GeneralitySourceFile
 	for _, f := range tree.GoFilesUnder(false, "cmd", "internal", "tools") {
-		if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("deprecated") {
+		if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") {
 			continue
 		}
 		files = append(files, GeneralitySourceFile{Rel: f.Rel, Src: f.Src})
@@ -492,7 +492,7 @@ func TestGeneralityGuardrail(t *testing.T) {
 	require.NoError(t, err)
 	if allowlist.Updating() {
 		for _, v := range generalitySortedViolations(allow) {
-			t.Error(v)
+			assert.Fail(t, v)
 		}
 		if t.Failed() {
 			return
@@ -504,7 +504,7 @@ func TestGeneralityGuardrail(t *testing.T) {
 
 	violations := checkGenerality(files, allow)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 
@@ -557,9 +557,7 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 		got := extractGeneralityTokens(tc.input)
 		sort.Strings(got)
 		sort.Strings(tc.want)
-		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
-			t.Errorf("extractGeneralityTokens(%q) = %v, want %v", tc.input, got, tc.want)
-		}
+		assert.Equal(t, strings.Join(tc.want, ","), strings.Join(got, ","), "extractGeneralityTokens(%q) = %v, want %v", tc.input, got, tc.want)
 	}
 }
 
@@ -583,9 +581,8 @@ func TestGeneralitySpaceHasNoSyntaxException(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			counts, _, _ := measureGeneralityCounts([]GeneralitySourceFile{{Rel: tc.rel, Src: []byte(tc.src)}})
-			if got := counts[tc.rel+":space"]; got != tc.want {
-				t.Errorf("space count = %d, want %d; cleaned source = %q", got, tc.want, cleanSourceForGenerality(tc.rel, []byte(tc.src)))
-			}
+			got := counts[tc.rel+":space"]
+			assert.Equal(t, tc.want, got, "space count = %d, want %d; cleaned source = %q", got, tc.want, cleanSourceForGenerality(tc.rel, []byte(tc.src)))
 		})
 	}
 }
@@ -623,18 +620,14 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 			{Rel: "test/file.go", Src: []byte("package test\nfunc foo() {\n\tmsg := \"hello glenn\"\n}\n")},
 		}
 		violationsOne := checkGenerality(oneOccurrence, allow)
-		if len(violationsOne) != 0 {
-			t.Fatalf("expected 1 occurrence to pass, got violations: %v", violationsOne)
-		}
+		require.Empty(t, violationsOne, "expected 1 occurrence to pass, got violations: %v", violationsOne)
 
 		// 2 occurrences: adding a second occurrence to the allowed file must fail!
 		twoOccurrences := []GeneralitySourceFile{
 			{Rel: "test/file.go", Src: []byte("package test\nfunc foo() {\n\tmsg := \"hello glenn\"\n\tsecond := \"glenn\"\n}\n")},
 		}
 		violationsTwo := checkGenerality(twoOccurrences, allow)
-		if len(violationsTwo) == 0 {
-			t.Fatalf("expected adding a second occurrence of an allowed token to fail, but it passed!")
-		}
+		require.NotEmpty(t, violationsTwo, "expected adding a second occurrence of an allowed token to fail, but it passed!")
 		matched := false
 		for _, v := range violationsTwo {
 			if strings.Contains(v, "exceeds allowed count 1") {
@@ -642,23 +635,18 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 				break
 			}
 		}
-		if !matched {
-			t.Fatalf("expected violation to mention 'exceeds allowed count 1', got: %v", violationsTwo)
-		}
+		require.True(t, matched, "expected violation to mention 'exceeds allowed count 1', got: %v", violationsTwo)
 	})
 
 	t.Run("adjacent-account-count", func(t *testing.T) {
 		a := generalityFixtureLedger(t, "@root.txt", "# ceiling: 1\nfixture.go:mas-bandwidth 1\n")
 		one := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\nconst owner = \"mas-bandwidth\"\n")}}
-		if v := checkGenerality(one, a); len(v) != 0 {
-			t.Fatalf("control: %v", v)
-		}
+		vOne := checkGenerality(one, a)
+		require.Empty(t, vOne, "control: %v", vOne)
 		two := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\nconst owner = \"mas-bandwidth mas-bandwidth\"\n")}}
 		v := checkGenerality(two, a)
 		t.Logf("two occurrences: %v", v)
-		if len(v) == 0 {
-			t.Error("second account occurrence escaped existing ceiling")
-		}
+		assert.NotEmpty(t, v, "second account occurrence escaped existing ceiling")
 	})
 
 	for _, tc := range []struct {
@@ -671,9 +659,7 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 			a := generalityFixtureLedger(t, "@root.txt", "# ceiling: 0\n")
 			v := checkGenerality([]GeneralitySourceFile{{Rel: "fixture.go", Src: []byte(tc.src)}}, a)
 			t.Logf("runtime string violations: %v", v)
-			if len(v) == 0 {
-				t.Error("runtime string mistaken for exempt comment or import")
-			}
+			assert.NotEmpty(t, v, "runtime string mistaken for exempt comment or import")
 		})
 	}
 
@@ -681,21 +667,18 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 		a := generalityFixtureLedger(t, "@root.txt", "# ceiling: 0\n")
 		// Real AST comment with marked example must be exempt
 		commentPass := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\n// bench name (e.g. \"hulk\", \"space\")\nfunc foo() {}\n")}}
-		if v := checkGenerality(commentPass, a); len(v) != 0 {
-			t.Errorf("legitimate marked comment failed: %v", v)
-		}
+		vComment := checkGenerality(commentPass, a)
+		assert.Empty(t, vComment, "legitimate marked comment failed: %v", vComment)
 
 		// Real AST import must be exempt
 		importPass := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\nimport (\n\t\"github.com/mas-bandwidth/nova-tools/internal/ci\"\n)\n")}}
-		if v := checkGenerality(importPass, a); len(v) != 0 {
-			t.Errorf("legitimate import failed: %v", v)
-		}
+		vImport := checkGenerality(importPass, a)
+		assert.Empty(t, vImport, "legitimate import failed: %v", vImport)
 
 		// Unmarked AST comment must NOT be exempt
 		commentFail := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\n// glenn was here\nfunc foo() {}\n")}}
-		if v := checkGenerality(commentFail, a); len(v) == 0 {
-			t.Error("unmarked AST comment with forbidden token was unexpectedly exempted")
-		}
+		vUnmarked := checkGenerality(commentFail, a)
+		assert.NotEmpty(t, vUnmarked, "unmarked AST comment with forbidden token was unexpectedly exempted")
 	})
 
 	t.Run("unicode-before-account", func(t *testing.T) {
@@ -703,9 +686,7 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 			src := "package fixture\nconst label = \"" + prefix + "mas-bandwidth\"\n"
 			counts, _, _ := measureGeneralityCounts([]GeneralitySourceFile{{Rel: "fixture.go", Src: []byte(src)}})
 			t.Logf("prefix=%q counts=%v", prefix, counts)
-			if counts["fixture.go:mas-bandwidth"] != 1 {
-				t.Errorf("Unicode prefix %q hid account token", prefix)
-			}
+			assert.Equal(t, 1, counts["fixture.go:mas-bandwidth"], "Unicode prefix %q hid account token", prefix)
 		}
 	})
 }
@@ -751,23 +732,18 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				p := filepath.Join(t.TempDir(), "@root.txt")
 				old := "# ceiling: 1\nfixture.go:glenn 2\nfixture.go:hulk 2\n"
-				if err := os.WriteFile(p, []byte(old), 0600); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, os.WriteFile(p, []byte(old), 0600))
 				err := update(p, tc.measured)
 				want := tc.want
 				if want == "" {
 					want = old
-					if err == nil || !strings.Contains(err.Error(), "ceiling") {
-						t.Errorf("want original ceiling refusal, got %v", err)
-					}
-				} else if err != nil {
-					t.Fatalf("removing enough rows should repair the list: %v", err)
+					assert.True(t, err != nil && strings.Contains(err.Error(), "ceiling"), "want original ceiling refusal, got %v", err)
+				} else {
+					require.NoError(t, err, "removing enough rows should repair the list: %v", err)
 				}
 				raw, err := os.ReadFile(p)
-				if err != nil || string(raw) != want {
-					t.Fatalf("ledger=%q (%v), want %q", raw, err, want)
-				}
+				require.NoError(t, err, "ledger=%q (%v), want %q", raw, err, want)
+				require.Equal(t, want, string(raw), "ledger=%q (%v), want %q", raw, err, want)
 			})
 		}
 	})
@@ -775,57 +751,35 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 	t.Run("refuses-growth-new-key", func(t *testing.T) {
 		p := filepath.Join(t.TempDir(), "@root.txt")
 		old := "# ceiling: 1\nfixture.go:glenn 1\n"
-		if err := os.WriteFile(p, []byte(old), 0600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(p, []byte(old), 0600))
 		measured := map[string]int{"fixture.go:glenn": 1, "fixture.go:hulk": 1}
 		err := update(p, measured)
-		if err == nil {
-			t.Fatal("expected error on attempted growth with new key, got nil")
-		}
-		if !strings.Contains(err.Error(), "refuses to grow") || !strings.Contains(err.Error(), "fixture.go:hulk") {
-			t.Fatalf("expected error mentioning refusal to grow and unlisted key, got: %v", err)
-		}
+		require.Error(t, err, "expected error on attempted growth with new key, got nil")
+		require.True(t, strings.Contains(err.Error(), "refuses to grow") && strings.Contains(err.Error(), "fixture.go:hulk"), "expected error mentioning refusal to grow and unlisted key, got: %v", err)
 		// Ledger on disk must remain untouched
 		raw, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(raw) != old {
-			t.Fatalf("ledger was modified despite refusal: got %q, want %q", string(raw), old)
-		}
+		require.NoError(t, err)
+		require.Equal(t, old, string(raw), "ledger was modified despite refusal: got %q, want %q", string(raw), old)
 	})
 
 	t.Run("refuses-growth-increased-count", func(t *testing.T) {
 		p := filepath.Join(t.TempDir(), "@root.txt")
 		old := "# ceiling: 1\nfixture.go:glenn 1\n"
-		if err := os.WriteFile(p, []byte(old), 0600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(p, []byte(old), 0600))
 		measured := map[string]int{"fixture.go:glenn": 2}
 		err := update(p, measured)
-		if err == nil {
-			t.Fatal("expected error on attempted growth with increased count, got nil")
-		}
-		if !strings.Contains(err.Error(), "refuses to raise a count") || !strings.Contains(err.Error(), "measured at 2") {
-			t.Fatalf("expected error mentioning refusal to grow and count exceed, got: %v", err)
-		}
+		require.Error(t, err, "expected error on attempted growth with increased count, got nil")
+		require.True(t, strings.Contains(err.Error(), "refuses to raise a count") && strings.Contains(err.Error(), "measured at 2"), "expected error mentioning refusal to grow and count exceed, got: %v", err)
 		// Ledger on disk must remain untouched
 		raw, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(raw) != old {
-			t.Fatalf("ledger was modified despite refusal: got %q, want %q", string(raw), old)
-		}
+		require.NoError(t, err)
+		require.Equal(t, old, string(raw), "ledger was modified despite refusal: got %q, want %q", string(raw), old)
 	})
 
 	t.Run("clean-write-on-shrinking", func(t *testing.T) {
 		p := filepath.Join(t.TempDir(), "@root.txt")
 		old := "# comment\n# ceiling: 3\nfixture.go:emma 2\nfixture.go:glenn 3\nfixture.go:rowan 1\n"
-		if err := os.WriteFile(p, []byte(old), 0600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(p, []byte(old), 0600))
 		// Shrink emma from 2 to 1, keep glenn at 3, drop rowan (absent / 0)
 		measured := map[string]int{
 			"fixture.go:emma":  1,
@@ -833,34 +787,18 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 			"fixture.go:rowan": 0,
 		}
 		err := update(p, measured)
-		if err != nil {
-			t.Fatalf("clean shrinking should succeed, got: %v", err)
-		}
+		require.NoError(t, err, "clean shrinking should succeed, got: %v", err)
 		raw, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		parsed, err := allowlist.Parse(p, string(raw), allowlist.Options{Ceiling: true, Counted: true})
-		if err != nil {
-			t.Fatalf("failed to parse updated allowlist: %v", err)
-		}
+		require.NoError(t, err, "failed to parse updated allowlist: %v", err)
 		ceil, ok := parsed.Ceiling()
-		if !ok || ceil != 2 {
-			t.Fatalf("expected ceiling 2, got %d (ok=%v)", ceil, ok)
-		}
-		if len(parsed.Rows()) != 2 {
-			t.Fatalf("expected 2 rows, got %d", len(parsed.Rows()))
-		}
-		if !parsed.Has("fixture.go:emma") || !parsed.Has("fixture.go:glenn") {
-			t.Fatalf("expected emma and glenn in rows, got: %v", parsed.Rows())
-		}
-		if parsed.Has("fixture.go:rowan") {
-			t.Fatalf("expected rowan to be dropped from rows, got: %v", parsed.Rows())
-		}
+		require.True(t, ok && ceil == 2, "expected ceiling 2, got %d (ok=%v)", ceil, ok)
+		require.Equal(t, 2, len(parsed.Rows()), "expected 2 rows, got %d", len(parsed.Rows()))
+		require.True(t, parsed.Has("fixture.go:emma") && parsed.Has("fixture.go:glenn"), "expected emma and glenn in rows, got: %v", parsed.Rows())
+		require.False(t, parsed.Has("fixture.go:rowan"), "expected rowan to be dropped from rows, got: %v", parsed.Rows())
 		expected := "# comment\n# ceiling: 2\nfixture.go:emma 1\nfixture.go:glenn 3\n"
-		if string(raw) != expected {
-			t.Fatalf("unexpected content:\ngot:\n%s\nwant:\n%s", string(raw), expected)
-		}
+		require.Equal(t, expected, string(raw), "unexpected content:\ngot:\n%s\nwant:\n%s", string(raw), expected)
 	})
 
 	t.Run("reason-and-comments-survive-count-lowering", func(t *testing.T) {

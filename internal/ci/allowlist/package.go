@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -132,13 +134,8 @@ func (p *Packages) Rows() []Row {
 }
 
 func (p *Packages) Lists() []*List {
-	names := make([]string, 0, len(p.shards))
-	for name := range p.shards {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	lists := make([]*List, 0, len(names))
-	for _, name := range names {
+	lists := make([]*List, 0, len(p.shards))
+	for _, name := range slices.Sorted(maps.Keys(p.shards)) {
 		lists = append(lists, p.shards[name])
 	}
 	return lists
@@ -200,17 +197,12 @@ func CheckPackagesCountedMode(r Reporter, p *Packages, measured map[string]int, 
 			byPackage[pkg] = make(map[string]int)
 		}
 	}
-	names := make([]string, 0, len(byPackage))
-	for pkg := range byPackage {
-		names = append(names, pkg)
-	}
-	sort.Strings(names)
 	type plan struct {
 		list *List
 		text string
 	}
 	var plans []plan
-	for _, pkg := range names {
+	for _, pkg := range slices.Sorted(maps.Keys(byPackage)) {
 		list := p.shards[pkg]
 		if list == nil {
 			file, err := packageShardPath(p.Path, pkg)

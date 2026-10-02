@@ -7,25 +7,21 @@ package store
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/require"
 )
 
 // readInbox is the coordinator reading the inbox and moving the cursor past it.
 func (h *harness) readInbox() {
 	h.t.Helper()
 	v, err := h.st.Inbox(h.ctx, 10*time.Minute, 30*time.Minute, 10000)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	if v.Last != "" {
-		if err := h.m.SetCursor(h.ctx, v.Last); err != nil {
-			h.t.Fatal(err)
-		}
+		require.NoError(h.t, h.m.SetCursor(h.ctx, v.Last))
 	}
 }
 
@@ -33,9 +29,7 @@ func (h *harness) readInbox() {
 func (h *harness) judgmentsOn(id string) []string {
 	h.t.Helper()
 	open, err := h.m.OpenNotes(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	var out []string
 	for _, o := range open {
 		if o.Subject() == id {
@@ -54,9 +48,8 @@ func TestTriggerLandingResolvesWaiters(t *testing.T) {
 	h.through("s1-1")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 10}))
 	h.readInbox()
-	if h.state("s1-1") != sprint.Landed || h.state("s2-1") != sprint.Ready {
-		t.Fatalf("s1-1 %s, s2-1 %s", h.state("s1-1"), h.state("s2-1"))
-	}
+	require.Equal(t, sprint.Landed, h.state("s1-1"), "s1-1 %s, s2-1 %s", h.state("s1-1"), h.state("s2-1"))
+	require.Equal(t, sprint.Ready, h.state("s2-1"), "s1-1 %s, s2-1 %s", h.state("s1-1"), h.state("s2-1"))
 	h.clean("resolved by the landing")
 }
 
@@ -84,9 +77,8 @@ func TestTheEngineRefusesAMovePastANeed(t *testing.T) {
 	}}
 	for _, step := range []Step{own, wrapped} {
 		res := h.run(step)
-		if len(res.Refused) != 1 || h.state("s2-1") != sprint.Waiting {
-			t.Fatalf("a move past a need: %+v; s2-1 is %s", res, h.state("s2-1"))
-		}
+		require.Len(t, res.Refused, 1, "a move past a need: %+v; s2-1 is %s", res, h.state("s2-1"))
+		require.Equal(t, sprint.Waiting, h.state("s2-1"), "a move past a need: %+v; s2-1 is %s", res, h.state("s2-1"))
 	}
 	h.clean("still waiting")
 }
@@ -107,9 +99,8 @@ func TestTheEngineRefusesASentinelLandedByAnotherStep(t *testing.T) {
 		return p
 	}}
 	res := h.run(mutant)
-	if len(res.Refused) == 0 || h.state("stop") != sprint.Waiting {
-		t.Fatalf("a sentinel landed by another step: %+v; stop is %s", res, h.state("stop"))
-	}
+	require.NotEmpty(t, res.Refused, "a sentinel landed by another step: %+v; stop is %s", res, h.state("stop"))
+	require.Equal(t, sprint.Waiting, h.state("stop"), "a sentinel landed by another step: %+v; stop is %s", res, h.state("stop"))
 	h.clean("still waiting")
 }
 
@@ -123,12 +114,11 @@ func TestTriggerReturnedPrimaryIsAJudgment(t *testing.T) {
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "suspect"}))
 	h.readInbox()
 	if got := h.judgmentsOn("s1-1"); h.state("s1-1") != sprint.Review || len(got) != 1 || got[0] != sprint.NReturned {
-		t.Fatalf("s1-1 is %s with %v open", h.state("s1-1"), got)
+		require.Failf(t, "", "s1-1 is %s with %v open", h.state("s1-1"), got)
 	}
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	if got := h.judgmentsOn("s1-1"); len(got) != 0 {
-		t.Fatalf("accept left %v open", got)
-	}
+	got := h.judgmentsOn("s1-1")
+	require.Empty(t, got, "accept left %v open", got)
 	h.clean("accepted again")
 }
 
@@ -141,19 +131,17 @@ func TestTriggerAckOfFailedWorkIsStranded(t *testing.T) {
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.takeAndFinish(true, "s1-1")
 	open, _ := h.m.OpenNotes(h.ctx)
-	if len(open) != 1 || open[0].Note.Type != sprint.NWorkFailed {
-		t.Fatalf("open: %v", open)
-	}
-	if res := h.run(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "looked"})); len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "nova-sprint rework --group") {
-		t.Fatalf("ack of failed work: %+v", res)
-	}
+	require.Len(t, open, 1, "open: %v", open)
+	require.Equal(t, string(sprint.NWorkFailed), open[0].Note.Type, "open: %v", open)
+	res := h.run(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "looked"}))
+	require.Len(t, res.Refused, 1, "ack of failed work: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "nova-sprint rework --group", "ack of failed work: %+v", res)
 	h.readInbox()
-	if got := h.judgmentsOn("s1-1"); len(got) != 1 || got[0] != sprint.NWorkFailed {
-		t.Fatalf("after the refused ack: %v", got)
-	}
+	got := h.judgmentsOn("s1-1")
+	require.Len(t, got, 1, "after the refused ack: %v", got)
+	require.Equal(t, sprint.NWorkFailed, got[0], "after the refused ack: %v", got)
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "again"}))
-	if got := h.judgmentsOn("s1-1"); len(got) != 0 {
-		t.Fatalf("rework left %v", got)
-	}
+	got = h.judgmentsOn("s1-1")
+	require.Empty(t, got, "rework left %v", got)
 	h.clean("reworked")
 }

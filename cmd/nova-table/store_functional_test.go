@@ -8,6 +8,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 )
@@ -55,21 +58,19 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 		{[]string{"show", "--bogus", "--redis", addr}, "unknown flag --bogus; show flags: --at-epoch, --redis"},
 	} {
 		code, stdout, stderr := runTable(c.args...)
-		if code != 2 || stdout != "" {
-			t.Errorf("%v: exit %d stdout %q, want 2 and nothing", c.args, code, stdout)
-		}
-		if !strings.Contains(stderr, c.want) || !strings.Contains(stderr, "; run: nova-table help") || strings.Count(stderr, "\n") != 1 {
-			t.Errorf("%v: stderr %q, want one line holding %q and the door", c.args, stderr, c.want)
-		}
+		assert.EqualValues(t, 2, code, "%v: exit %d stdout %q, want 2 and nothing", c.args, code, stdout)
+		assert.Empty(t, stdout, "%v: exit %d stdout %q, want 2 and nothing", c.args, code, stdout)
+		assert.Contains(t, stderr, c.want, "%v: stderr %q, want one line holding %q and the door", c.args, stderr, c.want)
+		assert.Contains(t, stderr, "; run: nova-table help", "%v: stderr %q, want one line holding %q and the door", c.args, stderr, c.want)
+		assert.EqualValues(t, 1, strings.Count(stderr, "\n"), "%v: stderr %q, want one line holding %q and the door", c.args, stderr, c.want)
 	}
 	code, _, stderr := runTable("create", "demo", "--columns", "a")
-	if code != 2 || !strings.Contains(stderr, "--redis <addr> is required") {
-		t.Fatalf("no address: exit %d stderr %q", code, stderr)
-	}
+	require.EqualValues(t, 2, code, "no address: exit %d stderr %q", code, stderr)
+	require.Contains(t, stderr, "--redis <addr> is required", "no address: exit %d stderr %q", code, stderr)
 	code, stdout, stderr := runTable(at(addr, "render", "nope")...)
-	if code != 1 || stdout != "" || !strings.Contains(stderr, `table "nope": no such table; run: nova-table create`) {
-		t.Fatalf("render of no table: exit %d stdout %q stderr %q", code, stdout, stderr)
-	}
+	require.EqualValues(t, 1, code, "render of no table: exit %d stdout %q stderr %q", code, stdout, stderr)
+	require.Empty(t, stdout, "render of no table: exit %d stdout %q stderr %q", code, stdout, stderr)
+	require.Contains(t, stderr, `table "nope": no such table; run: nova-table create`, "render of no table: exit %d stdout %q stderr %q", code, stdout, stderr)
 }
 
 // TestFlagsMayFollowTheWords: parseInterleaved reads the flags wherever
@@ -83,8 +84,10 @@ func TestFlagsMayFollowTheWords(t *testing.T) {
 		{"create", "--columns", "a,b", "demo", "--redis", addr},
 		{"create", "--redis", addr, "demo", "--columns", "a,b"},
 	} {
-		if code, stdout, stderr := runTable(args...); code != 0 || stdout != "TABLE CREATE table=demo columns=2 trips=1\n" {
-			t.Fatalf("%v: exit %d stdout %q stderr %q", args, code, stdout, stderr)
+		{
+			code, stdout, stderr := runTable(args...)
+			require.EqualValues(t, 0, code, "%v: exit %d stdout %q stderr %q", args, code, stdout, stderr)
+			require.Equal(t, "TABLE CREATE table=demo columns=2 trips=1\n", stdout, "%v: exit %d stdout %q stderr %q", args, code, stdout, stderr)
 		}
 	}
 }
@@ -144,18 +147,18 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 	}
 	for _, s := range steps {
 		code, stdout, stderr := runTable(at(addr, s.args...)...)
-		if code != 0 || stderr != "" || stdout != s.want {
-			t.Fatalf("%v: exit %d stderr %q\nstdout:\n%s\nwant:\n%s", s.args, code, stderr, stdout, s.want)
-		}
+		require.EqualValues(t, 0, code, "%v: exit %d stderr %q\nstdout:\n%s\nwant:\n%s", s.args, code, stderr, stdout, s.want)
+		require.Empty(t, stderr, "%v: exit %d stderr %q\nstdout:\n%s\nwant:\n%s", s.args, code, stderr, stdout, s.want)
+		require.Equal(t, s.want, stdout, "%v: exit %d stderr %q\nstdout:\n%s\nwant:\n%s", s.args, code, stderr, stdout, s.want)
 	}
 	// a second create with another definition is the store's no
-	if code, _, stderr := runTable(at(addr, "create", "jobs", "--columns", "a")...); code != 0 {
-		t.Fatalf("create after drop: exit %d stderr %q", code, stderr)
+	{
+		code, _, stderr := runTable(at(addr, "create", "jobs", "--columns", "a")...)
+		require.EqualValues(t, 0, code, "create after drop: exit %d stderr %q", code, stderr)
 	}
 	code, _, stderr := runTable(at(addr, "create", "jobs", "--columns", "a,b")...)
-	if code != 1 || !strings.Contains(stderr, `table "jobs": exists with another definition; run: nova-table set`) {
-		t.Fatalf("create with another definition: exit %d stderr %q", code, stderr)
-	}
+	require.EqualValues(t, 1, code, "create with another definition: exit %d stderr %q", code, stderr)
+	require.Contains(t, stderr, `table "jobs": exists with another definition; run: nova-table set`, "create with another definition: exit %d stderr %q", code, stderr)
 }
 
 // TestABoundCellIsAViewTheWritesRefuse: a row bound to a set another tool
@@ -169,18 +172,21 @@ func TestABoundCellIsAViewTheWritesRefuse(t *testing.T) {
 	mr := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = mr.Close() })
 	ctx := context.Background()
-	if _, err := mr.ZAdd(ctx, "ws:s:ready", redis.Z{Score: 1, Member: "c1"}).Result(); err != nil {
-		t.Fatal(err)
+	{
+		_, err := mr.ZAdd(ctx, "ws:s:ready", redis.Z{Score: 1, Member: "c1"}).Result()
+		require.NoError(t, err, "%v", err)
 	}
-	if _, err := mr.ZAdd(ctx, "ws:s:ready", redis.Z{Score: 2, Member: "s:sentinel"}).Result(); err != nil {
-		t.Fatal(err)
+	{
+		_, err := mr.ZAdd(ctx, "ws:s:ready", redis.Z{Score: 2, Member: "s:sentinel"}).Result()
+		require.NoError(t, err, "%v", err)
 	}
 	for _, args := range [][]string{
 		{"create", "views", "--columns", "ready,working"},
 		{"row", "add", "views", "s", "ready=ws:s:ready", "working=ws:s:working", "--owner", "nova-sprint task move", "--exclude", "s:sentinel"},
 	} {
-		if code, _, stderr := runTable(at(addr, args...)...); code != 0 {
-			t.Fatalf("%v: exit %d stderr %q", args, code, stderr)
+		{
+			code, _, stderr := runTable(at(addr, args...)...)
+			require.EqualValues(t, 0, code, "%v: exit %d stderr %q", args, code, stderr)
 		}
 	}
 	code, stdout, stderr := runTable(at(addr, "render", "views")...)
@@ -189,11 +195,12 @@ func TestABoundCellIsAViewTheWritesRefuse(t *testing.T) {
 		"s     |     1 |       0\n" +
 		"------+-------+--------\n" +
 		"      |     1 |       0\n"
-	if code != 0 || stdout != want {
-		t.Fatalf("render of a bound row: exit %d stderr %q\n%s", code, stderr, stdout)
-	}
-	if code, stdout, _ := runTable(at(addr, "cell", "members", "views", "s", "ready")...); code != 0 || stdout != "TABLE CELL table=views row=s col=ready n=1 trips=1\nTABLE MEMBER table=views row=s col=ready member=c1 score=1\n" {
-		t.Fatalf("cell members of a bound cell: exit %d\n%s", code, stdout)
+	require.EqualValues(t, 0, code, "render of a bound row: exit %d stderr %q\n%s", code, stderr, stdout)
+	require.Equal(t, want, stdout, "render of a bound row: exit %d stderr %q\n%s", code, stderr, stdout)
+	{
+		code, stdout, _ := runTable(at(addr, "cell", "members", "views", "s", "ready")...)
+		require.EqualValues(t, 0, code, "cell members of a bound cell: exit %d\n%s", code, stdout)
+		require.Equal(t, "TABLE CELL table=views row=s col=ready n=1 trips=1\nTABLE MEMBER table=views row=s col=ready member=c1 score=1\n", stdout, "cell members of a bound cell: exit %d\n%s", code, stdout)
 	}
 	for _, args := range [][]string{
 		{"cell", "add", "views", "s", "ready", "c2"},
@@ -202,16 +209,16 @@ func TestABoundCellIsAViewTheWritesRefuse(t *testing.T) {
 	} {
 		code, stdout, stderr := runTable(at(addr, args...)...)
 		verb := strings.Join(args[:2], " ")
-		if code != 1 || stdout != "" || (!strings.HasPrefix(stderr, "nova-table "+verb+": ") || !strings.Contains(stderr, "views.s.ready is bound to ws:s:ready, owned elsewhere; run: nova-sprint task move")) {
-			t.Fatalf("%v: exit %d stdout %q stderr %q", args, code, stdout, stderr)
-		}
+		require.EqualValues(t, 1, code, "%v: exit %d stdout %q stderr %q", args, code, stdout, stderr)
+		require.Empty(t, stdout, "%v: exit %d stdout %q stderr %q", args, code, stdout, stderr)
+		require.False(t, (!strings.HasPrefix(stderr, "nova-table "+verb+": ") || !strings.Contains(stderr, "views.s.ready is bound to ws:s:ready, owned elsewhere; run: nova-sprint task move")), "%v: exit %d stdout %q stderr %q", args, code, stdout, stderr)
 	}
-	if n, err := mr.ZScore(ctx, "ws:s:ready", "c1").Result(); err != nil || n != 1 {
-		t.Fatalf("the bound set was written: %v %v", n, err)
+	{
+		n, err := mr.ZScore(ctx, "ws:s:ready", "c1").Result()
+		require.NoError(t, err, "the bound set was written: %v %v", n, err)
+		require.EqualValues(t, 1, n, "the bound set was written: %v %v", n, err)
 	}
-	if mr.Exists(ctx, "ws:s:working").Val() != 0 {
-		t.Fatal("a refused move created the bound working set")
-	}
+	require.EqualValues(t, 0, mr.Exists(ctx, "ws:s:working").Val(), "%v", "a refused move created the bound working set")
 }
 
 func TestBoundRefusalPrintsTheStoredKey(t *testing.T) {
@@ -219,16 +226,15 @@ func TestBoundRefusalPrintsTheStoredKey(t *testing.T) {
 	addr := firstRunStore(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() {
-		if err := c.Close(); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, c.Close())
 	})
 	for _, args := range [][]string{
 		{"create", "machines", "--columns", "ready,working"},
 		{"row", "add", "machines", "batman"},
 	} {
-		if code, _, stderr := runTable(at(addr, args...)...); code != 0 {
-			t.Fatalf("setup %v: %d %q", args, code, stderr)
+		{
+			code, _, stderr := runTable(at(addr, args...)...)
+			require.EqualValues(t, 0, code, "setup %v: %d %q", args, code, stderr)
 		}
 	}
 	allBytes := make([]byte, 256)
@@ -236,9 +242,7 @@ func TestBoundRefusalPrintsTheStoredKey(t *testing.T) {
 		allBytes[i] = byte(i)
 	}
 	for _, key := range []string{"bench:batman:cards:ready", "external:" + string(allBytes)} {
-		if err := c.HSet(context.Background(), "table:machines:row:batman", "key:ready", key).Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, c.HSet(context.Background(), "table:machines:row:batman", "key:ready", key).Err())
 		for _, args := range [][]string{
 			{"cell", "add", "machines", "batman", "ready", "m"},
 			{"cell", "remove", "machines", "batman", "ready", "m"},
@@ -247,9 +251,10 @@ func TestBoundRefusalPrintsTheStoredKey(t *testing.T) {
 		} {
 			code, stdout, stderr := runTable(at(addr, args...)...)
 			want := "machines.batman.ready is bound to " + oneline.Escape(key) + ", owned elsewhere"
-			if code != 1 || stdout != "" || !strings.Contains(stderr, want) || strings.Count(stderr, "\n") != 1 {
-				t.Fatalf("%v key=%q: exit=%d stdout=%q stderr=%q", args, key, code, stdout, stderr)
-			}
+			require.EqualValues(t, 1, code, "%v key=%q: exit=%d stdout=%q stderr=%q", args, key, code, stdout, stderr)
+			require.Empty(t, stdout, "%v key=%q: exit=%d stdout=%q stderr=%q", args, key, code, stdout, stderr)
+			require.Contains(t, stderr, want, "%v key=%q: exit=%d stdout=%q stderr=%q", args, key, code, stdout, stderr)
+			require.EqualValues(t, 1, strings.Count(stderr, "\n"), "%v key=%q: exit=%d stdout=%q stderr=%q", args, key, code, stdout, stderr)
 		}
 	}
 }
@@ -259,38 +264,37 @@ func TestStoredViewReadsChangesWithoutRestartOrSummaryReread(t *testing.T) {
 	addr := firstRunStore(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() {
-		if err := c.Close(); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, c.Close())
 	})
 	ctx := context.Background()
 	for _, args := range [][]string{{"create", "live", "--columns", "a,b"}, {"row", "add", "live", "r", "s"}, {"cell", "add", "live", "r", "a", "m1", "m2"}, {"view", "set", "v", "--tables", "live", "--summary", "a", "--title", "before"}} {
-		if code, _, stderr := runTable(at(addr, args...)...); code != 0 {
-			t.Fatalf("%v: %s", args, stderr)
+		{
+			code, _, stderr := runTable(at(addr, args...)...)
+			require.EqualValues(t, 0, code, "%v: %s", args, stderr)
 		}
 	}
 	read := viewReader(c, "v", ntable.RenderOpts{}, false)
 	trips := redisconn.CountTrips(c)
 	// Establish the connection before counting application exchanges.
-	if err := c.Ping(ctx).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.Ping(ctx).Err())
 	n := trips.N()
 	first, err := read(ctx)
-	if err != nil || trips.N()-n != 2 || !strings.Contains(first, "before\n\n2/2 100.0% -> ETA") {
-		t.Fatalf("first view trips=%d err=%v\n%s", trips.N()-n, err, first)
+	require.NoError(t, err, "first view trips=%d err=%v\n%s", trips.N()-n, err, first)
+	require.EqualValues(t, 2, trips.N()-n, "first view trips=%d err=%v\n%s", trips.N()-n, err, first)
+	require.Contains(t, first, "before\n\n2/2 100.0% -> ETA", "first view trips=%d err=%v\n%s", trips.N()-n, err, first)
+	{
+		code, _, stderr := runTable(at(addr, "view", "set", "v", "--tables", "live", "--summary", "a", "--title", "after")...)
+		require.EqualValues(t, 0, code, "%v", stderr)
 	}
-	if code, _, stderr := runTable(at(addr, "view", "set", "v", "--tables", "live", "--summary", "a", "--title", "after")...); code != 0 {
-		t.Fatal(stderr)
-	}
-	if code, _, stderr := runTable(at(addr, "cell", "move", "live", "r", "a", "b", "m1", "m2")...); code != 0 {
-		t.Fatal(stderr)
+	{
+		code, _, stderr := runTable(at(addr, "cell", "move", "live", "r", "a", "b", "m1", "m2")...)
+		require.EqualValues(t, 0, code, "%v", stderr)
 	}
 	n = trips.N()
 	second, err := read(ctx)
-	if err != nil || trips.N()-n != 2 || !strings.Contains(second, "after\n\n0/2 0.0% -> ETA") {
-		t.Fatalf("changed view trips=%d err=%v\n%s", trips.N()-n, err, second)
-	}
+	require.NoError(t, err, "changed view trips=%d err=%v\n%s", trips.N()-n, err, second)
+	require.EqualValues(t, 2, trips.N()-n, "changed view trips=%d err=%v\n%s", trips.N()-n, err, second)
+	require.Contains(t, second, "after\n\n0/2 0.0% -> ETA", "changed view trips=%d err=%v\n%s", trips.N()-n, err, second)
 }
 
 // TestOrderVerbsThroughTheCommand: the rows and columns of a table moved by
@@ -315,16 +319,17 @@ func TestOrderVerbsThroughTheCommand(t *testing.T) {
 		{[]string{"row", "add", "crew", "alex"}, "TABLE ROW ADD table=crew row=alex cols=3 bound=0 trips=1\n"},
 	} {
 		code, stdout, stderr := runTable(at(addr, step.args...)...)
-		if code != 0 || stdout != step.want {
-			t.Fatalf("%v: exit %d\nstdout %q\nwant   %q\nstderr %q", step.args, code, stdout, step.want, stderr)
-		}
+		require.EqualValues(t, 0, code, "%v: exit %d\nstdout %q\nwant   %q\nstderr %q", step.args, code, stdout, step.want, stderr)
+		require.Equal(t, step.want, stdout, "%v: exit %d\nstdout %q\nwant   %q\nstderr %q", step.args, code, stdout, step.want, stderr)
 	}
 	code, stdout, stderr := runTable(at(addr, "row", "move", "crew", "alex", "--last")...)
-	if code != 1 || stdout != "" || !strings.Contains(stderr, "the rows are kept sorted by name") || !strings.HasSuffix(stderr, "; run: nova-table row sort 'crew' --manual\n") {
-		t.Fatalf("a move under a standing sort: exit %d stdout %q stderr %q", code, stdout, stderr)
-	}
+	require.EqualValues(t, 1, code, "a move under a standing sort: exit %d stdout %q stderr %q", code, stdout, stderr)
+	require.Empty(t, stdout, "a move under a standing sort: exit %d stdout %q stderr %q", code, stdout, stderr)
+	require.Contains(t, stderr, "the rows are kept sorted by name", "a move under a standing sort: exit %d stdout %q stderr %q", code, stdout, stderr)
+	require.True(t, strings.HasSuffix(stderr, "; run: nova-table row sort 'crew' --manual\n"), "a move under a standing sort: exit %d stdout %q stderr %q", code, stdout, stderr)
 	code, stdout, _ = runTable(at(addr, "show", "crew")...)
-	if code != 0 || !strings.Contains(stdout, " sort=name\n") || !strings.Contains(stdout, "row=alex") || strings.Index(stdout, "row=alex") > strings.Index(stdout, "row=hetzner") {
-		t.Fatalf("the standing sort places the new row: %q", stdout)
-	}
+	require.EqualValues(t, 0, code, "the standing sort places the new row: %q", stdout)
+	require.Contains(t, stdout, " sort=name\n", "the standing sort places the new row: %q", stdout)
+	require.Contains(t, stdout, "row=alex", "the standing sort places the new row: %q", stdout)
+	require.LessOrEqual(t, strings.Index(stdout, "row=alex"), strings.Index(stdout, "row=hetzner"), "the standing sort places the new row: %q", stdout)
 }

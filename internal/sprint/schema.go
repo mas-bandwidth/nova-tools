@@ -21,8 +21,29 @@ const (
 // them in: the work table always last (docs/SPEC-SPRINT.md section 10).
 var ApplyOrder = []string{Fleet, Readers, Merge, Work}
 
-// ViewOrder is the order the view shows the tables in.
+// ViewOrder is the order the stored view shows the four tables in.
 var ViewOrder = []string{Work, Readers, Merge, Fleet}
+
+// Friends is the friends table: one row per friend of nova-config's friend
+// rows, its status up, down or held (the owner, 2026-10-02: "add a friends
+// table, above fleet and below merge. friends | status for now. up/down/held").
+// It is drawn by where from the friends' records (store/friends.go), never
+// stored as a table: nothing in the four tables, the tick or an epoch holds it.
+const Friends = "friends"
+
+// ShownOrder is the order where shows the tables in: the four of the stored
+// view, with friends after merge and before fleet.
+var ShownOrder = []string{Work, Readers, Merge, Friends, Fleet}
+
+// FriendsDef is the friends table's shape: its one column, the friend's
+// status, as text with no fold. The rows are the friends'; where draws them.
+func FriendsDef() ntable.Table {
+	cols, err := ntable.ParseColumns("status:text")
+	if err != nil {
+		panic(fmt.Sprintf("sprint table %s: %v", Friends, err))
+	}
+	return ntable.Table{Name: Friends, Columns: cols}
+}
 
 // Readers table columns.
 const (
@@ -229,6 +250,21 @@ func ValidID(s string) bool { return len(s) <= MaxIDLen && idRE.MatchString(s) }
 
 // MaxIDLen is the longest identity ValidID takes.
 const MaxIDLen = 128
+
+// ValidCardID says a card's id is its parts joined by dots, each a ValidID word: a
+// primary (p), a work card (p.w1), a read card (p.r1.reader).
+func ValidCardID(s string) bool {
+	parts := strings.Split(s, ".")
+	if len(parts) > 3 {
+		return false
+	}
+	for _, p := range parts {
+		if !ValidID(p) {
+			return false
+		}
+	}
+	return true
+}
 
 // WorkCardID is the identity of a primary's work card for one attempt.
 func WorkCardID(primary string, attempt int) string {

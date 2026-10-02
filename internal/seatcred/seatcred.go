@@ -140,7 +140,6 @@ type Selection struct {
 	cred     Cred
 	credErr  error
 	addr     string
-	github   string
 	resolver func(seat string) (Cred, error)
 	getenv   func(string) string
 }
@@ -155,11 +154,6 @@ func defaultResolver(seat string) (Cred, error) { return Resolve(seat, os.Getenv
 // Select makes seat this process's seat ("" is none) and forgets any earlier
 // resolution. Nothing is decrypted until Active is first asked.
 func Select(seat string) { process.Select(seat) }
-
-// SelectWith is Select with the seat's Redis address; see Selection.SelectWith.
-func SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
-	process.SelectWith(seat, redisAddr, resolve)
-}
 
 // Addr is this process's seat's Redis address; see Selection.Addr.
 func Addr() string { return process.Addr() }
@@ -199,25 +193,13 @@ func (s *Selection) Select(seat string) { s.SelectWith(seat, "", nil) }
 func (s *Selection) SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.github, s.resolver, s.getenv = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, "", resolve, nil
+	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.resolver, s.getenv = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, resolve, nil
 }
 
-// SelectProfile is SelectWith for a seats.tsv row: the row's seat, its Redis
-// address and its GitHub token env (GitHubEnv), resolved through resolve.
+// SelectProfile is SelectWith for a seats.tsv row: the row's seat and its
+// Redis address, resolved through resolve.
 func (s *Selection) SelectProfile(p Profile, resolve func(seat string) (Cred, error)) {
 	s.SelectWith(p.Name, p.Addr, resolve)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.github = p.GitHubEnv
-}
-
-// GitHubEnv is the key of the selected seat's file that holds its GitHub
-// token, from its seats.tsv row's seventh column; "" when no seat is selected
-// or its row names none. Nothing is decrypted to answer it.
-func (s *Selection) GitHubEnv() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.github
 }
 
 // Addr is the selected seat's Redis address from its profile row, "" when no
@@ -300,24 +282,4 @@ func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]strin
 		s.withLookup(getenv)
 	}
 	return rest, nil
-}
-
-// ChildEnv is environ with the password variables a Redis child could confuse
-// for its own removed and REDISCLI_AUTH set to c's password: the environment of
-// the one child that is handed the password, never this process's.
-func ChildEnv(environ []string, c Cred) []string {
-	out := make([]string, 0, len(environ)+1)
-	for _, kv := range environ {
-		name, _, _ := strings.Cut(kv, "=")
-		if name == "REDISCLI_AUTH" || name == c.Key || (strings.HasPrefix(name, "NOVA_REDIS_") && strings.HasSuffix(name, "_PASSWORD")) {
-			continue
-		}
-		out = append(out, kv)
-	}
-	// ignored: Use fails only when its function is nil or fails, and this one does neither
-	_ = c.Password.Use(func(pw string) error {
-		out = append(out, "REDISCLI_AUTH="+pw)
-		return nil
-	})
-	return out
 }

@@ -17,6 +17,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fnStore is a store that keeps the function libraries it holds, by name,
@@ -132,8 +135,14 @@ func (h *fnHarness) open(_ context.Context, store login) (redis.UniversalClient,
 	if env == "" {
 		env = PasswordEnv
 	}
-	if o.Addr != *store.addr || o.User != h.user || o.PasswordEnv != env || h.d.getenv(o.PasswordEnv) != "pw" || o.Env != (redisconn.Env{}) {
-		h.t.Errorf("opened with %s; want user %q and the password in %s, and no variable of redisconn's own", o, h.user, env)
+	if assert.Equal(h.t, *store.addr, o.Addr, "opened with %s; want user %q and the password in %s, and no variable of redisconn's own", o, h.user, env) {
+		if assert.Equal(h.t, h.user, o.User, "opened with %s; want user %q and the password in %s, and no variable of redisconn's own", o, h.user, env) {
+			if assert.Equal(h.t, env, o.PasswordEnv, "opened with %s; want user %q and the password in %s, and no variable of redisconn's own", o, h.user, env) {
+				if assert.Equal(h.t, "pw", h.d.getenv(o.PasswordEnv), "opened with %s; want user %q and the password in %s, and no variable of redisconn's own", o, h.user, env) {
+					assert.Equal(h.t, (redisconn.Env{}), o.Env, "opened with %s; want user %q and the password in %s, and no variable of redisconn's own", o, h.user, env)
+				}
+			}
+		}
 	}
 	return h.store, h.store.Close, nil
 }
@@ -173,9 +182,7 @@ func (h *fnHarness) run(args ...string) (int, string, string) {
 func want(t *testing.T) string {
 	t.Helper()
 	d, err := library().Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	return d
 }
 
@@ -185,18 +192,16 @@ func want(t *testing.T) string {
 func TestFnLibraryIsTheLoadersBytes(t *testing.T) {
 	t.Parallel()
 	source, err := fn.Source()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err, err)
 	mine, err := library().Source()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mine != source {
-		t.Fatalf("library().Source() is %d bytes and fn.Source() %d; they must be the same bytes", len(mine), len(source))
-	}
-	if got := want(t); got != fn.Sum(source) {
-		t.Fatalf("digest %s, fn.Sum %s", got, fn.Sum(source))
+	require.NoError(t, err, err)
+	require.Equal(t, source, mine, "library().Source() is %d bytes and fn.Source() %d; they must be the same bytes", len(mine), len(source))
+	{
+		got := want(t)
+		expected := fn.Sum(source)
+		if got != expected {
+			require.Equal(t, expected, got, "digest %s, fn.Sum %s", got, fn.Sum(source))
+		}
 	}
 }
 
@@ -240,15 +245,16 @@ func TestFnLoadAndCheckOnAStore(t *testing.T) {
 			s.before()
 		}
 		code, out, errOut := h.run(s.args...)
-		if code != s.code || out != s.out || errOut != "" {
-			t.Errorf("%s: exit %d stdout %q stderr %q; want exit %d stdout %q and no stderr", s.name, code, out, errOut, s.code, s.out)
+		if assert.Equal(t, s.code, code, "%s: exit %d stdout %q stderr %q; want exit %d stdout %q and no stderr", s.name, code, out, errOut, s.code, s.out) {
+			if assert.Equal(t, s.out, out, "%s: exit %d stdout %q stderr %q; want exit %d stdout %q and no stderr", s.name, code, out, errOut, s.code, s.out) {
+				assert.Empty(t, errOut, "%s: exit %d stdout %q stderr %q; want exit %d stdout %q and no stderr", s.name, code, out, errOut, s.code, s.out)
+			}
 		}
-		if sent := h.store.take(); !slices.Equal(sent, s.sent) {
-			t.Errorf("%s: sent %q, want %q", s.name, sent, s.sent)
+		{
+			sent := h.store.take()
+			assert.True(t, slices.Equal(sent, s.sent), "%s: sent %q, want %q", s.name, sent, s.sent)
 		}
-		if h.store.closed != i+1 {
-			t.Errorf("%s: the client was closed %d times after %d runs", s.name, h.store.closed, i+1)
-		}
+		assert.Equal(t, i+1, h.store.closed, "%s: the client was closed %d times after %d runs", s.name, h.store.closed, i+1)
 	}
 }
 
@@ -310,24 +316,20 @@ func TestFnFailuresNameTheStateAndTheRemedy(t *testing.T) {
 			}
 			c.setup(h.store)
 			code, out, errOut := h.run(append([]string{"fn", c.args[0], "--addr", addr}, c.args[1:]...)...)
-			if code != c.code || out != "" {
-				t.Errorf("exit %d stdout %q; want exit %d and no stdout", code, out, c.code)
+			if assert.Equal(t, c.code, code, "exit %d stdout %q; want exit %d and no stdout", code, out, c.code) {
+				assert.Empty(t, out, "exit %d stdout %q; want exit %d and no stdout", code, out, c.code)
 			}
-			if strings.Count(errOut, "\n") != 1 || strings.Count(errOut, "remedy") != 1 {
-				t.Errorf("stderr is %d lines with %d remedies, want one line with one: %q", strings.Count(errOut, "\n"), strings.Count(errOut, "remedy"), errOut)
+			if assert.Equal(t, 1, strings.Count(errOut, "\n"), "stderr is %d lines with %d remedies, want one line with one: %q", strings.Count(errOut, "\n"), strings.Count(errOut, "remedy"), errOut) {
+				assert.Equal(t, 1, strings.Count(errOut, "remedy"), "stderr is %d lines with %d remedies, want one line with one: %q", strings.Count(errOut, "\n"), strings.Count(errOut, "remedy"), errOut)
 			}
 			for _, w := range c.inLine {
-				if !strings.Contains(errOut, w) {
-					t.Errorf("stderr %q does not hold %q", errOut, w)
-				}
+				assert.Contains(t, errOut, w, "stderr %q does not hold %q", errOut, w)
 			}
 			for _, w := range c.notIn {
-				if strings.Contains(errOut, w) {
-					t.Errorf("stderr %q holds %q, which is not this cause's remedy", errOut, w)
-				}
+				assert.NotContains(t, errOut, w, "stderr %q holds %q, which is not this cause's remedy", errOut, w)
 			}
-			if c.notSent != "" && slices.Contains(h.store.take(), c.notSent) {
-				t.Errorf("%s was sent after a failed read", c.notSent)
+			if c.notSent != "" {
+				assert.False(t, slices.Contains(h.store.take(), c.notSent), "%s was sent after a failed read", c.notSent)
 			}
 		})
 	}
@@ -340,8 +342,11 @@ func TestFnRemedyLogsInAsTheVerbDid(t *testing.T) {
 	h := newFnHarness(t)
 	h.user, h.passwordEnv = "coordinator", "SEAT_PW"
 	code, out, _ := h.run("fn", "check", "--addr", "127.0.0.1:6399", "--user", "coordinator", "--password-env", "SEAT_PW")
-	if want := `remedy="nova-redis fn load --addr 127.0.0.1:6399 --user coordinator --password-env SEAT_PW puts this binary's library on the store"`; code != 1 || !strings.HasSuffix(out, want+"\n") {
-		t.Errorf("exit %d %q; want MISSING ending in %s", code, out, want)
+	{
+		want := `remedy="nova-redis fn load --addr 127.0.0.1:6399 --user coordinator --password-env SEAT_PW puts this binary's library on the store"`
+		if assert.Equal(t, 1, code, "exit %d %q; want MISSING ending in %s", code, out, want) {
+			assert.True(t, strings.HasSuffix(out, want+"\n"), "exit %d %q; want MISSING ending in %s", code, out, want)
+		}
 	}
 }
 
@@ -354,28 +359,29 @@ func TestFnRefusesBeforeTheDial(t *testing.T) {
 		args []string
 		line string
 	}{
-		{[]string{"fn"}, "nova-redis fn: no subverb given; load puts this binary's function library on the store, check compares the store's with it; run: nova-redis help\n"},
-		{[]string{"fn", "deploy", "--addr", "127.0.0.1:6379"}, "nova-redis fn: unknown subverb \"deploy\"; want load or check; run: nova-redis help\n"},
-		{[]string{"fn", "load"}, "nova-redis fn load: --addr is required; refusing to guess; run: nova-redis help\n"},
-		{[]string{"fn", "check", "--addr", "127.0.0.1"}, "nova-redis fn check: --addr \"127.0.0.1\" is not <host:port>; refusing to guess; run: nova-redis help\n"},
-		{[]string{"fn", "check", "--addr", ":6379"}, "nova-redis fn check: --addr \":6379\" names no host; refusing to guess localhost; run: nova-redis help\n"},
-		{[]string{"fn", "load", "--addr", "127.0.0.1:6379", "extra"}, "nova-redis fn load: unexpected argument \"extra\"; run: nova-redis help\n"},
+		{[]string{"fn"}, "nova-redis fn REFUSED: no subverb given; load puts this binary's function library on the store, check compares the store's with it; run: nova-redis help fn\n"},
+		{[]string{"fn", "deploy", "--addr", "127.0.0.1:6379"}, "nova-redis fn REFUSED: unknown subverb \"deploy\"; want load or check; run: nova-redis help fn\n"},
+		{[]string{"fn", "load"}, "nova-redis fn load REFUSED: --addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess; run: nova-redis help fn load\n"},
+		{[]string{"fn", "check", "--addr", "127.0.0.1"}, "nova-redis fn check REFUSED: --addr \"127.0.0.1\" is not <host:port>; refusing to guess; run: nova-redis help fn check\n"},
+		{[]string{"fn", "check", "--addr", ":6379"}, "nova-redis fn check REFUSED: --addr \":6379\" names no host; refusing to guess localhost; run: nova-redis help fn check\n"},
+		{[]string{"fn", "load", "--addr", "127.0.0.1:6379", "extra"}, "nova-redis fn load REFUSED: unexpected argument \"extra\"; every input is a flag; run: nova-redis help fn load\n"},
 	}
 	for _, c := range cases {
 		h := newFnHarness(t)
 		code, out, errOut := h.run(c.args...)
-		if code != 2 || out != "" || errOut != c.line {
-			t.Errorf("%q: exit %d stdout %q stderr %q; want exit 2 and %q", c.args, code, out, errOut, c.line)
+		if assert.Equal(t, 2, code, "%q: exit %d stdout %q stderr %q; want exit 2 and %q", c.args, code, out, errOut, c.line) {
+			if assert.Empty(t, out, "%q: exit %d stdout %q stderr %q; want exit 2 and %q", c.args, code, out, errOut, c.line) {
+				assert.Equal(t, c.line, errOut, "%q: exit %d stdout %q stderr %q; want exit 2 and %q", c.args, code, out, errOut, c.line)
+			}
 		}
-		if h.dials != 0 {
-			t.Errorf("%q: dialled %d times; a refusal comes before the dial", c.args, h.dials)
-		}
+		assert.Zero(t, h.dials, "%q: dialled %d times; a refusal comes before the dial", c.args, h.dials)
 	}
 }
 
 // loginCase is one login a verb is given: the flags after --addr, the
 // environment, and either the user/password the login is made with or the
-// refusal (without the "nova-redis <verb>: " prefix) made before any dial.
+// refusal's reason (what stands between "nova-redis <verb> REFUSED: " and
+// "; run: nova-redis help <verb>") made before any dial.
 type loginCase struct {
 	name    string
 	flag    []string
@@ -407,17 +413,17 @@ func loginCases() []loginCase {
 		{"the flag's password variable", []string{"--user", "coordinator", "--password-env", "SEAT_PW"}, map[string]string{PasswordEnv: "pw", "SEAT_PW": "seat"}, "coordinator/seat", ""},
 		{"the environment's password variable", nil, map[string]string{UserEnv: "coordinator", PasswordEnvEnv: "SEAT_PW", "SEAT_PW": "seat"}, "coordinator/seat", ""},
 		{"a user without a password", []string{"--user", "fnuser"}, map[string]string{}, "",
-			"user fnuser (from --user) but NOVA_REDIS_PASSWORD is empty; run under nova-secrets exec --only NOVA_REDIS_PASSWORD, refusing to log in without a password; run: nova-redis help\n"},
+			"user fnuser (from --user) but NOVA_REDIS_PASSWORD is empty; run under nova-secrets exec --only NOVA_REDIS_PASSWORD, refusing to log in without a password"},
 		{"a user whose named password variable is empty", nil, map[string]string{UserEnv: "coordinator", PasswordEnvEnv: "SEAT_PW", PasswordEnv: "pw"}, "",
-			"user coordinator (from NOVA_REDIS_USER) but SEAT_PW is empty; run under nova-secrets exec --only SEAT_PW, refusing to log in without a password; run: nova-redis help\n"},
+			"user coordinator (from NOVA_REDIS_USER) but SEAT_PW is empty; run under nova-secrets exec --only SEAT_PW, refusing to log in without a password"},
 		{"a user name with a space, from the environment", nil, map[string]string{PasswordEnv: "pw", UserEnv: "fn user"}, "",
-			"NOVA_REDIS_USER \"fn user\" holds whitespace; give the ACL user's name; run: nova-redis help\n"},
+			"NOVA_REDIS_USER \"fn user\" holds whitespace; give the ACL user's name"},
 		{"a user name with a space, from the flag", []string{"--user", "fn user"}, map[string]string{PasswordEnv: "pw"}, "",
-			"--user \"fn user\" holds whitespace; give the ACL user's name; run: nova-redis help\n"},
+			"--user \"fn user\" holds whitespace; give the ACL user's name"},
 		{"a password variable that is not a name", []string{"--password-env", "1-bad"}, map[string]string{PasswordEnv: "pw"}, "",
-			"--password-env \"1-bad\" is not a variable name; name the variable that holds the password (default NOVA_REDIS_PASSWORD); run: nova-redis help\n"},
+			"--password-env \"1-bad\" is not a variable name; name the variable that holds the password (default NOVA_REDIS_PASSWORD)"},
 		{"a password variable from the environment that is not a name", nil, map[string]string{PasswordEnvEnv: "SEAT PW"}, "",
-			"NOVA_REDIS_PASSWORD_ENV \"SEAT PW\" is not a variable name; name the variable that holds the password (default NOVA_REDIS_PASSWORD); run: nova-redis help\n"},
+			"NOVA_REDIS_PASSWORD_ENV \"SEAT PW\" is not a variable name; name the variable that holds the password (default NOVA_REDIS_PASSWORD)"},
 	}
 }
 
@@ -442,18 +448,25 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 
 		fs := flag.NewFlagSet("login", flag.ContinueOnError)
 		l := loginFlags(fs)
-		if err := fs.Parse(append([]string{"--addr", "127.0.0.1:1"}, c.flag...)); err != nil {
-			t.Fatal(err)
+		{
+			err := fs.Parse(append([]string{"--addr", "127.0.0.1:1"}, c.flag...))
+			require.NoError(t, err, err)
 		}
 		err := l.check(d)
 		if c.refusal != "" {
-			if err == nil || err.Error()+"; run: nova-redis help\n" != c.refusal {
-				t.Errorf("%s: check %v; want the refusal %q", c.name, err, c.refusal)
+			if assert.Error(t, err, "%s: check %v; want the refusal %q", c.name, err, c.refusal) {
+				assert.Equal(t, c.refusal, err.Error(), "%s: check %v; want the refusal %q", c.name, err, c.refusal)
 			}
 		} else {
 			o := l.options(d)
-			if err != nil || o.Addr != "127.0.0.1:1" || o.User != user || d.getenv(o.PasswordEnv) != password || o.Env != (redisconn.Env{}) {
-				t.Errorf("%s: check %v, options %s (the variable holds %q); want user %q, password %q and no variable of redisconn's own", c.name, err, o, d.getenv(o.PasswordEnv), user, password)
+			if assert.NoError(t, err, "%s: check %v, options %s (the variable holds %q); want user %q, password %q and no variable of redisconn's own", c.name, err, o, d.getenv(o.PasswordEnv), user, password) {
+				if assert.Equal(t, "127.0.0.1:1", o.Addr, "%s: check %v, options %s (the variable holds %q); want user %q, password %q and no variable of redisconn's own", c.name, err, o, d.getenv(o.PasswordEnv), user, password) {
+					if assert.Equal(t, user, o.User, "%s: check %v, options %s (the variable holds %q); want user %q, password %q and no variable of redisconn's own", c.name, err, o, d.getenv(o.PasswordEnv), user, password) {
+						if assert.Equal(t, password, d.getenv(o.PasswordEnv), "%s: check %v, options %s (the variable holds %q); want user %q, password %q and no variable of redisconn's own", c.name, err, o, d.getenv(o.PasswordEnv), user, password) {
+							assert.Equal(t, (redisconn.Env{}), o.Env, "%s: check %v, options %s (the variable holds %q); want user %q, password %q and no variable of redisconn's own", c.name, err, o, d.getenv(o.PasswordEnv), user, password)
+						}
+					}
+				}
 			}
 		}
 
@@ -480,13 +493,19 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 				if verb[0] == "fn" {
 					verbName = "fn " + verb[1]
 				}
-				if want := "nova-redis " + verbName + ": " + c.refusal; code != 2 || errb.String() != want || len(got) != 0 {
-					t.Errorf("%s, %q: exit %d stderr %q opens %q; want exit 2, %q and no open", c.name, args, code, errb.String(), got, want)
+				{
+					want := "nova-redis " + verbName + " REFUSED: " + c.refusal + "; run: nova-redis help " + verbName + "\n"
+					if assert.Equal(t, 2, code, "%s, %q: exit %d stderr %q opens %q; want exit 2, %q and no open", c.name, args, code, errb.String(), got, want) {
+						if assert.Equal(t, want, errb.String(), "%s, %q: exit %d stderr %q opens %q; want exit 2, %q and no open", c.name, args, code, errb.String(), got, want) {
+							assert.Len(t, got, 0, "%s, %q: exit %d stderr %q opens %q; want exit 2, %q and no open", c.name, args, code, errb.String(), got, want)
+						}
+					}
 				}
 				continue
 			}
-			if want := []string{c.want}; !slices.Equal(got, want) {
-				t.Errorf("%s, %q: opened as %q, want %q (stderr %q)", c.name, args, got, want, errb.String())
+			{
+				want := []string{c.want}
+				assert.True(t, slices.Equal(got, want), "%s, %q: opened as %q, want %q (stderr %q)", c.name, args, got, want, errb.String())
 			}
 		}
 	}
@@ -514,8 +533,9 @@ func TestLoginFlagsEchoWhatWasGiven(t *testing.T) {
 	for _, c := range cases {
 		fs := flag.NewFlagSet("fn check", flag.ContinueOnError)
 		l := loginFlags(fs)
-		if err := fs.Parse(c.args); err != nil {
-			t.Fatal(err)
+		{
+			err := fs.Parse(c.args)
+			require.NoError(t, err, err)
 		}
 		if err := l.check(deps{getenv: func(k string) string {
 			if k == "OTHER_PW" || k == "SEAT_PW" || k == PasswordEnv {
@@ -523,10 +543,11 @@ func TestLoginFlagsEchoWhatWasGiven(t *testing.T) {
 			}
 			return c.env[k]
 		}}); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err, err)
 		}
-		if got := l.flags(); got != c.want {
-			t.Errorf("%q with %v: flags() = %q, want %q", c.args, c.env, got, c.want)
+		{
+			got := l.flags()
+			assert.Equal(t, c.want, got, "%q with %v: flags() = %q, want %q", c.args, c.env, got, c.want)
 		}
 	}
 }

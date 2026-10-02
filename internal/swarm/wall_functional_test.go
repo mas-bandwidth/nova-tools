@@ -6,8 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -25,9 +27,7 @@ func TestAWallDeathNamesItsPathAndKeepsItsCommits(t *testing.T) {
 
 	job := t.TempDir()
 	reject := "\x1b[33;1m!\x1b[0m  permission requested: external_directory (/outside/scratch/*); auto-rejecting\n"
-	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(reject), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(job, "harness.log"), []byte(reject), 0o644))
 	repo := filepath.Join(job, "repo")
 	git(t, repo, "init", "-q", "-b", "work")
 	git(t, repo, "config", "user.email", "card@example.invalid")
@@ -37,13 +37,9 @@ func TestAWallDeathNamesItsPathAndKeepsItsCommits(t *testing.T) {
 	commit(t, repo, "one")
 
 	report, ok := WallDeath(job, "a")
-	if !ok {
-		t.Fatalf("a fenced run with no result is a wall death: %s", report)
-	}
+	require.True(t, ok, "a fenced run with no result is a wall death: %s", report)
 	for _, want := range []string{"WALL task=a", "path=/outside/scratch/*", "commits=1", "branch=work"} {
-		if !strings.Contains(report, want) {
-			t.Errorf("the wall report names %q, got %q", want, report)
-		}
+		assert.Contains(t, report, want, "the wall report names %q, got %q", want, report)
 	}
 }
 
@@ -56,9 +52,7 @@ func TestWallCommitsCountsPastTheBase(t *testing.T) {
 		t.Skip("git is not on PATH")
 	}
 	repo := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(repo, 0o755))
 	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", args...)
@@ -66,9 +60,8 @@ func TestWallCommitsCountsPastTheBase(t *testing.T) {
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=rowan", "GIT_AUTHOR_EMAIL=rowan@example.com",
 			"GIT_COMMITTER_NAME=rowan", "GIT_COMMITTER_EMAIL=rowan@example.com")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %v\n%s", args, err, out)
 	}
 	run("init", "--quiet", "--initial-branch=main")
 	run("commit", "--quiet", "--allow-empty", "-m", "base")
@@ -78,10 +71,9 @@ func TestWallCommitsCountsPastTheBase(t *testing.T) {
 	run("commit", "--quiet", "--allow-empty", "-m", "two")
 
 	branch, commits, ok := WallCommits(repo)
-	if !ok || branch != "rowan/fix" || commits != 2 {
-		t.Fatalf("WallCommits = %q,%d,%v; want rowan/fix,2,true", branch, commits, ok)
-	}
-	if _, _, ok := WallCommits(filepath.Join(repo, "no-such-dir")); ok {
-		t.Errorf("WallCommits on a directory that is not a clone reports nothing")
-	}
+	require.True(t, ok, "WallCommits = %q,%d,%v; want rowan/fix,2,true", branch, commits, ok)
+	require.Equal(t, "rowan/fix", branch, "WallCommits = %q,%d,%v; want rowan/fix,2,true", branch, commits, ok)
+	require.Equal(t, 2, commits, "WallCommits = %q,%d,%v; want rowan/fix,2,true", branch, commits, ok)
+	_, _, ok = WallCommits(filepath.Join(repo, "no-such-dir"))
+	assert.False(t, ok, "WallCommits on a directory that is not a clone reports nothing")
 }

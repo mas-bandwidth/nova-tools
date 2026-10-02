@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
@@ -379,12 +380,7 @@ func checkCardTemplatesWith(root string, dirs []string, allowlistPath string, se
 // hasCardTemplateExt reports whether the path is one of the two card suffixes.
 func hasCardTemplateExt(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	for _, want := range cardTemplateExts {
-		if ext == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(cardTemplateExts, ext)
 }
 
 // scanCardTemplate reads one template's text and returns its findings, in file

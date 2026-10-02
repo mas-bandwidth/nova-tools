@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestXaiUsageJSONShapeParses pins the second accepted shape for --provider xai: a
@@ -47,39 +50,22 @@ func TestXaiUsageJSONShapeParses(t *testing.T) {
     }
   ]
 }`
-	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(raw), 0o644))
 	s := ReadProvider("xai", "studio", path, nil)
-	if s.Stat.Unreadable != 0 {
-		t.Fatalf("the JSON shape is unreadable: %+v", s.Unreadables)
-	}
-	if len(s.Stream) != 1 {
-		t.Fatalf("want 1 row, got %d", len(s.Stream))
-	}
+	require.EqualValuesf(t, 0, s.Stat.Unreadable, "the JSON shape is unreadable: %+v", s.Unreadables)
+	require.Lenf(t, s.Stream, 1, "want 1 row, got %d", len(s.Stream))
 	m := s.Stream[0]
-	if m.Model != "grok-model-example" {
-		t.Errorf("model = %q, want grok-model-example", m.Model)
-	}
-	if m.Day != "2026-09-12" {
-		t.Errorf("day = %q, want 2026-09-12", m.Day)
-	}
-	if m.Basis != UTC {
-		t.Errorf("basis = %q, want utc", m.Basis)
-	}
-	if m.Repo != Unattributed {
-		t.Errorf("repo = %q, want unattributed", m.Repo)
-	}
+	assert.EqualValuesf(t, "grok-model-example", m.Model, "model = %q, want grok-model-example", m.Model)
+	assert.EqualValuesf(t, "2026-09-12", m.Day, "day = %q, want 2026-09-12", m.Day)
+	assert.EqualValuesf(t, UTC, m.Basis, "basis = %q, want utc", m.Basis)
+	assert.EqualValuesf(t, Unattributed, m.Repo, "repo = %q, want unattributed", m.Repo)
 	want := map[Type]int64{Input: 1000, Output: 100, CacheWrite: 0, CacheRead: 800, Reasoning: 40}
 	for typ, v := range want {
 		got, ok := m.Counts.Get(typ)
-		if !ok {
-			t.Errorf("missing count for %s", TypeNames[typ])
+		if !assert.Truef(t, ok, "missing count for %s", TypeNames[typ]) {
 			continue
 		}
-		if got != v {
-			t.Errorf("%s = %d, want %d", TypeNames[typ], got, v)
-		}
+		assert.EqualValuesf(t, v, got, "%s = %d, want %d", TypeNames[typ], got, v)
 	}
 }
 
@@ -108,16 +94,10 @@ func TestXaiUsageJSONShapeParsesMissingKeysNotZero(t *testing.T) {
     }
   ]
 }`
-	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(raw), 0o644))
 	s := ReadProvider("xai", "studio", path, nil)
-	if s.Stat.Unreadable != 0 {
-		t.Fatalf("the JSON shape is unreadable: %+v", s.Unreadables)
-	}
-	if len(s.Stream) != 1 {
-		t.Fatalf("want 1 row, got %d", len(s.Stream))
-	}
+	require.EqualValuesf(t, 0, s.Stat.Unreadable, "the JSON shape is unreadable: %+v", s.Unreadables)
+	require.Lenf(t, s.Stream, 1, "want 1 row, got %d", len(s.Stream))
 	m := s.Stream[0]
 
 	gotPresent := []string{}
@@ -129,29 +109,30 @@ func TestXaiUsageJSONShapeParsesMissingKeysNotZero(t *testing.T) {
 	sort.Strings(gotPresent)
 	want := []string{"cache_read", "input", "output"}
 	sort.Strings(want)
-	if len(gotPresent) != len(want) {
-		t.Fatalf("present types = %v, want %v (a missing key must not count as zero)", gotPresent, want)
-	}
+	require.Lenf(t, gotPresent, len(want), "present types = %v, want %v (a missing key must not count as zero)", gotPresent, want)
 	for i, name := range want {
-		if gotPresent[i] != name {
-			t.Errorf("present[%d] = %q, want %q (a missing key must not count as zero)", i, gotPresent[i], name)
-		}
+		assert.EqualValuesf(t, name, gotPresent[i], "present[%d] = %q, want %q (a missing key must not count as zero)", i, gotPresent[i], name)
 	}
 
-	if _, ok := m.Counts.Get(CacheWrite); ok {
-		t.Error("cache_write reported as present, but the turn did not carry cacheCreationTokens")
+	{
+		_, ok := m.Counts.Get(CacheWrite)
+		assert.False(t, ok, "cache_write reported as present, but the turn did not carry cacheCreationTokens")
 	}
-	if _, ok := m.Counts.Get(Reasoning); ok {
-		t.Error("reasoning reported as present, but the turn did not carry reasoningTokens")
+	{
+		_, ok := m.Counts.Get(Reasoning)
+		assert.False(t, ok, "reasoning reported as present, but the turn did not carry reasoningTokens")
 	}
 
-	if got, ok := m.Counts.Get(Input); !ok || got != 1000 {
-		t.Errorf("input = (%d, %v), want (1000, true)", got, ok)
+	{
+		got, ok := m.Counts.Get(Input)
+		assert.Falsef(t, !ok || got != 1000, "input = (%d, %v), want (1000, true)", got, ok)
 	}
-	if got, ok := m.Counts.Get(Output); !ok || got != 100 {
-		t.Errorf("output = (%d, %v), want (100, true)", got, ok)
+	{
+		got, ok := m.Counts.Get(Output)
+		assert.Falsef(t, !ok || got != 100, "output = (%d, %v), want (100, true)", got, ok)
 	}
-	if got, ok := m.Counts.Get(CacheRead); !ok || got != 800 {
-		t.Errorf("cache_read = (%d, %v), want (800, true)", got, ok)
+	{
+		got, ok := m.Counts.Get(CacheRead)
+		assert.Falsef(t, !ok || got != 800, "cache_read = (%d, %v), want (800, true)", got, ok)
 	}
 }

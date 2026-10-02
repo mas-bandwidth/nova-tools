@@ -25,13 +25,11 @@ func (h *harness) finishAttempt(id string, failed bool, head string) {
 	h.must(FinishStep(sprint.FinishReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: g, Failed: failed, Head: head, Report: "r"}))
 }
 
-// reworkBroken has one reader of a finished attempt find it broken, and reworks. The first
-// attempt's readers are asked here; fixed work that comes back ok is asked again by the machine.
+// reworkBroken has one reader of a finished attempt find it broken, and reworks. The machine's
+// ask asks the attempt's readers here, every attempt: the finish asks no reader (one path asks).
 func (h *harness) reworkBroken(id string) {
 	h.t.Helper()
-	if h.snap().Work.Card(id).Int("attempt") == 1 {
-		h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
-	}
+	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
 	rc := h.snap().Readers.Of(id)
 	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
 	h.must(ReadStep(sprint.ReadReq{As: rc[1].Row, Verdict: "broken", Finding: "f", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))

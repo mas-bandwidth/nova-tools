@@ -7,22 +7,24 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func (h *harness) machine(t *testing.T, name, slots string) {
+// machine makes a machine row with this width; its slots are a number unlike
+// any width, so a width read from them would be seen.
+func (h *harness) machine(t *testing.T, name, width string) {
 	t.Helper()
-	row := config.Row{Name: name, Fields: map[string]string{"user": "u", "seat": "s", "slots": slots, "runners": "0"}}
+	row := config.Row{Name: name, Fields: map[string]string{"user": "u", "seat": "s", "slots": "160", "runners": "0", "width": width}}
 	_, err := h.store.Insert(context.Background(), config.KindMachine, row, "t")
 	require.NoError(t, err)
 }
 
-func (h *harness) friend(t *testing.T, name, slots, host string) {
+func (h *harness) friend(t *testing.T, name, slots string) {
 	t.Helper()
 	row := config.Row{Name: name, Fields: map[string]string{"slots": slots, "tiers": "flash", "roles": "builder"}}
 	_, err := h.store.Insert(context.Background(), config.KindFriend, row, "t")
 	require.NoError(t, err)
-	h.redis.hosts[name] = host
 }
 
 const tailnetOf = `{"BackendState":"Running","Self":{"HostName":"m1","DNSName":"m1.tail1234.ts.net."}}`
@@ -84,42 +86,48 @@ func TestMachineSelfCheckIsTwoWhenTheNameIsNoRowAndThreeWhenUnreadable(t *testin
 	require.Contains(t, errsCheck82, "could not be resolved", "no name: %d %q", codeCheck82, errsCheck82)
 }
 
-// TestMachineWidthIsSlotsLessTheFriendsCharged: the query; a machine with no room is no member.
-func TestMachineWidthIsSlotsLessTheFriendsCharged(t *testing.T) {
+// TestMachineWidthPrintsTheRowsWidth: the query prints the width the row
+// carries, whatever its slots and whatever friend rows carry slots; width 0
+// is no member; it opens no Redis, even with one named in the environment.
+func TestMachineWidthPrintsTheRowsWidth(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
-	h.machine(t, "m1", "8")
-	h.machine(t, "m2", "2")
-	h.friend(t, "f1", "3", "m1")
-	h.friend(t, "f2", "2", "m2")
-	code, out, errs := h.run(t, "machine", "width", "m1", "--pg", dsn, "--redis", "r:1")
+	h.env["NOVA_SPRINT_REDIS"] = "r:1"
+	h.machine(t, "m1", "32")
+	h.machine(t, "m2", "0")
+	h.friend(t, "f1", "32")
+	h.friend(t, "f2", "32")
+	code, out, errs := h.run(t, "machine", "width", "m1", "--pg", dsn)
 	require.Equal(t, 0, code, "m1: %d %q %q", code, out, errs)
 	require.Equal(t, "", errs, "m1: %d %q %q", code, out, errs)
-	require.Equal(t, "CONFIG WIDTH machine=m1 width=5 slots=8 charged=3 member=true\n", out, "m1: %d %q %q", code, out, errs)
-	code, out, _ = h.run(t, "machine", "width", "m2", "--pg", dsn, "--redis", "r:1", "--json")
+	require.Equal(t, "CONFIG WIDTH machine=m1 width=32 member=true\n", out, "m1: %d %q %q", code, out, errs)
+	code, out, _ = h.run(t, "machine", "width", "m2", "--pg", dsn, "--json")
 	require.Equal(t, 0, code, "m2 json: %d %q", code, out)
-	require.Equal(t, `{"machine":"m2","slots":2,"charged":2,"width":0,"member":false}`+"\n", out, "m2 json: %d %q", code, out)
-	codeCheck103, _, errsCheck103 := h.run(t, "machine", "width", "m9", "--pg", dsn, "--redis", "r:1")
+	require.Equal(t, `{"machine":"m2","width":0,"member":false}`+"\n", out, "m2 json: %d %q", code, out)
+	codeCheck103, _, errsCheck103 := h.run(t, "machine", "width", "m9", "--pg", dsn)
 	require.Equal(t, 1, codeCheck103, "unknown: %d %q", codeCheck103, errsCheck103)
 	require.Contains(t, errsCheck103, "machine m9 not found", "unknown: %d %q", codeCheck103, errsCheck103)
-	// friends with slots and no Redis named: refused, never a wrong width
-	codeCheck107, _, errsCheck107 := h.run(t, "machine", "width", "m1", "--pg", dsn)
-	require.Equal(t, 2, codeCheck107, "no redis: %d %q", codeCheck107, errsCheck107)
-	require.Contains(t, errsCheck107, "Redis address is needed", "no redis: %d %q", codeCheck107, errsCheck107)
-	codeCheck110, _, _ := h.run(t, "machine", "list", "--pg", dsn)
-	require.Equal(t, 0, codeCheck110, "the plain list needs no Redis")
+	require.Equal(t, 0, h.redis.opens, "machine width opened Redis")
 }
 
-// TestMachineWidthWithNoFriendsNeedsNoRedis: the width is the ceiling.
-func TestMachineWidthWithNoFriendsNeedsNoRedis(t *testing.T) {
+// TestMachineSetWidthIsWhatWidthPrints: a width set with machine set is the
+// width machine width prints, and it moves no other machine's.
+func TestMachineSetWidthIsWhatWidthPrints(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
-	h.machine(t, "m1", "6")
-	code, out, errs := h.run(t, "machine", "width", "m1", "--pg", dsn)
-	require.Equal(t, 0, code, "%d %q %q", code, out, errs)
-	require.Equal(t, "", errs, "%d %q %q", code, out, errs)
-	require.Contains(t, out, "width=6 slots=6 charged=0 member=true", "%d %q %q", code, out, errs)
-	require.Equal(t, 0, h.redis.opens, "opened Redis with no friend to charge")
+	h.machine(t, "m1", "16")
+	h.machine(t, "m2", "16")
+	code, out, errs := h.run(t, "machine", "set", "m1", "--width", "32", "--pg", dsn, "--as", "t")
+	require.Equal(t, 0, code, "set: %d %q %q", code, out, errs)
+	_, out, _ = h.run(t, "machine", "width", "m1", "--pg", dsn)
+	require.Equal(t, "CONFIG WIDTH machine=m1 width=32 member=true\n", out)
+	_, out, _ = h.run(t, "machine", "width", "m2", "--pg", dsn)
+	require.Equal(t, "CONFIG WIDTH machine=m2 width=16 member=true\n", out)
+	_, out, _ = h.run(t, "machine", "show", "m1", "--pg", dsn)
+	require.Contains(t, out, "width=32", "show: %q", out)
+	_, out, _ = h.run(t, "machine", "list", "--pg", dsn)
+	require.Contains(t, out, "width=32", "list: %q", out)
+	require.Contains(t, out, "width=16", "list: %q", out)
 }
 
 // getDown is a store whose row reads fail.
@@ -141,4 +149,18 @@ func TestMachineSelfCheckIsThreeWhenTheRowCannotBeRead(t *testing.T) {
 	require.Equal(t, 3, code, "%d %q %q", code, out, errs)
 	require.Equal(t, "", out, "%d %q %q", code, out, errs)
 	require.Contains(t, errs, "the config cannot be read: postgres: connection reset", "%d %q %q", code, out, errs)
+}
+
+// TestAMachineAddedWithNoWidthIsToldItIsNoMember: width is set apart from
+// slots and defaults to 0, no sprint member; add says so in a NOTE with the
+// set line that makes it one, and says nothing when a width was given.
+func TestAMachineAddedWithNoWidthIsToldItIsNoMember(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	code, out, errs := h.run(t, "machine", "add", "m1", "--user", "u", "--seat", "s", "--slots", "8", "--pg", dsn, "--as", "a1")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\nNOTE machine=m1 width=0: no sprint member, so it is dealt no work; its width is set apart from its slots; run: nova-config machine set m1 --width <n> --as a1 --pg "+dsn+"\n", out)
+	code, out, errs = h.run(t, "machine", "add", "m2", "--user", "u", "--seat", "s", "--slots", "8", "--width", "4", "--pg", dsn, "--as", "a1")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, "CONFIG ADD kind=machine name=m2 rev=2\n", out)
 }

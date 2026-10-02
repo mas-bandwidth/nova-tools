@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // SPEC-LOGS.md Part 2, "What must never be logged": a secret VALUE never leaves the
@@ -60,12 +63,8 @@ func TestRedactRemovesEverySecretShape(t *testing.T) {
 
 	for _, c := range secretShapes() {
 		got := Redact(c.line)
-		if strings.Contains(got, c.secret) {
-			t.Errorf("%s: the secret survived Redact: %s", c.name, got)
-		}
-		if !strings.Contains(got, Redacted) {
-			t.Errorf("%s: nothing was marked redacted: %s", c.name, got)
-		}
+		assert.NotContains(t, got, c.secret, "%s: the secret survived Redact: %s", c.name, got)
+		assert.Contains(t, got, Redacted, "%s: nothing was marked redacted: %s", c.name, got)
 	}
 }
 
@@ -90,9 +89,8 @@ func TestRedactLeavesTheFieldsWeQueryWithAlone(t *testing.T) {
 		"the base moved to 0d739352aa1f4c7e9b2d5a8f3e6c1b04d7a9f2e5",
 	}
 	for _, s := range keep {
-		if got := Redact(s); got != s {
-			t.Errorf("Redact changed a line it should have left alone:\n in: %s\nout: %s", s, got)
-		}
+		got := Redact(s)
+		assert.Equal(t, s, got, "Redact changed a line it should have left alone:\n in: %s\nout: %s", s, got)
 	}
 }
 
@@ -114,18 +112,11 @@ func TestWriteRedactsEveryVariableField(t *testing.T) {
 	l.Err = "publish card-done: " + secret
 
 	var b bytes.Buffer
-	if err := l.Write(&b); err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(b.Bytes(), []byte(secret)) {
-		t.Fatalf("a secret value reached the writer: %s", b.String())
-	}
-	if !bytes.Contains(b.Bytes(), []byte(Redacted)) {
-		t.Fatalf("the line carries no redaction mark: %s", b.String())
-	}
-	if n := bytes.Count(bytes.TrimRight(b.Bytes(), "\n"), []byte("\n")); n != 0 {
-		t.Fatalf("Write emitted more than one line: %s", b.String())
-	}
+	require.NoError(t, l.Write(&b))
+	require.False(t, bytes.Contains(b.Bytes(), []byte(secret)), "a secret value reached the writer: %s", b.String())
+	require.True(t, bytes.Contains(b.Bytes(), []byte(Redacted)), "the line carries no redaction mark: %s", b.String())
+	n := bytes.Count(bytes.TrimRight(b.Bytes(), "\n"), []byte("\n"))
+	require.Zero(t, n, "Write emitted more than one line: %s", b.String())
 }
 
 // The fixed vocabulary the program itself writes -- ts, level, source, event -- is never
@@ -138,12 +129,8 @@ func TestWriteKeepsTheFixedVocabulary(t *testing.T) {
 	l.Event = "pr-checks-done"
 	l.Msg = "pr 42 concluded SUCCESS"
 	var b bytes.Buffer
-	if err := l.Write(&b); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, l.Write(&b))
 	for _, want := range []string{`"source":"nova-work"`, `"verb":"events"`, `"event":"pr-checks-done"`, `"level":"INFO"`} {
-		if !bytes.Contains(b.Bytes(), []byte(want)) {
-			t.Errorf("the line lost %s: %s", want, b.String())
-		}
+		assert.True(t, bytes.Contains(b.Bytes(), []byte(want)), "the line lost %s: %s", want, b.String())
 	}
 }

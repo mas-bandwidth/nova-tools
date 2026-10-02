@@ -3,6 +3,7 @@ package sprint
 import (
 	"cmp"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"math/big"
 	"sort"
 	"strconv"
@@ -312,8 +313,11 @@ func seconds(n int64) string {
 // The work table's cost column shows the control card's (Cost; SyncMirrors).
 const FieldCost = "cost"
 
-// MoneyText is a cost as the work table's cost cell shows it: US dollars to four
-// places ("$1.2345"), "-" when there is none.
+// MoneyText is a cost as the work table's cost cell shows it: US dollars and cents,
+// rounded up to the next cent ("$1.24" for 1.2345; the owner, 2026-10-01: "For money, I
+// never care about anything past 2 decimal places (cents)." / "round up to cents"), "-"
+// when there is none. The card keeps the exact figure (FieldCost, FieldCostTotal); only
+// what is shown is rounded.
 func MoneyText(usd string) string {
 	if usd == "" {
 		return "-"
@@ -322,5 +326,5 @@ func MoneyText(usd string) string {
 	if !ok {
 		return "-"
 	}
-	return "$" + r.FloatString(4)
+	return ntable.Cents(r)
 }

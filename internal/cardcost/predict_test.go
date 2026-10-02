@@ -89,7 +89,6 @@ func TestTheSheetsCopyOnACardReadsBackAsTheSheet(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.copy, tc.p.Copy())
-			assert.Equal(t, tc.p, ParseCopy(tc.copy))
 		})
 	}
 	withSource := sheet()

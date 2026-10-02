@@ -17,6 +17,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
@@ -65,7 +68,7 @@ func certifyRegistry(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "machines.tsv")
 	body := "hulk\thulk\tlinux/x64\tbench\tswarm-hulk\t64\t-\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return path
 }
@@ -76,7 +79,7 @@ func certifyPaths(t *testing.T) (registry, certs, standard string) {
 	certs = filepath.Join(dir, "certs.tsv")
 	standard = filepath.Join(dir, "standard.go")
 	if err := os.WriteFile(standard, []byte("echo STANDARD OK\n"), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return certifyRegistry(t), certs, standard
 }
@@ -112,32 +115,32 @@ func TestAdoptWithCertifyRunsTheWorkloadsOnEachAdoptedMachineUnderTheVersionJust
 		"--certify", registry, "--certs", certs, "--standard", standard,
 	}, &o, &e, Deps{SSH: s})
 	if code != 0 {
-		t.Fatalf("code = %d\nstdout:%s\nstderr:%s", code, o.String(), e.String())
+		require.Equal(t, 0, code, "code = %d\nstdout:%s\nstderr:%s", code, o.String(), e.String())
 	}
 	if !strings.Contains(o.String(), "CERTIFY hulk go-test OK") {
-		t.Fatalf("the adopted machine was not certified:\n%s", o.String())
+		require.Contains(t, o.String(), "CERTIFY hulk go-test OK", "the adopted machine was not certified:\n%s", o.String())
 	}
 	if !strings.Contains(o.String(), "CERTIFY OK machines=1 ok=10 fail=0 warn=0") {
-		t.Fatalf("no closing certification line:\n%s\n%s", o.String(), e.String())
+		require.Contains(t, o.String(), "CERTIFY OK machines=1 ok=10 fail=0 warn=0", "no closing certification line:\n%s\n%s", o.String(), e.String())
 	}
 	// An adopt has no runner list to read, so the forge classes are SKIPPED and left
 	// uncertified rather than failed: "this tool could not ask" is not "this machine is
 	// wrong", and the loop's own certify carries a forge.
 	if !strings.Contains(e.String(), "CERTIFY NOTE machine=hulk class=registry-truth skipped=no-forge") {
-		t.Errorf("the forge class was not skipped with its reason:\n%s", e.String())
+		assert.Contains(t, e.String(), "CERTIFY NOTE machine=hulk class=registry-truth skipped=no-forge", "the forge class was not skipped with its reason:\n%s", e.String())
 	}
 	rows, err := fleet.ReadCertificates(certs)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	if len(rows) != 10 {
-		t.Fatalf("wrote %d certificate rows, want 10", len(rows))
+		require.Len(t, rows, 10, "wrote %d certificate rows, want 10", len(rows))
 	}
 	for _, r := range rows {
 		// THE POINT: the build on the row is the one this verb just put there, not the one
 		// the machine was running when the run began.
 		if r.Build != "v0.16.0" {
-			t.Errorf("%s carries build %q, want the version just installed", r.Class, r.Build)
+			assert.Equal(t, "v0.16.0", r.Build, "%s carries build %q, want the version just installed", r.Class, r.Build)
 		}
 	}
 	// And the certification really did go through the wall for the classes that ask for it.
@@ -148,7 +151,7 @@ func TestAdoptWithCertifyRunsTheWorkloadsOnEachAdoptedMachineUnderTheVersionJust
 		}
 	}
 	if !wall {
-		t.Error("the go-test certification did not go through nova-sandbox")
+		assert.True(t, wall, "the go-test certification did not go through nova-sandbox")
 	}
 }
 
@@ -171,16 +174,16 @@ func TestAdoptWithCertifyFailsTheMachineWhoseWorkloadFailed(t *testing.T) {
 		"--certify", registry, "--certs", certs, "--standard", standard,
 	}, &o, &e, Deps{SSH: s})
 	if code != 1 {
-		t.Fatalf("code = %d, want 1", code)
+		require.Equal(t, 1, code, "code = %d, want 1", code)
 	}
 	if !strings.Contains(e.String(), "CERTIFY hulk go-test FAIL") {
-		t.Fatalf("the failure is not named:\n%s", e.String())
+		require.Contains(t, e.String(), "CERTIFY hulk go-test FAIL", "the failure is not named:\n%s", e.String())
 	}
 	if !strings.Contains(e.String(), "go.mod requires go >= 1.26.5") {
-		t.Fatalf("the failure does not carry what the machine said:\n%s", e.String())
+		require.Contains(t, e.String(), "go.mod requires go >= 1.26.5", "the failure does not carry what the machine said:\n%s", e.String())
 	}
 	if fleet.Certified(mustCerts(t, certs), "hulk", "go-test", "v0.16.0", "") {
-		t.Error("a FAIL was written as a certificate")
+		assert.Fail(t, "a FAIL was written as a certificate")
 	}
 }
 
@@ -199,11 +202,11 @@ func TestAdoptRefusesHalfOfTheCertifyFlags(t *testing.T) {
 		"--certify", registry,
 	}, &o, &e, Deps{SSH: &fakeSSH{}})
 	if code != 2 {
-		t.Fatalf("code = %d, want 2", code)
+		require.Equal(t, 2, code, "code = %d, want 2", code)
 	}
 	for _, want := range []string{"--certs", "--standard"} { // named together or not at all
 		if !strings.Contains(e.String(), want) {
-			t.Errorf("the refusal does not name %s:\n%s", want, e.String())
+			assert.Contains(t, e.String(), want, "the refusal does not name %s:\n%s", want, e.String())
 		}
 	}
 }
@@ -223,16 +226,16 @@ func TestAdoptWaivedByNoCertifyCertifiesNothingAndSaysSo(t *testing.T) {
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/home/nova/.local/bin",
 		"--dest", "/home/nova/nova-bench/build", "--platform", "linux-amd64", "--no-certify",
 	}, &o, &e, Deps{SSH: s}); code != 0 {
-		t.Fatalf("code = %d: %s", code, e.String())
+		require.Equal(t, 0, code, "code = %d: %s", code, e.String())
 	}
 	if len(s.scripts) != 0 {
-		t.Errorf("a waived adopt sent %d certification scripts", len(s.scripts))
+		assert.Len(t, s.scripts, 0, "a waived adopt sent %d certification scripts", len(s.scripts))
 	}
 	if strings.Contains(o.String()+e.String(), "CERTIFY") {
-		t.Errorf("a waived adopt spoke about certification:\n%s%s", o.String(), e.String())
+		assert.NotContains(t, o.String()+e.String(), "CERTIFY", "a waived adopt spoke about certification:\n%s%s", o.String(), e.String())
 	}
 	if !strings.Contains(o.String(), "certified=waived") {
-		t.Errorf("the waiver is not on the verdict line:\n%s", o.String())
+		assert.Contains(t, o.String(), "certified=waived", "the waiver is not on the verdict line:\n%s", o.String())
 	}
 }
 
@@ -250,11 +253,11 @@ func TestAdoptRefusesWhenNeitherCertifiedNorWaived(t *testing.T) {
 		"--dest", "/home/nova/nova-bench/build", "--platform", "linux-amd64",
 	}, &o, &e, Deps{SSH: &certifySSH{}})
 	if code != 2 {
-		t.Fatalf("code = %d, want 2", code)
+		require.Equal(t, 2, code, "code = %d, want 2", code)
 	}
 	for _, want := range []string{"--certify", "--certs", "--standard", "--no-certify"} {
 		if !strings.Contains(e.String(), want) {
-			t.Errorf("the refusal does not name %s:\n%s", want, e.String())
+			assert.Contains(t, e.String(), want, "the refusal does not name %s:\n%s", want, e.String())
 		}
 	}
 }
@@ -273,10 +276,10 @@ func TestNoCertifyAndCertifyTogetherIsARefusal(t *testing.T) {
 		"--certify", registry, "--certs", certs, "--standard", standard, "--no-certify",
 	}, &o, &e, Deps{SSH: &certifySSH{}})
 	if code != 2 {
-		t.Fatalf("code = %d, want 2", code)
+		require.Equal(t, 2, code, "code = %d, want 2", code)
 	}
 	if !strings.Contains(e.String(), "--no-certify waives certification") {
-		t.Errorf("the refusal does not say the two disagree:\n%s", e.String())
+		assert.Contains(t, e.String(), "--no-certify waives certification", "the refusal does not say the two disagree:\n%s", e.String())
 	}
 }
 
@@ -284,7 +287,7 @@ func mustCerts(t *testing.T, path string) []fleet.Certificate {
 	t.Helper()
 	certs, err := fleet.ReadCertificates(path)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err, err)
 	}
 	return certs
 }
@@ -307,10 +310,10 @@ func TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard(t *testing.T) {
 	r := scriptRemote{ssh: s, parent: context.Background()}
 	out, err := r.Run(context.Background(), "hulk", "# nova-certify workload go\ntrue\n")
 	if err != nil || out != "ok\n" {
-		t.Fatalf("Run = %q, %v; want the fake's answer", out, err)
+		require.FailNowf(t, "", "Run = %q, %v; want the fake's answer", out, err)
 	}
 	if len(s.scripts) != 1 {
-		t.Fatalf("fake saw %d scripts, want 1", len(s.scripts))
+		require.Len(t, s.scripts, 1, "fake saw %d scripts, want 1", len(s.scripts))
 	}
 }
 
@@ -323,9 +326,9 @@ func TestScriptRemoteOverTheRealSSHIsStillRefusedUnderTheHostGuard(t *testing.T)
 		v := recover()
 		msg, _ := v.(string)
 		if !strings.Contains(msg, testguard.EnvNoHost) || !strings.Contains(msg, "hulk") {
-			t.Fatalf("recover() = %v; want the host guard's refusal naming the machine", v)
+			require.FailNowf(t, "", "recover() = %v; want the host guard's refusal naming the machine", v)
 		}
 	}()
 	_, _ = r.Run(context.Background(), "hulk", "true\n")
-	t.Fatal("Run over the real ssh returned under the host guard")
+	require.FailNow(t, "Run over the real ssh returned under the host guard")
 }

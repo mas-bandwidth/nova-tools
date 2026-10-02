@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Rule 1: a machine with no backend REFUSES, and the command does not run. The seam is
@@ -19,26 +22,18 @@ func TestNoSandboxRefusesOnDarwin(t *testing.T) {
 
 	write := t.TempDir()
 	home := filepath.Join(write, "home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(home, 0o755))
 	p, bad := Build(in(t, write, t.TempDir(), home, "/bin/echo"))
-	if len(bad) > 0 {
-		t.Fatalf("refused at build: %v", bad)
-	}
+	require.Empty(t, bad, "refused at build: %v", bad)
 	p.Available = func() (string, bool) { return "", false }
 	var out, errb bytes.Buffer
 	code, err := Run(p, os.Environ(), strings.NewReader(""), &out, &errb, nil)
-	if code != ExitRefused {
-		t.Errorf("exit %d, want %d", code, ExitRefused)
-	}
+	assert.Equal(t, ExitRefused, code, "exit %d, want %d", code, ExitRefused)
 	var r Refusal
-	if !asRef(err, &r) || r.Reason != "no_sandbox" {
-		t.Fatalf("err = %v, want a no_sandbox refusal", err)
-	}
-	if out.Len() != 0 {
-		t.Errorf("the command produced output; it must not have run: %q", out.String())
-	}
+	ok := asRef(err, &r)
+	require.True(t, ok, "err = %v, want a no_sandbox refusal", err)
+	require.Equal(t, "no_sandbox", r.Reason, "err = %v, want a no_sandbox refusal", err)
+	assert.Zero(t, out.Len(), "the command produced output; it must not have run: %q", out.String())
 }
 
 func asRef(err error, out *Refusal) bool {
@@ -56,24 +51,15 @@ func TestNoProfileFileIsWritten(t *testing.T) {
 
 	write := t.TempDir()
 	home := filepath.Join(write, "home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(home, 0o755))
 	p, bad := Build(in(t, write, t.TempDir(), home, "/bin/echo"))
-	if len(bad) > 0 {
-		t.Fatalf("refused: %v", bad)
-	}
+	require.Empty(t, bad, "refused: %v", bad)
 	var out, errb bytes.Buffer
-	if _, err := Run(p, ChildEnv(append(os.Environ(), "HOME="+home), p.Tmp), strings.NewReader(""), &out, &errb, nil); err != nil {
-		t.Fatalf("run: %v (%s)", err, errb.String())
-	}
+	_, err := Run(p, ChildEnv(append(os.Environ(), "HOME="+home), p.Tmp), strings.NewReader(""), &out, &errb, nil)
+	require.NoError(t, err, "run: %v (%s)", err, errb.String())
 	entries, err := os.ReadDir(write)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), profileFilePrefx) && strings.HasSuffix(e.Name(), ".sb") {
-			t.Errorf("the wrap left a profile file in the write set: %s", e.Name())
-		}
+		assert.False(t, strings.HasPrefix(e.Name(), profileFilePrefx) && strings.HasSuffix(e.Name(), ".sb"), "the wrap left a profile file in the write set: %s", e.Name())
 	}
 }

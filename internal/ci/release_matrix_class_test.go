@@ -50,9 +50,8 @@ func releaseWorkflowJobs(t *testing.T, file string) map[string]releaseJob {
 	var wf struct {
 		Jobs map[string]releaseJob `yaml:"jobs"`
 	}
-	if err := yaml.Unmarshal([]byte(raw), &wf); err != nil {
-		t.Fatalf("%s: %v", file, err)
-	}
+	err := yaml.Unmarshal([]byte(raw), &wf)
+	require.NoErrorf(t, err, "%s: %v", file, err)
 	return wf.Jobs
 }
 
@@ -67,9 +66,7 @@ func releaseTargets(t *testing.T) []string {
 			continue
 		}
 		f := strings.Fields(line)
-		if len(f) != 2 {
-			t.Fatalf("release-targets: %q is not \"<goos> <goarch>\"", line)
-		}
+		require.Equalf(t, 2, len(f), "release-targets: %q is not \"<goos> <goarch>\"", line)
 		out = append(out, f[0]+" "+f[1])
 	}
 	sort.Strings(out)
@@ -107,26 +104,20 @@ func TestReleaseMatricesAreTheTargetsFile(t *testing.T) {
 	t.Parallel()
 
 	want := releaseTargets(t)
-	if len(want) == 0 {
-		t.Fatal("release-targets names no platform; a release would ship nothing")
-	}
+	require.NotEmpty(t, want, "release-targets names no platform; a release would ship nothing")
 	for _, c := range []struct{ file, job string }{
 		{"release.yml", "build"},
 		{"certification.yml", "release-build"},
 	} {
 		job, ok := releaseWorkflowJobs(t, c.file)[c.job]
-		if !ok {
-			t.Errorf("%s has no %s job; the release build is one leg per platform", c.file, c.job)
+		if !assert.Truef(t, ok, "%s has no %s job; the release build is one leg per platform", c.file, c.job) {
 			continue
 		}
-		if got := matrixTargets(job); strings.Join(got, ",") != strings.Join(want, ",") {
-			t.Errorf("%s %s matrix is %v, release-targets is %v; the three lists are one list", c.file, c.job, got, want)
-		}
+		got := matrixTargets(job)
+		assert.Equalf(t, strings.Join(want, ","), strings.Join(got, ","), "%s %s matrix is %v, release-targets is %v; the three lists are one list", c.file, c.job, got, want)
 		builds, uploads := 0, 0
 		for _, s := range job.Steps {
-			if strings.Contains(s.Run, "go build") {
-				t.Errorf("%s %s step %q runs go build; the only compile is ghrelease build, so the dry run builds what the release builds", c.file, c.job, s.Name)
-			}
+			assert.NotContainsf(t, s.Run, "go build", "%s %s step %q runs go build; the only compile is ghrelease build, so the dry run builds what the release builds", c.file, c.job, s.Name)
 			if strings.Contains(s.Run, ghreleaseBuild) &&
 				strings.Contains(s.Run, "${{ matrix.goos }}") && strings.Contains(s.Run, "${{ matrix.goarch }}") {
 				builds++
@@ -134,16 +125,10 @@ func TestReleaseMatricesAreTheTargetsFile(t *testing.T) {
 			if strings.HasPrefix(s.Uses, "actions/upload-artifact@") && s.With["name"] == "release-${{ matrix.goos }}-${{ matrix.goarch }}" {
 				uploads++
 			}
-			if c.file == "release.yml" && strings.HasPrefix(s.Uses, "actions/cache/save@") {
-				t.Errorf("release.yml %s saves a build cache; a release restores the certification entry and writes nothing but its release", c.job)
-			}
+			assert.Falsef(t, c.file == "release.yml" && strings.HasPrefix(s.Uses, "actions/cache/save@"), "release.yml %s saves a build cache; a release restores the certification entry and writes nothing but its release", c.job)
 		}
-		if builds != 1 {
-			t.Errorf("%s %s runs ghrelease build for its leg %d times, want 1", c.file, c.job, builds)
-		}
-		if uploads != 1 {
-			t.Errorf("%s %s uploads release-<goos>-<goarch> %d times, want 1", c.file, c.job, uploads)
-		}
+		assert.Equalf(t, 1, builds, "%s %s runs ghrelease build for its leg %d times, want 1", c.file, c.job, builds)
+		assert.Equalf(t, 1, uploads, "%s %s uploads release-<goos>-<goarch> %d times, want 1", c.file, c.job, uploads)
 	}
 }
 
@@ -161,13 +146,10 @@ func TestReleaseSumsAreOneMachineOverTheWholeSet(t *testing.T) {
 		{"certification.yml", "release-dry-run", "release-build", ghreleaseSums},
 	} {
 		job, ok := releaseWorkflowJobs(t, c.file)[c.job]
-		if !ok {
-			t.Errorf("%s has no %s job", c.file, c.job)
+		if !assert.Truef(t, ok, "%s has no %s job", c.file, c.job) {
 			continue
 		}
-		if !needsJob(job.Needs, c.build) {
-			t.Errorf("%s %s does not need %s; it would sum a set nobody built", c.file, c.job, c.build)
-		}
+		assert.Truef(t, needsJob(job.Needs, c.build), "%s %s does not need %s; it would sum a set nobody built", c.file, c.job, c.build)
 		download, stamp, sums := -1, -1, -1
 		for i, s := range job.Steps {
 			if strings.HasPrefix(s.Uses, "actions/download-artifact@") && s.With["pattern"] == "release-*" && s.With["merge-multiple"] == "true" {
@@ -180,9 +162,7 @@ func TestReleaseSumsAreOneMachineOverTheWholeSet(t *testing.T) {
 				sums = i
 			}
 		}
-		if download < 0 || stamp < 0 || sums < 0 || !(download < stamp && stamp < sums) {
-			t.Errorf("%s %s: download every release-* artifact (step %d), assert the stamp (step %d), then `%s` (step %d), in that order", c.file, c.job, download, stamp, c.sumsCall, sums)
-		}
+		assert.Truef(t, download >= 0 && stamp >= 0 && sums >= 0 && download < stamp && stamp < sums, "%s %s: download every release-* artifact (step %d), assert the stamp (step %d), then `%s` (step %d), in that order", c.file, c.job, download, stamp, c.sumsCall, sums)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,44 +27,84 @@ func TestReceiptRefusesBeforeTheStore(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{}, "the verb is receipt"},
-		{[]string{"status"}, "the verb is receipt"},
-		{receiptArgs("extra"), "takes flags only"},
-		{receiptArgs("--job", "lint=success"), "flag provided but not defined: -job"},
-		{receiptArgs("--event", "push"), "flag provided but not defined: -event"},
-		{receiptArgs("--from-runner=false"), "--from-runner is the one source"},
+		{[]string{}, "the one verb is receipt; run: nova-ci github receipt -h"},
+		{[]string{"status"}, `unknown verb "status" after github; the one verb is receipt`},
+		{receiptArgs("extra"), "receipt takes flags only"},
+		{receiptArgs("--job", "lint=success"), "unknown flag --job; the flags are --at, --conclusion, --dry-run"},
+		{receiptArgs("--event", "push"), "unknown flag --event"},
+		{receiptArgs("--from-runner=false"), "--from-runner is required"},
 		{receiptArgs("--sha", "abc"), "--sha wants the 40-hex head"},
 		{receiptArgs("--conclusion", "skipped"), "--conclusion wants success, failure or cancelled"},
 	} {
 		var out, errOut bytes.Buffer
 		code := cmdGitHub(c.args, &out, &errOut, noEnv)
 		msg := errOut.String()
-		if code != 2 || out.Len() != 0 || !strings.Contains(msg, c.want) || !strings.HasPrefix(msg, "nova-ci github") ||
-			strings.Count(msg, "\n") != 1 {
-			t.Errorf("%v: code %d out %q err %q, want 2 and %q", c.args, code, out.String(), msg, c.want)
-		}
+		assert.Equal(t, 2, code, "%v", c.args)
+		assert.Empty(t, out.String(), "%v", c.args)
+		assert.Contains(t, msg, c.want, "%v", c.args)
+		assert.Regexp(t, `^nova-ci github( receipt)? REFUSED: .*; run: nova-ci github receipt -h\n$`, msg, "%v", c.args)
 	}
 }
 
 func noEnv(string) string { return "" }
+
+// One run names every refused field and the missing store together, so the
+// caller fixes the call once (STANDARD §2).
+func TestReceiptNamesEveryProblemAtOnce(t *testing.T) {
+	t.Parallel()
+	var out, errOut bytes.Buffer
+	code := cmdGitHub([]string{"receipt", "--repo", "x", "--sha", "abc", "--run-id", "1", "--workflow", "CI", "--conclusion", "maybe"}, &out, &errOut, noEnv)
+	assert.Equal(t, 2, code)
+	for _, want := range []string{"--from-runner is required", "--repo wants", "--sha wants", "--conclusion wants", "needs --redis <host:port> or NOVA_REDIS_ADDR"} {
+		assert.Contains(t, errOut.String(), want)
+	}
+	assert.Equal(t, 1, strings.Count(errOut.String(), "\n"), "one refusal line: %q", errOut.String())
+}
+
+// --dry-run checks the fields and prints the line the write would print, with
+// ev=-, and needs no store: nothing is dialled (no --redis is given at all).
+func TestReceiptDryRunChecksAndDialsNothing(t *testing.T) {
+	t.Parallel()
+	args := []string{"receipt", "--dry-run", "--from-runner", "--repo", "mas-bandwidth/nova-tools", "--sha", receiptSHA,
+		"--run-id", "42", "--workflow", "CI", "--conclusion", "success", "--pr", "7"}
+	var out, errOut bytes.Buffer
+	code := cmdGitHub(args, &out, &errOut, noEnv)
+	require.Equal(t, 0, code, "stderr %q", errOut.String())
+	assert.Equal(t, "CI RECEIPT mas-bandwidth/nova-tools sha="+receiptSHA+" run=42 workflow=CI conclusion=success pr=7 ev=-\n"+
+		"CI RECEIPT NOTE --dry-run: the fields are good; nothing was dialled or written; drop --dry-run to write it\n", out.String())
+	assert.Empty(t, errOut.String())
+}
 
 func TestReceiptNeedsAStoreAddress(t *testing.T) {
 	t.Parallel()
 	args := receiptArgs()
 	args[3] = ""
 	var out, errOut bytes.Buffer
-	if code := cmdGitHub(args, &out, &errOut, noEnv); code != 2 || !strings.Contains(errOut.String(), "needs --redis <addr> or NOVA_REDIS_ADDR") {
-		t.Fatalf("code %d err %q", code, errOut.String())
-	}
+	code := cmdGitHub(args, &out, &errOut, noEnv)
+	require.Equal(t, 2, code, "code %d err %q", code, errOut.String())
+	require.Contains(t, errOut.String(), "needs --redis <host:port> or NOVA_REDIS_ADDR", "code %d err %q", code, errOut.String())
 }
 
-func TestReceiptHelpIsTheUsageLine(t *testing.T) {
+// receipt -h is the verb's help: its usage lines, every flag with what it
+// wants, and its own exit codes.
+func TestReceiptHelpDescribesEveryFlag(t *testing.T) {
 	t.Parallel()
 	var out, errOut bytes.Buffer
-	if code := run([]string{"github", "receipt", "--help"}, nil, &out, &errOut); code != 0 ||
-		!strings.HasPrefix(out.String(), "nova-ci github receipt --from-runner --redis <addr>") || errOut.Len() != 0 {
-		t.Fatalf("code %d out %q err %q", code, out.String(), errOut.String())
+	code := run([]string{"github", "receipt", "--help"}, nil, &out, &errOut)
+	require.Equal(t, 0, code, "stderr %q", errOut.String())
+	assert.Empty(t, errOut.String())
+	assert.Contains(t, out.String(), "nova-ci github receipt --from-runner --redis <addr>")
+	_, flags, found := strings.Cut(out.String(), "\nflags:\n")
+	require.True(t, found, "receipt -h lists no flags:\n%s", out.String())
+	for _, line := range strings.Split(flags, "\n") {
+		if strings.HasPrefix(line, "  --") {
+			assert.Regexp(t, `^  --[a-z-]+( <[a-z]+>)?  \S`, line, "flag line %q has no description", line)
+		}
 	}
+	for _, flag := range []string{"--repo", "--sha", "--run-id", "--workflow", "--conclusion", "--redis", "--dry-run", "--from-runner"} {
+		assert.Contains(t, out.String(), "\n  "+flag)
+	}
+	assert.Contains(t, out.String(), "github receipt: 0 written")
 }
 
 // TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints executes the
@@ -81,14 +122,12 @@ func TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints(t *testing.T) {
 	require.Len(t, steps, 2, "the `### github receipt` block runs %d commands, want 2 refusals", len(steps))
 	got := make([]onboarding.Result, 0, len(steps))
 	for _, s := range steps {
-		if len(s.Args) < 2 || s.Args[0] != "github" || s.Args[1] != "receipt" {
-			t.Fatalf("the documented command %q is not nova-ci github receipt", s.Line)
-		}
+		require.GreaterOrEqual(t, len(s.Args), 2, "the documented command %q is not nova-ci github receipt", s.Line)
+		require.Equal(t, "github", s.Args[0], "the documented command %q is not nova-ci github receipt", s.Line)
+		require.Equal(t, "receipt", s.Args[1], "the documented command %q is not nova-ci github receipt", s.Line)
 		var out, errb bytes.Buffer
 		code := cmdGitHub(s.Args[1:], &out, &errb, noEnv)
-		if code != 2 {
-			t.Errorf("%s: exit %d, want 2 (refused before any dial)", s.Line, code)
-		}
+		assert.Equal(t, 2, code, "%s: exit %d, want 2 (refused before any dial)", s.Line, code)
 		got = append(got, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()})
 	}
 	for _, p := range onboarding.CompareTranscript(steps, got, nil) {

@@ -3,8 +3,10 @@ package functional
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A package with a functional file is selected with exactly that file's
@@ -14,16 +16,11 @@ func TestSelectNamesOnlyTheTaggedTests(t *testing.T) {
 
 	mixed := filepath.Join("testdata", "mixed")
 	got, err := Select([]string{filepath.Join("testdata", "plain"), mixed, filepath.Join("testdata", "absent")})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := []Package{{Dir: mixed, Tests: []string{"TestStoreRefuses", "TestStoreRoundTrip"}}}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Select = %+v, want %+v", got, want)
-	}
-	if got, want := RunPattern(got), "^(TestStoreRefuses|TestStoreRoundTrip)$"; got != want {
-		t.Errorf("RunPattern = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got, "Select = %+v, want %+v", got, want)
+	pattern := RunPattern(got)
+	assert.Equal(t, "^(TestStoreRefuses|TestStoreRoundTrip)$", pattern, "RunPattern = %q, want %q", pattern, "^(TestStoreRefuses|TestStoreRoundTrip)$")
 }
 
 // A dir/... pattern is every package directory under it, testdata and dot
@@ -33,18 +30,12 @@ func TestExpandWalksTheTreeLikeGoList(t *testing.T) {
 
 	root := t.TempDir()
 	for _, d := range []string{"a/b", "a/testdata/x", "a/.hidden", "c"} {
-		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Join(root, d), 0o755))
 	}
 	got, err := Expand([]string{filepath.Join(root, "a") + "/...", "./cmd/x"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := []string{filepath.Join(root, "a"), filepath.Join(root, "a", "b"), "./cmd/x"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Expand = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got, "Expand = %q, want %q", got, want)
 }
 
 // Unmatched names each pattern go list would list nothing for, in order: a
@@ -55,14 +46,10 @@ func TestUnmatchedNamesEveryPatternWithNoPackage(t *testing.T) {
 
 	root := t.TempDir()
 	for _, d := range []string{"empty/sub", "pkg"} {
-		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Join(root, d), 0o755))
 	}
 	for _, f := range []string{"pkg/a.go", "file.txt"} {
-		if err := os.WriteFile(filepath.Join(root, f), []byte("package a\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(root, f), []byte("package a\n"), 0o644))
 	}
 	j := func(p string) string { return filepath.Join(root, p) }
 	got := Unmatched([]string{j("pkg"), root + "/...", j("nope"), j("nope") + "/...", j("file.txt"), j("empty"), j("empty") + "/..."})
@@ -73,7 +60,5 @@ func TestUnmatchedNamesEveryPatternWithNoPackage(t *testing.T) {
 		`package pattern "` + j("empty") + `" matches no package (the directory holds no .go file)`,
 		`package pattern "` + j("empty") + `/..." matches no package (no directory under it holds a .go file)`,
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Unmatched =\n%q\nwant\n%q", got, want)
-	}
+	assert.Equal(t, want, got, "Unmatched =\n%q\nwant\n%q", got, want)
 }

@@ -145,8 +145,8 @@ func ReadDogfood(cli, receipts, cmd string) (DogfoodVerdict, error) {
 	// non-author. The stronger question is `dogfood gate --require-all`, and a
 	// tag held hostage to the last unrun verb in a 200-verb reference is a tag
 	// nobody ever cuts.
-	// THE GATE JUDGES WHAT SHIPS. A receipt about a tool parked under
-	// deprecated/ is true about that tool and says nothing about this
+	// THE GATE JUDGES WHAT SHIPS. A receipt about a tool that is not under
+	// cmd/ is true about that tool and says nothing about this
 	// release, which does not contain it.
 	var shipped, outside int
 	if cmd != "" {

@@ -7,25 +7,25 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Deprecated tools and modules are never tested (Glenn 2026-09-27: "Tests do
 // not run for deprecated tools and modules. ... We don't run their tests. We
 // don't stop builds for them. We don't bog down CI for them."). Every place
 // that chooses the packages a run tests reads its list through
-// pkgselect.Deprecated.Live, which drops what deprecated/PACKAGES names:
+// pkgselect.Deprecated.Live, which drops what pkgselect.DeprecatedFile names:
 // pkgselect.Select (the change's selection and the whole tree, and the tree read
 // from the tracked files), pkgselect.LiveTree (the hosted deal and the race
 // dependency build) and the perf-test finder.
 
 // livePackages is the deprecated filter's answer for the listed packages, read
-// from the repository's own deprecated/PACKAGES.
+// from the repository's own pkgselect.DeprecatedFile.
 func livePackages(t *testing.T, root, in string) []string {
 	t.Helper()
 	dep, err := pkgselect.LoadDeprecated(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return dep.Live(strings.Fields(in))
 }
 
@@ -54,9 +54,7 @@ func TestDeprecatedPackagesAreNeverSelected(t *testing.T) {
 		keptSet[p] = true
 	}
 	for _, p := range strings.Fields(in) {
-		if live := lt.Package(strings.TrimPrefix(p, mod)); live != keptSet[p] {
-			t.Errorf("liveTree says %s live=%v, the deprecated filter says %v; the two readings of deprecated/PACKAGES disagree", p, live, keptSet[p])
-		}
+		assert.Equal(t, keptSet[p], lt.Package(strings.TrimPrefix(p, mod)), "liveTree says %s live=%v, the deprecated filter says %v; the two readings of %s disagree", p, lt.Package(strings.TrimPrefix(p, mod)), keptSet[p], pkgselect.DeprecatedFile)
 	}
 	want := strings.Join([]string{
 		"./internal/nsprint/store",
@@ -66,9 +64,7 @@ func TestDeprecatedPackagesAreNeverSelected(t *testing.T) {
 		mod + "internal/ntable",
 		"./cmd/nova-bus",
 	}, " ")
-	if got != want {
-		t.Errorf("the deprecated filter kept\n  %s\nwant\n  %s\n(a path in deprecated/PACKAGES drops that package and everything under it; a keep line keeps one; a name that only starts the same is another package)", got, want)
-	}
+	assert.Equal(t, want, got, "the deprecated filter kept\n  %s\nwant\n  %s\n(a path in %s drops that package and everything under it; a keep line keeps one; a name that only starts the same is another package)", got, want, pkgselect.DeprecatedFile)
 
 	// every selection point reads its list through the filter
 	sel := readFile(t, filepath.Join(root, "internal", "pkgselect", "select.go"))
@@ -77,38 +73,34 @@ func TestDeprecatedPackagesAreNeverSelected(t *testing.T) {
 		"selected = s.dep.Live(selected)",                           // the change's selection
 		"return s.dep.Live(out), nil",                               // the whole tree read from tracked files
 	} {
-		if !strings.Contains(sel, want) {
-			t.Errorf("internal/pkgselect/select.go lacks %q: a list that skips the filter would test deprecated packages", want)
-		}
+		assert.Contains(t, sel, want, "internal/pkgselect/select.go lacks %q: a list that skips the filter would test deprecated packages", want)
 	}
 	extras := readFile(t, filepath.Join(root, "internal", "pkgselect", "extras.go"))
-	if !strings.Contains(extras, "return dep.Live(lines(res.Stdout)), nil") || !strings.Contains(extras, "!dep.LivePackage(pkg)") {
-		t.Errorf("internal/pkgselect/extras.go's live tree or perf finder lists packages without the deprecated filter")
-	}
+	assert.Contains(t, extras, "return dep.Live(lines(res.Stdout)), nil", "internal/pkgselect/extras.go's live tree or perf finder lists packages without the deprecated filter")
+	assert.Contains(t, extras, "!dep.LivePackage(pkg)", "internal/pkgselect/extras.go's live tree or perf finder lists packages without the deprecated filter")
 	ci := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	if !strings.Contains(ci, ciRunner+" deal --shards") {
-		t.Errorf("ci.yml's hosted deal does not go through `ci deal`, which lists the live tree, so its shards would test deprecated packages")
-	}
-	if verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_deal.go")); !strings.Contains(verb, "pkgselect.LiveTree(") {
-		t.Errorf("tools/ci/sel_deal.go lists the tree without pkgselect.LiveTree, so its shards would test deprecated packages")
-	}
+	assert.Contains(t, ci, ciRunner+" deal --shards", "ci.yml's hosted deal does not go through `ci deal`, which lists the live tree, so its shards would test deprecated packages")
+	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_deal.go"))
+	assert.Contains(t, verb, "pkgselect.LiveTree(", "tools/ci/sel_deal.go lists the tree without pkgselect.LiveTree, so its shards would test deprecated packages")
 }
 
-// Every line of deprecated/PACKAGES names a directory that is in the tree: a
-// path that moved under deprecated/ or was deleted leaves the list, so the
-// list only shrinks and never names nothing.
+// Every line of pkgselect.DeprecatedFile names a directory that is in the
+// tree: a path that was deleted leaves the list, so the list only shrinks and
+// never names nothing.
 func TestDeprecatedListNamesRealPackages(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, line := range strings.Split(readFile(t, filepath.Join(root, "deprecated", "PACKAGES")), "\n") {
+	for _, line := range strings.Split(readFile(t, filepath.Join(root, filepath.FromSlash(pkgselect.DeprecatedFile))), "\n") {
 		line, _, _ = strings.Cut(line, "#")
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "keep "))
 		if line == "" {
 			continue
 		}
-		if fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(line))); err != nil || !fi.IsDir() {
-			t.Errorf("deprecated/PACKAGES names %s, which is not a directory in the tree; delete the line (the list only shrinks)", line)
+		fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(line)))
+		if !assert.NoError(t, err, "%s names %s, which is not a directory in the tree; delete the line (the list only shrinks)", pkgselect.DeprecatedFile, line) {
+			continue
 		}
+		assert.True(t, fi.IsDir(), "%s names %s, which is not a directory in the tree; delete the line (the list only shrinks)", pkgselect.DeprecatedFile, line)
 	}
 }

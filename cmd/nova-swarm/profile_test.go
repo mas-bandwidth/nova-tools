@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -28,46 +31,31 @@ func TestNativeRunWritesTimeline(t *testing.T) {
 		card: []byte("FAKE-TIMELINE\n"), slotDir: slot, root: root,
 		deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
-	if code != 0 {
-		t.Fatalf("native run exits 0, got %d:\n%s", code, errOut.String())
-	}
+	require.Equal(t, 0, code, "native run exits 0, got %d:\n%s", code, errOut.String())
 
 	path := filepath.Join(slot, "jobs", label, swarm.TimelineFileName)
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("the native run wrote no timeline at %s: %v", path, err)
-	}
+	require.NoError(t, err, "the native run wrote no timeline at %s", path)
 	head := strings.SplitN(string(raw), "\n", 2)[0]
-	if head != strings.Join(swarm.TimelineColumns, "\t") {
-		t.Fatalf("timeline header = %q, want %q", head, strings.Join(swarm.TimelineColumns, "\t"))
-	}
+	require.Equal(t, strings.Join(swarm.TimelineColumns, "\t"), head, "timeline header = %q, want %q", head, strings.Join(swarm.TimelineColumns, "\t"))
 
 	rows, err := swarm.ReadTimeline(path)
-	if err != nil {
-		t.Fatalf("read the timeline back: %v", err)
-	}
-	if len(rows) != 6 {
-		t.Fatalf("%d timeline rows, want 6 (one turn, five tool calls):\n%s", len(rows), raw)
-	}
-	if rows[0].Tool != "model" || rows[0].InputTokens != "1200" || rows[0].OutputTokens != "340" {
-		t.Errorf("turn row = %+v, want tool=model in=1200 out=340", rows[0])
-	}
+	require.NoError(t, err, "read the timeline back")
+	require.Len(t, rows, 6, "%d timeline rows, want 6 (one turn, five tool calls):\n%s", len(rows), raw)
+	assert.Equal(t, "model", rows[0].Tool, "turn row = %+v, want tool=model in=1200 out=340", rows[0])
+	assert.Equal(t, "1200", rows[0].InputTokens, "turn row = %+v, want tool=model in=1200 out=340", rows[0])
+	assert.Equal(t, "340", rows[0].OutputTokens, "turn row = %+v, want tool=model in=1200 out=340", rows[0])
 	// The tool calls, in report order, each with no tokens of its own.
 	wants := []string{"git clone", "cat ", "go test", "go test", "result.md"}
 	for i, want := range wants {
 		r := rows[i+1]
-		if !strings.Contains(strings.ToLower(r.Tool), want) {
-			t.Errorf("tool row %d = %q, want it to name %q", i, r.Tool, want)
-		}
-		if r.InputTokens != "" || r.OutputTokens != "" {
-			t.Errorf("tool row %d carries tokens %q/%q, want both empty (the harness gave none)", i, r.InputTokens, r.OutputTokens)
-		}
+		assert.Contains(t, strings.ToLower(r.Tool), want, "tool row %d = %q, want it to name %q", i, r.Tool, want)
+		assert.Equal(t, "", r.InputTokens, "tool row %d carries tokens %q/%q, want both empty (the harness gave none)", i, r.InputTokens, r.OutputTokens)
+		assert.Equal(t, "", r.OutputTokens, "tool row %d carries tokens %q/%q, want both empty (the harness gave none)", i, r.InputTokens, r.OutputTokens)
 	}
 	// Every span is a real, non-negative duration.
 	for i, r := range rows {
-		if r.End.Before(r.Start) {
-			t.Errorf("row %d ends before it starts: %s < %s", i, r.End, r.Start)
-		}
+		assert.False(t, r.End.Before(r.Start), "row %d ends before it starts: %s < %s", i, r.End, r.Start)
 	}
 }
 
@@ -75,12 +63,8 @@ func TestNativeRunWritesTimeline(t *testing.T) {
 // known phase durations so the profile line's arithmetic is exact.
 func timelineFile(t *testing.T, dir string, body string) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, swarm.TimelineFileName), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, swarm.TimelineFileName), []byte(body), 0o644))
 }
 
 // TestProfilePrintsPhases: `nova-swarm profile --jobs <glob>` prints one PROFILE line per
@@ -109,9 +93,7 @@ func TestProfilePrintsPhases(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"profile", "--jobs", filepath.Join(root, "job-*")},
 		strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("profile exits 0, got %d:\n%s", rc, stderr.String())
-	}
+	require.Equal(t, 0, rc, "profile exits 0, got %d:\n%s", rc, stderr.String())
 	out := stdout.String()
 	for _, want := range []string{
 		"PROFILE job=job-a", "turns=1", "tools=7",
@@ -119,8 +101,6 @@ func TestProfilePrintsPhases(t *testing.T) {
 		"PROFILE job=job-b",
 		"PROFILE SUMMARY jobs=2",
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("profile output does not name %q:\n%s", want, out)
-		}
+		assert.Contains(t, out, want, "profile output does not name %q:\n%s", want, out)
 	}
 }
