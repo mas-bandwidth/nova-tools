@@ -45,11 +45,16 @@ exactly: the commit the work started from, a full sha, the two commands that sho
 (`git diff <start>..HEAD`, `git diff --stat <start>..HEAD`), and that the base branch may have
 moved since and is not what to compare against. The packet carries the base's name, never the
 commit the work was staged on, so native finds the start when it stages the read: the merge base
-of the read's head and `origin/<base>` (else `<base>`) in the staged checkout; the gh shim's
-`pr diff` and `pr view` read from it too. On the 1000-card load test of 2026-10-01 cards landed on
-the base every few seconds, and a reader that ran `git diff origin/dev` saw every file landed
-since the work began as a deletion and sent a correct work card back
-(`TestAReadIsToldTheWorksChangeWhenTheBaseMoved`). JOB.md repeats no rules:
+of the read's head and `origin/<base>` (else `<base>`) in the staged checkout, `origin/<base>`
+fetched from origin first; the gh shim's `pr diff` and `pr view` read from it too. On the
+1000-card load test of 2026-10-01 cards landed on the base every few seconds, and a reader that
+ran `git diff origin/dev` saw every file landed since the work began as a deletion and sent a
+correct work card back (`TestAReadIsToldTheWorksChangeWhenTheBaseMoved`). The fetch is because
+the checkout is cloned from the bench mirror, whose base can be older than the work's start: the
+merge base against it was that older tip, and readers judged correct work broken because the diff
+held every card landed in between ("diff has 22 files not exactly one"). origin's base holds the
+work's start and not the work, so the merge base against it is the start however far the base
+has moved (`TestAReadsDiffIsExactlyTheWorkWhereverTheBaseIs`). JOB.md repeats no rules:
 the card's own RULES paragraph is in the brief, where the add lint holds it, and the child
 reads it once.
 
