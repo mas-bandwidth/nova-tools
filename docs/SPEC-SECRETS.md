@@ -1110,11 +1110,11 @@ none of them. Nothing below is a default: every path is typed, once.
 
 ```
 mkdir -m 700 -p ~/.config/nova-secrets
-nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen $(brew --prefix)/bin/age-keygen
-# paste the printed SECRETS RULE lines into .sops.yaml in a PR touching only your own rule; the other collaborator approves and merges it, and then a holder of an existing key seals the file in a second PR — `sops rowan.yaml` if it is new, `sops updatekeys rowan.yaml` if it exists — because the merge alone grants you nothing
-nova-secrets check --store ~/secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops $(brew --prefix)/bin/sops
-nova-secrets names --store ~/secrets --as rowan
-nova-secrets exec  --store ~/secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops $(brew --prefix)/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
+nova-secrets keygen --as <seat> --key ~/.config/nova-secrets/<seat>.key --age-keygen $(brew --prefix)/bin/age-keygen
+# paste the printed SECRETS RULE lines into .sops.yaml in a PR touching only your own rule; the other collaborator approves and merges it, and then a holder of an existing key seals the file in a second PR — `sops <seat>.yaml` if it is new, `sops updatekeys <seat>.yaml` if it exists — because the merge alone grants you nothing
+nova-secrets check --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key --sops $(brew --prefix)/bin/sops
+nova-secrets names --store ~/secrets --as <seat>
+nova-secrets exec  --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key --sops $(brew --prefix)/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
 ```
 
 Six lines: one directory, one keygen, one comment that is the step other people do for you,
