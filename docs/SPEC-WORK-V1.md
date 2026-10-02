@@ -36,7 +36,7 @@ invariant), and the unit tests below are green.
    :url "https://github.com/<org>/<repo>"
    :archived false
    :issues
-   ((issue
+   ((issue <number>
       :url "https://github.com/<org>/<repo>/issues/7"
       :node-id "I_..."
       :title "..."
