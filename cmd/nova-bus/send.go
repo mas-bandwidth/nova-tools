@@ -217,35 +217,18 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		}
 		return 2
 	}
-	if *dryRun {
-		if err := bus.IsRepoRoot(*busDir); err != nil {
-			fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
-			return 2
-		}
-		t, ok := openBus("send", *busDir, stderr)
-		if !ok {
-			return 2
-		}
-		prepared, err := bus.PrepareWith(t, text, now, bus.SendOptions{Slug: *slug, As: *as, Host: hostName})
-		if err != nil {
-			for _, reason := range bus.Reasons(err) {
-				fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
-			}
-			return 1
-		}
-		printSendDraft(stdout, prepared, t.Config, now)
-		return 0
-	}
 	if err := bus.IsRepoRoot(*busDir); err != nil {
 		fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
 		return 2
 	}
-	release, err := bus.LockCheckout(*busDir, checkoutLockWait)
-	if err != nil {
-		fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
-		return 1
+	if !*dryRun { // the lock is a file in .git; a dry run writes nothing
+		release, err := bus.LockCheckout(*busDir, checkoutLockWait)
+		if err != nil {
+			fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))
+			return 1
+		}
+		defer release()
 	}
-	defer release()
 	t, ok := openBus("send", *busDir, stderr)
 	if !ok {
 		return 2
@@ -277,6 +260,11 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	if err := checkoutReady(*busDir, *branch, []string{beat}); err != nil {
 		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
+	}
+	// Everything above is read-only and the dry run's; everything below writes.
+	if *dryRun {
+		printSendDraft(stdout, prepared, t.Config, now)
+		return 0
 	}
 	if err := levelWithRemote(*busDir, *remote, *branch, *noPush); err != nil {
 		fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus send -h"))

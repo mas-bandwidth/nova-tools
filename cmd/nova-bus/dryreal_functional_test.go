@@ -118,7 +118,7 @@ func TestEveryDryRunIsTheRealRunWithoutItsWrites(t *testing.T) {
 
 // dryRealVerbs is every verb TestEveryDryRunIsTheRealRunWithoutItsWrites holds: every verb
 // of this tool that takes --dry-run but wait, which has none.
-var dryRealVerbs = []string{"inbox --advance", "draft --out", "receipt"}
+var dryRealVerbs = []string{"inbox --advance", "draft --out", "receipt", "send", "reply", "close", "check --rebuild-index"}
 
 // treeBytes is every file under root, .git included, with its bytes, and every directory.
 func treeBytes(t *testing.T, root string) map[string]string {
@@ -146,4 +146,21 @@ func normalizeRoot(s, root string) string {
 		s = strings.ReplaceAll(s, resolved, "<root>")
 	}
 	return strings.ReplaceAll(s, root, "<root>")
+}
+
+// Every verb whose -h lists --dry-run is in dryRealVerbs: a dry run added later is held to
+// the same rule the day it lands.
+func TestEveryDryRunVerbIsHeldToTheRealRun(t *testing.T) {
+	t.Parallel()
+	for _, verb := range verbs {
+		help := invoke(t, "", verb, "-h").mustCode(t, 0).stdout
+		if !strings.Contains(help, "\n  --dry-run  ") {
+			continue
+		}
+		found := false
+		for _, v := range dryRealVerbs {
+			found = found || strings.Fields(v)[0] == verb
+		}
+		assert.True(t, found, "%s takes --dry-run and TestEveryDryRunIsTheRealRunWithoutItsWrites does not hold it", verb)
+	}
 }
