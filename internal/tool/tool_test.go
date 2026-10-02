@@ -817,3 +817,32 @@ func TestASetupLineIsPrintedAboveTheExamples(t *testing.T) {
 		})
 	}
 }
+
+// TestHelpForAVerbIsHelpWhateverFollowsIt: `help <verb>` puts --help straight after the
+// verb's words, so a word, a `--` or a flag after them never turns a request for help
+// into a run, a refusal, or help for something else; for a verb with positionals, one
+// without, and a verb of two words.
+func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		tool  *Tool
+		verb  string
+		usage string
+	}{
+		{memo(), "search", "usage: nova-memo search [flags] <words>...\n"},
+		{memo(), "check", "usage: nova-memo check [flags] <file|->\n"},
+		{demo(), "put", "usage: nova-demo put [flags]\n"},
+		{demo(), "fn load", "usage: nova-demo fn load [flags]\n"},
+	} {
+		for _, after := range [][]string{nil, {"extra"}, {"--", "x"}, {"--json"}} {
+			args := append(append([]string{"help"}, strings.Fields(tc.verb)...), after...)
+			t.Run(strings.Join(args, " "), func(t *testing.T) {
+				t.Parallel()
+				var out, errs bytes.Buffer
+				assert.Equal(t, 0, tc.tool.Run(args, strings.NewReader(""), &out, &errs))
+				assert.True(t, strings.HasPrefix(out.String(), tc.usage), "help opens %q, want %q", out.String(), tc.usage)
+				assert.Empty(t, errs.String())
+			})
+		}
+	}
+}
