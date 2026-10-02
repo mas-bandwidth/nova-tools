@@ -6,7 +6,7 @@ reads: $HOME/sdk, $HOME/go, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/h
 # THE HURT ITSELF, as its own class.
 #
 # The script reads the go version inside the wall and fails when it is below $NOVA_GO,
-# and the failure names the SDK root in the card's read roots.
+# and the failure says to name the SDK root in the card's read roots.
 # vision's had no fallback at all and could not compile Go. Both were SILENT failures of the
 # wall's read roots, not of the machine. go-test proves a module builds; this proves the
 # VERSION the wall lets through is the one go.mod asks for, which is the half that was
