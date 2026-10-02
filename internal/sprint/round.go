@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// The deal goes round the fleet and the ask goes round the readers (errata 3,
-// amendment 5): each keeps a rolling index into its names, in name order,
+// The deal goes round the fleet and the ask goes round the readers: each
+// keeps a rolling index into its names, in name order,
 // modulo their number, that moves on with every card dealt (every read asked)
 // past the name it went to. A deal scans the members from the index,
 // wrapping, and takes the first that is up and has room for the card (a
@@ -21,8 +21,8 @@ import (
 // members in name order and the tail of the fleet none.
 //
 // Every placement of a card on a member goes through the deal's index and
-// moves it, first attempts and redeals and levelling alike (errata 3,
-// amendment 5): the deal (R6, T3) and the withdrawn card dealt again, the
+// moves it, first attempts and redeals and levelling alike: the
+// deal (R6, T3) and the withdrawn card dealt again, the
 // rework of failed or broken work (R10, the coordinator's rework), the cards of
 // a member that goes down (R2, fleet down and the tick's presence) and the
 // levelling (R7, T4, fleet up and level). A rework skips the
@@ -36,8 +36,8 @@ import (
 // of the reader table and the fleet table respectively; not a property of the
 // work stream"): the index's counter (round), read with the table and written
 // by the step that deals (asks) in the same atomic batch as its cards, guarded
-// on the value the step read (Plan.Props; the table layer's properties, L1
-// contract amendment of 2026-09-30). So it is atomic with the deal and
+// on the value the step read (Plan.Props; the table layer's properties). So it
+// is atomic with the deal and
 // survives a stop and a start of the machine and a new loop, and a clear
 // starts the next epoch at counter 0, the first name. The model is
 // tla/SprintEvents.tla: dcur and acur, moved by the deal's and the ask's
@@ -67,9 +67,7 @@ const (
 // round is a rolling index into names, in name order: the next name is the
 // first from the index, wrapping, that is acceptable.
 //
-// The index is a counter (the owner's form, errata 3 amendment 5: "The modulo
-// index can and does start at zero, it's just that past that point it can be
-// a uint64 that increments with each step, and then is modulo by count"): a
+// The index is a counter: a
 // uint64 that starts at 0 with the epoch and goes up with every placement, the
 // place a scan starts at the counter modulo the number of names. A placement
 // on a name moves the counter past it: by one when the name is the one at the
@@ -169,7 +167,7 @@ func (r *round) picks(k int, taken []string, ok func(string) bool) []string {
 
 // moved moves the index past name: the counter goes up by one for the
 // placement and by one for each name it passed over to reach name, so the next
-// scan starts at the name after it (errata 3 amendment 5, the owner's form).
+// scan starts at the name after it.
 func (r *round) moved(name string) {
 	if i, found := slices.BinarySearch(r.order, name); found {
 		n := len(r.order)
@@ -181,7 +179,7 @@ func (r *round) moved(name string) {
 // up and holds fewer cards (q) than its room (room; a member with none there
 // has no room), the avoid member only when no other is; "" when none has room.
 // It does not move the index. The room of a placement on a member is its
-// width (width.go, errata 3 amendment 9), q its work cards held, ready and
+// width (width.go), q its work cards held, ready and
 // working (memberLoads).
 func (r *round) member(up []string, q, room map[string]int, avoid string) string {
 	isUp := make(map[string]bool, len(up))
@@ -196,8 +194,8 @@ func (r *round) member(up []string, q, room map[string]int, avoid string) string
 	return m
 }
 
-// next is the member a card placed on the fleet goes to (errata 3 amendment
-// 5: every placement, first attempts and redeals and levelling alike, goes
+// next is the member a card placed on the fleet goes to (every placement,
+// first attempts and redeals and levelling alike, goes
 // round the fleet and moves the index): the first from the index that is up
 // and below its room, the avoid member only when no other has room; "" when
 // none has room (a card is never placed past a width: tla/DirtyTick.tla,
@@ -208,7 +206,7 @@ func (r *round) next(up []string, q, room map[string]int, avoid string) string {
 }
 
 // levelTo is where the level moves the newest card of the longest queue, and
-// moves the index past it (errata 3 amendment 5): the next member round the
+// moves the index past it: the next member round the
 // fleet from the index that is below its room (held, the work cards it
 // holds, under widths: DealAhead times its width, width.go) and whose backlog
 // (n, which may be below zero: level) is below the up members' mean rounded
@@ -271,9 +269,7 @@ func dealRound(s *Snapshot) *round { return tableRound(s.Fleet, PropDealIndex, s
 // askRound is the ask's rolling index over the readers.
 func askRound(s *Snapshot) *round { return tableRound(s.Readers, PropAskIndex, s.Readers.Rows()) }
 
-// The streams take turns (the owner's ruling of 2026-09-30, errata 3
-// amendment 10: "we should deal fairly from each work stream, perhaps with
-// ... another index in that table"): every step that takes cards across the
+// The streams take turns: every step that takes cards across the
 // streams (the deal, and the withdrawn card dealt again with it; the ask; the
 // accept) takes one card from each stream in turn, starting at the stream
 // past its rolling index on the work table (stream_index for the deal,
@@ -289,7 +285,7 @@ func askRound(s *Snapshot) *round { return tableRound(s.Readers, PropAskIndex, s
 
 // askStreamRound is the ask's rolling index over the streams, a property of
 // the readers table: the ask is the readers' update, and only the pump writes
-// the work table while the machine runs (errata 3 amendment 12).
+// the work table while the machine runs.
 func askStreamRound(s *Snapshot) *round {
 	if s.Work == nil || s.Readers == nil {
 		return newRound(nil, "")
@@ -393,8 +389,8 @@ type roundMoves map[string]string
 // step read moved past the names of each kept unit, in the plan's order, so it
 // goes up with every placement the step makes (a unit the plan dropped moves
 // it no more), written as the table's property, guarded on the value the step
-// read, in the step's batch of that table (errata 3 amendment 5, the owner's
-// form; tla/SprintEvents.tla dcur and acur).
+// read, in the step's batch of that table (tla/SprintEvents.tla dcur
+// and acur).
 func roundWrites(p *Plan, r *round, moves roundMoves) {
 	if r == nil || len(moves) == 0 {
 		return
@@ -412,8 +408,7 @@ type roundRecord struct {
 
 // rewriteRounds makes a plan's index writes again from its units: after a
 // unit is dropped, each index is up by the placements the kept units make
-// and the names they pass over, never by the dropped one's (errata 3, the
-// form of the index: one a placement made).
+// and the names they pass over, never by the dropped one's.
 func rewriteRounds(p *Plan) {
 	var props []PropWrite
 	for _, pw := range p.Props {
