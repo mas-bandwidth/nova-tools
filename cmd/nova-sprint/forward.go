@@ -259,7 +259,7 @@ func (a *app) inboxWaitAt(addr string, fs *flag.FlagSet, args []string, atEpoch 
 	}
 	ctx := context.Background()
 	lastTickEnd := func() (last string, code int) {
-		res, err := a.ask(ctx, addr, []string{"log"}, []string{"--json", "--since", (timeout + tickEndPoll).String()})
+		res, err := a.ask(ctx, addr, []string{"log"}, []string{"--json", "--max", "0", "--since", (timeout + tickEndPoll).String()})
 		if err != nil {
 			return "", a.unanswered("inbox --wait", addr, err, stderr)
 		}

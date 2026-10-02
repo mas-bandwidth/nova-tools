@@ -166,3 +166,35 @@ func TestWhereHidesTheMergeTablesSince(t *testing.T) {
 	require.NotEmpty(t, block, "no merge table:\n%s", out)
 	require.NotContains(t, block, "since", "where shows since:\n%s", out)
 }
+
+// log --max keeps the newest n lines with a MORE line naming the total, in
+// both renderings; --max 0 is every line (defect 1 of the USE raters: the
+// flag was parsed and ignored).
+func TestLogMaxKeepsTheNewestLines(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.a.loc = time.UTC
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 2")
+	ta.deal(2)
+	ta.ok("take --as m1 s1-1.w1@1")
+	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'the tests went red'")
+	all := ta.ok("log --max 0")
+	require.Contains(t, all, "m1 finished attempt 1: FAILED", "log --max 0")
+	total := strings.Count(all, "\n") - 1
+	require.Greater(t, total, 2, "log --max 0:\n%s", all)
+	out := ta.ok("log --max 1")
+	assert.Contains(t, out, "judgment: work came back failed", "log --max 1 keeps the newest line:\n%s", out)
+	assert.NotContains(t, out, "m1 took attempt 1", "log --max 1 prints an older line:\n%s", out)
+	assert.Contains(t, out, "MORE kind=line shown=1 total=", "log --max 1 says the cut:\n%s", out)
+	assert.Contains(t, out, "LOG OK lines=1 of=", "log --max 1:\n%s", out)
+	assert.NotContains(t, all, "MORE", "log --max 0 is every line:\n%s", all)
+	var j struct {
+		Lines []struct{ Kind string }    `json:"lines"`
+		More  struct{ Shown, Total int } `json:"more"`
+	}
+	ta.json("log --max 2", &j)
+	assert.Len(t, j.Lines, 2, "log --max 2 --json: %+v", j)
+	assert.Equal(t, 2, j.More.Shown, "log --max 2 --json: %+v", j)
+	assert.Greater(t, j.More.Total, 2, "log --max 2 --json: %+v", j)
+}

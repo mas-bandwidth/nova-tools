@@ -11,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // cmdLog prints the epoch's log: every change of every card and every
@@ -52,13 +53,23 @@ func (a *app) cmdLog(args []string, stdout, stderr io.Writer) int {
 			out = append(out, l)
 		}
 	}
+	// --max keeps the newest lines and says the cut (a log is read from its end)
+	matched := len(out)
+	if c.max > 0 && matched > c.max {
+		out = out[matched-c.max:]
+	}
 	if c.json {
 		if out == nil {
 			out = []sprint.Line{}
 		}
+		var more *tool.More
+		if len(out) < matched {
+			more = &tool.More{Kind: "line", Shown: len(out), Total: matched, Remedy: "nova-sprint log ... --max 0"}
+		}
 		b, _ := json.Marshal(struct {
 			Lines []sprint.Line `json:"lines"`
-		}{out})
+			More  *tool.More    `json:"more,omitempty"`
+		}{out, more})
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -77,6 +88,9 @@ func (a *app) cmdLog(args []string, stdout, stderr io.Writer) int {
 		if strings.TrimSpace(brief) != "" {
 			fmt.Fprintf(stdout, "    brief: %d bytes, shown by nova-sprint card %s\n", len(brief), oneline.Field(l.Card))
 		}
+	}
+	if len(out) < matched {
+		fmt.Fprintf(stdout, "MORE kind=line shown=%d total=%d run: nova-sprint log ... --max 0\n", len(out), matched)
 	}
 	fmt.Fprintf(stdout, "LOG OK lines=%d of=%d\n", len(out), len(lines))
 	return 0
