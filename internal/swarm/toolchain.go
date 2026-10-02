@@ -12,7 +12,7 @@ import (
 
 // The bench toolchain roots are the directories the wall grants to toolchain processes.
 //
-// The provisioning and wall contracts use the same roots so a card can run its provisioned
+// The wall and the provisioning standard agree on every root, so a card's toolchain runs. The
 // bench provisioning standard puts the toolchain in a USER directory -- Go and sbcl under
 // `~/sdk`, the standard's own PATH entry `~/go/bin`, the module cache at `~/go/pkg/mod` --
 // while the native wall named NO toolchain root at all and pinned `GOTOOLCHAIN=local`. So
