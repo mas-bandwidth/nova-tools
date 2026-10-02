@@ -22,6 +22,13 @@ var verbExit = map[string]string{
 	"check":       "exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer",
 }
 
+// verbEffect is a verb's effect line, the last line of its -h, where the verb
+// states one (docs/STANDARD.md: `effect: inspection|local write|delivery`).
+var verbEffect = map[string]string{
+	"handover":    "inspection: reads the store, writes nothing",
+	"coordinator": "delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing",
+}
+
 // commonExit is the codes of every other verb.
 const commonExit = "exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer"
 
@@ -50,7 +57,11 @@ func recoverHelp(out io.Writer, code *int) {
 	var b strings.Builder
 	verbflag.Print(&b, prog, strings.Replace(banner(), exitLine, verbExits(name), 1), h.FS)
 	*code = 0
-	if _, err := io.WriteString(out, verbflag.Insert(b.String(), verbExample(name))); err != nil {
+	text := verbflag.Insert(b.String(), verbExample(name))
+	if e, ok := verbEffect[name]; ok {
+		text += "effect: " + e + "\n"
+	}
+	if _, err := io.WriteString(out, text); err != nil {
 		// the help did not reach its reader (a closed stdout): the exit code says so
 		*code = 1
 	}

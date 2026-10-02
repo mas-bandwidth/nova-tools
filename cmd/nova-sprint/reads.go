@@ -379,6 +379,9 @@ type whereView struct {
 	Cleared     time.Time                               `json:"cleared,omitempty"` // when the epoch began
 	Machine     string                                  `json:"machine,omitempty"`
 	Goals       []goalView                              `json:"goals,omitempty"`
+	// Seat is the seat's last change (coordinator <name>): who gave or took
+	// it, when and why; absent while the seat has not moved since init.
+	Seat *sprint.SeatChange `json:"seat,omitempty"`
 }
 
 // whereRun is what one where was asked, its flags read.
@@ -526,8 +529,15 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	if err != nil {
 		return whereView{}, "", err
 	}
+	seat, moved, err := st.Seat(ctx)
+	if err != nil {
+		return whereView{}, "", err
+	}
 	now := a.now()
 	v := whereView{At: now, Tables: map[string]map[string]map[string]string{}, Streams: clocks, Epoch: st.PinnedEpoch(), Coordinator: coordinator}
+	if moved {
+		v.Seat = &seat
+	}
 	if v.Epoch == es.N {
 		v.Cleared = es.Cleared
 	}
@@ -540,7 +550,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	}
 	v.Machine = st.MachineLine(ctx)
 	var b strings.Builder
-	b.WriteString("SPRINT TABLE\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
+	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
 	parts := map[string]string{}
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]
@@ -723,7 +733,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	atEpoch := fs.Int64("at-epoch", -1, "the inbox as it was at an earlier epoch (before a clear)")
 	wait := fs.Bool("wait", false, "block until a judgment, or a note to the coordinator, that was not in the inbox when the wait began (a held judgment never wakes it), or the machine stops; then show the inbox, saying what is new")
 	timeout := fs.Duration("timeout", 5*time.Minute, "with --wait, the longest wait; the inbox is shown when it passes (with --push, how often the loop looks at the machine)")
-	push := fs.String("push", "", "with --wait, keep running (until interrupted): each new judgment and note to the coordinator is written once as <dir>/<note id>.md, the group as inbox --open prints it and the clock; the files there are the cursor, so a restart pushes nothing twice; a local write")
+	push := fs.String("push", "", "with --wait, keep running (until interrupted): each new judgment and note to the coordinator is written once as <dir>/<note id>.md, the group as inbox --open prints it and the clock; the files there are the cursor, so a restart pushes nothing twice; a local write; seat is the holder's inbox, ~/<holder>-working/inbox/sprint-judgments, followed through a seat change (a directory named seat is ./seat)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "inbox", argErr("takes no words ", err, pos...))
@@ -783,15 +793,15 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if *push != "" {
 			return a.pushLoop(ctx, src, *push, *timeout, c.json, stdout, stderr)
 		}
-		groups, machine, err := src.inbox(ctx, "")
+		first, err := src.inbox(ctx, "")
 		if err != nil {
 			return a.readFailed("inbox", err, stderr)
 		}
-		var after string
-		if fresh, after, err = a.waitNew(ctx, src, seenKeys(groups), machine == machineRunning, *timeout); err != nil {
+		var after inboxLook
+		if fresh, after, err = a.waitNew(ctx, src, seenFresh(seenKeys(first.groups)), first.machine == machineRunning, *timeout); err != nil {
 			return a.waitFailed(err, stderr)
 		}
-		stopped := machine == machineRunning && after != machineRunning
+		stopped := first.machine == machineRunning && after.machine != machineRunning
 		woke = len(fresh) > 0 || stopped
 		sayWoke(fresh, stopped, *timeout, c.json, stdout, stderr)
 	}
@@ -821,8 +831,12 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		mach, _, _ := st.Machine(ctx)
 		machine := st.MachineLine(ctx)
 		judgments, happened := inboxActs(groups, a.now())
+		holder, err := st.B.Coordinator(ctx)
+		if err != nil {
+			return a.readFailed("inbox", err, stderr)
+		}
 		out := map[string]any{"groups": groups, "judgments": judgments, "happened": happened, "done": mach.Done(),
-			"last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": machine}
+			"last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": machine, "coordinator": holder}
 		if *wait {
 			// how the wait ended is in both renderings: the line above, and
 			// woke with the new groups' ids here (the one-value rule)
