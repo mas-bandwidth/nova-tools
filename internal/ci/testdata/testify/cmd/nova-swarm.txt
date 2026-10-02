@@ -1,4 +1,4 @@
 # Migrated counted package ledger; original row keys preserved.
 # ceiling: 2
-cmd/nova-swarm:assert 760 bare assertions to convert to testify
+cmd/nova-swarm:assert 735 bare assertions to convert to testify
 cmd/nova-swarm:env 54 t.Setenv and Chdir sites to inject through config
