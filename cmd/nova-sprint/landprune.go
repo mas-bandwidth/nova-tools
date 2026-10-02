@@ -374,8 +374,8 @@ func (a *app) tidyRefs(ctx context.Context, dir string, bases []string) (refs in
 	}
 	var others []string
 	for _, ref := range strings.Fields(local) {
-		// origin/HEAD, the clone's symbolic ref, names no branch of origin's
-		if name := strings.TrimPrefix(ref, prefix); ref != prefix+"HEAD" && !slices.Contains(bases, name) {
+		name := strings.TrimPrefix(ref, prefix)
+		if name != "HEAD" && !slices.Contains(bases, name) {
 			others = append(others, name)
 		}
 	}
