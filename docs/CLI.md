@@ -634,7 +634,7 @@ nova-bus names --bus ~/bus
 
 ### The cursor
 
-`inbox` and `check` do not walk the bus. Each reader keeps a cursor, the commit they last read to, in their own lane, and a run reads `git diff` from there: ten thousand notes on the bus and one new one is one parse. Three files in a lane make that work, all rebuildable from the notes: `CURSOR` (the commit, the count carried, and the switch-day line if you drew one), `OPEN` (the notes you have been shown and not answered, each as its whole display line so a later run prints it without opening the note), and `INDEX` (the lane's catalogue of its own notes, so a thread resolves by lookup). All three are written to a temp file beside themselves and renamed, so a run killed mid-write leaves the old file entire.
+`inbox` and `check` do not walk the bus. Each reader keeps a cursor, the commit they last read to, in their own lane, and a run reads `git diff` from there: ten thousand notes on the bus and one new one is one parse. Three files in a lane make that work, all rebuildable from the notes: `CURSOR` (the commit, the count carried, and the switch-day line if you drew one), `OPEN` (the notes you have been shown and not answered, each as its whole display line so a later run prints it without opening the note), and `INDEX` (the lane's catalogue of its own notes, so a thread resolves by lookup). All three are written to a temp file beside themselves and renamed, so a run killed mid-write leaves the file entire.
 
 The price, said plainly: closing is driven by what is new, so if somebody edits a note you answered long ago you are shown it again. You are asked twice; you are never told a note is answered when it is not. If your cursor is refused (the history was rewritten under it, or the open list is missing beside a cursor that says it was carrying notes, or the open list is from an older version), read once with `--full --advance`, which replaces all three. Those refusals are deliberate: a reader told "nothing new" by a stale cursor has been lied to.
 
@@ -664,7 +664,7 @@ nova-bus inbox --bus <dir> --as <you> --receipt-max-words 40 \
   --advance --remote origin --branch main
 ```
 
-`--legacy-before` takes a UTC date (midnight at its start) or an RFC 3339 instant; a note dated before the line is not carried and not listed, only counted on one `INBOX LEGACY` line. `--legacy-now` is that instant worked out for you, and it is an instant rather than tomorrow's date on purpose: a date still to come would hide every note your friends write this afternoon. A reader's first `--advance` over notes older than today is refused until it carries `--legacy-before`, `--legacy-now` or `--carry-history`, and the refusal hands you the exact line to run; a line that did not know took 602 old notes onto its open list and printed all 602 on every poll. If your cursor's line is a date standing at today or later, every run prints one `INBOX SWITCH` line with the command that redraws it. Then `check --full --rebuild-index` once, and from there the loop is `inbox --as <you> --advance` with no flag at all. Nothing is deleted and no note is changed; an old note is still on the bus, still answerable by id or path.
+`--legacy-before` takes a UTC date (midnight at its start) or an RFC 3339 instant; a note dated before the line is not carried and not listed, only counted on one `INBOX LEGACY` line. `--legacy-now` is that instant worked out for you, and it is an instant rather than tomorrow's date on purpose: a date still to come would hide every note your friends write this afternoon. A reader's first `--advance` over notes older than today is refused until it carries `--legacy-before`, `--legacy-now` or `--carry-history`, and the refusal hands you the exact line to run; a line that omits the flag takes 602 earlier notes onto its open list and prints all 602 on every poll. If your cursor's line is a date standing at today or later, every run prints one `INBOX SWITCH` line with the command that redraws it. Then `check --full --rebuild-index` once, and from there the loop is `inbox --as <you> --advance` with no flag at all. Nothing is deleted and no note is changed; a note behind the line is still on the bus, still answerable by id or path.
 
 ### The rule this tool does not enforce
 
@@ -706,7 +706,7 @@ exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complex
 
 ## What this deliberately is not
 
-`nova-check` is the record layer and nothing above it. It proves the files were present, whole, sized, linked, prose and in floor-set agreement when the check ran. It does not prove a model read them or acts from them, and it cannot detect a hostile input or a compromised reader; those defenses stay doctrine. What it closes is narrower and real: the posture used to rest on records nothing checked.
+`nova-check` is the record layer and nothing above it. It proves the files were present, whole, sized, linked, prose and in floor-set agreement when the check ran. It does not prove a model read them or acts from them, and it cannot detect a hostile input or a compromised reader; those defenses stay doctrine. What it closes is narrower and real: the posture no longer rests on records nothing checked.
 
 `nova-self-talk` reads sentence shapes, not a mind. It keeps no ratio and cannot see register, irony or an unmarked quotation, and it says so on every run, because a green from a partial check reads exactly like a green from a complete one.
 
@@ -1003,7 +1003,7 @@ would call it a pass. `--secret <path>` names the file the probe proves it
 cannot read — the path is not the secret, and its contents are never read — and
 it must be **outside** both lists, since a secret inside a named directory is a
 misconfiguration rather than a failed check. The `HOME=` prefix is not
-decoration: rule 9's check runs before the policy is built, so a probe run with
+decoration: the check runs before the policy is built, so a probe run with
 the dispatcher's own `HOME` is refused before it starts.
 
 Then wrap the command. This example uses an empty repository initialized on
@@ -1036,7 +1036,7 @@ What a first run gets wrong, and what each one wants:
   first config write dies there.
 - **No `--write`, or no `--secret` on a probe.** Both are required and neither
   has a default. They are named **together**, in one refusal, so a first run is
-  not sequenced into one run per mistake (nova-tools #104).
+  not sequenced into one run per mistake.
 - **A toolchain outside the wall.** A command that runs outside the wall and
   dies inside it is missing a `--read`: a toolchain in a user directory is
   exactly a caller-supplied read-only root, so name it. Name a cache or a data
@@ -1143,8 +1143,7 @@ $ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 5
   fallback: containment that only holds inside WSL is containment on a machine
   the card was not sent to.
 
-**This is not measured on a Windows machine.** The estate has none as of
-2026-09-18. The verb's sequence is proven against a fake on every host, the
+**This is not measured on a Windows machine.** The estate has none. The verb's sequence is proven against a fake on every host, the
 binary cross-compiles and vets for `GOOS=windows`, and until the **wall**
 (AppContainer) is built the verb refuses there with `reason=no_sandbox` naming
 the half that is missing — a place without a wall is hygiene, not containment.
@@ -1158,8 +1157,7 @@ the verb's own usage.
 volume is the one step that cannot be shared: two `diskutil apfs addVolume`
 running at the same time leave the new volume's root owned by `root:wheel`
 instead of you, it never settles, and the run dies at `mkdir` with `permission
-denied` before its card starts — measured in a 20-run soak on the Studio,
-2026-09-18, three of four concurrent runs and then four of four. `run`
+denied` before its card starts, and three of four concurrent runs — then four of four — die that way. `run`
 serializes creation across processes with a lock file under your own cache
 directory, and checks the new root is yours and writable before it hands it to
 anything. Nothing else is serialized: the runs themselves overlap freely.
@@ -1246,7 +1244,7 @@ The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` —
 nova-tokens check --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
 ```
 
-`check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, which is the old reading whole), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `--through <YYYY-MM-DD>` asserts that the ledger is current through the specified day; when the newest folded day under `--out` is older than the given day (or if `--out` has no folded days), `check` prints `CHECK FAIL stale last=<last> through=<day>` on standard error, marks the run failed, and exits 1. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines. One `--provider xai:<label>=<file>` names one file. A missing path is `TOKENS UNREADABLE` and is not a search of a session store; a directory is not walked.
+`check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, the whole reading), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `--through <YYYY-MM-DD>` asserts that the ledger is current through the specified day; when the newest folded day under `--out` is older than the given day (or if `--out` has no folded days), `check` prints `CHECK FAIL stale last=<last> through=<day>` on standard error, marks the run failed, and exits 1. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines. One `--provider xai:<label>=<file>` names one file. A missing path is `TOKENS UNREADABLE` and is not a search of a session store; a directory is not walked.
 
 ### First run
 
@@ -1258,14 +1256,14 @@ What a first run gets wrong, and what each one wants:
 - **Expecting exit 0 with an unreadable file.** A declared source is a claim that the report covers it, so an unreadable one is one `TOKENS UNREADABLE` line, one in `unreadable=`, and exit 1 — and the day files still land. `written=true` is about the files; the exit code is about the claim.
 - **Reading a `-` as a zero.** A dash is "this source did not report that type" and a zero is a measurement. `sum` counts the dashes per column beside the totals, and nothing here folds one type into another.
 - **Sending a second tokens note for a day.** Two notes in one lane for one day are `TOKENS CONFLICT` and fold nothing, because no winner can be read off a clock, a filename or a git history. A correction names what it corrects: `supersedes=<id>[,<id>…]` in the subject, which `report --supersedes` writes for you.
-- **Reusing one label across two kinds.** A label is unique across the whole run, not per flag: `--claude bench=… --opencode bench=…` is `TOKENS REFUSED … the label bench is used twice`, exit 2, before anything is read. Two sources with one label would make the `sources` column a lie. A `--provider` is the one flag whose label carries its parser too — `--provider google:emma=<export>` — so two friends' exports from one provider are `google:emma` and `google:freddy`.
+- **Reusing one label across two kinds.** A label is unique across the whole run, not per flag: `--claude bench=… --opencode bench=…` is `TOKENS REFUSED … the label bench is used twice`, exit 2, before anything is read. Two sources with one label would make the `sources` column a lie. A `--provider` is the one flag whose label carries its parser too — `--provider google:<label>=<export>` — so two exports from one provider are `google:<label>` and `google:<other>`.
 - **Declaring one harness twice.** **One harness is one `--claude`.** This fold does not de-duplicate across sources, by design (SPEC-TOKENS, *what it deliberately does not do*), so two declared directories holding the same transcripts count every message twice and the day file, `check` and `sum` are all green about it. Measured on this bench: `~/.claude/projects/<session>/subagents/agent-*.jsonl` and `/private/tmp/claude-501/*/tasks/*.output` were the same 10,281 messages for one day, and the doubled fold said `written=true`. A fold that sees two sources feed one message id now says so on its `TOKENS NOTE` line, naming both labels and the count — it is a warning, not a correction: the numbers are still doubled and the remedy is to drop one flag.
 - **Pointing `--claude` at a directory with a scratch tree under it.** `--claude` walks every `*.jsonl` and `*.output` under the directory **recursively**, and prunes nothing: a session scratchpad, a git clone or a build tree under it is walked too. Measured: a window-only fold of 1,278 files and 739 MB took **10.4s**; adding a directory of 33 session scratchpads under `/private/tmp` took **531.7s**, 331s of it in the kernel, to find 2,612 transcripts. Nothing is skipped silently, because a silent prune is a number nobody can account for — so name the transcript directory itself, and expect the walk to cost what the tree costs.
 - **`--scratch` without `--opencode`, or the other way round.** The OpenCode database is copied into `--scratch` and read there with `sqlite3 -readonly`, which is this tool's one subprocess; a scratch directory with nothing to put in it is a flag that does nothing, and both mistakes are refused with the sentence saying so.
 
 There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` carries seven example lines a stranger can paste instead — six under its first `example:` and one under the `session` example, and `sources` is the one verb that only looks.
 
-**The token ledger on Redis** (SPEC-STATE test 17, #2201). `ledger` indexes folded day files
+**The token ledger on Redis** (SPEC-STATE test 17). `ledger` indexes folded day files
 into the fleet Redis, one hash per day, and `report --redis` is the month as one GROUP BY
 over those hashes -- every one of the five types apart, a dash where no row reported a type,
 and equal to the folded day TSVs to the token. The day files stay the record.
@@ -1306,7 +1304,7 @@ for your bench; it and any snapshot path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
 then `--version`, then bare, all inside one `--timeout` — so our own tools, which
 answer a bare invocation with a usage refusal, are read rather than reported
-UNKNOWN (#1264). A row holding a whole argv (`go version`) is run as written.
+UNKNOWN. A row holding a whole argv (`go version`) is run as written.
 
 Use `nova-update help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. Updates require an explicit `nova-update apply --file ... name`;
@@ -1353,7 +1351,7 @@ that platform only. Every other platform the release built is adopted with `--ex
 <out>/<version>/<goos-goarch>/SUMS.digest` on the host that built it, or `--expect-sums <sha256>`
 from the `sums=` field of its `RELEASE BUILT` line. It also
 classifies the range since the previous tag against the sensitive path list and refuses until
-`--security-read <note id|url>` names Johnny's read. A compare the forge could only answer in part —
+`--security-read <note id|url>` names the recorded read. A compare the forge could only answer in part —
 300 files, its ceiling — is a different refusal, `reason=compare-truncated`, and a read does not get
 past it: classify from a complete local list instead, with `--local-diff <checkout>` to produce one
 (`git diff --name-only <previous>...<head>`) and `--paths-from <file>` to write it or read it back.
@@ -1364,7 +1362,7 @@ past it: classify from a complete local list instead, with `--local-diff <checko
 that nobody has run since and said it did, is an **open edge**, and an open edge refuses —
 `RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or --no-dogfood-gate
 --reason <why>"`. `--cli` defaults to `docs/CLI.md` beside the checkout the verb was already given
-(`--changelog` for `cut`, `--source` for `build`); `--receipts` defaults to `~/rowan-working/dogfood`
+(`--changelog` for `cut`, `--source` for `build`); `--receipts` defaults to `~/dogfood`
 when that directory exists, and a run with neither says `dogfood-gate=skipped` rather than passing
 quietly. The gate judges the **shipped set** only: the tools under the checkout's `cmd/`. A receipt
 naming any other tool is set aside and counted on `RELEASE CUT NOTE dogfood-gate shipped=<n>
@@ -1460,7 +1458,7 @@ for your bench; it and any snapshot path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
 then `--version`, then bare, all inside one `--timeout` — so our own tools, which
 answer a bare invocation with a usage refusal, are read rather than reported
-UNKNOWN (#1264). A row holding a whole argv (`go version`) is run as written.
+UNKNOWN. A row holding a whole argv (`go version`) is run as written.
 
 Use `nova-version help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. `nova-version snapshot --file <manifest>` counts the adopted tools the
