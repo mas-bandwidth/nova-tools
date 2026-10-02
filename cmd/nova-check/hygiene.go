@@ -98,7 +98,7 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 			paths = append(paths, p)
 		}
 	}
-	// `paths=-` is printed and not omitted: a member with no declared paths had
+	// `paths=-` is printed and not omitted: a run with no declared paths has
 	// out-of-path SKIPPED, and a line that simply left the field out would read as a
 	// bound that held.
 	shown := "-"

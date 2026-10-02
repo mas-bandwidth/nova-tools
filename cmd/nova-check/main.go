@@ -1,10 +1,11 @@
-// nova-check runs checks over markdown records and repositories (SPEC-CHECK.md):
-// quickstart (links, then nocode), boot attestation, link integrity, the
-// kernel size budget, the self/machinery separation (nocode, and nocode
-// --staged over the git index), the floor-set parity of a derived door and its
-// source, the protected corpus, branch hygiene, the dogfood ledger (record,
-// ledger, gate), convergence and spelling. Exit 0 pass, 1 check failed, 2 could
-// not run.
+// nova-check checks markdown records and git repositories and names each
+// problem on one line (docs/CLI.md, "nova-check"; docs/SPEC-CHECK.md for
+// convergence): quickstart (links, then nocode), boot attestation, link
+// integrity, the kernel size budget, the prose/machinery separation (nocode,
+// and nocode --staged over the git index), the floor-set parity of a derived
+// copy and its source, the protected corpus, branch hygiene, the dogfood
+// ledger (record, ledger, gate), convergence and spelling. Exit 0 pass, 1
+// check failed, 2 could not run.
 //
 // Every path and every budget comes from a flag. There are no defaults: a
 // missing flag is a refusal, never a guess. Three verbs write, each only when
@@ -27,7 +28,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-check: checks over markdown records and repositories, each finding named by file and line
+const usage = `nova-check: checks markdown records and git repositories and names each problem on one line
 
 how it works: most verbs inspect named paths and keep no state between runs.
 dogfood record appends a receipt; spelling --write edits files in place (--dry-run: neither writes).
@@ -36,13 +37,21 @@ the files you name; --state stores its two-tick streak. Other repository checks
 read the manifests, ledgers and receipts you name.
 first run: create the small markdown tree below, then run the example commands.
 
+terms: a record is a directory of markdown notes; a self repo is one that holds prose
+only. The kernel is the file a reader loads first, held to a size budget; a full boot
+is every file a session reads at its start, listed in a manifest. The door (SEED-CORE.md)
+is a short derived copy of a charter (SEED.md) whose floors, its numbered rules, both
+must state alike; in nocode, a floor is a built-in deny list. <verb> -h defines the rest.
+
 usage:
   nova-check version [--json] print this build identity (--version also accepted)
   nova-check quickstart --dir <dir> [--fail-max <n>] the two checks a first run can make
                                                      with nothing but a directory: links,
                                                      then nocode. Both run even if the
-                                                     first says NO.
-  nova-check attest --home <dir> --manifest <file>   did the full self load
+                                                     first says NO. For a self repo; on a
+                                                     tree that holds code, run links alone.
+  nova-check attest --home <dir> --manifest <file>   every file of a full boot is present:
+                                                     count, bytes and one sha256
   nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]
                                                      every relative md link resolves;
                                                      --file (repeatable) checks just those
@@ -52,7 +61,7 @@ usage:
   nova-check kernel --file <file> --max-bytes <n>    kernel size budget, in bytes
   nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>
                                                      kernel size budget, in tokens
-  nova-check nocode --dir <dir>                      no code files in a self repo
+  nova-check nocode --dir <dir>                      no code files in a self repo (prose only)
         [--allow <prefix>]     where machinery may live (repeatable, empty by default)
         [--deny-ext <l|@f>]    replace the floor EXTENSION list wholesale
         [--deny-ext-add <l|@f>] extend the floor EXTENSION list
@@ -66,7 +75,8 @@ usage:
                                                       rules the audit walks the tree with;
                                                       --dir is the repository root, required
   nova-check floors --core <docs/SEED-CORE.md> --source <docs/SEED.md>
-                                                     the door's floor set matches the seed's
+                                                     the derived copy states the same floors
+                                                     as its source
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
                                                      protected material is still where the
                                                      ledger says it is
@@ -74,7 +84,7 @@ usage:
         [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
                                                      the four mechanical checks the accept
                                                      gate runs, on a branch, before you ask
-                                                     a friend for a read: identity,
+                                                     a reviewer for a read: identity,
                                                      out-of-path, stray-file, secret.
                                                      --paths is the card's bound; with none
                                                      the line says paths=- and out-of-path
@@ -91,7 +101,7 @@ usage:
   nova-check dogfood gate --cli <file> --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]
                                                      exit 1 with the verbs no non-author has
                                                      run and the edges nobody has cleared;
-                                                     the line the release lane calls
+                                                     the line a release calls
   nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir>
                          --retired <file> --since <RFC3339|24h>
         [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
@@ -141,15 +151,14 @@ floors checks the fixed eight-floor charter: --core has numbered bold titles;
 
 `
 
-// The hints below turn this binary's most-hit refusals into a next step. The
-// no-guessing law is unchanged — a missing flag is still exit 2 and still says
-// "refusing to guess" — but a refusal that names only what was wrong leaves a
-// first-time caller to guess what the flag wanted, which is the same guessing
-// the tool refuses to do, moved onto the reader. Each hint says what the flag
-// IS and what a first run should put there.
+// The hints below turn this binary's most-hit refusals into a next step. A
+// missing flag is exit 2 and says "refusing to guess"; a refusal that named
+// only what was wrong would leave a first-time caller to guess what the flag
+// wants, which is the same guessing the tool refuses to do, moved onto the
+// reader. Each hint says what the flag IS and what a first run should put there.
 const (
 	dirHint      = `--dir <dir> is the tree to walk, your self repo's root or a directory inside it; it is never guessed from the working directory, so write it out every run`
-	homeHint     = `--home <dir> is your memory-home directory: the tree the manifest's paths are relative to, and the only place attest reads`
+	homeHint     = `--home <dir> is the directory your records live in: the tree the manifest's paths are relative to, and the only place attest reads`
 	manifestHint = `--manifest <file> is a text file listing the paths a full boot must read, one per line, relative to --home (blank lines and # comments ignored); this tool ships none, because what a full boot reads is yours`
 	fileHint     = `--file <file> is the one kernel file to measure — the file whose size you are holding to a budget, not the directory it lives in`
 	coreHint     = `--core <file> is the door: the derived copy, usually SEED-CORE.md, whose floor set is checked against the source's`
@@ -239,12 +248,33 @@ var effects = map[string]string{
 	"version":        "inspection: prints this build identity",
 }
 
-// verbHelp is the lines run adds to a verb's -h: its effect, and for the
-// dogfood verbs the shape of the command reference they read.
+// terms defines, in a verb's -h, the nouns that verb's lines use and a
+// stranger has no reason to know; the banner's terms: paragraph holds the ones
+// several verbs share.
+var terms = map[string]string{
+	"quickstart":     "for a self repo (a record of prose only); on a markdown tree that also holds code, run links --dir alone, since nocode names every code file",
+	"attest":         "a full boot is every file a session reads at its start; --manifest lists them, one path per line relative to --home",
+	"kernel":         "the kernel is the one file a reader loads before anything else, held to a size budget you state in bytes or in tokens",
+	"nocode":         "a self repo holds prose only; a floor is a built-in deny list, one of file extensions and one of build-machinery names and locations",
+	"floors":         "the door (--core) is a short copy derived from a charter (--source); the floors are the charter's numbered rules, and both files must state the same ones in the same order",
+	"corpus":         "the ledger is your markdown table of protected material, one row per fragment of text with the file it lives in; the check is that every fragment is still there",
+	"hygiene":        "the accept gate is the check a branch passes before a reviewer reads it; a card is the task brief, and its PATHS: line bounds the files the branch may change",
+	"dogfood":        "a verb is dogfooded when someone who did not write it has run it on real work; a receipt records one such run, and an edge is a problem a receipt names",
+	"dogfood ledger": "a verb is dogfooded when someone who did not write it has run it on real work; a receipt records one such run, and an edge is a problem a receipt names",
+	"dogfood record": "a receipt records one run of a verb on real work: who ran it, when, and whether it did what they needed; an edge is a problem its notes name",
+	"dogfood gate":   "a verb is dogfooded when someone who did not write it has run it on real work; an open edge is a problem a receipt names that no later receipt closes",
+	"convergence":    "a stream is one number measured now and at --since; the --ledger here is a pit-stop ledger, a markdown table of checks whose last cell says PASS, FAIL, PARTIAL or TODO",
+}
+
+// verbHelp is the lines run adds to a verb's -h: the terms it uses, for the
+// dogfood verbs the shape of the command reference they read, and its effect.
 func verbHelp(verb string) string {
 	lines := ""
+	if t := terms[verb]; t != "" {
+		lines = "terms: " + t + "\n"
+	}
 	if strings.HasPrefix(verb, "dogfood") {
-		lines = "  " + cliShapeHint + "\n"
+		lines += "  " + cliShapeHint + "\n"
 	}
 	if e := effects[verb]; e != "" {
 		lines += "effect: " + e + "\n"
@@ -337,9 +367,8 @@ func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 		return false
 	}
 	if fs.NArg() > 0 {
-		// Through refuse like every other unusable invocation: this site printed its own
-		// line and dropped the `; run: nova-check help` door, so a stray word after a
-		// verb said what was wrong and nothing about where to look.
+		// Through refuse like every other unusable invocation, so a stray word
+		// after a verb is answered with where to look (`; run: nova-check help`).
 		refuse(stderr, " "+fs.Name(), fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 		return false
 	}
@@ -433,7 +462,7 @@ func cmdAttest(args []string, stdout, stderr io.Writer) int {
 	defer stderr.(*jsonOutput).finish()
 	fs := flag.NewFlagSet("attest", flag.ContinueOnError)
 	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
-	home := fs.String("home", "", "memory-home directory (required)")
+	home := fs.String("home", "", "directory the manifest's paths are relative to (required)")
 	manifest := fs.String("manifest", "", "file listing the paths a full boot must read, relative to --home (required)")
 	failMax := addFailMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{"home": home, "manifest": manifest}) {
@@ -501,7 +530,7 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 			if b.Line == 0 && b.Target == "" {
 				// A whole-file finding: the .md itself could not be read, so there
 				// is no line and no target — `LINKS FAIL <file>: unreadable (<why>)`.
-				// A named failure like any other, per SPEC; not a refusal.
+				// A named failure like any other, not a refusal (docs/SPEC.md).
 				list.Line(fmt.Sprintf("LINKS FAIL %s: %s", oneline.Escape(b.File), oneline.Escape(oneline.Cap(b.Reason, oneline.TailBytes))))
 				continue
 			}
@@ -509,9 +538,8 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 				oneline.Escape(oneline.Cap(b.Target, oneline.TailBytes)), oneline.Escape(oneline.Cap(b.Reason, oneline.TailBytes))))
 		}
 		list.More()
-		// The count line prints on FAILURE too. It did not, so a failing run gave N lines
-		// and never N: the one number a reader wanted was the one thing they had to
-		// derive by counting the output.
+		// The count line prints on FAILURE too, so a failing run states N rather
+		// than leaving the reader to count N lines.
 		fmt.Fprintf(stderr, "LINKS FAIL files=%d links=%d broken=%d shown=%d excluded=%d\n", res.MDFiles, res.Checked, list.Total(), list.Shown(), res.Excluded)
 		return 1
 	}
@@ -534,8 +562,7 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	}
 	// The file and the budget are independent, so both are judged before
 	// either sends the caller away: `nova-check kernel` with nothing at all
-	// used to name --file and stop, and the second run then learned about the
-	// budget. One run, every problem it can find.
+	// names --file and the budget in one run.
 	ok := requireFlags(fs, stderr, map[string]*string{"file": file})
 	// Which budget was GIVEN, not which value survived: --max-bytes 0 is a
 	// stated (and refused) budget, not an absent one.
@@ -659,8 +686,8 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " nocode", oneline.Cap(verbflag.Explain(fs, err), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
-		// nocode parses its own flags rather than through parse(), so it carried the
-		// second copy of the door-less refusal; both go through refuse now.
+		// nocode parses its own flags rather than through parse(); its stray-word
+		// refusal goes through refuse like parse's.
 		return refuse(stderr, " nocode", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 	}
 	if *denyExt != "" && *denyExtAdd != "" {
@@ -738,8 +765,6 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	// A run that classified nothing should not read as a run that found
 	// nothing: an empty tree and a wrong --dir are indistinguishable here.
 	if scanned == 0 {
-		// The audit had no such warning, so a --dir that resolved to an empty
-		// or unreadable tree read as a clean repo with nothing to say.
 		fmt.Fprintf(stderr, "NOCODE NOTE classified NOTHING under %s — an empty tree, everything allowed, or the wrong directory\n", oneline.Escape(*dir))
 	}
 	fmt.Fprintf(stdout, "NOCODE OK files=%d clean deny-list=%s\n", scanned, oneline.Field(source))

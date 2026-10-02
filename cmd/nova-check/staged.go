@@ -2,7 +2,7 @@ package main
 
 // The --staged half of nova-check nocode: the audit's classifier over the
 // INDEX, reading what is about to be committed rather than what is on disk
-// (SPEC.md:805). A commit commits an index, not a tree -- staging a script
+// (docs/SPEC.md, "`--staged`", "What it is for"). A commit commits an index, not a tree -- staging a script
 // and replacing it in the working directory leaves the script in the commit
 // while every working-tree reader sees prose -- so this mode classifies the
 // staged records of one plumbing command, `git diff-index -r
@@ -14,12 +14,11 @@ package main
 // (check.FloorDenyExts / check.FloorDenyNames), resolved through the same
 // flags by the verb, and the reason strings are the audit's own so a finding
 // reads the same from either mode. The rule code that joins them is a second
-// copy in this package because the audit's classify is unexported in
-// internal/check and this change is scoped to cmd/nova-check; folding the two
-// into one shared, substrate-parameterised classifier is the follow-up this
-// copy names.
+// copy in this package, because the audit's classify is unexported in
+// internal/check; one shared classifier for both is owed.
 //
-// It is an ADVISORY and not an enforcement boundary (SPEC.md:817): a local
+// It is an ADVISORY and not an enforcement boundary (docs/SPEC.md, "`--staged`",
+// "It is an advisory and NOT an enforcement boundary"): a local
 // check cannot be a boundary, because the committer controls whether it runs
 // at all. The enforcement is the audit run in CI.
 
@@ -96,8 +95,7 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 			// THE ONE SKIP, and a real status skip, never an inference from a
 			// missing working-tree file: `git add evil.sh && rm evil.sh`
 			// leaves an A record whose blob still carries the shebang while
-			// the file is gone from disk. The inference was the original
-			// design's root defect.
+			// the file is gone from disk, so a missing file proves nothing.
 			continue
 		case "A", "M", "T":
 			// Classified on the destination mode and OID below.
@@ -201,7 +199,7 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 	return 0
 }
 
-// stagedRoot is the root test (SPEC.md:1021): `git -C <dir> rev-parse
+// stagedRoot is the root test (docs/SPEC.md, "`--staged`", "The root test"): `git -C <dir> rev-parse
 // --show-toplevel`, compared with --dir after resolving symlinks on BOTH
 // sides -- never a test for .git being a directory, which is false in a
 // linked worktree and in a submodule, both legitimate places to commit from.
@@ -245,7 +243,8 @@ func stagedResolved(dir string) (string, error) {
 	return full, nil
 }
 
-// stagedBase is the base detector (SPEC.md:1028): the base is HEAD, except on
+// stagedBase is the base detector (docs/SPEC.md, "`--staged`", "The base is
+// HEAD, except on an unborn HEAD"): the base is HEAD, except on
 // an unborn HEAD, where the comparison is against the EMPTY TREE obtained
 // from the repository itself. THE DETECTOR IS THE EXIT CODE, never git's
 // wording: the failure text is not stable across invocations, and a
@@ -296,8 +295,8 @@ func stagedGit(root string, args ...string) (string, error) {
 // stagedRecord is one `git diff-index --cached -z` record:
 // `:<srcmode> <dstmode> <srcOID> <dstOID> <status>`. The mode and the content
 // handle travel together in one record, which is why the source is one
-// command: a second command joining a path back to its content is the seam
-// two earlier designs' bypasses lived in.
+// command: a second command joining a path back to its content is a seam a
+// bypass can live in.
 type stagedRecord struct {
 	srcMode string
 	dstMode string
@@ -398,8 +397,8 @@ type stagedBlobHead struct {
 
 // stagedBlobHeads reads the first two bytes of every blob record's
 // destination OID through ONE `git cat-file --batch` fed from the record
-// list, never a process per path -- a pre-commit that takes 37 seconds is
-// disabled exactly the way an advisory that refuses on every commit is. The
+// list, never a process per path -- a slow pre-commit is disabled exactly
+// the way an advisory that refuses on every commit is. The
 // two requirements the reader must both keep: stay FRAMED on the stream,
 // consuming each record whole rather than two bytes and moving on, since a
 // desynchronised reader slides onto the next object's bytes; and do not

@@ -1,8 +1,9 @@
 package main
 
-// The convergence verb: are we converging? Convergence is a health metric, the
-// contraction ratio per stream, every tick; read by hand it comes from six places
-// and is a paragraph nobody can diff against the next one, so this verb reads it.
+// The convergence verb: is the work converging? Per stream, one number now
+// against the same number at --since, with the ratio and the trend; read by
+// hand it comes from six places and is a paragraph nobody can diff against the
+// next one, so this verb reads it.
 //
 // Seven streams, each read from a real source through a seam: the forge, a
 // checkout, the receipts, the retired README, a bin, a version snapshot and the
@@ -77,7 +78,7 @@ func requireConvergenceFlags(stderr io.Writer, required map[string]*string) bool
 func cmdConvergence(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("convergence", flag.ContinueOnError)
 	repo := fs.String("repo", "", "forge repository the queue and the batches are read from, owner/name (required)")
-	ledger := fs.String("ledger", "", "pit-stop ledger markdown; its open rows are the LEDGER stream (required)")
+	ledger := fs.String("ledger", "", "pit-stop ledger: a markdown table of checks whose last cell says PASS, FAIL, PARTIAL or TODO; its open rows are the LEDGER stream (required)")
 	receipts := fs.String("receipts", "", "dogfood receipts directory; its open edges are the EDGES stream (required)")
 	retired := fs.String("retired", "", "retired-scripts README; its dated rows are what the window retired (required)")
 	since := fs.String("since", "", "far edge of the window: an RFC3339 instant, or a duration such as 24h (required)")
@@ -95,7 +96,7 @@ func cmdConvergence(args []string, stdout, stderr io.Writer) int {
 	asJSON := fs.Bool("json", false, "print the reading as one JSON object instead of the lines")
 	dryRun := fs.Bool("dry-run", false, "take the reading and print it; write no --state")
 	var by repeatable
-	fs.Var(&by, "by", "narrow the EDGES rounds to this friend's receipts (repeatable; empty reads them all)")
+	fs.Var(&by, "by", "narrow the EDGES rounds to the receipts recorded under this name (repeatable; empty reads them all)")
 
 	if !parseFlags(fs, args, stderr) {
 		return 2

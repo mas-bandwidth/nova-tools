@@ -43,7 +43,6 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	// Validate ignore flags before proceeding.
 	if _, err := check.ParseIgnoreSpec(ignore); err != nil {
 		return refuse(stderr, " spelling", oneline.Err(err))
 	}

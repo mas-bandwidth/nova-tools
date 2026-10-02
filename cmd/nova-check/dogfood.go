@@ -21,8 +21,8 @@ import (
 //
 // Three sub-verbs, and they are deliberately small: `ledger` reads the verb
 // list against a directory of receipts and prints one row per verb; `record`
-// appends one receipt; `gate` is the same read with an exit code, for the
-// release lane to call. There is no state anywhere else — the receipts ARE the
+// appends one receipt; `gate` is the same read with an exit code, for a
+// release to call. There is no state anywhere else — the receipts ARE the
 // record, and every path comes from a flag.
 //
 // The verb list comes from the binaries when `--tools` names them, and from the
@@ -226,7 +226,7 @@ func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, r
 
 // reportStranded names every receipt that matched no verb: the file, what it
 // claimed, and the verb it was probably meant to be. Both `ledger` and `gate`
-// call it, on every outcome: a lane must not pass or fail without learning
+// call it, on every outcome: a release must not pass or fail without learning
 // that evidence it read was thrown away, and which, and how to spell it.
 func reportStranded(read dogfoodRead, failMax int, stderr io.Writer) {
 	strands := dogfood.Stranded(read.verbs, read.receipts)
@@ -311,8 +311,8 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	}
 	// No receipts read is an empty evidence set, not a pass: the gate's whole
 	// question is whether the verbs in the list have been dogfooded, and with
-	// nothing read there is nothing to answer it. The release lane asks for
-	// this refusal by name so it cannot go green on nothing.
+	// nothing read there is nothing to answer it. The refusal is by name so a
+	// release cannot go green on nothing.
 	if len(read.receipts) == 0 && !*allowEmpty {
 		return refuseRan(stderr, " dogfood gate", fmt.Sprintf("no receipts were read from %s, so the gate has nothing to pass on; add receipts, or pass --allow-empty to say that is deliberate", oneline.Escape(*receipts)))
 	}
@@ -324,8 +324,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	// The token is one word: bounded escapes what it is given, and a token with
-	// a space in it came back as `DOGFOOD\x20GATE MORE` the first time this verb
-	// was run against this repository's own reference.
+	// a space in it would print as `DOGFOOD\x20GATE MORE`.
 	list := bounded.Capped(stderr, *failMax, "DOGFOOD", "verb", failMaxRemedy)
 	for _, f := range findings {
 		list.Line(oneline.Escape(oneline.Cap(f.Line(), oneline.TailBytes)))
@@ -370,8 +369,8 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	// The spelling is checked against the same list the ledger will read it
-	// against, so a receipt for a verb spelled differently is refused now
-	// rather than stranded, unread, later.
+	// against, so a receipt for a verb spelled differently is refused when it
+	// is written rather than stranded, unread, later.
 	verbs, code := src.verbList("record", *failMax, stderr)
 	if code != 0 {
 		return code
