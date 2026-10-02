@@ -691,3 +691,105 @@ func TestAStageLineIsWhereEveryReaderMeetsTheTool(t *testing.T) {
 		})
 	}
 }
+
+// memo is a tool whose verbs take positional arguments and whose first run
+// needs one setup line: search a tail of words, check exactly one file, with
+// lines its spec opens with MEMORY.
+func memo() *Tool {
+	return &Tool{Name: "nova-memo", What: "finds notes", ExitTable: "0 done, 2 could not run.",
+		Setup: "mkdir -p ./notes",
+		Verbs: []Verb{
+			{Name: "search", Usage: "search --root <dir> [--k <n>] <words>...", Example: "search --root ./notes glass", Effect: Inspection,
+				Flags: func(f *Flags) {
+					f.String("root", "", "the notes directory")
+					f.Int("k", 3, "hits")
+					f.Args("<words>...")
+				}, Run: func(c *Call) *Out {
+					return Done().Fact("root", c.Str("root")).Fact("k", c.Int("k")).Fact("words", Text(strings.Join(c.Args(), " ")))
+				}},
+			{Name: "check", Usage: "check <file|->", Example: "check ./notes/a.md", Effect: Inspection, Token: "MEMORY",
+				Flags: func(f *Flags) {
+					f.Required("root", "the notes directory")
+					f.Args("<file|->")
+				}, Run: func(c *Call) *Out { return Done().Fact("file", c.Args()[0]) }},
+		}}
+}
+
+// TestPositionalArguments pins Flags.Args: flags on either side of an
+// argument, `--` ending the flags, a `--` that is a flag's value read as that
+// value, the count refused in one line naming what the verb takes with its -h
+// as the remedy, the usage line of -h, and a verb's own token.
+func TestPositionalArguments(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name           string
+		args           []string
+		code           int
+		stdout, stderr string
+	}{
+		{"a tail of words", []string{"search", "a", "b"}, 0, "SEARCH OK root=- k=3 words=\"a b\"\n", ""},
+		{"flags before, between and after the words", []string{"search", "--root", "r", "a", "--k", "5", "b", "--json=false"}, 0,
+			"SEARCH OK root=r k=5 words=\"a b\"\n", ""},
+		{"-- ends the flags", []string{"search", "a", "--", "--k", "-x"}, 0, "SEARCH OK root=- k=3 words=\"a --k -x\"\n", ""},
+		{"a -- that is a flag's value is that value", []string{"search", "--root", "--", "a"}, 0, "SEARCH OK root=-- k=3 words=\"a\"\n", ""},
+		{"a tail of none is refused with the verb's -h", []string{"search", "--k", "2"}, 2, "",
+			"SEARCH REFUSED: takes <words>..., at least 1 argument, got 0; run: nova-memo search -h\n"},
+		{"one too many is refused", []string{"check", "--root", "r", "a", "b"}, 2, "",
+			"MEMORY REFUSED: takes <file|->, exactly 1 argument, got 2; run: nova-memo check -h\n"},
+		{"every problem at once, the count's remedy for all", []string{"check"}, 2, "",
+			"MEMORY REFUSED: --root is required; it wants the notes directory; refusing to guess; run: nova-memo check -h\n" +
+				"MEMORY REFUSED: takes <file|->, exactly 1 argument, got 0; run: nova-memo check -h\n"},
+		{"a lone dash is an argument", []string{"check", "-", "--root", "r"}, 0, "MEMORY OK file=-\n", ""},
+		{"--json after the argument is the flag", []string{"check", "f", "--root", "r", "--json"}, 0,
+			`{"result":{"verb":"check","status":"ok","exit":0},"facts":{"file":"f"}}` + "\n", ""},
+		{"an unknown flag after an argument is refused", []string{"check", "f", "--rot", "r"}, 2, "",
+			"MEMORY REFUSED: unknown flag --rot; the flags of check are --json, --root; did you mean --root?; run: nova-memo check -h\n"},
+		{"-h after an argument is help, the arguments on the usage line", []string{"search", "a", "-h"}, 0,
+			"usage: nova-memo search [flags] <words>...\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out, errs bytes.Buffer
+			code := memo().Run(tc.args, strings.NewReader(""), &out, &errs)
+			assert.Equal(t, tc.code, code)
+			if strings.HasPrefix(tc.stdout, "usage:") {
+				assert.True(t, strings.HasPrefix(out.String(), tc.stdout), "help opens %q, want %q", out.String(), tc.stdout)
+			} else {
+				assert.Equal(t, tc.stdout, out.String())
+			}
+			assert.Equal(t, tc.stderr, errs.String())
+		})
+	}
+	assert.Empty(t, memo().Problems())
+}
+
+// TestASetupLineIsPrintedAboveTheExamples pins Tool.Setup: the banner prints
+// the one line under onboarding's setup heading, after the exit codes and
+// above the example block, which it leaves as it was; a tool without one
+// prints no heading.
+func TestASetupLineIsPrintedAboveTheExamples(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		tool  *Tool
+		setup string
+		block string
+	}{
+		{"a tool with a setup line", memo(), "mkdir -p ./notes",
+			"exit codes: 0 done, 2 could not run.\n\n" + onboarding.SetupHeading + "\n  mkdir -p ./notes\n\nexample:\n  nova-memo search --root ./notes glass\n"},
+		{"a tool without one", demo(), "", "exit codes: 0 done, 1 said no, 2 could not run.\n\nexample:\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			banner := tc.tool.Banner()
+			assert.Contains(t, banner, tc.block)
+			assert.Equal(t, tc.setup, onboarding.SetupLine(banner))
+			examples, err := onboarding.ExampleLines(banner, tc.tool.Name)
+			require.NoError(t, err)
+			assert.NotEmpty(t, examples)
+			for _, ex := range examples {
+				assert.NotContains(t, ex, "mkdir")
+			}
+		})
+	}
+}
