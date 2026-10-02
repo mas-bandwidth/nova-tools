@@ -53,7 +53,7 @@ func (e *ManifestError) Error() string {
 // manifestProblemCap bounds the problems one refusal lists; the rest are counted.
 const manifestProblemCap = 50
 
-// Load reads the manifest (SPEC-UPDATE rule 2) and returns every problem it finds as one
+// Load reads the manifest (SPEC-UPDATE) and returns every problem it finds as one
 // *ManifestError: the header, then each line's fields in order, every bad field of a line
 // named and every bad line of the file. A file with no problem yields its entries.
 func Load(r io.Reader) ([]Entry, error) {
@@ -104,7 +104,7 @@ func Load(r io.Reader) ([]Entry, error) {
 		}
 		// "-" is the field a snapshot leaves for a person to fill in, and it is the same
 		// answer as "none": there is no command to apply an update with. It is not a
-		// command named "-" (#571).
+		// command named "-".
 		if f[4] != "none" && f[4] != "-" {
 			e.Apply, err = argv(f[4])
 			if err != nil {

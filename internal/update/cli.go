@@ -123,7 +123,7 @@ nova-update help`
 // the rule-2 manifest, one tab-separated line per tool, written by hand in git.
 // The usage line and the refusal on a missing file both carry it, so neither
 // reads as if --file were an output. Only `example` writes one, the example to
-// start from; the spec carries the same shape once (SPEC-UPDATE rule 2).
+// start from; SPEC-UPDATE carries the same shape once.
 const manifestShape = "one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand"
 
 // updateOpening opens the banner with its three answers:
@@ -292,7 +292,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		return VersionTool(stamp, env).Run(args, nil, out, errs)
 	}
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before any manifest, bus or store is read (the CLI style's rule (b), #4505).
+	// before any manifest, bus or store is read (the CLI style's help rule).
 	defer verbflag.RecoverWith(out, name, helpText(name), &rc, func(verb string) string { return verbDetail(name, verb) })
 	door, asked := name+" help", verbflag.BoolAsked(args, "json")
 	if len(args) == 0 {
@@ -369,7 +369,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
 		// `<tool> <verb> --help` never lands here: verbflag.Parse raises that
 		// verb's help, which Run prints on stdout at exit 0 (asking is not an
-		// error; darwin dogfood, 2026-09-18).
+		// error).
 		return emit(refused(verb, name+" "+verb+" -h", flagProblem(f, err).Error()), verbflag.BoolAsked(args, "json"), 0, out, errs)
 	}
 	if o.store != "" {
@@ -391,7 +391,7 @@ func reportDeliveryFlags(f *flag.FlagSet, o *options) {
 	f.StringVar(&o.branch, "branch", "", "the bus branch")
 }
 
-// storeReport is `report --store` (#3880): every bench's nova-sprint build from
+// storeReport is `report --store`: every bench's nova-sprint build from
 // its beat, so it takes no manifest, snapshot or note and never runs ssh.
 func storeReport(name string, o options, positional []string, env Environment) *tool.Out {
 	help := name + " report -h"
@@ -490,7 +490,7 @@ func checked(name, verb string, o options, positional []string, env Environment)
 		return report(ctx, verb, entries, selected, o, strings.Join(kinds, ","), help, started, env)
 	}
 	// status is check's read with every entry's item shown, current ones included
-	// (SPEC-UPDATE rule 9): the same reads, the same exit, its own first token.
+	// (SPEC-UPDATE): the same reads, the same exit, its own first token.
 	results := readEntries(ctx, selected, o, env, false)
 	counts := map[string]int{}
 	pins := 0
@@ -642,7 +642,7 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 		args[i] = strings.ReplaceAll(args[i], "{version}", target)
 	}
 	// --dry-run is the plan this function is about to take, printed and not taken
-	// (SPEC-UPDATE rule 13): every refusal above has passed, the target and the argv
+	// (SPEC-UPDATE): every refusal above has passed, the target and the argv
 	// are the ones below, and no process starts.
 	if o.dryRun {
 		return applyDryRun(*e, before, target, args)
@@ -671,7 +671,7 @@ func apply(entries []Entry, name, help string, o options, env Environment) *tool
 // applyDryRun is what `apply` would do to one entry, done to none of it: the entry's
 // item as `status` shows it (installed against the target the real run would
 // install), and the plan, the argv the real run's RUN item carries. No process starts
-// and nothing is written; it exits 0, the plan having been made (SPEC-UPDATE rule 13,
+// and nothing is written; it exits 0, the plan having been made (SPEC-UPDATE's
 // `--dry-run`).
 func applyDryRun(e Entry, before Read, target string, argv []string) *tool.Out {
 	r := entryRead{Entry: e, Installed: before, Latest: Read{Version: target, Source: e.Latest}}
@@ -689,7 +689,7 @@ func applyDryRun(e Entry, before Read, target string, argv []string) *tool.Out {
 
 // movedChildTimeout is the default deadline one child of `moved` gets, and
 // `--timeout` is how a caller changes it. It is snapshot's thirty seconds, not
-// report's five, for the same measured reason (#890): every binary this verb
+// report's five, for a measured reason: every binary this verb
 // reads is one it built a moment ago, so the platform's one-time assessment of
 // a never-seen executable is charged to the first exec of every tool at every
 // revision. A five-second bound here refused healthy builds and sent the reader
@@ -701,17 +701,17 @@ var movedChildTimeout = 30 * time.Second
 // `snapshot` already take.
 var movedBudget = 60 * time.Second
 
-// movedVerb is SPEC-VERSION's TOOLS MOVED note (#2288): it compares two
+// movedVerb is SPEC-VERSION's TOOLS MOVED note: it compares two
 // revisions by BUILDING both and reading what each build's own `help` prints,
 // never a hand-written list. The hurt it removes is the ADOPT EVERYTHING note,
-// which named four `--decide` flags that were still on open PRs (#1141): a list
+// which names flags no shipped binary answers: a list
 // a person wrote can announce a flag no binary ever answered, and a reader
 // cannot tell that from a reading. Here every announced verb and flag was
 // parsed off a `<tool> help` this run executed, so a flag on no binary's help
 // cannot be announced (SPEC-VERSION rules 2 and 10). A tool that vanishes is
 // deleted and one that appears is added; a rename is counted only when a commit
-// message or a MOVED file states it and the builds confirm it (rule 2); an
-// empty diff is three zeros, exit 0, never a refusal (rule 3).
+// message or a MOVED file states it and the builds confirm it; an
+// empty diff is three zeros, exit 0, never a refusal.
 func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	// Read once at entry, so a refusal on the way keeps its own reason: the
 	// skeleton fails a --dry-run call whose verb never read it.
@@ -732,10 +732,10 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 		return p
 	}
 	// Both revisions resolve in --repo alone, before anything is built or
-	// written (SPEC-VERSION rule 1: never the cwd, never origin/HEAD). A
+	// written (SPEC-VERSION: never the cwd, never origin/HEAD). A
 	// revision that is not a commit names the git fetch that would bring it;
 	// the fetch itself is the caller's, because this verb reaches for no
-	// network of its own (rule 12).
+	// network of its own.
 	// A --repo that is no checkout is named as such first: a revision cannot be a
 	// commit there, and a fetch would not help.
 	if p := runChild([]string{"git", "-C", repo, "rev-parse", "--git-dir"}); strings.HasPrefix(p.Reason, "exit ") {
@@ -853,7 +853,7 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 				}
 			}
 			if p.Reason != "" || strings.TrimSpace(p.Stdout) == "" {
-				// SPEC-VERSION rule 4: a cmd/* that builds but answers no
+				// SPEC-VERSION requires: a cmd/* that builds but answers no
 				// help names the cmd, the revision and the build to repair
 				// there.
 				return nil, fmt.Errorf("cannot read %s help at %s (%s) (repair the build there: go build ./cmd/%s, or raise --timeout)", cmd, rev, what, cmd)
@@ -878,7 +878,7 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	for _, e := range entries {
 		fmt.Fprintln(&note, e)
 	}
-	// The one line, every field named (SPEC-VERSION rule 3): added, deleted
+	// The one line, every field named (SPEC-VERSION): added, deleted
 	// and renamed count tools, and verbs counts the (tool, verb) pairs the
 	// --to build answers -- the size of the surface the note describes.
 	o := tool.Done().Fact("from", fromSha).Fact("to", toSha).Fact("added", counts.added).Fact("deleted", counts.deleted).
@@ -905,7 +905,7 @@ type movedInv map[string]map[string]map[string]bool
 // usage line (SPEC-VERSION's block names nova-update's in nova-version's help)
 // cannot add that tool to THIS revision's inventory, and a line that is not a
 // usage line -- the defaults, the notes, the examples -- contributes nothing.
-// This function is the whole of "never a hand-written list" (#2288): whatever
+// This function is why the note is never a hand-written list: whatever
 // these lines do not print, the note cannot announce.
 func parseMovedHelp(tool, help string) map[string]map[string]bool {
 	verbs := map[string]map[string]bool{}
@@ -938,9 +938,9 @@ func parseMovedHelp(tool, help string) map[string]map[string]bool {
 // diffMoved compares the two inventories and returns the note's entry lines
 // and the counts the MOVED OK line prints. A tool that vanishes is deleted and
 // one that appears is added; a rename is counted only when it was stated (in a
-// commit message or a MOVED file) AND the inventories confirm it -- the old
+// commit message or a MOVED file) AND the inventories confirm it -- the original
 // name built only at --from, the new name only at --to -- so help text alone,
-// however identical, never makes a rename (SPEC-VERSION rule 2). A confirmed
+// however identical, never makes a rename (SPEC-VERSION). A confirmed
 // rename consumes its pair: the statement, not a guess, is what moved the tool.
 func diffMoved(before, after movedInv, stated map[string]string) (entries []string, counts struct{ added, deleted, renamed, verbs int }) {
 	consumed := map[string]bool{}
