@@ -8,10 +8,10 @@ import (
 // RemedyMarkers are the house forms of a remedy on a refusal line
 // (docs/CLI-STYLE.md (f)): the command to run, the flag or value the input
 // wants, where to read, or what to do next. A line holding any of them has left
-// its reader a breadcrumb. The owner's rule (2026-09-30): every tool and verb
-// "should never fail silently, and they should always provide helpful
-// breadcrumbs how to fix anything going wrong". internal/ci's remedy rule reads
-// the source for the same forms, so the two agree on what a remedy is.
+// its reader a breadcrumb. No tool or verb fails silently, and every failure
+// carries a breadcrumb that shows how to fix what went wrong. internal/ci's
+// remedy rule reads the source for the same forms, so the two agree on what
+// a remedy is.
 var RemedyMarkers = []string{
 	"run:", "run `", "remedy:", "remedy=", "fix:", "wants ", "see `",
 	"rerun", "next:", " -h", "--help",
