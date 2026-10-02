@@ -261,7 +261,7 @@ $ nova-check quickstart --dir ./self
 QUICKSTART RUN dir=./self checks=2: links, then nocode
 LINKS OK files=4 links=3 excluded=0
 NOCODE OK files=5 clean deny-list=floor-list
-QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
+QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (kernel wants a size budget, attest a manifest of what a full boot reads, floors a derived copy and its source, corpus a ledger of protected lines: nova-check help)
 
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 KERNEL OK bytes=771 budget=4000
@@ -284,7 +284,7 @@ HYGIENE OK base=main head=card paths=sign/** findings=0
 
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
+HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
 HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
 HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
@@ -296,8 +296,8 @@ back (#1804) — it is the command that prints the rest, and it carries the
 ```
 $ nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
-HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS:
+HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
+HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS: sign/**
 HYGIENE FINDING reason=stray-file at=sign/RESULT.md: an added file matching the stray list's RESULT.md
 HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
@@ -307,7 +307,7 @@ than matched against nobody:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <<ada@example.com>>"
-nova-check hygiene: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
+nova-check hygiene REFUSED: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
 ```
 
 `--kind` is a card kind the toolchain declares, and there is no default one. One
@@ -315,7 +315,7 @@ it does not hold is refused by name rather than left to unlock nothing (#1848):
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
-nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
+nova-check hygiene REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
 ## nova-self-talk
@@ -375,7 +375,7 @@ $ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
 FUSE FAIL quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
 
 $ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
-QUARANTINE OK a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)
+QUARANTINE OK a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell the person you work with now)
 
 $ nova-fuse check --box ./fuse-box.json a-forum
 FUSE FAIL quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')

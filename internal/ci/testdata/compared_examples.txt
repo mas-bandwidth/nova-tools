@@ -90,3 +90,14 @@ cmd/nova-tokens/read_examples_test.go:TestTheHelpReadingExamplesAreWhatTheyPrint
 cmd/nova-tokens/read_examples_test.go:TestTheHelpReadingExamplesAreWhatTheyPrint example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
 cmd/nova-tokens/read_examples_test.go:TestTheHelpReadingExamplesAreWhatTheyPrint example: nova-tokens sum --out ./out --month 2026-09
 cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine $ nova-memory search --root ./corpus --channels bm25 --k 3 glazing minutes pressure
+cmd/nova-cairn/firstrun_test.go:TestUsageBannerExamplesRun example: nova-cairn open --store ./cairns --session s1 --publish manual
+cmd/nova-cairn/firstrun_test.go:TestUsageBannerExamplesRun example: nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep"
+cmd/nova-cairn/firstrun_test.go:TestUsageBannerExamplesRun example: nova-cairn index --store ./cairns
+cmd/nova-cairn/firstrun_test.go:TestUsageBannerExamplesRun example: nova-cairn receipt --store ./cairns --session s1 --entry e1 --text
+cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example: nova-fuse check --box ./fuse-box.json a-forum
+cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example: nova-fuse check --box ./fuse-box.json a-public-issue-tracker
+cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example: nova-fuse lift quarantine --box ./fuse-box.json a-forum
+cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example: nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
+cmd/nova-fuse/firstrun_test.go:TestTheBannerSittingThroughTheComparator example: nova-fuse status --box ./fuse-box.json
+cmd/nova-check/answers_test.go:TestTheBannerQuickstartAndKernelExamplesMatchOutput example: nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
+cmd/nova-check/answers_test.go:TestTheBannerQuickstartAndKernelExamplesMatchOutput example: nova-check quickstart --dir ./self

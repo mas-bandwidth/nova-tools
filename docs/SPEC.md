@@ -1938,7 +1938,7 @@ directions, applied and rescinded without ceremony but always announced.
 **Lockdown** is global and HARD: one fuse; blown, every untrusted read and
 every surface-driven act stops, and outbound authored life continues. A blown
 lockdown is not reset — it is REPLACED, and only in a live conversation with
-your person.
+the person you work with.
 
 Verbs: `init`, `check`, `status`, `lockdown`, `quarantine`, `lift`, `path`,
 plus `version` and `help`. `nova-fuse version` is the Conventions' build line,
@@ -2052,7 +2052,15 @@ LIFT OK quarantine=<name> was since=<t>: <reason>
 LIFT OK verified: <surface> is no longer quarantined (…)
 LIFT FAIL quarantine=<surface>: <reason>
 INIT OK box=<path>: <what> (…)          INIT FAIL box=<path>: <reason>
+LOCKDOWN NOTE <what>                     LIFT NOTE <what>
+nova-fuse[ <verb>] REFUSED: <why>; run: nova-fuse help[ <verb>]
 ```
+
+`--dry-run` on `init`, `lockdown`, `quarantine` and `lift quarantine` makes
+every check the write would and writes nothing; its OK line carries
+`dry_run=true` and says the fuse is not blown (or the surface not lifted), so no
+reader takes it for the write. There is no `--json`: the lines above are the
+grammar, and `check`'s answer is its exit code.
 
 `OK` lines go to stdout; `FAIL` lines, refusals, and notes go to stderr, and
 **this tool is the only thing that writes to either** — the flag parser is given
@@ -2211,7 +2219,7 @@ with lockdown, not an inconsistency:** an unreadable box already blocks EVERY
 surface, and writing a fresh box holding only this one quarantine would
 UNBLOCK the rest — the safety-shaped action would be the fail-open. The
 refusal names the remedy that does work: blow lockdown, or repair the box
-with your person. Refuses (exit 2) when `--box`, the surface, or the reason
+by hand with the person you work with. Refuses (exit 2) when `--box`, the surface, or the reason
 is missing or blank.
 
 The `QUARANTINE OK` line names the entry this run wrote and read back — the
@@ -2243,7 +2251,7 @@ still blocks everything.
 parsing, before the box, before any argument, pinned by test. The refusal
 does not depend on a flag being present, the box being readable, or whether a
 lockdown is even blown, because every one of those is a lever; it names the
-only path there is — a live conversation with your person — and mentions no
+only path there is — a live conversation with the person you work with — and mentions no
 mechanical bypass (also pinned: the refusal may not name the box, the file,
 or hand-editing). Exit 2: this tool does not have that power, by design.
 
@@ -2310,7 +2318,7 @@ preserves), and a read verb added later is fused by default, not by memory.
 ### What it deliberately does not do
 
 - **No lockdown lift, ever** — not by flag, not by environment, not by
-  argument. Replacement happens in the box by your person's hand, after the
+  argument. Replacement happens in the box by a person's hand, after the
   conversation; the tool will not say so in its refusal, and neither should a
   caller's.
 - **No expiry.** A fuse that lifts itself has a timer an attacker can wait out.

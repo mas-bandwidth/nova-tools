@@ -1,9 +1,8 @@
 package main
 
-// The convergence verb: are we converging? Glenn, 2026-09-15 -- convergence is
-// the health metric, the contraction ratio per stream, every tick. Rowan
-// answered it by hand on 2026-09-18 out of six different places, an hour of it,
-// and the answer was a paragraph nobody could diff against the next one.
+// The convergence verb: are we converging? Convergence is a health metric, the
+// contraction ratio per stream, every tick; read by hand it comes from six places
+// and is a paragraph nobody can diff against the next one, so this verb reads it.
 //
 // Seven streams, each read from a real source through a seam: the forge, a
 // checkout, the receipts, the retired README, a bin, a version snapshot and the
@@ -17,18 +16,19 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/converge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// The hints, one per required flag. Each says what the flag IS and what a first
-// run should put there -- the same law the rest of this binary keeps, with its
-// own --ledger, which here is the pit-stop ledger and not the corpus one.
+// The hints, one per required flag. Each says what the flag is and what a first
+// run should put there, with this verb's own --ledger, which here is the
+// pit-stop ledger and not the corpus one.
 const (
-	convRepoHint     = `--repo <owner/name> is the forge repository the queue and the batches are read from (mas-bandwidth/nova-tools); it is a name on a forge, never a directory`
+	convRepoHint     = `--repo <owner/name> is the forge repository the queue and the batches are read from (an owner/name such as example/project); it is a name on a forge, never a directory`
 	convLedgerHint   = `--ledger <file> is the pit-stop ledger: the markdown whose table rows carry PASS, FAIL, PARTIAL or TODO in their last cell, and whose open rows are the LEDGER stream`
 	convReceiptsHint = `--receipts <dir> is the dogfood receipts directory, the same one nova-check dogfood reads; its open edges are the EDGES stream`
 	convRetiredHint  = `--retired <file> is the retired-scripts README, whose dated rows say what the window retired; with --bin it is the SCRIPTS stream`
@@ -59,20 +59,15 @@ func convergenceHint(name string) string {
 	return ""
 }
 
-// requireConvergenceFlags reports EVERY missing required flag, not the first,
+// requireConvergenceFlags reports every missing required flag, not the first,
 // each with the hint that says what it wants. It is this verb's own because
 // this verb's --ledger is a different ledger from the corpus verb's, and a hint
 // that names the wrong document is worse than none.
 func requireConvergenceFlags(stderr io.Writer, required map[string]*string) bool {
-	names := make([]string, 0, len(required))
-	for name := range required {
-		names = append(names, name)
-	}
-	sort.Strings(names)
 	ok := true
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(required)) {
 		if *required[name] == "" {
-			fmt.Fprintf(stderr, "nova-check convergence: --%s is required; refusing to guess; run: nova-check help\n%s", oneline.Field(name), convergenceHint(name))
+			fmt.Fprintf(stderr, "nova-check convergence REFUSED: --%s is required; refusing to guess; run: nova-check help\n%s", oneline.Field(name), convergenceHint(name))
 			ok = false
 		}
 	}
@@ -98,6 +93,7 @@ func cmdConvergence(args []string, stdout, stderr io.Writer) int {
 	gitBin := fs.String("git", "git", "the git executable --repo-dir is read through")
 	timeout := fs.Int("timeout", convDefaultTimeout, "seconds one child read may take before it is killed and named")
 	asJSON := fs.Bool("json", false, "print the reading as one JSON object instead of the lines")
+	dryRun := fs.Bool("dry-run", false, "take the reading and print it; write no --state")
 	var by repeatable
 	fs.Var(&by, "by", "narrow the EDGES rounds to this friend's receipts (repeatable; empty reads them all)")
 
@@ -110,7 +106,7 @@ func cmdConvergence(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *timeout <= 0 {
-		fmt.Fprintf(stderr, "nova-check convergence: --timeout must be a positive number of seconds (got %d); a child with no deadline is a wait with no end; run: nova-check help\n", *timeout)
+		fmt.Fprintf(stderr, "nova-check convergence REFUSED: --timeout must be a positive number of seconds (got %d); a child with no deadline is a wait with no end; run: nova-check help\n", *timeout)
 		return 2
 	}
 
@@ -118,14 +114,14 @@ func cmdConvergence(args []string, stdout, stderr io.Writer) int {
 	if *nowFlag != "" {
 		at, err := time.Parse(time.RFC3339, *nowFlag)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-check convergence: --now %s is not an RFC3339 instant; %s; run: nova-check help\n", oneline.Field(*nowFlag), oneline.Err(err))
+			fmt.Fprintf(stderr, "nova-check convergence REFUSED: --now %s is not an RFC3339 instant; %s; run: nova-check help\n", oneline.Field(*nowFlag), oneline.Err(err))
 			return 2
 		}
 		now = at.UTC()
 	}
 	sinceAt, err := converge.ParseSince(*since, now)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check convergence: %s; run: nova-check help\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-check convergence REFUSED: %s; run: nova-check help\n", oneline.Err(err))
 		return 2
 	}
 
@@ -151,24 +147,28 @@ func cmdConvergence(args []string, stdout, stderr io.Writer) int {
 
 	st, err := converge.LoadState(*state)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check convergence: %s; run: nova-check help\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-check convergence REFUSED: %s; run: nova-check help\n", oneline.Err(err))
 		return 2
 	}
 	report, err := converge.Read(context.Background(), opts)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check convergence: %s; run: nova-check help\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-check convergence REFUSED: %s; run: nova-check help\n", oneline.Err(err))
 		return 2
 	}
 	report, next, streak := report.Apply(st, now)
-	if err := next.Save(*state); err != nil {
-		fmt.Fprintf(stderr, "nova-check convergence: --state %s could not be written: %s; run: nova-check help\n", oneline.Field(*state), oneline.Err(err))
+	if *dryRun {
+		if *state != "" {
+			fmt.Fprintf(stderr, "CONVERGENCE NOTE dry_run=true: --state %s was not written\n", oneline.Field(*state))
+		}
+	} else if err := next.Save(*state); err != nil {
+		fmt.Fprintf(stderr, "nova-check convergence REFUSED: --state %s could not be written: %s; run: nova-check help\n", oneline.Field(*state), oneline.Err(err))
 		return 2
 	}
 
 	if *asJSON {
 		raw, err := json.Marshal(report.AsJSON(now, sinceAt))
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-check convergence: %s; run: nova-check help\n", oneline.Err(err))
+			fmt.Fprintf(stderr, "nova-check convergence REFUSED: %s; run: nova-check help\n", oneline.Err(err))
 			return 2
 		}
 		printJSON(stdout, raw)
