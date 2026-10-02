@@ -12,7 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
-// What a card cost (docs/SPEC-SPRINT.md, "What a card cost"; the owner, 2026-10-01:
+// What a card cost (docs/SPEC-SPRINT.md, "What a card cost");
 // "the producer card by the time it gets to landed, should have the history of
 // consumer cards that did work for it ... how much each consumer card cost, total
 // for producer"; and "The cost needs to be tracked IN THE CARD"). A producer card's
@@ -83,7 +83,7 @@ func nextTake(c *Card, prefix string) int {
 	return n
 }
 
-// The producer card carries what it cost (the owner, 2026-10-01: "The cost needs to
+// The producer card carries what it cost (as the section says: "The cost needs to
 // be tracked IN THE CARD"): each consumer that ends appends one record to the primary,
 // FieldCostRecord plus the consumer's key, in the same step that ends it, and the
 // primary's running total (FieldCostTotal) is updated with it. Everything that shows
@@ -314,7 +314,7 @@ func seconds(n int64) string {
 const FieldCost = "cost"
 
 // MoneyText is a cost as the work table's cost cell shows it: US dollars and cents,
-// rounded up to the next cent ("$1.24" for 1.2345; the owner, 2026-10-01: "For money, I
+// rounded up to the next cent ("$1.24" for 1.2345; "
 // never care about anything past 2 decimal places (cents)." / "round up to cents"), "-"
 // when there is none. The card keeps the exact figure (FieldCost, FieldCostTotal); only
 // what is shown is rounded.
