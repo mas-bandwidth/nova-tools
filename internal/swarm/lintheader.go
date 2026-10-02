@@ -57,9 +57,9 @@ import (
 //
 // KIND: IS THE NAME SET, NOT A SECOND TABLE. `hygiene.KindDeclared` reads
 // internal/hygiene/kinds.txt, which is the names `cut` and `nova-check hygiene`
-// already refuse. The gate TABLE -- steps, control, reject tokens -- is still
-// internal/pulse/kinds.go; refusing
-// `TEST: none` on a gated kind needs that table, so that half still waits. Writing
+// already refuse. The gate TABLE -- steps, control, reject tokens -- is the
+// half that decides whether `TEST: none` is refused on a gated kind, and that
+// half still waits. Writing
 // a second name list here would be the same mistake `validGlobs` just undid.
 
 // CardHeaderFinding is one typed-header defect: the check's token, the 1-based line it
