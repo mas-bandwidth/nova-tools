@@ -14,7 +14,7 @@ import (
 // policy, in the order addRules adds it: the read-only roots, this run's
 // optional roots, the caller's --read and --read-noexec, then the write set.
 // Landlock takes rules, not a profile document, so this text IS the generated
-// the `policy` verb asks to print — and like the verb, it runs
+// policy the `policy` verb prints — and like the verb, it runs
 // nothing and applies nothing.
 //
 // A path holding a control character cannot reach here: Build refuses one on

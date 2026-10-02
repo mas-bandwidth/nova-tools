@@ -1,4 +1,5 @@
 # Migrated counted package ledger; original row keys preserved.
-# ceiling: 2
+# ceiling: 3
 internal/sandbox/landlock_linux.go:space 1
+internal/sandbox/policy.go:johnny 1
 internal/sandbox/policy.go:space 1

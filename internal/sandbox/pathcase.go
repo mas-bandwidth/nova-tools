@@ -27,8 +27,8 @@ import (
 // AND THE MEASUREMENT IS MADE IN THE DIRECTORY BEING JUDGED, NEVER ON ITS OWN NAME IN ITS
 // PARENT. A previous revision took a read-only shortcut -- re-case dir's own name and ask the
 // parent for it back -- and that measures the PARENT's filesystem, which differs at a mount
-// boundary and on a filesystem with a per-directory casefold setting (
-// measured on a case-sensitive
+// boundary and on a filesystem with a per-directory casefold setting (measured on a
+// case-sensitive
 // APFS image mounted under the folding `/Volumes`, where the mountpoint's own name folds and
 // nothing inside it does). The shortcut was never REACHED from this package -- `Inside` asks
 // this only about a directory that does not exist, and the shortcut needed it to exist -- but
