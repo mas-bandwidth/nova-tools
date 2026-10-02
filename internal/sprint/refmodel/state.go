@@ -101,14 +101,14 @@ const (
 	KindSentinel = "sentinel"
 )
 
-// Width is every member's width, the engine's default (sprint.DefaultWidth,
-// errata 3 amendment 9): the most work cards, ready and working together, the
+// Width is every member's width, the engine's default (sprint.DefaultWidth):
+// the most work cards, ready and working together, the
 // tick deals a member.
 const Width = 64
 
 // DealAhead is how many widths of work cards a member holds, ready and working
-// together: its width working and as many again ready behind them (the owner,
-// 2026-10-01: "deal at most 2X width ahead per-machine in fleet"; the engine's
+// together: its width working and as many again ready behind them, so a
+// member is dealt at most twice its width ahead (the engine's
 // sprint.DealAhead).
 const DealAhead = 2
 
@@ -239,7 +239,7 @@ type State struct {
 	// Coordinator is the one actor who releases sentinels.
 	Coordinator string
 	// DealLast and AskLast are the rolling indexes of the deal and the ask
-	// (errata 3, amendment 5; tla/SprintEvents.tla dcur and acur): each a
+	// (tla/SprintEvents.tla dcur and acur): each a
 	// counter, as the table's property holds it (a decimal uint64 from 0 this
 	// epoch, up by one with every placement and by one for every name passed
 	// over, roundPast). The next member is the first up with room from
@@ -247,8 +247,8 @@ type State struct {
 	// the first able from AskLast modulo the readers.
 	DealLast, AskLast string
 	// StreamLast, AskStreamLast and AcceptStreamLast are the work table's
-	// stream indexes of the deal, the ask and the accept (errata 3 amendment
-	// 10; sprint.PropStreamIndex, PropAskStreamIndex, PropAcceptStreamIndex):
+	// stream indexes of the deal, the ask and the accept (sprint.PropStreamIndex,
+	// PropAskStreamIndex, PropAcceptStreamIndex):
 	// the stream of the last primary each took. Each takes the streams in
 	// turn from the first past its own, in name order, wrapping, a stream with
 	// nothing to take skipped.
@@ -433,7 +433,7 @@ func (s State) RL(m string) int {
 }
 
 // roundFrom is where a rolling index starts in order (sorted): its counter
-// modulo the number of names (errata 3 amendment 5, the owner's form: a uint64
+// modulo the number of names (a uint64
 // from 0 that goes up with every placement, modulo the count); a value that is
 // not a counter (a name) starts just past that name.
 func roundFrom(order []string, value string) int {
@@ -484,7 +484,7 @@ func (s State) streamOrder(extra ...string) []string {
 	return names
 }
 
-// NextMember is the deal's choice (errata 3, amendment 5; SprintEvents.tla
+// NextMember is the deal's choice (SprintEvents.tla
 // RoundAssign): the first of the members, in name order from just past
 // DealLast, wrapping, that is in set; "" when none is.
 func (s State) NextMember(set []string) string {
@@ -498,11 +498,11 @@ func (s State) NextMember(set []string) string {
 	return ""
 }
 
-// PlaceOn is the member a card placed on the fleet goes to (errata 3
-// amendment 5: every placement, first attempts and redeals and levelling
-// alike, goes round the fleet and moves the index; the engine's round.next):
+// PlaceOn is the member a card placed on the fleet goes to (every
+// placement, first attempts and redeals and levelling alike, goes round the
+// fleet and moves the index; the engine's round.next):
 // the next member round the fleet among set holding fewer work cards, ready
-// and working, than its Room (errata 3 amendment 9; DealAhead), avoid only when no
+// and working, than its Room (DealAhead), avoid only when no
 // other has room; with none having room, the next of set, avoid only when it
 // is the only one. "" when set is empty.
 func (s State) PlaceOn(set []string, avoid string) string {
@@ -542,8 +542,8 @@ func without(xs []string, x string) []string {
 	return out
 }
 
-// NextReaders is the ask's choice of k readers for p at its attempt (errata 3,
-// amendment 5; SprintEvents.tla RoundTwo): from just past AskLast, in name
+// NextReaders is the ask's choice of k readers for p at its attempt
+// (SprintEvents.tla RoundTwo): from just past AskLast, in name
 // order, wrapping, the first reader without a read card at the attempt, then
 // the first past it, and so on.
 func (s State) NextReaders(p string, k int) []string {
@@ -671,8 +671,8 @@ func (s State) sortByScore(ids []string) {
 	})
 }
 
-// streamTurns is the ids in stream turns from a stream index, last (errata 3
-// amendment 10; sprint.streamTurns): one of each stream in turn, the streams
+// streamTurns is the ids in stream turns from a stream index, last
+// (sprint.streamTurns): one of each stream in turn, the streams
 // from the first past last in name order, wrapping, a stream with none
 // skipped at no cost of a turn; within a stream by score.
 func (s State) streamTurns(ids []string, last string) []string {
