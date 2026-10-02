@@ -3,6 +3,9 @@ package dogfood
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func verbs(keys ...string) []Verb {
@@ -23,16 +26,10 @@ func TestLedgerSaysNobodyForAVerbNoOneHasRun(t *testing.T) {
 	t.Parallel()
 
 	rows, summary := Ledger(verbs("nova-check links"), nil, nil)
-	if len(rows) != 1 {
-		t.Fatalf("rows %d, want one per verb", len(rows))
-	}
+	require.Len(t, rows, 1, "rows %d, want one per verb", len(rows))
 	want := "DOGFOOD tool=nova-check verb=links by=nobody at=- ok=- issue=- open=0"
-	if rows[0].Line() != want {
-		t.Fatalf("row:\n got %q\nwant %q", rows[0].Line(), want)
-	}
-	if summary.Line() != "DOGFOOD OK verbs=1 dogfooded=0 by-nonauthor=0 open-edges=0 unfiled=0 unmatched=0" {
-		t.Fatalf("summary %q", summary.Line())
-	}
+	require.Equal(t, want, rows[0].Line(), "row:\n got %q\nwant %q", rows[0].Line(), want)
+	require.Equal(t, "DOGFOOD OK verbs=1 dogfooded=0 by-nonauthor=0 open-edges=0 unfiled=0 unmatched=0", summary.Line(), "summary %q", summary.Line())
 }
 
 // The whole point of the ledger: the author's own pass is not evidence.
@@ -46,15 +43,9 @@ func TestAnAuthorDogfoodingTheirOwnVerbDoesNotCount(t *testing.T) {
 		[]Receipt{receipt("nova-check links", "rowan", "2026-09-18T09:00:00Z", true, 0)},
 		authors,
 	)
-	if summary.Dogfooded != 1 {
-		t.Fatalf("dogfooded=%d, want 1: somebody did run it", summary.Dogfooded)
-	}
-	if summary.ByNonAuthor != 0 {
-		t.Fatalf("by-nonauthor=%d, want 0: the author ran their own verb", summary.ByNonAuthor)
-	}
-	if rows[0].NonAuthor {
-		t.Fatal("the author's receipt was read as a non-author's; names compare case-insensitively")
-	}
+	require.Equal(t, 1, summary.Dogfooded, "dogfooded=%d, want 1: somebody did run it", summary.Dogfooded)
+	require.Equal(t, 0, summary.ByNonAuthor, "by-nonauthor=%d, want 0: the author ran their own verb", summary.ByNonAuthor)
+	require.False(t, rows[0].NonAuthor, "the author's receipt was read as a non-author's; names compare case-insensitively")
 }
 
 func TestAVerbWithNoKnownAuthorCountsEveryReceipt(t *testing.T) {
@@ -65,9 +56,7 @@ func TestAVerbWithNoKnownAuthorCountsEveryReceipt(t *testing.T) {
 		[]Receipt{receipt("nova-check links", "Rowan", "2026-09-18T09:00:00Z", true, 0)},
 		Authors{},
 	)
-	if summary.ByNonAuthor != 1 {
-		t.Fatalf("by-nonauthor=%d, want 1: an unknown author is not a reason to hold a verb back", summary.ByNonAuthor)
-	}
+	require.Equal(t, 1, summary.ByNonAuthor, "by-nonauthor=%d, want 1: an unknown author is not a reason to hold a verb back", summary.ByNonAuthor)
 }
 
 func TestTheRowShowsTheReceiptThatSpeaksBestForTheVerb(t *testing.T) {
@@ -79,12 +68,8 @@ func TestTheRowShowsTheReceiptThatSpeaksBestForTheVerb(t *testing.T) {
 		receipt("nova-check links", "Rowan", "2026-09-18T12:00:00Z", true, 0), // newest, but the author's
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0),
 	}, authors)
-	if rows[0].By != "Stella" {
-		t.Fatalf("row shows by=%s, want the non-author's pass", rows[0].By)
-	}
-	if rows[0].OK != "yes" || rows[0].At != "2026-09-18T09:00:00Z" {
-		t.Fatalf("row %q", rows[0].Line())
-	}
+	require.Equal(t, "Stella", rows[0].By, "row shows by=%s, want the non-author's pass", rows[0].By)
+	require.True(t, rows[0].OK == "yes" && rows[0].At == "2026-09-18T09:00:00Z", "row %q", rows[0].Line())
 }
 
 func TestTheRowCarriesTheIssueWhenAnEdgeWasFiled(t *testing.T) {
@@ -94,15 +79,9 @@ func TestTheRowCarriesTheIssueWhenAnEdgeWasFiled(t *testing.T) {
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", false, 1301),
 	}, nil)
 	want := "DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=no issue=1301 open=1"
-	if rows[0].Line() != want {
-		t.Fatalf("row:\n got %q\nwant %q", rows[0].Line(), want)
-	}
-	if summary.OpenEdges != 1 {
-		t.Fatalf("open-edges=%d, want 1", summary.OpenEdges)
-	}
-	if summary.ByNonAuthor != 0 {
-		t.Fatalf("by-nonauthor=%d: a run that did not work is not a pass", summary.ByNonAuthor)
-	}
+	require.Equal(t, want, rows[0].Line(), "row:\n got %q\nwant %q", rows[0].Line(), want)
+	require.Equal(t, 1, summary.OpenEdges, "open-edges=%d, want 1", summary.OpenEdges)
+	require.Equal(t, 0, summary.ByNonAuthor, "by-nonauthor=%d: a run that did not work is not a pass", summary.ByNonAuthor)
 }
 
 // Feedback filed is not feedback applied: the edge stays open until it is
@@ -121,25 +100,19 @@ func TestALaterPassClosesAnEdgeAndAnEarlierOneDoesNot(t *testing.T) {
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", false, 1301),
 		receipt("nova-check links", "Stella", "2026-09-18T11:00:00Z", true, 0),
 	}, nil)
-	if closed.OpenEdges != 0 {
-		t.Fatalf("open-edges=%d after the finder ran it again and it worked, want 0", closed.OpenEdges)
-	}
+	require.Equal(t, 0, closed.OpenEdges, "open-edges=%d after the finder ran it again and it worked, want 0", closed.OpenEdges)
 	_, stillOpen := Ledger(verbs("nova-check links"), []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0),
 		receipt("nova-check links", "Stella", "2026-09-18T11:00:00Z", false, 1301),
 	}, nil)
-	if stillOpen.OpenEdges != 1 {
-		t.Fatalf("open-edges=%d after an edge filed later than the pass, want 1", stillOpen.OpenEdges)
-	}
+	require.Equal(t, 1, stillOpen.OpenEdges, "open-edges=%d after an edge filed later than the pass, want 1", stillOpen.OpenEdges)
 	// The same pair with two different people leaves it open, which is the whole
 	// of the edge.
 	_, other := Ledger(verbs("nova-check links"), []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", false, 1301),
 		receipt("nova-check links", "Emma", "2026-09-18T11:00:00Z", true, 0),
 	}, nil)
-	if other.OpenEdges != 1 {
-		t.Fatalf("open-edges=%d; Emma's pass closed Stella's finding, which nobody read", other.OpenEdges)
-	}
+	require.Equal(t, 1, other.OpenEdges, "open-edges=%d; Emma's pass closed Stella's finding, which nobody read", other.OpenEdges)
 }
 
 func TestLedgerCountsAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
@@ -148,12 +121,8 @@ func TestLedgerCountsAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
 	rows, summary := Ledger(verbs("nova-check links"), []Receipt{
 		receipt("nova-check ghost", "Stella", "2026-09-18T09:00:00Z", true, 0),
 	}, nil)
-	if len(rows) != 1 || rows[0].By != "nobody" {
-		t.Fatalf("a receipt for an undeclared verb landed on a row: %q", rows[0].Line())
-	}
-	if summary.Unmatched != 1 {
-		t.Fatalf("unmatched=%d, want 1; docs drift is a finding, not a silent drop", summary.Unmatched)
-	}
+	require.True(t, len(rows) == 1 && rows[0].By == "nobody", "a receipt for an undeclared verb landed on a row: %q", rows[0].Line())
+	require.Equal(t, 1, summary.Unmatched, "unmatched=%d, want 1; docs drift is a finding, not a silent drop", summary.Unmatched)
 }
 
 func TestRowsComeBackInTheReferencesOrder(t *testing.T) {
@@ -163,9 +132,7 @@ func TestRowsComeBackInTheReferencesOrder(t *testing.T) {
 	got := []string{rows[0].Verb, rows[1].Verb, rows[2].Verb}
 	want := []string{"quickstart", "links", "send"}
 	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("order %v, want %v", got, want)
-		}
+		require.Equal(t, want[i], got[i], "order %v, want %v", got, want)
 	}
 }
 
@@ -175,15 +142,9 @@ func TestGateSaysNoOnAnOpenEdgeWithoutRequireAll(t *testing.T) {
 	findings, _ := Gate(verbs("nova-check links"), []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", false, 1301),
 	}, nil, false)
-	if len(findings) != 1 {
-		t.Fatalf("findings %+v, want the open edge", findings)
-	}
-	if findings[0].Kind != "open-edge" {
-		t.Fatalf("kind %q, want open-edge", findings[0].Kind)
-	}
-	if !strings.Contains(findings[0].Line(), "#1301") {
-		t.Fatalf("the finding does not name the issue: %q", findings[0].Line())
-	}
+	require.Len(t, findings, 1, "findings %+v, want the open edge", findings)
+	require.Equal(t, "open-edge", findings[0].Kind, "kind %q, want open-edge", findings[0].Kind)
+	require.Contains(t, findings[0].Line(), "#1301", "the finding does not name the issue: %q", findings[0].Line())
 }
 
 func TestGateRequireAllListsEveryVerbNoNonAuthorHasRun(t *testing.T) {
@@ -207,12 +168,8 @@ func TestGateRequireAllListsEveryVerbNoNonAuthorHasRun(t *testing.T) {
 		}
 	}
 	want := "nova-check nocode|nova-check corpus"
-	if strings.Join(missing, "|") != want {
-		t.Fatalf("missing %q, want %q", strings.Join(missing, "|"), want)
-	}
-	if summary.ByNonAuthor != 1 {
-		t.Fatalf("by-nonauthor=%d, want 1", summary.ByNonAuthor)
-	}
+	require.Equal(t, want, strings.Join(missing, "|"), "missing %q, want %q", strings.Join(missing, "|"), want)
+	require.Equal(t, 1, summary.ByNonAuthor, "by-nonauthor=%d, want 1", summary.ByNonAuthor)
 }
 
 func TestGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
@@ -223,12 +180,8 @@ func TestGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
 	findings, summary := Gate(verbs("nova-check links"), []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0),
 	}, authors, true)
-	if len(findings) != 0 {
-		t.Fatalf("findings %+v, want none", findings)
-	}
-	if summary.ByNonAuthor != 1 || summary.OpenEdges != 0 {
-		t.Fatalf("summary %q", summary.Line())
-	}
+	require.Empty(t, findings, "findings %+v, want none", findings)
+	require.True(t, summary.ByNonAuthor == 1 && summary.OpenEdges == 0, "summary %q", summary.Line())
 }
 
 // Edge 5 of the 2026-09-18 dogfood pass: `open-edges=0` on a bench whose
@@ -242,18 +195,10 @@ func TestAnEdgeNamedInTheNotesIsAnOpenEdge(t *testing.T) {
 	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
 	r.Notes = "Ran it over the lane's own docs. Edges: (1) it reads only --dir, so one file cannot be checked alone."
 	rows, summary := Ledger(verbs("nova-check links"), []Receipt{r}, nil)
-	if summary.OpenEdges != 1 {
-		t.Fatalf("open-edges=%d, want 1: the notes name an edge", summary.OpenEdges)
-	}
-	if summary.Unfiled != 1 {
-		t.Fatalf("unfiled=%d, want 1: nobody can act on an edge with no issue", summary.Unfiled)
-	}
-	if rows[0].OK != "yes" {
-		t.Fatalf("the verdict was rewritten: %q", rows[0].Line())
-	}
-	if !strings.Contains(summary.Line(), "open-edges=1 unfiled=1") {
-		t.Fatalf("the summary hides the unfiled edges: %q", summary.Line())
-	}
+	require.Equal(t, 1, summary.OpenEdges, "open-edges=%d, want 1: the notes name an edge", summary.OpenEdges)
+	require.Equal(t, 1, summary.Unfiled, "unfiled=%d, want 1: nobody can act on an edge with no issue", summary.Unfiled)
+	require.Equal(t, "yes", rows[0].OK, "the verdict was rewritten: %q", rows[0].Line())
+	require.Contains(t, summary.Line(), "open-edges=1 unfiled=1", "the summary hides the unfiled edges: %q", summary.Line())
 }
 
 func TestAnEdgeWithAnIssueIsOpenButFiled(t *testing.T) {
@@ -262,9 +207,7 @@ func TestAnEdgeWithAnIssueIsOpenButFiled(t *testing.T) {
 	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 1301)
 	r.Notes = "worked; Edge: the refusal names no remedy"
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{r}, nil)
-	if summary.OpenEdges != 1 || summary.Unfiled != 0 {
-		t.Fatalf("summary %q, want one open edge, filed", summary.Line())
-	}
+	require.True(t, summary.OpenEdges == 1 && summary.Unfiled == 0, "summary %q, want one open edge, filed", summary.Line())
 }
 
 func TestNotesThatMerelyUseTheWordEdgeAreNotAnEdge(t *testing.T) {
@@ -273,9 +216,7 @@ func TestNotesThatMerelyUseTheWordEdgeAreNotAnEdge(t *testing.T) {
 	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
 	r.Notes = "ran it on the edge of the release; nothing to report"
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{r}, nil)
-	if summary.OpenEdges != 0 {
-		t.Fatalf("open-edges=%d: the marker is `Edge:` or `Edges:`, not the word", summary.OpenEdges)
-	}
+	require.Equal(t, 0, summary.OpenEdges, "open-edges=%d: the marker is `Edge:` or `Edges:`, not the word", summary.OpenEdges)
 }
 
 // An edge named only in the notes closes the same way any other does: the
@@ -289,16 +230,12 @@ func TestALaterCleanRunClosesAnEdgeNamedInTheNotes(t *testing.T) {
 	later := receipt("nova-check links", "Stella", "2026-09-18T11:00:00Z", true, 0)
 	later.Notes = "ran it again on the same tree; clean"
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{first, later}, nil)
-	if summary.OpenEdges != 0 {
-		t.Fatalf("open-edges=%d after the finder's own later clean run, want 0", summary.OpenEdges)
-	}
+	require.Equal(t, 0, summary.OpenEdges, "open-edges=%d after the finder's own later clean run, want 0", summary.OpenEdges)
 	// And a third party's clean run does not, however late it is.
 	byOther := receipt("nova-check links", "Emma", "2026-09-18T12:00:00Z", true, 0)
 	byOther.Notes = "ran it again on the same tree; clean"
 	_, stillOpen := Ledger(verbs("nova-check links"), []Receipt{first, byOther}, nil)
-	if stillOpen.OpenEdges != 1 {
-		t.Fatalf("open-edges=%d; somebody else's clean run closed Stella's note", stillOpen.OpenEdges)
-	}
+	require.Equal(t, 1, stillOpen.OpenEdges, "open-edges=%d; somebody else's clean run closed Stella's note", stillOpen.OpenEdges)
 }
 
 func TestGateSaysNoToAnEdgeNamedOnlyInTheNotes(t *testing.T) {
@@ -307,12 +244,8 @@ func TestGateSaysNoToAnEdgeNamedOnlyInTheNotes(t *testing.T) {
 	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
 	r.Notes = "Edge: the refusal names no remedy"
 	findings, _ := Gate(verbs("nova-check links"), []Receipt{r}, nil, false)
-	if len(findings) != 1 || findings[0].Kind != "open-edge" {
-		t.Fatalf("findings %+v, want the open edge", findings)
-	}
-	if !strings.Contains(findings[0].Line(), "no issue filed") {
-		t.Fatalf("the finding does not say the edge was never filed: %q", findings[0].Line())
-	}
+	require.True(t, len(findings) == 1 && findings[0].Kind == "open-edge", "findings %+v, want the open edge", findings)
+	require.Contains(t, findings[0].Line(), "no issue filed", "the finding does not say the edge was never filed: %q", findings[0].Line())
 }
 
 // Edge 3: the NOTE said nine receipts matched nothing and named none of them,
@@ -328,20 +261,12 @@ func TestStrandedReceiptsAreNamedOneByOneWithTheNearestVerb(t *testing.T) {
 	}
 	got[0].File = "/receipts/a.json"
 	strands := Stranded(declared, got)
-	if len(strands) != 1 {
-		t.Fatalf("stranded %+v, want the one receipt naming no declared verb", strands)
-	}
-	if strands[0].File != "/receipts/a.json" {
-		t.Fatalf("the strand does not name its file: %+v", strands[0])
-	}
-	if strands[0].Nearest != "nova-check dogfood ledger" {
-		t.Fatalf("nearest = %q, want the verb it was probably meant to be", strands[0].Nearest)
-	}
+	require.Len(t, strands, 1, "stranded %+v, want the one receipt naming no declared verb", strands)
+	require.Equal(t, "/receipts/a.json", strands[0].File, "the strand does not name its file: %+v", strands[0])
+	require.Equal(t, "nova-check dogfood ledger", strands[0].Nearest, "nearest = %q, want the verb it was probably meant to be", strands[0].Nearest)
 	line := strands[0].Line()
 	for _, want := range []string{"/receipts/a.json", "tool=nova-check", "verb=ledger", "nova-check dogfood ledger"} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("the strand line %q is missing %q", line, want)
-		}
+		require.Contains(t, line, want, "the strand line %q is missing %q", line, want)
 	}
 }
 
@@ -349,14 +274,12 @@ func TestNearestPrefersTheSameTool(t *testing.T) {
 	t.Parallel()
 
 	declared := verbs("nova-bus check", "nova-check nocode")
-	if got := Nearest(declared, "nova-check", "nocdoe"); got != "nova-check nocode" {
-		t.Fatalf("nearest = %q, want nova-check nocode", got)
-	}
+	got := Nearest(declared, "nova-check", "nocdoe")
+	require.Equal(t, "nova-check nocode", got, "nearest = %q, want nova-check nocode", got)
 	// Nothing close enough is no guess at all: a remedy that named a verb from
 	// a different tool would send a reader further away than silence.
-	if got := Nearest(declared, "nova-elsewhere", "wildly-different-verb"); got != "" {
-		t.Fatalf("nearest = %q, want no guess", got)
-	}
+	got = Nearest(declared, "nova-elsewhere", "wildly-different-verb")
+	require.Empty(t, got, "nearest = %q, want no guess", got)
 }
 
 // TestANameForTheBareFormSuggestsTheDash is edge 7225d4da: a receipt for
@@ -370,25 +293,18 @@ func TestANameForTheBareFormSuggestsTheDash(t *testing.T) {
 
 	declared := verbs("nova-sandbox", "nova-sandbox reap", "nova-check nocode")
 	for _, spelled := range []string{"(default)", "default", "bare", "(none)", "no verb", "[bare form]", " Default "} {
-		if got := Nearest(declared, "nova-sandbox", spelled); got != "nova-sandbox --verb -" {
-			t.Errorf("nearest for %q = %q, want nova-sandbox --verb -", spelled, got)
-		}
+		assert.Equal(t, "nova-sandbox --verb -", Nearest(declared, "nova-sandbox", spelled), "nearest for %q = %q, want nova-sandbox --verb -", spelled, Nearest(declared, "nova-sandbox", spelled))
 	}
-	if got := Nearest(declared, "nova-sandbox", "raep"); got != "nova-sandbox reap" {
-		t.Errorf("nearest for a typo = %q, want nova-sandbox reap", got)
-	}
-	if got := Nearest(declared, "nova-check", "(default)"); got == "nova-check --verb -" {
-		t.Errorf("a tool with no bare form was offered one: %q", got)
-	}
+	assert.Equal(t, "nova-sandbox reap", Nearest(declared, "nova-sandbox", "raep"), "nearest for a typo = %q, want nova-sandbox reap", Nearest(declared, "nova-sandbox", "raep"))
+	got := Nearest(declared, "nova-check", "(default)")
+	assert.NotEqual(t, "nova-check --verb -", got, "a tool with no bare form was offered one: %q", got)
 }
 
 func TestTheBareInvocationPrintsAsADash(t *testing.T) {
 	t.Parallel()
 
 	rows, _ := Ledger([]Verb{{Tool: "nova-decide", Verb: "", Line: 1}}, nil, nil)
-	if !strings.Contains(rows[0].Line(), "verb=- ") {
-		t.Fatalf("a tool with no verb prints as %q; the bare invocation is a unit like any other", rows[0].Line())
-	}
+	require.Contains(t, rows[0].Line(), "verb=- ", "a tool with no verb prints as %q; the bare invocation is a unit like any other", rows[0].Line())
 }
 
 func TestAReceiptCanNameTheBareInvocation(t *testing.T) {
@@ -397,7 +313,5 @@ func TestAReceiptCanNameTheBareInvocation(t *testing.T) {
 	declared := []Verb{{Tool: "nova-decide", Verb: "", Line: 1}}
 	r := Receipt{Tool: "nova-decide", Verb: "-", By: "Stella", At: "2026-09-18T09:00:00Z", OK: true, Notes: "one real decision"}
 	_, summary := Ledger(declared, []Receipt{r}, nil)
-	if summary.Dogfooded != 1 {
-		t.Fatalf("a receipt for the bare invocation was stranded: %q", summary.Line())
-	}
+	require.Equal(t, 1, summary.Dogfooded, "a receipt for the bare invocation was stranded: %q", summary.Line())
 }
