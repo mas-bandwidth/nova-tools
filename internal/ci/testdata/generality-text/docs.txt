@@ -39,12 +39,12 @@ docs/SPEC-SANDBOX.md:space 5
 docs/SPEC-SANDBOX.md:studio 2
 docs/SPEC-SECRETS.md:emma 1
 docs/SPEC-SECRETS.md:freddy 1
-docs/SPEC-SECRETS.md:glenn 16
+docs/SPEC-SECRETS.md:glenn 15
 docs/SPEC-SECRETS.md:johnny 1
-docs/SPEC-SECRETS.md:rowan 55
+docs/SPEC-SECRETS.md:rowan 35
 docs/SPEC-SECRETS.md:space 9
 docs/SPEC-SECRETS.md:stella 1
-docs/SPEC-SECRETS.md:studio 4
+docs/SPEC-SECRETS.md:studio 1
 docs/SPEC-SWARM.md:space 4
 docs/SPEC-TOKENS.md:emma 13
 docs/SPEC-TOKENS.md:freddy 2
