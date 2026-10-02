@@ -51,7 +51,9 @@ import (
 // text) is refused too, which is the safe side. The epoch a take, a finish and
 // a read must name is checked where the verb has parsed it (runStep, a.serving):
 // what counts is the epoch the verb runs at, not a word that looks like one. A beat's load is the worker's own measure: the server cannot measure
-// another machine, and would record its own.
+// another machine, and would record its own. A queue's --packets and --have (the packets
+// the worker wants) are held to their shapes here, before the verb runs: a count, and card
+// ids (packetsWanted).
 func workerVerb(argv []string) (as string, words int, why string) {
 	if len(argv) >= 2 && argv[0] == "fleet" && argv[1] == "beat" {
 		rest := argv[2:]
@@ -83,7 +85,47 @@ func workerVerb(argv []string) (as string, words int, why string) {
 			return "", 0, "--" + name + " is not a worker's to give the server"
 		}
 	}
+	if verb == "queue" {
+		packets, okP := flagWord(rest, "packets")
+		have, okH := flagWord(rest, "have")
+		if !okP || !okH {
+			return "", 0, "a queue's --packets and --have are each given at most once, each with its value"
+		}
+		if _, err := packetsWanted(packets, have); err != nil {
+			return "", 0, err.Error()
+		}
+	}
 	return as, 1, ""
+}
+
+// flagWord is the value the words give the flag name (--name v, --name=v, one dash or
+// two), "" when they give none; ok is false when they give it more than once or with no
+// value.
+func flagWord(words []string, name string) (value string, ok bool) {
+	seen := false
+	for i := 0; i < len(words); i++ {
+		w := words[i]
+		if !strings.HasPrefix(w, "-") {
+			continue
+		}
+		n, v, eq := strings.Cut(strings.TrimLeft(w, "-"), "=")
+		if n != name {
+			continue
+		}
+		if seen {
+			return "", false
+		}
+		seen = true
+		if !eq {
+			if i+1 >= len(words) {
+				return "", false
+			}
+			i++
+			v = words[i]
+		}
+		value = v
+	}
+	return value, true
 }
 
 // notServed are the verbs the server runs for nobody: itself (run, tick), the ones that

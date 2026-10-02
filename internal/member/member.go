@@ -18,6 +18,7 @@
 package member
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -224,14 +225,17 @@ type Packet struct {
 	Deadline int    `json:"deadline,omitempty"`
 }
 
-// queueCard is one card of `nova-sprint queue --as <me> --json`.
+// queueCard is one card of `nova-sprint queue --as <me> --json`. Its claim is the
+// answer's epoch, its gen (a work card) and its attempt (a read), which a packet repeats:
+// the queue hands a packet only for a card the member asked one for (queueArgs).
 type queueCard struct {
-	ID     string  `json:"id"`
-	Table  string  `json:"table"`
-	Row    string  `json:"row"`
-	Col    string  `json:"col"`
-	Gen    int     `json:"gen"`
-	Packet *Packet `json:"packet"`
+	ID      string  `json:"id"`
+	Table   string  `json:"table"`
+	Row     string  `json:"row"`
+	Col     string  `json:"col"`
+	Gen     int     `json:"gen"`
+	Attempt int     `json:"attempt"`
+	Packet  *Packet `json:"packet"`
 }
 
 type queueOut struct {
@@ -321,6 +325,9 @@ type Member struct {
 	noRoom       bool   // Room said no on the last tick it was asked
 	// spent is where the last pass's time went, by part (PassTimes)
 	spent PassTimes
+	// have is the --have of the cards the last pass ended holding (haveWords), for the
+	// reader's beat, which asks its queue on its own clock and reads none of the answer
+	have atomic.Pointer[string]
 
 	// the beat's own clock (BeatLoop): beatMu guards beaten; progress is when the work pass
 	// last advanced, in unix nanoseconds
@@ -473,7 +480,11 @@ func (m *Member) Stalled() time.Duration {
 func (m *Member) Beat() error {
 	m.beatMu.Lock()
 	defer m.beatMu.Unlock()
-	args := []string{"queue", "--as", m.cfg.As, "--json"}
+	// a reader's beat wants no packet: none for a card it may start, none for one it runs
+	args := []string{"queue", "--as", m.cfg.As, "--json", "--packets", "0"}
+	if have := m.have.Load(); have != nil && *have != "" {
+		args = append(args, "--have", *have)
+	}
 	var total uint64
 	if !m.cfg.Reader {
 		args = []string{"fleet", "beat", m.cfg.As}
@@ -485,7 +496,11 @@ func (m *Member) Beat() error {
 			}
 		}
 	}
-	code, out := m.sprint.Run(args...)
+	run := m.sprint.Run
+	if m.cfg.Reader {
+		run = func(args ...string) (int, []byte) { return queueOf(m.sprint.Run, args) }
+	}
+	code, out := run(args...)
 	if code == 0 && !m.cfg.Reader && m.cfg.Meter != nil {
 		m.beaten = total
 	}
@@ -551,6 +566,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		unanswered = append(unanswered, what)
 		fmt.Fprintf(m.out, "NOTE %s: the store did not answer; the pass goes on, and it is tried again next pass: %s\n", what, oneLine(strings.TrimSpace(string(out))))
 	}
+	defer m.haveWords() // what the pass ended holding, for the beat
 	defer func() {
 		if err == nil && len(unanswered) > 0 {
 			err = fmt.Errorf("the store did not answer %d of this pass's verbs (%s); each is tried again next pass", len(unanswered), strings.Join(unanswered, ", "))
@@ -558,7 +574,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	}()
 	// the beat is not this pass's: it goes on its own clock (BeatLoop), so a pass held for
 	// minutes by its pushes and finishes never lets the machine go down while it works
-	code, out := m.run("queue", "--as", m.cfg.As, "--json")
+	code, out := queueOf(m.run, m.queueArgs())
 	m.spent.Queue = since()
 	if code != 0 {
 		return 0, fmt.Errorf("queue: exit %d: %s", code, strings.TrimSpace(string(out)))
@@ -626,7 +642,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			if !l.child.Done() {
 				continue
 			}
-			fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, id, l.epoch, l.gen, l.attempt, c.Packet.Epoch, c.Packet.Gen, c.Packet.Attempt)
+			epoch, gen, attempt := m.claim(c)
+			fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, id, l.epoch, l.gen, l.attempt, epoch, gen, attempt)
 			m.forget(id, false) // reaped: the result is nobody's
 			claimMoved[id] = true
 			continue
@@ -662,7 +679,11 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				// across a launch the recovery path makes (start gives it to the launch)
 				delete(m.running, id)
 				m.stageRetried[id] = true
-				if c.Packet != nil && m.start(*c.Packet) {
+				p := l.packet // the claim has not moved: the launch's packet is the card's
+				if c.Packet != nil {
+					p = *c.Packet
+				}
+				if m.start(p) {
 					acted++
 				}
 				continue
@@ -1124,9 +1145,90 @@ func (m *Member) returnUnstarted(p Packet, why error) {
 }
 
 // moved says the claim moved under a launch: the queue's card is at another
-// epoch, generation (a read: attempt) than the one the child was started for.
+// epoch, generation (a read: attempt) than the one the child was started for. The
+// claim is the card's own (the answer's epoch, its gen and attempt), or its packet's
+// when it carries one: the queue hands packets only for the cards asked (queueArgs).
 func (m *Member) moved(l launch, c queueCard) bool {
-	return c.Packet != nil && (l.epoch != c.Packet.Epoch || (!m.cfg.Reader && l.gen != c.Packet.Gen) || (m.cfg.Reader && l.attempt != c.Packet.Attempt))
+	epoch, gen, attempt := m.claim(c)
+	return l.epoch != epoch || (!m.cfg.Reader && l.gen != gen) || (m.cfg.Reader && l.attempt != attempt)
+}
+
+// claim is the queue's card's claim: its packet's, when it carries one, else the card's own.
+func (m *Member) claim(c queueCard) (epoch uint64, gen, attempt int) {
+	if p := c.Packet; p != nil {
+		return p.Epoch, p.Gen, p.Attempt
+	}
+	return m.epoch, c.Gen, c.Attempt
+}
+
+// queueArgs is the pass's queue, asking only for the packets it may use (the fleet load
+// test of 2026-10-01: a reader's answer carried its 150 asked reads' briefs, 579,181
+// bytes, every pass): --packets, the reads a reader may begin this pass (its lanes free,
+// and those the pass's reports free; a member none: its take hands its packets), and
+// --have, every card it holds a launch for and every read it returned a moment ago, which
+// need none. Every other in-flight card comes with its packet, so a restarted member
+// recovers its cards from the first answer.
+func (m *Member) queueArgs() []string {
+	n := 0
+	if m.cfg.Reader && !m.drain {
+		n = m.lanes()
+	}
+	args := []string{"queue", "--as", m.cfg.As, "--json", "--packets", strconv.Itoa(n)}
+	if words := m.haveWords(); words != "" {
+		args = append(args, "--have", words)
+	}
+	return args
+}
+
+// haveWords is the cards that need no packet, comma separated, as --have names them, and
+// remembered for the beat (Beat): every card this worker holds a launch for, and every
+// read it returned a moment ago.
+func (m *Member) haveWords() string {
+	have := make([]string, 0, len(m.running)+len(m.returnedAt))
+	for id := range m.running {
+		have = append(have, id)
+	}
+	for id := range m.returnedAt {
+		if _, ours := m.running[id]; !ours {
+			have = append(have, id)
+		}
+	}
+	sort.Strings(have)
+	words := strings.Join(have, ",")
+	m.have.Store(&words)
+	return words
+}
+
+// lanes is how many cards this pass may start: the lanes free now, and one for every
+// launch the pass will report (its end collected or posted, or its child exited), so a
+// read begun in the lane a report frees has its packet in the same pass.
+func (m *Member) lanes() int {
+	m.postMu.Lock()
+	ended := map[string]bool{}
+	for id, po := range m.posted {
+		ended[id] = po.child == nil // a start posted frees nothing; its failure, or an end, does
+	}
+	m.postMu.Unlock()
+	n := m.width - m.Running()
+	for id, l := range m.running {
+		if !l.spent && (l.res != nil || ended[id] || (l.child != nil && l.child.Done())) {
+			n++
+		}
+	}
+	return max(n, 0)
+}
+
+// queueOf runs a queue that asks for its packets (--packets), and, when the server is one
+// from before the flag (it refuses it, `unknown flag --packets`), the queue as it was:
+// a member installed ahead of its server works on, at one more exchange a pass, until the
+// server is new.
+func queueOf(run func(...string) (int, []byte), args []string) (int, []byte) {
+	code, out := run(args...)
+	if code == 0 || !bytes.Contains(out, []byte("unknown flag --packets")) {
+		return code, out
+	}
+	i := slices.Index(args, "--packets")
+	return run(args[:i]...)
 }
 
 // endEnded begins the end of every launch whose child has exited and whose claim the queue
