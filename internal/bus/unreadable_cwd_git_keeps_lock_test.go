@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The /proc half of Stella's probe (known_foreign_git_keeps_its_lock_darwin_test.go holds the ps
+// The /proc half of Stella's probe (known_foreign_git_keeps_lock_darwin_test.go holds the ps
 // half): a supplied /proc view of a git, of this account or another, naming this checkout
 // with -C and whose cwd cannot be read, keeps the lock. No build tag, so the case runs on
 // the linux shard as well as on darwin; the view is injected, no foreign process is started.
