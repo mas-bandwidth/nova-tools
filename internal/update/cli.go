@@ -258,6 +258,25 @@ func interspersed(f *flag.FlagSet, args []string) []string {
 	}
 	return flags
 }
+// versionVerb prints the version line, or with --json internal/tool's Out with the
+// line as its payload: the one shape every skeleton tool's version verb answers
+// (internal/tool's verbs), refusals worded as the skeleton words them.
+func versionVerb(name, stamp string, args []string, out, errs io.Writer) int {
+	f := verbflag.New("version")
+	asJSON := f.Bool("json", false, "print the result as one JSON object instead of lines")
+	help := name + " version -h"
+	if err := verbflag.Parse(f, args); err != nil {
+		return emit(refused("version", help, oneline.Cap(verbflag.Explain(f, err), oneline.TailBytes)), verbflag.BoolGiven(f, args, "json"), 0, out, errs)
+	}
+	if f.NArg() > 0 {
+		// The skeleton's remedy for a problem the parse did not find is the banner.
+		return emit(refused("version", name+" help", fmt.Sprintf("takes no positional arguments, got %q (flags come before arguments)", f.Arg(0))), *asJSON, 0, out, errs)
+	}
+	o := tool.Payload(buildinfo.Line(name, stamp))
+	o.Verb = "version"
+	return emit(o, *asJSON, 0, out, errs)
+}
+
 func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 	return Run(name, args, stamp, out, errs, Environment{})
 }
@@ -285,12 +304,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		return 0
 	}
 	if verb == "version" || verb == "--version" {
-		verbflag.HelpIfAsked(args, "version")
-		if len(args) != 0 {
-			return emit(refused("update", name+" version", "version takes no arguments"), asked, 0, out, errs)
-		}
-		fmt.Fprintln(out, buildinfo.Line(name, stamp))
-		return 0
+		return versionVerb(name, stamp, args, out, errs)
 	}
 	// `release` is the last mile -- cut, build, install, adopt -- and it is a
 	// verb of nova-update rather than a tool of its own because it is the same
