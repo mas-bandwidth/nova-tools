@@ -297,5 +297,9 @@ func (f *FileStore) Migrate(ctx context.Context) (from, to int, applied []int, e
 	return from, len(all), applied, nil
 }
 
+// Ownership is the zero Ownership: a file has no roles and no owners, so
+// migrate's preflight has nothing to refuse.
+func (f *FileStore) Ownership(context.Context) (Ownership, error) { return Ownership{}, nil }
+
 // Close writes nothing: every write saved the file as it landed.
 func (f *FileStore) Close() error { return nil }
