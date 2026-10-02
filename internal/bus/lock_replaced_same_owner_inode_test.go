@@ -62,7 +62,8 @@ func TestRowanOpusLockReplacedDuringScanSequence(t *testing.T) {
 	body := func(step, want string) {
 		t.Helper()
 		got, err := os.ReadFile(lock)
-		require.False(t, err != nil || string(got) != want, "%s: lock at the path = %q, %v; want %q", step, got, err, want)
+		require.NoError(t, err, "%s: lock at the path = %q, %v; want %q", step, got, err, want)
+		require.Equal(t, want, string(got), "%s: lock at the path = %q, %v; want %q", step, got, err, want)
 	}
 	own(self)
 	now := time.Now()
@@ -70,7 +71,8 @@ func TestRowanOpusLockReplacedDuringScanSequence(t *testing.T) {
 
 	// 1. own stale lock, own git holds the checkout: kept, no error.
 	c, err := clearStaleIndexLockAs(dir, now, func() ([]gitProc, error) { return ownGit, nil }, seam, self)
-	require.False(t, c || err != nil, "1 own git holds: c=%v err=%v", c, err)
+	require.False(t, c, "1 own git holds: c=%v err=%v", c, err)
+	require.NoError(t, err, "1 own git holds: c=%v err=%v", c, err)
 	body("1", "")
 	// 2. (a) during the scan the own git finishes and a foreign git's lock takes the path.
 	c, err = clearStaleIndexLockAs(dir, now, func() ([]gitProc, error) { replace("foreign", other); return nil, nil }, seam, self)
@@ -79,7 +81,10 @@ func TestRowanOpusLockReplacedDuringScanSequence(t *testing.T) {
 	// 3. back: the foreign lock, stale, is refused by owner before any scan.
 	scanned := false
 	c, err = clearStaleIndexLockAs(dir, now, func() ([]gitProc, error) { scanned = true; return nil, nil }, seam, self)
-	require.False(t, c || err == nil || err.Error() != lockOwnerForeignErr(other).Error() || scanned, "3 foreign stale: c=%v err=%v scanned=%v", c, err, scanned)
+	require.False(t, c, "3 foreign stale: c=%v err=%v scanned=%v", c, err, scanned)
+	require.Error(t, err, "3 foreign stale: c=%v err=%v scanned=%v", c, err, scanned)
+	require.Equal(t, lockOwnerForeignErr(other).Error(), err.Error(), "3 foreign stale: c=%v err=%v scanned=%v", c, err, scanned)
+	require.False(t, scanned, "3 foreign stale: c=%v err=%v scanned=%v", c, err, scanned)
 	body("3", "foreign")
 	// 4. (c) the path is own again; during the scan it is replaced by another own lock
 	// with the same owner and the same mtime: only the inode differs. Not removed.
@@ -89,9 +94,10 @@ func TestRowanOpusLockReplacedDuringScanSequence(t *testing.T) {
 	body("4", "own-b")
 	// 5. the lock that stayed, unchanged through a scan: cleared.
 	c, err = clearStaleIndexLockAs(dir, now, func() ([]gitProc, error) { return nil, nil }, seam, self)
-	require.False(t, !c || err != nil, "5 unchanged: c=%v err=%v", c, err)
+	require.True(t, c, "5 unchanged: c=%v err=%v", c, err)
+	require.NoError(t, err, "5 unchanged: c=%v err=%v", c, err)
 	{
 		_, err := os.Lstat(lock)
-		require.False(t, !os.IsNotExist(err), "5 lock still here: %v", err)
+		require.True(t, os.IsNotExist(err), "5 lock still here: %v", err)
 	}
 }
