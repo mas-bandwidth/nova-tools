@@ -42,7 +42,7 @@ func TestGrokUsageFoldsToOneRowWithInOutUsd(t *testing.T) {
 		"2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:johnny")
 	{
 		c := invoke(t, "check", "--out", out)
-		assert.False(t, c.exit != 0, "check over the folded day: exit %d, want 0\n%s", c.exit, c.stderr)
+		assert.Equal(t, 0, c.exit, "check over the folded day: exit %d, want 0\n%s", c.exit, c.stderr)
 	}
 
 	rep := invoke(t, "report", "--who", "johnny", "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
