@@ -892,7 +892,7 @@ Beside those: the first-run block runs against the fixture, compared by shape pe
 ONBOARDING.md 5(c); `nova-update help` prints the verbs block on stdout, exit 0; a
 bare invocation or a flag typo costs one line, never a banner.
 
-## Open questions — each with a default, and the default stands unless Glenn says otherwise
+## Open questions — each with a default, and the default stands
 
 1. **Ollama publishes no JSON API, but its registry speaks registry-v2.** Default: rule 4a's
 one manifest GET, digest as text; the rejected alternative, scraping

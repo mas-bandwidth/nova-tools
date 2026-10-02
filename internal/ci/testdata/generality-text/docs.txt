@@ -54,7 +54,7 @@ docs/SPEC-TOKENS.md:space 2
 docs/SPEC-TOKENS.md:stella 2
 docs/SPEC-UPDATE.md:emma 1
 docs/SPEC-UPDATE.md:freddy 1
-docs/SPEC-UPDATE.md:glenn 2
+docs/SPEC-UPDATE.md:glenn 1
 docs/SPEC-UPDATE.md:hulk 3
 docs/SPEC-UPDATE.md:johnny 1
 docs/SPEC-UPDATE.md:rowan 5
