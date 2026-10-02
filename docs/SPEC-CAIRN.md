@@ -50,8 +50,8 @@ format stores no source or publication policy: receipts print `source=-`
 and `publish=unknown`. Ordinary prose without machine-form entry headings
 is not an indexed entry. Invalid stamps, invalid entry identifiers and duplicate
 entry headings refuse rather than produce an ambiguous receipt. The nested
-record wins when a store holds both shapes for a session, which counts once. The hurt this is written from
-An append into a bench store refuses `no such session`
+record wins when a store holds both shapes for a session, which counts once. The hurt this
+is written from: an append into a bench store refused `no such session
 "b9395d11"; open first` with `cairns/b9395d11.md` in place, and running the
 named remedy would have written a second record and split one session in
 two. **A refusal names the remedy verb whole** — `open first: nova-cairn
