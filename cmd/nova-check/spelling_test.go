@@ -371,7 +371,7 @@ func TestSpellingRevisedWitnesses(t *testing.T) {
 	}
 }
 
-func TestReviewSpellingLooseListContainers(t *testing.T) {
+func TestSpellingLooseListContainers(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, before, want string }{
 		{"blank-before-fence-with-four-space-continuation", "-   intro\n\n    ~~~go\n    func recieve() {}\n    ~~~\n", "-   intro\n\n    ~~~go\n    func recieve() {}\n    ~~~\n"},
@@ -391,7 +391,7 @@ func TestReviewSpellingLooseListContainers(t *testing.T) {
 	}
 }
 
-func TestStellaQuotedListTabFence(t *testing.T) {
+func TestSpellingQuotedListTabFence(t *testing.T) {
 	t.Parallel()
 	for _, prefix := range []string{"> - ", "> -\t"} {
 		t.Run(prefix, func(t *testing.T) {

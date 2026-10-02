@@ -18,7 +18,7 @@ import (
 // under its own timeout, and `--repo` warns on stderr that the read can take
 // seconds. This test pins all four "only-when" boundaries and the progress
 // notice.
-func TestIssue2311(t *testing.T) {
+func TestDogfoodRunsGitAndHelpOnlyWhenAsked(t *testing.T) {
 	t.Run("RecordWritesTheClockTimestamp", func(t *testing.T) {
 		fixed := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 		dogfoodClock = func() time.Time { return fixed }

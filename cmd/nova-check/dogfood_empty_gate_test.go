@@ -19,7 +19,7 @@ import (
 // Asserting only the exit code would pass a change that made the verb refuse
 // EVERY invocation, so the --allow-empty case below pins today's summary line,
 // require-all=no and all.
-func TestIssue1466TheDogfoodGateRefusesAnEmptyReceiptSetUnlessAllowEmpty(t *testing.T) {
+func TestDogfoodGateRefusesAnEmptyReceiptSetUnlessAllowEmpty(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()

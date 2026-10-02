@@ -141,11 +141,11 @@ func stLine(t *testing.T, stream, prefix string) string {
 	return ""
 }
 
-// TestIssue2296 is the anchor: the whole #2296 surface in one test, so the
+// TestNoCodeStagedWholeSurface is the anchor: the whole #2296 surface in one test, so the
 // card's check (`go test ./cmd/nova-check/ -run TestIssue2296`) exercises
 // every behaviour the issue names. The six bodies also stand as the six
 // top-level tests below, under the issue's own names.
-func TestIssue2296(t *testing.T) {
+func TestNoCodeStagedWholeSurface(t *testing.T) {
 	t.Run("TestNoCodeStagedClassifiesTheIndex", noCodeStagedClassifiesTheIndex)
 	t.Run("TestNoCodeStagedRequiresDir", noCodeStagedRequiresDir)
 	t.Run("TestNoCodeStagedNothingToSay", noCodeStagedNothingToSay)
@@ -485,7 +485,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	}
 }
 
-// TestFriendSequenceStagedAdvisoryCommit is the sequence a friend runs the
+// TestStagedAdvisoryCommitSequence is the sequence a friend runs the
 // --staged verb inside (WORKER-CARDS.md practice 21): stage, advisory, act on
 // what the advisory named, advisory again, commit, and the audit over what was
 // committed. A verb's own tests see what the verb prints; only the sequence
@@ -494,7 +494,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 // is the composition this verb exists for. CI's e2e job selects this test by
 // name (`-run TestFriendSequence`), so the round trip runs on every pull
 // request once it lands here.
-func TestFriendSequenceStagedAdvisoryCommit(t *testing.T) {
+func TestStagedAdvisoryCommitSequence(t *testing.T) {
 	t.Parallel()
 
 	dir := stLab(t)

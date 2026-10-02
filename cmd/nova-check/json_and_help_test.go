@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPolishJSONLinksKeepsTotalsAndProvenance(t *testing.T) {
+func TestJSONLinksKeepsTotalsAndProvenance(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("[one](missing)\n[two](gone)\n"), 0600))
@@ -53,7 +53,7 @@ func TestPolishJSONLinksKeepsTotalsAndProvenance(t *testing.T) {
 	assert.Equal(t, 2, out.More[0].Total)
 }
 
-func TestPolishJSONRefusalIsOneObjectWithEveryProblem(t *testing.T) {
+func TestJSONRefusalIsOneObjectWithEveryProblem(t *testing.T) {
 	t.Parallel()
 	exit, stdout, stderr := runCheck(t, "kernel", "--json")
 	assert.Equal(t, 2, exit)
@@ -73,7 +73,7 @@ func TestPolishJSONRefusalIsOneObjectWithEveryProblem(t *testing.T) {
 	assert.Equal(t, "nova-check help", out.Result.Remedy)
 }
 
-func TestPolishUnknownVerbNamesAvailableRemedies(t *testing.T) {
+func TestUnknownVerbNamesAvailableRemedies(t *testing.T) {
 	t.Parallel()
 	exit, _, stderr := runCheck(t, "bogus")
 	assert.Equal(t, 2, exit)
@@ -82,7 +82,7 @@ func TestPolishUnknownVerbNamesAvailableRemedies(t *testing.T) {
 	}
 }
 
-func TestPolishHygieneHelpDescribesEveryFlag(t *testing.T) {
+func TestHygieneHelpDescribesEveryFlag(t *testing.T) {
 	t.Parallel()
 	exit, stdout, stderr := runCheck(t, "hygiene", "-h")
 	assert.Equal(t, 0, exit)
@@ -92,7 +92,7 @@ func TestPolishHygieneHelpDescribesEveryFlag(t *testing.T) {
 	}
 }
 
-func TestPolishSourceFreeExampleSetup(t *testing.T) {
+func TestSourceFreeExampleSetup(t *testing.T) {
 	t.Parallel()
 	scratch := t.TempDir()
 	// Execute the printed setup in a directory containing no checkout fixtures.
@@ -117,7 +117,7 @@ func TestPolishSourceFreeExampleSetup(t *testing.T) {
 	}
 }
 
-func TestPolishJSONCheckSuccessAndFailure(t *testing.T) {
+func TestJSONCheckSuccessAndFailure(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	file := filepath.Join(dir, "record.md")
@@ -161,7 +161,7 @@ func TestPolishJSONCheckSuccessAndFailure(t *testing.T) {
 	}
 }
 
-func TestPolishJSONSpellingWriteReflectsChangedFile(t *testing.T) {
+func TestJSONSpellingWriteReflectsChangedFile(t *testing.T) {
 	t.Parallel()
 	file := filepath.Join(t.TempDir(), "a.md")
 	require.NoError(t, os.WriteFile(file, []byte("the teh word\n"), 0600))
@@ -181,7 +181,7 @@ func TestPolishJSONSpellingWriteReflectsChangedFile(t *testing.T) {
 	assert.Equal(t, "the the word\n", string(raw))
 }
 
-func TestPolishJSONUsesFlagParserValueBoundaries(t *testing.T) {
+func TestJSONUsesFlagParserValueBoundaries(t *testing.T) {
 	t.Parallel()
 	exit, stdout, stderr := runCheck(t, "links", "--dir", "--json")
 	assert.Equal(t, 2, exit)
@@ -201,7 +201,7 @@ func TestPolishJSONUsesFlagParserValueBoundaries(t *testing.T) {
 	}
 }
 
-func TestPolishJSONDoesNotSwallowHelp(t *testing.T) {
+func TestJSONDoesNotSwallowHelp(t *testing.T) {
 	t.Parallel()
 	for _, verb := range []string{"attest", "links", "kernel", "nocode", "floors", "corpus", "hygiene", "spelling", "version"} {
 		t.Run(verb, func(t *testing.T) {
@@ -218,7 +218,7 @@ func TestPolishJSONDoesNotSwallowHelp(t *testing.T) {
 	}
 }
 
-func TestPolishLinksBannerExampleMatchesOutput(t *testing.T) {
+func TestLinksBannerExampleMatchesOutput(t *testing.T) {
 	t.Parallel()
 	const command = "nova-check links --dir ./self"
 	_, help, _ := runCheck(t, "help")

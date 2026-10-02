@@ -239,10 +239,10 @@ func findingsByPath(fs []Failure) map[string]string {
 	return m
 }
 
-// TestIssue2294ClassifyParametrisedSymlink asserts that a symlink named as
+// TestNoCodeClassifyFlagsASymlinkWithoutReadingIt asserts that a symlink named as
 // code is flagged without being followed, through the parameterised path: the
 // reader is never called.
-func TestIssue2294ClassifyParametrisedSymlink(t *testing.T) {
+func TestNoCodeClassifyFlagsASymlinkWithoutReadingIt(t *testing.T) {
 	t.Parallel()
 
 	rules, err := newNoCodeRules(NoCodeOptions{})
@@ -260,10 +260,10 @@ func TestIssue2294ClassifyParametrisedSymlink(t *testing.T) {
 	}
 }
 
-// TestIssue2294ClassifyParametrisedUnreadablePeek asserts that a read error
+// TestNoCodeClassifyNamesAnUnreadablePeek asserts that a read error
 // from the first-two-bytes reader, or no reader at all, is a finding through
 // the parameterised path, never a pass.
-func TestIssue2294ClassifyParametrisedUnreadablePeek(t *testing.T) {
+func TestNoCodeClassifyNamesAnUnreadablePeek(t *testing.T) {
 	t.Parallel()
 
 	rules, err := newNoCodeRules(NoCodeOptions{})

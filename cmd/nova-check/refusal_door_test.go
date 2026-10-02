@@ -18,7 +18,7 @@ import (
 // that says "refusing to guess" and then dumps the whole usage banner: the door has to be
 // ON the refusal line a reader scans, so this asserts it line by line, and a bare verb
 // that reports several missing flags must carry it on each of those lines.
-func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
+func TestEveryRefusalNamesTheDoor(t *testing.T) {
 	t.Parallel()
 
 	exit, helpOut, helpErr := runCheck(t, "help")
