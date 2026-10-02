@@ -209,7 +209,7 @@ func hasShebang(path string) bool {
 // ---------------------------------------------------------------------------
 
 // batchLogRE is the shape --batch-logs holds: one file per gate round per
-// batch, `<pr>-round-<n>.log`. The hulk logs are linked into that shape rather
+// batch, `<pr>-round-<n>.log`. The build host's gate logs are linked into that shape rather
 // than guessed at, because a directory of free-form names read as evidence is
 // a number nobody can check.
 var batchLogRE = regexp.MustCompile(`^([0-9]{1,9})-round-([0-9]{1,4})\.log$`)
