@@ -226,15 +226,6 @@ func (h TimeoutHierarchy) StepContext(parent context.Context, remainingCard time
 	return context.WithTimeout(parent, budget)
 }
 
-// GitContext returns a context bounded by GitBudget(remainingStep).
-func (h TimeoutHierarchy) GitContext(parent context.Context, remainingStep time.Duration) (context.Context, context.CancelFunc) {
-	if parent == nil {
-		parent = context.Background()
-	}
-	budget := h.GitBudget(remainingStep)
-	return context.WithTimeout(parent, budget)
-}
-
 // TwoPhaseReap performs a canonical two-phase reap of a process group:
 // 1. Sends SIGTERM (or graceful tree termination) to allow processes to flush/cleanup.
 // 2. Waits up to TerminateGrace (3s) polling for all processes in the group to exit.

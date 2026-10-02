@@ -3,7 +3,6 @@ package swarm
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -102,35 +101,12 @@ type Report struct {
 	Bytes         int
 }
 
-// Red, Green and NotDone count the item states.
-func (r Report) Red() int     { return r.countState("red") }
-func (r Report) Green() int   { return r.countState("green") }
-func (r Report) NotDone() int { return r.countState("not done") }
-
-func (r Report) countState(state string) int {
-	n := 0
-	for _, it := range r.Items {
-		if it.State == state {
-			n++
-		}
-	}
-	return n
-}
-
 // HashBytes is a revision's identity: the SHA-256 of its bytes. There is no mtime anywhere
 // in this tool -- two revisions with one mtime are two hashes, and an mtime a filesystem
 // rounds is not an identity (rule 16).
 func HashBytes(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
-}
-
-// Short is the twelve characters of a hash that an event line carries.
-func Short(hash string) string {
-	if len(hash) <= 12 {
-		return hash
-	}
-	return hash[:12]
 }
 
 // ParseReport reads one RESULT.md into a Report. It never returns a finding from a report
@@ -440,73 +416,4 @@ func NormalizePath(path string) string {
 		path = path[2:]
 	}
 	return strings.TrimPrefix(path, "/")
-}
-
-// OwedMatch reports whether a finding matches an item on a pull request's owed list. The
-// match is the owed item's own text, compared without case and without punctuation, because
-// a worker retyping an owed line is not expected to retype its commas.
-func OwedMatch(f Finding, owed []string) bool {
-	needle := foldForMatch(f.Text)
-	if needle == "" {
-		return false
-	}
-	for _, item := range owed {
-		hay := foldForMatch(item)
-		if hay == "" {
-			continue
-		}
-		if strings.Contains(needle, hay) || strings.Contains(hay, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func foldForMatch(s string) string {
-	var b strings.Builder
-	space := false
-	for _, r := range strings.ToLower(s) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '/', r == '.', r == ':':
-			b.WriteRune(r)
-			space = false
-		default:
-			if !space {
-				b.WriteByte(' ')
-				space = true
-			}
-		}
-	}
-	return strings.TrimSpace(b.String())
-}
-
-// FindingCount is the ONE number a report has: the head's own, where there is a head, and
-// the finding lines where there is none. A report killed before it wrote its head still
-// carries what it found (rule 3, and demanded test 8's headless report with one appended
-// line).
-func (r Report) FindingCount() int {
-	if r.HasHead {
-		return r.Findings
-	}
-	return len(r.FindingLines)
-}
-
-// ReadOwed reads an owed list: the items a pull request already knows it owes, one per
-// line, `- ` bullets and blank lines alike. It is a FILE because an owed list is a
-// paragraph a person wrote, and putting it in an argument would put it in the process
-// table (the same reason a task is a file).
-func ReadOwed(path string) ([]string, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, line := range strings.Split(string(raw), "\n") {
-		item := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
-		if item == "" {
-			continue
-		}
-		out = append(out, item)
-	}
-	return out, nil
 }

@@ -13,20 +13,6 @@ import (
 // in cmd/nova-swarm's tests, on the platform whose body is built; what is here is the shape
 // of the two lists, which is the same shape on every platform.
 
-// absFixture builds a fixture path that is absolute ON EVERY PLATFORM. A path typed
-// `/w/home-1` is absolute on darwin and linux and is NOT on windows -- `filepath.IsAbs` is
-// false without a volume -- so `absPath`, which is the seam obeying rule 5 ("paths are
-// resolved, absolute and existing"), correctly turned the fixture into `D:\w\home-1` and
-// the test compared it against what it had typed (windows CI of #88 at d8a5824). The seam
-// was right and the FIXTURE was wrong: the promise is that every path the seam hands the
-// wall is absolute, and a test of that promise must start from a path that is absolute
-// where it runs. The volume is the one the machine's own temp directory is on; nothing is
-// created, so no directory of that volume is touched.
-func absFixture(parts ...string) string {
-	root := filepath.VolumeName(os.TempDir()) + string(filepath.Separator)
-	return filepath.Join(append([]string{root}, parts...)...)
-}
-
 // DEMANDED (SPEC-SANDBOX.md rule 5, "there is no --root flag"). read_roots is the one field
 // the wall added to the worker description, and a root that is relative, absent or a file
 // is refused at LOAD -- once, where a person can fix it -- rather than by the wall at every

@@ -335,33 +335,6 @@ func slotHolders(counts map[string]int) string {
 	return strings.Join(parts, ",")
 }
 
-// SlotUtilisation reports one bench store for `nova-pulse status --slots-store`:
-// capacity and reserve from shares.tsv, held and free after reaping expired
-// leases with a dead pid (expired leases with a live pid are DRIFT and stay
-// held), per-owner held counts and per-owner shares. Free is
-// capacity-reserve-held.
-func SlotUtilisation(store string, now time.Time) (capacity, reserve, held, free int, heldBy map[string]int, shares map[string]int, err error) {
-	capacity, reserve, shares, err = loadSlotShares(store)
-	if err != nil {
-		return 0, 0, 0, 0, nil, nil, err
-	}
-	leases, lerr := ListSlotLeases(store, now)
-	if lerr != nil {
-		return 0, 0, 0, 0, nil, nil, lerr
-	}
-	heldBy = map[string]int{}
-	for _, l := range leases {
-		if !l.Until.After(now) && !Alive(l.Pid, "") {
-			continue
-		}
-		u := l.Units()
-		heldBy[l.Owner] += u
-		held += u
-	}
-	free = capacity - reserve - held
-	return capacity, reserve, held, free, heldBy, shares, nil
-}
-
 // TakeSlotLeases grants k unweighted (weight 1) leases. See takeSlotLeases.
 func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string, now time.Time, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
 	return takeSlotLeases(store, owner, k, 1, "", dur, label, now, pid)

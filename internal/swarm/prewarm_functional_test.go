@@ -56,15 +56,6 @@ func envHasPrefix(env []string, prefix string) bool {
 	return false
 }
 
-func envValue(env []string, name string) string {
-	for _, entry := range env {
-		if key, value, ok := strings.Cut(entry, "="); ok && key == name {
-			return value
-		}
-	}
-	return ""
-}
-
 func mustWrite(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

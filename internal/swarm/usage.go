@@ -2,7 +2,6 @@ package swarm
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -51,33 +50,6 @@ const Dash = "-"
 
 // UsageRow is one job's row.
 type UsageRow map[string]string
-
-// UsagePath is <pool>/usage/<job>.tsv, one per job id, outside everything reclaim removes.
-func (p *Pool) UsagePath(id string) string { return p.Path(Usage, id+".tsv") }
-
-// WriteUsage writes a job's usage file, once and never again: a job's second attempt is a
-// new job id with its own file, so cost sums each attempt once and a retry never
-// double-counts. It reports whether the file already existed.
-func (p *Pool) WriteUsage(id string, row UsageRow) (string, bool, error) {
-	path := p.UsagePath(id)
-	if _, err := os.Stat(path); err == nil {
-		return path, true, nil
-	}
-	var head, values []string
-	for _, c := range UsageColumns {
-		v := strings.TrimSpace(row[c])
-		if v == "" {
-			v = Dash
-		}
-		// A tab or a newline in a value would make one row read as two fields or two rows;
-		// the file is tab-separated and this is where that is kept true.
-		v = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(v)
-		head = append(head, c)
-		values = append(values, v)
-	}
-	body := strings.Join(head, "\t") + "\n" + strings.Join(values, "\t") + "\n"
-	return path, false, writeAtomic(path, []byte(body), 0o644)
-}
 
 // Int reads a numeric column, reporting whether it is a number at all -- a dash is not.
 func (r UsageRow) Int(name string) (int, bool) {
