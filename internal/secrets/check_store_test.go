@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,45 +118,45 @@ func TestCheckRefusesAStoreItCannotReadAsCommitted(t *testing.T) {
 }
 
 // Order is output: failures of one kind are listed by path, so two runs over the same
-// store print the same lines, and --max shows the same first ones.
+// store print the same lines, and --max shows the same first ones. The files come out of
+// maps (the git index, the HEAD tree), so sixteen of them make an unsorted listing all
+// but certain to show.
 func TestCheckListsFailuresInPathOrderAndCapsTheSameOnes(t *testing.T) {
 	t.Parallel()
-	rules := "creation_rules:\n"
-	files := map[string]string{"recovery.pub": pubRecovery + "\n"}
-	seats := []string{"rowan", "c", "a", "d", "b"}
-	for _, seat := range seats {
+	rules := "creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: " + pubRowan + "," + pubRecovery + "\n"
+	files := map[string]string{"recovery.pub": pubRecovery + "\n", "rowan.yaml": sealedFor([]string{pubRowan, pubRecovery})}
+	var drifted []string
+	for i := 16; i >= 1; i-- {
+		seat := fmt.Sprintf("s%02d", i)
 		rules += "  - path_regex: ^" + seat + "\\.yaml$\n    age: " + pubRowan + "," + pubRecovery + "\n"
-		// every seat but rowan is sealed to a stranger: recipients-drift, in path order
-		recipients := []string{pubRowan, pubRecovery}
-		if seat != "rowan" {
-			recipients = []string{pubStranger, pubRecovery}
-		}
-		files[seat+".yaml"] = sealedFor(recipients)
+		// sealed to a stranger, not the rule's seat: recipients-drift
+		files[seat+".yaml"] = sealedFor([]string{pubStranger, pubRecovery})
+		drifted = append([]string{seat + ".yaml"}, drifted...)
 	}
 	files[".sops.yaml"] = rules
 	s := newCheckStore(t, files)
 
-	kind := func(out, word string) []string {
+	listed := func(out, word string) []string {
 		var got []string
 		for _, l := range strings.Split(out, "\n") {
 			if strings.Contains(l, word) {
-				got = append(got, strings.Fields(l)[3])
+				got = append(got, strings.TrimSuffix(strings.Fields(l)[3], ":"))
 			}
 		}
 		return got
 	}
 	out, code := s.run(t, 0)
 	require.Equal(t, 1, code, out)
-	assert.Equal(t, []string{"a.yaml:", "b.yaml:", "c.yaml:", "d.yaml:"}, kind(out, "recipients differ"))
+	assert.Equal(t, drifted, listed(out, "recipients differ"))
 
 	out, code = s.run(t, 1)
 	require.Equal(t, 1, code, out)
-	assert.Equal(t, []string{"a.yaml:"}, kind(out, "recipients differ"))
-	assert.Contains(t, out, "SECRETS CHECK MORE kind=recipients-drift shown=1 total=4")
+	assert.Equal(t, drifted[:1], listed(out, "recipients differ"))
+	assert.Contains(t, out, "SECRETS CHECK MORE kind=recipients-drift shown=1 total=16")
 
 	// The working copy's own drift (the stale-working-copy candidates) is in path order too.
-	for _, seat := range []string{"d", "b", "c", "a"} {
-		s.write(t, seat+".yaml", sealedFor([]string{pubStranger, pubRecovery})+"# edited\n")
+	for _, f := range drifted {
+		s.write(t, f, sealedFor([]string{pubStranger, pubRecovery})+"# edited\n")
 	}
 	_, _, _, failures, refusal := ValidateAdmissibleStore(s.dir)
 	require.NoError(t, refusal)
@@ -165,7 +166,7 @@ func TestCheckListsFailuresInPathOrderAndCapsTheSameOnes(t *testing.T) {
 			stale = append(stale, f.File)
 		}
 	}
-	assert.Equal(t, []string{"a.yaml", "b.yaml", "c.yaml", "d.yaml"}, stale)
+	assert.Equal(t, drifted, stale)
 }
 
 // ValidateAdmissibleStore holds the working copy to what is committed: each way a

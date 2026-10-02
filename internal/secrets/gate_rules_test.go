@@ -78,3 +78,13 @@ func TestGateResolveCommitRefusesAnOptionShapedRef(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, sha, 40)
 }
+
+// The first wall: both refs are held to their shape before git is asked anything, so an
+// option-shaped --head is refused as one even where --base would fail git first (here, a
+// directory that is no repository).
+func TestGateRefusesAnOptionShapedRefBeforeAskingGit(t *testing.T) {
+	t.Parallel()
+	line, code := RunGate(GateInput{StoreDir: t.TempDir(), Base: "HEAD", Head: "-R"})
+	assert.Equal(t, 2, code, line)
+	assert.Contains(t, line, `SECRETS GATE REFUSED: --head -R begins with "-", the shape of an option, not a git ref`)
+}
