@@ -20,7 +20,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
-// place.go implements issue #764: `nova-secrets place` copies one named secret from the
+// place.go implements `nova-secrets place`, which copies one named secret from the
 // local store to a remote fleet machine over ssh with mode 0600, never prints or logs the
 // value, and writes a receipt (machine, secret, path, the sealed file it came from, stamp).
 // `nova-secrets placed --machine <name>` reads those receipts back.
@@ -128,7 +128,7 @@ func storeHead(storeDir string) string {
 // decryptSnapshot decrypts sealed, the seat file's bytes as place read them ONCE, from a
 // private copy, never from the store's pathname a second time: the bytes sops decrypts are
 // then exactly the bytes the receipt's blob id names, whatever happens to the store's file
-// meanwhile (a reseal between two reads would deliver the old value under the new blob).
+// meanwhile (a reseal between two reads would deliver the stale value under the new blob).
 // The copy keeps the file's name, which sops reads the format from, at mode 0600 in a
 // fresh 0700 directory under the process's temp dir, and its removal is tried on every
 // path out. A copy left behind is never left silently: a failed removal is returned,
