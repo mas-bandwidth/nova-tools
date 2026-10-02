@@ -743,7 +743,7 @@ the variable the tool that acts already reads.
 one carrying org roles — with the coordinator's working needs beside it;
 `rowan-keeper.yaml` is sealed to the **keeper bench key alone**, plus the recovery key, and
 holds the keeper's **own** `GH_TOKEN` with the life's surfaces beside it — a **second
-fine-grained token on the same `rowan-claude` account**, scoped to the repositories **plus
+fine-grained token on the same `rowan-claude` account**, scoped to the keeper's own repositories **plus
 `contents` and `pull_requests` write on `mas-bandwidth/secrets` and nothing else org-wide**,
 both halves because every re-seal of his own file is a branch pushed **and** a pull request
 opened against the org's store, and `contents` alone pushes the branch without opening the
@@ -803,7 +803,7 @@ secrets inside — needs the wall to permit the read a wall exists to refuse: **
 ## The migration from the Keychain
 
 A surface held as a macOS Keychain item, read by a tool calling
-`security find-generic-password`, moves by *changing a reader*, not by *copying a value*. The per-surface runbook belongs in **tools**; the order belongs here,
+`security find-generic-password`, moves by *changing a reader*, not by *copying a value*. The per-surface runbook belongs in **rowan-tools**; the order belongs here,
 because at no step may there be a live consumer with a dead credential. **Issue** alongside the
 old (where issuing *revokes* the old, as a Ghost admin key does, the job is unloaded first and
 the migration is one sitting); **seal** in an approved pull request and pull on every bench,
