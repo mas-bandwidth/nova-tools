@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -252,24 +251,26 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 	return code
 }
 
-// afterSync reads the fleet as the sync's step left it and deletes the row of
-// every member that is not a member of the inventory whose control card is off
-// the table: the members the step removed, and a row a sync before left when its
-// delete failed. A row whose control card is off the table is dealt nothing, so
-// no card lands on it between the step and the delete (sprint.FleetDrift,
-// DriftRemove). holding is the members with no machine row that cards keep on the
-// fleet, held (sprint.GoneHolding).
+// afterSync deletes the row of every member that is not a member of the
+// inventory whose control card is off the table (the members the sync's step
+// removed, and a row a sync before left when its delete failed), deciding and
+// deleting under the fence (store.DropMembers), so a member placed again in
+// between (fleet up) keeps its row and its cards. holding is the members with
+// no machine row that cards keep on the fleet, held (sprint.GoneHolding), as
+// read after the delete.
 func afterSync(ctx context.Context, st *store.Store, want []sprint.SyncMember, machines []string) (gone, holding []string, err error) {
+	keep := make([]string, len(want))
+	for i, w := range want {
+		keep[i] = w.Name
+	}
+	if gone, err = st.DropMembers(ctx, keep); err != nil {
+		return gone, nil, err
+	}
 	snap, err := st.Load(ctx, []string{sprint.Fleet, sprint.Work}, nil)
 	if err != nil {
-		return nil, nil, err
+		return gone, nil, err
 	}
-	for _, m := range snap.Fleet.Rows() {
-		if snap.MemberCtl(m) == nil && !slices.ContainsFunc(want, func(w sprint.SyncMember) bool { return w.Name == m }) {
-			gone = append(gone, m)
-		}
-	}
-	return gone, sprint.GoneHolding(snap, want, machines), st.DropMembers(ctx, gone)
+	return gone, sprint.GoneHolding(snap, want, machines), nil
 }
 
 // nothingChanged is an error as one line ending in "nothing was changed",

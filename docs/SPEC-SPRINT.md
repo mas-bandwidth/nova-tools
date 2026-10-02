@@ -469,11 +469,16 @@ and it is the coordinator's decision, receipted.
   way and, when no card stays on it after that redeal (no withdrawn card, and no
   finished card that is the live work of a primary on the table and not
   landed), removed in the same run: the step takes its control card off the
-  table, held by the sync, and the verb deletes its row and its beat record, so
-  its width leaves the fleet's total, one line saying so; while cards stay on
+  table, held by the sync, and the verb deletes its beat record and then its
+  row, deciding and deleting under the fence (it reads the rows, takes the
+  fence at that generation, and only then deletes, so a `fleet up` or a deal in
+  between is read and its row kept; a cleanup cut short leaves the row, which
+  the next sync reads as drift and finishes), so its width leaves the fleet's
+  total, one line saying so; while cards stay on
   it, it stays held and a NOTE line says so, and a later sync removes it. A
   machine row that comes back places the same control card again before the
-  step (the table layer's cell add; a batch never places a removed card) and
+  step, under the fence too (the table layer's cell add; a batch never places a
+  removed card; the records read in read sets of at most the table's bound) and
   the sync releases it, and `fleet up` does the same for a removed member. A member that stays has its status
   untouched, and the deal's rolling index moves only with the cards a held
   member's redeal places. A hold is marked by who made it (the control card's
