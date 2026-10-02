@@ -130,9 +130,8 @@ func TestStatusPrintsEveryEntryAndExitsByWhetherAnyDiffer(t *testing.T) {
 	if c != 1 {
 		t.Fatalf("a differing entry exited %d, want 1\n%s\n%s", c, out, errs)
 	}
-	need(t, out, "STATUS at=", "STATUS EQUAL name=current kind=tool installed=1.0.0 latest=1.0.0", "STATUS STALE name=behind kind=tool installed=1.0.0 latest=2.0.0")
-	need(t, errs, "STATUS FAIL checked=2 current=1 stale=1")
-	if strings.Contains(out, "UPDATE ") || strings.Contains(errs, "UPDATE ") {
+	need(t, errs, "STATUS FAIL checked=2 current=1 stale=1", " at=", "STATUS EQUAL name=current kind=tool installed=1.0.0 latest=1.0.0", "STATUS STALE name=behind kind=tool installed=1.0.0 latest=2.0.0")
+	if strings.Contains(out, "CHECK ") || strings.Contains(errs, "CHECK ") {
 		t.Errorf("status printed a check line; its own first token is STATUS:\nout: %s\nerr: %s", out, errs)
 	}
 	sameDir(t, "status", before, dirTree(t, f.dir))
@@ -143,8 +142,8 @@ func TestStatusPrintsEveryEntryAndExitsByWhetherAnyDiffer(t *testing.T) {
 	}
 
 	// check on the same file hides the current entry; status shows it.
-	_, checkOut, _ := run(t, Environment{}, "check", "--file", p)
-	if strings.Contains(checkOut, "name=current") {
+	_, checkOut, checkErrs := run(t, Environment{}, "check", "--file", p)
+	if checkOut += checkErrs; strings.Contains(checkOut, "name=current") {
 		t.Errorf("check printed a current entry; that is the gap status closes:\n%s", checkOut)
 	}
 
@@ -212,10 +211,10 @@ func TestApplyDryRunPrintsThePlanTheRealApplyTakes(t *testing.T) {
 		t.Fatalf("apply --dry-run exited %d stderr %q\n%s", c, errs, out)
 	}
 	need(t, out,
-		"STATUS STALE name=x kind=tool installed=1.0.0 latest=1.2.0",
-		"APPLY DRY-RUN would install x 1.2.0 from "+strings.ReplaceAll(latest, " ", `\x20`),
-		"APPLY DRY-RUN would run argv=2 version=1.2.0: "+filepath.Join(f.dir, "installer.sh")+" 1.2.0",
-		"APPLY DRY-RUN OK name=x nothing installed, nothing written")
+		"APPLY OK name=x dry_run=true from=1.0.0 to=1.2.0 source="+strings.ReplaceAll(latest, " ", `\x20`),
+		"APPLY STALE name=x kind=tool installed=1.0.0 latest=1.2.0",
+		"APPLY PLAN name=x argv=2 version=1.2.0: "+filepath.Join(f.dir, "installer.sh")+" 1.2.0",
+		"APPLY NOTE dry run: nothing installed, nothing written")
 	sameDir(t, "apply --dry-run", before, dirTree(t, f.dir))
 	if strings.Contains(f.callLog(t), "installer.sh") {
 		t.Fatalf("the dry run started the installer:\n%s", f.callLog(t))
@@ -244,7 +243,7 @@ func TestApplyDryRunTakesTheNamedVersion(t *testing.T) {
 	if c != 0 {
 		t.Fatalf("exit %d\n%s\n%s", c, out, errs)
 	}
-	need(t, out, "would install x 1.1.0 from", "version=1.1.0: "+filepath.Join(f.dir, "installer.sh")+" 1.1.0")
+	need(t, out, "dry_run=true from=1.0.0 to=1.1.0", "version=1.1.0: "+filepath.Join(f.dir, "installer.sh")+" 1.1.0")
 	if strings.Contains(out, "9.9.9") {
 		t.Errorf("the plan names the latest, not the version asked for:\n%s", out)
 	}
@@ -308,14 +307,15 @@ func TestHelpNamesStatusAndDryRun(t *testing.T) {
 		"nova-update status --file <path>",
 		"nova-update apply --file <path> <name> [--version <v>] [--dry-run]",
 		"apply --dry-run prints the plan and writes nothing",
-		"nova-update status --file cmd/nova-update/testdata/example.tsv",
-		"nova-update apply --file cmd/nova-update/testdata/dry-run.tsv go --dry-run",
+		"nova-update status --file versions.tsv",
+		"nova-update apply --file versions.tsv go --dry-run",
 	} {
 		if !strings.Contains(up, want) {
 			t.Errorf("nova-update help is missing %q:\n%s", want, up)
 		}
 	}
-	if v := VersionTool("", Environment{}).Banner(); strings.Contains(v, "status") || strings.Contains(v, "--dry-run") {
+	// nova-version has no status and no apply; its own --dry-run is snapshot's and moved's.
+	if v := VersionTool("", Environment{}).Banner(); strings.Contains(v, "nova-version status") || strings.Contains(v, "apply --") {
 		t.Errorf("nova-version's help names a verb it does not have:\n%s", v)
 	}
 }

@@ -1272,13 +1272,17 @@ no user, no variable is read unless `--password-env` names it.
 ### First run
 
 ```sh
-nova-update report --file cmd/nova-update/testdata/example.tsv
+nova-update example --out versions.tsv
+nova-update report --file versions.tsv
 ```
 
-Run this from the nova-tools checkout. The executable transcript is in [TESTS.md](TESTS.md#nova-update).
+Run this with the binary alone, in any directory: `example` writes a one-tool
+manifest (Go, read with `go version` on both sides) and names the next command; the
+same file again is left unchanged, and a file holding anything else is never
+overwritten. The executable transcript is in [TESTS.md](TESTS.md#nova-update).
 The report reads only installed identities. UNKNOWN means a partial inventory; it
-never means zero or current. Use your own explicit six-column manifest for your
-bench. There is no quickstart: a manifest and any snapshot path belong to the caller.
+never means zero or current. Replace the example with your own six-column manifest
+for your bench; it and any snapshot path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
 then `--version`, then bare, all inside one `--timeout` — so our own tools, which
 answer a bare invocation with a usage refusal, are read rather than reported
@@ -1293,12 +1297,15 @@ participation and updates remain voluntary.
 
 `status` is `check` with every entry's line shown, the current ones too, exit 0 when
 every entry is equal and 1 when any differs; it writes nothing. `apply --dry-run`
-prints the plan and writes nothing: the entry's line against the target, `would
-install <name> <version> from <source>` and the command the real run would start.
+prints the plan and writes nothing: `APPLY OK ... dry_run=true from=<installed>
+to=<target>`, the entry's line against the target, and `APPLY PLAN` with the command
+the real run would start. Every verb but `watch` and `release` takes `--json`: the same
+result as one JSON object on stdout, refusals included. The first line of every result
+is the verb, its status word (`OK`, `FAIL`, `REFUSED`) and the run's counts.
 
 ```sh
-nova-update status --file cmd/nova-update/testdata/example.tsv
-nova-update apply --file cmd/nova-update/testdata/dry-run.tsv go --dry-run
+nova-update status --file versions.tsv
+nova-update apply --file versions.tsv go --dry-run
 ```
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
@@ -1419,13 +1426,17 @@ the date and `--reason`. `--dry-run` says what would be deleted and deletes noth
 ### First run
 
 ```sh
-nova-version report --file cmd/nova-version/testdata/example.tsv
+nova-version example --out versions.tsv
+nova-version report --file versions.tsv
 ```
 
-Run this from the nova-tools checkout. The executable transcript is in [TESTS.md](TESTS.md#nova-version).
+Run this with the binary alone, in any directory: `example` writes a one-tool
+manifest (Go) and names the next command; the same file again is left unchanged,
+and a file holding anything else is never overwritten. The executable transcript is
+in [TESTS.md](TESTS.md#nova-version).
 The report reads only installed identities. UNKNOWN means a partial inventory; it
-never means zero or current. Use your own explicit six-column manifest for your
-bench. There is no quickstart: a manifest and any snapshot path belong to the caller.
+never means zero or current. Replace the example with your own six-column manifest
+for your bench; it and any snapshot path belong to the caller.
 A `tool` row whose `installed` column is just the executable is asked `version`,
 then `--version`, then bare, all inside one `--timeout` — so our own tools, which
 answer a bare invocation with a usage refusal, are read rather than reported
@@ -1433,7 +1444,8 @@ UNKNOWN (#1264). A row holding a whole argv (`go version`) is run as written.
 
 Use `nova-version help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. `nova-version snapshot --file <manifest>` counts the adopted tools the
-manifest names and prints one `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n>` line —
+manifest names and prints one `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n>` line,
+then a `SNAPSHOT UNKNOWN name=<name>` line for each tool that did not answer —
 the adopted 16, never how many `nova-*` executables sit on PATH. Updates require an explicit
 `nova-update apply --file ... name`; models are listed for the owner to evaluate and
 pull themselves. No timer is installed.
@@ -1472,7 +1484,9 @@ This four-column inventory is **not** the six-column manifest accepted by
 
 `snapshot`'s `--file` shape instead reads the six-column manifest the caller has
 already adopted and counts how many of its tools answer, printing one
-`SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line — the
+`SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line and one
+`SNAPSHOT UNKNOWN name=<name> reason=<why> remedy=<what to do>` line per tool that
+did not answer (`--max` caps them, with a `MORE` line) — the
 adopted 16, never the 32 `nova-*` executables a directory or `PATH` might hold.
 It writes no file and mirrors `report`'s read, so a recorded version is known
 without running a process; it exits 1 when any adopted tool does not answer

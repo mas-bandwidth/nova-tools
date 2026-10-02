@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -131,7 +132,13 @@ func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo
 // from a flag; neither the file's name nor PATH is trusted for the reading.
 func snapshotVerb(c *tool.Call) *tool.Out {
 	if c.Given("file") {
-		return snapshotAdopted(c.Str("file"))
+		// The manifest shape reads as report does, five seconds a tool, unless
+		// the caller names --timeout; --budget bounds the run in both shapes.
+		timeout := snapshotAdoptedTimeout
+		if c.Given("timeout") {
+			timeout = c.Dur("timeout")
+		}
+		return snapshotAdopted(c.Str("file"), timeout, c.Dur("budget"))
 	}
 	bin, outPath := c.Str("bin"), c.Str("out")
 	timeout, budget := c.Dur("timeout"), c.Dur("budget")
@@ -156,6 +163,11 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 		path := filepath.Join(bin, e.Name())
 		ctx, cancel := context.WithTimeout(run, timeout)
 		p := process(ctx, []string{path, "version"}, nil, ChildCap)
+		// A deadline spent before the child even started (a loaded machine) is the
+		// same timeout as one spent while it ran, whatever the start reported.
+		if p.Reason != "" && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			p.Reason = "timeout"
+		}
 		cancel()
 		if p.Reason != "" {
 			reason, remedy := p.Reason, "repair the build there: go build ./cmd/"+e.Name()
@@ -226,15 +238,22 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 			return tool.Refuse(fmt.Sprintf("mixed source: %s=%s %s=%s (rebuild the set under one source with nova-update release build --version <v> --out <dir> --source <checkout>, then nova-update release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", firstSrcName, sourceString(firstSrc), r.name, sourceString(r.src)))
 		}
 	}
+	// The rows are the result's items as well as the file's lines, so a reader sees
+	// what was recorded; --dry-run is the same reads with the write left out.
+	o := tool.Done().Fact("bin", bin).Fact("out", outPath).Fact("tools", len(rows)).Fact("stamp", rows[0].stamp)
 	var b strings.Builder
 	b.WriteString(snapshotHeader + "\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", r.name, r.stamp, r.revision, r.platform)
+		o.Item("row", "name", r.name, "stamp", r.stamp, "revision", r.revision, "platform", r.platform)
+	}
+	if c.Bool("dry-run") {
+		return o.Fact("dry_run", true).Note("dry run: " + outPath + " not written")
 	}
 	if err := os.WriteFile(outPath, []byte(b.String()), 0o644); err != nil {
 		return tool.Refuse(fmt.Sprintf("cannot write --out %s (supply a writable --out path)", outPath))
 	}
-	return tool.Done().Fact("bin", bin).Fact("out", outPath).Fact("tools", len(rows)).Fact("stamp", rows[0].stamp)
+	return o
 }
 
 // snapshotAdopted counts how many of the adopted manifest's tools answer, and is
@@ -246,28 +265,34 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 // is written: the manifest is adopted, not discovered. The verdict mirrors
 // report's: one count line, exit 0 when every adopted tool answers and exit 1
 // when any does not.
-func snapshotAdopted(file string) *tool.Out {
+func snapshotAdopted(file string, timeout, budget time.Duration) *tool.Out {
 	f, err := os.Open(file)
 	if err != nil {
-		return tool.Refuse(fmt.Sprintf("cannot open %s (supply a readable --file: %s)", file, manifestShape))
+		return tool.Refuse(fmt.Sprintf("cannot open %s (supply a readable --file: %s; nova-version example --out %s writes one to start from)", file, manifestShape, file))
 	}
 	entries, err := Load(f)
 	f.Close()
 	if err != nil {
 		return tool.Refuse(fmt.Sprintf("%s: %s", file, err))
 	}
+	o := tool.Done()
 	known := 0
+	run, cancelRun := context.WithTimeout(context.Background(), budget)
+	defer cancelRun()
 	for _, e := range entries {
-		ctx, cancel := context.WithTimeout(context.Background(), snapshotAdoptedTimeout)
-		r := Installed(ctx, e, snapshotAdoptedTimeout, true)
-		cancel()
+		// Installed bounds the tool by timeout under the run's context, and tells a
+		// spent budget from a slow tool by that context.
+		r := Installed(run, e, timeout, true)
 		if r.Known() {
 			known++
+			continue
 		}
+		// Each tool that did not answer is named with its reason, so a FAIL needs
+		// no second call to learn which.
+		o.Item("unknown", "name", e.Name, "reason", r.Reason, "remedy", r.Remedy)
 	}
-	o := tool.Done()
 	if known != len(entries) {
-		o = tool.Fail()
+		o.Status, o.Exit = tool.Failed, 1
 	}
 	return o.Fact("checked", len(entries)).Fact("known", known).Fact("unknown", len(entries)-known).Fact("file", file)
 }
