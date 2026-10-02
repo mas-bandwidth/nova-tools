@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Every primary
+// The no-stall rule: every primary
 // that has not landed and is on the table is held by something that will move
 // it or tell the coordinator about it. Exactly what holds it is one of:
 //
