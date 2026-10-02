@@ -109,7 +109,7 @@ type InboxResult struct {
 	// Fresh is those notes THEMSELVES, in listing order: the entries this run put on the
 	// open list that were not on it before, and nothing that was already there.
 	//
-	// It exists because a default run used to print no note at all. The listing was a
+	// It exists because a default run prints the newly arrived notes separately. The listing is a
 	// choice between one summary line and the WHOLE carried list, so a reader who wanted to
 	// see the note that had just arrived had to ask for every note they had ever failed to
 	// answer -- which is how a line on a small-context model came to re-read seventy-four
@@ -124,7 +124,7 @@ type InboxResult struct {
 	// before the line: left off the open list, left out of Unreadable, and counted here.
 	// It is a second number rather than part of Legacy because the two are different
 	// facts about the bus -- a note taken as read, and a file nobody can read -- and a
-	// reader deciding whether to go and look at the old lane needs to know which.
+	// reader deciding whether to go and look at the earlier lane needs to know which.
 	LegacyUnreadable int
 }
 
@@ -166,7 +166,7 @@ func (r InboxResult) Counts() (notes, receipts, heard int) {
 // list, which is the one thing on the bus that was theirs alone anyway.
 //
 // A note whose date cannot be read AT ALL -- no parseable Date line, and no day at the
-// front of its filename either -- is never legacy, on the same rule the check tolerance
+// front of its filename either -- is never treated as a legacy note, on the same rule the check tolerance
 // uses: a file that cannot say when it was written cannot claim to predate anything, and
 // the safe direction for a note nobody can date is to carry it. See Note.legacyDay for
 // what counts as saying it.
@@ -200,7 +200,7 @@ func NewLegacyLine(value string) (LegacyLine, error) {
 	return LegacyLine{Before: when, Text: value}, nil
 }
 
-// covers reports whether a note's moment is on the old side of the line. The comparison is
+// covers reports whether a note's moment is before the line. The comparison is
 // by INSTANT and not by day, in both directions: the line is a moment (a date is midnight at
 // its start) and so is the note's date, so a line drawn at 18:07 leaves 18:06 behind and
 // carries 18:08. A zero moment is never covered: a file that cannot say when it was written
@@ -652,7 +652,7 @@ type noteChecker struct {
 	// idOwner answers which note already holds this id, if any.
 	idOwner func(id string) (path string, ok bool)
 	// indexed answers whether this note has a line in its lane's INDEX. A note with no id
-	// is never asked about: a legacy note is addressed by path and inventing a catalogue
+	// is never asked about: a legacy note is a current path-addressed format, and inventing a catalogue
 	// entry keyed on an id it does not have would be inventing the id.
 	indexed func(n *Note) bool
 	opts    CheckOptions
