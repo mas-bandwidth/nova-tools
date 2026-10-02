@@ -1429,7 +1429,7 @@ func TestRule18TwoFoldsDifferInNothingButTheStamp(t *testing.T) {
 	assert.False(t, strings.ReplaceAll(a[0], "at=2026-09-11T23:55:02Z", "") != strings.ReplaceAll(b[0], "at=2026-09-12T00:55:02Z", ""), "the stamp lines differ in more than at=:\n%s\n%s", a[0], b[0])
 	// rows sorted by (model, repo)
 	rows := strings.Split(strings.TrimSpace(first), "\n")[2:]
-	assert.False(t, !strings.HasPrefix(rows[0], "2026-09-11\ta\t"), "rows are not sorted by (model, repo): %q", rows[0])
+	assert.True(t, strings.HasPrefix(rows[0], "2026-09-11\ta\t"), "rows are not sorted by (model, repo): %q", rows[0])
 }
 
 // ---------------------------------------------------------------- rule 20: report
@@ -1447,7 +1447,7 @@ func TestRule20ReportPrintsTheBodyAndNothingElse(t *testing.T) {
 	wantExit(t, r, 0)
 	for _, line := range strings.Split(strings.TrimSuffix(r.stdout, "\n"), "\n") {
 		f := strings.Split(line, "\t")
-		assert.False(t, len(f) != 6, "a report line has %d fields, want six: %q", len(f), line)
+		assert.Equal(t, 6, len(f), "a report line has %d fields, want six: %q", len(f), line)
 		assert.False(t, strings.ContainsAny(line, "~#"), "a report line carries ~ or #: %q", line)
 	}
 	wantNotContains(t, r.stdout, "reasoning")
@@ -1455,7 +1455,7 @@ func TestRule20ReportPrintsTheBodyAndNothingElse(t *testing.T) {
 	wantContains(t, r.stdout, "2026-09-11\temma\tgemini\tschema\tcache_write\t0")
 	wantContains(t, r.stderr, "REPORT OK who=emma day=2026-09-11")
 	wantContains(t, r.stderr, "subject=tokens 2026-09-11 at=2026-09-11T23:55:02Z build=")
-	assert.False(t, read(t, note) != r.stdout, "--note is not exactly the stdout bytes")
+	assert.Equal(t, r.stdout, read(t, note), "--note is not exactly the stdout bytes")
 
 	// The note folds back as the same rows, through the bus, with one hand-added comment.
 	out := mkdir(t, filepath.Join(dir, "out"))
@@ -1479,7 +1479,7 @@ func TestRule20ReportPrintsTheBodyAndNothingElse(t *testing.T) {
 		}
 		return strings.Join(keep, "\n")
 	}
-	assert.False(t, stripRow(viaBus) != stripRow(direct), "the note's rows are not the transcript's rows:\nbus:\n%s\ndirect:\n%s", stripRow(viaBus), stripRow(direct))
+	assert.Equal(t, stripRow(direct), stripRow(viaBus), "the note's rows are not the transcript's rows:\nbus:\n%s\ndirect:\n%s", stripRow(viaBus), stripRow(direct))
 	wantContains(t, viaBus, "\t-\t0\tutc\tbus:emma")
 }
 
@@ -1498,10 +1498,10 @@ func TestRule20ReportRefusesAndSupersedes(t *testing.T) {
 		release := makeUnreadable(t, write(t, filepath.Join(bad, "x.jsonl"), "{}\n"))
 		r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+bad, "--note", note)
 		wantExit(t, r, 1)
-		assert.False(t, r.stdout != "", "a failed report wrote to stdout: %q", r.stdout)
+		assert.Equal(t, "", r.stdout, "a failed report wrote to stdout: %q", r.stdout)
 		wantContains(t, r.stderr, "REPORT FAIL")
 		wantContains(t, r.stderr, "TOKENS UNREADABLE")
-		assert.False(t, read(t, note) != "what was there before\n", "a failed report replaced the --note file")
+		assert.Equal(t, "what was there before\n", read(t, note), "a failed report replaced the --note file")
 		{
 			_, err := os.Stat(note + ".tmp")
 			assert.False(t, err == nil, "a failed report left a .tmp beside the note")
@@ -1543,7 +1543,7 @@ func TestRule20ReportRefusesAndSupersedes(t *testing.T) {
 	wantContains(t, f.stdout, "TOKENS SUPERSEDED label=bus:emma note="+firstID+" by="+secondID+" day=2026-09-11")
 	{
 		n := strings.Count(f.stdout, "TOKENS SUPERSEDED")
-		assert.False(t, n != 1, "%d SUPERSEDED lines for two sequential reports, want one", n)
+		assert.Equal(t, 1, n, "%d SUPERSEDED lines for two sequential reports, want one", n)
 	}
 	wantContains(t, lineWith(f.stdout, "TOKENS SOURCE"), "superseded=1")
 }
@@ -1688,14 +1688,14 @@ func TestRule19TheTimeoutDefaultIsTwoMinutes(t *testing.T) {
 	s.declare(fs, true)
 	{
 		err := fs.Parse(nil)
-		require.False(t, err != nil, err)
+		require.NoError(t, err)
 	}
-	assert.False(t, s.timeout != 120, "--timeout unset is %d, want 120", s.timeout)
+	assert.Equal(t, 120, s.timeout, "--timeout unset is %d, want 120", s.timeout)
 	{
 		got := fs.Lookup("timeout").DefValue
-		assert.False(t, got != "120", "the flag's declared default is %q, want \"120\"", got)
+		assert.Equal(t, "120", got, "the flag's declared default is %q, want \"120\"", got)
 	}
-	assert.False(t, tokens.DefaultTimeout != 120*time.Second, "tokens.DefaultTimeout is %s, want 2m0s", tokens.DefaultTimeout)
+	assert.Equal(t, 120*time.Second, tokens.DefaultTimeout, "tokens.DefaultTimeout is %s, want 2m0s", tokens.DefaultTimeout)
 }
 
 // TestRule20ABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed pins rule 20's own clause:
@@ -1754,7 +1754,7 @@ func TestReportCountsAndPrintsEverythingItDropped(t *testing.T) {
 	wantContains(t, r.stderr, "REPORT OK who=emma day=2026-09-11 rows=1")
 	{
 		n := strings.Count(r.stderr, "TOKENS UNPARSED")
-		assert.False(t, n != 1, "%d TOKENS UNPARSED lines, want 1:\n%s", n, r.stderr)
+		assert.Equal(t, 1, n, "%d TOKENS UNPARSED lines, want 1:\n%s", n, r.stderr)
 	}
 	// The no-id message is spend that was read and dropped, and it is named.
 	note := lineWith(r.stderr, "TOKENS NOTE")
@@ -1947,7 +1947,7 @@ func TestAFailedDayWriteIsInsideTheUnreadableCap(t *testing.T) {
 	wantExit(t, r, 1)
 	{
 		n := strings.Count(r.stderr, "TOKENS UNREADABLE")
-		assert.False(t, n != 1, "%d TOKENS UNREADABLE lines under --max 1, want 1:\n%s", n, r.stderr)
+		assert.Equal(t, 1, n, "%d TOKENS UNREADABLE lines under --max 1, want 1:\n%s", n, r.stderr)
 	}
 	wantContains(t, r.stdout+r.stderr, "TOKENS MORE kind=unreadable shown=1 total=2")
 	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "unreadable=2")
@@ -1980,7 +1980,7 @@ func TestReportKeepsTheLinesForEveryKeyThatIsNotMixed(t *testing.T) {
 	wantContains(t, r.stdout, "clean-model")
 	wantNotContains(t, r.stdout, "mixed-model")
 	// A FAIL still writes nothing: the note file is byte-unchanged.
-	assert.False(t, read(t, note) != "what was there before\n", "a failed report replaced the --note file")
+	assert.Equal(t, "what was there before\n", read(t, note), "a failed report replaced the --note file")
 }
 
 // TestEveryVerbRefusesAPositionalArgument: every verb's shape in the usage block is flags
