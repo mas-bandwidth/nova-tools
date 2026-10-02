@@ -1708,14 +1708,36 @@ prose: identifiers and code snippets in fences and backticks are skipped.
 ## nova-self-talk — the self-talk register, classified
 
 ```
-nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
+nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] [--json] <file>...
+nova-self-talk scan [flags] <file>...
+nova-self-talk shapes [--json]
+nova-self-talk example [--dry-run] <dir>
 nova-self-talk version
-nova-self-talk help
+nova-self-talk help [<verb>]
 ```
 
-`version` is a verb here the way `help` is: as the WHOLE invocation, because
-this tool takes its files positionally and has no other verb. A file actually
-named `version`, named beside another file, is still a file.
+**Verbs and files.** The first argument is a verb only when it is `scan`,
+`shapes`, `example`, `version` or `help`; anything else is the first file, so
+the plain use stays `nova-self-talk <file>...` and `scan` is the same scan
+named as a verb. A file whose name is a verb is given as `./version`. A named
+file that cannot be read and has no `.`, `/` or `\` in its name is most often
+a verb guessed wrong, so its refusal names the verbs. `help <verb>` is that
+verb's help, `help` with anything else the banner. `-` is standard input, one
+file named `-`.
+
+**`shapes`** prints the detector table the scan walks (`selftalk.Rules`): one
+row per rule with its class, its shape, what it finds, its pattern, a sentence
+it reports and a near miss it passes, then the licences. A test runs every
+row's two sentences through the scan. **`example <dir>`** writes the two
+example pages built into the binary into `<dir>`, keeps a page already there
+with the same bytes, and refuses before writing anything if one has other
+bytes; `--dry-run` writes nothing. It is the tool's only write.
+
+**Findings.** Each finding line carries `match="<words>"`: the words its rule
+matched. **`--json`** prints the run as one JSON object on stdout (`result`,
+`facts` with the closing line's counts, `items` one per finding, skip and
+banner, `more`, `notes`), capped by `--max` the same way; a refusal under
+`--json` is the same object with `status` `refused`.
 
 **`--max <n>`, default 20, `0` for all.** At most n finding lines per CLASS —
 `standing` and `installation` capped separately, so six hundred of the first
@@ -1888,7 +1910,9 @@ what the first one misses; what remains is genuinely out of reach of grammar and
 5. **The first-person promise written with *always* or *never*** —
    *"I never optimize how things look over what is true"* is a commitment, and
    it is grammatically identical to a habitual self-report. Those two adverbs
-   are out of the habituality markers for that reason.
+   are out of the habituality markers for that reason; `TRAIT` reaches them
+   only through closed sets of failing verbs (*"I always overpromise"*, *"I
+   never finish anything"*), which a promise does not use.
 
 (**The sentences in 3–5 above are each pinned by a test that goes red if the
 tool ever reaches them**, and this section is rewritten in the same commit that
