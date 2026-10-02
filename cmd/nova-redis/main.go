@@ -1,12 +1,12 @@
 // Command nova-redis is the Layer 2 binary of docs/SPEC-REDIS.md, the owner of
 // the local instance: `serve` launches it bound to loopback and the tailnet,
 // with auth from nova-secrets and the fleet store's rules: AOF on, no eviction,
-// no TTL policy, the store in --dir (serve.go, #2281, #3879). It also
+// no TTL policy, the store in --dir (serve.go). It also
 // carries the scratch verbs: `spill` writes a value under an owner
 // prefix with a required TTL, and `recall` reads it back and refuses a missing
 // or expired key. A write with no owner or no TTL is refused before the
-// instance is dialled, so an unbounded key never reaches Redis (rules 2 and
-// the spill/recall paragraph of the spec; nova-tools #2279). The fn verbs
+// instance is dialled, so an unbounded key never reaches Redis (the spill and
+// recall section of the spec). The fn verbs
 // load and check the store's function library (fn.go, over internal/redisfn).
 //
 // Scratch is scratch: nothing spilled is a record, and recall is allowed to
@@ -204,7 +204,7 @@ var effects = map[string]string{
 func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// with its effect, before anything is dialed, launched or written (the CLI
-	// style's rule (b), #4505).
+	// style's help rule).
 	defer verbflag.RecoverWith(stdout, "nova-redis", usage, &code, func(verb string) string {
 		if e := effects[verb]; e != "" {
 			return e + "\n"
