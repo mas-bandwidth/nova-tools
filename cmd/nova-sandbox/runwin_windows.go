@@ -12,7 +12,7 @@
 // dependency in the module.
 //
 // NOT MEASURED. Not one line below has run on a Windows machine: the estate has none
-// (2026-09-18). It cross-compiles, it vets, and its caller's sequence is proven against a
+// yet: it cross-compiles, it vets, and its caller's sequence is proven against a
 // fake. The first Windows bench proves the rest, and until it does the wall check at
 // winWallAvailable keeps the verb from claiming containment it has not got.
 package main
@@ -70,7 +70,7 @@ const (
 	startfUseStdHandles = 0x00000100
 
 	// PROC_THREAD_ATTRIBUTE_JOB_LIST (W3) and the slot the WALL fills
-	// (PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, rule 3 of the AppContainer section).
+	// (PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES).
 	// They are on ONE attribute list and therefore one CreateProcessW, which is why there is
 	// no ordering between the wall and the place to get wrong.
 	procThreadAttributeJobList              = 0x0002000D
@@ -183,12 +183,13 @@ type winJobHandle struct {
 	created time.Time
 }
 
-// winWallAvailable is rule 1 on windows, and today it says NO.
+// winWallAvailable is the windows form of "OS-enforced or refused", and today it says NO.
 //
 // The PLACE is this file. The WALL is the AppContainer body of the section above, and it is
 // not built: internal/sandbox/wrap_other.go is what compiles on windows and its Available
 // answers false. A place without a wall is a disposable directory, not containment, and a
-// tool that ran the command anyway would be the silent sandbox rule 1 exists to prevent --
+// tool that ran the command anyway would be the silent sandbox "OS-enforced or refused"
+// exists to prevent --
 // so the verb refuses, and the refusal names the half that is missing rather than saying
 // "the sandbox failed".
 //
@@ -364,7 +365,7 @@ func (winPlace) Start(j winJob, spec winStartSpec) (winStarted, error) {
 		uintptr(unsafe.Pointer(cmdLine)),
 		0, // lpProcessAttributes
 		0, // lpThreadAttributes
-		1, // bInheritHandles: rule 12's inherited handle is this and the STARTUPINFOEX handle list, never fd 3
+		1, // bInheritHandles: the exec verb's transparency inherits stdio through this and the STARTUPINFOEX handle list, never fd 3
 		uintptr(extendedStartupInfoPresent|createUnicodeEnvironment|createNoWindow|createSuspended),
 		uintptr(unsafe.Pointer(&envBlock[0])),
 		uintptr(unsafe.Pointer(cwd)),
@@ -487,8 +488,8 @@ func (winPlace) Used(dir string) (int64, error) {
 // image cannot be removed: a rename over a running .exe raises ERROR_SHARING_VIOLATION and
 // unix's replace-the-inode trick has no equivalent on NTFS.
 // The removal itself is safepath.RemoveUnder(root, dir) and never a bare os.RemoveAll:
-// deletion in this repository is a verb over a path VALIDATED BELOW A ROOT (Glenn,
-// 2026-09-17, "it is just one mistake away from deleting the whole disk"), and the class test
+// deletion in this repository is a verb over a path VALIDATED BELOW A ROOT, because an
+// unvalidated deletion is one mistaken path away from deleting the whole disk, and the class test
 // in internal/ci refuses every other spelling. The root is the caller's --scratch, so a
 // --name that somehow escaped okName still cannot reach a directory outside the place the
 // caller named.
