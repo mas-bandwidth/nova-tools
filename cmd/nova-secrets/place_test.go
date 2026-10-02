@@ -2,12 +2,10 @@ package main
 
 // Red tests for issue #764: `nova-secrets place` copies a named secret from the local
 // store to a remote fleet machine over ssh with mode 0600 and writes a receipt; `placed`
-// lists what is there by name and hash. The ssh child and sops are fakes on disk, so no
+// lists what is there by name and sealed file. The ssh child and sops are fakes on disk, so no
 // test reaches a machine or a real credential.
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -67,7 +65,9 @@ func newPlaceFixture(t *testing.T) placeFixture {
 		t.Fatal(err)
 	}
 
-	value := "sk-distinctive-DEEPSEEK-value-0001"
+	// Shares no six bytes with any name, path or word the tool prints, so a leak test
+	// that finds a fragment of it has found the value and not a coincidence.
+	value := "sk-qzxjwkvbnmplrtq9x"
 	sopsPath := filepath.Join(td, "fake-sops")
 	writeFakeExe(t, sopsPath, "#!/bin/sh\n"+
 		"case \"$1\" in\n"+
@@ -109,7 +109,7 @@ func (f placeFixture) placedArgs(machine string) []string {
 	return []string{"placed", "--machine", machine, "--receipts", f.receipts}
 }
 
-func TestPlaceThenPlacedShowsNameAndHash(t *testing.T) {
+func TestPlaceThenPlacedShowsNameAndSealedFile(t *testing.T) {
 	t.Parallel()
 	f := newPlaceFixture(t)
 	stdout, stderr, code := runNovaSecrets(f.bin, f.placeArgs("mini", "DEEPSEEK_API_KEY", f.remotePath)...)
@@ -117,8 +117,8 @@ func TestPlaceThenPlacedShowsNameAndHash(t *testing.T) {
 		t.Fatalf("place exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 
-	sum := sha256.Sum256([]byte(f.value))
-	wantHash := hex.EncodeToString(sum[:])
+	// What was placed is named by the sealed file's blob id, never a digest of the value.
+	wantBlob := blobOf(t, filepath.Join(f.store, "rowan.yaml"))
 
 	// The value reached the machine by stdin, not an argument.
 	copied, err := os.ReadFile(f.sshStdinFile)
@@ -136,7 +136,7 @@ func TestPlaceThenPlacedShowsNameAndHash(t *testing.T) {
 		t.Fatalf("the value appears in the ssh argument list: %q", args)
 	}
 
-	// The receipt carries machine, secret, path, sha256 and a stamp, and never the value.
+	// The receipt carries secret, path, the sealed file and a stamp, and never the value.
 	receipt, err := os.ReadFile(filepath.Join(f.receipts, "mini.receipt"))
 	if err != nil {
 		t.Fatal(err)
@@ -144,20 +144,20 @@ func TestPlaceThenPlacedShowsNameAndHash(t *testing.T) {
 	if strings.Contains(string(receipt), f.value) {
 		t.Fatalf("the receipt holds the value: %q", receipt)
 	}
-	if !strings.Contains(string(receipt), wantHash) {
-		t.Fatalf("receipt = %q, want sha256 %s", receipt, wantHash)
+	if !strings.Contains(string(receipt), wantBlob) {
+		t.Fatalf("receipt = %q, want the sealed file's blob %s", receipt, wantBlob)
 	}
 	if !strings.Contains(string(receipt), f.remotePath) {
 		t.Fatalf("receipt = %q, want remote path %s", receipt, f.remotePath)
 	}
 
-	// placed lists the name and the hash.
+	// placed lists the name and the sealed file.
 	stdout, stderr, code = runNovaSecrets(f.bin, f.placedArgs("mini")...)
 	if code != 0 {
 		t.Fatalf("placed exit=%d stderr=%q", code, stderr)
 	}
-	if !strings.Contains(stdout, "DEEPSEEK_API_KEY") || !strings.Contains(stdout, wantHash) {
-		t.Fatalf("placed stdout = %q, want the secret name and hash %s", stdout, wantHash)
+	if !strings.Contains(stdout, "DEEPSEEK_API_KEY") || !strings.Contains(stdout, "blob="+wantBlob) {
+		t.Fatalf("placed stdout = %q, want the secret name and blob %s", stdout, wantBlob)
 	}
 }
 
