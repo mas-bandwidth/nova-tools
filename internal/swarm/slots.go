@@ -451,9 +451,9 @@ func ReleaseSlotLeases(store, owner, label string, all bool) (released, held int
 //
 // A LEASE IS NOT A TICKET SOMEBODY ELSE MAY TEAR UP. Deleting a lease
 // does not stop the process holding it: the holder keeps running, keeps spending, and
-// the seat it is sitting in is handed to the next taker.
-// only seat from outside and watched a second `native` take it -- two cards on a
-// capacity-1 bench, both printing NATIVE OK -- and a card given --no-wall did the same
+// the seat it is sitting in is handed to the next taker. An external release frees a
+// live `native`'s only seat, and a second `native` takes it -- two cards on a
+// capacity-1 bench, both printing NATIVE OK -- and a card given --no-wall does the same
 // to a bystander from inside its own shell. `--owner` is an unauthenticated string and
 // every owner on a shared bench is the same unix user, so who CALLED release is not a
 // fence either. The only fence that means anything is the holder: a lease whose pid is
