@@ -80,13 +80,13 @@ type Worker struct {
 	// and cannot silently un-teach another's.
 	InputLimitPhrases []string `json:"input_limit_phrases,omitempty"`
 
-	// LAUNCH GRACE: how long a harness may run before its exit stops counting as a launch
-	// failure. Nine of forty requests in one measurement died in under two seconds with a
-	// provider 5xx and wasted the slot they held; a death inside this window whose tail
-	// names a provider server error is a launch that did not take, and the dispatcher
-	// retries it instead of filing it. OPTIONAL: the default is DefaultLaunchGrace (15s).
-	// A slow failure -- one that takes longer than this -- is a real run that failed and
-	// is never retried.
+	// LAUNCH GRACE (issue #900): how long a harness may run before its exit stops counting
+	// as a launch failure. Nine of forty requests in a recorded launch batch died in under
+	// two seconds with a provider 5xx and wasted the slot they held; a death inside this
+	// window whose tail names a provider server error is a launch that did not take, and
+	// the dispatcher retries it instead of filing it. OPTIONAL: the default is
+	// DefaultLaunchGrace (15s). A slow failure -- one that takes longer than this -- is a
+	// real run that failed and is never retried.
 	LaunchGrace string `json:"launch_grace,omitempty"`
 
 	// KEEP DATA: when true, asks `run` to preserve the finished slots' data/ and tmp/
