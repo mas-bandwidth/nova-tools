@@ -1,13 +1,14 @@
 package workfile_test
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/workfile"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // hard is a tree whose strings hold everything the file must survive:
@@ -33,18 +34,12 @@ func hard() *workfile.Tree {
 func recorded(t *testing.T) *workfile.Tree {
 	t.Helper()
 	q, err := workgh.Replay("../workgh/testdata/reliable")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	f := &workgh.Fetcher{Q: q, PageSize: 15, MaxCalls: 10}
 	m, err := f.Repo(context.Background(), "mas-bandwidth/reliable")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	r, err := f.Issues(context.Background(), m)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return &workfile.Tree{Source: "github", Org: "mas-bandwidth", Fetched: "2026-01-01T00:00:00Z", Repos: []workfile.Repo{r}}
 }
 
@@ -52,25 +47,33 @@ func recorded(t *testing.T) *workfile.Tree {
 // back, a tree equals itself field for field, and encodes to the same bytes.
 func TestEncodeDecodeIsTheIdentity(t *testing.T) {
 	t.Parallel()
-	for name, tree := range map[string]*workfile.Tree{"hard": hard(), "recorded": recorded(t)} {
-		data, err := workfile.Encode(tree)
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		back, err := workfile.Decode(name, data, workfile.Limits(len(data)))
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if d := workfile.Diff(back, tree, nil); len(d) != 0 {
-			t.Fatalf("%s: %d differences after the round trip, first %+v", name, len(d), d[0])
-		}
-		again, err := workfile.Encode(back)
-		if err != nil || !bytes.Equal(again, data) {
-			t.Fatalf("%s: the second encoding differs (%v)", name, err)
-		}
-		if back.Count() != tree.Count() {
-			t.Fatalf("%s: counts %+v, want %+v", name, back.Count(), tree.Count())
-		}
+	cases := []struct {
+		name string
+		tree func(t *testing.T) *workfile.Tree
+	}{
+		{name: "hard", tree: func(t *testing.T) *workfile.Tree { return hard() }},
+		{name: "recorded", tree: recorded},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tree := tc.tree(t)
+			data, err := workfile.Encode(tree)
+			require.NoError(t, err)
+			back, err := workfile.Decode(tc.name, data, workfile.Limits(len(data)))
+			require.NoError(t, err)
+			d := workfile.Diff(back, tree, nil)
+			var first any
+			if len(d) > 0 {
+				first = d[0]
+			}
+			require.Empty(t, d, "%d differences after the round trip, first %+v", len(d), first)
+			again, err := workfile.Encode(back)
+			require.NoError(t, err)
+			assert.Equal(t, data, again, "the second encoding differs")
+			assert.Equal(t, tree.Count(), back.Count(), "counts mismatch: counts %+v, want %+v", back.Count(), tree.Count())
+		})
 	}
 }
 
@@ -79,72 +82,89 @@ func TestEncodeDecodeIsTheIdentity(t *testing.T) {
 func TestTheReaderRefusesWhatTheWriterWouldNotWrite(t *testing.T) {
 	t.Parallel()
 	data, err := workfile.Encode(hard())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	s := string(data)
-	for name, c := range map[string]struct{ from, to, want string }{
-		"unknown key":      {`:node-id "I_1"`, `:node-id "I_1" :colour "red"`, "unknown key :colour"},
-		"repeated key":     {`:node-id "I_1"`, `:node-id "I_1" :node-id "I_2"`, ":node-id twice"},
-		"missing key":      {`:node-id "I_1"`, ``, "has no :node-id"},
-		"url not path":     {"\"" + workfile.Web + "o/b/issues/1\"", "\"" + workfile.Web + "o/b/issues/2\"", "is not the URL its path gives"},
-		"out of order":     {"(issue 4\n      :url \"" + workfile.Web + "o/b/issues/4\"", "(issue 1\n      :url \"" + workfile.Web + "o/b/issues/1\"", "out of order or repeated"},
-		"evaluating":       {`:locked true`, `:locked #.true`, "byte="},
-		"bad enum":         {`:state :open`, `:state :Open`, "outside [a-z-]"},
-		"wrong kind":       {`:author ""`, `:author 5`, ":author wants a string"},
-		"format":           {`(work-tree "v1"`, `(work-tree "v2"`, `format "v2"`},
-		"repos order":      {`(repo "o/a"`, `(repo "o/c"`, "out of order or repeated"},
-		"origin":           {`:origin :internal`, `:origin :elsewhere`, ":origin wants"},
-		"boolean":          {`:archived true`, `:archived yes`, ":archived wants true or false"},
-		"milestone key":    {`(:number 3 :title`, `(:number 3 :name`, "unknown key :name"},
-		"repeated comment": {`(comment "IC_0"`, `(comment "IC_1"`, "the comment id is repeated"},
-		"ref number 0":     {`:kind "PullRequest" :repo "o/a" :number 9`, `:kind "PullRequest" :repo "o/a" :number 0`, ":number wants a positive integer"},
-		"no-source number": {`:kind "" :repo "" :number 0`, `:kind "" :repo "" :number 3`, "a reference with no source wants :number 0"},
-		"unsorted":         {`("a b" "z\"q")`, `("z\"q" "a b")`, "must be sorted"},
-	} {
-		if !strings.Contains(s, c.from) {
-			t.Fatalf("%s: the fixture lacks %q", name, c.from)
-		}
-		bad := strings.Replace(s, c.from, c.to, 1)
-		_, err := workfile.Decode("t.lisp", []byte(bad), workfile.Limits(len(bad)))
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Fatalf("%s: err=%v, want it to say %q", name, err, c.want)
-		}
+	cases := []struct {
+		name, from, to, want string
+	}{
+		{"unknown key", `:node-id "I_1"`, `:node-id "I_1" :colour "red"`, "unknown key :colour"},
+		{"repeated key", `:node-id "I_1"`, `:node-id "I_1" :node-id "I_2"`, ":node-id twice"},
+		{"missing key", `:node-id "I_1"`, ``, "has no :node-id"},
+		{"url not path", "\"" + workfile.Web + "o/b/issues/1\"", "\"" + workfile.Web + "o/b/issues/2\"", "is not the URL its path gives"},
+		{"out of order", "(issue 4\n      :url \"" + workfile.Web + "o/b/issues/4\"", "(issue 1\n      :url \"" + workfile.Web + "o/b/issues/1\"", "out of order or repeated"},
+		{"evaluating", `:locked true`, `:locked #.true`, "byte="},
+		{"bad enum", `:state :open`, `:state :Open`, "outside [a-z-]"},
+		{"wrong kind", `:author ""`, `:author 5`, ":author wants a string"},
+		{"format", `(work-tree "v1"`, `(work-tree "v2"`, `format "v2"`},
+		{"repos order", `(repo "o/a"`, `(repo "o/c"`, "out of order or repeated"},
+		{"origin", `:origin :internal`, `:origin :elsewhere`, ":origin wants"},
+		{"boolean", `:archived true`, `:archived yes`, ":archived wants true or false"},
+		{"milestone key", `(:number 3 :title`, `(:number 3 :name`, "unknown key :name"},
+		{"repeated comment", `(comment "IC_0"`, `(comment "IC_1"`, "the comment id is repeated"},
+		{"ref number 0", `:kind "PullRequest" :repo "o/a" :number 9`, `:kind "PullRequest" :repo "o/a" :number 0`, ":number wants a positive integer"},
+		{"no-source number", `:kind "" :repo "" :number 0`, `:kind "" :repo "" :number 3`, "a reference with no source wants :number 0"},
+		{"unsorted", `("a b" "z\"q")`, `("z\"q" "a b")`, "must be sorted"},
 	}
-	evil := strings.Replace(s, `:locked true`, `:locked #.true`, 1)
-	if _, err := workfile.Decode("t.lisp", []byte(evil), workfile.Limits(len(evil))); err == nil || strings.Contains(err.Error(), "plan") || !strings.Contains(err.Error(), "tree file=t.lisp") || !strings.Contains(err.Error(), "a tree is data") {
-		t.Fatalf("a refused tree is described as %v", err)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Contains(t, s, tc.from, "the fixture lacks %q", tc.from)
+			bad := strings.Replace(s, tc.from, tc.to, 1)
+			_, err := workfile.Decode("t.lisp", []byte(bad), workfile.Limits(len(bad)))
+			assert.ErrorContains(t, err, tc.want, "err=%v, want it to say %q", err, tc.want)
+		})
 	}
-	if _, err := workfile.Decode("t.lisp", data, workfile.Limits(len(data)-1)); err == nil || !strings.Contains(err.Error(), "--max-bytes") {
-		t.Fatalf("a file past the byte bound was read: %v", err)
-	}
+
+	t.Run("evaluating tree description", func(t *testing.T) {
+		t.Parallel()
+		evil := strings.Replace(s, `:locked true`, `:locked #.true`, 1)
+		_, err := workfile.Decode("t.lisp", []byte(evil), workfile.Limits(len(evil)))
+		require.Error(t, err, "a refused tree is described as %v", err)
+		require.NotContains(t, err.Error(), "plan", "a refused tree is described as %v", err)
+		require.Contains(t, err.Error(), "tree file=t.lisp", "a refused tree is described as %v", err)
+		require.Contains(t, err.Error(), "a tree is data", "a refused tree is described as %v", err)
+	})
+
+	t.Run("byte bound", func(t *testing.T) {
+		t.Parallel()
+		_, err := workfile.Decode("t.lisp", data, workfile.Limits(len(data)-1))
+		require.ErrorContains(t, err, "--max-bytes", "a file past the byte bound was read: %v", err)
+	})
 }
 
 // TestEncodeRefusesALossyValue: a value the file could not give back
 // unchanged is refused, never written.
 func TestEncodeRefusesALossyValue(t *testing.T) {
 	t.Parallel()
-	for name, mut := range map[string]func(*workfile.Tree){
-		"enum":        func(t *workfile.Tree) { t.Repos[1].Issues[0].State = "open" },
-		"enum digit":  func(t *workfile.Tree) { t.Repos[1].Issues[0].StateReason = "R2" },
-		"origin":      func(t *workfile.Tree) { t.Repos[1].Issues[0].Origin = "" },
-		"unsorted":    func(t *workfile.Tree) { t.Repos[1].Issues[0].Labels = []string{"z", "a"} },
-		"issue order": func(t *workfile.Tree) { t.Repos[1].Issues[1].Number = 1 },
-		"repo order":  func(t *workfile.Tree) { t.Repos[0].Name = "o/c" },
-		"repo name":   func(t *workfile.Tree) { t.Repos[0].Name = "a" },
-		"number":      func(t *workfile.Tree) { t.Repos[1].Issues[0].Number = 0 },
-		"repeated comment id": func(t *workfile.Tree) {
+	cases := []struct {
+		name string
+		mut  func(*workfile.Tree)
+	}{
+		{"enum", func(t *workfile.Tree) { t.Repos[1].Issues[0].State = "open" }},
+		{"enum digit", func(t *workfile.Tree) { t.Repos[1].Issues[0].StateReason = "R2" }},
+		{"origin", func(t *workfile.Tree) { t.Repos[1].Issues[0].Origin = "" }},
+		{"unsorted", func(t *workfile.Tree) { t.Repos[1].Issues[0].Labels = []string{"z", "a"} }},
+		{"issue order", func(t *workfile.Tree) { t.Repos[1].Issues[1].Number = 1 }},
+		{"repo order", func(t *workfile.Tree) { t.Repos[0].Name = "o/c" }},
+		{"repo name", func(t *workfile.Tree) { t.Repos[0].Name = "a" }},
+		{"number", func(t *workfile.Tree) { t.Repos[1].Issues[0].Number = 0 }},
+		{"repeated comment id", func(t *workfile.Tree) {
 			t.Repos[1].Issues[0].Comments = append(t.Repos[1].Issues[0].Comments, workfile.Comment{ID: "IC_1"})
-		},
-		"ref kind with no number": func(t *workfile.Tree) { t.Repos[1].Issues[0].References[0].Number = 0 },
-		"ref number with no kind": func(t *workfile.Tree) { t.Repos[1].Issues[0].References[1].Number = 5 },
-		"ref no kind but a url":   func(t *workfile.Tree) { t.Repos[1].Issues[0].References[1].URL = "u" },
-	} {
-		tr := hard()
-		mut(tr)
-		if _, err := workfile.Encode(tr); err == nil {
-			t.Fatalf("%s: encoded", name)
-		}
+		}},
+		{"ref kind with no number", func(t *workfile.Tree) { t.Repos[1].Issues[0].References[0].Number = 0 }},
+		{"ref number with no kind", func(t *workfile.Tree) { t.Repos[1].Issues[0].References[1].Number = 5 }},
+		{"ref no kind but a url", func(t *workfile.Tree) { t.Repos[1].Issues[0].References[1].URL = "u" }},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tr := hard()
+			tc.mut(tr)
+			_, err := workfile.Encode(tr)
+			assert.Error(t, err, "%s: encoded", tc.name)
+		})
 	}
 }
 
@@ -181,16 +201,12 @@ func TestDiffNamesEveryKind(t *testing.T) {
 		"EXTRA repos/o/b/issues/1/linked-prs linked-pr",
 		"EXTRA repos/o/z repo",
 	} {
-		if !lines[l] {
-			t.Errorf("no %q among %v", l, lines)
-		}
+		assert.True(t, lines[l], "no %q among %v", l, lines)
 	}
-	if d := workfile.Diff(got, want, []string{"o/a"}); len(d) != 0 {
-		t.Fatalf("a scope of o/a still reported %v", d)
-	}
-	if s := workfile.Show(strings.Repeat("x", 81)); !strings.HasPrefix(s, "bytes:81:sha256:") {
-		t.Fatalf("a long value shows as %q", s)
-	}
+	d := workfile.Diff(got, want, []string{"o/a"})
+	require.Empty(t, d, "a scope of o/a still reported %v", d)
+	s := workfile.Show(strings.Repeat("x", 81))
+	require.True(t, strings.HasPrefix(s, "bytes:81:sha256:"), "a long value shows as %q", s)
 }
 
 // TestDiffSeesRepeatsAndOrder: a comment injected under an existing id, a
@@ -198,51 +214,72 @@ func TestDiffNamesEveryKind(t *testing.T) {
 // joins to the same text are each found; nothing is folded into a set.
 func TestDiffSeesRepeatsAndOrder(t *testing.T) {
 	t.Parallel()
-	want := hard()
-	lines := func(got *workfile.Tree) map[string]bool {
-		m := map[string]bool{}
-		for _, d := range workfile.Diff(got, want, nil) {
-			m[d.Kind+" "+d.Path+" "+d.Field] = true
-		}
-		return m
-	}
-	for name, c := range map[string]struct {
-		mut  func(*workfile.Issue)
+	cases := []struct {
+		name string
+		mut  func(want *workfile.Tree, is *workfile.Issue)
 		want []string
 	}{
-		"injected same-id comment": {func(is *workfile.Issue) {
-			is.Comments = append(is.Comments, workfile.Comment{ID: "IC_1", Body: "injected"})
-		}, []string{"EXTRA repos/o/b/issues/1/comments/IC_1 comment", "DRIFT repos/o/b/issues/1 comments-order"}},
-		"duplicated comment": {func(is *workfile.Issue) {
-			is.Comments = append(is.Comments, is.Comments[0])
-		}, []string{"EXTRA repos/o/b/issues/1/comments/IC_1 comment", "DRIFT repos/o/b/issues/1 comments-order"}},
-		"swapped comments": {func(is *workfile.Issue) {
-			is.Comments[0], is.Comments[1] = is.Comments[1], is.Comments[0]
-		}, []string{"DRIFT repos/o/b/issues/1 comments-order"}},
-		"swapped references": {func(is *workfile.Issue) {
-			is.References[0], is.References[1] = is.References[1], is.References[0]
-		}, []string{"DRIFT repos/o/b/issues/1 references-order"}},
-		"swapped linked prs": {func(is *workfile.Issue) {
-			is.LinkedPRs = append(is.LinkedPRs, workfile.LinkedPR{Repo: "o/a", Number: 10, URL: "v", State: "OPEN"})
-			want.Repos[1].Issues[0].LinkedPRs = []workfile.LinkedPR{is.LinkedPRs[1], is.LinkedPRs[0]}
-		}, []string{"DRIFT repos/o/b/issues/1 linked-prs-order"}},
-		"labels joined alike": {func(is *workfile.Issue) {
-			is.Labels = []string{"a b,z\"q"}
-			want.Repos[1].Issues[0].Labels = []string{"a b", "z\"q"}
-		}, []string{"DRIFT repos/o/b/issues/1 labels"}},
-	} {
-		want = hard()
-		got := hard()
-		c.mut(&got.Repos[1].Issues[0])
-		m := lines(got)
-		for _, w := range c.want {
-			if !m[w] {
-				t.Errorf("%s: no %q among %v", name, w, m)
+		{
+			name: "injected same-id comment",
+			mut: func(want *workfile.Tree, is *workfile.Issue) {
+				is.Comments = append(is.Comments, workfile.Comment{ID: "IC_1", Body: "injected"})
+			},
+			want: []string{"EXTRA repos/o/b/issues/1/comments/IC_1 comment", "DRIFT repos/o/b/issues/1 comments-order"},
+		},
+		{
+			name: "duplicated comment",
+			mut: func(want *workfile.Tree, is *workfile.Issue) {
+				is.Comments = append(is.Comments, is.Comments[0])
+			},
+			want: []string{"EXTRA repos/o/b/issues/1/comments/IC_1 comment", "DRIFT repos/o/b/issues/1 comments-order"},
+		},
+		{
+			name: "swapped comments",
+			mut: func(want *workfile.Tree, is *workfile.Issue) {
+				is.Comments[0], is.Comments[1] = is.Comments[1], is.Comments[0]
+			},
+			want: []string{"DRIFT repos/o/b/issues/1 comments-order"},
+		},
+		{
+			name: "swapped references",
+			mut: func(want *workfile.Tree, is *workfile.Issue) {
+				is.References[0], is.References[1] = is.References[1], is.References[0]
+			},
+			want: []string{"DRIFT repos/o/b/issues/1 references-order"},
+		},
+		{
+			name: "swapped linked prs",
+			mut: func(want *workfile.Tree, is *workfile.Issue) {
+				is.LinkedPRs = append(is.LinkedPRs, workfile.LinkedPR{Repo: "o/a", Number: 10, URL: "v", State: "OPEN"})
+				want.Repos[1].Issues[0].LinkedPRs = []workfile.LinkedPR{is.LinkedPRs[1], is.LinkedPRs[0]}
+			},
+			want: []string{"DRIFT repos/o/b/issues/1 linked-prs-order"},
+		},
+		{
+			name: "labels joined alike",
+			mut: func(want *workfile.Tree, is *workfile.Issue) {
+				is.Labels = []string{"a b,z\"q"}
+				want.Repos[1].Issues[0].Labels = []string{"a b", "z\"q"}
+			},
+			want: []string{"DRIFT repos/o/b/issues/1 labels"},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			localWant := hard()
+			got := hard()
+			tc.mut(localWant, &got.Repos[1].Issues[0])
+			m := map[string]bool{}
+			for _, d := range workfile.Diff(got, localWant, nil) {
+				m[d.Kind+" "+d.Path+" "+d.Field] = true
 			}
-		}
-		if len(m) != len(c.want) {
-			t.Errorf("%s: lines %v, want exactly %v", name, m, c.want)
-		}
+			for _, w := range tc.want {
+				assert.True(t, m[w], "%s: no %q among %v", tc.name, w, m)
+			}
+			assert.Len(t, m, len(tc.want), "%s: lines %v, want exactly %v", tc.name, m, tc.want)
+		})
 	}
 }
 
@@ -250,24 +287,40 @@ func TestDiffSeesRepeatsAndOrder(t *testing.T) {
 func TestPathAndURLAreOneLookupEachWay(t *testing.T) {
 	t.Parallel()
 	p, err := workfile.PathOfURL(workfile.Web + "o/r/issues/12")
-	if err != nil || p != "repos/o/r/issues/12" {
-		t.Fatalf("path %q %v", p, err)
-	}
+	require.Equal(t, "repos/o/r/issues/12", p, "path %q %v", p, err)
+
 	u, err := workfile.URLOfPath(p)
-	if err != nil || u != workfile.Web+"o/r/issues/12" {
-		t.Fatalf("url %q %v", u, err)
-	}
-	for _, bad := range []string{workfile.Web + "o/r/pull/12", workfile.Web + "o/r/issues/012", "https://example.com/o/r/issues/1", workfile.Web + "o/r/issues/0"} {
-		if _, err := workfile.PathOfURL(bad); err == nil {
-			t.Fatalf("%q was taken for an issue URL", bad)
+	require.Equal(t, workfile.Web+"o/r/issues/12", u, "url %q %v", u, err)
+
+	t.Run("bad URLs", func(t *testing.T) {
+		t.Parallel()
+		for _, bad := range []string{
+			workfile.Web + "o/r/pull/12",
+			workfile.Web + "o/r/issues/012",
+			"https://example.com/o/r/issues/1",
+			workfile.Web + "o/r/issues/0",
+		} {
+			_, err := workfile.PathOfURL(bad)
+			assert.Error(t, err, "%q was taken for an issue URL", bad)
 		}
-	}
-	for _, bad := range []string{"repos/o/issues/1", "repos/o/r/pulls/1", "repos/o/r/issues/x"} {
-		if _, err := workfile.URLOfPath(bad); err == nil {
-			t.Fatalf("%q was taken for an issue path", bad)
+	})
+
+	t.Run("bad paths", func(t *testing.T) {
+		t.Parallel()
+		for _, bad := range []string{
+			"repos/o/issues/1",
+			"repos/o/r/pulls/1",
+			"repos/o/r/issues/x",
+		} {
+			_, err := workfile.URLOfPath(bad)
+			assert.Error(t, err, "%q was taken for an issue path", bad)
 		}
-	}
-	if workfile.OriginOf("COLLABORATOR") != "internal" || workfile.OriginOf("CONTRIBUTOR") != "external" || workfile.OriginOf("") != "external" {
-		t.Fatal("origin")
-	}
+	})
+
+	t.Run("origin", func(t *testing.T) {
+		t.Parallel()
+		require.Equal(t, "internal", workfile.OriginOf("COLLABORATOR"), "origin")
+		require.Equal(t, "external", workfile.OriginOf("CONTRIBUTOR"), "origin")
+		require.Equal(t, "external", workfile.OriginOf(""), "origin")
+	})
 }
