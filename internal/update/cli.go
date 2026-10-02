@@ -721,6 +721,9 @@ var movedBudget = 60 * time.Second
 // message or a MOVED file states it and the builds confirm it (rule 2); an
 // empty diff is three zeros, exit 0, never a refusal (rule 3).
 func movedVerb(c *tool.Call, env Environment) *tool.Out {
+	// Read once at entry, so a refusal on the way keeps its own reason: the
+	// skeleton fails a --dry-run call whose verb never read it.
+	dryRun := c.DryRun()
 	started := env.Now()
 	from, to, repo, outPath := c.Str("from"), c.Str("to"), c.Str("repo"), c.Str("out")
 	timeout, budget := c.Dur("timeout"), c.Dur("budget")
@@ -889,10 +892,9 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	o := tool.Done().Fact("from", fromSha).Fact("to", toSha).Fact("added", counts.added).Fact("deleted", counts.deleted).
 		Fact("renamed", counts.renamed).Fact("verbs", counts.verbs).Fact("file", outPath)
 	// --dry-run is the same builds and reads with the note printed, not written.
-	if c.DryRun() {
-
+	if dryRun { // the skeleton adds dry_run=true
 		o.Payload = note.String()
-		return o.Fact("dry_run", true)
+		return o
 	}
 	if err := os.WriteFile(outPath, []byte(note.String()), 0o644); err != nil {
 		return tool.Refuse(fmt.Sprintf("cannot write --out %s (supply a writable --out path)", outPath))

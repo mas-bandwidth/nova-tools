@@ -131,6 +131,9 @@ func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo
 // a directory of binaries by running each one's own `version`. Every path comes
 // from a flag; neither the file's name nor PATH is trusted for the reading.
 func snapshotVerb(c *tool.Call) *tool.Out {
+	// Read once at entry, so a refusal on the way keeps its own reason: the
+	// skeleton fails a --dry-run call whose verb never read it.
+	dryRun := c.DryRun()
 	if c.Given("file") {
 		// The manifest shape reads as report does, five seconds a tool, unless
 		// the caller names --timeout; --budget bounds the run in both shapes.
@@ -247,9 +250,8 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", r.name, r.stamp, r.revision, r.platform)
 		o.Item("row", "name", r.name, "stamp", r.stamp, "revision", r.revision, "platform", r.platform)
 	}
-	if c.DryRun() {
-
-		return o.Fact("dry_run", true).Note("dry run: " + outPath + " not written")
+	if dryRun { // the skeleton adds dry_run=true
+		return o.Note("dry run: " + outPath + " not written")
 	}
 	if err := os.WriteFile(outPath, []byte(b.String()), 0o644); err != nil {
 		return tool.Refuse(fmt.Sprintf("cannot write --out %s (supply a writable --out path)", outPath))
