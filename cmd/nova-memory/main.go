@@ -193,7 +193,7 @@ const failMaxRemedy = "--fail-max <n> raises the ceiling, --fail-max 0 prints ev
 // refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
 // door to the usage rather than the usage itself.
 //
-// It used to be the whole 62-line banner, on every flag typo -- 3,908 bytes to say that
+// Refuses unusable invocation with a concise message naming what was wrong
 // a dash was in the wrong place. That is the wrong trade twice over: a reader who
 // mistyped a flag knows what the flags are and wanted the one sentence, and a reader who
 // does not know can type the four words at the end of the line. The usage is still there,
@@ -207,7 +207,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read or written (the CLI style's rule (b), #4505).
+	// before anything is read or written
 	defer verbflag.Recover(stdout, "nova-memory", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; quickstart is the first run")
