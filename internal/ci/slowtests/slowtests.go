@@ -105,8 +105,8 @@ type Row struct {
 }
 
 // MaxHeadroom is the most a row's budget may exceed its own measurement: three
-// times; measured ratios on loaded runners stay around 1.0-1.2 per 0.9 second
-// baselines, leaving comfortable room.
+// times. Measurements from a busy runner (run 36261817989 on 2026-09-26) showed
+// ratios around 1.0-1.2 per 0.9 second baselines, leaving comfortable room.
 const MaxHeadroom = 3.0
 
 // SleepRow is one line of the SLEEPS ledger: `pkg<TAB>test<TAB>where`, a
@@ -222,7 +222,7 @@ func ParseAllowlist(r io.Reader) ([]Row, error) {
 }
 
 // Benches are the machines a row may name as where it was measured: the
-// self-hosted runner groups ci.yml's test legs run on. internal/ci's
+// self-hosted runner groups ci.yml's test legs run on. The internal/ci test
 // TestMeasuredBenchesAreCIRunners holds each to ci.yml.
 var Benches = []string{"space", "studio", "superman", "batman", "air"}
 
@@ -462,7 +462,7 @@ func (r Report) SleepsLines(ledger string) []string {
 // run is judged. It is a MEASUREMENT printed beside the times, never an input
 // to the verdict: a budget verdict is the same on any machine, so the load only tells a reader what the
 // box was doing while the times were taken. Known is false when the host has
-// no load average to read (Windows) or the read failed; Why then says so.
+// no load average to read or the read failed; Why then says so.
 type Load struct {
 	Avg   float64
 	CPUs  int
