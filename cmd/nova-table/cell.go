@@ -14,25 +14,6 @@ import (
 // bound to a set another tool owns is a view: add, remove and move refuse
 // it naming the owner; members reads it freely.
 
-const cellWants = "wants add <table> <row> <col> <member>... [--score <n>], remove <table> <row> <col> <member>, move <table> <row> <from-col> <to-col> <member>, or members <table> <row> <col>"
-
-func (app *application) cmdCell(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return refuse(stderr, "cell", cellWants)
-	}
-	switch args[0] {
-	case "add":
-		return app.cmdCellAdd(args[1:], stdout, stderr)
-	case "remove":
-		return app.cmdCellRemove(args[1:], stdout, stderr)
-	case "move":
-		return app.cmdCellMove(args[1:], stdout, stderr)
-	case "members":
-		return app.cmdCellMembers(args[1:], stdout, stderr)
-	}
-	return refuse(stderr, "cell", "unknown subverb "+args[0]+"; "+cellWants)
-}
-
 func (app *application) cmdCellAdd(args []string, stdout, stderr io.Writer) int {
 	const verb = "cell add"
 	fs := verbflag.New(verb)

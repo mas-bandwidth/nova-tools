@@ -67,23 +67,6 @@ func (app *application) setVerb(verb, table, addr string, o ntable.SetOpts, writ
 	return 0
 }
 
-const colUsage = "wants add, del or move: col add <table> <column spec> [" + placeUsage + "], col del <table> <col>, col move <table> <col> " + placeUsage
-
-func (app *application) cmdCol(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return refuse(stderr, "col", colUsage)
-	}
-	switch args[0] {
-	case "add":
-		return app.cmdColAdd(args[1:], stdout, stderr)
-	case "del":
-		return app.cmdColDel(args[1:], stdout, stderr)
-	case "move":
-		return app.cmdColMove(args[1:], stdout, stderr)
-	}
-	return refuse(stderr, "col", "unknown subverb "+args[0]+"; "+colUsage)
-}
-
 func (app *application) cmdColAdd(args []string, stdout, stderr io.Writer) int {
 	const verb = "col add"
 	fs := verbflag.New(verb)

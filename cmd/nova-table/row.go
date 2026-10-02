@@ -12,31 +12,6 @@ import (
 
 // The row verbs: row add, set, hide, show, del here; move, order, sort in order.go.
 
-func (app *application) cmdRow(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return refuse(stderr, "row", "wants add, set, hide, show, move, order, sort or del: row add <table> <row> ..., row set <table> <row> <col>=<value> ..., row hide|show <table> <row> ..., row move <table> <row> "+placeUsage+", row order <table> <row> ..., row sort <table> [--by name|label|<col>] [--desc] [--keep], row del <table> <row>")
-	}
-	switch args[0] {
-	case "add":
-		return app.cmdRowAdd(args[1:], stdout, stderr)
-	case "del":
-		return app.cmdRowDel(args[1:], stdout, stderr)
-	case "set":
-		return app.cmdRowSet(args[1:], stdout, stderr)
-	case "hide":
-		return app.cmdRowsHide(args[1:], stdout, stderr, true)
-	case "show":
-		return app.cmdRowsHide(args[1:], stdout, stderr, false)
-	case "move":
-		return app.cmdRowMove(args[1:], stdout, stderr)
-	case "order":
-		return app.cmdRowOrder(args[1:], stdout, stderr)
-	case "sort":
-		return app.cmdRowSort(args[1:], stdout, stderr)
-	}
-	return refuse(stderr, "row", "unknown subverb "+args[0]+"; wants add, set, hide, show, move, order, sort or del")
-}
-
 func (app *application) cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 	const verb = "row add"
 	fs := verbflag.New(verb)
