@@ -1,15 +1,11 @@
 package main
 
-// The convergence verb: is the work converging? Per stream, one number now
-// against the same number at --since, with the ratio and the trend; read by
-// hand it comes from six places and is a paragraph nobody can diff against the
-// next one, so this verb reads it.
-//
-// Seven streams, each read from a real source through a seam: the forge, a
-// checkout, the receipts, the retired README, a bin, a version snapshot and the
-// pit-stop ledger. Every path comes from a flag; a stream whose source was not
-// named is ABSENT and says so, because a stream nobody measured printed as zero
-// is the failure this verb exists to remove. See docs/SPEC-CHECK.md.
+// The convergence verb compares seven measures of progress and prints one line
+// per stream: current value, earlier value, ratio and trend. Sources include
+// the forge, a checkout, receipts, a retired-scripts README, a scripts directory,
+// a version snapshot and a ledger of checks. Each path comes from a flag.
+// Missing optional sources print ABSENT; they never contribute a guessed zero.
+// See docs/SPEC-CHECK.md.
 
 import (
 	"context"
@@ -30,7 +26,7 @@ import (
 // pit-stop ledger and not the corpus one.
 const (
 	convRepoHint     = `--repo <owner/name> is the forge repository the queue and the batches are read from (an owner/name such as example/project); it is a name on a forge, never a directory`
-	convLedgerHint   = `--ledger <file> is the pit-stop ledger: the markdown whose table rows carry PASS, FAIL, PARTIAL or TODO in their last cell, and whose open rows are the LEDGER stream`
+	convLedgerHint   = `--ledger <file> is the pit-stop ledger: a markdown table of checks with results in the last cell; a result is closed when it contains PASS and none of TODO, PARTIAL or NEEDS WORK; open rows are the LEDGER stream`
 	convReceiptsHint = `--receipts <dir> is the dogfood receipts directory, the same one nova-check dogfood reads; its open edges are the EDGES stream`
 	convRetiredHint  = `--retired <file> is the retired-scripts README, whose dated rows say what the window retired; with --bin it is the SCRIPTS stream`
 	convSinceHint    = `--since <RFC3339|24h> is the far edge of the window: an instant (2026-09-18T00:00:00Z) or how long ago it starts (24h); there is no default, because the window is the whole question`
@@ -78,7 +74,7 @@ func requireConvergenceFlags(stderr io.Writer, required map[string]*string) bool
 func cmdConvergence(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("convergence", flag.ContinueOnError)
 	repo := fs.String("repo", "", "forge repository the queue and the batches are read from, owner/name (required)")
-	ledger := fs.String("ledger", "", "pit-stop ledger: a markdown table of checks whose last cell says PASS, FAIL, PARTIAL or TODO; its open rows are the LEDGER stream (required)")
+	ledger := fs.String("ledger", "", "pit-stop ledger: a markdown table of checks with results in the last cell; its open rows are the LEDGER stream (required)")
 	receipts := fs.String("receipts", "", "dogfood receipts directory; its open edges are the EDGES stream (required)")
 	retired := fs.String("retired", "", "retired-scripts README; its dated rows are what the window retired (required)")
 	since := fs.String("since", "", "far edge of the window: an RFC3339 instant, or a duration such as 24h (required)")

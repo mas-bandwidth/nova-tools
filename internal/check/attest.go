@@ -1,15 +1,12 @@
-// Package check implements seven of nova-check's ten record-layer checks
-// (checks over a repository of prose records): attest, links, kernel, nocode,
-// floors, corpus and spelling. The other three read something other than one
-// such repository, so each has its own package: dogfood (internal/dogfood)
-// reads receipts about the tools; hygiene (internal/hygiene) reads a branch's
-// commit range, with one function that the accept gate and the merge lane
-// both run; convergence (internal/converge) reads measurements of the work
-// itself.
-// A check returns its findings apart from its error: a finding means the check
-// ran and said NO (exit 1 at the CLI); a non-nil error means the check could
-// not run at all (exit 2). docs/SPEC.md, "nova-check", states what each check
-// asserts and, as importantly, what it deliberately does not.
+// Package check implements seven of nova-check's ten record-layer checks:
+// manifest completeness, links, file size budgets, code in prose-only trees,
+// charter consistency, protected text and spelling. The CLI's dogfood, hygiene
+// and convergence checks have their own packages because they inspect receipts,
+// commit ranges and work metrics.
+//
+// Findings mean the check ran and failed (exit 1 at the CLI); a non-nil error
+// means it could not run (exit 2). See docs/SPEC.md, "nova-check", for each
+// check's contract and limits.
 package check
 
 import (
@@ -31,7 +28,8 @@ type Failure struct {
 }
 
 // Attestation is the successful result of Attest: the count, total size and
-// hash of every file the manifest lists, in the order a reader loads them.
+// hash of the manifest files, in manifest order. It does not prove a session
+// loaded those files.
 type Attestation struct {
 	Files  int
 	Bytes  int64
@@ -41,8 +39,8 @@ type Attestation struct {
 // Attest verifies that every file listed in the manifest exists under home,
 // is a regular file, and is non-empty, and computes the attestation: file
 // count, total bytes, and a SHA-256 binding paths, order, and contents.
-// Any failure leaves the attestation zero-valued: a set of files only partly
-// present must not produce a line that can be pasted as proof of a full load.
+// Any failure leaves the attestation zero-valued, so an incomplete manifest
+// cannot produce a success result.
 func Attest(home, manifest string) (Attestation, []Failure, error) {
 	info, err := os.Stat(home)
 	if err != nil {
@@ -167,8 +165,8 @@ func Attest(home, manifest string) (Attestation, []Failure, error) {
 }
 
 // parseManifest reads one relative path per line; blank lines and lines
-// starting with # are ignored. Order is preserved: it is the order a reader
-// loads the files in, and the hash binds it.
+// starting with # are ignored. The hash binds the manifest
+// order, so parsing preserves it.
 func parseManifest(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {

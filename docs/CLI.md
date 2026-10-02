@@ -6,12 +6,14 @@ Command reference and worked examples. Run shell examples from the repository ro
 
 ## nova-check
 
+nova-check: checks markdown records and git repositories and names each problem on one line
+
 ```
-nova-check quickstart --dir <dir> [--fail-max <n>] # the first run: links, then nocode, both run even if the first says NO
+nova-check quickstart --dir <dir> [--fail-max <n>] # for prose-only trees: links, then nocode, even if links fails
 nova-check attest --home <dir> --manifest <file>   # every file of a full boot is present: count, bytes and one sha256, pasteable at session start
 nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]   # every relative inline link resolves; --file (repeatable) checks just those files, not the whole tree; --exclude (repeatable) keeps a path prefix out of the scan and out of the check
 nova-check kernel --file <file> --max-bytes <n>    # the kernel file holds to its size budget, in bytes
-nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>   # the same budget, in the unit a context window actually spends
+nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>   # budget for estimated tokens, using your measured bytes per token
 nova-check nocode --dir <dir>                      # no code, executables, scripts or build machinery in a self repo (prose only)
 nova-check nocode --print-deny-list                # both floors actually in force: the extension list and the name list
 nova-check nocode --staged --dir <repo>            # advisory over the git index: what is about to be committed, by the same rules
@@ -21,17 +23,19 @@ nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <em
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
 nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>] [--dry-run]   # append one receipt, refusing a verb the list does not declare
 nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
-nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>] [--dry-run]   # are we converging: one line per stream, now against --since, with the ratio and the trend
+nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>] [--dry-run]   # one line per measure: current value, earlier value, ratio and trend
 nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--dry-run] [--exclude <prefix>] [--fail-max <n>]   # check markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place
 ```
 
 Most verbs only read. Three write, each only when asked and each with `--dry-run`, which makes every check and writes nothing: `dogfood record` appends a receipt, `spelling --write` edits files in place, `convergence --state` stores its two-tick streak. `convergence` also reads the forge through `gh`, over the network. A refusal is one line, `nova-check[ <verb>] REFUSED: <why>; run: nova-check help`; `<verb> -h` ends in the verb's `effect:` line.
 
-**Terms.** A record is a directory of markdown notes; a self repo is one that holds prose only. The kernel is the file a reader loads first, held to a size budget. A full boot is every file a session reads at its start, listed in a manifest. The door (`SEED-CORE.md`) is a short copy derived from a charter (`SEED.md`), and the floors are the charter's numbered rules, which both files must state alike; in `nocode`, a floor is a built-in deny list instead. Each verb's `-h` has a `terms:` line for the nouns it uses.
+**Terms.** A record is a markdown note; a self repo is a repository for prose only. The kernel is the file a reader loads first, held to a size budget. A full boot is the files a session reads at startup, listed in a manifest. The door (`SEED-CORE.md`) is a short copy of a charter (`SEED.md`); its floors are protected commitments. The `floors` verb checks both files against the fixed eight-commitment registry in `internal/check/floors.go`, including their prescribed sections and ordering. It is not a general document comparison. In `nocode`, a floor means a built-in deny list. Each verb's `-h` explains its inputs and effects.
 
 ### First run
 
-`quickstart` needs nothing but a directory. It runs the two checks that want no budget, manifest or ledger, and runs both even if the first says no. `./self` is a self repo of yours; `cmd/nova-check/testdata/example-self` is one the size of a first run, and the tests run every line below against it. On a markdown tree that also holds code, the first command is `nova-check links --dir <dir>` alone: `nocode` names every code file, which is its job in a self repo and noise anywhere else.
+For any markdown tree, start with `nova-check links --dir <dir>`, replacing `<dir>` with the directory to check. This needs no self-repository policy.
+
+For a prose-only repository, `quickstart` runs links and nocode; both run even if links fails. It needs no budget, manifest or ledger. The transcript below uses `./self`, a copy of the included `cmd/nova-check/testdata/example-self` fixture. The tests run these commands against that fixture.
 
 ```
 $ nova-check quickstart --dir ./self
@@ -44,9 +48,9 @@ $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 KERNEL OK bytes=771 budget=4000
 ```
 
-**Reading it.** Every line is `<CHECK> OK` or `<CHECK> FAIL`; FAIL lines go to stderr with the subject named. `worst-exit=` is the run's exit code. A failing run is bounded: `attest`, `links`, `nocode`, `corpus` and `quickstart` print at most `--fail-max` FAIL lines (default 20, `0` for all), then one `MORE` line naming the flag that shows the rest, then a count line that prints on success too. The four verbs `quickstart` names at the end each want something only you have: a size budget, a boot manifest, a seed to compare against, a ledger of what you have chosen never to lose.
+**Reading it.** `QUICKSTART RUN` names the checks; each check prints its own verdict, and `QUICKSTART OK` or `QUICKSTART FAIL` closes the run. FAIL lines go to stderr with the subject named. `worst-exit=` is the run's exit code. Listings are bounded: `attest`, `links`, `nocode` and `corpus` cap each kind of finding at `--fail-max` (default 20, `0` for all); quickstart passes that cap to both checks. A `MORE` line names the total and how to see the rest. Summaries keep the full count on success and failure. The four verbs `quickstart` names at the end each want something only you have: a size budget, a boot manifest, a seed to compare against, a ledger of what you have chosen never to lose.
 
-**What the flags want.** `--dir`, `--home` and `--root` are directories you write out, never the working directory. `--file` is one file to measure, with exactly one of `--max-bytes <n>` or `--max-tokens <n> --bytes-per-token <r>`; the divisor is one you measured on your own writing, because one the tool supplied would make the answer a guess that looked like an instrument. `--manifest` is a text file of paths relative to `--home`; `--ledger` is your markdown ledger of protected material and `--min-anchors <n>` its row floor. A run missing several flags names all of them at once. A typo or an unknown verb is one line that points to the help (`run: nova-check help`), never the whole banner.
+**What the flags want.** `--dir`, `--home` and `--root` require an explicit directory; none defaults to the working directory. `--file` is one file to measure, with exactly one of `--max-bytes <n>` or `--max-tokens <n> --bytes-per-token <r>`; the divisor is one you measured on your own writing, because one the tool supplied would make the answer a guess that looked like an instrument. `--manifest` is a text file of paths relative to `--home`; `--ledger` is your markdown ledger of protected material and `--min-anchors <n>` its row floor. A run missing several flags names all of them at once. A typo or an unknown verb is one line that points to the help (`run: nova-check help`), never the whole banner.
 
 **`corpus` is the odd one out.** Every other check finds something present: a broken link names its target. A sentence that has been dropped names nothing, and a rewrite, a move or a restore can drop something that was given to you once, with nothing going red, because the record and the evidence about the record are the same files. So `corpus` reads a ledger you wrote in advance, the statements you intend never to lose without deciding to and where each lives, and asserts they are still there. Changing them is allowed; changing them silently is not, because the repair for a real change is to move the ledger row in the same commit.
 
@@ -57,11 +61,11 @@ work with the edges filed, the feedback applied, documented and released.
 The middle of that sentence needs a record, or the claim is whatever the last
 person to speak says it is. `dogfood` is that record: the verbs come from the
 binaries or from this file, the runs come from receipts, and the gate is one
-exit code a release lane can call.
+exit code a release check can use.
 
 ```
 $ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
-    --notes "ran it over my own self repo before the merge; found nothing" \
+    --cli ./docs/CLI.md --notes "ran it over my own self repo before the merge; found nothing" \
     --receipts ./dogfood-receipts
 DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- file=./dogfood-receipts/20260918T090000Z-nova-check-links-stella-8e9b64a4.json
 
@@ -91,9 +95,8 @@ naming a tool that is not under that `cmd/` is set aside and counted on
 
 **An edge is answered, not outlived.** Somebody else running the verb later and
 finding nothing does not close it, because a second pass says nothing about the
-first one's finding. A finding is
-closed by a receipt that **names** it — `dogfood record --closes <id>`, which
-anybody may write — or by **the person who found it** running the verb again and
+first one's finding. A finding is closed by a receipt that **names** it —
+`dogfood record --closes <id>`, which anybody may write — or by **the person who found it** running the verb again and
 finding nothing. The id is the eight hex characters the gate prints beside the
 finding and the same eight that end the receipt's filename, so a reader with an
 id can find the file:
@@ -106,7 +109,7 @@ A `--closes` naming an id nothing carries closes nothing and leaves the edge
 open: a typo must never read as a close. A receipt the tool cannot parse is exit 1 and a named
 `DOGFOOD FAIL` line, never a quietly shorter ledger. A receipt naming a verb
 the list does not declare is named one by one — its file, what it claimed and
-the nearest declared verb — by `ledger` AND by `gate`, because a release lane
+the nearest declared verb — by both `ledger` and `gate`, because a release check
 must not be able to pass or fail without learning that the evidence it read was
 thrown away.
 
@@ -129,9 +132,9 @@ spelling it — `(default)`, `bare`, `none`, `no verb` — is refused with
 
 **An edge is what the run found, not only what it failed at.** A receipt records
 an edge when the verb did not do what the run needed (`--not-ok`) **or** when
-its notes name one in the shape the family writes them: `Edge:` or `Edges:`
-before the finding. It stays open until somebody runs the verb again, later, and
-records neither. An edge with no `--issue` is counted separately as `unfiled=`,
+its notes contain `Edge:` or `Edges:` before the finding. It stays open until
+a receipt explicitly closes it, or the same person runs the verb again later
+and records neither a failure nor an edge. An edge with no `--issue` is counted separately as `unfiled=`,
 because an edge nobody has filed is one nobody else can act on.
 
 **Who counts as the author.** `--authors <file>` maps `<tool> <verb> = <who
@@ -146,20 +149,18 @@ dogfooding their own verb is recorded and does not count.
 `ok`, `notes`, `issue` — one file per receipt, written to a temporary name and
 renamed, so two benches recording at once never interleave. `record` refuses a
 `--tool`/`--verb` pair the list does not declare and names the nearest verb it
-does, so a receipt is stranded at the moment it is written rather than found
-months later in a count. Keep the directory in a repository: it is the record,
+does, so a misspelled verb is caught before it leaves a receipt the ledger cannot match. Keep the directory in a repository: it is the record,
 and it should outlive the bench.
 
 ### hygiene
 
-The four mechanical checks the accept gate (the check a branch passes before a
-reviewer reads it) runs, on a branch, before you ask for a read: **identity**
-(every commit authored and committed by an identity `--identity` names),
-**out-of-path** (every changed file inside the `PATHS:` of the card, the task
-brief), **stray-file** (no `RESULT.md` and the rest of the stray list), **secret** (no
-key-shaped string in the diff). The command reports 0 for clean, 1 for
-findings and 2 when it could not run; the reviewer decides what to do with
-those findings.
+`hygiene` checks a branch before review: **identity** (each commit's author and
+committer match an identity named by `--identity`), **out-of-path** (changed
+files stay within `--paths`), **stray-file** (no `RESULT.md` or other prohibited
+artifact), and **secret** (no key-shaped string in the diff). A card is the task
+brief; its `PATHS:` line supplies the allowed paths. Exit 0 means clean, 1 means
+findings, and 2 means the check could not run. The reviewer decides what to do
+with the findings.
 
 `--identity` is `Name <email>`, ONE pair of angle brackets, repeatable with
 commas. There is no default: a range checked against nobody would admit
@@ -167,7 +168,7 @@ anybody, so the flag is required and the repository's own config is never a
 fallback. An email spelled with a bracket still inside it is refused rather
 than quietly matched against no one.
 
-`--kind` is a card kind this toolchain DECLARES, and there is no default one
+`--kind` is a card kind this toolchain declares, and there is no default
 (docs/SPEC-TOOLWORK.md, the hygiene rules). It unlocks an allowlisted stray
 exception and nothing else. A kind the tool does not declare is refused by
 name, listing the kinds there are, rather than answered with a `HYGIENE OK`
@@ -187,10 +188,10 @@ can be pasted, as in `HYGIENE MORE kind=finding shown=2 total=4 nova-check hygie
 
 ### Are we converging
 
-`convergence` reads whether a body of work is converging: seven streams,
-each read from a real source, each printed as a number now, the same number at
-`--since`, the ratio between them and a trend in that stream's own direction of
-travel.
+`convergence` compares seven measures of progress, called streams. Each line
+shows a current value, an earlier value, their ratio, and whether the measure
+is improving (`contracting`), unchanged (`flat`), or worsening (`widening`).
+Most comparisons use `--since`; FLEET and LEDGER use the last saved reading.
 
 ```
 $ nova-check convergence --repo mas-bandwidth/nova-tools \
@@ -223,8 +224,9 @@ tick read again and never advances the streak; run the loop with the rolling
 the second one goes red. `--json` prints the same reading as one object.
 
 **What the flags want.** `--repo` is a name on a forge, never a directory;
-`--ledger` is a pit-stop ledger, a markdown table of checks whose last cell says
-PASS, FAIL, PARTIAL or TODO;
+`--ledger` is a pit-stop ledger, a markdown table of checks with results in the
+last cell. A result is closed when it contains PASS and none of TODO, PARTIAL
+or NEEDS WORK;
 `--receipts` is the same directory `dogfood` reads; `--retired` is the retired
 scripts README, whose dated rows say what the window retired, and `--bin` is
 what is left. `--since` is an instant or a duration (`24h`), and there is no
@@ -702,7 +704,7 @@ exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complex
 
 ## What this deliberately is not
 
-`nova-check` is the record layer and nothing above it. It proves the files were present, whole, sized, linked, prose and in floor-set agreement when the check ran. It does not prove a model read them or acts from them, and it cannot detect a hostile input or a compromised reader; those defenses stay doctrine. What it closes is narrower and real: records that nothing else checks.
+`nova-check` checks only the properties its chosen verb inspects: file presence, content hashes, size budgets, links, prose-only rules or charter agreement. A passing check does not prove that a model read the files or acts from them. It cannot establish that an input is trustworthy or a reader uncompromised; those judgments require separate safeguards.
 
 `nova-self-talk` reads sentence shapes, not a mind. It keeps no ratio and cannot see register, irony or an unmarked quotation, and it says so on every run, because a green from a partial check reads exactly like a green from a complete one.
 

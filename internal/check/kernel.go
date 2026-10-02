@@ -31,15 +31,10 @@ func measureKernel(file string) (size int64, failures []Failure, err error) {
 	return size, failures, nil
 }
 
-// Kernel enforces a BYTE budget on the kernel file: the one file a reader
-// loads first, held to a size budget. maxBytes must be
-// positive; there is no default budget and zero does not mean unlimited.
-// A missing kernel and an empty kernel are both failures, not errors:
-// the check ran, and the answer is NO.
-//
-// Bytes are a proxy. What a context window actually spends is tokens, and the
-// bytes-per-token ratio is a property of the writing, not of the format — see
-// KernelTokens for the honest denomination.
+// Kernel enforces a byte budget on one file. maxBytes must be positive; zero
+// does not mean unlimited. Missing or empty files are findings, not errors.
+// KernelTokens offers an estimate in tokens when the caller has measured
+// bytes per token for the intended tokenizer.
 func Kernel(file string, maxBytes int64) (measured int64, failures []Failure, err error) {
 	if maxBytes <= 0 {
 		return 0, nil, fmt.Errorf("max-bytes must be positive, got %d", maxBytes)
@@ -55,30 +50,16 @@ func Kernel(file string, maxBytes int64) (measured int64, failures []Failure, er
 	return measured, failures, nil
 }
 
-// KernelTokens enforces a TOKEN budget, derived from the measured bytes and a
-// divisor the caller states.
+// KernelTokens checks a token estimate against maxTokens. The caller measures
+// bytesPerToken on representative text: divide the sample's byte count by its
+// token count under the intended tokenizer. There is no default because this
+// ratio varies by tokenizer, language and writing style.
 //
-// The divisor is not a constant this tool can know: bytes per token varies by
-// tokenizer, by language, and by how a given writer writes. It is a
-// MEASUREMENT the caller makes on their own text — count the tokens of a
-// representative sample with the tokenizer that will actually read the
-// kernel, divide by its bytes, and pass that number. There is deliberately no
-// default: a guessed divisor would make the whole answer a guess while
-// looking like an instrument.
-//
-// The derivation rounds UP (ceiling). A size check must never report fewer
-// tokens than its own estimate, and rounding down would let a kernel sit one
-// token over budget and read as exactly at it.
-//
-// AND IT NEVER REPORTS A NUMBER THE CONVERSION INVENTED. The estimate is a
-// float64 and the count is an int64, and Go leaves an out-of-range conversion
-// between them to the hardware: arm64 saturates to MaxInt64, amd64 yields the
-// integer-indefinite value MinInt64, which is less than every budget and would
-// print a negative token count as a pass. The divisor is a hand-typed
-// measurement and `1e-20` is a scientific-notation typo away from `1e20`, so
-// the range is checked BEFORE the conversion, and an estimate that cannot be
-// counted is over budget, said in those words: the same verdict on every
-// GOARCH.
+// The estimate is ceil(bytes / bytesPerToken). Rounding up prevents the check
+// from understating its own estimate. The float64-to-int64 conversion is range
+// checked first: an out-of-range value can become a negative integer on some
+// architectures and would incorrectly pass any positive budget. An estimate
+// too large to count is reported as over budget on every architecture.
 func KernelTokens(file string, maxTokens int64, bytesPerToken float64) (measured, tokens int64, failures []Failure, err error) {
 	if maxTokens <= 0 {
 		return 0, 0, nil, fmt.Errorf("max-tokens must be positive, got %d", maxTokens)

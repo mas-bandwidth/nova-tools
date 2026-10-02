@@ -13,14 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The onboarding standard (ONBOARDING.md), pinned for this binary. A newcomer's
-// first stumble is the spec for these tests: the usage banner's examples are RUN
-// rather than read, every refusal a first run hits must say what the flag WANTS,
-// and the README's transcript is compared against what the tool actually prints.
-// Guidance nothing checks rots into a claim about a message that has since moved.
+// The onboarding contract (docs/STANDARD.md, "Help and refusal: the six
+// onboarding points"): run the banner's examples, check the input hints, and
+// compare the docs/TESTS.md transcript with actual output.
 
 // exampleSelf is the fixture repository that ships with this tool: a five-file
-// tree the size of a first run, referenced by nothing outside testdata.
+// tree used by the first-run examples and transcript.
 const exampleSelf = "testdata/example-self"
 
 func runCheck(t *testing.T, args ...string) (exit int, stdout, stderr string) {

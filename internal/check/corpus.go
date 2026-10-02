@@ -8,49 +8,21 @@ import (
 	"strings"
 )
 
-// corpus.go — the protected-corpus gate: a ledger of statements a repository
-// must never lose silently, and the check that each is still where it lives.
+// corpus.go checks that protected text remains in the files named by a ledger
+// (docs/SPEC.md, "corpus"). Rewrites, moves and restores can remove a sentence
+// while leaving valid markdown and working links. A ledger written in advance
+// gives the check evidence of what should still be present.
 //
-// THE HAZARD IS PRESENCE, NOT TONE, and it is structural to any repository
-// whose memory is a growing set of files. A screen on new text watches what
-// creeps IN. Nothing watches what falls OUT. A consolidation pass, a rewrite, a
-// directory move, a restore to an earlier checkpoint — each can drop a
-// sentence that was given once and never repeated, and none of them produces
-// an error. The file still parses. The links still resolve. The repository has
-// no way to know what it no longer holds, because the record and the evidence
-// about the record are the same object.
+// The ledger lives inside the tree it protects, so the same operation could
+// remove both a fragment and its ledger row. The caller supplies --min-anchors
+// to detect a shrinking ledger; this minimum has no default.
 //
-// That asymmetry is the whole argument for a ledger. Anything else a check
-// can find is present in the tree: a broken link names its target, an
-// oversized file names its bytes. A lost sentence names nothing. So the
-// author writes down, in advance and in prose, the statements the repository
-// must never lose silently, and where each one lives. This check reads that ledger
-// and asserts every fragment is still where the ledger says.
-//
-// AND THE LEDGER IS INSIDE THE THING IT PROTECTS, which is the obvious
-// objection and is answered by a minimum rather than by hope. The same restore
-// that drops a sentence drops the row guarding it, and the run would go green
-// with a smaller count that nothing compares to anything. So the caller
-// states a MINIMUM ROW COUNT (--min-anchors), which like every budget in
-// these checks has no default, and losing rows is itself red. Without it this
-// check protects everything except itself.
-//
-// THE LEDGER IS PROSE FIRST. It is written to be read by a person as the
-// list of what is protected and why; this check reads only its table rows.
-// Fragments are verbatim substrings — short enough to survive a reflow, long
-// enough to be unmistakable, and that judgment is the author's, never this
-// tool's.
-//
-// THE ONE LEGITIMATE WAY OUT IS THE LEDGER. If protected words must move or
-// be reworded, the ledger row changes in the same commit. That makes the
-// change a visible decision instead of a silent loss, which is the entire
-// point: this check does not forbid change, it forbids change that leaves no
-// trace.
-//
-// WHAT IT DOES NOT DO. It does not judge what belongs in the corpus, does
-// not read sentiment, and does not ship a corpus of its own. What is worth
-// protecting is one of the more personal decisions an author makes, and a tool
-// that guessed it would be answering a question it cannot see.
+// Ledger prose explains what is protected and why; the check reads its tables.
+// Fragments are verbatim substrings, chosen by the author to survive reflow
+// without matching unrelated text. An intentional move or rewording requires
+// a ledger update in the same commit, making the change visible for review.
+// The tool does not choose the corpus, judge sentiment or forbid deliberate
+// changes to protected text.
 
 // Anchor is one ledger row: a verbatim fragment, the file it lives in, and
 // the provenance columns that make the ledger readable as prose.
@@ -83,33 +55,16 @@ const anchorColumns = 4
 
 // ParseLedger reads the anchor rows out of a ledger's markdown.
 //
-// THE TABLE DECLARES ITS OWN SHAPE; THIS DOES NOT GUESS AT ONE. That is the
-// whole parsing rule. A heuristic about what a table looks like fails in one
-// direction or the other: requiring outer pipes silently drops rows a renderer
-// accepts, and accepting any pipe-bearing line reads ordinary prose and
-// unrelated tables as anchors.
+// A table declares its shape with a header and a matching separator. Four
+// columns identify an anchor table; column titles may be in any language.
+// Outer pipes are optional. Other table formats do not declare anchors, and
+// fenced or indented examples can document the format without creating anchors.
 //
-// A run is a block of consecutive non-blank lines outside any fence, at least
-// one of which bears pipes. A run is an ANCHOR TABLE only when its second line
-// is a separator whose cell count matches its first line's, and that count is
-// four. Everything else is somebody else's table — a two-column glossary, a
-// prose line that happens to contain pipes — and is left alone, because a
-// protection check that reddens on a glossary is one people learn to silence.
-//
-// Header and separator are recognized by SHAPE and POSITION, never by the
-// words in them: no column title is special to this tool, and an author may
-// title the columns in any language. A ledger may hold any number of tables.
-//
-// What IS reported, because each would otherwise be a silent loss inside the
-// ledger's own anchor table: a separator in the body, a row whose column count
-// is not four, a table whose separator disagrees with its header, a pipe-led
-// block with no separator at all (markdown will not render it as a table, so
-// none of its rows would ever be checked), a lone four-column row adrift
-// outside any table, and an unterminated fence.
-//
-// AN EMPTY LEDGER IS AN ERROR, NEVER A GREEN. A ledger with no rows guards
-// nothing, and "everything present" and "nothing checked" must never print
-// the same line.
+// Within an anchor table, a separator in the body or a row with the wrong
+// column count is a finding. So are a header and separator that disagree,
+// a pipe-led block with no separator, a pipe-led orphaned four-column row, and an
+// unterminated fence. These findings expose rows that would otherwise be
+// silently dropped. A ledger with no anchors is an error: it protects nothing.
 func ParseLedger(raw []byte) ([]Anchor, []Failure, error) {
 	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
 

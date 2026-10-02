@@ -1,14 +1,11 @@
-// Package converge measures convergence: per stream, a number now against the
-// same number at --since, with its ratio and its trend.
+// Package converge compares seven measures of progress with their earlier
+// values and reports ratios, trends and consecutive widening readings.
+// A stream is one measure with a stated direction of improvement. Streams
+// print in a fixed order so successive readings can be compared line by line.
 //
-// A stream is one number a converging family drives in one direction. The
-// reading is one line per stream and one verdict line, in a fixed order, so
-// one tick diffs against the next.
-//
-// Apart from the state file (LoadState, Save), this file is pure: it takes
-// already-fetched data and returns findings. The forge, git, the filesystem and
-// the clock are seams (forge.go, git.go, sources.go), so every test is
-// fake-driven and nothing here reaches a network. See docs/SPEC-CHECK.md.
+// The calculations take already-fetched data. Forge, git, filesystem and clock
+// access are separate dependencies for tests; LoadState and Save persist the
+// previous reading and its widening streaks. See docs/SPEC-CHECK.md.
 package converge
 
 import (
@@ -50,8 +47,8 @@ type Field struct {
 	Value string
 }
 
-// Stream is one measure of convergence: what it counts, what it counts now,
-// what it counted at --since, and which way it is meant to move.
+// Stream is one measure of convergence: its current and earlier values,
+// what they count, and which direction means improvement.
 type Stream struct {
 	Name    string // LANDING, CLASSES, SCRIPTS, PRS, EDGES, FLEET, LEDGER
 	Measure string // what the number counts, printed as measure=
@@ -63,8 +60,8 @@ type Stream struct {
 	HaveBefore bool
 
 	// Lower is true when fewer is converging. CLASSES is the one stream where
-	// it is false: a class made mechanical cannot come back, so more entries is
-	// the family contracting, not widening.
+	// it is false: more entries in the class-test index means more named
+	// guards against defects, so an increase counts as contracting.
 	Lower bool
 
 	// Want is the flag that would have fed this stream, on an absent one.
@@ -81,9 +78,9 @@ type Stream struct {
 // Absent reports whether this stream was read at all.
 func (s Stream) Absent() bool { return !s.HaveNow }
 
-// Ratio is always now/before, whichever way the stream converges, so one column
-// means one thing down the whole reading. A before of zero has no ratio: the
-// line prints `-` rather than an infinity dressed up as a measurement.
+// Ratio returns now/before, independent of the direction of improvement.
+// Missing values have no ratio. Zero to zero returns 1; zero to a nonzero
+// value has no ratio and prints `-`.
 func (s Stream) Ratio() (float64, bool) {
 	if !s.HaveNow || !s.HaveBefore {
 		return 0, false
@@ -115,9 +112,8 @@ func (s Stream) Trend() Trend {
 	}
 }
 
-// nearly compares two measured numbers at the precision the line prints them
-// to, so a mean that differs in the fifteenth decimal is flat rather than a
-// widening nobody can see.
+// nearly treats differences smaller than half a displayed decimal step as
+// flat, so insignificant floating-point differences do not start a streak.
 func nearly(a, b float64) bool { return math.Abs(a-b) < 0.005 }
 
 // Num renders one measured number: an integer when it is one, two decimals when
@@ -235,8 +231,9 @@ func (r Report) Lines() []string {
 
 // StreamState is what one tick remembers about one stream: the value it read,
 // when it read it, and how many consecutive ticks that stream has been
-// widening. The streak is the only thing in this verb that cannot be recomputed
-// from the sources, which is why it is the only thing kept.
+// widening. FLEET and LEDGER need the saved value as their earlier reading;
+// every stream needs the saved streak because it cannot be recovered from
+// a single reading.
 type StreamState struct {
 	Now      float64 `json:"now"`
 	At       string  `json:"at"`

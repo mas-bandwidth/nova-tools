@@ -1,10 +1,8 @@
 # nova-check convergence — specification
 
-`nova-check convergence` reads whether a body of work is converging: per stream,
-a number now against the same number at `--since`, with the ratio and a trend.
-Read by hand, the same answer is six windows read out of six different places and
-a paragraph nobody can diff against the next one; this verb prints it as one line
-per stream.
+`nova-check convergence` compares seven measures of progress. Each stream's
+line shows its current and earlier values, their ratio, and a trend. The fixed
+output order lets a reader compare successive readings.
 
 `docs/SPEC.md`'s **Conventions** govern — exit codes, the one-line grammar, the field
 law, no guessed paths — and [SPEC.md's `## nova-check`](SPEC.md) holds the record-layer
@@ -16,8 +14,9 @@ nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --reti
 
 ## What a stream is
 
-A **stream** is one number that a converging family drives in one direction, measured
-now and measured at `--since`. Its **ratio** is always `now / before`, whichever way the
+A **stream** is one measure with a stated direction of improvement. Its earlier
+value comes from `--since`, the preceding window, or saved state, as defined below.
+Its **ratio** is `now / before` when the denominator is nonzero, whichever way the
 stream is meant to move; its **trend** is `contracting` when the number moved the way
 that stream converges, `widening` when it moved the other way, `flat` when it did not
 move. Seven streams, each read from a real source through a seam, so every test here is
@@ -33,8 +32,9 @@ fake-driven and none of them reaches a network or a clock.
 | `FLEET` | machines off the one build | fewer |
 | `LEDGER` | pit-stop ledger rows not yet PASS | fewer |
 
-A **pit-stop ledger** is a markdown table of checks whose last cell says `PASS`,
-`FAIL`, `PARTIAL` or `TODO`; a **receipt** is one dogfood run recorded by
+A **pit-stop ledger** is a markdown table of checks with a result in the last
+cell; the LEDGER rule below defines which results are closed. A **receipt** is
+one dogfood run recorded by
 `nova-check dogfood record`, and an **edge** a problem a receipt names.
 
 1. **Every path comes from a flag, and the verb takes no positional argument.**
@@ -66,8 +66,8 @@ A **pit-stop ledger** is a markdown table of checks whose last cell says `PASS`,
 5. **`CLASSES` counts the index, not the tests.** `now` is the number of `###` entries
    under `## The class tests` in `docs/SPEC-CI.md` as it stands; `before` is the same
    count in `git show <sha>:docs/SPEC-CI.md`, `<sha>` the last commit in `--repo-dir` at
-   or before `--since`. It is the one stream that converges UPWARDS: a class made
-   mechanical is a class that cannot come back, so more entries is `contracting`.
+   or before `--since`. It is the one stream that improves as it increases: more indexed
+   checks means more classes of defect have a named guard, so more entries is `contracting`.
 6. **`SCRIPTS` is what is left to replace.** `now` is the scripts left in
    `--bin` — a regular file whose name ends `.sh`, `.py`, `.pl`, `.rb`, `.zsh`, `.bash`,
    or whose first two bytes are `#!`, with `--bin`'s own subdirectories unread;
@@ -91,7 +91,7 @@ A **pit-stop ledger** is a markdown table of checks whose last cell says `PASS`,
    header `name<TAB>status`, adds `certified=<k/n>`. `before` comes from `--state`'s last
    tick and from nowhere else, because a snapshot is a photograph of one instant.
    Extras: `units=`, `stamps=`, `certified=`.
-10. **`LEDGER` is what the ledger still owes.** `now` is the `--ledger` table rows
+10. **`LEDGER` counts unfinished checks.** `now` is the `--ledger` table rows
     whose result cell is not closed; a cell is closed when it holds `PASS` and holds none
     of `TODO`, `PARTIAL` or `NEEDS WORK`, so `FAIL then PASS` is closed and
     `PARTIAL: …` is not. `before` comes from `--state`'s last tick. Extras: `rows=`,
@@ -107,7 +107,7 @@ A **pit-stop ledger** is a markdown table of checks whose last cell says `PASS`,
     instant is that tick read again, not a second one**, and never advances the streak:
     without the rule two invocations of one command over one window would go red on
     a reading nobody took. The
-    streak is therefore about a window that MOVES: a stream whose `before` is anchored
+    streak therefore needs a moving window: a stream whose `before` is anchored
     to a fixed `--since` reports the same trend on every tick and trips the streak on
     the second one, which is what the rolling `--since 24h` spelling is for.
 12. **`--json` prints the same reading, once, as one object.** The stream rows, their
@@ -129,8 +129,8 @@ A **pit-stop ledger** is a markdown table of checks whose last cell says `PASS`,
 
 ### Red tests this section demands
 
-Numbered, one sentence each, every fake standing where the real thing is a forge, a git
-or a clock; nothing below reaches a network.
+Each test uses fakes for forge and git reads and an injected clock. None reaches
+the network.
 
 1. `TestConvergencePrintsOneLinePerStream`: a fake forge, a fake git, a fixture ledger, receipts, retired README and bin yield exactly seven `CONVERGENCE <stream>` lines and one verdict line, in the fixed stream order.
 2. `TestATrendIsTheDirectionTheStreamConverges`: a stream with fewer open edges than at `--since` is `contracting`, one with more is `widening`, an unchanged one is `flat`, and `CLASSES` inverts all three because it converges upwards.

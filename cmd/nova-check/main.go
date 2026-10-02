@@ -1,16 +1,11 @@
 // nova-check checks markdown records and git repositories and names each
-// problem on one line (docs/CLI.md, "nova-check"; docs/SPEC-CHECK.md for
-// convergence): quickstart (links, then nocode), boot attestation, link
-// integrity, the kernel size budget, the prose/machinery separation (nocode,
-// and nocode --staged over the git index), the floor-set parity of a derived
-// copy and its source, the protected corpus, branch hygiene, the dogfood
-// ledger (record, ledger, gate), convergence and spelling. Exit 0 pass, 1
-// check failed, 2 could not run.
+// problem on one line. See docs/CLI.md, "nova-check", for the record checks,
+// branch hygiene and dogfood receipts; docs/SPEC-CHECK.md defines convergence.
+// Exit 0 means pass, 1 means a check failed, and 2 means the check could not run.
 //
-// Every path and every budget comes from a flag. There are no defaults: a
-// missing flag is a refusal, never a guess. Three verbs write, each only when
-// asked and each with --dry-run: dogfood record appends a receipt, spelling
-// --write edits files, convergence --state stores its streak.
+// Input paths and size budgets must be explicit. Three verbs can write, each
+// with --dry-run: dogfood record appends a receipt, spelling --write edits
+// files, and convergence --state stores its widening streak.
 package main
 
 import (
@@ -30,111 +25,48 @@ import (
 
 const usage = `nova-check: checks markdown records and git repositories and names each problem on one line
 
-how it works: most verbs inspect named paths and keep no state between runs.
-dogfood record appends a receipt; spelling --write edits files in place (--dry-run: neither writes).
-convergence reads forge data through gh, an optional checkout through git, and
-the files you name; --state stores its two-tick streak. Other repository checks
-read the manifests, ledgers and receipts you name.
-first run: create the small markdown tree below, then run the example commands.
+how it works: most verbs inspect the paths you name and keep no state between runs.
+dogfood record appends receipts; spelling --write edits files; convergence --state
+stores a widening streak. Each accepts --dry-run to check without writing.
+convergence reads the forge through gh and an optional checkout through git;
+other checks read local files, manifests, ledgers and receipts.
+first run: use links --dir for any markdown tree; quickstart adds nocode for a prose-only tree.
 
-terms: a record is a directory of markdown notes; a self repo is one that holds prose
-only. The kernel is the file a reader loads first, held to a size budget; a full boot
-is every file a session reads at its start, listed in a manifest. The door (SEED-CORE.md)
-is a short derived copy of a charter (SEED.md) whose floors, its numbered rules, both
-must state alike; in nocode, a floor is a built-in deny list. <verb> -h defines the rest.
+terms: a record is a markdown note; a self repo is a repository for prose only.
+A kernel is the file a reader loads first, held to a size budget. A full boot is
+all files a session reads at startup, listed in a manifest. A door is a short
+copy of a charter; floors are its protected commitments. In nocode, a floor is
+a built-in deny list instead. Each verb's -h explains its inputs and effects.
 
 usage:
-  nova-check version [--json] print this build identity (--version also accepted)
-  nova-check quickstart --dir <dir> [--fail-max <n>] the two checks a first run can make
-                                                     with nothing but a directory: links,
-                                                     then nocode. Both run even if the
-                                                     first says NO. For a self repo; on a
-                                                     tree that holds code, run links alone.
-  nova-check attest --home <dir> --manifest <file>   every file of a full boot is present:
-                                                     count, bytes and one sha256
-  nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]
-                                                     every relative md link resolves;
-                                                     --file (repeatable) checks just those
-                                                     files, not the whole tree; --exclude
-                                                     leaves a subtree unscanned and skips
-                                                     links into it
-  nova-check kernel --file <file> --max-bytes <n>    kernel size budget, in bytes
-  nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>
-                                                     kernel size budget, in tokens
-  nova-check nocode --dir <dir>                      no code files in a self repo (prose only)
-        [--allow <prefix>]     where machinery may live (repeatable, empty by default)
-        [--deny-ext <l|@f>]    replace the floor EXTENSION list wholesale
-        [--deny-ext-add <l|@f>] extend the floor EXTENSION list
-        [--print-deny-list]    print both floors in force, exit 0
-    two floors: an EXTENSION list, and a NAME list for build machinery named
-    or located rather than extensioned (Makefile, .github/workflows/). The
-    --deny-ext flags govern the EXTENSION list only; --allow is the escape
-    for the name floor, and names where machinery may live.
-  nova-check nocode --staged --dir <repo>            advisory over the index: classify what
-                                                      is about to be committed, by the same
-                                                      rules the audit walks the tree with;
-                                                      --dir is the repository root, required
-  nova-check floors --core <docs/SEED-CORE.md> --source <docs/SEED.md>
-                                                     the derived copy states the same floors
-                                                     as its source
-  nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
-                                                     protected material is still where the
-                                                     ledger says it is
-  nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"
-        [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
-                                                     the four mechanical checks the accept
-                                                     gate runs, on a branch, before you ask
-                                                     a reviewer for a read: identity,
-                                                     out-of-path, stray-file, secret.
-                                                     --paths is the card's bound; with none
-                                                     the line says paths=- and out-of-path
-                                                     is skipped, never silently passed.
-  nova-check dogfood ledger --cli <file> --receipts <dir> [--authors <file>] [--repo <dir>]
-                                                     one row per verb the command reference
-                                                     declares: who has run it, when, and
-                                                     whether it did what they needed
-  nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok)
-                            --notes <text> [--issue <n>] [--closes <id>] --receipts <dir>
-                            [--tools-timeout <s>] [--fail-max <n>] [--dry-run]
-                                                     append one receipt: I ran this verb,
-                                                     on real work, and here is how it went
-  nova-check dogfood gate --cli <file> --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]
-                                                     exit 1 with the verbs no non-author has
-                                                     run and the edges nobody has cleared;
-                                                     the line a release calls
-  nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir>
-                         --retired <file> --since <RFC3339|24h>
-        [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
-        [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--dry-run]
-                                                     LANDING and PRS read the forge through
-                                                     gh; CLASSES reads the optional checkout
-                                                     through git. SCRIPTS, EDGES, FLEET and
-                                                     LEDGER read the named paths. --state
-                                                     stores the two-tick streak. Each stream
-                                                     shows now, --since, ratio and trend;
-                                                     an unnamed optional source is ABSENT,
-                                                     not zero. Exit 1 after two consecutive
-                                                     widening ticks.
-  nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
-                      [--ignore <word|@file>] [--write] [--exclude <prefix>]
-                      [--fail-max <n>] [--dry-run]
-                                                     check markdown or prose for misspellings;
-                                                     fenced code blocks and inline code spans
-                                                     are blanked so code is not prose;
-                                                     --write fixes misspellings in place
+  nova-check version [--json]                       print this build identity (--version also accepted)
+  nova-check quickstart --dir <dir> [--fail-max <n>] run links, then nocode, even if links fails; for prose-only trees
+  nova-check attest --home <dir> --manifest <file>   check every manifest file; report count, bytes and sha256
+  nova-check links --dir <dir> [--file <path>] [--exclude <prefix>] check relative markdown links
+  nova-check kernel --file <file> --max-bytes <n>    check a file's byte budget
+  nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r> check a measured token estimate
+  nova-check nocode --dir <dir> [--allow <prefix>]   find code, scripts, executables and build machinery
+  nova-check nocode --staged --dir <repo>           check staged changes; advisory, not an enforcement boundary
+  nova-check floors --core <docs/SEED-CORE.md> --source <docs/SEED.md> check the fixed eight-commitment charter
+  nova-check corpus --ledger <file> --root <dir> --min-anchors <n> check protected text against its ledger
+  nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" check identity, paths, stray files and secrets
+  nova-check dogfood ledger (--cli <file> | --tools <dir>) --receipts <dir> list real-work runs of each verb
+  nova-check dogfood record (--cli <file> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> --receipts <dir> append a run receipt
+  nova-check dogfood gate (--cli <file> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty] check receipts for release
+  nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> compare seven measures of progress
+  nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--write] check prose, excluding fenced and inline code
 
-  --json           on attest, links, kernel, nocode, floors, corpus, hygiene, spelling
-                   and version: structured findings and totals; convergence uses
-                   its reading object. quickstart and dogfood use typed lines.
+Run nova-check <verb> -h for all flags, input formats and effects.
+--json: attest, links, kernel, nocode, floors, corpus, hygiene, spelling and
+version print findings and totals as one object; convergence prints its reading.
+quickstart and dogfood print typed lines only.
+--fail-max <n>: quickstart, attest, links, nocode, corpus and spelling cap findings
+at 20 by default; 0 prints all. MORE gives the total and the flag to show the rest.
+The summary keeps the full count on success and failure.
 
-  --fail-max <n>   on quickstart, attest, links, nocode, corpus and spelling: how many
-                   FAIL lines to print before one MORE line stands for the
-                   rest. Default 20, and 0 means all. The count line prints
-                   whether the check passed or failed, so a run that found 800
-                   broken links says 800 without printing 800.
+exit codes: 0 pass, 1 check failed, 2 could not run (invalid input or a read failure).
 
-exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation).
-
+Create a prose-only tree for the example:
 mkdir -p ./self/docs
 printf '# Kernel\n' > ./self/docs/SEED-CORE.md
 
@@ -142,12 +74,6 @@ example:
   nova-check quickstart --dir ./self
   nova-check links --dir ./self
   nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
-
-links findings are relative to --dir; kernel findings use the --file path as given.
-attest manifests list one path per line relative to --home (blank lines and # comments ignored).
-corpus ledgers use markdown rows: | fragment | home file | given | by |.
-floors checks the fixed eight-floor charter: --core has numbered bold titles;
---source has the section 6 charter enumeration and section 0 rank declarations.
 
 `
 
@@ -157,7 +83,7 @@ floors checks the fixed eight-floor charter: --core has numbered bold titles;
 // wants, which is the same guessing the tool refuses to do, moved onto the
 // reader. Each hint says what the flag IS and what a first run should put there.
 const (
-	dirHint      = `--dir <dir> is the tree to walk, your self repo's root or a directory inside it; it is never guessed from the working directory, so write it out every run`
+	dirHint      = `--dir <dir> is the tree to walk, a repository root or any directory of markdown records; it is never guessed from the working directory, so write it out every run`
 	homeHint     = `--home <dir> is the directory your records live in: the tree the manifest's paths are relative to, and the only place attest reads`
 	manifestHint = `--manifest <file> is a text file listing the paths a full boot must read, one per line, relative to --home (blank lines and # comments ignored); this tool ships none, because what a full boot reads is yours`
 	fileHint     = `--file <file> is the one kernel file to measure — the file whose size you are holding to a budget, not the directory it lives in`
@@ -252,18 +178,19 @@ var effects = map[string]string{
 // stranger has no reason to know; the banner's terms: paragraph holds the ones
 // several verbs share.
 var terms = map[string]string{
-	"quickstart":     "for a self repo (a record of prose only); on a markdown tree that also holds code, run links --dir alone, since nocode names every code file",
-	"attest":         "a full boot is every file a session reads at its start; --manifest lists them, one path per line relative to --home",
-	"kernel":         "the kernel is the one file a reader loads before anything else, held to a size budget you state in bytes or in tokens",
-	"nocode":         "a self repo holds prose only; a floor is a built-in deny list, one of file extensions and one of build-machinery names and locations",
-	"floors":         "the door (--core) is a short copy derived from a charter (--source); the floors are the charter's numbered rules, and both files must state the same ones in the same order",
-	"corpus":         "the ledger is your markdown table of protected material, one row per fragment of text with the file it lives in; the check is that every fragment is still there",
+	"quickstart":     "for a self repo (a repository for prose only). Runs links and nocode even if links fails. On a tree that also holds code, run links --dir alone",
+	"links":          "checks relative markdown links under --dir. Findings use paths relative to --dir; --file narrows the scan to named files, and --exclude skips both a subtree and links into it",
+	"attest":         "a full boot is the files a session reads at startup. --manifest lists one path per line relative to --home; blank lines and # comments are ignored. The attestation checks those files and hashes their paths, order and contents; it does not prove a session read them",
+	"kernel":         "the kernel is the file a reader loads first. State its budget in bytes or estimated tokens; measure --bytes-per-token as sample bytes divided by sample tokens. Findings use --file as given",
+	"nocode":         "a self repo holds prose only. Two floors (built-in deny lists) cover extensions and build-machinery names or locations. --deny-ext replaces the extension list; --deny-ext-add extends it. Neither changes the name list; --allow permits machinery under a named prefix. --print-deny-list shows both lists",
+	"floors":         "the door (--core) is a short copy of a charter (--source). This checks the fixed eight commitments in internal/check/floors.go: --core uses numbered bold titles; --source uses section 6 charter entries and section 0 rank declarations. It is not a general comparison of two documents",
+	"corpus":         "the ledger is a markdown table of protected text, with rows | fragment | home file | given | by |. Home paths are relative to --root; each fragment must still occur in its home file. --min-anchors protects against the ledger itself shrinking",
 	"hygiene":        "the accept gate is the check a branch passes before a reviewer reads it; a card is the task brief, and its PATHS: line bounds the files the branch may change",
 	"dogfood":        "a verb is dogfooded when someone who did not write it has run it on real work; a receipt records one such run, and an edge is a problem a receipt names",
 	"dogfood ledger": "a verb is dogfooded when someone who did not write it has run it on real work; a receipt records one such run, and an edge is a problem a receipt names",
 	"dogfood record": "a receipt records one run of a verb on real work: who ran it, when, and whether it did what they needed; an edge is a problem its notes name",
 	"dogfood gate":   "a verb is dogfooded when someone who did not write it has run it on real work; an open edge is a problem a receipt names that no later receipt closes",
-	"convergence":    "a stream is one number measured now and at --since; the --ledger here is a pit-stop ledger, a markdown table of checks whose last cell says PASS, FAIL, PARTIAL or TODO",
+	"convergence":    "a stream is one measure of progress. LANDING and PRS read the forge; CLASSES reads the checkout; SCRIPTS, EDGES, FLEET and LEDGER read named files. A pit-stop ledger is a markdown table of checks with results in the last cell. Missing optional sources print ABSENT. --state remembers ticks; exit 1 means a stream widened twice in succession",
 }
 
 // verbHelp is the lines run adds to a verb's -h: the terms it uses, for the
@@ -407,12 +334,8 @@ func checkFailMax(fs *flag.FlagSet, max int, stderr io.Writer) bool {
 	return true
 }
 
-// cmdQuickstart is the first run: the two checks that need nothing but a
-// directory, in one command, so that a stranger's first invocation is a line
-// they can type from the usage banner rather than a choice between six verbs
-// and the flags each of them wants. It adds no check of its own — it runs
-// links and then nocode, and both run even when the first says NO, because a
-// first run should learn everything this pair can tell it in one go.
+// cmdQuickstart runs links and nocode for a prose-only repository. Both run
+// even if links fails, so one invocation reports both sets of findings.
 func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("quickstart", flag.ContinueOnError)
 	dir := fs.String("dir", "", "directory tree to check (required)")

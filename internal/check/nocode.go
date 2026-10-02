@@ -300,9 +300,9 @@ type NoCodeOptions struct {
 
 // NoCode reports every file that is machinery living inside a prose-only tree.
 //
-// A file is flagged when its extension is on the effective deny-list, when it
-// carries an executable bit, or when it begins with a shebang. The three catch
-// different things: the extension is the auditable common case, the mode bit
+// A file is flagged by its name or location, a denied extension, an executable
+// bit, or a shebang. Name and location rules catch extensionless build files
+// and workflow directories. The other three checks catch different things: the extension is the auditable common case, the mode bit
 // catches a chmod +x on anything at all, and the shebang is the tell that
 // survives renaming — a script with no extension is still a script.
 //
@@ -420,7 +420,7 @@ func isAllowed(rel string, allow []string) bool {
 //
 // peekTwo returns AT MOST the first two bytes: fewer for a short or empty
 // file, which is not an error. Whether those bytes are "#!" is decided here
-// and only here, so no caller carries its own copy of the shebang rule. A
+// for this tree audit. The staged mode has a separate shebang check. A
 // nil peekTwo on a non-symlink is a finding, never a pass: a caller that
 // cannot say what the file starts with cannot rule out a shebang.
 func classifyParametrised(rel string, perm os.FileMode, isLink bool, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string, peekTwo func() ([]byte, error)) []string {
@@ -449,10 +449,9 @@ func classifyParametrised(rel string, perm os.FileMode, isLink bool, denySet map
 	return reasons
 }
 
-// pathOnlyReasons returns the path-side reasons: name, location and
-// extension. The spec pins them to one statement, and this is its one
-// implementation (docs/SPEC.md, "nocode", `--staged`, "PARITY IS BY
-// CONSTRUCTION, NOT BY TRANSCRIPTION").
+// pathOnlyReasons classifies names, locations and extensions for the tree
+// audit (docs/SPEC.md, "nocode", `--staged`, "PARITY IS BY CONSTRUCTION, NOT BY
+// TRANSCRIPTION"). The staged mode carries a separate copy in cmd/nova-check.
 func pathOnlyReasons(rel string, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string) []string {
 	var reasons []string
 	if base := strings.TrimSpace(strings.ToLower(filepath.Base(rel))); denyNames[base] {

@@ -13,7 +13,7 @@ import (
 // The fixtures are verbatim excerpts of the real records this check guards —
 // nova's SEED-CORE.md ("## The floors") and SEED.md (its honest-ground and
 // autonomy sections) — pinned under testdata/. Testing against the real prose
-// is the point: the autonomy section's enumeration hides its floors inside a hard-wrapped sentence with a
+// is the point: the autonomy section lists its floors in a hard-wrapped sentence with a
 // nested parenthetical carrying semicolons, colons, and periods, and a parser
 // proven only on tidy synthetic text would be a green that means nothing.
 func loadFixture(t *testing.T, name string) string {

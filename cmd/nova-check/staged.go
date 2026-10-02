@@ -2,7 +2,7 @@ package main
 
 // The --staged half of nova-check nocode: the audit's classifier over the
 // INDEX, reading what is about to be committed rather than what is on disk
-// (docs/SPEC.md, "`--staged`", "What it is for"). A commit commits an index, not a tree -- staging a script
+// (docs/SPEC.md, "`--staged`", "What it is for"). Staging a script
 // and replacing it in the working directory leaves the script in the commit
 // while every working-tree reader sees prose -- so this mode classifies the
 // staged records of one plumbing command, `git diff-index -r
@@ -199,7 +199,8 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 	return 0
 }
 
-// stagedRoot is the root test (docs/SPEC.md, "`--staged`", "The root test"): `git -C <dir> rev-parse
+// stagedRoot checks the repository root (docs/SPEC.md, "`--staged`", "The root
+// test"): `git -C <dir> rev-parse
 // --show-toplevel`, compared with --dir after resolving symlinks on BOTH
 // sides -- never a test for .git being a directory, which is false in a
 // linked worktree and in a submodule, both legitimate places to commit from.

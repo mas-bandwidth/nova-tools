@@ -86,8 +86,8 @@ func cmdDogfood(args []string, stdout, stderr io.Writer) int {
 }
 
 // dogfoodSources is where the verb list comes from: the binaries, the
-// reference, or both. All three sub-verbs take them, because a `record` that
-// checked a spelling against nothing is what stranded nine receipts.
+// reference, or both. All three sub-verbs use the same list so record cannot
+// accept a verb that ledger and gate would leave unmatched.
 type dogfoodSources struct {
 	cli     string
 	tools   string

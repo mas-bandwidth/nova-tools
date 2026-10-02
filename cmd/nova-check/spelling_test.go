@@ -324,7 +324,7 @@ func TestSpellingReviewWitnesses(t *testing.T) {
 	})
 }
 
-func TestSpellingRevisedWitnesses(t *testing.T) {
+func TestSpellingRootExclusionsAndCodeBoundaries(t *testing.T) {
 	t.Parallel()
 	t.Run("relative-root-glob", func(t *testing.T) {
 		t.Parallel()

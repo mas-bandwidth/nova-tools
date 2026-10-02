@@ -32,8 +32,8 @@ type Batch struct {
 	HaveRounds bool
 }
 
-// BatchPrefix is what makes a merged pull request a batch: only integration
-// batches enter the queue, so only they count.
+// BatchPrefix selects integration batches from merged pull requests; other
+// pull requests do not enter the LANDING measure.
 const BatchPrefix = "integration-"
 
 // Batches turns merged pull requests into batches, taking each one's rounds
@@ -138,8 +138,8 @@ func Classes(nowSpec string, beforeSpec string, haveBefore bool) Stream {
 // SCRIPTS
 // ---------------------------------------------------------------------------
 
-// Scripts is the scripts left in bin, against what was left at --since — which
-// is what is left now plus what the window retired.
+// Scripts compares the scripts left in bin with the count at --since,
+// reconstructed by adding the scripts retired inside the window.
 func Scripts(remaining int, rows []RetiredRow, since, now time.Time) Stream {
 	s := Stream{Name: "SCRIPTS", Measure: "scripts-left-in-bin", Lower: true}
 	inWindow, undated := RetiredInWindow(rows, since, now)
@@ -188,7 +188,7 @@ func PRs(open, closed []PR, since, now time.Time) Stream {
 // EDGES
 // ---------------------------------------------------------------------------
 
-// Edges is the dogfood gate: the edges nobody has filed an issue for, now and
+// Edges counts receipts that report a problem without an issue number, now and
 // at --since, with the not-ok rate of the rounds inside the window beside it.
 // A round is one receipt author (`By`) with a receipt in the window. `by`
 // narrows the rounds to the named authors; empty reads them all.
@@ -286,8 +286,7 @@ func orDash(s string) string {
 // LEDGER
 // ---------------------------------------------------------------------------
 
-// Ledger is what a ledger of checks still owes — a table whose result cells say
-// PASS, FAIL, PARTIAL or TODO: the rows not yet closed. Like FLEET,
+// Ledger counts table rows whose result cells are not closed. Like FLEET,
 // its `before` comes from the state file, because the ledger's rows carry a
 // status and not a date.
 func Ledger(md string) Stream {

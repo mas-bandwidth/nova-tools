@@ -1,7 +1,7 @@
 package main
 
 // `nova-check hygiene` runs, by hand, the same function an accept gate runs
-// (SPEC-TOOLWORK.md hygiene rule 1), for whoever wants to know before asking for
+// (docs/SPEC-TOOLWORK.md, "Hygiene"), for whoever wants to know before asking for
 // a read. One implementation, so a gate and a hand cannot disagree about what
 // clean means.
 //
@@ -84,7 +84,7 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// A kind is a shape of work the tool declares and a card cannot widen
-	// (SPEC-TOOLWORK.md hygiene rule 6): a kind the tool does not declare is refused,
+	// (docs/SPEC-TOOLWORK.md, "Hygiene"): a kind the tool does not declare is refused,
 	// rather than run as a clean answer about a shape of work that does not exist,
 	// and there is no default kind.
 	if *kind != "" && !hygiene.KindDeclared(*kind) {
@@ -157,7 +157,7 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	return 1
 }
 
-// identityList spells the pool back in the form the flag takes, so the MORE line's
+// identityList spells the allowed identities back in the form the flag takes, so the MORE line's
 // remedy is the run that printed it and not an approximation of it. The separator is
 // the flag's own: `Name <email>,Name <email>`.
 func identityList(ids []hygiene.Identity) string {
