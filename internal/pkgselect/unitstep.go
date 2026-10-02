@@ -51,7 +51,7 @@ const (
 	DefaultRunners = 8
 	// ShareCeiling: AT MOST TWO cores a leg. Unit tests "must not be so aggressive
 	// that they fill a whole machine cores": min(share, 2), the Makefile's
-	// GOTEST_P, whatever the box (nova-tools#4328).
+	// GOTEST_P, whatever the box.
 	ShareCeiling = 2
 )
 

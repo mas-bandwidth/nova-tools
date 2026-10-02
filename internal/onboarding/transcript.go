@@ -199,7 +199,7 @@ func cutRedirect(cmd string) (string, string, error) {
 // and a worker on Linux duly reported three steps as defects anyway, because a
 // section header cannot say that step 1 is platform-bound and step 4 is not. The
 // same run recorded a JEV key, a forge credential and a posting credential as
-// defects for want of anywhere to state them (#1570 §2). Both are properties of
+// defects for want of anywhere to state them. Both are properties of
 // a COMMAND.
 //
 // The declaration is written as a shell comment on the command line itself, so a
@@ -694,7 +694,7 @@ func marked(want []string) bool {
 //
 // This is what makes a block like nova-self-talk's -- whose seven lines come out
 // of two streams -- executable at all, and it is why the harness reports rather
-// than guesses when a block is unmarked and both streams spoke (#1549).
+// than guesses when a block is unmarked and both streams spoke.
 func compareByStream(s Step, res Result, norms []Norm) []Problem {
 	var wantOut, wantErr []string
 	for _, line := range s.Want {
