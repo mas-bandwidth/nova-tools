@@ -405,7 +405,7 @@ func TestNoCodeProvenanceCannotLie(t *testing.T) {
 func TestParseDenyListRefusesNonExtensions(t *testing.T) {
 	t.Parallel()
 
-	for _, spec := range []string{"mylist.txt", "*.py", "src/x", ".a b", "..", "."} {
+	for _, spec := range []string{"mylist.txt", "*.py", ".py*", ".p?", ".p[y]", "src/x", ".a b", "..", "."} {
 		t.Run(spec, func(t *testing.T) {
 			got, err := ParseDenyList(spec)
 			assert.Error(t, err, "accepted %q as %v; a guard that forbids nothing must refuse", spec, got)
