@@ -22,7 +22,7 @@ func TestTheMemsTailsAreTheLastIDsOfTheLogAndTheInbox(t *testing.T) {
 	ctx := context.Background()
 	m := NewMem()
 	if lg, in, err := m.Tails(ctx); err != nil || lg != "" || in != "" {
-		t.Fatalf("an empty store: log %q, inbox %q, %v", lg, in, err)
+		require.Fail(t, fmt.Sprintf("an empty store: log %q, inbox %q, %v", lg, in, err))
 	}
 	h := newHarness(t)
 	h.setup(1)
@@ -30,7 +30,7 @@ func TestTheMemsTailsAreTheLastIDsOfTheLogAndTheInbox(t *testing.T) {
 	lines, ids, lerr := h.m.LogSince(ctx, "", 1000)
 	_, nids, nerr := h.m.NotesSince(ctx, "", 1000)
 	if err != nil || lerr != nil || nerr != nil || len(ids) == 0 || len(nids) == 0 {
-		t.Fatalf("a store with a step: %v %v %v, %d lines, %d notes", err, lerr, nerr, len(lines), len(nids))
+		require.Fail(t, fmt.Sprintf("a store with a step: %v %v %v, %d lines, %d notes", err, lerr, nerr, len(lines), len(nids)))
 	}
 	require.Equal(t, ids[len(ids)-1], lg, "tails log %q inbox %q, want %q and %q", lg, in, ids[len(ids)-1], nids[len(nids)-1])
 	require.Equal(t, nids[len(nids)-1], in, "tails log %q inbox %q, want %q and %q", lg, in, ids[len(ids)-1], nids[len(nids)-1])
@@ -54,7 +54,7 @@ func TestTheMemCountsTheCallsThatNameAnEpoch(t *testing.T) {
 	n := h.m.Touched(7)
 	assert.Equal(t, 1, n, "a refused write at epoch 7 touched it %d times, want 1", n)
 	if _, ok, err := h.m.DoneBefore(ctx, "no-such-op", 3); ok || err != nil {
-		t.Fatalf("an operation nobody ran: %v %v", ok, err)
+		require.Fail(t, fmt.Sprintf("an operation nobody ran: %v %v", ok, err))
 	}
 	for e, want := range map[uint64]int{3: 0, 2: 1, 1: 1} {
 		t.Run(fmt.Sprint("epoch ", e), func(t *testing.T) {
@@ -76,7 +76,7 @@ func TestTheMemKeepsTheResidueOfADroppedTable(t *testing.T) {
 	require.NotEmpty(t, held, "the table holds no record: %v %v", held, err)
 	require.NoError(t, h.m.DropTable(ctx, "t-work"))
 	if left, err := h.m.RecordIDs(ctx, "t-work"); err != nil || !slices.Equal(left, held) {
-		t.Errorf("after the drop the records are %v (%v), want the %v it held", left, err, held)
+		assert.Fail(t, fmt.Sprintf("after the drop the records are %v (%v), want the %v it held", left, err, held))
 	}
 	keys := h.m.Keys(h.st.Names)
 	assert.True(t, slices.Contains(keys, "table:t-work:definition"), "after the drop the keys are %v, want its definition kept", keys)
@@ -94,6 +94,6 @@ func TestAddRowsKeepsEachTablesRowsSortedAndOnce(t *testing.T) {
 		got[tb.Table] = tb.Rows
 	}
 	if !slices.Equal(got[sprint.Work], []string{"s1", "s2", "s3"}) || !slices.Equal(got[sprint.Fleet], []string{"m1", "m2"}) || len(got[sprint.Merge]) != 0 {
-		t.Fatalf("rows %v", got)
+		require.Fail(t, fmt.Sprintf("rows %v", got))
 	}
 }

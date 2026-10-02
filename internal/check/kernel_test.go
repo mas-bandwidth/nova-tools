@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestKernel(t *testing.T) {
@@ -35,12 +38,10 @@ func TestKernel(t *testing.T) {
 				writeMode(t, dir, "KERNEL.md", tt.content, 0o644)
 			}
 			measured, failures, err := Kernel(file, tt.max)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err, "unexpected error: %v", err)
 			wantFailures(t, failures, tt.wantFail)
-			if tt.create && measured != int64(len(tt.content)) {
-				t.Errorf("measured = %d, want %d", measured, len(tt.content))
+			if tt.create {
+				assert.Equal(t, int64(len(tt.content)), measured, "measured = %d, want %d", measured, len(tt.content))
 			}
 		})
 	}
@@ -58,13 +59,9 @@ func TestKernelRefusesSymlink(t *testing.T) {
 		t.Skipf("cannot create symlink: %v", err)
 	}
 	measured, failures, err := Kernel(link, 100)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err, "unexpected error: %v", err)
 	wantFailures(t, failures, []string{"not a regular file", "symlink"})
-	if measured != 0 {
-		t.Errorf("measured = %d, want 0: a symlink must not be measured", measured)
-	}
+	assert.Equal(t, int64(0), measured, "measured = %d, want 0: a symlink must not be measured", measured)
 }
 
 func TestKernelRefusesNonPositiveBudget(t *testing.T) {
@@ -73,9 +70,8 @@ func TestKernelRefusesNonPositiveBudget(t *testing.T) {
 	dir := t.TempDir()
 	writeMode(t, dir, "KERNEL.md", "k", 0o644)
 	for _, budget := range []int64{0, -1} {
-		if _, _, err := Kernel(filepath.Join(dir, "KERNEL.md"), budget); err == nil {
-			t.Errorf("budget %d should be refused, not treated as unlimited", budget)
-		}
+		_, _, err := Kernel(filepath.Join(dir, "KERNEL.md"), budget)
+		assert.Error(t, err, "budget %d should be refused, not treated as unlimited", budget)
 	}
 }
 
@@ -120,15 +116,11 @@ func TestKernelTokens(t *testing.T) {
 				writeMode(t, dir, "KERNEL.md", tt.content, 0o644)
 			}
 			measured, tokens, failures, err := KernelTokens(file, tt.max, tt.divisor)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err, "unexpected error: %v", err)
 			wantFailures(t, failures, tt.wantFail)
-			if tokens != tt.wantTokens {
-				t.Errorf("tokens = %d, want %d", tokens, tt.wantTokens)
-			}
-			if tt.create && measured != int64(len(tt.content)) {
-				t.Errorf("measured = %d bytes, want %d", measured, len(tt.content))
+			assert.Equal(t, tt.wantTokens, tokens, "tokens = %d, want %d", tokens, tt.wantTokens)
+			if tt.create {
+				assert.Equal(t, int64(len(tt.content)), measured, "measured = %d bytes, want %d", measured, len(tt.content))
 			}
 		})
 	}
@@ -144,14 +136,12 @@ func TestKernelTokensRefusesUnusableInputs(t *testing.T) {
 	writeMode(t, dir, "KERNEL.md", "kernel", 0o644)
 	file := filepath.Join(dir, "KERNEL.md")
 	for _, budget := range []int64{0, -1} {
-		if _, _, _, err := KernelTokens(file, budget, 2.4); err == nil {
-			t.Errorf("token budget %d should be refused, not treated as unlimited", budget)
-		}
+		_, _, _, err := KernelTokens(file, budget, 2.4)
+		assert.Error(t, err, "token budget %d should be refused, not treated as unlimited", budget)
 	}
 	for _, d := range []float64{0, -2.4, math.Inf(1), math.NaN()} {
-		if _, _, _, err := KernelTokens(file, 100, d); err == nil {
-			t.Errorf("divisor %v should be refused; a ratio that is not a positive finite number is not a measurement", d)
-		}
+		_, _, _, err := KernelTokens(file, 100, d)
+		assert.Error(t, err, "divisor %v should be refused; a ratio that is not a positive finite number is not a measurement", d)
 	}
 }
 
@@ -165,13 +155,10 @@ func TestKernelTokensRefusesSymlink(t *testing.T) {
 		t.Skipf("cannot create symlink: %v", err)
 	}
 	measured, tokens, failures, err := KernelTokens(link, 100, 2.4)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err, "unexpected error: %v", err)
 	wantFailures(t, failures, []string{"not a regular file", "symlink"})
-	if measured != 0 || tokens != 0 {
-		t.Errorf("measured = %d bytes / %d tokens, want 0/0: a symlink must not be measured", measured, tokens)
-	}
+	assert.Equal(t, int64(0), measured, "measured = %d bytes / %d tokens, want 0/0: a symlink must not be measured", measured, tokens)
+	assert.Equal(t, int64(0), tokens, "measured = %d bytes / %d tokens, want 0/0: a symlink must not be measured", measured, tokens)
 }
 
 // TestKernelTokensNeverReportsFewerTokensThanItsEstimate is the invariant the
@@ -191,18 +178,10 @@ func TestKernelTokensNeverReportsFewerTokensThanItsEstimate(t *testing.T) {
 	// 2.41e21, 2.41e23, and a denormal one whose quotient is +Inf.
 	for _, divisor := range []float64{1e-20, 1e-22, math.SmallestNonzeroFloat64} {
 		measured, tokens, failures, err := KernelTokens(file, 400, divisor)
-		if err != nil {
-			t.Fatalf("divisor %g: unexpected error: %v", divisor, err)
-		}
-		if len(failures) == 0 {
-			t.Errorf("divisor %g: an uncountable estimate passed the budget; tokens = %d", divisor, tokens)
-		}
-		if tokens < 0 {
-			t.Errorf("divisor %g: tokens = %d, a negative count is not an estimate", divisor, tokens)
-		}
-		if measured != 241 {
-			t.Errorf("divisor %g: measured = %d bytes, want 241", divisor, measured)
-		}
+		require.NoError(t, err, "divisor %g: unexpected error: %v", divisor, err)
+		assert.NotEmpty(t, failures, "divisor %g: an uncountable estimate passed the budget; tokens = %d", divisor, tokens)
+		assert.GreaterOrEqual(t, tokens, int64(0), "divisor %g: tokens = %d, a negative count is not an estimate", divisor, tokens)
+		assert.Equal(t, int64(241), measured, "divisor %g: measured = %d bytes, want 241", divisor, measured)
 	}
 }
 
@@ -315,21 +294,13 @@ func TestTheTokenEstimateBoundaryIsExact(t *testing.T) {
 
 			measured, tokens, failures, err := KernelTokens(file, tt.maxTokens, divisor)
 			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("estimate %g (divisor %g): expected an error, got tokens=%d", tt.estimate, divisor, tokens)
-				}
+				require.Error(t, err, "estimate %g (divisor %g): expected an error, got tokens=%d", tt.estimate, divisor, tokens)
 				return
 			}
-			if err != nil {
-				t.Fatalf("estimate %g (divisor %g): unexpected error: %v", tt.estimate, divisor, err)
-			}
+			require.NoError(t, err, "estimate %g (divisor %g): unexpected error: %v", tt.estimate, divisor, err)
 			wantFailures(t, failures, tt.wantFail)
-			if tokens != tt.wantTokens {
-				t.Errorf("estimate %g (divisor %g): tokens = %d, want %d", tt.estimate, divisor, tokens, tt.wantTokens)
-			}
-			if measured != int64(tt.measured) {
-				t.Errorf("estimate %g: measured = %d bytes, want %d", tt.estimate, measured, tt.measured)
-			}
+			assert.Equal(t, tt.wantTokens, tokens, "estimate %g (divisor %g): tokens = %d, want %d", tt.estimate, divisor, tokens, tt.wantTokens)
+			assert.Equal(t, int64(tt.measured), measured, "estimate %g: measured = %d bytes, want %d", tt.estimate, measured, tt.measured)
 		})
 	}
 }

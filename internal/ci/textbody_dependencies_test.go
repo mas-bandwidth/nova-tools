@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Webhook decoding must not compile merge policy to filter comment text. The
@@ -15,9 +18,7 @@ import (
 func TestWebhookTextDoesNotPullInMergePolicy(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "go.mod"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	module := ""
 	for _, line := range strings.Split(string(raw), "\n") {
 		fields := strings.Fields(line)
@@ -26,33 +27,26 @@ func TestWebhookTextDoesNotPullInMergePolicy(t *testing.T) {
 			break
 		}
 	}
-	if module == "" {
-		t.Fatal("go.mod has no module directive")
-	}
+	require.NotEmpty(t, module, "go.mod has no module directive")
 	imports := map[string][]string{}
 	for _, f := range repoTree(t).GoFilesUnder(false, "cmd", "internal") {
 		if f.HasDirNamed("testdata") {
 			continue
 		}
-		if f.ParseErr != nil {
-			t.Fatal(f.ParseErr)
-		}
+		require.NoError(t, f.ParseErr)
 		pkg := module + path.Dir(f.Rel)
 		if _, ok := imports[pkg]; !ok {
 			imports[pkg] = nil
 		}
 		for _, spec := range f.AST.Imports {
 			dep, err := strconv.Unquote(spec.Path.Value)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			imports[pkg] = append(imports[pkg], dep)
 		}
 	}
 	for _, root := range []string{"internal/ghevent", "internal/textbody"} {
-		if _, ok := imports[module+root]; !ok {
-			t.Fatalf("missing root %s", root)
-		}
+		_, ok := imports[module+root]
+		require.Truef(t, ok, "missing root %s", root)
 		seen := map[string]bool{}
 		var walk func(string)
 		walk = func(pkg string) {
@@ -62,16 +56,15 @@ func TestWebhookTextDoesNotPullInMergePolicy(t *testing.T) {
 			seen[pkg] = true
 			for _, dep := range imports[pkg] {
 				if strings.HasPrefix(dep, module) {
-					if root == "internal/textbody" || dep == module+"internal/merge" {
-						t.Errorf("%s reaches %s through %s; use general text filtering without merge policy", root, dep, pkg)
-					}
-					if _, ok := imports[dep]; !ok {
-						t.Errorf("cannot inspect %s", dep)
+					assert.Falsef(t, root == "internal/textbody" || dep == module+"internal/merge", "%s reaches %s through %s; use general text filtering without merge policy", root, dep, pkg)
+					_, ok := imports[dep]
+					if !assert.Truef(t, ok, "cannot inspect %s", dep) {
 						continue
 					}
 					walk(dep)
-				} else if first, _, _ := strings.Cut(dep, "/"); root == "internal/textbody" && strings.Contains(first, ".") {
-					t.Errorf("textbody reaches third-party %s", dep)
+				} else {
+					first, _, _ := strings.Cut(dep, "/")
+					assert.Falsef(t, root == "internal/textbody" && strings.Contains(first, "."), "textbody reaches third-party %s", dep)
 				}
 			}
 		}

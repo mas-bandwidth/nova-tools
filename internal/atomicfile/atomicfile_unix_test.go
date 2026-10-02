@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestUmaskHonored(t *testing.T) {
@@ -18,27 +20,20 @@ func TestUmaskHonored(t *testing.T) {
 		dir := t.TempDir()
 		target := filepath.Join(dir, "umask_077_test.txt")
 
-		if err := Write(target, []byte("private content\n"), 0o644); err != nil {
-			t.Fatalf("Write failed: %v", err)
-		}
+		err := Write(target, []byte("private content\n"), 0o644)
+		require.NoError(t, err, "Write failed: %v", err)
 
 		info, err := os.Stat(target)
-		if err != nil {
-			t.Fatalf("Stat failed: %v", err)
-		}
+		require.NoError(t, err, "Stat failed: %v", err)
 
-		if perm := info.Mode().Perm(); perm != 0o600 {
-			t.Fatalf("file perm with umask 077 = %04o, want 0600 (umask was ignored!)", perm)
-		}
+		require.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "file perm with umask 077 = %04o, want 0600 (umask was ignored!)", info.Mode().Perm())
 		return
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestUmaskHonored$")
 	cmd.Env = append(os.Environ(), "GO_TEST_SUBPROCESS_UMASK=077")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("subprocess failed: %v\n%s", err, string(out))
-	}
+	require.NoError(t, err, "subprocess failed: %v\n%s", err, string(out))
 }
 
 func TestUmaskGroupWritableHonored(t *testing.T) {
@@ -49,27 +44,20 @@ func TestUmaskGroupWritableHonored(t *testing.T) {
 		dir := t.TempDir()
 		target := filepath.Join(dir, "umask_002_test.txt")
 
-		if err := Write(target, []byte("group content\n"), 0o666); err != nil {
-			t.Fatalf("Write failed: %v", err)
-		}
+		err := Write(target, []byte("group content\n"), 0o666)
+		require.NoError(t, err, "Write failed: %v", err)
 
 		info, err := os.Stat(target)
-		if err != nil {
-			t.Fatalf("Stat failed: %v", err)
-		}
+		require.NoError(t, err, "Stat failed: %v", err)
 
-		if perm := info.Mode().Perm(); perm != 0o664 {
-			t.Fatalf("file perm with umask 002 = %04o, want 0664 (umask was ignored!)", perm)
-		}
+		require.Equal(t, os.FileMode(0o664), info.Mode().Perm(), "file perm with umask 002 = %04o, want 0664 (umask was ignored!)", info.Mode().Perm())
 		return
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestUmaskGroupWritableHonored$")
 	cmd.Env = append(os.Environ(), "GO_TEST_SUBPROCESS_UMASK=002")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("subprocess failed: %v\n%s", err, string(out))
-	}
+	require.NoError(t, err, "subprocess failed: %v\n%s", err, string(out))
 }
 
 func TestExactModeBypassesUmask(t *testing.T) {
@@ -80,25 +68,18 @@ func TestExactModeBypassesUmask(t *testing.T) {
 		dir := t.TempDir()
 		target := filepath.Join(dir, "exact_mode_077_test.txt")
 
-		if err := Write(target, []byte("exact content\n"), 0o644, ExactMode()); err != nil {
-			t.Fatalf("Write with ExactMode failed: %v", err)
-		}
+		err := Write(target, []byte("exact content\n"), 0o644, ExactMode())
+		require.NoError(t, err, "Write with ExactMode failed: %v", err)
 
 		info, err := os.Stat(target)
-		if err != nil {
-			t.Fatalf("Stat failed: %v", err)
-		}
+		require.NoError(t, err, "Stat failed: %v", err)
 
-		if perm := info.Mode().Perm(); perm != 0o644 {
-			t.Fatalf("file perm with ExactMode under umask 077 = %04o, want 0644", perm)
-		}
+		require.Equal(t, os.FileMode(0o644), info.Mode().Perm(), "file perm with ExactMode under umask 077 = %04o, want 0644", info.Mode().Perm())
 		return
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestExactModeBypassesUmask$")
 	cmd.Env = append(os.Environ(), "GO_TEST_SUBPROCESS_EXACT_MODE=077")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("subprocess failed: %v\n%s", err, string(out))
-	}
+	require.NoError(t, err, "subprocess failed: %v\n%s", err, string(out))
 }

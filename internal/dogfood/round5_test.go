@@ -3,6 +3,9 @@ package dogfood
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // DOGFOOD ROUND 5, EDGE 2: ONE DOGFOODER'S PASS CLOSED ANOTHER'S OPEN EDGE.
@@ -36,24 +39,16 @@ func TestAnUnrelatedPassDoesNotCloseSomebodyElsesEdge(t *testing.T) {
 	johnny := cleanReceipt("nova-check links", "johnny", "2026-09-18T10:00:00Z")
 
 	rows, summary := Ledger(verbs("nova-check links"), []Receipt{stella, johnny}, nil)
-	if summary.OpenEdges != 1 {
-		t.Fatalf("open-edges=%d; johnny's pass closed stella's edge, which nobody read\n%s", summary.OpenEdges, summary.Line())
-	}
-	if summary.Unfiled != 1 {
-		t.Fatalf("unfiled=%d; the edge has no issue anybody can act on", summary.Unfiled)
-	}
+	require.Equal(t, 1, summary.OpenEdges, "open-edges=%d; johnny's pass closed stella's edge, which nobody read\n%s", summary.OpenEdges, summary.Line())
+	require.Equal(t, 1, summary.Unfiled, "unfiled=%d; the edge has no issue anybody can act on", summary.Unfiled)
 	// AND THE ROW SAYS SO. The row shows the receipt that speaks best for the verb --
 	// johnny's ok=yes -- which is exactly the line that hid the edge. It now carries the
 	// count, so the one line a reader parses can never claim a clean verb over an open
 	// finding.
-	if !strings.Contains(rows[0].Line(), "open=1") {
-		t.Fatalf("the row hides the open edge behind a pass:\n%s", rows[0].Line())
-	}
+	require.Contains(t, rows[0].Line(), "open=1", "the row hides the open edge behind a pass:\n%s", rows[0].Line())
 
 	findings, _ := Gate(verbs("nova-check links"), []Receipt{stella, johnny}, nil, false)
-	if len(findings) != 1 {
-		t.Fatalf("the gate found %d; an open edge is a finding\n%v", len(findings), findings)
-	}
+	require.Len(t, findings, 1, "the gate found %d; an open edge is a finding\n%v", len(findings), findings)
 	// The gate names WHOSE edge it is and gives the id a closer must name.
 	contains(t, findings[0].Line(), "stella")
 	contains(t, findings[0].Line(), "receipt="+stella.ID())
@@ -68,9 +63,7 @@ func TestTheDogfooderWhoFoundItClosesItByRunningItAgain(t *testing.T) {
 	again := cleanReceipt("nova-check links", "stella", "2026-09-18T12:00:00Z")
 
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{stella, again}, nil)
-	if summary.OpenEdges != 0 {
-		t.Fatalf("open-edges=%d; the dogfooder who found it ran it again and found nothing\n%s", summary.OpenEdges, summary.Line())
-	}
+	require.Equal(t, 0, summary.OpenEdges, "open-edges=%d; the dogfooder who found it ran it again and found nothing\n%s", summary.OpenEdges, summary.Line())
 }
 
 // And anybody may close it by NAMING it: the fixer records a receipt that says which
@@ -83,13 +76,9 @@ func TestAReceiptThatNamesTheEdgeClosesIt(t *testing.T) {
 	fixer.Closes = stella.ID()
 
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{stella, fixer}, nil)
-	if summary.OpenEdges != 0 {
-		t.Fatalf("open-edges=%d; the closing receipt names stella's edge by id\n%s", summary.OpenEdges, summary.Line())
-	}
+	require.Equal(t, 0, summary.OpenEdges, "open-edges=%d; the closing receipt names stella's edge by id\n%s", summary.OpenEdges, summary.Line())
 	findings, _ := Gate(verbs("nova-check links"), []Receipt{stella, fixer}, nil, false)
-	if len(findings) != 0 {
-		t.Fatalf("the gate still says no over a closed edge: %v", findings)
-	}
+	require.Empty(t, findings, "the gate still says no over a closed edge: %v", findings)
 }
 
 // A receipt naming an id nothing carries closes nothing, and does not disappear: a typo in
@@ -102,9 +91,7 @@ func TestAClosesThatNamesNothingClosesNothing(t *testing.T) {
 	fixer.Closes = "deadbeef"
 
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{stella, fixer}, nil)
-	if summary.OpenEdges != 1 {
-		t.Fatalf("open-edges=%d; a --closes naming nothing closed a real edge\n%s", summary.OpenEdges, summary.Line())
-	}
+	require.Equal(t, 1, summary.OpenEdges, "open-edges=%d; a --closes naming nothing closed a real edge\n%s", summary.OpenEdges, summary.Line())
 }
 
 // Two people, two findings, one of them answered: the other is still open and still named.
@@ -117,16 +104,10 @@ func TestEachEdgeIsClosedOnItsOwn(t *testing.T) {
 	fixer.Closes = stella.ID()
 
 	rows, summary := Ledger(verbs("nova-check links"), []Receipt{stella, johnny, fixer}, nil)
-	if summary.OpenEdges != 1 {
-		t.Fatalf("open-edges=%d, want johnny's alone\n%s", summary.OpenEdges, summary.Line())
-	}
-	if !strings.Contains(rows[0].Line(), "open=1") {
-		t.Fatalf("row: %s", rows[0].Line())
-	}
+	require.Equal(t, 1, summary.OpenEdges, "open-edges=%d, want johnny's alone\n%s", summary.OpenEdges, summary.Line())
+	require.Contains(t, rows[0].Line(), "open=1", "row: %s", rows[0].Line())
 	findings, _ := Gate(verbs("nova-check links"), []Receipt{stella, johnny, fixer}, nil, false)
-	if len(findings) != 1 {
-		t.Fatalf("findings %d, want johnny's alone: %v", len(findings), findings)
-	}
+	require.Len(t, findings, 1, "findings %d, want johnny's alone: %v", len(findings), findings)
 	contains(t, findings[0].Line(), "johnny")
 }
 
@@ -138,16 +119,10 @@ func TestAReceiptsIDIsItsContent(t *testing.T) {
 	a := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "one")
 	b := a
 	b.File = "somewhere/else.json:3" // where it was read from is not part of it
-	if a.ID() != b.ID() {
-		t.Fatalf("the same receipt read from two places has two ids: %s and %s", a.ID(), b.ID())
-	}
+	require.Equal(t, a.ID(), b.ID(), "the same receipt read from two places has two ids: %s and %s", a.ID(), b.ID())
 	c := edgeReceipt("nova-check links", "stella", "2026-09-18T09:00:00Z", "two")
-	if a.ID() == c.ID() {
-		t.Fatalf("two different findings share one id: %s", a.ID())
-	}
-	if len(a.ID()) != 8 {
-		t.Fatalf("an id a person has to type is short: %q", a.ID())
-	}
+	require.NotEqual(t, a.ID(), c.ID(), "two different findings share one id: %s", a.ID())
+	require.Len(t, a.ID(), 8, "an id a person has to type is short: %q", a.ID())
 }
 
 // A verb with nothing open says so, rather than leaving the field off: a field that
@@ -157,14 +132,10 @@ func TestTheRowAlwaysCarriesTheOpenCount(t *testing.T) {
 
 	rows, _ := Ledger(verbs("nova-check links"), nil, nil)
 	want := "DOGFOOD tool=nova-check verb=links by=nobody at=- ok=- issue=- open=0"
-	if rows[0].Line() != want {
-		t.Fatalf("row:\n got %q\nwant %q", rows[0].Line(), want)
-	}
+	require.Equal(t, want, rows[0].Line(), "row:\n got %q\nwant %q", rows[0].Line(), want)
 }
 
 func contains(t *testing.T, haystack, needle string) {
 	t.Helper()
-	if !strings.Contains(haystack, needle) {
-		t.Errorf("want %q in:\n%s", needle, haystack)
-	}
+	assert.Contains(t, haystack, needle, "want %q in:\n%s", needle, haystack)
 }

@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // All production platform variants are included. Readers may share the wire
@@ -14,9 +17,7 @@ import (
 func TestGitHubEventReadersDoNotImportIngestion(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "go.mod"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	module := ""
 	for _, line := range strings.Split(string(raw), "\n") {
 		fields := strings.Fields(line)
@@ -25,34 +26,27 @@ func TestGitHubEventReadersDoNotImportIngestion(t *testing.T) {
 			break
 		}
 	}
-	if module == "" {
-		t.Fatal("go.mod has no module directive")
-	}
+	require.NotEmpty(t, module, "go.mod has no module directive")
 	wire := module + "internal/ghevent/wire"
 	imports := map[string][]string{}
 	for _, f := range repoTree(t).GoFilesUnder(false, "cmd", "internal") {
 		if f.HasDirNamed("testdata") {
 			continue
 		}
-		if f.ParseErr != nil {
-			t.Fatal(f.ParseErr)
-		}
+		require.NoError(t, f.ParseErr)
 		pkg := module + path.Dir(f.Rel)
 		if _, ok := imports[pkg]; !ok {
 			imports[pkg] = nil
 		}
 		for _, spec := range f.AST.Imports {
 			dep, err := strconv.Unquote(spec.Path.Value)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			imports[pkg] = append(imports[pkg], dep)
 		}
 	}
 	for _, root := range []string{"internal/ghevent/wire"} {
-		if _, ok := imports[module+root]; !ok {
-			t.Fatalf("missing root %s", root)
-		}
+		_, ok := imports[module+root]
+		require.True(t, ok, "missing root %s", root)
 		seen := map[string]bool{}
 		var walk func(string)
 		walk = func(pkg string) {
@@ -61,15 +55,11 @@ func TestGitHubEventReadersDoNotImportIngestion(t *testing.T) {
 			}
 			seen[pkg] = true
 			for _, dep := range imports[pkg] {
-				if pkg == wire {
-					t.Errorf("wire identity imports %s; keep the contract import-free", dep)
-				}
-				if dep == module+"internal/ghevent" {
-					t.Errorf("%s reaches webhook ingestion through %s; depend on the wire contract", root, pkg)
-				}
+				assert.NotEqual(t, wire, pkg, "wire identity imports %s; keep the contract import-free", dep)
+				assert.NotEqual(t, module+"internal/ghevent", dep, "%s reaches webhook ingestion through %s; depend on the wire contract", root, pkg)
 				if strings.HasPrefix(dep, module) {
-					if _, ok := imports[dep]; !ok {
-						t.Errorf("cannot inspect %s", dep)
+					_, ok := imports[dep]
+					if !assert.True(t, ok, "cannot inspect %s", dep) {
 						continue
 					}
 					walk(dep)

@@ -7,8 +7,9 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type seamCalls struct {
@@ -60,11 +61,8 @@ func TestTheSourceSeamsAnswerAsTheDiskDoes(t *testing.T) {
 		viaTree, treeErr := check(defaultSourceSeams())
 		var calls seamCalls
 		viaDisk, diskErr := check(countedDiskSeams(&calls))
-		if (treeErr == nil) != (diskErr == nil) || !reflect.DeepEqual(viaTree, viaDisk) {
-			t.Errorf("%s through the shared tree differs from the disk:\n tree %+v (%v)\n disk %+v (%v)", name, viaTree, treeErr, viaDisk, diskErr)
-		}
-		if calls.reads == 0 {
-			t.Errorf("%s made no disk reads through its seam (%+v); injected seam bypass would not be caught", name, calls)
-		}
+		assert.Equal(t, diskErr == nil, treeErr == nil, "%s through the shared tree differs from the disk:\n tree %+v (%v)\n disk %+v (%v)", name, viaTree, treeErr, viaDisk, diskErr)
+		assert.Equal(t, viaDisk, viaTree, "%s through the shared tree differs from the disk:\n tree %+v (%v)\n disk %+v (%v)", name, viaTree, treeErr, viaDisk, diskErr)
+		assert.NotEqual(t, 0, calls.reads, "%s made no disk reads through its seam (%+v); injected seam bypass would not be caught", name, calls)
 	}
 }

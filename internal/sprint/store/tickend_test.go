@@ -20,25 +20,26 @@ func TestTheTickEndWakesTheCoordinatorOnce(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.startMachine()
-	if res := h.machine(); res.TickEnd != 0 || h.written(sprint.NTickEnd) != 0 {
-		t.Fatalf("a tick of an empty sprint addressed the coordinator nothing and wrote a tick end: %+v", res)
-	}
+	res := h.machine()
+	require.Equal(t, 0, res.TickEnd, "a tick of an empty sprint addressed the coordinator nothing and wrote a tick end: %+v", res)
+	require.Equal(t, 0, h.written(sprint.NTickEnd), "a tick of an empty sprint addressed the coordinator nothing and wrote a tick end: %+v", res)
 	h.setup(2)
 	_, from, err := h.m.Tails(h.ctx)
 	require.NoError(t, err)
 	h.landThrough("s1", "s1-1", "s1-2")
 	if res := h.machine(); res.Done == "" || res.TickEnd != 1 || h.written(sprint.NTickEnd) != 1 {
-		t.Fatalf("the done tick: done %q, tick end %d, written %d", res.Done, res.TickEnd, h.written(sprint.NTickEnd))
+		require.Failf(t, "", "the done tick: done %q, tick end %d, written %d", res.Done, res.TickEnd, h.written(sprint.NTickEnd))
 	}
 	notes, _, err := h.m.NotesSince(h.ctx, from, 1000)
 	require.NoError(t, err)
 	last := notes[len(notes)-1]
-	if last.Type != sprint.NTickEnd || last.Kind != sprint.Happened || last.To != h.st.Actor || last.What != "judgments=1" {
-		t.Fatalf("the tick end: %+v", last)
-	}
-	if woke, err := h.st.WaitTickEnd(h.ctx, from, time.Minute); err != nil || !woke {
-		t.Fatalf("a wait from before the done tick: %v %v", woke, err)
-	}
+	require.Equal(t, sprint.NTickEnd, last.Type, "the tick end: %+v", last)
+	require.Equal(t, sprint.Happened, last.Kind, "the tick end: %+v", last)
+	require.Equal(t, h.st.Actor, last.To, "the tick end: %+v", last)
+	require.Equal(t, "judgments=1", last.What, "the tick end: %+v", last)
+	woke, err := h.st.WaitTickEnd(h.ctx, from, time.Minute)
+	require.NoError(t, err, "a wait from before the done tick: %v %v", woke, err)
+	require.True(t, woke, "a wait from before the done tick: %v %v", woke, err)
 	v, err := h.st.Inbox(h.ctx, time.Hour, time.Hour, 100)
 	require.NoError(t, err)
 	for _, g := range v.Groups {
@@ -48,14 +49,14 @@ func TestTheTickEndWakesTheCoordinatorOnce(t *testing.T) {
 	h.startMachine()
 	if res := h.machine(); res.TickEnd != 1 || h.written(sprint.NTickEnd) != 2 {
 		// the start says the sprint done again (the done part), and wakes once
-		t.Fatalf("the tick after a start of a done sprint: %+v, %d tick ends", res, h.written(sprint.NTickEnd))
+		require.Failf(t, "", "the tick after a start of a done sprint: %+v, %d tick ends", res, h.written(sprint.NTickEnd))
 	}
 	_, tail, err := h.m.Tails(h.ctx)
 	require.NoError(t, err)
 	waiter := &Store{B: h.m, Names: h.st.Names, Actor: h.st.Actor, Now: h.st.Now, NewID: h.st.NewID, Sleep: h.tick}
-	if woke, err := waiter.WaitTickEnd(h.ctx, tail, time.Second); err != nil || woke {
-		t.Fatalf("a wait with nothing to come: %v %v", woke, err)
-	}
+	woke, err = waiter.WaitTickEnd(h.ctx, tail, time.Second)
+	require.NoError(t, err, "a wait with nothing to come: %v %v", woke, err)
+	require.False(t, woke, "a wait with nothing to come: %v %v", woke, err)
 }
 
 // The mark is of its epoch (the cold read of #4843, 1): after a clear the
@@ -67,9 +68,9 @@ func TestTheTickEndMarkStartsAgainAfterAClear(t *testing.T) {
 	h.setup(1)
 	h.startMachine()
 	h.landThrough("s1", "s1-1")
-	if res := h.machine(); res.Done == "" || res.TickEnd == 0 {
-		t.Fatalf("the first sprint's done tick: %+v", res)
-	}
+	res := h.machine()
+	require.NotEmpty(t, res.Done, "the first sprint's done tick: %+v", res)
+	require.NotEqual(t, 0, res.TickEnd, "the first sprint's done tick: %+v", res)
 	_, err := h.st.Clear(h.ctx)
 	require.NoError(t, err)
 	h.setup(1)
@@ -79,9 +80,9 @@ func TestTheTickEndMarkStartsAgainAfterAClear(t *testing.T) {
 	}
 	h.startMachine()
 	h.landThrough("s1", ids...)
-	if res := h.machine(); res.Done == "" || res.TickEnd == 0 {
-		t.Fatalf("the second sprint's done tick after the clear: done %q, tick end %d", res.Done, res.TickEnd)
-	}
+	res = h.machine()
+	require.NotEmpty(t, res.Done, "the second sprint's done tick after the clear: done %q, tick end %d", res.Done, res.TickEnd)
+	require.NotEqual(t, 0, res.TickEnd, "the second sprint's done tick after the clear: done %q, tick end %d", res.Done, res.TickEnd)
 }
 
 // noteBetween is the Mem with a note for the coordinator written once, right

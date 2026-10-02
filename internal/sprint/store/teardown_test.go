@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -44,7 +45,7 @@ func TestTeardownLeavesTheKeysAsBeforeInit(t *testing.T) {
 	_, err = h.st.Teardown(h.ctx)
 	require.NoError(t, err)
 	if after := m.Keys(h.st.Names); !slices.Equal(after, before) {
-		t.Fatalf("after teardown:\n%s\nbefore init:\n%s", strings.Join(after, "\n"), strings.Join(before, "\n"))
+		require.Fail(t, fmt.Sprintf("after teardown:\n%s\nbefore init:\n%s", strings.Join(after, "\n"), strings.Join(before, "\n")))
 	}
 	work()
 	_, err = h.st.Teardown(h.ctx)

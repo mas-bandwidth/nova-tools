@@ -28,9 +28,7 @@ var shrinkOnly = allowlist.Options{Ceiling: true}
 func loadAllowlist(t *testing.T, path string, opt allowlist.Options) *allowlist.List {
 	t.Helper()
 	l, err := allowlist.Load(filepath.FromSlash(path), opt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return l
 }
 
@@ -65,9 +63,7 @@ func TestEveryAllowlistIsReadThroughTheOneHelper(t *testing.T) {
 	lists := map[string]bool{}
 	for _, pat := range listFilePatterns {
 		matches, err := filepath.Glob(filepath.Join(root, "internal", "ci", "testdata", pat))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, m := range matches {
 			lists[filepath.Base(m)] = true
 		}
@@ -76,10 +72,8 @@ func TestEveryAllowlistIsReadThroughTheOneHelper(t *testing.T) {
 	shardDirs := existingShardDirectories(t, root)
 	require.True(t, len(lists) > 0 || len(shardDirs) > 0, "no top-level list or counted ledger under internal/ci/testdata; the walk is looking in the wrong place")
 	for _, name := range mapKeysSorted(lists) {
-		if !loaded[name] {
-			t.Errorf("internal/ci/testdata/%s is not read through allowlist.Load (loadAllowlist in a test); its class test has no %s=1 path, so a removal would edit it by hand",
-				name, allowlist.UpdateEnv)
-		}
+		assert.True(t, loaded[name], "internal/ci/testdata/%s is not read through allowlist.Load (loadAllowlist in a test); its class test has no %s=1 path, so a removal would edit it by hand",
+			name, allowlist.UpdateEnv)
 	}
 	for _, dir := range unconsumedShardDirectories(shardDirs, loaded) {
 		t.Errorf("internal/ci/testdata/%s has package shards but no allowlist.LoadPackages call consumes the directory", dir)
@@ -101,9 +95,7 @@ func treeHelperReads(t *testing.T, root string, lists map[string]bool) (map[stri
 	} else {
 		var err error
 		tree, err = loadRepoTree(root)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 	}
 	pkgs := map[string][]*treeFile{}
 	for _, f := range tree.Files {

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // The class test behind internal/subproc: a production child has a bound or a
@@ -162,7 +164,7 @@ func TestEveryChildProcessGoesThroughTheSubprocDoor(t *testing.T) {
 			continue
 		}
 		for _, finding := range subprocFindings(f.Rel, f.Src) {
-			t.Error(finding)
+			assert.Fail(t, finding)
 		}
 	}
 }
@@ -199,8 +201,6 @@ func TestSubprocessClassTestRefusesItsProbes(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := subprocFindings("internal/probe/probe.go", []byte(c.src))
-		if len(got) != c.want {
-			t.Errorf("%s: %d findings, want %d: %v", c.name, len(got), c.want, got)
-		}
+		assert.Equal(t, c.want, len(got), "%s: %d findings, want %d: %v", c.name, len(got), c.want, got)
 	}
 }

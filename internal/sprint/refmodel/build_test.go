@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
@@ -149,7 +151,7 @@ func (w *world) applyPart(t *testing.T, part string, after time.Duration) {
 			return
 		}
 	}
-	t.Fatalf("the tick has no part %s", part)
+	require.FailNowf(t, "assertion failed", "the tick has no part %s", part)
 }
 
 // later is the sprint with the clock d on: a duty decides at that time.
@@ -181,9 +183,8 @@ func show(ms []refmodel.Move) string {
 func (w *world) land(t *testing.T, id string) {
 	t.Helper()
 	c := w.s.Work.Card(id)
-	if c == nil || c.Col != sprint.Merging {
-		t.Fatalf("land %s: it is not merging", id)
-	}
+	require.NotNil(t, c, "land %s: it is not merging", id)
+	require.Equal(t, string(sprint.Merging), c.Col, "land %s: it is not merging", id)
 	c.Col = sprint.Landed
 	c.Rev++
 	w.s.Work.Put(c)

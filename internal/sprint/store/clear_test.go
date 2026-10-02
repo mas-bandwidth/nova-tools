@@ -3,12 +3,14 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,9 +45,7 @@ func midFlight(t *testing.T) *harness {
 		s.Merge:   {sprint.Queued, sprint.Merged, sprint.Stuck},
 	} {
 		for _, col := range cols {
-			if len(table.Column(col)) == 0 {
-				t.Fatalf("mid-flight: nothing in %s %s", table.Name, col)
-			}
+			require.NotEmpty(t, table.Column(col), "mid-flight: nothing in %s %s", table.Name, col)
 		}
 	}
 	return h
@@ -55,33 +55,32 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	t.Parallel()
 	h := midFlight(t)
 	before := h.snap()
-	if _, _, _, err := h.st.SetMachine(h.ctx, true); err != nil {
-		t.Fatal(err)
-	}
+	_, _, _, err := h.st.SetMachine(h.ctx, true)
+	require.NoError(t, err)
 	res, err := h.st.Clear(h.ctx)
 	m, _, merr := h.st.Machine(h.ctx)
 	stopped := merr == nil && res.Machine == Running && m.State == Stopped
-	require.NoError(t, err)
+	require.NoError(t, err, "clear: %v", err)
 	if !stopped || res.From != 0 || res.To != 1 || res.Held["primaries"] != 8 || res.Held["merge cards"] != 3 {
-		t.Fatalf("clear: stopped %v %+v", stopped, res)
+		require.Fail(t, fmt.Sprintf("clear: stopped %v %+v", stopped, res))
 	}
 	after := h.snap()
 	require.Equal(t, uint64(1), after.Epoch, "epoch %d", after.Epoch)
 	for _, pair := range [][2]*sprint.Table{{before.Work, after.Work}, {before.Readers, after.Readers}, {before.Merge, after.Merge}, {before.Fleet, after.Fleet}} {
 		if !slices.Equal(pair[0].Rows(), pair[1].Rows()) {
-			t.Fatalf("%s rows %v, were %v", pair[1].Name, pair[1].Rows(), pair[0].Rows())
+			require.Fail(t, fmt.Sprintf("%s rows %v, were %v", pair[1].Name, pair[1].Rows(), pair[0].Rows()))
 		}
 		for _, c := range pair[1].Cards() {
 			if c.Placed() && c.Col != sprint.Ctl {
-				t.Fatalf("%s still holds %s at %s", pair[1].Name, c.ID, c.Col)
+				require.Fail(t, fmt.Sprintf("%s still holds %s at %s", pair[1].Name, c.ID, c.Col))
 			}
 		}
 	}
 	if after.StreamCtl("s1").F("state") != sprint.StreamWaiting || after.MemberCtl("m1").F("status") != sprint.Up || after.Fleet.Count("m1", sprint.DoneOK) != 0 {
-		t.Fatalf("control cards: %v %v", after.StreamCtl("s1").Fields, after.MemberCtl("m1").Fields)
+		require.Fail(t, fmt.Sprintf("control cards: %v %v", after.StreamCtl("s1").Fields, after.MemberCtl("m1").Fields))
 	}
 	if open, _ := h.st.Inbox(h.ctx, 0, 0, 100); len(open.Groups) != 1 || open.Groups[0].Type != sprint.NMachineStopped {
-		t.Fatalf("the new epoch's inbox is not the one line that the machine is STOPPED: %+v", open.Groups)
+		require.Fail(t, fmt.Sprintf("the new epoch's inbox is not the one line that the machine is STOPPED: %+v", open.Groups))
 	}
 	h.clean("cleared")
 
@@ -94,29 +93,32 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	} {
 		step.Epoch = &held
 		res, err := h.st.Run(h.ctx, step)
-		if err != nil || len(res.Moved) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Why, "cleared at") || !strings.Contains(res.Refused[0].Why, "epoch is now 1") {
-			t.Fatalf("a late %s of the old epoch: %+v %v", name, res, err)
-		}
+		require.NoError(t, err, "a late %s of the old epoch: %+v %v", name, res, err)
+		require.Empty(t, res.Moved, "a late %s of the old epoch: %+v %v", name, res, err)
+		require.Len(t, res.Refused, 1, "a late %s of the old epoch: %+v %v", name, res, err)
+		require.Contains(t, res.Refused[0].Why, "cleared at", "a late %s of the old epoch: %+v %v", name, res, err)
+		require.Contains(t, res.Refused[0].Why, "epoch is now 1", "a late %s of the old epoch: %+v %v", name, res, err)
 	}
 
 	// The old epoch stays readable.
 	old, err := h.st.At(0).Load(h.ctx, All, nil)
-	if err != nil || old.StateOf("s1-1") != sprint.Landed || old.Merge.Placed("s1-2").Col != sprint.Stuck {
-		t.Fatalf("the old epoch: %v", err)
-	}
-	if card, err := h.st.At(0).CardOf(h.ctx, "s1-3"); err != nil || card.Primary == nil || card.Primary.Col != sprint.Merging {
-		t.Fatalf("card at the old epoch: %+v %v", card, err)
-	}
-	if v, err := h.st.At(0).Inbox(h.ctx, 0, 0, 1000); err != nil || len(v.Groups) == 0 {
-		t.Fatalf("the old epoch's inbox: %+v %v", v, err)
-	}
+	require.NoError(t, err, "the old epoch: %v", err)
+	require.Equal(t, sprint.Landed, old.StateOf("s1-1"), "the old epoch: %v", err)
+	require.Equal(t, sprint.Stuck, old.Merge.Placed("s1-2").Col, "the old epoch: %v", err)
+	card, err := h.st.At(0).CardOf(h.ctx, "s1-3")
+	require.NoError(t, err, "card at the old epoch: %+v %v", card, err)
+	require.NotNil(t, card.Primary, "card at the old epoch: %+v %v", card, err)
+	require.Equal(t, sprint.Merging, card.Primary.Col, "card at the old epoch: %+v %v", card, err)
+	v, err := h.st.At(0).Inbox(h.ctx, 0, 0, 1000)
+	require.NoError(t, err, "the old epoch's inbox: %+v %v", v, err)
+	require.NotEmpty(t, v.Groups, "the old epoch's inbox: %+v %v", v, err)
 
 	// The same ids run again, to landed, in the new epoch.
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 3}))
 	h.through("s1-1", "s1-2", "s1-3")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
 	if s := h.snap(); s.StateOf("s1-1") != sprint.Landed || s.StateOf("s1-3") != sprint.Landed {
-		t.Fatalf("the same ids again: %s %s", s.StateOf("s1-1"), s.StateOf("s1-3"))
+		require.Failf(t, "", "the same ids again: %s %s", s.StateOf("s1-1"), s.StateOf("s1-3"))
 	}
 	h.clean("landed again")
 
@@ -140,17 +142,17 @@ func TestACutClearIsFinishedByTheNext(t *testing.T) {
 		}
 		return nil
 	}
-	if _, err := h.st.Clear(h.ctx); err == nil {
-		t.Fatalf("not cut")
-	}
+	_, err := h.st.Clear(h.ctx)
+	require.Error(t, err, "not cut")
 	h.m.Fail = nil
 	res, err := h.st.Clear(h.ctx)
-	if err != nil || !res.Restored || res.From != 1 || res.To != 2 {
-		t.Fatalf("the next clear: %+v %v", res, err)
-	}
-	if s := h.snap(); s.StreamCtl("s1").F("state") != sprint.StreamWaiting || s.MemberCtl("m2") == nil {
-		t.Fatalf("the shape is not restored")
-	}
+	require.NoError(t, err, "the next clear: %+v %v", res, err)
+	require.True(t, res.Restored, "the next clear: %+v %v", res, err)
+	require.Equal(t, uint64(1), res.From, "the next clear: %+v %v", res, err)
+	require.Equal(t, uint64(2), res.To, "the next clear: %+v %v", res, err)
+	s := h.snap()
+	require.Equal(t, sprint.StreamWaiting, s.StreamCtl("s1").F("state"), "the shape is not restored")
+	require.NotNil(t, s.MemberCtl("m2"), "the shape is not restored")
 	h.clean("finished and cleared")
 }
 
@@ -176,7 +178,7 @@ func TestTeardownAfterClearsLeavesNoKey(t *testing.T) {
 	_, err := h.st.Teardown(h.ctx)
 	require.NoError(t, err)
 	if after := m.Keys(h.st.Names); !slices.Equal(after, before) {
-		t.Fatalf("after teardown:\n%s\nbefore init:\n%s", strings.Join(after, "\n"), strings.Join(before, "\n"))
+		require.Fail(t, fmt.Sprintf("after teardown:\n%s\nbefore init:\n%s", strings.Join(after, "\n"), strings.Join(before, "\n")))
 	}
 }
 
@@ -227,13 +229,12 @@ func TestATickInFlightAtAClearIsRefusedAsStale(t *testing.T) {
 	loop.Actor = sprint.MachineActor
 	loop.B = clearAtTick{Backend: h.m, kv: h.m, done: &done, clear: func() {
 		var err error
-		if cleared, err = h.st.Clear(h.ctx); err != nil {
-			t.Errorf("clear: %v", err)
-		}
+		cleared, err = h.st.Clear(h.ctx)
+		assert.NoError(t, err, "clear: %v", err)
 	}}
 	res, err := loop.Tick(h.ctx)
 	if err != nil || !done || res.Stale == "" || len(res.Moved()) != 0 {
-		t.Fatalf("the tick at a clear: stale %q moved %v err %v", res.Stale, res.Moved(), err)
+		require.Failf(t, "", "the tick at a clear: stale %q moved %v err %v", res.Stale, res.Moved(), err)
 	}
 	require.Equal(t, Running, cleared.Machine, "clear: %+v", cleared)
 	require.Equal(t, uint64(1), cleared.To, "clear: %+v", cleared)
@@ -244,18 +245,18 @@ func TestATickInFlightAtAClearIsRefusedAsStale(t *testing.T) {
 	require.Equal(t, 0, n, "the stale tick dealt %d cards at the old epoch", n)
 	// The loop goes on: the machine is STOPPED at the new epoch.
 	res, err = loop.Tick(h.ctx)
-	if err != nil || res.State != Stopped || len(res.Parts) != 0 {
-		t.Fatalf("the next tick: %+v %v", res, err)
-	}
+	require.NoError(t, err, "the next tick: %+v %v", res, err)
+	require.Equal(t, Stopped, res.State, "the next tick: %+v %v", res, err)
+	require.Empty(t, res.Parts, "the next tick: %+v %v", res, err)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 4}))
 	h.startMachine()
 	res, err = loop.Tick(h.ctx)
-	if err != nil || res.Stale != "" || len(res.Moved()) == 0 {
-		t.Fatalf("the first tick at the new epoch: %+v %v", res, err)
-	}
-	if s := h.snap(); s.Epoch != 1 || len(s.Work.Column(sprint.Working)) == 0 {
-		t.Fatalf("nothing dealt at epoch %d", s.Epoch)
-	}
+	require.NoError(t, err, "the first tick at the new epoch: %+v %v", res, err)
+	require.Empty(t, res.Stale, "the first tick at the new epoch: %+v %v", res, err)
+	require.NotEmpty(t, res.Moved(), "the first tick at the new epoch: %+v %v", res, err)
+	s = h.snap()
+	require.Equal(t, uint64(1), s.Epoch, "nothing dealt at epoch %d", s.Epoch)
+	require.NotEmpty(t, s.Work.Column(sprint.Working), "nothing dealt at epoch %d", s.Epoch)
 	h.clean("after the stale tick")
 }
 
@@ -279,10 +280,11 @@ func TestAnAnswerOfAnotherEpochRefusesTheWholeStep(t *testing.T) {
 	require.NoError(t, err)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
 	got := h.run(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}, Reason: "obsolete", Answers: []string{old}}))
-	if len(got.Moved) != 0 || len(got.Refused) != 1 || got.Refused[0].Key != old ||
-		!strings.Contains(got.Refused[0].Why, "epoch 0") || !strings.Contains(got.Refused[0].Why, res.At.UTC().Format(time.RFC3339)) {
-		t.Fatalf("the drop answering %s: %+v", old, got)
-	}
+	require.Empty(t, got.Moved, "the drop answering %s: %+v", old, got)
+	require.Len(t, got.Refused, 1, "the drop answering %s: %+v", old, got)
+	require.Equal(t, old, got.Refused[0].Key, "the drop answering %s: %+v", old, got)
+	require.Contains(t, got.Refused[0].Why, "epoch 0", "the drop answering %s: %+v", old, got)
+	require.Contains(t, got.Refused[0].Why, res.At.UTC().Format(time.RFC3339), "the drop answering %s: %+v", old, got)
 	require.Equal(t, sprint.Ready, h.state("s1-1"), "the refused step moved: %s %s", h.state("s1-1"), h.state("s1-2"))
 	require.Equal(t, sprint.Ready, h.state("s1-2"), "the refused step moved: %s %s", h.state("s1-1"), h.state("s1-2"))
 }

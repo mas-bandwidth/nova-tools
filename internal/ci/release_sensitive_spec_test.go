@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/release"
 )
 
@@ -31,28 +34,20 @@ func TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec(t *testing.T) {
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-RELEASE.md"))
 	inSpec := fencedBlockAfter(t, spec, sensitiveMarker)
 	inCode := release.SensitivePaths
-	if len(inSpec) != len(inCode) {
-		t.Fatalf("the spec lists %d paths and the code lists %d:\nspec: %v\ncode: %v", len(inSpec), len(inCode), inSpec, inCode)
-	}
+	require.Equalf(t, len(inCode), len(inSpec), "the spec lists %d paths and the code lists %d:\nspec: %v\ncode: %v", len(inSpec), len(inCode), inSpec, inCode)
 	for i := range inCode {
-		if inSpec[i] != inCode[i] {
-			t.Errorf("entry %d differs: the spec says %q, the code says %q", i+1, inSpec[i], inCode[i])
-		}
+		assert.Equalf(t, inCode[i], inSpec[i], "entry %d differs: the spec says %q, the code says %q", i+1, inSpec[i], inCode[i])
 	}
 	// Every entry is a directory prefix. A list entry that is not one is a
 	// list entry that classifies by accident: `internal/secrets` without the
 	// slash would also catch `internal/secretsanta/`.
 	for _, p := range inCode {
-		if !strings.HasSuffix(p, "/") || strings.HasPrefix(p, "/") || strings.Contains(p, "..") {
-			t.Errorf("%q is not a directory prefix", p)
-		}
+		assert.Truef(t, strings.HasSuffix(p, "/") && !strings.HasPrefix(p, "/") && !strings.Contains(p, ".."), "%q is not a directory prefix", p)
 	}
 	// And the spec says what the gate DOES, not merely what it covers: the
 	// refusal, the flag that gets past it, and the receipt line.
 	for _, want := range []string{"--security-read", "RELEASE CUT SENSITIVE", "internal/release/sensitive.go"} {
-		if !strings.Contains(spec, want) {
-			t.Errorf("docs/SPEC-RELEASE.md does not carry %q", want)
-		}
+		assert.Containsf(t, spec, want, "docs/SPEC-RELEASE.md does not carry %q", want)
 	}
 }
 
@@ -60,27 +55,19 @@ func TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec(t *testing.T) {
 func fencedBlockAfter(t *testing.T, text, marker string) []string {
 	t.Helper()
 	_, after, found := strings.Cut(text, marker)
-	if !found {
-		t.Fatalf("docs/SPEC-RELEASE.md carries no %s marker, so the list cannot be found", marker)
-	}
+	require.Truef(t, found, "docs/SPEC-RELEASE.md carries no %s marker, so the list cannot be found", marker)
 	_, after, found = strings.Cut(after, "```")
-	if !found {
-		t.Fatalf("no fenced block follows %s", marker)
-	}
+	require.Truef(t, found, "no fenced block follows %s", marker)
 	// The fence may carry a language tag; the block starts at the next line.
 	_, after, _ = strings.Cut(after, "\n")
 	block, _, found := strings.Cut(after, "```")
-	if !found {
-		t.Fatalf("the fenced block after %s is never closed", marker)
-	}
+	require.Truef(t, found, "the fenced block after %s is never closed", marker)
 	var lines []string
 	for _, line := range strings.Split(block, "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			lines = append(lines, line)
 		}
 	}
-	if len(lines) == 0 {
-		t.Fatalf("the fenced block after %s is empty", marker)
-	}
+	require.NotEmptyf(t, lines, "the fenced block after %s is empty", marker)
 	return lines
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -13,6 +14,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // namedPathsAllowlistPath is the shrink-only list of the names that LOOK like a path in
@@ -59,9 +62,7 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 	root := repoRoot(t)
 	allow := readNamedPathAllowlist(t)
 	files := namedPathSources(repoTree(t))
-	if len(files) == 0 {
-		t.Fatal("no Go source or docs to read; this test is looking in the wrong place")
-	}
+	require.NotEmpty(t, files, "no Go source or docs to read; this test is looking in the wrong place")
 
 	// earning is every allowlisted name this run found MISSING, so the stale half below
 	// can tell a narrowing that is still doing work from one that is not. A listed name
@@ -80,9 +81,8 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 		raw := f.Src
 		if raw == nil {
 			var err error
-			if raw, err = os.ReadFile(f.Path); err != nil {
-				t.Fatal(err)
-			}
+			raw, err = os.ReadFile(f.Path)
+			require.NoError(t, err)
 		}
 		for line, text := range strings.Split(string(raw), "\n") {
 			for _, name := range namedPathsIn(text) {
@@ -107,8 +107,8 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 
 	sort.Strings(missing)
 	for _, name := range missing {
-		t.Errorf("%s: %s names no file or directory in this tree; a friend following it finds nothing -- correct the path, or add it to %s with the reason it is not a real path",
-			sites[name], name, namedPathsAllowlistPath)
+		assert.Fail(t, fmt.Sprintf("%s: %s names no file or directory in this tree; a friend following it finds nothing -- correct the path, or add it to %s with the reason it is not a real path",
+			sites[name], name, namedPathsAllowlistPath))
 	}
 
 	// The measured set is every name the list must hold: a listed name still
@@ -127,12 +127,12 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 	sort.Strings(stale)
 	for _, name := range stale {
 		if realNow[name] {
-			t.Errorf("%s lists %s, and it is in the tree now; delete the entry -- the name is a real path and the rule should hold it (the list only shrinks)",
-				namedPathsAllowlistPath, name)
+			assert.Fail(t, fmt.Sprintf("%s lists %s, and it is in the tree now; delete the entry -- the name is a real path and the rule should hold it (the list only shrinks)",
+				namedPathsAllowlistPath, name))
 			continue
 		}
-		t.Errorf("%s lists %s, and nothing names it any more; delete the stale entry (the list only shrinks)",
-			namedPathsAllowlistPath, name)
+		assert.Fail(t, fmt.Sprintf("%s lists %s, and nothing names it any more; delete the stale entry (the list only shrinks)",
+			namedPathsAllowlistPath, name))
 	}
 }
 
@@ -367,9 +367,8 @@ func readNamedPathAllowlist(t *testing.T) *allowlist.List {
 	t.Helper()
 	allow := loadAllowlist(t, namedPathsAllowlistPath, shrinkOnly)
 	for _, row := range allow.Rows() {
-		if _, reason, _ := strings.Cut(row.Text, " "); strings.TrimSpace(reason) == "" {
-			t.Errorf("%s: %q carries no reason; every narrowing says why it is one", namedPathsAllowlistPath, row.Key)
-		}
+		_, reason, _ := strings.Cut(row.Text, " ")
+		assert.NotEmpty(t, strings.TrimSpace(reason), "%s: %q carries no reason; every narrowing says why it is one", namedPathsAllowlistPath, row.Key)
 	}
 	return allow
 }
@@ -457,16 +456,7 @@ func TestTheNamedPathHeuristicReadsWhatItClaims(t *testing.T) {
 	}
 	for _, tc := range cases {
 		got := namedPathsIn(tc.text)
-		if len(got) != len(tc.want) {
-			t.Errorf("%s: namedPathsIn(%q) = %v, want %v", tc.name, tc.text, got, tc.want)
-			continue
-		}
-		for i := range got {
-			if got[i] != tc.want[i] {
-				t.Errorf("%s: namedPathsIn(%q) = %v, want %v", tc.name, tc.text, got, tc.want)
-				break
-			}
-		}
+		assert.True(t, slices.Equal(got, tc.want), "%s: namedPathsIn(%q) = %v, want %v", tc.name, tc.text, got, tc.want)
 	}
 }
 
@@ -478,13 +468,9 @@ func TestTheNamedPathExistenceCheckReadsTheTree(t *testing.T) {
 
 	root := repoRoot(t)
 	for _, name := range []string{"internal/ci/doc.go", "internal/ci", "internal/ci/"} {
-		if !namedPathExists(root, name) {
-			t.Errorf("namedPathExists(%q) = false, want true", name)
-		}
+		assert.True(t, namedPathExists(root, name), "namedPathExists(%q) = false, want true", name)
 	}
 	for _, name := range []string{"internal/ci/no-such-file.go", "internal/ci/doc.go/", "cmd/no-such-tool"} {
-		if namedPathExists(root, name) {
-			t.Errorf("namedPathExists(%q) = true, want false", name)
-		}
+		assert.False(t, namedPathExists(root, name), "namedPathExists(%q) = true, want false", name)
 	}
 }

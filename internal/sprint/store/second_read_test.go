@@ -5,6 +5,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -46,7 +47,7 @@ func TestAckOfBrokenReadsIsRefused(t *testing.T) {
 	require.Len(t, nids, 1, "open %v", nids)
 	r := p.do("ack", AckStep(sprint.AckReq{Notes: nids, Reason: "looked"}))
 	if len(r.Moved) != 0 || len(r.Refused) != 1 || !strings.Contains(r.Refused[0].Why, "nova-sprint rework --group") {
-		t.Errorf("ack of the broken reads: %+v", r)
+		assert.Fail(t, fmt.Sprintf("ack of the broken reads: %+v", r))
 	}
 	o := p.openOn("s1-1")
 	assert.Len(t, o, 1, "after the refused ack: %v", o)
@@ -69,7 +70,7 @@ func TestCIGreenLeavesTheBrokenReadOpen(t *testing.T) {
 	p.do("ci green", CIStep(sprint.CIReq{Sel: ids("s1-1"), Run: "r2"}))
 	o := p.openOn("s1-1")
 	if len(o) != 1 || o[0].Note.Type != sprint.NReadBroken {
-		t.Errorf("ci green closes ci red and leaves the broken read open; open is %v", o)
+		assert.Fail(t, fmt.Sprintf("ci green closes ci red and leaves the broken read open; open is %v", o))
 	}
 }
 
@@ -167,7 +168,7 @@ func TestReturnAndDropAnswerTheStreamJudgmentsThatListThem(t *testing.T) {
 				}
 				t.Logf("%s %s: listed=%v moved=%v refused=%v", verb, kind, listed, res.Moved, res.Refused)
 				if listed && refusedAnswer {
-					t.Errorf("%s is a listed decision of %q and --answers naming it is refused", verb, o[0].Note.Type)
+					assert.Fail(t, fmt.Sprintf("%s is a listed decision of %q and --answers naming it is refused", verb, o[0].Note.Type))
 				}
 				a := p.do("ack stopped", AckStep(sprint.AckReq{Notes: []string{nid}, Reason: "x"}))
 				assert.Len(t, a.Refused, 1, "ack of a stopped stream's judgment: %+v", a)
@@ -191,7 +192,7 @@ func TestAskAnotherAnswersABrokenRead(t *testing.T) {
 	br := p.noteOf("s1-1", sprint.NReadBroken)
 	r := p.do("ask another --answers broken", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true, Answers: []string{br}}))
 	if len(r.Moved) != 1 || len(r.Refused) != 0 || p.noteOf("s1-1", sprint.NReadBroken) != "" {
-		t.Errorf("ask --another --answers <broken read>: moved=%v refused=%v; open after: %v", r.Moved, r.Refused, p.openOn("s1-1"))
+		assert.Fail(t, fmt.Sprintf("ask --another --answers <broken read>: moved=%v refused=%v; open after: %v", r.Moved, r.Refused, p.openOn("s1-1")))
 	}
 }
 
@@ -248,7 +249,7 @@ func TestReworkOrReturnTakesAnOrphanMergeCardOff(t *testing.T) {
 				}
 			}
 			if res := p.do("accept", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")})); len(res.Moved) != 1 || p.state("s1-1") != sprint.Merging {
-				t.Fatalf("accept after %s: %+v", verb, res)
+				require.Fail(t, fmt.Sprintf("accept after %s: %+v", verb, res))
 			}
 		})
 	}
@@ -267,7 +268,7 @@ func TestEveryTextFieldIsBounded(t *testing.T) {
 		res, err := p.st.Run(p.ctx, step)
 		refused := len(res.Refused) > 0 && strings.Contains(res.Refused[0].Why, "over the bound")
 		if err != nil || len(res.Moved) != 0 && !refused || !refused {
-			t.Errorf("%s over 8 KiB: %+v %v", name, res, err)
+			assert.Fail(t, fmt.Sprintf("%s over 8 KiB: %+v %v", name, res, err))
 		}
 	}
 	over("return reason", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1"), Reason: long}))
@@ -293,17 +294,17 @@ func TestTheEngineHoldsEveryPlanToTheLifecycle(t *testing.T) {
 	}
 	r := p.do("through Lawful", Step{Verb: "mutant", Load: All, Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Lawful(illegal(s)) }})
 	if len(r.Moved) != 0 || p.state("s1-1") != sprint.Review {
-		t.Errorf("Lawful let review -> landed through: %+v", r)
+		assert.Fail(t, fmt.Sprintf("Lawful let review -> landed through: %+v", r))
 	}
 	r = p.do("not through Lawful", Step{Verb: "mutant", Load: All, Plan: illegal})
 	if len(r.Moved) != 0 || len(r.Refused) != 1 || p.state("s1-1") != sprint.Review {
-		t.Errorf("the engine applied a plan that skips Lawful: moved=%v refused=%v state=%s", r.Moved, r.Refused, p.state("s1-1"))
+		assert.Fail(t, fmt.Sprintf("the engine applied a plan that skips Lawful: moved=%v refused=%v state=%s", r.Moved, r.Refused, p.state("s1-1")))
 	}
 	create := func(s *sprint.Snapshot) sprint.Plan {
 		e := ntable.BatchMemberEntry{ID: "zz", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "s1", Col: sprint.Merging, Score: 9}}
 		return sprint.Plan{Units: []sprint.Unit{{Key: "zz", Stream: "s1", Changes: []sprint.Change{{Table: sprint.Work, Entry: e}}}}}
 	}
 	if r := p.do("admitted merging", Step{Verb: "mutant", Load: All, Plan: create}); len(r.Moved) != 0 || p.snap().Work.Card("zz") != nil {
-		t.Errorf("a primary admitted merging: %+v", r)
+		assert.Fail(t, fmt.Sprintf("a primary admitted merging: %+v", r))
 	}
 }
