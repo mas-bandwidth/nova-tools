@@ -21,7 +21,7 @@
 //	names     echoes the roster, so a person can spell a To line the tool will accept
 //
 // And one failure that is not in that list because it arrives slowly: a tool whose read
-// cost grows with the record. inbox and check used to walk every lane on every run, so the
+// cost grows with the record: a run of inbox or check that walks every lane makes the
 // ten-thousandth note cost ten thousand parses to find. They now read from a CURSOR -- the
 // commit a reader last read to, kept in that reader's own lane and pushed like a receipt --
 // so the work is the size of the CHANGE and never the size of the bus. --full walks
@@ -349,7 +349,7 @@ func main() {
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read, dialed or written (the CLI style's rule (b), #4505).
+	// before anything is read, dialed or written: help is never a refusal.
 	defer verbflag.Recover(stdout, "nova-bus", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; `inbox --as <name>` is the one that only looks")
@@ -717,7 +717,7 @@ func quoteList(names []string) string {
 // printTranscript puts git's own output on stderr, VERBATIM, under the one actionable line
 // that has already been printed and escaped.
 //
-// THE FAILURE THIS CLOSES: a `SEND FAIL` on a rebase conflict used to carry git's whole
+// THE FAILURE THIS CLOSES: a `SEND FAIL` on a rebase conflict would otherwise carry git's whole
 // transcript inside the reason, rendered through the one-line escape, so forty lines of git
 // arrived as one line of `\x0d\x0a` and nobody could read any of it. The one-line guarantee
 // is about the EVENT line -- the line above this, which a scanner reads -- and a transcript
@@ -1001,7 +1001,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	for _, notice := range prepared.Notices {
 		fmt.Fprintf(stdout, "SEND NOTE %s\n", oneline.Escape(notice))
 	}
-	// THE SENDER'S OWN BEAT IS NOT SOMEBODY ELSE'S WORK (#488). `wait` writes
+	// THE SENDER'S OWN BEAT IS NOT SOMEBODY ELSE'S WORK: `wait` writes
 	// from-<me>/BEAT, and a wait killed between its tick and its commit leaves it in the
 	// tree. Refusing over it told the writer their checkout held "changes that are not
 	// this note" and named a file they had never touched, and their answer did not go out.
@@ -1191,7 +1191,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 0
 	}
 	// The reader's own BEAT, as in send: `wait` wrote it, so it is this run's own
-	// machinery and not a change that is "not this receipt" (#488).
+	// machinery and not a change that is "not this receipt".
 	beat := bus.BeatPath(me.Lane)
 	if err := checkoutReady(*busDir, *branch, []string{plan.Path, beat}); err != nil {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
@@ -1281,7 +1281,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
 		return 1
 	}
-	// closed= COUNTS NOTES, not receipts. Since #1540 one receipt closes every note one
+	// closed= COUNTS NOTES, not receipts: one receipt closes every note one
 	// sender left before the stamp, so len(plan.Prepared) is the number of lanes answered
 	// and would be a different, smaller and quite surprising number here.
 	if *dryRun {
@@ -1300,8 +1300,8 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "CLOSE REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus close -h"))
 		return 1
 	}
-	// A PARTIAL CLOSE COMPLETES OR LEAVES NOTHING BEHIND (#1540). The collision this fix
-	// removes used to stop the loop at its second Save, with the first receipt written into
+	// A PARTIAL CLOSE COMPLETES OR LEAVES NOTHING BEHIND. The collision this fix
+	// removes would stop the loop at its second Save, with the first receipt written into
 	// the working tree, no commit, and the cursor where it started -- so the next run met a
 	// file it had not committed and the lane had to be cleaned by hand. Whatever stops the
 	// loop now, the files this run wrote go back out of the tree before it returns.
@@ -1350,7 +1350,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(sha8) > 8 {
 		sha8 = sha8[:8]
 	}
-	// receipts= is new with #1540 and is the one number that changed shape: closed= counts
+	// receipts= is the one number here that counts receipts rather than notes: closed= counts
 	// notes, as it always did and as the dry run above already did, and receipts= says how
 	// many notes it took to close them -- one per sender lane. A reader who wants to know
 	// whether a close collapsed 2964 files into a handful reads it here.
@@ -1523,7 +1523,7 @@ type inboxOpts struct {
 	remote, branch string
 	attempts       int
 	noPush         bool
-	// legacy is the --legacy-before line as the flag gave it, or the zero line for no flag.
+	// legacy is the --legacy-before line as the flag gives it, or the zero line for no flag.
 	// What a run actually reads under is effectiveLegacy of this and the cursor's own.
 	legacy       bus.LegacyLine
 	carryHistory bool
@@ -1540,7 +1540,7 @@ type inboxOpts struct {
 	// way; only the narration is a verb's choice.
 	walkProgress bool
 	diagnostics  bool
-	// quietBeats records that the caller passed `wait --quiet-beats`. Since #328 a change
+	// quietBeats records that the caller passed `wait --quiet-beats`. A change
 	// that is only beats and cursors never wakes a wait, so the flag is accepted and
 	// changes nothing; it is kept so callers that pass it keep working. It is `wait`'s
 	// only; `inbox` leaves it false.
@@ -1548,10 +1548,10 @@ type inboxOpts struct {
 	// me is the reader resolved against the roster, carried so `wait` can name its lane's
 	// files without resolving the roster twice. It is `wait`'s only; `inbox` leaves it zero.
 	me bus.Participant
-	// noBeat is `wait --no-beat`: this wait does not own the lane's BEAT. Since #3144 no
+	// noBeat is `wait --no-beat`: this wait does not own the lane's BEAT. No
 	// wait writes a BEAT or makes a beat commit -- presence is friend:<name> in Redis --
 	// so what the flag still decides is whether a dirty BEAT an older wait left behind is
-	// this wait's to discard (a process BESIDE a line never discards the line's, #1517).
+	// this wait's to discard: a process BESIDE a line never discards the line's.
 	// `inbox` leaves it false.
 	noBeat bool
 	// onNote is `wait --on-note`: on a note arrival exit 0 with the note, on an empty
@@ -1724,7 +1724,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				fmt.Fprintf(stderr, "INBOX WALK bounded commits=%d %s\n", limit, boundedWalkRemedy)
 				// THE BOUND ENDS THE RUN, AND THAT INCLUDES THE ADVANCE. This is the one
 				// exit-0 way out of a listing that did not run, and the caller reads exit 0
-				// plus --advance as "the listing is done, move the cursor". It used to hand
+				// plus --advance as "the listing is done, move the cursor". It would hand
 				// back the ZERO reading -- Me is resolved onto it at the END of a listing
 				// that finished -- so the advance ran with an EMPTY LANE, wrote CURSOR at
 				// the checkout ROOT, and left it there for every later run on that bus to
@@ -1815,7 +1815,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// It worked exactly as written: 602 old notes went onto the open list, the cursor was
 	// written beside them, and every poll from then on printed the same 602 carried notes,
 	// forever, because an open note only comes off the list when something answers it.
-	// Glenn, reading the polls: "lots of spam there. do we need so much spam? it costs $$$".
+	// So much repetition in the polls is spam: nobody needs it, and every line costs.
 	// Every one of those lines was paid for, on every run, by a reader who had never said
 	// they meant to carry the history.
 	//
@@ -1836,10 +1836,10 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 		_, oldNotes, oldUnreadable := bus.SplitLegacy(res.Open, bus.LegacyLine{Before: utcDay(now)})
 		old := oldNotes + oldUnreadable
 		if old > 0 {
-			// THE SUGGESTED LINE IS AN INSTANT, and it used to be tomorrow's DATE. A date
+			// THE SUGGESTED LINE IS AN INSTANT, NOT TOMORROW'S DATE. A date
 			// is midnight at its START, so tomorrow's date is a moment AFTER everything
 			// written today: the line this guard handed a stuck reader made the whole switch
-			// day legacy, and the notes they were being refused for carrying were joined by
+			// day legacy, and the notes they are refused for carrying are joined by
 			// every note anybody sent while they were reading the refusal. Drawn at an
 			// instant, everything on the bus at that moment is history and everything after
 			// it is news, which is the sentence this message actually makes.
