@@ -35,9 +35,7 @@ var selfTalkAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|run|c.Verdict":                   "a selftalk.Verdict, one of the two constants package selftalk declares; two sites",
-		"main.go|run|selftalk.RuleDocumentBanner": "a constant in package selftalk",
-		"main.go|run|i.Shape":                     "one of the four Shape constants package selftalk declares",
+		"main.go|lines|selftalk.RuleDocumentBanner": "a constant in package selftalk",
 	},
 	Imports: []string{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
@@ -49,7 +47,14 @@ var selfTalkAudit = audit.Config{
 		// its own, and returns a STRING that this package prints -- rendered field by
 		// field through oneline.Field before it is returned.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
-		`"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"regexp"`, `"strings"`,
+		`"errors"`, `"flag"`, `"fmt"`, `"io"`, `"io/fs"`, `"os"`, `"slices"`, `"strings"`,
+		// bytes compares a page on disk with the one built in; embed holds the example pages;
+		// path and path/filepath join names. None of them writes to a stream.
+		`"bytes"`, `"embed"`, `"path"`, `"path/filepath"`,
+		// tool renders the --json form: Out.Render(stdout, true) marshals one value with
+		// encoding/json, which escapes every control character, so a JSON line is one line
+		// whatever a file name or a sentence holds. Its typed-line rendering is not used here.
+		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
 		// bounded prints the capped finding listings and the one MORE line that stands
 		// for what they did not print. Every line reaching it is rendered by a
 		// fmt.Sprintf in THIS package, which the classifier walks like any other print
@@ -58,13 +63,6 @@ var selfTalkAudit = audit.Config{
 		// to nothing else.
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/selftalk"`,
-		// plainest.go (nova-tools #1468, third fix attempt) compiles the three
-		// plainest first-person absolutes as regexps and matches them against the
-		// flattened text. It returns Claims and Installations -- the same types
-		// selftalk exports -- so the run loop merges them with selftalk.Scan and
-		// ScanInstallation; the audit classifier walks the loop's print sites, which
-		// are already on the list above, and never sees a print site in plainest.go
-		// itself.
 	},
 	MinClassified: 10,
 }

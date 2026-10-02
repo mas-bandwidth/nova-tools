@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -21,33 +23,21 @@ func TestSlotsTakeRefusesASchemaKindWhenTheShareFitsOnlyARead(t *testing.T) {
 	rc := run([]string{"slots", "take", "--store", store, "--owner", "swarm-space",
 		"--n", "1", "--for", "10m", "--label", "schema-card", "--kind", "schema"},
 		strings.NewReader(""), &out, &errb, time.Now())
-	if rc != 2 {
-		t.Fatalf("schema take on share 3 exits 2, got %d:\n%s%s", rc, out.String(), errb.String())
-	}
-	if !strings.Contains(errb.String(), "SLOTS REFUSED owner=swarm-space want=4 held=0 share=3") {
-		t.Fatalf("the refusal names want=4 against share 3:\n%s", errb.String())
-	}
+	require.Equal(t, 2, rc, "schema take on share 3 exits 2, got %d:\n%s%s", rc, out.String(), errb.String())
+	require.Contains(t, errb.String(), "SLOTS REFUSED owner=swarm-space want=4 held=0 share=3", "the refusal names want=4 against share 3:\n%s", errb.String())
 	out.Reset()
 	errb.Reset()
 	rc = run([]string{"slots", "list", "--store", store}, strings.NewReader(""), &out, &errb, time.Now())
-	if rc != 0 {
-		t.Fatalf("list after a refused take: %d\n%s%s", rc, out.String(), errb.String())
-	}
-	if strings.Contains(out.String(), "SLOT ") {
-		t.Fatalf("a refused take must publish no lease:\n%s", out.String())
-	}
+	require.Equal(t, 0, rc, "list after a refused take: %d\n%s%s", rc, out.String(), errb.String())
+	require.NotContains(t, out.String(), "SLOT ", "a refused take must publish no lease:\n%s", out.String())
 
 	out.Reset()
 	errb.Reset()
 	rc = run([]string{"slots", "take", "--store", store, "--owner", "swarm-space",
 		"--n", "1", "--for", "10m", "--label", "read-card", "--kind", "read"},
 		strings.NewReader(""), &out, &errb, time.Now())
-	if rc != 0 {
-		t.Fatalf("a read take on share 3 is granted, got %d:\n%s%s", rc, out.String(), errb.String())
-	}
-	if !strings.Contains(out.String(), "SLOTS OK owner=swarm-space granted=1 held=1 share=3") {
-		t.Fatalf("read take grants one unit:\n%s", out.String())
-	}
+	require.Equal(t, 0, rc, "a read take on share 3 is granted, got %d:\n%s%s", rc, out.String(), errb.String())
+	require.Contains(t, out.String(), "SLOTS OK owner=swarm-space granted=1 held=1 share=3", "read take grants one unit:\n%s", out.String())
 }
 
 func TestSlotsListMarksADeadHolderStrandedWithItsLabel(t *testing.T) {
@@ -58,19 +48,11 @@ func TestSlotsListMarksADeadHolderStrandedWithItsLabel(t *testing.T) {
 		t.Skip("dead pid probe is alive here")
 	}
 	store := slotShares(t, "capacity\t1\nreserve\t0\nalice\t1\n")
-	if err := swarm.MakeSlotLease(store, "dead-1", "alice", deadPid, "card-schema-7", time.Now().UTC().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, swarm.MakeSlotLease(store, "dead-1", "alice", deadPid, "card-schema-7", time.Now().UTC().Add(time.Hour)))
 	var out, errb bytes.Buffer
 	rc := run([]string{"slots", "list", "--store", store}, strings.NewReader(""), &out, &errb, time.Now())
-	if rc != 0 {
-		t.Fatalf("list: %d\n%s%s", rc, out.String(), errb.String())
-	}
+	require.Equal(t, 0, rc, "list: %d\n%s%s", rc, out.String(), errb.String())
 	line := out.String()
-	if !strings.Contains(line, "stranded=1") {
-		t.Fatalf("list marks the dead holder stranded, got:\n%s", line)
-	}
-	if !strings.Contains(line, "label=card-schema-7") {
-		t.Fatalf("stranded lease carries its label, got:\n%s", line)
-	}
+	require.Contains(t, line, "stranded=1", "list marks the dead holder stranded, got:\n%s", line)
+	require.Contains(t, line, "label=card-schema-7", "stranded lease carries its label, got:\n%s", line)
 }

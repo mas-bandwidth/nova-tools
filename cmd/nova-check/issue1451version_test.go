@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Defect #1451, the site PR #1755 disclosed as owed: PR #1755 fixed every
@@ -20,18 +23,13 @@ func TestVersionsStrayArgumentRefusalNamesTheDoor(t *testing.T) {
 	const door = "; run: nova-check help"
 
 	exit, _, stderr := runCheck(t, "version", "extra")
-	if exit != 2 {
-		t.Fatalf("version extra: exit %d, want 2; stderr: %q", exit, stderr)
-	}
+	require.EqualValues(t, 2, exit, "version extra: exit %d, want 2; stderr: %q", exit, stderr)
 
 	line := strings.TrimRight(stderr, "\n")
-	if !strings.Contains(line, "takes no flags and no arguments") {
-		t.Errorf("refusal no longer says what the input wants: %q", line)
-	}
-	if !strings.HasSuffix(line, door) {
-		t.Errorf("refusal line does not END in the door: %q", line)
-	}
-	if got := strings.Count(line, door); got != 1 {
-		t.Errorf("the door appears %d times, want exactly 1: %q", got, line)
+	assert.Contains(t, line, "takes no flags and no arguments", "refusal no longer says what the input wants: %q", line)
+	assert.True(t, strings.HasSuffix(line, door), "refusal line does not END in the door: %q", line)
+	{
+		got := strings.Count(line, door)
+		assert.EqualValues(t, 1, got, "the door appears %d times, want exactly 1: %q", got, line)
 	}
 }

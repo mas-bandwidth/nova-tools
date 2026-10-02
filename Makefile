@@ -12,7 +12,7 @@ GO ?= go
 PKGS ?= ./...
 # CL_PKGS IS THE LIVING TREE, read the way ci.yml's test-packages job reads it:
 # `go run ./tools/ci select-packages --all` lists every package under cmd/,
-# internal/ and tools/ and drops the ones deprecated/PACKAGES names (a
+# internal/ and tools/ and drops the ones internal/pkgselect/DEPRECATED names (a
 # deprecated package is never tested), or fails loudly when `go list` fails; it
 # never selects nothing in silence. Recursive (`=`), and the `test` and
 # `test-functional` lines that take it are recursive too, so the go list runs
@@ -77,7 +77,7 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
@@ -89,6 +89,9 @@ help:
 	@echo "make fmt         report files that are not gofmt-clean"
 	@echo "make vet         go vet PKGS (default ./...)"
 	@echo "make vet-functional go vet -tags functional PKGS (the redis-backed test files compiled too)"
+	@echo "make vet-slow go vet -tags slow PKGS (the nightly tier's test files compiled on every change)"
+	@echo "make vet-shippedsmoke go vet -tags shippedsmoke ./internal/shippedsmoke (the shipped binary's smoke tests compiled on every change)"
+	@echo "make vet-novadisk GOOS=darwin go vet -tags novadisk ./cmd/nova-sandbox (the one real-disk e2e test compiled on every change)"
 	@echo "make vet-laws    build tools/analyzers/cmd/vetlaw and vet ./cmd/... with it"
 	@echo "make vet-windows GOOS=windows go vet ./... (the one Windows guard on the CL path)"
 	@echo "make lint        fmt and vet"
@@ -146,7 +149,6 @@ new-verb:
 build:
 	$(GO) build ./...
 
-# deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
 fmt:
 	@$(GO) run ./tools/ci gofmt
 
@@ -162,6 +164,26 @@ vet:
 # internal/ci's TestRedisBackedTestsCarryTheFunctionalTag keeps the tag on.
 vet-functional:
 	$(GO) vet -tags functional $(PKGS)
+
+# THE SLOW TIER (#516), the mirror of vet-functional: a test behind `//go:build
+# slow` is compiled by no plain `go vet` and runs only in the nightly job, so a
+# PR that breaks one stayed green until the morning. vet-slow compiles them on
+# every change; internal/ci's TestEveryTestBuildTagIsVettedByCIVetSteps keeps
+# the tag on.
+vet-slow:
+	$(GO) vet -tags slow $(PKGS)
+
+# The shippedsmoke and novadisk tags are the two opt-in tags left, both compiled
+# only by a scheduled job: shippedsmoke by certification.yml, novadisk (a darwin
+# file, `//go:build darwin && novadisk`) by nightly-slow.yml on a mac. vet-shippedsmoke
+# compiles the one package on every change; vet-novadisk is a GOOS=darwin cross-vet
+# like vet-windows, because the file it guards is darwin-only and the lint job is
+# linux.
+vet-shippedsmoke:
+	$(GO) vet -tags shippedsmoke ./internal/shippedsmoke
+
+vet-novadisk:
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) vet -tags novadisk ./cmd/nova-sandbox
 
 # THE VERB-LAW GUARD, its own target rather than folded into `vet` because
 # `vet` is also the SHARDED per-package leg (ci.yml's test-packages job calls
@@ -197,7 +219,7 @@ vet-laws:
 vet-windows:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) vet ./...
 
-lint: fmt vet vet-functional vet-laws
+lint: fmt vet vet-functional vet-slow vet-laws
 
 # preflight is the standard check for swarm cards and developers (#2498 S4):
 # gofmt + go vet + go test -count=1, run by tools/preflight. The tool is built into
@@ -233,7 +255,8 @@ preflight:
 # 2026-09-26). What is ENFORCED on every leg is static: no unit test waits on
 # the wall clock (internal/ci: TestNoUnitTestWaitsOnTheWallClock), and a test
 # skipped with the SLEEPS marker that internal/ci/sleeps-skips_allowlist.txt does
-# not name is a CI-SLEEPS line and exit 2 here, whatever SLOWTESTS_ENFORCE says.
+# not name is a CI-SLEEPS line (slowtests exits 1) and fails the target here,
+# whatever SLOWTESTS_ENFORCE says.
 # The wall times are MEASUREMENTS: slowtests prints every CI-SLOW line and a
 # CI-LOAD line (the host's load, never read by the verdict) and exits 0 on
 # them, unless SLOWTESTS_ENFORCE=1 passes --enforce, which one caller does: the
@@ -358,9 +381,9 @@ test-prewarm-done:
 	$(GO) test -count=1 ./tools/testmanifest
 	$(GO) run ./tools/testmanifest --go "$(GO)" --package ./internal/swarm -- TestASDFMappingReusesCompiledOutputAcrossFreshJobClone TestPrewarmFailedRerunInvalidatesPriorReceipt TestPrewarmGitChildrenDropSecrets
 
-# The Lisp tier. nova-work, the one Lisp system, is PARKED under
-# deprecated/lisp/nova-work (Glenn 2026-09-27: deprecated code is not tested, not
-# built and never blocks CI), so lisp/ holds no system: test-lisp runs CI's
+# The Lisp tier. The old nova-work's Lisp kernel, the one Lisp system, lives in
+# the repository nova-work-old, for reference only (the deprecated/
+# folder that parked it was removed on 2026-10-01), so lisp/ holds no system: test-lisp runs CI's
 # verb (tools/ci lisp-test), which prints "nothing to test" and exits 0, and
 # compile-lisp (the swarm prewarm's lisp phase) prints "nothing to compile".
 # verify-roadmap and measure-roadmap ran cmd/nova-work's verification verb and went with it.
@@ -369,7 +392,7 @@ test-lisp:
 
 compile-lisp:
 	@if [ -e lisp ]; then echo "compile-lisp: lisp/ exists and no compile step names it; write one" >&2; exit 1; fi
-	@echo "compile-lisp: nothing to compile: lisp/ holds no system (nova-work is parked under deprecated/lisp/nova-work)"
+	@echo "compile-lisp: nothing to compile: lisp/ holds no system (the old nova-work kernel lives in the nova-work-old repository)"
 
 # What CI runs on a pull request: the self-hosted lint job, the sharded test
 # job, the friend sequences and the lisp tier (test-lisp; nothing to test while

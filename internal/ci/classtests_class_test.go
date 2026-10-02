@@ -577,6 +577,21 @@ func declaredRowsAdded(diff string) map[string]string {
 	return rows
 }
 
+// distinctRows drops a row whose text an earlier row repeats. The log merges by
+// union (.gitattributes), so two changes that each add the same row leave it
+// twice; a row is read once, in any order.
+func distinctRows(rows []allowlist.Row) []allowlist.Row {
+	seen := map[string]bool{}
+	var out []allowlist.Row
+	for _, row := range rows {
+		if !seen[row.Text] {
+			seen[row.Text] = true
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 // findings are the rule's red lines: a guarded file deleted with no row of
 // this change declaring it, and a row declaring a deletion this change does
 // not make; on a main run, the second-parent comparison's own (Beyond), and
@@ -636,8 +651,8 @@ func (m *mergeDeletions) ordinaryFindings() []string {
 func TestNoMergeDeletesATestFileUndeclared(t *testing.T) {
 	t.Parallel()
 
-	log := loadAllowlist(t, "testdata/deleted-tests.txt", allowlist.Options{})
-	for _, row := range log.Rows() {
+	log := loadAllowlist(t, "testdata/deleted-tests.txt", allowlist.Options{RepeatedKeys: true})
+	for _, row := range distinctRows(log.Rows()) {
 		if _, why, _ := strings.Cut(row.Text, " "); strings.TrimSpace(why) == "" {
 			t.Errorf("%s: %q carries no why", deletedTestsLogPath, row.Text)
 		}

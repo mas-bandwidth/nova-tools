@@ -3,11 +3,12 @@ package store
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The sprint done stops its machine (errata 3 amendment 6; sprint.TickDone):
@@ -27,9 +28,7 @@ func (h *harness) landThrough(stream string, ids ...string) {
 func (h *harness) machineRecord() Machine {
 	h.t.Helper()
 	m, _, err := h.st.Machine(h.ctx)
-	if err != nil {
-		h.t.Fatal(err)
-	}
+	require.NoError(h.t, err)
 	return m
 }
 
@@ -37,9 +36,7 @@ func (h *harness) machineRecord() Machine {
 func (h *harness) viewState() string {
 	h.t.Helper()
 	v, ok := h.m.View(h.st.Names.View())
-	if !ok {
-		h.t.Fatal("no view")
-	}
+	require.True(h.t, ok, "no view")
 	return v.State
 }
 
@@ -71,9 +68,7 @@ func TestADoneSprintStopsItsMachineAndSaysSoToTheCoordinator(t *testing.T) {
 		t.Fatalf("no STOPPED span opened at the done: %+v", m.Spans)
 	}
 	notes, _, err := h.m.NotesSince(h.ctx, "", 100000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var done []sprint.Note
 	for _, n := range notes {
 		if n.Type == sprint.NSprintDone {
@@ -83,20 +78,16 @@ func TestADoneSprintStopsItsMachineAndSaysSoToTheCoordinator(t *testing.T) {
 	if len(done) != 1 || done[0].Kind != sprint.Happened || done[0].To != h.st.Actor || done[0].What != what || done[0].Hint != sprint.DoneHint {
 		t.Fatalf("the notes stream: %+v", done)
 	}
-	if open := h.openOf(sprint.NSprintDone); len(open) != 0 {
-		t.Fatalf("the sprint done opened a judgment: %+v", open)
-	}
+	open := h.openOf(sprint.NSprintDone)
+	require.Empty(t, open, "the sprint done opened a judgment: %+v", open)
 	v, err := h.st.Inbox(h.ctx, time.Minute, time.Hour, 10000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(v.Groups) == 0 || v.Groups[0].Type != sprint.NSprintDone || v.Groups[0].To != h.st.Actor || v.Groups[0].What != what {
 		t.Fatalf("the inbox does not show the sprint done first: %+v", v.Groups)
 	}
 	b, err := os.ReadFile(route)
-	if err != nil || !strings.Contains(string(b), "the sprint is done: "+what+"\n"+sprint.DoneHint) {
-		t.Fatalf("the goal route: %q %v", b, err)
-	}
+	require.NoError(t, err, "the goal route: %q %v", b, err)
+	require.Contains(t, string(b), "the sprint is done: "+what+"\n"+sprint.DoneHint, "the goal route: %q %v", b, err)
 	// STOPPED: the next ticks say nothing more.
 	h.tick(time.Minute)
 	if res := h.machine(); res.Done != "" || h.written(sprint.NSprintDone) != 1 {
@@ -135,14 +126,11 @@ func TestAStartOfADoneSprintStopsAgainAtTheFirstTick(t *testing.T) {
 	h.setup(1)
 	h.startMachine()
 	h.landThrough("s1", "s1-1")
-	if res := h.machine(); res.Done == "" {
-		t.Fatalf("not done: %+v", res)
-	}
+	res := h.machine()
+	require.NotEmpty(t, res.Done, "not done: %+v", res)
 	h.tick(time.Second)
 	h.startMachine()
-	if !h.machineRecord().Running() {
-		t.Fatal("start did not start")
-	}
+	require.True(t, h.machineRecord().Running(), "start did not start")
 	if res := h.machine(); res.Done != "1 landed, 0 dropped, took 1s from the first start" || !h.machineRecord().Done() {
 		t.Fatalf("a start of a done sprint: %+v", res)
 	}
@@ -157,8 +145,7 @@ func TestTheFirstStartIsTheEndOfTheFirstSpanAfterTheEpochBegan(t *testing.T) {
 		after time.Time
 		want  time.Time
 	}{{time.Time{}, at(1)}, {at(1), at(3)}, {at(5), at(6)}, {at(6), time.Time{}}} {
-		if got := m.FirstStart(c.after); !got.Equal(c.want) {
-			t.Errorf("FirstStart(%v) = %v, want %v", c.after, got, c.want)
-		}
+		got := m.FirstStart(c.after)
+		assert.True(t, got.Equal(c.want), "FirstStart(%v) = %v, want %v", c.after, got, c.want)
 	}
 }

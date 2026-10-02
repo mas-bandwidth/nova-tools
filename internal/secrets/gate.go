@@ -29,14 +29,9 @@ type GateInput struct {
 // "GATE REFUSE rule=<n> file=<f>: <why>" at exit 2.
 func RunGate(in GateInput) (string, int) {
 	storeDir, base, head := in.StoreDir, in.Base, in.Head
-	if storeDir == "" {
-		return "SECRETS REFUSED: missing --store <dir>", 2
-	}
-	if base == "" {
-		return "SECRETS REFUSED: missing --base <git ref>", 2
-	}
-	if head == "" {
-		return "SECRETS REFUSED: missing --head <git ref>", 2
+	// The flags only: the gate judges any working copy, a store with no seat yet included.
+	if err := preflight("", need{storeDir, "--store <dir>", false}, need{base, "--base <git ref>", false}, need{head, "--head <git ref>", false}); err != nil {
+		return "SECRETS REFUSED: " + oneline.WithRemedy(err.Error(), "nova-secrets gate -h"), 2
 	}
 	// The two refs become commits before anything reads them. A ref is handed to git as an
 	// argument, and one beginning with "-" is read by git as an OPTION: --head=--diff-filter=U
@@ -335,7 +330,7 @@ func gateResolveCommit(storeDir, flagName, ref string) (string, error) {
 	if strings.HasPrefix(ref, "-") {
 		return "", fmt.Errorf("%s %s begins with \"-\", the shape of an option, not a git ref", flagName, oneline.Field(ref))
 	}
-	res, err := gitrun.Run(context.Background(), gitrun.Options{C: storeDir}, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
+	res, err := gitrun.Run(context.Background(), storeGit(storeDir), "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
 	sha := strings.TrimSpace(string(res.Stdout))
 	if err != nil || sha == "" || strings.HasPrefix(sha, "-") {
 		return "", fmt.Errorf("%s %s does not name a commit in the store %s", flagName, oneline.Field(ref), oneline.Field(storeDir))
@@ -345,7 +340,7 @@ func gateResolveCommit(storeDir, flagName, ref string) (string, error) {
 
 // gitChangedFiles lists the files that differ between base and head.
 func gitChangedFiles(storeDir, base, head string) ([]string, error) {
-	res, err := gitrun.Run(context.Background(), gitrun.Options{C: storeDir}, "diff", "--name-only", "--end-of-options", base, head, "--")
+	res, err := gitrun.Run(context.Background(), storeGit(storeDir), "diff", "--name-only", "--end-of-options", base, head, "--")
 	if err != nil {
 		return nil, fmt.Errorf("git diff %s %s failed: %v", base, head, err)
 	}
@@ -354,7 +349,7 @@ func gitChangedFiles(storeDir, base, head string) ([]string, error) {
 
 // gitTreeFiles lists every path in the tree at ref.
 func gitTreeFiles(storeDir, ref string) ([]string, error) {
-	res, err := gitrun.Run(context.Background(), gitrun.Options{C: storeDir}, "ls-tree", "-r", "--name-only", "--end-of-options", ref)
+	res, err := gitrun.Run(context.Background(), storeGit(storeDir), "ls-tree", "-r", "--name-only", "--end-of-options", ref)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +360,7 @@ func gitTreeFiles(storeDir, ref string) ([]string, error) {
 
 // gitShowFile reads one file's bytes out of the tree at ref.
 func gitShowFile(storeDir, ref, path string) ([]byte, error) {
-	res, err := gitrun.Run(context.Background(), gitrun.Options{C: storeDir}, "show", "--end-of-options", ref+":"+path)
+	res, err := gitrun.Run(context.Background(), storeGit(storeDir), "show", "--end-of-options", ref+":"+path)
 	return res.Stdout, err
 }
 

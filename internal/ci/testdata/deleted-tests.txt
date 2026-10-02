@@ -1185,6 +1185,34 @@ internal/tset/zguard_functional_test.go internal/tset is deleted: the parked Lay
 tools/sprintsize/tset_test.go tools/sprintsize's --tset-* size run is deleted with internal/tset; main.go's size run of the present build stays with main_test.go
 internal/ci/failed_test.go internal/ci/failed.go and failed_forge.go (the `nova-ci failed` job-log reader) are deleted: no cmd, tool or workflow called them; nova-ci has no failed verb
 internal/fleet/certified_test.go Registry.CertifiedBenchNames and Machine.Certified are deleted (no verb derived a pool from the registry notes); the live certification record is fleet.ReadCertificates and fleet.Certified, tested in certify_test.go
+internal/sprint/rules_time_test.go the old event-driven rule path is deleted (rules_time.go, R11-R14, R17, R18 on the rule registry; no cmd reached it after the dirty tick); TickDeadlines and TickOverdue hold the living laws: store TestDeadlinesCountRunningTimeAndNotifyOnce, TestTwoLateReadsOfOnePrimaryAreTwoJudgments, TestARedealtCardAfterATakeIsLateNotTaken, TestAnOverdueMarkFollowsTheDueTime, TestAWaitedTickJudgmentComesBackAfterItsTime, the store remind tests. Dropped with the rules, no tick law: the replacement of a late card (R11) and behind (R18); the idle notice (the inbox's NStreamStale group stands in its place); the read limit that halves then parks; the inclusive due boundary (TestDueBoundaryIsInclusive: the tick's lateness is strict, d > limit in TickDeadlines)
+internal/sprint/rules_time_stopped_test.go R17 (the stopped look) on the deleted rule path; store TestAStoppedTickSaysItLooked, TestAStoppedMachineMovesNothing, TestNoPartBeginsAfterStop, TestAudit2ClosedClearLeavesTheMachineStoppedSilently, and TestHeldByTheTickWhileTheMachineIsStopped hold the stopped machine's laws
+internal/sprint/rules_held_test.go R16 as a registered rule over agenda keys is deleted with the rule path; held.go's Holder and TickCheck hold its law: held_test.go (TestHeldByTheNextTick, TestTheCheckWritesAStallOnceAndClosesItWhenItClears, TestAStallOffersOnlyEnabledDecisions and the rest). Not held: one note per cause for any number of cards (TestHeldOneNotePerCauseForAnyNumberOfCards); TickCheck writes one stall judgment per unrooted card; a follow-up card
+internal/sprint/rules_review_test.go R8, R9, R10 on the deleted rule path; TickAsk (TestTheTickAskGoesRoundTheReaders, TestTheAskTakesTheStreamsInTurnFromItsOwnIndex, store TestTheTickAsksTwoReadersAndSaysWhenItCannot, TestCannotAskIsWrittenOncePerPrimary), TickAccept (tick_laws_test.go TestTheTickDoesNotAcceptAReturnedPrimaryOnItsStandingReads, TestTheTickDoesNotAcceptAPrimaryWhoseCIIsRedAtItsHead, TestAnAcceptablePrimaryTheTickHoldsIsReadyToAccept; store tick_laws_test.go TestTheMachineDoesNotAcceptAReturnedPrimaryAgain, TestTheMachineDoesNotAcceptAPrimaryWhoseCIIsRed, TestReturnedPrimariesStayHeldThroughMoreReads, TestALateCIResultForAnOlderHeadKeepsTheHold; store TestAReadOnARunningMachineOpensNoReadyToAccept, TestAMergeBeforeThePumpSeesTheQueuedAccept) and the coordinator's Rework (TestReworkOfNoNamedCardTakesReviewAndTheBoundedReadyCards, TestTheReworksOfFailedWorkGoRoundTheFleet) hold the laws
+internal/sprint/rules_position_test.go R3, R4, R5, R15, R19 on the deleted rule path; TickResolve (TestTheTicksResolveOverAManyCardSprint, TestAChainAndADiamondResolveInOrder, store TestTheTickResolvesEveryWaiterOfOneNeedPastTheBound, TestMissingNeedJudgmentsAllInOneTick), sentinels (sentinel_test.go, store TestTheTickStopsAtASentinelUntilItIsReleased), TickResume (store TestTheTickResumesACrossStopWhenTheCardLands) and TickDone (sprint_done_needs_test.go, store done_stop_test.go) hold the laws; R19's pull back is no part of the tick
+internal/sprint/rules_position_read_test.go the read plans of the deleted position rules; the tick plans on the whole snapshot the twin reads (store twin_test.go)
+internal/sprint/rules_position_twin_test.go the twin that compared the deleted position rules with the steps; the steps keep their own tests
+internal/sprint/rules_fleet_test.go R1, R2, R6, R7 on the deleted rule path; TickPresence (store TestASilentMemberGoesDownAndItsCardsAreDealt, TestAnUnknownMachineBeatingIsToldOnce; TestADownMembersCardsGoRoundTheFleet), TickDeal (width_test.go, deal_turns_test.go, TestTheTickDealGoesRoundTheFleet, store TestNoMemberUpIsOneJudgmentUntilAMemberIsUp) and TickLevel (store TestTheTickLevelsUnevenQueues, TestTheLevelGoesRoundTheFleet) hold the laws
+internal/sprint/rules_fleet_pin_test.go the read plans and cell counts of the deleted fleet rules; the deal, down and level laws are held as for rules_fleet_test.go, and the redeal bound, counted over ended takes only, by tick_laws_test.go TestTheTickCountsARedealOnlyForATakeThatEnded, TestTheTickRetiresACardOnlyWhenATakeEndsAtItsBound, TestTheTickLevelKeepsRedealsAndTheUntakenClock and store tick_laws_test.go TestMembersFlappingNeverRetireAReadyCard, TestWithdrawalsWithoutATakeKeepTheCountAndTheFourthEndedTakeRetires, and store log_test.go TestTheRedealBoundEndsTheTakeAndAbandonLoop
+internal/sprint/rules_fleet_twin_test.go the twin that compared the deleted fleet rules with the steps; the steps keep their own tests
+internal/sprint/events_test.go the log line read as an event for the deleted ingest; the log's own law is store TestTheLogHoldsEveryMoveAndReplaysToTheTables, and the decided line of an ack is store ack_line_test.go
+internal/sprint/indexdef_test.go the store-side indexes the deleted rules' partial reads used; no reader is left, and the tick plans from the snapshot's own index (core_test.go)
+internal/sprint/indexops_test.go the store-side index operations of the deleted rule path; no reader is left
+internal/sprint/indexops_property_test.go the property tests of the deleted index operations; no reader is left
+internal/sprint/ingest_test.go log lines turned into agenda keys for the deleted rule registry; the dirty tick's queues hold the order (store TestTheTickUpdatesTheTablesInTheOwnersOrder, TestAMutuallyDirtyingTickSettles)
+internal/sprint/judgments_boundary_test.go the deleted judgments table (Answerable, Printed) at its boundaries; the tick's decisions are decisions_test.go (TestEveryDecisionPrintsItsCommands, TestAckAnswersOnlyTheTypesThatListIt, TestAReaderCountsOnceWhereItsCardIs); the helpers of TestReworkOfNoNamedCardTakesReviewAndTheBoundedReadyCards moved to review_judgment_test.go
+internal/sprint/judgments_dropping_test.go Printed's leaving out what DROPPING refuses, deleted with judgments.go; no living caller printed it
+internal/sprint/judgments_table_test.go the deleted table 2.2 (Judgments); the tick's kept conditions are pinned by TestTickKeptList, moved to decisions_test.go over TickDecisions and TickKept
+internal/sprint/partial_fields_test.go the partial-load field guards are deleted (no snapshot is loaded from a read plan); every snapshot is whole
+internal/sprint/partial_guard_test.go the partial-load read guards are deleted; TestNoExportedFieldOfATableGivesItsCardsOrRows moved to core_test.go
+internal/sprint/partial_stub_test.go the stubs of the deleted partial loads
+internal/sprint/partial_test.go LoadPartial and its loaded-cell bookkeeping are deleted; every snapshot is whole
+internal/sprint/plan_types_test.go RulePlan, ReadAnswer and the read types of the deleted rule path
+internal/sprint/readplan_test.go read-plan costs and splits of the deleted rule path; the tick's bounds are refmodel bounds_test.go and store bounds_test.go
+internal/sprint/rule_test.go the deleted rule registry's priorities; the tick's order is TickTables, pinned by store TestTheTickUpdatesTheTablesInTheOwnersOrder
+internal/sprint/steps_remove_test.go Remove had no verb (deadcode lists it); the stream's drop and clear keep their own tests
+internal/sprint/needall_test.go NeedAll guarded the Cards scan of a snapshot loaded from a read plan and goes with the partial loads; every snapshot is whole, so Cards answers every card (the dependency-needs tests, needs_test.go and cycle_test.go, never went through it)
+internal/sprint/store/ingest_lines_test.go its test moves to store/ack_line_test.go without the deleted ingest: the decided line of an ack names its subjects
 internal/ci/testdata/discarded_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
 internal/ci/testdata/generality_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
 internal/ci/testdata/generality_text_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
@@ -1192,3 +1220,97 @@ internal/ci/testdata/okonfailure_allowlist.txt the zero-row ledger uses an empty
 internal/ci/testdata/remedy_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
 internal/ci/testdata/scripthide_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
 internal/ci/testdata/testify_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
+internal/sprint/route_test.go the weighted draw's salt-parity test goes with the weighted draw and its mixer: the deal takes a tier's route by a rolling index modulo its array, pinned in internal/sprint/store/route_test.go
+cmd/nova-swarm/recovery_test.go no test was left in it: its twelve helpers were reached by nothing (deadcode -test, tags functional,slow, darwin, linux and windows); waitForFile, its one live helper, moves beside its one user, native_idle_test.go
+internal/ghevent/event_test.go the webhook decoder it drove (ghevent.Decode, Accept) is gone: its last command caller, internal/nsprint/webhook, went in #4866; Publish and Fields keep their tests in internal/cireceipt
+internal/ghevent/disposition_text_test.go the webhook decoder it drove (ghevent.Decode) is gone with event_test.go; the DISPOSITION parser keeps its tests in internal/typedrec and internal/textbody
+internal/ci/testdata/generality-text/internal/ghevent/testdata.txt its four rows named the decoder's fixtures under internal/ghevent/testdata, deleted with the decoder; no row was left
+internal/ci/testdata/testify/internal/ghevent.txt its one row counted the bare assertions in the decoder's tests, deleted with the decoder; internal/ghevent has no test file left
+internal/fleet/parallel_test.go its four tests tested only RunBenchesConcurrently, which no command calls (deadcode, tags functional,slow,perf,swarmtest, darwin and linux); both go
+internal/nsprint/store/census_test.go the census read (CensusSet, CensusKeys, RunCensus) has no verb left (the old nova-sprint census went with deprecated/); no command calls it, so it and its tests go
+internal/nsprint/store/census_cards_test.go RefuseCardCensus and CardCensusRequest have no verb left; no command calls them, so they and their tests go
+internal/nsprint/store/census_functional_test.go the census read it drove has no verb left; no command calls it, so it and its tests go
+internal/nsprint/store/reach_test.go its one test drove OpenProbe, Reach and Unreachable, which no command calls (nova-sprint doctor no longer opens through them); they go with it, and TestOpenSendsNoCommand3277 still holds that Open sends nothing
+cmd/nova-ci/issue2255_test.go no test was left in it: its one helper, makeFlakes, was reached by nothing (deadcode -test, tags functional,slow,perf,swarmtest,shippedsmoke, darwin, linux and windows)
+internal/bounded/issue2209_test.go it tested only bounded.Receipt, which goes with it: the receipt was for the nova-test verb, now under deprecated/, and nothing living builds one
+internal/log/slog_test.go it tested only log.LongVerb, which goes with it: the long-running verbs it was built for (nova-pulse harvest, the pull worker) are gone and nothing living builds one; docs/SPEC-LOGS.md drops its part and test 10
+internal/swarm/cardbudget_functional_test.go its one test drove the pool route's harness.log turn count and RESULT.md PROMPT-DEFECT append (CountCardTurns, AppendPromptDefect), which no command reaches; the native route's CountCardTurnsIn and OverCardBudget keep their own tests
+internal/swarm/batch_helpers_test.go no test was left in it: its three card fixture helpers (itoa, writeCard, writeCards) were reached by nothing (deadcode -test, tags functional,swarmtest,slow, darwin, linux and windows)
+internal/swarm/benchpull_test.go no test was left in it: stepClock, its one type, was reached by nothing (deadcode -test, tags functional,swarmtest,slow, darwin, linux and windows)
+internal/swarm/slot_race_test.go its one test (skipped since #4221) drove the pool's slot files (OpenPool, Reserve, claimFree, Free), which no command reaches; the pool and its slot files are deleted
+internal/swarm/reap_test.go its tests drove ReapSlots and ReapAtTaskEnd, the pool's slot reaper, which no command reaches; both are deleted
+internal/swarm/prewarm_functional_test.go its one test drove CacheEnv, which no command reaches; native builds the child's cache environment itself, and cmd/nova-swarm native_test.go holds the private Lisp overlay it carries
+internal/swarm/f2_forged_exit_test.go its one test marshalled PidRecord, a record no command writes or reads; the type is deleted
+internal/swarm/d5_ratelimit_test.go its one test drove rateLimitedOutcome, the pool's finish-step 429 rewrite, which no command reaches; it is deleted
+internal/swarm/delta2_ratelimit_reap_test.go its one test drove rateLimitedOutcome and reapEnd, which no command reaches; both are deleted
+cmd/nova-swarm/fixture_guards_test.go its tests guarded the bench's add and run helpers, which drove the `add` and `run` verbs nova-swarm no longer has; the helpers and the slow tests that used them are deleted
+internal/swarm/benchsize_test.go its tests drove the bench-size doubling and launch headroom (SizeRoundHolds, MeasureWidthFromRounds, Headroom, PlanBenchLaunch), which no command reaches; they are deleted, Version8 stays
+internal/swarm/d13_refusals_test.go its one test drove CountRefusals and its refusal marks, the pool's refusals= diagnosis, which no command reaches; both are deleted
+internal/swarm/slot_holdings_test.go its one test drove SlotHoldings, the read a status verb printed, which no command reaches; it is deleted
+deprecated/cmd/nova-work/accept_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/ask_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/audit_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/configverbs_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/dagverbs_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/deadline_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/deps_set_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/events_log_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/evidenceverbs_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/firstrun_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/forestwrite_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/issue1696_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/issue2089_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/issue2090_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/issue2111_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/issue2331_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/issue2353_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/issue2762_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/main_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/next_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/proving_run_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/push_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/routeverbs_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/s8_snapshot_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/s8_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/set_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/setland_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/socketverbs_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/specverbs_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/verb_help_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/verification_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/cmd/nova-work/writeflags_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/coordinator_handover_spec_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/events_log_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/events_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/forestwriter_class_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/lispduplicate_class_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/lispkernel_class_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/lisptemppath_class_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/recovery_spec_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/scheduling_cost_spec_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/spec_work_gate_and_report_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/spec_work_rate_convergence_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/spec_work_tokens_join_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/spec_work_widening_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/work_kernel_dep_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ci/work_schema_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/docs/issue1594_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/docs/issue2065_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/docs/issue2080_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/docs/issue2190_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/docs/novaworknext_source_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/docs/spec_work_record_home_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/docs/worklang_amendment_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/friends/friends_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/ghcapture/adapter_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/landed/batch_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/landed/deepen_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/landed/landed_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/workclient/frame_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/workclient/workclient_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/workreconcile/importer_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/workreconcile/orchestrator_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/workreconcile/reconcile_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/workreconcile/sprint_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+deprecated/internal/workreconcile/types_test.go deprecated/ removed 2026-10-01; moved with its history to the nova-work-old repository (reference only)
+internal/ci/sizetable_test.go dead: its only helper readSizeTable had no caller; the size tables it read are checked nowhere else (dead-code pass 2026-10-01)

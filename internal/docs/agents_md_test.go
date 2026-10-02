@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,15 +71,11 @@ func TestStandardNamesEveryClassRule(t *testing.T) {
 func standardNamesEveryClassRule(t *testing.T) {
 	t.Helper()
 	page, err := os.ReadFile(standardPath)
-	if err != nil {
-		t.Fatalf("%s: %v; docs/STANDARD.md carries the ten rules and every class rule by name — it is not optional", standardPath, err)
-	}
+	require.NoError(t, err, "%s: %v; docs/STANDARD.md carries the ten rules and every class rule by name — it is not optional", standardPath, err)
 	body := string(page)
 
 	rules := classRuleNames(t)
-	if len(rules) == 0 {
-		t.Fatalf("%s: the %q section indexes no rule; this test is reading the wrong section", specCIPath, classTestSection)
-	}
+	require.NotEmpty(t, rules, "%s: the %q section indexes no rule; this test is reading the wrong section", specCIPath, classTestSection)
 
 	var missing []string
 	for _, name := range rules {
@@ -107,14 +104,10 @@ func TestAgentsPageStaysUnderTheLineCap(t *testing.T) {
 	t.Parallel()
 
 	page, err := os.ReadFile(agentsPath)
-	if err != nil {
-		t.Fatalf("%s: %v", agentsPath, err)
-	}
+	require.NoError(t, err, "%s: %v", agentsPath, err)
 	lines := strings.Count(strings.TrimRight(string(page), "\n"), "\n") + 1
-	if lines > agentsLineCap {
-		t.Errorf("%s is %d lines, over the cap of %d; a harness that reads this page reads it at the start of every session, so the cost is paid on every turn — move the detail into docs/ and leave the rule and the link here",
-			agentsPath, lines, agentsLineCap)
-	}
+	assert.LessOrEqual(t, lines, agentsLineCap, "%s is %d lines, over the cap of %d; a harness that reads this page reads it at the start of every session, so the cost is paid on every turn — move the detail into docs/ and leave the rule and the link here",
+		agentsPath, lines, agentsLineCap)
 }
 
 // TestNoPerHarnessFileStandsBesideAgents holds the ruling: AGENTS.md alone.
@@ -124,9 +117,7 @@ func TestNoPerHarnessFileStandsBesideAgents(t *testing.T) {
 	root := filepath.Join("..", "..")
 	for _, name := range harnessFiles {
 		found, err := findHarnessFiles(root, name)
-		if err != nil {
-			t.Fatalf("walking for %s: %v", name, err)
-		}
+		require.NoError(t, err, "walking for %s: %v", name, err)
 		for _, rel := range found {
 			t.Errorf("%s stands beside AGENTS.md; Glenn, 2026-09-18: AGENTS.md alone — no %s, no pointer file, no symlink. Claude Code reads AGENTS.md exactly when no %s stands, so even a one-line pointer holds every Claude session on a file that says nothing while the other harnesses read the real page — delete it, and move anything it carried into AGENTS.md or under docs/",
 				rel, name, name)
@@ -161,10 +152,6 @@ func findHarnessFiles(root, name string) ([]string, error) {
 		if d.IsDir() {
 			base := d.Name()
 			if base == ".git" || base == "testdata" || base == "node_modules" {
-				return filepath.SkipDir
-			}
-			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-			if rel == deprecatedDir {
 				return filepath.SkipDir
 			}
 			return nil

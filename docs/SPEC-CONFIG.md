@@ -35,15 +35,23 @@ configuration; what she would just know is runtime data in Redis. And the
 person coordinating is sprint-global configuration: the
 fleet row holds machines only (the store, the coordinator machine); the
 sprint row holds who coordinates; a friend's roles are what the deal reads.
+A loop's row is a process someone decides runs on one machine: its command,
+the seat and secret names it opens, and how it runs. A route's row is one way
+someone decides to run a model tier: the provider and model, the budget and
+deadline. A tier's row is the order someone decides the deal takes a tier's
+routes in.
 
 Where each field of this cut sits:
 
 | side | fields |
 | --- | --- |
-| machine (varies per machine) | `user`, `seat`, `slots`, `runners` |
+| machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines) |
 | friend (decided for her) | `slots`, `tiers`, `roles` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend) |
+| loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
+| route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of` |
+| tier (decided per tier) | `routes` |
 
 A kind is one registry: one table under schema `config`, one Go descriptor
 (`internal/config/kind.go`: `Kind`), one migration, one Redis writer. The
@@ -95,9 +103,17 @@ never an `ADD` or a `REMOVE`.
 | `list` | a comma list of words from the field's list, deduplicated and sorted | `text` |
 | `names` | a comma list of names (letters, digits, dashes), deduplicated and sorted | `text` |
 | `ref` | the name of a row of another kind; an optional one may be empty | `text` with a foreign key, `NULL` for empty |
+| `bool` | `true` or `false` (any spelling `strconv.ParseBool` reads, stored in that one) | `boolean` |
+| `keys` | a comma list of environment variable names (letters, digits, underscores, not starting with a digit), deduplicated and sorted: the names of secrets, never a value | `text` |
+| `argv` | a command as a JSON array of strings, the program first and not empty, no line break or NUL in a word, at most 64 words and 4096 bytes; stored in its compact JSON spelling | `text` |
 
 A value is canonicalised before it is stored (`Field.Canonical`), so a row
-compares equal to its Redis view field by field. `add` refuses a row missing
+compares equal to its Redis view field by field. A field add is not given is
+stored as its `Default` when the descriptor declares one, else its type's
+zero (0, false, empty). A rule across a row's fields that no one field can
+say is the kind's `Check`: `add` runs it on the new row before any store is
+opened (exit 2), and every store runs it on the row a `set` would leave and
+refuses the set (exit 1, `ErrInvalid`), writing nothing. `add` refuses a row missing
 a required field, a value outside its type, or a flag the kind has not, and
 names every problem in one line. `set` changes the fields named and no
 other. A `ref` field naming no row is refused (`--store space names no
@@ -118,8 +134,9 @@ nothing invented.
 | --- | --- | --- | --- | --- |
 | `user` | text | yes | the plays and the seals: `ssh <user>@<name>` | `machine:<m>` |
 | `seat` | text | yes | nova-secrets: the seat on that machine (studio, swarm-hulk, ...) | `machine:<m>` |
-| `slots` | int | yes | the deal: how many cards it may run; 0 runs none | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
+| `slots` | int | yes | apply: the machine ceiling the friends' desired slots must fit under (`ns_capacity_machine`, `ns_capacity_desired`); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
+| `width` | int | (0) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; 0 is no member | `machine:<m>` |
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are
 never typed and never columns: they come live from the machine's own
@@ -132,21 +149,23 @@ beat does not carry it, and `beat=none` alone for a machine with no
 beat. Nothing is stored, nothing is typed; what the beat carries is the
 beat writer's, not this tool's.
 
-**The sprint's width.** One ceiling per machine, shared by the friends and the
-sprint: the machine's `slots` is the ceiling, each friend's `slots` is charged
-to the machine her own beat reports (else the fleet row's coordinator machine,
-the charge apply makes), and what remains is the sprint member's width:
-`width = slots - the friend slots charged to the machine`. A machine with a
-width of 1 or more is a member of the sprint's fleet; a machine with `slots` 0,
-or whose friends take the whole ceiling, is not. No field holds it: the width
-is derived on every read, so the inventory is the one place a machine's
-capacity is written. It is a static share, the same on every read of the same rows: the CI legs
-running on the machine and every other child hold slots of the ceiling moment
-by moment, and they are taken off at the take, by a lease from the machine's
-one slot store, never in the width. `nova-config machine width <name>` prints it, reading the friends' beats from a
-Redis when a friend row carries slots (`Widths`, `internal/config/width.go`);
-with no friend beats on the store, every friend is charged to the coordinator
-machine.
+**The sprint's width.** The machine row's `width` is the sprint member's
+width, set directly (`nova-config machine set <m> --width <n>`; the owner,
+2026-10-01: "we should just be able to set width specifically in nova-config
+and it just works"). Nothing else takes part: not the machine's `slots`, not
+any friend row, not any beat, and no Redis is read. A machine with a width of
+1 or more is a member of the sprint's fleet; a machine with width 0 (the
+default) is not. It is a static share, the same on every read of the same row:
+the CI legs running on the machine and every other child are taken off at the
+take, by a lease from the machine's one slot store, never in the width.
+`nova-config machine width <name>` prints it (`Widths`,
+`internal/config/width.go`), and `nova-sprint fleet sync` moves it to the
+fleet table. Until migration 0012 the width was derived (the machine's `slots`
+less the `slots` of the friends charged to it: the machine a friend's beat
+named, else the fleet row's coordinator machine); 0012 filled `width` with
+the rule's beat-free part, every friend charged to the coordinator machine
+(never below 0) and every other machine its `slots`
+(docs/nova-config/README.md, "Migrating to a set width").
 
 **A machine's own name.** `nova-config machine self` prints the name this
 machine has in the inventory, so no name is typed on the machine it names:
@@ -174,7 +193,7 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `slots` | int | yes | the deal: her desired slots, under the ceiling of the machine she is charged to | `friend:<f>:desired` slots (`ns_capacity_desired`) |
+| `slots` | int | yes | apply: her desired slots, under the ceiling of the machine she is charged to; no machine's width | `friend:<f>:desired` slots (`ns_capacity_desired`) |
 | `tiers` | list: flash, frontier, pro | yes | the deal's tier filter (capacity.lua `filter_ok`): which she can do | `friend:<f>:desired` tiers (`ns_capacity_desired`) |
 | `roles` | list: builder, may-hold, reader | | the deal and the routing: what she may hold | `friend:<f>:roles` (`ns_friend_roles`) |
 
@@ -184,6 +203,95 @@ facts.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
+
+**`loop`** (`config.loops`): a supervised process on one machine. Every
+value is data in the row: the code names no machine, seat, secret or
+program. A secret is never part of the command; the loop names the secrets
+it needs in `keys`, and the unit opens them from `seat` on that machine
+(`nova-secrets exec --only <keys>`), so they reach the process's environment
+only. The plays render one unit per row from the Redis view apply writes.
+
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `machine` | ref machine | yes | the plays: the machine the unit is installed on | `loop:<l>` |
+| `argv` | argv | yes | the plays: the unit's command, word for word, with `width` as its `--width` | `loop:<l>` |
+| `seat` | text | | the plays: the nova-secrets seat on that machine the unit opens its secrets from; empty when it needs none | `loop:<l>` |
+| `keys` | keys | | the plays: the names of the secrets the unit opens from the seat; empty when none, and a non-empty list needs a seat | `loop:<l>` |
+| `every` | int | (0) | the plays: seconds between runs of a periodic unit | `loop:<l>` |
+| `keepalive` | bool | (false) | the plays: a long-running unit, restarted when it exits | `loop:<l>` |
+| `width` | int | (0) | the plays, through the inventory: above 0 the value of the command's `--width` (the argv's last one replaced, or appended when it has none, `LoopCommand`); 0 runs the argv as written. A reader loop's width; a work member's is its machine row's | `loop:<l>` |
+| `enabled` | bool | (true) | the plays: false writes the unit and does not start it | `loop:<l>` |
+
+The kind's `Check`: exactly one of `every` above 0 and `keepalive` true (a
+loop runs every n seconds or is kept alive), and `keys` only with a `seat`.
+The command a unit runs is `LoopCommand(argv, width)`: the inventory's
+`nova_loops` argv and `loop show`'s `command=`; migration 0013 set each
+existing row's `width` to the `--width` its argv carried, 0 when none, so the
+rule changed no command.
+The log path is derived from the name, `~/nova-bench/loops/<name>.log`
+(`LoopLog`), and is never typed. A machine a loop names cannot be removed
+(`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
+the machine's loops (`loops=<a,b>`, `-` for none).
+
+**`route`** (`config.routes`): one way to run a model tier, the provider
+and model a card of that tier runs on, its token budget and deadline. A
+tier has several routes so the deal spreads its cards across providers and
+models, in the order of the tier's array (the `tier` kind below); a card's
+`model:` header pins it instead. Frontier cards are never dealt from
+routes: they escalate to the coordinator, so `frontier` is no route's tier. Every value is data in the
+row: the code names no provider or model.
+
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `tier` | enum `flash`, `pro` | yes | the deal: the cards of this tier are dealt on it | `route:<r>` |
+| `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
+| `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
+| `tokens` | int | (0) | the deal: the token budget per card; 0 is unmetered and the deadline is the only stop | `route:<r>` |
+| `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
+| `enabled` | bool | (true) | the deal: false takes it out of the deal | `route:<r>` |
+| `price_input` | decimal | (empty) | a card's cost: USD per million uncached input tokens | `route:<r>` |
+| `price_cache_read` | decimal | (empty) | a card's cost: USD per million cached input tokens read | `route:<r>` |
+| `price_cache_write` | decimal | (empty) | a card's cost: USD per million tokens written to the cache | `route:<r>` |
+| `price_output` | decimal | (empty) | a card's cost: USD per million output tokens | `route:<r>` |
+| `reasoning_as_output` | bool | (true) | a card's cost: reasoning tokens billed at the output price; false when not billed apart | `route:<r>` |
+| `long_context` | int | (0) | a card's cost: the prompt size in tokens above which a request is priced long; 0 is none | `route:<r>` |
+| `price_input_long` | decimal | (empty) | a card's cost: USD per million input tokens above `long_context` | `route:<r>` |
+| `price_output_long` | decimal | (empty) | a card's cost: USD per million output tokens above `long_context` | `route:<r>` |
+| `price_request` | decimal | (empty) | a card's cost: USD per request | `route:<r>` |
+| `billing` | enum `metered`, `plan` | (metered) | a card's cost: paid per token, or by a subscription (the predicted cost is then the metered price of the tokens) | `route:<r>` |
+| `gateway_percent` | decimal | (empty) | a card's cost: the percent a gateway adds on top | `route:<r>` |
+| `price_source` | text | (empty) | a reader: where the prices were read (a URL) | `route:<r>` |
+| `price_as_of` | text, `YYYY-MM-DD` | (empty) | a reader: the date the prices were read | `route:<r>` |
+
+The price sheet is optional: the owner, 2026-10-01, "the pricing
+configuration saved per-tuple, so it is known and easily look upable". A
+decimal is digits with an optional fraction after one point, no sign and
+no exponent, kept as text in its one spelling (`internal/cardcost`,
+`Canonical`: `0.30` is `0.3`), never a float; empty is not set, never 0.
+
+The kind's `Check`: `provider` is one word with no slash or blank, `model`
+is not empty and has no blank, and `deadline` is above 0; `long_context`
+above 0 comes with both long prices, and a long price with a threshold;
+`price_as_of` is a date. A route names no row of another kind.
+
+**`tier`** (`config.tiers`): a model tier's route array (the owner,
+2026-10-01: "the per-tier provider/model array should be specified in
+nova-config"). It has two rows, `flash` and `pro`, made by migrate, so `set`
+takes them on a new store and there is nothing to add. The deal takes
+`routes[index mod len]` for each card of the tier, the index a uint64
+counter on the fleet table (`route_index_flash`, `route_index_pro`), moved
+by one a card dealt; a redeal moves past the entries it leaves out
+(internal/sprint/route.go, tla/RouteIndex.tla). A route named twice takes
+two turns: the array is how a route gets more of the tier's cards.
+
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `routes` | ordered comma list of route names, a name repeated as given | (empty) | the deal: the tier's array, read with the routes in one round trip; empty takes the tier's enabled routes in name order | `tier:<t>` |
+
+`set` refuses a name that is no route row, a disabled route, or a route of
+another tier (the store's check beside the kind's), and `remove` refuses
+both rows: the deal reads them. A route disabled or removed after the array
+is set is skipped by the deal. `tier list` prints the arrays.
 
 ## The schema
 
@@ -203,14 +311,35 @@ config.schema_migrations (version integer PK, applied_at timestamptz)
 config.history           (id bigserial PK, kind, name, op add|set|remove,
                           before jsonb, after jsonb, actor, at timestamptz)
 config.machines          (name PK, "user", seat, slots, runners,
-                          created_at, updated_at)
+                          created_at, updated_at; width added by 0012,
+                          filled with slots less the friends' slots on the
+                          coordinator machine, slots elsewhere)
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, created_at, updated_at;
                           the one row inserted by the migration)
 config.friends           (name PK, slots, tiers, roles, created_at, updated_at)
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           created_at, updated_at; the one row inserted by
-                          the migration)
+                          the migration; reader_tier added by 0010, dropped
+                          by 0011)
+config.loops             (name PK, machine -> machines.name, argv, seat, keys,
+                          every, keepalive boolean, width, enabled boolean,
+                          created_at, updated_at; CHECK exactly one of
+                          every > 0 and keepalive, keys only with a seat,
+                          argv a JSON array: the kind's Check again, as a
+                          wall behind the tool)
+config.routes            (name PK, tier flash|pro, provider, model, tokens,
+                          deadline, enabled boolean, created_at,
+                          updated_at; CHECK provider one word with no slash,
+                          model with no blank, deadline > 0, tokens >= 0:
+                          the kind's Check again; weight dropped by 0008;
+                          the price sheet added by 0009: the decimals as
+                          text with a CHECK on their shape,
+                          reasoning_as_output boolean, long_context,
+                          billing metered|plan, price_source, price_as_of)
+config.tiers             (name PK flash|pro, routes, created_at, updated_at;
+                          CHECK routes a comma list of names; the two rows
+                          inserted by the migration)
 ```
 
 No database has applied `0002_machine.sql` or `0003_friend.sql` in their
@@ -236,7 +365,8 @@ global ids, so they rise across kinds and never repeat.
 
 `nova-config apply [--kind <k>] [--check]` runs per kind, in kind order:
 machines (the ceilings), the fleet row (a friend with no beat is charged to
-its coordinator machine), friends, the sprint row:
+its coordinator machine), friends, the sprint row, loops (each names a
+machine), routes:
 
 1. read the kind's rows and revision from Postgres, then the kind's
    `Derive` when it has one (the friend kind adds the `coordinator` word to
@@ -270,8 +400,10 @@ its coordinator machine), friends, the sprint row:
    `CONFLICT`.
 
 A second apply of the same Postgres is a no-op: no `APPLY` line, the counts
-zero, the revision unchanged (steady apply is 6 Redis round trips down from 18;
-first run across the seed kinds takes 30 trips down from the 42 baseline, with
+zero, the revision unchanged (steady apply is 8 Redis round trips down from 18, two of them the loop
+and route kinds' reads of a store with none of their rows: each kind's set
+and stamp in one trip, its hashes in a second only when it has rows;
+first run across the seed kinds takes 32 trips down from the 42 baseline, with
 each machine running its ceiling check before its write transaction).
 
 ### What apply writes, per kind
@@ -280,7 +412,7 @@ each machine running its ceiling check before its write transaction).
 `CEILING` when the friends and benches on it already desire more than
 `slots`; cores and memory are never declared, so the call carries none and
 derives no budget); the hash `machine:<m>` with user, seat, slots, runners,
-rev, at; the set `machines`. slots is read back from the ceiling, the key the
+width, rev, at; the set `machines`. slots is read back from the ceiling, the key the
 runtime guards on, so a ceiling moved by hand is put back by the next apply.
 Remove: refused while any friend or bench desired hash names the machine;
 else `machine:<m>`, `machine:<m>:ceiling` and `machine:<m>:budget` are
@@ -305,13 +437,27 @@ registry member, the desired and roles hashes are removed in one
 transaction, with a `config-remove` receipt in `cap:log`; her beat, logins
 and wake path stay, they are hers.
 
-**sprint:** a plain `SET sprint:coordinator <friend>`, `DEL` when empty.
+**sprint:** a plain `SET sprint:<field>` for each field (`sprint:coordinator <friend>`), `DEL` when empty.
 Never removed. The handover is `nova-config sprint set --coordinator
 stella --as rowan` then `apply`: the sprint kind's own revision moves and
 the friend kind's plan is two `SET ... changed=roles`, stella's first.
 
-`machine:<m>`, `machines`, `fleet:*` and `sprint:coordinator` are
-nova-config's own keys: no function in the library reads or writes them.
+**loop:** the hash `loop:<l>` with every field of the row, `name`, `log`
+(the derived path), `rev` and `at`, written whole in one transaction with
+the name added to the set `loops`; this is the view the plays read. A field
+the hash lacks or holds out of shape reads back as the type's zero, so a
+hash changed by hand is put back by the next apply. Remove: the hash and the
+name in `loops` go in one transaction, with a `config-remove` receipt in
+`cap:log`.
+
+**route:** the hash `route:<r>` with every field of the row, `name`, `rev`
+and `at`, written whole in one transaction with the name added to the set
+`routes`; this is the view the deal reads. It reads, writes and removes as
+a loop does (one code path, `hashKinds`), with no derived field.
+
+`machine:<m>`, `machines`, `fleet:*`, `sprint:coordinator`, `loop:<l>`,
+`loops`, `route:<r>` and `routes` are nova-config's own keys: no function in
+the library reads or writes them.
 
 ## Lines
 
@@ -325,6 +471,7 @@ CONFIG REMOVE kind=<k> name=<n> rev=<id>
 <KIND> name=<n> <field>=<v> ...                          (list: one per row)
 MACHINE name=<n> <field>=<v> ... os=<v> arch=<v> cores=<n> memory_gb=<n> beat=<t>   (list and show with a Redis: the live facts, - each when the beat lacks it)
 MACHINE name=<n> <field>=<v> ... beat=none                (with a Redis: no beat)
+MACHINE name=<n> <field>=<v> ... created=<t> updated=<t> loops=<l,...> [live facts]   (show: the machine's loops, - for none)
 CONFIG LIST kind=<k> rows=<n>
 <KIND> name=<n> <field>=<v> ... created=<t> updated=<t>  (show)
 HISTORY id=<id> kind=<k> name=<n> op=<op> actor=<a> at=<t> <field>=<before>><after> ...
@@ -334,18 +481,26 @@ CONFIG CHECK kind=<k> add=<n> set=<n> remove=<n> rev=<r> applied=<redis rev>
 APPLY ADD|SET|REMOVE kind=<k> name=<n> [changed=<f,g>]
 CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>
 MIGRATION version=<v> file=<f> lines=<n>                 (migrate --print)
+MIGRATION version=<v> file=<f> lines=<n> state=applied|pending|missing   (migrate --dry-run: the ledger; missing is below the greatest recorded and not in the ledger, which migrate will not apply)
 CONFIG MIGRATE print=<n> pg=-
-CONFIG MIGRATE pg=<user@host:port/db> from=<v> to=<v> applied=<n>
-CONFIG STATUS pg=<...> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
+CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [dry_run=true pending=<n> missing=<n>]
+CONFIG STATUS pg=<...>|file=<path> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
+CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing <field>=<v>|<field>=<before>><after> ...   (add, set, remove --dry-run)
+NOTE machine=<m> width=0: no sprint member, ...; run: nova-config machine set <m> --width <n> ...   (machine add with no --width)
+LOOP name=<n> <field>=<v> ... created=<t> updated=<t> command=<json>   (loop show: the words the unit runs)
 CONFIG KIND name=<k> table=config.<t> fields=<f,...> required=<f,...> rows=many|one
 CONFIG KINDS count=<n>
 ```
 
 Exit codes: 0 done; 1 refused (the store or Redis said no: a duplicate, a
-missing row, a ref naming no row, a row another names, a ceiling, working
-copies, `CONFLICT`, a status behind); 2 usage (a flag, a value, a name on a
+missing row, a ref naming no row, a row another names, a set that breaks
+the kind's `Check`, a ceiling, working copies, `CONFLICT`, a status behind); 2 usage (a flag, a value, a name on a
 singleton, a store that did not answer). A refusal is
-one stderr line, `nova-config <verb>: <why>; run: <next step>`.
+one stderr line, `nova-config <verb> REFUSED: <why>; run: <next step>`; a
+usage refusal's next step is the verb's own `-h`. `--json` prints the same
+result as one object in `internal/tool`'s shape (`result`, `facts`, `items`,
+`notes`). `--file <path>` stands in for `--pg`: the same store, kept in a
+local JSON file (`config.FileStore`), for trying the tool with no database.
 
 ## Connecting
 

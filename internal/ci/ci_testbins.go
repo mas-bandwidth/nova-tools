@@ -208,14 +208,10 @@ func matchTestbinAllow(entries []waitAllow, used []bool, f TestbinFinding) int {
 	return loose
 }
 
-// scanTestbinFile parses one _test.go and returns its copied-built-binary
+// scanTestbinFileWith parses one _test.go and returns its copied-built-binary
 // findings. The second result is false when the file does not parse: a file
 // that is not Go cannot carry the shapes this check reads, and a fixture
 // deliberately holding a broken literal is not the offender itself.
-func scanTestbinFile(rel string, src []byte) ([]TestbinFinding, bool) {
-	return scanTestbinFileWith(rel, src, defaultSourceSeams())
-}
-
 func scanTestbinFileWith(rel string, src []byte, seams SourceSeams) ([]TestbinFinding, bool) {
 	fset, file, err := seams.parseFile(rel, src, 0)
 	if err != nil {

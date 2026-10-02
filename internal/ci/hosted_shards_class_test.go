@@ -32,7 +32,7 @@ const hostedDealStep = "deal this shard's packages"
 // round-robin: cmd/nova-bus (46.4 s -short on the Studio) and cmd/nova-merge
 // (28.6 s) held shard 3 of 4 together, the ubuntu leg cancelled at 123 s
 // (reader measurement, #4421 round 2); cmd/nova-swarm is the reader's other named heavy
-// command. cmd/nova-merge is under deprecated/ and in no deal. ci.yml's deal step spells
+// command. cmd/nova-merge is deleted and in no deal. ci.yml's deal step spells
 // the same list.
 var hostedHeavy = []string{"cmd/nova-bus", "cmd/nova-swarm"}
 

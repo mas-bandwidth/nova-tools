@@ -93,7 +93,7 @@ backed by Redis data structures.
 | Key Pattern | Redis Type | Purpose |
 | --- | --- | --- |
 | `table:<name>` | Hash | Table schema, epoch, revision, column definitions, footer, hidden attributes |
-| `table:<name>:identity` | Hash | Immutable table identity: `epoch_key`, `epoch_field`, `member_prefix` |
+| `table:<name>:identity` | Hash | Table identity: `epoch_key`, `epoch_field`, `member_prefix`; fixed while the table exists, removed by `drop --definition` |
 | `table:<name>:revision` | Hash | Revision counter tracking mutations |
 | `table:<name>:changes` | Stream | Audit stream of table mutations |
 | `table:<name>:ops` | Hash | Batch operation records across epochs, keyed by epoch and operation id |
@@ -563,10 +563,11 @@ JSON escapes; 4,175,647 bytes for 128 members each setting 26 fields of 64 `/`
 characters). Records do not expire, so a record holds that much for as long as the
 table exists. One key keeps the
 work of removing them bounded. `drop <table>` and `drop <table> --definition` treat
-them alike: each removes the whole hash in the same atomic call as the drop, so a table
-created again under the name is a new table and no operation of the old one replays
-against it; the two verbs differ only in what they always differed in, the saved
-column definition. `clear <table>` removes no record and does not itself
+them alike: each removes the whole hash in the same atomic call as the drop, so no
+operation of the old table replays against a table created again under the name; the
+two verbs differ in what else they remove: `--definition` takes the saved column
+definition, the identity hash and the rows of every epoch too, and the revision
+counter and the change log continue across a drop and a create. `clear <table>` removes no record and does not itself
 advance the configured external epoch. If that epoch advances separately, an
 earlier operation still replays with its original receipt, epoch and revisions.
 Epoch snapshots that a drop keeps readable are not operation records and stay. A
@@ -788,6 +789,22 @@ usage: nova-table batch (<manifest-file> | - | '<json>')
 example:
   nova-table batch manifest.json
   nova-table batch - < manifest.json
+
+manifest: one JSON object; required keys are schema (1), table, epoch,
+expected_table_revision, operation_id and members. Epoch and revisions are
+unsigned decimal strings. Optional keys: actor, props, prop_expect, prop_absent.
+Each member names id and expect, with create, move, remove, set or unset for a
+change; a member with only expect is a guard. A create expects absent=true.
+Example manifest (demo has row build and column ready; revision 2 was observed):
+{
+  "schema":1,"table":"demo","epoch":"0","expected_table_revision":"2","operation_id":"create-b1",
+  "members":[{"id":"b1","expect":{"absent":true},"create":{"row":"build","col":"ready","score":0}}]}
+Read the current epoch/revision with nova-table show demo and existing members
+with nova-table member read demo b1 before choosing expectations.
+Use the same --redis or --seat for these reads and the batch.
+Retry the same manifest with the same operation_id to replay its recorded
+result; changing the manifest under that id is refused. --idem on individual
+write verbs records receipt metadata only and does not deduplicate retries.
 
 flags:
   --json  print the receipt as one JSON object instead of the lines

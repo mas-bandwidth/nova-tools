@@ -1,7 +1,9 @@
 package bus
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/stretchr/testify/require"
 )
 
 // A git that never returns is a tool that has stopped saying anything, which from the
@@ -18,38 +21,53 @@ import (
 // The git here is a script that sleeps, so the assertion is about the budget and not about
 // a network nobody has.
 func TestAGitThatHangsIsKilledAndNamed(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("slow: kills a hanging git behind a real budget; runs on the self-hosted legs and nightly")
 	}
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake git is a shell script")
 	}
+	if fake := os.Getenv("NOVA_BUS_TIMEOUT_TEST_CHILD"); fake != "" {
+		checkGitTimeoutInChild(t, fake)
+		return
+	}
 	fake := t.TempDir()
 	script := "#!/bin/sh\nexec sleep 30\n"
-	if err := testbin.WriteExecutable(filepath.Join(fake, "git"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", fake+string(os.PathListSeparator)+os.Getenv("PATH"))
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(fake, "git"), []byte(script), 0o755))
 
-	restore := gitTimeoutNanos.Load()
-	t.Cleanup(func() { gitTimeoutNanos.Store(restore) })
-	if err := SetGitTimeout(300 * time.Millisecond); err != nil {
-		t.Fatal(err)
+	// The child is a fresh test process, so its positive SetGitTimeout calls cannot
+	// alter another test's budget. The fake git is selected through only this child's
+	// environment, without changing the parent process PATH.
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestAGitThatHangsIsKilledAndNamed$")
+	cmd.WaitDelay = 2 * time.Second
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "PATH=") || strings.HasPrefix(entry, "NOVA_BUS_TIMEOUT_TEST_CHILD=") {
+			continue
+		}
+		env = append(env, entry)
 	}
+	cmd.Env = append(env, "PATH="+fake+string(os.PathListSeparator)+os.Getenv("PATH"), "NOVA_BUS_TIMEOUT_TEST_CHILD="+fake)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "bounded timeout child failed: %s", out)
+}
+
+func checkGitTimeoutInChild(t *testing.T, fake string) {
+	t.Helper()
+	require.NoError(t, SetGitTimeout(300*time.Millisecond))
 
 	// The assertion is on the refusal and not on elapsed time: a wall-clock bound here
 	// measures the machine's load, and the injected subprocess budget is what is under
 	// test. The refusal firing on the deadline is what says the call was cut short.
 	_, err := git(t.TempDir(), "fetch", "origin", "main")
-	if err == nil {
-		t.Fatal("a git that never returns was waited on forever and reported success")
-	}
+	require.Error(t, err, "a git that never returns was waited on forever and reported success")
 	// The refusal names the CALL, which is the one thing a person needs in order to know
 	// what was hanging.
-	for _, want := range []string{"fetch origin main", "did not finish within", "--git-timeout"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("the refusal does not say %q: %v", want, err)
-		}
+	for _, want := range []string{"fetch origin main", "did not finish within", "300ms", "--git-timeout"} {
+		require.Contains(t, err.Error(), want, "the refusal does not say %q: %v", want, err)
 	}
 
 	// The other way: a budget that is not exceeded is not a refusal. A git that answers
@@ -61,22 +79,15 @@ func TestAGitThatHangsIsKilledAndNamed(t *testing.T) {
 	// `-race -count=N` that alone has overrun 300ms here, which failed the test with the
 	// refusal that the OTHER half exists to prove happens. A wall-clock margin that has to
 	// hold for a fork is a wall clock in a test, so it is made wide enough not to be one.
-	if err := SetGitTimeout(30 * time.Second); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, SetGitTimeout(30*time.Second))
 	quick := "#!/bin/sh\necho fine\n"
-	if err := testbin.WriteExecutable(filepath.Join(fake, "git"), []byte(quick), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(fake, "git"), []byte(quick), 0o755))
 	out, err := git(t.TempDir(), "fetch", "origin", "main")
-	if err != nil {
-		t.Fatalf("a git well inside the budget was refused: %v", err)
-	}
-	if strings.TrimSpace(out) != "fine" {
-		t.Fatalf("git printed %q", out)
-	}
+	require.NoError(t, err, "a git well inside the budget was refused: %v", err)
+	require.False(t, strings.TrimSpace(out) != "fine", "git printed %q", out)
 	// And a budget of nothing is a bad invocation rather than a call with no budget at all.
-	if err := SetGitTimeout(0); err == nil {
-		t.Fatal("a budget of zero was accepted; every call would be killed before it started")
+	{
+		err := SetGitTimeout(0)
+		require.Error(t, err, "a budget of zero was accepted; every call would be killed before it started")
 	}
 }

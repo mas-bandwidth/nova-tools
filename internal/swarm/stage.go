@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -15,15 +16,33 @@ import (
 // DefaultStageTimeout is the hard timeout for card staging (120 s).
 const DefaultStageTimeout = 120 * time.Second
 
+// stageFetchRetryDelay is the pause before the one retry of the fetch of a head the stage lacks.
+const stageFetchRetryDelay = 2 * time.Second
+
 // ErrStageTimeout is returned when card staging exceeds the hard timeout.
 var ErrStageTimeout = errors.New("stage-timeout")
 
 // CardBase is what a card's header says to stage into <job>/repo (nova-tools#3711).
 type CardBase struct {
-	Repo  string // the clone URL (or a local path) to stage; "" when the card names none that can be read
-	Sha   string // base-sha: (or the sha of BASE: <ref>@<sha40>); "" when absent
-	Ref   string // BASE: <ref> without @; the ref checked out when there is no sha
-	Named string // the raw value of the card's base-repo: or REPO: line, even one Repo could not be read from
+	Repo  string   // the clone URL (or a local path) to stage; "" when the card names none that can be read
+	Sha   string   // base-sha: (or the sha of BASE: <ref>@<sha40>); "" when absent
+	Ref   string   // BASE: <ref> without @; the ref checked out when there is no sha
+	Named string   // the raw value of the card's base-repo: or REPO: line, even one Repo could not be read from
+	Stage []string // the recipe files the header's `Stage:` lines name, in order (docs/SPEC-CARD-CONTRACT.md)
+}
+
+// headerLineRE is a card header line: a key, a colon, then a value or nothing.
+var headerLineRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*:(\s|$)`)
+
+// cardHeader is a card's header: line 1, then every line after it while it is a
+// `key: value` line; the first blank line or line of prose ends it.
+func cardHeader(card string) []string {
+	lines := strings.Split(card, "\n")
+	n := 1
+	for n < len(lines) && headerLineRE.MatchString(strings.TrimSpace(lines[n])) {
+		n++
+	}
+	return lines[:min(n, len(lines))]
 }
 
 // cardRepoNameRE is the owner/name a REPO: line carries.
@@ -53,15 +72,15 @@ func CardRepoURL(value string) string {
 }
 
 // ReadCardBase is THE reader of which repository a card works in, at which sha: staging
-// (StageCard) calls it, so the repo a card is staged from is the repo it names. It reads the first 40 lines. Precedence:
-// `base-repo: <url>`, then `REPO: <owner>/<name>` (the header every pushed card carries), then
-// the first github clone URL anywhere in the card (CardCloneRepos). The sha is `base-sha:`,
-// else the sha of `BASE: <ref>@<sha40>`; the ref is BASE:'s value before any @.
+// (StageCard) and the member's frame call it, so the repo a card is staged from is the repo it
+// names. It reads the card's HEADER only (docs/SPEC-CARD-CONTRACT.md: the frame is the
+// card's data, never its prose): line 1 and the `key: value` lines that follow it, up to the
+// first line of another form; a line in the body that looks like a header names nothing.
+// Precedence: `base-repo: <url>`, then `REPO: <owner>/<name>` (the header every pushed card
+// carries). The sha is `base-sha:`, else the sha of `BASE: <ref>@<sha40>`; the ref is BASE:'s
+// value before any @.
 func ReadCardBase(card []byte) CardBase {
-	lines := strings.Split(string(card), "\n")
-	if len(lines) > 40 {
-		lines = lines[:40]
-	}
+	lines := cardHeader(string(card))
 	var b CardBase
 	var baseRepo, repoLine string
 	var sawRepoLine bool
@@ -70,6 +89,8 @@ func ReadCardBase(card []byte) CardBase {
 		switch {
 		case strings.HasPrefix(trimmed, "base-repo:"):
 			baseRepo = strings.TrimSpace(strings.TrimPrefix(trimmed, "base-repo:"))
+		case strings.HasPrefix(trimmed, "Stage:"):
+			b.Stage = append(b.Stage, strings.Fields(strings.TrimPrefix(trimmed, "Stage:"))...)
 		case strings.HasPrefix(trimmed, "base-sha:"):
 			b.Sha = strings.TrimSpace(strings.TrimPrefix(trimmed, "base-sha:"))
 		case strings.HasPrefix(trimmed, "REPO:") && !sawRepoLine:
@@ -92,10 +113,7 @@ func ReadCardBase(card []byte) CardBase {
 	case CardRepoURL(repoLine) != "":
 		b.Repo, b.Named = CardRepoURL(repoLine), repoLine
 	default:
-		if repos := CardCloneRepos(string(card)); len(repos) > 0 {
-			b.Repo = defaultProbeBase + "/" + repos[0] + ".git"
-			b.Named = repos[0]
-		} else if repoLine != "-" && !strings.EqualFold(repoLine, "none") {
+		if repoLine != "-" && !strings.EqualFold(repoLine, "none") {
 			// A REPO: line no reader can resolve still NAMES a repo: staging must refuse
 			// it (no-repo-staged), never launch the model into an empty job dir.
 			b.Named = repoLine
@@ -277,10 +295,19 @@ type StageOptions struct {
 	BenchHome string
 	BenchName string
 	Timeout   time.Duration
+	// Base and Branch, when set, are the frame's (internal/cardcontract): the repository,
+	// ref and sha the member's packet names and the branch it pushes, staged in place of
+	// what the card's header lines say (docs/SPEC-CARD-CONTRACT.md layer 2).
+	Base   *CardBase
+	Branch string
 
 	// git, when set, builds every staging git call in place of stageGit: a test's seam for
 	// a step git itself would not fail.
 	git func(ctx context.Context, args ...string) *exec.Cmd
+
+	// fetchRetryDelay, when set, is the pause before the one retry of a head fetch, in place
+	// of stageFetchRetryDelay: a test's seam for the clock.
+	fetchRetryDelay time.Duration
 }
 
 // StageResult is the outcome of a staging operation.
@@ -293,6 +320,9 @@ type StageResult struct {
 	Staged   bool
 	TimedOut bool
 	Wall     time.Duration
+	// Clone, Fetch and Checkout sum their Git command times; Clone includes
+	// the initial checkout, and Fetch excludes probes and the retry wait.
+	Clone, Fetch, Checkout time.Duration
 }
 
 // StageCard stages the repository for a card into TargetDir using the bench mirror.
@@ -309,10 +339,13 @@ type StageResult struct {
 //
 // and returns ErrStageTimeout.
 func StageCard(opts StageOptions) (StageResult, error) {
-	if len(opts.Card) == 0 {
+	if len(opts.Card) == 0 && opts.Base == nil {
 		return StageResult{}, nil
 	}
 	cb := ReadCardBase(opts.Card)
+	if opts.Base != nil {
+		cb = *opts.Base
+	}
 	baseRepo, baseSha := cb.Repo, cb.Sha
 	if baseRepo == "" {
 		return StageResult{}, nil
@@ -352,7 +385,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 
 	mirror := FindBenchMirror(opts.BenchHome, baseRepo)
 	if mirror == "" && isRemoteRepo(baseRepo) {
-		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha}, fmt.Errorf("staging refused: no bench mirror for %s: a card may not clone directly from github without a bench mirror", baseRepo)
+		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, fmt.Errorf("staging refused: no bench mirror for %s: a card may not clone directly from github without a bench mirror", baseRepo)
 	}
 
 	cloneSource := mirror
@@ -368,13 +401,14 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	}
 
 	start := time.Now()
+	var cloneTime, fetchTime, checkoutTime time.Duration
 	cloneArgs := []string{"clone", "-q", "--", cloneSource, opts.TargetDir}
 	if mirror != "" {
 		cloneArgs = MirrorCloneArgs(mirror, opts.TargetDir, false)
 	}
 
 	cloneCmd := stageCmd(ctx, cloneArgs...)
-	if out, err := cloneCmd.CombinedOutput(); err != nil {
+	if out, err := stageTimedOutput(cloneCmd, &cloneTime); err != nil {
 		if stageTimedOut(ctx, err) {
 			// ignored: the timeout is returned as ErrStageTimeout on the next line; the result file is a courtesy for the reader of the job directory
 			_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
@@ -405,36 +439,63 @@ func StageCard(opts StageOptions) (StageResult, error) {
 
 	// Fetch and checkout baseSha (else the BASE: ref) on the card's branch.
 	branch := CardStageBranch(opts.Card)
+	if opts.Branch != "" {
+		if err := refuseOptionLike("branch", opts.Branch); err != nil {
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror, Wall: time.Since(start)}, err
+		}
+		branch = opts.Branch
+	}
 	switch {
 	case baseSha != "":
-		catCmd := stageCmd(ctx, "-C", opts.TargetDir, "cat-file", "-e", "--end-of-options", baseSha+"^{commit}")
-		if err := catCmd.Run(); err != nil {
-			// Commit not present locally, fetch from origin
-			fetchCmd := stageCmd(ctx, "-C", opts.TargetDir, "fetch", "-q", "--", "origin", baseSha)
-			if out, ferr := fetchCmd.CombinedOutput(); ferr != nil {
-				return fail("fetch", out, ferr)
+		// RULE (docs/SPEC-CARD-CONTRACT.md, staging): the head is checked out only when its
+		// tree is in the stage, the mirror's own refresh no dependency of a stage: else the head
+		// is fetched from origin by sha, and fetched once more after stageFetchRetryDelay; a head
+		// still absent is refused in one line. The commit alone is no answer: a mirror caught
+		// between a commit and its tree hands the clone the commit, and the checkout of a head
+		// whose tree is unread fails (or, in git 2.43, reports done with an empty worktree). The
+		// fetch is --refetch: a plain fetch of a sha does nothing when a stage ref (a clone's
+		// refs/remotes/origin/*) already reaches the commit, whatever its tree.
+		haveHead := func() bool {
+			return stageCmd(ctx, "-C", opts.TargetDir, "cat-file", "-e", "--end-of-options", baseSha+"^{tree}").Run() == nil
+		}
+		var fetched []byte
+		for try := 0; try < 2 && !haveHead(); try++ {
+			if try > 0 {
+				select {
+				case <-time.After(cmp.Or(opts.fetchRetryDelay, stageFetchRetryDelay)):
+				case <-ctx.Done():
+				}
+			}
+			var ferr error
+			if fetched, ferr = stageTimedOutput(stageCmd(ctx, "-C", opts.TargetDir, "fetch", "-q", "--refetch", "--", "origin", baseSha), &fetchTime); stageTimedOut(ctx, ferr) {
+				return fail("fetch", fetched, ferr)
 			}
 		}
+		if !haveHead() {
+			why := strings.Join(strings.Fields(string(fetched)), " ")
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror, Wall: time.Since(start)},
+				fmt.Errorf("staging refused: head %s is in neither the mirror %s nor origin %s: %s", baseSha, cmp.Or(mirror, "(none)"), baseRepo, why)
+		}
 		coCmd := stageCmd(ctx, "-C", opts.TargetDir, "switch", "-q", "-C", branch, "--end-of-options", baseSha)
-		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
+		if out, cerr := stageTimedOutput(coCmd, &checkoutTime); cerr != nil {
 			return fail("checkout", out, cerr)
 		}
 	case cb.Ref != "":
 		// The clone's remote-tracking ref first (the mirror's branch), then the ref as
 		// written (a tag or a sha the clone holds).
 		coCmd := stageCmd(ctx, "-C", opts.TargetDir, "switch", "-q", "-C", branch, "--end-of-options", "origin/"+cb.Ref)
-		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
+		if out, cerr := stageTimedOutput(coCmd, &checkoutTime); cerr != nil {
 			if stageTimedOut(ctx, cerr) {
 				return fail("checkout", out, cerr)
 			}
 			coCmd = stageCmd(ctx, "-C", opts.TargetDir, "switch", "-q", "-C", branch, "--end-of-options", cb.Ref)
-			if out, cerr := coCmd.CombinedOutput(); cerr != nil {
+			if out, cerr := stageTimedOutput(coCmd, &checkoutTime); cerr != nil {
 				return fail("checkout", out, cerr)
 			}
 		}
 	default:
 		coCmd := stageCmd(ctx, "-C", opts.TargetDir, "switch", "-q", "-C", branch)
-		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
+		if out, cerr := stageTimedOutput(coCmd, &checkoutTime); cerr != nil {
 			return fail("checkout", out, cerr)
 		}
 	}
@@ -456,5 +517,17 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		Mirror:   mirror,
 		Staged:   true,
 		Wall:     time.Since(start),
+		Clone:    cloneTime,
+		Fetch:    fetchTime,
+		Checkout: checkoutTime,
 	}, nil
+}
+
+// stageTimedOutput accumulates the Git command time of a staging phase,
+// including failed attempts (docs/SPEC-CARD-CONTRACT.md, staging).
+func stageTimedOutput(cmd *exec.Cmd, elapsed *time.Duration) ([]byte, error) {
+	started := time.Now()
+	out, err := cmd.CombinedOutput()
+	*elapsed += time.Since(started)
+	return out, err
 }

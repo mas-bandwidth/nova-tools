@@ -164,6 +164,17 @@ func renderRead(l Line, toRow, toCol string, moved bool, by string) string {
 	switch {
 	case l.From == "" && !l.Removed:
 		return fmt.Sprintf("%s asked to read attempt %s %s", reader, a, by)
+	case l.Set[FieldReturned] != "":
+		// read --return: not a read, the card back in asked on its row; the
+		// reason is the inbox note's
+		return fmt.Sprintf("%s returned its read of attempt %s with no verdict", reader, a)
+	case l.Removed && l.Set["retired_by"] == "returned":
+		// a returned read another reader took: the retirement's words, as a
+		// work card taken back says them
+		return fmt.Sprintf("the read of attempt %s taken back from %s %s", a, l.Card[strings.LastIndex(l.Card, ".")+1:], by)
+	case !moved && l.Set["asked"] != "":
+		// a returned read asked of its reader again, in place
+		return fmt.Sprintf("%s asked again to read attempt %s %s", reader, a, by)
 	case l.Removed:
 		return fmt.Sprintf("the read of attempt %s by %s taken off %s", a, l.Card[strings.LastIndex(l.Card, ".")+1:], by)
 	case !moved:

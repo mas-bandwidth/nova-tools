@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -21,13 +23,9 @@ import (
 func (ta *testApp) streamIndexes() string {
 	ta.t.Helper()
 	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
-	if err != nil {
-		ta.t.Fatal(err)
-	}
+	require.NoError(ta.t, err)
 	s, err := st.Load(context.Background(), store.All, nil)
-	if err != nil {
-		ta.t.Fatal(err)
-	}
+	require.NoError(ta.t, err)
 	var out []string
 	for _, p := range []string{sprint.PropStreamIndex, sprint.PropAskStreamIndex, sprint.PropAcceptStreamIndex} {
 		t := s.Work
@@ -83,16 +81,16 @@ func fairStreams(t *testing.T, count, width int) {
 		var v tablesView
 		ta.json("where", &v)
 		for _, col := range []string{"review", "landed"} {
-			if lo, hi := spreadOf(v, "work", col, streams); hi-lo > few {
-				t.Fatalf("tick %d: the streams' %s counts run from %d to %d, more than %d apart: %v", tick, col, lo, hi, few, v.Tables["work"])
-			}
+			lo, hi := spreadOf(v, "work", col, streams)
+			require.LessOrEqual(t, hi-lo, few, "tick %d: the streams' %s counts run from %d to %d, more than %d apart: %v", tick, col, lo, hi, few, v.Tables["work"])
 		}
 		if tick == 3 {
 			before := ta.streamIndexes()
 			ta.ok("stop")
-			if after := ta.streamIndexes(); after != before || !strings.HasPrefix(before, sprint.PropStreamIndex+"=") || strings.HasPrefix(before, sprint.PropStreamIndex+"= ") {
-				t.Fatalf("the indexes across a stop: %s, then %s", before, after)
-			}
+			after := ta.streamIndexes()
+			require.Equal(t, before, after, "the indexes across a stop: %s, then %s", before, after)
+			require.True(t, strings.HasPrefix(before, sprint.PropStreamIndex+"="), "the indexes across a stop: %s, then %s", before, after)
+			require.False(t, strings.HasPrefix(before, sprint.PropStreamIndex+"= "), "the indexes across a stop: %s, then %s", before, after)
 			ta.ok("start")
 		}
 		if strings.Contains(play, "every stream has landed") {

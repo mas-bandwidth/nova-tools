@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCRTwoRunLoopsAtOnce(t *testing.T) {
@@ -73,9 +74,7 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 			h.machine()
 		}
 		h.clean(fmt.Sprintf("trial %d", trial))
-		if cut > 0 {
-			t.Errorf("trial %d: %d outside verbs were told \"cut ... changed under the step\" while two ticks ran (their operation was applied by a tick's Fenced finish)", trial, cut)
-		}
+		assert.LessOrEqual(t, cut, 0, "trial %d: %d outside verbs were told \"cut ... changed under the step\" while two ticks ran (their operation was applied by a tick's Fenced finish)", trial, cut)
 		if len(errs) > 0 {
 			t.Logf("trial %d: %d tick errors, e.g. %s", trial, len(errs), errs[0])
 		}
@@ -87,15 +86,12 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 			}
 		}
 		for k, v := range seen {
-			if v > 1 {
-				t.Errorf("trial %d: the machine wrote %s %d times", trial, k, v)
-			}
+			assert.LessOrEqual(t, v, 1, "trial %d: the machine wrote %s %d times", trial, k, v)
 		}
 		s := h.snap()
 		for _, m := range crMembers {
-			if n := heldBy(s, m); n > s.Width(m) {
-				t.Errorf("trial %d: %s holds %d, its width %d", trial, m, n, s.Width(m))
-			}
+			n := heldBy(s, m)
+			assert.LessOrEqual(t, n, s.Width(m), "trial %d: %s holds %d, its width %d", trial, m, n, s.Width(m))
 		}
 		for _, c := range s.Work.Column(sprint.Review) {
 			n := 0

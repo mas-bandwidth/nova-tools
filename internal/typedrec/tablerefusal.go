@@ -58,6 +58,8 @@ const (
 	TableRefusalPlaceGuard
 	TableRefusalFormula
 	TableRefusalPropGuard
+	TableRefusalOrphan
+	TableRefusalResidue
 )
 
 // ParseTableRefusal parses a raw table Lua reply reason token into a typed TableRefusal.
@@ -169,6 +171,10 @@ func ParseTableRefusal(reason string) TableRefusal {
 		return TableRefusalFormula
 	case "PROPGUARD":
 		return TableRefusalPropGuard
+	case "ORPHAN":
+		return TableRefusalOrphan
+	case "RESIDUE":
+		return TableRefusalResidue
 	default:
 		return TableRefusalUnknown
 	}

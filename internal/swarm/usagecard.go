@@ -13,11 +13,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/big"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
 // CardUsageColumns are the fourteen columns of one card's usage.tsv, in this order. The
@@ -58,7 +61,11 @@ func cardMessagesSQL(startedMs, endedMs int64) string {
 		`SUM(json_extract(data, '$.tokens.cache.write')), ` +
 		`SUM(json_extract(data, '$.tokens.cache.read')), ` +
 		`SUM(json_extract(data, '$.tokens.reasoning')), ` +
-		`SUM(json_extract(data, '$.cost')) ` +
+		`SUM(json_extract(data, '$.cost')), ` +
+		// the card's requests (one assistant message is one model call) and its largest
+		// prompt, what a long-context price is decided on (internal/cardcost, Predict)
+		`COUNT(*), ` +
+		`MAX(COALESCE(json_extract(data, '$.tokens.input'), 0) + COALESCE(json_extract(data, '$.tokens.cache.read'), 0) + COALESCE(json_extract(data, '$.tokens.cache.write'), 0)) ` +
 		`FROM message WHERE json_extract(data, '$.role') = 'assistant' ` +
 		`AND time_created >= ` + strconv.FormatInt(startedMs, 10) +
 		` AND time_created <= ` + strconv.FormatInt(endedMs, 10) +
@@ -173,16 +180,22 @@ func queryCardMessages(path string, startedMs, endedMs int64) ([][]string, error
 
 // foldCardMessages sums the grouped assistant rows into the columns the usage row carries.
 // A field some message reported is the sum of the messages that did; one no message reported
-// stays a dash, never a zero.
+// stays a dash, never a zero. Beside the row's columns it keeps what a card's cost record
+// reads (internal/cardcost): the harness's cost as the decimal the store printed for its
+// float sum of opencode's per-message float costs, uncut ("cost", where the row's usd is
+// cut to four places): the harness's own computation, not an invoice; the requests and
+// the largest prompt; none of the three reaches the usage file.
 func foldCardMessages(rows [][]string) (ProviderUsage, string) {
 	values := map[string]string{}
 	sums := make([]int64, len(TokenColumns))
 	reported := make([]bool, len(TokenColumns))
 	var usdSum float64
 	usdReported := false
+	cost := new(big.Rat)
+	var requests, maxPrompt int64
 	provider, model := "", ""
 	for _, row := range rows {
-		if len(row) != 2+len(TokenColumns)+1 {
+		if len(row) != 2+len(TokenColumns)+3 {
 			continue
 		}
 		if v := strings.TrimSpace(row[0]); v != "" {
@@ -208,6 +221,15 @@ func foldCardMessages(rows [][]string) (ProviderUsage, string) {
 				usdSum += f
 				usdReported = true
 			}
+			if r, ok := new(big.Rat).SetString(cell); ok && r.Sign() >= 0 {
+				cost.Add(cost, r)
+			}
+		}
+		if n, err := strconv.ParseInt(strings.TrimSpace(row[3+len(TokenColumns)]), 10, 64); err == nil {
+			requests += n
+		}
+		if n, err := strconv.ParseInt(strings.TrimSpace(row[4+len(TokenColumns)]), 10, 64); err == nil {
+			maxPrompt = max(maxPrompt, n)
 		}
 	}
 	for i, c := range TokenColumns {
@@ -219,37 +241,22 @@ func foldCardMessages(rows [][]string) (ProviderUsage, string) {
 	}
 	if usdReported {
 		values["usd"] = strconv.FormatFloat(usdSum, 'f', 4, 64)
+		values["cost"] = cardcost.Text(cost)
 	} else {
 		values["usd"] = Dash
 	}
+	values["requests"] = strconv.FormatInt(requests, 10)
+	values["max_prompt"] = strconv.FormatInt(maxPrompt, 10)
 	values["provider"] = dashOr(provider)
 	values["model"] = dashOr(model)
 	return ProviderUsage{Values: values, Observed: true, Turns: len(rows)}, ""
-}
-
-// WriteCardUsage writes one card's usage.tsv, header line and one row, atomically. The
-// fields follow the same tab- and newline-scrubbing law as the pool's usage file, so the row
-// is always one row.
-func WriteCardUsage(path string, row UsageRow) error {
-	var head, values []string
-	for _, c := range CardUsageColumns {
-		v := strings.TrimSpace(row[c])
-		if v == "" {
-			v = Dash
-		}
-		v = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(v)
-		head = append(head, c)
-		values = append(values, v)
-	}
-	body := strings.Join(head, "\t") + "\n" + strings.Join(values, "\t") + "\n"
-	return writeAtomic(path, []byte(body), 0o644)
 }
 
 // AppendCardUsage appends one attempt's usage row to a card's usage.tsv, writing the header
 // first when the file is new (issue #900). A native run that retried a launch writes one row
 // per attempt -- attempt=1,2,3 for one card -- so the file holds the header and one row per
 // launch, and a reader folds them. A field the provider did not report stays a dash, never a
-// zero, exactly as in the single-row writer.
+// zero, and a tab or a newline in a value is scrubbed so the row is always one row.
 func AppendCardUsage(path string, row UsageRow) error {
 	_, statErr := os.Stat(path)
 	var b strings.Builder

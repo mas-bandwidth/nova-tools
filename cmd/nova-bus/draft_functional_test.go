@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Issue #327: nova-bus draft prints the note to stdout and writes no file,
@@ -32,9 +35,7 @@ func TestDraftWithoutFilePrintsSkeletonToStdoutAndHintsSendOnStderr(t *testing.T
 		mustContain(t, "stdout", "Subject: gate").
 		mustContain(t, "stderr", "DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>")
 
-	if strings.Contains(r.stdout, "DRAFT OK") {
-		t.Fatalf("stdout without --out should not contain DRAFT OK:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "DRAFT OK", "stdout without --out should not contain DRAFT OK:\n%s", r.stdout)
 }
 
 func TestDraftWritesFileWhenOutFlagGiven(t *testing.T) {
@@ -48,13 +49,9 @@ func TestDraftWritesFileWhenOutFlagGiven(t *testing.T) {
 		mustContain(t, "stdout", "DRAFT OK path="+draftFile)
 
 	data, err := os.ReadFile(draftFile)
-	if err != nil {
-		t.Fatalf("draft file was not written: %v", err)
-	}
+	require.NoErrorf(t, err, "draft file was not written: %v", err)
 	content := string(data)
-	if !strings.Contains(content, "To: Bo") || !strings.Contains(content, "From: Ada") || !strings.Contains(content, "Subject: gate") {
-		t.Fatalf("draft file content missing expected headers:\n%s", content)
-	}
+	require.Falsef(t, !strings.Contains(content, "To: Bo") || !strings.Contains(content, "From: Ada") || !strings.Contains(content, "Subject: gate"), "draft file content missing expected headers:\n%s", content)
 }
 
 // TestDraftPrintsSendHintOnStderr closes the silence the card names: after the skeleton
@@ -70,9 +67,7 @@ func TestDraftPrintsSendHintOnStderr(t *testing.T) {
 		mustCode(t, 0).
 		mustContain(t, "stderr", "nova-bus send --file")
 	lines := strings.Split(strings.TrimRight(r.stderr, "\n"), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("draft without --out should print exactly one hint line to stderr, got %d: %q", len(lines), r.stderr)
-	}
+	require.Equalf(t, 1, len(lines), "draft without --out should print exactly one hint line to stderr, got %d: %q", len(lines), r.stderr)
 }
 
 func TestDraftRefusesFileInsideBusCheckout(t *testing.T) {
@@ -95,9 +90,7 @@ func TestDraftOverwriteWithoutOutRefuses(t *testing.T) {
 		mustCode(t, 2).
 		mustContain(t, "stderr", "--overwrite requires --out")
 
-	if strings.Contains(r.stdout, "DRAFT OK") {
-		t.Fatalf("stdout without --out should not contain DRAFT OK:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "DRAFT OK", "stdout without --out should not contain DRAFT OK:\n%s", r.stdout)
 }
 
 func TestDraftDanglingSymlinkRefusesOverwrite(t *testing.T) {
@@ -116,8 +109,9 @@ func TestDraftDanglingSymlinkRefusesOverwrite(t *testing.T) {
 		mustCode(t, 1).
 		mustContain(t, "stderr", "DRAFT REFUSED: "+link+" exists; pass --overwrite to replace it")
 
-	if _, err := os.Lstat(target); !os.IsNotExist(err) {
-		t.Fatalf("dangling symlink target was created: %s", target)
+	{
+		_, err := os.Lstat(target)
+		require.Truef(t, os.IsNotExist(err), "dangling symlink target was created: %s", target)
 	}
 
 	// Also verify a dangling symlink pointing inside the bus checkout is not followed.
@@ -128,8 +122,9 @@ func TestDraftDanglingSymlinkRefusesOverwrite(t *testing.T) {
 			mustCode(t, 1).
 			mustContain(t, "stderr", "DRAFT REFUSED: "+busLink+" exists; pass --overwrite to replace it")
 
-		if _, err := os.Lstat(insideTarget); !os.IsNotExist(err) {
-			t.Fatalf("dangling symlink target inside bus was created: %s", insideTarget)
+		{
+			_, err := os.Lstat(insideTarget)
+			require.Truef(t, os.IsNotExist(err), "dangling symlink target inside bus was created: %s", insideTarget)
 		}
 	}
 }
@@ -167,34 +162,22 @@ func TestDraftAtomicCreationRace(t *testing.T) {
 		switch res.code {
 		case 0:
 			successCount++
-			if !strings.Contains(res.out, "DRAFT OK path="+target) {
-				t.Errorf("success run missing DRAFT OK: %s", res.out)
-			}
+			assert.Containsf(t, res.out, "DRAFT OK path="+target, "success run missing DRAFT OK: %s", res.out)
 		case 1:
 			refusedCount++
-			if !strings.Contains(res.err, "exists; pass --overwrite to replace it") {
-				t.Errorf("refused run missing exists message: %s", res.err)
-			}
+			assert.Containsf(t, res.err, "exists; pass --overwrite to replace it", "refused run missing exists message: %s", res.err)
 		default:
-			t.Errorf("unexpected exit code %d: stdout=%q, stderr=%q", res.code, res.out, res.err)
+			assert.Failf(t, "assertion failed", "unexpected exit code %d: stdout=%q, stderr=%q", res.code, res.out, res.err)
 		}
 	}
 
-	if successCount != 1 {
-		t.Fatalf("expected exactly 1 successful draft creation, got %d (refused=%d)", successCount, refusedCount)
-	}
-	if refusedCount != concurrency-1 {
-		t.Fatalf("expected %d refused draft creations, got %d", concurrency-1, refusedCount)
-	}
+	require.Falsef(t, successCount != 1, "expected exactly 1 successful draft creation, got %d (refused=%d)", successCount, refusedCount)
+	require.Falsef(t, refusedCount != concurrency-1, "expected %d refused draft creations, got %d", concurrency-1, refusedCount)
 
 	data, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("failed to read created draft: %v", err)
-	}
+	require.NoErrorf(t, err, "failed to read created draft: %v", err)
 	content := string(data)
-	if !strings.Contains(content, "To: Bo") || !strings.Contains(content, "From: Ada") || !strings.Contains(content, "Subject: gate") {
-		t.Fatalf("target file content missing expected headers:\n%s", content)
-	}
+	require.Falsef(t, !strings.Contains(content, "To: Bo") || !strings.Contains(content, "From: Ada") || !strings.Contains(content, "Subject: gate"), "target file content missing expected headers:\n%s", content)
 }
 
 func TestDraftOverwriteSymlinkReplacesLinkWithoutTouchingTarget(t *testing.T) {
@@ -205,8 +188,9 @@ func TestDraftOverwriteSymlinkReplacesLinkWithoutTouchingTarget(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "sensitive-target.md")
 	initialTargetContent := "SENSITIVE TARGET CONTENT - DO NOT OVERWRITE"
-	if err := os.WriteFile(target, []byte(initialTargetContent), 0o644); err != nil {
-		t.Fatalf("failed to create target file: %v", err)
+	{
+		err := os.WriteFile(target, []byte(initialTargetContent), 0o644)
+		require.NoErrorf(t, err, "failed to create target file: %v", err)
 	}
 
 	link := filepath.Join(dir, "symlink-draft.md")
@@ -220,29 +204,17 @@ func TestDraftOverwriteSymlinkReplacesLinkWithoutTouchingTarget(t *testing.T) {
 
 	// Verify target was NEVER overwritten
 	targetData, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("failed to read target: %v", err)
-	}
-	if string(targetData) != initialTargetContent {
-		t.Fatalf("target content was altered! got %q, want %q", string(targetData), initialTargetContent)
-	}
+	require.NoErrorf(t, err, "failed to read target: %v", err)
+	require.Falsef(t, string(targetData) != initialTargetContent, "target content was altered! got %q, want %q", string(targetData), initialTargetContent)
 
 	// Verify link is now a regular file, not a symlink
 	fi, err := os.Lstat(link)
-	if err != nil {
-		t.Fatalf("failed to lstat link: %v", err)
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		t.Fatalf("expected link to be replaced with a regular file, but it is still a symlink")
-	}
+	require.NoErrorf(t, err, "failed to lstat link: %v", err)
+	require.Falsef(t, fi.Mode()&os.ModeSymlink != 0, "expected link to be replaced with a regular file, but it is still a symlink")
 
 	linkData, err := os.ReadFile(link)
-	if err != nil {
-		t.Fatalf("failed to read replaced file: %v", err)
-	}
-	if !strings.Contains(string(linkData), "To: Bo") || !strings.Contains(string(linkData), "From: Ada") {
-		t.Fatalf("replaced file missing draft content:\n%s", string(linkData))
-	}
+	require.NoErrorf(t, err, "failed to read replaced file: %v", err)
+	require.Falsef(t, !strings.Contains(string(linkData), "To: Bo") || !strings.Contains(string(linkData), "From: Ada"), "replaced file missing draft content:\n%s", string(linkData))
 }
 
 func TestDraftOverwriteDirectoryRefuses(t *testing.T) {
@@ -251,8 +223,9 @@ func TestDraftOverwriteDirectoryRefuses(t *testing.T) {
 	checkout, _ := busDir(t)
 
 	dir := filepath.Join(t.TempDir(), "some-dir")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatalf("failed to create dir: %v", err)
+	{
+		err := os.Mkdir(dir, 0o755)
+		require.NoErrorf(t, err, "failed to create dir: %v", err)
 	}
 
 	invoke(t, "", "draft", "--bus", checkout, "--as", "Ada", "--to", "Bo", "--subject", "gate", "--out", dir, "--overwrite").

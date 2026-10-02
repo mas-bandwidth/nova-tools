@@ -7,6 +7,8 @@ import (
 	"os"
 	"syscall"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // TestWindowsTransientLockCollisionClassification tests that the Windows-specific
@@ -31,9 +33,7 @@ func TestWindowsTransientLockCollisionClassification(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := platformTransientLockCollision(tc.err)
-			if got != tc.want {
-				t.Errorf("platformTransientLockCollision(%v) = %v, want %v", tc.err, got, tc.want)
-			}
+			assert.Equal(t, tc.want, got, "platformTransientLockCollision(%v) = %v, want %v", tc.err, got, tc.want)
 		})
 	}
 }

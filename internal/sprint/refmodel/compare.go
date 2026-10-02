@@ -53,6 +53,10 @@ func Compare(e, m State) []Difference {
 			add("primary", id, "pair", ep.Pair, mp.Pair)
 			add("primary", id, "reached", ep.Reached, mp.Reached)
 		}
+		if ep.State == Review && mp.State == Review {
+			// what the machine's accept reads of its CI and its return
+			add("primary", id, "accept_held", e.AcceptHeld(id) != "", m.AcceptHeld(id) != "")
+		}
 	}
 	for _, id := range union(Keys(e.Work), Keys(m.Work)) {
 		ew, eok := e.Work[id]
@@ -66,6 +70,8 @@ func Compare(e, m State) []Difference {
 			add("work", id, "member", ew.Member, mw.Member)
 		}
 		add("work", id, "gen", ew.Gen, mw.Gen)
+		add("work", id, "redeals", ew.Redeals, mw.Redeals)
+		add("work", id, "take_ended", ew.TakeEnded, mw.TakeEnded)
 		add("work", id, "ok", ew.OK, mw.OK)
 		add("work", id, "primary", ew.Primary, mw.Primary)
 		add("work", id, "attempt", ew.Attempt, mw.Attempt)

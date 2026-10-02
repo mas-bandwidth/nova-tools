@@ -3,9 +3,10 @@ package swarm
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TakeLock(run.lock, 0) is a probe: supervise uses it to notice that no dispatcher
@@ -16,19 +17,14 @@ func TestAZeroWaitLockProbeDoesNotTakeAHeldLock(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "run.lock")
 	release, err := takeFileLock(path, 0)
-	if err != nil {
-		t.Fatalf("the free lock was not taken: %v", err)
-	}
+	require.NoError(t, err, "the free lock was not taken: %v", err)
 	_, err = takeFileLock(path, 0)
-	if err == nil || !strings.Contains(err.Error(), "another nova-swarm holds") {
-		t.Fatalf("a zero wait acquired a lock this process still holds: %v", err)
-	}
+	require.Error(t, err, "a zero wait acquired a lock this process still holds: %v", err)
+	require.Contains(t, err.Error(), "another nova-swarm holds", "a zero wait acquired a lock this process still holds: %v", err)
 	release()
 	release()
 	again, err := takeFileLock(path, 0)
-	if err != nil {
-		t.Fatalf("the lock was not released, or a second release wedged the turn: %v", err)
-	}
+	require.NoError(t, err, "the lock was not released, or a second release wedged the turn: %v", err)
 	again()
 }
 
@@ -38,16 +34,11 @@ func TestAFailedOpenDoesNotKeepTheTurn(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "missing", "slots.lock")
-	if _, err := takeFileLock(path, 0); err == nil {
-		t.Fatal("opened a lock in a directory that does not exist")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	_, err := takeFileLock(path, 0)
+	require.Error(t, err, "opened a lock in a directory that does not exist")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	release, err := takeFileLock(path, 0)
-	if err != nil {
-		t.Fatalf("the turn stayed held after the open failed: %v", err)
-	}
+	require.NoError(t, err, "the turn stayed held after the open failed: %v", err)
 	release()
 }
 
@@ -80,13 +71,9 @@ func TestOneZeroWaitWinsWhenSeveralAskTogether(t *testing.T) {
 	for release := range wins {
 		got = append(got, release)
 	}
-	if len(got) != 1 {
-		t.Fatalf("zero-wait takes that acquired together: %d, want 1", len(got))
-	}
+	require.Len(t, got, 1, "zero-wait takes that acquired together: %d, want 1", len(got))
 	got[0]()
 	release, err := takeFileLock(path, 0)
-	if err != nil {
-		t.Fatalf("the winner's release did not give the lock back: %v", err)
-	}
+	require.NoError(t, err, "the winner's release did not give the lock back: %v", err)
 	release()
 }

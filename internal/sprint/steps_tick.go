@@ -24,7 +24,7 @@ const MachineActor = "machine"
 const (
 	// TickMaxMoves bounds the units one part of a tick applies; the rest are
 	// due, and the next tick moves them. It is the deal's bound, TickMaxDeal
-	// (width.go): one Layer 1 write's member candidates, which the step
+	// (width.go): one table-layer write's member candidates, which the step
 	// builder cuts into parts under the table layer's entry bounds, so a
 	// part plans every row that needs it in the one tick and never lags its
 	// own work (the owner's rule, errata 3 amendment 10: every row of every
@@ -47,9 +47,47 @@ const (
 )
 
 // MaxRedeals is how many times one attempt's work card is dealt again after
-// its member went down or away (its redeals counter, which no take resets):
-// past it the card stays withdrawn, and the bound's judgment names it.
+// a take of it ended without a finish, its member down or away while the card
+// was working (its redeals counter, which no take resets). A card that was
+// ready, never taken, is dealt again and keeps its count: a card is retired
+// for repeated failure at members, never for members flapping while it sat
+// ready. A working card whose member goes down with its count at the bound
+// stays withdrawn, and the bound's judgment names it (docs/SPEC-SPRINT.md
+// section 2, the work card's redeals; tla/DirtyTick.tla RedealsAreEndedTakes
+// and RedealBoundHolds).
 const MaxRedeals = 3
+
+// FieldTakeEnded is the work card's mark that a take of it ended without a
+// finish and it was withdrawn (no member had room, or it is at its bound):
+// the deal that places it again counts that take, and unsets the mark.
+const FieldTakeEnded = "take_ended"
+
+// A take the provider failed ends like any take that ended without a finish: the card
+// is withdrawn with FieldTakeEnded and dealt again, never judged as failed work
+// (docs/SPEC-SPRINT.md, the work card's redeals; tla/CardContract.tla, ProviderFailure;
+// tla/DirtyTick.tla, RedealsAreEndedTakes). The work card keeps the last failure's line
+// (FieldProviderError, for the bound's judgment, cleared when it is dealt again) and a
+// record of every take the provider failed (FieldProviderTake, ProviderTake: the record
+// of that take, which `card` prints and the route stats count).
+const (
+	FieldProviderError = "provider_error"
+	FieldProviderTake  = "provider_take_" // + the take's number, redeals + 1 when it ended
+)
+
+// FieldStagingTake is the record of a launch its member refused at staging, keyed by the
+// generation refused (ProviderTake's shape: the route, the member, when, the reason). A
+// staging refusal spends none of the redeal bound: its own bound is the fleet, each member
+// refusing an attempt's card at most once, the deal never placing it on a member that
+// refused it (tla/CardContract.tla, StageRefused, Restage and StagingBound).
+const FieldStagingTake = "staging_take_"
+
+// MaxProviderErrorBytes bounds the line FieldProviderError keeps.
+const MaxProviderErrorBytes = 200
+
+// FieldReturnedAttempt is the primary's attempt when the coordinator last
+// returned it to review (return): at that attempt the pump does not accept
+// it, and the judgment "returned to review" decides it.
+const FieldReturnedAttempt = "returned_attempt"
 
 // The tick's own notification types.
 const (
@@ -74,14 +112,16 @@ const Sentinel = "sentinel"
 
 // TickDecisions are the decisions open to the tick's judgments.
 var TickDecisions = map[string][]string{
-	NBound:     {"rework with a fix", "drop", "wait"},
-	NCannotAsk: {"reader add", "rework", "drop", "wait"},
-	NNoMember:  {"fleet beat", "fleet up", "wait"},
-	NInvariant: {"look at the card", "repair", "wait"},
-	NWorkLate:  {"fleet down <member>", "wait", "drop"},
-	NReadLate:  {"ask --another", "wait", "drop"},
-	NMergeLate: {"merge --stream <s>", "look", "wait"},
-	NStalled:   {"look at the card", "wait"},
+	NBound:      {"rework with a fix", "drop", "wait"},
+	NCannotAsk:  {"reader add", "rework", "drop", "wait"},
+	NFewReaders: {"reader up", "reader add", "wait"},
+	NNoMember:   {"fleet beat", "fleet up", "wait"},
+	NNoRoute:    {"route add", "look at the card", "drop", "wait"},
+	NInvariant:  {"look at the card", "repair", "wait"},
+	NWorkLate:   {"fleet down <member>", "wait", "drop"},
+	NReadLate:   {"ask --another", "wait", "drop"},
+	NMergeLate:  {"merge --stream <s>", "look", "wait"},
+	NStalled:    {"look at the card", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -167,8 +207,25 @@ var TickTables = []TableUpdate{
 	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {"deal", TickDeal}, {"accept", TickAccept}}},
 	{Readers, []TickPartDef{{"ask", TickAsk}}},
 	{Merge, []TickPartDef{{"resume", TickResume}}},
-	{Fleet, []TickPartDef{{"presence", TickPresence}, {"level", TickLevel}}},
+	{Fleet, []TickPartDef{{"presence", TickPresence}}},
 }
+
+// PartLevel and PartLevelReads are the tick start's parts: the fleet's and the
+// readers' rebalance.
+const (
+	PartLevel      = "level"
+	PartLevelReads = "level reads"
+)
+
+// TickStart is the tick's start, once, before any table's update (the owner,
+// 2026-10-01: "both for readers and fleet, there needs to be a rebalance step
+// done at the start of each tick. it's simple. just once before tick,
+// rebalance each table."): the fleet's level (ready cards from a member that
+// cannot start them to one with free lanes, never past DealAhead times a
+// width) and the readers' (asked reads from a reader with a backlog to one
+// idle), each one batch. It runs once a tick: a table written again later in
+// the tick is updated by its update, never levelled again.
+var TickStart = []TickPartDef{{PartLevel, TickLevel}, {PartLevelReads, TickLevelReads}}
 
 // TickEnd is the tick's end, once the tables are settled: what is always
 // true held, the deadlines and the overdue judgments, and the done part last.
@@ -181,9 +238,9 @@ var TickEnd = []TickPartDef{
 }
 
 // TickParts is every part with a planner in the order a tick first runs them:
-// the four tables' updates, then the end.
+// the start, the four tables' updates, then the end.
 var TickParts = func() []TickPartDef {
-	var out []TickPartDef
+	out := append([]TickPartDef(nil), TickStart...)
 	for _, u := range TickTables {
 		for _, p := range u.Parts {
 			if p.Fn != nil {
@@ -217,10 +274,23 @@ const NReadyToMerge = "ready to merge"
 // the pump's one plan (Accept). The coordinator is told once for each stream
 // the tick queued cards in, "ready to merge" with the cards in order: the
 // merge is the coordinator's.
+//
+// A primary a change queued after the drain names (s.Held) is not eligible: it
+// waits for the next tick's pump, where the change finds it where it expects
+// it (docs/SPEC-SPRINT.md's accept row: review -> merging only on two ok reads
+// at the head, and the work table advances only at a tick's pump). It is
+// dropped here, before the plan, so the stream's state change and both notes
+// are planned for the cards accepted and for no others.
 func TickAccept(s *Snapshot, r TickReq) (Plan, int) {
 	eligible := func(c *Card) string {
 		if c.F("result") == "failed" || len(okReaders(s, c)) < 2 {
 			return "not two ok reads"
+		}
+		if why := AcceptHeld(c); why != "" {
+			return why
+		}
+		if s.Held[c.ID] {
+			return "a change is queued for it"
 		}
 		if m := s.Merge.Card(c.ID); m != nil && (!m.Placed() || m.Col != Returned) {
 			return "its merge record is " + placeWord(m)
@@ -253,10 +323,48 @@ func TickAccept(s *Snapshot, r TickReq) (Plan, int) {
 	for _, st := range streams {
 		n := happened(NReadyToMerge, st, s.Now, by[st]...)
 		n.Who, n.To = r.who(), s.Coordinator
-		n.What = fmt.Sprintf("%d accepted and queued to merge: %s; run: nova-sprint merge --stream %s", len(by[st]), Preview(by[st], " "), st)
+		// the thing to run is land (git merges and pushes, then the merge step); merge alone
+		// records a landing without touching git; nova-sprint run --land lands by itself
+		n.What = fmt.Sprintf("%d accepted and queued to merge: %s; run: nova-sprint land --stream %s (a nova-sprint run started with --land lands them itself)", len(by[st]), Preview(by[st], " "), st)
 		p.Notes = append(p.Notes, n)
 	}
 	return p, 0
+}
+
+// AcceptHeld is why the pump leaves a primary in review that has ok reads
+// from two different readers at its head for the coordinator, "" when it
+// accepts it (R9's two holds, docs/SPEC-SPRINT.md section 6):
+//   - its CI is red at its head (CIRedAtHead): "ci red on a primary" is the
+//     coordinator's to decide (rework, return, drop, ack); the coordinator's
+//     accept still takes it;
+//   - it was returned to review at its attempt (ReturnedAtAttempt): the
+//     coordinator sent it back, and "returned to review" decides it (rework,
+//     accept, drop); its reads stand, but only a new attempt's two reads are
+//     the pump's to accept.
+//
+// The holder of a primary in review (reviewAccepts) and reviewJudgment read
+// the same holds, so no primary in review is silent. The model is
+// tla/DirtyTick.tla Held and AcceptHolds.
+func AcceptHeld(c *Card) string {
+	switch {
+	case CIRedAtHead(c):
+		return "its CI is red at its head " + orDash(c.F("head"))
+	case ReturnedAtAttempt(c):
+		return "it was returned to review at attempt " + c.F("attempt")
+	}
+	return ""
+}
+
+// CIRedAtHead says the primary's last CI observation is red, for its current
+// head (a red for an older head is not about the work in review).
+func CIRedAtHead(c *Card) bool {
+	return c.F("ci") == "red" && c.F("ci_head") == c.F("head")
+}
+
+// ReturnedAtAttempt says the coordinator returned the primary to review at
+// its current attempt.
+func ReturnedAtAttempt(c *Card) bool {
+	return c.F(FieldReturnedAttempt) != "" && c.Int(FieldReturnedAttempt) == c.Int("attempt")
 }
 
 // Empty says a plan writes nothing.
@@ -298,6 +406,49 @@ func TickResolve(s *Snapshot, r TickReq) (Plan, int) {
 		p = Resolve(s, ResolveReq{Sel: Sel{Only: ids}, Who: r.who()})
 	}
 	return bound(p)
+}
+
+// dealTurns is the order the tick resolves in (front(s) per stream): one
+// card from each stream in turn, in the order of streams, until every stream's
+// cards are taken; a stream with none left is skipped, and within a stream the
+// cards go in work order (SortCards). A card of a stream not in streams takes
+// its turn after them, its streams in name order. So every stream with a
+// ready card is worked in parallel: a deal of k cards over n streams gives
+// each stream k/n, give or take one, never one stream's backlog first. The
+// model is tla/SprintEvents.tla: TurnSorted is this order (one card from each
+// stream's front in turn, a stream with none skipped, within a stream by work
+// order), PlanDeal takes the room from it, and DealTakesTurns states it from
+// the counts of a plan; the witness W28 (MCSprintEventsW28.cfg) is the order of
+// the whole table. Errata 3, amendment 4.
+func dealTurns(cards []*Card, streams []string) []*Card {
+	by := map[string][]*Card{}
+	order := append([]string(nil), streams...)
+	known := map[string]bool{}
+	for _, st := range streams {
+		known[st] = true
+	}
+	var extra []string
+	for _, c := range cards {
+		if !known[c.Row] {
+			known[c.Row] = true
+			extra = append(extra, c.Row)
+		}
+		by[c.Row] = append(by[c.Row], c)
+	}
+	sort.Strings(extra)
+	order = append(order, extra...)
+	for _, st := range order {
+		SortCards(by[st])
+	}
+	out := make([]*Card, 0, len(cards))
+	for turn := 0; len(out) < len(cards); turn++ {
+		for _, st := range order {
+			if turn < len(by[st]) {
+				out = append(out, by[st][turn])
+			}
+		}
+	}
+	return out
 }
 
 // T7. TickResume resumes a stream stopped only because a card needed another
@@ -354,21 +505,67 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	due := 0
 	var ready []*Card
 	var conds []cond
+	unserved, whyOf := map[string][]string{}, map[string]string{}
+	up := s.UpMembers()
 	for _, c := range s.Work.Column(Ready) {
 		if wc := AtRedealBound(s, c); wc != nil {
 			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID},
-				what: fmt.Sprintf("%s: attempt %s was redealt %d times, its bound, and is not dealt again; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), wc.Int("redeals"), c.ID)})
+				what: fmt.Sprintf("%s: attempt %s was redealt %d times, its bound, and is not dealt again%s; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), wc.Int("redeals"), providerWhy(wc), c.ID)})
 			continue
 		}
-		if !IsSentinel(c) {
-			ready = append(ready, c)
+		if wc, takes := AtStagingBound(s, c, up); wc != nil {
+			// every member up refused it at staging: the coordinator's, once, never dealt again
+			var who []string
+			for _, t := range takes {
+				who = append(who, t.Member)
+			}
+			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID},
+				what: fmt.Sprintf("%s: attempt %s was refused at staging by every member up (%s) and is not dealt again; last: %s; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), strings.Join(who, ", "), takes[len(takes)-1].Error, c.ID)})
+			continue
+		}
+		if IsSentinel(c) {
+			continue
+		}
+		if tier, why := s.noRoute(c); why != "" {
+			// no route serves its tier, or its model lines cannot be read (a card
+			// admitted before the lint): one judgment per tier either way
+			unserved[tier] = append(unserved[tier], c.ID)
+			whyOf[tier] = why
+			continue
+		}
+		ready = append(ready, c)
+	}
+	// the reads too: a primary in review waiting for reads while no enabled route
+	// serves its tier is held by the same judgment of that tier, the deal's,
+	// at once, not at the unreported deadline (route.go, readRouteMissing); one
+	// owner of the judgment, so it is written once and closed once
+	if s.Readers != nil {
+		for _, c := range s.Work.Column(Review) {
+			if c.F("result") == "failed" || !readsWithoutRoute(s, c) {
+				continue
+			}
+			if tier, why := s.readRouteMissing(c); why != "" {
+				unserved[tier] = append(unserved[tier], c.ID)
+				if whyOf[tier] == "" {
+					whyOf[tier] = why
+				}
+			}
 		}
 	}
+	for _, tier := range sortedKeys(unserved) {
+		conds = append(conds, cond{typ: NNoRoute, stream: TierSubject(tier), streamLevel: true, primaries: unserved[tier],
+			what: fmt.Sprintf("%d primaries of tier %s wait: %s", len(unserved[tier]), tier, whyOf[tier])})
+	}
 	ready = streamTurns(ready, streamRound(s, PropStreamIndex))
-	up := s.UpMembers()
 	if len(up) == 0 && len(ready) > 0 {
-		conds = append(conds, cond{typ: NNoMember, streamLevel: true,
-			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))})
+		c := cond{typ: NNoMember, streamLevel: true,
+			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))}
+		if beatingHeld(s, r) {
+			// the members beat: the hold keeps them down, so the remedy is to release it
+			c.what = fmt.Sprintf("%d primaries wait to be dealt and no member is up: every member that beats is held; release a hold with nova-sprint fleet up <member>", len(ready))
+			c.decisions = []string{"fleet up", "wait"}
+		}
+		conds = append(conds, c)
 	}
 	if len(up) > 0 {
 		room := widthRoom(s, up)
@@ -382,34 +579,135 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
 		}
 	}
-	due += notify(&p, s, conds, []string{NNoMember, NBound}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute}, r)
 	return p, due
 }
 
+// readsWithoutRoute says a primary in review waits for reads, or holds a read
+// asked or begun with no route (asked while no route served its tier): what
+// that tier's no-route judgment holds (TickDeal).
+func readsWithoutRoute(s *Snapshot, pr *Card) bool {
+	live := liveReadsAt(s, pr, pr.Int("attempt"))
+	if len(live) < 2 {
+		return true
+	}
+	for _, rc := range live {
+		if (rc.Col == Asked || rc.Col == Reading) && rc.F(FieldRoute) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// beatingHeld says some fleet member beats and every member that beats is
+// held (docs/SPEC-SPRINT.md, the judgment "no fleet member is up": the hold,
+// not a missing beat, keeps the fleet down).
+func beatingHeld(s *Snapshot, r TickReq) bool {
+	beats := false
+	for _, m := range s.Fleet.Rows() {
+		if !r.Beats[m].Fresh(s.Now) {
+			continue
+		}
+		if ctl := s.MemberCtl(m); ctl == nil || ctl.F("held") == "" {
+			return false
+		}
+		beats = true
+	}
+	return beats
+}
+
 // AtRedealBound is the primary's withdrawn work card when it is at its
-// redeal bound: the tick deals it no more. nil when it is not.
+// redeal bound: a take of it ended (FieldTakeEnded) with its count at
+// MaxRedeals, so the deal that would place it again would pass the bound. The
+// tick deals it no more. nil when it is not: a card withdrawn while ready
+// keeps its count and is dealt again (tla/DirtyTick.tla AtRB).
 func AtRedealBound(s *Snapshot, pr *Card) *Card {
 	if pr == nil || pr.Col != Ready {
 		return nil
 	}
 	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
-	if wc != nil && wc.Col == Withdrawn && wc.Int("redeals") >= MaxRedeals {
+	if wc != nil && wc.Col == Withdrawn && redealBound(wc) {
 		return wc
 	}
 	return nil
 }
 
-// T4. TickLevel evens the up members' ready queues when two differ by more
-// than one: the newest cards of the longest queue go round the fleet from the
-// deal's index (level, round.levelTo).
+// StagingTakes is the work card's launches refused at staging, in the order of their
+// generations (FieldStagingTake).
+func StagingTakes(wc *Card) (takes []ProviderTake, gens []int) {
+	for g := 1; g <= wc.Int("gen"); g++ {
+		if v := wc.F(FieldStagingTake + itoa(g)); v != "" {
+			f := append(strings.SplitN(v, "\t", 6), "", "", "", "", "", "")
+			takes, gens = append(takes, ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5]}), append(gens, g)
+		}
+	}
+	return takes, gens
+}
+
+// StagingRefusers is the members that refused the work card at staging, each once, in the
+// order they refused: the deal places it on none of them.
+func StagingRefusers(wc *Card) []string {
+	takes, _ := StagingTakes(wc)
+	var out []string
+	for _, t := range takes {
+		if !contains(out, t.Member) {
+			out = append(out, t.Member)
+		}
+	}
+	return out
+}
+
+// AtStagingBound is the primary's withdrawn work card when every member up (up, at least
+// one) refused it at staging, and the refusals: the deal has no member to place it on, and
+// the tick deals it no more until a member that has not refused it is up, or the coordinator
+// reworks or drops it. nil when it is not.
+func AtStagingBound(s *Snapshot, pr *Card, up []string) (*Card, []ProviderTake) {
+	if pr == nil || pr.Col != Ready || len(up) == 0 {
+		return nil, nil
+	}
+	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
+	if wc == nil || wc.Col != Withdrawn || len(without(up, StagingRefusers(wc))) > 0 {
+		return nil, nil
+	}
+	takes, _ := StagingTakes(wc)
+	return wc, takes
+}
+
+// providerWhy is what a bound's judgment adds when the take that ended last was the
+// provider's: the provider (the model id's first word) and the last error line
+// (tla/CardContract.tla, ProviderFailure).
+func providerWhy(wc *Card) string {
+	line := wc.F(FieldProviderError)
+	if line == "" {
+		return ""
+	}
+	provider, _, _ := strings.Cut(wc.F(FieldModel), "/")
+	return fmt.Sprintf(": the provider %s failed it, last error: %s", orDash(provider), line)
+}
+
+// redealBound says the withdrawn work card's next deal would count a take
+// past MaxRedeals.
+func redealBound(wc *Card) bool {
+	return wc.F(FieldTakeEnded) != "" && wc.Int("redeals") >= MaxRedeals
+}
+
+// T4. TickLevel is the fleet's rebalance, once at the start of every tick
+// (TickStart): the up members' backlogs evened when two differ by more than
+// one, the newest ready cards of the largest going round the fleet from the
+// deal's index to a member below DealAhead times its width (level,
+// round.levelTo).
 func TickLevel(s *Snapshot, r TickReq) (Plan, int) {
 	return bound(FleetStep(s, FleetReq{Op: "level", Who: r.who()}))
 }
 
 // T2. TickAsk asks two different readers of every primary in review whose
-// work did not fail and that has no read card at its attempt (the readers
-// named on the primary first). One that cannot be asked, for want of two
-// different readers, is a judgment once (N1), closed when it is asked. The
+// work did not fail and that has fewer than two read cards at its attempt (the
+// readers named on the primary first), readers up only; a read asked of a
+// reader that is not up is taken back, and its primary is asked again, in the
+// same step. One that cannot be asked, for want of two different readers, is a
+// judgment once (N1), closed when it is asked; with fewer than two readers up
+// it asks none, and one judgment says so (NFewReaders, the sprint's, once per
+// tick-end). The
 // primaries go in stream turns from the ask's stream index on the work table
 // (streamTurns, as the deal's; Ask moves the index), so the readers
 // serve every stream alike and no stream's backlog waits behind another's
@@ -418,7 +716,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	var ids []string
 	due := 0
 	askable := func(c *Card) string {
-		if c.F("result") != "failed" && len(readsAt(s, c, c.Int("attempt"))) == 0 {
+		if c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < 2 {
 			return ""
 		}
 		return "asked, or its work failed"
@@ -431,17 +729,21 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	var p Plan
-	if len(ids) > 0 {
+	var conds []cond
+	switch {
+	case len(ids) > 0 && s.ReaderStates != nil && len(s.UpReaders()) < 2:
+		// an absent reader is never asked: the sprint's one judgment says so
+		conds = append(conds, cond{typ: NFewReaders, streamLevel: true, what: fewReaders(s)})
+	case len(ids) > 0:
 		p = Ask(s, AskReq{Sel: Sel{Only: ids}, Who: r.who()})
 	}
-	var conds []cond
 	for _, x := range p.Refused {
 		if pr := s.Work.Placed(x.Key); pr != nil {
 			conds = append(conds, cond{typ: NCannotAsk, stream: pr.Row, primaries: []string{pr.ID}, what: x.Why})
 		}
 	}
 	p.Refused = nil
-	due += notify(&p, s, conds, []string{NCannotAsk}, r)
+	due += notify(&p, s, conds, []string{NCannotAsk, NFewReaders}, r)
 	return p, due
 }
 
@@ -651,7 +953,7 @@ type cond struct {
 // stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, card, what string) string {
 	switch typ {
-	case NNoMember, NCannotAsk:
+	case NNoMember, NCannotAsk, NNoRoute, NFewReaders:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
@@ -772,7 +1074,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			k := condKey(c.typ, sub, c.card, c.what)
 			holds[k] = true
 			fresh = fresh || !open[k]
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate) {
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders) {
 				update(n, c.what) // the latest facts, in place
 			}
 		}
@@ -832,7 +1134,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 func MovesDue(s *Snapshot) int {
 	n := len(s.Fleet.Column(Withdrawn))
 	for _, c := range s.Work.Column(Review) {
-		if s.Readers != nil && c.F("result") != "failed" && len(readsAt(s, c, c.Int("attempt"))) == 0 {
+		if s.Readers != nil && c.F("result") != "failed" && len(liveReadsAt(s, c, c.Int("attempt"))) < 2 && (s.ReaderStates == nil || len(s.UpReaders()) >= 2) {
 			n++
 		}
 	}

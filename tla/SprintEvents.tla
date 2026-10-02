@@ -9,8 +9,8 @@
 \* from the present state.
 \*
 \* WHAT IT STANDS ON. Layers 1 and 2 are assumed, as their own models prove
-\* them (tla/SetTable.tla, the table, and tla/SetTableLog.tla, the log, on
-\* their own branches): one call at a time, a step all or nothing, guards
+\* them (the table layer's models, tla/TABLE-MODEL.md): one
+\* call at a time, a step all or nothing, guards
 \* checked at apply, one place per card and table, a revision that moves
 \* with every change of a record, a receipt that makes a part identity apply
 \* once, one gapless line per change in the step's own commit, a function

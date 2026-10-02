@@ -26,7 +26,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	written, err := scaffold.Verb(abs, fs.Arg(0), fs.Arg(1))
+	written, err := verb(abs, fs.Arg(0), fs.Arg(1))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "newverb: %v\n", err)
 		os.Exit(1)
@@ -36,4 +36,12 @@ func main() {
 		fmt.Println("wrote " + p)
 	}
 	fmt.Print(scaffold.DispatchNote(fs.Arg(0), fs.Arg(1)))
+}
+
+func verb(root, tool, verb string) ([]string, error) {
+	outs, err := scaffold.VerbFiles(root, tool, verb)
+	if err != nil {
+		return nil, err
+	}
+	return scaffold.Write(root, outs)
 }

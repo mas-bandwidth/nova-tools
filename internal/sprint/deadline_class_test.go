@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // One deadline: a work card's deal and take stamps are read only by
@@ -22,6 +24,9 @@ func TestTheWorkStampsAreReadOnlyByWorkDeadline(t *testing.T) {
 		"WorkDeadline": true, // the one deadline
 		"takenStamps":  true, // writes first_taken once
 		"nextGen":      true, // writes untaken_since once per take
+		"AttemptLine":  true, // prints an attempt's stamps, judges nothing
+		"RouteStats":   true, // a route's mean wall, shown, judges nothing
+		"takeStamps":   true, // a take's waiting and running time, recorded and shown, judges nothing (cost.go)
 	}
 	var dirs []string
 	err := filepath.WalkDir(".", func(p string, d os.DirEntry, err error) error {
@@ -30,16 +35,12 @@ func TestTheWorkStampsAreReadOnlyByWorkDeadline(t *testing.T) {
 		}
 		return err
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var bad []string
 	for _, dir := range dirs {
 		fset := token.NewFileSet()
 		pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, pkg := range pkgs {
 			for _, f := range pkg.Files {
 				for _, decl := range f.Decls {
@@ -87,7 +88,5 @@ func TestTheWorkStampsAreReadOnlyByWorkDeadline(t *testing.T) {
 			}
 		}
 	}
-	if len(bad) > 0 {
-		t.Fatalf("a work stamp read outside WorkDeadline, a second clock:\n%s", strings.Join(bad, "\n"))
-	}
+	require.Empty(t, bad, "a work stamp read outside WorkDeadline, a second clock:\n%s", strings.Join(bad, "\n"))
 }

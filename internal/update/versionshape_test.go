@@ -136,11 +136,9 @@ func TestReportStillRefusesAToolThatAnswersNothing(t *testing.T) {
 	bin := t.TempDir()
 	mute := specScript(t, bin, "nova-mute", `printf '%s\n' 'nova-mute: no verb given' >&2; exit 2`)
 	file := manifest(t, row("nova-mute", "tool", mute, "local:"+mute, "none"))
-	code, stdout, stderr := specRun(t, Environment{}, "report", "--file", file)
-	need(t, stdout, "REPORT UNKNOWN name=nova-mute")
-	// The closing count is on stderr when the check ran and failed, which is where a
-	// FAIL line belongs.
-	need(t, stdout+stderr, "unknown=1")
+	code, _, stderr := specRun(t, Environment{}, "report", "--file", file)
+	// A report that ran and failed prints on stderr, where a FAIL belongs.
+	need(t, stderr, "REPORT UNKNOWN name=nova-mute", "unknown=1")
 	if code != 1 {
 		t.Errorf("exit %d, want 1 (the check ran and failed)", code)
 	}

@@ -12,6 +12,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE REPLY TRANSACTION, at the binary: one test per normative sentence of the reply
@@ -42,9 +44,7 @@ func replyBus(t *testing.T) (checkout, bare, drafts string) {
 func bodyFile(t *testing.T, text string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "body.txt")
-	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(text), 0o644))
 	return path
 }
 
@@ -61,9 +61,7 @@ func replyArgs(checkout, drafts, target, body string, extra ...string) []string 
 func draftsIn(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var out []string
 	for _, e := range entries {
 		out = append(out, e.Name())
@@ -73,8 +71,9 @@ func draftsIn(t *testing.T, dir string) []string {
 
 func mustEmptyDir(t *testing.T, dir string) {
 	t.Helper()
-	if got := draftsIn(t, dir); len(got) != 0 {
-		t.Fatalf("the draft directory holds %v; a refusal writes no draft and leaves no temporary", got)
+	{
+		got := draftsIn(t, dir)
+		require.Emptyf(t, len(got), "the draft directory holds %v; a refusal writes no draft and leaves no temporary", got)
 	}
 }
 
@@ -96,21 +95,13 @@ func TestDraftWithoutReplyToIsByteIdenticalToTodays(t *testing.T) {
 	checkout, _ := busDir(t)
 	const expected = "From: Ada\nTo: Bo\nSubject: gate\n\n" + bus.PlaceholderBody + "\n"
 	r := invoke(t, "", "draft", "--bus", checkout, "--as", "Ada", "--to", "Bo", "--subject", "gate").mustCode(t, 0)
-	if r.stdout != expected {
-		t.Errorf("stdout is %q, want %q", r.stdout, expected)
-	}
-	if r.stderr != "DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>\n" {
-		t.Errorf("the released form printed %q on stderr; want the one-line send hint", r.stderr)
-	}
+	assert.Equalf(t, expected, r.stdout, "stdout is %q, want %q", r.stdout, expected)
+	assert.Equalf(t, "DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>\n", r.stderr, "the released form printed %q on stderr; want the one-line send hint", r.stderr)
 	// And the refusal side, unchanged: exit 2, one DRAFT REFUSED line per problem.
 	bad := invoke(t, "", "draft", "--bus", checkout, "--as", "Nobody", "--to", "Bo").mustCode(t, 2)
-	if !strings.Contains(bad.stderr, `DRAFT REFUSED: --as "Nobody" names no one on this bus`) {
-		t.Errorf("the released refusal changed: %q", bad.stderr)
-	}
+	assert.Containsf(t, bad.stderr, `DRAFT REFUSED: --as "Nobody" names no one on this bus`, "the released refusal changed: %q", bad.stderr)
 	// No git at all: the released form runs against a checkout with no remote reachable.
-	if strings.Contains(r.stderr, "fetch") {
-		t.Errorf("the released form went near git: %q", r.stderr)
-	}
+	assert.NotContainsf(t, r.stderr, "fetch", "the released form went near git: %q", r.stderr)
 }
 
 // The operation: "`--remote`, `--branch`, `--body-file`, `--draft-dir` and `--git-timeout`
@@ -149,12 +140,8 @@ func TestPrepareAndSendAreUnchangedByThisSlice(t *testing.T) {
 	invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).mustCode(t, 0)
 	path := replyPath(drafts, "bo-abcdef012345")
 	r := invoke(t, "", "prepare", "--bus", checkout, "--as", "Ada", "--file", path).mustCode(t, 0)
-	if !strings.Contains(r.stdout, `"id"`) {
-		t.Errorf("prepare did not produce an artifact for a generated reply: %s\n%s", r.stdout, r.stderr)
-	}
-	if strings.Contains(r.stderr, "NOTE") {
-		t.Errorf("prepare applied a tolerance to a generated reply, so the header is not the header it writes: %s", r.stderr)
-	}
+	assert.Containsf(t, r.stdout, `"id"`, "prepare did not produce an artifact for a generated reply: %s\n%s", r.stdout, r.stderr)
+	assert.NotContainsf(t, r.stderr, "NOTE", "prepare applied a tolerance to a generated reply, so the header is not the header it writes: %s", r.stderr)
 }
 
 // ------------------------------------------------------------- that it is fresh
@@ -179,12 +166,8 @@ func TestReplyRefreshesBeforeItResolves(t *testing.T) {
 
 	body := bodyFile(t, "Green on all three.\n")
 	r := invoke(t, "", replyArgs(checkout, drafts, "bo-999999999999", body)...).mustCode(t, 0)
-	if !strings.Contains(r.stdout, "re=bo-999999999999") {
-		t.Fatalf("the refresh did not put the remote-only note on the listing: %s", r.stdout)
-	}
-	if !strings.Contains(r.stdout, "moved=true") {
-		t.Errorf("the receipt does not say the checkout moved: %s", r.stdout)
-	}
+	require.Containsf(t, r.stdout, "re=bo-999999999999", "the refresh did not put the remote-only note on the listing: %s", r.stdout)
+	assert.Containsf(t, r.stdout, "moved=true", "the receipt does not say the checkout moved: %s", r.stdout)
 	// The same run with the fetch disabled at the seam: the id is unknown locally.
 	second := t.TempDir()
 	withoutFetch(t, func() {
@@ -253,13 +236,12 @@ func TestADivergedCheckoutIsRefusedAndLosesNothing(t *testing.T) {
 	invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).
 		mustCode(t, 1).mustContain(t, "stderr", "DRAFT REFUSED: this checkout and origin/main have both moved since they last agreed")
 	mustEmptyDir(t, drafts)
-	if got := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD")); got != head {
-		t.Errorf("the refusal moved HEAD from %s to %s", head, got)
+	{
+		got := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
+		assert.Falsef(t, got != head, "the refusal moved HEAD from %s to %s", head, got)
 	}
 	raw, err := os.ReadFile(filepath.Join(checkout, "scratch.txt"))
-	if err != nil || string(raw) != "not the bus's business\n" {
-		t.Errorf("the refusal did not leave the dirty file alone: %v %q", err, raw)
-	}
+	assert.Falsef(t, err != nil || string(raw) != "not the bus's business\n", "the refusal did not leave the dirty file alone: %v %q", err, raw)
 }
 
 // "the refresh moves the checkout and nothing else. No commit, no push, no CURSOR, no
@@ -285,20 +267,17 @@ func TestTheRefreshWritesNothingToTheBus(t *testing.T) {
 	for path, want := range before {
 		got, err := os.ReadFile(filepath.Join(checkout, filepath.FromSlash(path)))
 		if err != nil {
-			t.Errorf("%s: %v", path, err)
+			assert.Failf(t, "assertion failed", "%s: %v", path, err)
 			continue
 		}
-		if string(got) != want {
-			t.Errorf("%s changed under a draft:\nbefore %q\nafter  %q", path, want, got)
-		}
+		assert.Equalf(t, want, string(got), "%s changed under a draft:\nbefore %q\nafter  %q", path, want, got)
 	}
 	// The fetch moves the checkout; nothing this run did adds a commit of its own.
 	after := strings.TrimSpace(gitIn(t, checkout, "rev-list", "--count", "HEAD"))
-	if after != "3" || commits != "2" {
-		t.Errorf("the checkout went from %s commits to %s; the refresh is a fast-forward of the bus's own history and writes none", commits, after)
-	}
-	if dirty := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain")); dirty != "" {
-		t.Errorf("the run left the checkout dirty:\n%s", dirty)
+	assert.Falsef(t, after != "3" || commits != "2", "the checkout went from %s commits to %s; the refresh is a fast-forward of the bus's own history and writes none", commits, after)
+	{
+		dirty := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain"))
+		assert.Emptyf(t, dirty, "the run left the checkout dirty:\n%s", dirty)
 	}
 }
 
@@ -316,9 +295,7 @@ func laneState(t *testing.T, checkout string) map[string]string {
 			out[rel] = string(raw)
 		}
 	}
-	if len(out) == 0 {
-		t.Fatal("the fixture has no lane state files, so this test would assert nothing")
-	}
+	require.NotEmpty(t, len(out), "the fixture has no lane state files, so this test would assert nothing")
 	return out
 }
 
@@ -462,29 +439,17 @@ func TestReplyResolvesAPathForANoteWrittenBeforeIds(t *testing.T) {
 	var names []string
 	for _, target := range []string{"from-bo/2026-09-05T0900Z-old.md", "from-bo/2026-09-05T0901Z-older.md"} {
 		r := invoke(t, "", replyArgs(checkout, drafts, target, body)...).mustCode(t, 0)
-		if !strings.Contains(r.stdout, "re="+target) {
-			t.Errorf("the receipt does not carry the path as the target: %s", r.stdout)
-		}
+		assert.Containsf(t, r.stdout, "re="+target, "the receipt does not carry the path as the target: %s", r.stdout)
 	}
 	for _, n := range draftsIn(t, drafts) {
-		if !strings.Contains(n, "-re-legacy-") {
-			t.Errorf("a legacy target produced the filename %q; the name is built from the derived id", n)
-		}
-		if strings.ContainsAny(n, "/\\") {
-			t.Errorf("the filename %q holds a path separator", n)
-		}
+		assert.Containsf(t, n, "-re-legacy-", "a legacy target produced the filename %q; the name is built from the derived id", n)
+		assert.Falsef(t, strings.ContainsAny(n, "/\\"), "the filename %q holds a path separator", n)
 		names = append(names, n)
 	}
-	if len(names) != 2 {
-		t.Fatalf("two legacy targets produced %d files: %v", len(names), names)
-	}
+	require.Equalf(t, 2, len(names), "two legacy targets produced %d files: %v", len(names), names)
 	raw, err := os.ReadFile(filepath.Join(drafts, names[0]))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "Re: from-bo/2026-09-05T090") {
-		t.Errorf("the Re line does not carry the path:\n%s", raw)
-	}
+	require.NoError(t, err)
+	assert.Containsf(t, string(raw), "Re: from-bo/2026-09-05T090", "the Re line does not carry the path:\n%s", raw)
 }
 
 // ------------------------------------------------------------- headers are the tool's, the body the author's
@@ -498,16 +463,10 @@ func TestGeneratedReplyHeaderIsByteEqualToTheHandBuiltOne(t *testing.T) {
 	body := bodyFile(t, "Yes, and on the merge queue too.\n")
 	invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).mustCode(t, 0)
 	want, err := os.ReadFile(filepath.Join("testdata", "reply", "hand-built.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got, err := os.ReadFile(replyPath(drafts, "bo-abcdef012345"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(want) {
-		t.Errorf("the generated reply is not the hand-built one:\ngot:\n%s\nwant:\n%s", got, want)
-	}
+	require.NoError(t, err)
+	assert.Falsef(t, string(got) != string(want), "the generated reply is not the hand-built one:\ngot:\n%s\nwant:\n%s", got, want)
 }
 
 // "`To` | `--to` when given; otherwise the resolved sender of the target note"; "`Cc` |
@@ -530,15 +489,9 @@ func TestReplyDefaultsToTheSendersCanonicalNameAndNoCc(t *testing.T) {
 	invoke(t, "", replyArgs(checkout, drafts, "bo-222222222222", body)...).
 		mustCode(t, 0).mustContain(t, "stdout", `to="Bo" cc=-`)
 	raw, err := os.ReadFile(replyPath(drafts, "bo-222222222222"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "Cc:") {
-		t.Errorf("the reply inherited the target's Cc:\n%s", raw)
-	}
-	if !strings.Contains(string(raw), "To: Bo\n") {
-		t.Errorf("To is not the target's resolved sender:\n%s", raw)
-	}
+	require.NoError(t, err)
+	assert.NotContainsf(t, string(raw), "Cc:", "the reply inherited the target's Cc:\n%s", raw)
+	assert.Containsf(t, string(raw), "To: Bo\n", "To is not the target's resolved sender:\n%s", raw)
 }
 
 // "`Subject` | ... the target's subject with one `Re: ` in front, and an existing `Re: ` is
@@ -560,21 +513,13 @@ func TestReplySubjectIsPrefixedOnceAndNeverStacked(t *testing.T) {
 	body := bodyFile(t, "Yes.\n")
 	invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).mustCode(t, 0)
 	plain, err := os.ReadFile(replyPath(drafts, "bo-abcdef012345"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(plain), "Subject: Re: A question about the gate\n") {
-		t.Errorf("the subject is not prefixed once:\n%s", plain)
-	}
+	require.NoError(t, err)
+	assert.Containsf(t, string(plain), "Subject: Re: A question about the gate\n", "the subject is not prefixed once:\n%s", plain)
 	r := invoke(t, "", replyArgs(checkout, drafts, "bo-aaaaaaaaaaaa", body)...).mustCode(t, 0)
 	r.mustContain(t, "stderr", `DRAFT NOTE the subject is the target's own, unstacked: "Re: A question about the gate"`)
 	stacked, err := os.ReadFile(replyPath(drafts, "bo-aaaaaaaaaaaa"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(stacked), "Re: Re: ") {
-		t.Errorf("the Re: prefix was stacked:\n%s", stacked)
-	}
+	require.NoError(t, err)
+	assert.NotContainsf(t, string(stacked), "Re: Re: ", "the Re: prefix was stacked:\n%s", stacked)
 }
 
 // "A reply to your own note requires an explicit `--to`, because the default -- the
@@ -642,19 +587,11 @@ func TestBodyFileIsPreservedAndItsFakeHeadersDoNotRoute(t *testing.T) {
 	invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).
 		mustCode(t, 0).mustContain(t, "stdout", `to="Bo"`)
 	raw, err := os.ReadFile(replyPath(drafts, "bo-abcdef012345"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	header, rest, ok := strings.Cut(string(raw), "\n\n")
-	if !ok {
-		t.Fatalf("the draft has no blank line between header and body:\n%s", raw)
-	}
-	if strings.Contains(header, "somebody-else") || strings.Contains(header, "bo-111111111111") {
-		t.Errorf("a line of the body routed something:\n%s", header)
-	}
-	if !strings.HasPrefix(rest, "To: somebody-else\nRe: bo-111111111111\n\nand the rest of the body.\n") {
-		t.Errorf("the body was not preserved:\n%q", rest)
-	}
+	require.Truef(t, ok, "the draft has no blank line between header and body:\n%s", raw)
+	assert.Falsef(t, strings.Contains(header, "somebody-else") || strings.Contains(header, "bo-111111111111"), "a line of the body routed something:\n%s", header)
+	assert.Truef(t, strings.HasPrefix(rest, "To: somebody-else\nRe: bo-111111111111\n\nand the rest of the body.\n"), "the body was not preserved:\n%q", rest)
 }
 
 // The refusal table: "`--to`, `--cc` or `--subject` carrying a control character or a line
@@ -705,12 +642,8 @@ func TestAGroupStaysTheGroupsNameOnTheHeaderLine(t *testing.T) {
 	r := invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body, "--to", "Everybody on the bus")...).mustCode(t, 0)
 	r.mustContain(t, "stdout", `to="Ada";"Bo";"Dana"`)
 	raw, err := os.ReadFile(replyPath(drafts, "bo-abcdef012345"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "To: Everybody on the bus\n") {
-		t.Errorf("the group was expanded onto the header line:\n%s", raw)
-	}
+	require.NoError(t, err)
+	assert.Containsf(t, string(raw), "To: Everybody on the bus\n", "the group was expanded onto the header line:\n%s", raw)
 }
 
 // ------------------------------------------------------------- outside the checkout, or not at all
@@ -723,9 +656,7 @@ func TestDraftInsideTheProtectedCheckoutIsRefused(t *testing.T) {
 	t.Parallel()
 	checkout, _, _ := replyBus(t)
 	inside := filepath.Join(checkout, "scratch")
-	if err := os.MkdirAll(inside, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(inside, 0o755))
 	link := filepath.Join(t.TempDir(), "through-a-link")
 	if err := os.Symlink(inside, link); err != nil {
 		t.Skipf("this filesystem will not make a symlink: %v", err)
@@ -736,8 +667,9 @@ func TestDraftInsideTheProtectedCheckoutIsRefused(t *testing.T) {
 			mustCode(t, 2).
 			mustContain(t, "stderr", "drafts go outside the bus, because send needs its tree clean")
 	}
-	if got := draftsIn(t, inside); len(got) != 0 {
-		t.Errorf("something was written inside the checkout: %v", got)
+	{
+		got := draftsIn(t, inside)
+		assert.Emptyf(t, len(got), "something was written inside the checkout: %v", got)
 	}
 }
 
@@ -750,19 +682,16 @@ func TestReplyNeverOverwritesAnExistingDraft(t *testing.T) {
 	t.Parallel()
 	checkout, _, drafts := replyBus(t)
 	path := replyPath(drafts, "bo-abcdef012345")
-	if err := os.WriteFile(path, []byte("somebody is editing this\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("somebody is editing this\n"), 0o644))
 	body := bodyFile(t, "Yes.\n")
 	invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).
 		mustCode(t, 1).
 		mustContain(t, "stderr", "DRAFT REFUSED: a draft already exists at "+path+"; this tool never overwrites a draft")
 	raw, err := os.ReadFile(path)
-	if err != nil || string(raw) != "somebody is editing this\n" {
-		t.Errorf("the existing draft was touched: %v %q", err, raw)
-	}
-	if got := draftsIn(t, drafts); len(got) != 1 {
-		t.Errorf("the refused run left %v behind", got)
+	assert.Falsef(t, err != nil || string(raw) != "somebody is editing this\n", "the existing draft was touched: %v %q", err, raw)
+	{
+		got := draftsIn(t, drafts)
+		assert.Equalf(t, 1, len(got), "the refused run left %v behind", got)
 	}
 }
 
@@ -793,9 +722,7 @@ func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 	for round := 0; round < 5; round++ {
 		round := round
 		dir := filepath.Join(drafts, fmt.Sprintf("round%d", round))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(dir, 0o755))
 		// One channel, one value per run: a code and its own output travel together. Two
 		// channels let the second run's output arrive before the first run's code, and the
 		// loser's words were then read off the winner.
@@ -830,28 +757,18 @@ func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 		// processes is only diagnosable from what they said, and a -1 says nothing.
 		for _, r := range []runOut{runA, runB} {
 			t.Logf("round %d: bus=%s started=%v code=%d err=%v output:\n%s", round, r.bus, r.started, r.code, r.err, r.out)
-			if !r.started {
-				t.Fatalf("round %d: the run against %s never started (%v); both racing processes must run and exit with a code of their own", round, r.bus, r.err)
-			}
+			require.Truef(t, r.started, "round %d: the run against %s never started (%v); both racing processes must run and exit with a code of their own", round, r.bus, r.err)
 		}
 		a, b := runA.code, runB.code
-		if a+b != 1 {
-			t.Fatalf("round %d: exit codes %d and %d; exactly one run wins and the other is refused\n%s\n%s", round, a, b, runA.out, runB.out)
-		}
+		require.Falsef(t, a+b != 1, "round %d: exit codes %d and %d; exactly one run wins and the other is refused\n%s\n%s", round, a, b, runA.out, runB.out)
 		loser := runB.out
 		if a == 1 {
 			loser = runA.out
 		}
-		if !strings.Contains(loser, "this tool never overwrites a draft") {
-			t.Errorf("round %d: the loser said %q", round, loser)
-		}
+		assert.Containsf(t, loser, "this tool never overwrites a draft", "round %d: the loser said %q", round, loser)
 		files := draftsIn(t, dir)
-		if len(files) != 1 {
-			t.Fatalf("round %d: the directory holds %v; one name, one file, no temporary", round, files)
-		}
-		if strings.HasSuffix(files[0], ".tmp") {
-			t.Errorf("round %d: a temporary survived: %v", round, files)
-		}
+		require.Equalf(t, 1, len(files), "round %d: the directory holds %v; one name, one file, no temporary", round, files)
+		assert.Falsef(t, strings.HasSuffix(files[0], ".tmp"), "round %d: a temporary survived: %v", round, files)
 	}
 }
 
@@ -873,16 +790,10 @@ func buildNovaBus(t *testing.T) string {
 	build := exec.Command("go", "build", "-o", dir+string(os.PathSeparator), ".")
 	build.Env = goenv.Clean(os.Environ())
 	out, err := build.CombinedOutput()
-	if err != nil {
-		t.Fatalf("go build: %v\n%s", err, out)
-	}
+	require.NoErrorf(t, err, "go build: %v\n%s", err, out)
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("go build wrote %d files into %s, want the one binary", len(entries), dir)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, 1, len(entries), "go build wrote %d files into %s, want the one binary", len(entries), dir)
 	return filepath.Join(dir, entries[0].Name())
 }
 
@@ -943,14 +854,10 @@ func TestReplyReceiptIsExactlyOneLineOnStdout(t *testing.T) {
 	body := bodyFile(t, "Yes.\n")
 	for i, extra := range [][]string{nil, {"--to", "Bo"}, {"--cc", "Dana"}, {"--subject", "a subject of my own"}} {
 		dir := filepath.Join(drafts, fmt.Sprintf("case%d", i))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(dir, 0o755))
 		r := invoke(t, "", replyArgs(checkout, dir, "bo-abcdef012345", body, extra...)...).mustCode(t, 0)
 		lines := strings.Split(strings.TrimSuffix(r.stdout, "\n"), "\n")
-		if len(lines) != 1 || !strings.HasPrefix(lines[0], "DRAFT OK path=") {
-			t.Errorf("stdout is %d lines: %q", len(lines), r.stdout)
-		}
+		assert.Falsef(t, len(lines) != 1 || !strings.HasPrefix(lines[0], "DRAFT OK path="), "stdout is %d lines: %q", len(lines), r.stdout)
 	}
 }
 
@@ -975,11 +882,13 @@ func TestReplyReceiptStaysOneLineAtSixHundredOpenNotes(t *testing.T) {
 	drafts := t.TempDir()
 	body := bodyFile(t, "Yes.\n")
 	r := invoke(t, "", replyArgs(checkout, drafts, "bo-000000000042", body)...).mustCode(t, 0)
-	if lines := strings.Split(strings.TrimSuffix(r.stdout, "\n"), "\n"); len(lines) != 1 {
-		t.Errorf("stdout is %d lines at 600 carried notes:\n%s", len(lines), r.stdout)
+	{
+		lines := strings.Split(strings.TrimSuffix(r.stdout, "\n"), "\n")
+		assert.Equalf(t, 1, len(lines), "stdout is %d lines at 600 carried notes:\n%s", len(lines), r.stdout)
 	}
-	if n := strings.Count(r.stderr, "DRAFT NOTE"); n > 5 {
-		t.Errorf("stderr carries %d DRAFT NOTE lines; the set is finite and at most five", n)
+	{
+		n := strings.Count(r.stderr, "DRAFT NOTE")
+		assert.Falsef(t, n > 5, "stderr carries %d DRAFT NOTE lines; the set is finite and at most five", n)
 	}
 }
 
@@ -1016,19 +925,14 @@ func TestReplyRecipientFieldCapsAtEightNamesAndCounts(t *testing.T) {
 		all = append(all, fmt.Sprintf("Friend%02d", i))
 	}
 	r := invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body, "--to", strings.Join(all, ";"))...).mustCode(t, 0)
-	if !strings.Contains(r.stdout, `;+12 `) {
-		t.Errorf("the recipient field does not carry the overflow count: %s", r.stdout)
-	}
-	if n := strings.Count(r.stdout, `"Friend`); n != 8 {
-		t.Errorf("the recipient field printed %d names, want 8: %s", n, r.stdout)
+	assert.Containsf(t, r.stdout, `;+12 `, "the recipient field does not carry the overflow count: %s", r.stdout)
+	{
+		n := strings.Count(r.stdout, `"Friend`)
+		assert.Equalf(t, 8, n, "the recipient field printed %d names, want 8: %s", n, r.stdout)
 	}
 	raw, err := os.ReadFile(replyPath(drafts, "bo-abcdef012345"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "Friend19") {
-		t.Errorf("the file the receipt names does not carry the whole list:\n%s", raw)
-	}
+	require.NoError(t, err)
+	assert.Containsf(t, string(raw), "Friend19", "the file the receipt names does not carry the whole list:\n%s", raw)
 }
 
 // "`DRAFT REFUSED` prints every problem in one run, one line each."
@@ -1040,8 +944,9 @@ func TestAReplyRefusalNamesEveryProblemInOneRun(t *testing.T) {
 	body := bodyFile(t, "Yes.\n")
 	r := invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body,
 		"--to", "Nobody", "--subject", "one\ntwo", "--max-body-bytes", "0")...).mustCode(t, 2)
-	if n := strings.Count(r.stderr, "DRAFT REFUSED: "); n != 3 {
-		t.Errorf("three mistakes produced %d refusal lines:\n%s", n, r.stderr)
+	{
+		n := strings.Count(r.stderr, "DRAFT REFUSED: ")
+		assert.Equalf(t, 3, n, "three mistakes produced %d refusal lines:\n%s", n, r.stderr)
 	}
 	mustEmptyDir(t, drafts)
 	// ACROSS THE GROUPS, and not within one of them. The first version of this verb checked
@@ -1062,12 +967,11 @@ func TestAReplyRefusalNamesEveryProblemInOneRun(t *testing.T) {
 		`--to: Nobody names no one on this bus`,
 		"--body-file ",
 	} {
-		if !strings.Contains(r.stderr, want) {
-			t.Errorf("five mistakes in one run did not name %q:\n%s", want, r.stderr)
-		}
+		assert.Containsf(t, r.stderr, want, "five mistakes in one run did not name %q:\n%s", want, r.stderr)
 	}
-	if n := strings.Count(r.stderr, "DRAFT REFUSED: "); n != 5 {
-		t.Errorf("five mistakes produced %d refusal lines:\n%s", n, r.stderr)
+	{
+		n := strings.Count(r.stderr, "DRAFT REFUSED: ")
+		assert.Equalf(t, 5, n, "five mistakes produced %d refusal lines:\n%s", n, r.stderr)
 	}
 	mustEmptyDir(t, five)
 }
@@ -1193,12 +1097,8 @@ func TestDraftingAReplyClosesNothing(t *testing.T) {
 	body := bodyFile(t, "Yes.\n")
 	invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).mustCode(t, 0)
 	after := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
-	if !strings.Contains(before.stdout, "INBOX OPEN carrying=2 heard=0") {
-		t.Fatalf("the fixture is not what this test measures:\n%s", before.stdout)
-	}
-	if !strings.Contains(after.stdout, "INBOX OPEN carrying=2 heard=0") {
-		t.Errorf("the draft changed the open list:\n%s", after.stdout)
-	}
+	require.Containsf(t, before.stdout, "INBOX OPEN carrying=2 heard=0", "the fixture is not what this test measures:\n%s", before.stdout)
+	assert.Containsf(t, after.stdout, "INBOX OPEN carrying=2 heard=0", "the draft changed the open list:\n%s", after.stdout)
 }
 
 // "the end-to-end path against a disposable local bare remote: draft, `prepare`,
@@ -1220,9 +1120,7 @@ func TestGeneratedReplySendsAndClosesItsTarget(t *testing.T) {
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--advance", "--remote", "origin", "--branch", "main").mustCode(t, 0)
-	if !strings.Contains(r.stdout, "INBOX OPEN carrying=1 heard=0") {
-		t.Errorf("the target did not leave the open list:\n%s", r.stdout)
-	}
+	assert.Containsf(t, r.stdout, "INBOX OPEN carrying=1 heard=0", "the target did not leave the open list:\n%s", r.stdout)
 }
 
 // "another `nova-bus` holds this checkout | the existing lock refusal, unchanged | 1"
@@ -1231,9 +1129,7 @@ func TestGeneratedReplySendsAndClosesItsTarget(t *testing.T) {
 func TestASecondReplyOnOneCheckoutWaitsAndThenRefuses(t *testing.T) {
 	checkout, _, drafts := replyBus(t)
 	release, err := bus.LockCheckout(checkout, checkoutLockWait)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer release()
 	old := checkoutLockWait
 	checkoutLockWait = 50 * 1000 * 1000 // 50ms
@@ -1274,9 +1170,7 @@ func TestARelativeDraftDirInsideTheCheckoutIsRefused(t *testing.T) {
 	checkout, _, _ := replyBus(t)
 	body := bodyFile(t, "Yes.\n")
 	inside := filepath.Join(checkout, "scratch")
-	if err := os.MkdirAll(inside, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(inside, 0o755))
 	t.Chdir(checkout)
 	for _, tc := range []struct{ name, bus, draftDir string }{
 		{"a relative draft dir under a relative bus", ".", "scratch"},
@@ -1347,16 +1241,10 @@ func TestAReplyToANoteWhoseIdTheOpenListCannotCarryIsResolvedByPath(t *testing.T
 	invoke(t, "", replyArgs(checkout, drafts, path, body)...).
 		mustCode(t, 0).mustContain(t, "stdout", "re="+path)
 	names := draftsIn(t, drafts)
-	if len(names) != 1 || !strings.Contains(names[0], "-re-legacy-") || strings.ContainsAny(names[0], "/\\") {
-		t.Fatalf("the draft is named %v; a name the open list cannot carry is the derived one, and it is one path segment", names)
-	}
+	require.Falsef(t, len(names) != 1 || !strings.Contains(names[0], "-re-legacy-") || strings.ContainsAny(names[0], "/\\"), "the draft is named %v; a name the open list cannot carry is the derived one, and it is one path segment", names)
 	raw, err := os.ReadFile(filepath.Join(drafts, names[0]))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "Re: "+path+"\n") {
-		t.Errorf("the Re line is not the name the listing uses for this note:\n%s", raw)
-	}
+	require.NoError(t, err)
+	assert.Containsf(t, string(raw), "Re: "+path+"\n", "the Re line is not the name the listing uses for this note:\n%s", raw)
 }
 
 // The count the comment on refusalTable claims, asserted rather than trusted, so that a row
@@ -1377,12 +1265,11 @@ func TestTheRefusalTableIsAccountedForBelow(t *testing.T) {
 		fixturesOverThem  = 17
 		rowsInTheDocument = 19
 	)
-	if got := len(refusalTable(t, checkout)); got != fixturesOverThem {
-		t.Errorf("refusalTable drives %d fixtures, want %d over %d rows", got, fixturesOverThem, rowsDrivenHere)
+	{
+		got := len(refusalTable(t, checkout))
+		assert.Falsef(t, got != fixturesOverThem, "refusalTable drives %d fixtures, want %d over %d rows", got, fixturesOverThem, rowsDrivenHere)
 	}
-	if rowsDrivenHere+rowsOwnTests != rowsInTheDocument {
-		t.Errorf("%d rows are accounted for, and docs/SPEC-BUS-REPLY.md 389-409 is %d", rowsDrivenHere+rowsOwnTests, rowsInTheDocument)
-	}
+	assert.Falsef(t, rowsDrivenHere+rowsOwnTests != rowsInTheDocument, "%d rows are accounted for, and docs/SPEC-BUS-REPLY.md 389-409 is %d", rowsDrivenHere+rowsOwnTests, rowsInTheDocument)
 	// The six are named, not merely counted: each has to exist in this package.
 	for _, name := range []string{
 		"TestADivergedCheckoutIsRefusedAndLosesNothing",
@@ -1393,11 +1280,7 @@ func TestTheRefusalTableIsAccountedForBelow(t *testing.T) {
 		"TestASecondReplyOnOneCheckoutWaitsAndThenRefuses",
 	} {
 		raw, err := os.ReadFile("reply_functional_test.go")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(raw), "func "+name+"(") {
-			t.Errorf("refusalTable's comment names %s and this package does not define it", name)
-		}
+		require.NoError(t, err)
+		assert.Containsf(t, string(raw), "func "+name+"(", "refusalTable's comment names %s and this package does not define it", name)
 	}
 }

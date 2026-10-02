@@ -8,6 +8,7 @@ package bus
 
 import (
 	"errors"
+	"github.com/stretchr/testify/require"
 	"os"
 	"sync"
 	"testing"
@@ -21,9 +22,7 @@ func TestRowanOpusLockReplacedDuringScanSequence(t *testing.T) {
 	other := self + 1
 	dir, lock := oldIndexLock(t)
 	fi0, err := os.Lstat(lock)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	old := fi0.ModTime()
 
 	var mu sync.Mutex
@@ -34,9 +33,7 @@ func TestRowanOpusLockReplacedDuringScanSequence(t *testing.T) {
 	var owners []owned
 	own := func(uid uint32) { // the file now at the path is owned by uid
 		fi, err := os.Lstat(lock)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		mu.Lock()
 		owners = append(owners, owned{fi, uid})
 		mu.Unlock()
@@ -57,23 +54,15 @@ func TestRowanOpusLockReplacedDuringScanSequence(t *testing.T) {
 	n := 0
 	replace := func(body string, uid uint32) {
 		n++
-		if err := os.Rename(lock, lock+".old"+string(rune('0'+n))); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(lock, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chtimes(lock, old, old); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Rename(lock, lock+".old"+string(rune('0'+n))))
+		require.NoError(t, os.WriteFile(lock, []byte(body), 0o600))
+		require.NoError(t, os.Chtimes(lock, old, old))
 		own(uid)
 	}
 	body := func(step, want string) {
 		t.Helper()
 		got, err := os.ReadFile(lock)
-		if err != nil || string(got) != want {
-			t.Fatalf("%s: lock at the path = %q, %v; want %q", step, got, err, want)
-		}
+		require.False(t, err != nil || string(got) != want, "%s: lock at the path = %q, %v; want %q", step, got, err, want)
 	}
 	own(self)
 	now := time.Now()
@@ -81,37 +70,28 @@ func TestRowanOpusLockReplacedDuringScanSequence(t *testing.T) {
 
 	// 1. own stale lock, own git holds the checkout: kept, no error.
 	c, err := clearStaleIndexLockAs(dir, now, func() ([]gitProc, error) { return ownGit, nil }, seam, self)
-	if c || err != nil {
-		t.Fatalf("1 own git holds: c=%v err=%v", c, err)
-	}
+	require.False(t, c || err != nil, "1 own git holds: c=%v err=%v", c, err)
 	body("1", "")
 	// 2. (a) during the scan the own git finishes and a foreign git's lock takes the path.
 	c, err = clearStaleIndexLockAs(dir, now, func() ([]gitProc, error) { replace("foreign", other); return nil, nil }, seam, self)
-	if c || !errors.Is(err, ErrIndexLockChanged) {
-		t.Fatalf("2 foreign replaced during scan: c=%v err=%v", c, err)
-	}
+	require.False(t, c || !errors.Is(err, ErrIndexLockChanged), "2 foreign replaced during scan: c=%v err=%v", c, err)
 	body("2", "foreign")
 	// 3. back: the foreign lock, stale, is refused by owner before any scan.
 	scanned := false
 	c, err = clearStaleIndexLockAs(dir, now, func() ([]gitProc, error) { scanned = true; return nil, nil }, seam, self)
-	if c || err == nil || err.Error() != lockOwnerForeignErr(other).Error() || scanned {
-		t.Fatalf("3 foreign stale: c=%v err=%v scanned=%v", c, err, scanned)
-	}
+	require.False(t, c || err == nil || err.Error() != lockOwnerForeignErr(other).Error() || scanned, "3 foreign stale: c=%v err=%v scanned=%v", c, err, scanned)
 	body("3", "foreign")
 	// 4. (c) the path is own again; during the scan it is replaced by another own lock
 	// with the same owner and the same mtime: only the inode differs. Not removed.
 	replace("own-a", self)
 	c, err = clearStaleIndexLockAs(dir, now, func() ([]gitProc, error) { replace("own-b", self); return nil, nil }, seam, self)
-	if c || !errors.Is(err, ErrIndexLockChanged) {
-		t.Fatalf("4 same owner, same mtime, new inode: c=%v err=%v", c, err)
-	}
+	require.False(t, c || !errors.Is(err, ErrIndexLockChanged), "4 same owner, same mtime, new inode: c=%v err=%v", c, err)
 	body("4", "own-b")
 	// 5. the lock that stayed, unchanged through a scan: cleared.
 	c, err = clearStaleIndexLockAs(dir, now, func() ([]gitProc, error) { return nil, nil }, seam, self)
-	if !c || err != nil {
-		t.Fatalf("5 unchanged: c=%v err=%v", c, err)
-	}
-	if _, err := os.Lstat(lock); !os.IsNotExist(err) {
-		t.Fatalf("5 lock still here: %v", err)
+	require.False(t, !c || err != nil, "5 unchanged: c=%v err=%v", c, err)
+	{
+		_, err := os.Lstat(lock)
+		require.False(t, !os.IsNotExist(err), "5 lock still here: %v", err)
 	}
 }

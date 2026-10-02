@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
 	"time"
@@ -15,16 +16,10 @@ func TestStellaLockReplacedDuringScanIsRetained(t *testing.T) {
 	dir, lock := oldIndexLock(t)
 	replacement := []byte("new git index lock")
 	cleared, err := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
-		if err := os.Rename(lock, lock+".old"); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(lock, replacement, 0600); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Rename(lock, lock+".old"))
+		require.NoError(t, os.WriteFile(lock, replacement, 0600))
 		return nil, nil
 	})
 	got, readErr := os.ReadFile(lock)
-	if cleared || readErr != nil || string(got) != string(replacement) {
-		t.Fatalf("replacement lock lost: cleared=%v err=%v read=%v contents=%q", cleared, err, readErr, got)
-	}
+	require.False(t, cleared || readErr != nil || string(got) != string(replacement), "replacement lock lost: cleared=%v err=%v read=%v contents=%q", cleared, err, readErr, got)
 }

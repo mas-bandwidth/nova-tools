@@ -10,6 +10,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const testsMDPath = "../../docs/TESTS.md"
@@ -28,14 +31,10 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 	t.Parallel()
 
 	md, err := os.ReadFile(testsMDPath)
-	if err != nil {
-		t.Fatalf("reading %s: %v", testsMDPath, err)
-	}
+	require.NoError(t, err, "reading %s: %v", testsMDPath, err)
 
 	tools := toolSectionsFromMD(string(md))
-	if len(tools) == 0 {
-		t.Fatal("no tool sections found in docs/TESTS.md")
-	}
+	require.NotEmpty(t, tools, "no tool sections found in docs/TESTS.md")
 
 	root := filepath.Join("..", "..")
 	sections := map[string]bool{}
@@ -105,8 +104,7 @@ func firstRunExecutes(t *testing.T, root, tool string) bool {
 		return false
 	}
 	f, err := parser.ParseFile(token.NewFileSet(), path, raw, 0)
-	if err != nil {
-		t.Errorf("cannot parse %s: %v", path, err)
+	if !assert.NoError(t, err, "cannot parse %s: %v", path, err) {
 		return false
 	}
 
@@ -275,16 +273,11 @@ func runner() func() { return func() { onboarding.Execute(nil, nil) } }`, false}
 			t.Parallel()
 			root := t.TempDir()
 			dir := filepath.Join(root, "cmd", "nova-x")
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.MkdirAll(dir, 0o755))
 			src := "package main\n\nimport (\n\t\"testing\"\n\n\t\"example.invalid/onboarding\"\n)\n\n" + tc.body + "\n"
-			if err := os.WriteFile(filepath.Join(dir, "firstrun_test.go"), []byte(src), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if got := firstRunExecutes(t, root, "nova-x"); got != tc.want {
-				t.Errorf("firstRunExecutes = %v, want %v for:\n%s", got, tc.want, tc.body)
-			}
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "firstrun_test.go"), []byte(src), 0o644))
+			got := firstRunExecutes(t, root, "nova-x")
+			assert.Equal(t, tc.want, got, "firstRunExecutes = %v, want %v for:\n%s", got, tc.want, tc.body)
 		})
 	}
 }

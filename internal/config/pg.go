@@ -150,6 +150,32 @@ func (p *PG) Version(ctx context.Context) (int, error) {
 	return int(v.Int64), nil
 }
 
+// Applied is the ledger: every version recorded in config.schema_migrations,
+// in order, none before the first migrate. migrate --dry-run prints it, so a
+// version missing below the greatest is seen rather than assumed.
+func (p *PG) Applied(ctx context.Context) ([]int, error) {
+	if v, err := p.Version(ctx); err != nil || v == 0 {
+		return nil, err
+	}
+	rows, err := p.db.QueryContext(ctx, `SELECT version FROM config.schema_migrations ORDER BY version`)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: read the migration ledger: %w", err)
+	}
+	defer rows.Close()
+	var out []int
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("postgres: read the migration ledger: %w", err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: read the migration ledger: %w", err)
+	}
+	return out, nil
+}
+
 // Migrate applies every embedded migration the ledger lacks, each in its own
 // transaction with its ledger row, and returns the version before, the
 // version after and the versions applied. Running it twice applies nothing
@@ -231,10 +257,14 @@ func scanRow(k *Kind, scan func(dest ...any) error) (Row, error) {
 	dest := []any{&row.Name}
 	texts := make([]sql.NullString, len(k.Fields))
 	ints := make([]int64, len(k.Fields))
+	bools := make([]bool, len(k.Fields))
 	for i, f := range k.Fields {
-		if f.Type == TypeInt {
+		switch f.Type {
+		case TypeInt:
 			dest = append(dest, &ints[i])
-		} else {
+		case TypeBool:
+			dest = append(dest, &bools[i])
+		default:
 			dest = append(dest, &texts[i])
 		}
 	}
@@ -244,9 +274,12 @@ func scanRow(k *Kind, scan func(dest ...any) error) (Row, error) {
 		return Row{}, err
 	}
 	for i, f := range k.Fields {
-		if f.Type == TypeInt {
+		switch f.Type {
+		case TypeInt:
 			row.Fields[f.Name] = strconv.FormatInt(ints[i], 10)
-		} else {
+		case TypeBool:
+			row.Fields[f.Name] = strconv.FormatBool(bools[i])
+		default:
 			// A NULL (an optional ref naming no row) is the empty value.
 			row.Fields[f.Name] = texts[i].String
 		}
@@ -266,13 +299,15 @@ func values(k *Kind, row Row) []any {
 }
 
 // fieldArg is one field's value as the column takes it: an int as a
-// number, an empty optional ref as NULL (the foreign key allows no ”), any
-// other value as text.
+// number, a bool as a boolean, an empty optional ref as NULL (the foreign
+// key allows no ”), any other value as text.
 func fieldArg(f Field, v string) any {
 	switch {
 	case f.Type == TypeInt:
 		n, _ := strconv.ParseInt(v, 10, 64)
 		return n
+	case f.Type == TypeBool:
+		return v == "true"
 	case f.Type == TypeRef && v == "":
 		return nil
 	}
@@ -340,28 +375,6 @@ func listRows(ctx context.Context, q queryer, kind string) ([]Row, error) {
 		return nil, fmt.Errorf("postgres: list %s: %w", kind, err)
 	}
 	return out, nil
-}
-
-// MachinesAndFleet reads every machine row and the fleet row in one
-// read-only repeatable-read transaction: both come from one snapshot, so a
-// write between them cannot show one revision of the machines and another of
-// the fleet row.
-func (p *PG) MachinesAndFleet(ctx context.Context) ([]Row, Row, error) {
-	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
-	if err != nil {
-		return nil, Row{}, fmt.Errorf("postgres: begin read: %w", err)
-	}
-	// ignored: a read-only transaction; the rollback ends it and has nothing to undo
-	defer func() { _ = tx.Rollback() }()
-	machines, err := listRows(ctx, tx, KindMachine)
-	if err != nil {
-		return nil, Row{}, err
-	}
-	fleet, _, err := getRow(ctx, tx, KindFleet, KindFleet)
-	if err != nil {
-		return nil, Row{}, err
-	}
-	return machines, fleet, nil
 }
 
 // record appends the history row inside the write's transaction.

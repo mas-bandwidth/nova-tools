@@ -4,6 +4,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestASecondBoxCannotAnswerForABlownOne is the reproduced bypass, exactly:
@@ -30,16 +33,13 @@ func TestASecondBoxCannotAnswerForABlownOne(t *testing.T) {
 		{"path", "--box", box, "--box", other},
 	} {
 		code, out, errOut := capture(t, args, nowish())
-		if code != 2 || out != "" {
-			t.Errorf("%q: exit %d stdout %q, want exit 2 and no OK line", args, code, out)
-		}
-		if !strings.Contains(errOut, "--box is given more than once") || strings.Count(errOut, "\n") != 1 {
-			t.Errorf("%q: stderr %q, want one line naming --box as given more than once", args, errOut)
-		}
+		assert.Equal(t, 2, code, "%q: exit %d, want exit 2", args, code)
+		assert.Empty(t, out, "%q: stdout %q, want no OK line", args, out)
+		assert.Contains(t, errOut, "--box is given more than once", "%q: stderr %q, want naming --box as given more than once", args, errOut)
+		assert.Equal(t, 1, strings.Count(errOut, "\n"), "%q: stderr %q, want one line", args, errOut)
 	}
-	if code, _, _ := capture(t, []string{"check", "--box", box}, nowish()); code != 1 {
-		t.Fatalf("the lockdown is still blown: check exit %d, want 1", code)
-	}
+	code, _, _ := capture(t, []string{"check", "--box", box}, nowish())
+	require.Equal(t, 1, code, "the lockdown is still blown: check exit %d, want 1", code)
 }
 
 // TestEveryFlagOfEveryVerbTakesOneValue is the class: no flag nova-fuse
@@ -74,9 +74,10 @@ func TestEveryFlagOfEveryVerbTakesOneValue(t *testing.T) {
 			}
 			args = append(args, positional...)
 			code, out, errOut := capture(t, args, nowish())
-			if code != 2 || out != "" || !strings.Contains(errOut, "--"+name+" is given more than once") || strings.Count(errOut, "\n") != 1 {
-				t.Errorf("%q: exit %d stdout %q stderr %q, want exit 2 and one line naming --%s", args, code, out, errOut, name)
-			}
+			assert.Equal(t, 2, code, "%q: exit %d, want exit 2", args, code)
+			assert.Empty(t, out, "%q: stdout %q, want no OK line", args, out)
+			assert.Contains(t, errOut, "--"+name+" is given more than once", "%q: stderr %q, want naming --%s", args, errOut, name)
+			assert.Equal(t, 1, strings.Count(errOut, "\n"), "%q: stderr %q, want one line", args, errOut)
 		}
 	}
 }
@@ -94,8 +95,9 @@ func TestABoxValueShapedLikeAFlagIsRefused(t *testing.T) {
 		{"lift", "quarantine", "--box", "-x", "a-forum"},
 	} {
 		code, out, errOut := capture(t, args, nowish())
-		if code != 2 || out != "" || !strings.Contains(errOut, "begins with \"-\"") || strings.Count(errOut, "\n") != 1 {
-			t.Errorf("%q: exit %d stdout %q stderr %q, want exit 2 and one line", args, code, out, errOut)
-		}
+		assert.Equal(t, 2, code, "%q: exit %d, want exit 2", args, code)
+		assert.Empty(t, out, "%q: stdout %q, want no OK line", args, out)
+		assert.Contains(t, errOut, `begins with "-"`, "%q: stderr %q, want begins with -", args, errOut)
+		assert.Equal(t, 1, strings.Count(errOut, "\n"), "%q: stderr %q, want one line", args, errOut)
 	}
 }

@@ -1,8 +1,9 @@
 package sprint
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
@@ -20,9 +21,9 @@ func TestLawfulRefusedLandingSatisfiesNoNeed(t *testing.T) {
 	}}
 	p.on(w.s)
 	p = Lawful(p)
-	if len(p.Units) != 0 || len(p.Refused) != 2 || !strings.Contains(p.Refused[1].Why, "b needs s1-1") {
-		t.Fatalf("a refused landing lent to a waiter: %+v", p)
-	}
+	require.Empty(t, p.Units, "a refused landing lent to a waiter: %+v", p)
+	require.Len(t, p.Refused, 2, "a refused landing lent to a waiter: %+v", p)
+	require.Contains(t, p.Refused[1].Why, "b needs s1-1", "a refused landing lent to a waiter: %+v", p)
 }
 
 // A work-table move whose expectation names no place is judged from the
@@ -52,14 +53,13 @@ func TestLawfulMoveWithoutPlace(t *testing.T) {
 			p.on(w.s)
 		}
 		p = Lawful(p)
-		if len(p.Units) != 0 || len(p.Refused) != 1 || !strings.Contains(p.Refused[0].Why, c.why) {
-			t.Fatalf("%s (pre %v, want %q): %+v", c.u.Key, c.pre, c.why, p)
-		}
+		require.Empty(t, p.Units, "%s (pre %v, want %q): %+v", c.u.Key, c.pre, c.why, p)
+		require.Len(t, p.Refused, 1, "%s (pre %v, want %q): %+v", c.u.Key, c.pre, c.why, p)
+		require.Contains(t, p.Refused[0].Why, c.why, "%s (pre %v, want %q): %+v", c.u.Key, c.pre, c.why, p)
 	}
 	// A move from a place the pre-state holds, by the lifecycle, is kept.
 	p := Plan{Units: []Unit{bare("s1-1", "s1", Working)}}
 	p.on(w.s)
-	if p = Lawful(p); len(p.Units) != 1 {
-		t.Fatalf("ready -> working without a place: %+v", p)
-	}
+	p = Lawful(p)
+	require.Len(t, p.Units, 1, "ready -> working without a place: %+v", p)
 }

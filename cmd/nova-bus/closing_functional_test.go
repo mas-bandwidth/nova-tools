@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // CLOSING, at the binary.
@@ -42,9 +44,7 @@ func TestDraftReTakesTheSubjectOfAnOpenNoteAndWritesTheID(t *testing.T) {
 		mustCode(t, 0).
 		mustContain(t, "stdout", "Re: bo-abcdef012345").
 		mustContain(t, "stderr", `DRAFT NOTE --re named the subject "A question about the gate" rather than an id; the skeleton names the open note bo-abcdef012345 from Bo`)
-	if strings.Contains(r.stdout, "A question about the gate") {
-		t.Fatalf("the skeleton carried the subject where the id belongs:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "A question about the gate", "the skeleton carried the subject where the id belongs:\n%s", r.stdout)
 
 	// A subject already written as a reply names the same note: `Re: ` comes off both sides
 	// before they are compared, which is the shape a second turn of a thread arrives in.
@@ -87,16 +87,10 @@ func TestSendResolvesAReSubjectToTheOpenNoteAndClosesIt(t *testing.T) {
 	// The bytes on the bus carry the ID, because the id is what every reader resolves.
 	path := field(t, r.stdout, "path=")
 	stored := readFile(t, checkout, path)
-	if !strings.Contains(stored, "Re: bo-abcdef012345") {
-		t.Fatalf("the note that landed does not name the id it answers:\n%s", stored)
-	}
-	if strings.Contains(stored, "\nRe: A question about the gate\n") {
-		t.Fatalf("the note that landed still carries the subject on its Re line:\n%s", stored)
-	}
+	require.Containsf(t, stored, "Re: bo-abcdef012345", "the note that landed does not name the id it answers:\n%s", stored)
+	require.NotContainsf(t, stored, "\nRe: A question about the gate\n", "the note that landed still carries the subject on its Re line:\n%s", stored)
 	// And a note that answers something is not told it answers nothing.
-	if strings.Contains(r.stdout, "answers nothing") {
-		t.Fatalf("a note with a Re line was told it answers nothing:\n%s", r.stdout)
-	}
+	require.NotContainsf(t, r.stdout, "answers nothing", "a note with a Re line was told it answers nothing:\n%s", r.stdout)
 
 	// The whole point: it CLOSED. Ada was carrying two and is carrying one.
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
@@ -127,9 +121,7 @@ func TestAReSubjectMatchingTwoNotesClosesTheNewestAndSaysSo(t *testing.T) {
 		mustCode(t, 0).
 		mustContain(t, "stdout", "SEND NOTE Re: subject matched 2 notes; closed the newest bo-bbbb33334444; name the id to be exact")
 	stored := readFile(t, checkout, field(t, r.stdout, "path="))
-	if !strings.Contains(stored, "Re: bo-bbbb33334444") {
-		t.Fatalf("the newest of the two was not the one named:\n%s", stored)
-	}
+	require.Containsf(t, stored, "Re: bo-bbbb33334444", "the newest of the two was not the one named:\n%s", stored)
 	// One closed, not both: the older is still Ada's, and is named by id if she means it.
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=3")
@@ -192,8 +184,9 @@ func TestSendSaysWhenADraftThatLooksLikeAReplyAnswersNothing(t *testing.T) {
 			r := invoke(t, tc.draft, "send", "--bus", checkout, "--stdin",
 				"--remote", "origin", "--branch", "main", "--attempts", "3", "--no-push").
 				mustCode(t, 0)
-			if got := strings.Contains(r.stdout, notice); got != tc.want {
-				t.Fatalf("the answers-nothing notice was %v, want %v:\n%s", got, tc.want, r.stdout)
+			{
+				got := strings.Contains(r.stdout, notice)
+				require.Equalf(t, tc.want, got, "the answers-nothing notice was %v, want %v:\n%s", got, tc.want, r.stdout)
 			}
 		})
 	}
@@ -219,8 +212,6 @@ func TestAReSubjectOnALaneWithNoOpenListIsTheRefusalItAlwaysWas(t *testing.T) {
 func readFile(t *testing.T, root, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(raw)
 }

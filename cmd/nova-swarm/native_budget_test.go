@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -43,9 +46,7 @@ func budgetNativeArgs(t *testing.T, bin, card, slot, root, tokens string) []stri
 func budgetCard(t *testing.T, root string) string {
 	t.Helper()
 	path := filepath.Join(root, "card.md")
-	if err := os.WriteFile(path, []byte("a card\nFAKE-FINDINGS 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("a card\nFAKE-FINDINGS 1\n"), 0o644))
 	return path
 }
 
@@ -80,14 +81,10 @@ func TestNativeRefusesWithoutTheBudgetWord(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			rc := run(budgetNativeArgs(t, bin, card, slot, root, tc.tokens),
 				strings.NewReader(""), &stdout, &stderr, time.Now())
-			if rc != 2 {
-				t.Fatalf("a native launch with tokens=%q is exit 2, got %d\nstdout:\n%s\nstderr:\n%s",
-					tc.tokens, rc, stdout.String(), stderr.String())
-			}
+			require.Equal(t, 2, rc, "a native launch with tokens=%q is exit 2, got %d\nstdout:\n%s\nstderr:\n%s",
+				tc.tokens, rc, stdout.String(), stderr.String())
 			for _, w := range tc.words {
-				if !strings.Contains(stderr.String(), w) {
-					t.Errorf("the refusal names %q:\n%s", w, stderr.String())
-				}
+				assert.Contains(t, stderr.String(), w, "the refusal names %q:\n%s", w, stderr.String())
 			}
 			// NO DIRECTORY WAS MADE. The job directory, the data home and the temp
 			// directory are all the run's own, and none of them exists after a refusal
@@ -97,9 +94,8 @@ func TestNativeRefusesWithoutTheBudgetWord(t *testing.T) {
 				filepath.Join(slot, "data"),
 				filepath.Join(slot, "tmp"),
 			} {
-				if _, err := os.Stat(made); err == nil {
-					t.Errorf("the refusal made %s; rule 13d refuses before any directory is made", made)
-				}
+				_, err := os.Stat(made)
+				assert.Error(t, err, "the refusal made %s; rule 13d refuses before any directory is made", made)
 			}
 		})
 	}
@@ -117,12 +113,8 @@ func TestNativeUnmeteredPrintsTheWordOnTheLine(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := run(budgetNativeArgs(t, bin, card, slot, root, "unmetered"),
 		strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("an unmetered native launch exits 0, got %d:\n%s", rc, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), " budget=unmetered ") {
-		t.Fatalf("NATIVE OK carries budget=unmetered:\n%s", stdout.String())
-	}
+	require.Equal(t, 0, rc, "an unmetered native launch exits 0, got %d:\n%s", rc, stderr.String())
+	require.Contains(t, stdout.String(), " budget=unmetered ", "NATIVE OK carries budget=unmetered:\n%s", stdout.String())
 }
 
 // TestNativeNumericBudgetPrintsAgainstTheNumber: the same line under a number. Until a
@@ -143,15 +135,9 @@ func TestNativeNumericBudgetPrintsAgainstTheNumber(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := run(budgetNativeArgs(t, bin, card, slot, root, "50000"),
 		strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("a numeric native launch exits 0, got %d:\n%s", rc, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "/50000 ") {
-		t.Fatalf("NATIVE OK carries budget=<spent|n+|->/50000:\n%s", stdout.String())
-	}
-	if strings.Contains(stdout.String(), " budget=unmetered") {
-		t.Fatalf("a numeric budget never prints unmetered:\n%s", stdout.String())
-	}
+	require.Equal(t, 0, rc, "a numeric native launch exits 0, got %d:\n%s", rc, stderr.String())
+	require.Contains(t, stdout.String(), "/50000 ", "NATIVE OK carries budget=<spent|n+|->/50000:\n%s", stdout.String())
+	require.NotContains(t, stdout.String(), " budget=unmetered", "a numeric budget never prints unmetered:\n%s", stdout.String())
 }
 
 // TestNativeBudgetSitsWhereTheGrammarPutsIt: the output grammar (SPEC-SWARM.md:1946) puts
@@ -166,18 +152,15 @@ func TestNativeBudgetSitsWhereTheGrammarPutsIt(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := run(budgetNativeArgs(t, bin, card, slot, root, "unmetered"),
 		strings.NewReader(""), &stdout, &stderr, time.Now())
-	if rc != 0 {
-		t.Fatalf("the launch exits 0, got %d:\n%s", rc, stderr.String())
-	}
+	require.Equal(t, 0, rc, "the launch exits 0, got %d:\n%s", rc, stderr.String())
 	line := nativeOKLine(t, stdout.String())
 	fields := strings.Fields(line)
 	for i, f := range fields {
 		if !strings.HasPrefix(f, "harness=") {
 			continue
 		}
-		if i+1 >= len(fields) || !strings.HasPrefix(fields[i+1], "budget=") {
-			t.Fatalf("budget= follows harness= on the NATIVE OK line (grammar, SPEC-SWARM.md:1946):\n%s", line)
-		}
+		require.Less(t, i+1, len(fields), "budget= follows harness= on the NATIVE OK line (grammar, SPEC-SWARM.md:1946):\n%s", line)
+		require.True(t, strings.HasPrefix(fields[i+1], "budget="), "budget= follows harness= on the NATIVE OK line (grammar, SPEC-SWARM.md:1946):\n%s", line)
 		return
 	}
 	t.Fatalf("the NATIVE OK line carries no harness= field:\n%s", line)

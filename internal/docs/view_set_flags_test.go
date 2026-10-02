@@ -5,6 +5,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // view_set_flags_test.go pins the `view set` usage line of each nova-table
@@ -14,23 +17,15 @@ import (
 func TestTheViewSetUsageLinesNameEveryFlag(t *testing.T) {
 	t.Parallel()
 	src, err := os.ReadFile("../../cmd/nova-table/table.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	_, block, ok := strings.Cut(string(src), `if sub == "set" {`)
-	if !ok {
-		t.Fatal(`cmd/nova-table/table.go: no if sub == "set" block`)
-	}
+	require.True(t, ok, `cmd/nova-table/table.go: no if sub == "set" block`)
 	block, _, _ = strings.Cut(block, "\n\t}\n")
 	flags := regexp.MustCompile(`fs\.StringVar\(&\w+, "([a-z-]+)"`).FindAllStringSubmatch(block, -1)
-	if len(flags) < 3 {
-		t.Fatalf("read %d flags of view set, want at least 3", len(flags))
-	}
+	require.GreaterOrEqual(t, len(flags), 3, "read %d flags of view set, want at least 3", len(flags))
 	for _, doc := range []string{"../../docs/nova-table/README.md", "../../docs/CLI.md", "../../docs/SPEC-NOVA-TABLE.md"} {
 		text, err := os.ReadFile(doc)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		found := 0
 		for _, line := range strings.Split(string(text), "\n") {
 			if !strings.Contains(line, "nova-table view set ") && !strings.Contains(line, "`view set <name>") {
@@ -41,13 +36,9 @@ func TestTheViewSetUsageLinesNameEveryFlag(t *testing.T) {
 			}
 			found++
 			for _, f := range flags {
-				if !strings.Contains(line, "--"+f[1]) {
-					t.Errorf("%s: the view set usage line does not name --%s: %s", doc, f[1], line)
-				}
+				assert.Contains(t, line, "--"+f[1], "%s: the view set usage line does not name --%s: %s", doc, f[1], line)
 			}
 		}
-		if found == 0 {
-			t.Errorf("%s: no view set usage line found", doc)
-		}
+		assert.NotZero(t, found, "%s: no view set usage line found", doc)
 	}
 }

@@ -1,0 +1,6 @@
+# tool-answers: the mistakes this tool does not yet answer with the way forward; each row's count only falls
+# ceiling: 4
+cmd/nova-table:bare 1 the bare refusal predates the REFUSED word (tool ledger X4)
+cmd/nova-table:dry-run 35 verbs whose -h states no effect, or that write with no --dry-run (tool ledger X12)
+cmd/nova-table:unknown-flag 1 the unknown-flag answer names the flags and predates the REFUSED word (tool ledger X2)
+cmd/nova-table:unknown-verb 1 the unknown-verb answer names the verbs and predates the REFUSED word (tool ledger X3)

@@ -28,16 +28,20 @@ import (
 )
 
 func cmdHygiene(args []string, stdout, stderr io.Writer) int {
+	var asJSON bool
+	stdout, stderr = jsonWriters(stdout, stderr, &asJSON)
+	defer stderr.(*jsonOutput).finish()
 	fs := flag.NewFlagSet("hygiene", flag.ContinueOnError)
+	fs.BoolVar(&asJSON, "json", false, "print typed findings and totals as one JSON object")
 	fs.SetOutput(io.Discard)
-	repo := fs.String("repo", "", "")
-	base := fs.String("base", "", "")
-	head := fs.String("head", "", "")
-	pathsFlag := fs.String("paths", "", "")
-	identity := fs.String("identity", "", "")
-	kind := fs.String("kind", "", "")
-	maxFlag := fs.Int("max", bounded.Default, "")
-	timeout := fs.Int("timeout", 120, "")
+	repo := fs.String("repo", "", "git checkout to inspect (required)")
+	base := fs.String("base", "", "base git ref of the comparison (required)")
+	head := fs.String("head", "", "head git ref of the comparison (required)")
+	pathsFlag := fs.String("paths", "", "comma-separated allowed path globs; empty skips out-of-path checking")
+	identity := fs.String("identity", "", "comma-separated allowed authors in Name <email> form")
+	kind := fs.String("kind", "", "card kind to validate; empty skips kind-specific checks")
+	maxFlag := fs.Int("max", bounded.Default, "finding lines to print; 0 prints all")
+	timeout := fs.Int("timeout", 120, "git inspection deadline in positive seconds")
 	if verbflag.Parse(fs, args) != nil || fs.NArg() != 0 {
 		return refuse(stderr, " hygiene", "bad flags")
 	}
@@ -148,6 +152,9 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 		remedy += " --kind " + oneline.Quote(*kind)
 	}
 	remedy += " --max 0"
+	if asJSON {
+		return renderHygiene(stdout, findings, *maxFlag, remedy, *repo, *base, *head, shown)
+	}
 	list := bounded.Capped(stdout, *maxFlag, "HYGIENE", "finding", remedy)
 	for _, f := range findings {
 		list.Line(fmt.Sprintf("HYGIENE FINDING reason=%s at=%s: %s",

@@ -51,12 +51,6 @@ var skipNames = map[string]bool{
 	"tending":      true,
 }
 
-// deprecatedDir is the one top-level directory no walk of this repository
-// descends into: the tools kept there are reference only, a module of their own
-// that nothing builds, tests or ships (deprecated/README.md). The map still
-// lists the directory itself, from its catalog row.
-const deprecatedDir = "deprecated"
-
 // Entry is one mapped directory.
 type Entry struct {
 	Path    string // slash-separated, no trailing slash
@@ -338,10 +332,6 @@ func extraAgentsPages(root string, pages map[string]string) []string {
 				return filepath.SkipDir
 			}
 			if strings.HasPrefix(d.Name(), ".") && d.Name() != ".github" {
-				return filepath.SkipDir
-			}
-			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-			if path == filepath.Join(root, deprecatedDir) {
 				return filepath.SkipDir
 			}
 			return nil

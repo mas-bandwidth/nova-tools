@@ -1,8 +1,11 @@
 package bus
 
 import (
+	"github.com/stretchr/testify/assert"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 const goodNote = `From: Ada (day shift, the west host, the shared account)
@@ -22,37 +25,22 @@ The body.
 func TestParseNoteReadsTheHeaderAndStopsAtTheBlankLine(t *testing.T) {
 	t.Parallel()
 	n, err := ParseNote("from-ada/x.md", goodNote)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	h := n.Header
-	if h.From != "Ada (day shift, the west host, the shared account)" {
-		t.Fatalf("From = %q", h.From)
-	}
+	require.Equal(t, "Ada (day shift, the west host, the shared account)", h.From, "From = %q", h.From)
 	if h.To != "Bo" || h.Cc != "Dana" {
-		t.Fatalf("To = %q Cc = %q", h.To, h.Cc)
+		require.False(t, h.To != "Bo" || h.Cc != "Dana", "To = %q Cc = %q", h.To, h.Cc)
 	}
-	if h.ID != "ada-0123456789ab" {
-		t.Fatalf("Id = %q", h.ID)
-	}
+	require.Equal(t, "ada-0123456789ab", h.ID, "Id = %q", h.ID)
 	if len(h.Re) != 2 || h.Re[0] != "bo-fedcba987654" {
-		t.Fatalf("Re = %v; both an id and a legacy path are Re lines", h.Re)
+		require.False(t, len(h.Re) != 2 || h.Re[0] != "bo-fedcba987654", "Re = %v; both an id and a legacy path are Re lines", h.Re)
 	}
-	if h.Subject != "Cold read of #624" {
-		t.Fatalf("Subject = %q", h.Subject)
-	}
-	if !strings.HasPrefix(n.Body, "Bo,") {
-		t.Fatalf("Body = %q; the body is everything after the first blank line", n.Body)
-	}
-	if strings.Contains(n.Body, "Subject:") {
-		t.Fatal("a header line leaked into the body")
-	}
-	if n.Lane != "from-ada" {
-		t.Fatalf("Lane = %q", n.Lane)
-	}
-	if got := h.LineOf(KeySubject); got != 8 {
-		t.Fatalf("LineOf(Subject) = %d, want 8", got)
-	}
+	require.Equal(t, "Cold read of #624", h.Subject, "Subject = %q", h.Subject)
+	require.True(t, strings.HasPrefix(n.Body, "Bo,"), "Body = %q; the body is everything after the first blank line", n.Body)
+	require.NotContains(t, n.Body, "Subject:", "a header line leaked into the body")
+	require.Equal(t, "from-ada", n.Lane, "Lane = %q", n.Lane)
+	got := h.LineOf(KeySubject)
+	require.Equal(t, 8, got, "LineOf(Subject) = %d, want 8", got)
 }
 
 func TestParseNoteRefuses(t *testing.T) {
@@ -70,11 +58,9 @@ func TestParseNoteRefuses(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseNote("from-ada/x.md", tc.text)
-			if err == nil {
-				t.Fatal("want a refusal, got none")
-			}
+			require.Error(t, err, "want a refusal, got none")
 			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("refusal %q does not name %q", err, tc.want)
+				require.Contains(t, err.Error(), tc.want, "refusal %q does not name %q", err, tc.want)
 			}
 		})
 	}
@@ -86,37 +72,30 @@ func TestParseNoteToleratesCRLFAndABOM(t *testing.T) {
 	t.Parallel()
 	crlf := "\ufeff" + strings.ReplaceAll(goodNote, "\n", "\r\n")
 	a, err := ParseNote("from-ada/x.md", goodNote)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	b, err := ParseNote("from-ada/x.md", crlf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if a.Header.Subject != b.Header.Subject {
-		t.Fatalf("subjects differ: %q vs %q", a.Header.Subject, b.Header.Subject)
+		require.Equal(t, b.Header.Subject, a.Header.Subject, "subjects differ: %q vs %q", a.Header.Subject, b.Header.Subject)
 	}
 	if NormalizeBody(a.Body) != NormalizeBody(b.Body) {
-		t.Fatalf("bodies differ after normalization:\n%q\n%q", a.Body, b.Body)
+		require.False(t, NormalizeBody(a.Body) != NormalizeBody(b.Body), "bodies differ after normalization:\n%q\n%q", a.Body, b.Body)
 	}
 }
 
 func TestHeaderValidate(t *testing.T) {
 	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	ok := func(text string) Header {
 		t.Helper()
 		n, err := ParseNote("from-ada/x.md", text)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		return n.Header
 	}
-	if err := ok(goodNote).Validate(c); err != nil {
-		t.Fatalf("a good header was refused: %v", err)
+	{
+		err := ok(goodNote).Validate(c)
+		require.NoError(t, err, "a good header was refused: %v", err)
 	}
 	cases := []struct {
 		name, text, want string
@@ -133,11 +112,9 @@ func TestHeaderValidate(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ok(tc.text).Validate(c)
-			if err == nil {
-				t.Fatal("want a refusal, got none")
-			}
+			require.Error(t, err, "want a refusal, got none")
 			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("refusal %q does not name %q", err, tc.want)
+				require.Contains(t, err.Error(), tc.want, "refusal %q does not name %q", err, tc.want)
 			}
 		})
 	}
@@ -146,17 +123,20 @@ func TestHeaderValidate(t *testing.T) {
 func TestValidID(t *testing.T) {
 	t.Parallel()
 	for _, good := range []string{"ada-0123456789ab", "self-talk-ffffffffffff", "a-000000000000"} {
-		if err := ValidID(good); err != nil {
-			t.Fatalf("ValidID(%q) = %v, want nil", good, err)
+		{
+			err := ValidID(good)
+			require.NoError(t, err, "ValidID(%q) = %v, want nil", good, err)
 		}
 	}
 	for _, bad := range []string{"", "ada", "ada-0123456789", "ada-0123456789AB", "ada-0123456789zz", "ada0123456789ab", "Ada-0123456789ab", "-0123456789ab"} {
-		if err := ValidID(bad); err == nil {
-			t.Fatalf("ValidID(%q) = nil, want a refusal", bad)
+		{
+			err := ValidID(bad)
+			require.Error(t, err, "ValidID(%q) = nil, want a refusal", bad)
 		}
 	}
-	if got := SlugOfID("ada-0123456789ab"); got != "ada" {
-		t.Fatalf("SlugOfID = %q, want ada", got)
+	{
+		got := SlugOfID("ada-0123456789ab")
+		require.Equal(t, "ada", got, "SlugOfID = %q, want ada", got)
 	}
 }
 
@@ -164,9 +144,7 @@ func TestValidID(t *testing.T) {
 func TestIDIsDeterministicNamespacedAndSensitiveToEveryFieldThatMakesANoteDifferent(t *testing.T) {
 	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	ada := mustParticipant(t, c, "Ada")
 	bo := mustParticipant(t, c, "Bo")
 	base := Header{From: "Ada", To: "Bo", Subject: "A finding"}
@@ -174,32 +152,21 @@ func TestIDIsDeterministicNamespacedAndSensitiveToEveryFieldThatMakesANoteDiffer
 	body := "The body.\n"
 
 	id, err := AssignID(c, ada, base, body, date)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	again, err := AssignID(c, ada, base, body, date)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id != again {
-		t.Fatalf("the id is not deterministic: %q then %q", id, again)
-	}
-	if !strings.HasPrefix(id, "ada-") {
-		t.Fatalf("id %q is not namespaced by the sender's lane slug", id)
-	}
-	if err := ValidID(id); err != nil {
-		t.Fatalf("assigned id %q is not a valid id: %v", id, err)
+	require.NoError(t, err)
+	require.Equal(t, again, id, "the id is not deterministic: %q then %q", id, again)
+	require.False(t, !strings.HasPrefix(id, "ada-"), "id %q is not namespaced by the sender's lane slug", id)
+	{
+		err := ValidID(id)
+		require.NoError(t, err, "assigned id %q is not a valid id: %v", id, err)
 	}
 
 	// Same everything, a different sender: a different id, because the namespace differs.
 	// This is the property that makes two lines racing unable to collide at all.
 	other, err := AssignID(c, bo, Header{From: "Bo", To: "Ada", Subject: "A finding"}, body, date)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if SlugOfID(other) != "bo" {
-		t.Fatalf("id %q is not in Bo's namespace", other)
-	}
+	require.NoError(t, err)
+	require.False(t, SlugOfID(other) != "bo", "id %q is not in Bo's namespace", other)
 
 	// Every field that makes a note a different note changes the id.
 	seen := map[string]string{id: "the base note"}
@@ -219,11 +186,12 @@ func TestIDIsDeterministicNamespacedAndSensitiveToEveryFieldThatMakesANoteDiffer
 	}
 	for _, v := range vary {
 		got, err := AssignID(c, ada, v.h, v.body, v.date)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if prev, dup := seen[got]; dup {
-			t.Fatalf("%s produced the same id as %s: %q", v.name, prev, got)
+		require.NoError(t, err)
+		{
+			prev, dup := seen[got]
+			if dup {
+				require.False(t, dup, "%s produced the same id as %s: %q", v.name, prev, got)
+			}
 		}
 		seen[got] = v.name
 	}
@@ -233,24 +201,16 @@ func TestIDIsDeterministicNamespacedAndSensitiveToEveryFieldThatMakesANoteDiffer
 func TestIDIsUnchangedByTrailingWhitespaceAndCRLF(t *testing.T) {
 	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	ada := mustParticipant(t, c, "Ada")
 	h := Header{From: "Ada", To: "Bo", Subject: "A finding"}
 	date := "Mon Sep  7 00:02:12 UTC 2026"
 	want, err := AssignID(c, ada, h, "one\ntwo\n", date)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, body := range []string{"one\ntwo\n", "one\r\ntwo\r\n", "one  \ntwo\t\n", "one\ntwo\n\n\n", "one\ntwo"} {
 		got, err := AssignID(c, ada, h, body, date)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != want {
-			t.Fatalf("body %q changed the id: %q, want %q", body, got, want)
-		}
+		require.NoError(t, err)
+		require.Equal(t, want, got, "body %q changed the id: %q, want %q", body, got, want)
 	}
 }
 
@@ -260,33 +220,24 @@ func TestIDIsUnchangedByTrailingWhitespaceAndCRLF(t *testing.T) {
 func TestIDUsesResolvedRecipients(t *testing.T) {
 	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	bo := mustParticipant(t, c, "Bo")
 	date := "Mon Sep  7 00:02:12 UTC 2026"
 	a, err := AssignID(c, bo, Header{From: "Bo", To: "Ada Vale", Subject: "s"}, "b", date)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	b, err := AssignID(c, bo, Header{From: "Bo", To: "Ada a1b2c3d4 (active line)", Subject: "s"}, "b", date)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a != b {
-		t.Fatalf("two spellings of one recipient gave two ids: %q and %q", a, b)
-	}
+	require.NoError(t, err)
+	require.Equal(t, b, a, "two spellings of one recipient gave two ids: %q and %q", a, b)
 }
 
 func TestAssignIDRefusesASenderWithNoLane(t *testing.T) {
 	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	dana := mustParticipant(t, c, "Dana")
-	if _, err := AssignID(c, dana, Header{From: "Dana", To: "Ada", Subject: "s"}, "b", "d"); err == nil {
-		t.Fatal("a participant with no lane was assigned an id")
+	{
+		_, err := AssignID(c, dana, Header{From: "Dana", To: "Ada", Subject: "s"}, "b", "d")
+		require.Error(t, err, "a participant with no lane was assigned an id")
 	}
 }
 
@@ -294,15 +245,11 @@ func TestFileNameCarriesTheMinuteTheSlugAndTheIDsHashHalf(t *testing.T) {
 	t.Parallel()
 	got := FileName(at("2026-09-09T12:34:56Z"), "cold-read", "ada-0123456789ab")
 	want := "2026-09-09T1234Z-cold-read-0123456789ab.md"
-	if got != want {
-		t.Fatalf("FileName = %q, want %q", got, want)
-	}
+	require.Equal(t, want, got, "FileName = %q, want %q", got, want)
 	// The failure this closes: one sender writing twice inside one minute collided on the
 	// filename and overwrote their own note.
 	other := FileName(at("2026-09-09T12:34:59Z"), "cold-read", "ada-ba9876543210")
-	if got == other {
-		t.Fatal("two notes in one minute produced one filename")
-	}
+	require.False(t, got == other, "two notes in one minute produced one filename")
 }
 
 func TestSlugify(t *testing.T) {
@@ -315,8 +262,11 @@ func TestSlugify(t *testing.T) {
 		{strings.Repeat("long ", 40), "long-long-long-long-long-long-long-long-long-long-long-long"},
 	}
 	for _, tc := range cases {
-		if got := Slugify(tc.in, SlugMax); got != tc.want {
-			t.Fatalf("Slugify(%q) = %q, want %q", tc.in, got, tc.want)
+		{
+			got := Slugify(tc.in, SlugMax)
+			if got != tc.want {
+				require.Equal(t, tc.want, got, "Slugify(%q) = %q, want %q", tc.in, got, tc.want)
+			}
 		}
 	}
 }
@@ -344,8 +294,11 @@ func TestIsReceipt(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			n := Note{Header: Header{Kind: tc.kind}, Body: tc.body}
-			if got := IsReceipt(n, maxWords); got != tc.want {
-				t.Fatalf("IsReceipt = %v, want %v", got, tc.want)
+			{
+				got := IsReceipt(n, maxWords)
+				if got != tc.want {
+					require.Equal(t, tc.want, got, "IsReceipt = %v, want %v", got, tc.want)
+				}
 			}
 		})
 	}
@@ -354,29 +307,23 @@ func TestIsReceipt(t *testing.T) {
 func TestRenderPutsTheHeaderInCanonicalOrderAndKeepsTheAuthorsWords(t *testing.T) {
 	t.Parallel()
 	n, err := ParseNote("from-ada/x.md", goodNote)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	out := n.Render()
 	reparsed, err := ParseNote("from-ada/x.md", out)
-	if err != nil {
-		t.Fatalf("a rendered note did not parse: %v\n%s", err, out)
-	}
-	if reparsed.Header.From != n.Header.From || reparsed.Header.To != n.Header.To || reparsed.Header.Subject != n.Header.Subject {
-		t.Fatal("Render did not round-trip the author's own lines")
-	}
+	require.NoError(t, err, "a rendered note did not parse: %v\n%s", err, out)
+	require.False(t, reparsed.Header.From != n.Header.From || reparsed.Header.To != n.Header.To || reparsed.Header.Subject != n.Header.Subject, "Render did not round-trip the author's own lines")
 	if len(reparsed.Header.Re) != len(n.Header.Re) {
-		t.Fatalf("Re lines: %v, want %v", reparsed.Header.Re, n.Header.Re)
+		require.False(t, len(reparsed.Header.Re) != len(n.Header.Re), "Re lines: %v, want %v", reparsed.Header.Re, n.Header.Re)
 	}
 	lines := strings.Split(out, "\n")
 	wantOrder := []string{"From: ", "To: ", "Cc: ", "Date: ", "Id: ", "Re: ", "Re: ", "Subject: "}
 	for i, prefix := range wantOrder {
 		if !strings.HasPrefix(lines[i], prefix) {
-			t.Fatalf("line %d = %q, want it to start with %q", i+1, lines[i], prefix)
+			require.False(t, !strings.HasPrefix(lines[i], prefix), "line %d = %q, want it to start with %q", i+1, lines[i], prefix)
 		}
 	}
 	if lines[len(wantOrder)] != "" {
-		t.Fatalf("the header is not closed by a blank line: %q", lines[len(wantOrder)])
+		require.False(t, lines[len(wantOrder)] != "", "the header is not closed by a blank line: %q", lines[len(wantOrder)])
 	}
 }
 
@@ -427,20 +374,24 @@ func TestParseNoteAcceptsAHeadingAndBulletHeaders(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			n, err := ParseNote("from-bo/x.md", tc.text)
-			if err != nil {
-				t.Fatalf("ParseNote: %v", err)
-			}
+			require.NoError(t, err, "ParseNote: %v", err)
 			if n.Header.From != tc.wantFrom {
-				t.Errorf("From = %q, want %q", n.Header.From, tc.wantFrom)
+				assert.Equal(t, tc.wantFrom, n.Header.From, "From = %q, want %q", n.Header.From, tc.wantFrom)
 			}
 			if n.Header.Subject != tc.wantSubject {
-				t.Errorf("Subject = %q, want %q", n.Header.Subject, tc.wantSubject)
+				assert.Equal(t, tc.wantSubject, n.Header.Subject, "Subject = %q, want %q", n.Header.Subject, tc.wantSubject)
 			}
-			if got := NormalizeBody(n.Body); got != tc.wantBody {
-				t.Errorf("Body = %q, want %q", got, tc.wantBody)
+			{
+				got := NormalizeBody(n.Body)
+				if got != tc.wantBody {
+					assert.Equal(t, tc.wantBody, got, "Body = %q, want %q", got, tc.wantBody)
+				}
 			}
-			if got := n.Header.LineOf(KeyFrom); got != tc.wantFromLine {
-				t.Errorf("the From line is reported at line %d, want %d: a refusal must name the line a person opens to", got, tc.wantFromLine)
+			{
+				got := n.Header.LineOf(KeyFrom)
+				if got != tc.wantFromLine {
+					assert.Equal(t, tc.wantFromLine, got, "the From line is reported at line %d, want %d: a refusal must name the line a person opens to", got, tc.wantFromLine)
+				}
 			}
 		})
 	}
@@ -454,26 +405,16 @@ func TestAProseFirstLineFailsWithAShortQuotedKey(t *testing.T) {
 	t.Parallel()
 	long := "Ada, the graph checkpoint is pushed at 15649542 on PR #707 and the whole suite passed: 138,751 mutations, zero divergence"
 	_, err := ParseNote("from-bo/x.md", long+"\n\nbody\n")
-	if err == nil {
-		t.Fatal("a note whose first line is prose parsed")
-	}
-	if !strings.Contains(err.Error(), "not a header key") {
-		t.Fatalf("the refusal does not say what is wrong: %v", err)
-	}
+	require.Error(t, err, "a note whose first line is prose parsed")
+	require.Contains(t, err.Error(), "not a header key", "the refusal does not say what is wrong: %v", err)
 	if len(err.Error()) > 200 {
-		t.Fatalf("the refusal is %d characters; it pastes the paragraph back:\n%v", len(err.Error()), err)
+		require.False(t, len(err.Error()) > 200, "the refusal is %d characters; it pastes the paragraph back:\n%v", len(err.Error()), err)
 	}
-	if !strings.Contains(err.Error(), "...") {
-		t.Fatalf("the refusal does not mark that it shortened the key: %v", err)
-	}
-	if strings.Contains(err.Error(), "138,751") {
-		t.Fatalf("the whole paragraph is in the refusal: %v", err)
-	}
+	require.Contains(t, err.Error(), "...", "the refusal does not mark that it shortened the key: %v", err)
+	require.NotContains(t, err.Error(), "138,751", "the whole paragraph is in the refusal: %v", err)
 	// A key short enough to read is quoted whole, so the common case is unchanged.
 	_, err = ParseNote("from-bo/x.md", "From: Ada\nSbuject: s\n\nbody\n")
-	if err == nil || !strings.Contains(err.Error(), `unknown header key "Sbuject"`) {
-		t.Fatalf("a short key was not quoted whole: %v", err)
-	}
+	require.False(t, err == nil || !strings.Contains(err.Error(), `unknown header key "Sbuject"`), "a short key was not quoted whole: %v", err)
 }
 
 // THE THREE SHAPES A READ OF THE REAL BUS FOUND, and what each refusal now has to say.
@@ -511,20 +452,14 @@ func TestAnUnreadableNoteSaysWhatToDoAboutIt(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseNote("from-bo/x.md", tc.text)
-			if err == nil {
-				t.Fatal("the note parsed; these four shapes are still failures")
-			}
+			require.Error(t, err, "the note parsed; these four shapes are still failures")
 			for _, want := range tc.want {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("the refusal does not say %q:\n%v", want, err)
-				}
+				require.Contains(t, err.Error(), want, "the refusal does not say %q:\n%v", want, err)
 			}
 		})
 	}
 	// And the tolerances are untouched: a bullet in front of a bold key is still read as a
 	// bullet, so the refusal is about the bold and not about the bullet.
 	_, err := ParseNote("from-bo/x.md", "- From: Bo\n- **To**: Ada\n- Subject: s\n\nbody\n")
-	if err == nil || !strings.Contains(err.Error(), "not markdown bold") {
-		t.Fatalf("a bulleted bold key: %v", err)
-	}
+	require.False(t, err == nil || !strings.Contains(err.Error(), "not markdown bold"), "a bulleted bold key: %v", err)
 }

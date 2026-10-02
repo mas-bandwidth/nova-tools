@@ -1,13 +1,14 @@
 package ci
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 )
 
-// liveTree is deprecated/PACKAGES read the way pkgselect.Deprecated reads it,
+// liveTree is pkgselect.DeprecatedFile read the way pkgselect.Deprecated reads it,
 // for the class tests that walk source rather than a package list: a class
 // rule over deprecated code is a test of deprecated code, which is never run
 // (Glenn 2026-09-27), so a rule walks the packages CI selects and no others. A
@@ -16,15 +17,14 @@ import (
 // own reading; TestDeprecatedPackagesAreNeverSelected holds the two to the
 // same answer.
 type liveTree struct {
-	root string
 	drop []string
 	keep map[string]bool
 }
 
 func loadLiveTree(t *testing.T, root string) *liveTree {
 	t.Helper()
-	lt := &liveTree{root: root, keep: map[string]bool{}}
-	for _, line := range strings.Split(readFile(t, filepath.Join(root, "deprecated", "PACKAGES")), "\n") {
+	lt := &liveTree{keep: map[string]bool{}}
+	for _, line := range strings.Split(readFile(t, filepath.Join(root, filepath.FromSlash(pkgselect.DeprecatedFile))), "\n") {
 		line, _, _ = strings.Cut(line, "#")
 		line = strings.TrimSpace(line)
 		switch {
@@ -51,29 +51,4 @@ func (lt *liveTree) Package(dir string) bool {
 		}
 	}
 	return true
-}
-
-// File reports whether the source file rel belongs to a live package. A file
-// in a directory with no Go of its own (a Lua library under lua/, embedded by
-// the package above it) belongs to the nearest directory above it that holds a
-// non-test .go file.
-func (lt *liveTree) File(rel string) bool {
-	dir := filepath.ToSlash(filepath.Dir(rel))
-	for dir != "." && dir != "" && !lt.hasGo(dir) {
-		dir = filepath.ToSlash(filepath.Dir(dir))
-	}
-	return lt.Package(dir)
-}
-
-func (lt *liveTree) hasGo(dir string) bool {
-	entries, err := os.ReadDir(filepath.Join(lt.root, filepath.FromSlash(dir)))
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if n := e.Name(); !e.IsDir() && strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
-			return true
-		}
-	}
-	return false
 }

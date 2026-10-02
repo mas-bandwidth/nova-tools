@@ -224,7 +224,7 @@ func TestBoundToLocalhostAndTailnetOnly(t *testing.T) {
 		if code != 2 || len(h.launches) != 0 {
 			t.Errorf("%s (--bind %q): exit %d launches %d, want 2 and 0 (a public bind is refused, never launched)", tc.name, tc.bind, code, len(h.launches))
 		}
-		if !strings.HasPrefix(errb, "nova-redis serve: ") {
+		if !strings.HasPrefix(errb, "nova-redis serve REFUSED: ") {
 			t.Errorf("%s: stderr %q is not a serve refusal", tc.name, errb)
 		}
 	}
@@ -380,7 +380,7 @@ func TestServeFailuresHaveRemedies(t *testing.T) {
 		h := newServeHarness(t, "fixture-secret-only")
 		h.d.lookPath = func(string) (string, error) { return "", errors.New("not found") }
 		code, out, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6380", "--dir", h.dir)
-		const want = "SERVE FAIL err=redis-server not found on PATH: not found remedy=\"install redis-server or make its executable available on PATH for this process\"\n"
+		const want = "SERVE FAIL err=redis-server not found on PATH: not found remedy=\"install redis-server (Redis 7 or later) so it is on PATH, then run nova-redis serve again\"\n"
 		require.True(t, code == 1 && out == "" && errb == want && len(h.launches) == 0,
 			"missing executable: exit %d stdout %q stderr %q launches %d", code, out, errb, len(h.launches))
 	})

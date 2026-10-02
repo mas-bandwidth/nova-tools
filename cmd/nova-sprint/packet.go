@@ -23,6 +23,9 @@ func printPacket(w io.Writer, p sprint.Packet) {
 	if p.Kind == "work" {
 		kv("branch", p.Branch)
 		kv("base", orDashStr(p.Base, "the stream's base"))
+		if p.Route != "" {
+			kv("route", fmt.Sprintf("%s model=%s tokens=%s deadline=%ds", p.Route, p.Model, orDashStr(p.Tokens, "-"), p.Deadline))
+		}
 	} else {
 		kv("work", fmt.Sprintf("attempt %d by %s", p.Attempt, orDashStr(p.Worker, "-")))
 		kv("head", p.Head)
@@ -37,6 +40,8 @@ func printPacket(w io.Writer, p sprint.Packet) {
 		paragraph(w, v)
 	}
 	para("brief", p.Brief)
+	para("why this attempt exists", p.Why)
+	para("a reader found", p.Finding)
 	para("fix (this attempt)", p.Fix)
 	para("report", p.Report)
 	if len(p.Notes) == 0 {
@@ -46,7 +51,7 @@ func printPacket(w io.Writer, p sprint.Packet) {
 		para("note", n)
 	}
 	if p.Kind == "work" {
-		fmt.Fprintf(w, "  report it: nova-sprint finish --as %s %s@%d --epoch %d --branch %s --report '<what you did>' [--failed]\n", p.As, p.Card, p.Gen, p.Epoch, p.Branch)
+		fmt.Fprintf(w, "  report it: nova-sprint finish --as %s %s@%d --epoch %d --branch %s --head <commit> --report '<what you did>' [--failed]\n", p.As, p.Card, p.Gen, p.Epoch, p.Branch)
 	} else {
 		fmt.Fprintf(w, "  report it: nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<what you found>'\n", p.As, p.Card, p.Epoch)
 	}

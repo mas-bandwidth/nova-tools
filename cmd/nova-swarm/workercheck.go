@@ -44,7 +44,8 @@ func workerHelpFlag(arg string) bool {
 // -- whether the harness can be run, whether both harness placeholders are present, whether
 // a named secret is in this process's environment, whether the worker directory can exist,
 // and whether the optional class and budget fields hold. A description with no drift prints
-// one WORKER OK line, exit 0; one with drifts prints them, exit 2, and starts nothing.
+// one WORKER OK line, exit 0; one with drifts prints them, exit 1, and starts nothing; a
+// description that cannot be read is refused, exit 2.
 func cmdWorker(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && workerHelpFlag(args[0]) {
 		verbflag.HelpIfAsked(args[:1], "worker")
@@ -86,7 +87,7 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 			}
 			max = n
 		case strings.HasPrefix(rest[i], "-"):
-			return refuse(stderr, " worker check", fmt.Sprintf("unknown flag %q", rest[i]))
+			return refuse(stderr, " worker check", fmt.Sprintf("unknown flag %s; worker check takes --env, --max", oneline.Field(rest[i])))
 		default:
 			if path != "" {
 				return refuse(stderr, " worker check", "takes exactly one worker description")
@@ -101,6 +102,11 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " worker check", fmt.Sprintf("--max is 0 or more, got %d; 0 shows all", max))
 	}
 
+	// a description that cannot be read is a check that could not run (exit 2); one read
+	// and found wanting is the verb saying no (exit 1; tool ledger W11, X10)
+	if _, err := os.ReadFile(path); err != nil {
+		return refuse(stderr, " worker check", "the worker description cannot be read: "+oneline.Err(err)+"; it wants a JSON file, nova-swarm template --name worker prints one")
+	}
 	w, drifts := checkWorkerDescription(path, requireEnv, os.Getenv)
 	if len(drifts) == 0 {
 		fmt.Fprintf(stdout, "WORKER OK %s model=%s provider=%s class=%s\n",
@@ -112,7 +118,7 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 		list.Line(d.String())
 	}
 	list.More()
-	return 2
+	return 1
 }
 
 // checkWorkerDescription loads a description with the existing loader and returns the

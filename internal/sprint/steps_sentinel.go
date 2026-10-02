@@ -130,11 +130,9 @@ func addScores(s *Snapshot, r AddReq, n int) ([]float64, string) {
 	return out, ""
 }
 
-// mod is a change a step makes to a primary already in line: its needs, a
+// mod is a change a step makes to a primary already in line: a
 // move back to waiting, and the step's reason when it is no longer reached.
 type mod struct {
-	needs   []string
-	named   int // the needs it names before the step: needs are written only when this step adds one
 	to      State
 	unreach string
 }
@@ -143,31 +141,20 @@ func modOf(mods map[string]*mod, c *Card) *mod {
 	if m := mods[c.ID]; m != nil {
 		return m
 	}
-	m := &mod{needs: Split(c.F("needs"))}
-	m.named = len(m.needs)
+	m := &mod{}
 	mods[c.ID] = m
 	return m
 }
 
-func (m *mod) addNeed(id string) {
-	if !contains(m.needs, id) {
-		m.needs = append(m.needs, id)
-	}
-}
-
 func (m *mod) change(c *Card) Change {
-	var set map[string]string
-	if len(m.needs) != m.named {
-		set = map[string]string{"needs": strings.Join(m.needs, ",")}
-	}
 	var unset []string
 	if m.unreach != "" {
 		unset = append(unset, "reached")
 	}
 	if m.to != "" {
-		return change(Work, moveEntry(c, c.Row, m.to, set, unset...))
+		return change(Work, moveEntry(c, c.Row, m.to, nil, unset...))
 	}
-	return change(Work, setEntry(c, set, unset...))
+	return change(Work, setEntry(c, nil, unset...))
 }
 
 // reachedNote is the judgment a sentinel is reached: how many cards of its
