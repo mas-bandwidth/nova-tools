@@ -1,11 +1,12 @@
 package main
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
@@ -42,7 +43,7 @@ func TestTheHelpReportExampleIsWhatItPrints(t *testing.T) {
 		"! TOKENS AVG-ALL day=2026-09-11 tokens=250131 usd=- usd_per_mtok=-",
 		"! REPORT OK who=ada day=2026-09-11 rows=7 at=2026-09-11T23:55:02Z build=devel subject=tokens 2026-09-11 at=2026-09-11T23:55:02Z build=devel",
 	}}
-	for _, p := range onboarding.Compare(step, onboarding.Result{Code: r.exit, Stdout: r.stdout, Stderr: r.stderr}, []onboarding.Norm{onboarding.Version()}) {
+	for _, p := range onboarding.CompareTranscript([]onboarding.Step{step}, []onboarding.Result{{Code: r.exit, Stdout: r.stdout, Stderr: r.stderr}}, []onboarding.Field{{Name: "build"}}) {
 		assert.Fail(t, "onboarding example comparison failed", "%v", p)
 	}
 }

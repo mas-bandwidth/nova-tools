@@ -3,14 +3,15 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
@@ -139,61 +140,17 @@ func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
 	assert.False(t, !strings.Contains(cli, "no `quickstart`"), "docs/CLI.md does not say why there is no quickstart verb (docs/STANDARD.md, onboarding point 4)")
 }
 
-// The TESTS.md transcript is compared by SHAPE -- the two-token event prefix and the field
-// names in order -- and deliberately not by value, so the transcript stays a document
-// instead of becoming a fixture.
-func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
-	doc := readRepoFile(t, filepath.Join("docs", "TESTS.md"))
-	lines, err := onboarding.FirstRun(doc, "nova-tokens")
-	require.False(t, err != nil, err)
-	fixtureIn(t)
-	var want []string
-	var got []string
-	var pending []string
-	flush := func() {
-		got = append(got, pending...)
-		pending = nil
-	}
-	for _, line := range lines {
-		if args, ok := strings.CutPrefix(line, "$ nova-tokens "); ok {
-			flush()
-			var out, errb bytes.Buffer
-			run(strings.Fields(args), &out, &errb, firstRunStamp)
-			for _, printed := range strings.Split(out.String()+errb.String(), "\n") {
-				if shape := onboarding.Shape(printed); shape != "" {
-					pending = append(pending, shape)
-				}
-			}
-			continue
-		}
-		if shape := onboarding.Shape(line); shape != "" {
-			want = append(want, shape)
-		}
-	}
-	flush()
-	require.False(t, len(want) == 0, "the transcript holds no event line")
-	for i, w := range want {
-		require.False(t, i >= len(got), "the transcript has a line the tool does not print: %q", w)
-		assert.False(t, got[i] != w, "line %d of the transcript is\n  %s\nand the tool prints\n  %s", i+1, w, got[i])
-	}
-	if len(got) > len(want) {
-		assert.Failf(t, "extra event lines", "the tool prints %d event lines and the transcript shows %d; the first missing is %q", len(got), len(want), got[len(want)])
-	}
-}
-
 // The `### First run` block of docs/TESTS.md is EXECUTED, not shape-matched:
 // every command is run in one sitting, in order, against a COPY of the fixture
 // in t.TempDir() (a first run WRITES), and each step's whole output is compared
 // line for line -- same number of lines, same lines, same order -- with the
-// block written under it. TestTheTranscriptIsWhatTheToolPrints above compares
-// only the event shape and stays; this is the whole promise.
+// block written under it, through the one comparator (onboarding.CompareTranscript).
 //
 // NOTHING IS NORMALISED, and that is a property of this transcript rather than a
 // shortcut: the `at=` stamps are driven from run()'s injected clock
 // (firstRunStamp, the instant the document was produced at) and the fixture is
-// deterministic, so every value on every line reproduces. onboarding.Execute is
-// told so by being handed no Norm, and it says as much under any line that
-// disagrees.
+// deterministic, so every value on every line reproduces, and the comparator is
+// handed no run-owned field: under `go test` the build is `devel`, as written.
 //
 // The transcript's paths (`./out`, `./repos.tsv`, `./transcripts`, `./bus`) are
 // written from the copied fixture's root, where a reader typing them stands, so
@@ -214,7 +171,14 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// The fold WRITES, so it runs against a copy of the fixture in t.TempDir()
 	// and the test moves into it; the documented paths are relative to here.
 	fixtureIn(t)
-	for _, p := range onboarding.Execute(steps, runDocumented(t)) {
+	run := runDocumented(t)
+	var results []onboarding.Result
+	for _, s := range steps {
+		r, err := run(s)
+		require.NoError(t, err)
+		results = append(results, r)
+	}
+	for _, p := range onboarding.CompareTranscript(steps, results, nil) {
 		assert.Fail(t, "%v", p)
 	}
 }
