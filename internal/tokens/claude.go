@@ -42,10 +42,8 @@ type claudeLine struct {
 		Usage map[string]json.RawMessage `json:"usage"`
 		// `message.content` is a STRING on a user turn and an ARRAY of blocks on an
 		// assistant turn, and both are valid transcript lines. Declaring it the array
-		// alone made every user turn a type mismatch -- valid JSON that json.Unmarshal
-		// refuses -- and the reader called those lines "not JSON": 1,260 of 1,278 files
-		// flagged on a clean bench, TOKENS UNREADABLE, exit 1, and a remedy nobody could
-		// act on (measured 2026-09-11). Raw here, decoded below only when it is an array.
+		// alone made every user turn a type mismatch, causing the reader to reject
+		// those lines as invalid JSON.
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 }
@@ -197,12 +195,11 @@ func (s *Source) unreadable(path, why string) {
 	s.Unreadables = append(s.Unreadables, Unreadable{Label: s.Label, Path: path, Why: why})
 }
 
-// DayOfStamp is the UTC day of an RFC 3339 stamp (rule 17: "A day is a UTC day, from the
-// message's own stamp"). The stamp is PARSED and converted, never sliced: its first ten
-// characters are the day in whatever zone it was printed in, and a line stamped
-// 2026-09-11T20:30:00-07:00 belongs to 2026-09-12. A stamp this tool cannot read is not a
-// day, is not dated by a guess, and is not dropped either: every caller counts it and
-// prints it (rule 3).
+// DayOfStamp is the UTC day of an RFC 3339 stamp. The stamp is PARSED and converted,
+// never sliced: its first ten characters are the day in whatever zone it was printed
+// in, so a stamp offset from UTC can belong to a different UTC day. A stamp this tool
+// cannot read is not a day, is not dated by a guess, and is not dropped: every caller
+// counts and prints it.
 func DayOfStamp(stamp string) (string, bool) {
 	t, err := time.Parse(time.RFC3339, strings.TrimSpace(stamp))
 	if err != nil {
