@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
@@ -80,9 +83,7 @@ func TestNoTestSleepsOverASecondOrWaitsOutADeadlineOverFive(t *testing.T) {
 		if f.HasDirNamed("testdata") || isSlowTagged(f.Src) {
 			continue
 		}
-		if f.ParseErr != nil {
-			t.Fatal(f.ParseErr)
-		}
+		require.NoError(t, f.ParseErr)
 		hits = append(hits, slowWaitsIn(tree.FSet, f.Rel, f.AST)...)
 	}
 	allow := readSlowWaitsAllowlist(t)
@@ -105,7 +106,7 @@ func TestNoTestSleepsOverASecondOrWaitsOutADeadlineOverFive(t *testing.T) {
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
-		t.Error(v)
+		assert.Fail(t, v)
 	}
 }
 
@@ -134,22 +135,16 @@ func TestOK8(t *testing.T) { _ = Opts{Deadline: time.Minute} }
 `
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "p_test.go", src, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got := map[string]bool{}
 	for _, h := range slowWaitsIn(fset, "p_test.go", f) {
 		got[h.Func] = true
 	}
 	for _, name := range []string{"TestA", "TestB", "TestC", "TestD", "TestE", "TestF"} {
-		if !got[name] {
-			t.Errorf("the slow-wait reader missed %s", name)
-		}
+		assert.True(t, got[name], "the slow-wait reader missed %s", name)
 	}
 	for _, name := range []string{"TestOK1", "TestOK2", "TestOK3", "TestOK4", "TestOK5", "TestOK6", "TestOK7", "TestOK8"} {
-		if got[name] {
-			t.Errorf("the slow-wait reader flagged %s, which waits for nothing over the line", name)
-		}
+		assert.False(t, got[name], "the slow-wait reader flagged %s, which waits for nothing over the line", name)
 	}
 }
 
@@ -263,9 +258,8 @@ func readSlowWaitsAllowlist(t *testing.T) *allowlist.List {
 	t.Helper()
 	allow := loadAllowlist(t, slowWaitsAllowlistPath, shrinkOnly)
 	for _, row := range allow.Rows() {
-		if _, reason, _ := strings.Cut(row.Text, " "); strings.TrimSpace(reason) == "" {
-			t.Errorf("%s: %q carries no reason", slowWaitsAllowlistPath, row.Text)
-		}
+		_, reason, _ := strings.Cut(row.Text, " ")
+		assert.NotEmpty(t, strings.TrimSpace(reason), "%s: %q carries no reason", slowWaitsAllowlistPath, row.Text)
 	}
 	return allow
 }
