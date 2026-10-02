@@ -174,7 +174,7 @@ func TestACouldNotRunIsRefusedInPlainWords(t *testing.T) {
 		{"a file that is no tree", unreachable(t), []string{"verify", "--tree", notATree},
 			"VERIFY REFUSED tree=" + notATree + ": workfile: file=" + notATree + " (root): want a (work-tree ...) record", "nova-work verify -h"},
 		{"no tree there", unreachable(t), []string{"verify", "--tree", filepath.Join(dir, "none.lisp")},
-			"VERIFY REFUSED tree=" + filepath.Join(dir, "none.lisp") + ": stat ", "nova-work import --org <org> --out " + filepath.Join(dir, "none.lisp")},
+			"VERIFY REFUSED tree=" + filepath.Join(dir, "none.lisp") + ": stat ", "nova-work import -h"},
 		{"gh not found", unreachable(t), []string{"import", "--org", "o", "--dry-run", "--gh", "/nonexistent/gh-cli"},
 			`IMPORT REFUSED: the GitHub CLI "/nonexistent/gh-cli" is not found`, "nova-work import -h"},
 	}
@@ -321,7 +321,7 @@ func TestVerifyAgainstASecondTreeReadsNoNetwork(t *testing.T) {
 		{"a GitHub flag beside it", []string{"verify", "--tree", a, "--against", b, "--gh", "gh", "--page-size", "5"}, 2, "",
 			[]string{"VERIFY REFUSED: --gh reads GitHub and --against reads no network", "VERIFY REFUSED: --page-size reads GitHub"}},
 		{"no second tree", []string{"verify", "--tree", a, "--against", filepath.Join(dir, "none.lisp")}, 2, "",
-			[]string{"VERIFY REFUSED tree=" + filepath.Join(dir, "none.lisp") + " against="}},
+			[]string{"VERIFY REFUSED against=" + filepath.Join(dir, "none.lisp") + ": stat ", "; run: nova-work import -h\n"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
