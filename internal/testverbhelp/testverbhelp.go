@@ -1,6 +1,6 @@
 // Package testverbhelp is the per-tool check of the verb-help rule
-// (internal/nsprint/verbflag is the one seam that implements it):
-// `<tool> <verb> -h` and `--help` print that verb's help on
+// (the CLI style's rule (b), #4505; internal/nsprint/verbflag is the one seam that
+// implements it): `<tool> <verb> -h` and `--help` print that verb's help on
 // stdout and exit 0, with nothing on stderr, no file written and no dial.
 // The check opens no socket: it is a unit-tier check.
 //
