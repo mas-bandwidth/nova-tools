@@ -44,7 +44,7 @@ const localDiffCap = 8 * 1024 * 1024
 
 // runCommand runs one argv directly -- no shell, no pipe, no glob, no
 // environment expansion -- and returns its output, stdout and stderr together,
-// bounded. SPEC-UPDATE rule 3 is the same rule and this is the same reason: a
+// bounded. Direct argv keeps command arguments explicit: a
 // command built as a string is a command whose quoting nobody can check.
 func runCommand(ctx context.Context, name string, args ...string) (string, error) {
 	out, _, err := runCommandCapped(ctx, childCap, nil, "", name, args...)
@@ -214,9 +214,9 @@ func (g *GH) Files(ctx context.Context, repo, base, head string) ([]string, erro
 // from the exec so a test can read the exact arguments the forge would be handed
 // without a subprocess -- the same reason apiError is its own function.
 //
-// THE OBJECT FIRST, THEN THE REF. This verb used to POST `git/refs` alone, which
+// THE OBJECT FIRST, THEN THE REF. The tag object carries the annotation, while the ref
 // creates a LIGHTWEIGHT tag: a name pointing straight at the commit and carrying
-// nothing. Johnny's decision 2 on SPEC-RELEASE (#1337) is that the tag carries
+// nothing. The tag carries
 // the digest of the release's SHA256SUMS, so there has to be something to carry
 // it IN -- a tag object -- and the ref has to point at THAT, not at the commit,
 // or the annotation is orphaned and the tag still reads lightweight to everything
@@ -289,7 +289,7 @@ func (GoBuild) Build(ctx context.Context, source, pkg, out, goos, goarch string,
 	cmd.Dir = source
 	cmd.Stdout = capture
 	cmd.Stderr = capture
-	// THE CALLER'S GOFLAGS DOES NOT REACH THE RELEASE BUILD (#1333). CI's
+	// The caller's GOFLAGS does not reach the release build. CI's
 	// `make test` exports GOFLAGS=-json, and the same inheritance made
 	// `nova-review mutate` read a green unit as red. A release is the one
 	// artifact where flags nobody chose are least acceptable: the binaries
@@ -400,7 +400,7 @@ func (s ExecSSH) sshArgs(machine string) []string {
 }
 
 // SSHOptions are the options EVERY invocation carries, in one slice so a test
-// can read the whole policy rather than three call sites (Johnny, 2026-09-18).
+// can read the whole policy rather than three call sites.
 //
 // BatchMode so a missing key is a refusal now rather than a password prompt
 // nobody is at the keyboard for. ConnectTimeout so a sleeping bench costs
@@ -437,8 +437,8 @@ func (s ExecSSH) Send(ctx context.Context, machine, dir, dest string) (string, e
 	// ONLY WHAT THE CHECKSUM FILE NAMES GOES OVER THE WIRE. Sending whatever
 	// happens to be sitting in the directory would mean that anything dropped
 	// there -- a key, a token, an unrelated file -- is copied to every machine
-	// in the fleet by a verb nobody thinks of as a file transfer (Johnny,
-	// 2026-09-18). The shipped set is the verified set and nothing else.
+	// in the fleet by this explicit file transfer operation.
+	// The shipped set is the verified set and nothing else.
 	arts, err := ReadSums(dir)
 	if err != nil {
 		return "", err

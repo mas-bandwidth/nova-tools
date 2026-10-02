@@ -2,7 +2,7 @@ package release
 
 // THE DEFINITION OF DONE, IN FRONT OF THE TAG.
 //
-// Glenn, 2026-09-18: a tool is finished when it has been tested, dogfooded by
+// A tool is finished when it has been tested, dogfooded by
 // somebody who did NOT write it on real work, the edges that found have been
 // filed, and the fixes have been applied. `nova-check dogfood gate` made that
 // mechanical -- receipts on disk, read against the command reference, an exit
@@ -15,14 +15,14 @@ package release
 // single tool is compiled -- and refuse on an open edge. An open edge is
 // somebody having run a verb, it not having done what they needed, and nobody
 // having run it since and said it did: feedback FILED is not feedback APPLIED,
-// which is the third step of the definition and the one that used to go
+// which is the third step of the definition and the one that can go
 // missing.
 //
 // The gate is the same read the CLI does, in process rather than through a
 // shell: `nova-check dogfood gate --cli <cli> --receipts <dir>` is
 // internal/dogfood.Gate over dogfood.ParseCLI and dogfood.ReadReceipts, and
 // calling it directly is one process, one set of refusals, and no shell to get
-// wrong (Glenn, 2026-09-17: no shell for coordination).
+// wrong. Calling it directly avoids shell parsing errors.
 
 import (
 	"errors"
@@ -38,7 +38,7 @@ import (
 
 // DefaultReceiptsDir is where this fleet keeps its receipts, relative to the
 // home directory of whoever is cutting. It is the ONLY path in this package
-// with a default, and it is one on purpose: SPEC-UPDATE rule 1 says no path is
+// with a default, and it is one on purpose: no path is
 // guessed, and the reason the rule exists is that a guessed path makes two
 // runs mean different things. A receipts directory is the exception because
 // the alternative -- a release lane that silently skips the gate whenever
@@ -84,8 +84,8 @@ func addDogfoodFlags(f *flag.FlagSet, o *options, cliDefault string) {
 	f.StringVar(&o.reason, "reason", "", "why the gate was waived; it goes on the line and into the changelog")
 }
 
-// dogfoodFindingCap bounds the refusal. Tool output costs tokens (Glenn,
-// 2026-09-11): the COUNT is the answer, the first few edges are the orientation,
+// dogfoodFindingCap bounds the refusal. Tool output costs tokens:
+// The COUNT is the answer, the first few edges are the orientation,
 // and a person who wants all of them runs the ledger.
 const dogfoodFindingCap = 10
 
