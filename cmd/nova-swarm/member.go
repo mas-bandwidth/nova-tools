@@ -361,28 +361,24 @@ func (r *nativeRunner) started(name string) {
 // Start runs a packet as a child. The launch is claimed (live) before its directory is
 // touched and for as long as it runs, so the cleaner, which removes ended launches apart
 // from the pass, never removes the directory of a launch of the same name started again.
-func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
+func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if !safepath.NameOK(p.Card) {
 		return nil, fmt.Errorf("card %q is not a name", p.Card)
 	}
-	name := launchName(p)
-	r.removing.Lock() // a removal in flight ends first: it may be this name's old directory
-	r.started(name)
-	r.removing.Unlock()
-	c, err := r.start(p)
-	if err != nil {
-		r.mu.Lock()
-		delete(r.live, name)
-		r.mu.Unlock()
-	}
-	return c, err
-}
-
-func (r *nativeRunner) start(p member.Packet) (member.Child, error) {
 	// one slot and one results root per launch (the card at its generation, or
 	// attempt, in its epoch), so a result can only be this launch's; a launch
 	// whose pid file names a live process is adopted, never run twice
 	name := launchName(p)
+	r.removing.Lock() // a removal in flight ends first: it may be this name's old directory
+	r.started(name)
+	r.removing.Unlock()
+	defer func() {
+		if err != nil {
+			r.mu.Lock()
+			delete(r.live, name)
+			r.mu.Unlock()
+		}
+	}()
 	slot := filepath.Join(r.slots, name)
 	results := filepath.Join(r.resultsRoot, name)
 	logPath := filepath.Join(r.slots, name+".native.log")
