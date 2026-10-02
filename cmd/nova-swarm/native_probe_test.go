@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -111,8 +112,8 @@ DONE-WHEN: RESULT.md exists
 		linksOut, _ := os.ReadFile(filepath.Join(jobDir, "links.out"))
 		versionOut, _ := os.ReadFile(filepath.Join(jobDir, "version.out"))
 		catOut, _ := os.ReadFile(filepath.Join(jobDir, "cat.out"))
-		t.Fatalf("native run failed rc=%d: probe.rc=%s\nlinks.out:\n%s\nversion.out:\n%s\ncat.out:\n%s\nstderr:\n%s\nstdout:\n%s",
-			rc, string(rcData), string(linksOut), string(versionOut), string(catOut), stderr.String(), stdout.String())
+		require.Fail(t, fmt.Sprintf("native run failed rc=%d: probe.rc=%s\nlinks.out:\n%s\nversion.out:\n%s\ncat.out:\n%s\nstderr:\n%s\nstdout:\n%s",
+			rc, string(rcData), string(linksOut), string(versionOut), string(catOut), stderr.String(), stdout.String()))
 	}
 
 	probeRcBytes, err := os.ReadFile(filepath.Join(jobDir, "probe.rc"))

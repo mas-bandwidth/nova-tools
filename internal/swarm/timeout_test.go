@@ -44,9 +44,8 @@ func TestWindowsKillStrategyComparison(t *testing.T) {
 			hasForce = true
 		}
 	}
-	if !hasTree || !hasForce {
-		t.Errorf("taskkill forceful kill missing tree or force flags: %v", taskkillForceArgs)
-	}
+	assert.True(t, hasTree, "taskkill forceful kill missing tree or force flags: %v", taskkillForceArgs)
+	assert.True(t, hasForce, "taskkill forceful kill missing tree or force flags: %v", taskkillForceArgs)
 }
 
 // TestWindowsTreeReapFallback verifies the PID formatting of the taskkill fallback.

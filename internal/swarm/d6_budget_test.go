@@ -27,9 +27,8 @@ func TestTheBudgetCountsSpendNotCacheReads(t *testing.T) {
 	}}
 	spent, seen, partial := u.Budget()
 	assert.Equal(t, 11139+944+120, spent, "the budget counts input, output and reasoning: spent=%d, want %d", spent, 11139+944+120)
-	if seen != 3 || partial {
-		t.Errorf("three columns observed and none missing: seen=%d partial=%t", seen, partial)
-	}
+	assert.Equal(t, 3, seen, "three columns observed and none missing: seen=%d partial=%t", seen, partial)
+	assert.False(t, partial, "three columns observed and none missing: seen=%d partial=%t", seen, partial)
 	// The row keeps every column, and the whole-row sum is unchanged.
 	sum, _, _ := u.Sum()
 	assert.Equal(t, 11139+944+3000+4160000+120, sum, "the usage row still carries all five columns, got sum=%d", sum)
@@ -39,9 +38,9 @@ func TestTheBudgetCountsSpendNotCacheReads(t *testing.T) {
 		"tokens_in": "100", "tokens_out": Dash, "cache_read": "999999", "reasoning": Dash,
 	}}
 	spent, seen, partial = partialUsage.Budget()
-	if spent != 100 || seen != 1 || !partial {
-		t.Errorf("a partial budget observation counts what it has and says so: spent=%d seen=%d partial=%t, want 100, 1, true", spent, seen, partial)
-	}
+	assert.Equal(t, 100, spent, "a partial budget observation counts what it has and says so: spent=%d seen=%d partial=%t, want 100, 1, true", spent, seen, partial)
+	assert.Equal(t, 1, seen, "a partial budget observation counts what it has and says so: spent=%d seen=%d partial=%t, want 100, 1, true", spent, seen, partial)
+	assert.True(t, partial, "a partial budget observation counts what it has and says so: spent=%d seen=%d partial=%t, want 100, 1, true", spent, seen, partial)
 }
 
 // AND THE COLUMNS THEMSELVES, so that a future edit that adds cache_read back has to say so
