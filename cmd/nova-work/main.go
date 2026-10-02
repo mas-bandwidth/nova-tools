@@ -96,7 +96,7 @@ output (stdout): PLAN OK, then REPO OK per repository, then
   IMPORT OK org= out= repos= issues= comments= references= linked_prs= bytes=
   sha256= calls= points= rest=0 seconds= dry_run=
 calls are GraphQL calls; points are what GitHub charged for them; rest is REST
-calls, always 0. Failures go to stderr as IMPORT FAIL <reason>.
+calls, always 0. Failures go to stderr as IMPORT FAILED <reason>.
 
 exit: 0 the tree is written (or, with --dry-run, fetched and checked); 1 the
 encoded tree did not read back equal to what was fetched, nothing written;
@@ -133,7 +133,7 @@ flags:
   --max-bytes <n>      the largest tree file read (default 1073741824).
 
 output: VERIFY OK tree= sha256= repos= issues= comments= calls= points= rest=0
-seconds= on stdout when there is no difference; VERIFY FAIL ... differences=
+seconds= on stdout when there is no difference; VERIFY FAILED ... differences=
 on stderr when there is.
 
 exit: 0 no difference; 1 one or more differences; 2 could not run (a flag,
@@ -240,18 +240,18 @@ func parse(verb string, fs *flag.FlagSet, args []string, stderr io.Writer) (int,
 		if errors.Is(err, flag.ErrHelp) {
 			return -1, false
 		}
-		fmt.Fprintf(stderr, "nova-work %s: %s; run: nova-work %s -h\n", verb, oneline.Escape(err.Error()), verb)
+		fmt.Fprintf(stderr, "%s REFUSED: %s; run: nova-work %s -h\n", strings.ToUpper(verb), oneline.Escape(err.Error()), verb)
 		return 2, false
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "nova-work %s: unexpected argument %q; run: nova-work %s -h\n", verb, fs.Arg(0), verb)
+		fmt.Fprintf(stderr, "%s REFUSED: unexpected argument %q; run: nova-work %s -h\n", strings.ToUpper(verb), fs.Arg(0), verb)
 		return 2, false
 	}
 	return 0, true
 }
 
 func refuse(stderr io.Writer, verb string, problems []string) int {
-	fmt.Fprintf(stderr, "nova-work %s: %s; run: nova-work %s -h\n", verb, strings.Join(problems, "; "), verb)
+	fmt.Fprintf(stderr, "%s REFUSED: %s; run: nova-work %s -h\n", strings.ToUpper(verb), strings.Join(problems, "; "), verb)
 	return 2
 }
 
