@@ -44,8 +44,8 @@ Every path comes from a flag: no default bus, remote or branch, and a missing on
 is a refusal. The receipt word count comes from --receipt-max-words <n>, else a
 receipt-max-words=<n> line in <bus>/.nova-bus/defaults, else the
 NOVA_BUS_RECEIPT_MAX_WORDS environment variable; none of them is a refusal. One
-nova-bus runs on one checkout at a time: a second holds off ten seconds, then
-refuses. inbox reports and exits 0; check is the gate.
+run at a time holds a checkout: a second holds off ten seconds, then refuses.
+inbox reports and exits 0; check is the gate.
 
 first send, from nothing, in a scratch directory (writes only ./bus and ./d.md):
 

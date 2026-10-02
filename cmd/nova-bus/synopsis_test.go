@@ -209,3 +209,12 @@ func TestThePackageDocNamesEveryVerb(t *testing.T) {
 		assert.NotRegexp(t, `\b(Glenn|Rowan|Stella|Emma|Johnny|Freddy)\b`, string(src), "%s names a person", f)
 	}
 }
+
+// A prose line of the banner never begins with the tool's name: the onboarding walk reads
+// such a line as a usage line, and its second word as a verb.
+func TestNoBannerProseLineReadsAsAVerb(t *testing.T) {
+	t.Parallel()
+	for _, line := range strings.Split(usage, "\n") {
+		assert.False(t, strings.HasPrefix(line, "nova-bus ") && !strings.HasPrefix(line, "nova-bus: "), "a banner line reads as a usage line: %q", line)
+	}
+}
