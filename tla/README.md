@@ -411,7 +411,7 @@ the modules and configs matching these files by sha256, logs in
 states of a run that stops at a violation are what the two workers had found
 by then, and vary from run to run; the length of the counterexample does not.
 The first five configs, before `Missers` was added, gave the same outcomes at
-<date> (`~/tla/redisfn/`).
+(`~/tla/redisfn/`).
 
 | config | result |
 |---|---|
