@@ -117,7 +117,11 @@ func runWithTemp(t *testing.T, bin, tmp string, args ...string) (string, string,
 	cmd := exec.Command(bin, args...)
 	// GOTMPDIR keeps the test's own temp root a temp root for the host guard, which tells a
 	// fake ssh from the fleet by whether it lives under one; TMPDIR moves only place's.
-	cmd.Env = append(os.Environ(), "TMPDIR="+tmp, "GOTMPDIR="+os.TempDir())
+	testRoot := os.Getenv("GOTMPDIR")
+	if testRoot == "" {
+		testRoot = os.TempDir()
+	}
+	cmd.Env = append(os.Environ(), "TMPDIR="+tmp, "GOTMPDIR="+testRoot)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
 	var exitErr *exec.ExitError
