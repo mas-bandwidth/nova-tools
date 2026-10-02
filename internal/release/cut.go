@@ -206,7 +206,7 @@ var annotationSums = regexp.MustCompile(`(?m)^` + AnnotationSumsPrefix + `([0-9a
 
 // Annotation is the message the TAG OBJECT carries, composed in one place
 // because it is written by `cut` and read by `adopt` and the two have to agree
-// about where the digest is, as SPEC-RELEASE rule 2 requires. A tag is the one
+// about where the digest is. A tag is the one
 // thing in this repository that cannot be quietly amended, so what it says
 // about a release is the most durable record the release has.
 func Annotation(version, sha, sumsDigest string) string {
@@ -237,13 +237,12 @@ func SumsInAnnotation(message string) string {
 // reason a cut can refuse.
 var errTruncated = errors.New("compare-truncated")
 
-// classify is the gate SPEC-RELEASE decision 1 (rule 1: a sensitive range
-// needs the security reader's read) puts in front of the tag: which of
+// classify is the gate in front of the tag: which of
 // the paths this range touched are on SensitivePaths, and may this cut proceed.
 // It is its own function, and pure apart from the writers, because the decision
 // is the thing worth reading -- the cut around it is bookkeeping.
 //
-// THE ORDER IS THE WHOLE LESSON OF THE FOURTH DOGFOOD. That cut's compare
+// THE ORDER IS THE WHOLE LESSON. That cut's compare
 // answered with exactly 300 files -- the forge's ceiling -- and the
 // verb refused naming 24 sensitive paths out of the 58 the range really
 // touched. It looked like the gate working. It was the gate being lucky: the
@@ -478,7 +477,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	}
 	prs := PullRequests(commits)
 	// WHICH PATHS THE RANGE TOUCHED, and whether that needs a read before a
-	// tag exists (SPEC-RELEASE decision 1, rule 1). Asked BEFORE --dry-run branches
+	// tag exists. Asked BEFORE --dry-run branches
 	// and before anything is written: a dry run exists to find out what would
 	// happen, and what would happen is this refusal.
 	files, complete, err := paths(ctx, o, deps, previous, sha, out, errs)

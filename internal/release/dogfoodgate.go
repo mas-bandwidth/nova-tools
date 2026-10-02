@@ -38,7 +38,7 @@ import (
 
 // DefaultReceiptsDir is where this fleet keeps its receipts, relative to the
 // home directory of whoever is cutting. It is the ONLY path in this package
-// with a default, and it is one on purpose: SPEC-UPDATE rule 1 says no path is
+// with a default, and it is one on purpose: no path is
 // guessed, because a guessed path makes two runs mean different things. A
 // receipts directory is the exception because the alternative -- a release
 // lane that silently skips the gate whenever somebody forgets a flag -- fails
