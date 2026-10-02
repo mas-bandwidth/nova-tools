@@ -1,12 +1,11 @@
 // Package fleet holds the machines registry: the one file that says what each machine in
 // the fleet IS, and therefore what may be placed on it.
 //
-// The runner/bench lock keeps cards, probes and load off machines that serve the merge
-// group's CI shards. A card and a CI shard on one host make the shard slow, the gate red
-// and the queue stop.
+// The runner/bench lock keeps cards, probes and load off machines that serve CI shards.
+// Sharing a host slows the shard, can make the gate red and stops the queue.
 //
-// The registry resolves machine names to their roles. A bare name string is refused
-// if it does not appear in the registry, with the reason and remedy on the line.
+// The registry resolves machine names to their roles. It refuses a bare name that is not
+// present in the registry and reports the reason and remedy on the line.
 //
 // The file is data, tab separated, kept in git beside the lanes file:
 //
@@ -59,8 +58,8 @@ var knownRoles = map[string]bool{
 // reading it learns the same thing.
 const ReasonUnknown = "unknown-machine"
 
-// allowSharedPrefix is how a machine that is BOTH runner and bench says why. The exception
-// records why the machine may serve both roles.
+// allowSharedPrefix identifies the note that explains why a machine may serve both runner
+// and bench roles. The note carries the date and reason for sharing.
 const allowSharedPrefix = "allow-shared="
 
 // Machine is one line of the registry.
