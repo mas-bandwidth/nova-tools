@@ -146,13 +146,6 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 			continue
 		}
 
-		// Read previous unreleased holder note if present.
-		existing := readExistingStamp(f)
-		var prev *Stamp
-		if !existing.IsZero() {
-			prev = &existing
-		}
-
 		// Truncate file, write own note, fsync.
 		if err := f.Truncate(0); err != nil {
 			unlockFile(f)
@@ -186,7 +179,7 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 			return nil, fmt.Errorf("filelock %q sync: %w", cleanPath, wrapPathError(err))
 		}
 
-		return &FileLock{file: f, previous: prev}, nil
+		return &FileLock{file: f}, nil
 	}
 
 	return nil, fmt.Errorf("filelock %q: failed after %d inode collision retries", cleanPath, maxInodeRetries)

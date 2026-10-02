@@ -1,8 +1,11 @@
 // Package filelock is the one lock on a file across processes: the kernel's lock
 // (flock on unix, LockFileEx on Windows), released by the kernel when its holder
 // dies, with the holder's stamp written inside the file for a refusal to name. Its
-// design and invariants are tla/FileLock.tla. A probe that asked without taking
-// left the package on 2026-10-02 because no caller used it; it can return with one.
+// design and invariants are tla/FileLock.tla. Two things left the package on
+// 2026-10-02 because no caller used them, and each can return with one: a probe
+// that asked without taking, and the take telling its caller whether the last
+// holder released (Previous). Release still clears the note, so a free lock
+// names nobody; the note is what a refusal reports, and nothing decides on it.
 //
 // Its callers, on unix, each the same flock on the same file its earlier binary took, so
 // an old and a new binary exclude each other across an upgrade (each package's
@@ -347,14 +350,8 @@ func (o options) getSync() func(*os.File) error {
 
 // FileLock represents an acquired, open file lock.
 type FileLock struct {
-	file     *os.File
-	previous *Stamp
-	mu       sync.Mutex
-}
-
-// Previous returns the stamp of the previous unreleased holder (e.g. killed/crashed), or nil.
-func (l *FileLock) Previous() *Stamp {
-	return l.previous
+	file *os.File
+	mu   sync.Mutex
 }
 
 // Unlock releases the file lock by truncating the file to zero bytes, syncing,

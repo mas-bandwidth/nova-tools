@@ -6,7 +6,6 @@ MCEpochMemberFixedPoint.cfg	MCEpochMemberTable.tla	pass	-	ignore-terminal	epoch-
 MCEpochMemberTable.cfg	MCEpochMemberTable.tla	pass	-	ignore-terminal	epochmembertable	required	-
 MCFileLock.cfg	MCFileLock.tla	pass	-	ignore-terminal	filelock	bench	-
 MCFileLockBrokenBusyIsHeld.cfg	MCFileLock.tla	invariant	HeldIsTrue	ignore-terminal	filelock	bench	-
-MCFileLockBrokenKeepStamp.cfg	MCFileLock.tla	invariant	UncleanIsTold	ignore-terminal	filelock	bench	-
 MCFileLockBrokenSentinel.cfg	MCFileLock.tla	invariant	NothingToClear	ignore-terminal	filelock	bench	-
 MCFileLockBrokenStale.cfg	MCFileLock.tla	invariant	MutualExclusion	ignore-terminal	filelock	bench	-
 MCFileLockBrokenUnlink.cfg	MCFileLock.tla	invariant	MutualExclusion	ignore-terminal	filelock	bench	-

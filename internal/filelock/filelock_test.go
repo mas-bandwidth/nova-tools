@@ -32,9 +32,6 @@ func TestTryLock_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "worker-1", st.Label, "the held file's label")
 	assert.Equal(t, os.Getpid(), st.PID, "the held file's pid")
-	if lock.Previous() != nil {
-		assert.Fail(t, fmt.Sprintf("lock.Previous() = %+v, want nil for fresh lock", lock.Previous()))
-	}
 
 	// Verify file exists on disk and is non-empty while held
 	fi, err := os.Stat(path)
@@ -90,10 +87,6 @@ func TestLock_Success(t *testing.T) {
 		require.NoError(t, err, "Lock failed: %v", err)
 	}
 	defer lock.Unlock()
-
-	if lock.Previous() != nil {
-		assert.Fail(t, fmt.Sprintf("lock.Previous() = %+v, want nil", lock.Previous()))
-	}
 }
 
 func TestLock_TimeoutBound(t *testing.T) {
@@ -255,11 +248,6 @@ func TestLock_AcquiresAfterRelease(t *testing.T) {
 		require.NoError(t, err, "second Lock failed: %v", err)
 	}
 	defer lock2.Unlock()
-
-	// Clean unlock truncated previous note, so Previous is nil
-	if lock2.Previous() != nil {
-		assert.Fail(t, fmt.Sprintf("lock2.Previous() = %+v, want nil after clean unlock", lock2.Previous()))
-	}
 }
 
 func TestUnlock_IdempotentAndNeverDeletes(t *testing.T) {
@@ -296,13 +284,14 @@ func TestUnlock_IdempotentAndNeverDeletes(t *testing.T) {
 	}
 }
 
-func TestPrevious_UnreleasedHolderObserved(t *testing.T) {
+// A holder that died holding leaves its note; the next taker writes its own over
+// it, so the file names its holder (tla/FileLock.tla, HolderIsNamed).
+func TestTryLock_OverwritesAnUnreleasedNote(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "crash.lock")
 
-	// Simulate an unreleased crashed holder: create file with stamp without releasing
 	unreleased := Stamp{
 		PID:     9999,
 		Host:    "crashed-host",
@@ -313,25 +302,16 @@ func TestPrevious_UnreleasedHolderObserved(t *testing.T) {
 		require.NoError(t, err, "WriteFile failed: %v", err)
 	}
 
-	// Next process takes the lock
 	lock, err := TryLock(path, "recovery-worker")
 	if err != nil {
 		require.NoError(t, err, "TryLock failed: %v", err)
 	}
 	defer lock.Unlock()
 
-	if lock.Previous() == nil {
-		require.Fail(t, fmt.Sprintf("lock.Previous() = nil, want crashed holder stamp"))
-	}
-	if lock.Previous().PID != 9999 {
-		assert.Fail(t, fmt.Sprintf("Previous().PID = %d, want 9999", lock.Previous().PID))
-	}
-	if lock.Previous().Host != "crashed-host" {
-		assert.Fail(t, fmt.Sprintf("Previous().Host = %q, want crashed-host", lock.Previous().Host))
-	}
-	if lock.Previous().Label != "crashed-worker" {
-		assert.Fail(t, fmt.Sprintf("Previous().Label = %q, want crashed-worker", lock.Previous().Label))
-	}
+	st, err := ReadStamp(path)
+	require.NoError(t, err)
+	assert.Equal(t, "recovery-worker", st.Label, "the file still names the dead holder: %+v", st)
+	assert.Equal(t, os.Getpid(), st.PID, "the file still names the dead holder: %+v", st)
 }
 
 func TestSymlink_NotPermitted(t *testing.T) {

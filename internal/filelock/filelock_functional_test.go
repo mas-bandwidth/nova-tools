@@ -99,10 +99,10 @@ func TestFunctional_TwoProcessesContend(t *testing.T) {
 	}
 }
 
-// TestFunctional_KilledHolderLockFreedByKernelAndPreviousNoteObserved tests that when
-// a lock holder process is killed, the kernel releases the OS lock immediately,
-// and the next taker acquires without delay while observing Previous() *Stamp.
-func TestFunctional_KilledHolderLockFreedByKernelAndPreviousNoteObserved(t *testing.T) {
+// TestFunctional_KilledHolderLockFreedByKernel tests that when a lock holder
+// process is killed, the kernel releases the OS lock immediately, and the next
+// taker acquires without delay and writes its own note over the dead holder's.
+func TestFunctional_KilledHolderLockFreedByKernel(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -156,38 +156,26 @@ func TestFunctional_KilledHolderLockFreedByKernelAndPreviousNoteObserved(t *test
 
 	// The kernel releases the OS lock immediately upon death: a try, with no
 	// wait, takes it.
-	// New taker acquires immediately and observes previous unreleased holder
+	// The dead holder's note is still in the file: nothing released it.
+	left, err := filelock.ReadStamp(path)
+	require.NoError(t, err)
+	assert.Equal(t, holderPID, left.PID, "the killed holder's note: %+v", left)
+
 	lock, err := filelock.TryLock(path, "recovery-taker")
 	if err != nil {
-		require.NoError(t, err, "Lock failed after holder died: %v", err)
+		require.NoError(t, err, "TryLock failed after holder died: %v", err)
 	}
-	defer lock.Unlock()
+	now, err := filelock.ReadStamp(path)
+	require.NoError(t, err)
+	assert.Equal(t, "recovery-taker", now.Label, "the file does not name the new holder: %+v", now)
 
-	if lock.Previous() == nil {
-		require.Fail(t, fmt.Sprintf("lock.Previous() = nil, want killed holder stamp"))
-	}
-	if lock.Previous().PID != holderPID {
-		assert.Fail(t, fmt.Sprintf("Previous().PID = %d, want %d", lock.Previous().PID, holderPID))
-	}
-	if lock.Previous().Label != "killed-worker" {
-		assert.Fail(t, fmt.Sprintf("Previous().Label = %q, want killed-worker", lock.Previous().Label))
-	}
-
-	// When recovery-taker unlocks cleanly:
+	// When recovery-taker unlocks cleanly the note is cleared.
 	if err := lock.Unlock(); err != nil {
 		require.NoError(t, err, "Unlock failed: %v", err)
 	}
-
-	// Next taker sees nil Previous() because Unlock cleanly truncated the note
-	nextLock, err := filelock.TryLock(path, "clean-taker")
-	if err != nil {
-		require.NoError(t, err, "TryLock failed: %v", err)
-	}
-	defer nextLock.Unlock()
-
-	if nextLock.Previous() != nil {
-		assert.Fail(t, fmt.Sprintf("nextLock.Previous() = %+v, want nil after clean unlock", nextLock.Previous()))
-	}
+	cleared, err := filelock.ReadStamp(path)
+	require.NoError(t, err)
+	assert.True(t, cleared.IsZero(), "the note after a clean unlock: %+v", cleared)
 }
 
 // TestFunctional_HelperProcess is invoked by the functional tests above via exec.Command(os.Args[0]).

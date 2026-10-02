@@ -247,9 +247,6 @@ What it holds the module to:
 - "held" is said only of a holder (`HeldIsTrue`): a refused taker asks for a
   shared lock before it says "held", so another taker asking is never taken
   for a holder; a taker that only askers kept out answers "busy";
-- who takes the lock is told, truly, whether the last holder released it
-  (`UncleanIsTold`): release clears the note, so a note found is a holder that
-  never released, whatever became of its pid;
 - the kernel's lock is only ever with a live process that knows it has it, so
   a death leaves nothing for anybody to clear (`NothingToClear`).
 
@@ -263,32 +260,41 @@ directory under a 60 s cap:
     done; wait
 
 Measured on a Linux bench, 2026-09-27, load 10, all nine at once: 5 s wall.
+The module changed on 2026-10-02 (the probe and the telling left), so every
+row below waits for the bench run that refreshes `RUNS.tsv`; the counts and
+times shown are the 2026-09-27 measurements of the earlier module, and the
+rows marked "not yet measured" are new or changed.
 
 | config | result | time |
 |---|---|---|
-| `MCFileLock` | no error, 37,611 distinct states, three processes, each pid reused twice: TypeOK, MutualExclusion, HolderHoldsThePath, HolderIsNamed, OneFileForEver, HeldIsTrue, UncleanIsTold, NothingToClear | 3 s |
-| `MCFileLockFour` | no error, 160,832 distinct states, four processes, each pid reused once: the same eight | 5 s |
+| `MCFileLock` | expected no error, three processes, each pid reused twice: TypeOK, MutualExclusion, HolderHoldsThePath, HolderIsNamed, OneFileForEver, HeldIsTrue, NothingToClear; not yet measured since 2026-10-02 (37,611 distinct states with the probe and the telling) | - |
+| `MCFileLockFour` | expected no error, four processes, each pid reused once: the same seven; not yet measured since 2026-10-02 (160,832 distinct states before) | - |
 | `MCFileLockBrokenStale` | MutualExclusion violated in 21 states: a holder dies; two processes find the lock stale and both clear it; the first removes the file and takes a new one at the path; the second opens that new file, finds no name in it, and removes it; both then create a file and hold (d653eb53e filelock_unix.go: 167, 197, 206, 217, 221, then 57, 64, 70) | 2 s |
 | `MCFileLockBrokenSentinel` | NothingToClear violated in 4 states: the holder dies and the lock stays taken (`lock_other.go` of `internal/bus`, `tokens`, `swarm`; `internal/wake/lockprobe_other.go` says so of itself) | 2 s |
 | `MCFileLockCandidate` | the candidate's take and stale clear, its probe gone (2026-10-02): expected HeldIsTrue violated (a refusal by a process clearing the lock, which is no holder) or MutualExclusion as above; not yet measured | - |
 | `MCFileLockBrokenBusyIsHeld` | expected HeldIsTrue violated: a refused taker whose shared ask is granted, the holder gone, answers "held" where take.go tries again and then answers busy; not yet measured | - |
 | `MCFileLockBrokenUnlink` | MutualExclusion violated in 11 states: release removes the file under a taker that has it open | 2 s |
-| `MCFileLockBrokenKeepStamp` | UncleanIsTold violated: release leaves the name, and the next taker is told the last holder never released | 2 s |
 
 Stale and Sentinel are in code that exists or existed, each checked by hand
 against the lines named. The first Stale counterexample TLC gave did not
 survive that check (it counted as a holder a process the code makes give up),
 so the invariant was tightened to locks handed to a caller, and the trace above
-is the one that holds. BusyIsHeld, Unlink and KeepStamp are misimplementations
-the invariants are shown to catch.
+is the one that holds. BusyIsHeld and Unlink are misimplementations the
+invariants are shown to catch.
 
 Until 2026-10-02 the model also had a probe (ask who holds the lock without
 taking it) and two witnesses on it: ExProbe (a probe taking the exclusive lock
 for an instant, the candidate's and `internal/wake`'s) and PidLive (a probe
 answering from the pid in the file). They left with the module's `Probe`,
 which no caller used; HeldIsTrue stayed, on the refused taker, with BusyIsHeld
-as its reversed witness. A probe can return with a caller, and these two with
-it.
+as its reversed witness. The same day the telling left too: a take handed the
+caller what the file said (empty, the last holder released; a name, it never
+did), checked as UncleanIsTold with the reversed witness KeepStamp (release
+leaving the name). It left with the module's `FileLock.Previous`, which no
+caller used. Release still clears the note, so a free lock names nobody, but
+the model no longer checks it: the note is what a refusal reports
+(HolderIsNamed) and nothing decides on it. A probe and the telling can each
+return with a caller, and their witnesses with them.
 
 ## The shell (TableSession)
 

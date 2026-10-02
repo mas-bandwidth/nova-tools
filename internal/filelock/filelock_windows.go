@@ -140,12 +140,6 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 		return nil, err
 	}
 
-	existing := readExistingStamp(f)
-	var prev *Stamp
-	if !existing.IsZero() {
-		prev = &existing
-	}
-
 	if err := f.Truncate(0); err != nil {
 		unlockFile(f)
 		// ignored: a close on the failure path; the error returned says what went wrong, and the close drops any kernel lock
@@ -178,7 +172,7 @@ func tryLockWithOptions(path string, label string, opts options) (*FileLock, err
 		return nil, fmt.Errorf("filelock %q sync: %w", cleanPath, wrapPathError(err))
 	}
 
-	return &FileLock{file: f, previous: prev}, nil
+	return &FileLock{file: f}, nil
 }
 
 func lockWithOptions(path string, label string, timeout time.Duration, opts options) (*FileLock, error) {

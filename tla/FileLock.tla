@@ -16,15 +16,13 @@
 \* a process or nobody), the kernel's lock on each file (ex: the one
 \* exclusive holder; sh: the shared holders), and for each process where it
 \* is (pc) and which file it has open (fd). The outside: a process dies
-\* wherever it is, and its pid comes back as another process. crashed, lied
-\* and toldWrong are history, kept so the invariants can say what happened.
+\* wherever it is, and its pid comes back as another process. lied is
+\* history, kept so HeldIsTrue can say what happened.
 \*
 \* The design, Broken = {}:
 \*   take     open the path, creating the file when absent; ask the kernel
 \*            for the exclusive lock without waiting; holding it, read what
 \*            the file says, write this process in, and only then hold.
-\*            What the file said is handed to the caller: empty means the
-\*            last holder released; a name means it never did.
 \*   refused  ask for a shared lock: refused too, there is an exclusive
 \*            holder and the answer is "held"; granted, the only others are
 \*            askers, so let go and try again, a bounded number of times,
@@ -33,6 +31,13 @@
 \*            file stays.
 \*   The file is never removed, by anyone. Waiting (Lock with a bound) is
 \*   take again, and adds no state.
+\*   Until 2026-10-02 the take also handed the caller what the file said
+\*   (empty: the last holder released; a name: it never did), checked as
+\*   UncleanIsTold with the reversed witness "keepstamp"; it left with the
+\*   module's FileLock.Previous, which no caller used, and can return with a
+\*   caller. Release still clears the file, so a free lock names nobody, but
+\*   nothing here checks that any more: the name in the file is what a
+\*   refusal reports (HolderIsNamed), and nothing decides on it.
 \*   A probe (ask who holds it without taking) was here until 2026-10-02 and
 \*   left with the module's Probe, which no caller used; it can return with a
 \*   caller. HeldIsTrue is still the refused taker's: in Blocked it answers
@@ -53,9 +58,8 @@
 \*                in the way) answers "held" all the same, where take.go lets
 \*                go and tries again and then answers busy
 \*   "unlink"     release removes the file
-\*   "keepstamp"  release leaves the name in the file
 \* The first two are in code that exists or existed, each read against the lines
-\* named. The last three are misimplementations the invariants are shown to
+\* named. The last two are misimplementations the invariants are shown to
 \* catch.
 \*
 \* Not here: the wait and its jitter (a bound on retries, not a state), what
@@ -64,28 +68,25 @@
 \* locks are not the kernel's (NFS). Those are tests of the module.
 EXTENDS Naturals, FiniteSets
 CONSTANTS Procs, MaxInodes, MaxLives, Broken
-Faults == {"stale", "sentinel", "busyisheld", "unlink", "keepstamp"}
+Faults == {"stale", "sentinel", "busyisheld", "unlink"}
 None == 0
 Nobody == 0
 ASSUME Broken \subseteq Faults /\ 0 \notin Procs
 Inodes == 1..MaxInodes
-VARIABLES path, used, stamp, ex, sh, crashed, alive, lives, pc, fd,
-          lied, toldWrong
-vars == <<path, used, stamp, ex, sh, crashed, alive, lives, pc, fd,
-          lied, toldWrong>>
+VARIABLES path, used, stamp, ex, sh, alive, lives, pc, fd, lied
+vars == <<path, used, stamp, ex, sh, alive, lives, pc, fd, lied>>
 files == <<path, used, stamp>>
 kernel == <<ex, sh>>
 life == <<alive, lives>>
-history == <<crashed, lied, toldWrong>>
+history == <<lied>>
 
 Init ==
  /\ path = None /\ used = 0
  /\ stamp = [i \in Inodes |-> Nobody]
  /\ ex = [i \in Inodes |-> None] /\ sh = [i \in Inodes |-> {}]
- /\ crashed = [i \in Inodes |-> FALSE]
  /\ alive = [p \in Procs |-> TRUE] /\ lives = [p \in Procs |-> 0]
  /\ pc = [p \in Procs |-> "idle"] /\ fd = [p \in Procs |-> None]
- /\ lied = FALSE /\ toldWrong = FALSE
+ /\ lied = FALSE
 
 Go(p, to) == pc' = [pc EXCEPT ![p] = to]
 Close(p) == fd' = [fd EXCEPT ![p] = None]
@@ -132,7 +133,7 @@ Blocked(p) ==
        ELSE /\ sh' = [sh EXCEPT ![i] = @ \cup {p}]
             /\ Go(p, "peek")
             /\ UNCHANGED <<fd, lied>>
- /\ UNCHANGED <<files, ex, life, crashed, toldWrong>>
+ /\ UNCHANGED <<files, ex, life>>
 
 \* Only askers were in the way: let go, and try again or answer "busy".
 Peek(p) ==
@@ -151,10 +152,8 @@ Stamp(p) ==
        THEN \* the candidate: a dead name is a refusal
             /\ ex' = [ex EXCEPT ![i] = None]
             /\ Go(p, "idle") /\ Close(p)
-            /\ UNCHANGED <<stamp, crashed, toldWrong>>
+            /\ UNCHANGED stamp
        ELSE /\ stamp' = [stamp EXCEPT ![i] = p]
-            /\ toldWrong' = (toldWrong \/ ((found # Nobody) # crashed[i]))
-            /\ crashed' = [crashed EXCEPT ![i] = FALSE]
             /\ Go(p, "held")
             /\ UNCHANGED <<ex, fd>>
  /\ UNCHANGED <<path, used, sh, life, lied>>
@@ -163,8 +162,7 @@ Stamp(p) ==
 Release(p) ==
  /\ pc[p] = "held"
  /\ LET i == fd[p]
-    IN /\ stamp' = [stamp EXCEPT ![i] =
-                      IF "keepstamp" \in Broken THEN @ ELSE Nobody]
+    IN /\ stamp' = [stamp EXCEPT ![i] = Nobody]
        /\ ex' = [ex EXCEPT ![i] = None]
        /\ path' = IF "unlink" \in Broken /\ path = i THEN None ELSE path
  /\ Go(p, "idle") /\ Close(p)
@@ -209,12 +207,11 @@ ClearDone(p) ==
 Die(p) ==
  /\ alive[p]
  /\ alive' = [alive EXCEPT ![p] = FALSE]
- /\ crashed' = [i \in Inodes |-> crashed[i] \/ (pc[p] = "held" /\ fd[p] = i)]
  /\ ex' = [i \in Inodes |->
             IF ex[i] = p /\ "sentinel" \notin Broken THEN None ELSE ex[i]]
  /\ sh' = [i \in Inodes |-> sh[i] \ {p}]
  /\ Go(p, "dead") /\ Close(p)
- /\ UNCHANGED <<files, lives, lied, toldWrong>>
+ /\ UNCHANGED <<files, lives, lied>>
 \* Its pid comes back as another process, which holds nothing.
 Reborn(p) ==
  /\ ~alive[p] /\ lives[p] < MaxLives
@@ -238,10 +235,9 @@ TypeOK ==
  /\ stamp \in [Inodes -> Procs \cup {Nobody}]
  /\ ex \in [Inodes -> Procs \cup {None}]
  /\ sh \in [Inodes -> SUBSET Procs]
- /\ crashed \in [Inodes -> BOOLEAN]
  /\ alive \in [Procs -> BOOLEAN] /\ lives \in [Procs -> 0..MaxLives]
  /\ pc \in [Procs -> States] /\ fd \in [Procs -> Inodes \cup {None}]
- /\ lied \in BOOLEAN /\ toldWrong \in BOOLEAN
+ /\ lied \in BOOLEAN
 
 \* One holder at a time: the lock is never handed to two callers.
 MutualExclusion == Cardinality({p \in Procs : pc[p] = "held"}) <= 1
@@ -256,8 +252,6 @@ OneFileForEver == used <= 1
 \* "held" is said only of a holder: a refused taker never takes an asker for
 \* one.
 HeldIsTrue == ~lied
-\* Who takes the lock is told, truly, whether the last holder released it.
-UncleanIsTold == ~toldWrong
 \* The kernel's lock is only ever with a live process that knows it has it:
 \* a death leaves nothing for anybody to clear.
 NothingToClear ==
