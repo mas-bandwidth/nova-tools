@@ -469,8 +469,11 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 			// the machine keeps a stream's since; the view does not show it
 			t.Hidden = append(append([]string(nil), t.Hidden...), sprint.Since)
 		}
-		if logical == sprint.Readers {
-			t = readersAll(t) // the text only: v.Tables keeps every reader's row
+		switch logical { // the text only: v.Tables keeps every reader's and stream's row
+		case sprint.Readers:
+			t = readersAll(t)
+		case sprint.Merge:
+			t = mergeAll(t)
 		}
 		// every table shows, every stream row in it, empty or not
 		parts = append(parts, ntable.Render(t, ntable.RenderOpts{Title: logical}))
@@ -485,8 +488,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	return v, b.String(), nil
 }
 
-// readersAllRow is the label of the readers table's one row in the view.
-const readersAllRow = "all"
+// allRow is the label of the one row the view draws for the readers and the
+// merge tables.
+const allRow = "all"
 
 // readersAll is the readers table as the view's text draws it: one row, all,
 // whose cells are the sums over every reader (hidden rows, readers away or down,
@@ -495,8 +499,59 @@ const readersAllRow = "all"
 // of all"; "i just need to see reader *progress* overall"). A cell some reader's
 // set did not come back for prints "?", as the footer's sum did. Display only:
 // the stored table, its rows and where --json are as they were.
-func readersAll(t ntable.Table) ntable.Table {
-	all := ntable.Row{Key: readersAllRow, Cells: make([]ntable.Cell, len(t.Columns))}
+func readersAll(t ntable.Table) ntable.Table { return allOf(t, nil) }
+
+// mergeAll is the merge table as the view's text draws it, the same way (the
+// owner, 2026-10-01: "Can we please (for next sprint) do the same for merge"):
+// queued, merged and stuck are the sums over every stream; ci and state, which
+// do not add up, show the value across the streams that most needs the
+// coordinator's eye (worst), and a stopped state the count of streams stopped,
+// so one stopped stream of four is not hidden ("stopped 1").
+func mergeAll(t ntable.Table) ntable.Table {
+	ci, _ := worst(t.Rows, sprint.CI, "red", "green")
+	state, n := worst(t.Rows, sprint.StateCol, sprint.StreamStopped, sprint.StreamMerging, sprint.StreamWaiting, sprint.StreamLanded)
+	if state == sprint.StreamStopped {
+		state += " " + strconv.Itoa(n)
+	}
+	return allOf(t, map[string]string{sprint.CI: ci, sprint.StateCol: state})
+}
+
+// worst is the value of a text column, over the rows, that comes first in
+// order (most attention first), and how many rows hold it. A value the order
+// does not name comes after every named one, and "-" or blank after that: the
+// cell shows "-" when no row has a value.
+func worst(rows []ntable.Row, col string, order ...string) (string, int) {
+	rank := func(v string) int {
+		if i := slices.Index(order, v); i >= 0 {
+			return i
+		}
+		if v == "" || v == "-" {
+			return len(order) + 1
+		}
+		return len(order)
+	}
+	w, n := "-", 0
+	for _, r := range rows {
+		v := r.Texts[col]
+		switch {
+		case n == 0 || rank(v) < rank(w):
+			w, n = v, 1
+		case v == w:
+			n++
+		}
+	}
+	if w == "" {
+		w = "-"
+	}
+	return w, n
+}
+
+// allOf is the table as one row, all, whose count cells are the sums over every
+// row (an unread set prints "?", as the footer's sum did) and whose text cells
+// are texts, with no footer: the stored table, its rows and where --json are as
+// they were.
+func allOf(t ntable.Table, texts map[string]string) ntable.Table {
+	all := ntable.Row{Key: allRow, Cells: make([]ntable.Cell, len(t.Columns)), Texts: texts}
 	for _, r := range t.Rows {
 		for j := range t.Columns {
 			if j >= len(r.Cells) || r.Cells[j].Unread {
