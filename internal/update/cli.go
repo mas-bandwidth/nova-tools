@@ -102,7 +102,8 @@ func flagProblem(f *flag.FlagSet, err error) error {
 // report line's alternation showing that --send is the one that needs a bus. A
 // change here belongs in the spec first, and TestHelpIsTheSpecsVerbsBlock reads
 // the spec file and compares the two. nova-version's usage lines are its
-// verbs' own (versiontool.go).
+// verbs' own (versiontool.go). The release verbs are one line here; their own
+// lines are release.Verbs, printed by `nova-update help release`.
 const updateVerbs = `nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
@@ -110,7 +111,7 @@ nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft -
 nova-update report --store <host:port> [--timeout <d>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
-` + release.Verbs + `
+nova-update release <cut|build|install|adopt|pull> ...   nova-tools' own release pipeline: nova-update help release prints its usage lines
 nova-update help`
 
 // manifestShape is the one sentence that says what the file --file names holds:
@@ -187,6 +188,30 @@ func manifestHelp(name string) string {
 		"      6. example: go<TAB>tool<TAB>go version<TAB>local:go version<TAB>none<TAB>me\n"
 }
 
+// verbDetail is what `<verb> -h` adds to the verb's usage lines and flags: the
+// manifest's rules for the verbs that read one (report's are quoted from the
+// banner already) and the verb's effect, one of inspection, local write or
+// delivery (STANDARD §2, "its effects are explicit").
+func verbDetail(name, verb string) string {
+	effects := map[string]string{
+		"check":    "inspection: reads each tool's installed version and asks its latest source (github:, npm:, brew: and ollama: are network reads); writes nothing",
+		"status":   "inspection: the reads of check; writes nothing",
+		"apply":    "local write: runs the named entry's apply command, which installs; --dry-run starts no process and writes nothing",
+		"report":   "inspection: reads each installed version, no latest, no network; --snapshot writes its state file (local write); --send delivers the note through nova-bus (delivery); --store reads the fleet's Redis",
+		"watch":    "inspection: runs each check's command; with --bus and its four companions, delivery: the receipt goes out through nova-bus",
+		"adoption": "inspection: reads the ledger, writes nothing",
+		"version":  "inspection: prints this binary's version line",
+	}
+	detail := ""
+	if verb == "check" || verb == "status" || verb == "apply" {
+		detail = strings.TrimPrefix(manifestHelp(name), "\n")
+	}
+	if e, ok := effects[verb]; ok {
+		detail += "effect: " + e + "\n"
+	}
+	return detail
+}
+
 // exitCodes is nova-update's exit-code paragraph, for the verbs it has (check, apply,
 // report); nova-version's is its Tool's ExitTable (versiontool.go), and neither names a
 // verb of the other.
@@ -237,7 +262,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	}
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before any manifest, bus or store is read (the CLI style's rule (b), #4505).
-	defer verbflag.Recover(out, name, helpText(name), &rc)
+	defer verbflag.RecoverWith(out, name, helpText(name), &rc, func(verb string) string { return verbDetail(name, verb) })
 	door, asked := name+" help", verbflag.BoolAsked(args, "json")
 	if len(args) == 0 {
 		return emit(refused("update", door, "no verb given; the verbs are "+updateVerbNames), asked, 0, out, errs)
@@ -283,7 +308,11 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	f := flag.NewFlagSet(verb, flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	f.StringVar(&o.file, "file", "", "the manifest (required): "+manifestShape)
-	f.DurationVar(&o.timeout, "timeout", o.timeout, "one read's deadline, such as 5s")
+	timeoutWants := "one read's deadline, such as 5s"
+	if verb == "apply" {
+		timeoutWants = "the deadline of each version read and of the install command itself, such as 5m for a slow installer"
+	}
+	f.DurationVar(&o.timeout, "timeout", o.timeout, timeoutWants)
 	f.BoolVar(&asJSON, "json", false, "print the result as one JSON object instead of lines")
 	if verb == "apply" {
 		f.StringVar(&o.target, "version", "", "the version to install, when the entry's apply argv holds {version}; default: the latest its source reports")

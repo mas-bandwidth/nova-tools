@@ -224,6 +224,52 @@ func TestUpdateVerbsTakeJSONAndLeadWithTheirStatus(t *testing.T) {
 	})
 }
 
+// The release verbs are one line of nova-update's usage, pointing at their own
+// help (ledger U5): the manifest verbs' screen is not the release pipeline's.
+// `help release` holds the five usage lines and notes, and each release verb's
+// -h lists its flags with what each wants, the exit codes, and no person.
+// Every manifest verb's -h states its effect, and those that read a manifest
+// state its rules.
+func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
+	t.Parallel()
+	linesOf := func(s, prefix string) (lines []string) {
+		for _, l := range strings.Split(s, "\n") {
+			if strings.HasPrefix(l, prefix) {
+				lines = append(lines, l)
+			}
+		}
+		return lines
+	}
+	code, banner, _ := runTool(t, "nova-update", "help")
+	require.Equal(t, 0, code)
+	release := linesOf(banner, "nova-update release")
+	require.Len(t, release, 1, banner)
+	assert.Contains(t, release[0], "nova-update help release")
+	code, rel, _ := runTool(t, "nova-update", "help", "release")
+	require.Equal(t, 0, code)
+	assert.Len(t, linesOf(rel, "nova-update release "), 5, rel)
+	for _, verb := range []string{"cut", "build", "install", "adopt", "pull"} {
+		t.Run("release "+verb, func(t *testing.T) {
+			code, h, _ := runTool(t, "nova-update", "release", verb, "-h")
+			assert.Equal(t, 0, code)
+			assert.Contains(t, h, "flags:\n")
+			assert.Contains(t, h, "  --version <string>  ")
+			assert.Contains(t, h, "exit codes: 0 ")
+			assert.NotContains(t, h, "Johnny")
+		})
+	}
+	for _, verb := range []string{"check", "status", "apply", "report", "watch", "adoption", "version"} {
+		t.Run(verb+" -h", func(t *testing.T) {
+			code, h, _ := runTool(t, "nova-update", verb, "-h")
+			assert.Equal(t, 0, code)
+			assert.Contains(t, h, "effect: ")
+			if verb != "watch" && verb != "adoption" && verb != "version" {
+				assert.Contains(t, h, "name<TAB>kind<TAB>installed<TAB>latest<TAB>apply<TAB>owner")
+			}
+		})
+	}
+}
+
 // snapshot --file takes the --timeout its help offers: a slow tool is UNKNOWN
 // for its timeout, and the remedy names a flag that works for this shape.
 func TestSnapshotOfAManifestTakesItsTimeout(t *testing.T) {

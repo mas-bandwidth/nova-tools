@@ -29,7 +29,7 @@ nova-update release pull --version <v> --out <dir> --changelog <path> [--machine
 // because it names the list, and the list has ONE home: composing this from
 // SensitivePaths is why the help cannot fall behind the gate.
 var CutNote = "cut classifies the range since the previous tag against the sensitive path list in internal/release/sensitive.go and docs/SPEC-RELEASE.md " +
-	"(" + SensitiveShape + "). A range that touches one of them REFUSES until --security-read names Johnny's read -- a note id or the url of his comment -- " +
+	"(" + SensitiveShape + "). A range that touches one of them REFUSES until --security-read names the security reader's read -- a note id or the url of the comment -- " +
 	"and the cut then prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt. " +
 	"A range TOO BIG FOR THE FORGE TO LIST is a different refusal and --security-read does not get past it: a read of a list that may be short is a read of a prefix of the truth. " +
 	"Classify such a range from a complete local list instead -- `--local-diff <checkout>` runs `git diff --name-only <previous tag>...<head>` in that checkout, and `--paths-from <file>` writes the answer there for a later cut to read back. " +
@@ -155,6 +155,11 @@ func refusal(w io.Writer, token string, err error) int {
 // verbNames are the release verbs, as a refusal lists them.
 const verbNames = "cut, build, install, adopt, pull"
 
+// ExitCodes is the release verbs' exit-code line, which each verb's -h prints.
+const ExitCodes = "exit codes: 0 the verb did what its line says (a --dry-run printed its plan and changed nothing); " +
+	"1 it ran and a step failed partway, the FAIL or REFUSED line naming what was done and what to do next; " +
+	"2 it refused before acting, naming the command to run."
+
 // progress is the stderr voice. Glenn, 2026-09-17: a program says what it is
 // doing for any step over about a tenth of a second, and every step in this
 // package -- a forge read, a compile, a copy over ssh -- is well over that.
@@ -187,6 +192,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	case "cut", "build", "install", "adopt", "pull":
 	case "help", "--help", "-h":
 		fmt.Fprintln(out, Verbs)
+		fmt.Fprintln(out, ExitCodes+" `nova-update release <verb> -h` lists a verb's flags.")
 		fmt.Fprintln(out, CutNote)
 		fmt.Fprintln(out, DogfoodNote)
 		fmt.Fprintln(out, AdoptNote)
@@ -198,42 +204,42 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	o := options{timeout: 10 * time.Minute}
 	f := flag.NewFlagSet("release "+verb, flag.ContinueOnError)
 	f.SetOutput(io.Discard)
-	f.DurationVar(&o.timeout, "timeout", o.timeout, "whole-run deadline")
-	f.StringVar(&o.version, "version", "", "release version")
+	f.DurationVar(&o.timeout, "timeout", o.timeout, "the whole run's deadline, such as 10m")
+	f.StringVar(&o.version, "version", "", "the release version, such as 1.2.0")
 	// Every verb's own flags, declared per verb rather than all at once, so
 	// that `release cut --bin x` is an unknown flag rather than a silent
 	// no-op -- a flag the verb ignores is a flag somebody thinks worked.
 	var required []string
 	switch verb {
 	case "cut":
-		f.StringVar(&o.repo, "repo", "", "owner/name")
-		f.StringVar(&o.from, "from", "", "branch")
-		f.StringVar(&o.changelog, "changelog", "", "CHANGELOG.md path")
+		f.StringVar(&o.repo, "repo", "", "the forge repository to tag, owner/name")
+		f.StringVar(&o.from, "from", "", "the branch whose head is cut")
+		f.StringVar(&o.changelog, "changelog", "", "the CHANGELOG.md the release's section is written to")
 		f.BoolVar(&o.dryRun, "dry-run", false, "decide and print, write nothing")
 		f.StringVar(&o.sums, "sums", "", "one platform's built SHA256SUMS, <out>/<version>/<goos-goarch>/SHA256SUMS; the section and the tag record its digest, and adopt --repo verifies that platform")
-		f.StringVar(&o.securityRead, "security-read", "", "the note id or comment url of Johnny's read, required when the range touches a sensitive path")
+		f.StringVar(&o.securityRead, "security-read", "", "the note id or comment url of the security reader's read, required when the range touches a sensitive path")
 		f.StringVar(&o.localDiff, "local-diff", "", "a checkout to run `git diff --name-only <previous>...<head>` in, when the forge's compare is at its ceiling")
 		f.StringVar(&o.pathsFrom, "paths-from", "", "the path list to classify: written by --local-diff, read back without it")
 		addDogfoodFlags(f, &o, "docs/CLI.md beside --changelog")
 		required = []string{"repo", "from", "version", "changelog"}
 	case "build":
-		f.StringVar(&o.out, "out", "", "artifact root")
+		f.StringVar(&o.out, "out", "", "the artifact root the release is written under, as <out>/<version>/<goos-goarch>/")
 		f.StringVar(&o.source, "source", "", "the checkout to build")
 		f.Var(&o.platforms, "platform", "goos-goarch, repeatable and comma-separated (default: this host)")
 		addDogfoodFlags(f, &o, "<--source>/docs/CLI.md")
 		required = []string{"version", "out", "source"}
 	case "install":
-		f.StringVar(&o.from, "from", "", "artifact root")
-		f.StringVar(&o.bin, "bin", "", "install directory")
-		f.StringVar(&o.retire, "retire", "", "second directory to clear of this release's tools")
+		f.StringVar(&o.from, "from", "", "the artifact root a release build wrote (its --out)")
+		f.StringVar(&o.bin, "bin", "", "the directory the binaries are installed into")
+		f.StringVar(&o.retire, "retire", "", "a second directory to clear of this release's tools")
 		f.StringVar(&o.platform, "platform", "", "goos-goarch (default: this host)")
 		required = []string{"version", "from", "bin"}
 	case "adopt":
-		f.StringVar(&o.from, "from", "", "artifact root, or host:dir on another machine")
-		f.StringVar(&o.bin, "bin", "", "install directory on each machine")
+		f.StringVar(&o.from, "from", "", "the artifact root a release build wrote, here or as host:dir on another machine")
+		f.StringVar(&o.bin, "bin", "", "the install directory on each machine")
 		f.StringVar(&o.machines, "machines", "", MachinesShape)
-		f.StringVar(&o.ssh, "ssh", "", "the ssh binary")
-		f.StringVar(&o.dest, "dest", "", "artifact root on each machine")
+		f.StringVar(&o.ssh, "ssh", "", "the ssh binary that reaches each machine")
+		f.StringVar(&o.dest, "dest", "", "the artifact root on each machine")
 		f.StringVar(&o.stage, "stage", "", "where to fetch a host:dir --from to")
 		f.StringVar(&o.expectSums, "expect-sums", "", "sha256 of SHA256SUMS, as the cut recorded it")
 		f.StringVar(&o.expectSumsFrom, "expect-sums-from", "", "a LOCAL "+DigestFile+" this host's own `release build` wrote; a release with no tag has no other digest")
@@ -251,11 +257,11 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		// guess would be wrong, and it refuses naming both.
 		required = []string{"from", "bin", "machines", "ssh", "dest"}
 	case "pull":
-		f.StringVar(&o.out, "out", "", "artifact root holding the release to withdraw")
-		f.StringVar(&o.changelog, "changelog", "", "CHANGELOG.md path; its section is marked pulled")
+		f.StringVar(&o.out, "out", "", "the artifact root holding the release to withdraw")
+		f.StringVar(&o.changelog, "changelog", "", "the CHANGELOG.md whose section for the release is marked pulled")
 		f.StringVar(&o.machines, "machines", "", MachinesShape)
-		f.StringVar(&o.ssh, "ssh", "", "the ssh binary")
-		f.StringVar(&o.dest, "dest", "", "artifact root on each machine")
+		f.StringVar(&o.ssh, "ssh", "", "the ssh binary that reaches each machine")
+		f.StringVar(&o.dest, "dest", "", "the artifact root on each machine")
 		f.StringVar(&o.reason, "reason", "", "why it was withdrawn; it goes in the changelog")
 		f.StringVar(&o.platform, "platform", "", "goos-goarch (default: this host)")
 		f.BoolVar(&o.dryRun, "dry-run", false, "say what would be deleted and delete nothing")
@@ -274,6 +280,15 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		// because asking is not an error.
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(out, VerbUsage(verb))
+			fmt.Fprintln(out, "flags:")
+			f.VisitAll(func(fl *flag.Flag) {
+				kind, wants := flag.UnquoteUsage(fl)
+				if kind != "" {
+					kind = " <" + kind + ">"
+				}
+				fmt.Fprintf(out, "  --%s%s  %s\n", fl.Name, kind, wants)
+			})
+			fmt.Fprintln(out, ExitCodes)
 			switch verb {
 			case "cut":
 				fmt.Fprintln(out, CutNote)
