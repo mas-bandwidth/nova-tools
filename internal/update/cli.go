@@ -258,6 +258,7 @@ func interspersed(f *flag.FlagSet, args []string) []string {
 	}
 	return flags
 }
+
 // versionVerb prints the version line, or with --json internal/tool's Out with the
 // line as its payload: the one shape every skeleton tool's version verb answers
 // (internal/tool's verbs), refusals worded as the skeleton words them.
