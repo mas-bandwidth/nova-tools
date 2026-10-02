@@ -19,7 +19,7 @@ import (
 // inner `go test` of `nova-review mutate` inherited it, and the parser counting
 // `--- PASS:` lines saw a JSON stream instead, called the green run red and
 // reported `red=2 green=0` where the range is `red=1 green=1`. Three legs of
-// integration-4 (#1332) failed on a tool that was working. Any tool that reads
+// integration-4 failed on a tool that was working. Any tool that reads
 // the output of a go command it started has the same hole; internal/goenv is
 // the one place that closes it, and this checker is what keeps the next site
 // from opening it again.
