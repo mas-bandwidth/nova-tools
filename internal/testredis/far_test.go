@@ -150,10 +150,10 @@ func farDialOutliving(sub, owner *testing.T, addr string) net.Conn {
 	sub.Helper()
 	c, err := net.Dial("tcp", addr)
 	if err != nil {
-		sub.Fatal(err)
+		require.NoError(sub, err, err)
 	}
 	if err := c.SetDeadline(time.Now().Add(farCeiling)); err != nil {
-		sub.Fatal(err)
+		require.NoError(sub, err, err)
 	}
 	owner.Cleanup(func() { _ = c.Close() })
 	return c
@@ -253,11 +253,11 @@ func TestFarStopsInCleanupAndLeavesNothingRunning(t *testing.T) {
 		// its own closed socket and never the proxy's hang-up.
 		left = farDialOutliving(sub, t, p.Addr())
 		if _, err := io.WriteString(left, farPing); err != nil {
-			sub.Fatal(err)
+			require.NoError(sub, err, err)
 		}
 		<-fake.blocked // held
 		if got, want := p.Live(), 1+delayproxy.GoroutinesPerConn; got != want {
-			sub.Fatalf("Live = %d with one client; want %d: one to accept and %d for the client", got, want, delayproxy.GoroutinesPerConn)
+			require.Equal(sub, want, got, "Live = %d with one client; want %d: one to accept and %d for the client", got, want, delayproxy.GoroutinesPerConn)
 		}
 	})
 	if got := p.Live(); got != 0 {
