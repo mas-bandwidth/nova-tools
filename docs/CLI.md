@@ -1695,8 +1695,8 @@ the unit tier CI runs for your change: the packages
 `HEAD`, through the Makefile's `test` target (its go test flags and slowtests
 budgets) under `nice -n 15` with `GOMAXPROCS=2`, `GOTEST_P=2` and `-count=1`. It
 prints one `PKG` line per package with its seconds and one `RED` line per failing
-test with its output; exit 0 is green, 1 a red test or build, 2 a CI-SLEEPS line
-or a step that could not run. `--functional` adds the functional build tag
+test with its output; exit 0 is green, 1 a red test or build or a CI-SLEEPS line,
+2 a step that could not run. `--functional` adds the functional build tag
 (`GOTEST_TAGS=functional`); CI runs those tests in its `functional` job as a
 stream merges ([TESTING.md](../TESTING.md)). `--dry-run` prints the packages and
 the `make test` line and runs no test.
