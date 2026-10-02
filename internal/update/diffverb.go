@@ -45,13 +45,22 @@ func readSnapshotFile(path string) (map[string]snapRow, error) {
 // line that counts the state -- every name on either side -- not the output.
 func diffVerb(c *tool.Call) *tool.Out {
 	from, to := c.Str("from"), c.Str("to")
-	before, err := readSnapshotFile(from)
-	if err != nil {
-		return tool.Refuse(fmt.Sprintf("cannot read %s as a snapshot (%s) (write one with nova-version snapshot --bin <dir> --out <file.tsv>)", from, err))
-	}
-	after, err := readSnapshotFile(to)
-	if err != nil {
-		return tool.Refuse(fmt.Sprintf("cannot read %s as a snapshot (%s) (write one with nova-version snapshot --bin <dir> --out <file.tsv>)", to, err))
+	// Both files are read before either is refused, so one run names both.
+	before, errFrom := readSnapshotFile(from)
+	after, errTo := readSnapshotFile(to)
+	if errFrom != nil || errTo != nil {
+		var why []string
+		for _, f := range []struct {
+			path string
+			err  error
+		}{{from, errFrom}, {to, errTo}} {
+			if f.err != nil {
+				why = append(why, fmt.Sprintf("cannot read %s as a snapshot (%s)", f.path, f.err))
+			}
+		}
+		o := tool.Refuse(strings.Join(why, "; ") + " (write one with nova-version snapshot --bin <dir> --out <file.tsv>)")
+		o.Remedy = "nova-version snapshot -h"
+		return o
 	}
 	names := map[string]bool{}
 	for n := range before {

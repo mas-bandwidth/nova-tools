@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// runTool runs one invocation of either name in dir and returns its exit and streams.
+// runTool runs one invocation of either tool and returns its exit and streams.
 func runTool(t *testing.T, name string, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errs bytes.Buffer
@@ -123,4 +123,55 @@ func TestEveryUpdateRefusalEndsInACommandToRun(t *testing.T) {
 			}
 		})
 	}
+}
+
+// nova-version's refusals name every problem and the shape that would run
+// (ledger V4, V7, and the rows found using it cold): a bare snapshot names both
+// of its shapes, moved on a directory that is no checkout says so, and diff
+// names both unreadable snapshots in one run.
+func TestVersionRefusalsNameWhatWouldRun(t *testing.T) {
+	t.Parallel()
+	manifest := writeFile(t, "m.tsv", Header+"\ngo\ttool\tgo version\tlocal:go version\tnone\tme\n")
+	for _, c := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"bare snapshot", []string{"snapshot"}, []string{"missing --bin, --out", "--file <manifest>"}},
+		{"snapshot with both shapes", []string{"snapshot", "--file", manifest, "--bin", t.TempDir()}, []string{"give one shape"}},
+		{"moved outside a checkout", []string{"moved", "--from", "a", "--to", "b", "--repo", t.TempDir(), "--out", "m.md"}, []string{"is not a git checkout"}},
+		{"diff of two missing snapshots", []string{"diff", "--from", "x.tsv", "--to", "y.tsv"}, []string{"cannot read x.tsv", "cannot read y.tsv", "write one with nova-version snapshot --bin <dir> --out", "; run: nova-version snapshot -h"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			code, out, errs := runTool(t, "nova-version", c.args...)
+			assert.Equal(t, 2, code)
+			assert.Empty(t, out)
+			assert.NotContains(t, errs, "git fetch")
+			for _, w := range c.want {
+				assert.Contains(t, errs, w)
+			}
+		})
+	}
+}
+
+// snapshot --file names each adopted tool that did not answer, with its
+// reason, so a FAIL needs no second call to learn which.
+func TestSnapshotOfAManifestNamesTheToolsThatDidNotAnswer(t *testing.T) {
+	t.Parallel()
+	manifest := writeFile(t, "m.tsv", Header+"\nghost\ttool\tnova-no-such-tool-here\tgithub:example/ghost\tnone\tme\nknown\ttool\tv1.2.3\tgithub:example/known\tnone\tme\n")
+	code, _, errs := runTool(t, "nova-version", "snapshot", "--file", manifest)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "SNAPSHOT FAIL checked=2 known=1 unknown=1")
+	assert.Contains(t, errs, "SNAPSHOT UNKNOWN name=ghost")
+	assert.NotContains(t, errs, "name=known")
+}
+
+// moved reads the usage lines of every tool's help, indented or not: a tool on
+// the shared skeleton indents them under usage:, and its verbs were invisible.
+func TestMovedReadsAnIndentedUsageBlock(t *testing.T) {
+	t.Parallel()
+	verbs := parseMovedHelp("nova-version", VersionTool("", Environment{}).Banner())
+	require.Contains(t, verbs, "diff")
+	assert.True(t, verbs["diff"]["--from"])
+	assert.Contains(t, verbs, "moved")
 }

@@ -1418,7 +1418,8 @@ UNKNOWN (#1264). A row holding a whole argv (`go version`) is run as written.
 
 Use `nova-version help` for filters, optional draft/delivery and limits. A plain report
 needs no bus. `nova-version snapshot --file <manifest>` counts the adopted tools the
-manifest names and prints one `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n>` line —
+manifest names and prints one `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n>` line,
+then a `SNAPSHOT UNKNOWN name=<name>` line for each tool that did not answer —
 the adopted 16, never how many `nova-*` executables sit on PATH. Updates require an explicit
 `nova-update apply --file ... name`; models are listed for the owner to evaluate and
 pull themselves. No timer is installed.
@@ -1457,7 +1458,9 @@ This four-column inventory is **not** the six-column manifest accepted by
 
 `snapshot`'s `--file` shape instead reads the six-column manifest the caller has
 already adopted and counts how many of its tools answer, printing one
-`SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line — the
+`SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line and one
+`SNAPSHOT UNKNOWN name=<name> reason=<why> remedy=<what to do>` line per tool that
+did not answer (`--max` caps them, with a `MORE` line) — the
 adopted 16, never the 32 `nova-*` executables a directory or `PATH` might hold.
 It writes no file and mirrors `report`'s read, so a recorded version is known
 without running a process; it exits 1 when any adopted tool does not answer

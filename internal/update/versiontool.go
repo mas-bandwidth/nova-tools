@@ -1,6 +1,7 @@
 package update
 
 import (
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -54,13 +55,23 @@ first run: from a nova-tools checkout, the example lines read the included manif
 					f.Duration("budget", snapshotBudget, "whole run deadline")
 					// Neither path is guessed: both are the caller's to name
 					// (SPEC-UPDATE rule 1), unless --file asks the manifest shape.
+					// The refusal names both shapes, so either is the next call.
 					f.Check(func(c *tool.Call) {
-						if !c.Given("file") {
-							c.Want("bin", "the directory holding the binaries, for example ./bin")
-							c.Want("out", "the TSV snapshot to write, for example ./before.tsv")
+						var missing []string
+						for _, n := range []string{"bin", "out"} {
+							if c.Str(n) == "" {
+								missing = append(missing, "--"+n)
+							}
+						}
+						switch {
+						case c.Given("file") && len(missing) < 2:
+							c.Problem("--file counts a manifest's adopted tools and --bin/--out inventory a directory; give one shape, not both")
+						case !c.Given("file") && len(missing) > 0:
+							c.Problem("missing " + strings.Join(missing, ", ") + "; refusing to guess (--bin wants the directory holding the binaries, for example ./bin, and --out the TSV snapshot to write, for example ./before.tsv; or give --file <manifest> alone to count which adopted tools answer)")
 						}
 					})
 					f.Check(positiveBounds)
+					f.Max()
 				},
 				Run: snapshotVerb,
 			},

@@ -672,6 +672,11 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	// revision that is not a commit names the git fetch that would bring it;
 	// the fetch itself is the caller's, because this verb reaches for no
 	// network of its own (rule 12).
+	// A --repo that is no checkout is named as such first: a revision cannot be a
+	// commit there, and a fetch would not help.
+	if p := runChild([]string{"git", "-C", repo, "rev-parse", "--git-dir"}); strings.HasPrefix(p.Reason, "exit ") {
+		return tool.Refuse(fmt.Sprintf("--repo %s is not a git checkout (name the checkout holding both revisions)", repo))
+	}
 	resolve := func(rev string) (string, error) {
 		p := runChild([]string{"git", "-C", repo, "rev-parse", "--verify", rev + "^{commit}"})
 		if p.Reason != "" {
@@ -825,7 +830,8 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 type movedInv map[string]map[string]map[string]bool
 
 // parseMovedHelp reads one built tool's `help` into verbs and flags. Only lines
-// that begin with the tool's own name count: a help that prints another tool's
+// that begin with the tool's own name count, after any indent (a tool on
+// internal/tool indents its usage lines): a help that prints another tool's
 // usage line (SPEC-VERSION's block names nova-update's in nova-version's help)
 // cannot add that tool to THIS revision's inventory, and a line that is not a
 // usage line -- the defaults, the notes, the examples -- contributes nothing.
@@ -834,7 +840,7 @@ type movedInv map[string]map[string]map[string]bool
 func parseMovedHelp(tool, help string) map[string]map[string]bool {
 	verbs := map[string]map[string]bool{}
 	for _, line := range strings.Split(help, "\n") {
-		if !strings.HasPrefix(line, tool+" ") {
+		if line = strings.TrimSpace(line); !strings.HasPrefix(line, tool+" ") {
 			continue
 		}
 		f := strings.Fields(line)

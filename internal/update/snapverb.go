@@ -256,6 +256,7 @@ func snapshotAdopted(file string) *tool.Out {
 	if err != nil {
 		return tool.Refuse(fmt.Sprintf("%s: %s", file, err))
 	}
+	o := tool.Done()
 	known := 0
 	for _, e := range entries {
 		ctx, cancel := context.WithTimeout(context.Background(), snapshotAdoptedTimeout)
@@ -263,11 +264,14 @@ func snapshotAdopted(file string) *tool.Out {
 		cancel()
 		if r.Known() {
 			known++
+			continue
 		}
+		// Each tool that did not answer is named with its reason, so a FAIL needs
+		// no second call to learn which.
+		o.Item("unknown", "name", e.Name, "reason", r.Reason, "remedy", r.Remedy)
 	}
-	o := tool.Done()
 	if known != len(entries) {
-		o = tool.Fail()
+		o.Status, o.Exit = tool.Failed, 1
 	}
 	return o.Fact("checked", len(entries)).Fact("known", known).Fact("unknown", len(entries)-known).Fact("file", file)
 }
