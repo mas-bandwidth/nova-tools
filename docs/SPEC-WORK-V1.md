@@ -176,6 +176,8 @@ refused. `verify -h` prints the tree's grammar and a minimal tree to try it on.
 import's own round trip did; 2 could not run (a missing flag, an unreadable or refused tree, a
 refused budget, GitHub unreachable or refusing). A refusal is `<VERB> REFUSED: <what is wrong>;
 run: <the next command>`, one line per problem, every problem of a malformed invocation at once.
+Every value the caller gave that a remedy carries (a path, the gh program, an organization) is one
+POSIX shell word (`oneline.ShellWord`), so the remedy pasted runs with those values and no others.
 
 **GitHub.** Both verbs read through `internal/workgh`: GraphQL documents run by `gh api graphql`,
 the program found on PATH or named with `--gh` and echoed as `gh=`. The seam refuses a
@@ -259,7 +261,9 @@ The whole of an organization of 96 repositories, one run each way from a working
 17. `TestVerifyHelpShowsATreeTheReaderAccepts`: the minimal tree `verify -h` prints reads back.
 18. `TestVerifyAgainstASecondTreeReadsNoNetwork`: `verify --against` gives the same lines with
     no gh and no network, and the worked example of `verify -h` runs as written.
-19. `TestGhQueryRunsTheProgramWithTheBodyOnStdin` (`internal/workgh`, functional): the gh adapter
+19. `TestARemedyKeepsEveryValueOneShellWord`: a blank, a quote, `$(x)`, a `;`, a leading dash or a
+    newline in `--out`, `--gh` or a tree path stays one shell word in every remedy that carries it.
+20. `TestGhQueryRunsTheProgramWithTheBodyOnStdin` (`internal/workgh`, functional): the gh adapter
     itself, against a stand-in program; every other test answers from the recording through
     `workgh.Replay` and starts no process.
 
