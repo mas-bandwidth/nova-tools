@@ -738,12 +738,12 @@ the variable the tool that acts already reads.
 | Discord | `DISCORD_BOT_TOKEN` | `rowan-keeper` | rowan-discord producer and consumer |
 | Ghost | `GHOST_ADMIN_KEY` | `rowan-keeper` | rowan-ghost |
 
-**Rowan's two files, and which key opens each.** `rowan.yaml` is sealed to the
+**Two files, and which key opens each.** `rowan.yaml` is sealed to the
 **admin bench key alone**, plus the recovery key, and holds the **admin** `GH_TOKEN` — the
 one carrying org roles — with the coordinator's working needs beside it;
 `rowan-keeper.yaml` is sealed to the **keeper bench key alone**, plus the recovery key, and
 holds the keeper's **own** `GH_TOKEN` with the life's surfaces beside it — a **second
-fine-grained token on the same `rowan-claude` account**, scoped to his own repositories **plus
+fine-grained token on the same `rowan-claude` account**, scoped to the repositories **plus
 `contents` and `pull_requests` write on `mas-bandwidth/secrets` and nothing else org-wide**,
 both halves because every re-seal of his own file is a branch pushed **and** a pull request
 opened against the org's store, and `contents` alone pushes the branch without opening the
@@ -753,7 +753,7 @@ that: no org role, no admin anywhere, no second org repository.
 Neither bench opens the other's file, and that is the point of the split rather
 than a consequence of it: the admin bench is the unwalled coordinator running many children,
 and a child that gets loose there must not be able to send mail, post to Bluesky, speak in
-Discord or publish as Rowan; the keeper manages himself and holds no org role. The same key
+Discord or publish; the keeper manages itself and holds no org role. The same key
 name in both files is two different tokens on purpose: the name is the variable its reader
 already reads, and the **scope** is the split. **A secret both seats would use is decided per
 secret, by who acts with it**, and sealed once in that seat's file — `DEEPSEEK_API_KEY` is
@@ -764,11 +764,11 @@ value is two rotations, one forgotten.
 OAuth token has a refresh dance, a device flow, an expiry
 and a file the harness rewrites behind your back. So **no harness auth file** is held here or
 handed over; a harness that can only authenticate that way is one we start by hand. **The one
-exception is Glenn's: Rowan's own Claude Code seat authenticates through Glenn's manual login on the admin
-bench: not in the store, no `ANTHROPIC_API_KEY` in `rowan.yaml` for it, and nobody should put
+exception is the admin seat: the Claude Code seat authenticates through manual login on the admin
+bench: not in the store, no `ANTHROPIC_API_KEY` in `rowan.yaml` for it, and no user should put
 one there.** That row is for *workers*, and whether they move off the plan seat is billing.
 
-**Per seat, so per file.** Stella, Emma, Johnny and Freddy have one seat each and one file
+**Per seat, so per file.** Multiple seats have one seat each and one file
 each, and an AI with no Bluesky simply has no `BSKY_APP_PASSWORD`. A swarm pool's file holds
 exactly one provider key plus a **read-only** `GH_TOKEN` and nothing else: a worker
 holding a line's send credential is a worker that can post as that line.
@@ -789,7 +789,7 @@ nova-secrets exec --store <home>/secrets --as <seat> \
 The pull is the launcher's, never the tool's (invariant 8). The `--only` names the four this
 harness needs, because a launcher knows that and a default cannot. The
 inner line is **nova-sandbox's own grammar**, two of whose rules are load-bearing
-here: the harness's `HOME` inside a `--write` path (its rule 9), and the environment passing
+here: the harness's `HOME` inside a `--write` path (rule 9), and the environment passing
 through the wrap untouched.
 
 Read that outward. `nova-secrets` opens the file, sets the environment, and **becomes**
@@ -802,12 +802,12 @@ secrets inside — needs the wall to permit the read a wall exists to refuse: **
 
 ## The migration from the Keychain
 
-A surface held as a macOS Keychain item, read by a rowan-tool calling
-`security find-generic-password`, moves by *changing a reader*, not by *copying a value*. The per-surface runbook belongs in **rowan-tools**; the order belongs here,
+A surface held as a macOS Keychain item, read by a tool calling
+`security find-generic-password`, moves by *changing a reader*, not by *copying a value*. The per-surface runbook belongs in **tools**; the order belongs here,
 because at no step may there be a live consumer with a dead credential. **Issue** alongside the
 old (where issuing *revokes* the old, as a Ghost admin key does, the job is unloaded first and
 the migration is one sitting); **seal** in an approved pull request and pull on every bench,
-Glenn's hand when the value came from his console; **switch the reader**, two edits and not one
+admin hand when the value came from the console; **switch the reader**, two edits and not one
 — the tool learns one environment variable, the `security` call is **deleted** rather than kept
 as a fallback, and the launchd plist's program becomes the **whole launcher line, pull
 included** (invariant 8); **probe**; **delete** the Keychain item only after green; **revoke**
@@ -821,11 +821,11 @@ refusal, no value at all. So `launchctl bootout` **before** the binary changes a
 letting the reader fall back to the old Keychain value until the plist reload, is refused: a
 fallback to the Keychain is a bench where the migration silently did not happen. On a
 LaunchDaemon under a per-AI user, that plist's `--store` and `--key` are paths in **that**
-user's home, so that user has done the first run, and the edit is Glenn's sudo.
+user's home, so that user has done the first run, and the edit is the admin's sudo.
 
 ## Dependencies, pinned
 
-| binary | pinned minimum | measured on the Studio bench | probe |
+| binary | pinned minimum | measured on the admin bench | probe |
 |---|---|---|---|
 | `sops` | **3.13.3** | `sops 3.13.3` | `<--sops> --version --disable-version-check` |
 | `age-keygen` | **1.3.2** | `v1.3.2` | `<--age-keygen> --version` |
@@ -842,7 +842,7 @@ absent or too-old binary is a refusal naming `brew install sops` or `brew upgrad
 
 ## Rotation, said plainly
 
-Four acts in one order, and the tool is only in the last. **Glenn revokes the old value at the
+Four acts in one order, and the tool is only in the last. **The admin revokes the old value at the
 provider** — that is what makes it dead, a person's hand at a console. **The file is
 re-sealed**, a pull request the other collaborator approves and merges under the ruleset, so a
 rotation waits on a second account and the window between revoke and merge holds no working
@@ -1104,7 +1104,7 @@ bench holds the one credential the clone needs — an SSH key generated on that 
 half authorized **on the GitHub account that bench acts as**, not as a deploy key on the store:
 a deploy key is per-repository and read-only, and a bench that must re-seal its own file pushes
 a branch. Outside the store by design is **every file-shaped secret** (**The model**), of which
-this bench today holds three: that SSH key, its age key, and Glenn's recovery key, which is on
+this bench today holds three: that SSH key, its age key, and the admin's recovery key, which is on
 no bench at all and whose public half is the store's `recovery.pub`. `nova-secrets` carries
 none of them. Nothing below is a default: every path is typed, once.
 
