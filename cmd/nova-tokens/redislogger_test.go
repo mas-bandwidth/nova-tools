@@ -1,14 +1,15 @@
 package main
 
 import (
-	"bytes"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // asToolEnv makes the test binary run as nova-tokens (TestMain).
@@ -23,28 +24,19 @@ func TestReportRedisDialFailureStderrIsTheOneFailedLine(t *testing.T) {
 	t.Parallel()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.False(t, err != nil, err)
+	require.NoError(t, err)
 	addr := ln.Addr().String()
-	ln.Close() // nothing listens there now: every dial is refused
+	require.NoError(t, ln.Close()) // nothing listens there now: every dial is refused
 
 	self, err := os.Executable()
-	require.False(t, err != nil, err)
+	require.NoError(t, err)
 	cmd := exec.Command(self, "report", "--redis", addr, "--month", "2026-09")
 	cmd.Env = append(os.Environ(), asToolEnv+"=1")
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr strings.Builder
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err = cmd.Run()
-	exit := 0
-	if ee, ok := err.(*exec.ExitError); ok {
-		exit = ee.ExitCode()
-	} else if err != nil {
-		require.FailNow(t, "%v", err)
-	}
-	assert.False(t, exit != 1, "exit %d, want 1\nstdout:\n%s\nstderr:\n%s", exit, stdout.String(), stderr.String())
-	assert.False(t, stdout.Len() != 0, "stdout is not empty on a dial failure:\n%s", stdout.String())
-	got := stderr.String()
-	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
-	assert.False(t, len(lines) != 1 || !strings.HasSuffix(got, "\n") ||
-		!strings.HasPrefix(lines[0], "REPORT FAILED store=redis err=") ||
-		!strings.Contains(lines[0], addr), "stderr of a dial failure must be exactly one `REPORT FAILED store=redis err=... %s ...` line, got %d line(s):\n%s", addr, len(lines), got)
+	var exit *exec.ExitError
+	require.ErrorAs(t, cmd.Run(), &exit)
+	assert.Equal(t, 1, exit.ExitCode(), "stderr:\n%s", stderr.String())
+	assert.Empty(t, stdout.String(), "stdout on a dial failure")
+	assert.Regexp(t, `^REPORT FAILED store=redis err=[^\n]*`+regexp.QuoteMeta(addr)+`[^\n]*\n$`, stderr.String(), "stderr of a dial failure is exactly one REPORT FAILED line naming the address")
 }

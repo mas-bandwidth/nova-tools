@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 )
 
 // THE GATE ON THE ONLY DIRECTORY ANYBODY POINTS IT AT.
@@ -20,300 +22,154 @@ import (
 // which is worse than no gate, because a red that means nothing hides a red that means
 // something.
 //
-// The fixture is cut from that directory's own file names, so this test is the directory.
-func reportsTokensNames() (days []string, others []string, dirs []string) {
-	days = []string{
-		"2026-07-29", "2026-07-30", "2026-08-15",
-		"2026-09-06", "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10",
-		"2026-09-11", "2026-09-12", "2026-09-13", "2026-09-14", "2026-09-15",
-		"2026-09-16", "2026-09-17", "2026-09-18",
-	}
-	others = []string{"README.md", "collate.log", "session-151250bd-2026-09-14.md"}
-	dirs = []string{"pre-nova-tokens"}
-	return days, others, dirs
-}
-
-// reportsTokensFixture writes a directory with those names: a well-formed day file for
-// each day, and the four non-day entries exactly as they are on disk.
-func reportsTokensFixture(t *testing.T) string {
-	t.Helper()
-	const hdr = "date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n"
-	out := mkdir(t, filepath.Join(t.TempDir(), "tokens"))
-	days, others, dirs := reportsTokensNames()
-	for _, d := range days {
-		write(t, filepath.Join(out, d+".tsv"),
-			"nova-tokens v1 day="+d+" at=2026-09-11T23:55:02Z build=b turns=1 sources=x\n"+hdr+
-				d+"\tclaude-fable-5-1\tschema\t1\t2\t3\t4\t-\t0\tutc\tx\n")
-	}
-	for _, name := range others {
-		write(t, filepath.Join(out, name), "what a person put beside the day files\n")
-	}
-	for _, name := range dirs {
-		mkdir(t, filepath.Join(out, name))
-		write(t, filepath.Join(out, name, "daily-2026-08.tsv"), "the table the day files replaced\n")
-	}
-	return out
-}
-
-// CHECK OK IS REACHABLE ON THAT DIRECTORY AS IT IS. No file moved, nothing removed, no
-// list maintained: the gaps and the notes are counted on the line, and neither is a
-// finding, because nothing in that directory says anybody worked on 2026-08-03.
+// The fixture is cut from that directory's own file names, so each row runs on the
+// directory: a well-formed day file for each day, and the four non-day entries exactly as
+// they are on disk. The summary line is on stdout when green and on stderr when red.
 func TestCheckIsGreenOnTheReportsTokensDirectoryAsItIs(t *testing.T) {
 	t.Parallel()
 
-	out := reportsTokensFixture(t)
-	r := invoke(t, "check", "--out", out)
-	wantExit(t, r, 0)
-	line := lineWith(r.stdout, "CHECK OK")
-	wantContains(t, line, "files=16")
-	wantContains(t, line, "first=2026-07-29")
-	wantContains(t, line, "last=2026-09-18")
-	wantContains(t, line, "missing=0")
-	wantContains(t, line, "stray=0")
-	// NOTHING WAS HIDDEN TO MAKE IT GREEN. The 36 calendar days with no file and the 4
-	// entries that are not day files are both on the OK line, counted.
-	wantContains(t, line, "gap=36")
-	wantContains(t, line, "notes=4")
-	wantNotContains(t, r.all(), "CHECK MISSING")
-	wantNotContains(t, r.all(), "CHECK STRAY")
-}
-
-// And --strict is the old reading, whole: the same forty findings, so a person who wants
-// them has them and nobody had to argue about which ones to keep.
-func TestCheckStrictRestoresEveryFindingTheGateUsedToMake(t *testing.T) {
-	t.Parallel()
-
-	out := reportsTokensFixture(t)
-	r := invoke(t, "check", "--out", out, "--strict", "--max", "0")
-	wantExit(t, r, 1)
-	line := lineWith(r.stderr, "CHECK FAIL files=")
-	wantContains(t, line, "missing=36")
-	wantContains(t, line, "stray=4")
-	wantContains(t, line, "bad=0")
-	{
-		n := strings.Count(r.stderr, "CHECK MISSING ")
-		assert.False(t, n != 36, "%d CHECK MISSING lines under --strict, want 36", n)
+	const hdr = "date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n"
+	dir := map[string]string{
+		"README.md":                         "what a person put beside the day files\n",
+		"collate.log":                       "what a person put beside the day files\n",
+		"session-151250bd-2026-09-14.md":    "what a person put beside the day files\n",
+		"pre-nova-tokens/daily-2026-08.tsv": "the table the day files replaced\n",
 	}
-	{
-		n := strings.Count(r.stderr, "CHECK STRAY ")
-		assert.False(t, n != 4, "%d CHECK STRAY lines under --strict, want 4", n)
+	for _, d := range []string{"2026-07-29", "2026-07-30", "2026-08-15", "2026-09-06", "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10",
+		"2026-09-11", "2026-09-12", "2026-09-13", "2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"} {
+		dir[d+".tsv"] = "nova-tokens v1 day=" + d + " at=2026-09-11T23:55:02Z build=b turns=1 sources=x\n" + hdr + d + "\tclaude-fable-5-1\tschema\t1\t2\t3\t4\t-\t0\tutc\tx\n"
 	}
-	// The strays are named by path, and the archive DIRECTORY is one of them.
-	for _, want := range []string{"README.md", "collate.log", "pre-nova-tokens", "session-151250bd-2026-09-14.md"} {
-		wantContains(t, r.stderr, want)
-	}
-}
-
-// A .tsv that is not a day, and a file with no extension at all, are strays under BOTH
-// readings: the allowlist is three shapes, not "anything that is not a day file".
-func TestTheAllowlistDoesNotSwallowARealStray(t *testing.T) {
-	t.Parallel()
-
-	out := reportsTokensFixture(t)
-	write(t, filepath.Join(out, "daily-2026-09.tsv"), "a month file from the prototype\n")
-	write(t, filepath.Join(out, "scratch"), "no extension\n")
-	mkdir(t, filepath.Join(out, "working"))
-	r := invoke(t, "check", "--out", out)
-	wantExit(t, r, 1)
-	line := lineWith(r.stderr, "CHECK FAIL files=")
-	wantContains(t, line, "stray=3")
-	wantContains(t, line, "notes=4")
-	for _, want := range []string{"daily-2026-09.tsv", "scratch", "working"} {
-		wantContains(t, r.stderr, want)
+	for _, c := range []struct {
+		name   string
+		extra  map[string]string
+		args   []string
+		exit   int
+		fields []string       // on the summary line
+		counts map[string]int // finding lines on stderr
+		named  []string       // on stderr
+		absent []string       // on either stream
+	}{
+		// CHECK OK IS REACHABLE ON THAT DIRECTORY AS IT IS. No file moved, nothing removed,
+		// no list maintained: NOTHING WAS HIDDEN TO MAKE IT GREEN, the 36 calendar days with
+		// no file and the 4 entries that are not day files are on the OK line, counted, and
+		// neither is a finding, because nothing in that directory says anybody worked on
+		// 2026-08-03.
+		{"as it is", nil, nil, 0, []string{"CHECK OK", "files=16", "first=2026-07-29", "last=2026-09-18", "missing=0", "stray=0", "gap=36", "notes=4"},
+			nil, nil, []string{"CHECK MISSING", "CHECK STRAY"}},
+		// --strict is the old reading, whole: the same forty findings, so a person who wants
+		// them has them and nobody had to argue about which ones to keep. The strays are
+		// named by path, and the archive DIRECTORY is one of them.
+		{"--strict restores every finding", nil, []string{"--strict", "--max", "0"}, 1, []string{"CHECK FAIL files=", "missing=36", "stray=4", "bad=0"},
+			map[string]int{"CHECK MISSING ": 36, "CHECK STRAY ": 4}, []string{"README.md", "collate.log", "pre-nova-tokens", "session-151250bd-2026-09-14.md"}, nil},
+		// A .tsv that is not a day, and a file with no extension at all, are strays under
+		// BOTH readings: the allowlist is three shapes, not "anything that is not a day file".
+		{"a real stray is not swallowed", map[string]string{"daily-2026-09.tsv": "a month file from the prototype\n", "scratch": "no extension\n", "working/.keep": ""},
+			nil, 1, []string{"CHECK FAIL files=", "stray=3", "notes=4"}, nil, []string{"daily-2026-09.tsv", "scratch", "working"}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			out := testkit.Tree(t, filepath.Join(t.TempDir(), "tokens"), dir)
+			testkit.Tree(t, out, c.extra)
+			r := novaTokens.Do(t, append([]string{"check", "--out", out}, c.args...)...).Exit(c.exit).Err(c.named...).NotOut(c.absent...).NotErr(c.absent...)
+			summary := r.Stdout
+			if c.exit != 0 {
+				summary = r.Stderr
+			}
+			linesHold(t, summary, map[string][]string{c.fields[0]: c.fields[1:]}, summary)
+			for line, n := range c.counts {
+				assert.Equal(t, n, strings.Count(r.Stderr, line), "%q lines", line)
+			}
+		})
 	}
 }
-
-// ------------------------------------------------------------ sources --unattributed
 
 // `other=81%` on a day line (measured on this bench, 2026-09-18) is a diagnosis with no
 // remedy: it says the rules file is not good enough and nothing about which line to add.
 // `sources --unattributed` is the evidence — the path stems that were seen and matched no
-// rule, heaviest first, in the shape a rule matches.
+// rule, heaviest first, in the shape a rule matches. Each row is one transcript and the
+// runs of `sources --repos <schema, serialize> --claude g=<it>` over it.
 func TestSourcesUnattributedNamesThePathsThatFellToOther(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	tr := mkdir(t, filepath.Join(dir, "tr"))
-	repos := reposFile(t, dir) // names `schema` and `serialize`, and nothing else
-
-	var lines []string
-	// Three messages under one unnamed tree, two under another, one under a repo the
-	// rules DO name: only the five unattributed ones are tallied.
-	for i, p := range []string{
-		"/Users/glenn/deepseek-working-3/cmd/a.go",
-		"/Users/glenn/deepseek-working-3/cmd/b.go",
-		"/Users/glenn/deepseek-working-3/internal/c.go",
-		"/Users/glenn/rowan-working/nova-tools/cmd/d.go",
-		"/Users/glenn/rowan-working/nova-tools/internal/e.go",
-		"/x/schema/f.go",
-	} {
-		lines = append(lines, msg(fmt.Sprintf("m%d", i), "2026-09-11T10:00:00Z", "fable",
-			map[string]int{"input_tokens": 10}, p))
-	}
-	write(t, filepath.Join(tr, "a.jsonl"), strings.Join(lines, "\n")+"\n")
-
-	r := invoke(t, "sources", "--repos", repos, "--all", "--claude", "g="+tr, "--unattributed", "--max", "20")
-	wantExit(t, r, 0)
-	// Heaviest first, keyed by the leading directory rather than by the file, because a
-	// list of files is not a list of candidate rules.
-	first := strings.Split(strings.TrimSpace(r.stdout), "\n")
-	var stems []string
-	for _, line := range first {
-		if strings.HasPrefix(line, "SOURCES UNATTRIBUTED ") {
-			stems = append(stems, line)
+	onePerPath := func(paths ...string) []string {
+		var lines []string
+		for i, p := range paths {
+			lines = append(lines, msg(fmt.Sprintf("m%d", i), "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 10}, p))
 		}
+		return lines
 	}
-	require.False(t, len(stems) != 2, "%d SOURCES UNATTRIBUTED lines, want 2:\n%s", len(stems), r.stdout)
-	// One unnamed tree is ONE stem however many directories inside it were touched: the
-	// three `deepseek-working-3` paths sit in two directories and arrive as one line.
-	wantContains(t, stems[0], "stem=/Users/glenn/deepseek-working-3 tokens=3")
-	wantContains(t, stems[1], "stem=/Users/glenn/rowan-working tokens=2")
-	// The path the rules DO name never reaches the tally.
-	wantNotContains(t, r.all(), "schema")
-	wantContains(t, lineWith(r.stdout, "SOURCES OK"), "unattributed=5")
-
-	// Without the flag nothing is tallied, and the field is a dash: a dash is an absence
-	// where a zero is a measurement (rule 15's reading, applied to this count).
-	plain := invoke(t, "sources", "--repos", repos, "--all", "--claude", "g="+tr)
-	wantExit(t, plain, 0)
-	wantNotContains(t, plain.all(), "SOURCES UNATTRIBUTED")
-	wantContains(t, lineWith(plain.stdout, "SOURCES OK"), "unattributed=-")
-}
-
-// The listing is capped like every other listing here, with the one MORE line that says
-// what was not shown and how to see it.
-func TestSourcesUnattributedIsCappedWithARemedy(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	tr := mkdir(t, filepath.Join(dir, "tr"))
-	repos := reposFile(t, dir)
-	var lines []string
+	var trees []string
 	for i := 0; i < 25; i++ {
-		lines = append(lines, msg(fmt.Sprintf("m%d", i), "2026-09-11T10:00:00Z", "fable",
-			map[string]int{"input_tokens": 10}, fmt.Sprintf("/home/nova/tree-%02d/a.go", i)))
+		trees = append(trees, fmt.Sprintf("/home/nova/tree-%02d/a.go", i))
 	}
-	write(t, filepath.Join(tr, "a.jsonl"), strings.Join(lines, "\n")+"\n")
-
-	r := invoke(t, "sources", "--repos", repos, "--all", "--claude", "g="+tr, "--unattributed", "--max", "20")
-	wantExit(t, r, 0)
-	{
-		n := strings.Count(r.stdout, "SOURCES UNATTRIBUTED ")
-		assert.False(t, n != 20, "%d unattributed lines at --max 20, want 20", n)
+	type run struct {
+		args            []string
+		source, ok, out []string // fields on the SOURCES SOURCE and SOURCES OK lines; text on stdout
+		not             []string // on neither stream
+		unattributed    int      // SOURCES UNATTRIBUTED lines
 	}
-	wantContains(t, r.stdout, "SOURCES MORE kind=unattributed shown=20 total=25")
-	wantContains(t, r.stdout, "--max 0")
-
-	all := invoke(t, "sources", "--repos", repos, "--all", "--claude", "g="+tr, "--unattributed", "--max", "0")
-	wantExit(t, all, 0)
-	{
-		n := strings.Count(all.stdout, "SOURCES UNATTRIBUTED ")
-		assert.False(t, n != 25, "%d unattributed lines at --max 0, want all 25", n)
+	for _, c := range []struct {
+		name  string
+		lines []string
+		runs  []run
+	}{
+		// Three messages under one unnamed tree, two under another, one under a repo the
+		// rules DO name: only the five unattributed ones are tallied, heaviest first, keyed by
+		// the leading directory rather than by the file, because a list of files is not a
+		// list of candidate rules. One unnamed tree is ONE stem however many directories
+		// inside it were touched. Without the flag nothing is tallied and the field is a
+		// dash: an absence, where a zero is a measurement (rule 15's reading).
+		{"the paths that fell to other", onePerPath("/Users/glenn/deepseek-working-3/cmd/a.go", "/Users/glenn/deepseek-working-3/cmd/b.go",
+			"/Users/glenn/deepseek-working-3/internal/c.go", "/Users/glenn/rowan-working/nova-tools/cmd/d.go",
+			"/Users/glenn/rowan-working/nova-tools/internal/e.go", "/x/schema/f.go"), []run{
+			{args: []string{"--all", "--unattributed", "--max", "20"}, ok: []string{"unattributed=5"}, not: []string{"schema"}, unattributed: 2,
+				out: []string{"SOURCES UNATTRIBUTED stem=/Users/glenn/deepseek-working-3 tokens=3\nSOURCES UNATTRIBUTED stem=/Users/glenn/rowan-working tokens=2\n"}},
+			{args: []string{"--all"}, ok: []string{"unattributed=-"}, not: []string{"SOURCES UNATTRIBUTED"}},
+		}},
+		// The listing is capped like every other listing here, with the one MORE line that
+		// says what was not shown and how to see it.
+		{"capped with a remedy", onePerPath(trees...), []run{
+			{args: []string{"--all", "--unattributed", "--max", "20"}, unattributed: 20, out: []string{"SOURCES MORE kind=unattributed shown=20 total=25", "--max 0"}},
+			{args: []string{"--all", "--unattributed", "--max", "0"}, unattributed: 25, not: []string{"SOURCES MORE kind=unattributed"}},
+		}},
+		// One message, two path-like inputs, two different trees: the row is one `other` and
+		// the tally is two, which is the whole difference between a repo and a path.
+		{"every path of a message", []string{msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 10}, "/home/nova/tree/a.go", "/home/nova/elsewhere/c.go")}, []run{
+			{args: []string{"--all", "--unattributed"}, ok: []string{"unattributed=2"},
+				out: []string{"SOURCES UNATTRIBUTED stem=/home/nova/tree tokens=1", "SOURCES UNATTRIBUTED stem=/home/nova/elsewhere tokens=1"}},
+		}},
+		// --day filters the day-scoped tallies (messages, rows and unattributed stems) to the
+		// requested day, while the inventory (files, unreadables, unparsed) stays source-wide;
+		// --all covers every day. Each day has one message on a named repo and one on an
+		// unmatched stem: two rows.
+		{"--day scopes the tallies", []string{
+			msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 10}, "/x/schema/a.go"),
+			msg("m2", "2026-09-11T11:00:00Z", "fable", map[string]int{"input_tokens": 20}, "/x/unmatched1/b.go"),
+			msg("m3", "2026-09-12T10:00:00Z", "fable", map[string]int{"input_tokens": 30}, "/x/serialize/c.go"),
+			msg("m4", "2026-09-12T11:00:00Z", "fable", map[string]int{"input_tokens": 40}, "/x/unmatched2/d.go"),
+		}, []run{
+			{args: []string{"--day", "2026-09-11", "--unattributed"}, source: []string{"files=1", "messages=2", "rows=2"}, ok: []string{"files=1", "messages=2", "rows=2", "unattributed=1"},
+				out: []string{"SOURCES UNATTRIBUTED stem=/x/unmatched1/b.go tokens=1"}, not: []string{"SOURCES UNATTRIBUTED stem=/x/unmatched2"}},
+			{args: []string{"--day", "2026-09-12", "--unattributed"}, source: []string{"files=1", "messages=2", "rows=2"}, ok: []string{"files=1", "messages=2", "rows=2", "unattributed=1"},
+				out: []string{"SOURCES UNATTRIBUTED stem=/x/unmatched2/d.go tokens=1"}, not: []string{"SOURCES UNATTRIBUTED stem=/x/unmatched1"}},
+			{args: []string{"--day", "2026-09-13", "--unattributed"}, source: []string{"files=1", "messages=0", "rows=0"}, ok: []string{"files=1", "messages=0", "rows=0", "unattributed=0"},
+				not: []string{"SOURCES UNATTRIBUTED"}},
+			{args: []string{"--all", "--unattributed"}, source: []string{"files=1", "messages=4", "rows=4"}, ok: []string{"files=1", "messages=4", "rows=4", "unattributed=2"},
+				out: []string{"SOURCES UNATTRIBUTED stem=/x/unmatched1/b.go tokens=1", "SOURCES UNATTRIBUTED stem=/x/unmatched2/d.go tokens=1"}},
+			{args: []string{"--day", "2026-09-11"}, source: []string{"messages=2", "rows=2"}, ok: []string{"unattributed=-"}},
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			b := newBench(t)
+			b.transcript("a.jsonl", c.lines...)
+			for _, s := range c.runs {
+				r := novaTokens.Do(t, append([]string{"sources", "--repos", b.repos, "--claude", "g=" + b.tr}, s.args...)...).Exit(0).Out(s.out...).NotOut(s.not...).NotErr(s.not...)
+				linesHold(t, r.Stdout, map[string][]string{"SOURCES SOURCE label=claude:g": s.source, "SOURCES OK": s.ok}, r)
+				if s.unattributed > 0 {
+					assert.Equal(t, s.unattributed, strings.Count(r.Stdout, "SOURCES UNATTRIBUTED "), "%q", s.args)
+				}
+			}
+		})
 	}
-	wantNotContains(t, all.stdout, "SOURCES MORE kind=unattributed")
-}
-
-// A message naming several unattributed paths counts each of them: `other` is one repo for
-// the row, and the tally is about the PATHS, which is what a rules file matches.
-func TestSourcesUnattributedCountsEveryTokenOfAMessage(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	tr := mkdir(t, filepath.Join(dir, "tr"))
-	repos := reposFile(t, dir)
-	// One message, two path-like inputs, two different trees: the row is one `other` and
-	// the tally is two, which is the whole difference between a repo and a path.
-	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable",
-		map[string]int{"input_tokens": 10},
-		"/home/nova/tree/a.go", "/home/nova/elsewhere/c.go")+"\n")
-	r := invoke(t, "sources", "--repos", repos, "--all", "--claude", "g="+tr, "--unattributed")
-	wantExit(t, r, 0)
-	wantContains(t, r.stdout, "SOURCES UNATTRIBUTED stem=/home/nova/tree tokens=1")
-	wantContains(t, r.stdout, "SOURCES UNATTRIBUTED stem=/home/nova/elsewhere tokens=1")
-	wantContains(t, lineWith(r.stdout, "SOURCES OK"), "unattributed=2")
-}
-
-// TestSourcesDayScopeAppliesToStatisticsAndTallies: sources --day must filter day-scoped
-// tallies (messages, rows, and unattributed stems) to only the requested day, while
-// inventory metadata (files, unreadables, unparsed) remains source-wide. --all covers every day.
-func TestSourcesDayScopeAppliesToStatisticsAndTallies(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	tr := mkdir(t, filepath.Join(dir, "tr"))
-	repos := reposFile(t, dir) // names schema and serialize
-
-	// Write transcript with messages on two distinct days:
-	// Day 2026-09-11: 1 message on repo "schema", 1 message on unmatched stem "/x/unmatched1" (2 rows: schema, other)
-	// Day 2026-09-12: 1 message on repo "serialize", 1 message on unmatched stem "/x/unmatched2" (2 rows: serialize, other)
-	lines := []string{
-		msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 10}, "/x/schema/a.go"),
-		msg("m2", "2026-09-11T11:00:00Z", "fable", map[string]int{"input_tokens": 20}, "/x/unmatched1/b.go"),
-		msg("m3", "2026-09-12T10:00:00Z", "fable", map[string]int{"input_tokens": 30}, "/x/serialize/c.go"),
-		msg("m4", "2026-09-12T11:00:00Z", "fable", map[string]int{"input_tokens": 40}, "/x/unmatched2/d.go"),
-	}
-	write(t, filepath.Join(tr, "a.jsonl"), strings.Join(lines, "\n")+"\n")
-
-	// 1. Inspecting 2026-09-11 with --unattributed:
-	// exactly 2 messages, 2 rows (schema, other), and only the first day's unmatched stem.
-	// files=1 is source-wide metadata and remains present.
-	r1 := invoke(t, "sources", "--repos", repos, "--day", "2026-09-11", "--claude", "bench="+tr, "--unattributed")
-	wantExit(t, r1, 0)
-	wantContains(t, lineWith(r1.stdout, "SOURCES SOURCE label=claude:bench"), "files=1")
-	wantContains(t, lineWith(r1.stdout, "SOURCES SOURCE label=claude:bench"), "messages=2")
-	wantContains(t, lineWith(r1.stdout, "SOURCES SOURCE label=claude:bench"), "rows=2")
-	wantContains(t, r1.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched1/b.go tokens=1")
-	wantNotContains(t, r1.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched2")
-	wantContains(t, lineWith(r1.stdout, "SOURCES OK"), "files=1")
-	wantContains(t, lineWith(r1.stdout, "SOURCES OK"), "messages=2")
-	wantContains(t, lineWith(r1.stdout, "SOURCES OK"), "rows=2")
-	wantContains(t, lineWith(r1.stdout, "SOURCES OK"), "unattributed=1")
-
-	// 2. Inspecting 2026-09-12 with --unattributed:
-	// exactly 2 messages, 2 rows (serialize, other), and only the second day's unmatched stem.
-	r2 := invoke(t, "sources", "--repos", repos, "--day", "2026-09-12", "--claude", "bench="+tr, "--unattributed")
-	wantExit(t, r2, 0)
-	wantContains(t, lineWith(r2.stdout, "SOURCES SOURCE label=claude:bench"), "files=1")
-	wantContains(t, lineWith(r2.stdout, "SOURCES SOURCE label=claude:bench"), "messages=2")
-	wantContains(t, lineWith(r2.stdout, "SOURCES SOURCE label=claude:bench"), "rows=2")
-	wantContains(t, r2.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched2/d.go tokens=1")
-	wantNotContains(t, r2.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched1")
-	wantContains(t, lineWith(r2.stdout, "SOURCES OK"), "files=1")
-	wantContains(t, lineWith(r2.stdout, "SOURCES OK"), "messages=2")
-	wantContains(t, lineWith(r2.stdout, "SOURCES OK"), "rows=2")
-	wantContains(t, lineWith(r2.stdout, "SOURCES OK"), "unattributed=1")
-
-	// 3. Inspecting 2026-09-13 (a day with no messages) with --unattributed:
-	// 0 messages, 0 rows, 0 unattributed, but source-wide files=1 is preserved.
-	r3 := invoke(t, "sources", "--repos", repos, "--day", "2026-09-13", "--claude", "bench="+tr, "--unattributed")
-	wantExit(t, r3, 0)
-	wantContains(t, lineWith(r3.stdout, "SOURCES SOURCE label=claude:bench"), "files=1")
-	wantContains(t, lineWith(r3.stdout, "SOURCES SOURCE label=claude:bench"), "messages=0")
-	wantContains(t, lineWith(r3.stdout, "SOURCES SOURCE label=claude:bench"), "rows=0")
-	wantNotContains(t, r3.stdout, "SOURCES UNATTRIBUTED")
-	wantContains(t, lineWith(r3.stdout, "SOURCES OK"), "files=1")
-	wantContains(t, lineWith(r3.stdout, "SOURCES OK"), "messages=0")
-	wantContains(t, lineWith(r3.stdout, "SOURCES OK"), "rows=0")
-	wantContains(t, lineWith(r3.stdout, "SOURCES OK"), "unattributed=0")
-
-	// 4. Inspecting --all with --unattributed: all 4 messages, 4 rows (day/model/repo identities),
-	// and both unattributed stems reported across the sources.
-	rAll := invoke(t, "sources", "--repos", repos, "--all", "--claude", "bench="+tr, "--unattributed")
-	wantExit(t, rAll, 0)
-	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE label=claude:bench"), "files=1")
-	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE label=claude:bench"), "messages=4")
-	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE label=claude:bench"), "rows=4")
-	wantContains(t, rAll.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched1/b.go tokens=1")
-	wantContains(t, rAll.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched2/d.go tokens=1")
-	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "files=1")
-	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "messages=4")
-	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "rows=4")
-	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "unattributed=2")
-
-	// 5. Without --unattributed: day scope applies to messages and rows, unattributed is a dash
-	rPlain := invoke(t, "sources", "--repos", repos, "--day", "2026-09-11", "--claude", "bench="+tr)
-	wantExit(t, rPlain, 0)
-	wantContains(t, lineWith(rPlain.stdout, "SOURCES SOURCE label=claude:bench"), "messages=2")
-	wantContains(t, lineWith(rPlain.stdout, "SOURCES SOURCE label=claude:bench"), "rows=2")
-	wantContains(t, lineWith(rPlain.stdout, "SOURCES OK"), "unattributed=-")
 }

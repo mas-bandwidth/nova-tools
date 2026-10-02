@@ -8,57 +8,22 @@ package main
 // said so; the block did not).
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 )
 
-// outputGrammar is the fenced grammar block of docs/SPEC-TOKENS.md -- the one that carries
-// `TOKENS FOLD at=` -- keyed by the first two words of each line.
-func outputGrammar(t *testing.T) map[string]string {
-	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.False(t, err != nil, err)
-	raw, err := os.ReadFile(filepath.Join(root, "docs", "SPEC-TOKENS.md"))
-	require.False(t, err != nil, err)
-	var block, cur []string
-	in := false
-	for _, line := range strings.Split(string(raw), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			if in {
-				for _, l := range cur {
-					if strings.HasPrefix(l, "TOKENS FOLD at=") {
-						block = cur
-					}
-				}
-				cur = nil
-			}
-			in = !in
-			continue
-		}
-		if in {
-			cur = append(cur, line)
-		}
-	}
-	require.False(t, block == nil, "docs/SPEC-TOKENS.md has no OUTPUT GRAMMAR block carrying `TOKENS FOLD at=`; this test was reading the wrong thing and would have passed by checking nothing")
-	out := map[string]string{}
-	for _, l := range block {
-		f := strings.Fields(l)
-		if len(f) < 2 {
-			continue
-		}
-		out[f[0]+" "+strings.TrimSuffix(f[1], ":")] = l
-	}
-	return out
-}
-
-// grammarPairs splits the head of a line (everything before the free-text tail) into its
-// key=value pairs. A token with no `=` continues the value before it, because a rendered
-// value can carry a space inside quotes.
+// grammarPairs splits the head of a line (everything before the free-text tail, the first
+// ": ") into its key=value pairs. A token with no `=` continues the value before it,
+// because a rendered value can carry a space inside quotes.
 func grammarPairs(s string) map[string]string {
+	s, _, _ = strings.Cut(s, ": ")
 	out := map[string]string{}
 	key := ""
 	for _, tok := range strings.Fields(s) {
@@ -74,191 +39,135 @@ func grammarPairs(s string) map[string]string {
 	return out
 }
 
-// grammarEnum is the set of members a `<a|b|c>` value admits. A member in angle brackets --
-// `<zone>` in `<utc|mixed|<zone>>` -- is a PLACEHOLDER for a class of values, not a literal,
-// and comes back with its brackets so the matcher can check the class instead of the word:
-// the grammar used to spell that member `zone`, a word the tool has never printed, and the
-// zone name it does print was admitted by nothing. A one-letter member is a placeholder too
+// grammarAdmits reports whether spec is an enumeration, `<a|b|c>`, and whether it admits v.
+// A literal member matches exactly. A member in angle brackets -- `<zone>` in
+// `<utc|mixed|<zone>>` -- is a PLACEHOLDER for a class of values, and is checked by its
+// class: the grammar used to spell that member `zone`, a word the tool has never printed,
+// and the zone name it does print was admitted by nothing. `<zone>` is the zone an export
+// declares, as rule 17 and rule 13 accept it: non-empty, no whitespace, and not one of the
+// literal members beside it (`utc` spelled out is refused by rule 6); a placeholder this
+// test knows no class for admits anything. A one-letter member is a placeholder too
 // (`<all|d>`, `<n|->`), and this test knows no class for it, so such a template is not a set.
-func grammarEnum(spec string) ([]string, bool) {
+func grammarAdmits(spec, v string) (enum, ok bool) {
 	if !strings.HasPrefix(spec, "<") || !strings.HasSuffix(spec, ">") {
-		return nil, false
+		return false, false
 	}
 	alts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(spec, "<"), ">"), "|")
 	if len(alts) < 2 {
-		return nil, false
+		return false, false
 	}
 	for _, a := range alts {
-		if strings.HasPrefix(a, "<") && strings.HasSuffix(a, ">") && len(a) > 2 {
-			continue // a named placeholder, checked by grammarPlaceholder
-		}
-		if len(a) < 2 || strings.ContainsAny(a, "<>") {
-			return nil, false
+		placeholder := strings.HasPrefix(a, "<") && strings.HasSuffix(a, ">") && len(a) > 2
+		if !placeholder && (len(a) < 2 || strings.ContainsAny(a, "<>")) {
+			return false, false
 		}
 	}
-	return alts, true
-}
-
-// grammarAdmits reports whether an enumerated value is admitted: a literal member matches
-// exactly, a bracketed member by its class.
-func grammarAdmits(alts []string, v string) bool {
 	for _, a := range alts {
-		if strings.HasPrefix(a, "<") && strings.HasSuffix(a, ">") && len(a) > 2 {
-			if grammarPlaceholder(a[1:len(a)-1], v, alts) {
-				return true
-			}
-			continue
-		}
-		if v == a {
-			return true
+		if strings.HasPrefix(a, "<") {
+			ok = ok || a != "<zone>" || v != "" && !strings.ContainsAny(v, " \t") && !slices.Contains(alts, v)
+		} else {
+			ok = ok || v == a
 		}
 	}
-	return false
-}
-
-// grammarPlaceholder is the class each named placeholder stands for. `<zone>` is the zone
-// an export declares, as rule 17 and rule 13 accept it: non-empty, no whitespace, and not
-// one of the literal members standing beside it (`utc` spelled out is refused by rule 6).
-// A placeholder this test knows no class for admits anything, which is the old behaviour.
-func grammarPlaceholder(name, v string, alts []string) bool {
-	switch name {
-	case "zone":
-		if v == "" || strings.ContainsAny(v, " \t") {
-			return false
-		}
-		for _, a := range alts {
-			if v == a {
-				return false
-			}
-		}
-		return true
-	}
-	return true
-}
-
-func head(s string) string {
-	if i := strings.Index(s, ": "); i >= 0 {
-		return s[:i]
-	}
-	return s
-}
-
-// checkAgainstGrammar fails if the grammar has no line of this kind, does not name a key
-// the line prints, or admits a narrower value than the line carries.
-func checkAgainstGrammar(t *testing.T, grammar map[string]string, line string) {
-	t.Helper()
-	f := strings.Fields(head(line))
-	if len(f) < 2 {
-		return
-	}
-	kind := f[0] + " " + strings.TrimSuffix(f[1], ":")
-	tmpl, ok := grammar[kind]
-	if !ok {
-		assert.Failf(t, "output grammar lacks printed line", "the tool prints %q; the output grammar has no line for %s, so a consumer scanning the grammar cannot parse it", line, kind)
-		return
-	}
-	want := grammarPairs(head(tmpl))
-	for k, v := range grammarPairs(head(line)) {
-		spec, ok := want[k]
-		if !ok {
-			assert.Failf(t, "output grammar field missing", "%s prints %s=%s; the output grammar's %s line has no %s= field", kind, k, v, kind, k)
-			continue
-		}
-		if i := strings.Index(spec, "<"); i > 0 {
-			assert.False(t, !strings.HasPrefix(v, spec[:i]), "%s prints %s=%s; the output grammar admits only %s=%s", kind, k, v, k, spec)
-			continue
-		}
-		if alts, closed := grammarEnum(spec); closed {
-			assert.False(t, !grammarAdmits(alts, v), "%s prints %s=%s; the output grammar enumerates %s=%s", kind, k, v, k, spec)
-		}
-	}
-}
-
-// printedLines is every line of a run that starts with one of the tool's tokens.
-func printedLines(r result) []string {
-	var out []string
-	for _, s := range []string{r.stdout, r.stderr} {
-		for _, line := range strings.Split(s, "\n") {
-			switch strings.Fields(line + " x")[0] {
-			case "TOKENS", "SOURCES", "SUM", "CHECK", "REPORT":
-				out = append(out, line)
-			}
-		}
-	}
-	return out
+	return true, ok
 }
 
 func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 	t.Parallel()
 
-	grammar := outputGrammar(t)
+	// The fenced grammar block of docs/SPEC-TOKENS.md -- the one that carries
+	// `TOKENS FOLD at=` -- keyed by the first two words of each line.
+	var block, cur []string
+	in := false
+	for _, line := range strings.Split(testkit.ReadFile(t, filepath.Join("..", "..", "docs", "SPEC-TOKENS.md")), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			if in && strings.Contains("\n"+strings.Join(cur, "\n"), "\nTOKENS FOLD at=") {
+				block = cur
+			}
+			cur, in = nil, !in
+			continue
+		}
+		if in {
+			cur = append(cur, line)
+		}
+	}
+	require.NotNil(t, block, "docs/SPEC-TOKENS.md has no OUTPUT GRAMMAR block carrying `TOKENS FOLD at=`; this test was reading the wrong thing and would have passed by checking nothing")
+	grammar := map[string]string{}
+	for _, l := range block {
+		if f := strings.Fields(l); len(f) >= 2 {
+			grammar[f[0]+" "+strings.TrimSuffix(f[1], ":")] = l
+		}
+	}
 
+	b := newBench(t)
+	outs := func(name string) string { return testkit.Mkdir(t, filepath.Join(b.dir, name)) }
 	// A transcript with a stamp this tool cannot read: the UNPARSED line carries a
 	// `claude:` label, not a `bus:` one.
-	dir := t.TempDir()
-	out := mkdir(t, filepath.Join(dir, "out"))
-	tr := write(t, filepath.Join(dir, "a.jsonl"), strings.Join([]string{
+	tr := b.transcript("a.jsonl",
 		`{"type":"assistant","timestamp":"2026-09-11T10:00:00Z","message":{"id":"m1","model":"f","usage":{"input_tokens":7}},"cwd":"/x/schema"}`,
-		`{"type":"assistant","timestamp":"the eleventh","message":{"id":"m3","model":"f","usage":{"input_tokens":9}}}`,
-	}, "\n")+"\n")
-	runs := []result{invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--claude", "g="+tr)}
+		`{"type":"assistant","timestamp":"the eleventh","message":{"id":"m3","model":"f","usage":{"input_tokens":9}}}`)
+	runs := []testkit.Ran{novaTokens.Do(t, "fold", "--out", b.out, "--all", "--repos", b.repos, "--claude", "g="+tr)}
 
 	// A bus lane carrying a six-field and a seven-field line: day_basis=mixed.
-	dir2 := t.TempDir()
-	out2 := mkdir(t, filepath.Join(dir2, "out"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir2, "bus")), "emma")
-	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
-		"2026-09-11\temma\tutcmodel\tschema\tinput\t100",
-		"2026-09-11\temma\tzonemodel\tschema\tinput\t5\tday_basis=America/Los_Angeles",
-		"",
-	}, "\n"))
+	out2 := outs("out2")
+	bus := busDir(t, outs("bus"), "emma")
+	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate,
+		"2026-09-11\temma\tutcmodel\tschema\tinput\t100\n2026-09-11\temma\tzonemodel\tschema\tinput\t5\tday_basis=America/Los_Angeles\n")
 	runs = append(runs,
-		invoke(t, "fold", "--out", out2, "--all", "--repos", reposFile(t, dir2), "--bus", bus),
-		invoke(t, "sources", "--all", "--repos", reposFile(t, dir2), "--bus", bus),
-		invoke(t, "sum", "--out", out2, "--month", "2026-09"),
-		invoke(t, "check", "--out", out2))
+		novaTokens.Do(t, "fold", "--out", out2, "--all", "--repos", b.repos, "--bus", bus),
+		novaTokens.Do(t, "sources", "--all", "--repos", b.repos, "--bus", bus),
+		novaTokens.Do(t, "sum", "--out", out2, "--month", "2026-09"),
+		novaTokens.Do(t, "check", "--out", out2))
 
 	// A provider export of per-day totals in its own zone (rule 17): the SOURCE line's
 	// `day_basis=` is the zone NAME, `America/Los_Angeles`, never the word `zone`. The
 	// grammar said `<utc|zone|mixed>` and the tool has never printed `zone`.
-	dir3 := t.TempDir()
-	out3 := mkdir(t, filepath.Join(dir3, "out"))
-	xai := write(t, filepath.Join(dir3, "xai.csv"), strings.Join([]string{
-		"# timezone: America/Los_Angeles",
-		"date,model,input,output,reasoning",
-		"2026-09-11,grok-4,9912340,301122,55",
-		"",
-	}, "\n"))
+	out3 := outs("out3")
+	xai := testkit.WriteFile(t, filepath.Join(b.dir, "xai.csv"), "# timezone: America/Los_Angeles\ndate,model,input,output,reasoning\n2026-09-11,grok-4,9912340,301122,55\n")
 	runs = append(runs,
-		invoke(t, "fold", "--out", out3, "--all", "--repos", reposFile(t, dir3), "--provider", "xai:johnny="+xai),
-		invoke(t, "sources", "--all", "--repos", reposFile(t, dir3), "--provider", "xai:johnny="+xai),
-		invoke(t, "sum", "--out", out3, "--month", "2026-09"),
-		invoke(t, "check", "--out", out3))
+		novaTokens.Do(t, "fold", "--out", out3, "--all", "--repos", b.repos, "--provider", "xai:johnny="+xai),
+		novaTokens.Do(t, "sources", "--all", "--repos", b.repos, "--provider", "xai:johnny="+xai),
+		novaTokens.Do(t, "sum", "--out", out3, "--month", "2026-09"),
+		novaTokens.Do(t, "check", "--out", out3))
 
 	// A partial-source fold: produces a TOKENS PARTIAL line when a row was blended across
 	// declared and undeclared sources (#268).
-	dir4 := t.TempDir()
-	out4 := mkdir(t, filepath.Join(dir4, "out"))
-	repos4 := reposFile(t, dir4)
-	poolA := mkdir(t, filepath.Join(dir4, "poolA"))
-	poolB := mkdir(t, filepath.Join(dir4, "poolB"))
+	out4, poolA, poolB := outs("out4"), outs("poolA"), outs("poolB")
 	swarmUsage(t, poolA, "j1", swarmRow("j1", "1", "-", "claude-x", "serialize", "2026-09-14T01:00:00Z", "410", "100", "0", "0", "-"))
 	swarmUsage(t, poolB, "j2", swarmRow("j2", "1", "-", "claude-x", "serialize", "2026-09-14T02:00:00Z", "2000", "420", "0", "0", "-"))
-	invoke(t, "fold", "--out", out4, "--day", "2026-09-14", "--repos", repos4, "--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB)
-	runs = append(runs,
-		invoke(t, "fold", "--out", out4, "--day", "2026-09-14", "--repos", repos4, "--swarm", "freddy="+poolB))
+	novaTokens.Do(t, "fold", "--out", out4, "--day", "2026-09-14", "--repos", b.repos, "--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB)
+	runs = append(runs, novaTokens.Do(t, "fold", "--out", out4, "--day", "2026-09-14", "--repos", b.repos, "--swarm", "freddy="+poolB))
 
-	sawPartial := false
-	n := 0
+	// Each printed line: the grammar has a line of its kind, names every key it prints, and
+	// admits no narrower value than it carries.
+	sawPartial, n := false, 0
 	for _, r := range runs {
-		for _, line := range printedLines(r) {
+		for _, line := range strings.Split(r.Stdout+"\n"+r.Stderr, "\n") {
+			f := strings.Fields(strings.SplitN(line, ": ", 2)[0])
+			if len(f) < 2 || !strings.Contains(" TOKENS SOURCES SUM CHECK REPORT ", " "+f[0]+" ") {
+				continue
+			}
 			n++
-			checkAgainstGrammar(t, grammar, line)
-			if strings.HasPrefix(line, "TOKENS PARTIAL ") {
-				sawPartial = true
+			sawPartial = sawPartial || strings.HasPrefix(line, "TOKENS PARTIAL ")
+			kind := f[0] + " " + strings.TrimSuffix(f[1], ":")
+			tmpl, ok := grammar[kind]
+			if !assert.True(t, ok, "the tool prints %q; the output grammar has no line for %s, so a consumer scanning the grammar cannot parse it", line, kind) {
+				continue
+			}
+			want := grammarPairs(tmpl)
+			for k, v := range grammarPairs(line) {
+				spec, ok := want[k]
+				if !assert.True(t, ok, "%s prints %s=%s; the output grammar's %s line has no %s= field", kind, k, v, kind, k) {
+					continue
+				}
+				if i := strings.Index(spec, "<"); i > 0 {
+					assert.True(t, strings.HasPrefix(v, spec[:i]), "%s prints %s=%s; the output grammar admits only %s=%s", kind, k, v, k, spec)
+				} else if enum, admitted := grammarAdmits(spec, v); enum {
+					assert.True(t, admitted, "%s prints %s=%s; the output grammar enumerates %s=%s", kind, k, v, k, spec)
+				}
 			}
 		}
 	}
-	require.False(t, !sawPartial, "no TOKENS PARTIAL line was checked against the grammar")
-	require.False(t, n < 10, "%d printed lines checked against the grammar; the fixtures printed nothing and this test would have passed by checking nothing", n)
+	require.True(t, sawPartial, "no TOKENS PARTIAL line was checked against the grammar")
+	require.GreaterOrEqual(t, n, 10, "printed lines checked against the grammar; the fixtures printed nothing and this test would have passed by checking nothing")
 }

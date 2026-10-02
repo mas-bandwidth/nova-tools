@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -70,13 +71,13 @@ func texts(bad []sandbox.Refusal) []string {
 // --write the misspelled flag was meant to be, reported missing) are not printed.
 func TestProbeStopsAtAnUnknownFlag(t *testing.T) {
 	t.Parallel()
-	r := streams(func(args []string, stdout, stderr io.Writer) int { return probeVerb(args, stdout, stderr, nil) }).Do(t, "--bogus").Exit(2)
+	r := testkit.Streams(func(args []string, stdout, stderr io.Writer) int { return probeVerb(args, stdout, stderr, nil) }).Do(t, "--bogus").Exit(2)
 	assert.Equal(t, "PROBE REFUSED reason=check: unknown flag --bogus; run: nova-sandbox help probe\n", r.Stderr)
 }
 
 // `check` words an unknown flag the same way as every other verb.
 func TestCheckUnknownFlagIsTheSameLine(t *testing.T) {
 	t.Parallel()
-	r := streams(checkVerb).Do(t, "--wrte", "./x").Exit(2)
+	r := testkit.Streams(checkVerb).Do(t, "--wrte", "./x").Exit(2)
 	assert.Equal(t, "CHECK REFUSED reason=bad_flag: unknown flag --wrte; run: nova-sandbox help check\n", r.Stderr)
 }

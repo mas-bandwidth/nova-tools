@@ -3,9 +3,11 @@
 package main
 
 import (
-	"github.com/stretchr/testify/require"
 	"os"
+	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // makeUnreadable makes an EXISTING file refuse os.Open, and returns the release that
@@ -19,18 +21,8 @@ func makeUnreadable(t *testing.T, path string) (release func()) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-000 file, so a refused read cannot be produced here")
 	}
-	{
-		err := os.Chmod(path, 0o000)
-		require.False(t, err != nil, err)
-	}
-	done := false
-	release = func() {
-		if done {
-			return
-		}
-		done = true
-		_ = os.Chmod(path, 0o644)
-	}
+	require.NoError(t, os.Chmod(path, 0o000))
+	release = sync.OnceFunc(func() { _ = os.Chmod(path, 0o644) })
 	t.Cleanup(release)
 	// PROVE it, here as on windows: a fixture that cannot be observed to work is the bug
 	// this helper exists to catch.

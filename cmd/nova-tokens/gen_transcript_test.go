@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -22,9 +21,8 @@ func TestGenerateTranscript(t *testing.T) {
 		"check --out ./out",
 		"sum --out ./out --month 2026-09",
 	} {
-		var out, errb bytes.Buffer
-		exit := run(strings.Fields(line), &out, &errb, firstRunStamp)
-		fmt.Fprintf(&doc, "$ nova-tokens %s\n%s%s[exit %d]\n\n", line, out.String(), errb.String(), exit)
+		r := at(firstRunStamp).Do(t, strings.Fields(line)...)
+		fmt.Fprintf(&doc, "$ nova-tokens %s\n%s%s[exit %d]\n\n", line, r.Stdout, r.Stderr, r.Code)
 	}
 	t.Log("\n" + doc.String())
 }

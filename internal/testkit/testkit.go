@@ -1,7 +1,7 @@
 // Package testkit holds the test rigs that were copied from package to package:
 // running a tool's entry point in process with both streams captured and
-// checked (verb.go), writing and reading the files a test sets up (here and
-// tree.go), a recording wait for code a synctest bubble cannot hold
+// checked (verb.go) and its version line checked (tool.go), writing and
+// reading the files a test sets up (here and tree.go), a recording wait for code a synctest bubble cannot hold
 // (waits.go) and a skip by platform (skip.go). Each helper fails the test
 // through testify's require, so a caller's setup is one line. Time in a test
 // is testing/synctest's first, a clockwork.FakeClock where code does real
@@ -74,10 +74,20 @@ func (m Main) NoStdin() func(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+// Streams is an entry point that reads no stdin (a verb, or a tool whose run
+// takes only the two streams) as a Main; the stdin it is handed goes unread.
+// A run that also takes a clock or deps closes over it:
+//
+//	var tokens = testkit.Streams(func(a []string, o, e io.Writer) int { return run(a, o, e, stamp) })
+func Streams(f func(args []string, stdout, stderr io.Writer) int) Main {
+	return func(args []string, _ io.Reader, stdout, stderr io.Writer) int { return f(args, stdout, stderr) }
+}
+
 // WriteFile writes body to path with mode 0o644, or with mode when one is
 // given (0o600 for a fixture standing in for a secret), making the parent
-// directories first, and fails the test on any error naming the path.
-func WriteFile(t testing.TB, path, body string, mode ...os.FileMode) {
+// directories first, fails the test on any error naming the path, and
+// returns the path, so a fixture is named where it is made.
+func WriteFile(t testing.TB, path, body string, mode ...os.FileMode) string {
 	t.Helper()
 	perm := os.FileMode(0o644)
 	if len(mode) > 0 {
@@ -85,6 +95,15 @@ func WriteFile(t testing.TB, path, body string, mode ...os.FileMode) {
 	}
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755), "write %s", path)
 	require.NoError(t, os.WriteFile(path, []byte(body), perm), "write %s", path)
+	return path
+}
+
+// Mkdir makes the directory path and its parents, failing the test on any
+// error naming the path, and returns the path.
+func Mkdir(t testing.TB, path string) string {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(path, 0o755), "mkdir %s", path)
+	return path
 }
 
 // ReadFile returns the file's contents, failing the test when it cannot be read.

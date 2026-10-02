@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox/darwincheck"
@@ -460,15 +459,11 @@ func TestCheckAndVersion(t *testing.T) {
 	// `version` is SPEC.md's Conventions line, the four tokens every binary prints, then this
 	// tool's two extras. Its old shape, `SANDBOX VERSION tool=... version=...`, no reader of
 	// a version line could take apart (#1297).
-	r = j.run(t, "version").Exit(0)
-	f, ok := buildinfo.Parse(r.Stdout)
-	require.True(t, ok, "version printed a line internal/buildinfo.Parse refuses: %s", r)
-	require.Equal(t, "nova-sandbox", f.Tool, r)
-	require.NotEmpty(t, f.Version, r)
+	f := withEnv(run, j.env()).Version(t, "nova-sandbox")
 	for _, x := range [][2]string{{"backend", sandbox.Backend}, {"platform", runtime.GOOS}} {
 		v, have := f.Extra(x[0])
-		require.True(t, have, "version does not carry %s=: %s", x[0], r)
-		require.Equal(t, x[1], v, r)
+		require.True(t, have, "version does not carry %s=: %s", x[0], f.Extras)
+		require.Equal(t, x[1], v, f.Extras)
 	}
 }
 

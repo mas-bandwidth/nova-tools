@@ -1,10 +1,14 @@
 package main
 
+// harness_test.go is what this package's tests share: the tool in process at a fixed
+// clock as a testkit.Main, so every run is one testkit.Ran (r.Code, r.Stdout, r.Stderr)
+// checked by testify or the Ran's own methods; the bench a fold runs on; the fixture
+// builders for the four source kinds (a Claude Code transcript line, OpenCode's database
+// through a fake sqlite3, a swarm usage row, a bus note); and lineWith, the one search
+// every day file and stream is read through.
+
 import (
-	"bytes"
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +19,9 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // usage is the help banner: what `nova-tokens help` prints.
@@ -24,40 +31,92 @@ var usage = tokensTool(foldStamp).Banner()
 // reading of the machine the test happens to run on.
 var foldStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)
 
-type result struct {
-	exit   int
-	stdout string
-	stderr string
+// novaTokens is the tool in process at foldStamp; at is the tool at another instant.
+var novaTokens = at(foldStamp)
+
+func at(now time.Time) testkit.Main {
+	return testkit.Streams(func(args []string, stdout, stderr io.Writer) int { return run(args, stdout, stderr, now) })
 }
 
-func (r result) all() string { return r.stdout + r.stderr }
-
-// invoke runs the binary in process, with the clock injected.
-func invoke(t *testing.T, args ...string) result {
-	t.Helper()
-	return invokeAt(t, foldStamp, args...)
+// bench is one fold's ground under its own t.TempDir(): the output directory, a
+// transcripts directory and the rules file naming schema and serialize. It holds the test
+// it was made in, so a subtest makes its own.
+type bench struct {
+	t                   *testing.T
+	dir, out, tr, repos string
 }
 
-func invokeAt(t *testing.T, now time.Time, args ...string) result {
+func newBench(t *testing.T) bench {
 	t.Helper()
-	var out, errb bytes.Buffer
-	exit := run(args, &out, &errb, now)
-	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
+	dir := t.TempDir()
+	return bench{t: t, dir: dir, out: testkit.Mkdir(t, filepath.Join(dir, "out")), tr: testkit.Mkdir(t, filepath.Join(dir, "tr")), repos: reposFile(t, dir)}
 }
 
-func wantExit(t *testing.T, r result, want int) {
-	t.Helper()
-	assert.False(t, r.exit != want, "exit %d, want %d\nstdout:\n%s\nstderr:\n%s", r.exit, want, r.stdout, r.stderr)
+// fold is `nova-tokens fold --out <out> --day 2026-09-11 --repos <repos>` and then args.
+func (b bench) fold(args ...string) testkit.Ran {
+	b.t.Helper()
+	return novaTokens.Do(b.t, append([]string{"fold", "--out", b.out, "--day", "2026-09-11", "--repos", b.repos}, args...)...)
 }
 
-func wantContains(t *testing.T, got, want string) {
-	t.Helper()
-	assert.False(t, !strings.Contains(got, want), "output does not contain %q:\n%s", want, got)
+// transcript writes lines, one per line, as the file name under tr, and returns its path.
+func (b bench) transcript(name string, lines ...string) string {
+	b.t.Helper()
+	return testkit.WriteFile(b.t, filepath.Join(b.tr, name), strings.Join(lines, "\n")+"\n")
 }
 
-func wantNotContains(t *testing.T, got, want string) {
+// day is the day file the fold wrote for 2026-09-11.
+func (b bench) day() string {
+	b.t.Helper()
+	return testkit.ReadFile(b.t, filepath.Join(b.out, "2026-09-11.tsv"))
+}
+
+// holds asserts that s contains every one of subs; lacks, that it contains none.
+func holds(t *testing.T, s string, subs ...string) {
 	t.Helper()
-	assert.False(t, strings.Contains(got, want), "output contains %q and should not:\n%s", want, got)
+	for _, sub := range subs {
+		assert.Contains(t, s, sub)
+	}
+}
+
+func lacks(t *testing.T, s string, subs ...string) {
+	t.Helper()
+	for _, sub := range subs {
+		assert.NotContains(t, s, sub)
+	}
+}
+
+// linesHold fails unless, for each key, a line of text holds it and the first such line holds
+// every want; a want written "!x" is one the line must not hold. msg names the run.
+func linesHold(t *testing.T, text string, lines map[string][]string, msg any) {
+	t.Helper()
+	for key, wants := range lines {
+		line := lineWith(text, key)
+		require.NotEmpty(t, line, "no line holds %q: %v", key, msg)
+		for _, w := range wants {
+			if not, ok := strings.CutPrefix(w, "!"); ok {
+				assert.NotContains(t, line, not, msg)
+			} else {
+				assert.Contains(t, line, w, msg)
+			}
+		}
+	}
+}
+
+// exampleBench is a copy of testdata/example-bench (what the help's setup line makes) in
+// its own t.TempDir(), with the out directory the examples write to; it returns the root.
+// A first run writes, so the fixture is copied rather than run in place.
+func exampleBench(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	require.NoError(t, os.CopyFS(root, os.DirFS(filepath.Join("testdata", "example-bench"))))
+	testkit.Mkdir(t, filepath.Join(root, "out"))
+	return root
+}
+
+// pasted is the arguments of a help line as a reader pastes it in root: the tool's name
+// cut, and every ./ path made root's.
+func pasted(root, line string) []string {
+	return strings.Fields(strings.ReplaceAll(strings.TrimPrefix(line, "nova-tokens "), "./", root+"/"))
 }
 
 // lineWith returns the first line of s holding every one of the substrings.
@@ -77,39 +136,10 @@ func lineWith(s string, subs ...string) string {
 	return ""
 }
 
-func write(t *testing.T, path, content string) string {
-	t.Helper()
-	{
-		err := os.MkdirAll(filepath.Dir(path), 0o755)
-		require.False(t, err != nil, err)
-	}
-	{
-		err := os.WriteFile(path, []byte(content), 0o644)
-		require.False(t, err != nil, err)
-	}
-	return path
-}
-
-func read(t *testing.T, path string) string {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	require.False(t, err != nil, err)
-	return string(raw)
-}
-
-func mkdir(t *testing.T, path string) string {
-	t.Helper()
-	{
-		err := os.MkdirAll(path, 0o755)
-		require.False(t, err != nil, err)
-	}
-	return path
-}
-
 // reposFile writes a rules file naming schema and serialize.
 func reposFile(t *testing.T, dir string) string {
 	t.Helper()
-	return write(t, filepath.Join(dir, "repos.tsv"), strings.Join([]string{
+	return testkit.WriteFile(t, filepath.Join(dir, "repos.tsv"), strings.Join([]string{
 		"# name<TAB>regexp, in priority order",
 		"schema\t(^|/)schema($|/)",
 		"serialize\t(^|/)serialize($|/)",
@@ -164,10 +194,7 @@ func msg(id, stamp, model string, usage map[string]int, paths ...string) string 
 // would be a fixture only this code could read.
 func fakeSqlite3(t *testing.T, sessions, messages, parts string) (logPath string) {
 	t.Helper()
-	answers := mkdir(t, filepath.Join(t.TempDir(), "answers"))
-	write(t, filepath.Join(answers, "sessions"), sessions)
-	write(t, filepath.Join(answers, "messages"), messages)
-	write(t, filepath.Join(answers, "parts"), parts)
+	answers := testkit.Tree(t, filepath.Join(t.TempDir(), "answers"), map[string]string{"sessions": sessions, "messages": messages, "parts": parts})
 	fakeSqlite3OnPath(t, answers)
 	return filepath.Join(answers, fakeArgvLog)
 }
@@ -196,16 +223,13 @@ var fakeModes = map[string]func() int{}
 func fakeSqlite3OnPath(t *testing.T, mode string) {
 	t.Helper()
 	self, err := os.Executable()
-	require.False(t, err != nil, err)
-	bin := mkdir(t, filepath.Join(t.TempDir(), "bin"))
+	require.NoError(t, err)
+	bin := testkit.Mkdir(t, filepath.Join(t.TempDir(), "bin"))
 	name := "sqlite3"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	{
-		err := testbin.Place(self, filepath.Join(bin, name))
-		require.False(t, err != nil, err)
-	}
+	require.NoError(t, testbin.Place(self, filepath.Join(bin, name)))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv(fakeSqlite3Env, mode)
 }
@@ -341,17 +365,17 @@ func swarmRowCost(job, attempt, from, provider, model, repo, ended string, in, o
 
 func swarmUsage(t *testing.T, pool, job string, row string) {
 	t.Helper()
-	write(t, filepath.Join(pool, "usage", job+".tsv"), strings.Join(swarmHeader, "\t")+"\n"+row+"\n")
+	testkit.WriteFile(t, filepath.Join(pool, "usage", job+".tsv"), strings.Join(swarmHeader, "\t")+"\n"+row+"\n")
 }
 
-// busLane writes a roster and returns the bus directory.
+// busDir writes a roster and returns the bus directory.
 func busDir(t *testing.T, dir string, names ...string) string {
 	t.Helper()
 	var ps []string
 	for _, n := range names {
 		ps = append(ps, fmt.Sprintf(`{"name":%q,"lane":"from-%s","git_email":"%s@example.com"}`, strings.Title(n), n, n))
 	}
-	write(t, filepath.Join(dir, "participants.json"), "{\"participants\":["+strings.Join(ps, ",")+"]}\n")
+	testkit.WriteFile(t, filepath.Join(dir, "participants.json"), "{\"participants\":["+strings.Join(ps, ",")+"]}\n")
 	return dir
 }
 
@@ -359,7 +383,7 @@ func busDir(t *testing.T, dir string, names ...string) string {
 func busNote(t *testing.T, bus, lane, file, id, subject, date, body string) string {
 	t.Helper()
 	header := fmt.Sprintf("From: %s\nTo: Rowan\nDate: %s\nId: %s\nSubject: %s\n\n", strings.Title(lane), date, id, subject)
-	write(t, filepath.Join(bus, "from-"+lane, file), header+body)
+	testkit.WriteFile(t, filepath.Join(bus, "from-"+lane, file), header+body)
 	return id
 }
 
