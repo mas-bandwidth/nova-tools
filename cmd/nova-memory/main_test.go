@@ -891,9 +891,9 @@ func TestEvalRejectsNaNFloorBeforeReads(t *testing.T) {
 	assert.Equalf(t, "", stdout, "expected empty stdout on refusal, got %q", stdout)
 }
 
-// TestStatusGrammar drives each verb through OK, REFUSED and (where supported) FAILED
-// and asserts the first status word after the printed verb token together with the exit
-// code. It uses the package run entry so the grammar is pinned at source.
+// TestStatusGrammar drives each verb to one OK, one REFUSED and, where the verb
+// prints it, one FAILED, and asserts that word after the verb token with the exit
+// code (docs/STANDARD.md section 2). Boot has no FAILED line: a bad pin is a refusal.
 func TestStatusGrammar(t *testing.T) {
 	t.Parallel()
 
@@ -918,6 +918,7 @@ func TestStatusGrammar(t *testing.T) {
 		{"eval ok", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.1", exampleGold}, "OK", 0},
 		{"eval refused", []string{"eval"}, "REFUSED", 2},
 		{"eval failed", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.999", exampleGold}, "FAILED", 1},
+		{"boot ok", []string{"boot"}, "OK", 0}, // The runner writes the pin; boot prints BOOT OK.
 		{"boot refused", []string{"boot"}, "REFUSED", 2},
 		{"quickstart ok", []string{"quickstart", "--root", corpus}, "OK", 0},
 		{"quickstart refused", []string{"quickstart"}, "REFUSED", 2},
@@ -930,6 +931,11 @@ func TestStatusGrammar(t *testing.T) {
 			args := tc.args
 			if tc.name == "check ok" {
 				stdin = "The lantern glazing is cleaned with two cloths.\n"
+			}
+			if tc.name == "boot ok" {
+				pin := filepath.Join(t.TempDir(), "pin")
+				require.NoError(t, os.WriteFile(pin, []byte("notes/lantern.md\n"), 0o644))
+				args = []string{"boot", "--root", corpus, "--pin", pin}
 			}
 			if tc.name == "eval failed" {
 				// use a gold with deliberately wrong expectations so recall low
