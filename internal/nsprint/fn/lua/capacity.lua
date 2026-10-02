@@ -54,8 +54,8 @@ end
 -- registered. It is the same rule Go's capacity.Evaluate applies; running it
 -- here makes the guard and the write atomic.
 --
--- Benches are not in the sum: one ceiling per machine, and friends and
--- benches share it. A bench's share is checked against the ceiling on its own
+-- Benches are not in the sum: one ceiling per machine bounds the friends'
+-- sum and each bench's share. A bench's share is checked against the ceiling on its own
 -- (capacity_desired below), and at run time its slots are the ceiling
 -- less the slots of the friends awake on its machine, read at every deal
 -- and work (TM.bench_slots in 02_card_move.lua), so the split follows who
