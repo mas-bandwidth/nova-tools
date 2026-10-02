@@ -68,6 +68,10 @@ nova_pg_password_key: NOVA_PG_CONFIG_PASSWORD
 nova_release_out: "{{ lookup('env', 'HOME') }}/nova-bench/release-build"
 nova_release_gocache: "{{ lookup('env', 'HOME') }}/nova-bench/release-gocache"
 nova_release_gate_args: ["--cli", "{{ nova_source }}/docs/CLI.md", "--receipts", "{{ nova_dogfood_receipts }}"]
+# nova_release_build_args is appended to the build after the gate's: empty for
+# a whole build; `nova-update release cycle` passes --incremental and
+# --gate report --reason <why> (docs/SPEC-RELEASE.md rule 13).
+nova_release_build_args: []
 
 # The TLC record machines (the inventory's tla group: the machine rows with
 # tla=true) hold the pinned TLC jar at nova_tla_jar, owned by the login. The

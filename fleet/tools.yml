@@ -9,10 +9,14 @@
 # The build is one `nova-update release build` on the machine running the play,
 # every platform in one call; each machine installs its platform's directory
 # with that release's own `nova-update release install`, which verifies the
-# SHA256SUMS whole and skips a tool already answering the version, and every
-# tool nova-tools once shipped and ships no more (fleet/retired-tools.txt, by
-# exact name) is removed from the bin directory; --check lists each as
-# WOULD-REMOVE. A platform already built at the version is not built again.
+# SHA256SUMS whole and skips a tool already answering the version or holding
+# its bytes, and every tool nova-tools once shipped and ships no more
+# (fleet/retired-tools.txt, by exact name) is removed from the bin directory;
+# --check lists each as WOULD-REMOVE. A platform already built at the version is not built again.
+# A new version directory on a machine is seeded from the installed build's,
+# on the machine, so the copy sends only the binaries whose checksums differ;
+# `nova-update release cycle` runs this play --check, then for real, with
+# the build --incremental (docs/SPEC-RELEASE.md rule 13).
 # The build and the install each remove, last, the old version directories of
 # their own root (the build's out, the machine's release directory), keeping
 # the version just made, the one installed before it and the 3 newest besides;
@@ -52,7 +56,7 @@
     - name: build the missing platforms in one call, niced, with its own Go cache
       ansible.builtin.command:
         argv: "{{ ['nice', '-n', '19', 'nova-update', 'release', 'build', '--version', nova_version, '--out', nova_release_out,
-                   '--source', nova_source, '--platform', tools_missing | join(',')] + nova_release_gate_args }}"
+                   '--source', nova_source, '--platform', tools_missing | join(',')] + nova_release_gate_args + nova_release_build_args }}"
       environment: { GOMAXPROCS: "4", GOCACHE: "{{ nova_release_gocache }}" }
       vars:
         tools_missing: "{{ tools_built.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
@@ -67,6 +71,10 @@
           built={{ tools_built.results | selectattr('stat.exists') | map(attribute='item') | join(',') or 'none' }}
           missing={{ tools_built.results | rejectattr('stat.exists') | map(attribute='item') | join(',') or 'none' }}
 
+    - name: what the build rebuilt and reused, and what its gate said
+      ansible.builtin.debug: { msg: "{{ tools_build.stdout_lines | select('match', '^RELEASE BUILD ') | list }}" }
+      when: tools_build is not skipped
+
     - name: the tools nova-tools no longer ships (fleet/retired-tools.txt)
       ansible.builtin.set_fact:
         tools_retired: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/retired-tools.txt').splitlines() | reject('match', '^\\s*(#|$)') | map('trim') | list }}"
@@ -76,6 +84,7 @@
   gather_facts: false
   vars:
     tools_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}"
+    tools_was_version: "{{ tools_was.content | default('') | b64decode | trim }}"
   tasks:
     - name: the build installed now (the build fact)
       ansible.builtin.slurp: { src: "{{ nova_build_file }}" }
@@ -94,11 +103,55 @@
     - name: the release directory
       ansible.builtin.file: { path: "{{ tools_stage }}", state: directory, mode: "0755" }
 
-    - name: this platform's binaries and SHA256SUMS, copied when they differ
+    # The stage (tla/BenchStage.tla). A new version's directory starts as a
+    # copy of the installed build's, made on the machine and not verified;
+    # then one listing measures the sha256 of every file in it, and the files
+    # sent are exactly those whose bytes there differ from the release's
+    # SHA256SUMS (absent, changed by the build, or corrupt on the machine),
+    # with the checksum files. So every file in the stage holds the release's
+    # bytes before anything in it runs (ReusedByteIdentical), whether it was
+    # seeded, begun by an earlier run or empty, and `release install` checks
+    # the whole set again before its first rename.
+    - name: the installed build's directory (what the seed copies)
+      ansible.builtin.stat: { path: "{{ nova_release_dir }}/{{ tools_was_version }}/{{ nova_platform }}/SHA256SUMS", get_checksum: false }
+      register: tools_was_dir
+      when: tools_was_version not in ['', nova_version]
+
+    - name: this version's checksum file, if its directory is already begun
+      ansible.builtin.stat: { path: "{{ tools_stage }}/SHA256SUMS", get_checksum: false }
+      register: tools_begun
+
+    - name: the stage seeded from the installed build's directory, on the machine
       ansible.builtin.copy:
-        src: "{{ nova_release_out }}/{{ nova_version }}/{{ nova_platform }}/"
+        src: "{{ nova_release_dir }}/{{ tools_was_version }}/{{ nova_platform }}/"
         dest: "{{ tools_stage }}/"
+        remote_src: true
+        mode: preserve
+      when: not ansible_check_mode and (tools_was_dir.stat | default({})).exists | default(false) and not tools_begun.stat.exists
+
+    - name: the stage's files and their sha256 (one listing)
+      ansible.builtin.find: { paths: "{{ tools_stage }}", get_checksum: true, checksum_algorithm: sha256, hidden: true }
+      register: tools_staged
+
+    - name: the files to send, whose bytes in the stage differ from the release's SHA256SUMS, and the checksum files
+      ansible.builtin.set_fact:
+        tools_send: >-
+          {{ tools_release_sums | difference(tools_staged_sums) | map('split', '  ') | map('last') | list
+             + ['SHA256SUMS'] + (['SUMS.digest'] if (tools_built_dir ~ '/SUMS.digest') is file else []) }}
+      vars:
+        tools_built_dir: "{{ nova_release_out }}/{{ nova_version }}/{{ nova_platform }}"
+        tools_release_sums: "{{ lookup('ansible.builtin.file', tools_built_dir ~ '/SHA256SUMS').splitlines() }}"
+        tools_staged_sums: >-
+          {{ tools_staged.files | map(attribute='checksum') | zip(tools_staged.files | map(attribute='path') | map('basename'))
+             | map('join', '  ') | list }}
+      when: not ansible_check_mode
+
+    - name: send them
+      ansible.builtin.copy:
+        src: "{{ nova_release_out }}/{{ nova_version }}/{{ nova_platform }}/{{ item }}"
+        dest: "{{ tools_stage }}/{{ item }}"
         mode: "0755"
+      loop: "{{ tools_send | default([]) }}"
       when: not ansible_check_mode
 
     - name: install them into the bin directory (verified whole, a tool at the version skipped)
@@ -108,14 +161,15 @@
       register: tools_install
       changed_when: "tools_install.stdout is search('RELEASE INSTALLED .*tools=[1-9]')"
 
-    - name: the retired tools in the bin directory, by exact name
-      ansible.builtin.stat: { path: "{{ nova_bin_dir }}/{{ item }}" }
-      loop: "{{ hostvars['localhost'].tools_retired }}"
+    - name: the retired tools in the bin directory, by exact name (one listing)
+      ansible.builtin.find: { paths: "{{ nova_bin_dir }}", patterns: "{{ hostvars['localhost'].tools_retired }}", file_type: any, hidden: true }
       register: tools_present
 
     - name: the ones present
       ansible.builtin.set_fact:
-        tools_retire: "{{ tools_present.results | selectattr('stat.exists') | map(attribute='stat.path') | list }}"
+        tools_retire: >-
+          {{ tools_present.files | map(attribute='path') | select('in', hostvars['localhost'].tools_retired
+             | map('regex_replace', '^', nova_bin_dir ~ '/') | list) | list }}
 
     - name: what --check would remove
       ansible.builtin.debug: { msg: "WOULD-REMOVE {{ item }} on {{ inventory_hostname }}" }
@@ -139,8 +193,8 @@
       ansible.builtin.debug:
         msg: >-
           TOOLS host={{ inventory_hostname }} platform={{ nova_platform }} version={{ nova_version }}
-          was={{ (tools_was.content | default('') | b64decode | trim) or 'none' }} removed={{ tools_retire | length }}
-          {{ (('UP-TO-DATE' if nova_version in (tools_now.stdout | default('')).split() else 'WOULD-INSTALL') if ansible_check_mode
+          was={{ tools_was_version or 'none' }} removed={{ tools_retire | length }}
+          {{ (('UP-TO-DATE' if nova_version in (tools_now.stdout | default('')).split() or tools_was_version == nova_version else 'WOULD-INSTALL') if ansible_check_mode
               else (('UP-TO-DATE ' if tools_install.stdout is search('RELEASE INSTALLED .*tools=0 ') else 'INSTALLED ') ~ tools_install.stdout)) }}
 
 - name: the build's schema and function library on the store

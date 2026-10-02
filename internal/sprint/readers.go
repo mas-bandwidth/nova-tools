@@ -252,7 +252,7 @@ func levelReads(s *Snapshot, p *Plan) {
 					avoid = append(avoid, rd)
 				}
 			}
-			to = rr.levelTo(up, maps.Clone(held), held, room, avoid)
+			to = rr.levelTo(up, maps.Clone(held), held, room, long, avoid)
 		}
 		if to == "" {
 			break

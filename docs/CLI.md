@@ -287,6 +287,7 @@ SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM match="dead as a pr
 ## nova-fuse
 
 ```
+nova-fuse version    print this build identity (--version also accepted)
 nova-fuse init --box <path>                              make an empty box where none is; never replaces one
 nova-fuse status --box <path> [--max <n>]                what is blown, and since when (reports; never gate on it)
 nova-fuse check --box <path> [surface]                   may I read? -- act only on exit 0
@@ -922,6 +923,151 @@ named binary's `version` by hand to see what it does, then rebuild it or remove 
 Removing the copy under `~/.local/bin` is tolerated: with no local copy there is nothing to
 shadow with, and the check passes on the PATH binary alone. No flag skips the check.
 
+## nova-sprint
+
+nova-sprint: a sprint of work cards, dealt to a fleet of workers and read before they land
+
+One store — a Redis, or a twin file — holds one sprint as four tables (work,
+merge, readers, fleet) and the view `sprint`. A card is one unit of work in a
+stream; each tick deals ready cards to members (machines with a width), sends
+finished work to readers, queues what they pass to merge by stream, and puts
+every judgment it cannot make in the coordinator's inbox. The contract is
+[SPEC-SPRINT.md](SPEC-SPRINT.md).
+
+### First run
+
+No Redis, no git: `--redis mem:<file>` (or `NOVA_SPRINT_REDIS=mem:<file>`) runs
+every verb against an in-memory twin of the store kept in a file — for learning
+and tests, not for a fleet — one command at a time. These lines are one card's
+whole flow, with the store and actor set on the first line; the two stand-ins at
+the end (`finish` with no `--head`, then `merge`) record a landing with no push,
+so nothing here needs a forge:
+
+```sh
+export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
+nova-sprint init --readers reader-a,reader-b --members m1
+nova-sprint add --stream s1 --count 1
+nova-sprint start
+nova-sprint tick
+nova-sprint tick
+nova-sprint take --as m1 --epoch 0
+nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done
+nova-sprint tick
+nova-sprint read --as reader-a --begin --epoch 0
+nova-sprint read --as reader-b --begin --epoch 0
+nova-sprint read --as reader-a --ok --epoch 0
+nova-sprint read --as reader-b --ok --epoch 0
+nova-sprint tick
+nova-sprint merge --stream s1 --batch 1
+```
+
+A twin beats every member and reader at every verb, so `m1` is up after the
+first tick; nothing runs between commands, so the tick is yours (`nova-sprint
+tick`), and `run`, `inbox --wait` and `where --watch` are refused. Each verb
+prints what moved (`MOVED`), what did not and why (`REFUSED`, on stderr), its
+summary line, and the sprint's line (`landed/all percent -> ETA ...`). The card
+moves ready -> working (`take`), working -> done (`finish`), is asked of both
+readers and passed (`read --ok`), and lands on `merge`. The transcript, line for
+line, is [TESTS.md](TESTS.md#nova-sprint), run by
+`cmd/nova-sprint/firstrun_test.go`.
+
+### Verbs
+
+```
+nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]
+nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>]
+nova-sprint quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]
+nova-sprint release <sentinel>... --reason <text> [--answers <note>]
+nova-sprint resolve [<id>...] [--stream <s>] [--limit <n>]
+nova-sprint start
+nova-sprint stop
+nova-sprint run
+nova-sprint tick
+nova-sprint goal set <name> [--file <path>] [--to file:<path>]
+nova-sprint goal show [<name>]
+nova-sprint goal drop <name>
+nova-sprint take --as <member> [<card>@<gen>...] [--epoch <n>] [--limit <n>]
+nova-sprint finish --as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]
+nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]
+nova-sprint queue --as <reader|member> | --stream <s>
+nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]
+nova-sprint accept (<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]
+nova-sprint rework (<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]
+nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]
+nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
+nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
+nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>]
+nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
+nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]
+nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
+nova-sprint fleet beat <member> [--load <percent>]
+nova-sprint fleet up <member> [--width <n>]
+nova-sprint fleet down <member>
+nova-sprint fleet sync [--check] [--pg <dsn>]
+nova-sprint fleet level
+nova-sprint friend sync [--pg <dsn>]
+nova-sprint friend beat <friend>
+nova-sprint friend down <friend>
+nova-sprint friend up <friend>
+nova-sprint reader add <reader>...
+nova-sprint reader away <reader>...
+nova-sprint reader up <reader>...
+nova-sprint reader remove <reader>...
+nova-sprint stream remove <stream>...
+nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
+nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
+nova-sprint ack <note>... --reason <text>
+nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
+nova-sprint card <id>
+nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
+nova-sprint check
+nova-sprint repair
+nova-sprint where [--watch] [--every <duration>]
+nova-sprint routes
+nova-sprint stats
+nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
+nova-sprint clear --confirm sprint
+nova-sprint teardown --confirm sprint
+```
+
+Every store verb takes `--redis <addr>` (else `NOVA_SPRINT_REDIS`, then
+`NOVA_REDIS_ADDR`), `--actor <name>` (else `NOVA_SPRINT_ACTOR`; no default — a
+verb that writes wants one), `--op <id>` (the same id again returns the recorded
+result), `--json` and `--max <n>` (listed items; 0 is all). The coordinator's
+verbs are the coordinator's alone (the first `init` names it: `--coordinator`,
+else the actor); `take`, `finish`, `read`, `fleet beat` and `friend beat` are the
+workers', whose actor is the member, reader or friend named; `merge` and `ci`
+are reports; `tick` and `run` are the machine's; the reads need no actor. A set
+is ids, a stream, a column, `--limit n`, or an inbox group: `--group <id>`, the
+id `inbox` prints, with `--expect <n>` the size it printed, which refuses a group
+that has changed. `nova-sprint help <verb>` (or `<verb> -h`) prints one verb's
+usage, flags and exit codes; `nova-sprint help <group>` (fleet, friend, reader,
+goal, stream) one group's.
+
+### Exit codes
+
+| exit | meaning |
+|---|---|
+| 0 | done |
+| 1 | failed or incomplete (including refused) |
+| 2 | usage, or a store that did not answer (`fleet sync --check`: there is drift) |
+| 3 | `fleet sync` or `friend sync` could not read the config, or `run`: its binary was replaced (its supervisor starts the new one) |
+
+### What it does not prove
+
+The sprint is the plumbing, not the verdict. A card lands when its worker
+reports it done and its readers pass it, and the coordinator `accept`s — the
+green means the flow completed, never that the work is correct: `finish
+--report done` takes the worker's word, `read --ok` takes the readers', and the
+coordinator's accept takes those. A twin is not a fleet: nothing beats or ticks
+between commands, so timing, the `run` loop, `inbox --wait` and liveness go
+unproven, and `finish` with no `--head` (then `merge`) records a landing with no
+push. The work table's cost column is, per stream, the sum of its landed cards'
+total cost in US dollars — each card's actual cost where one was priced, else its
+predicted one, `-` when none was — so a total is a ledger of recorded spend, not
+a proof of it.
+
 ## nova-sandbox
 
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS
@@ -1337,7 +1483,7 @@ or a larger `--budget`; never remove a lock file to break a live lock.
 ### The release verb
 
 `nova-update release` is the last mile: a green commit becomes a version, a set of stamped binaries,
-and the same binaries answering for themselves on every bench in the fleet. Five verbs, each of which
+and the same binaries answering for themselves on every bench in the fleet. Six verbs, each of which
 can refuse. The gates are in [docs/SPEC-RELEASE.md](SPEC-RELEASE.md) and the verbs in
 [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
@@ -1384,6 +1530,14 @@ to `SUMS.digest` beside it. An unsupported `goos-goarch` refuses before the firs
 half-made directory is left behind. One `RELEASE BUILT` line per platform, then one
 `RELEASE BUILD OK … platforms=<a,b,c> sums=<sha256,…> pruned=<n> prune-failed=<n>`.
 
+`--incremental` compiles only the tools whose packages, or the packages they import, changed since
+the newest clean build recorded under `--out` (`<out>/<version>/<goos-goarch>.build`, written by every
+build beside its platform directory), and copies every other tool from that build, verified; it says
+`RELEASE BUILD INCREMENTAL … base=<v> rebuilt=<tools> reused=<n>`, or `RELEASE BUILD WHOLE …
+reason=<why>` when it cannot trust a base. `--gate report --reason <why>` runs the dogfood gate,
+prints its open edges and builds (`dogfood=report`); `cut` has no such flag. See
+[SPEC-RELEASE.md](SPEC-RELEASE.md) rule 13.
+
 Retention, after a successful `build` (in `--out`) and a successful `install` (in `--from`): a
 directory directly under that root whose name is a version (`release.ValidVersion`) is removed unless
 it is the version just built or installed, the version the machine had installed before it (`build`:
@@ -1396,7 +1550,8 @@ on stderr and counted in `prune-failed=`; it never fails the build or the instal
 nova-update release install --from ./release --version v0.17.0 --bin ~/.local/bin --retire ~/go/bin
 ```
 
-`install` verifies the checksums, puts the binaries in place by rename, skips what is already current
+`install` verifies the checksums, puts the binaries in place by rename, skips what is already current (answering the version, or
+holding the same bytes)
 and clears this release's own files out of `--retire`. Run it **on the coordinator before adopting**:
 `adopt` fans out with the nova-update this host is holding, and a coordinator behind the release
 refuses and says so.
@@ -1438,6 +1593,19 @@ nova-update release pull --version v0.17.0 --out ./release --changelog ./CHANGEL
 `pull` withdraws a release: the artifacts go here and on every machine, by name, from that release's
 own `SHA256SUMS` — never recursively — and the tag stays while the changelog section is marked with
 the date and `--reason`. `--dry-run` says what would be deleted and deletes nothing.
+
+```sh
+nova-update release cycle --version v1.1.0-dev.abcdef12 --source . --out ~/nova-bench/release-build --inventory ./nova-inventory --benches bench-a,bench-b --reason "the member fix, PR 5092" --ansible "$(command -v ansible-playbook)"
+```
+
+`cycle` is the fix-land-install cycle from the coordinator in one command: `fleet/tools.yml` with
+`--check`, then for real, limited to `--benches` and `localhost`, the build `--incremental --gate
+report --reason <why>`. Each machine's new version directory is seeded from its installed build's
+and only the files whose `SHA256SUMS` line differs are sent; `install` leaves a binary that already
+holds the same bytes in place, so only the loops of the tools that changed restart. One `CYCLE
+BENCH host=<h> … version=<v> state=<s> installed=<n>` line per bench, then `CYCLE OK … check=<d>
+apply=<d> total=<d>`; both plays' output is kept under `<out>/<version>/`. `--dry-run` is the check
+alone. It runs in the inventory's environment, as the play does.
 
 ## nova-version
 

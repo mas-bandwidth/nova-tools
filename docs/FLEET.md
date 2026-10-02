@@ -73,14 +73,37 @@ Both loops name the identity every child commits under, `--identity
 <owner>,<name>,<email>`, in their argv, so no file is written into a pool by
 hand; a loop without it reads the pool's `identity.tsv`.
 
+The coordinator's seat can run one more loop record: `nova-sprint inbox --wait
+--push <dir>`, which writes each new judgment (and each note addressed to the
+coordinator) once into the coordinator's own inbox directory, so the coordinator
+is woken by a file and polls nothing. It is a client of the server like every
+other loop (`NOVA_SPRINT_SERVER` names the loopback address `run --listen`
+prints; the unit's environment names the store, which a verb sent to the server
+never opens), and the files it wrote are its cursor, so a restart by its
+supervisor pushes nothing twice:
+
+```
+nova-config loop add inbox-push --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/<coordinator>-working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true --as ada
+```
+
 The friends are nova-config's friend rows: `nova-sprint friend sync --actor ada`
 copies their names into the sprint's friends table, and each friend says it is
 there by beating from its own machinery, beside its harness, every few seconds
 (the same window and misses as a member's beat; `where` shows it `up`, `down`,
-or `held` while `nova-sprint friend down <friend>` holds it). On any harness the
-wrapper that starts the friend adds one line before it, with
-`NOVA_SPRINT_SERVER` (the run loop's loopback address) or `NOVA_SPRINT_REDIS`
-set for the friend:
+or `held` while `nova-sprint friend down <friend>` holds it). The same sync
+reads each friend's working directory, `<root>/<friend>-working` (`--root
+<dir>`, else `HOME`, so it runs on the machine that holds them), and writes her
+job cards, which `where` counts as the fleet's columns but load: `ready`,
+`working`, `width` (1), `done`, `ok%`, `status`. A job is the inbox/outbox
+standard: the coordinator delivers `inbox/<job>/` (with its `BRIEF.md`) and
+only the coordinator reaches out; the friend makes `outbox/<job>/` when she
+starts and writes `outbox/<job>/REPORT.md` when done, with a `Verdict:` line
+(any word but HOLD, FAIL, FAILED or BROKEN is ok; no line is ok). A brief to a
+friend says so. The sync reads and never writes a friend's directory; run it
+after a job is delivered or collected, or every minute from the coordinator's
+loop. On any harness the wrapper that starts the friend adds one line before
+it, with `NOVA_SPRINT_SERVER` (the run loop's loopback address) or
+`NOVA_SPRINT_REDIS` set for the friend:
 
 ```
 while :; do nova-sprint friend beat friend-a >/dev/null 2>&1; sleep 5; done &
@@ -147,6 +170,7 @@ an explicit localhost; it is never derived from the Redis store machine.
 | `nova_tla_sha256_file` | `tla/tla2tools.sha256` of the checkout the play runs from | the SHA-256 the jar must have, read on the machine running the play |
 | `nova_tla_java_candidates` | `~/sdk/bin/java`, `/usr/bin/java`, `/usr/local/bin/java` | the java a record machine runs TLC with: the first that exists |
 | `nova_release_gate_args` | `--cli <nova_source>/docs/CLI.md --receipts <nova_dogfood_receipts>` | the build's gate flags; a waiver replaces them whole with `--no-dogfood-gate --reason <why>`, and then no receipts are named |
+| `nova_release_build_args` | `[]` | flags appended to the build after the gate's; `nova-update release cycle` passes `--incremental --gate report --reason <why>` |
 
 An existing schema has neither endpoint before migration 0014 adds their
 columns. Bootstrap once with `nova-config migrate --pg
@@ -166,9 +190,15 @@ password reaches the tool's environment and no file, line or log. That the
 
 1. Every machine's platform: its beat's `nova_os`-`nova_arch`, else the gathered facts.
 2. On the machine running the play, one `nice -n 19 nova-update release build` (`GOMAXPROCS=4`, its own Go cache) for every platform that has no `SHA256SUMS` under `nova_release_out/<version>/` yet; a platform already built is not built again. `--check` prints `WOULD-BUILD ... built=<platforms> missing=<platforms>`. After a successful build it removes the old version directories in `nova_release_out`: it keeps the version just built, the version of the `nova-update` running it, and the 3 newest of the rest (`pruned=<n>` on its `RELEASE BUILD OK` line). The Go cache (`nova_release_gocache`) is the build's own `GOCACHE`, trimmed by Go itself of entries unused for five days, and is not pruned here.
-3. On every machine: the platform's directory copied to `~/nova-bench/release/<version>/<platform>/` (only files that differ), then that release's own `nova-update release install`, which verifies the `SHA256SUMS` whole and skips a tool that already answers the version, then, last, removes the old version directories under `~/nova-bench/release/`: it keeps the version installed, every version the bin directory's binaries answered before it (so a bad build can be put back), and the 3 newest of the rest; only names that parse as a version are touched, and a removal that fails is counted (`prune-failed=<n>` on the `RELEASE INSTALLED` line) and never fails the install; the tools named in `fleet/retired-tools.txt` (tools nova-tools once shipped and ships no more, by exact name) are removed from the bin directory, and nothing else is: a binary the list does not name (a credential helper, a loop wrapper of the fleet's own, a `.prev` copy) is never touched, whatever its name; the build fact (`~/.config/nova/build`) holds the version. `--check` prints `TOOLS host=<m> ... UP-TO-DATE` or `WOULD-INSTALL` from the installed `nova-update version`, and `WOULD-REMOVE <path>` for each retired tool present.
+3. On every machine: the platform's directory copied to `~/nova-bench/release/<version>/<platform>/`: when the machine has the installed build's directory and this one is not begun, it is seeded from that directory on the machine (unverified); then one listing measures the sha256 of every file in the stage and only the files whose bytes differ from the release's `SHA256SUMS` are sent, so a missing, rebuilt or corrupt file is sent and an intact reused one is not (`tla/BenchStage.tla`). Then that release's own `nova-update release install`, which verifies the `SHA256SUMS` whole and skips a tool that already answers the version or already holds its bytes, then, last, removes the old version directories under `~/nova-bench/release/`: it keeps the version installed, every version the bin directory's binaries answered before it (so a bad build can be put back), and the 3 newest of the rest; only names that parse as a version are touched, and a removal that fails is counted (`prune-failed=<n>` on the `RELEASE INSTALLED` line) and never fails the install; the tools named in `fleet/retired-tools.txt` (tools nova-tools once shipped and ships no more, by exact name) are removed from the bin directory, and nothing else is: a binary the list does not name (a credential helper, a loop wrapper of the fleet's own, a `.prev` copy) is never touched, whatever its name; the build fact (`~/.config/nova/build`) holds the version. `--check` prints `TOOLS host=<m> ... UP-TO-DATE` or `WOULD-INSTALL` from the installed `nova-update version` or the build fact, and `WOULD-REMOVE <path>` for each retired tool present.
 4. On `store_deployer`: `nova-config migrate` (the schema a kind the build adds needs: run before any `nova-config loop add`), then `nova-redis fn load` as the deploy user; `--check` runs `nova-redis fn check` instead.
 5. On `tla`, the record machines (rows with `tla=true`; tagged `tla`, so `--tags tla` runs this step alone): the machine is Linux; `nova_tla_dir` exists and is the login's, and the jar at `nova_tla_jar` is the login's (sudo only when either is not); the jar's SHA-256 is the first word of `nova_tla_sha256_file`; java (the first of `nova_tla_java_candidates`) runs. It downloads and copies nothing: a jar that is missing or differs refuses the host with `TLA REFUSED host=<m> jar=<path> want=<sha> got=<sha|none>` and the `scp` that places it; a host that passes prints `TLA OK host=<m> jar=<path> sha256=<sha> java=<path> version=<v>`, and `--check` says the same. `tlacheck run --bench` runs the records there (tla/README.md, "The record machines").
+
+A machinery install during a sprint is one command from the coordinator,
+`nova-update release cycle` (docs/CLI.md, SPEC-RELEASE rule 13): this play
+with `--check`, then for real, limited to the benches named and `localhost`,
+the build `--incremental --gate report --reason <why>`, one `CYCLE BENCH`
+line per machine.
 
 The role that runs migrate must own every table in schema config. The play
 runs it as the role `nova_pg_dsn` names (the config role), so a schema whose
