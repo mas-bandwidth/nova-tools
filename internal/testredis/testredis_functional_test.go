@@ -94,7 +94,13 @@ func fakeServer(t *testing.T, out, err string, code int) string {
 	}
 	bin := filepath.Join(t.TempDir(), "redis-server")
 	body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' %q\nprintf '%%s\\n' %q >&2\nexit %d\n", out, err, code)
-	require.NoError(t, os.WriteFile(bin, []byte(body), 0o755))
+	// No fork while the file is open for writing: a child another parallel
+	// test forks in that window holds the descriptor until it execs, and the
+	// exec of this file fails with "text file busy" (seen on spacegame).
+	syscall.ForkLock.RLock()
+	werr := os.WriteFile(bin, []byte(body), 0o755)
+	syscall.ForkLock.RUnlock()
+	require.NoError(t, werr)
 	return bin
 }
 
