@@ -73,6 +73,19 @@ Both loops name the identity every child commits under, `--identity
 <owner>,<name>,<email>`, in their argv, so no file is written into a pool by
 hand; a loop without it reads the pool's `identity.tsv`.
 
+The coordinator's seat can run one more loop record: `nova-sprint inbox --wait
+--push <dir>`, which writes each new judgment (and each note addressed to the
+coordinator) once into the coordinator's own inbox directory, so the coordinator
+is woken by a file and polls nothing. It is a client of the server like every
+other loop (`NOVA_SPRINT_SERVER` names the loopback address `run --listen`
+prints; the unit's environment names the store, which a verb sent to the server
+never opens), and the files it wrote are its cursor, so a restart by its
+supervisor pushes nothing twice:
+
+```
+nova-config loop add inbox-push --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/<coordinator>-working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true --as ada
+```
+
 The friends are nova-config's friend rows: `nova-sprint friend sync --actor ada`
 copies their names into the sprint's friends table, and each friend says it is
 there by beating from its own machinery, beside its harness, every few seconds
