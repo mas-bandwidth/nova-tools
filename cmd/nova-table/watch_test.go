@@ -326,7 +326,7 @@ func TestAViewsFrameShowsItsStateAloneAsTheSummaryLine(t *testing.T) {
 		require.NoError(t, err, "%v", err)
 		_, frame, _ := strings.Cut(got, "\n\n") // the clock line first
 		require.True(t, strings.HasPrefix(frame, c.want), "state %q: frame\n%s\nwant it to open with %q", c.state, frame, c.want)
-		require.False(t, c.state != "" && strings.Contains(frame, "ETA"), "state %q: the frame still counts:\n%s", c.state, frame)
+		require.True(t, c.state == "" || !strings.Contains(frame, "ETA"), "state %q: the frame still counts:\n%s", c.state, frame)
 	}
 }
 
