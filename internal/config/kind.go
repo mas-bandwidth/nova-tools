@@ -342,7 +342,8 @@ var Kinds = []*Kind{
 const SayWhy = "say why: --note '<the measured reason>'"
 
 // noteField is the note column of a kind an operator decides about: free
-// text, one line, empty by default, cleared with --note ”, cut by the list.
+// text, one line, empty by default, cleared by giving an empty --note, and cut
+// by the list.
 func noteField(what string) Field {
 	return Field{Name: "note", Type: TypeText, Cut: true, Help: what + "; one line, empty (the default) when none; --note '' clears it"}
 }
