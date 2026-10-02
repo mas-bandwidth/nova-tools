@@ -1,3 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
 # ceiling: 1
-internal/bus:assert 729 bare assertions to convert to testify
+internal/bus:assert 727 bare assertions to convert to testify

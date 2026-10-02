@@ -208,7 +208,7 @@ func TestSearch(t *testing.T) {
 		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
 	}
 	for _, want := range []string{
-		"SEARCH OK query=", "hits=3", "channels=bm25",
+		"SEARCH OK hits=", "hits=3", "channels=bm25",
 		"SEARCH CAL score=", "probe=unrelated-control",
 		"SEARCH HIT rank=1", "class=notes", "name=tide-tables", "type=reference", "notes/tides.md:",
 		"SEARCH NOTE lexical only",
@@ -332,34 +332,24 @@ func TestReceiptsNameTheChannelTheScoreCameFrom(t *testing.T) {
 	}
 }
 
-// The query is argv: the one slot on a SEARCH or EVAL line that a caller
-// controls outright. Printed with %q it kept one line and still let
-// `quokka class=poison` put a second class= field on the OK line, so a grep
-// for class=poison matched a class the corpus never held. A field is one
-// token, whatever wrote it.
+// Free text sits after the field boundary so query text cannot forge metadata.
 func TestACallersQueryCannotPoseAsAField(t *testing.T) {
 	t.Parallel()
-
-	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3",
-		"quokka class=poison name=fake")
+	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3", "quokka class=poison name=fake")
 	if exit != 0 {
-		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
+		t.Fatalf("exit=%d stderr=%s", exit, stderr)
 	}
-	if strings.Contains(stdout, "class=poison") || strings.Contains(stdout, "name=fake") {
-		t.Errorf("the caller's query posed as a field:\n%s", stdout)
+	line := strings.Split(stdout, "\n")[0]
+	head, tail, found := strings.Cut(line, ": ")
+	if !found || strings.Contains(head, "class=poison") || strings.Contains(head, "name=fake") {
+		t.Fatalf("query forged metadata: %s", line)
 	}
-	if !strings.Contains(stdout, `SEARCH OK query=quokka\x20class\x3dpoison\x20name\x3dfake `) {
-		t.Errorf("the query must print as one token with its spaces and = escaped, got:\n%s", stdout)
+	if tail != `query="quokka class=poison name=fake"` {
+		t.Fatalf("query is not readable quoted free text: %s", tail)
 	}
-	// Every field on the OK line is one token holding exactly one "=", the tool's own.
-	for _, line := range strings.Split(strings.TrimRight(stdout, "\n"), "\n") {
-		if !strings.HasPrefix(line, "SEARCH OK ") {
-			continue
-		}
-		for _, tok := range strings.Fields(line)[2:] {
-			if strings.Count(tok, "=") != 1 {
-				t.Errorf("token %q on %q is not one key=value field", tok, line)
-			}
+	for _, tok := range strings.Fields(head)[2:] {
+		if strings.Count(tok, "=") != 1 {
+			t.Errorf("invalid field %q", tok)
 		}
 	}
 }
@@ -1017,7 +1007,7 @@ func TestNoCorpusOrCallerTextCanForgeALine(t *testing.T) {
 			t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
 		}
 		noForgedLine(t, forged, stdout, stderr)
-		if !strings.Contains(stdout, `name=x\x20lockdown\x3dclear type=t\x20u root=`+root+`: notes/zz\x0a`+forged+`.md:1 `) {
+		if !strings.Contains(stdout, `name=x\x20lockdown\x3dclear type=t\x20u root=`+root+`: notes/zz\x0a`+forged+`.md:6 `) {
 			t.Errorf("stdout = %q, want the frontmatter as one token each, the root named, and the file name escaped", stdout)
 		}
 	})

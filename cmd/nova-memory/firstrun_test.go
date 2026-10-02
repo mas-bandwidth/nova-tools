@@ -703,10 +703,10 @@ func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("help failed: %d", exit)
 	}
-	// All thirteen flags supported by nova-memory subcommands.
+	// All flags supported by nova-memory subcommands.
 	flags := []string{
 		"root", "channels", "k", "exclude", "floor", "links",
-		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft", "pin",
+		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft", "pin", "json",
 	}
 	for _, f := range flags {
 		target := "  --" + f + " "
@@ -728,7 +728,7 @@ func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("quickstart with dash-leading word failed: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "$ nova-memory search ") || !strings.Contains(stdout, "SEARCH OK query=-glazing") {
+	if !strings.Contains(stdout, "$ nova-memory search ") || !strings.Contains(stdout, `query="-glazing"`) {
 		t.Errorf("quickstart did not complete search step with dash-leading word:\n%s", stdout)
 	}
 }

@@ -25,17 +25,8 @@ type verbData struct {
 	CamelVerb string
 }
 
-// Verb writes a new CLI verb skeleton into root.
-func Verb(root, tool, verb string) ([]string, error) {
-	outs, err := VerbFiles(root, tool, verb)
-	if err != nil {
-		return nil, err
-	}
-	return Write(root, outs)
-}
-
 // VerbFiles renders a new CLI verb skeleton for root without writing it: what
-// Verb writes, and what Check walks for a dry run.
+// Write lays down, and what Check walks for a dry run.
 func VerbFiles(root, tool, verb string) ([]Planned, error) {
 	if !verbNameRe.MatchString(tool) {
 		return nil, fmt.Errorf("tool name %q must start with a lowercase letter and contain only 1-32 lowercase letters, digits, '_' or '-'", tool)

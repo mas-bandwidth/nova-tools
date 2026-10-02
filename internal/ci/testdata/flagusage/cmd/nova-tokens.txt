@@ -1,11 +1,2 @@
 # flag-usage: flags registered with no description; each row's count only falls
-# ceiling: 9
-cmd/nova-tokens/ledger.go:cmdLedger 6 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-tokens/main.go:*sourceFlags.declare 8 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-tokens/main.go:cmdCheck 5 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-tokens/main.go:cmdFold 5 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-tokens/main.go:cmdReport 10 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-tokens/main.go:cmdSources 4 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-tokens/main.go:cmdSum 3 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-tokens/profiles.go:cmdProfiles 1 declared before the rule (tool ledger X7); the tool's author describes each flag
-cmd/nova-tokens/session.go:cmdSession 3 declared before the rule (tool ledger X7); the tool's author describes each flag
+# ceiling: 0

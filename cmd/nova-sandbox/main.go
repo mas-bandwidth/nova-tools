@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -386,11 +387,32 @@ func parseVerb(verb string, args []string) flags {
 			f.max, f.maxSet = n, true
 		default:
 			text, took := unknownArg(args, i, verb)
-			f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command", Text: text})
+			reason := "no_command"
+			if verb == "" && strings.HasPrefix(text, "unknown flag ") {
+				// the bare form names the mistake: the flag, the flags there are, the nearest
+				reason, text = "bad_flag", bareFlagText(text)
+			}
+			f.bad = append(f.bad, sandbox.Refusal{Reason: reason, Text: text})
 			i += took
 		}
 	}
 	return f
+}
+
+// bareFlags is every flag parseVerb's table takes, in its order: what an
+// unknown flag on the bare form is answered with.
+var bareFlags = []string{"--read", "--read-noexec", "--write", "--cwd", "--tmp", "--name", "--acl", "--secret", "--gpu",
+	"--net-deny", "--net-listen", "--json", "--net-allow", "--max"}
+
+// bareFlagText is unknownArg's `unknown flag --x; run: ...` with the flags
+// the bare form takes and the nearest of them between the two.
+func bareFlagText(text string) string {
+	head, run, _ := strings.Cut(text, "; run: ")
+	near := verbflag.Nearest(strings.TrimPrefix(head, "unknown flag "), bareFlags)
+	if near != "" {
+		near = "; did you mean " + near + "?"
+	}
+	return head + "; the flags are " + verbflag.List(bareFlags) + near + "; run: " + run
 }
 
 // refuseAll prints one SANDBOX REFUSED line per independent problem — rule 16 asks for

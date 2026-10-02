@@ -69,6 +69,75 @@ func TestWhatTheHelpLicensesIsNotFound(t *testing.T) {
 	}
 }
 
+// A rule document with ANY finding carries its banner, a STANDING one as much as an INSTALLATION
+// one: the banner says what a finding there is for, whichever class found it. Both renderings.
+func TestRuleDocBannerCoversEveryClass(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, body string }{
+		{"standing only", "I am bad at estimating time.\n"},
+		{"installation only", "I have no associative recall to drag anything back later.\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := write(t, t.TempDir(), "POLICY.md", tc.body)
+			exit, stdout, _ := runSelfTalk(t, "--rule-doc", "POLICY.md", f)
+			assert.Equal(t, 1, exit)
+			assert.Contains(t, stdout, "SELFTALK RULEDOC "+f+": "+selftalk.RuleDocumentBanner)
+
+			exit, stdout, _ = runSelfTalk(t, "--json", "--rule-doc", "POLICY.md", f)
+			assert.Equal(t, 1, exit)
+			var got struct {
+				Items []struct {
+					Kind   string
+					Fields map[string]any
+				}
+			}
+			require.NoError(t, json.Unmarshal([]byte(stdout), &got), stdout)
+			require.NotEmpty(t, got.Items)
+			assert.Equal(t, "ruledoc", got.Items[0].Kind)
+			assert.Equal(t, f, got.Items[0].Fields["file"])
+		})
+	}
+}
+
+// Every flag a verb registers is named on that verb's usage line in the banner, so the usage a
+// reader meets first and the flags the verb takes cannot disagree. The flags are read from each
+// verb's own -h, which lists what its flag set defines.
+func TestEveryVerbsUsageLineNamesItsFlags(t *testing.T) {
+	t.Parallel()
+
+	usageLine := func(prefix string) string {
+		for _, l := range strings.Split(usage, "\n") {
+			if l = strings.TrimSpace(l); strings.HasPrefix(l, prefix) {
+				return l
+			}
+		}
+		return ""
+	}
+	for verb, prefix := range map[string]string{
+		"scan":    "nova-self-talk [--", // the scan's flags stand on the plain usage line
+		"shapes":  "nova-self-talk shapes ",
+		"example": "nova-self-talk example ",
+		"version": "nova-self-talk version ",
+	} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+			line := usageLine(prefix)
+			require.NotEmpty(t, line, "the banner has no usage line for %s", verb)
+			exit, help, _ := runSelfTalk(t, verb, "-h")
+			require.Equal(t, 0, exit)
+			_, flags, _ := strings.Cut(help, "flags:\n")
+			for _, l := range strings.Split(flags, "\n") {
+				if name, ok := strings.CutPrefix(l, "  --"); ok {
+					name, _, _ = strings.Cut(name, " ")
+					assert.Contains(t, line, "[--"+name, "%s registers --%s and its usage line does not name it: %s", verb, name, line)
+				}
+			}
+		})
+	}
+}
+
 // `shapes` prints the detector table row for row (ledger T2), from the same rows the scan walks.
 func TestShapesPrintsTheDetectorTable(t *testing.T) {
 	t.Parallel()

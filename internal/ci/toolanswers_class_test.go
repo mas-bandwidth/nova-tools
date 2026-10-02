@@ -41,8 +41,9 @@ var toolAnswersRemedy = map[string]string{
 	answerVerb: "an unknown verb is refused at exit 2 in one line naming the tool's verbs, as `<TOOL> REFUSED: unknown verb \"x\"; " +
 		"the verbs are ...; run: <tool> help` (internal/tool's Run does it)",
 	answerFlag: "an unknown flag is refused naming the verb's flags (and the nearest), never the flag package's " +
-		"`flag provided but not defined` line (internal/tool does it; a tool not on it prints tool.FlagRefusal)",
-	answerGroup: "`<tool> <group> -h` lists the group's verbs on stdout at exit 0 (a two-word Verb.Name on internal/tool)",
+		"`flag provided but not defined` line (internal/tool does it; a tool not on it prints verbflag.Explain)",
+	answerGroup: "`<tool> <group> -h` names the group's verbs on stdout at exit 0, as `usage: <tool> <group> <a|b> [flags]` (a two-word " +
+		"Verb.Name on internal/tool; verbflag.Print reads the group from the banner's usage lines)",
 	answerDry: "a verb's -h says `effect: inspection|local write|delivery`, and a verb that writes takes --dry-run that writes " +
 		"nothing (Verb.Effect and Verb.DryRun with Call.DryRun on internal/tool)",
 }
@@ -114,6 +115,37 @@ func unknownFlagAnswers(code int, said string, flags []string) string {
 		return ""
 	}
 	return fmt.Sprintf("an unknown flag is answered naming none of the verb's flags (%s): %q", strings.Join(flags, ", "), firstLine(said))
+}
+
+// groupHelpAnswers is "" when a group's -h is help (exit 0, on stdout, nothing
+// on stderr) that names every verb of the group (members are its verbs' full
+// names), as the group form `usage: <tool> <group> <a|b> [flags]` does.
+func groupHelpAnswers(code int, stdout, stderr string, members []string) string {
+	if code != 0 || strings.TrimSpace(stdout) == "" || stderr != "" {
+		return fmt.Sprintf("exits %d with %q on stdout and %q on stderr", code, firstLine(stdout), firstLine(stderr))
+	}
+	var missing []string
+	for _, m := range members {
+		w := strings.Fields(m)
+		if !regexp.MustCompile(`(^|[^a-z0-9-])` + regexp.QuoteMeta(w[len(w)-1]) + `($|[^a-z0-9-])`).MatchString(stdout) {
+			missing = append(missing, m)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Sprintf("its help does not name %s: %q", strings.Join(missing, ", "), firstLine(stdout))
+	}
+	return ""
+}
+
+// groupMembers is the verbs of a group: the verbs whose first word it is.
+func groupMembers(group string, verbs []string) []string {
+	var out []string
+	for _, v := range verbs {
+		if w := strings.Fields(v); len(w) > 1 && w[0] == group {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // helpFlagRe reads a flag line of a verb's -h: `  --name <type>  text`.
@@ -240,6 +272,11 @@ func TestToolAnswersJudges(t *testing.T) {
 		{"inspection", dryRunAnswers("flags:\n  --json  x\neffect: inspection: reads, writes nothing\n"), ""},
 		{"a write with no dry run", dryRunAnswers("flags:\n  --json  x\neffect: local write: writes files on this machine\n"), "it writes (effect: local write"},
 		{"no effect", dryRunAnswers("usage: nova-bus send [flags]\nflags:\n  --as <string>  who\n"), "states no effect"},
+		{"group form", groupHelpAnswers(0, "usage: nova-redis fn <load|ls> [flags]\nexit codes: 0\n", "", []string{"fn load", "fn ls"}), ""},
+		{"group refused", groupHelpAnswers(2, "", "FN REFUSED: no subverb", []string{"fn load"}), "exits 2"},
+		{"group help on stderr", groupHelpAnswers(0, "usage: x fn <load>\n", "warning\n", []string{"fn load"}), "exits 0"},
+		{"group help naming a verb short", groupHelpAnswers(0, "usage: nova-redis fn [flags]\n  nova-redis fn loader\n", "", []string{"fn load", "fn ls"}),
+			"does not name fn load, fn ls"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -252,4 +289,5 @@ func TestToolAnswersJudges(t *testing.T) {
 	}
 	assert.Equal(t, []string{"dry-run", "json", "store"}, helpFlags("usage: nova-x put [flags]\nfrom `nova-x help`:\n  nova-x put --store <dir>\nflags:\n  --dry-run  p\n  --json  j\n  -h  help\n  --store <string>  s\n"))
 	assert.Equal(t, []string{"fn", "github"}, verbGroups([]string{"open", "fn load", "fn ls", "github receipt"}))
+	assert.Equal(t, []string{"fn load", "fn ls"}, groupMembers("fn", []string{"open", "fn load", "fn ls", "github receipt"}))
 }

@@ -7,47 +7,7 @@ package cardhdr
 import (
 	"regexp"
 	"strings"
-
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
-
-// Runner kinds: a card hash kind that sets no RESULT expectation (card_run.lua
-// says the same of them). A card with no KIND line is KindModel.
-const (
-	KindModel  = "model"
-	KindScript = "script"
-)
-
-// RunnerKinds are the card kinds besides typedrec.Kinds that card push accepts.
-var RunnerKinds = []string{KindModel, KindScript}
-
-// KindMap is the one declared mapping from a classification kind to the RESULT
-// kind the card is pushed as (nova-tools#3651). The cutter and the feed apply
-// it at cut time (card.MapKind), and card push --map-kind applies it at push.
-// A kind already in typedrec.Kinds or RunnerKinds is never in this table and
-// is never rewritten.
-var KindMap = map[string]string{
-	"go-verb":  typedrec.KindFix,
-	"go-fix":   typedrec.KindFix,
-	"lua-fn":   typedrec.KindFix,
-	"bats":     typedrec.KindFix,
-	"security": typedrec.KindFix,
-	"fleet":    typedrec.KindFix,
-	"retire":   typedrec.KindFix,
-	"docs":     typedrec.KindDocsGuard,
-	"spec":     typedrec.KindReport,
-	"probe":    typedrec.KindReport,
-}
-
-// IsRunnerKind reports whether kind is one of RunnerKinds.
-func IsRunnerKind(kind string) bool {
-	for _, k := range RunnerKinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
-}
 
 // The routes a card may carry: the three model types (Glenn 2026-09-26).
 // frontier is the most recent Astra or Fable model only; pro and flash are
@@ -69,11 +29,6 @@ var Routes = []string{RouteFrontier, RoutePro, RouteFlash}
 
 // RouteList is the three types as a refusal names them.
 const RouteList = "frontier, pro or flash"
-
-// DefaultTiers is what a worker with no tiers advertised is treated as: the
-// two swarm rungs, so a frontier card never goes to a worker that did not
-// advertise frontier.
-const DefaultTiers = "flash,pro"
 
 // IsRoute reports whether s is one of the three model types.
 func IsRoute(s string) bool {
@@ -116,26 +71,6 @@ type TestLine struct {
 	// None is `TEST: none <why>`; Why is the reason the card has no test.
 	None bool
 	Why  string
-}
-
-// String is the line's value as a card carries it.
-func (t TestLine) String() string {
-	if t.None {
-		return "none " + t.Why
-	}
-	if t.Tags != "" {
-		return "-tags " + t.Tags + " " + t.Package + " " + t.Name
-	}
-	return t.Package + " " + t.Name
-}
-
-// GoPackage is Package as go test takes it: a repository-relative
-// package gets a leading ./ (a ./-relative one is kept as it is).
-func (t TestLine) GoPackage() string {
-	if strings.HasPrefix(t.Package, ".") {
-		return t.Package
-	}
-	return "./" + t.Package
 }
 
 // TestRemedy is what a card whose DONE-WHEN cannot be turned into a test is

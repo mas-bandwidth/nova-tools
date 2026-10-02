@@ -157,11 +157,3 @@ func runnerDoing(t *testing.T, dir, name string, steps ...runnerStep) string {
 	}
 	return path
 }
-
-// publishCard is the step every runner that "does the work" ends with: RESULT.md whose line 1
-// is the card's contract line and line 2 its disposition, under the job directory. `into` is
-// the directory it lands in -- "{job}" for a worker that published where it was told, or
-// "{job}/repo" for one that published in its clone (issue #594).
-func publishCard(into string) runnerStep {
-	return runnerStep{Op: "write", Path: into + "/RESULT.md", Body: "{line1}\n{line2}\n"}
-}

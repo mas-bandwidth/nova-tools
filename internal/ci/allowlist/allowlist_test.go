@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // recorder is a Reporter that keeps what Check printed, so a test can hold the
@@ -294,4 +296,31 @@ func TestCountedUpdateLowersCountsAndNeverRaisesThem(t *testing.T) {
 	if got := readBack(t, path); got != "# ceiling: 1\na:f 1 why a\n" {
 		t.Errorf("a refused update changed the file: %q", got)
 	}
+}
+
+// TestParseRejectsDuplicateKeys verifies that Parse rejects repeated keys by default,
+// and accepts them when RepeatedKeys is enabled.
+func TestParseRejectsDuplicateKeys(t *testing.T) {
+	t.Parallel()
+	const duplicateText = `# list with duplicate
+a.go:f # first
+b.go:g # second
+a.go:f # duplicate
+`
+	_, err := Parse("test.txt", duplicateText, Options{})
+	require.Error(t, err)
+	require.ErrorContains(t, err, `duplicate key "a.go:f"`)
+
+	// RepeatedKeys permits repeated keys.
+	l, err := Parse("test.txt", duplicateText, Options{RepeatedKeys: true})
+	require.NoError(t, err)
+	require.Equal(t, 3, l.Len())
+
+	const duplicateCounted = `# ceiling: 2
+a:f 1 reason
+a:f 2 reason duplicate
+`
+	_, err = Parse("test.txt", duplicateCounted, Options{Counted: true})
+	require.Error(t, err)
+	require.ErrorContains(t, err, `duplicate key "a:f"`)
 }

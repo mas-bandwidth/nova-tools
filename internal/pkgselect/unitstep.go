@@ -26,7 +26,7 @@ const ShardGoTestTimeout = "110s"
 // nightly reference leg: -count=1, so every time is a run and none a cached pass,
 // and the budgets ENFORCED (SLOWTESTS_ENFORCE=1). THE VERDICT IS THE SAME ON ANY
 // MACHINE otherwise: the CI-SLOW lines and a CI-LOAD line print and exit 0, and a
-// CI-SLEEPS line (a SLEEPS skip off the ledger) is exit 2. The nightly leg on the
+// CI-SLEEPS line (a SLEEPS skip off the ledger) fails the leg (slowtests exits 1). The nightly leg on the
 // Linux shards is the one place a CI-SLOW line fails the run, and this is the only
 // place SLOWTESTS_ENFORCE=1 is spelled. internal/ci's class test of the nightly
 // leg holds it.

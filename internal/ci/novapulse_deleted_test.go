@@ -14,9 +14,8 @@ import (
 var novaPulseRun = regexp.MustCompile(`(Command(Context)?\(|\.String\()[^\n]*"nova-pulse"`)
 
 // TestTheNovaPulseCommandIsDeleted is the DONE-WHEN of nova-tools #3801: cmd/nova-pulse is
-// gone, nothing in the tree runs the nova-pulse binary (internal/pulse, the frozen
-// engine no command reaches, is the one package left to delete), no bench
-// script installs or checks it, and living command references omit it.
+// gone, nothing in the tree runs the nova-pulse binary, no bench script installs
+// or checks it, and living command references omit it.
 func TestTheNovaPulseCommandIsDeleted(t *testing.T) {
 	t.Parallel()
 
@@ -33,7 +32,7 @@ func TestTheNovaPulseCommandIsDeleted(t *testing.T) {
 		rel, _ := filepath.Rel(root, path)
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if rel == ".git" || rel == "internal/pulse" || strings.HasSuffix(rel, "/testdata") || rel == "testdata" {
+			if rel == ".git" || strings.HasSuffix(rel, "/testdata") || rel == "testdata" {
 				return filepath.SkipDir
 			}
 			return nil

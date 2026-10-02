@@ -216,6 +216,7 @@ type FileHit struct {
 	FMName  string
 	FMType  string
 	Para    int
+	Line    int
 	Snippet string
 	Fused   float64
 	// Native is the chunk's score in NativeChan, and NativeChan is the first
@@ -320,11 +321,11 @@ func Retrieve(c *Corpus, channels []Channel, text string, k int) []FileHit {
 		if ok && (prev.Fused > f || (prev.Fused == f && prev.Para <= ch.Para)) {
 			continue
 		}
-		snip := Truncate(ch.Text, 120)
+		snip := Truncate(ch.Original, 120)
 		n := native[id]
 		best[key] = FileHit{
 			File: ch.File, Root: ch.Root, Class: ch.Class, FMName: ch.FMName, FMType: ch.FMType,
-			Para: ch.Para, Snippet: snip, Fused: f, Native: n.score, NativeChan: n.chn,
+			Para: ch.Para, Line: ch.Line, Snippet: snip, Fused: f, Native: n.score, NativeChan: n.chn,
 		}
 	}
 	hits := make([]FileHit, 0, len(best))

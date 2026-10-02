@@ -76,7 +76,10 @@ func Latest(ctx context.Context, e Entry, timeout time.Duration, client *http.Cl
 		}
 		endpoint = "https://registry.ollama.ai/v2/library/" + url.PathEscape(model) + "/manifests/" + url.PathEscape(tag)
 	default:
-		r.Reason = "unsupported source"
+		// The manifest admits no other scheme (Load refuses one), so the only
+		// value that reaches here is "-": declared as not known yet.
+		r.Reason = "latest not declared (-)"
+		r.Remedy = "fill the latest column with github:, npm:, brew:, ollama: or local:"
 		return r
 	}
 	if client == nil {

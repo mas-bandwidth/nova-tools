@@ -25,8 +25,8 @@ func TestThereIsNoWayToRunAnUnwalledCommand(t *testing.T) {
 		if code != 125 {
 			t.Fatalf("%s: exit %d, want 125; a tool whose reason is containment has no switch that turns it off: %s", flag, code, errOut)
 		}
-		if !strings.Contains(errOut, "SANDBOX REFUSED reason=no_command:") ||
-			!strings.Contains(errOut, "unknown flag "+flag+"; run: nova-sandbox help") {
+		if !strings.Contains(errOut, "SANDBOX REFUSED reason=bad_flag: unknown flag "+flag+"; the flags are --read, ") ||
+			!strings.Contains(errOut, "; run: nova-sandbox help\n") {
 			t.Errorf("%s was refused off the grammar the spec fixes, got %q", flag, errOut)
 		}
 		if strings.Contains(errOut, "UNSANDBOXED") {

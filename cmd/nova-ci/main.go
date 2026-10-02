@@ -12,9 +12,11 @@ package main
 
 import (
 	_ "embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"regexp"
 	"runtime"
@@ -25,6 +27,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/internal/tty"
 )
 
 // exampleEvents is the go test -json stream slowtests --example reads: two
@@ -117,8 +120,9 @@ usage:
 
 exit codes: 0 done and 2 usage or could not run, for every verb; by verb:
   slowtests: 0 inside budget, or CI-SLOW lines without --enforce (a
-    measurement); 2 a CI-SLEEPS line, a CI-SLOW line under --enforce, or
-    the invocation could not run (bad flag, unreadable stdin)
+    measurement); 1 a CI-SLEEPS line, or a CI-SLOW line under --enforce
+    (the check said no); 2 the invocation could not run (bad flag,
+    unreadable stdin)
   local: 0 green; 1 a red test or a package that did not build; 2 a
     CI-SLEEPS line, a step that could not run, or usage
   functional: 0 the selection printed (packages=0 included); 2 a flag, or
@@ -286,18 +290,19 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	loadFlag := fs.Float64("load", -1, "the host's load average, instead of reading it")
 	cpusFlag := fs.Int("cpus", 0, "the host's logical CPUs, instead of runtime.NumCPU")
 	example := fs.Bool("example", false, "read the built-in six-event example stream instead of stdin: a first run with no Go module")
-	asJSON := fs.Bool("json", false, "print the verdict as one JSON object {result, facts, items} instead of lines")
+	asJSON := fs.Bool("json", false, "print the verdict, or the refusal, as one JSON object {result, facts, items} on stdout instead of lines")
 	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " slowtests", flagProblem(fs, err))
+		return slowtestsRefuse(stdout, stderr, verbflag.BoolAsked(args, "json"), []string{flagProblem(fs, err)}, "nova-ci slowtests -h")
 	}
-	var problems []string
+	problems := nonFinite(fs)
 	if fs.NArg() > 0 {
 		problems = append(problems, fmt.Sprintf("unexpected argument %q (the events come on stdin, the budgets from flags)", fs.Arg(0)))
 	}
 	if *budget <= 0 {
 		problems = append(problems, fmt.Sprintf("--budget must be a whole number of seconds greater than zero (got %d)", *budget))
 	}
-	if *packageBudget < 0 || *testBudget < 0 {
+	// -Inf is named once, by nonFinite, not again as a negative.
+	if negative := func(v float64) bool { return v < 0 && !math.IsInf(v, -1) }; negative(*packageBudget) || negative(*testBudget) {
 		problems = append(problems, "--package-budget and --test-budget want seconds, zero or more (0 leaves the package budget to --budget, and judges no test alone)")
 	}
 	if *cpusFlag < 0 {
@@ -321,12 +326,12 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		problems = append(problems, "stdin is a terminal, and slowtests reads go test -json events on stdin: pipe them in, or pass --example for the built-in stream")
 	}
 	if len(problems) > 0 {
-		return refuse(stderr, " slowtests", strings.Join(problems, "; "))
+		return slowtestsRefuse(stdout, stderr, *asJSON, problems, "nova-ci slowtests -h")
 	}
 
 	events, err := slowtests.Parse(in)
 	if err != nil {
-		return refuseRun(stderr, " slowtests", fmt.Sprintf("stdin is not newline-delimited go test -json: %s", oneline.Err(err)), "go test -json <packages> | nova-ci slowtests --budget 60")
+		return slowtestsRefuse(stdout, stderr, *asJSON, []string{fmt.Sprintf("stdin is not newline-delimited go test -json: %s", oneline.Err(err))}, "go test -json <packages> | nova-ci slowtests --budget 60")
 	}
 	report := slowtests.Judge(events, budgets)
 	// The load is printed, never judged: read from the host unless --load
@@ -344,13 +349,46 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	}
 	lines, code := slowtests.Verdict(report, load, *enforce, ledger)
 	if *asJSON {
-		verdictJSON(report, load, *enforce, code).Render(stdout, true)
-		return code
+		return renderJSON(stdout, stderr, verdictJSON(report, load, *enforce, code))
 	}
 	for _, line := range lines {
 		fmt.Fprintln(stdout, line)
 	}
 	return code
+}
+
+// renderJSON prints o as one JSON object on stdout and returns its exit. A
+// value that cannot be marshalled is never an empty line at exit 0: it is a
+// FAIL line on stderr and exit 1.
+func renderJSON(stdout, stderr io.Writer, o *tool.Out) int {
+	raw, err := json.Marshal(o)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-ci %s FAIL: the verdict could not be rendered as JSON: %s; run: nova-ci %s -h\n", o.Verb, oneline.Err(err), o.Verb)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s\n", raw)
+	return o.Exit
+}
+
+// slowtestsRefuse is slowtests' refusal: the house line on stderr, or with
+// --json the same refusal as the JSON of the one output value on stdout.
+func slowtestsRefuse(stdout, stderr io.Writer, asJSON bool, why []string, next string) int {
+	if !asJSON {
+		return refuseRun(stderr, " slowtests", strings.Join(why, "; "), next)
+	}
+	return renderJSON(stdout, stderr, &tool.Out{Verb: "slowtests", Status: tool.Refused, Exit: 2, Why: why, Remedy: next})
+}
+
+// nonFinite names every float flag of fs whose value is NaN or an infinity:
+// strconv parses them, and no budget, load or count is one.
+func nonFinite(fs *flag.FlagSet) []string {
+	var bad []string
+	fs.VisitAll(func(f *flag.Flag) {
+		if v, ok := f.Value.(flag.Getter).Get().(float64); ok && (math.IsNaN(v) || math.IsInf(v, 0)) {
+			bad = append(bad, fmt.Sprintf("--%s wants a finite number, got %s", f.Name, f.Value.String()))
+		}
+	})
+	return bad
 }
 
 // readRows parses the file a ledger flag names; an empty name is no rows.
@@ -372,14 +410,16 @@ func readRows[R any](path string, parse func(io.Reader) ([]R, error)) ([]R, erro
 }
 
 // isTerminal reports whether r is a terminal: slowtests with nothing piped in
-// would wait for input that never comes, so it refuses instead.
+// would wait for input that never comes, so it refuses instead. A file asks
+// internal/tty, which asks the terminal for its window size: a character
+// device alone is not one (/dev/null is the empty stream). A reader that
+// answers IsTerminal itself is the seam a test hands in.
 func isTerminal(r io.Reader) bool {
-	f, ok := r.(interface{ Stat() (os.FileInfo, error) })
-	if !ok {
-		return false
+	if t, ok := r.(interface{ IsTerminal() bool }); ok {
+		return t.IsTerminal()
 	}
-	st, err := f.Stat()
-	return err == nil && st.Mode()&os.ModeCharDevice != 0
+	f, ok := r.(*os.File)
+	return ok && tty.IsTerminal(f)
 }
 
 // verdictJSON is the slowtests verdict as the one output value (STANDARD §2):

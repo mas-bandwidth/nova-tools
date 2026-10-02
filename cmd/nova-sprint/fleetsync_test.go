@@ -180,7 +180,14 @@ func TestFleetSyncSetsAChangedWidthAndNothingElse(t *testing.T) {
 	before, index := ta.fleetRows(), ta.dealIndex()
 	inv.set("m1", 6)
 	out := ta.ok("fleet sync")
-	if !strings.Contains(out, "MOVED m1 width=6 (was 4)") || strings.Contains(out, "m2") {
+	// the MOVED lines alone: the OK line's op id is random and can hold the letters m2
+	var moved []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "MOVED ") {
+			moved = append(moved, l)
+		}
+	}
+	if len(moved) != 1 || moved[0] != "MOVED m1 width=6 (was 4)" {
 		t.Fatalf("a width change moves that member alone:\n%s", out)
 	}
 	after := ta.fleetRows()

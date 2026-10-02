@@ -168,16 +168,6 @@ func WallRefused(log []byte) (WallRefusal, bool) {
 	return WallRefusal{}, false
 }
 
-// wallRefusedInLog reads one log file and reports the wall refusal in it, or false when the
-// file cannot be read or holds no refusal.
-func wallRefusedInLog(path string) (WallRefusal, bool) {
-	raw, err := readRegular(path)
-	if err != nil {
-		return WallRefusal{}, false
-	}
-	return WallRefused(raw)
-}
-
 // WallStep returns the number on the LAST `STEP <n>` line the card printed, or "" when it
 // printed none. A card that died at its second step says so, so the remedy can name where.
 func WallStep(log []byte) string {

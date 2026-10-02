@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/mas-bandwidth/nova-tools/internal/scaffold"
 )
 
 func TestNewRuleScaffoldValidatesInput(t *testing.T) {
@@ -13,7 +11,7 @@ func TestNewRuleScaffoldValidatesInput(t *testing.T) {
 
 	tree := t.TempDir()
 	// No go.mod
-	if _, err := scaffold.Rule(tree, "sample"); err == nil {
+	if _, err := rule(tree, "sample"); err == nil {
 		t.Errorf("expected error when go.mod missing, got nil")
 	}
 
@@ -22,13 +20,13 @@ func TestNewRuleScaffoldValidatesInput(t *testing.T) {
 
 	// Invalid names
 	for _, bad := range []string{"123num", "BadName", "rule with spaces", "for", "type"} {
-		if _, err := scaffold.Rule(tree, bad); err == nil {
+		if _, err := rule(tree, bad); err == nil {
 			t.Errorf("expected error for invalid rule name %q, got nil", bad)
 		}
 	}
 
 	// Valid name
-	written, err := scaffold.Rule(tree, "my-rule")
+	written, err := rule(tree, "my-rule")
 	if err != nil {
 		t.Fatalf("Scaffold failed on valid name: %v", err)
 	}
@@ -37,7 +35,7 @@ func TestNewRuleScaffoldValidatesInput(t *testing.T) {
 	}
 
 	// Second run refused
-	if _, err := scaffold.Rule(tree, "my-rule"); err == nil {
+	if _, err := rule(tree, "my-rule"); err == nil {
 		t.Errorf("expected error on duplicate scaffold, got nil")
 	}
 }

@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
@@ -331,81 +330,6 @@ func (b *bench) swarmTry(args ...string) (exit int, stdout, stderr string, err e
 	return exit, out.String(), errb.String(), err
 }
 
-func (b *bench) add(task string, extra ...string) string {
-	b.t.Helper()
-	// THE FIXTURE'S OWN CAP, ENFORCED HERE (#132; fixture_guards_test.go carries the why):
-	// a hold -- `FAKE-SLEEP` plus `FAKE-AWAIT-NOTE`, in that order, as the fake runs them --
-	// that reaches the deadline this job will run under is refused before the job is queued,
-	// because the wait and the reaper would come due together and the silent `end=killed` of
-	// #126 would be back. The deadline READ HERE is the one standing at add time; `b.run`
-	// applies the same cap against the description the run hands the dispatcher, which is
-	// what covers a rewrite after the add and the verbs that skip `add`.
-	deadline, err := benchJobDeadline(b.worker, extra)
-	if err != nil {
-		b.t.Fatalf("reading the deadline this job would run under: %v", err)
-	}
-	if err := awaitNoteCap(task, deadline); err != nil {
-		b.t.Fatalf("this fixture would recreate the silent kill of #126: %v", err)
-	}
-	file := filepath.Join(b.dir, fmt.Sprintf("task-%d.md", time.Now().UnixNano()))
-	write(b.t, file, task)
-	args := append([]string{"add", "--pool", b.pool, "--task", file, "--files", "5", "--tokens", "100000"}, extra...)
-	exit, stdout, stderr := b.swarm(args...)
-	if exit != 0 {
-		b.t.Fatalf("add exited %d: %s%s", exit, stdout, stderr)
-	}
-	return field(b.t, stdout, "id=")
-}
-
-func (b *bench) run(args ...string) (int, string, string) {
-	b.t.Helper()
-	all := append([]string{"run", "--pool", b.pool, "--workers", "1", "--hours", "0.25", "--worker", b.worker}, args...)
-	// THE CAP AGAIN, WHERE THE JOB'S DEADLINE IS ACTUALLY RESOLVED (#132, the #140 read's
-	// finding 2): every task still pending, against the description THIS run hands the
-	// dispatcher -- so a deadline rewritten after the add, another `--worker`, and the jobs
-	// `batch` and `requeue --task-file` queue without going through `add` are all covered.
-	// fixture_guards_test.go names what stays uncovered.
-	worker := b.worker
-	if named, ok := flagAfter(all, "--worker"); ok {
-		worker = named
-	}
-	if err := capPendingTasks(b.pool, worker); err != nil {
-		b.t.Fatalf("this fixture would recreate the silent kill of #126: %v", err)
-	}
-	return b.swarm(withSandbox(all)...)
-}
-
-// withSandbox is how every `run` in this package names the wall, and it is one function
-// rather than a flag typed thirty times: on darwin, whose body is built, the contract tests
-// run INSIDE the real nova-sandbox, which is the whole point of the seam -- the transaction
-// is proved where it actually runs. On a platform whose body is not built, nova-sandbox
-// REFUSES (rule 1), so the tests take rule 11's one loud workaround and say so in the argv
-// where a reader can see it. A caller that already named one is left alone.
-func withSandbox(args []string) []string {
-	for _, a := range args {
-		if a == "--sandbox" || a == "--no-sandbox" {
-			return args
-		}
-	}
-	if runtime.GOOS == "darwin" {
-		return append(args, "--sandbox", builtSandbox)
-	}
-	return append(args, "--no-sandbox")
-}
-
-func field(t *testing.T, out, key string) string {
-	t.Helper()
-	for _, line := range strings.Split(out, "\n") {
-		for _, token := range strings.Fields(line) {
-			if strings.HasPrefix(token, key) {
-				return strings.TrimPrefix(token, key)
-			}
-		}
-	}
-	t.Fatalf("no %s field in:\n%s", key, out)
-	return ""
-}
-
 func mustContain(t *testing.T, what, body, want string) {
 	t.Helper()
 	if !strings.Contains(body, want) {
@@ -414,21 +338,6 @@ func mustContain(t *testing.T, what, body, want string) {
 }
 
 // ---------------------------------------------------------------------------------------
-
-// mustReadDirNames is one directory listing, named, so a test reads a pool the way a person
-// does and fails on the read rather than on a nil slice three lines later.
-func mustReadDirNames(t *testing.T, dir string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
-	return names
-}
 
 // grepTree reports the first file under dir holding needle, or "".
 func grepTree(t *testing.T, dir, needle string) string {
@@ -445,86 +354,4 @@ func grepTree(t *testing.T, dir, needle string) string {
 		return nil
 	})
 	return found
-}
-
-// sidecar reads one job's sidecar wherever it is in the pool.
-func (b *bench) sidecar(id string) swarmSidecar {
-	b.t.Helper()
-	for _, state := range []string{"pending", "running", "done", "failed"} {
-		raw, err := os.ReadFile(filepath.Join(b.pool, state, id+".json"))
-		if err != nil {
-			continue
-		}
-		var sc swarmSidecar
-		if err := json.Unmarshal(raw, &sc); err != nil {
-			b.t.Fatal(err)
-		}
-		return sc
-	}
-	b.t.Fatalf("no sidecar for %s anywhere in %s", id, b.pool)
-	return swarmSidecar{}
-}
-
-// swarmSidecar is the handful of sidecar fields these tests read. It is deliberately its
-// own type: a test that imported the package's struct would pass when the FILE stopped
-// carrying a field the struct still has.
-type swarmSidecar struct {
-	ID        string `json:"id"`
-	Violation string `json:"violation,omitempty"`
-	Launch    string `json:"launch,omitempty"`
-	End       string `json:"end,omitempty"`
-	RC        int    `json:"rc"`
-	Class     string `json:"class,omitempty"`
-	Reaped    int    `json:"reaped,omitempty"`
-	Requeued  int    `json:"requeued,omitempty"`
-	From      string `json:"from,omitempty"`
-}
-
-// lineWith is the one line of an output that carries a marker.
-func lineWith(t *testing.T, out, marker string) string {
-	t.Helper()
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, marker) {
-			return line
-		}
-	}
-	t.Fatalf("no line carrying %q in:\n%s", marker, out)
-	return ""
-}
-
-// jobDir is one job's directory, wherever its slot put it.
-func (b *bench) jobDir(id string) string {
-	b.t.Helper()
-	for slot := 1; slot <= swarmSlotsInTests; slot++ {
-		dir := filepath.Join(b.dir, fmt.Sprintf("worker-home-%d", slot), "jobs", id)
-		if _, err := os.Stat(dir); err == nil {
-			return dir
-		}
-	}
-	b.t.Fatalf("no job directory for %s under %s", id, b.dir)
-	return ""
-}
-
-// swarmSlotsInTests is the highest slot any test here runs with.
-const swarmSlotsInTests = 8
-
-// usageRow reads one job's usage file as a map of column to value.
-func (b *bench) usageRow(id string) map[string]string {
-	b.t.Helper()
-	raw, err := os.ReadFile(filepath.Join(b.pool, "usage", id+".tsv"))
-	if err != nil {
-		b.t.Fatalf("no usage file for %s: %v", id, err)
-	}
-	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
-	if len(lines) != 2 {
-		b.t.Fatalf("a usage file is one header and one row, got %d lines:\n%s", len(lines), raw)
-	}
-	head, values := strings.Split(lines[0], "\t"), strings.Split(lines[1], "\t")
-	row := map[string]string{}
-	for i, name := range head {
-		if i < len(values) {
-			row[name] = values[i]
-		}
-	}
-	return row
 }

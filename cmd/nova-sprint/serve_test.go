@@ -69,7 +69,7 @@ func (r *serverRig) boss(line string) string {
 // send is a worker's delivery of a batch with no connection: the server's step.
 func (r *serverRig) send(_ context.Context, verbs ...[]string) ([]sprintwire.Result, error) {
 	r.served = append(r.served, verbs...)
-	return r.a.serve(sprintwire.Request{Verbs: verbs}).Results, nil
+	return r.a.serveFrom(sprintwire.Request{Verbs: verbs}, false).Results, nil
 }
 
 // one sends one verb and returns its answer.
@@ -280,7 +280,7 @@ func TestBatchesAndTicksRunOneAtATime(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i] = r.a.serve(sprintwire.Request{Verbs: [][]string{{"take", "--as", "m1", "--limit", "1", "--epoch", "0", "--json"}}}).Results[0]
+			results[i] = r.a.serveFrom(sprintwire.Request{Verbs: [][]string{{"take", "--as", "m1", "--limit", "1", "--epoch", "0", "--json"}}}, false).Results[0]
 		}()
 	}
 	wg.Add(1)
