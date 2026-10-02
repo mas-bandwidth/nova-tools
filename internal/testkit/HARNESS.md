@@ -49,27 +49,41 @@ Files are `WriteFile`, `ReadFile`, `ReadJSON`, `JSON` and `Tree` (which refuses 
 path outside its root); `SkipOn` names the platform a property cannot be seen on.
 Time is `testing/synctest` first; `Waits` only for code that must do real I/O.
 
-**Hard limits** of a harness pass. The same `Test` names survive, in the same
-files (subtests may be added under them). No check is removed or weakened:
-`Equal` stays `Equal`, a fatal check stays `require`, a `t.Error`-class check
-stays `assert`. Every failure message keeps its sentence and its arguments. No
-production code changes. No ledger ceiling is raised and no allowlist row is
-added under `internal/ci/testdata`. A rewrite by script is read line by line:
-in the pilot a rename turned `require.Equal(t, out, again)` into a comparison of
-a value with itself, which compiles, passes, and checks nothing.
+**The limits of a compaction** (the owner, 2026-10-02, after the pilot). Every pinned
+BEHAVIOUR stays pinned; `Equal` is never weakened to `Contains`. `Test` names may
+go: cases that differ only in data are rows of one table, a shared long setup may
+be one scenario's steps, and each former `Test` keeps a subtest name, so a failure
+still names the case. A helper may own the failure sentence; a custom sentence
+stays only where it carries a reason the check and the row name do not, and a
+reason comment stays once, at the table or the row. Still forbidden: production
+changes, raised ceilings, added allowlist rows, changed fakes.
 
-**Proving no check was lost.** Count the checks before and after (testify calls,
-`ExitErr` as two, `t.Error*`), account for every difference, then break five
-production behaviours the converted checks pin and watch each test go red.
+**The method.** (1) Inventory before editing: one line per `Test`, file, name and
+the behaviour it pins, plus a check count (testify calls, `ExitErr` as two,
+`t.Error*`). (2) Compact. Severity in a row: `require` for setup and for a check
+whose failure makes the rest of the row meaningless, `assert` for independent
+facts. A `Test` that swaps a seam stays serial and keeps the name of one merged
+test already on `serial-tests_allowlist.txt`; the others' rows go stale and are
+removed with `NOVA_CI_UPDATE=1 go test -run '^TestEveryTestOpensWithTParallel$'
+./internal/ci/`, which lowers the ceiling. Names other ledgers cite
+(`compared_examples.txt`) stay. A deleted test file, or one git reads as deleted
+across a merge, is declared in `deleted-tests.txt` in that change. (3) Map every
+inventory line to the row or step that now pins it, then break ten production
+behaviours across the converted files, at least two in merged tables, and watch
+each go red; a probe that stays green is checked against the base before calling
+it lost. A rewrite by script is read line by line: in the pilot a rename turned
+`require.Equal(t, out, again)` into a value compared with itself.
 
-**Measuring.** Lines: `wc -l cmd/<pkg>/*_test.go` at the base and after, and
-`git diff --shortstat origin/sprint/foundation -- '*.go'` for the whole branch,
-harness included. Time: `go test -count=1 ./cmd/<pkg>/` three times, before and
-after.
+**Measuring.** `wc -l cmd/<pkg>/*_test.go` before and after; `git diff --shortstat
+<base> -- '*.go'`; `go test -count=1 ./cmd/<pkg>/` three times each side; `go
+test -v` counting top-level tests and subtests.
 
-**What to expect.** The cmd/nova-sandbox pilot (2026-10-02) went from 7,582 to
-7,453 test lines (-1.7%), checks intact, wall time unchanged. The testify pass
-before it took 8,751 to 7,582. Under the limits above, the lines that remain are
-reasons (17% are comments), failure sentences, and the fakes that stand in for
-the disk, the forge and Win32; a harness pass makes runs uniform and removes
-copy-paste, but a 20% cut would need sentences dropped or tests merged.
+**What it did.** cmd/nova-sandbox: harness pilot 7,582 -> 7,453 (-1.7%) under the
+old limits; compaction 7,453 -> 5,748 (-24.2% from 7,582), 212 tests -> 114 with
+272 subtests, wall time unchanged, ten probes red. What remains: 1,040 comment
+lines (reasons, issues, measurements), 398 blank, 4,310 code, of which the fakes
+(disk, forge, Win32, nft) are a fixed cost. Next package: split it by file among
+agents only after the shared helpers are settled (in `harness_test.go` and here),
+because helpers added late collide; write the inventory with the check count
+per `Test` so the mapping is mechanical; and read every allowlist that keys on a
+test name before merging any.
