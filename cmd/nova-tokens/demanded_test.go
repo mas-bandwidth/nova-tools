@@ -38,7 +38,7 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	wantExit(t, r, 2)
 	{
 		opened := tokens.Opens() - opensBefore
-		assert.False(t, opened != 0, "the refusal opened %d source files; nothing under $HOME, $TMPDIR or $XDG_DATA_HOME may be opened", opened)
+		assert.True(t, opened == 0, "the refusal opened %d source files; nothing under $HOME, $TMPDIR or $XDG_DATA_HOME may be opened", opened)
 	}
 
 	// And a fold that DOES run opens only the source its flags name -- the one transcript
@@ -51,18 +51,18 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
 	{
 		opened := tokens.Opens() - opensBefore
-		assert.False(t, opened != 1, "the fold opened %d source files, want the 1 its --claude names; the bait tree under $HOME, $TMPDIR and $XDG_DATA_HOME holds one more", opened)
+		assert.True(t, opened == 1, "the fold opened %d source files, want the 1 its --claude names; the bait tree under $HOME, $TMPDIR and $XDG_DATA_HOME holds one more", opened)
 	}
 	lines := strings.Split(strings.TrimSuffix(r.stderr, "\n"), "\n")
-	require.False(t, len(lines) != 3, "want three refusal lines, one per independent problem, got %d:\n%s", len(lines), r.stderr)
+	require.Equal(t, 3, len(lines), "want three refusal lines, one per independent problem, got %d:\n%s", len(lines), r.stderr)
 	for i, want := range []string{"--out", "--repos", "source"} {
-		assert.False(t, !strings.Contains(lines[i], want), "refusal line %d is %q, want the one about %s (the order is fixed)", i+1, lines[i], want)
-		assert.False(t, !strings.HasPrefix(lines[i], "TOKENS REFUSED: "), "refusal line %d does not open TOKENS REFUSED: %q", i+1, lines[i])
+		assert.True(t, strings.Contains(lines[i], want), "refusal line %d is %q, want the one about %s (the order is fixed)", i+1, lines[i], want)
+		assert.True(t, strings.HasPrefix(lines[i], "TOKENS REFUSED: "), "refusal line %d does not open TOKENS REFUSED: %q", i+1, lines[i])
 	}
 	// What it WANTS, not only what was wrong.
 	wantContains(t, r.stderr, "refusing to guess")
 	wantContains(t, r.stderr, "--claude <label>=<dir>")
-	assert.False(t, r.stdout != "", "a refusal wrote to stdout: %q", r.stdout)
+	assert.Equal(t, "", r.stdout, "a refusal wrote to stdout: %q", r.stdout)
 }
 
 func TestFoldRefusesSymlinkedOutputBeforeWritingLock(t *testing.T) {
@@ -78,7 +78,7 @@ func TestFoldRefusesSymlinkedOutputBeforeWritingLock(t *testing.T) {
 			write(t, filepath.Join(target, "2026-09-11.tsv"), "original day\n")
 			{
 				err := os.Symlink(target, link)
-				require.False(t, err != nil, err)
+				require.NoError(t, err, err)
 			}
 			result := invoke(t, "fold", "--out", link+suffix, "--day", "2026-09-11",
 				"--repos", reposFile(t, dir), "--claude", "fixture="+transcripts)
@@ -86,11 +86,11 @@ func TestFoldRefusesSymlinkedOutputBeforeWritingLock(t *testing.T) {
 			wantContains(t, result.stderr, "symlink")
 			{
 				got := read(t, filepath.Join(target, tokens.LockName))
-				assert.False(t, got != "original lock\n", "lock changed: %q", got)
+				assert.Equal(t, "original lock\n", got, "lock changed: %q", got)
 			}
 			{
 				got := read(t, filepath.Join(target, "2026-09-11.tsv"))
-				assert.False(t, got != "original day\n", "day changed: %q", got)
+				assert.Equal(t, "original day\n", got, "day changed: %q", got)
 			}
 		})
 	}
@@ -110,7 +110,7 @@ func TestFoldRefusesParentSymlinkedOutputBeforeWritingLock(t *testing.T) {
 			write(t, filepath.Join(child, "2026-09-11.tsv"), "original day\n")
 			{
 				err := os.Symlink(target, link)
-				require.False(t, err != nil, err)
+				require.NoError(t, err, err)
 			}
 			outPath := filepath.Join(link, "child") + suffix
 			result := invoke(t, "fold", "--out", outPath, "--day", "2026-09-11",
@@ -119,11 +119,11 @@ func TestFoldRefusesParentSymlinkedOutputBeforeWritingLock(t *testing.T) {
 			wantContains(t, result.stderr, "symlink")
 			{
 				got := read(t, filepath.Join(child, tokens.LockName))
-				assert.False(t, got != "original lock\n", "lock changed: %q", got)
+				assert.Equal(t, "original lock\n", got, "lock changed: %q", got)
 			}
 			{
 				got := read(t, filepath.Join(child, "2026-09-11.tsv"))
-				assert.False(t, got != "original day\n", "day changed: %q", got)
+				assert.Equal(t, "original day\n", got, "day changed: %q", got)
 			}
 		})
 	}
@@ -141,7 +141,7 @@ func TestFoldRefusesParentSymlinkCreatesNoFiles(t *testing.T) {
 			transcripts := mkdir(t, filepath.Join(dir, "transcripts"))
 			{
 				err := os.Symlink(target, link)
-				require.False(t, err != nil, err)
+				require.NoError(t, err, err)
 			}
 			outPath := filepath.Join(link, "child") + suffix
 			result := invoke(t, "fold", "--out", outPath, "--day", "2026-09-11",
@@ -150,11 +150,11 @@ func TestFoldRefusesParentSymlinkCreatesNoFiles(t *testing.T) {
 			wantContains(t, result.stderr, "symlink")
 			{
 				_, err := os.Stat(filepath.Join(child, tokens.LockName))
-				assert.False(t, !os.IsNotExist(err), "fold.lock created in referent child: %v", err)
+				assert.True(t, os.IsNotExist(err), "fold.lock created in referent child: %v", err)
 			}
 			{
 				_, err := os.Stat(filepath.Join(child, "2026-09-11.tsv"))
-				assert.False(t, !os.IsNotExist(err), "day file created in referent child: %v", err)
+				assert.True(t, os.IsNotExist(err), "day file created in referent child: %v", err)
 			}
 			entries, err := os.ReadDir(child)
 			require.False(t, err != nil, err)
