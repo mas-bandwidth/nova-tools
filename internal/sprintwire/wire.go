@@ -1,9 +1,9 @@
 // Package sprintwire is how a worker talks to the sprint's server: the run
 // loop on the coordinator's machine, the one writer of the sprint, which runs a
-// worker's verbs for it, one at a time, beside the store (the owner, 2026-10-01:
-// "single threaded server, pipelined batches like redis." / "I think we should
-// not use redis as the transport, but have a client/server" / "and then stick
-// with golang for client and server."). A request is the worker's verbs, each
+// worker's verbs for it, one at a time, beside the store. The server is single
+// threaded and runs each request's batch in order, a plain client/server pair
+// carries the verbs rather than a shared store, and both ends are Go. A request
+// is the worker's verbs, each
 // the argument list it would give nova-sprint, in the order to run them; the
 // reply is each verb's exit code and what it printed. One request is one
 // exchange whatever it carries, from beside the server or from 100 ms away.
