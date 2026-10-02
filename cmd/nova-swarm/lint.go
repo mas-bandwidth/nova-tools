@@ -23,11 +23,11 @@ import (
 // lives in the nova-work-old repository).
 
 // cardMaxBytes is the ADVISORY ceiling a card is written within: past it a model stops
-// reading the card in one window, so the lint says so before any spend -- and nothing is
-// remains advisory: cards over it are reported but neither refused nor truncated.
+// reading the card in one window, so the lint says so before any spend -- nothing is
+// refused and nothing is cut, so a card over it still ships.
 //
 // The ceiling is a reading budget rather than an input limit, so callers may choose to exceed it
-// it and two others shipped over it on purpose, because the line said `at or over the
+// and some have shipped over it on purpose, because the line said `at or over the
 // 12000-byte ceiling` and the verb exited 2, which is the exit code a caller refuses on.
 // The ceiling is a reading budget, not an input limit: a 12422-byte card was measured
 // and the linter reports an overage as a `LINT NOTE`, never a
@@ -58,9 +58,9 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 // size of cardLintRemedies below: a check with no remedy is a red test, never a judgement.
 //
 // It counts the twelve shape rules of WORKER-CARDS.md:23-36, the four typed-header
-// typed-header tokens add -- `kind-declared`, `paths-declared`, `test-named`
+// tokens add -- `kind-declared`, `paths-declared`, `test-named`
 // and `paused` -- whose rules live in internal/swarm/lintheader.go, beside a note on the
-// gate parser they have to agree with (internal/pulse/cardheader.go),
+// gate parser they have to agree with,
 // and `depends-on`, which fires only under `--typed`, and the base checks of
 // internal/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
 // `deadline-p95` -- with `donewhen-test-name`, which fire only under
@@ -834,8 +834,8 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	// A template is printed verbatim and is not itself a card: `nova-swarm template --name
-	// <t>` piped into `lint --card` reports result-first drift on the template's first
-	// line. The card templates pass, and a template that is not a card answers
+	// <t>` piped into `lint --card` used to report result-first drift on the template's first
+	// line. The card templates now pass, and a template that is not a card answers
 	// by name rather than as a drift.
 	if tmpl := matchingTemplate(raw); tmpl != "" && tmpl != "card" {
 		if swarm.IsCardTemplate(tmpl) {
