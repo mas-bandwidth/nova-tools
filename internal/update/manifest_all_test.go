@@ -92,7 +92,7 @@ func TestReportRefusesAManifestNamingEveryProblem(t *testing.T) {
 	t.Parallel()
 	path := t.TempDir() + "/m.tsv"
 	if err := os.WriteFile(path, []byte(Header+"\na\tgadget\tgo version\tlocal:go version\tnone\tme\nb\ttool\tgo version\tnowhere:x\tnone\tme\n"), 0o600); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	var out, errs bytes.Buffer
 	if rc := Main("nova-version", []string{"report", "--file", path}, "v0", &out, &errs); rc != 2 {
@@ -109,8 +109,8 @@ func TestReportRefusesAManifestNamingEveryProblem(t *testing.T) {
 }
 
 // The two tools say, each in its own banner, that they are two binaries sharing the
-// manifest and report, and what each is for (ledger U8, V1: they are two builds, never
-// "one binary under two names"); `report -h` carries the manifest format in six lines
+// manifest and report, and what each is for (they are two builds, never "one binary
+// under two names"); `report -h` carries the manifest format in six lines
 // under its example line.
 func TestBannersSayTwoBinariesAndReportHelpCarriesTheManifest(t *testing.T) {
 	t.Parallel()
@@ -131,9 +131,7 @@ func TestBannersSayTwoBinariesAndReportHelpCarriesTheManifest(t *testing.T) {
 		if name == "nova-version" {
 			other = "nova-update"
 		}
-		if !strings.Contains(help, other+"'s") {
-			assert.Containsf(t, help, other+"'s", "%s help does not say which verbs are %s's", name, other)
-		}
+		assert.Containsf(t, help, other+"'s", "%s help does not say which verbs are %s's", name, other)
 		out.Reset()
 		errs.Reset()
 		if rc := Main(name, []string{"report", "-h"}, "v0", &out, &errs); rc != 0 {
@@ -146,13 +144,9 @@ func TestBannersSayTwoBinariesAndReportHelpCarriesTheManifest(t *testing.T) {
 				numbered++
 			}
 		}
-		if numbered != 6 {
-			assert.EqualValuesf(t, 6, numbered, "%s report -h carries %d manifest lines, want six:\n%s", name, numbered, h)
-		}
+		assert.EqualValuesf(t, 6, numbered, "%s report -h carries %d manifest lines, want six:\n%s", name, numbered, h)
 		for _, want := range []string{"name<TAB>kind<TAB>installed<TAB>latest<TAB>apply<TAB>owner", "github:<owner>/<repo>", "harness, engine, model, tool or pin", "every problem"} {
-			if !strings.Contains(h, want) {
-				assert.Containsf(t, h, want, "%s report -h does not carry %q", name, want)
-			}
+			assert.Containsf(t, h, want, "%s report -h does not carry %q", name, want)
 		}
 	}
 	// nova-version's exit codes name no verb it does not have

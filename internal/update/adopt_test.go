@@ -25,15 +25,13 @@ func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
 		"snapshot-report\t" + command(t, "fail") + "\trowan",
 	}
 	if err := os.WriteFile(checks, []byte(strings.Join(rows, "\n")+"\n"), 0600); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	c, out, errs := run(t, Environment{}, "watch", "--adopt", checks,
 		"--bus", bus, "--remote", "origin", "--branch", "main",
 		"--as", "coordinator", "--to", "duty")
 	combined := out + "\n" + errs
-	if c != 1 {
-		require.EqualValuesf(t, 1, c, "want exit 1 with one refusal, got %d:\n%s", c, combined)
-	}
+	require.EqualValuesf(t, 1, c, "want exit 1 with one refusal, got %d:\n%s", c, combined)
 	need(t, combined, "ADOPT OK check=versions-agree")
 	need(t, combined, "ADOPT OK check=known-answer-flat")
 	need(t, combined, "ADOPT OK check=known-answer-local")
@@ -43,9 +41,7 @@ func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
 	need(t, combined, "ADOPT DONE sha=", "ok=4 refused=1")
 	need(t, combined, "ADOPT SENT")
 	b, err := os.ReadFile(log)
-	if err != nil {
-		require.NoErrorf(t, err, "coordinator posted no bus receipt: %v", err)
-	}
+	require.NoErrorf(t, err, "coordinator posted no bus receipt: %v", err)
 	if strings.Count(string(b), "prepare\n") != 1 || strings.Count(string(b), "send\n") != 1 {
 		require.Failf(t, "", "adoption receipt was not posted once via prepare+send:\n%s", string(b))
 	}
@@ -57,9 +53,7 @@ func TestSpecUpdateNamesAdoptPass(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-UPDATE.md"))
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	doc := string(raw)
 	for _, phrase := range []string{
 		"coordinator's own adoption pass",
@@ -68,8 +62,6 @@ func TestSpecUpdateNamesAdoptPass(t *testing.T) {
 		"known-answer",
 		"as the coordinator's own",
 	} {
-		if !strings.Contains(doc, phrase) {
-			assert.Containsf(t, doc, phrase, "SPEC-UPDATE.md does not name the adoption pass keyed by %q", phrase)
-		}
+		assert.Containsf(t, doc, phrase, "SPEC-UPDATE.md does not name the adoption pass keyed by %q", phrase)
 	}
 }

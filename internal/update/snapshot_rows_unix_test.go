@@ -12,7 +12,7 @@ import (
 )
 
 // snapshot lists the rows it records, and --dry-run takes the same reads and
-// writes no --out (STANDARD §2, "a verb that writes has a dry run"; ledger X12).
+// writes no --out (STANDARD §2, "a verb that writes has a dry run").
 func TestSnapshotListsItsRowsAndDryRunWritesNothing(t *testing.T) {
 	t.Parallel()
 	bin := t.TempDir()

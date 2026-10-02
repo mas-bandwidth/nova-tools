@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,13 +24,11 @@ func TestVoluntaryAdoptionMatrix(t *testing.T) {
 		"nova-tokens\trowan\tequivalent\t-\tuses own ledger script instead\n" +
 		"nova-swarm\trowan\tunknown\t-\tunknown version: not installed here\n"
 	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	var out, errs bytes.Buffer
 	code := Run("nova-update", []string{"adoption", "--file", path}, "stamp", &out, &errs, Environment{})
-	if code != 0 {
-		require.EqualValuesf(t, 0, code, "adoption with declined/equivalent/unknown = exit %d, want 0 (voluntary: none is failure):\n%s\n%s", code, out.String(), errs.String())
-	}
+	require.EqualValuesf(t, 0, code, "adoption with declined/equivalent/unknown = exit %d, want 0 (voluntary: none is failure):\n%s\n%s", code, out.String(), errs.String())
 	got := out.String()
 	for _, want := range []string{
 		"ADOPTION CHOICE tool=nova-bus friend=rowan state=adopted",
@@ -40,8 +37,6 @@ func TestVoluntaryAdoptionMatrix(t *testing.T) {
 		"ADOPTION CHOICE tool=nova-swarm friend=rowan state=unknown",
 		"ADOPTION OK entries=4 friends=1",
 	} {
-		if !strings.Contains(got, want) {
-			assert.Containsf(t, got, want, "adoption output missing %q:\n%s", want, got)
-		}
+		assert.Containsf(t, got, want, "adoption output missing %q:\n%s", want, got)
 	}
 }

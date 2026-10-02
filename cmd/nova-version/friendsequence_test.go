@@ -21,16 +21,10 @@ import (
 func TestFriendSequenceSnapshotReport(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
-	{
-		err := os.MkdirAll(bin, 0o755)
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, os.MkdirAll(bin, 0o755))
 	stub := func(name, line string) {
 		t.Helper()
-		{
-			err := testbin.WriteExecutable(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' '"+line+"'\n"), 0o755)
-			require.NoError(t, err, err)
-		}
+		require.NoError(t, testbin.WriteExecutable(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' '"+line+"'\n"), 0o755))
 	}
 	stub("nova-bus", "nova-bus v0.15.0 darwin/arm64 go1.26.0")
 	stub("nova-check", "nova-check v0.15.0 darwin/arm64 go1.26.0")
@@ -38,12 +32,9 @@ func TestFriendSequenceSnapshotReport(t *testing.T) {
 
 	manifest := filepath.Join(dir, "versions.tsv")
 	body := update.Header + "\n" +
-		"nova-bus\ttool\tnova-bus version\t-\t-\trowan\n" +
-		"nova-check\ttool\tnova-check version\t-\t-\trowan\n"
-	{
-		err := os.WriteFile(manifest, []byte(body), 0o644)
-		require.NoError(t, err, err)
-	}
+		"nova-bus\ttool\tnova-bus version\t-\t-\tme\n" +
+		"nova-check\ttool\tnova-check version\t-\t-\tme\n"
+	require.NoError(t, os.WriteFile(manifest, []byte(body), 0o644))
 
 	snap := filepath.Join(dir, "snapshot.tsv")
 	var out, errs bytes.Buffer

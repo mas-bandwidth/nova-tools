@@ -117,9 +117,7 @@ func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	c := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	out, err := c.CombinedOutput()
-	if err != nil {
-		require.NoErrorf(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
+	require.NoErrorf(t, err, "git %s: %v\n%s", strings.Join(args, " "), err, out)
 	return string(out)
 }
 
@@ -133,7 +131,7 @@ func hermeticGit(t *testing.T) {
 	t.Helper()
 	cfg := filepath.Join(t.TempDir(), "gitconfig")
 	if err := os.WriteFile(cfg, []byte("[user]\n\tname = Ada\n\temail = ada@example.com\n[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n"), 0600); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
@@ -156,10 +154,10 @@ func realBus(t *testing.T) busFixture {
 	write := func(rel, content string) {
 		full := filepath.Join(checkout, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 	}
 	write("participants.json", `{"participants":[`+
@@ -242,7 +240,7 @@ func newReporter(t *testing.T, version string) reporter {
 	dir := t.TempDir()
 	m := filepath.Join(dir, "versions.tsv")
 	if err := os.WriteFile(m, []byte(Header+"\n"+row("x", "tool", printer(t, version), "npm:unused", "none")+"\n"), 0600); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	t.Setenv("NOVA_UPDATE_HELPER", "1")
 	return reporter{bus: b, bin: bin, manifest: m, snapshot: filepath.Join(dir, "s.json")}
@@ -263,12 +261,8 @@ func (r reporter) send(t *testing.T, pathDir string) (int, string, string) {
 func (r reporter) pendingID(t *testing.T) string {
 	t.Helper()
 	s, err := readSnapshot(r.snapshot)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
-	if len(s.Pending) != 1 {
-		require.Lenf(t, s.Pending, 1, "want one pending report, got %d (delivered %d)", len(s.Pending), len(s.Delivered))
-	}
+	require.NoError(t, err)
+	require.Lenf(t, s.Pending, 1, "want one pending report, got %d (delivered %d)", len(s.Pending), len(s.Delivered))
 	for _, p := range s.Pending {
 		if p.ID == "" {
 			require.NotEqualValues(t, "", p.ID, "pending report retained no identity")
@@ -280,9 +274,7 @@ func (r reporter) pendingID(t *testing.T) string {
 func (r reporter) deliveredID(t *testing.T) string {
 	t.Helper()
 	s, err := readSnapshot(r.snapshot)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	if len(s.Delivered) != 1 || len(s.Pending) != 0 {
 		require.Failf(t, "", "want one confirmed delivery and no pending, got delivered=%d pending=%d", len(s.Delivered), len(s.Pending))
 	}
@@ -302,25 +294,25 @@ func (b busFixture) refusePushes(t *testing.T) (restore func(), how string) {
 	if runtime.GOOS != "windows" {
 		dir := filepath.Join(b.bare, "hooks")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 		hook := filepath.Join(dir, "pre-receive")
 		if err := testbin.WriteExecutable(hook, []byte("#!/bin/sh\necho 'synthetic refusal' >&2\nexit 1\n"), 0o755); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 		return func() {
 			if err := os.Remove(hook); err != nil {
-				require.NoError(t, err, err)
+				require.NoError(t, err)
 			}
 		}, "a pre-receive hook that rejects every push"
 	}
 	aside := b.bare + ".aside"
 	if err := os.Rename(b.bare, aside); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	return func() {
 		if err := os.Rename(aside, b.bare); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 	}, "moving the bare remote aside so the push cannot land"
 }
@@ -489,11 +481,9 @@ func (r reporter) wrapperOnPath(t *testing.T, boundary string) (dir, record stri
 	t.Helper()
 	dir = t.TempDir()
 	self, err := os.Executable()
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	if err = testbin.Place(self, filepath.Join(dir, exeName("nova-bus"))); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	record = filepath.Join(dir, "record")
 	t.Setenv("NOVA_UPDATE_JOIN_REAL", filepath.Join(r.bin, exeName("nova-bus")))
@@ -526,21 +516,13 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 	r := newReporter(t, "v1.2.3")
 	wrap, record := r.wrapperOnPath(t, boundary)
 	code, out, errs := r.send(t, wrap)
-	if code != 1 {
-		require.EqualValuesf(t, 1, code, "a killed bus was not reported as a failure: %d\n%s\n%s", code, out, errs)
-	}
-	if !strings.Contains(errs+out, "sent=uncertain") {
-		require.Containsf(t, errs+out, "sent=uncertain", "a killed bus was not reported as uncertain:\n%s\n%s", out, errs)
-	}
+	require.EqualValuesf(t, 1, code, "a killed bus was not reported as a failure: %d\n%s\n%s", code, out, errs)
+	require.Containsf(t, errs+out, "sent=uncertain", "a killed bus was not reported as uncertain:\n%s\n%s", out, errs)
 	id := r.pendingID(t)
 	b, err := os.ReadFile(record)
-	if err != nil {
-		require.NoErrorf(t, err, "the wrapper left no record of what it staged: %v", err)
-	}
+	require.NoErrorf(t, err, "the wrapper left no record of what it staged: %v", err)
 	staged := strings.TrimSpace(string(b))
-	if !strings.Contains(staged, "observed=true") {
-		require.Containsf(t, staged, "observed=true", "the boundary was never observed, so no death was staged: %s", staged)
-	}
+	require.Containsf(t, staged, "observed=true", "the boundary was never observed, so no death was staged: %s", staged)
 	if !strings.Contains(staged, "killed-alive=true") {
 		return false
 	}
@@ -551,9 +533,7 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 	// operator, and it does what an operator must do FIRST -- establish that no
 	// process is left to own the locks -- before removing anything, out loud.
 	if locks := staleGitTransactionLocks(filepath.Join(r.bus.checkout, ".git")); len(locks) > 0 {
-		if !strings.Contains(staged, "group-gone=true") {
-			require.Containsf(t, staged, "group-gone=true", "a process may still own Git transaction locks, so the named repair is not available: %s", staged)
-		}
+		require.Containsf(t, staged, "group-gone=true", "a process may still own Git transaction locks, so the named repair is not available: %s", staged)
 		removed := removeStaleGitTransactionLocks(t, filepath.Join(r.bus.checkout, ".git"))
 		t.Logf("%s (attempt %d): the killed git left stale transaction locks %v; with the whole process group verified gone, the test performed the operator's named repair before retrying", boundary, attempt, removed)
 	}
@@ -588,14 +568,12 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 func (r reporter) leftInTheLane(t *testing.T) string {
 	t.Helper()
 	st, err := readSnapshot(r.snapshot)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	var want string
 	for _, p := range st.Pending {
 		var a struct{ Note, Path string }
 		if err := json.Unmarshal(p.Artifact, &a); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 		want = a.Note
 		full := filepath.Join(r.bus.checkout, filepath.FromSlash(a.Path))
@@ -603,9 +581,7 @@ func (r reporter) leftInTheLane(t *testing.T) string {
 		if os.IsNotExist(err) {
 			return "no note at the prepared path"
 		}
-		if err != nil {
-			require.NoError(t, err, err)
-		}
+		require.NoError(t, err)
 		got := string(b)
 		switch {
 		case got == want:
@@ -652,15 +628,14 @@ func removeStaleGitTransactionLocks(t *testing.T, gitDir string) []string {
 
 func TestRemoveStaleGitTransactionLocksNamesOnly(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep), and unit tests
+	// use no real time: it becomes a mocked-clock unit test or a functional program.
 	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	gitDir := filepath.Join(t.TempDir(), ".git")
 	for _, dir := range []string{gitDir, filepath.Join(gitDir, "refs", "heads"), filepath.Join(gitDir, "logs", "refs", "heads")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 	}
 	for _, name := range []string{
@@ -669,7 +644,7 @@ func TestRemoveStaleGitTransactionLocksNamesOnly(t *testing.T) {
 		"config.lock", "next-index.lock",
 	} {
 		if err := os.WriteFile(filepath.Join(gitDir, filepath.FromSlash(name)), nil, 0o600); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 	}
 
@@ -677,9 +652,7 @@ func TestRemoveStaleGitTransactionLocksNamesOnly(t *testing.T) {
 	var names []string
 	for _, path := range removed {
 		rel, err := filepath.Rel(gitDir, path)
-		if err != nil {
-			require.NoError(t, err, err)
-		}
+		require.NoError(t, err)
 		names = append(names, filepath.ToSlash(rel))
 	}
 	sort.Strings(names)
@@ -733,7 +706,7 @@ func (r reporter) removeStaleIndexLock(t *testing.T) bool {
 		return false
 	}
 	if err := os.Remove(lock); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	return true
 }
@@ -797,9 +770,7 @@ func (r reporter) indexShape(t *testing.T) string {
 	if os.IsNotExist(err) {
 		return "no lane INDEX"
 	}
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	text := string(b)
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 	last := lines[len(lines)-1]
@@ -840,10 +811,10 @@ func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached f
 	c.Stdout, c.Stderr = io.Discard, io.Discard
 	setGroup(c)
 	if err := c.Start(); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	if err := assignGroup(c); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	done := make(chan struct{})
 	go func() { _ = c.Wait(); close(done) }()
@@ -930,9 +901,7 @@ func (r reporter) repairAfterStagedDeath(t *testing.T, attempt int) {
 func (r reporter) stagedPendingID(t *testing.T) (string, bool) {
 	t.Helper()
 	s, err := readSnapshot(r.snapshot)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	if len(s.Pending) != 1 || len(s.Delivered) != 0 {
 		return "", false
 	}
@@ -998,9 +967,7 @@ func reporterDeathWithPendingSaved(t *testing.T, attempt int) bool {
 	}
 	r.repairAfterStagedDeath(t, attempt)
 	code, out, errs := r.send(t, r.bin)
-	if code != 0 {
-		require.EqualValuesf(t, 0, code, "the report did not finish: %d\n%s\n%s", code, out, errs)
-	}
+	require.EqualValuesf(t, 0, code, "the report did not finish: %d\n%s\n%s", code, out, errs)
 	if got := r.deliveredID(t); got != id {
 		require.EqualValuesf(t, id, got, "a new identity was prepared: %q, not the saved %q", got, id)
 	}
@@ -1019,9 +986,7 @@ func reporterDeathAfterRemoteConfirmation(t *testing.T, attempt int) bool {
 		return false
 	}
 	notes, _ := r.bus.published(t)
-	if len(notes) != 1 {
-		require.Lenf(t, notes, 1, "want the one published note, got %v", notes)
-	}
+	require.Lenf(t, notes, 1, "want the one published note, got %v", notes)
 	id, staged := r.stagedPendingID(t)
 	if !staged {
 		t.Logf("attempt %d of %d: the reporter recorded the confirmation before the kill landed, which is not the case this stages; staging it again", attempt, stagingAttempts)
@@ -1030,9 +995,7 @@ func reporterDeathAfterRemoteConfirmation(t *testing.T, attempt int) bool {
 	r.repairAfterStagedDeath(t, attempt)
 	head := git(t, r.bus.bare, "rev-parse", "main")
 	code, out, errs := r.send(t, r.bin)
-	if code != 0 {
-		require.EqualValuesf(t, 0, code, "recovery failed: %d\n%s\n%s", code, out, errs)
-	}
+	require.EqualValuesf(t, 0, code, "recovery failed: %d\n%s\n%s", code, out, errs)
 	if got := r.deliveredID(t); got != id {
 		require.EqualValuesf(t, id, got, "recovery confirmed %q, not the pending %q", got, id)
 	}
@@ -1040,9 +1003,7 @@ func reporterDeathAfterRemoteConfirmation(t *testing.T, attempt int) bool {
 	if after := git(t, r.bus.bare, "rev-parse", "main"); after != head {
 		require.EqualValuesf(t, head, after, "recovery published a second time: %s became %s", head, after)
 	}
-	if !strings.Contains(out, "already-published") {
-		require.Containsf(t, out, "already-published", "recovery did not recognise the note it had already published: %s", out)
-	}
+	require.Containsf(t, out, "already-published", "recovery did not recognise the note it had already published: %s", out)
 	t.Logf("reporter death after remote confirmation verified on attempt %d: recovered single note %s without republishing", attempt, id)
 	return true
 }
@@ -1065,9 +1026,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 
 	// 1. Establish existing contribution and prior INDEX prefix
 	code, out, errs := r.send(t, r.bin)
-	if code != 0 {
-		require.EqualValuesf(t, 0, code, "initial report failed: %d\n%s\n%s", code, out, errs)
-	}
+	require.EqualValuesf(t, 0, code, "initial report failed: %d\n%s\n%s", code, out, errs)
 	priorNotes, priorIndexRows := r.bus.published(t)
 	if len(priorNotes) != 1 || len(priorIndexRows) != 1 {
 		require.Failf(t, "", "want 1 prior note and 1 INDEX row, got notes=%v index=%v", priorNotes, priorIndexRows)
@@ -1076,7 +1035,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 
 	// 2. Prepare next report for version v1.1.0
 	if err := os.WriteFile(r.manifest, []byte(Header+"\n"+row("x", "tool", printer(t, "v1.1.0"), "npm:unused", "none")+"\n"), 0600); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 
 	// 3. Phase 1: Interrupt during real prepared send (at killBeforeNote)
@@ -1086,9 +1045,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 		require.Failf(t, "", "phase 1 interruption was not reported as uncertain: %d\n%s\n%s", code, out, errs)
 	}
 	b1, err := os.ReadFile(record1)
-	if err != nil {
-		require.NoErrorf(t, err, "phase 1 wrapper left no record: %v", err)
-	}
+	require.NoErrorf(t, err, "phase 1 wrapper left no record: %v", err)
 	r1 := parseStageRecord(string(b1))
 	if !r1.observed {
 		require.Failf(t, "", "phase 1 boundary was never observed: %s", string(b1))
@@ -1106,9 +1063,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 
 	// Verify local INDEX invariant before phase 2: pending ID MUST be absent
 	localIndex1, err := os.ReadFile(filepath.Join(r.bus.checkout, r.bus.lane, "INDEX"))
-	if err != nil {
-		require.NoErrorf(t, err, "could not read local INDEX: %v", err)
-	}
+	require.NoErrorf(t, err, "could not read local INDEX: %v", err)
 	if bytes.Contains(localIndex1, []byte(id)) {
 		t.Logf("phase 1 raced past note creation to INDEX append before death; retrying: %s", string(localIndex1))
 		return false
@@ -1140,9 +1095,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 		require.Failf(t, "", "phase 2 interruption was not reported as uncertain: %d\n%s\n%s", code, out, errs)
 	}
 	b2, err := os.ReadFile(record2)
-	if err != nil {
-		require.NoErrorf(t, err, "phase 2 wrapper left no record: %v", err)
-	}
+	require.NoErrorf(t, err, "phase 2 wrapper left no record: %v", err)
 	r2 := parseStageRecord(string(b2))
 	if !r2.observed {
 		require.Failf(t, "", "phase 2 boundary was never observed: %s", string(b2))
@@ -1158,9 +1111,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 
 	// Verify local INDEX now contains the newly appended id
 	localIndex2, err := os.ReadFile(filepath.Join(r.bus.checkout, r.bus.lane, "INDEX"))
-	if err != nil {
-		require.NoErrorf(t, err, "could not read local INDEX after phase 2: %v", err)
-	}
+	require.NoErrorf(t, err, "could not read local INDEX after phase 2: %v", err)
 	if !bytes.Contains(localIndex2, []byte(id)) {
 		require.Failf(t, "", "phase 2 was expected to append id %q to local INDEX before kill, but INDEX does not contain it:\n%s", id, string(localIndex2))
 	}
@@ -1181,9 +1132,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 	// 5. Phase 3: Final retry runs to completion with real binary
 	clearWrapper(t)
 	code, out, errs = r.send(t, r.bin)
-	if code != 0 {
-		require.EqualValuesf(t, 0, code, "phase 3 final recovery failed: %d\n%s\n%s", code, out, errs)
-	}
+	require.EqualValuesf(t, 0, code, "phase 3 final recovery failed: %d\n%s\n%s", code, out, errs)
 	if got := r.deliveredID(t); got != id {
 		require.EqualValuesf(t, id, got, "phase 3 delivered ID %q, want retained %q", got, id)
 	}

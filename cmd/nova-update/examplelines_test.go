@@ -30,9 +30,8 @@ import (
 // a reader types exists, or that the fixture path in the banner resolves from a checkout root.
 func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
+	// SLEEPS: this test waits on the wall clock (over 5 s on a PR run), and unit tests
+	// use no real time: it becomes a mocked-clock unit test or a functional program.
 	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	if runtime.GOOS == "windows" {
@@ -66,7 +65,7 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 
 // skippedExampleLines are the lines this test does NOT run, by name, each with the reason. They are
 // skipped because the line pushes, publishes, contacts a forge, acts on a machine or needs a key --
-// not because the test is unwilling to run it. nova-update's block carries no such line today, so the
+// not because the test is unwilling to run it. nova-update's block carries no such line, so the
 // list is empty and every line is run; an entry added here must carry its `// why`.
 var skippedExampleLines = map[string]string{}
 
@@ -75,7 +74,7 @@ var skippedExampleLines = map[string]string{}
 func buildUpdate(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	bin := filepath.Join(t.TempDir(), "nova-update")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-update")
 	build.Dir = root
@@ -93,7 +92,7 @@ func buildUpdate(t *testing.T) string {
 func checkoutCopy(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	dst := t.TempDir()
 	{
 		err := copyTree(root, dst)

@@ -41,6 +41,9 @@ first run: the binary alone; the example lines write a one-tool manifest and rea
 				Name:   "moved",
 				Usage:  "moved --from <sha> --to <sha> --repo <dir> --out <path> [--timeout <d>] [--budget <d>] [--dry-run]",
 				Effect: tool.LocalWrite + "; with --dry-run, the note is printed and nothing is written but the builds' scratch",
+				// No banner example: it needs a checkout and builds every cmd/* twice.
+				Detail: "example, in a checkout of these tools (it builds both revisions; raise --budget when two builds outlast it):\n" +
+					"  nova-version moved --from HEAD~1 --to HEAD --repo . --out moved.txt --dry-run\n",
 				Flags: func(f *tool.Flags) {
 					f.Required("from", "the revision to compare from")
 					f.Required("to", "the revision to compare to")

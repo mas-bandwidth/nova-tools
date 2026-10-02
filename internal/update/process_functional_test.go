@@ -15,18 +15,10 @@ import (
 
 // process_functional_test.go holds the tests of this package that stage a real
 // child process against a real deadline, so they are the functional tier
-// (nova-tools #4328: a real process is functional), not a unit test paying the
-// wall clock. Measured 2026-09-26: TestHeldPipePastGraceIsNamedAndEchoesNoContent
-// waits out killGrace (2 s) and ran 2.0 s on run 36261817989's space shard 1/4;
-// TestJoinReporterDeathWithPendingSavedFinishesTheSameReport ran 1.6 s there and
-// 2.2 s in a child's local run, TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers
-// 1.5 s, each staging a kill inside a window it does not own; on the Studio at
-// load 17-30 (nice -n 15, -p 2) the three ran 2.0, 4.4 and 3.2 s.
-// TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice stages the
-// same kind of kill and ran 1.3 s and 2.9 s in two Studio runs at load 10-30.
-// TestJoinInterruptionNegativeControlWithoutKillFails stages the same wrapped
-// child and ran 1.6 s on run 36264290984's space shard 3/4 at load 3 of 32
-// (#4413), red against the unit tier's 1 s budget.
+// (a real process is functional), not a unit test paying the wall clock.
+// TestHeldPipePastGraceIsNamedAndEchoesNoContent waits out killGrace (2 s);
+// the join tests each stage a kill inside a window they do not own, and run
+// 1.3 s to 4.4 s under load, over the unit tier's 1 s budget.
 
 // Past the grace the refusal must name the pipe rather than blame the version
 // command, and it must say so without echoing a byte the child wrote.
@@ -37,9 +29,7 @@ func TestHeldPipePastGraceIsNamedAndEchoesNoContent(t *testing.T) {
 	if r.Known() || r.Reason != "output_not_closed" {
 		require.Failf(t, "", "reason=%q remedy=%q", r.Reason, r.Remedy)
 	}
-	if r.Remedy != leakRemedy {
-		require.EqualValuesf(t, leakRemedy, r.Remedy, "remedy=%q", r.Remedy)
-	}
+	require.EqualValuesf(t, leakRemedy, r.Remedy, "remedy=%q", r.Remedy)
 	if strings.Contains(r.Reason, "9.9.9") || strings.Contains(r.Remedy, "9.9.9") {
 		require.Failf(t, "", "diagnostic echoed child content: %q %q", r.Reason, r.Remedy)
 	}
@@ -104,9 +94,7 @@ func TestJoinInterruptionNegativeControlWithoutKillFails(t *testing.T) {
 		require.Failf(t, "", "negative control wrapper was not reported as failure: %d\n%s\n%s", code, out, errs)
 	}
 	b, err := os.ReadFile(record)
-	if err != nil {
-		require.NoErrorf(t, err, "wrapper left no record: %v", err)
-	}
+	require.NoErrorf(t, err, "wrapper left no record: %v", err)
 	receipt := parseStageRecord(string(b))
 	if !receipt.observed {
 		require.Failf(t, "", "expected boundary observed=true, got %s", string(b))

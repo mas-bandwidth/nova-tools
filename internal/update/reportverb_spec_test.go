@@ -3,7 +3,6 @@ package update
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,14 +18,10 @@ func TestSpecUpdateReportVerbSectionIsIntact(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-UPDATE.md"))
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	doc := string(raw)
 	for _, marker := range []string{"<<<<<<<", "|||||||", ">>>>>>>", "\n=======\n"} {
-		if strings.Contains(doc, marker) {
-			assert.NotContainsf(t, doc, marker, "SPEC-UPDATE.md carries an unresolved merge marker %q", marker)
-		}
+		assert.NotContainsf(t, doc, marker, "SPEC-UPDATE.md carries an unresolved merge marker %q", marker)
 	}
 	for _, phrase := range []string{
 		"nova-version report …",
@@ -34,8 +29,6 @@ func TestSpecUpdateReportVerbSectionIsIntact(t *testing.T) {
 		"prints the inventory and composes nothing (rule 26)",
 		"the ready-to-send draft is `nova-version report --draft …`, the flag typed.",
 	} {
-		if !strings.Contains(doc, phrase) {
-			assert.Containsf(t, doc, phrase, "SPEC-UPDATE.md does not name the report-verb contract keyed by %q", phrase)
-		}
+		assert.Containsf(t, doc, phrase, "SPEC-UPDATE.md does not name the report-verb contract keyed by %q", phrase)
 	}
 }

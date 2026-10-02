@@ -18,25 +18,15 @@ import (
 // `--timeout` is how a caller changes it. It is also a package seam so a test
 // can be bounded by a short clock rather than the machine's default.
 //
-// THIRTY SECONDS, NOT FIVE, BECAUSE THIS VERB'S FIRST EXEC IS ALWAYS A COLD ONE.
-// Every other verb in this package probes tools a person has been running for
-// days; `snapshot` reads a directory that was written a command ago -- the
-// documented sequence is `go install ./cmd/...` and then `nova-version
-// snapshot` -- so every binary in it is one this machine has never executed,
-// and the platform's one-time assessment of a never-seen executable is charged
-// to that first exec. Measured on the darwin/arm64 Studio over fresh
-// executables: 164-571 ms cold against 5 ms warm at load 121-151 on 32 cores,
-// and 140 ms median cold with a 7.03 s maximum while the tree compiled beside
-// it -- which is precisely the state `go install ./cmd/...` leaves the machine
-// in. A five-second bound therefore refused healthy binaries and sent the
-// person to repair a build that was fine (#890, and #1554 for the class).
+// It is thirty seconds, not report's five, because a first exec of a new binary
+// is slow: `snapshot` reads a directory written a command ago (`go install
+// ./cmd/...`, then `nova-version snapshot`), and a platform assesses each
+// never-run executable on its first exec, a cost that runs to seconds while a
+// build runs beside it. Lower it with --timeout for binaries already run.
 //
-// A warm-up exec outside the bound was the other candidate and was measured and
-// rejected: an exec killed at 40 ms leaves the assessment unpaid (the next exec
-// of that same file still cost 101 ms against a 140 ms cold and a 7 ms warm),
-// so a warm-up bounded by the same `--timeout` buys nothing, and one bounded by
-// `--budget` would turn a genuinely broken binary's prompt refusal into a
-// whole-budget wait. One honest bound, reachable by flag, is the smaller thing.
+// A warm-up exec outside the bound buys nothing: an exec killed early leaves the
+// assessment unpaid, and one bounded by --budget would turn a broken binary's
+// prompt refusal into a whole-budget wait. One bound, reachable by flag.
 var snapshotChildTimeout = 30 * time.Second
 
 // snapshotBudget is the default deadline for the WHOLE run, and `--budget` is
@@ -52,7 +42,7 @@ var snapshotBudget = 60 * time.Second
 // an installed argv is probed, and it gets this deadline and no more. The bound
 // is report's five-second default rather than the directory shape's thirty,
 // because a recorded version never pays a first-exec toll and the count is a
-// manifest of adopted tools, not a scan of freshly installed binaries (#890).
+// manifest of adopted tools, not a scan of freshly installed binaries.
 var snapshotAdoptedTimeout = 5 * time.Second
 
 // snapshotHeader is the TSV shape `snapshot` writes and `diff` reads. It is one
@@ -65,8 +55,8 @@ const snapshotHeader = "name\tstamp\trevision\tplatform"
 // the line carries (repository, revision, dirty flag, build host), and has
 // tells the mixed-source gate whether the line named source at all: a binary
 // that did not name source contributes no opinion to that gate, and a binary
-// that did is checked against every other binary that did (#2291,
-// SPEC-VERSION item 6).
+// that did is checked against every other binary that did (SPEC-VERSION
+// item 6).
 type snapRow struct {
 	name, stamp, revision, platform string
 	src                             buildinfo.Source
@@ -101,12 +91,10 @@ func revisionOf(stamp string) string {
 // through internal/buildinfo, the one place in this tree that both WRITES that
 // line and reads it.
 //
-// It used to demand exactly four tokens, and on 2026-09-18 that cost a whole
-// install: nova-merge prints a fifth `build=<hex>`, the sha256 of its own file,
-// and one snapshot of ~/.local/bin refused every binary in it (#1297). An extra
-// is a tool saying one more true thing about itself; every column this verb
-// writes is read out of the four tokens the whole set shares, so an extra
-// changes nothing here except that it is no longer a refusal.
+// Named `key=value` extras after the four tokens are accepted: an extra is a
+// tool saying one more true thing about itself (a `build=<hex>` digest of its
+// own file, say), and every column this verb writes is read out of the four
+// tokens the whole set shares.
 //
 // The structured source view -- repository, revision, dirty flag, build host
 // -- is read from the same line and returned separately. A line that does not
@@ -114,7 +102,7 @@ func revisionOf(stamp string) string {
 // from a tag) returns src with has=false: the row is still recorded, and
 // "no source" is the honest answer rather than a refusal at this verb's
 // normal case. The mixed-source gate downstream compares only what the rows
-// carry (#2291, SPEC-VERSION item 6).
+// carry (SPEC-VERSION item 6).
 func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo.Source, has bool, ok bool) {
 	f, ok := buildinfo.Parse(s)
 	if !ok {
@@ -125,8 +113,8 @@ func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo
 }
 
 // snapshotVerb has two shapes. With --file <manifest> it scopes to the ADOPTED
-// rule-2 manifest (#622): it reads the manifest's entries the way report does
-// and reports how many answer -- the adopted sixteen -- never how many nova-*
+// rule-2 manifest: it reads the manifest's entries the way report does
+// and reports how many answer -- the tools the manifest names -- never how many nova-*
 // executables sit in a bin directory or on PATH. With --bin/--out it inventories
 // a directory of binaries by running each one's own `version`. Every path comes
 // from a flag; neither the file's name nor PATH is trusted for the reading.
@@ -183,13 +171,10 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 			}
 			switch reason {
 			case "timeout":
-				// NAME BOTH READINGS OF A TIMEOUT. A binary that does not answer
-				// inside its bound is usually broken, and was the only reading
-				// this line offered; the other is that the bound was spent on the
-				// platform's one-time assessment of an executable this machine has
-				// never run, which is what every binary in a freshly installed
-				// --bin is (#890). Sending somebody to `go build` a package that
-				// builds cleanly is a dead end, so the flag is named too.
+				// Both readings of a timeout are named: a binary that does not
+				// answer inside its bound may be broken, or the bound was spent on
+				// the platform's first-exec assessment of a newly installed
+				// binary, so the remedy names the build and the flag.
 				reason = "timeout after " + timeout.String()
 				remedy = "repair the build there (go build ./cmd/" + e.Name() + "), or raise --timeout: the first run of a newly installed binary is assessed by the platform and that cost is charged to this deadline"
 			case "budget":
@@ -213,19 +198,14 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 			return tool.Refuse(fmt.Sprintf("mixed stamps: %s=%s %s=%s (rebuild the set under one stamp with nova-update release build --version <v> --out <dir> --source <checkout>, then nova-update release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", rows[0].name, rows[0].stamp, rows[i].name, rows[i].stamp))
 		}
 	}
-	// SOURCE METADATA GATE (#2291, SPEC-VERSION item 6). The version stamp
-	// is one field a build can carry from a different checkout; the four
-	// source keys -- repository, revision, dirty flag, build host -- are
-	// the structured view of WHERE the build actually came from, and
-	// every stamp read at the gate checks it. A row that does not name
-	// source (an old binary, a foreign tool, a `go install` from a tag)
-	// contributes no opinion, so the existing tests' four-token stubs
-	// remain readable; a row that names source is checked against every
-	// other row that named source, and disagreement is refused. Missing
-	// in the strict sense ("a binary whose source metadata is missing")
-	// is the next issue's slice, once every stamp read across the tree
-	// can demand source without breaking the older binaries in the
-	// wild.
+	// The source metadata gate (SPEC-VERSION item 6). The version stamp is
+	// one field a build can carry from a different checkout; the four source
+	// keys -- repository, revision, dirty flag, build host -- say where the
+	// build came from. A row that does not name source (a binary built
+	// without it, a foreign tool, a `go install` from a tag) contributes no
+	// opinion; a row that names source is checked against every other row
+	// that named source, and disagreement is refused. A row without source
+	// is not refused.
 	var firstSrc buildinfo.Source
 	var firstSrcName string
 	var firstSrcSet bool
@@ -260,11 +240,11 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 }
 
 // snapshotAdopted counts how many of the adopted manifest's tools answer, and is
-// the --file shape of snapshotVerb (#622). It reads the rule-2 manifest --file
+// the --file shape of snapshotVerb. It reads the rule-2 manifest --file
 // names and asks each entry its identity exactly as report does, so a recorded
 // installed version is known without a process and an installed argv is probed
-// once. The count is the manifest's own -- the adopted sixteen -- never the
-// thirty-two nova-* executables a bin directory or PATH might hold, and no file
+// once. The count is the manifest's own, never the nova-* executables a bin
+// directory or PATH might hold, and no file
 // is written: the manifest is adopted, not discovered. The verdict mirrors
 // report's: one count line, exit 0 when every adopted tool answers and exit 1
 // when any does not.

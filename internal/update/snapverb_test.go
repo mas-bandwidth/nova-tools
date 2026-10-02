@@ -38,8 +38,6 @@ func TestSnapshotFileCountsTheAdoptedManifest(t *testing.T) {
 	file := manifest(t, rows...)
 	var o, e bytes.Buffer
 	code := Run("nova-version", []string{"snapshot", "--file", file}, "", &o, &e, Environment{})
-	if code != 0 {
-		require.EqualValuesf(t, 0, code, "snapshot --file did not count the adopted manifest: exit %d\nstdout: %s\nstderr: %s", code, o.String(), e.String())
-	}
+	require.EqualValuesf(t, 0, code, "snapshot --file did not count the adopted manifest: exit %d\nstdout: %s\nstderr: %s", code, o.String(), e.String())
 	need(t, o.String(), "SNAPSHOT OK checked=16 known=16 unknown=0 file="+field(file))
 }

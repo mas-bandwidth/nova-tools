@@ -43,9 +43,7 @@ func treeOf(t *testing.T, root string) []string {
 		seen = append(seen, fmt.Sprintf("%s %d %s", path, info.Size(), info.ModTime().UTC().Format(time.RFC3339Nano)))
 		return nil
 	})
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	return seen
 }
 
@@ -62,9 +60,7 @@ func TestRule9CheckWritesNothingAndNeverRunsAnApply(t *testing.T) {
 	p := manifest(t, row("x", "tool", installed, "local:"+latest, command(t, "write", witness, "installed")))
 	before := treeOf(t, filepath.Dir(p))
 	c, out, errs := run(t, Environment{}, "check", "--file", p)
-	if c != 1 {
-		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
-	}
+	require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
 	need(t, errs, "CHECK STALE name=x")
 	if _, err := os.Stat(witness); err == nil {
 		require.Error(t, err, "check ran the apply command")
@@ -73,9 +69,7 @@ func TestRule9CheckWritesNothingAndNeverRunsAnApply(t *testing.T) {
 		require.Failf(t, "", "check wrote to the manifest's directory:\nbefore %v\nafter  %v", before, after)
 	}
 	log, err := os.ReadFile(calls)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	for _, line := range strings.Split(strings.TrimSpace(string(log)), "\n") {
 		if line != "" && !strings.HasPrefix(line, "print ") {
 			require.Failf(t, "", "check ran something that is not a version read: %q", line)
@@ -101,18 +95,14 @@ func TestRule16OutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	}
 	p := manifest(t, rows...)
 	c, out, errs := run(t, Environment{}, "check", "--file", p, "--max", "3")
-	if c != 1 {
-		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
-	}
+	require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
 	lines := strings.Count(strings.TrimSpace(out+errs), "\n") + 1
 	if lines > 12 {
 		require.LessOrEqualf(t, lines, 12, "a 500-entry run printed %d lines", lines)
 	}
 	need(t, errs, "entries=500", "CHECK MORE kind=unknown shown=3 total=500")
 	c, out, all := run(t, Environment{}, "check", "--file", p, "--max", "0")
-	if c != 1 {
-		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, all)
-	}
+	require.EqualValuesf(t, 1, c, "%d %s %s", c, out, all)
 	if shown := strings.Count(all, "CHECK UNKNOWN "); shown != many {
 		require.EqualValuesf(t, many, shown, "--max 0 showed %d of %d", shown, many)
 	}
@@ -153,9 +143,7 @@ func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
 			continue
 		}
 		first := firstLine(said)
-		if !strings.Contains(first, "REFUSED") {
-			assert.Containsf(t, first, "REFUSED", "%s: not a REFUSED line: %q", name, first)
-		}
+		assert.Containsf(t, first, "REFUSED", "%s: not a REFUSED line: %q", name, first)
 		if _, run, ok := strings.Cut(first, "; run: nova-update "); !ok || run == "" {
 			assert.Failf(t, "", "%s: no command to run: %q", name, first)
 		}
@@ -172,9 +160,7 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	log := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, out, errs := run(t, env, "report", "--file", p, "--as", "fixture", "--to", "integrator", "--snapshot", snapshot)
-	if c != 0 {
-		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
-	}
+	require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
 	if !strings.Contains(firstLine(out), " at="+fixed.Format(time.RFC3339)) || !strings.Contains(firstLine(out), " took=0s") {
 		require.Failf(t, "", "the printed stamp is not the injected clock's: %s", firstLine(out))
 	}
@@ -193,9 +179,7 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	// Rule 25's injected clock: the snapshot's own stamps are that clock too, so
 	// two runs of one fixture are byte-identical and a diff means a change.
 	state, err := readSnapshot(snapshot)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	for name, o := range state.Observed {
 		if o.At != fixed.Format(time.RFC3339) {
 			require.Failf(t, "", "%s was stamped %q, not by the injected clock", name, o.At)
@@ -227,21 +211,17 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 		require.EqualValuesf(t, 0, rc, "exit %d\n%s", rc, goodOut.String())
 	}
 	settled, err := os.ReadFile(snapshot)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	foreign := filepath.Join(dir, snapshotTempPrefix+"another-writer")
 	foreignBytes := []byte("another writer's unfinished work\n")
 	if err := os.WriteFile(foreign, foreignBytes, 0600); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 
 	second := manifest(t, row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none"))
 	ready := filepath.Join(dir, "before-rename")
 	input, heldOpen, err := os.Pipe()
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = input.Close(); _ = heldOpen.Close() })
 	c := exec.Command(os.Args[0], "-test.run=^TestSnapshotRenameBarrierHelper$")
 	c.Env = append(os.Environ(), "NOVA_SNAPSHOT_BARRIER="+ready,
@@ -250,7 +230,7 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 	var output bytes.Buffer
 	c.Stdout, c.Stderr = &output, &output
 	if err := c.Start(); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	done := make(chan struct{})
 	var waitErr error
@@ -280,9 +260,7 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 		}
 	}
 	inFlight, err := os.ReadFile(interrupted)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	if bytes.Equal(inFlight, settled) {
 		require.Fail(t, fmt.Sprintln("replacement must differ from the previously committed snapshot"))
 	}
@@ -355,9 +333,7 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	t.Parallel()
 
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-UPDATE.md"))
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	// The block is the first fenced code block after the "## The verbs" heading.
 	_, after, ok := strings.Cut(string(doc), "\n## The verbs\n")
 	if !ok {
@@ -435,9 +411,7 @@ func TestUsageAndRefusalSayWhatTheFileIs(t *testing.T) {
 	}
 	var out, err bytes.Buffer
 	c := Main("nova-version", []string{"report", "--file", filepath.Join(t.TempDir(), "missing.tsv")}, "", &out, &err)
-	if c != 2 {
-		require.EqualValuesf(t, 2, c, "missing file exit = %d, want 2", c)
-	}
+	require.EqualValuesf(t, 2, c, "missing file exit = %d, want 2", c)
 	if !strings.Contains(err.String(), manifestShape) {
 		require.Failf(t, "", "missing-file refusal does not carry the shape sentence:\n%s", err.String())
 	}
@@ -476,9 +450,7 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 	}
 	// The versions fixture is the spec's own four entries, in its order, then one pin entry.
 	entries, err := Load(strings.NewReader(readFixture(t, "versions.tsv")))
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	want := []struct{ name, kind, owner string }{
 		{"gh", "tool", "rowan"},
 		{"sops", "tool", "rowan"},
@@ -486,9 +458,7 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 		{"qwen3-coder:30b", "model", "stella"},
 		{"nova-wake-pin-nova-bus", "pin", "rowan"},
 	}
-	if len(entries) != len(want) {
-		require.Lenf(t, entries, len(want), "the fixture should carry %d entries, it carries %d", len(want), len(entries))
-	}
+	require.Lenf(t, entries, len(want), "the fixture should carry %d entries, it carries %d", len(want), len(entries))
 	for i, w := range want {
 		if entries[i].Name != w.name || entries[i].Kind != w.kind || entries[i].Owner != w.owner {
 			assert.Failf(t, "", "entry %d is %s/%s/%s, the spec says %s/%s/%s", i, entries[i].Name, entries[i].Kind, entries[i].Owner, w.name, w.kind, w.owner)
@@ -498,9 +468,7 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 func readFixture(t *testing.T, name string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "cmd", "nova-update", "testdata", name))
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	return string(b)
 }
 
@@ -514,18 +482,14 @@ func TestTripwiresStayOutOfShippingCode(t *testing.T) {
 
 	shipping := map[string]string{}
 	entries, err := os.ReadDir(".")
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
 		b, err := os.ReadFile(name)
-		if err != nil {
-			require.NoError(t, err, err)
-		}
+		require.NoError(t, err)
 		shipping[name] = string(b)
 	}
 	if len(shipping) < 8 {
@@ -533,9 +497,7 @@ func TestTripwiresStayOutOfShippingCode(t *testing.T) {
 	}
 	for _, forbidden := range []string{"os.Getwd", "os.UserHomeDir", "os.Hostname", "11434", `"sh"`, `"bash"`, `"cmd.exe"`, "os/user", "time.Ticker", "time.Tick(", "http.DefaultClient"} {
 		for name, body := range shipping {
-			if strings.Contains(body, forbidden) {
-				assert.NotContainsf(t, body, forbidden, "%s carries %s, which rule 26 and the tripwire list keep out of this tool", name, forbidden)
-			}
+			assert.NotContainsf(t, body, forbidden, "%s carries %s, which rule 26 and the tripwire list keep out of this tool", name, forbidden)
 		}
 	}
 	// The two hosts this tool may name live in one file, so a third one added
@@ -559,9 +521,7 @@ func TestTripwiresStayOutOfShippingCode(t *testing.T) {
 			assert.Failf(t, "", "%s reads an environment variable that is not PATH", name)
 		}
 	}
-	if reads != 1 {
-		assert.EqualValuesf(t, 1, reads, "shipping code reads the environment %d times, want exactly the one PATH in a remedy", reads)
-	}
+	assert.EqualValuesf(t, 1, reads, "shipping code reads the environment %d times, want exactly the one PATH in a remedy", reads)
 	if strings.Count(strings.Join(valuesOf(shipping), "\n"), "NOVA_UPDATE_") != 0 {
 		assert.Fail(t, fmt.Sprintln("shipping code reads a NOVA_UPDATE_ variable; the test seams are not settings"))
 	}
@@ -574,9 +534,9 @@ func valuesOf(m map[string]string) []string {
 	return out
 }
 
-// `nova-update check --help` answered `flag: help requested` -- the flag
-// package's own sentinel, shown to somebody who asked for help (darwin dogfood,
-// 2026-09-18). Asking is not an error: the usage is printed and the exit is 0.
+// `nova-update check --help` never answers `flag: help requested`, the flag
+// package's own sentinel. Asking is not an error: the usage is printed and the
+// exit is 0.
 func TestVerbHelpPrintsUsageRatherThanTheFlagSentinel(t *testing.T) {
 	t.Parallel()
 

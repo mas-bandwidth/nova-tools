@@ -131,7 +131,7 @@ var busRefusals = []string{"SEND FAIL ", "SEND REFUSED: ", "SEND OK ", "PREPARE 
 // output_not_closed, the operating system's own words) is about this tool's argv
 // and is never the bus's text.
 //
-// What the bus's own reasons may contain, read at #138 aeb45c9: a note header
+// What the bus's own reasons may contain: a note header
 // VALUE (a From or a Subject, truncated), a roster name, an id, a lane, a path,
 // one remote INDEX line. They do not contain a note body and they cannot contain
 // a version command's output, which reaches the bus only inside the note.

@@ -88,9 +88,7 @@ func fakeBusPath(t *testing.T) string {
 		name += ".exe"
 	}
 	raw, e := os.Executable()
-	if e != nil {
-		require.NoError(t, e, e)
-	}
+	require.NoError(t, e, e)
 	if e = testbin.Place(raw, filepath.Join(dir, name)); e != nil {
 		require.NoError(t, e, e)
 	}
@@ -104,9 +102,7 @@ func fakeBusPath(t *testing.T) string {
 func calls(t *testing.T, p string) (int, int) {
 	t.Helper()
 	b, e := os.ReadFile(p)
-	if e != nil {
-		require.NoError(t, e, e)
-	}
+	require.NoError(t, e, e)
 	s := string(b)
 	return strings.Count(s, "prepare\n"), strings.Count(s, "send\n")
 }
@@ -143,9 +139,7 @@ func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
 		require.Fail(t, fmt.Sprintln(np, ns))
 	}
 	s, _ = readSnapshot(sp)
-	if len(s.Pending) != 0 {
-		require.Len(t, s.Pending, 0, "pending not cleared")
-	}
+	require.Len(t, s.Pending, 0, "pending not cleared")
 	for _, v := range s.Delivered {
 		if v.Observed["x"].Raw != "v2.0.0" || v.ID == old {
 			require.Fail(t, fmt.Sprintln(v))
@@ -205,9 +199,7 @@ func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 	}
 	for name, raw := range bad {
 		id, err := validatePrepared([]byte(raw))
-		if err == nil {
-			require.Errorf(t, err, "%s accepted, id=%q", name, id)
-		}
+		require.Errorf(t, err, "%s accepted, id=%q", name, id)
 		if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "a note") {
 			require.Failf(t, "", "%s diagnostic echoed content: %v", name, err)
 		}
@@ -218,9 +210,7 @@ func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 		require.NoError(t, e, e)
 	}
 	s, err := readSnapshot(dup)
-	if err == nil {
-		require.Errorf(t, err, "ambiguous snapshot accepted: %v", s)
-	}
+	require.Errorf(t, err, "ambiguous snapshot accepted: %v", s)
 	if strings.Contains(err.Error(), secret) {
 		require.Failf(t, "", "snapshot diagnostic echoed content: %v", err)
 	}
@@ -229,9 +219,9 @@ func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 	}
 }
 
-// A failed delivery used to say "exit 1" and nothing else. The bus's own first
-// line now reaches the caller's diagnostic -- one line, clipped, and no binary
-// on PATH can turn one event into two.
+// A failed delivery says more than "exit 1": the bus's own first line reaches
+// the caller's diagnostic -- one line, clipped, and no binary on PATH can turn
+// one event into two.
 func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL one\nSEND FAIL two\n"}); got != "SEND FAIL one" {
 		require.EqualValuesf(t, "SEND FAIL one", got, "%q", got)
@@ -255,16 +245,12 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 			c, _, errout := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
 				filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 				"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
-			if c != 1 {
-				require.EqualValues(t, 1, c, c)
-			}
+			require.EqualValues(t, 1, c, c)
 			need(t, errout, "the bus said: PREPARE FAIL")
 			note := ""
 			for _, line := range strings.Split(errout, "\n") {
 				if strings.HasPrefix(line, "REPORT NOTE") {
-					if note != "" {
-						require.EqualValuesf(t, "", note, "one refusal became two lines:\n%s", errout)
-					}
+					require.EqualValuesf(t, "", note, "one refusal became two lines:\n%s", errout)
 					note = line
 				}
 			}
@@ -315,12 +301,10 @@ func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
 	} {
 		p := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".json")
 		if err := os.WriteFile(p, []byte(body), 0600); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 		s, err := readSnapshot(p)
-		if err == nil {
-			assert.Errorf(t, err, "%s accepted: %+v", name, s)
-		}
+		assert.Errorf(t, err, "%s accepted: %+v", name, s)
 		if err != nil && strings.Contains(err.Error(), "tell-nobody") {
 			assert.Failf(t, "", "%s echoed content: %v", name, err)
 		}
@@ -360,13 +344,9 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--budget", "60s")
-	if c != 0 {
-		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
-	}
+	require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
 	b, err := os.ReadFile(log)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	sendArgv := ""
 	for _, line := range strings.Split(string(b), "\n") {
 		if strings.HasPrefix(line, "argv send ") {
@@ -377,9 +357,7 @@ func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
 		require.NotEqualValuesf(t, "", sendArgv, "no send argv was logged:\n%s", b)
 	}
 	for _, want := range []string{"--attempts ", "--git-timeout ", "--prepared-stdin"} {
-		if !strings.Contains(sendArgv, want) {
-			assert.Containsf(t, sendArgv, want, "the send argv does not carry %s: %s", want, sendArgv)
-		}
+		assert.Containsf(t, sendArgv, want, "the send argv does not carry %s: %s", want, sendArgv)
 	}
 	fields := strings.Fields(sendArgv)
 	for i, f := range fields {
@@ -425,11 +403,7 @@ func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
 	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
 		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
 		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
-	if c != 1 {
-		require.EqualValues(t, 1, c, c)
-	}
-	if strings.Contains(out+errs, "tell-nobody-this") {
-		require.NotContainsf(t, out+errs, "tell-nobody-this", "an alien binary's words reached the event line:\n%s%s", out, errs)
-	}
+	require.EqualValues(t, 1, c, c)
+	require.NotContainsf(t, out+errs, "tell-nobody-this", "an alien binary's words reached the event line:\n%s%s", out, errs)
 	need(t, errs, "a line outside the bus's refusal grammar, not relayed")
 }

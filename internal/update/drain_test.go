@@ -14,17 +14,11 @@ import (
 // by a drain allowance that only the deadline case may shrink.
 func TestDeadlineHealthyChildUnderLoadIsFullyDrained(t *testing.T) {
 	args, err := argv(command(t, "flood", strconv.Itoa(40)))
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	p := process(ctx, args, nil, ChildCap)
-	if p.Reason != "" {
-		require.EqualValuesf(t, "", p.Reason, "a healthy child was refused: %s", p.Reason)
-	}
+	require.Empty(t, p.Reason, "a healthy child was refused")
 	// The version line ("x 1.2.3\n") plus 40 KiB of padding, every byte captured.
-	if want := 8 + 40*1024; len(p.Stdout) != want {
-		require.Lenf(t, p.Stdout, want, "drained %d bytes, want %d", len(p.Stdout), want)
-	}
+	require.Len(t, p.Stdout, 8+40*1024, "the drain cut the stream short")
 }

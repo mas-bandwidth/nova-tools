@@ -75,9 +75,7 @@ func TestDeadlineEscapedPipeGrandchildReturnsInsideBudget(t *testing.T) {
 		require.Failf(t, "", "drain allowance = %v, want 50ms (drainFloor)", drain)
 	}
 
-	if c != 1 {
-		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
-	}
+	require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
 	if took := time.Since(started); took > 30*time.Second {
 		require.Failf(t, "", "a budget with an escaped grandchild took %s", took)
 	}

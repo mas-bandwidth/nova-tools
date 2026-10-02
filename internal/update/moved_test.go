@@ -16,9 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The red tests nova-tools #2288 demands (docs/SPEC-VERSION.md, "nova-version
-// moved and nova-update apply --sha", rules 2, 3 and 12; the demands list's
-// items 1, 5, 6 and 7). `git`, `go` and every built binary are fakes on PATH,
+// The tests of `nova-version moved` (docs/SPEC-VERSION.md rules 2, 3 and 12).
+// `git`, `go` and every built binary are fakes on PATH,
 // the clock is injected, and nothing here reaches a network: the fakes stand
 // where the spec says a bench, a network or a clock stands.
 
@@ -117,7 +116,7 @@ func movedBenchSetup(t *testing.T) *movedBench {
 	t.Helper()
 	b := &movedBench{fx: t.TempDir(), fakeDir: t.TempDir(), repo: filepath.Join(t.TempDir(), "repo")}
 	if err := os.MkdirAll(b.repo, 0o755); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	specScript(t, b.fakeDir, "git", strings.ReplaceAll(movedFakeGit, "@FX@", b.fx))
 	specScript(t, b.fakeDir, "go", strings.ReplaceAll(movedFakeGo, "@FX@", b.fx))
@@ -131,7 +130,7 @@ func (b *movedBench) rev(t *testing.T, rev string, tools map[string]string) {
 	t.Helper()
 	dir := filepath.Join(b.fx, "revs", rev)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	names := make([]string, 0, len(tools))
 	for name := range tools {
@@ -145,11 +144,11 @@ func (b *movedBench) rev(t *testing.T, rev string, tools map[string]string) {
 		}
 		fmt.Fprintln(&list, name)
 		if err := os.WriteFile(filepath.Join(dir, name+".help"), []byte(tools[name]), 0o644); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(dir, "tools"), []byte(list.String()), 0o644); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 }
 
@@ -157,7 +156,7 @@ func (b *movedBench) rev(t *testing.T, rev string, tools map[string]string) {
 func (b *movedBench) message(t *testing.T, text string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(b.fx, "msg.txt"), []byte(text), 0o644); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	t.Cleanup(func() { os.Remove(filepath.Join(b.fx, "msg.txt")) })
 }
@@ -166,7 +165,7 @@ func (b *movedBench) message(t *testing.T, text string) {
 func (b *movedBench) movedFile(t *testing.T, text string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(b.fx, "MOVED.txt"), []byte(text), 0o644); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	t.Cleanup(func() { os.Remove(filepath.Join(b.fx, "MOVED.txt")) })
 }
@@ -192,12 +191,12 @@ func (b *movedBench) gitUnexpected() bool {
 	return err == nil
 }
 
-// TestIssue2288 is the anchor: `nova-version moved` exists, reads each
+// TestMovedAnnouncesOnlyWhatTheBuildsPrint is the anchor: `nova-version moved` exists, reads each
 // revision's own build, and never a hand-written list. One tool gains --decide
 // between the two revisions and another is replaced by a differently named one,
 // and every word the note announces was parsed off a help a built binary
 // printed -- the flag a hand list would name is announced nowhere.
-func TestIssue2288(t *testing.T) {
+func TestMovedAnnouncesOnlyWhatTheBuildsPrint(t *testing.T) {
 	b := movedBenchSetup(t)
 	b.rev(t, "aaaa1", map[string]string{
 		"nova-secrets": "nova-secrets seat --file <path> [--max <n>]\nnova-secrets version (or --version)\nnova-secrets help\n",
@@ -210,26 +209,20 @@ func TestIssue2288(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "moved.txt")
 	env := Environment{Now: func() time.Time { return time.Date(2026, 9, 23, 1, 2, 3, 0, time.UTC) }}
 	code, stdout, stderr := b.run(t, env, "moved", "--from", "aaaa1", "--to", "bbbb2", "--repo", b.repo, "--out", out)
-	if code != 0 {
-		require.EqualValuesf(t, 0, code, "moved refused a healthy bench: exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
+	require.EqualValuesf(t, 0, code, "moved refused a healthy bench: exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	need(t, stdout, "MOVED OK", "from=aaaa1", "to=bbbb2", "added=1", "deleted=1", "renamed=0", "verbs=6", "file="+field(out))
 	note := string(readFileOrFail(t, out))
 	// READING THE BUILD: --decide is announced because the --to build's own
 	// help prints it, and for no other reason.
 	need(t, note, "added=--decide tool=nova-secrets verb=seat")
 	// NEVER A HAND-WRITTEN LIST: --adopt is the kind of flag the ADOPT
-	// EVERYTHING note named off a list (#1141); neither revision's help prints
+	// EVERYTHING note named off a list; neither revision's help prints
 	// it, so it is announced nowhere. This is the mutation that matters.
-	if strings.Contains(stdout+note, "--adopt") {
-		assert.NotContainsf(t, stdout+note, "--adopt", "a flag no help printed was announced:\nstdout:\n%s\nnote:\n%s", stdout, note)
-	}
+	assert.NotContainsf(t, stdout+note, "--adopt", "a flag no help printed was announced:\nstdout:\n%s\nnote:\n%s", stdout, note)
 	// A vanished tool and a differently named appeared tool, no rename stated:
 	// deleted and added, never a rename inferred from help text.
 	need(t, note, "added=nova-new", "deleted=nova-old")
-	if strings.Contains(note, "renamed=") {
-		assert.NotContainsf(t, note, "renamed=", "a rename was inferred from help text alone:\n%s", note)
-	}
+	assert.NotContainsf(t, note, "renamed=", "a rename was inferred from help text alone:\n%s", note)
 	// The verb is dispatched and the help banner names it.
 	var banner bytes.Buffer
 	banner.WriteString(VersionTool("", Environment{}).Banner())
@@ -252,15 +245,11 @@ func TestMovedReadsTheBuildNeverAList(t *testing.T) {
 	})
 	out := filepath.Join(t.TempDir(), "moved.txt")
 	code, stdout, stderr := b.run(t, Environment{}, "moved", "--from", "aaaa1", "--to", "bbbb2", "--repo", b.repo, "--out", out)
-	if code != 0 {
-		require.EqualValuesf(t, 0, code, "exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
+	require.EqualValuesf(t, 0, code, "exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	need(t, stdout, "MOVED OK", "added=0", "deleted=0", "renamed=0")
 	note := string(readFileOrFail(t, out))
 	need(t, note, "added=--decide tool=nova-secrets verb=seat")
-	if strings.Contains(note+stdout, "--pin") {
-		assert.NotContainsf(t, note+stdout, "--pin", "a flag neither help prints was announced:\nstdout:\n%s\nnote:\n%s", stdout, note)
-	}
+	assert.NotContainsf(t, note+stdout, "--pin", "a flag neither help prints was announced:\nstdout:\n%s\nnote:\n%s", stdout, note)
 	// --dry-run takes the same builds and reads and prints that note, writing no
 	// --out (STANDARD §2, "a verb that writes has a dry run").
 	dry := filepath.Join(t.TempDir(), "dry.txt")
@@ -289,22 +278,16 @@ func TestMovedNeverInfersARename(t *testing.T) {
 	args := []string{"moved", "--from", "aaaa1", "--to", "bbbb2", "--repo", b.repo, "--out", out}
 	t.Run("unstated is deleted and added, never a rename", func(t *testing.T) {
 		code, stdout, stderr := b.run(t, Environment{}, args...)
-		if code != 0 {
-			require.EqualValuesf(t, 0, code, "exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-		}
+		require.EqualValuesf(t, 0, code, "exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 		need(t, stdout, "added=1", "deleted=1", "renamed=0")
 		note := string(readFileOrFail(t, out))
 		need(t, note, "added=nova-new", "deleted=nova-old")
-		if strings.Contains(note, "renamed=") {
-			assert.NotContainsf(t, note, "renamed=", "a rename was inferred from help text alone:\n%s", note)
-		}
+		assert.NotContainsf(t, note, "renamed=", "a rename was inferred from help text alone:\n%s", note)
 	})
 	t.Run("a rename stated in the commit message", func(t *testing.T) {
 		b.message(t, "routine churn between the two revisions\n\nrenamed nova-old to nova-new\n")
 		code, stdout, stderr := b.run(t, Environment{}, args...)
-		if code != 0 {
-			require.EqualValuesf(t, 0, code, "exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-		}
+		require.EqualValuesf(t, 0, code, "exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 		need(t, stdout, "added=0", "deleted=0", "renamed=1")
 		note := string(readFileOrFail(t, out))
 		need(t, note, "renamed=nova-old->nova-new")
@@ -315,9 +298,7 @@ func TestMovedNeverInfersARename(t *testing.T) {
 	t.Run("a rename stated in a MOVED file", func(t *testing.T) {
 		b.movedFile(t, "renamed nova-old to nova-new\n")
 		code, stdout, stderr := b.run(t, Environment{}, args...)
-		if code != 0 {
-			require.EqualValuesf(t, 0, code, "exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-		}
+		require.EqualValuesf(t, 0, code, "exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 		need(t, stdout, "added=0", "deleted=0", "renamed=1")
 		note := string(readFileOrFail(t, out))
 		need(t, note, "renamed=nova-old->nova-new")
@@ -337,19 +318,13 @@ func TestMovedEmptyDiffIsNotARefusal(t *testing.T) {
 	b.rev(t, "bbbb2", map[string]string{"nova-bus": seatHelp})
 	out := filepath.Join(t.TempDir(), "moved.txt")
 	code, stdout, stderr := b.run(t, Environment{}, "moved", "--from", "aaaa1", "--to", "bbbb2", "--repo", b.repo, "--out", out)
-	if code != 0 {
-		require.EqualValuesf(t, 0, code, "an empty diff was refused: exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
+	require.EqualValuesf(t, 0, code, "an empty diff was refused: exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	need(t, stdout, "MOVED OK", "added=0", "deleted=0", "renamed=0")
-	if strings.Contains(stdout+stderr, "REFUSED") {
-		assert.NotContainsf(t, stdout+stderr, "REFUSED", "an empty diff printed a refusal:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
-	}
+	assert.NotContainsf(t, stdout+stderr, "REFUSED", "an empty diff printed a refusal:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
 	note := string(readFileOrFail(t, out))
 	need(t, note, "MOVED from=aaaa1 to=bbbb2")
 	for _, absent := range []string{"added=", "deleted=", "renamed="} {
-		if strings.Contains(note, absent) {
-			assert.NotContainsf(t, note, absent, "an empty diff announced an entry:\n%s", note)
-		}
+		assert.NotContainsf(t, note, absent, "an empty diff announced an entry:\n%s", note)
 	}
 }
 
@@ -359,10 +334,9 @@ func TestMovedEmptyDiffIsNotARefusal(t *testing.T) {
 // build is started.
 func TestMovedIsBoundedByTheClock(t *testing.T) {
 	// SLEEPS: the first subtest uses the injected clock, but the second runs a child
-	// whose help sleeps past --timeout and waits for the real deadline to bite; it
-	// failed on the 2026-09-25 darwin shard of PR #4215. Skipped 2026-09-25 by Glenn's
-	// rule ("unit tests must not have real sleeps or waits"): the deadline subtest
-	// becomes a mocked-clock unit test or a functional program (nova-tools #4221).
+	// whose help sleeps past --timeout and waits for the real deadline to bite, and
+	// unit tests use no real time: the deadline subtest becomes a mocked-clock unit
+	// test or a functional program.
 	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	b := movedBenchSetup(t)
 	b.rev(t, "aaaa1", map[string]string{
@@ -377,9 +351,7 @@ func TestMovedIsBoundedByTheClock(t *testing.T) {
 	t.Run("the clock comes from the injected seam", func(t *testing.T) {
 		env := Environment{Now: func() time.Time { return time.Date(2026, 9, 23, 4, 5, 6, 0, time.UTC) }}
 		code, stdout, stderr := b.run(t, env, args...)
-		if code != 0 {
-			require.EqualValuesf(t, 0, code, "exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-		}
+		require.EqualValuesf(t, 0, code, "exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 		need(t, string(readFileOrFail(t, out)), "MOVED from=aaaa1 to=bbbb2 at=2026-09-23T04:05:06Z")
 	})
 	t.Run("a child past its deadline is refused and no note is written", func(t *testing.T) {
@@ -392,13 +364,11 @@ func TestMovedIsBoundedByTheClock(t *testing.T) {
 			"nova-slow": "nova-slow seat --file <path>\nnova-slow help\n",
 		})
 		if err := os.WriteFile(filepath.Join(b.fx, "revs", "dddd4", "nova-slow.slow"), nil, 0o644); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 		slowOut := filepath.Join(t.TempDir(), "slow.txt")
 		code, _, stderr := b.run(t, Environment{}, "moved", "--from", "dddd4", "--to", "eeee5", "--repo", b.repo, "--out", slowOut, "--timeout", "200ms")
-		if code != 2 {
-			require.EqualValuesf(t, 2, code, "exit %d, want 2; stderr=%s", code, stderr)
-		}
+		require.EqualValuesf(t, 2, code, "exit %d, want 2; stderr=%s", code, stderr)
 		need(t, stderr, "MOVED REFUSED", "nova-slow", "200ms")
 		if _, err := os.Stat(slowOut); err == nil {
 			require.Error(t, err, "a refused run wrote its note")
@@ -408,9 +378,7 @@ func TestMovedIsBoundedByTheClock(t *testing.T) {
 		b.resetGoRan()
 		missOut := filepath.Join(t.TempDir(), "missing.txt")
 		code, _, stderr := b.run(t, Environment{}, "moved", "--from", "cccc3", "--to", "bbbb2", "--repo", b.repo, "--out", missOut)
-		if code != 2 {
-			require.EqualValuesf(t, 2, code, "exit %d, want 2; stderr=%s", code, stderr)
-		}
+		require.EqualValuesf(t, 2, code, "exit %d, want 2; stderr=%s", code, stderr)
 		need(t, stderr, "MOVED REFUSED", "cccc3", "git fetch")
 		if _, err := os.Stat(missOut); err == nil {
 			require.Error(t, err, "a refused run wrote its note")

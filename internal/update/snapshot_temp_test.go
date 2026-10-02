@@ -1,10 +1,8 @@
 package update
 
-// Stella's deciding-delta witnesses for #141, added first and run red before
-// the repairs that make them pass. They name the two properties the earlier
-// implementation broke: one snapshot writer must never delete another
-// snapshot's live temporary, and the writer's own data-map keys must survive
-// its own reader.
+// Two properties of the snapshot writer: one snapshot writer never deletes
+// another snapshot's live temporary, and the writer's own data-map keys
+// survive its own reader.
 
 import (
 	"context"
@@ -20,32 +18,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestStellaSnapshotWriterPreservesOtherSnapshotsTemp(t *testing.T) {
+func TestSnapshotWriterPreservesOtherSnapshotsTemp(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	a, b := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json")
 	unlockA, err := lockSnapshot(context.Background(), a)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	defer unlockA()
 	unlockB, err := lockSnapshot(context.Background(), b)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	defer unlockB()
 	// B holds its own lock and has a live, open temporary exactly as writeSnapshot creates it.
 	f, err := os.CreateTemp(dir, snapshotTempPrefix+"*")
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	defer f.Close()
 	if _, err = f.WriteString("synthetic B bytes"); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	if err = writeSnapshot(a, emptySnapshot()); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	}
 	got, err := os.ReadFile(f.Name())
 	if err != nil || string(got) != "synthetic B bytes" {
@@ -53,7 +45,7 @@ func TestStellaSnapshotWriterPreservesOtherSnapshotsTemp(t *testing.T) {
 	}
 }
 
-func TestStellaSnapshotRoundTripKeepsDistinctMapKeys(t *testing.T) {
+func TestSnapshotRoundTripKeepsDistinctMapKeys(t *testing.T) {
 	t.Parallel()
 
 	for _, names := range [][]string{{"Tool", "tool"}, {"outil-é"}} {
@@ -63,16 +55,14 @@ func TestStellaSnapshotRoundTripKeepsDistinctMapKeys(t *testing.T) {
 		}
 		p := filepath.Join(t.TempDir(), "s.json")
 		if err := writeSnapshot(p, s); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 		got, err := readSnapshot(p)
 		if err != nil {
 			assert.NoErrorf(t, err, "writer's own %q map cannot be read: %v", names, err)
 			continue
 		}
-		if len(got.Observed) != len(names) {
-			assert.Lenf(t, got.Observed, len(names), "keys collapsed")
-		}
+		assert.Lenf(t, got.Observed, len(names), "keys collapsed")
 	}
 }
 
@@ -80,10 +70,9 @@ func TestStellaSnapshotRoundTripKeepsDistinctMapKeys(t *testing.T) {
 // processes. A killed writer's temporary must not be swept by the other
 // snapshot's writer (a leftover is preferable to deleting another writer's
 // work), and the killed write retries cleanly on top of the leftover.
-func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) {
-	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
+func TestTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep), and unit tests
+	// use no real time: it becomes a mocked-clock unit test or a functional program.
 	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGKILL on a process group stages the death; the owed Windows validation is named in the pull request")
@@ -112,10 +101,10 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 		c := exec.Command(bin, "report", "--file", p, "--snapshot", snapA)
 		setGroup(c)
 		if err := c.Start(); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 		if err := assignGroup(c); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 		done := make(chan struct{})
 		go func() { _ = c.Wait(); close(done) }()

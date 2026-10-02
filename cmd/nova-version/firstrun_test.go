@@ -3,12 +3,13 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/mas-bandwidth/nova-tools/internal/update"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/update"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,19 +19,19 @@ import (
 // example lines write their own manifest there, never into the checkout.
 func TestExecutableFirstRun(t *testing.T) {
 	doc, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	t.Chdir(t.TempDir())
 	var banner bytes.Buffer
 	update.Main("nova-version", []string{"help"}, "", &banner, &banner)
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-version")
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	for _, line := range examples {
 		var out, errs bytes.Buffer
 		code := update.Main("nova-version", strings.Fields(line)[1:], "", &out, &errs)
 		require.NotEqual(t, 2, code, "%s refused: %s", line, errs.String())
 	}
 	transcript, err := onboarding.FirstRun(string(doc), "nova-version")
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	var wanted, actual []string
 	var out, errs bytes.Buffer
 	for _, line := range transcript {
@@ -74,19 +75,19 @@ func firstRunShape(line string) string { return onboarding.Shape(line) }
 // promise.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	t.Chdir(t.TempDir())
 	lines, err := onboarding.FirstRun(string(raw), "nova-version")
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-version", lines)
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	require.NotEmpty(t, steps, "the `### First run` block holds no nova-version command; this test would pass by running nothing")
 	// The transcript declares four values as owned by the RUN or the BENCH
 	// rather than by the document, and nothing else: the instant of the run
 	// (`at=`) and its duration (`took=`), and the three fields of the
 	// `REPORT TOOL` line that say which Go THIS machine runs (`version=`),
 	// what its `version` command printed (`raw=`) and where it is installed
-	// (`path=`). The document records the Studio's arm64 Go; a bench runs its
+	// (`path=`). The document records one machine's arm64 Go; a bench runs its
 	// own, so those three cannot be compared as written. Every other value --
 	// the file, the counts, the kinds, the bounds -- is compared exactly.
 	norms := []onboarding.Norm{
@@ -106,7 +107,7 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 func elide(t *testing.T, name, pattern, as string) onboarding.Norm {
 	t.Helper()
 	n, err := onboarding.Elide(name, pattern, as)
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	return n
 }
 
@@ -132,7 +133,7 @@ func runVersionDocumented(t *testing.T) onboarding.Runner {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	{
 		_, err := os.Stat(filepath.Join(root, "docs", "TESTS.md"))
 		require.NoError(t, err, "docs/TESTS.md is not under %s: %v", root, err)

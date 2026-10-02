@@ -28,7 +28,7 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 	for _, tool := range []string{"ssh", "git", "gh"} {
 		script := "#!/bin/sh\necho " + tool + " >> " + mark + "\nexit 1\n"
 		if err := testbin.WriteExecutable(filepath.Join(trap, tool), []byte(script), 0o755); err != nil {
-			require.NoError(t, err, err)
+			require.NoError(t, err)
 		}
 	}
 	t.Setenv("PATH", trap)
@@ -46,18 +46,14 @@ func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 	var out, errs bytes.Buffer
 	code := Run("nova-update", []string{"report", "--store", mr.Addr()}, "test", &out, &errs, Environment{})
 	all := out.String() + errs.String()
-	if code != 1 {
-		require.EqualValuesf(t, 1, code, "exit %d, want 1 (drift found)\n%s", code, all)
-	}
+	require.EqualValuesf(t, 1, code, "exit %d, want 1 (drift found)\n%s", code, all)
 	var drift []string
 	for _, l := range strings.Split(all, "\n") {
 		if strings.Contains(l, "DRIFT") {
 			drift = append(drift, l)
 		}
 	}
-	if len(drift) != 1 {
-		require.Lenf(t, drift, 1, "want exactly one DRIFT line, got %d:\n%s", len(drift), all)
-	}
+	require.Lenf(t, drift, 1, "want exactly one DRIFT line, got %d:\n%s", len(drift), all)
 	if !strings.Contains(drift[0], "bench=stale") || !strings.Contains(drift[0], "build=20260924090000-bbbbbbbbbbbb") || !strings.Contains(drift[0], "want=20260925120000-aaaaaaaaaaaa") {
 		require.Failf(t, "", "the DRIFT line does not name the stale bench and both stamps: %s", drift[0])
 	}

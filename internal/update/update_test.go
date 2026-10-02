@@ -150,9 +150,7 @@ func run(t *testing.T, env Environment, a ...string) (int, string, string) {
 func need(t *testing.T, s string, want ...string) {
 	t.Helper()
 	for _, w := range want {
-		if !strings.Contains(s, w) {
-			require.Containsf(t, s, w, "missing %q in:\n%s", w, s)
-		}
+		require.Containsf(t, s, w, "missing %q in:\n%s", w, s)
 	}
 }
 func TestManifestRefusesBeforeAnyProcess(t *testing.T) {
@@ -185,9 +183,7 @@ func TestWholeVersionAndVerifiedOrder(t *testing.T) {
 			require.Fail(t, fmt.Sprintln(r))
 		}
 		r = identity(Entry{Kind: "tool"}, line, false)
-		if r.Reason != "no_release_identity" {
-			require.EqualValues(t, "no_release_identity", r.Reason, r)
-		}
+		require.EqualValues(t, "no_release_identity", r.Reason, r)
 	}
 	for _, c := range [][3]string{{"1.9.0", "1.10.0", "OLDER"}, {"1.10.0", "1.9.0", "NEWER"}, {"1.9", "1.9.0", "DIFFERENT"}, {"1.09.0", "1.9.0", "DIFFERENT"}, {"1.0.0-rc1", "1.0.0", "DIFFERENT"}, {"0.12.0", "0.12.1-0.1-abc", "DIFFERENT"}, {"999999999999999999999999.0", "1000000000000000000000000.0", "OLDER"}} {
 		if got := Compare(c[0], c[1]); got != c[2] {
@@ -231,9 +227,7 @@ func TestProcessesAreBoundedAndRawSurvivesFailure(t *testing.T) {
 		a, _ := argv(tc.cmd)
 		start := time.Now()
 		r := Installed(context.Background(), Entry{Kind: "tool", Installed: a}, tc.timeout, true)
-		if r.Reason != tc.want {
-			require.EqualValuesf(t, tc.want, r.Reason, "%s: %+v", tc.want, r)
-		}
+		require.EqualValuesf(t, tc.want, r.Reason, "%s: %+v", tc.want, r)
 		if took := time.Since(start); took > tc.bound {
 			require.LessOrEqualf(t, took, tc.bound, "%s: %s is past the %s bound", tc.want, took, tc.bound)
 		}
@@ -312,9 +306,7 @@ func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
 		})
 		r := Latest(context.Background(), Entry{Kind: "model", Latest: "ollama:model:tag"}, time.Second, c)
 		done()
-		if r.Reason != tc.want {
-			require.EqualValuesf(t, tc.want, r.Reason, "%s: %+v", tc.want, r)
-		}
+		require.EqualValuesf(t, tc.want, r.Reason, "%s: %+v", tc.want, r)
 		if tc.status == 429 {
 			need(t, r.Remedy, "123")
 		}
@@ -333,9 +325,7 @@ func TestReportNeverReadsLatestAndPartialIsVisible(t *testing.T) {
 		return nil, fmt.Errorf("forbidden")
 	})}}
 	code, out, errs := run(t, env, "report", "--file", p, "--host", "air")
-	if code != 1 {
-		require.EqualValues(t, 1, code, code)
-	}
+	require.EqualValues(t, 1, code, code)
 	need(t, errs, "host=air", "REPORT TOOL name=good", "version=1.2.3-rc1+dirty", "REPORT UNKNOWN name=bad", "not_found")
 	need(t, errs, "REPORT FAIL checked=2 known=1 unknown=1")
 	code, out, errs = run(t, env, "report", "--file", p, "--draft", "--as", "fixture", "--to", "integrator")
@@ -352,27 +342,19 @@ func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 	p := manifest(t, row("x", "tool", read, "local:"+printer(t, "v1.2.0\n"), write), row("model:tag", "model", "should-not-run", "ollama:model:tag", write))
 	for _, a := range [][]string{{"apply", "--file", p}, {"apply", "--file", p, "wrong"}, {"apply", "--file", p, "model:tag"}, {"apply", "--file", p, "--all"}} {
 		c, _, _ := run(t, Environment{}, a...)
-		if c != 2 {
-			require.EqualValues(t, 2, c, fmt.Sprintln(a, c))
-		}
+		require.EqualValues(t, 2, c, fmt.Sprintln(a, c))
 	}
 	c, out, err := run(t, Environment{}, "apply", "--file", p, "x", "--version", "1.2.0")
-	if c != 0 {
-		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, err)
-	}
+	require.EqualValuesf(t, 0, c, "%d %s %s", c, out, err)
 	need(t, out, "APPLY BEFORE", "installed=1.0.0", "APPLY AFTER", "installed=1.2.0", "APPLY OK")
 	p = manifest(t, row("x", "tool", read, "local:"+printer(t, "1.3.0"), command(t, "write", state, "1.1.1")))
 	c, _, err = run(t, Environment{}, "apply", "--file", p, "x")
-	if c != 1 {
-		require.EqualValues(t, 1, c, c)
-	}
+	require.EqualValues(t, 1, c, c)
 	need(t, err, "installed 1.1.1, asked 1.3.0")
 	calls := filepath.Join(dir, "calls")
 	t.Setenv("NOVA_UPDATE_CALLS", calls)
 	c, _, _ = run(t, Environment{}, "apply", "--file", p, "--version", "9.0.0", "x")
-	if c != 2 {
-		require.EqualValues(t, 2, c, c)
-	}
+	require.EqualValues(t, 2, c, c)
 	if _, e := os.Stat(calls); !os.IsNotExist(e) {
 		require.Fail(t, fmt.Sprintln("refusal ran a process"))
 	}
@@ -397,9 +379,7 @@ func TestFourReadLimitAndOverallBudget(t *testing.T) {
 	if took := time.Since(started); took > 30*time.Second {
 		require.Failf(t, "", "budget exceeded: took %s", took)
 	}
-	if len(r) != 40 {
-		require.Lenf(t, r, 40, "expected 40 results, got %d", len(r))
-	}
+	require.Lenf(t, r, 40, "expected 40 results, got %d", len(r))
 	if r[39].Installed.Reason != "budget" && r[39].Latest.Reason != "budget" {
 		require.Failf(t, "", "expected budget reason on unread entry, got: %+v", r[39])
 	}
@@ -493,14 +473,10 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	s := filepath.Join(t.TempDir(), "snapshot.json")
 	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 	c, o, e := run(t, Environment{}, "report", "--file", p, "--snapshot", s)
-	if c != 0 {
-		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
-	}
+	require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	need(t, o, "changed=yes")
 	c, o, e = run(t, Environment{}, "report", "--file", p, "--snapshot", s)
-	if c != 0 {
-		require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
-	}
+	require.EqualValuesf(t, 0, c, "%d %s %s", c, o, e)
 	need(t, o, "changed=no")
 	state, err := readSnapshot(s)
 	if err != nil || len(state.Delivered) != 0 || len(state.Pending) != 0 {
@@ -509,9 +485,7 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	unlock, err := lockSnapshot(ctx, s)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	blocked, cancel2 := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel2()
 	if release, err := lockSnapshot(blocked, s); err == nil {
@@ -520,7 +494,7 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	}
 	unlock()
 	if release, err := lockSnapshot(ctx, s); err != nil {
-		require.NoError(t, err, err)
+		require.NoError(t, err)
 	} else {
 		release()
 	}
@@ -540,9 +514,7 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 		}, nil
 	})}}
 	c, o, e := run(t, env, "check", "--file", p, "--kind", "tool", "--max", "2")
-	if c != 1 {
-		require.EqualValues(t, 1, c, c)
-	}
+	require.EqualValues(t, 1, c, c)
 	need(t, e, "entries=27", "CHECK MORE kind=stale shown=2 total=26", "checked=26", "stale=26")
 	if strings.Contains(o+e, "excluded") {
 		require.Fail(t, fmt.Sprintln(o+e))
@@ -577,9 +549,7 @@ func TestProcessFailuresAreDistinguishable(t *testing.T) {
 func mustArgv(t *testing.T, s string) []string {
 	t.Helper()
 	a, err := argv(s)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
+	require.NoError(t, err)
 	return a
 }
 
@@ -592,9 +562,7 @@ func TestReportLocalLocatorWithVersionStringInstalled(t *testing.T) {
 	// installed is a version string, not a command; latest points to the real binary.
 	p := manifest(t, row("mytool", "tool", "v1.2.3", "local:"+binCmd, "none"))
 	code, out, errs := run(t, Environment{}, "report", "--file", p, "--host", "air")
-	if code != 0 {
-		require.EqualValuesf(t, 0, code, "want exit 0, got %d: out=%s errs=%s", code, out, errs)
-	}
+	require.EqualValuesf(t, 0, code, "want exit 0, got %d: out=%s errs=%s", code, out, errs)
 	need(t, out, "REPORT TOOL name=mytool", "version=1.2.3")
 	need(t, out, "REPORT OK checked=1 known=1 unknown=0")
 	if strings.Contains(out, "not_found") || strings.Contains(errs, "not_found") {

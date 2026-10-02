@@ -31,7 +31,7 @@ func writeFile(t *testing.T, name, body string) string {
 }
 
 // A header refusal shows the tab as <TAB>, the way the banner spells it, never
-// the escape \x09 (ledger U3, V6): a reader copies the header from the line.
+// the escape \x09: a reader copies the header from the line.
 func TestAHeaderRefusalSpellsTheTabAsTAB(t *testing.T) {
 	t.Parallel()
 	bad := writeFile(t, "bad.tsv", "name\tkind\n")
@@ -64,7 +64,7 @@ func TestAHeaderRefusalSpellsTheTabAsTAB(t *testing.T) {
 }
 
 // A latest of "-" is the manifest's "not known yet" (banner rule 4): check says
-// so and names the column to fill, never "unsupported source" (ledger U11). The
+// so and names the column to fill, never "unsupported source". The
 // exit stays 1, an UNKNOWN entry.
 func TestADashLatestIsNotDeclaredNotUnsupported(t *testing.T) {
 	t.Parallel()
@@ -81,8 +81,8 @@ func TestADashLatestIsNotDeclaredNotUnsupported(t *testing.T) {
 }
 
 // Every refusal nova-update prints is one line in the one grammar,
-// `<TOKEN> REFUSED: <reason>; run: <a command that runs>` (STANDARD §2, §3.1;
-// ledger U12, X3): an unknown verb is named and the verbs listed, a misspelled
+// `<TOKEN> REFUSED: <reason>; run: <a command that runs>` (STANDARD §2, §3.1):
+// an unknown verb is named and the verbs listed, a misspelled
 // flag is named with the verb's flags, a bad value says what the flag wants.
 func TestEveryUpdateRefusalEndsInACommandToRun(t *testing.T) {
 	t.Parallel()
@@ -128,9 +128,8 @@ func TestEveryUpdateRefusalEndsInACommandToRun(t *testing.T) {
 	}
 }
 
-// nova-version's refusals name every problem and the shape that would run
-// (ledger V4, V7, and the rows found using it cold): a bare snapshot names both
-// of its shapes, moved on a directory that is no checkout says so, and diff
+// nova-version's refusals name every problem and the shape that would run: a
+// bare snapshot names both of its shapes, moved on a directory that is no checkout says so, and diff
 // names both unreadable snapshots in one run.
 func TestVersionRefusalsNameWhatWouldRun(t *testing.T) {
 	t.Parallel()
@@ -170,7 +169,7 @@ func TestSnapshotOfAManifestNamesTheToolsThatDidNotAnswer(t *testing.T) {
 }
 
 // Every nova-update verb on a manifest builds one value and takes --json for it
-// (STANDARD §2; ledger U14, X1, X4): the JSON is one object on stdout, refusals
+// (STANDARD §2): the JSON is one object on stdout, refusals
 // included; the line form opens with the verb and its status word; and kinds=
 // names the kinds the run read, never a kind the file does not hold (U13).
 func TestUpdateVerbsTakeJSONAndLeadWithTheirStatus(t *testing.T) {
@@ -238,7 +237,7 @@ func TestHelpForAVerbIsHelpWhateverFollowsIt(t *testing.T) {
 }
 
 // The release verbs are one line of nova-update's usage, pointing at their own
-// help (ledger U5): the manifest verbs' screen is not the release pipeline's.
+// help: the manifest verbs' screen is not the release pipeline's.
 // `help release` holds the five usage lines and notes, and each release verb's
 // -h lists its flags with what each wants, the exit codes, and no person.
 // Every manifest verb's -h states its effect, and those that read a manifest
@@ -286,7 +285,7 @@ func TestHelpKeepsTheReleasePipelineApartAndStatesEffects(t *testing.T) {
 	}
 }
 
-// Both tools' first run needs the binary alone (ledger U9, X6): `example` prints
+// Both tools' first run needs the binary alone: `example` prints
 // the example manifest, or writes it to --out and names the next command; the
 // same file again is unchanged, so the help's example lines run twice, and a file
 // holding anything else is never overwritten.

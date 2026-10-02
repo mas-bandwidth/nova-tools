@@ -3,12 +3,13 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/mas-bandwidth/nova-tools/internal/update"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/update"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,19 +19,19 @@ import (
 // example lines write their own manifest there, never into the checkout.
 func TestExecutableFirstRun(t *testing.T) {
 	doc, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	t.Chdir(t.TempDir())
 	var banner bytes.Buffer
 	update.Main("nova-update", []string{"help"}, "", &banner, &banner)
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-update")
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	for _, line := range examples {
 		var out, errs bytes.Buffer
 		code := update.Main("nova-update", strings.Fields(line)[1:], "", &out, &errs)
 		require.NotEqual(t, 2, code, "%s refused: %s", line, errs.String())
 	}
 	transcript, err := onboarding.FirstRun(string(doc), "nova-update")
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	var wanted, actual []string
 	var out, errs bytes.Buffer
 	for _, line := range transcript {
@@ -70,12 +71,12 @@ func TestMissingIndependentFlagsAreNamedTogether(t *testing.T) {
 // promise.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	t.Chdir(t.TempDir())
 	lines, err := onboarding.FirstRun(string(raw), "nova-update")
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-update", lines)
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	require.NotEmpty(t, steps, "the `### First run` block holds no nova-update command; this test would pass by running nothing")
 	for _, p := range onboarding.Execute(steps, runDocumented(t), firstRunNorms(t)...) {
 		assert.Fail(t, fmt.Sprint(p))
@@ -91,12 +92,12 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 //     tool printed is still a finding rather than a value a norm erased.
 //   - `took=` is how long this run's version reads took.
 //   - `version=`, `raw=` and `path=` are the `go version` THIS bench answers.
-//     The documented transcript was cut on the Studio (go1.27.1, darwin/arm64,
+//     The documented transcript was cut on one machine (go1.27.1, darwin/arm64,
 //     /opt/homebrew/bin/go); the same command on a Linux bench answers a
 //     different release, a different GOOS/GOARCH and a different executable
 //     path. The fixture (`testdata/example.tsv`) declares `go version` as the
 //     installed command, so these three fields are the bench's by construction
-//     and no run of this test on any machine could reproduce the Studio's.
+//     and no run of this test on another machine could reproduce that one's.
 //
 // What is NOT declared is the point of comparing line for line: the number of
 // lines, their order, and `entries=`, `kinds=`, `checked=`, `known=`,
@@ -109,25 +110,25 @@ func firstRunNorms(t *testing.T) []onboarding.Norm {
 		`took=[0-9][^\s]*`,
 		"took=<the wall time this run's reads took>",
 	)
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	version, err := onboarding.Elide(
 		"version= (the release this bench's version command answers)",
 		`version=[^\s]+`,
 		"version=<the release this bench's version command answers>",
 	)
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	rawVersion, err := onboarding.Elide(
 		"raw= (this bench's version command printed)",
 		`raw=[^\s]+`,
 		"raw=<this bench's version command printed>",
 	)
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	path, err := onboarding.Elide(
 		"path= (the executable this bench found on PATH)",
 		`path=[^\s]+`,
 		"path=<the executable this bench found on PATH>",
 	)
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	return []onboarding.Norm{onboarding.Instant("at"), duration, version, rawVersion, path}
 }
 
@@ -148,7 +149,7 @@ func runDocumented(t *testing.T) onboarding.Runner {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err, err)
+	require.NoError(t, err)
 	{
 		_, err := os.Stat(filepath.Join(root, "docs", "TESTS.md"))
 		require.NoError(t, err, "docs/TESTS.md is not under %s: %v", root, err)
