@@ -397,17 +397,17 @@ type Norm struct {
 	Name string
 	// Re matches the whole value INCLUDING its field name, so that a norm
 	// declared for one field cannot quietly swallow another's value. For a norm
-	// built by Instant or HexID it is anchored and matched against ONE token of
-	// the line at a time -- see field below.
+	// built by Instant it is anchored and matched against ONE token of the line
+	// at a time -- see field below.
 	Re *regexp.Regexp
 	// As is what a match becomes on both sides of the comparison.
 	As string
 
-	// field is the name Instant and HexID were given. When it is set, this norm
-	// is applied token by token and may replace only a COMPLETE
-	// `field=value` token of the output grammar. An unanchored pattern is what
-	// let `HexID("id", 8)` normalise `parent_id=` and `Instant("created")`
-	// normalise `last_created=`: the comparison then found no problem on a line
+	// field is the name Instant was given. When it is set, this norm is applied
+	// token by token and may replace only a COMPLETE `field=value` token of the
+	// output grammar. An unanchored pattern is what let a norm for `id`
+	// normalise `parent_id=` and `Instant("created")` normalise
+	// `last_created=`: the comparison then found no problem on a line
 	// whose undeclared field had changed, which is the opposite of what this
 	// type promises. Go's regexp has no look-behind, so the boundary is drawn
 	// here rather than in the pattern.
