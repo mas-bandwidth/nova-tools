@@ -218,6 +218,8 @@ func TestAReaderLoopsWidthIsSetAsOneValue(t *testing.T) {
 	assert.Contains(t, out, ` argv=["nova-swarm","member","--reader","--width","8"] `, "the argv as typed is kept")
 	assert.Contains(t, out, ` command=["nova-swarm","member","--reader","--width","16"]`, "the command runs the field")
 
+	code, _, errs = h.run(t, "fleet", "set", "--redis_port", "6380", "--pg_dsn", dsn)
+	require.Equal(t, 0, code, errs)
 	for _, kind := range []string{"machine", "fleet", "loop"} {
 		code, out, errs = h.run(t, "apply", "--kind", kind)
 		require.Equal(t, 0, code, "%s\n%s", out, errs)
