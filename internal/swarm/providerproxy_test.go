@@ -10,6 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func proxyClient() *http.Client {
@@ -86,8 +89,11 @@ func TestSilentBodyAfterHeadersIsOneUpstreamRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = io.Copy(io.Discard, resp2.Body)
+	body2, err := io.ReadAll(resp2.Body)
+	require.NoError(t, err)
 	resp2.Body.Close()
+	assert.Equal(t, http.StatusBadGateway, resp2.StatusCode, "must return 502 Bad Gateway")
+	assert.Equal(t, "lost\n", string(body2), "must return 'lost\n' error message")
 
 	if got, upn := p.Requests(), upstream.Load(); got != 1 || upn != 1 {
 		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got, upn)

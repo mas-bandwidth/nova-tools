@@ -41,6 +41,8 @@ func TestTreeCPUReadsOnlyAKnownSnapshotsLiveTree(t *testing.T) {
 		{"a live pid", &procSnapshot{live: map[int]bool{self: true}, known: true}, self, true},
 		{"a pid that is not live", &procSnapshot{live: map[int]bool{}, known: true}, self, false},
 		{"no pid", &procSnapshot{live: map[int]bool{self: true}, known: true}, 0, false},
+		{"zero pid even if in live table", &procSnapshot{live: map[int]bool{0: true, self: true}, known: true}, 0, false},
+		{"negative pid even if in live table", &procSnapshot{live: map[int]bool{-1: true, self: true}, known: true}, -1, false},
 		{"a live child of a live pid", &procSnapshot{live: map[int]bool{gone: true, self: true}, children: map[int][]int{gone: {self}}, known: true}, gone, true},
 		{"a live child of a pid that is not live", &procSnapshot{live: map[int]bool{self: true}, children: map[int][]int{gone: {self}}, known: true}, gone, false},
 	} {
