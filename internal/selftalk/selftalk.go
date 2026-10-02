@@ -50,12 +50,63 @@ type Claim struct {
 	Match   string // the negative words that made the sentence a claim
 }
 
+// markers are the words that make a sentence a first-person self/capability
+// assertion: the writer as subject (I am, I cannot, I fail ...), as possessor
+// (my <noun> is), as object of a verdict (makes me), or a habit adverb.
+const markers = `I am|I'm|I have never|I always|I never|` +
+	`I cannot|I can't|I can not|I do not|I don't|my \w+ is|makes me|I tend|I struggle|I fail|` +
+	`reliably|every time|in one direction`
+
 // claim matches a sentence carrying a first-person self/capability
 // assertion. The bounded context either side keeps a match to roughly one
 // sentence without needing a real parser.
-var claim = regexp.MustCompile(`(?i)[^.!?]{0,120}\b(I am|I'm|I have never|I always|I never|` +
-	`I cannot|I can't|I can not|I do not|I don't|my \w+ is|makes me|I tend|I struggle|I fail|` +
-	`reliably|every time|in one direction)\b[^.!?]{0,160}[.!?]`)
+var claim = regexp.MustCompile(`(?i)[^.!?]{0,120}\b(` + markers + `)\b[^.!?]{0,160}[.!?]`)
+
+// marker finds each marker in a claim, for anchoring its failure word.
+var marker = regexp.MustCompile(`(?i)\b(?:` + markers + `)\b`)
+
+// subordinator opens a clause with a subject of its own: a failure word past
+// one belongs to that clause, not to the marker before it ("I am slow because
+// the cache is broken").
+var subordinator = regexp.MustCompile(`(?i)\b(?:when|whenever|if|unless|until|because|since|while|although|though|whereas)\b`)
+
+// conditionalOpener opens a hypothetical: a marker or a shape inside "if ...",
+// "when ...", "unless ..." states a condition, not what the writer is. The
+// clause ends at a comma, a semicolon or a colon.
+var conditionalOpener = regexp.MustCompile(`(?i)\b(?:if|when|whenever|unless|until|in case)\b`)
+
+// conditional reports whether position at of s lies inside a conditional
+// clause: an opener stands before it with no , ; or : between them.
+func conditional(s string, at int) bool {
+	for _, o := range conditionalOpener.FindAllStringIndex(s[:at], -1) {
+		if !strings.ContainsAny(s[o[1]:at], ",;:") {
+			return true
+		}
+	}
+	return false
+}
+
+// anchored returns the failure word of a claim that belongs to the writer, or
+// "": THE FAILURE WORD IS ANCHORED TO THE FIRST-PERSON MARKER. A marker stands
+// before it (or is it: "I fail"), outside a conditional clause, with no
+// subordinate clause opening between the two. Co-occurrence is not enough:
+// in "a tell that asks me to classify my own state fails exactly when my state
+// is what is off", "fails" is the tell's.
+func anchored(s string) string {
+	ms := marker.FindAllStringIndex(s, -1)
+	for _, n := range negative.FindAllStringIndex(s, -1) {
+		for _, m := range ms {
+			if m[0] > n[0] || conditional(s, m[0]) {
+				continue
+			}
+			if m[1] < n[0] && subordinator.MatchString(s[m[1]:n[0]]) {
+				continue
+			}
+			return s[n[0]:n[1]]
+		}
+	}
+	return ""
+}
 
 // negative is the vocabulary that turns a first-person assertion into a
 // claim worth looking at: without it every ordinary "I am" sentence flags.
@@ -95,7 +146,7 @@ func Scan(text string) []Claim {
 	for _, span := range claim.FindAllStringIndex(flat, -1) {
 		m := flat[span[0]:span[1]]
 		s := strings.TrimSpace(m)
-		word := negative.FindString(s)
+		word := anchored(s)
 		if word == "" {
 			continue
 		}
