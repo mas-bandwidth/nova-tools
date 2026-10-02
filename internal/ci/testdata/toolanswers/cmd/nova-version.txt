@@ -1,3 +1,3 @@
 # tool-answers: the mistakes this tool does not yet answer with the way forward; each row's count only falls
 # ceiling: 1
-cmd/nova-version:dry-run 4 moved and snapshot write, report and send deliver, with no --dry-run yet (report's --draft prints without sending) (tool ledger X12); set Verb.DryRun and honour Call.DryRun
+cmd/nova-version:dry-run 3 verbs whose help states no effect or whose write/delivery has no --dry-run (tool ledger X12)

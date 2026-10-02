@@ -187,12 +187,6 @@ func refuse(stdout, stderr io.Writer, asJSON bool, verb, hint string, problems .
 
 func main() { os.Exit(runStdin(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
-// run is the binary with an empty standard input: the entry the tests and the verb-help
-// check call.
-func run(args []string, stdout, stderr io.Writer) int {
-	return runStdin(args, strings.NewReader(""), stdout, stderr)
-}
-
 func runStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` is that verb's help on stdout at exit 0, with the verb's effect, before
 	// anything is read (the CLI style's rule (b), #4505).

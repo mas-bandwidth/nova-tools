@@ -115,12 +115,16 @@ func TestScaffoldRuleAndVerbBasic(t *testing.T) {
 	writeTool(t, tree, "nova-ci")
 
 	// Rule
-	writtenRule, err := Rule(tree, "sample")
+	ruleFiles, err := RuleFiles(tree, "sample")
+	require.NoError(t, err, "Rule failed: %v", err)
+	writtenRule, err := Write(tree, ruleFiles)
 	require.NoError(t, err, "Rule failed: %v", err)
 	require.Len(t, writtenRule, 3, "Rule wrote %d files, want 3", len(writtenRule))
 
 	// Verb
-	writtenVerb, err := Verb(tree, "nova-ci", "sample")
+	verbFiles, err := VerbFiles(tree, "nova-ci", "sample")
+	require.NoError(t, err, "Verb failed: %v", err)
+	writtenVerb, err := Write(tree, verbFiles)
 	require.NoError(t, err, "Verb failed: %v", err)
 	require.Len(t, writtenVerb, 4, "Verb wrote %d files, want 4", len(writtenVerb))
 }
@@ -155,7 +159,7 @@ func TestVerbRefusesAToolWithNoMain(t *testing.T) {
 				_ = os.MkdirAll(filepath.Join(tree, "cmd", "tool"), 0o755)
 				_ = os.WriteFile(filepath.Join(tree, "cmd", "tool", f), []byte(src), 0o644)
 			}
-			written, err := Verb(tree, "tool", "probe")
+			written, err := VerbFiles(tree, "tool", "probe")
 			require.ErrorContains(t, err, "no func main", "Verb into a tool with no func main: err %v, want a no-func-main refusal", err)
 			require.Empty(t, written, "Verb wrote %v despite refusing", written)
 			_, err = os.Stat(filepath.Join(tree, "cmd", "tool", "probe.go"))

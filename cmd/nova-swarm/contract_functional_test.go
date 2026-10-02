@@ -192,14 +192,18 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 		require.NoError(t, err)
 		require.Len(t, logs, 1, "the wall run writes one native log")
 		launch := strings.TrimSuffix(filepath.Base(logs[0]), ".native.log")
-		runLog := filepath.Join(root, "slots", launch, "native.log")
+		runLog := logs[0]
 		raw, err := os.ReadFile(runLog)
 		require.NoError(t, err)
 		backend, cwd, reason := wallNamed(string(raw))
 		require.Empty(t, reason, "launch native log %s contains no valid SANDBOX OK receipt: %s", runLog, raw)
 		require.Equal(t, wallBackend, backend, "the framed child ran under the checked real backend")
 		jobDir := filepath.Join(root, "slots", launch, "jobs", "a-1.w1")
-		require.True(t, sameDir(cwd, jobDir), "SANDBOX OK cwd %q must name job %q", cwd, jobDir)
+		resolvedRoot, err := filepath.EvalSymlinks(root)
+		require.NoError(t, err)
+		expectedCwd := filepath.Join(resolvedRoot, "slots", launch, "jobs", "a-1.w1")
+		require.Equal(t, expectedCwd, filepath.Clean(cwd), "SANDBOX OK cwd must name the staged job")
+		assert.NoDirExists(t, jobDir, "a successful launch leaves no checkout behind")
 	}
 
 	args, err := os.ReadFile(filepath.Join(dir, "gh.args"))

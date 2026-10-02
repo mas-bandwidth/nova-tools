@@ -46,7 +46,7 @@ func TestDeletedTestsLogMergesByUnionAndReadsUnordered(t *testing.T) {
 	r.git("merge", "-q", "--no-edit", "one")
 	merged, err := os.ReadFile(filepath.Join(r.root, filepath.FromSlash(deletedTestsLogPath)))
 	require.NoError(t, err)
-	got, err := allowlist.Parse(deletedTestsLogPath, string(merged), allowlist.Options{})
+	got, err := allowlist.Parse(deletedTestsLogPath, string(merged), allowlist.Options{RepeatedKeys: true})
 	require.NoError(t, err)
 	for _, key := range []string{"old_test.go", "a_test.go", "b_test.go", "shared_test.go"} {
 		assert.True(t, got.Has(key), "the union merge lost the row for %s:\n%s", key, merged)
@@ -54,7 +54,7 @@ func TestDeletedTestsLogMergesByUnionAndReadsUnordered(t *testing.T) {
 
 	// Order and repetition change nothing the rule reads.
 	scrambled := "shared_test.go gone both\nb_test.go gone two\nshared_test.go gone both\n# a comment\nold_test.go moved\na_test.go gone one\nold_test.go moved\n"
-	list, err := allowlist.Parse(deletedTestsLogPath, scrambled, allowlist.Options{})
+	list, err := allowlist.Parse(deletedTestsLogPath, scrambled, allowlist.Options{RepeatedKeys: true})
 	require.NoError(t, err)
 	assert.Len(t, distinctRows(list.Rows()), 4, "a scrambled log with repeated rows reads as its four distinct rows")
 	diff := "--- a/" + deletedTestsLogPath + "\n+++ b/" + deletedTestsLogPath + "\n@@ -1,1 +1,5 @@\n+shared_test.go gone both\n+b_test.go gone two\n+shared_test.go gone both\n+a_test.go gone one\n"
