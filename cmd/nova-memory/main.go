@@ -25,11 +25,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -737,12 +739,7 @@ func cmdStats(args []string, stdout, stderr io.Writer) int {
 	// duration, labelled as one. Everything else is derived from the tree.
 	fmt.Fprintf(stdout, "STATS OK schema=%s files=%d chunks=%d bytes=%d vocab=%d avg-terms=%.1f build=%v\n",
 		memindex.SchemaVersion, len(c.Files), len(c.Chunks), c.Bytes, len(c.DF), c.AvgLen, buildTime)
-	classes := make([]string, 0, len(c.ByClass))
-	for cl := range c.ByClass {
-		classes = append(classes, cl)
-	}
-	sort.Strings(classes)
-	for _, cl := range classes {
+	for _, cl := range slices.Sorted(maps.Keys(c.ByClass)) {
 		fmt.Fprintf(stdout, "STATS OK class=%s chunks=%d\n", oneline.Field(cl), c.ByClass[cl])
 	}
 	return 0

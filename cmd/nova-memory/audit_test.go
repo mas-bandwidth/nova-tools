@@ -68,6 +68,9 @@ var memoryAudit = audit.Config{
 		// quickstart line has to paste into is a property of the machine printing it.
 		// It writes to no stream.
 		`"bufio"`, `"flag"`, `"fmt"`, `"io"`, `"math"`, `"os"`, `"path"`, `"runtime"`, `"sort"`, `"strings"`, `"time"`,
+		// maps and slices hold no writer: they return keys, sorted copies and membership,
+		// which this package renders through oneline at its own print sites.
+		`"maps"`, `"slices"`,
 		// boot resolves pinned memory paths under --root through the platform
 		// path separator (filepath.Join/FromSlash) after validating them with
 		// path's slash rules; it writes to no stream.
