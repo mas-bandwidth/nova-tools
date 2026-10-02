@@ -110,7 +110,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 			if !assert.Equal(t, "0", got["width"], assertionMsg81...) {
 				return
 			}
-			assert.Len(t, got, 7, assertionMsg81...)
+			assert.Len(t, got, 8, assertionMsg81...)
 		}()
 	}
 	{
