@@ -35,7 +35,7 @@ func LoadAdopt(r io.Reader) ([]AdoptCheck, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 4096), 1024*1024)
 	if !sc.Scan() || sc.Text() != AdoptHeader {
-		return nil, fmt.Errorf("line 1: invalid header (put the header back exactly: %s)", AdoptHeader)
+		return nil, fmt.Errorf("line 1: invalid header (put the header back exactly: %s)", tabbed(AdoptHeader))
 	}
 	var out []AdoptCheck
 	seen := map[string]bool{}

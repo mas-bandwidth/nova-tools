@@ -142,7 +142,7 @@ func oneBinary(name string) string {
 func manifestHelp(name string) string {
 	return "\nTHE MANIFEST is the file --file names, written by hand, the same for both names:\n" +
 		"  " + name + " report --file versions.tsv     the six lines that say what versions.tsv holds:\n" +
-		"      1. line 1 is the header, byte for byte: " + strings.ReplaceAll(Header, "\t", "<TAB>") + "; every other line is six fields, one tab between, none empty; a line starting # is a comment\n" +
+		"      1. line 1 is the header, byte for byte: " + tabbed(Header) + "; every other line is six fields, one tab between, none empty; a line starting # is a comment\n" +
 		"      2. kind is harness, engine, model, tool or pin; name is unique in the file; owner is who answers for it\n" +
 		"      3. installed is a version (v1.2.3), a command name on PATH, or an argv whose first line of output carries the version (single spaces, no quotes)\n" +
 		"      4. latest is github:<owner>/<repo>, npm:<package>, brew:<formula>, ollama:<model>:<tag> (kind model), local:<argv> (a pin takes this only), or - for not known yet\n" +

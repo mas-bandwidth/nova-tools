@@ -21,7 +21,7 @@ func readSnapshotFile(path string) (map[string]snapRow, error) {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 4096), 1024*1024)
 	if !sc.Scan() || sc.Text() != snapshotHeader {
-		return nil, fmt.Errorf("its header is not %q", snapshotHeader)
+		return nil, fmt.Errorf("its header is not %s", tabbed(snapshotHeader))
 	}
 	rows := map[string]snapRow{}
 	for sc.Scan() {
