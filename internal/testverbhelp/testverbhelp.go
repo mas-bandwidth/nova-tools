@@ -1,6 +1,6 @@
 // Package testverbhelp is the per-tool check of the verb-help rule
-// (the CLI style's rule (b), #4505; internal/nsprint/verbflag is the one seam that
-// implements it): `<tool> <verb> -h` and `--help` print that verb's help on
+// (internal/nsprint/verbflag is the one seam that implements it):
+// `<tool> <verb> -h` and `--help` print that verb's help on
 // stdout and exit 0, with nothing on stderr, no file written and no dial.
 // The check opens no socket: it is a unit-tier check.
 //
@@ -73,9 +73,9 @@ func Check(t *testing.T, run Run, cases []Case) {
 const UnknownFlag = "--no-such-flag-breadcrumb"
 
 // RefusalProblems runs one case with UnknownFlag and returns every way the
-// refusal broke the owner's rule (2026-09-30: every tool and verb "should never
-// fail silently, and they should always provide helpful breadcrumbs how to fix
-// anything going wrong"). It is the runtime half of internal/ci's remedy and
+// refusal broke the rule: a tool or verb never fails silently, and every
+// refusal carries a breadcrumb to the fix. It is the runtime half of
+// internal/ci's remedy and
 // no-ok-on-failure rules, run through the same seam every verb parses its flags
 // with:
 //
