@@ -930,7 +930,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	var briefFiles stringList
 	fs.Var(&briefFiles, "brief-file", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; given once, the brief of the cards the ids, --count or --sentinel name; given again, one card per file in the order given, each card's id its file's name without .md (a1.md is a1); not with --brief or --brief-dir")
 	briefDir := fs.String("brief-dir", "", "one card per *.md file in this directory, in byte order of file name, each card's id its file's name without .md (a1.md is a1); not with --brief-file")
-	rules := fs.String("rules", "", "the child rules file this add holds the brief to: one required sentence per line, `[name] sentence` to name its token (default: the file init --rules recorded, else the built-in general rules)")
+	rules := fs.String("rules", "", "the child rules `file`, read at add time (not recorded, unlike init --rules): one required sentence per line, [name] sentence names its token (default: the file init --rules recorded, else the built-in general rules); e.g. --rules rules/card.txt")
 	score := fs.String("score", "", "the first primary's score; the rest follow it (default: after every primary)")
 	sentinel := fs.String("sentinel", "", "admit a sentinel with this id: a stop the coordinator releases; what sorts after it waits for it")
 	before := fs.String("before", "", "place the cards in line in front of this primary of the stream")
@@ -1246,7 +1246,11 @@ func lintBriefFiles(cards []sprint.CardAdd, rules []swarm.ChildRule, max int, st
 // rule set is a usage refusal naming it.
 func (a *app) briefRules(verbName, file string, c *common, st **store.Store, stderr io.Writer) ([]swarm.ChildRule, int) {
 	if file != "" {
-		rs, err := swarm.ReadChildRules(file)
+		abs, err := filepath.Abs(file)
+		if err != nil {
+			return nil, refuse(stderr, verbName, "--rules: "+err.Error())
+		}
+		rs, err := swarm.ReadChildRules(abs)
 		if err != nil {
 			return nil, refuse(stderr, verbName, "--rules: "+err.Error())
 		}
