@@ -113,7 +113,7 @@ example:
 // from the verb's own flags: what a stranger copies, then edits. template and
 // lint quote theirs from the banner's example block.
 var verbExamples = map[string]string{
-	"native": "nova-swarm native --harness ./harness --model provider/model --card card.md --slot slots/1 --root jobs --deadline 30m --tokens unmetered",
+	"native": "nova-swarm native --harness ./harness --model provider/model --card card.md --slot jobs/slots/1 --root jobs --deadline 30m --tokens unmetered --identity owner,name,owner@example.com",
 	"member": "nova-swarm member --as m1 --server sprint.example:6390 --harness ./harness --root jobs --once",
 }
 
@@ -429,7 +429,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	// directory after that publish, so a bench sweep never deletes the results with the
 	// working directory.
 	nf := &nativeFlags{
-		harness:         f.fs.String("harness", "", "required: the harness binary `path` the child runs under, checked for existence and execution"),
+		harness:         f.fs.String("harness", "", "required: the harness binary `path` the child runs under (a relative path is from where native runs), checked for existence and execution"),
 		model:           f.fs.String("model", "", "required without --worker: the `provider/model` to run, one slash, both sides nonempty"),
 		cardPath:        f.fs.String("card", "", "required: the card `file`, handed to the child byte for byte as its task"),
 		slot:            f.fs.String("slot", "", "required: the slot `dir` this run executes in, under --root; HOME is a data directory beneath it"),

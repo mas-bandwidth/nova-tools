@@ -295,8 +295,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	}
 
 	// (1) THE BINARY. Resolved once, on PATH when the name has no separator, then
-	// checked for existence and the execute bit. A missing binary and an
-	// unexecutable one are the same refusal class, one line each.
+	// made absolute (the child starts in its job directory, so a relative path
+	// names the file from where native was run), then checked for existence and
+	// the execute bit. A missing binary and an unexecutable one are the same
+	// refusal class, one line each.
 	bin := cfg.binary
 	if !strings.ContainsRune(bin, filepath.Separator) {
 		found, err := exec.LookPath(cfg.binary)
@@ -305,6 +307,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			return nativeRunResult{}, 2
 		}
 		bin = found
+	}
+	if abs, err := filepath.Abs(bin); err == nil {
+		bin = abs
+	} else {
+		refuseNative(errOut, fmt.Sprintf("the harness binary %s has no absolute path: %s", oneline.Field(bin), oneline.Err(err)))
+		return nativeRunResult{}, 2
 	}
 	if _, err := os.Stat(bin); err != nil {
 		refuseNative(errOut, fmt.Sprintf("the harness binary %s is missing", oneline.Field(bin)))

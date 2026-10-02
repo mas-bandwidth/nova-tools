@@ -87,3 +87,34 @@ func TestNativeStillAcceptsAnOrdinaryLabel(t *testing.T) {
 	_, err := os.Stat(filepath.Join(slot, "jobs", "card-1.a_b"))
 	require.NoError(t, err, "the honest job directory was not made")
 }
+
+// A relative --harness names a file from where native was run, and the child
+// starts in its job directory, so the path is made absolute when it is
+// checked (USE defect 7: native -h's own example, --harness ./harness,
+// passed the check and then failed to start, "no such file or directory").
+func TestNativeRunsARelativeHarnessFromWhereItWasNamed(t *testing.T) {
+	t.Parallel()
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	rel, err := filepath.Rel(wd, nativeHarness(t))
+	if err != nil {
+		t.Skipf("no relative path from %s to the harness: %v", wd, err)
+	}
+	require.False(t, filepath.IsAbs(rel), "the harness path is relative: %s", rel)
+	base := t.TempDir()
+	root := filepath.Join(base, "swarm-root")
+	slot := filepath.Join(root, "1")
+	require.NoError(t, os.MkdirAll(slot, 0o755))
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: rel, model: "fake/fake-model", label: "card-1",
+		card:    []byte("a card\n"),
+		slotDir: slot, root: root, deadline: time.Minute, noWall: true,
+	}, &errOut)
+	assert.NotContains(t, errOut.String(), "could not be started", "a relative harness did not start (exit %d):\n%s", code, errOut.String())
+	assert.NotEqual(t, 2, code, "a relative harness:\n%s", errOut.String())
+	assert.Equal(t, "ok", res.harness, "the harness answered:\n%s", errOut.String())
+}
