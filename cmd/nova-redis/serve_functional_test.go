@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"strings"
 	"testing"
 	"time"
 
