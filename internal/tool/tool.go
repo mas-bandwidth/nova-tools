@@ -34,13 +34,13 @@ import (
 
 // Tool is one command.
 type Tool struct {
-	Name      string // the binary: nova-<name>
-	What      string // line 1 of the banner: what the tool is for
+	Name string // the binary: nova-<name>
+	What string // line 1 of the banner: what the tool is for
 	// Stage, when set, is one sentence on how ready the tool is ("nova-x is
 	// pre-alpha: not ready for production use."): the banner's line 2, the
 	// second line of every verb's -h, and an indented hint under a bare
 	// command's refusal, so no reader meets the tool without it.
-	Stage string
+	Stage     string
 	How       string // how it works: the paragraph under line 1
 	Verbs     []Verb // in banner order; version and help are added here
 	ExitTable string // "0 ..., 1 ..., 2 ...": the banner's exit-codes line
