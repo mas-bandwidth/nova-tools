@@ -208,6 +208,12 @@ type common struct {
 	// card's packet), read after the step and printed with its report.
 	packets func(ctx context.Context, st *store.Store, res store.Result) []sprint.Packet
 	handed  []sprint.Packet
+	// says is what the verb tells its reader about what it did that the moves
+	// do not say (a card's id from its file, a card with no brief, a take cut
+	// short and why), printed as NOTE lines under its summary line; after, when
+	// set, adds to it from the step's result.
+	says  []string
+	after func(ctx context.Context, st *store.Store, res store.Result) []string
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {
