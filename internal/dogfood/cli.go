@@ -1,9 +1,9 @@
 // Package dogfood answers one question about a tool that its own tests
 // cannot: has somebody who did not write it actually run it?
 //
-// Glenn, 2026-09-18: a tool is not finished until it is tested, dogfooded by a
-// non-author on real work with the edges filed, the feedback applied,
-// documented and released. Nothing tracked that. This package holds the three
+// A tool is not finished until it is tested, dogfooded by a non-author on real
+// work with the edges filed, the feedback applied, documented and released.
+// Nothing tracked that. This package holds the three
 // mechanical halves of the tracking: the list of verbs the command reference
 // declares (cli.go), the receipts a dogfooder writes (receipt.go), and the
 // ledger and the gate that read one against the other (ledger.go). Authorship,
@@ -67,12 +67,11 @@ func NormalizeKey(tool, verb string) string {
 //
 // The rule is mechanical, because a rule a reader cannot apply by hand is a
 // rule nobody can check the tool against. It reads the three shapes this
-// reference actually uses, which is the whole lesson of the 2026-09-18 dogfood
-// pass: `nova-sandbox` and `nova-work` contributed zero rows of 77, not because
-// nobody had run them but because one is documented as prose with a worked
-// transcript and the other by pasting its own indented help block. A tool can
-// go un-dogfooded forever by being documented in a shape the extractor does not
-// read, so the extractor reads every shape:
+// reference actually uses. A tool documented as prose with a worked transcript,
+// or by pasting its own indented help block, would otherwise go un-dogfooded
+// forever: the extractor reads no rows for it, not because nobody runs it but
+// because it is documented in a shape the extractor does not read. So the
+// extractor reads every shape:
 //
 //   - **a command line inside a fenced block**, at any indentation, with or
 //     without a `$ ` prompt and with or without leading `VAR=value` environment
