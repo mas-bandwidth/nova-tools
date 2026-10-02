@@ -35,6 +35,10 @@ func TestBusTransactionsProposalBoundaries(t *testing.T) {
 		"second identity is how a message is delivered twice",
 		"docs/SPEC-BUS-DELIVERY.md",
 		"no savings percentage is claimed yet",
+		// the bounded check: the per-class cap and count that ship, held to the common
+		// cap rule
+		"`check` holds the common cap rule",
+		"BUS MORE kind=<class> shown=<n> total=<t>",
 	} {
 		assert.Contains(t, content, want, "docs/SPEC.md missing %q", want)
 	}
