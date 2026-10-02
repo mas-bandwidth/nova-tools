@@ -49,14 +49,11 @@ import (
 //     <package> <TestName>`, the name matching `^Test[A-Za-z0-9_]*$` (cardheader.go:89-108);
 //   - KIND, PATHS and TEST are the three a gated card must carry (cardheader.go:138-150).
 //
-// THE PARSER IS CITED; THE VALIDATOR IS CALLED. `internal/pulse` still does not carry
-// `cardheader.go`, so the block's SHAPE above is the
-// parser's rules written out, cited line by line. But `hygiene.ValidatePaths` (T02) HAS
-// landed, and `validGlobs` below is now a call to it rather than a second copy of the
-// PATHS: rule. A restated copy drifts from the validator, which is the whole
-// argument for calling a validator instead of
-// restating one. When `cardheader.go` lands, the shape rules above should go the same
-// way, with the class test that the two agree in the lane that owns `internal/pulse`.
+// THE PARSER IS CITED; THE VALIDATOR IS CALLED. The block's SHAPE above restates
+// the parser's rules, cited line by line. `validGlobs` below calls
+// `hygiene.ValidatePaths` rather than restating the PATHS: rule: a restated copy
+// drifts from the validator, which is the whole argument for calling a validator
+// instead of restating one.
 //
 // KIND: IS THE NAME SET, NOT A SECOND TABLE. `hygiene.KindDeclared` reads
 // internal/hygiene/kinds.txt, which is the names `cut` and `nova-check hygiene`
