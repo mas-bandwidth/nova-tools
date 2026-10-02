@@ -683,54 +683,43 @@ REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20da
 
 ## nova-config
 
-No fixture and no store: the first run reads the kind descriptors and the
-migrations compiled into the binary, so every value below reproduces on
-every bench. The real runs need a Postgres (`nova-config migrate`) and a
-Redis (`nova-config apply`); `docs/nova-config/README.md` walks them, and
+No database: the first run keeps its rows in `./try.json` (`--file`), the
+same kinds, refusals and history as PostgreSQL, and
+`cmd/nova-config/firstrun_test.go` runs each `$` line in `t.TempDir()`. The
+history's `at=` is the instant of the run, the one value that differs on a
+second run. The real runs need a Postgres (`nova-config migrate`) and a Redis
+(`nova-config apply`); `docs/nova-config/README.md` walks them, and
 `cmd/nova-config/config_functional_test.go` runs them against a throwaway
 Postgres and a throwaway Redis.
 
 ### First run
 
 ```text
-$ nova-config kinds
-CONFIG KIND name=machine table=config.machines fields=user,seat,slots,runners required=user,seat,slots rows=many
-CONFIG KIND name=fleet table=config.fleet fields=store,coordinator required=- rows=one
-CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many
-CONFIG KIND name=sprint table=config.sprint fields=coordinator,reader_tier required=- rows=one
-CONFIG KIND name=loop table=config.loops fields=machine,argv,seat,keys,every,keepalive,width,enabled required=machine,argv rows=many
-CONFIG KIND name=route table=config.routes fields=tier,provider,model,tokens,deadline,enabled,price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of required=tier,provider,model,deadline rows=many
-CONFIG KIND name=tier table=config.tiers fields=routes required=- rows=many
-CONFIG KINDS count=7
+$ nova-config migrate --file try.json
+CONFIG MIGRATE file=try.json from=0 to=13 applied=13
 
-$ nova-config migrate --print
-MIGRATION version=1 file=0001_schema.sql lines=23
-MIGRATION version=2 file=0002_machine.sql lines=16
-MIGRATION version=3 file=0003_friend.sql lines=13
-MIGRATION version=4 file=0004_fleet.sql lines=14
-MIGRATION version=5 file=0005_sprint.sql lines=12
-MIGRATION version=6 file=0006_loop.sql lines=27
-MIGRATION version=7 file=0007_route.sql lines=24
-MIGRATION version=8 file=0008_tier.sql lines=18
-MIGRATION version=9 file=0009_route_prices.sql lines=23
-MIGRATION version=10 file=0010_sprint_reader_tier.sql lines=6
-CONFIG MIGRATE print=10 pg=-
+$ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
+CONFIG ADD kind=machine name=m1 rev=1
 
-$ nova-config machine add -h
-usage: nova-config machine add [flags]
-from `nova-config help`:
-  nova-config machine add -h
-flags:
-  --as <string>  the friend making the change (env NOVA_FRIEND); every write records it in config.history
-  --pg <string>  Postgres DSN postgres://user@host:port/db with no password (env NOVA_PG_DSN); the password comes from the variable NOVA_PG_PASSWORD_ENV names
-  --runners <string>  how many CI runners it hosts; 0 (the default) hosts none
-  --seat <string>  its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store
-  --slots <string>  how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none
-  --user <string>  the login the plays and seals use on it (ssh <user>@<name>)
-exit codes: 0 done, 1 refused, 2 usage
+$ nova-config machine set m1 --width 6 --as a1 --file try.json
+CONFIG SET kind=machine name=m1 rev=2 changed=width
+
+$ nova-config machine list --file try.json
+MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6
+CONFIG LIST kind=machine rows=1
+
+$ nova-config machine history m1 --file try.json
+HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z runners=0 seat=s1 slots=8 user=nova width=4
+HISTORY id=2 kind=machine name=m1 op=set actor=a1 at=2026-10-02T03:18:20Z width=4>6
+CONFIG HISTORY kind=machine name=m1 changes=2
 ```
 
-`kinds` is one line per kind: its table under schema `config`, its fields in
+`migrate --file` makes the file at this binary's schema; each write prints
+its history id (`rev=`); `list` is one typed line per row and a count;
+`history` is every change, who made it and when, a set as
+`<field>=<before>><after>`.
+
+`kinds` (no store) is one line per kind: its table under schema `config`, its fields in
 the order every line prints them, the fields `add` requires, and whether the
 kind is many rows or one (`rows=one`: the fleet and the sprint, a row
 `migrate` creates and `set` changes, with no add, remove or list). `migrate --print` lists the

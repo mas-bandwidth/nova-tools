@@ -4,7 +4,7 @@ docs/nova-config/README.md:emma 2
 docs/nova-config/README.md:glenn 3
 docs/nova-config/README.md:hulk 11
 docs/nova-config/README.md:mini 1
-docs/nova-config/README.md:rowan 25
-docs/nova-config/README.md:space 7
+docs/nova-config/README.md:rowan 24
+docs/nova-config/README.md:space 6
 docs/nova-config/README.md:stella 4
-docs/nova-config/README.md:studio 16
+docs/nova-config/README.md:studio 13
