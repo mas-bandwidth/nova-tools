@@ -337,7 +337,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		return nativeRunResult{}, 2
 	}
 
-	// (2b) THE WORKER DESCRIPTION (issue #881). When `--worker <file>` names a
+	// (2b) THE WORKER DESCRIPTION. When `--worker <file>` names a
 	// description, the description is the source of the model: a key is authorized for ONE
 	// model only, and the description pins that one. The gate compares provider/model as
 	// ONE NAME: a description's `model` without a slash takes the description's
@@ -376,8 +376,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		return nativeRunResult{}, 2
 	}
 
-	// (3a) THE LABEL IS A NAME, NOT A PATH (issue #1923). The slot is checked against the
-	// root above, and that check used to be the whole of it -- but the directories this run
+	// (3a) THE LABEL IS A NAME, NOT A PATH. The slot is checked against the
+	// root above; that check is not the whole of it, and the directories this run
 	// then makes, leases and hands the wall as write roots are <slot>/jobs/<label> and
 	// <slot>/tmp/<label>, and a label is a string a card's own TSV row can spell. A label of
 	// `../../../OUTSIDE` makes both of those joins a path OUTSIDE the swarm root: MkdirAll
@@ -397,10 +397,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 
 	// The job directory is where the child runs and writes: <slot>/jobs/<label>, made here
 	// before the child starts, so the card's cwd exists and the card is told its place by
-	// that cwd (SPEC-SWARM rule 13). HOME is a data directory under the slot directory; the
+	// that cwd (docs/SPEC-SWARM.md). HOME is a data directory under the slot directory; the
 	// child is pointed at it and nothing above it.
 	jobDir := filepath.Join(cfg.slotDir, "jobs", cfg.label)
-	// THE RESULTS ROOT IS NOT THE JOB (issue #2632). A sweep deletes the job
+	// THE RESULTS ROOT IS NOT THE JOB. A sweep deletes the job
 	// directory. Publishing into it, or into a directory inside it, would make
 	// the copy the sweep removes.
 	if cfg.resultsRoot != "" && within(jobDir, cfg.resultsRoot) {
@@ -408,7 +408,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			oneline.Field(cfg.resultsRoot), oneline.Field(jobDir)))
 		return nativeRunResult{}, 2
 	}
-	// The join is checked as well as the name (#1923): NameOK above makes this true by
+	// The join is checked as well as the name: NameOK above makes this true by
 	// construction, and a derivation that decides where a card writes is checked anyway,
 	// because the cost of the two being out of step once is a MkdirAll and a --write
 	// outside the swarm root.
@@ -421,24 +421,22 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, fmt.Sprintf("the job directory %s could not be made: %s", oneline.Field(jobDir), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
-	// THE LEASE (issue #1499). The bench's hygiene pass reaps job directories, and it used
-	// to decide a card was dead because its capture had been quiet for fifteen minutes --
-	// which is what one long model call looks like. The launcher knows better and says so:
-	// <job>/.lease carries this process's pid and a heartbeat for as long as the child runs,
-	// and the reaper never touches a leased job or the slot's data/ and tmp/ around it. It
-	// is released, and the file removed, when this run returns by any path.
+	// THE LEASE. The bench's hygiene pass reaps job directories, and it reads the capture
+	// alone: a capture quiet for fifteen minutes is what one long model call looks like,
+	// and a live card reaped on that quiet is what the lease prevents. <job>/.lease
+	// carries this process's pid and a heartbeat for as long as the child runs, and the
+	// reaper never touches a leased job or the slot's data/ and tmp/ around it. It is
+	// released, and the file removed, when this run returns by any path.
 	//
-	// AND IT IS THE JOB DIRECTORY'S OWNERSHIP (issue #1585). Two `native` runs were given
-	// one physical <slot>/jobs/<label>: the bench store gave each its own seat, but the job
-	// directory, the data home, the temp directory and the logs under it were ONE set of
-	// paths, and the first run to exit removed the other's lease. SPEC-SWARM settles
-	// whether that is lawful before any repair is designed: under **Slots** a worker has
-	// "its own data home" and "its own job directory" and "a slot is held by exactly one
-	// worker", and under **the races, taken out** two workers on one data home is the
-	// 2026-09-10 `database is locked` failure, closed on purpose. So the second run is
-	// REFUSED rather than made safe, and it is refused HERE -- the take is the first thing
-	// this verb does to the job directory that was not already there, and nothing of the
-	// holder's is touched on the way out.
+	// AND IT IS THE JOB DIRECTORY'S OWNERSHIP. Two `native` runs on one physical
+	// <slot>/jobs/<label> hold one set of paths: the bench store gives each its own seat,
+	// but the job directory, the data home, the temp directory and the logs under it are
+	// ONE set, and the first run to exit removes the other's lease. docs/SPEC-SWARM.md
+	// gives a worker its own data home and its own job directory and a slot to exactly one
+	// worker, and its failure table closes two workers on one data home as the
+	// `database is locked` race. So the second run is REFUSED rather than made safe, and
+	// it is refused HERE -- the take is the first thing this verb does to the job directory
+	// that was not already there, and nothing of the holder's is touched on the way out.
 	releaseLease, err := swarm.StartJobLease(jobDir, cfg.label)
 	if err != nil {
 		if held, ok := swarm.HeldJobLease(err); ok {
@@ -447,24 +445,23 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 				oneline.Field(held.Label), oneline.Field(held.Started)))
 			return nativeRunResult{}, 2
 		}
-		// RULE 3 (review finding on #1585): a take that establishes nothing used to hand
-		// back a do-nothing release and the launch went on -- with `.lease` an owned
-		// directory, BOTH of two runs were told they held the place. A run that cannot
+		// A take that establishes nothing would hand
+		// back a do-nothing release and the launch would go on -- with `.lease` an owned
+		// directory, BOTH of two runs would be told they hold the place. A run that cannot
 		// prove it owns its job directory does not start.
 		refuseNative(errOut, fmt.Sprintf("the job lease on %s could not be taken, so this run cannot prove it owns its job directory and will not start: %s; clear or repair %s and run it again",
 			oneline.Field(jobDir), oneline.Escape(err.Error()), oneline.Field(filepath.Join(jobDir, swarm.JobLeaseName))))
 		return nativeRunResult{}, 2
 	}
 	defer releaseLease()
-	// THE SLOT IS HELD BY EXACTLY ONE WORKER (issue #1901). The job lease above refuses a
+	// THE SLOT IS HELD BY EXACTLY ONE WORKER. The job lease above refuses a
 	// second run in the same <slot>/jobs/<label>. It cannot refuse a second run in the same
 	// SLOT under a different label, and the data home below is per SLOT, not per job: two
 	// labels in one slot is one HOME, one cache and one opencode.db, which is the
-	// 2026-09-10 `database is locked` failure SPEC-SWARM closed on purpose. The bench store
+	// `database is locked` race docs/SPEC-SWARM.md closes. The bench store
 	// cannot answer this -- its lease is a count and names no directory -- so the slot says
 	// it itself, with the same lease machinery and the same four rules, and it is taken
-	// HERE, after the job lease, so that same-slot-same-label keeps saying what #1585 made
-	// it say.
+	// HERE, after the job lease, so that same-slot-same-label keeps saying what slot ownership requires.
 	releaseSlot, err := swarm.StartSlotLease(cfg.slotDir, cfg.label)
 	if err != nil {
 		if held, ok := swarm.HeldJobLease(err); ok {
@@ -485,7 +482,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	}
 	// TMPDIR is the slot's own tmp/<label>, never the job directory (which admission git-inits
 	// into a repo): a card's temp dir inside a repo makes tests checking for a non-bus directory
-	// fail for a reason the card did not cause (#460). The slot
+	// fail for a reason the card did not cause. The slot
 	// directory is never a repo, so a temp file made here sits outside every repository the
 	// card's work could touch. It is made here so the child's TMPDIR exists before it starts.
 	tmpDir := filepath.Join(cfg.slotDir, "tmp", cfg.label)
@@ -498,11 +495,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		refuseNative(errOut, fmt.Sprintf("the temp directory %s could not be made: %s", oneline.Field(tmpDir), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
-	// THE SHARED PER-BENCH CACHE (issue #1048). The Go toolchain and every module are the
-	// same for every card under one root, but each card downloaded them into its own data
-	// home -- up to 5 GB per slot, and 120 cards filled two benches to 100%. The cache
-	// lives once under <root>/cache (a permitted write root beside the job directory) and
-	// the child is pointed at it by GOMODCACHE, GOCACHE and NPM_CONFIG_CACHE.
+	// THE SHARED PER-BENCH CACHE. The Go toolchain and every module are the
+	// same for every card under one root, but each card left to itself downloads them
+	// into its own data home -- up to 5 GB per slot, and 120 cards fill two benches to
+	// 100%. The cache lives once under <root>/cache (a permitted write root beside the
+	// job directory) and the child is pointed at it by GOMODCACHE, GOCACHE and NPM_CONFIG_CACHE.
 	if !cfg.noSharedCaches && cfg.root != "" {
 		if err := swarm.EnsureCacheDirs(cfg.root); err != nil {
 			refuseNative(errOut, fmt.Sprintf("the shared cache directories under %s could not be made: %s", oneline.Field(swarm.CacheRoot(cfg.root)), oneline.Escape(err.Error())))
@@ -510,9 +507,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 
-	// (3b) THE BENCH-SHARED GO CACHES (card 8963). Go derives GOMODCACHE and GOCACHE from
-	// HOME, and a native run makes HOME the slot's data home, so every card used to download
-	// its own copy of the module cache -- and a toolchain -- and grew a slot to five to seven
+	// (3b) THE BENCH-SHARED GO CACHES. Go derives GOMODCACHE and GOCACHE from
+	// HOME, and a native run makes HOME the slot's data home, so every card downloads
+	// its own copy of the module cache -- and a toolchain -- and grows a slot to five to seven
 	// gigabytes. Instead the two caches live once per bench under <root>/cache, made here at
 	// mode 0755 BEFORE the child can derive them and handed to the child as GOMODCACHE and
 	// GOCACHE. GOTOOLCHAIN=local keeps a card from fetching a toolchain behind the bench's
@@ -529,7 +526,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 
-	// (3c) THE SHELL SHIM (issue #1814). The harness spawns its bash tool's shell by NAME,
+	// (3c) THE SHELL SHIM. The harness spawns its bash tool's shell by NAME,
 	// resolving it through the child's PATH and SHELL, and hands it the harness's own
 	// environment -- which carries the provider key. A `bash` and an `sh` wrapper are
 	// written into <slot>/shim, which is inside the wall's read set and outside its write
@@ -546,7 +543,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// (4) THE AUTH COPY. One entry, the model's provider's, moved to the data home so
 	// the child's account resolves, and left mode 0600. A source that is looser than
 	// 0600 is refused: its copy would spread a secret further than its owner.
-	// --auth stays ONLY the legacy shape's (issue #881): a description that names
+	// --auth stays ONLY the legacy shape's: a description that names
 	// "secret": "<NAME>" takes the key from the environment and writes no auth file, so
 	// this step is skipped entirely for one. When a description IS given and --auth is
 	// used, the auth copy is made and one note line says so.
