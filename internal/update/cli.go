@@ -3,6 +3,7 @@ package update
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,9 +58,44 @@ func field(s string) string {
 	}
 	return oneline.Field(s)
 }
-func refusal(w io.Writer, token string, err error) int {
-	fmt.Fprintf(w, "%s REFUSED: %s\n", token, oneline.Err(err))
+// refusal is the one refusal line (STANDARD §2): what was wrong and what the
+// input wants, then the command a reader runs next.
+func refusal(w io.Writer, token, run string, err error) int {
+	fmt.Fprintf(w, "%s REFUSED: %s; run: %s\n", token, oneline.Err(err), run)
 	return 2
+}
+
+// updateVerbNames are nova-update's verbs, as a refusal lists them.
+const updateVerbNames = "check, status, apply, report, watch, adoption, release, version"
+
+// flagProblem says what a flag parse error means in the words a reader acts on
+// (STANDARD §3.2): an unknown flag is named with every flag the verb takes, a
+// bad value with what the flag wants, never the flag package's own sentence.
+func flagProblem(f *flag.FlagSet, err error) error {
+	msg := err.Error()
+	if name, ok := strings.CutPrefix(msg, "flag provided but not defined: -"); ok {
+		var names []string
+		f.VisitAll(func(fl *flag.Flag) { names = append(names, "--"+fl.Name) })
+		return fmt.Errorf("unknown flag --%s; the flags are %s", strings.TrimLeft(name, "-"), strings.Join(names, ", "))
+	}
+	if name, ok := strings.CutPrefix(msg, "flag needs an argument: -"); ok {
+		return fmt.Errorf("--%s needs a value", strings.TrimLeft(name, "-"))
+	}
+	if rest, ok := strings.CutPrefix(msg, "invalid value "); ok {
+		if value, err := strconv.QuotedPrefix(rest); err == nil {
+			name, why, _ := strings.Cut(strings.TrimPrefix(rest[len(value):], " for flag -"), ": ")
+			if fl := f.Lookup(name); fl != nil {
+				switch kind, _ := flag.UnquoteUsage(fl); kind {
+				case "duration":
+					return fmt.Errorf("--%s wants a duration (5s, 2m), got %s", name, value)
+				case "int":
+					return fmt.Errorf("--%s wants a whole number, got %s", name, value)
+				}
+			}
+			return fmt.Errorf("--%s got %s: %s", name, value, why)
+		}
+	}
+	return err
 }
 
 // updateVerbs is SPEC-UPDATE's verbs block, byte for byte,
@@ -201,9 +238,9 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before any manifest, bus or store is read (the CLI style's rule (b), #4505).
 	defer verbflag.Recover(out, name, helpText(name), &rc)
-	tool := "UPDATE"
+	tool, door := "UPDATE", name+" help"
 	if len(args) == 0 {
-		return refusal(errs, tool, fmt.Errorf("a verb is required (run: %s help)", name))
+		return refusal(errs, tool, door, fmt.Errorf("no verb given; the verbs are %s", updateVerbNames))
 	}
 	verb := args[0]
 	args = args[1:]
@@ -211,16 +248,13 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		if verb == "help" && len(args) > 0 && args[0] != "help" && !verbflag.IsHelp(args[0]) {
 			return Run(name, append(args, "--help"), stamp, out, errs, env)
 		}
-		if len(args) != 0 {
-			return refusal(errs, tool, fmt.Errorf("help takes no arguments (run %s help)", name))
-		}
 		help(name, out)
 		return 0
 	}
 	if verb == "version" || verb == "--version" {
 		verbflag.HelpIfAsked(args, "version")
 		if len(args) != 0 {
-			return refusal(errs, tool, fmt.Errorf("version takes no arguments (run %s version)", name))
+			return refusal(errs, tool, name+" version", fmt.Errorf("version takes no arguments"))
 		}
 		fmt.Fprintln(out, buildinfo.Line(name, stamp))
 		return 0
@@ -239,7 +273,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		return adoptionVerb(name, args, stamp, out, errs)
 	}
 	if verb != "report" && verb != "check" && verb != "status" && verb != "apply" && verb != "watch" {
-		return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
+		return refusal(errs, tool, door, fmt.Errorf("unknown verb %q; the verbs are %s", verb, updateVerbNames))
 	}
 	if verb == "watch" {
 		return watchMain(name, args, out, errs, env)
@@ -275,7 +309,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		// `<tool> <verb> --help` never lands here: verbflag.Parse raises that
 		// verb's help, which Run prints on stdout at exit 0 (asking is not an
 		// error; darwin dogfood, 2026-09-18).
-		return refusal(errs, token, fmt.Errorf("%s (run %s help)", err, name))
+		return refusal(errs, token, name+" "+verb+" -h", flagProblem(f, err))
 	}
 	return checked(name, verb, token, o, f.Args(), out, errs, env)
 }
@@ -291,17 +325,21 @@ func checked(name, verb, token string, o options, positional []string, out, errs
 	if verb == "status" {
 		pfx = "STATUS"
 	}
+	help := name + " " + verb + " -h"
 	// --store is the fleet read (#3880): every bench's nova-sprint build from
 	// its beat, so it takes no manifest, snapshot or note and never runs ssh.
 	if o.store != "" {
 		if o.file != "" || o.snapshot != "" || o.draft || o.send || o.host != "" || len(positional) != 0 {
-			return refusal(errs, token, fmt.Errorf("--store reads the bench beats and takes no --file, --snapshot, --host, --draft or --send (run report --file without --store for this box)"))
+			return refusal(errs, token, help, fmt.Errorf("--store reads the bench beats and takes no --file, --snapshot, --host, --draft or --send (drop --store and give --file to report this machine)"))
 		}
 		if o.timeout <= 0 {
-			return refusal(errs, token, fmt.Errorf("invalid bound (use a positive --timeout)"))
+			return refusal(errs, token, help, fmt.Errorf("--timeout wants a positive duration"))
 		}
-		return fleetReport(o.store, o.timeout, env.Now(), out, errs)
+		return fleetReport(o.store, help, o.timeout, env.Now(), out, errs)
 	}
+	// Every problem of the invocation is named in one refusal (STANDARD §2), so a
+	// reader fixes the call once.
+	var problems []string
 	missing := []string{}
 	if o.file == "" {
 		missing = append(missing, "--file")
@@ -321,44 +359,39 @@ func checked(name, verb, token string, o options, positional []string, out, errs
 		}
 	}
 	if len(missing) > 0 {
-		return refusal(errs, token, fmt.Errorf("missing %s; refusing to guess (supply each named flag; run: %s help)", strings.Join(missing, ", "), name))
+		problems = append(problems, "missing "+strings.Join(missing, ", ")+"; refusing to guess")
 	}
-	if o.max < 0 || o.timeout <= 0 || o.budget <= 0 {
-		return refusal(errs, token, fmt.Errorf("invalid bound (use --max >= 0 and positive --timeout/--budget)"))
+	if o.max < 0 {
+		problems = append(problems, fmt.Sprintf("--max wants 0 or more (0 shows all), got %d", o.max))
 	}
-	if (verb == "apply" && len(positional) != 1) || (verb != "apply" && len(positional) != 0) {
-		return refusal(errs, token, fmt.Errorf("%s requires %s (run %s help)", verb, map[bool]string{true: "exactly one entry name", false: "no positional arguments"}[verb == "apply"], name))
+	if o.timeout <= 0 || o.budget <= 0 {
+		problems = append(problems, "--timeout and --budget want positive durations")
+	}
+	if verb == "apply" && len(positional) != 1 {
+		problems = append(problems, fmt.Sprintf("apply wants exactly one entry name, got %d", len(positional)))
+	} else if verb != "apply" && len(positional) != 0 {
+		problems = append(problems, fmt.Sprintf("%s takes no positional arguments, got %q", verb, positional[0]))
 	}
 	if o.draft && o.send {
-		return refusal(errs, token, fmt.Errorf("draft and send are exclusive (choose --draft or --send)"))
+		problems = append(problems, "--draft and --send are exclusive (choose one)")
 	}
-	if o.draft || o.send {
-		required := []struct{ n, v string }{{"as", o.as}, {"to", o.to}}
-		if o.send {
-			required = append(required, struct{ n, v string }{"bus", o.bus}, struct{ n, v string }{"remote", o.remote}, struct{ n, v string }{"branch", o.branch})
-		}
-		for _, x := range required {
-			if x.v == "" {
-				return refusal(errs, token, fmt.Errorf("--%s is required (supply --%s)", x.n, x.n))
-			}
-		}
-		for _, s := range []string{o.as, o.to, o.host} {
-			if strings.ContainsAny(s, "\r\n") {
-				return refusal(errs, token, fmt.Errorf("note header contains a newline (use a single-line --as, --to and --host)"))
-			}
-		}
+	if (o.draft || o.send) && strings.ContainsAny(o.as+o.to+o.host, "\r\n") {
+		problems = append(problems, "note header contains a newline (use a single-line --as, --to and --host)")
+	}
+	if len(problems) > 0 {
+		return refusal(errs, token, help, errors.New(strings.Join(problems, "; ")))
 	}
 	file, err := os.Open(o.file)
 	if err != nil {
-		return refusal(errs, token, fmt.Errorf("cannot open %s (supply a readable --file: %s)", o.file, manifestShape))
+		return refusal(errs, token, help, fmt.Errorf("cannot open %s (supply a readable --file: %s)", o.file, manifestShape))
 	}
 	entries, err := Load(file)
 	file.Close()
 	if err != nil {
-		return refusal(errs, token, fmt.Errorf("%s: %w", o.file, err))
+		return refusal(errs, token, help, fmt.Errorf("%s: %w", o.file, err))
 	}
 	if verb == "apply" {
-		return apply(entries, positional[0], o, out, errs, env)
+		return apply(entries, positional[0], help, o, out, errs, env)
 	}
 	selected := []Entry{}
 	for _, e := range entries {
@@ -382,7 +415,7 @@ func checked(name, verb, token string, o options, positional []string, out, errs
 	ctx, cancel := context.WithTimeout(baseCtx, o.budget)
 	defer cancel()
 	if verb == "report" {
-		return report(ctx, entries, selected, o, strings.Join(kinds, ","), started, out, errs, env)
+		return report(ctx, entries, selected, o, strings.Join(kinds, ","), help, started, out, errs, env)
 	}
 	fmt.Fprintf(out, pfx+" at=%s file=%s entries=%d kinds=%s timeout=%s budget=%s max=%d\n", field(started.UTC().Format(time.RFC3339)), field(o.file), len(entries), field(strings.Join(kinds, ",")), o.timeout, o.budget, o.max)
 	results := readEntries(ctx, selected, o, env, false)
@@ -499,39 +532,44 @@ func verdict(r entryRead) (string, string) {
 	}
 	return v, ""
 }
-func apply(entries []Entry, name string, o options, out, errs io.Writer, env Environment) int {
+func apply(entries []Entry, name, help string, o options, out, errs io.Writer, env Environment) int {
 	var e *Entry
+	var names []string
 	for i := range entries {
+		names = append(names, entries[i].Name)
 		if entries[i].Name == name {
 			e = &entries[i]
-			break
 		}
 	}
 	if e == nil {
-		return refusal(errs, "APPLY", fmt.Errorf("name %s absent from %s (%d entries; name one exact entry)", name, o.file, len(entries)))
+		// The names the file holds are the choices, so the next call is a paste.
+		if len(names) > manifestProblemCap {
+			names = append(names[:manifestProblemCap], fmt.Sprintf("and %d more", len(names)-manifestProblemCap))
+		}
+		return refusal(errs, "APPLY", help, fmt.Errorf("name %s absent from %s; its %d entries are %s", name, o.file, len(entries), strings.Join(names, ", ")))
 	}
 	if e.Kind == "model" {
-		return refusal(errs, "APPLY", fmt.Errorf("model %s is not installed by this tool (owner: ollama pull %s; nova-local status --list)", name, name))
+		return refusal(errs, "APPLY", help, fmt.Errorf("model %s is not installed by this tool (its owner %s pulls it: ollama pull %s)", name, e.Owner, name))
 	}
 	if len(e.Apply) == 0 {
-		return refusal(errs, "APPLY", fmt.Errorf("%s is installed by hand (follow the owner's installation procedure)", name))
+		return refusal(errs, "APPLY", help, fmt.Errorf("%s is installed by hand: its apply column is none (its owner %s installs it, or write the install argv in that column)", name, e.Owner))
 	}
 	if o.target != "" && !strings.Contains(strings.Join(e.Apply, " "), "{version}") {
-		return refusal(errs, "APPLY", fmt.Errorf("this entry's apply does not take a version (remove --version or declare {version} in the manifest)"))
+		return refusal(errs, "APPLY", help, fmt.Errorf("this entry's apply does not take a version (remove --version or declare {version} in the manifest)"))
 	}
 	started := env.Now()
 	target := o.target
 	if target == "" {
 		r := Latest(context.Background(), *e, o.timeout, env.Client)
 		if !r.Known() {
-			return refusal(errs, "APPLY", fmt.Errorf("latest unknown for %s (pass --version <v>, or ask again when the source answers)", name))
+			return refusal(errs, "APPLY", help, fmt.Errorf("latest unknown for %s (pass --version <v>, or ask again when the source answers)", name))
 		}
 		target = r.Version
 	} else {
 		var err error
 		target, err = versionKey(target)
 		if err != nil {
-			return refusal(errs, "APPLY", fmt.Errorf("invalid target (pass a complete version with --version)"))
+			return refusal(errs, "APPLY", help, fmt.Errorf("invalid target %q (pass a complete version with --version, such as 1.2.3)", o.target))
 		}
 	}
 	before := Installed(context.Background(), *e, o.timeout, false)

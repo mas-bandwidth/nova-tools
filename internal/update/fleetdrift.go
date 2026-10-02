@@ -125,17 +125,17 @@ func newer(a, b string) bool {
 // fleetReport is the verb body: one DRIFT line per stale bench, one receipt.
 // Exit 0 when every beating bench is on the newest build, 1 on drift, 2 when
 // the store cannot be read.
-func fleetReport(addr string, timeout time.Duration, started time.Time, out, errs io.Writer) int {
+func fleetReport(addr, help string, timeout time.Duration, started time.Time, out, errs io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	st, err := store.Open(ctx, addr)
 	if err != nil {
-		return refusal(errs, "REPORT", fmt.Errorf("%w (supply a reachable --store host:port)", err))
+		return refusal(errs, "REPORT", help, fmt.Errorf("%w (supply a reachable --store host:port)", err))
 	}
 	defer st.Close()
 	fleet, err := readFleetBuilds(ctx, st.Client())
 	if err != nil {
-		return refusal(errs, "REPORT", fmt.Errorf("fleet beats at %s: %w", addr, err))
+		return refusal(errs, "REPORT", help, fmt.Errorf("fleet beats at %s: %w", addr, err))
 	}
 	var stamped []string
 	beating, unknown := 0, 0

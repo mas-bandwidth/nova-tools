@@ -122,7 +122,7 @@ func TestRule16OutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 }
 
 // Rule 18: a refusal a person cannot act on is not a refusal. Every one of them
-// names a remedy, and the shape is the grammar's: REFUSED: <reason> (<remedy>).
+// names a remedy, and the shape is the grammar's: REFUSED: <reason>; run: <command>.
 func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
 	good := row("x", "tool", printer(t, "1.0.0"), "npm:unused", "none")
 	p := manifest(t, good)
@@ -153,9 +153,8 @@ func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
 		if !strings.Contains(first, "REFUSED") {
 			t.Errorf("%s: not a REFUSED line: %q", name, first)
 		}
-		open := strings.Index(first, "(")
-		if open < 0 || !strings.HasSuffix(first, ")") || open+2 >= len(first) {
-			t.Errorf("%s: no remedy in parentheses: %q", name, first)
+		if _, run, ok := strings.Cut(first, "; run: nova-update "); !ok || run == "" {
+			t.Errorf("%s: no command to run: %q", name, first)
 		}
 	}
 }

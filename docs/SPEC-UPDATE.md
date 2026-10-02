@@ -241,7 +241,10 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     EQUAL is 1.
 18. **Every refusal names its remedy.** No refusal here ends at the reason: the
     missing flag, the malformed line, the script to wrap the command in, the owner's own
-    pull of the weights — the next thing to type is on the line.
+    pull of the weights — the next thing to type is on the line. The line is
+    `<TOKEN> REFUSED: <reason>; run: <command>`: the reason says what the input wants,
+    every problem of the invocation named at once, and the command is the refusing
+    verb's `-h` (`nova-update help` for an invocation with no verb, or an unknown one).
 19. **`--kind <k>` restricts the run, not the output.** Repeatable, the only filter; absent,
     every kind runs. A kind not named is **neither read nor printed** — no `installed` argv
     starts for it and no GET is made — so the first line's `kinds=` and the count line's
@@ -639,7 +642,7 @@ UPDATE UNKNOWN name=<name> kind=<kind> installed=<v|-> path=<path|-> source=<sou
 UPDATE <OK|FAIL> checked=<n> current=<n> stale=<n> newer=<n> ahead=<n> differ=<n> unknown=<n> pins=<n> took=<d> file=<path>
 UPDATE MORE kind=<stale|newer|ahead|differ|unknown> shown=<n> total=<t> <remedy>
 UPDATE NOTE <something true about this run that is not a finding>
-UPDATE REFUSED: <reason> (<remedy>)
+UPDATE REFUSED: <reason>; run: <command>
 STATUS at=<stamp> file=<path> entries=<n> kinds=<k,k,k> timeout=<d> budget=<d> max=<n>
 STATUS <EQUAL|STALE|NEWER|DIFFERENT> name=<name> kind=<kind> installed=<v> latest=<v> path=<path> source=<source> owner=<owner>
 STATUS AHEAD name=<name> kind=<kind> installed=<v> latest=<v> ahead=<commit> path=<path> source=<source> owner=<owner>
@@ -653,7 +656,7 @@ APPLY BEFORE name=<name> kind=<kind> installed=<v|-> path=<path|-> latest=<v> so
 APPLY RUN name=<name> argv=<n> version=<v>: <command, escaped>
 APPLY AFTER name=<name> installed=<v|-> was=<v|->
 APPLY <OK|FAIL> name=<name> from=<v|-> to=<v|-> took=<d>[: <reason>]
-APPLY REFUSED name=<name>: <reason> (<remedy>)
+APPLY REFUSED: <reason>; run: <command>
 REPORT at=<stamp> file=<path> host=<label|-> as=<friend|-> entries=<n> kinds=<k,k,k> timeout=<d> budget=<d> max=<n> snapshot=<path|->
 REPORT TOOL name=<name> kind=<kind> version=<v|-> raw=<first line, escaped> path=<path>
 REPORT UNKNOWN name=<name> kind=<kind> path=<path|-> raw=<line|->: <reason> (<remedy>)
@@ -662,19 +665,19 @@ REPORT MORE kind=<tool|unknown|changed> shown=<n> total=<t> <remedy>
 REPORT SENT to=<who,who> via=<nova-bus argv, escaped> line=<nova-bus's SEND OK line, escaped>
 REPORT <OK|FAIL> checked=<n> known=<n> unknown=<n> changed=<yes|no|-> sent=<yes|no|uncertain|-> took=<d> file=<path>
 REPORT NOTE <something true about this run that is not a finding>
-REPORT REFUSED: <reason> (<remedy>)
+REPORT REFUSED: <reason>; run: <command>
 ADOPT OK check=<name> detail=<first line, escaped>
 ADOPT REFUSED check=<name> detail=<reason> (<remedy>)
 ADOPT ESCALATE check=<name> to=<owner>: duty files an issue and a fix card (<reason>)
 ADOPT DONE sha=<12 hex> ok=<n> refused=<m>
 ADOPT SENT to=<who,who> line=<nova-bus's SEND OK line, escaped>
 ADOPT NOTE <something true about this run that is not a finding>
-ADOPT REFUSED: <reason> (<remedy>)
+ADOPT REFUSED: <reason>; run: <command>
 ADOPTION at=<stamp> file=<path> entries=<n> max=<n>
 ADOPTION tool=<tool> friend=<friend> state=<evaluated|useful-now|tried|adopted|declined|deferred|unknown|equivalent> version=<v|-> detail=<reason, escaped>
 ADOPTION MORE kind=<choice> shown=<n> total=<t> <remedy>
 ADOPTION OK entries=<n> friends=<n> file=<path>
-ADOPTION REFUSED: <reason> (<remedy>)
+ADOPTION REFUSED: <reason>; run: <command>
 ```
 
 `UPDATE`, `STATUS`, `APPLY`, `REPORT`, `ADOPT` and `ADOPTION` are the first tokens, `OK` and `FAIL` the verdicts and the

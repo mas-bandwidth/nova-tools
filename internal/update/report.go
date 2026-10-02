@@ -18,18 +18,18 @@ import (
 )
 
 func shaText(s string) string { sum := sha256.Sum256([]byte(s)); return hex.EncodeToString(sum[:]) }
-func report(ctx context.Context, all, entries []Entry, o options, kinds string, started time.Time, out, errs io.Writer, env Environment) int {
+func report(ctx context.Context, all, entries []Entry, o options, kinds, help string, started time.Time, out, errs io.Writer, env Environment) int {
 	state := emptySnapshot()
 	var err error
 	if o.snapshot != "" {
 		release, lockErr := lockSnapshot(ctx, o.snapshot)
 		if lockErr != nil {
-			return refusal(errs, "REPORT", lockErr)
+			return refusal(errs, "REPORT", help, lockErr)
 		}
 		defer release()
 		state, err = readSnapshot(o.snapshot)
 		if err != nil {
-			return refusal(errs, "REPORT", err)
+			return refusal(errs, "REPORT", help, err)
 		}
 	}
 	rs := readEntries(ctx, entries, o, env, true)
@@ -77,7 +77,7 @@ func report(ctx context.Context, all, entries []Entry, o options, kinds string, 
 		}
 		state.Observed = seen
 		if err = writeSnapshot(o.snapshot, state); err != nil {
-			return refusal(errs, "REPORT", err)
+			return refusal(errs, "REPORT", help, err)
 		}
 	}
 	group.More()

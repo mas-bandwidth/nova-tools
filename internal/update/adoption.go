@@ -73,26 +73,32 @@ func adoptionVerb(name string, args []string, stamp string, out, errs io.Writer)
 	f.StringVar(&o.file, "file", "", "adoption file")
 	f.StringVar(&o.as, "as", "", "friend filter")
 	f.IntVar(&o.max, "max", 20, "output cap")
+	help := name + " adoption -h"
 	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
-		return refusal(errs, "ADOPTION", fmt.Errorf("%s (run %s help)", err, name))
+		return refusal(errs, "ADOPTION", help, flagProblem(f, err))
 	}
+	// Every problem of the invocation in one refusal (STANDARD §2).
+	var problems []string
 	if o.file == "" {
-		return refusal(errs, "ADOPTION", fmt.Errorf("missing --file; refusing to guess (supply each named flag; run: %s help)", name))
+		problems = append(problems, "missing --file; refusing to guess")
 	}
 	if o.max < 0 {
-		return refusal(errs, "ADOPTION", fmt.Errorf("invalid bound (use --max >= 0)"))
+		problems = append(problems, fmt.Sprintf("--max wants 0 or more (0 shows all), got %d", o.max))
 	}
 	if len(f.Args()) != 0 {
-		return refusal(errs, "ADOPTION", fmt.Errorf("adoption takes no positional arguments (run %s help)", name))
+		problems = append(problems, fmt.Sprintf("adoption takes no positional arguments, got %q", f.Arg(0)))
+	}
+	if len(problems) > 0 {
+		return refusal(errs, "ADOPTION", help, fmt.Errorf("%s", strings.Join(problems, "; ")))
 	}
 	file, err := os.Open(o.file)
 	if err != nil {
-		return refusal(errs, "ADOPTION", fmt.Errorf("cannot open %s (supply a readable --file: one line per tool choice, five tab-separated fields tool friend state version detail, written by hand)", o.file))
+		return refusal(errs, "ADOPTION", help, fmt.Errorf("cannot open %s (supply a readable --file: one line per tool choice, five tab-separated fields tool friend state version detail, written by hand)", o.file))
 	}
 	rows, err := loadAdoption(file)
 	file.Close()
 	if err != nil {
-		return refusal(errs, "ADOPTION", fmt.Errorf("%s: %w", o.file, err))
+		return refusal(errs, "ADOPTION", help, fmt.Errorf("%s: %w", o.file, err))
 	}
 	selected := []adoption{}
 	for _, r := range rows {

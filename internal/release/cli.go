@@ -140,10 +140,20 @@ func VerbUsage(verb string) string {
 	return Verbs
 }
 
+// refusal is the one refusal line (STANDARD §2): what was wrong and what the
+// input wants, then the command a reader runs next, the help of the verb that
+// refused (token is that verb, upper-case) or of the release verbs as a whole.
 func refusal(w io.Writer, token string, err error) int {
-	fmt.Fprintf(w, "%s REFUSED: %s\n", token, oneline.Err(err))
+	run := "nova-update release " + strings.ToLower(token) + " -h"
+	if token == "RELEASE" {
+		run = "nova-update help release"
+	}
+	fmt.Fprintf(w, "%s REFUSED: %s; run: %s\n", token, oneline.Err(err), run)
 	return 2
 }
+
+// verbNames are the release verbs, as a refusal lists them.
+const verbNames = "cut, build, install, adopt, pull"
 
 // progress is the stderr voice. Glenn, 2026-09-17: a program says what it is
 // doing for any step over about a tenth of a second, and every step in this
@@ -169,7 +179,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		deps.Now = time.Now
 	}
 	if len(args) == 0 {
-		return refusal(errs, "RELEASE", fmt.Errorf("a release verb is required: cut, build, install, adopt or pull (run %s help)", name))
+		return refusal(errs, "RELEASE", fmt.Errorf("a release verb is required; the release verbs are %s", verbNames))
 	}
 	verb := args[0]
 	args = args[1:]
@@ -183,7 +193,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		fmt.Fprintln(out, PullNote)
 		return 0
 	default:
-		return refusal(errs, "RELEASE", fmt.Errorf("unknown release verb %s (use cut, build, install, adopt or pull)", verb))
+		return refusal(errs, "RELEASE", fmt.Errorf("unknown release verb %q; the release verbs are %s", verb, verbNames))
 	}
 	o := options{timeout: 10 * time.Minute}
 	f := flag.NewFlagSet("release "+verb, flag.ContinueOnError)
@@ -277,10 +287,13 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 			}
 			return 0
 		}
-		return refusal(errs, token, fmt.Errorf("%s (run %s help)", err, name))
+		if flagName, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: -"); ok {
+			err = fmt.Errorf("unknown flag --%s (the verb's help lists its flags)", strings.TrimLeft(flagName, "-"))
+		}
+		return refusal(errs, token, err)
 	}
 	if len(f.Args()) != 0 {
-		return refusal(errs, token, fmt.Errorf("release %s takes no positional arguments (run %s help)", verb, name))
+		return refusal(errs, token, fmt.Errorf("release %s takes no positional arguments, got %q", verb, f.Arg(0)))
 	}
 	// EVERY missing flag at once. A refusal that names one of four sends
 	// somebody round the loop four times.
@@ -291,10 +304,10 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		}
 	}
 	if len(missing) > 0 {
-		return refusal(errs, token, fmt.Errorf("missing %s; refusing to guess (supply each named flag; run: %s help)", strings.Join(missing, ", "), name))
+		return refusal(errs, token, fmt.Errorf("missing %s; refusing to guess (supply each named flag)", strings.Join(missing, ", ")))
 	}
 	if o.timeout <= 0 {
-		return refusal(errs, token, fmt.Errorf("invalid bound (use a positive --timeout)"))
+		return refusal(errs, token, fmt.Errorf("--timeout wants a positive duration"))
 	}
 	// adopt may infer its version from --from; every other verb must be told.
 	if o.version != "" || verb != "adopt" {
@@ -320,15 +333,15 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		switch {
 		case o.noCertify && len(half) < 3:
 			return refusal(errs, token, fmt.Errorf(
-				"--no-certify waives certification and %s asks for it; pass one (run %s help)",
-				strings.Join(namedHalf(half), ", "), name))
+				"--no-certify waives certification and %s asks for it; pass one",
+				strings.Join(namedHalf(half), ", ")))
 		case !o.noCertify && len(half) == 3:
 			return refusal(errs, token, fmt.Errorf(
-				"an adopt certifies the machines it changes: pass --certify <machines registry> --certs <file> --standard <file>, or waive it with --no-certify (run %s help)", name))
+				"an adopt certifies the machines it changes: pass --certify <machines registry> --certs <file> --standard <file>, or waive it with --no-certify"))
 		case !o.noCertify && len(half) > 0:
 			return refusal(errs, token, fmt.Errorf(
-				"missing %s; refusing to guess (certification after an adopt wants the machines registry, the certificates file and the provisioning standard together: run %s help)",
-				strings.Join(half, ", "), name))
+				"missing %s; refusing to guess (certification after an adopt wants the machines registry, the certificates file and the provisioning standard together)",
+				strings.Join(half, ", ")))
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
