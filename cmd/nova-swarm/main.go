@@ -38,6 +38,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 const usage = `nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
@@ -45,8 +46,8 @@ const usage = `nova-swarm: one-task AI workers, each run in the sandbox with a d
 how it works: a card is one task, a markdown file with a header and its RULES;
 a worker description (JSON) names the harness, the model, the key file and the
 directories it may read. native runs one card as one child inside nova-sandbox;
-batch runs many under a pool of slots (leases in a --slots-store directory);
-each result lands in the job directory under --root. Nothing has a default.
+member runs a sprint's cards on this machine, each a native child, every sprint
+verb sent to the sprint's server; results land under --root. Nothing has a default.
 first run: the lines under example: need nothing: a card, a worker description
 and the lint's rules; running a card needs a harness, a model's key file and nova-sandbox.
 
@@ -104,9 +105,12 @@ A command that runs outside the wall and dies
 inside it is missing a read_roots entry.
 
 A card to start from: nova-swarm template --name card prints one that passes
-the lint (lint --card <file> --child-rules): put it in a file, fill in its <...>
-lines, lint it, then hand it to native or member. native and member each show
+the lint (lint --card <file> --child-rules): put it in a file, fill in its
+<...> lines (REPO: and BASE: name the repository and the branch the work starts
+from and lands on), lint it (a line still unfilled is named on a NOTE line), then
+hand it to native, or to nova-sprint add as a brief. native and member each show
 one example line in their -h, and template -h lists the lines a card needs.
+nova-swarm help <verb> (or <verb> -h) prints one verb's usage, flags and example.
 
 example:
   nova-swarm template --name read-pr
@@ -127,6 +131,8 @@ var verbExamples = map[string]string{
 // every line it lists is one of the template's own (a test holds the two).
 const cardLines = `a card's required lines (template --name card writes them; lint --card <file> --child-rules checks them, lint --rules says why each rule is there):
   line 1     RESULT: <label> sha=<sha12>
+  REPO:      <owner>/<name>, the repository the member stages and land merges into (land --repo-dir stands in for a card naming none)
+  BASE:      <branch>, the branch the work starts from and lands on (land --base stands in for a card naming none)
   a bound    Deadline: finish within <n> minutes.
   RULES.     every rule the coordinator gives a child, each quoted whole
   THE TASK.  what is wanted, the files or package it lives in, the worktree, branch, base and private GOCACHE
@@ -147,6 +153,10 @@ func verbHelpLines(verb string) string {
 	return add
 }
 
+// verbNames are the verbs, in the usage's order: what a bare command and an unknown verb
+// are answered with (the tool-answers rule).
+var verbNames = []string{"template", "lint", "member", "native", "worker", "verify", "doctor", "profile", "slots", "version"}
+
 // helpVerbs are the verbs `help <verb>` answers with that verb's help, the same text
 // `<verb> -h` prints.
 var helpVerbs = map[string]bool{
@@ -154,10 +164,18 @@ var helpVerbs = map[string]bool{
 	"template": true, "profile": true, "native": true, "member": true, "slots": true, "worker": true,
 }
 
-// refuse is what an unusable invocation costs: ONE line naming what was wrong and the door
-// to the usage, never the banner, which is 60 lines and is behind `nova-swarm help`.
+// refuse is what an unusable invocation costs: ONE line, `nova-swarm[ <verb>] REFUSED:
+// <what was wrong>; run: <remedy>` (docs/STANDARD.md section 3, point 1), never the banner,
+// which is behind `nova-swarm help`. The remedy is the verb's help, or what names its own.
 func refuse(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-swarm%s: %s; run: nova-swarm help\n", oneline.Escape(where), oneline.Escape(what))
+	run := "; run: nova-swarm help"
+	if w := strings.Fields(where); len(w) > 0 && helpVerbs[w[0]] {
+		run += " " + w[0]
+	}
+	if strings.Contains(what, "; run: ") {
+		run = ""
+	}
+	fmt.Fprintf(stderr, "nova-swarm%s REFUSED: %s%s\n", oneline.Escape(where), oneline.Escape(what), oneline.Escape(run))
 	return 2
 }
 
@@ -176,7 +194,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0, before
 	// anything is read, dialed or written (the CLI style's rule (b), #4505). Only -h:
 	// every other exit of this tool is unchanged.
-	defer verbflag.RecoverWith(stdout, "nova-swarm", usage, &code, verbHelpLines)
+	defer recoverHelp(stdout, &code)
 	// --seat <name> (or NOVA_SEAT): the Redis login is read from that seat's
 	// file through nova-secrets' library, in this process (#4052).
 	args, err := seatcred.FromArgs(args, os.Getenv)
@@ -184,14 +202,18 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return refuse(stderr, "", err.Error())
 	}
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; `template --name read-pr` is the one that only looks")
+		return refuse(stderr, "", "no verb given; the verbs are "+strings.Join(verbNames, ", ")+"; `template --name card` is the one that only looks")
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "help", "-h", "--help":
-		// help <verb> for a NAMED verb only: anything else is the banner.
+		// help <verb> for a named verb; help with a word that is no verb is refused
+		// naming the verbs, as an unknown verb is
 		if cmd == "help" && len(rest) > 0 && helpVerbs[rest[0]] {
 			return run(append(append([]string{}, rest...), "--help"), stdin, stdout, stderr, now)
+		}
+		if cmd == "help" && len(rest) > 0 && !verbflag.IsHelp(rest[0]) {
+			return refuse(stderr, "", fmt.Sprintf("help %q: no such verb", rest[0])+"; the verbs are "+strings.Join(verbNames, ", "))
 		}
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -216,7 +238,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "worker":
 		return cmdWorker(rest, stdout, stderr)
 	}
-	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
+	return refuse(stderr, "", fmt.Sprintf("unknown verb %q", cmd)+"; the verbs are "+strings.Join(verbNames, ", "))
 }
 
 // ------------------------------------------------------------------------------- flags
@@ -254,9 +276,9 @@ func (s stringListValue) Set(v string) error {
 // wait under a second can say so and every existing caller is unchanged.
 type secondsFlag struct{ d time.Duration }
 
-func newSecondsFlag(fs *flag.FlagSet, name string, def time.Duration) *secondsFlag {
+func newSecondsFlag(fs *flag.FlagSet, name string, def time.Duration, usage string) *secondsFlag {
 	v := &secondsFlag{d: def}
-	fs.Var(v, name, "")
+	fs.Var(v, name, usage)
 	return v
 }
 
@@ -281,11 +303,12 @@ func (s *secondsFlag) Set(v string) error {
 // all (ONBOARDING point 2) rather than sending a first run back three times.
 func (f *flags) parse(args []string, stderr io.Writer) bool {
 	if err := verbflag.Parse(f.fs, args); err != nil {
-		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
+		// the nearest flag and the verb's flags, never the flag package's line (tool ledger X2)
+		refuse(stderr, " "+f.verb, oneline.Cap(tool.FlagRefusal(f.verb, f.fs, err), oneline.TailBytes))
 		return false
 	}
 	if n := f.fs.NArg(); n > 0 {
-		fmt.Fprintf(stderr, "nova-swarm %s: takes no positional arguments, got %d (flags come before arguments)\n", f.verb, n)
+		refuse(stderr, " "+f.verb, fmt.Sprintf("takes no positional arguments, got %d: %q (every input is a flag)", n, f.fs.Args()))
 		return false
 	}
 	return true
@@ -360,13 +383,13 @@ func (f *flags) wantMax(value int) {
 
 func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("verify")
-	result := f.fs.String("result", "", "")
-	contract := f.fs.String("contract", "", "")
-	label := f.fs.String("label", "", "")
-	card := f.fs.String("card", "", "")
-	runRecord := f.fs.String("run-record", "", "")
-	usageFile := f.fs.String("usage", "", "")
-	max := f.fs.Int("max", swarm.DefaultContractLines, "")
+	result := f.fs.String("result", "", "required: the job's RESULT.md `file`, whose line 1 is checked")
+	contract := f.fs.String("contract", "", "required: the card's contract `line`, which line 1 of RESULT.md must equal exactly")
+	label := f.fs.String("label", "", "required: the job's `label`, carried on the result line and in the receipt")
+	card := f.fs.String("card", "", "the card `file`, read only when given, for the checks that need the card")
+	runRecord := f.fs.String("run-record", "", "the job's exit.json `file`: the harness's exit code joins the verdict")
+	usageFile := f.fs.String("usage", "", "the job's usage.tsv `file`: tokens, dollars and wall time join the receipt")
+	max := f.fs.Int("max", swarm.DefaultContractLines, "the most evidence lines past the disposition, at least 1")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -443,7 +466,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 
 func cmdTemplate(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("template")
-	name := f.fs.String("name", "", "")
+	name := f.fs.String("name", "", "required: the template's `name`: "+strings.Join(swarm.TemplateNames(), ", ")+" (card is a whole card that passes lint --child-rules)")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -469,7 +492,7 @@ func cmdTemplate(args []string, stdout, stderr io.Writer) int {
 // reads only the files the native run already wrote; it launches nothing and calls no model.
 func cmdProfile(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("profile")
-	jobs := f.fs.String("jobs", "", "")
+	jobs := f.fs.String("jobs", "", "required: a `glob` of job directories (or timeline.tsv files), each holding a native run's per-turn timeline")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -519,37 +542,37 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	// directory after that publish, so a bench sweep never deletes the results with the
 	// working directory.
 	nf := &nativeFlags{
-		harness:         f.fs.String("harness", "", ""),
-		model:           f.fs.String("model", "", ""),
-		cardPath:        f.fs.String("card", "", ""),
-		slot:            f.fs.String("slot", "", ""),
-		root:            f.fs.String("root", "", ""),
-		deadline:        f.fs.String("deadline", "", ""),
-		idle:            f.fs.String("idle", swarm.DefaultNativeIdle.String(), ""),
-		label:           f.fs.String("label", "", ""),
-		auth:            f.fs.String("auth", "", ""),
-		config:          f.fs.String("config", "", ""),
-		workerFile:      f.fs.String("worker", "", ""),
-		sandbox:         f.fs.String("sandbox", "", ""),
-		noWall:          f.fs.Bool("no-wall", false, ""),
-		noSharedCaches:  f.fs.Bool("no-shared-caches", false, ""),
-		resultsRootFlag: f.fs.String("results-root", "", ""),
-		sweepNow:        f.fs.Bool("sweep-now", false, ""),
+		harness:         f.fs.String("harness", "", "required: the harness binary `path` the child runs under, checked for existence and execution"),
+		model:           f.fs.String("model", "", "required without --worker: the `provider/model` to run, one slash, both sides nonempty"),
+		cardPath:        f.fs.String("card", "", "required: the card `file`, handed to the child byte for byte as its task"),
+		slot:            f.fs.String("slot", "", "required: the slot `dir` this run executes in, under --root; HOME is a data directory beneath it"),
+		root:            f.fs.String("root", "", "required: the configured root `dir` the slot sits under; results go under <root>/results"),
+		deadline:        f.fs.String("deadline", "", "required: the wall-clock bound that ends the child, a `duration` such as 30m"),
+		idle:            f.fs.String("idle", swarm.DefaultNativeIdle.String(), "end the card when neither its output nor its process tree has moved for this `duration`; 0 turns the watch off (default 5m)"),
+		label:           f.fs.String("label", "", "the run's `label`, on its NATIVE line and its result (default: the card file's name without its extension)"),
+		auth:            f.fs.String("auth", "", "the harness's auth `file`, one entry of it copied into the child's data home (not with a --worker naming a secret)"),
+		config:          f.fs.String("config", "", "the harness's provider config `file` (opencode.json), copied beside the auth (not with a --worker naming a secret)"),
+		workerFile:      f.fs.String("worker", "", "the worker description `file` (JSON) that names the model, the key and the read roots; nova-swarm worker check checks it"),
+		sandbox:         f.fs.String("sandbox", "", "the nova-sandbox binary `path` that builds the wall (default: nova-sandbox on PATH); not with --no-wall"),
+		noWall:          f.fs.Bool("no-wall", false, "run the child with no nova-sandbox wall: the caller owns every read and write it makes"),
+		noSharedCaches:  f.fs.Bool("no-shared-caches", false, "keep the Go caches under the child's HOME instead of the bench's shared <root>/cache"),
+		resultsRootFlag: f.fs.String("results-root", "", "the `dir` RESULT.md, usage.tsv and the report are published under (default <root>/results)"),
+		sweepNow:        f.fs.Bool("sweep-now", false, "delete the job directory once its results are published (never before)"),
 	}
 	// native takes no bench slot lease: a bench's capacity is one place, the dealer's, and a
 	// second ledger here would give a second answer. --slots-store and --owner are accepted
 	// so a caller that passes them is not refused on an unknown flag, and they are read by
 	// nothing.
-	_ = f.fs.String("slots-store", "", "")
-	_ = f.fs.String("owner", "", "")
-	nf.tokensWord = f.fs.String("tokens", "", "")
-	nf.usageInterval = newSecondsFlag(f.fs, "usage-interval", swarm.DefaultUsageInterval)
-	nf.benchFlag = f.fs.String("bench", "", "")
-	nf.stageTimeout = f.fs.String("stage-timeout", "", "")
-	nf.frame = f.fs.String("frame", "", "")
-	nf.identity = f.fs.String("identity", "", "")
-	f.fs.Var(stringListValue{&nf.repos}, "repo", "")
-	f.fs.Var(stringListValue{&nf.recipients}, "recipient", "")
+	_ = f.fs.String("slots-store", "", "accepted and read by nothing: native takes no slot lease (the dealer holds a bench's capacity)")
+	_ = f.fs.String("owner", "", "accepted and read by nothing, with --slots-store")
+	nf.tokensWord = f.fs.String("tokens", "", "required: the token budget, a number of tokens, or the word unmetered when the provider has no live accounting and the deadline is the only stop (`n|unmetered`)")
+	nf.usageInterval = newSecondsFlag(f.fs, "usage-interval", swarm.DefaultUsageInterval, "how often the token budget's source is read, a `duration` or whole seconds, at least 1s and under --deadline (default 5s)")
+	nf.benchFlag = f.fs.String("bench", "", "this bench's `name`, in a staging timeout's report (default: this machine's host name up to its first dot)")
+	nf.stageTimeout = f.fs.String("stage-timeout", "", "the bound on staging the card's checkout from the bench mirror, a `duration` (default 120s)")
+	nf.frame = f.fs.String("frame", "", "the frame `file` a member wrote: the repository, commit and branch to stage, from which JOB.md and the shims are written")
+	nf.identity = f.fs.String("identity", "", "the pool identity the child commits under, `owner,name,email` (default: <root>/identity.tsv)")
+	f.fs.Var(stringListValue{&nf.repos}, "repo", "a repository the card may clone, `owner/name` (again for more): the wall opens the network to it alone")
+	f.fs.Var(stringListValue{&nf.recipients}, "recipient", "a bus lane the card may address (again for more); a bus send is denied inside the wall whatever is named")
 	return f, nf
 }
 

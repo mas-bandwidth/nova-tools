@@ -121,7 +121,7 @@ func TestQuackRefusesEveryMissingInputAtOnce(t *testing.T) {
 		assert.Contains(t, errs, want)
 	}
 	assert.Equal(t, before, ta.applies(), "a refusal writes nothing")
-	assert.True(t, strings.HasPrefix(errs, "nova-sprint quack: "), errs)
+	assert.True(t, strings.HasPrefix(errs, "nova-sprint quack REFUSED: "), errs)
 }
 
 // The --op contract (docs/SPEC-SPRINT.md section 11): the same quack call

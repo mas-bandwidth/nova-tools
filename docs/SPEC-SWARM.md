@@ -272,7 +272,9 @@ P7. **The fix-card shape is three calls, not thirty turns.** Step 1 (model):
 
 BOUND THE REPORT (issue #74): findings only. No narration of the clone, no
 restated task, no praise, no summary. One line per finding: `file:line`, the
-rule in twelve words, the severity, and the fix in one clause. Keep RESULT.md
+rule quoted verbatim in at most twelve words (a longer rule by the twelve of its
+own words the finding rests on, never a paraphrase: rule 2 holds), the severity,
+and the fix in one clause. Keep RESULT.md
 under 40 lines and every line under 300 characters, and no pipe inside backticks:
 a `|` in a quote broke the table grammar twice (D12), so quote the rule without
 it. Put the verdict line last. When there is nothing to report, write `findings: 0`.
