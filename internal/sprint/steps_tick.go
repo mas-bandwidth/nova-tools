@@ -1161,7 +1161,7 @@ func MovesDue(s *Snapshot) int {
 		}
 	}
 	for _, c := range s.Work.Column(Waiting) {
-		if !IsSentinel(c) && len(WaitsFor(s, c, nil)) == 0 {
+		if !IsSentinel(c) && !IsHeld(c) && len(WaitsFor(s, c, nil)) == 0 {
 			n++
 		}
 	}

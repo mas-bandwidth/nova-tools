@@ -24,36 +24,45 @@ import (
 // object for a program; the driver reads the sprint through them.
 
 // summary is the sprint's line: landed / all primaries on the table, percent,
-// ETA. The ETA is an estimate once five cards have landed: the cards left, each
-// at the average time a card has taken to land (since, the time from the
+// ETA. The ETA is an estimate once five cards have landed: the dealable cards
+// left (all but the landed and the held), each at the average time a card has
+// taken to land (since, the time from the
 // machine's first start, over the cards landed), in whole minutes rounded up,
 // with no seconds ("47m", "1h12m"); before five have landed, or with no start
 // known, the ETA reads a dash. Every primary landed, it has no ETA: it is done
 // (errata 3 amendment 6).
 // eta is the minutes left (etaMinutes, or the view's held value), 0 when there
-// is no estimate.
-func summary(t ntable.Table, eta int64) string {
+// is no estimate. held is the cards no tick moves on its own (sprint.HeldBack:
+// behind a sentinel not released, or admitted held), shown apart as held=N
+// when there are any; the ETA leaves them out (nova-tools#5096 item 16).
+func summary(t ntable.Table, held, eta int64) string {
 	landed, all := counts(t)
+	line := progress(t)
+	if held > 0 {
+		line += fmt.Sprintf(" held=%d", held)
+	}
 	switch {
 	case all > 0 && landed == all:
 		return progress(t) + " done"
 	case eta >= 60:
-		return fmt.Sprintf("%s -> ETA %dh%dm", progress(t), eta/60, eta%60)
+		return fmt.Sprintf("%s -> ETA %dh%dm", line, eta/60, eta%60)
 	case eta > 0:
-		return fmt.Sprintf("%s -> ETA %dm", progress(t), eta)
+		return fmt.Sprintf("%s -> ETA %dm", line, eta)
 	}
-	return progress(t) + " -> ETA -"
+	return line + " -> ETA -"
 }
 
-// etaMinutes is the estimate of the minutes left, rounded up: the cards left,
-// each at since over the cards landed; 0 when there is none (fewer than five
-// landed, nothing left, or no first start known).
-func etaMinutes(t ntable.Table, since time.Duration, started bool) int64 {
+// etaMinutes is the estimate of the minutes left, rounded up: the dealable
+// cards left (all but the landed and the held), each at since over the cards
+// landed; 0 when there is none (fewer than five landed, nothing dealable left,
+// or no first start known).
+func etaMinutes(t ntable.Table, held int64, since time.Duration, started bool) int64 {
 	landed, all := counts(t)
-	if !started || landed < 5 || landed >= all {
+	left := all - landed - held
+	if !started || landed < 5 || left <= 0 {
 		return 0
 	}
-	return int64(math.Ceil(float64(since) * float64(all-landed) / float64(landed) / float64(time.Minute)))
+	return int64(math.Ceil(float64(since) * float64(left) / float64(landed) / float64(time.Minute)))
 }
 
 // etaHold is how long the view holds an estimate: it shows the largest of the
@@ -388,6 +397,7 @@ type whereView struct {
 	At          time.Time                               `json:"at"`
 	Landed      int64                                   `json:"landed"`
 	All         int64                                   `json:"all"`
+	Held        int64                                   `json:"held,omitempty"` // behind a sentinel not released, or admitted held: not in the ETA
 	Summary     string                                  `json:"summary"`
 	Tables      map[string]map[string]map[string]string `json:"tables"` // table -> row -> column -> cell as printed
 	Streams     []sprint.StreamClock                    `json:"streams"`
@@ -407,6 +417,7 @@ type whereView struct {
 type whereRun struct {
 	c       common
 	watch   bool
+	all     bool
 	every   time.Duration
 	stale   time.Duration
 	atEpoch int64
@@ -416,6 +427,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("where")
 	watch := fs.Bool("watch", false, "redraw in place every --every until interrupted")
 	every := fs.Duration("every", time.Second, "the redraw interval with --watch, above 0")
+	all := fs.Bool("all", false, "draw the readers and merge tables too, hidden from the default frame (--json always carries them)")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
@@ -438,7 +450,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 		ctx, stop = a.notify(ctx)
 		defer stop()
 	}
-	r := whereRun{c: *c, watch: *watch, every: *every, stale: *stale, atEpoch: *atEpoch}
+	r := whereRun{c: *c, watch: *watch, all: *all, every: *every, stale: *stale, atEpoch: *atEpoch}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
@@ -475,7 +487,7 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 			}
 			return "", refuse(stderr, "where", err.Error()), false
 		}
-		v, frame, err := a.where(ctx, st, r.stale)
+		v, frame, err := a.where(ctx, st, r.stale, r.all)
 		if err != nil {
 			if ctx.Err() != nil {
 				return "", 0, false // an interrupt cut the read short: the watch is over, not failed
@@ -519,7 +531,11 @@ func (a *app) drawLoop(ctx context.Context, r whereRun, stdout, stderr io.Writer
 	}
 }
 
-func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (whereView, string, error) {
+// where is the view and its frame. The frame draws the tables of sprint.ShownOrder,
+// or with all every table in sprint.AllOrder: the readers and merge tables are
+// hidden from the default frame (the owner, 2026-10-02: "please hide the reader
+// and merge tables"); the view for a program carries every table whichever is drawn.
+func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, all bool) (whereView, string, error) {
 	st, err := st.Pinned(ctx)
 	if err != nil {
 		return whereView{}, "", err
@@ -561,8 +577,13 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		v.Cleared = es.Cleared
 	}
 	v.Landed, v.All = counts(shapes[0])
+	held, err := st.HeldBack(ctx)
+	if err != nil {
+		return whereView{}, "", err
+	}
+	v.Held = int64(held)
 	since, started := st.SinceFirstStart(ctx)
-	v.Summary = summary(shapes[0], a.heldETA(now, etaMinutes(shapes[0], since, started)))
+	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaMinutes(shapes[0], v.Held, since, started)))
 
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID
@@ -615,8 +636,12 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	// the table layer draws it as it draws the fleet: header, rule, rows, rule,
 	// the folded footer; with no friend the header, its rule and the footer
 	parts[sprint.Friends] = ntable.Render(ft, ntable.RenderOpts{Title: sprint.Friends})
+	order := sprint.ShownOrder
+	if all {
+		order = sprint.AllOrder
+	}
 	var shown []string
-	for _, t := range sprint.ShownOrder {
+	for _, t := range order {
 		shown = append(shown, parts[t])
 	}
 	b.WriteString(strings.Join(shown, "\n"))

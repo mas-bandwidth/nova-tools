@@ -26,7 +26,10 @@ that or when it has never beaten; the tick applies each change
 (a member down has its unfinished work cards dealt to the members up; a
 member up levels the ready queues). fleet down holds a member down whatever
 it beats (status held); fleet up releases the hold, adding a member the
-sprint does not know. The load cell is the machine's CPU busy percent of all
+sprint does not know. Each says where the cards went on its MOVED line: down
+"moved=N to <member>(n),...; stayed=K withdrawn: <ids>" (a card no member up
+has room for is withdrawn and dealt again where there is room), up
+"moved=N to <member>(n) from <member>(n),..." (the level). The load cell is the machine's CPU busy percent of all
 its cores (the one-minute load average over the cores where that cannot be
 measured), the highest of the last `+sprint.LoadWindow.String()+`.
 

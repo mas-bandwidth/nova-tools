@@ -184,7 +184,7 @@ func waive(s *Snapshot, id, who string, judgments []Note) (Change, []Note) {
 	fields["waived"] = set["waived"]
 	after := &Card{ID: c.ID, Row: c.Row, Col: c.Col, Score: c.Score, Fields: fields}
 	switch {
-	case len(WaitsFor(s, after, nil)) > 0:
+	case len(WaitsFor(s, after, nil)) > 0, IsHeld(c):
 	case IsSentinel(c):
 		set["reached"] = stamp(s.Now)
 		return change(Work, setEntry(c, set)), []Note{reachedNote(s, c, nil, 0, who)}

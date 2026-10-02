@@ -191,6 +191,16 @@ func cardHeaderBlock(raw []byte) (block map[string]headerField, stranded map[str
 	return block, stranded
 }
 
+// CardHeaderValue is the value of one key of a card's typed header block, read
+// as the lint and the gate read the block (the unbroken run of `KEY: value`
+// lines under the contract line); ok is false when the block has no such line.
+// nova-sprint add reads DEPENDS-ON: and PATHS: through it.
+func CardHeaderValue(raw []byte, key string) (value string, ok bool) {
+	block, _ := cardHeaderBlock(raw)
+	f := block[key]
+	return f.value, f.found
+}
+
 // cardTypedKeys is the five lines SPEC-TOOLWORK.md §5 rule 1 names, as a set.
 var cardTypedKeys = map[string]bool{"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true}
 

@@ -35,9 +35,16 @@ var ViewOrder = []string{Work, Readers, Merge, Fleet}
 // nothing in the four tables, the tick or an epoch holds it.
 const Friends = "friends"
 
-// ShownOrder is the order where shows the tables in: the four of the stored
+// ShownOrder is the order where shows the tables in by default: work, friends,
+// fleet. The readers and merge tables are hidden from the default frame (the
+// owner, 2026-10-02: "I feel like reading and merging is something you can
+// handle now. it seems to work, so please hide the reader and merge tables.");
+// where --all draws them, in AllOrder, and where --json carries them always.
+var ShownOrder = []string{Work, Friends, Fleet}
+
+// AllOrder is the order where --all shows every table in: the four of the stored
 // view, with friends after merge and before fleet.
-var ShownOrder = []string{Work, Readers, Merge, Friends, Fleet}
+var AllOrder = []string{Work, Readers, Merge, Friends, Fleet}
 
 // FriendsDef is the friends table's shape: the fleet table's columns but load.
 // ready and working count her job cards in those states; width is her width
