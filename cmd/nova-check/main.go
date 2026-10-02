@@ -383,7 +383,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	// run needs NEXT does not depend on whether this one was green. THE OK WORD
 	// IS A CLAIM THAT BOTH CHECKS PASSED, so it is printed only then: a run with
 	// a failed check closes with FAIL and the names of the checks that failed
-	// (a cold evaluation shows that `QUICKSTART OK` can appear over two failures).
+	// (a cold use of the tool once read `QUICKSTART OK` over two failures).
 	if len(failed) == 0 {
 		fmt.Fprintf(stdout, "QUICKSTART OK done=2 worst-exit=%d next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)\n", worst)
 	} else {
@@ -499,8 +499,8 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	}
 	// The file and the budget are independent, so both are judged before
 	// either sends the caller away: `nova-check kernel` with nothing at all
-	// reports --file and the budget together instead of stopping after
-	// budget. One run, every problem it can find.
+	// names --file and the budget together, rather than naming --file, stopping,
+	// and leaving the budget for a second run. One run, every problem it can find.
 	ok := requireFlags(fs, stderr, map[string]*string{"file": file})
 	// Which budget was GIVEN, not which value survived: --max-bytes 0 is a
 	// stated (and refused) budget, not an absent one.

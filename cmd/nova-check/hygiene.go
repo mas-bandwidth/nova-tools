@@ -70,7 +70,7 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 		// an extra pair of angle brackets around the email. Pasted as written,
 		// `Name <<email>>` parses --
 		// it holds a `<` and it ends in `>` -- and leaves the address as
-		// `<r@example.com>`, which equals no git author alive. Every commit on a clean
+		// `<email>`, brackets included, which equals no git author alive. Every commit on a clean
 		// branch came back as an identity finding and nothing said why. An address is
 		// never spelled with an angle bracket in it, so this is the typo caught rather
 		// than guessed at: the refusal spells the form, and a wrong answer about who
@@ -97,9 +97,9 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	// Here it was neither. `--kind` went straight through to hygiene.Check, where it
 	// unlocks an allowlisted stray exception and nothing else, so an undeclared kind
 	// unlocked nothing and the run printed HYGIENE OK -- a clean answer about a shape
-	// of work that does not exist. A card carrying an undeclared kind comes
-	// back clean, because a check pass cannot print a finding about a kind the
-	// tool does not declare; refusing it here is what names the kind instead.
+	// of work that does not exist, and every card carrying an undeclared kind
+	// came back clean. Refusing the kind here, by name, is what makes that
+	// answer impossible.
 	if *kind != "" && !hygiene.KindDeclared(*kind) {
 		return refuse(stderr, " hygiene", fmt.Sprintf("--kind %q is not a kind this tool declares; one of: %s",
 			*kind, strings.Join(hygiene.Kinds(), ", ")))
