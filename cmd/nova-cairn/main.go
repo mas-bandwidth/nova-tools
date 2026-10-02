@@ -46,8 +46,9 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 				Usage:   "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]",
 				Example: "open --store ./cairns --session s1 --publish manual",
 				Effect:  tool.LocalWrite,
-				Detail: "A re-open naming the recorded policy (and source, when given) changes nothing; one naming\n" +
-					"another is a conflict, exit 1, and names the open that matches.",
+				Detail: "A re-open naming the recorded policy (and source, when given) changes nothing and says\n" +
+					"reopened=true with the stamp the record holds; one naming another is a conflict, exit 1, and\n" +
+					"names the open that matches.",
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					record(f)
@@ -203,14 +204,16 @@ func open(c *tool.Call) *tool.Out {
 	var err error
 	if c.DryRun() {
 		rec, err = cairn.PlanOpen(store, session, c.Str("source"), stamp, publish)
-	} else if err = cairn.Open(store, session, c.Str("source"), stamp, publish); err == nil {
+	} else if rec, err = cairn.Open(store, session, c.Str("source"), stamp, publish); err == nil && !rec.Reopened {
 		rec, err = cairn.ReadOpen(store, session)
 	}
 	if err != nil {
 		return refusal(err)
 	}
+	// The stamp is the record's own: a re-open prints the first open's, and a
+	// flat record, which keeps none, prints -, never this run's clock.
 	return tool.Done().Fact("session", session).Fact("store", store).Fact("source", sourceOf(rec.Source)).
-		Fact("publish", publish).Fact("stamp", stampOf(stamp))
+		Fact("publish", publish).Fact("stamp", sourceOf(rec.Stamp)).Fact("reopened", rec.Reopened)
 }
 
 func appendEntry(c *tool.Call) *tool.Out {

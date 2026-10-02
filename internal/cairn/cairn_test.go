@@ -32,7 +32,7 @@ func TestAppendKeepsExactProseAndReportsPersistenceSeparately(t *testing.T) {
 
 	store := t.TempDir()
 	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // nanoseconds: the stamp round-trips at full precision
-	require.NoError(t, Open(store, "sess-1", "bench-a/session-7", now, "manual"), "Open")
+	require.NoError(t, opened(Open(store, "sess-1", "bench-a/session-7", now, "manual")), "Open")
 	prose := "the friend's chosen words — \"as above\" is banned, \"café — 日本語\" stays byte-exact\nsecond line"
 	res, err := Append(store, "sess-1", "e-1", prose, "bench-a/session-7#L3", now, "manual")
 	require.NoError(t, err, "Append")
@@ -52,7 +52,7 @@ func TestDuplicateAppendIsIdempotentAndConflictingEntryRefused(t *testing.T) {
 
 	store := t.TempDir()
 	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // a clock reading with nanoseconds, passed in
-	require.NoError(t, Open(store, "s", "src", now, "never"), "Open")
+	require.NoError(t, opened(Open(store, "s", "src", now, "never")), "Open")
 	_, err := Append(store, "s", "e", "same words", "src", now, "never")
 	require.NoError(t, err, "Append")
 	dup, err := Append(store, "s", "e", "same words", "src", now, "never")
@@ -70,7 +70,7 @@ func TestInterruptedAppendRecoversAndPreservesOtherWriters(t *testing.T) {
 
 	store := t.TempDir()
 	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // a clock reading with nanoseconds, passed in
-	require.NoError(t, Open(store, "s", "src", now, "never"), "Open")
+	require.NoError(t, opened(Open(store, "s", "src", now, "never")), "Open")
 	_, err := Append(store, "s", "other", "other writer's note", "src", now, "never")
 	require.NoError(t, err, "Append other")
 	// Simulate a crash between temp write and rename: a stale partial file.
@@ -90,7 +90,7 @@ func TestOfflineAppendSucceedsWithPublicationPending(t *testing.T) {
 
 	store := t.TempDir()
 	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // a clock reading with nanoseconds, passed in
-	require.NoError(t, Open(store, "s", "src", now, "deferred"), "Open")
+	require.NoError(t, opened(Open(store, "s", "src", now, "deferred")), "Open")
 	res, err := Append(store, "s", "e", "offline note", "", now, "deferred")
 	require.NoError(t, err, "offline append must succeed locally")
 	persistedNotPublished(t, res.Persisted, res.Published, "offline append is durable-but-unpublished: persisted=true published=false, got %+v", res)
@@ -102,7 +102,7 @@ func TestOpenConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 	store := t.TempDir()
 	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // a clock reading with nanoseconds, passed in
 	for _, s := range []string{"alpha", "beta"} {
-		require.NoError(t, Open(store, s, "src", now, "never"), "Open %s", s)
+		require.NoError(t, opened(Open(store, s, "src", now, "never")), "Open %s", s)
 		_, err := Append(store, s, "e", "note in "+s, "src", now, "never")
 		require.NoError(t, err, "Append %s", s)
 	}
@@ -127,7 +127,7 @@ func TestUnreadableExistingEntryRefusedOnAppendAndRead(t *testing.T) {
 
 	store := t.TempDir()
 	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // a clock reading with nanoseconds, passed in
-	require.NoError(t, Open(store, "s", "src", now, "manual"), "Open")
+	require.NoError(t, opened(Open(store, "s", "src", now, "manual")), "Open")
 	prose := "initial durable words"
 	res, err := Append(store, "s", "e1", prose, "src", now, "manual")
 	require.NoError(t, err, "initial Append")
@@ -170,7 +170,7 @@ func TestCorruptStampRejectedByReaders(t *testing.T) {
 
 	store := t.TempDir()
 	now := time.Date(2026, 9, 17, 12, 0, 0, 123456789, time.UTC) // a clock reading with nanoseconds, passed in
-	require.NoError(t, Open(store, "s", "src", now, "manual"), "Open")
+	require.NoError(t, opened(Open(store, "s", "src", now, "manual")), "Open")
 
 	entriesDir := filepath.Join(store, "entries", "s")
 	require.NoError(t, os.MkdirAll(entriesDir, 0o755))
@@ -211,3 +211,6 @@ func TestCorruptStampRejectedByReaders(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "is corrupt")
 }
+
+// opened is Open's error alone, for the tests that only need the open to stand.
+func opened(_ OpenRecord, err error) error { return err }

@@ -37,7 +37,9 @@ Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`,
 with or without an extension). Every verb refuses another id at exit 2 before
 anything is written: `.` as a session would put its entries in `entries/`
 itself, where no index looks. Re-opening an open session with the recorded policy (and the
-recorded source, when it names one) is a no-op; naming another policy or
+recorded source, when it names one) is a no-op, and says so: its line carries
+`reopened=true` and the stamp the record holds, never the re-run's clock (`-`
+for a flat record, which keeps none); a first open says `reopened=false`. Naming another policy or
 source is exit 1, a conflict, whose remedy is the `open` that matches the
 record. `--dry-run` makes every check and writes nothing. The session file's
 header is convention only and is never parsed, so alternate

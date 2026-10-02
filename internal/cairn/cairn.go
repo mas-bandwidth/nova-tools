@@ -388,12 +388,14 @@ func appendLog(store, event, session, id, stamp, policy, source string) error {
 	return appendLine(filepath.Join(store, "log.jsonl"), string(rec))
 }
 
-// OpenRecord is what a session's open recorded in log.jsonl: its source and
-// its publication policy. Found is false when the log holds no open record
-// for the session (a flat store, or no log at all).
+// OpenRecord is what a session's open recorded in log.jsonl: its source, its
+// publication policy and its stamp. Found is false when the log holds no open
+// record for the session (a flat store, or no log at all). Reopened is set by
+// Open and PlanOpen when the record already stood, so the caller can say the
+// open changed nothing.
 type OpenRecord struct {
-	Source, Publish string
-	Found           bool
+	Source, Publish, Stamp string
+	Found, Reopened        bool
 }
 
 // ReadOpen reads the session's open record from log.jsonl. The session file's
@@ -435,7 +437,7 @@ func ReadOpen(store, session string) (OpenRecord, error) {
 			continue
 		}
 		if rec["event"] == "open" && rec["session"] == session {
-			return OpenRecord{Source: rec["source"], Publish: rec["publish"], Found: true}, nil
+			return OpenRecord{Source: rec["source"], Publish: rec["publish"], Stamp: rec["stamp"], Found: true}, nil
 		}
 	}
 	return OpenRecord{}, nil
@@ -444,10 +446,10 @@ func ReadOpen(store, session string) (OpenRecord, error) {
 // Open starts one session record, or re-opens it: a re-open naming the
 // recorded policy (and the recorded source, when it names one) changes
 // nothing, and one naming another is a conflict. Concurrent records coexist:
-// opening a second session never touches the first.
-func Open(store, session, source string, now time.Time, publish string) error {
-	_, err := open(store, session, source, now, publish, true)
-	return err
+// opening a second session never touches the first. It returns the record that
+// stands, Reopened when it stood already.
+func Open(store, session, source string, now time.Time, publish string) (OpenRecord, error) {
+	return open(store, session, source, now, publish, true)
 }
 
 // PlanOpen is Open with nothing written: every check Open makes and the same
@@ -478,6 +480,7 @@ func open(store, session, source string, now time.Time, publish string, write bo
 	// the store keeps it. A flat file counts, or open would write a second
 	// record beside one already being appended to.
 	if _, flat, ok := locateRecord(store, session); ok {
+		rec.Reopened = true
 		if flat || !rec.Found {
 			return rec, nil
 		}
@@ -494,7 +497,8 @@ func open(store, session, source string, now time.Time, publish string, write bo
 		}
 		return rec, nil
 	}
-	planned := OpenRecord{Source: source, Publish: publish, Found: true}
+	stamp := now.UTC().Format(time.RFC3339Nano)
+	planned := OpenRecord{Source: source, Publish: publish, Stamp: stamp, Found: true}
 	if !write {
 		// The plan is this open's own: the record and the log line it would
 		// write, checked as the write checks them, nothing written.
@@ -504,7 +508,6 @@ func open(store, session, source string, now time.Time, publish string, write bo
 		return planned, atomicfile.CheckAppend(filepath.Join(store, "log.jsonl"))
 	}
 	name := sessionFile(store, session)
-	stamp := now.UTC().Format(time.RFC3339Nano)
 	header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n",
 		session, stamp, source, publish)
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {

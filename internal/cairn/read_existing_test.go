@@ -15,7 +15,7 @@ func TestFlatReadMetadataOrderingAndNestedPrecedence(t *testing.T) {
 	raw := "# Own heading\n\n## 2026-09-28T02:00:00Z — late\n\n  late prose  \n\n## 2026-09-28T01:00:00Z — early\n\nearly\n"
 	require.NoError(t, os.WriteFile(flatFile(store, "flat"), []byte(raw), 0600))
 	now := time.Date(2026, 9, 28, 1, 30, 0, 0, time.UTC)
-	require.NoError(t, Open(store, "nested", "src", now, PublishNever))
+	require.NoError(t, opened(Open(store, "nested", "src", now, PublishNever)))
 	_, err := Append(store, "nested", "middle", "nested prose", "", now, PublishNever)
 	require.NoError(t, err)
 	rows, total, err := Index(store, "", 0)

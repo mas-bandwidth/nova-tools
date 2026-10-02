@@ -148,3 +148,35 @@ func TestDryRunWritesNothing(t *testing.T) {
 	printed(t, c.ok("append", "--session", "flat", "--entry", "f", "--text", "w", "--dry-run"), " persisted=false ", " dry_run=true")
 	assert.Equal(t, "# by hand\n", testkit.ReadFile(t, c.path("flat.md")), "a flat append --dry-run wrote")
 }
+
+// A re-open says it is one and prints the stamp the record holds, never the
+// re-run's clock: a first open is reopened=false with the stamp it wrote, a
+// re-open (real or dry) reopened=true with that first stamp, in lines and in
+// JSON, and a flat record, which records no stamp, says stamp=- rather than
+// inventing one.
+func TestAReOpenSaysSoAndPrintsTheRecordedStamp(t *testing.T) {
+	t.Parallel()
+
+	const first, later = "2026-09-17T12:00:00Z", "2026-09-17T13:00:00Z"
+	c := newRig(t)
+	printed(t, c.ok("open", "--session", "s", "--publish", "manual", "--now", first), " stamp="+first+" reopened=false")
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"a re-open", nil},
+		{"a dry re-open", []string{"--dry-run"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out := c.ok("open", append([]string{"--session", "s", "--publish", "manual", "--now", later}, tc.args...)...)
+			printed(t, out, " stamp="+first+" reopened=true")
+			assert.NotContains(t, out, later, "a re-open printed its own clock")
+		})
+	}
+	printed(t, c.ok("open", "--session", "s", "--publish", "manual", "--now", later, "--json"), `"reopened":true`, `"stamp":"`+first+`"`)
+	printed(t, c.ok("open", "--session", "t", "--publish", "manual", "--now", later, "--dry-run"), " stamp="+later+" reopened=false")
+
+	testkit.WriteFile(t, c.path("flat.md"), "# by hand\n")
+	printed(t, c.ok("open", "--session", "flat", "--publish", "manual", "--now", later), " stamp=- reopened=true")
+}
