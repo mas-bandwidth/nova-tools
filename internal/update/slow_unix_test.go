@@ -1,4 +1,4 @@
-//go:build slow && !windows
+//go:build slow && unix
 
 package update
 
