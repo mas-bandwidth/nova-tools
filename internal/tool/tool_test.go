@@ -540,10 +540,9 @@ func selfTalk() *Tool {
 	return &Tool{Name: "nova-talk", What: "scans files", ExitTable: "0 none, 1 findings, 2 could not run.", Default: "scan",
 		Verbs: []Verb{
 			{Name: "scan", Usage: "[scan] <file>...", Effect: Inspection, Flags: func(f *Flags) {
-				f.Positional()
 				f.Bool("strict", false, "count every shape")
 			}, Run: func(c *Call) *Out {
-				return Done().Fact("files", len(c.Args())).Fact("strict", c.Bool("strict"))
+				return Done().Fact("files", c.flags.NArg()).Fact("strict", c.Bool("strict"))
 			}},
 			{Name: "shapes", Usage: "shapes", Effect: Inspection, Run: func(*Call) *Out { return Done() }},
 		}}
@@ -563,6 +562,8 @@ func TestADefaultVerb(t *testing.T) {
 		stderr string
 	}{
 		{"a verb word is the verb", []string{"shapes"}, 0, "SHAPES OK\n", ""},
+		{"another verb refuses positional arguments", []string{"shapes", file}, 2, "",
+			"SHAPES REFUSED: takes no positional arguments, got " + fmt.Sprintf("%q", file) + " (flags come before arguments); run: nova-talk help\n"},
 		{"the verb named is the verb too", []string{"scan", file}, 0, "SCAN OK files=1 strict=false\n", ""},
 		{"a path is the default verb's", []string{file, file}, 0, "SCAN OK files=2 strict=false\n", ""},
 		{"a flag is the default verb's", []string{"--strict", file}, 0, "SCAN OK files=1 strict=true\n", ""},

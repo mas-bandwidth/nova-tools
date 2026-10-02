@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -110,13 +111,15 @@ func TestRosterShapeErrorsNameJSONInputs(t *testing.T) {
 		{"array", `[1,2]`, "participants.json must be one JSON object"},
 		{"null", `null`, "participants.json must be one JSON object"},
 		{"field", `{"participants":"Ada"}`, `field "participants" has the wrong JSON value type`},
-		{"name", `{"participants":[{"name":1}]}`, `field "participants.0.name" has the wrong JSON value type`},
+		{"name", `{"participants":[{"name":1}]}`, `field "participants.name" has the wrong JSON value type`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := LoadConfig(writeBus(t, map[string]string{ConfigName: tc.raw}))
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.want)
+			// Go 1.27 includes the array index in UnmarshalTypeError.Field;
+			// earlier supported toolchains identify the same field without it.
+			assert.Contains(t, strings.ReplaceAll(err.Error(), "participants.0.name", "participants.name"), tc.want)
 			assert.NotContains(t, err.Error(), "Go value")
 			assert.NotContains(t, err.Error(), "bus.Config")
 		})

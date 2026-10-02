@@ -22,7 +22,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 type flagSet = *flag.FlagSet
@@ -393,7 +392,7 @@ func (e *flagError) Error() string { return e.msg }
 // flagRefusal words a flag package's parse error once: a flag the verb does not define
 // is `unknown flag --x`, a flag missing its value is `--x wants a value`, each with the
 // verb's help to run; a value that does not parse names the flag and what it wants
-// (tool.FlagRefusal).
+// (verbflag.Explain).
 func flagRefusal(fs *flag.FlagSet, err error) error {
 	name := fs.Name()
 	if w := strings.Fields(name); len(w) > 0 && !slices.ContainsFunc(verbs, func(v verb) bool { return v.name == name }) {
@@ -405,13 +404,13 @@ func flagRefusal(fs *flag.FlagSet, err error) error {
 	case strings.HasPrefix(msg, undefined):
 		// the nearest flag and the flags the verb takes, never the flag package's line
 		// (tool ledger X2, the tool-answers rule)
-		return &flagError{tool.FlagRefusal(name, fs, err) + help}
+		return &flagError{verbflag.Explain(fs, err) + help}
 	case strings.HasPrefix(msg, needs):
 		return &flagError{"-" + strings.TrimPrefix(msg, needs) + " wants a value" + help}
 	}
 	// a value that does not parse names the flag and what it wants, as its own whole
 	// line: a verb's words are never glued in front of it ("takes no words invalid value")
-	return &flagError{tool.FlagRefusal(name, fs, err) + help}
+	return &flagError{verbflag.Explain(fs, err) + help}
 }
 
 // sel is the set flags of a verb.

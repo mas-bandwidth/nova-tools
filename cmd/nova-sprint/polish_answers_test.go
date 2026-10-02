@@ -48,12 +48,12 @@ func TestAMisspelledFlagNamesTheNearestAndTheVerbsFlags(t *testing.T) {
 	ta := newTestApp(t)
 	code, _, errs := ta.do("add --strem s1 --count 1")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "nova-sprint add REFUSED: unknown flag --strem; did you mean --stream? add takes --actor, --after")
+	assert.Equal(t, "nova-sprint add REFUSED: unknown flag --strem; the flags of add are --actor, --after, --before, --brief, --brief-dir, --brief-file, --count, --epoch, --json, --max, --needs, --op, --redis, --rules, --score, --sentinel and 3 more; did you mean --stream?; run: nova-sprint help add\n", errs)
 	assert.Contains(t, errs, "; run: nova-sprint help add\n")
 	assert.NotContains(t, errs, "provided but not defined")
 	code, _, errs = ta.do("fleet up m1 --wdth 3")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "did you mean --width? fleet up takes")
+	assert.Equal(t, "nova-sprint fleet up REFUSED: unknown flag --wdth; the flags of fleet up are --actor, --epoch, --json, --max, --op, --redis, --width; did you mean --width?; run: nova-sprint help fleet up\n", errs)
 	assert.Contains(t, errs, "; run: nova-sprint help fleet up\n", "a two-word verb's help is its own")
 }
 
@@ -208,7 +208,7 @@ func TestTheColdRunsMistakesAreAnsweredInOneTurn(t *testing.T) {
 
 	code, _, errs := ta.do("where --every x")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "nova-sprint where REFUSED: invalid value \"x\" for flag --every: parse error; --every wants ")
+	assert.Equal(t, "nova-sprint where REFUSED: invalid value for --every: it wants a duration such as 30s or 5m (the redraw interval with --watch, above 0); run: nova-sprint help where\n", errs)
 	assert.NotContains(t, errs, "takes no words")
 
 	before := ta.applies()

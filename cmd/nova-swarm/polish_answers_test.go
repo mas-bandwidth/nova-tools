@@ -33,7 +33,7 @@ func TestAMisspelledFlagNamesTheVerbsFlags(t *testing.T) {
 	exit, stdout, stderr := runSwarm(t, "lint", "--crad", "x.md")
 	assert.Equal(t, 2, exit)
 	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "nova-swarm lint REFUSED: unknown flag --crad; did you mean --card? lint takes --base-check, --card")
+	assert.Equal(t, "nova-swarm lint REFUSED: unknown flag --crad; the flags of lint are --base-check, --card, --child-rules, --child-rules-file, --fleet, --legs, --lineup, --max, --p95, --repo, --rules, --trust, --typed; did you mean --card?; run: nova-swarm help lint\n", stderr)
 	assert.Contains(t, stderr, "; run: nova-swarm help lint\n")
 	assert.NotContains(t, stderr, "provided but not defined")
 

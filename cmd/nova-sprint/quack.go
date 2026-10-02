@@ -173,7 +173,7 @@ func quackBrief(id, stream, tier, repo, base string, rules []swarm.ChildRule) st
 	lines := []string{
 		fmt.Sprintf("%s: quack like a duck (%s) tier: %s", id, stream, tier),
 		"BASE: " + base,
-		fmt.Sprintf("REPO: %s", repo),
+		"REPO: " + repo,
 		"The member stages this job: you start in the job directory (export JOB=$PWD). Read $JOB/JOB.md first: it names the staged checkout (a full clone at BASE) and how this card finishes. Work in the staged checkout, commit as usual, and finish as JOB.md says.",
 		"Needs: none",
 		"Libraries considered: none; this card writes no code.",

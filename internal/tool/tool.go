@@ -43,7 +43,8 @@ type Tool struct {
 	// Default is the verb run when the first word is no verb: a flag, a path
 	// (a word with a separator), or a word naming a file that is there
 	// (`<tool> <file>...`); any other word is refused as no verb and no file.
-	// "" makes every first word a verb.
+	// The default verb accepts positional arguments, also when named explicitly.
+	// "" makes every first word a verb and leaves every verb flags-only.
 	Default string
 	// Words are the tool's own status words (STALE, MISSING, UNCHANGED), the
 	// only ones Out.As may put in place of OK or FAIL: at most MaxWords,
@@ -374,7 +375,7 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	if f.max && c.Int("max") < 0 {
 		c.Problem(fmt.Sprintf("--max must be zero or more (got %d); 0 lists all", c.Int("max")))
 	}
-	if f.NArg() > 0 {
+	if v.Name != t.Default && f.NArg() > 0 {
 		c.Problem(fmt.Sprintf("takes no positional arguments, got %q (flags come before arguments)", f.Arg(0)))
 	}
 	if o := c.Refused(); o != nil {

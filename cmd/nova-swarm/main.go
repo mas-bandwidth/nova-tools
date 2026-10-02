@@ -38,7 +38,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 const usage = `nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
@@ -304,7 +303,7 @@ func (s *secondsFlag) Set(v string) error {
 func (f *flags) parse(args []string, stderr io.Writer) bool {
 	if err := verbflag.Parse(f.fs, args); err != nil {
 		// the nearest flag and the verb's flags, never the flag package's line (tool ledger X2)
-		refuse(stderr, " "+f.verb, oneline.Cap(tool.FlagRefusal(f.verb, f.fs, err), oneline.TailBytes))
+		refuse(stderr, " "+f.verb, oneline.Cap(verbflag.Explain(f.fs, err), oneline.TailBytes))
 		return false
 	}
 	if n := f.fs.NArg(); n > 0 {

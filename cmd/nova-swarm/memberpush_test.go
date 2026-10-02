@@ -284,13 +284,15 @@ func TestAPushTheRemoteRejectedIsSentAgain(t *testing.T) {
 // badFetchGit is a git whose first n fetches into the push repository fail as one did on the
 // 5000-card load test (2026-10-01), on another launch's ref, while the bench mirror the push
 // repository borrows objects from was being repacked; every other git, and the fetches
-// after, run. At each push it records the launch refs the push repository still holds.
+// after, run. Failed tries first run the real fetch, then inject an error after refs
+// exist. It records those refs and the refs held before each fetch and push.
 type badFetchGit struct {
-	mu          sync.Mutex
-	fail        int
-	fetches     int
-	refsAtPush  []string
-	refsAtFetch []string
+	mu               sync.Mutex
+	fail             int
+	fetches          int
+	refsAtPush       []string
+	refsAtFetch      []string
+	refsAfterFailure [][]string
 }
 
 const badFetchLine = "fatal: bad object refs/member/c9.w1.g1.e7/HEAD"
@@ -310,9 +312,17 @@ func (r *badFetchGit) run(ctx context.Context, o gitrun.Options, args ...string)
 		failed := r.fetches <= r.fail
 		r.refsAtFetch = append(r.refsAtFetch, held()...)
 		r.mu.Unlock()
+		res, err := gitrun.Run(ctx, o, args...)
+		if err != nil {
+			return res, err // a real fetch failure is never replaced by the injected one
+		}
 		if failed {
+			r.mu.Lock()
+			r.refsAfterFailure = append(r.refsAfterFailure, held())
+			r.mu.Unlock()
 			return gitrun.Result{Stderr: []byte(badFetchLine + "\n")}, assert.AnError
 		}
+		return res, nil
 	case slices.Contains(args, "push"):
 		r.mu.Lock()
 		r.refsAtPush = append(r.refsAtPush, held()...)
@@ -339,6 +349,8 @@ func TestAFetchFromTheCheckoutThatFailsIsMadeAgain(t *testing.T) {
 	require.Equal(t, member.Push{Sha: head}, g.Push(b.p, member.Result{Head: head}))
 	assert.Equal(t, 2, once.fetches, "failed once, fetched on the second")
 	assert.Equal(t, pushWaits[:1], waits)
+	require.Len(t, once.refsAfterFailure, 1)
+	assert.Contains(t, once.refsAfterFailure[0], "refs/member/"+launchName(b.p)+"/HEAD", "the failed try really created the launch namespace")
 	assert.Empty(t, once.refsAtFetch, "each try starts with this launch's namespace empty")
 	assert.Empty(t, once.refsAtPush, "the launch's refs are dropped before the push to origin")
 	assert.Equal(t, head, b.originHas(t, "sprint/c1"))
@@ -354,6 +366,12 @@ func TestAFetchFromTheCheckoutThatFailsIsMadeAgain(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("fetch from the checkout into the member's push repository, %d tries: %s", len(pushWaits)+1, badFetchLine), got.Refused)
 	assert.Equal(t, len(pushWaits)+1, always.fetches)
 	assert.Equal(t, pushWaits, waits)
+	require.Len(t, always.refsAfterFailure, len(pushWaits)+1)
+	for _, refs := range always.refsAfterFailure {
+		assert.Contains(t, refs, "refs/member/"+launchName(b2.p)+"/HEAD", "every failed try created refs before returning its error")
+	}
+	assert.Empty(t, always.refsAtFetch, "each retry starts after the failed try was cleaned up")
+	assert.Empty(t, runGit(t, filepath.Join(b2.root, "push.git"), "for-each-ref", "--format=%(refname)", "refs/member/"), "the final refusal also cleans up its partial fetch")
 	assert.Empty(t, b2.originHas(t, "sprint/c1"))
 }
 
