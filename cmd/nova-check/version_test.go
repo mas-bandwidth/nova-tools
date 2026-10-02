@@ -30,7 +30,7 @@ func TestVersionLineShape(t *testing.T) {
 	}
 	assert.EqualValues(t, 0, errOut.Len(), "wrote to stderr: %q", errOut.String())
 	line := out.String()
-	require.False(t, !strings.HasSuffix(line, "\n") || strings.Count(line, "\n") != 1, "want exactly one terminated line, got %q", line)
+	require.True(t, strings.HasSuffix(line, "\n") && strings.Count(line, "\n") == 1, "want exactly one terminated line, got %q", line)
 	fields := strings.Fields(strings.TrimSuffix(line, "\n"))
 	require.EqualValues(t, 4, len(fields), "want 4 fields, got %d: %q", len(fields), line)
 	assert.EqualValues(t, "nova-check", fields[0], "field 1 is the binary's name: got %q", fields[0])
@@ -104,6 +104,6 @@ func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
 				continue
 			}
 		}
-		assert.False(t, !strings.HasPrefix(out.String(), "nova-check ") || strings.Count(out.String(), "\n") != 1, "%s: not the version line: %q", verb, out.String())
+		assert.True(t, strings.HasPrefix(out.String(), "nova-check ") && strings.Count(out.String(), "\n") == 1, "%s: not the version line: %q", verb, out.String())
 	}
 }
