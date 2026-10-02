@@ -36,13 +36,9 @@ import (
 func listStepText(t *testing.T, src string) string {
 	t.Helper()
 	block := jobBody(src, "test-packages")
-	if block == "" {
-		t.Fatal("no test-packages job in ci.yml; the darwin gate has nothing to read")
-	}
+	require.NotEmpty(t, block, "no test-packages job in ci.yml; the darwin gate has nothing to read")
 	i := strings.Index(block, "- id: list")
-	if i < 0 {
-		t.Fatal("test-packages has no `- id: list` step; the darwin deal moved and the gate test is reading the wrong place")
-	}
+	require.NotEqual(t, -1, i, "test-packages has no `- id: list` step; the darwin deal moved and the gate test is reading the wrong place")
 	return block[i:]
 }
 
@@ -149,8 +145,6 @@ func TestMacOSRunnerMatchCatchesEveryPosition(t *testing.T) {
 		{`    runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}"]`, false},
 		{"    # runs-on: [self-hosted, macOS]", false},
 	} {
-		if got := namesMacOSRunner(tc.body); got != tc.want {
-			t.Errorf("namesMacOSRunner(%q) = %v, want %v", tc.body, got, tc.want)
-		}
+		assert.Equal(t, tc.want, namesMacOSRunner(tc.body), "namesMacOSRunner(%q) = %v, want %v", tc.body, namesMacOSRunner(tc.body), tc.want)
 	}
 }

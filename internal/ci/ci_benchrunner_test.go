@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // benchRunnerBaseSHA is the nova-tools dev commit the inventory was derived
@@ -41,13 +43,10 @@ func readBenchRunnerAllow(t *testing.T) *allowlist.List {
 	first := map[string]bool{}
 	for _, row := range allow.Rows() {
 		parts := strings.Split(row.Text, "\t")
-		if len(parts) != 3 || strings.Count(parts[0], " ") != 1 || parts[1] == "" || !strings.HasPrefix(parts[2], "#") {
-			t.Errorf("%s: row %q is not `<file> <func>\\t<shape>\\t<retiring issue>`", BenchRunnerAllowPath, row.Text)
+		if !assert.True(t, len(parts) == 3 && strings.Count(parts[0], " ") == 1 && parts[1] != "" && strings.HasPrefix(parts[2], "#"), "%s: row %q is not `<file> <func>\\t<shape>\\t<retiring issue>`", BenchRunnerAllowPath, row.Text) {
 			continue
 		}
-		if first[row.Key] {
-			t.Errorf("%s: %s listed twice", BenchRunnerAllowPath, row.Key)
-		}
+		assert.False(t, first[row.Key], "%s: %s listed twice", BenchRunnerAllowPath, row.Key)
 		first[row.Key] = true
 	}
 	return allow
@@ -62,9 +61,7 @@ func TestCIOneBenchRunner(t *testing.T) {
 
 	root := repoRoot(t)
 	sites, err := FindBenchRunners(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	allow := readBenchRunnerAllow(t)
 	base := map[string]bool{}
 	for _, k := range benchRunnerAtBase {
@@ -73,15 +70,11 @@ func TestCIOneBenchRunner(t *testing.T) {
 	found := map[string]bool{}
 	for _, s := range sites {
 		found[s.Key()] = true
-		if !allow.Has(s.Key()) {
-			t.Errorf("%s:%d: %s runs ssh itself; the fleet plays reach benches, never a new row in %s",
-				s.File, s.Line, s.Func, BenchRunnerAllowPath)
-		}
+		assert.True(t, allow.Has(s.Key()), "%s:%d: %s runs ssh itself; the fleet plays reach benches, never a new row in %s",
+			s.File, s.Line, s.Func, BenchRunnerAllowPath)
 	}
 	for _, row := range allow.Rows() {
-		if !base[row.Key] {
-			t.Errorf("%s row %s was added after %s: the allow file may only shrink", BenchRunnerAllowPath, row.Key, benchRunnerBaseSHA)
-		}
+		assert.True(t, base[row.Key], "%s row %s was added after %s: the allow file may only shrink", BenchRunnerAllowPath, row.Key, benchRunnerBaseSHA)
 	}
 	for _, row := range allowlist.Check(t, allow, found).Stale {
 		t.Errorf("%s lists %s, which is no longer an ssh exec site: delete the row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)", BenchRunnerAllowPath, row.Key)
@@ -89,9 +82,7 @@ func TestCIOneBenchRunner(t *testing.T) {
 
 	t.Run("inventory-at-base", func(t *testing.T) {
 		header, _, _ := strings.Cut(allow.Text(), "\n")
-		if !strings.Contains(header, "derived at nova-tools dev "+benchRunnerBaseSHA) {
-			t.Fatalf("%s line 1 %q does not name the base-sha %s", BenchRunnerAllowPath, header, benchRunnerBaseSHA)
-		}
+		require.Contains(t, header, "derived at nova-tools dev "+benchRunnerBaseSHA, "%s line 1 %q does not name the base-sha %s", BenchRunnerAllowPath, header, benchRunnerBaseSHA)
 		// Every site the rule finds was in the inventory derived at the base: a
 		// site outside it is new, and a site the rule misses leaves its row
 		// stale above, which is red too.
@@ -102,22 +93,16 @@ func TestCIOneBenchRunner(t *testing.T) {
 			}
 		}
 		sort.Strings(outside)
-		if len(outside) > 0 {
-			t.Fatalf("the rule finds\n%s\noutside the %d rows derived at %s", strings.Join(outside, "\n"), len(benchRunnerAtBase), benchRunnerBaseSHA)
-		}
+		require.Empty(t, outside, "the rule finds\n%s\noutside the %d rows derived at %s", strings.Join(outside, "\n"), len(benchRunnerAtBase), benchRunnerBaseSHA)
 	})
 
 	t.Run("git-transport-excluded", func(t *testing.T) {
 		raw, err := os.ReadFile(filepath.Join(root, "internal", "secrets", "storepull.go"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, err := BenchRunnersInSource("internal/secrets/storepull.go", raw); err != nil || len(got) != 0 {
-			t.Fatalf("storepull.go sites = %v (%v); StorePullSSHCommand and PullStore reach ssh only as git's transport", got, err)
-		}
-		if !strings.Contains(string(raw), "func StorePullSSHCommand") || !strings.Contains(string(raw), "func PullStore") {
-			t.Fatal("storepull.go no longer has StorePullSSHCommand and PullStore; re-derive this subtest")
-		}
+		require.NoError(t, err)
+		got, err := BenchRunnersInSource("internal/secrets/storepull.go", raw)
+		require.NoError(t, err, "storepull.go sites = %v (%v); StorePullSSHCommand and PullStore reach ssh only as git's transport", got, err)
+		require.Empty(t, got, "storepull.go sites = %v (%v); StorePullSSHCommand and PullStore reach ssh only as git's transport", got, err)
+		require.True(t, strings.Contains(string(raw), "func StorePullSSHCommand") && strings.Contains(string(raw), "func PullStore"), "storepull.go no longer has StorePullSSHCommand and PullStore; re-derive this subtest")
 		fixture := `package x
 import ("os/exec"; "github.com/mas-bandwidth/nova-tools/internal/testguard")
 func transportCmd(host string) string { testguard.RefuseHosts("ssh", host); return "ssh -o BatchMode=yes" }
@@ -128,13 +113,10 @@ func pull(host string) error {
 }
 func guardedOnly(host string) { testguard.RefuseHosts("ssh", host) }
 `
-		got, err := BenchRunnersInSource("x/x.go", []byte(fixture))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(got) != 1 || got[0].Func != "guardedOnly" {
-			t.Fatalf("fixture sites = %v; want guardedOnly only (RefuseHosts(\"ssh\") with no git transport is still a site)", got)
-		}
+		got, err = BenchRunnersInSource("x/x.go", []byte(fixture))
+		require.NoError(t, err)
+		require.Len(t, got, 1, "fixture sites = %v; want guardedOnly only (RefuseHosts(\"ssh\") with no git transport is still a site)", got)
+		require.Equal(t, "guardedOnly", got[0].Func, "fixture sites = %v; want guardedOnly only (RefuseHosts(\"ssh\") with no git transport is still a site)", got)
 	})
 
 	t.Run("rule-shapes", func(t *testing.T) {
@@ -156,16 +138,12 @@ func notSSH(ctx context.Context) {
 }
 `
 		got, err := BenchRunnersInSource("x/x.go", []byte(fixture))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		var keys []string
 		for _, s := range got {
 			keys = append(keys, s.Func)
 		}
 		want := "literal argv0 setIdent flagDefault param runner.Run ExecSSH.Go"
-		if strings.Join(keys, " ") != want {
-			t.Fatalf("fixture sites %q, want %q", strings.Join(keys, " "), want)
-		}
+		require.Equal(t, want, strings.Join(keys, " "), "fixture sites %q, want %q", strings.Join(keys, " "), want)
 	})
 }
