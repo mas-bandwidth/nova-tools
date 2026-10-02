@@ -140,6 +140,11 @@ func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) (map[str
 			if code != 2 || out.Len() != 0 {
 				t.Errorf("`%s` exited %d with stdout %q; %s refuses -h at exit 2 by design (%s)", line, code, out.String(), tool, helpRefusedByDesign[tool])
 			}
+			// Its verb's help is `<tool> help <verb>`, the route the refusal names:
+			// that is the help the tool-answers walk reads for its effect and dry run.
+			if hcode, hout, herr := runIn(t, bin, append([]string{"help"}, strings.Fields(verb)...)...); hcode == 0 && herr == "" && strings.TrimSpace(hout) != "" {
+				helps[verb] = hout
+			}
 			continue
 		}
 		if code != 0 || strings.TrimSpace(out.String()) == "" || errb.Len() != 0 {
