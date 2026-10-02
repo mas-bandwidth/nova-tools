@@ -1,3 +1,12 @@
+// Package filelock is the one lock on a file across processes: the kernel's lock
+// (flock on unix, LockFileEx on Windows), released by the kernel when its holder
+// dies, with the holder's stamp written inside the file for a refusal to name and
+// a probe that asks without taking. Its design and invariants are tla/FileLock.tla.
+//
+// It is the consolidation target for the private copies in internal/bus,
+// internal/swarm, internal/tokens, internal/update (the snapshot lock) and
+// cmd/nova-sandbox (the volume-creation lock). Until those callers move onto it no
+// command imports it: that is an adoption not yet landed, not dead code.
 package filelock
 
 import (
