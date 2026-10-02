@@ -298,6 +298,9 @@ func (r *Redis) delIf(ctx context.Context, table string, guards []RowGuard, rowP
 		return nil, err
 	}
 	watch := []string{ntable.RowsKeyAt(table, r.Pinned)}
+	if epochKey := r.Names.EpochKey(); epochKey != "" {
+		watch = append(watch, epochKey)
+	}
 	ids := make([]string, len(guards))
 	for i, g := range guards {
 		watch = append(watch, g.Key)
@@ -311,6 +314,9 @@ func (r *Redis) delIf(ctx context.Context, table string, guards []RowGuard, rowP
 			shape, err := ntable.Shape(ctx, tx, table)
 			if err != nil {
 				return err
+			}
+			if shape.Epoch != r.Pinned {
+				return &ntable.Refusal{Code: "STALE", Location: table, Sentence: fmt.Sprintf("pinned epoch %d, active %d", r.Pinned, shape.Epoch), Next: "nova-sprint check", Guarded: true}
 			}
 			rows := map[string]bool{}
 			for _, row := range shape.Rows {

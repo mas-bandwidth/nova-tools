@@ -670,7 +670,7 @@ func (m *Mem) RowsDelIf(_ context.Context, table string, guards []RowGuard) ([]s
 	}
 	var rows []string
 	for _, g := range guards {
-		if mm := t.members[g.ID]; mm != nil && !mm.placed && mm.rev == g.Rev {
+		if mm := t.members[g.ID]; mm != nil && !mm.placed && mm.rev == g.Rev && mm.epoch == m.epoch {
 			rows = append(rows, g.Row)
 		}
 	}
@@ -690,10 +690,13 @@ func (m *Mem) KeysDelIf(_ context.Context, table string, guards []RowGuard) ([]s
 	if err != nil {
 		return nil, err
 	}
+	if err := m.writeEpoch(t); err != nil {
+		return nil, err
+	}
 	rows := t.at(m.active(t)).rows
 	var out []string
 	for _, g := range guards {
-		if mm := t.members[g.ID]; mm == nil || mm.placed || mm.rev != g.Rev || slices.Contains(rows, g.Row) {
+		if mm := t.members[g.ID]; mm == nil || mm.placed || mm.rev != g.Rev || mm.epoch != m.epoch || slices.Contains(rows, g.Row) {
 			continue
 		}
 		for _, k := range g.Keys {

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -60,12 +62,11 @@ func (st *Store) fenceLocked(ctx context.Context, verb string, extras func(*spri
 // (FinishDrops). Teardown removes it, and the beats it names.
 const keyDropDebt = "fleet-drop-debt"
 
-// dropDebt is the members the cleanup owes a beat delete; none on a store that
-// keeps no records.
-func (st *Store) dropDebt(ctx context.Context) ([]string, error) {
+// dropDebtTokens returns the raw incarnation tokens stored in keyDropDebt.
+func (st *Store) dropDebtTokens(ctx context.Context) ([]string, error) {
 	kv, err := st.rootKV()
 	if err != nil {
-		return nil, nil
+		return nil, nil // a store that keeps no records keeps no beats to owe
 	}
 	raw, ok, err := kv.GetKey(ctx, keyDropDebt)
 	if err != nil || !ok || raw == "" {
@@ -76,6 +77,40 @@ func (st *Store) dropDebt(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("the fleet cleanup's record %s cannot be read: %w", keyDropDebt, err)
 	}
 	return out, nil
+}
+
+// dropDebt is the members the cleanup owes a beat delete; none on a store that
+// keeps no records. It extracts bare member names from stored incarnation tokens.
+func (st *Store) dropDebt(ctx context.Context) ([]string, error) {
+	tokens, err := st.dropDebtTokens(ctx)
+	if err != nil || len(tokens) == 0 {
+		return nil, err
+	}
+	var members []string
+	for _, tok := range tokens {
+		m, _ := parseDebtItem(tok)
+		if m != "" {
+			members = append(members, m)
+		}
+	}
+	slices.Sort(members)
+	return slices.Compact(members), nil
+}
+
+// formatDebtItem returns the incarnation token for a member drop obligation.
+func formatDebtItem(member string, rev uint64) string {
+	return fmt.Sprintf("%s:%d", member, rev)
+}
+
+// parseDebtItem extracts the member name and revision from a debt token.
+// Unversioned tokens (legacy entries without a colon) parse with revision 0.
+func parseDebtItem(item string) (member string, rev uint64) {
+	m, revStr, ok := strings.Cut(item, ":")
+	if !ok {
+		return item, 0
+	}
+	r, _ := strconv.ParseUint(revStr, 10, 64)
+	return m, r
 }
 
 func (st *Store) putDropDebt(ctx context.Context, debt []string) error {
@@ -89,6 +124,63 @@ func (st *Store) putDropDebt(ctx context.Context, debt []string) error {
 		return err
 	}
 	return kv.SetKey(ctx, keyDropDebt, string(b))
+}
+
+func (st *Store) modifyDropDebt(ctx context.Context, fn func(current []string) []string) error {
+	kv, err := st.rootKV()
+	if err != nil {
+		return nil // a store that keeps no records keeps no beats to owe
+	}
+	for tries := 0; tries < 5; tries++ {
+		raw, ok, err := kv.GetKey(ctx, keyDropDebt)
+		if err != nil {
+			return err
+		}
+		var current []string
+		if ok && raw != "" {
+			if err := json.Unmarshal([]byte(raw), &current); err == nil {
+				// current successfully read
+			} else {
+				return fmt.Errorf("the fleet cleanup's record %s cannot be read: %w", keyDropDebt, err)
+			}
+		}
+		updated := fn(current)
+		slices.Sort(updated)
+		compacted := slices.Compact(updated)
+		b, err := json.Marshal(compacted)
+		if err != nil {
+			return err
+		}
+		if err := kv.SetKey(ctx, keyDropDebt, string(b)); err != nil {
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("modifyDropDebt: failed to update %s after contention retries", keyDropDebt)
+}
+
+func (st *Store) addDropDebt(ctx context.Context, items []string) error {
+	if len(items) == 0 {
+		return nil
+	}
+	return st.modifyDropDebt(ctx, func(current []string) []string {
+		return append(current, items...)
+	})
+}
+
+func (st *Store) ackDropDebt(ctx context.Context, done []string) error {
+	if len(done) == 0 {
+		return nil
+	}
+	return st.modifyDropDebt(ctx, func(current []string) []string {
+		var remaining []string
+		for _, item := range current {
+			if !slices.Contains(done, item) {
+				remaining = append(remaining, item)
+			}
+		}
+		return remaining
+	})
 }
 
 // DropMembers deletes the fleet row of every member whose control card is off
@@ -123,7 +215,7 @@ func (st *Store) DropMembers(ctx context.Context, keep []string) ([]string, erro
 		return nil, err
 	}
 	var guards []RowGuard
-	var names []string
+	var debtItems []string
 	for _, m := range off(s) {
 		rec := s.Fleet.Card(sprint.CtlID(m))
 		if rec == nil {
@@ -131,15 +223,11 @@ func (st *Store) DropMembers(ctx context.Context, keep []string) ([]string, erro
 		}
 		id := pinned.sid(sprint.CtlID(m))
 		guards = append(guards, RowGuard{Row: m, ID: id, Key: pinned.Names.RecordKey(sprint.Fleet, id), Rev: rec.Rev})
-		names = append(names, m)
+		debtItems = append(debtItems, formatDebtItem(m, rec.Rev))
 	}
 	var deleted []string
 	if len(guards) > 0 {
-		debt, err := pinned.dropDebt(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if err := pinned.putDropDebt(ctx, append(debt, names...)); err != nil {
+		if err := pinned.addDropDebt(ctx, debtItems); err != nil {
 			return nil, err
 		}
 		if deleted, err = pinned.B.RowsDelIf(ctx, pinned.Names.Table(sprint.Fleet), guards); err != nil {
@@ -162,39 +250,71 @@ func (st *Store) FinishDrops(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	debt, err := pinned.dropDebt(ctx)
+	debt, err := pinned.dropDebtTokens(ctx)
 	if err != nil || len(debt) == 0 {
 		return err
 	}
-	s, err := pinned.Load(ctx, []string{sprint.Fleet, sprint.Work}, sprint.NamedExtras(sprint.Fleet, ctlIDs(debt)))
+	slices.Sort(debt)
+	debt = slices.Compact(debt)
+	var members []string
+	for _, item := range debt {
+		m, _ := parseDebtItem(item)
+		if m != "" {
+			members = append(members, m)
+		}
+	}
+	slices.Sort(members)
+	members = slices.Compact(members)
+	s, err := pinned.Load(ctx, []string{sprint.Fleet, sprint.Work}, sprint.NamedExtras(sprint.Fleet, ctlIDs(members)))
 	if err != nil {
 		return err
 	}
 	var guards []RowGuard
-	var owed []string
-	for _, m := range debt {
+	var guardItems []string
+	var completed []string
+	for _, item := range debt {
+		m, rev := parseDebtItem(item)
 		rec := s.Fleet.Card(sprint.CtlID(m))
 		switch {
-		case rec == nil || rec.Placed():
-			// no record, or placed again: nothing is owed
+		case rec == nil:
+			// no record: debt is satisfied
+			completed = append(completed, item)
+		case rec.Placed():
+			// placed again: if the active card revision is greater than the drop revision (or legacy rev 0),
+			// this drop obligation was superseded by the rejoin
+			if rec.Rev > rev || rev == 0 {
+				completed = append(completed, item)
+			}
 		case s.Fleet.HasRow(m):
-			owed = append(owed, m) // its row delete is still to come
+			// its row delete is still to come; keep in debt
 		default:
-			id := pinned.sid(sprint.CtlID(m))
-			guards = append(guards, RowGuard{Row: m, ID: id, Key: pinned.Names.RecordKey(sprint.Fleet, id), Rev: rec.Rev,
-				Keys: []string{pinned.Names.Key(beatKey(m))}})
+			// row is gone, control card is unplaced
+			if rec.Rev == rev || rev == 0 {
+				id := pinned.sid(sprint.CtlID(m))
+				guards = append(guards, RowGuard{
+					Row: m, ID: id, Key: pinned.Names.RecordKey(sprint.Fleet, id), Rev: rec.Rev,
+					Keys: []string{pinned.Names.Key(beatKey(m))},
+				})
+				guardItems = append(guardItems, item)
+			} else if rec.Rev > rev {
+				// card was removed at a newer revision; old drop is superseded
+				completed = append(completed, item)
+			}
 		}
 	}
 	done, err := pinned.B.KeysDelIf(ctx, pinned.Names.Table(sprint.Fleet), guards)
 	if err != nil {
+		if len(completed) > 0 {
+			_ = pinned.ackDropDebt(ctx, completed)
+		}
 		return err
 	}
-	for _, g := range guards {
-		if !slices.Contains(done, g.Row) {
-			owed = append(owed, g.Row) // changed under it: read again at the next sync
+	for i, g := range guards {
+		if slices.Contains(done, g.Row) {
+			completed = append(completed, guardItems[i])
 		}
 	}
-	return pinned.putDropDebt(ctx, owed)
+	return pinned.ackDropDebt(ctx, completed)
 }
 
 // RejoinMembers places again, under the fence, the control card of each named

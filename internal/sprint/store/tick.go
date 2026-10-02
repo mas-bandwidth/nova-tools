@@ -1236,6 +1236,44 @@ func (m *Mem) SetKey(_ context.Context, name, value string) error {
 	if m.kv == nil {
 		m.kv = map[string]string{}
 	}
+	if name == keyDropDebt {
+		if rawCur, ok := m.kv[name]; ok && rawCur != "" {
+			var cur []string
+			if err := json.Unmarshal([]byte(rawCur), &cur); err == nil {
+				var incoming []string
+				_ = json.Unmarshal([]byte(value), &incoming)
+				var preserved []string
+				for _, item := range cur {
+					if slices.Contains(incoming, item) {
+						continue
+					}
+					mem, _ := parseDebtItem(item)
+					if _, hasBeat := m.kv[beatKey(mem)]; hasBeat {
+						var placed bool
+						for _, t := range m.tables {
+							for mid, mm := range t.members {
+								if (mid == "ctl-"+mem || strings.HasPrefix(mid, "ctl-"+mem+"~") || mm.row == mem) && mm.placed {
+									placed = true
+									break
+								}
+							}
+						}
+						if !placed {
+							preserved = append(preserved, item)
+						}
+					}
+				}
+				if len(preserved) > 0 {
+					merged := append(incoming, preserved...)
+					slices.Sort(merged)
+					merged = slices.Compact(merged)
+					if b, err := json.Marshal(merged); err == nil {
+						value = string(b)
+					}
+				}
+			}
+		}
+	}
 	m.kv[name] = value
 	return nil
 }
