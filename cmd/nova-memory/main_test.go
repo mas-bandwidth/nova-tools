@@ -905,15 +905,16 @@ func TestStatusGrammar(t *testing.T) {
 	}
 	// Two rows need a file the corpus does not hold: boot reads a pin that names
 	// one note, and the failed eval reads a gold whose two expectations miss on
-	// purpose so recall falls below the floor. Both are written here so that every
-	// row runs exactly the args it states.
+	// purpose so recall falls below the floor. Both files are written here, under
+	// dir, and the two rows pass them by the same filepath.Join(dir, <name>)
+	// expression, so every row states the args it runs. The one value no row can
+	// state as a source literal is dir itself, which t.TempDir() returns at run
+	// time.
 	dir := t.TempDir()
-	pin := filepath.Join(dir, "pin")
-	require.NoError(t, os.WriteFile(pin, []byte("notes/lantern.md\n"), 0o644))
-	badGold := filepath.Join(dir, "bad-gold.tsv")
-	require.NoError(t, os.WriteFile(badGold, []byte("# wrong on purpose\nhow often should the lantern glazing be washed\tnotes/fog-signal.md\nwhen can the relief boat land at the jetty steps\tnotes/lantern.md\n"), 0o644))
-	// verbs use their printed token: STATS, SEARCH, MEMORY (for check), VERIFY, EVAL,
-	// BOOT, QUICKSTART.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pin"), []byte("notes/lantern.md\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bad-gold.tsv"), []byte("# wrong on purpose\nhow often should the lantern glazing be washed\tnotes/fog-signal.md\nwhen can the relief boat land at the jetty steps\tnotes/lantern.md\n"), 0o644))
+	// A row's wantFirst is the word the row expects after the token its verb
+	// prints: STATS, SEARCH, MEMORY for check, VERIFY, EVAL, BOOT and QUICKSTART.
 	cases := []row{
 		{"stats ok", []string{"stats", "--root", corpus}, "OK", 0},
 		{"stats refused", []string{"stats"}, "REFUSED", 2},
@@ -926,8 +927,8 @@ func TestStatusGrammar(t *testing.T) {
 		{"verify failed", []string{"verify", "--root", corpus, "--links", "gate", "--coverage", "notes/*.md:notes/index-*.md"}, "FAILED", 1},
 		{"eval ok", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.1", exampleGold}, "OK", 0},
 		{"eval refused", []string{"eval"}, "REFUSED", 2},
-		{"eval failed", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "1", "--floor", "0.8", badGold}, "FAILED", 1},
-		{"boot ok", []string{"boot", "--root", corpus, "--pin", pin}, "OK", 0},
+		{"eval failed", []string{"eval", "--root", corpus, "--channels", "bm25", "--k", "1", "--floor", "0.8", filepath.Join(dir, "bad-gold.tsv")}, "FAILED", 1},
+		{"boot ok", []string{"boot", "--root", corpus, "--pin", filepath.Join(dir, "pin")}, "OK", 0},
 		{"boot refused", []string{"boot"}, "REFUSED", 2},
 		{"quickstart ok", []string{"quickstart", "--root", corpus}, "OK", 0},
 		{"quickstart refused", []string{"quickstart"}, "REFUSED", 2},
@@ -949,7 +950,10 @@ func TestStatusGrammar(t *testing.T) {
 				if len(fs) < 2 {
 					continue
 				}
-				// verb tokens are upper: STATS, SEARCH, MEMORY (for check), CHECK(for refuse), VERIFY, EVAL, BOOT, QUICKSTART, NOVA-MEMORY
+				// The switch names every token a status line of this tool carries:
+				// STATS, SEARCH, VERIFY, EVAL, BOOT and QUICKSTART for their verbs,
+				// MEMORY for the receipts check renders, CHECK for the refusals of
+				// check, and NOVA-MEMORY for the refusal of a bare or unknown command.
 				switch fs[0] {
 				case "STATS", "SEARCH", "MEMORY", "CHECK", "VERIFY", "EVAL", "BOOT", "QUICKSTART", "NOVA-MEMORY":
 					if strings.TrimRight(fs[1], ":") == tc.wantFirst {
