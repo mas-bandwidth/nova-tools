@@ -1593,6 +1593,14 @@ any line.
 saying what to do with it, then `SECRETS KEYGEN OK` **last**. A run that ends on the
 OK line succeeded; a `NEXT:` line above it is the next step, not a failure.
 
+### List placed secrets on a machine
+
+```sh
+nova-secrets placed --machine <name> [--receipts <dir>] [--max <n>]
+```
+
+Lists the secrets placed on a fleet machine by name and hash. By default it outputs up to 20 items (`--max 20`). If the count exceeds `--max`, a `MORE` line is printed directing the caller to `--max 0` to see all items without bounding.
+
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds

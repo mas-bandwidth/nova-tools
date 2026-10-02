@@ -115,7 +115,7 @@ nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max 
 nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
 nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
 nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>]
-nova-secrets placed --machine <name> [--receipts <dir>]
+nova-secrets placed --machine <name> [--receipts <dir>] [--max <n>]
 nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]
 nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
 nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--gh <path>] [--git <path>]
@@ -490,10 +490,11 @@ review would be a courtesy between two administrators and this page could not ca
 nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> \
   --machine <name> --secret <name> [--path <remote path>] \
   [--machines <file>] [--receipts <dir>] [--ssh <path>]
-nova-secrets placed --machine <name> [--receipts <dir>]
+nova-secrets placed --machine <name> [--receipts <dir>] [--max <n>]
 SECRETS PLACE  OK   machine=<name> secret=<name> path=<path> sha256=<hex> stamp=<stamp>
-SECRETS PLACED OK   machine=<name> count=<n>
+SECRETS PLACED OK   machine=<name> count=<n> shown=<n>
 SECRETS PLACED ITEM machine=<name> secret=<name> path=<path> sha256=<hex> stamp=<stamp>
+SECRETS PLACED MORE kind=receipt shown=<shown> total=<total> run: nova-secrets placed --machine <name> --max 0
 ```
 
 **What it asserts.** A bench or a runner gets the keys it needs by machinery rather than by a

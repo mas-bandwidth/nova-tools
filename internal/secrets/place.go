@@ -53,6 +53,7 @@ type PlaceInput struct {
 type PlacedInput struct {
 	Machine  string
 	Receipts string
+	Max      int
 }
 
 // placedReceipt is one line of a machine's receipt file. It never holds the value.
@@ -221,28 +222,42 @@ func RunPlace(in PlaceInput) (string, error) {
 }
 
 // RunPlaced lists the receipts written for one machine, by name and hash.
-func RunPlaced(in PlacedInput) (string, []string, error) {
+func RunPlaced(in PlacedInput) (string, []string, string, error) {
+	if in.Max < 0 {
+		return "", nil, "", fmt.Errorf("--max %d is negative; expected non-negative integer", in.Max)
+	}
 	if in.Machine == "" {
-		return "", nil, fmt.Errorf("missing --machine <name>")
+		return "", nil, "", fmt.Errorf("missing --machine <name>")
 	}
 	if in.Receipts == "" {
 		in.Receipts = defaultReceiptsDir()
 	}
 	if in.Receipts == "" {
-		return "", nil, fmt.Errorf("missing --receipts <dir> (and HOME is unset, so there is no default)")
+		return "", nil, "", fmt.Errorf("missing --receipts <dir> (and HOME is unset, so there is no default)")
 	}
 	receipts, err := readReceipts(in.Receipts, in.Machine)
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
-	items := make([]string, 0, len(receipts))
-	for _, r := range receipts {
+	total := len(receipts)
+	shown := total
+	if in.Max > 0 && total > in.Max {
+		shown = in.Max
+	}
+	items := make([]string, 0, shown)
+	for i := 0; i < shown; i++ {
+		r := receipts[i]
 		items = append(items, fmt.Sprintf("SECRETS PLACED ITEM machine=%s secret=%s path=%s sha256=%s stamp=%s",
 			oneline.Field(in.Machine), oneline.Field(r.Secret), oneline.Field(r.Path),
 			oneline.Field(r.SHA256), oneline.Field(r.Stamp)))
 	}
-	okLine := fmt.Sprintf("SECRETS PLACED OK machine=%s count=%d", oneline.Field(in.Machine), len(receipts))
-	return okLine, items, nil
+	var moreLine string
+	if in.Max > 0 && total > in.Max {
+		moreLine = fmt.Sprintf("SECRETS PLACED MORE kind=receipt shown=%d total=%d run: nova-secrets placed --machine %s --max 0",
+			shown, total, oneline.Field(in.Machine))
+	}
+	okLine := fmt.Sprintf("SECRETS PLACED OK machine=%s count=%d shown=%d", oneline.Field(in.Machine), total, shown)
+	return okLine, items, moreLine, nil
 }
 
 // sshPlaceSecret writes value to remotePath over ssh with mode 0600. The value travels on

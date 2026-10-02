@@ -8,6 +8,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -207,5 +208,79 @@ func TestPlaceRefusesMissingStoreWithRemedy(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "nope") {
 		t.Fatalf("refusal %q must name the absent store", stderr)
+	}
+}
+
+func TestPlacedCLIMax(t *testing.T) {
+	t.Parallel()
+	f := newPlaceFixture(t)
+
+	// Populate 25 receipts for "mini"
+	if err := os.MkdirAll(f.receipts, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	for i := 1; i <= 25; i++ {
+		fmt.Fprintf(&b, "SECRET_%02d\t/path/%02d\tsha%02d\t2026-09-29T12:00:00Z\n", i, i, i)
+	}
+	if err := os.WriteFile(filepath.Join(f.receipts, "mini.receipt"), []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Default max (20)
+	stdout, stderr, code := runNovaSecrets(f.bin, "placed", "--machine", "mini", "--receipts", f.receipts)
+	if code != 0 {
+		t.Fatalf("placed default max exit=%d stderr=%q", code, stderr)
+	}
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	// 20 items + 1 more + 1 ok = 22 lines
+	if len(lines) != 22 {
+		t.Fatalf("expected 22 lines, got %d: %q", len(lines), stdout)
+	}
+	if !strings.Contains(lines[20], "SECRETS PLACED MORE kind=receipt shown=20 total=25 run: nova-secrets placed --machine mini --max 0") {
+		t.Fatalf("expected MORE line, got: %q", lines[20])
+	}
+	if lines[21] != "SECRETS PLACED OK machine=mini count=25 shown=20" {
+		t.Fatalf("expected OK line, got: %q", lines[21])
+	}
+
+	// 2. Custom max 5
+	stdout, stderr, code = runNovaSecrets(f.bin, "placed", "--machine", "mini", "--receipts", f.receipts, "--max", "5")
+	if code != 0 {
+		t.Fatalf("placed max 5 exit=%d stderr=%q", code, stderr)
+	}
+	lines = strings.Split(strings.TrimSpace(stdout), "\n")
+	// 5 items + 1 more + 1 ok = 7 lines
+	if len(lines) != 7 {
+		t.Fatalf("expected 7 lines, got %d: %q", len(lines), stdout)
+	}
+	if !strings.Contains(lines[5], "SECRETS PLACED MORE kind=receipt shown=5 total=25 run: nova-secrets placed --machine mini --max 0") {
+		t.Fatalf("expected MORE line, got: %q", lines[5])
+	}
+	if lines[6] != "SECRETS PLACED OK machine=mini count=25 shown=5" {
+		t.Fatalf("expected OK line, got: %q", lines[6])
+	}
+
+	// 3. Unlimited max 0
+	stdout, stderr, code = runNovaSecrets(f.bin, "placed", "--machine", "mini", "--receipts", f.receipts, "--max", "0")
+	if code != 0 {
+		t.Fatalf("placed max 0 exit=%d stderr=%q", code, stderr)
+	}
+	lines = strings.Split(strings.TrimSpace(stdout), "\n")
+	// 25 items + 0 more + 1 ok = 26 lines
+	if len(lines) != 26 {
+		t.Fatalf("expected 26 lines, got %d: %q", len(lines), stdout)
+	}
+	if lines[25] != "SECRETS PLACED OK machine=mini count=25 shown=25" {
+		t.Fatalf("expected OK line, got: %q", lines[25])
+	}
+
+	// 4. Negative max rejected
+	_, stderr, code = runNovaSecrets(f.bin, "placed", "--machine", "mini", "--receipts", f.receipts, "--max", "-1")
+	if code != 2 {
+		t.Fatalf("placed max -1 exit=%d want 2; stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stderr, "--max -1 is negative; expected non-negative integer") {
+		t.Fatalf("expected negative max refusal in stderr, got: %q", stderr)
 	}
 }
