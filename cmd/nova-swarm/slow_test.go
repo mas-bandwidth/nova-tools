@@ -16,6 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
@@ -36,15 +39,9 @@ func TestNativeRunKillsAtDeadline(t *testing.T) {
 		card: []byte("FAKE-SLEEP 60\n"), slotDir: slot, root: root, deadline: time.Second, noWall: true,
 	}, &errOut)
 	elapsed := time.Since(start)
-	if code != 0 {
-		t.Fatalf("a deadline kill is not a refusal, got exit %d:\n%s", code, errOut.String())
-	}
-	if res.rc == 0 {
-		t.Fatalf("the deadline killed the child, and the run records a non-zero exit")
-	}
-	if elapsed > 30*time.Second {
-		t.Fatalf("the deadline should cut the run short, but it took %v", elapsed)
-	}
+	require.Equal(t, 0, code, "a deadline kill is not a refusal, got exit %d:\n%s", code, errOut.String())
+	require.NotEqual(t, 0, res.rc, "the deadline killed the child, and the run records a non-zero exit")
+	require.LessOrEqual(t, elapsed, 30*time.Second, "the deadline should cut the run short, but it took %v", elapsed)
 }
 
 // SLOW: 25.2 s on bench-tier at dev 64b9bec48, over the five-second line.
@@ -64,26 +61,19 @@ func TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline(t *testing.T) {
 	// A database must EXIST for the reader to be run at all: an absent one is an absence
 	// and never a read.
 	db := filepath.Join(slot, "data", "opencode", "opencode.db")
-	if err := os.MkdirAll(filepath.Dir(db), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
 	cmd := exec.Command(swarm.SQLiteBinary, db)
 	cmd.Stdin = strings.NewReader("CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building the fixture store: %v\n%s", err, out)
-	}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "building the fixture store:\n%s", out)
 	// A `sqlite3` on PATH that never answers, ahead of the real one.
 	slow := t.TempDir()
 	stall := filepath.Join(slow, swarm.SQLiteBinary)
-	if err := testbin.WriteExecutable(stall, []byte("#!/bin/sh\nsleep 600\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, testbin.WriteExecutable(stall, []byte("#!/bin/sh\nsleep 600\n"), 0o755))
 	t.Setenv("PATH", slow+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	card := filepath.Join(root, "card.md")
-	if err := os.WriteFile(card, []byte("a card\nFAKE-IGNORE-TERM\nFAKE-SLEEP 60\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(card, []byte("a card\nFAKE-IGNORE-TERM\nFAKE-SLEEP 60\n"), 0o644))
 	args := append(budgetNativeArgs(t, bin, card, slot, root, "50000"), "--usage-interval", "1s")
 	for i := range args {
 		if args[i] == "--deadline" {
@@ -99,12 +89,10 @@ func TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
 	line := nativeOKLine(t, stdout.String())
-	if got := fieldOf(line, "rc"); got != "-1" {
-		t.Fatalf("the DEADLINE ended this card, so the line prints rc=-1; got %q:\n%s", got, line)
-	}
-	if got := fieldOf(line, "stopped"); got != "" {
-		t.Fatalf("a reader that never answers is not three FAILED reads while the card still had time; the deadline ended it and the line carries no stopped= field, got %q:\n%s", got, line)
-	}
+	got := fieldOf(line, "rc")
+	require.Equal(t, "-1", got, "the DEADLINE ended this card, so the line prints rc=-1; got %q:\n%s", got, line)
+	got = fieldOf(line, "stopped")
+	require.Empty(t, got, "a reader that never answers is not three FAILED reads while the card still had time; the deadline ended it and the line carries no stopped= field, got %q:\n%s", got, line)
 }
 
 // SLOW: 11.1 s on bench-tier at dev 64b9bec48, over the five-second line.
@@ -133,12 +121,8 @@ func TestNativeThreeFailedReadsEndTheCardUnverifiable(t *testing.T) {
 			// A DATABASE MUST EXIST for a read to be attempted at all: an absent one is an
 			// absence, and rule 13d keeps the two apart.
 			db := filepath.Join(slot, "data", "opencode", "opencode.db")
-			if err := os.MkdirAll(filepath.Dir(db), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(db, []byte("a database\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.MkdirAll(filepath.Dir(db), 0o755))
+			require.NoError(t, os.WriteFile(db, []byte("a database\n"), 0o644))
 			// A reader that refuses its first `failures` calls and answers after that,
 			// counting in a file of its own so the count survives across processes.
 			dir := t.TempDir()
@@ -148,15 +132,11 @@ func TestNativeThreeFailedReadsEndTheCardUnverifiable(t *testing.T) {
 				"n=$((n+1)); echo $n > " + counter + "\n" +
 				"if [ \"$n\" -le " + strconv.Itoa(tc.failures) + " ]; then echo 'Error: file is not a database' >&2; exit 1; fi\n" +
 				"exit 0\n"
-			if err := testbin.WriteExecutable(filepath.Join(dir, swarm.SQLiteBinary), []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, testbin.WriteExecutable(filepath.Join(dir, swarm.SQLiteBinary), []byte(script), 0o755))
 			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 			card := filepath.Join(root, "card.md")
-			if err := os.WriteFile(card, []byte("a card\nFAKE-SLEEP 8\nFAKE-FINDINGS 1\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(card, []byte("a card\nFAKE-SLEEP 8\nFAKE-FINDINGS 1\n"), 0o644))
 			args := append(budgetNativeArgs(t, bin, card, slot, root, "100000"), "--usage-interval", "1s")
 			for i := range args {
 				if args[i] == "--deadline" {
@@ -165,16 +145,12 @@ func TestNativeThreeFailedReadsEndTheCardUnverifiable(t *testing.T) {
 			}
 			var stdout, stderr strings.Builder
 			rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
-			if rc != tc.wantRC {
-				t.Fatalf("this card exits %d, got %d\nstdout:\n%s\nstderr:\n%s", tc.wantRC, rc, stdout.String(), stderr.String())
-			}
-			if got := fieldOf(nativeOKLine(t, stdout.String()), "stopped"); got != tc.wantStop {
-				t.Errorf("stopped= is %q, want %q:\n%s", got, tc.wantStop, stdout.String())
-			}
+			require.Equal(t, tc.wantRC, rc, "this card exits %d, got %d\nstdout:\n%s\nstderr:\n%s", tc.wantRC, rc, stdout.String(), stderr.String())
+			got := fieldOf(nativeOKLine(t, stdout.String()), "stopped")
+			assert.Equal(t, tc.wantStop, got, "stopped= is %q, want %q:\n%s", got, tc.wantStop, stdout.String())
 			head, rows := usageRows(t, filepath.Join(slot, "jobs", "lbl"))
-			if got := cell(t, head, rows[len(rows)-1], "end"); got != tc.wantEnd {
-				t.Errorf("the last row carries end=%s, got %q", tc.wantEnd, got)
-			}
+			got = cell(t, head, rows[len(rows)-1], "end")
+			assert.Equal(t, tc.wantEnd, got, "the last row carries end=%s, got %q", tc.wantEnd, got)
 		})
 	}
 }
