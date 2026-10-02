@@ -290,7 +290,11 @@ The test requirements are listed under **Tests this spec demands**.
    `HOME` resolves outside every `--write` path is
    `SANDBOX REFUSED reason=home_outside` at exit 125 and the command does not
    run, because a wall that lets the job start and kills its first git
-   command is the silent sandbox rule 1 exists to prevent.
+   command is the silent sandbox rule 1 exists to prevent. The refusal (and
+   `probe`'s and `policy`'s) ends with the command that answers it, the same
+   invocation with a data home made inside the first `--write`:
+   `run: mkdir -p <first --write>/home && HOME=<first --write>/home nova-sandbox <the same arguments>`.
+   That is a line for the caller to paste, not a default: nothing is set.
 10. **The probe proves the wall before the work runs.** `nova-sandbox probe
     --write <dir> [--read <dir>...] [--secret <path>]` runs five checks under the
     real policy for this platform: the control write outside the wall must
@@ -396,9 +400,9 @@ The test requirements are listed under **Tests this spec demands**.
 
 ```
 nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny] [--net-listen] [--net-allow <host:port>]... [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
-nova-sandbox probe   --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny] [--max <n>]
-nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--net-allow <host:port>]... [--cwd <dir>] [-- <command> <args...>]
-nova-sandbox check   [--max <n>]
+nova-sandbox probe   --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny] [--max <n>] [--json]
+nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--net-allow <host:port>]... [--cwd <dir>] [--json] [-- <command> <args...>]
+nova-sandbox check   [--json]
 nova-sandbox run     --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] -- <command> <args...>
 nova-sandbox reap    [--dry-run]
 nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
@@ -429,6 +433,20 @@ or not a sandbox is available, because it is a question, not an attempt. The
 `hosts=none` field is a fixed fixture: this tool has no per-host wall rule, so
 the token is always `none` and is printed only to keep the check line's shape
 across platforms.
+
+`check`, `policy` and `probe` take `--json`: the same result as one JSON object
+on stdout, a refusal included (`{"result":{"verb","status","exit","remedy","why"},
+"facts":{...},"items":[...],"notes":[...],"payload":"..."}`, the shape of
+`internal/tool`'s output value). `policy`'s profile is the `payload`, `probe`'s
+steps are `items` of kind `step`, and every typed line's fields are `facts`. The
+bare form and `run` wrap a command whose output is its own, and refuse `--json`.
+
+A flag that belongs to another verb is never silently dropped: the bare form
+refuses `--secret`, `--max` and `--json`; `probe` refuses `--cwd`, `--tmp`,
+`--name`, `--acl` and `--net-allow`, because a probe of a wall built without them
+answers a different question; `policy` accepts `--secret`, `--max` and `--acl` and
+prints one `POLICY NOTE` per flag saying it changed nothing. `<verb> -h` lists
+each verb's flags with what each wants, and that verb's own exit codes.
 
 The binary is `nova-sandbox`.
 
@@ -816,6 +834,10 @@ What a run allows, and it is the whole list:
 | the resolver `--resolver` names | **UDP 53 only** |
 | everything else | dropped |
 
+`plan` judges every flag and the policy file before it resolves a name, and a
+plan refused there names every problem at once and resolves nothing, so a
+mistyped invocation never waits on a resolver.
+
 Denied outright, before any allow is considered: `169.254.169.254/32` (the
 metadata address, **by name**, so a reader finds it without arithmetic), the rest
 of `169.254.0.0/16`, `127.0.0.0/8` as a destination, `::1/128` and `fe80::/10`,
@@ -941,7 +963,10 @@ and exit 0; it removes only trees named by its own record files, so a `git
 worktree` the friends made by hand and a tree whose PR state is unknown are
 kept, never deleted.
 
-Every refusal is exit 2 with **one remedy line** and creates nothing. A missing,
+Every refusal is exit 2 with **one remedy line** and creates nothing, and one run
+names every problem it finds, one `WORKTREE REFUSED` line each, before that remedy
+line. An argument the verb has no flag for is `reason=bad_flag: unknown flag
+--<x>; run: nova-sandbox help worktree`, never ignored. A missing,
 non-numeric or zero `--pr`, or `--pr` together with `--prune`, is `WORKTREE
 REFUSED reason=bad_pr: --pr wants one pull-request number and one mode`; a
 `--repo` that is missing, relative, or not a git work tree is `reason=bad_repo:
@@ -1022,10 +1047,15 @@ range. This departure from the conventions preserves the child's exit status.
 The reservation is ambiguous, as it is in `env(1)`: a wrapped command that
 itself exits 125, 126 or 127 — **and on darwin 71** — is indistinguishable from
 the tool's own refusal by exit status alone. The tool's refusals always print a
-`SANDBOX REFUSED` line to stderr and the command's do not, so a caller that
-needs to tell them apart reads the line, not the number. This is stated rather
-than fixed, because renumbering would break the convention the rest of the
-table follows.
+`SANDBOX REFUSED` line to stderr and the command's do not, and a status the
+command returned is announced after it ends by `SANDBOX DONE exit=<n>`, the last
+line the tool writes; so a caller that needs to tell them apart reads the line,
+not the number. This is stated rather than fixed, because renumbering would
+break the convention the rest of the table follows.
+
+A bare `nova-sandbox`, with no arguments at all, wrapped nothing: it is
+`SANDBOX REFUSED reason=no_command: no arguments; ...; run: nova-sandbox help`
+at exit **2**, SPEC.md's "could not run", like the verbs below.
 
 **Executability is checked before the wrap, not mapped after it.** Measured:
 when `sandbox-exec` cannot exec the command under the profile it prints
@@ -1052,7 +1082,8 @@ that is found and then dies inside the wall for want of its interpreter or a
 shared library exits `126` or dies by signal. There is **no** `SANDBOX NOTE`
 on that failure: on linux
 the tool is inside the wall it applied by the time the command runs, so it can
-print no more than the command's own status (rule 12), and a promise the tool
+print no more than the command's own status (rule 12), which is what `SANDBOX
+DONE exit=<n>` says and all it says, and a promise the tool
 can keep on one platform and not the other two is worse than no promise. The
 remedy is printed where it can be printed on all three — the usage banner and
 the `--read` paragraph of the roots section — and a reader diagnosing a `126`
@@ -1069,8 +1100,11 @@ and a platform with no nftables are **2**.
 
 ## Output grammar
 
-Every line below goes to **stderr** except the body of `policy`,
-which is the thing asked for and goes to stdout.
+Every line below goes to **stderr** except the body of `policy`, which is the
+thing asked for, and the answers of the verbs that wrap nothing (`CHECK OK`,
+`PROBE STEP`, `PROBE OK`, `WORKTREE OK`, `WORKTREE REMOVED`, the version line),
+which go to stdout; under `--json` the one object is all a verb prints, on
+stdout. A wrapped command's stdout is its own and the tool writes nothing there.
 
 ```
 SANDBOX OK backend=<sandbox-exec|landlock> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
@@ -1079,6 +1113,7 @@ SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi
 SANDBOX STEP name=<container|look|create|delete|denials|list> state=<start|done> [ms=<n>]
 SANDBOX DENIED path=<p> op=<read|write> remedy="--read <dir>"
 SANDBOX TIMEOUT after=<d> name=<n>
+SANDBOX DONE exit=<code> cmd=<name>   (the bare form: the last line, after the command ends)
 SANDBOX DONE name=<n> exit=<code> wall=<s> freed=<bytes>
 SANDBOX LEAK name=<n> volume=<disk> remedy="diskutil apfs deleteVolume <disk>"
 SANDBOX REAP volume=<n> procs=<n> deleted=<yes|no>
@@ -1087,6 +1122,7 @@ PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|re
 PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise> gpu=<none|metal>
 PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable>: <text>
 POLICY OK backend=<name> read=<n> read-noexec=<n> write=<n> bytes=<n> gpu=<none|metal>
+POLICY NOTE <flag> is <verb>'s flag and is ignored here: the policy printed is the same without it
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
 CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> hosts=none note=<one clause|->
 CHECK REFUSED reason=<bad_flag>: <text>
@@ -1107,7 +1143,14 @@ holding this binary at all (#1297). The backend and the platform a sandbox is
 judged by are not lost; they are said in the grammar the whole set shares.
 
 `SANDBOX OK` is printed **before** the command starts, so a log that ends in a
-crash still says what the wall was. It names `cmd=<name>` — the base name of
+crash still says what the wall was; its `OK` says the wall is up and the command
+is starting, never how the command ended. That is `SANDBOX DONE exit=<code>
+cmd=<name>`, the bare form's last line, printed when the command has ended with
+the status the tool then exits with: a reader that sees `SANDBOX OK` and then a
+non-zero `SANDBOX DONE` knows the wall stood and the command failed, and a
+refusal prints no `DONE` at all. It is printed after the command, which on
+linux is from inside the wall: the tool writes to the stderr it already holds
+and opens nothing. `SANDBOX OK` names `cmd=<name>` — the base name of
 the executable — and never the arguments, because arguments carry task text and
 task text carries quoted rules. The `cwd=<dir>` slot is a one-line field
 rendered through `internal/oneline` like every other path, so a directory whose
@@ -1146,8 +1189,8 @@ rules the file actually holds (the default deny counted among the drops), and
 compared without reading the ruleset. `EGRESS CHECK` is the same shape read back
 out of a file by the audit.
 
-`SANDBOX STEP`, `SANDBOX DONE`, `SANDBOX LEAK` and `SANDBOX DENIED` are the `run`
-verb's alone. `SANDBOX DENIED` is the one line this tool prints about a failure
+`SANDBOX STEP`, `SANDBOX LEAK` and `SANDBOX DENIED` are the `run` verb's alone,
+and `SANDBOX DONE` with `name=` is its form of the bare form's last line. `SANDBOX DENIED` is the one line this tool prints about a failure
 the command suffered INSIDE the wall, and it is an exception to the sentence
 above with a reason: on the `run` verb the tool is still there when the command
 dies, because it owns the disposable volume and has to delete it. It is not a

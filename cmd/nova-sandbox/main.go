@@ -23,13 +23,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // readRemedy is the one sentence that must live in the banner rather than in a NOTE: on
@@ -37,7 +38,10 @@ import (
 // after the fact is a promise one platform can keep and the others cannot.
 const readRemedy = "A command that runs OUTSIDE the wall and dies inside it is missing a --read"
 
-const usage = `nova-sandbox: run one command inside an OS-enforced wall around the directories you name
+const usage = usageHead + usageExits + usageExamples
+
+// usageHead is the banner down to its exit paragraph.
+const usageHead = `nova-sandbox: run one command inside an OS-enforced wall around the directories you name
 
 how it works: the wall is built for one run from your flags and kept nowhere:
 --read directories are readable, --write directories writable, and the kernel
@@ -167,14 +171,30 @@ a path from it and an inherited HOME is denied by the wall.
 ` + readRemedy + `:
 a toolchain in a user directory is exactly a caller-supplied read-only root.
 
-exit codes: a wrapped command (the bare wrap, run) ends with its own status,
-0-124, passed through; 3 run or reap left a volume behind (SANDBOX LEAK); 124 a
-run's --timeout ended it; 125 nova-sandbox said NO before the command ran
-(SANDBOX REFUSED); 126 the command could not be executed; 127 the command is on
-no PATH entry; 128+N the command was killed by signal N. probe, policy, check,
-worktree and egress use 0 done, 1 a check said NO, 2 could not run (a usage
-error).
+`
 
+// usageExits is the banner's exit paragraph, by verb. Each verb's -h quotes its label
+// and then that verb's own line from verbDocs, so a probe's codes are never read as a
+// wrapped command's.
+const exitsLabel = "exit codes: each verb's own, by verb:"
+
+const usageExits = exitsLabel + `
+  the bare wrap and run: the command's own status, 0-124, passed through, and
+    a SANDBOX DONE ... exit=<n> line on stderr after it ends says the command
+    returned it (SANDBOX OK, before it starts, says only that the wall is up);
+    125 nova-sandbox refused before the command ran, a usage error included
+    (a SANDBOX REFUSED line on stderr says why, and no SANDBOX DONE follows);
+    126 the command could not be executed; 127 it is on no PATH entry; 128+N
+    it was killed by signal N; run only: 3 a volume was left (SANDBOX LEAK),
+    124 its --timeout ended it. A command that itself exits 125-127 (or 71,
+    sandbox-exec's own exec failure) is told from the tool by that line.
+  probe, policy, check, version, worktree, egress: 0 done, 1 the verb ran and
+    said NO (probe, egress), 2 could not run (a usage error). reap: 0 clean, 3
+    something remained. <verb> -h gives one verb's codes and flags.
+`
+
+// usageExamples closes the banner: the first run, then two worked job lines.
+const usageExamples = `
 example:
   nova-sandbox check
   mkdir -p /tmp/trial/home
@@ -203,12 +223,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 	// before anything is probed, wrapped or written (the CLI style's rule (b), #4505).
 	// Only -h: every other exit of this tool, the bare wrap's 125 included, is
 	// unchanged, and nothing after -- is ever read as help.
-	defer verbflag.Recover(stdout, "nova-sandbox", usage, &code)
+	defer recoverVerbHelp(stdout, &code)
 	if len(args) == 0 {
 		// ONBOARDING.md point 2: the banner is behind `help`, not in front of every
 		// mistake. No arguments is "could not run", which is the 2 of SPEC.md's
 		// grammar and not the 125 of a wrap that refused — nothing was wrapped.
-		fmt.Fprint(stderr, "nova-sandbox: no arguments; every path is yours and none is guessed, so a run names at least one --write and a command after --; run: nova-sandbox help\n")
+		fmt.Fprint(stderr, "SANDBOX REFUSED reason=no_command: no arguments; every path is yours and none is guessed, so a run names at least one --write and a command after --; run: nova-sandbox help\n")
 		return sandbox.ExitCannotRun
 	}
 	switch args[0] {
@@ -221,7 +241,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
-		verbflag.HelpIfAsked(args[1:], "version")
+		helpIfAsked(args[1:], "version")
 		if len(args) > 1 {
 			// An ignored flag is a refusal (docs/CLI-STYLE.md (g)), never a
 			// version line over an argument nobody read.
@@ -238,28 +258,28 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 			"backend="+sandbox.Backend, "platform="+runtime.GOOS))
 		return 0
 	case "check":
-		verbflag.HelpIfAsked(args[1:], "check")
+		helpIfAsked(args[1:], "check")
 		return checkVerb(args[1:], stdout, stderr)
 	case "run":
 		return runVerb(args[1:], stdin, stdout, stderr, env)
 	case "reap":
 		return reapVerb(args[1:], stdout, stderr)
 	case "worktree":
-		verbflag.HelpIfAsked(args[1:], "worktree")
+		helpIfAsked(args[1:], "worktree")
 		return worktreeVerb(args[1:], stdout, stderr, env)
 	case "egress":
 		if len(args) > 1 {
 			if egressVerbs[args[1]] {
-				verbflag.HelpIfAsked(args[2:], "egress "+args[1])
+				helpIfAsked(args[2:], "egress "+args[1])
 			}
-			verbflag.HelpIfAsked(args[1:2], "egress")
+			helpIfAsked(args[1:2], "egress")
 		}
 		return egressVerb(args[1:], stderr)
 	case "policy":
-		verbflag.HelpIfAsked(args[1:], "policy")
+		helpIfAsked(args[1:], "policy")
 		return policyVerb(args[1:], stdout, stderr, env)
 	case "probe":
-		verbflag.HelpIfAsked(args[1:], "probe")
+		helpIfAsked(args[1:], "probe")
 		return probeVerb(args[1:], stdout, stderr, env)
 	case probeStepVerbName:
 		return probeStepVerb(args[1:], stderr, env)
@@ -285,7 +305,7 @@ type flags struct {
 	netAllow                    []string
 	cwd, tmp, name, secret, acl string
 	gpu                         string
-	netDeny, netListen          bool
+	netDeny, netListen, json    bool
 	max                         int
 	maxSet                      bool
 	argv                        []string
@@ -352,6 +372,8 @@ func parseVerb(verb string, args []string) flags {
 			f.netDeny = true
 		case "--net-listen":
 			f.netListen = true
+		case "--json":
+			f.json = true
 		case "--net-allow":
 			v, i = want(i, "--net-allow")
 			f.netAllow = append(f.netAllow, v)
@@ -392,6 +414,35 @@ func refuseAll(stderr io.Writer, bad []sandbox.Refusal) int {
 	return sandbox.ExitRefused
 }
 
+// homeRemedy gives every home_outside refusal in bad the command that answers it: make a
+// data home inside the first --write and run the same invocation with HOME set there.
+// HOME is never defaulted (rule 9); the caller pastes the line, and nothing is guessed.
+// argv is the invocation after `nova-sandbox`, verb included.
+func homeRemedy(bad []sandbox.Refusal, writes, argv []string) {
+	if len(writes) == 0 || !filepath.IsAbs(writes[0]) {
+		return
+	}
+	home := shellWord(filepath.Join(writes[0], "home"))
+	words := make([]string, len(argv))
+	for i, a := range argv {
+		words[i] = shellWord(a)
+	}
+	for i := range bad {
+		if bad[i].Reason == "home_outside" {
+			bad[i].Text += "; run: mkdir -p " + home + " && HOME=" + home + " nova-sandbox " + strings.Join(words, " ")
+		}
+	}
+}
+
+// shellWord is s as one POSIX shell word: as it is when it holds nothing a shell reads,
+// else single-quoted.
+func shellWord(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./=:@,+%") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func homeOf(env []string) string {
 	for _, kv := range env {
 		if name, value, _ := strings.Cut(kv, "="); name == "HOME" {
@@ -414,8 +465,8 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 	// to another verb was accepted here and then ignored — the opposite. --secret is
 	// probe's and --max is probe's and check's; the spec's verb table has neither on the
 	// bare form.
-	f.bad = append(f.bad, notForThisVerb("the bare form", map[string]bool{"--secret": f.secret != "", "--max": f.maxSet},
-		map[string]string{"--secret": "probe", "--max": "probe and check"})...)
+	f.bad = append(f.bad, notForThisVerb("the bare form", "nova-sandbox help",
+		map[string]bool{"--secret": f.secret != "", "--max": f.maxSet, "--json": f.json}, ownerOf)...)
 	if len(f.bad) > 0 {
 		return refuseAll(stderr, f.bad)
 	}
@@ -425,6 +476,7 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 		GPU: f.gpu,
 	})
 	if len(bad) > 0 {
+		homeRemedy(bad, f.writes, args)
 		return refuseAll(stderr, bad)
 	}
 	childEnv := sandbox.ChildEnv(env, p.Tmp)
@@ -473,21 +525,33 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=sandbox_failed: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-sandbox run -h"))
 		return sandbox.ExitRefused
 	}
+	// SANDBOX OK above says the wall is up and the command is starting, never how it
+	// ended; this line is the ending: the status is the command's own, so a 125 the
+	// command returned is told from the tool's refusal, which prints no DONE.
+	fmt.Fprintf(stderr, "SANDBOX DONE exit=%d cmd=%s\n", code, oneline.Field(p.CmdName()))
 	return code
 }
 
 // notForThisVerb turns "this flag is another verb's" into one refusal per flag, named and
-// in a fixed order so that two problems print the same way twice.
-func notForThisVerb(verb string, given map[string]bool, owner map[string]string) []sandbox.Refusal {
+// in a fixed order so that two problems print the same way twice. help is the command
+// that lists this verb's own flags.
+func notForThisVerb(verb, help string, given map[string]bool, owner map[string]string) []sandbox.Refusal {
 	var out []sandbox.Refusal
-	for _, flag := range []string{"--secret", "--max", "--acl", "--name", "--cwd", "--tmp"} {
+	for _, flag := range []string{"--secret", "--max", "--acl", "--name", "--cwd", "--tmp", "--net-allow", "--json"} {
 		if !given[flag] {
 			continue
 		}
 		out = append(out, sandbox.Refusal{Reason: "no_command",
-			Text: flag + " is not a flag of " + verb + "; it is " + owner[flag] + "'s: run nova-sandbox help"})
+			Text: flag + " is not a flag of " + verb + "; it is " + owner[flag] + "'s: run " + help})
 	}
 	return out
+}
+
+// ownerOf names the verbs each flag belongs to, for notForThisVerb's line.
+var ownerOf = map[string]string{
+	"--secret": "probe", "--max": "probe", "--acl": "the bare form", "--json": "check, policy and probe",
+	"--name": "the bare form and policy", "--cwd": "the bare form and policy", "--tmp": "the bare form and policy",
+	"--net-allow": "the bare form and policy",
 }
 
 func asRefusal(err error, out *sandbox.Refusal) bool {
@@ -501,17 +565,15 @@ func asRefusal(err error, out *sandbox.Refusal) bool {
 // checkVerb reports what this machine can enforce and exits 0 either way, because it is
 // a question, not an attempt.
 func checkVerb(args []string, stdout, stderr io.Writer) int {
-	for _, a := range args {
-		if a == "-h" || a == "--help" || a == "help" {
-			fmt.Fprint(stdout, usage)
-			return 0
+	v := newVerbOut("check", slices.Contains(args, "--json"), stdout, stderr)
+	for i, a := range args {
+		if a == "--json" {
+			continue
 		}
-	}
-	for i := range args {
 		// the first argument is the refusal: an unknown flag, or a word where none goes
 		text, _ := unknownArg(args, i, "check")
-		fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: %s\n", oneline.WithRemedy(text, "nova-sandbox help check"))
-		return sandbox.ExitCannotRun
+		v.refuse(tool.Refused, "bad_flag", oneline.WithRemedy(text, "nova-sandbox help check"))
+		return v.done(stderr, "", sandbox.ExitCannotRun)
 	}
 	backend, ok := sandbox.Available()
 	name, note := sandbox.Backend, sandbox.Note()
@@ -522,9 +584,9 @@ func checkVerb(args []string, stdout, stderr io.Writer) int {
 		net = "enforceable"
 		note = note + "; backend at " + backend
 	}
-	fmt.Fprintf(stdout, "CHECK OK backend=%s abi=%s net=%s hosts=none note=%s\n",
-		oneline.Field(name), oneline.Field(sandbox.ABI()), oneline.Field(net), oneline.Escape(note))
-	return 0
+	return v.done(stdout, fmt.Sprintf("CHECK OK backend=%s abi=%s net=%s hosts=none note=%s",
+		oneline.Field(name), oneline.Field(sandbox.ABI()), oneline.Field(net), oneline.Escape(note)), 0,
+		"backend", name, "abi", sandbox.ABI(), "net", net, "hosts", "none", "note", note)
 }
 
 // probeVerb is rule 10: four or five checks under the REAL policy for this platform, run once
@@ -533,6 +595,12 @@ func checkVerb(args []string, stdout, stderr io.Writer) int {
 // broken, and a two-check probe would call it a pass.
 func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	f := parseVerb("probe", args)
+	v := newVerbOut("probe", f.json, stdout, stderr)
+	// a flag the probe would accept and then not build its wall with is refused: a probe
+	// of a wall other than the one asked about answers the wrong question
+	f.bad = append(f.bad, notForThisVerb("probe", "nova-sandbox probe -h", map[string]bool{
+		"--acl": f.acl != "", "--name": f.name != "", "--cwd": f.cwd != "", "--tmp": f.tmp != "", "--net-allow": len(f.netAllow) > 0,
+	}, ownerOf)...)
 	// EVERY independent problem in ONE run. Emma, dogfooding v0.12.0 (nova-tools #104):
 	// a bare `probe` named the missing --secret, and named the missing --write only on
 	// the NEXT run, once --secret had been supplied -- a first run sequenced into as many
@@ -546,9 +614,9 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// is a list of consequences (`probe --wrte x` also said --write was missing).
 	if len(f.bad) > 0 {
 		for _, r := range f.bad {
-			fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s\n", oneline.WithRemedy(r.Text, "nova-sandbox help probe"))
+			v.refuse(tool.Refused, "check", oneline.WithRemedy(r.Text, "nova-sandbox help probe"))
 		}
-		return sandbox.ExitCannotRun
+		return v.done(stderr, "", sandbox.ExitCannotRun)
 	}
 	// Rule 10: the probe re-executes THIS binary under the policy it just generates, with
 	// an internal verb, never a shell. os.Executable() is the resolved command of that
@@ -583,6 +651,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		GPU:  f.gpu,
 		Argv: []string{self, probeStepVerbName}, Home: homeOf(env),
 	})
+	homeRemedy(policyBad, f.writes, append([]string{"probe"}, args...))
 	bad = append(bad, policyBad...)
 	if len(bad) > 0 {
 		for _, r := range bad {
@@ -598,22 +667,26 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 			// stays the one the spec publishes. DeepSeek's read of #108 at ab880be,
 			// finding 1: the previous revision forwarded bad_write, home_outside,
 			// bad_read and no_command into reason=, tokens the grammar does not list.
-			text := r.Text
+			// the token goes before a remedy the text carries, so the remedy stays a paste
+			text, next, hasNext := strings.Cut(r.Text, "; run: ")
 			if r.Reason != "" && r.Reason != "check" {
 				text += " (" + r.Reason + ")"
 			}
-			fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s\n", oneline.WithRemedy(oneline.Escape(text), "nova-sandbox probe -h"))
+			if hasNext {
+				text += "; run: " + next
+			}
+			v.refuse(tool.Refused, "check", oneline.WithRemedy(oneline.Escape(text), "nova-sandbox probe -h"))
 		}
-		return sandbox.ExitCannotRun
+		return v.done(stderr, "", sandbox.ExitCannotRun)
 	}
 	// rule 6: a --secret inside a named path is a misconfiguration, not a failed probe.
 	// A probe without --secret has no secret to place, and the check is skipped.
 	if secret != "" {
 		for _, d := range append(append([]string{}, p.Reads...), p.Writes...) {
 			if sandbox.Inside(secret, d) {
-				fmt.Fprintf(stderr, "PROBE REFUSED reason=secret_inside_allow: --secret %s is inside %s; the secret is never inside either list; run: nova-sandbox probe -h\n",
-					oneline.Escape(secret), oneline.Escape(d))
-				return sandbox.ExitCannotRun
+				v.refuse(tool.Refused, "secret_inside_allow", fmt.Sprintf("--secret %s is inside %s; the secret is never inside either list; run: nova-sandbox probe -h",
+					oneline.Escape(secret), oneline.Escape(d)))
+				return v.done(stderr, "", sandbox.ExitCannotRun)
 			}
 		}
 	}
@@ -623,9 +696,9 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	outside := filepath.Join(filepath.Dir(p.Writes[0]), fmt.Sprintf(".nova-sandbox-probe-%d", os.Getpid()))
 	for _, d := range append(append([]string{}, p.Reads...), p.Writes...) {
 		if sandbox.Inside(outside, d) {
-			fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_outside_inside: %s is inside %s; a probe that cannot find an outside cannot answer the question; run: nova-sandbox probe -h\n",
-				oneline.Escape(outside), oneline.Escape(d))
-			return sandbox.ExitCannotRun
+			v.refuse(tool.Refused, "probe_outside_inside", fmt.Sprintf("%s is inside %s; a probe that cannot find an outside cannot answer the question; run: nova-sandbox probe -h",
+				oneline.Escape(outside), oneline.Escape(d)))
+			return v.done(stderr, "", sandbox.ExitCannotRun)
 		}
 	}
 
@@ -650,8 +723,8 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// same binary.
 	rawNonce, err := probeNonce()
 	if err != nil {
-		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: this machine has no random source for the probe's one-time value: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-sandbox probe -h"))
-		return sandbox.ExitCannotRun
+		v.refuse(tool.Refused, "check", "this machine has no random source for the probe's one-time value: "+oneline.WithRemedy(oneline.Err(err), "nova-sandbox probe -h"))
+		return v.done(stderr, "", sandbox.ExitCannotRun)
 	}
 	nonce := hex.EncodeToString(rawNonce[:])
 
@@ -679,9 +752,10 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 			// is not a wall. If this one says deny, the machine cannot answer the
 			// question and the probe is exit 2, not a failed check.
 			if err := os.WriteFile(s.path, []byte("nova"), 0o600); err != nil {
-				fmt.Fprintf(stdout, "PROBE STEP name=%s expect=allow got=deny path=%s\n", oneline.Field(s.name), oneline.Escape(s.path))
-				fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_outside_unwritable: %s is not writable by this user anyway, so a deny there proves nothing; run: nova-sandbox probe -h\n", oneline.Escape(s.path))
-				return sandbox.ExitCannotRun
+				v.item(fmt.Sprintf("PROBE STEP name=%s expect=allow got=deny path=%s", oneline.Field(s.name), oneline.Escape(s.path)),
+					"step", "name", s.name, "expect", "allow", "got", "deny", "path", s.path)
+				v.refuse(tool.Refused, "probe_outside_unwritable", oneline.Escape(s.path)+" is not writable by this user anyway, so a deny there proves nothing; run: nova-sandbox probe -h")
+				return v.done(stderr, "", sandbox.ExitCannotRun)
 			}
 			// ignored: the control file this probe just wrote outside the wall; a leftover holds only the word nova in the caller's scratch path
 			_ = os.Remove(s.path)
@@ -689,22 +763,23 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		default:
 			got = walled(p, env, rawNonce, nonce, s.name, s.path)
 		}
-		fmt.Fprintf(stdout, "PROBE STEP name=%s expect=%s got=%s path=%s\n",
-			oneline.Field(s.name), oneline.Field(s.expect), oneline.Field(got), oneline.Escape(s.path))
+		v.item(fmt.Sprintf("PROBE STEP name=%s expect=%s got=%s path=%s",
+			oneline.Field(s.name), oneline.Field(s.expect), oneline.Field(got), oneline.Escape(s.path)),
+			"step", "name", s.name, "expect", s.expect, "got", got, "path", s.path)
 		if got == s.expect {
 			passed++
 			continue
 		}
 		failed++
-		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s expected %s and got %s at %s; run: nova-sandbox probe -h\n",
-			oneline.Field(s.name), s.expect, got, oneline.Escape(s.path))
+		v.refuse(tool.Failed, "check", fmt.Sprintf("%s expected %s and got %s at %s; run: nova-sandbox probe -h",
+			oneline.Field(s.name), s.expect, got, oneline.Escape(s.path)))
 	}
+	facts := []any{"backend", sandbox.Backend, "abi", sandbox.ABI(), "steps", len(steps), "passed", passed, "net", p.Net(), "gpu", string(p.GPUMode)}
 	if failed > 0 {
-		return sandbox.ExitProbeFailed
+		return v.done(stderr, "", sandbox.ExitProbeFailed, facts...)
 	}
-	fmt.Fprintf(stdout, "PROBE OK backend=%s abi=%s steps=%d passed=%d net=%s gpu=%s\n",
-		oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), len(steps), passed, oneline.Field(p.Net()), oneline.Field(string(p.GPUMode)))
-	return 0
+	return v.done(stdout, fmt.Sprintf("PROBE OK backend=%s abi=%s steps=%d passed=%d net=%s gpu=%s",
+		oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), len(steps), passed, oneline.Field(p.Net()), oneline.Field(string(p.GPUMode))), 0, facts...)
 }
 
 // walled runs one probe check INSIDE the wall and reports allow or deny. The child is
@@ -1003,11 +1078,15 @@ func policyText(p *sandbox.Policy) (string, error) {
 // the check and the tool cannot drift apart (rule 15: generated, never hand-edited).
 func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	f := parseVerb("policy", args)
-	if len(f.bad) > 0 {
-		for _, r := range f.bad {
-			fmt.Fprintf(stderr, "POLICY REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.WithRemedy(oneline.Escape(r.Text), "nova-sandbox policy -h"))
+	v := newVerbOut("policy", f.json, stdout, stderr)
+	refuse := func(bad []sandbox.Refusal) int {
+		for _, r := range bad {
+			v.refuse(tool.Refused, r.Reason, oneline.WithRemedy(oneline.Escape(r.Text), "nova-sandbox policy -h"))
 		}
-		return sandbox.ExitCannotRun
+		return v.done(stderr, "", sandbox.ExitCannotRun)
+	}
+	if len(f.bad) > 0 {
+		return refuse(f.bad)
 	}
 	// Rule 15: "policy prints exactly what a wrapped run would apply". One root is
 	// computed from the COMMAND — "the directory of the resolved command" — so a policy
@@ -1019,8 +1098,7 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	if len(argv) == 0 {
 		shell, err := exec.LookPath("sh")
 		if err != nil {
-			fmt.Fprintf(stderr, "POLICY REFUSED reason=bad_read: sh is on no PATH entry: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-sandbox policy -h"))
-			return sandbox.ExitCannotRun
+			return refuse([]sandbox.Refusal{{Reason: "bad_read", Text: "sh is on no PATH entry: " + err.Error()}})
 		}
 		argv = []string{shell, "-c", "true"}
 	}
@@ -1030,18 +1108,27 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		GPU: f.gpu,
 	})
 	if len(bad) > 0 {
-		for _, r := range bad {
-			fmt.Fprintf(stderr, "POLICY REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.WithRemedy(oneline.Escape(r.Text), "nova-sandbox policy -h"))
-		}
-		return sandbox.ExitCannotRun
+		homeRemedy(bad, f.writes, append([]string{"policy"}, args...))
+		return refuse(bad)
 	}
 	text, err := policyText(p)
 	if err != nil {
-		fmt.Fprintf(stderr, "POLICY REFUSED reason=bad_write: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-sandbox policy -h"))
-		return sandbox.ExitCannotRun
+		return refuse([]sandbox.Refusal{{Reason: "bad_write", Text: err.Error()}})
 	}
-	fmt.Fprint(stdout, text)
-	fmt.Fprintf(stderr, "POLICY OK backend=%s read=%d read-noexec=%d write=%d bytes=%d gpu=%s\n",
-		oneline.Field(sandbox.Backend), len(p.Reads), len(p.ReadsNoExec), len(p.Writes), len(text), oneline.Field(string(p.GPUMode)))
-	return 0
+	if f.json {
+		v.out.Payload = text
+	} else {
+		fmt.Fprint(stdout, text)
+	}
+	// Another verb's flag is accepted, as a caller that builds one argv for policy and
+	// probe has always had it, and said aloud: it changes nothing in the policy printed.
+	given := map[string]bool{"--secret": f.secret != "", "--max": f.maxSet, "--acl": f.acl != ""}
+	for _, flag := range []string{"--secret", "--max", "--acl"} {
+		if given[flag] {
+			v.note(flag + " is " + ownerOf[flag] + "'s flag and is ignored here: the policy printed is the same without it")
+		}
+	}
+	return v.done(stderr, fmt.Sprintf("POLICY OK backend=%s read=%d read-noexec=%d write=%d bytes=%d gpu=%s",
+		oneline.Field(sandbox.Backend), len(p.Reads), len(p.ReadsNoExec), len(p.Writes), len(text), oneline.Field(string(p.GPUMode))), 0,
+		"backend", sandbox.Backend, "read", len(p.Reads), "read-noexec", len(p.ReadsNoExec), "write", len(p.Writes), "bytes", len(text), "gpu", string(p.GPUMode))
 }

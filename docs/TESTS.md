@@ -185,9 +185,10 @@ $ HOME=/path/to/pool/jobs/j1/home nova-sandbox --read /path/to/pool/ref --write 
 SANDBOX NOTE dropped from the child's environment: GPG_AGENT_INFO SSH_AGENT_PID SSH_AUTH_SOCK; an agent socket speaks for a key the wall denies
 SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=sh gpu=none
 cat: /path/to/.config/anthropic/env: Operation not permitted
+SANDBOX DONE exit=1 cmd=sh
 ```
 
-The last run is the whole tool in three lines: the job's own write landed, and the same command could not read the key that was in neither list. Its exit status is the wrapped command's, which is 1 here because `cat` failed.
+The last run is the whole tool: the wall named, the job's own write landed, the same command could not read the key that was in neither list, and the closing line gives the wrapped command's own status, 1 here because `cat` failed, which is the status the tool exits with.
 
 ### The disposable volume, and the one test that touches a disk
 
