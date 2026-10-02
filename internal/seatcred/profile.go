@@ -25,8 +25,8 @@ const ProfileFile = "seats.tsv"
 
 // ProfileColumns names the tab-separated columns, in order; a refusal about a
 // row prints it so the fix needs no doc. The seventh, the GitHub token env, is
-// optional: a six-column row is the #4330 row, and its GitHub verbs read
-// GH_TOKEN from the session as before.
+// optional: a six-column row names no token key, and its GitHub verbs read
+// GH_TOKEN from the process environment instead.
 const ProfileColumns = "name, redis addr, redis user, secret env, store, key[, github token env]"
 
 // Profile is one seats.tsv row.
