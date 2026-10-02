@@ -197,7 +197,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 	now := a.now()
 	h := handoverView{At: now, Streams: []streamCounts{}, Sentinels: []sentinelView{}, Judgments: []inboxJudgment{}, Members: []memberView{},
 		Decisions: []decisionView{}, Routes: routesView{Disabled: []string{}}}
-	v, _, err := a.where(ctx, st, defaultStale)
+	v, _, err := a.where(ctx, st, defaultStale, false) // the view carries every table; the frame is not drawn here
 	if err != nil {
 		return h, "", err
 	}

@@ -15,7 +15,7 @@ func TestMisspelledFlagIsOneCleanLine(t *testing.T) {
 	for _, c := range []struct{ line, want string }{
 		{"add --wrong", "nova-sprint add REFUSED: unknown flag --wrong; the flags of add are --actor, --after, --before, --brief, --brief-dir, --brief-file, --count, --epoch, --json, --max, --needs, --op, --redis, --rules, --score, --sentinel and 3 more; run: nova-sprint help add\n"},
 		{"init --x", "nova-sprint init REFUSED: unknown flag --x; the flags of init are --actor, --coordinator, --epoch, --json, --max, --members, --op, --owner, --readers, --redis, --rules; run: nova-sprint help init\n"},
-		{"where --zz", "nova-sprint where REFUSED: unknown flag --zz; the flags of where are --actor, --at-epoch, --epoch, --every, --json, --max, --op, --redis, --stale, --watch; run: nova-sprint help where\n"},
+		{"where --zz", "nova-sprint where REFUSED: unknown flag --zz; the flags of where are --actor, --all, --at-epoch, --epoch, --every, --json, --max, --op, --redis, --stale, --watch; run: nova-sprint help where\n"},
 		{"inbox --zz", "nova-sprint inbox REFUSED: unknown flag --zz; the flags of inbox are --actor, --at-epoch, --deadline, --epoch, --json, --max, --op, --open, --push, --read, --redis, --stale, --timeout, --wait; run: nova-sprint help inbox\n"},
 		{"clear --zz", "nova-sprint clear REFUSED: unknown flag --zz; the flags of clear are --actor, --confirm, --epoch, --json, --max, --op, --redis; run: nova-sprint help clear\n"},
 		{"teardown --zz", "nova-sprint teardown REFUSED: unknown flag --zz; the flags of teardown are --actor, --confirm, --epoch, --json, --max, --op, --redis; run: nova-sprint help teardown\n"},

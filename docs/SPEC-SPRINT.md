@@ -107,7 +107,12 @@ layer's: the sums of `ready`, `working`, `width` and `done`, the pooled `ok%`,
 and a blank status cell, as the fleet table's; an empty friends table is its
 header, its one rule and that footer at zero, as every empty table is.
 
-The view shows work, readers, merge, friends, fleet in that order. The one line under
+The frame of `where` and `where --watch` shows work, friends, fleet in that order: the
+readers and merge tables are hidden from it (the owner, 2026-10-02: "I feel like
+reading and merging is something you can handle now. it seems to work, so please
+hide the reader and merge tables."); `where --all` draws every table, work, readers,
+merge, friends, fleet, and `where --json` carries every table and every row of it
+with the flag or without. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
 line (landed / all primaries, percent, ETA, with no machine text) when it is
 running; a RUNNING machine that has not ticked for 5 s shows
@@ -148,8 +153,8 @@ most needs the coordinator's eye: ci `red`, then `green`, then `-`; state
 `stopped`, then `merging`, then `waiting`, then `landed`, then `-` (a word the
 order does not name comes after `landed` and before `-`), and a stopped state the
 number of streams stopped beside it (`stopped 1`), so one stopped stream of four
-is not hidden. Both are the text of `where` and `where --watch` only: the readers
-and merge tables keep a row per reader and per stream, `where --json` lists each,
+is not hidden. Both are the text of `where --all` (and `where --all --watch`) only: the
+readers and merge tables keep a row per reader and per stream, `where --json` lists each,
 and the stored view `sprint` drawn by `nova-table watch --view sprint` shows each.
 The fleet table shows each member, with its footer. `where --watch` redraws the frame in
 place once a second (`--every`, any duration above 0): the cursor is hidden
@@ -1201,7 +1206,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>.g<gen>.e<epoch>` (the epoch makes it one per epoch, a card id coming back after a clear, and the generation one per launch, a card dealt again within an epoch, withdrawn from a member or redealt after a staging or provider failure, being another launch whose push must not meet the first's), and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it (a work card's names `--head <commit>`: a finish without `--head` records the card's id as its head, which `land` refuses as not a commit id); `queue --as <w> --packets <n> [--have <id,...>]` hands only the packets the worker asks for: the first n cards it may start (asked, ready) and every card in flight (reading, working), each not named in `--have`; every other card is listed with its id, column, attempt and gen, and the answer's epoch, which are its claim, and no packet (a reader of width 8 holding 150 asked reads with 2.5 KB briefs: 445,525 bytes without the flag, 51,623 asking for 8; the fleet load test of 2026-10-01 measured 579,181 bytes a pass); without `--packets` every card carries its packet, as before; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>.g<gen>.e<epoch>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17); a line's words are printed under it, a brief by its size and the card that shows it (`card <id>`), never whole (`--json` carries it) |
 | check, repair | section 9 and section 10 |
-| where | the view, once or `--watch` (redrawn in place, section 1); its title line names the seat's holder (`SPRINT TABLE  coordinator friend-b`, with `(taken 5:21 PM)` after a take until the next handover is given); `--json` also carries the pending operation, the stalled streams, the people, the coordinator and `seat`, its last change |
+| where | the view, once or `--watch` (redrawn in place, section 1): work, friends and fleet; `--all` draws the readers and merge tables too (hidden from the default frame; the owner, 2026-10-02: "please hide the reader and merge tables"); its title line names the seat's holder (`SPRINT TABLE  coordinator friend-b`, with `(taken 5:21 PM)` after a take until the next handover is given); `--json` carries every table and the pending operation, the stalled streams, the people, the coordinator and `seat`, its last change |
 | coordinator | moves the seat: `coordinator <name> --reason <text>`, given by its holder or the owner; `--take --approved-by <owner>`, taken by `<name>` itself; prints the handover after (below) |
 | handover | what the next seat needs, from the store, in one screen (below); `--json` |
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
