@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
+
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -446,8 +449,34 @@ func TestTheShellCarriesABatchAndItsResults(t *testing.T) {
 	assert.Len(t, r.queue("m1")["working"], 1, "the refused requests ran nothing")
 }
 
+// The answer is compressed for a client that asks for it, and plain for one that does
+// not: a worker's queue carries every brief of its cards, every pass, and the same answer
+// read back from gzip is the plain one, at a fraction of the bytes.
+func TestTheShellCompressesItsAnswerForAClientThatTakesGzip(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, twoLanes()...)
+	body := `{"verbs":[["queue","--as","m1","--json"]]}`
+	plain := httptest.NewRecorder()
+	r.a.ServeHTTP(plain, httptest.NewRequest(http.MethodPost, sprintwire.Path, strings.NewReader(body)))
+	require.Equal(t, http.StatusOK, plain.Code)
+	assert.Empty(t, plain.Header().Get("Content-Encoding"), "a client that names no encoding is answered plain")
+
+	req := httptest.NewRequest(http.MethodPost, sprintwire.Path, strings.NewReader(body))
+	req.Header.Set("Accept-Encoding", "gzip")
+	packed := httptest.NewRecorder()
+	r.a.ServeHTTP(packed, req)
+	require.Equal(t, http.StatusOK, packed.Code)
+	require.Equal(t, "gzip", packed.Header().Get("Content-Encoding"))
+	zr, err := gzip.NewReader(packed.Body)
+	require.NoError(t, err)
+	unpacked, err := io.ReadAll(zr)
+	require.NoError(t, err)
+	assert.JSONEq(t, plain.Body.String(), string(unpacked), "the same answer, compressed")
+}
+
 // The server checks no credential, so it listens on one address of its machine
 // and never on every network.
+
 func TestTheServerDoesNotListenOnEveryNetwork(t *testing.T) {
 	t.Parallel()
 	a := newApp(func(string) string { return "" })

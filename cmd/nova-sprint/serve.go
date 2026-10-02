@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -169,8 +170,21 @@ func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	// THE ANSWER IS COMPRESSED FOR A CLIENT THAT TAKES IT. A worker's queue carries each of
+	// its cards' briefs, every pass: 46 to 93 KB an answer on a sprint of 1000 cards, and a
+	// worker 300 ms away took 1.3 to 2.4 s to read one (the fleet pass of 2026-10-01
+	// 20:18 ET). The briefs are text and alike, and go to a twentieth. Go's client asks
+	// for gzip and reads it by itself.
+	var out io.Writer = w
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		// ignored: a worker that has gone reads no answer
+		defer func() { _ = gz.Close() }()
+		out = gz
+	}
 	// ignored: a worker that has gone reads no answer; what ran is in the sprint's log
-	_ = json.NewEncoder(w).Encode(a.serveFrom(req, local))
+	_ = json.NewEncoder(out).Encode(a.serveFrom(req, local))
 }
 
 // listen starts the server on the address for the store the run loop ticks,
