@@ -57,7 +57,11 @@ moves and is used as it is. A branch is fetched from origin into `origin/<base>`
 fetch that fails refuses the read at staging: native prints a STAGE FAIL line naming the base
 and the fetch error, writes no JOB.md, and the sprint deals the read again; the checkout's own
 branch is never trusted in its place
-(`TestAReadWhoseBaseCannotBeFetchedIsRefusedAtStaging`, `TestAReadAgainstATagOrAShaNeedsNoFetch`). On the
+(`TestAReadWhoseBaseCannotBeFetchedIsRefusedAtStaging`, `TestAReadAgainstATagOrAShaNeedsNoFetch`).
+A missing base object or an operational failure while finding the merge base also refuses the
+read before writing its frame. Valid unrelated histories have no common ancestor; their frame
+names no exact start (`TestReviewAMissingImmutableBaseRefusesTheReadBeforeWritingItsFrame`,
+`TestReviewUnrelatedHistoriesKeepTheUnknownStartPolicy`). On the
 1000-card load test of 2026-10-01 cards landed on the base every few seconds, and a reader that
 ran `git diff origin/dev` saw every file landed since the work began as a deletion and sent a
 correct work card back (`TestAReadIsToldTheWorksChangeWhenTheBaseMoved`). The fetch is because

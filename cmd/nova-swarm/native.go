@@ -2381,9 +2381,16 @@ func workStart(git, checkout, base string) (string, error) {
 		}
 	}
 	sha, err := gitrun.Output(context.Background(), o, "merge-base", "--end-of-options", "HEAD", ref)
-	if err != nil || !typedrec.IsFullSha(sha) {
-		// no merge base: JOB.md names no start, and says nothing it cannot back
-		return "", nil
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			// Unrelated histories have no merge base: JOB.md names no start.
+			return "", nil
+		}
+		return "", fmt.Errorf("%w: the merge base against %s could not be read: %w", errReadStart, base, err)
+	}
+	if !typedrec.IsFullSha(sha) {
+		return "", fmt.Errorf("%w: the merge base against %s returned no full commit sha: %q", errReadStart, base, sha)
 	}
 	return sha, nil
 }
