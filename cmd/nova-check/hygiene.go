@@ -66,8 +66,9 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, " hygiene", fmt.Sprintf("--identity %q: want `Name <email>`", one))
 		}
 		email = strings.TrimSpace(strings.TrimSuffix(email, ">"))
-		// The help and the command reference spelled the form `"<Name> <<email>>"` for
-		// an extra pair of angle brackets. Pasted as written, `Name <<email>>` parses --
+		// The help and the command reference spelled the form `"<Name> <<email>>"`:
+		// an extra pair of angle brackets around the email. Pasted as written,
+		// `Name <<email>>` parses --
 		// it holds a `<` and it ends in `>` -- and leaves the address as
 		// `<r@example.com>`, which equals no git author alive. Every commit on a clean
 		// branch came back as an identity finding and nothing said why. An address is
@@ -89,15 +90,16 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " hygiene", "--identity is required: `Name <email>`, repeatable with commas")
 	}
 
-	// A kind is a shape of work the TOOL declares and a card cannot widen
+	// A kind is a shape of work the TOOL declares, and a card cannot widen.
 	// A kind the tool does not declare is refused,
 	// and there is no default kind.
 	//
 	// Here it was neither. `--kind` went straight through to hygiene.Check, where it
 	// unlocks an allowlisted stray exception and nothing else, so an undeclared kind
 	// unlocked nothing and the run printed HYGIENE OK -- a clean answer about a shape
-	// of work that does not exist. Eleven of the tools12 cards carried
-	// an undeclared kind cannot make a check pass.
+	// of work that does not exist. Eleven of the tools12 cards carried an
+	// undeclared kind, and every one came back clean, though a check pass
+	// cannot print of a kind this tool does not declare.
 	if *kind != "" && !hygiene.KindDeclared(*kind) {
 		return refuse(stderr, " hygiene", fmt.Sprintf("--kind %q is not a kind this tool declares; one of: %s",
 			*kind, strings.Join(hygiene.Kinds(), ", ")))
@@ -132,7 +134,7 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	// The remedy is THE SAME RUN with the cap lifted, and it is built from the flags
 	// this run was actually given -- not from the three that happen to be easy.
 	//
-	// It carried --repo, --base and --head and dropped --identity, --paths and --kind
+	// It carried --repo, --base and --head and dropped --identity, --paths and --kind.
 	// --identity is required, so the one thing a capped listing exists to
 	// offer -- the rest of the list -- exited 2 for everyone who pasted it; and --paths
 	// and --kind decide WHICH findings there are, so a remedy without them would have
