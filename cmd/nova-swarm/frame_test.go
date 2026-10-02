@@ -61,6 +61,21 @@ func TestTheFrameIsThePackets(t *testing.T) {
 	assert.Equal(t, fullSha, frameOf(read, "m", "/root").StageSha)
 }
 
+// A read's JOB.md names the tier its route was drawn from: the packet's tier, the
+// sprint's read tier for the card (nova-tools#5096 item 27), over the brief's line 1,
+// which names the writer's; a packet with none keeps line 1's.
+func TestAReadsJobNamesItsReadTier(t *testing.T) {
+	t.Parallel()
+	brief := "c1: do it (tools) tier: flash\nbase-repo: https://example.com/example-owner/example-repo.git\nBASE: main@" + fullSha + "\n\nThe task."
+	read := member.Packet{Card: "c1.r1", Kind: "read", Attempt: 1, Brief: brief, Head: pushedSha, WorkBranch: "sprint/c1.w1", Tier: "pro"}
+	f := frameOf(read, "m", "/root")
+	assert.Equal(t, "pro", f.Tier, "the read tier, not the writer's")
+	job := cardcontract.For("claude").JobText(f, cardcontract.Staged{Job: "/j", Repo: "/j/repo", Head: pushedSha})
+	assert.Contains(t, job, "Tier: pro.")
+	read.Tier = ""
+	assert.Equal(t, "flash", frameOf(read, "m", "/root").Tier, "no tier in the packet: line 1's")
+}
+
 // The member names the repository to gh as gh names it: a GitHub URL's
 // owner/name in any spelling, another host's host/owner/name, a path as it is.
 func TestThePullRequestRepositoryIsGhsName(t *testing.T) {

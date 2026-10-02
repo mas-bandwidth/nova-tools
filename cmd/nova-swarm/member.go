@@ -733,6 +733,9 @@ func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 	}
 	mh, _ := cardhdr.ReadModel(first) // line 1's tier, by the one parser the deal reads it with
 	f.Tier = mh.Tier
+	if p.Tier != "" { // the sprint's: a read's read tier, a rework's --tier
+		f.Tier = p.Tier
+	}
 	if p.Kind == "read" {
 		f.Branch, f.ReviewBase = p.WorkBranch, cb.Ref
 		if p.WorkBase != "" {

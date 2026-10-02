@@ -156,6 +156,13 @@ func MergeStep(r sprint.MergeReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MergeStep(s, r) }}
 }
 
+// SetStep is the coordinator's settings: the sprint's dealt bound and read tier, or
+// a stream's read tier (sprint.Set).
+func SetStep(r sprint.SetReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "set", Load: tables(sprint.Work, sprint.Merge),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Set(s, r) }}
+}
+
 // ResumeStep moves a stopped stream again.
 func ResumeStep(r sprint.ResumeReq) Step {
 	return Step{Args: ArgsOf(r), Verb: "resume", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,

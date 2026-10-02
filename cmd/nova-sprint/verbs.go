@@ -77,6 +77,8 @@ func init() {
 		{"reader up", "<reader>...", "reader up reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(false, args, o, e) }},
 		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
+		{"stream set", "<stream>... --read-tier <flash|pro|default>", "stream set skips --read-tier pro", (*app).cmdStreamSet},
+		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
 		{"ack", "<note>... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
@@ -2090,7 +2092,50 @@ a STOPPED machine only (nova-sprint stop first), refused while a stream holds a
 card (a primary or a sentinel in any column of its work row, a merge card in
 its merge row: nova-sprint clear --confirm sprint, or drop) and all or none
 for the streams named. A clear does not bring a removed stream back, and its
-name is added again only after the next clear.`) + "\n"
+name is added again only after the next clear. stream set <s> --read-tier pro
+puts the reads of the stream's cards on pro, over the sprint's read tier (set
+--read-tier); a read tier raises a card's reads and never lowers them below the
+card's own tier, and default takes the stream's off.`) + "\n"
+}
+
+// cmdSet writes the sprint's settings (sprint.Set): its read tier, the tier every
+// card's reads are raised to, and its dealt bound, how long a work card may wait
+// dealt and never taken before it is a judgment (nova-tools#5096 items 22, 27).
+func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("set")
+	tier := fs.String("read-tier", "", "the tier every card's reads draw their route from when it is stronger than the card's own (flash or pro; default takes it off: each card's own tier)")
+	dealt := fs.String("dealt-max", "", fmt.Sprintf("how long a work card may wait dealt and never taken (in its member's ready queue, or withdrawn) before it is a judgment: a duration, or default (%s, 3 times the take deadline); a taken card's own deadline starts at its take", sprint.DealtMaxDefault))
+	pos, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "set", err.Error())
+	}
+	if len(pos) > 0 {
+		return refuse(stderr, "set", "takes no positional words (a stream's read tier: nova-sprint stream set <s> --read-tier <tier>)")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "set", err.Error())
+	}
+	return a.runStep("set", *c, st, store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, Who: c.actor}), stdout, stderr)
+}
+
+// cmdStreamSet writes the read tier of the streams named (sprint.Set), over the
+// sprint's.
+func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("stream set")
+	tier := fs.String("read-tier", "", "the tier the stream's reads draw their route from when it is stronger than the card's own (flash or pro; default takes it off: the sprint's)")
+	names, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "stream set", err.Error())
+	}
+	if len(names) == 0 || *tier == "" {
+		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|default>")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "stream set", err.Error())
+	}
+	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, Who: c.actor}), stdout, stderr)
 }
 
 // cmdStreamRemove takes the named streams off the work and merge tables (the

@@ -173,7 +173,7 @@ generation), dealt and taken (the clock times it was dealt and taken),
 first_dealt and first_taken (the attempt's first deal and first take, kept
 through every redeal and withdrawal), untaken_since (the first deal since its last take: a take unsets it, and
 no redeal or withdrawal rewrites it, so a member handed the card after
-someone else's take gets its own 15 minutes and a flapping member cannot
+someone else's take gets its own dealt bound and a flapping member cannot
 reset the clock), redeals (how many times this attempt's card was dealt
 again after a take of it ended without a finish, its member down or away
 while the card was working; a take never resets it; a card dealt and not
@@ -640,12 +640,18 @@ id (`--op`) returns the original result, with no second counter or notification.
   are up or no primary waits; `reader up` and `reader add` answer it.
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own. Each read card the ask creates carries a route as a work card does
-  (`route`, `model`, `tokens`, `deadline`), drawn from the tier of the card
-  it reads, the tier the deal draws that card's work from (line 1's tier,
-  flash when it names none, so a card that pins a model and names no tier is
-  read on flash; a frontier card, a tier no route serves, is read on pro; the
-  owner, 2026-10-01: "i think readers being conservatively the same tier as
-  the work being done seems fine?"), at that tier's rolling index on the
+  (`route`, `model`, `tokens`, `deadline`), and `tier`, the tier it is drawn
+  from: the tier of the card it reads, the tier the deal draws that card's
+  work from (line 1's tier, flash when it names none, so a card that pins a
+  model and names no tier is read on flash; a frontier card, a tier no route
+  serves, is read on pro; the owner, 2026-10-01: "i think readers being
+  conservatively the same tier as the work being done seems fine?"), raised
+  to the read tier set for its stream (`stream set <s> --read-tier <tier>`, the
+  stream's control card's `read_tier`) or else for the sprint (`set --read-tier
+  <tier>`, the work table's `read_tier` property) when that is stronger, and
+  never lowered (nova-tools#5096 item 27: a pro card's reads run on a tier at
+  least as strong as the writer's); its packet hands the reader that tier and
+  the reader's JOB.md names it. It is drawn at that tier's rolling index on the
   fleet table, which the deal and the reads share and the ask moves once a
   read (`internal/sprint/route.go`, readRouteOf;
   tla/RouteIndex.tla, THE READS); its packet hands the reader that route, so a
@@ -1146,6 +1152,8 @@ command that loads it.
 | reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
 | reader up | releases the hold; the reader's state is then its beat's |
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
+| stream set | `stream set <s>... --read-tier <flash|pro|default>`: the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`); `default` takes a stream's off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash or pro, or another actor |
+| set | `set [--read-tier <flash|pro|default>] [--dealt-max <duration|default>]`: the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered) and `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours); the coordinator's; refused whole, nothing written, for a tier that is not flash or pro, a bound that is not a duration above zero, nothing to set, or another actor; a clear starts the next epoch with neither |
 | stream remove | takes streams off the work and merge tables (the owner, 2026-10-01: "remove work streams a/b/c" / "you should have a verb to remove work streams" / "they should only succeed on a STOPPED sprint machine"): each stream's row of both tables, with the stream's control card, the one card `add` made for it, which the merge row's delete takes off the table (its record kept); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a stream that is no row of either table, named, and for a stream that holds a card (a primary or a sentinel placed in any column of its work row, landed included, or a merge card in its merge row), naming how many of each and the remedy (`nova-sprint clear --confirm sprint`, or `drop`); all or none for the streams named. A clear keeps the streams and does not bring a removed one back. The table layer never places a removed member again within an epoch, so `add --stream <s>` of a stream removed in this epoch is refused, naming the clear, and adds it fresh after the next clear (`sprint.StreamRemove`, `sprint.RemovedStream`) |
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
@@ -1343,15 +1351,24 @@ free for a primary, who has not already read its attempt;
 one condition per primary whatever its count of free readers),
 fewer than two readers up (the sprint's, one whatever the primaries waiting:
 the ask asks none while it stands, section 6),
-no fleet member is up, a work card past its deadline, by its state (not
-taken, ready or withdrawn again before a take: 15 minutes from untaken_since,
-the first deal since its last take; not finished, working or withdrawn from a
+no fleet member is up, a work card past its deadline, by its state (dealt,
+never taken, ready or withdrawn again before a take: the dealt bound from
+untaken_since, the first deal since its last take; a card's own deadline starts
+at its take, and a dealt card waiting in its member's ready queue is the
+machine's queue, not the card's fault (nova-tools#5096 item 22: nine judgments at
+once on a bench whose cards dealt ahead aged in ready); the dealt bound is the
+sprint's `set --dealt-max`, else 3 times the take deadline, 6 hours (a member
+holds at most 2 times its width, so a card at the back of its queue is taken
+within two take deadlines of a member that works); its judgment says
+`<card> dealt, never taken, at <member>:ready (dealt <time>, over the dealt bound
+<bound>)` and offers `fleet level`, `fleet down <member>` (when that member has had
+the whole bound itself) and `wait`; not finished, working or withdrawn from a
 take: 2 hours from the attempt's first take; no redeal or withdrawal rewrites
 either, and the time a card spends withdrawn counts; the no-stall rule holds a
 card to the same deadline; a lateness is one judgment per card and kind, and
 once raised it stays raised while its cause stands, whether or not the card is
 late at that moment: not finished until the attempt's work card is finished,
-reworked or dropped, not taken until it is taken, not begun until the read
+reworked or dropped, never taken until it is taken, not begun until the read
 begins, not reported until it reports; a redeal or a return to ready closes
 none of them; while raised it is updated in place with where the card is, each
 update a line of the log; no judgment is closed by a move that does not

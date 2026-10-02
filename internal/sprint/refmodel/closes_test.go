@@ -104,13 +104,13 @@ func TestDeadlinesCloseALatenessWhenTheCardIsTaken(t *testing.T) {
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
 	w.deal(t, "s1-1")
-	w.applyPart(t, "deadlines", 15*time.Minute+time.Second)
+	w.applyPart(t, "deadlines", sprint.DealtMaxDefault+time.Second)
 	ids := openIDs(w, sprint.NWorkLate)
 	require.Len(t, ids, 1, "the fixture: %d lateness judgments", len(ids))
 	// still late: the judgment stays, and the tick has nothing to write
-	expect(t, refmodel.DeadlineMoves(w.snapshot(nil), later(16*time.Minute)))
+	expect(t, refmodel.DeadlineMoves(w.snapshot(nil), later(sprint.DealtMaxDefault+time.Minute)))
 	w.take(t, "s1-1")
-	got := refmodel.DeadlineMoves(w.snapshot(nil), later(16*time.Minute))
+	got := refmodel.DeadlineMoves(w.snapshot(nil), later(sprint.DealtMaxDefault+time.Minute))
 	expect(t, got, "close a work card is past its deadline [s1-1]")
 	theClose(t, got, sprint.NWorkLate, ids[0], "s1-1")
 }

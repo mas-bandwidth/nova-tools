@@ -63,7 +63,8 @@ const (
 	RoutePin      = "pin"
 	// FieldTier is the primary's tier when the coordinator gave it one (rework --tier):
 	// every later deal and read of the card draws from it, over its brief's line 1
-	// (cardTier).
+	// (cardTier); on a read card, the tier its route was drawn from (readTierOf),
+	// which its packet hands the reader and its JOB.md names.
 	FieldTier = "tier"
 )
 
@@ -213,30 +214,36 @@ func cardTier(c *Card, m cardhdr.Model) string {
 // readTierOf is the tier a primary's reads are drawn from: the tier of the work
 // being read, as the deal draws it (cardTier; the owner, 2026-10-01: "i think
 // readers being conservatively the same tier as the work being done seems
-// fine?"). A card that pins a model and names no tier is read on flash; a
-// frontier card, a tier no route serves, is read on pro.
-func readTierOf(pr *Card) string {
+// fine?"), raised to the read tier set for its stream or the sprint when that is
+// stronger (settings.go; nova-tools#5096 item 27), never lowered. A card that pins
+// a model and names no tier is read on flash; a frontier card, a tier no route
+// serves, is read on pro.
+func (s *Snapshot) readTierOf(pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
-	if t := cardTier(pr, m); t != cardhdr.RouteFrontier {
-		return t
+	t := cardTier(pr, m)
+	if t == cardhdr.RouteFrontier {
+		t = cardhdr.RoutePro
 	}
-	return cardhdr.RoutePro
+	if set := s.readTierSetting(pr.Row); set != "" {
+		t = stronger(t, set)
+	}
+	return t
 }
 
 // readRouteOf is the route fields of one read card the ask creates for the
-// primary pr: the read is drawn as a work card is, from the array of pr's tier
-// (readTierOf) at that tier's rolling index, the index moved past the entry
+// primary pr: the read is drawn as a work card is, from the array of pr's read tier
+// (readTierOf, written on the read card as FieldTier) at that tier's rolling index, the index moved past the entry
 // taken and every entry skipped (an entry naming no enabled route), the moves
 // summed under pr's unit, so the deal and the reads of a tier share one
 // rotation (tla/RouteIndex.tla, THE READS). The routes avoid (those a read of
 // the primary returned on) are left out while another of the tier is served,
-// as a redeal leaves out the routes already taken. nil when the store holds no route or
-// none serves the tier: the read carries no route and its reader runs its own
-// --model.
+// as a redeal leaves out the routes already taken. The tier alone when the store holds
+// no route or none serves the tier: the read carries no route and its reader runs its
+// own --model.
 func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[string]string {
-	tier, key := readTierOf(pr), pr.ID
+	tier, key := s.readTierOf(pr), pr.ID
 	if len(s.Routes) == 0 || ri[tier] == nil {
-		return nil
+		return map[string]string{FieldTier: tier}
 	}
 	served := map[string]Route{}
 	for _, r := range s.Routes {
@@ -261,9 +268,9 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 		was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
 		ri[tier].moves[key] = strconv.FormatUint(was+i+1, 10)
 		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
-			FieldDeadline: strconv.Itoa(r.Deadline)}
+			FieldDeadline: strconv.Itoa(r.Deadline), FieldTier: tier}
 	}
-	return nil
+	return map[string]string{FieldTier: tier}
 }
 
 // readRouteMissing is the tier of the primary pr's reads (readTierOf), and why
@@ -272,7 +279,7 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 // the tier is in its array. The deal's tick raises the tier's judgment for the
 // reads waiting (TickDeal, NNoRoute), as it does for work cards.
 func (s *Snapshot) readRouteMissing(pr *Card) (tier, why string) {
-	tier = readTierOf(pr)
+	tier = s.readTierOf(pr)
 	if len(s.Routes) == 0 {
 		return tier, ""
 	}
