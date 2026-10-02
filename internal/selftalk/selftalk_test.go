@@ -194,17 +194,14 @@ func TestNoFalsePositivesOnOrdinaryProse(t *testing.T) {
 	}
 }
 
-// Flatten is exported and other text handling may lean on it: pin the two
-// behaviors the acceptance cases depend on — markup stripped, wraps
-// collapsed to single spaces.
+// Flattening is what Scan matches against: pin the two behaviors the
+// acceptance cases depend on — markup stripped, wraps collapsed to single
+// spaces.
 func TestFlatten(t *testing.T) {
 	t.Parallel()
 
-	in := "**bold** and a line\nthat wraps\t twice"
-	want := "bold and a line that wraps twice"
-	if got := Flatten(in); got != want {
-		t.Errorf("Flatten(%q) = %q, want %q", in, got, want)
-	}
+	got, _ := flattenWithLines("**bold** and a line\nthat wraps\t twice")
+	assert.Equal(t, "bold and a line that wraps twice", got)
 }
 
 // Base is what --skip matching is decided on; it must see through both

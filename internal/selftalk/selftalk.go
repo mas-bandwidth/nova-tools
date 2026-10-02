@@ -53,6 +53,7 @@ type Claim struct {
 	Line    int // first source line of the matched claim, before markdown flattening
 	Verdict Verdict
 	Text    string
+	Match   string // the negative words that made the sentence a claim
 }
 
 // claim matches a sentence carrying a first-person self/capability
@@ -68,8 +69,15 @@ var claim = regexp.MustCompile(`(?i)[^.!?]{0,120}\b(I am|I'm|I have never|I alwa
 // is deliberately narrow: widening it matches bare "cannot" and flags every
 // prohibition, and scoring prohibitions is exactly what got rules weakened.
 var negative = regexp.MustCompile(`(?i)\b(fallib\w*|fail\w*|unreliab\w*|weak\w*|incapab\w*|` +
-	`confabulat\w*|neurotic|inadequa\w*|broken|bad at|poor at|blind|worst|defect\w*|` +
-	`patholog\w*|flatters|cannot (?:verify|check|see|tell|trust|reliably|do))\b`)
+	`confabulat\w*|neurotic|inadequa\w*|broken|(?:bad|poor|terrible|awful|hopeless|useless|no good) at|` +
+	`blind|worst|defect\w*|patholog\w*|flatters|cannot (?:verify|check|see|tell|trust|reliably|do|ever))\b`)
+
+// standingRule is the first class's row of the detector table (Rules): the claim markers and
+// the negative vocabulary above are the whole of it.
+var standingRule = Rule{Class: "standing", Name: string(Standing), Pattern: negative.String(),
+	Says: "a first-person claim (I am, I cannot, I always, I never, my <noun> is, I tend, I fail ...) " +
+		"carrying a word of failure: fallible, weak, broken, bad at, terrible at, worst, cannot check, cannot ever ...",
+	Finds: "I am bad at estimating time.", Passes: "I cannot merge without a read."}
 
 // dated marks a claim as a record rather than a standing property.
 var dated = regexp.MustCompile(`(?i)\b(20\d\d-\d\d-\d\d|measured|that day|that night|once,|first time)\b`)
@@ -81,15 +89,6 @@ var markup = regexp.MustCompile("[*_`>#|]")
 // spans lines; without this the tool is blind to both regression cases that
 // occasioned it.
 var whitespace = regexp.MustCompile(`\s+`)
-
-// Flatten strips markdown and collapses all whitespace to single spaces.
-// Exported because a text check that matches against unflattened text is
-// blind to any claim spanning a hard wrap, and a shared implementation is
-// one true source for that fix.
-func Flatten(text string) string {
-	flat, _ := flattenWithLines(text) // ignored: the locations are for Scan; Flatten returns the text
-	return flat
-}
 
 // Scan classifies every negative self/capability claim in text.
 //
@@ -103,14 +102,15 @@ func Scan(text string) []Claim {
 	for _, span := range claim.FindAllStringIndex(flat, -1) {
 		m := flat[span[0]:span[1]]
 		s := strings.TrimSpace(m)
-		if !negative.MatchString(s) {
+		word := negative.FindString(s)
+		if word == "" {
 			continue
 		}
 		v := Standing
 		if dated.MatchString(s) {
 			v = Dated
 		}
-		out = append(out, Claim{Line: lines[span[0]+strings.Index(m, s)], Verdict: v, Text: s})
+		out = append(out, Claim{Line: lines[span[0]+strings.Index(m, s)], Verdict: v, Text: s, Match: word})
 	}
 	return out
 }
@@ -122,7 +122,8 @@ func Base(p string) string {
 	return path.Base(strings.ReplaceAll(p, `\`, "/"))
 }
 
-// flattenWithLines performs Flatten's byte transformations while retaining the
+// flattenWithLines strips markdown and collapses all whitespace to single
+// spaces, so a claim spanning a hard wrap is one sentence, while retaining the
 // original line for each output byte. Repeated sentences and hard wraps keep
 // their own locations; searching the original text for a flattened match cannot.
 //
