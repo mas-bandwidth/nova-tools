@@ -3646,12 +3646,12 @@ A bounded transaction, one note answered end to end:
 ```
 $ nova-bus draft --bus ~/bus --as Ada --reply-to bo-abcdef012345 \
     --body-file /tmp/reply.txt --draft-dir ~/scratch --remote origin --branch main
-DRAFT OK path=/home/ada/scratch/…T0910Z-re-bo-abcdef012345.md re=bo-abcdef012345 \
+DRAFT OK path=/home/ada/scratch/2026-09-15T0910Z-re-bo-abcdef012345.md re=bo-abcdef012345 \
   from=Ada to=Bo cc=- at=9f31c2b8d40e7c6a5b4938271605f4e3d2c1b0a moved=true bytes=412
-$ nova-bus prepare --bus ~/bus --as Ada --file /home/ada/scratch/…T0910Z-re-bo-abcdef012345.md
-{"schema":"nova.bus.prepared/1","id":"ada-3f9a1c2b8d40","path":"from-ada/…T0910Z-re-3f9a1c2b8d40.md","note":"<…>","sha256":"<64 hex>"}
+$ nova-bus prepare --bus ~/bus --as Ada --file /home/ada/scratch/2026-09-15T0910Z-re-bo-abcdef012345.md
+{"schema":"nova.bus.prepared/1","id":"ada-3f9a1c2b8d40","path":"from-ada/2026-09-15T0910Z-re-3f9a1c2b8d40.md","note":"<…>","sha256":"<64 hex>"}
 $ nova-bus send --bus ~/bus --as Ada --prepared /tmp/ada-3f9a1c2b8d40.json --remote origin --branch main
-SEND OK id=ada-3f9a1c2b8d40 path=from-ada/…T0910Z-re-3f9a1c2b8d40.md \
+SEND OK id=ada-3f9a1c2b8d40 path=from-ada/2026-09-15T0910Z-re-3f9a1c2b8d40.md \
   commit=7d1e0c2b8d40e7c6a5b4938271605f4e3d2c1b0a pushed=true attempts=1 state=published
 ```
 
@@ -3660,7 +3660,7 @@ second note:
 
 ```
 $ nova-bus send --bus ~/bus --as Ada --prepared /tmp/ada-3f9a1c2b8d40.json --remote origin --branch main
-SEND OK id=ada-3f9a1c2b8d40 path=from-ada/…T0910Z-re-3f9a1c2b8d40.md \
+SEND OK id=ada-3f9a1c2b8d40 path=from-ada/2026-09-15T0910Z-re-3f9a1c2b8d40.md \
   commit=7d1e0c2b8d40e7c6a5b4938271605f4e3d2c1b0a pushed=true attempts=0 state=already-published
 ```
 
