@@ -51,7 +51,7 @@ func TestPlaceDryRunPrintsThePlanAndWritesNothing(t *testing.T) {
 		t.Fatalf("want 4 lines (path, ssh, receipt, DRY-RUN OK), got %d:\n%s", len(lines), stdout)
 	}
 	for i, prefix := range []string{
-		"SECRETS PLACE PLAN machine=mini secret=DEEPSEEK_API_KEY path=" + f.remotePath + " mode=0600 sha256=",
+		"SECRETS PLACE PLAN machine=mini secret=DEEPSEEK_API_KEY path=" + f.remotePath + " mode=0600 file=rowan.yaml head=- blob=",
 		"SECRETS PLACE PLAN ssh=" + f.ssh + " target=mini.example writes=" + f.remotePath,
 		"SECRETS PLACE PLAN receipt=" + filepath.Join(f.receipts, "mini.receipt") + " action=add",
 		"SECRETS PLACE DRY-RUN OK machine=mini secret=DEEPSEEK_API_KEY nothing written, no ssh run",
@@ -60,15 +60,15 @@ func TestPlaceDryRunPrintsThePlanAndWritesNothing(t *testing.T) {
 			t.Errorf("line %d:\n got %s\nwant prefix %s", i, lines[i], prefix)
 		}
 	}
-	plannedHash := fieldOf(t, lines[0], "sha256")
+	plannedBlob := fieldOf(t, lines[0], "blob")
 
-	// The real run does what was planned: the same path, the same hash.
+	// The real run does what was planned: the same path, the same sealed file.
 	stdout, stderr, code = runNovaSecrets(f.bin, f.placeArgs("mini", "DEEPSEEK_API_KEY", f.remotePath)...)
 	if code != 0 {
 		t.Fatalf("place exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
-	if got := fieldOf(t, stdout, "sha256"); got != plannedHash {
-		t.Errorf("the real run wrote sha256=%s, the plan said %s", got, plannedHash)
+	if got := fieldOf(t, stdout, "blob"); got != plannedBlob {
+		t.Errorf("the real run wrote blob=%s, the plan said %s", got, plannedBlob)
 	}
 	if got := fieldOf(t, stdout, "path"); got != f.remotePath {
 		t.Errorf("the real run wrote path=%s, the plan said %s", got, f.remotePath)
@@ -84,7 +84,7 @@ func TestPlaceDryRunPrintsThePlanAndWritesNothing(t *testing.T) {
 		t.Fatalf("second place --dry-run exit=%d stderr=%q", code, stderr)
 	}
 	if !strings.Contains(again, "action=unchanged") {
-		t.Errorf("a secret already placed with this hash is not reported as unchanged:\n%s", again)
+		t.Errorf("a secret already placed from this sealed file is not reported as unchanged:\n%s", again)
 	}
 	receipt, err := os.ReadFile(filepath.Join(f.receipts, "mini.receipt"))
 	if err != nil {
