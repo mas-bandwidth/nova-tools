@@ -1,5 +1,5 @@
 // Package seatcred resolves a seat's fleet Redis user and password in the
-// process that needs them (nova-tools#4052). nova-sprint, nova-card,
+// process that needs them. nova-sprint, nova-card,
 // nova-swarm and nova-wake take `--seat <name>` (or NOVA_SEAT) and read the
 // seat's file through internal/secrets -- the same store, key and sops, and
 // the same checks, `nova-secrets exec` uses -- so no shell wrapper stands
@@ -60,7 +60,7 @@ type Cred struct {
 	// GitHubKey is the key of the seat's file its seats.tsv row names for the
 	// GitHub token (the seventh column), "" when the row names none. GitHub
 	// is the token when the file holds it; GitHubErr says why not when it
-	// does not (nova-tools#4330).
+	// does not.
 	GitHubKey string
 	GitHub    secrets.Secret
 	GitHubErr error
@@ -132,7 +132,7 @@ func Resolve(seat string, getenv func(string) string) (Cred, error) {
 
 // Selection is a seat choice: Select records it, Active resolves it once.
 // The process has one (Process), which the package functions act on; a test
-// holds its own so it runs in parallel with every other (nova-tools#4330).
+// holds its own so it runs in parallel with every other.
 type Selection struct {
 	mu       sync.Mutex
 	selected string
@@ -188,7 +188,7 @@ func (s *Selection) Select(seat string) { s.SelectWith(seat, "", nil) }
 
 // SelectWith is Select with the seat's Redis address (Addr, "" when the seat
 // names none) and the resolution Active runs on first use: resolve (a seat
-// profile row, nova-tools#4330) instead of Resolve's default layout. A nil
+// profile row) instead of Resolve's default layout. A nil
 // resolve is Resolve.
 func (s *Selection) SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
 	s.mu.Lock()
