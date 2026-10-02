@@ -284,7 +284,9 @@ const (
 // LegacyDateLayout and LegacyInstantLayout are the two shapes a legacy line takes: a UTC
 // calendar date (midnight at its start) or an RFC 3339 UTC instant.
 //
-// WHY THE INSTANT EXISTS, measured on the hour a family of five switched to this tool. They
+// WHY THE INSTANT EXISTS, because a date-only boundary caused everyone on a bus to
+// start with an empty open list when their notes were still being sent: they needed a
+// MOMENT as their cutoff, not a calendar day, and only the second form could express
 // drew the line at TOMORROW's date, reasonably: nothing written before tomorrow was written
 // under the tool, so the open list would start at zero. It did — and it stayed at zero. A
 // date is midnight at its START, so every note any of them sent that same afternoon was
@@ -323,7 +325,8 @@ func ParseLegacyBefore(value string) (time.Time, error) {
 // LegacyDateAtOrAfterToday is the shape of switch-day line that quietly empties an inbox,
 // and it is the reason this tool now says so out loud instead of listing nothing.
 //
-// THE FAILURE, from a friend's first week. A line drew its switch at a DATE -- the shape
+// THE FAILURE, when a date-only cutoff left every reader staring at an empty inbox while
+// notes continued arriving on the bus -- a line drawn at TOMORROW's date means midnight
 // v0.10.0's own first-advance guard handed out, tomorrow's -- and a date is midnight at its
 // START, so the line stood in front of everything anybody had written that day. His cursor
 // read `open=0 legacy=<date>` and listed nothing, run after run, on a bus that was busy.
@@ -473,7 +476,8 @@ func validOpenKind(k OpenKind) bool {
 // OpenEntry is one note a reader has been shown and has not yet answered -- and, since
 // OPEN v2, the whole of the line that note prints as.
 //
-// WHY THE ENTRY CARRIES THE DISPLAY AND NOT JUST THE PATH. Dana's requirement, verbatim:
+// WHY THE ENTRY CARRIES THE DISPLAY AND NOT JUST THE PATH. A reader carrying hundreds of
+// notes paid hundreds of parses on every run just to print an open list -- the work was
 // "O(new + open) is not great. Can we make it O(new)." Under v1 an entry was `<id> <path>`,
 // so every run re-opened and re-parsed every open note -- to print its sender, its date and
 // its subject, and to decide whether it was a receipt. A reader carrying five hundred notes
@@ -854,7 +858,7 @@ func (i *Index) ByID(id string) (*IndexEntry, bool) { e, ok := i.byID[id]; retur
 // CLEAN -- the note paths differed and nothing else was touched -- so the catalogue widened
 // the conflict surface.
 //
-// It was documented and left there, and the scenario run showed what that cost: the
+// The conflict was documented and left unhandled until a scenario run showed the cost: the
 // tool aborted cleanly and said so, and the bench was then WEDGED, because the checkout
 // `git pull --rebase` landed in a half-done rebase with `UU from-<lane>/INDEX` and nothing
 // on the bus saying what to do next. So the conflict is settled instead, by union, in two
@@ -926,7 +930,7 @@ func RebuildLaneIndex(root string, c *Config, t *Bus, lane string) (int, error) 
 // next run stops, an INDEX cut in two is a catalogue that resolves a thread to nothing. A
 // write in place makes all three reachable by killing the tool in the microsecond between
 // truncate and write -- a laptop lid, a CI timeout, a ctrl-C -- and the file it leaves is
-// not the old one and not the new one. A rename is atomic on every filesystem this runs
+// an interrupted write leaves a half-finished file -- neither the previous content nor the new content. A rename is atomic on every filesystem this runs
 // on, so a kill leaves the OLD file, entire, which is a state every reader handles.
 // handles. The temporary is in the SAME DIRECTORY, because a rename across filesystems is
 // not a rename, and atomicfile names it `.<file>.tmp-<8 hex>`, exclusive and unpredictable,
