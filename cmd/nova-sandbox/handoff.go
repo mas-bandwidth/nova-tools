@@ -19,7 +19,7 @@ package main
 //     (RESULT.md), its token row (usage.tsv) and its git bundle (repo.bundle);
 //     `--artifact <relpath>` names another, repeatable. A default that is not
 //     there is skipped; an artifact the CALLER named and is not there is a
-//     refusal (the run verb's rule 5, the same way --read refuses a path the
+//     refusal (the run verb's rule 5; --read also refuses a path the
 //     caller named).
 //   - Every source is reached by descriptor from the card's working directory:
 //     openat with O_NOFOLLOW on each path component, O_NONBLOCK so a FIFO cannot

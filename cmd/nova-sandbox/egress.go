@@ -394,7 +394,7 @@ func needNft(stderr io.Writer) int {
 	return 0
 }
 
-// noNftBody is rule 1's shape for these two verbs, with the platform NAMED so a test on any
+// noNftBody implements rule 1 for these two verbs, naming the platform so a test on any
 // host can ask what the tool says on Linux. apply and drop are nftables', and nftables is
 // linux's; on darwin the card's outbound wall is the seatbelt profile this binary already
 // generates, and saying so is better than a wall nobody applied.
