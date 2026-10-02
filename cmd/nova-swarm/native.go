@@ -737,8 +737,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// STAGE OK (issue #3050): staging returned silently, so the batch launcher
 	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
 	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
-	fmt.Fprintf(os.Stdout, "STAGE OK bench=%s repo=%s base=%s secs=%.0f\n",
-		oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), stageRes.Wall.Seconds())
+	writeStageOK(os.Stdout, bench, stageRes)
 
 	// (4f) THE FRAME (docs/SPEC-CARD-CONTRACT.md layers 2 and 3). A framed launch whose
 	// checkout is staged gets JOB.md in the job directory and its family's shims first on
@@ -747,7 +746,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// A frame that cannot be installed refuses the launch: a child outside its frame is the
 	// defect the frame closes.
 	if cfg.frame != nil && stageRes.Staged {
-		if err := installFrame(cfg, jobDir, stageRes.BaseSha); err != nil {
+		if err := installFrameTimed(cfg, jobDir, stageRes.BaseSha, os.Stdout); err != nil {
 			refuseNative(errOut, fmt.Sprintf("%s the card's frame could not be installed: %s", oneline.Field(cfg.label), oneline.Err(err)))
 			return nativeRunResult{}, 2
 		}
@@ -2283,6 +2282,24 @@ func nativePrompt(cfg nativeRunConfig) string {
 		return swarm.CardPrompt(cfg.card)
 	}
 	return cardcontract.Prompt(filepath.Join(cfg.slotDir, "jobs", cfg.label), swarm.CardPrompt(cfg.card))
+}
+
+// writeStageOK names the command phases of staging (docs/SPEC-CARD-CONTRACT.md,
+// staging), while preserving the readiness line before the frame is installed.
+func writeStageOK(w io.Writer, bench string, st swarm.StageResult) {
+	fmt.Fprintf(w, "STAGE OK bench=%s repo=%s base=%s secs=%.0f clone=%.1f fetch=%.1f checkout=%.1f\n",
+		oneline.Field(bench), oneline.Field(st.BaseRepo), oneline.Field(swarm.Version8(st.BaseSha)), st.Wall.Seconds(), st.Clone.Seconds(), st.Fetch.Seconds(), st.Checkout.Seconds())
+}
+
+// installFrameTimed reports the whole successful frame installation, including
+// recipes and shims, separately from staging (docs/SPEC-CARD-CONTRACT.md, staging).
+func installFrameTimed(cfg nativeRunConfig, jobDir, head string, w io.Writer) error {
+	started := time.Now()
+	if err := installFrame(cfg, jobDir, head); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "FRAME OK secs=%.1f\n", time.Since(started).Seconds())
+	return nil
 }
 
 // installFrame records the staged commit in the slot and writes a framed launch's JOB.md

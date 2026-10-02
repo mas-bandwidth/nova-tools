@@ -22,6 +22,11 @@ and opens the pull request). The model is `tla/CardContract.tla`.
 | 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule`, `TestJudgeNamesTheProviderForARunItFailed` and the push tests of `internal/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
 | 5. end to end | a scripted child (clone, branch, commit, push, `gh pr create`) runs under the real member and native on the mem twin with a local bare origin, once per profile | `TestTheScriptedChildEndToEnd` (functional tier) |
 
+`STAGE OK` reports total staging `secs` and cumulative Git command seconds for `clone`
+(including its initial checkout), `fetch` (excluding probes and retry waits), and `checkout`;
+`FRAME OK secs` reports the whole successful frame installation separately, including recipes,
+shims and the read base refresh.
+
 ## 2. The frame and JOB.md
 
 `JOB.md` is the first thing the child reads: the harness prompt begins `Read <job>/JOB.md
