@@ -36,8 +36,8 @@ import (
 //	               Class 11: 27 cards died at 1526 s against a 1500 s DEADLINE.
 //	donewhen-test-name  DONE-WHEN names a test runner and a literal test that is
 //	               absent at base-sha, so it can be red there. 321 of 543 post-tune
-//	               ledger rows read `donewhen missing`: the
-//	               card never named a control a test could fail. "applied cleanly" and
+//	               ledger rows read `donewhen missing`: the card never named a
+//	               control a test could fail. "applied cleanly" and
 //	               "make preflight" are English outcomes, not controls.
 //
 // NO EVIDENCE IS NOT NEGATIVE EVIDENCE. A check whose evidence was not handed over
