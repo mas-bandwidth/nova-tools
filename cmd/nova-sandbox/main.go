@@ -250,9 +250,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 			return sandbox.ExitCannotRun
 		}
 		// The same four tokens every other binary prints, then the two facts a
-		// sandbox is judged by as named extras. A shape of its own — `SANDBOX VERSION
-		// tool=... version=...` — is a shape every reader has to be taught, so the
-		// backend and the platform are said in the grammar the whole set shares.
+		// The sandbox version line keeps the common four tokens and adds backend and
+		// platform as named facts, so readers can use the shared output grammar.
 		fmt.Fprintln(stdout, buildinfo.Line("nova-sandbox", version,
 			"backend="+sandbox.Backend, "platform="+runtime.GOOS))
 		return 0
