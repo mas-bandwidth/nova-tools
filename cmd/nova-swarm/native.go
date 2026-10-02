@@ -236,7 +236,7 @@ var (
 )
 
 // nativeEndLeftovers ends what a harness that exited on its own left in its process
-// group (docs/SPEC-CARD-CONTRACT.md, the finish; docs/SPEC-SWARM.md, `native` and rule 9): a
+// group (docs/SPEC-CARD-CONTRACT.md, the finish; docs/SPEC-SWARM.md, `native`): a
 // grandchild that kept running (a language server, a watcher, a shell's `&`) holds the
 // harness's pipes and outlives the card. The harness leads its own group from its start
 // (ownChildGroup), so the group is signalled whole: a terminate, swarm.TerminateGrace, then
