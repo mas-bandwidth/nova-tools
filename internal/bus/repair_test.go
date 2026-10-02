@@ -506,7 +506,7 @@ func TestReadProcViewRecordsTheOwner(t *testing.T) {
 	}
 
 	v := readProcView("18772", fake(502, true, nil, "git\x00status", denied))
-	require.True(t, v.ownerKnown, "another account's entry: %+v, want owner and account 502 and comm, cmdline and cwd read", v)
+	require.False(t, !v.ownerKnown || v.owner != 502 || !v.accountKnown || v.account != 502 || strings.TrimSpace(v.comm) != "git" || v.cwdErr == nil, "another account's entry: %+v, want owner and account 502 and comm, cmdline and cwd read", v)
 	require.True(t, v.owner == 502, "another account's entry: %+v, want owner and account 502 and comm, cmdline and cwd read", v)
 	require.True(t, v.accountKnown, "another account's entry: %+v, want owner and account 502 and comm, cmdline and cwd read", v)
 	require.True(t, v.account == 502, "another account's entry: %+v, want owner and account 502 and comm, cmdline and cwd read", v)
