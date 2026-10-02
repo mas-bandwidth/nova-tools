@@ -117,6 +117,11 @@ const (
 	MaxReadReasks = 2
 )
 
+// FieldLeveled marks a read card the level asked by moving a read: the level
+// moves it no more (the owner, 2026-10-01: "We can't get stuck on the last
+// card.").
+const FieldLeveled = "leveled"
+
 // liveReadsAt is the primary's placed read cards at an attempt less the reads
 // the ask takes back or places again: the reads that stand.
 func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
@@ -196,11 +201,11 @@ func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
 // with two different readers, and no reader is asked an attempt it already
 // read. The move retires the read card (retired_by level: the reader it left
 // is never asked that attempt again) and asks the read of the other reader
-// at the same attempt and head, its route kept, in the readers table only. A
-// read is moved at most once (levelled), so a late read is not asked afresh
-// on reader after reader. A read begun stays with its reader; a reader that
-// is not up is neither a source nor a target: sweepReads takes its reads back
-// first.
+// at the same attempt and head, its route kept, in the readers table only,
+// marked leveled: a read is moved at most once, so a late read is not asked
+// afresh on reader after reader. A read begun stays with its reader; a
+// reader that is not up is neither a source nor a target: sweepReads takes
+// its reads back first.
 //
 // The sprint knows no reader's width: a reader loop's --width is the loop's
 // own, and the readers table has no width column, so every reader up counts
@@ -213,9 +218,9 @@ func levelReads(s *Snapshot, p *Plan) {
 	}
 	held, queues, room := map[string]int{}, map[string][]*Card{}, map[string]int{}
 	for _, rd := range up {
-		held[rd] = readerLoad(s, rd)
+		held[rd] = s.Readers.Count(rd, Asked) + s.Readers.Count(rd, Reading)
 		for _, c := range s.Readers.Cell(rd, Asked) {
-			if !levelled(s, c) {
+			if c.F(FieldLeveled) == "" {
 				queues[rd] = append(queues[rd], c)
 			}
 		}
@@ -267,29 +272,9 @@ func levelReads(s *Snapshot, p *Plan) {
 	roundWrites(p, rr, moves)
 }
 
-// levelled says the read card is one a level move asked: a card of its
-// primary's attempt was retired by the level as it was asked (the move retires
-// one and asks the other in one unit, at one stamp). The level moves it no
-// more (the owner, 2026-10-01: "We can't get stuck on the last card.").
-func levelled(s *Snapshot, c *Card) bool {
-	for _, rd := range s.Readers.Rows() {
-		x := s.Readers.Card(ReadCardID(c.F("primary"), c.Int("attempt"), rd))
-		if x != nil && x.F("retired_by") == RetiredByLevel && x.F("retired") == c.F("asked") {
-			return true
-		}
-	}
-	return false
-}
-
-// readerLoad is a reader's load as the level counts it: its reads asked and
-// reading together.
-func readerLoad(s *Snapshot, rd string) int {
-	return s.Readers.Count(rd, Asked) + s.Readers.Count(rd, Reading)
-}
-
 // movedReadFields is the fields of the card a read moved by the level is asked
 // on: the read's own (its primary, stream, attempt, head and route) for the
-// reader it goes to, asked now, and none of its run on the reader it left: not
+// reader it goes to, asked now, marked leveled, and none of its run on the reader it left: not
 // returned, not reasked (the new reader's bound starts at zero), no
 // read_take_<n> and no usage. The card it leaves is retired with every field it
 // had, and a returned run's cost is the primary's (cost_record:<card>#r<n>,
@@ -303,6 +288,6 @@ func movedReadFields(c *Card, to string, now time.Time) map[string]string {
 		}
 		fields[k] = v
 	}
-	fields["reader"], fields["asked"] = to, stamp(now)
+	fields["reader"], fields["asked"], fields[FieldLeveled] = to, stamp(now), "1"
 	return fields
 }

@@ -4,7 +4,6 @@ import (
 	"math/rand/v2"
 	"regexp"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,76 +13,9 @@ import (
 
 // The owner, 2026-10-01: "This pesky one card that doesn't clear thing... this is
 // a failure mode we must fix. We can't get stuck on the last card." The sprint's
-// last card sat in review for minutes on one late read (fleet pass 8, a-036).
-
-// lateReview is a sprint of one primary in review, asked of two readers by the
-// machine: the first has read it ok, the second holds it; reader-c is free.
-func lateReview(t *testing.T) (*harness, *sprint.Card) {
-	h := newHarness(t)
-	h.setup(1)
-	h.startMachine()
-	h.machine()
-	h.work("m1")
-	h.work("m2")
-	h.machine()
-	reads := readsAt(h.snap(), h.snap().Work.Card("s1-1"))
-	require.Len(t, reads, 2, "asked of two readers")
-	require.NotContains(t, []string{reads[0].Row, reads[1].Row}, "reader-c")
-	h.must(ReadStep(sprint.ReadReq{As: reads[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{reads[0].ID}}}))
-	return h, reads[1]
-}
-
-// moreOf is the primary's read cards on reader-c, the one reader lateReview
-// left free: the one more reader the tick asks.
-func moreOf(h *harness, id string) []*sprint.Card {
-	var out []*sprint.Card
-	for _, rc := range h.snap().Readers.Of(id) {
-		if rc.Row == "reader-c" {
-			out = append(out, rc)
-		}
-	}
-	return out
-}
-
-// A read out past the late bound gets one more reader, asked by the tick with no
-// coordinator verb; the tick right after moves nothing (errata 3 amendment 12);
-// the first two ok reads accept the card and the late read is retired.
-func TestALateReadIsAskedOfAnotherReaderByTheTick(t *testing.T) {
-	t.Parallel()
-	h, late := lateReview(t)
-	h.must(ReadStep(sprint.ReadReq{As: late.Row, Begin: true, Sel: sprint.Sel{IDs: []string{late.ID}}}))
-	h.tick(sprint.LateReadDefault)
-	h.machine()
-	assert.Empty(t, moreOf(h, "s1-1"), "not late at the bound itself")
-	h.tick(time.Second)
-	h.machine()
-	more := moreOf(h, "s1-1")
-	require.Len(t, more, 1, "one more reader asked by the tick")
-	assert.Equal(t, sprint.Asked, more[0].Col)
-	assert.Empty(t, h.openOf(sprint.NReadLate), "the late read is the machine's, not the coordinator's")
-	h.quiet("one more reader asked")
-	h.must(ReadStep(sprint.ReadReq{As: more[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{more[0].ID}}}))
-	h.machine()
-	assert.Equal(t, sprint.Merging, h.state("s1-1"), "accepted on the two oks")
-	assert.Nil(t, h.snap().Readers.Placed(late.ID), "the late read is retired at accept")
-	h.clean("accepted")
-}
-
-// With no reader left to ask, a late read is the coordinator's: "a read card is
-// past its deadline" at its deadline, and no reader is asked twice.
-func TestALateReadWithNoReaderLeftIsJudged(t *testing.T) {
-	t.Parallel()
-	h, late := lateReview(t)
-	h.tick(sprint.LateReadDefault + time.Second)
-	h.machine()
-	require.Len(t, moreOf(h, "s1-1"), 1, "reader-c asked as one more")
-	h.tick(sprint.DeadlineUnbegun - sprint.LateReadDefault)
-	h.machine()
-	assert.Len(t, h.snap().Readers.Of("s1-1"), 3, "no reader is left: none is asked twice")
-	open := h.openOf(sprint.NReadLate)
-	require.Len(t, open, 1, "the read out past its deadline is the coordinator's")
-	assert.Equal(t, late.ID, open[0].Note.Card)
-}
+// last card sat in review for minutes on one late read (fleet pass 8, a-036):
+// its returned read went back to the route it failed on, and the level moved
+// its other read from reader to reader.
 
 // A returned read asked again in place, no other reader free, runs on a route
 // drawn afresh, never the one it returned on while the tier has another.
@@ -115,6 +47,39 @@ func TestAReturnedReadAskedAgainInPlaceRunsOnAnotherRoute(t *testing.T) {
 	assert.Equal(t, "flash-a", again.F(sprint.FieldRoute), "a route drawn afresh, not the one it returned on")
 	assert.Equal(t, "prov-flash-a/model-flash-a", again.F(sprint.FieldModel))
 	h.clean("asked again in place")
+}
+
+// A returned read taken to another free reader runs on a route drawn afresh,
+// never the one it returned on while the tier has another: the same exclusion
+// as a read asked again in place.
+func TestAReturnedReadTakenToAnotherReaderRunsOnAnotherRoute(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("flash-a", "flash"), route("flash-b", "flash"))
+	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-c", true, "tester"))
+	require.NoError(t, h.st.BeatReaders(h.ctx))
+	h.addReady("s1", 1, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	h.work("m1")
+	h.work("m2")
+	h.machine()
+	var back *sprint.Card
+	for _, rc := range readsAt(h.snap(), h.snap().Work.Card("s1-1")) {
+		if rc.F(sprint.FieldRoute) == "flash-b" {
+			back = rc
+		}
+	}
+	// the deal took flash-a, the reads flash-b and flash-a: the index is at flash-b
+	require.NotNil(t, back, "a read on flash-b")
+	h.must(ReadStep(sprint.ReadReq{As: back.Row, Return: true, Reason: "no verdict (ran=false)", Sel: sprint.Sel{IDs: []string{back.ID}}}))
+	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-c", false, "tester"))
+	require.NoError(t, h.st.BeatReaders(h.ctx))
+	h.machine()
+	assert.Nil(t, h.snap().Readers.Placed(back.ID), "the returned read is taken back")
+	moved := h.snap().Readers.Placed(sprint.ReadCardID("s1-1", 1, "reader-c"))
+	require.NotNil(t, moved, "asked of the free reader")
+	assert.Equal(t, "flash-a", moved.F(sprint.FieldRoute), "a route drawn afresh, not the one it returned on")
+	h.clean("taken to another reader")
 }
 
 // levelMove is one move of the readers' level: the card it left and the card

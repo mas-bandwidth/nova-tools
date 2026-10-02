@@ -113,6 +113,11 @@ func readsWorld(t *testing.T, primaries int) *world {
 	return w
 }
 
+// readerLoad is a reader's reads asked and reading.
+func readerLoad(s *Snapshot, r string) int {
+	return s.Readers.Count(r, Asked) + s.Readers.Count(r, Reading)
+}
+
 // Three readers hold every asked read beside five idle ones: one rebalance
 // evens the loads, each primary's reads stay on two different readers, and no
 // reader holds a read of an attempt it already had.
