@@ -26,12 +26,12 @@ Landlock on Linux; other platforms refuse to run the command.
 |---|---|
 | a worker with the bench's credentials can read `~/.ssh`, the `gh` config, the keychain and the shell history | rules 3, 4 |
 | shared inputs get read **and write** reach because there is only one list | rules 3, 4 |
-| forcing a dedicated OS user per line is an administrative burden nobody will carry |
+| forcing a dedicated OS user per line is an administrative burden nobody will carry | rule 2 |
 | a sandbox that silently does nothing on a platform it does not support | rules 1, 11 |
 | a credential file readable inside the wall | rules 6, 10 |
-| `/tmp` on macOS is a symlink to `/private/tmp`, and a policy written against the unresolved path grants nothing |
+| `/tmp` on macOS is a symlink to `/private/tmp`, and a policy written against the unresolved path grants nothing | rule 5 |
 | a deny-by-default policy makes the inherited temp directory unwritable and half a toolchain dies on its first scratch file | the tool creates its own temp directory under the **first** `--write` |
-| The harness's `external_directory` is relative to the harness cwd, so a job directory that is not the cwd is "external" to itself |
+| The harness's `external_directory` is relative to the harness cwd, so a job directory that is not the cwd is "external" to itself | rule 13 |
 | 120 native cards each download the Go toolchain and every module into their own data home, up to 5 GB per slot, and the runners fill their disk | an explicitly named shared cache directory in the write set |
 | the wall stands and the job's first `git status` dies on `~/.gitconfig`, which reads as a broken sandbox | the caller sets `HOME` to the per-job data home, and a `HOME` outside both lists is a refusal |
 
@@ -45,7 +45,7 @@ The test requirements are listed under **Tests this spec demands**.
    `sandbox-exec` on `darwin` and Landlock on `linux`. On both, the tool
    waits and returns the command's status. On `linux` it restricts **itself**
    first and starts the command afterwards, so the tool is inside the wall it
-    applied while it waits, as the Linux section describes. If the platform's backend is not available at run time — no
+   applied while it waits, as the Linux section describes. If the platform's backend is not available at run time — no
    Landlock in the running kernel, no `sandbox-exec` on `PATH` and none at
    `/usr/bin/sandbox-exec`, or a platform without an implemented backend — the tool prints `SANDBOX REFUSED
    reason=no_sandbox` and **the command does not run**. A backend that is
@@ -1275,7 +1275,7 @@ stat `Info.plist` and load `SharedFrameworks` next to it — Developer alone is
 usual caller path; the shim no longer needs `--read /private/var/db`.
 
 There is no `--root` flag. A toolchain installed into a user directory — Go
-under `~/go`, node under `~/.nvm`, .NET under `~/.local`, any IDE's
+under `~/go`, node under `~/.nvm`, .NET under `~/.local`, a machine's
 `/Users/<user>/toolchains` — is named with `--read`, which is exactly a
 caller-supplied read-only root and needs no second spelling. On Windows,
 `--read` is what makes the tool add a read-only ACE for the container SID. A
@@ -1415,8 +1415,8 @@ write outside every named path, a read of the named secret file, a listing of
 an ancestor, and a connect to a unix-domain socket outside the write set —
 **each with a control run outside the wall**, so that no denial can pass by
 being impossible. It also asserts that a unix-domain socket **outside** the
-write set cannot be connected to while the job's own socket **inside** it can
-, and that the child environment holds none of the dropped set while
+write set cannot be connected to while the job's own socket **inside** it can,
+and that the child environment holds none of the dropped set while
 a caller variable beside them survives. One line per check,
 `CHECK OK name=...` / `CHECK FAIL name=...`, exit 1 on any FAIL. **The count is
 the check's own** and no number is stated here: a document that named one would
@@ -1650,8 +1650,8 @@ check runs before the policy is built, so a probe run with the dispatcher's own
 `HOME` — which is outside every `--write` by construction — is
 `PROBE REFUSED reason=check ... home_outside` and every swarm pass would refuse
 with it. A caller that runs the probe runs it with the job's data home. A caller
-whose key is delivered by `nova-secrets exec` names **no `--secret`** (issue
-aside): the key is never a file, so there is no secret file to prove unreadable,
+whose key is delivered by `nova-secrets exec` names **no `--secret`**: the
+key is never a file, so there is no secret file to prove unreadable,
 and the probe runs the other four checks.
 
 Five checks, under the real policy for this platform, each one line — the five
@@ -1992,7 +1992,7 @@ One per rule:
    tripwire on the exec path seeing no call — the mirror of the forced-down
    `net_unenforceable` case above, and the only thing that makes
    `landlock_abi_unknown` more than a word in the exit table. The
-   `no_sandbox` refusal gets the linux test the ABI refusal stands in
+   `no_sandbox` refusal has its own linux test, where the ABI refusal once stood in
    for, through the same seam and with the same tripwire. End to end on a real
    kernel, a walled run on a machine whose ABI is above the table **runs and
    exits 0** and its line carries `used=`; on a machine at or below the table
