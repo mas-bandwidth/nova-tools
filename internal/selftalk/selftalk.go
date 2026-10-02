@@ -87,7 +87,8 @@ var whitespace = regexp.MustCompile(`\s+`)
 // blind to any claim spanning a hard wrap, and a shared implementation is
 // one true source for that fix.
 func Flatten(text string) string {
-	return strings.TrimSpace(whitespace.ReplaceAllString(markup.ReplaceAllString(text, ""), " "))
+	flat, _ := flattenWithLines(text) // ignored: the locations are for Scan; Flatten returns the text
+	return flat
 }
 
 // Scan classifies every negative self/capability claim in text.
@@ -124,28 +125,47 @@ func Base(p string) string {
 // flattenWithLines performs Flatten's byte transformations while retaining the
 // original line for each output byte. Repeated sentences and hard wraps keep
 // their own locations; searching the original text for a flattened match cannot.
+//
+// A HEADING AND A BLANK LINE END A SENTENCE. A hard wrap joins two lines of one
+// sentence, but the line break on either side of a heading or a blank line is a
+// boundary the writer drew: joining across it glued "# Journal" onto the claim
+// under it and reported the claim on the heading's line. A '.' is inserted at
+// that break, so the claim pattern, which stops at a terminator, starts after it.
 func flattenWithLines(text string) (string, []int) {
 	var flat []byte
 	var lines []int
-	line := 1
-	for i := 0; i < len(text); i++ {
-		b := text[i]
-		originalLine := line
-		if b == '\n' {
-			line++
-		}
+	emit := func(b byte, line int) {
 		if strings.ContainsRune("*_`>#|", rune(b)) {
-			continue
+			return
 		}
 		switch b {
 		case ' ', '\t', '\n', '\r', '\f':
 			if len(flat) > 0 && flat[len(flat)-1] == ' ' {
-				continue
+				return
 			}
 			b = ' '
 		}
 		flat = append(flat, b)
-		lines = append(lines, originalLine)
+		lines = append(lines, line)
+	}
+	boundary := func(s string) bool {
+		s = strings.TrimSpace(s)
+		return s == "" || strings.HasPrefix(s, "#")
+	}
+	split := strings.Split(text, "\n")
+	for i, raw := range split {
+		for j := 0; j < len(raw); j++ {
+			emit(raw[j], i+1)
+		}
+		if i+1 < len(split) {
+			if boundary(raw) || boundary(split[i+1]) {
+				emit('.', i+1)
+			}
+			emit('\n', i+1)
+		}
+	}
+	if len(flat) == 0 {
+		return "", nil
 	}
 	raw := string(flat)
 	trimmed := strings.TrimSpace(raw)
