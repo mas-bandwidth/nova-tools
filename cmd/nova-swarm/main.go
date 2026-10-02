@@ -850,7 +850,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if res.wallReport != "" {
 		fmt.Fprintln(stdout, oneline.Escape(res.wallReport))
 	}
-	// THE REPORT LINE A WALL DEATH OWES (issue #644's follow-up): the path the wall refused,
+	// THE REPORT LINE A WALL DEATH OWES: the path the wall refused,
 	// the step the card reached, and the commits it left on its branch so a harvester can
 	// still push the work. Printed only when the wall stopped a card with no result, which is
 	// the one shape nativeRun sets res.wall for.
@@ -872,7 +872,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
 		}
 	}
-	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST (issue #2632). --sweep-now
+	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST. --sweep-now
 	// is the control: it deletes the job directory the way the bench sweep does,
 	// and only when publishNativeResults named the directory it landed in. A
 	// publish that did not land leaves the job, which is then the only copy.
@@ -925,8 +925,8 @@ func resultsRootOf(flag, root string) string {
 
 // nativeProcessExit is the process exit after a launch that started. The child's
 // code is already on the verdict line as rc=<n>. Passing 255 through made a fill
-// loop treat a finished card as a transport failure and retry it (nova-tools
-// #2058). Local ssh(1) exits 255 for any error; that is not proof the remote
+// loop treat a finished card as a transport failure and retry it.
+// Local ssh(1) exits 255 for any error; that is not proof the remote
 // command never started, so the outcome is potentially UNKNOWN and a retry
 // waits on reconciliation. A negative rc is a kill (deadline or TERM) and is
 // already exit 1.
@@ -944,11 +944,11 @@ func nativeProcessExit(childRC int) int {
 // RESULT.md in its job directory, or in the clone the card worked in. A card that abstains
 // still writes one (it says ABSTAIN on line 2); a run that produced nothing writes none.
 //
-// A REPORT THE MACHINERY WROTE IS NOT THE CARD'S (issue #2548). A card that ended its last
+// A REPORT THE MACHINERY WROTE IS NOT THE CARD'S. A card that ended its last
 // turn with a question publishes nothing, and the run now writes `RESULT: ASKED <question>`
 // for it so the question is not lost. That file is evidence of an ABSENCE, and counting it
 // here would turn the verdict this run already prints -- `INCOMPLETE why=no-result` -- into
-// `NATIVE OK` for a card that did nothing but ask, which is the very fault #1844 made this
+// `NATIVE OK` for a card that did nothing but ask, which is the very fault that lets the
 // word earn itself. The verdict is therefore unchanged by the report, and the report is
 // where the question goes.
 //
@@ -982,12 +982,12 @@ func dash(s string) string {
 	return s
 }
 
-// fenceSuffix renders what the harness's OWN fence did to this card (issue #644): the empty
+// fenceSuffix renders what the harness's OWN fence did to this card: the empty
 // string when it rejected nothing, and ` fence=rejected path=<p>` naming the first path it
 // auto-rejected otherwise. It is the FIELD a reader of the NATIVE line scores the card `fence` by instead
 // of `no-result` -- the machinery fenced the card off a path its own card named, which is
 // nothing like a model that chose to publish nothing, and a coordinator reading `no-result`
-// went looking at the model for eight cards that never got to run (2026-09-16).
+// blames the model for eight cards that never got to run.
 func fenceSuffix(path string) string {
 	if strings.TrimSpace(path) == "" {
 		return ""
@@ -997,16 +997,16 @@ func fenceSuffix(path string) string {
 
 // termSuffix names the one clean ending a manager brings: ` reason=terminated`, so a
 // coordinator reading the NATIVE OK line knows the run was stopped from outside and never
-// reads a silent exit as a spent failure (issue #779). The token is a literal put through
+// reads a silent exit as a spent failure. The token is a literal put through
 // oneline.Field like every other tail, so it cannot carry anything past the escape.
-// stoppedSuffix renders rule 13d's one new key: ` stopped=<tokens|max_turns|max_cache_read|
+// stoppedSuffix renders the budget rule's key: ` stopped=<tokens|max_turns|max_cache_read|
 // unverifiable>` for a card the machinery stopped under that rule, and the empty string for
 // every other card.
 //
-// IT IS A KEY OF ITS OWN and NOT a second `reason=` (PR #1566 decision 17): one key with one
+// IT IS A KEY OF ITS OWN and NOT a second `reason=`: one key with one
 // meaning, which also says WHICH budget fired. `reason=terminated` stays what a TERM from
 // outside prints and the `reason=` inside the `usage=none` group stays the usage read's --
-// that those two can still meet on one line is issue #1611, deliberately not this rule's to
+// that those two can still meet on one line is deliberate, not this rule's to
 // repair.
 func stoppedSuffix(stopped string) string {
 	if stopped == "" {
