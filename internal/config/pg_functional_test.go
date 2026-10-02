@@ -264,10 +264,6 @@ func TestAppliedIsTheLedger(t *testing.T) {
 	assert.Equal(t, len(all), got[len(got)-1])
 }
 
-// TestMigrationThirteenKeepsEveryLoopsCommand: 0013 sets each loop's width
-// field to the value its argv's --width carries (0 when none), so the command
-// LoopCommand renders after it is the command the argv ran before it, row by
-// row.
 // 0014 makes a loop's width the machine's: the second reader rows of
 // 2026-10-02 (reader-<m>-2) are removed, every nova-swarm member argv that
 // spells a width loses it (before any --; another program's is its own; the
@@ -292,22 +288,27 @@ func TestMigrationFourteenMovesTheLoopWidthToTheMachine(t *testing.T) {
 	require.Equal(t, "0014_loop_width_is_the_machines.sql", fourteen.Name)
 	_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('m1', 'u', 's', 4, 0)`)
 	require.NoError(t, err)
+	_, err = st.db.ExecContext(ctx, `INSERT INTO config.machines (name, "user", seat, slots, runners) VALUES ('bench-2', 'u', 's', 4, 0)`)
+	require.NoError(t, err)
 	loops := []struct {
-		name, argv string
-		width      int
-		want       string // the argv after; "" when the row is removed
+		name, argv, machine string
+		width               int
+		want                string // the argv after; "" when the row is removed
 	}{
-		{"reader-m1", `["nova-swarm","member","--as","reader-m1","--reader","--width","8"]`, 8, `["nova-swarm","member","--as","reader-m1","--reader"]`},
-		{"reader-m1-2", `["nova-swarm","member","--as","reader-m1-2","--reader","--width","8"]`, 8, ""},
-		{"member-m1", `["/opt/bin/nova-swarm","member","--as","m1","--width=4","--root","r"]`, 0, `["/opt/bin/nova-swarm","member","--as","m1","--root","r"]`},
-		{"single-dash", `["nova-swarm","member","-width","3","--reader"]`, 3, `["nova-swarm","member","--reader"]`},
-		{"blank-word", `["nova-swarm","member","--as","a b","--width","2","--x","&<>"]`, 0, `["nova-swarm","member","--as","a b","--x","&<>"]`},
-		{"after-terminator", `["nova-swarm","member","--","--width","9"]`, 0, `["nova-swarm","member","--","--width","9"]`},
-		{"another-program", `["p","--width","12"]`, 12, `["p","--width","12"]`},
-		{"reader-2", `["p","--reader"]`, 1, `["p","--reader"]`}, // its name ends in -2 and names no machine: kept
+		{"reader-m1", `["nova-swarm","member","--as","reader-m1","--reader","--width","8"]`, "m1", 8, `["nova-swarm","member","--as","reader-m1","--reader"]`},
+		{"reader-m1-2", `["nova-swarm","member","--as","reader-m1-2","--reader","--width","8"]`, "m1", 8, ""},
+		{"member-m1", `["/opt/bin/nova-swarm","member","--as","m1","--width=4","--root","r"]`, "m1", 0, `["/opt/bin/nova-swarm","member","--as","m1","--root","r"]`},
+		{"single-dash", `["nova-swarm","member","-width","3","--reader"]`, "m1", 3, `["nova-swarm","member","--reader"]`},
+		{"blank-word", `["nova-swarm","member","--as","a b","--width","2","--x","&<>"]`, "m1", 0, `["nova-swarm","member","--as","a b","--x","&<>"]`},
+		{"after-terminator", `["nova-swarm","member","--","--width","9"]`, "m1", 0, `["nova-swarm","member","--","--width","9"]`},
+		{"another-program", `["p","--width","12"]`, "m1", 12, `["p","--width","12"]`},
+		{"reader-2", `["p","--reader"]`, "m1", 1, `["p","--reader"]`}, // its name ends in -2 and names no machine: kept
+		// a machine whose own name ends in -2: its one reader reader-bench-2 is
+		// kept, not mistaken for a second reader of a machine named bench
+		{"reader-bench-2", `["nova-swarm","member","--as","reader-bench-2","--reader"]`, "bench-2", 0, `["nova-swarm","member","--as","reader-bench-2","--reader"]`},
 	}
 	for _, l := range loops {
-		_, err = st.db.ExecContext(ctx, `INSERT INTO config.loops (name, machine, argv, keepalive, width) VALUES ($1, 'm1', $2, true, $3)`, l.name, l.argv, l.width)
+		_, err = st.db.ExecContext(ctx, `INSERT INTO config.loops (name, machine, argv, keepalive, width) VALUES ($1, $2, $3, true, $4)`, l.name, l.machine, l.argv, l.width)
 		require.NoError(t, err, l.name)
 	}
 	require.NoError(t, st.applyOne(ctx, fourteen))

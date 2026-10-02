@@ -20,7 +20,11 @@
 -- width each reader ran at is not carried anywhere: from this version it is
 -- the machine's, as the member's is. A row's history (config.history) is not
 -- written by a migration, as 0013's was not.
-DELETE FROM config.loops WHERE name ~ '^reader-.+-2$';
+-- a second reader is the row whose name is its machine's name plus the -2
+-- suffix, never a machine whose own name ends in -2: reader-bench-2 (machine
+-- bench-2) is that machine's one reader, while reader-m1-2 (machine m1) is the
+-- second reader of m1. Match the row's machine identity, not the name alone.
+DELETE FROM config.loops WHERE name = 'reader-' || machine || '-2';
 
 UPDATE config.loops AS l
    SET argv = (

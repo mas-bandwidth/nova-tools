@@ -226,9 +226,10 @@ func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
 // reader that is not up is neither a source nor a target: sweepReads takes
 // its reads back first.
 //
-// The sprint knows no reader's width: a reader loop's --width is the loop's
-// own, and the readers table has no width column, so every reader up counts
-// alike and nothing here bounds a reader at DealAhead times a width.
+// The sprint knows no reader's width: a reader runs at its machine's width,
+// not a loop's own --width (there is none), and the readers table has no width
+// column, so every reader up counts alike and nothing here bounds a reader at
+// DealAhead times a width.
 func levelReads(s *Snapshot, p *Plan) {
 	sweepReads(s, p)
 	up := s.UpReaders()
