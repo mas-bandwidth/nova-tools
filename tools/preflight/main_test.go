@@ -1,14 +1,16 @@
 package main
 
 import (
-	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
-	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeRunner records every command and answers from a script: gofmt lists the
@@ -39,104 +41,63 @@ func (f *fakeRunner) named(name string) []command {
 	return out
 }
 
-// preflight runs the tool with the fake toolchain named by GO, GOFMT and MAKE
-// and returns its exit code and both streams.
-func preflight(t *testing.T, f *fakeRunner, extraEnv []string, args ...string) (int, string, string) {
-	t.Helper()
-	var out, errb bytes.Buffer
-	code := run(args, env{
-		stdout:  &out,
-		stderr:  &errb,
-		environ: append([]string{"GO=fake-go", "GOFMT=fake-gofmt", "MAKE=fake-make"}, extraEnv...),
-		dir:     "/repo",
-		runner:  f,
-	})
-	return code, out.String(), errb.String()
+// preflight is the tool in process with the fake toolchain named by GO, GOFMT
+// and MAKE, extraEnv after them, run by f in /repo.
+func preflight(f *fakeRunner, extraEnv ...string) testkit.Main {
+	return func(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+		environ := append([]string{"GO=fake-go", "GOFMT=fake-gofmt", "MAKE=fake-make"}, extraEnv...)
+		return run(args, env{stdout: stdout, stderr: stderr, environ: environ, dir: "/repo", runner: f})
+	}
 }
 
 func TestHelpPrintsUsageAndExitsZero(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	code, out, _ := preflight(t, f, nil, "--help")
-	if code != 0 || !strings.Contains(out, "Usage:") {
-		t.Fatalf("--help: code=%d out=%q", code, out)
-	}
-	if len(f.calls) != 0 {
-		t.Errorf("--help ran %d commands, want none", len(f.calls))
-	}
-	if code, out, _ := preflight(t, &fakeRunner{}, nil, "-h"); code != 0 || !strings.Contains(out, "Usage:") {
-		t.Errorf("-h: code=%d out=%q", code, out)
-	}
+	preflight(f).Do(t, "--help").Exit(0).Out("Usage:")
+	assert.Empty(t, f.calls, "--help ran commands, want none")
+	preflight(&fakeRunner{}).Do(t, "-h").Exit(0).Out("Usage:")
 }
 
 func TestUnformattedFilesFailTheRunBeforeVetAndTests(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{fmtOut: "internal/x/unformatted.go\n"}
-	code, _, errOut := preflight(t, f, nil, "./internal/x")
-	if code != 1 {
-		t.Fatalf("code=%d, want 1", code)
-	}
-	if !strings.Contains(errOut, "unformatted.go") || !strings.Contains(errOut, "gofmt check FAILED") {
-		t.Errorf("stderr does not name the unformatted file:\n%s", errOut)
-	}
-	if len(f.named("fake-go"))+len(f.named("fake-make")) != 0 {
-		t.Errorf("vet or tests ran after a gofmt finding: %v", f.calls)
-	}
+	preflight(f).Do(t, "./internal/x").Exit(1).Err("unformatted.go", "gofmt check FAILED")
+	assert.Empty(t, append(f.named("fake-go"), f.named("fake-make")...), "vet or tests ran after a gofmt finding: %v", f.calls)
 }
 
 func TestGofmtIsAskedToListTheWholeTreeFromTheRoot(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	preflight(t, f, nil, "./internal/x")
+	preflight(f).Run("./internal/x")
 	got := f.named("fake-gofmt")
-	if len(got) != 1 || !reflect.DeepEqual(got[0].args, []string{"-l", "."}) || got[0].dir != "/repo" {
-		t.Errorf("gofmt calls = %+v, want one `-l .` in /repo", got)
-	}
+	require.Len(t, got, 1, "want one gofmt call: %+v", got)
+	assert.Equal(t, []string{"-l", "."}, got[0].args)
+	assert.Equal(t, "/repo", got[0].dir)
 }
 
 func TestVetFailureFailsTheRunBeforeTests(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{codes: map[string]int{"fake-go": 1}}
-	code, out, _ := preflight(t, f, nil, "./internal/x")
-	if code != 1 {
-		t.Fatalf("code=%d, want vet's 1", code)
-	}
-	if len(f.named("fake-make")) != 0 {
-		t.Errorf("tests ran after a vet failure")
-	}
-	if strings.Contains(out, "ALL CHECKS PASSED") {
-		t.Errorf("a failed run printed ALL CHECKS PASSED:\n%s", out)
-	}
+	preflight(f).Do(t, "./internal/x").Exit(1).NotOut("ALL CHECKS PASSED")
+	assert.Empty(t, f.named("fake-make"), "tests ran after a vet failure")
 }
 
 func TestAFailingMakeFailsTheRunWithItsExitCode(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{codes: map[string]int{"fake-make": 2}}
-	code, out, _ := preflight(t, f, nil, "./internal/x")
-	if code != 2 {
-		t.Fatalf("code=%d, want make's 2", code)
-	}
-	if strings.Contains(out, "ALL CHECKS PASSED") || strings.Contains(out, "unit tests: OK") {
-		t.Errorf("a failed make printed success:\n%s", out)
-	}
+	preflight(f).Do(t, "./internal/x").Exit(2).NotOut("ALL CHECKS PASSED", "unit tests: OK")
 }
 
 func TestPackageArgumentsReachVetAndMake(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	code, out, _ := preflight(t, f, nil, "./internal/swarm", "./cmd/nova-swarm")
-	if code != 0 || !strings.Contains(out, "ALL CHECKS PASSED") {
-		t.Fatalf("code=%d out=%s", code, out)
-	}
+	preflight(f).Do(t, "./internal/swarm", "./cmd/nova-swarm").Exit(0).Out("ALL CHECKS PASSED")
 	vet := f.named("fake-go")
-	if len(vet) != 1 || !reflect.DeepEqual(vet[0].args, []string{"vet", "./internal/swarm", "./cmd/nova-swarm"}) {
-		t.Errorf("vet calls = %+v", vet)
-	}
+	require.Len(t, vet, 1)
+	assert.Equal(t, []string{"vet", "./internal/swarm", "./cmd/nova-swarm"}, vet[0].args)
 	mk := f.named("fake-make")
-	want := []string{"test-full", "GO=fake-go", "PKGS=./internal/swarm ./cmd/nova-swarm"}
-	if len(mk) != 1 || !reflect.DeepEqual(mk[0].args, want) {
-		t.Errorf("make calls = %+v, want args %v", mk, want)
-	}
+	require.Len(t, mk, 1)
+	assert.Equal(t, []string{"test-full", "GO=fake-go", "PKGS=./internal/swarm ./cmd/nova-swarm"}, mk[0].args)
 }
 
 func TestRunFlagAndRunEnvReachMakeAsRun(t *testing.T) {
@@ -153,17 +114,13 @@ func TestRunFlagAndRunEnvReachMakeAsRun(t *testing.T) {
 		{"flag beats env", []string{"-run", "TestFlag", "./internal/swarm"}, []string{"RUN=TestEnv"}, "RUN=TestFlag"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := &fakeRunner{}
-			if code, _, _ := preflight(t, f, tc.environ, tc.args...); code != 0 {
-				t.Fatalf("code=%d", code)
-			}
+			preflight(f, tc.environ...).Do(t, tc.args...).Exit(0)
 			mk := f.named("fake-make")
-			if len(mk) != 1 || mk[0].args[len(mk[0].args)-1] != tc.want {
-				t.Errorf("make args = %v, want last %q", mk, tc.want)
-			}
+			require.Len(t, mk, 1)
+			assert.Equal(t, tc.want, mk[0].args[len(mk[0].args)-1])
 		})
 	}
 }
@@ -171,102 +128,73 @@ func TestRunFlagAndRunEnvReachMakeAsRun(t *testing.T) {
 func TestNoRunPatternPassesNoRunToMake(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	preflight(t, f, nil, "./internal/a")
+	preflight(f).Run("./internal/a")
 	for _, a := range f.named("fake-make")[0].args {
-		if strings.HasPrefix(a, "RUN=") {
-			t.Errorf("make was handed %q with no pattern given", a)
-		}
+		assert.False(t, strings.HasPrefix(a, "RUN="), "make was handed %q with no pattern given", a)
 	}
 }
 
 func TestRunFlagWithoutAPatternIsRefused(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	code, _, errOut := preflight(t, f, nil, "-run")
-	if code != 1 || !strings.Contains(errOut, "-run requires a regex pattern argument") {
-		t.Errorf("code=%d stderr=%q", code, errOut)
-	}
-	if len(f.calls) != 0 {
-		t.Errorf("a refused flag ran commands: %v", f.calls)
-	}
+	preflight(f).Do(t, "-run").Exit(1).Err("-run requires a regex pattern argument")
+	assert.Empty(t, f.calls, "a refused flag ran commands")
 }
 
 func TestPKGSIsThePackageSetWhenNoneAreGiven(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	preflight(t, f, []string{"PKGS=./internal/fromenv ./cmd/x"})
-	vet := f.named("fake-go")[0].args
-	if !reflect.DeepEqual(vet, []string{"vet", "./internal/fromenv", "./cmd/x"}) {
-		t.Errorf("vet args = %v", vet)
-	}
-	mk := f.named("fake-make")[0].args
-	if mk[2] != "PKGS=./internal/fromenv ./cmd/x" {
-		t.Errorf("make args = %v", mk)
-	}
+	preflight(f, "PKGS=./internal/fromenv ./cmd/x").Run()
+	assert.Equal(t, []string{"vet", "./internal/fromenv", "./cmd/x"}, f.named("fake-go")[0].args)
+	assert.Equal(t, "PKGS=./internal/fromenv ./cmd/x", f.named("fake-make")[0].args[2])
 }
 
 func TestTheDefaultPackageSetIsCmdAndInternal(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	preflight(t, f, nil)
-	vet := f.named("fake-go")[0].args
-	if !reflect.DeepEqual(vet, []string{"vet", "./cmd/...", "./internal/..."}) {
-		t.Errorf("vet args = %v", vet)
-	}
+	preflight(f).Run()
+	assert.Equal(t, []string{"vet", "./cmd/...", "./internal/..."}, f.named("fake-go")[0].args)
 }
 
 func TestPackageArgumentsBeatPKGS(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	preflight(t, f, []string{"PKGS=./internal/fromenv"}, "./internal/given")
-	if vet := f.named("fake-go")[0].args; !reflect.DeepEqual(vet, []string{"vet", "./internal/given"}) {
-		t.Errorf("vet args = %v", vet)
-	}
+	preflight(f, "PKGS=./internal/fromenv").Run("./internal/given")
+	assert.Equal(t, []string{"vet", "./internal/given"}, f.named("fake-go")[0].args)
 }
 
 func TestTheHostGuardReachesEveryStep(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	preflight(t, f, nil, "./internal/x")
+	preflight(f).Run("./internal/x")
 	for _, c := range f.calls {
-		if lookup(c.env, "NOVA_TEST_NO_HOST") != "1" {
-			t.Errorf("%s ran without NOVA_TEST_NO_HOST=1: %v", c.name, c.env)
-		}
+		assert.Equal(t, "1", lookup(c.env, "NOVA_TEST_NO_HOST"), "%s ran without NOVA_TEST_NO_HOST=1: %v", c.name, c.env)
 	}
 	// A caller that chose another value keeps it.
 	g := &fakeRunner{}
-	preflight(t, g, []string{"NOVA_TEST_NO_HOST=0"}, "./internal/x")
-	if got := lookup(g.calls[0].env, "NOVA_TEST_NO_HOST"); got != "0" {
-		t.Errorf("a caller's NOVA_TEST_NO_HOST=0 became %q", got)
-	}
+	preflight(g, "NOVA_TEST_NO_HOST=0").Run("./internal/x")
+	assert.Equal(t, "0", lookup(g.calls[0].env, "NOVA_TEST_NO_HOST"), "a caller's NOVA_TEST_NO_HOST=0 was changed")
 }
 
 func TestEveryStepRunsInTheRepositoryRoot(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	preflight(t, f, nil, "./internal/x")
+	preflight(f).Run("./internal/x")
 	for _, c := range f.calls {
-		if c.dir != "/repo" {
-			t.Errorf("%s ran in %q, want /repo", c.name, c.dir)
-		}
+		assert.Equal(t, "/repo", c.dir, "%s ran outside the root", c.name)
 	}
 }
 
 func TestToolchainDefaultsAreGoGofmtMake(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	var out, errb bytes.Buffer
-	run([]string{"./internal/x"}, env{stdout: &out, stderr: &errb, environ: nil, dir: "/repo", runner: f})
+	run([]string{"./internal/x"}, env{stdout: io.Discard, stderr: io.Discard, environ: nil, dir: "/repo", runner: f})
 	var names []string
 	for _, c := range f.calls {
 		names = append(names, c.name)
 	}
-	if !reflect.DeepEqual(names, []string{"gofmt", "go", "make"}) {
-		t.Errorf("commands = %v", names)
-	}
-	if got := f.calls[2].args[1]; got != "GO=go" {
-		t.Errorf("make was handed %q, want GO=go", got)
-	}
+	assert.Equal(t, []string{"gofmt", "go", "make"}, names)
+	assert.Equal(t, "GO=go", f.calls[2].args[1], "make was handed the wrong GO")
 }
 
 // TestTheMakefileTestFullRecipeTakesWhatPreflightHandsIt reads the real
@@ -275,52 +203,35 @@ func TestToolchainDefaultsAreGoGofmtMake(t *testing.T) {
 // carry each of them to the go test line.
 func TestTheMakefileTestFullRecipeTakesWhatPreflightHandsIt(t *testing.T) {
 	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("make is not a Windows tool")
-	}
+	testkit.SkipOn(t, "windows", "make is not a Windows tool")
 	makeBin, err := exec.LookPath("make")
 	if err != nil {
 		t.Skip("no make on PATH")
 	}
 	root, err := startRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	cmd := exec.Command(makeBin, "-n", "test-full", "GO=fake-go", "PKGS=./internal/a ./internal/b", "RUN=TestX")
 	cmd.Dir = root
 	raw, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("make -n test-full: %v\n%s", err, raw)
-	}
+	require.NoError(t, err, "make -n test-full: %s", raw)
 	want := `fake-go test -count=1 -run "TestX" ./internal/a ./internal/b`
-	if !strings.Contains(strings.Join(strings.Fields(string(raw)), " "), want) {
-		t.Errorf("the test-full recipe is not %q:\n%s", want, raw)
-	}
+	assert.Contains(t, strings.Join(strings.Fields(string(raw)), " "), want, "the test-full recipe")
 	cmd = exec.Command(makeBin, "-n", "test-full", "GO=fake-go", "PKGS=./internal/a")
 	cmd.Dir = root
 	raw, _ = cmd.CombinedOutput()
-	if flat := strings.Join(strings.Fields(string(raw)), " "); strings.Contains(flat, "-run") || !strings.Contains(flat, "fake-go test -count=1 ./internal/a") {
-		t.Errorf("without RUN the recipe carries -run or drops the packages:\n%s", raw)
-	}
+	flat := strings.Join(strings.Fields(string(raw)), " ")
+	assert.NotContains(t, flat, "-run", "without RUN the recipe carries -run")
+	assert.Contains(t, flat, "fake-go test -count=1 ./internal/a", "without RUN the recipe drops the packages")
 }
 
 func TestRepoRootFindsGoModFromASubdirectory(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	dir := testkit.Tree(t, t.TempDir(), map[string]string{"go.mod": "module x\n"})
 	sub := filepath.Join(dir, "a", "b")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(sub, 0o755))
 	got, err := repoRoot(sub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != dir {
-		t.Errorf("repoRoot = %s, want %s", got, dir)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, dir, got)
 }
 
 func TestRepoRootRefusesATreeWithNoGoMod(t *testing.T) {
