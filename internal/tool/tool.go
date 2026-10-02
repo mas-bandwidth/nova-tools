@@ -31,7 +31,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -60,12 +59,17 @@ type Tool struct {
 	Words []string
 	// Setup, when set, is the one shell line a first run types before the
 	// examples work (it makes the files they read): the banner prints it
-	// under onboarding.SetupHeading, above the example block.
+	// under SetupHeading, above the example block.
 	Setup string
 }
 
 // MaxWords bounds a tool's own status words: a reader learns them all at once.
 const MaxWords = 6
+
+// SetupHeading is the banner line above Tool.Setup. It is the line
+// onboarding.SetupHeading reads back (TestSetupHeadingIsTheOneOnboardingReads),
+// written out here so a command never links the test comparator package.
+const SetupHeading = "setup (run it first, in an empty directory):"
 
 // reserved are the words every tool's lines already give a meaning.
 var reserved = []string{"OK", "FAIL", "FAILED", "REFUSED", "MORE", "NOTE"}
@@ -365,7 +369,7 @@ func (t *Tool) Banner() string {
 	b.WriteString(json + ": the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
 	fmt.Fprintf(&b, "exit codes: %s\n\n", t.ExitTable)
 	if setup := strings.TrimSpace(t.Setup); setup != "" {
-		fmt.Fprintf(&b, "%s\n  %s\n\n", onboarding.SetupHeading, setup)
+		fmt.Fprintf(&b, "%s\n  %s\n\n", SetupHeading, setup)
 	}
 	b.WriteString("example:\n")
 	for _, v := range t.verbs() {

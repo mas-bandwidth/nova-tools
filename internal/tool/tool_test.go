@@ -158,6 +158,14 @@ func fromJSON(t *testing.T, raw string) parsed {
 	return p
 }
 
+// TestSetupHeadingIsTheOneOnboardingReads holds the banner's setup heading to
+// the line the comparator cuts the setup line under: tool writes it, onboarding
+// reads it, and tool.go spells it out so no command links onboarding.
+func TestSetupHeadingIsTheOneOnboardingReads(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, onboarding.SetupHeading, SetupHeading)
+}
+
 // TestRender pins the encoder: each value's lines, exactly, and its lines and
 // its JSON read back to the same parts, field for field.
 func TestRender(t *testing.T) {
