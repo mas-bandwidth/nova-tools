@@ -147,15 +147,15 @@ func TestFoldIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 
 	// Ten declared sources: three transcript directories, one swarm pool, two exports and
 	// four bus lanes.
-	assert.False(t, byToken["TOKENS SOURCE"] != 10, "%d SOURCE lines, want 10", byToken["TOKENS SOURCE"])
+	assert.Equal(t, 10, byToken["TOKENS SOURCE"], "%d SOURCE lines, want 10", byToken["TOKENS SOURCE"])
 	for _, kind := range []string{"TOKENS UNREADABLE", "TOKENS UNPARSED", "TOKENS SUPERSEDED",
 		"TOKENS CONFLICT", "TOKENS TOUCHED", "TOKENS MIXED", "TOKENS DAY"} {
-		assert.False(t, byToken[kind] != 20, "%d %s lines, want the prefix of 20 the default ceiling allows", byToken[kind], kind)
+		assert.Equal(t, 20, byToken[kind], "%d %s lines, want the prefix of 20 the default ceiling allows", byToken[kind], kind)
 	}
-	assert.False(t, more != 7, "%d MORE lines, want one per overflowing kind (7)", more)
+	assert.Equal(t, 7, more, "%d MORE lines, want one per overflowing kind (7)", more)
 	{
 		n := byToken["TOKENS NOTE"]
-		assert.False(t, n != 1, "%d TOKENS NOTE lines, want exactly one remedy line", n)
+		assert.Equal(t, 1, n, "%d TOKENS NOTE lines, want exactly one remedy line", n)
 	}
 	{
 		n := len(lines(all))
@@ -175,8 +175,8 @@ func TestFoldIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	// --max 0 prints all of it.
 	r = invoke(t, append(append([]string{"fold"}, args...), "--max", "0")...)
 	more, byToken = countKinds(r.stdout + r.stderr)
-	assert.False(t, more != 0, "--max 0 printed %d MORE lines; a caller who asked for all of it gets all of it", more)
-	assert.False(t, byToken["TOKENS UNREADABLE"] != overflow, "--max 0 printed %d of %d unreadable lines", byToken["TOKENS UNREADABLE"], overflow)
+	assert.Equal(t, 0, more, "--max 0 printed %d MORE lines; a caller who asked for all of it gets all of it", more)
+	assert.Equal(t, overflow, byToken["TOKENS UNREADABLE"], "--max 0 printed %d of %d unreadable lines", byToken["TOKENS UNREADABLE"], overflow)
 	// --max -1 is a typo with two readings, and is refused.
 	r = invoke(t, append(append([]string{"fold"}, args...), "--max", "-1")...)
 	wantExit(t, r, 2)
@@ -198,8 +198,10 @@ func TestSourcesIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	wantExit(t, r, 0)
 	all := r.stdout + r.stderr
 	more, byToken := countKinds(all)
-	assert.False(t, byToken["SOURCES SOURCE"] != 10 || byToken["SOURCES UNREADABLE"] != 20 || byToken["SOURCES UNPARSED"] != 20, "sources printed %v", byToken)
-	assert.False(t, more != 2, "%d MORE lines, want 2", more)
+	assert.Equal(t, 10, byToken["SOURCES SOURCE"], "sources printed %v", byToken)
+	assert.Equal(t, 20, byToken["SOURCES UNREADABLE"], "sources printed %v", byToken)
+	assert.Equal(t, 20, byToken["SOURCES UNPARSED"], "sources printed %v", byToken)
+	assert.Equal(t, 2, more, "%d MORE lines, want 2", more)
 	{
 		n := len(lines(all))
 		assert.False(t, n > 53, "%d lines, want at most 53", n)
@@ -238,8 +240,9 @@ func TestCheckIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	if byToken["CHECK FAIL"] != 21 { // twenty item lines and the count line
 		assert.Failf(t, "CHECK FAIL line count mismatch", "%d CHECK FAIL lines, want 20 findings and one count line", byToken["CHECK FAIL"])
 	}
-	assert.False(t, byToken["CHECK MISSING"] != 20 || byToken["CHECK STRAY"] != 20, "check printed %v", byToken)
-	assert.False(t, more != 3, "%d MORE lines, want 3", more)
+	assert.Equal(t, 20, byToken["CHECK MISSING"], "check printed %v", byToken)
+	assert.Equal(t, 20, byToken["CHECK STRAY"], "check printed %v", byToken)
+	assert.Equal(t, 3, more, "%d MORE lines, want 3", more)
 	{
 		n := len(lines(all))
 		assert.False(t, n > 64, "%d lines, want at most 64", n)
@@ -283,8 +286,9 @@ func TestSumIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	wantExit(t, r, 0)
 	all := r.stdout + r.stderr
 	more, byToken := countKinds(all)
-	assert.False(t, byToken["SUM PAIR"] != 20 || byToken["SUM MODEL"] != 20, "sum printed %v", byToken)
-	assert.False(t, more != 2, "%d MORE lines, want 2", more)
+	assert.Equal(t, 20, byToken["SUM PAIR"], "sum printed %v", byToken)
+	assert.Equal(t, 20, byToken["SUM MODEL"], "sum printed %v", byToken)
+	assert.Equal(t, 2, more, "%d MORE lines, want 2", more)
 	{
 		n := len(lines(all))
 		assert.False(t, n > 45, "%d lines, want at most 45", n)
@@ -324,7 +328,7 @@ func TestReportIsUncappedBecauseTheBodyIsTheArtifact(t *testing.T) {
 	// Two hundred pairs, four types each: a Claude transcript carries no reasoning count.
 	{
 		n := len(lines(r.stdout))
-		assert.False(t, n != 800, "%d report lines, want 800 (200 pairs x the four types a transcript carries)", n)
+		assert.Equal(t, 800, n, "%d report lines, want 800 (200 pairs x the four types a transcript carries)", n)
 	}
 	wantNotContains(t, r.stdout, "MORE")
 	{
@@ -333,7 +337,7 @@ func TestReportIsUncappedBecauseTheBodyIsTheArtifact(t *testing.T) {
 	}
 	{
 		n := len(lines(r.stderr))
-		assert.False(t, n != 22, "%d lines on stderr, want 22 (20 TOKENS AVG + the one TOKENS AVG-ALL + the one REPORT OK)", n)
+		assert.Equal(t, 22, n, "%d lines on stderr, want 22 (20 TOKENS AVG + the one TOKENS AVG-ALL + the one REPORT OK)", n)
 	}
 	t.Logf("measured: %d lines, %d bytes", len(lines(r.stdout)), len(r.stdout))
 }
