@@ -246,7 +246,7 @@
       loop: "{{ loop_records | selectattr('enabled') | list }}"
       loop_control: { label: "{{ item.name }}" }
       when: >-
-        ((loop_units.results + (loop_timers.results | default([]))) | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list)
+        ((loop_units.results + (loop_timers.results | default([]))) | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list | length > 0)
         and (not loop_darwin or (loop_loaded.results | selectattr('item', 'equalto', item.name) | first).rc == 0)
 
     - name: unload the disabled and the changed (darwin)

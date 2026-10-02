@@ -312,6 +312,53 @@ func TestLoopsPlayRecordFilter(t *testing.T) {
 	assert.NotContains(t, out, "LOOPS host=")
 }
 
+// TestLoopsPlayLeavesAnUnchangedUnitAlone: a record whose unit file is already
+// what the play renders is not restarted, and the run does not fail. The
+// restart line's condition was a list where it was empty (no changed unit), and
+// ansible-core 2.19 on refuses a condition that is not a boolean, so the play
+// failed on every machine with one unchanged unit (the Studio, 2026-10-02).
+func TestLoopsPlayLeavesAnUnchangedUnitAlone(t *testing.T) {
+	t.Parallel()
+	r := newFleetPlayRig(t, "check-fixture.yml")
+	units := filepath.Join(r.home, ".config", "systemd", "user")
+	require.NoError(t, os.MkdirAll(units, 0o755))
+	check := []string{"--check", "--diff", "-e", "ansible_system=Linux", "-e", "nova_home=" + r.home, "-e", "nova_sops=/usr/bin/sops-of-the-fixture", "-e", "nova_loop_only=member-local"}
+	unit := filepath.Join(units, "nova-loop-member-local.service")
+
+	first := r.play(t, "loops.yml", check...)
+	require.Contains(t, first, "WOULD-RESTART member-local on localhost", "a new unit is a changed one")
+	require.NoError(t, os.WriteFile(unit, renderedByDiff(t, first, unit), 0o644))
+
+	again := r.play(t, "loops.yml", check...)
+	assert.NotContains(t, again, "FAILED!", "a task failed on an unchanged unit")
+	assert.NotContains(t, again, "WOULD-RESTART member-local", "an unchanged unit is not restarted")
+	assert.Contains(t, again, "LOOPS host=localhost place="+units+" records=1 enabled=1 written=0 retired=0 only=member-local (check: nothing changed)", "the unit is written by no one")
+}
+
+// renderedByDiff is the content --diff shows a new unit at path getting: the
+// "+" lines of the hunk whose first line is the unit's mark naming path (the
+// diff's header names the template, not the unit).
+func renderedByDiff(t *testing.T, out, path string) []byte {
+	t.Helper()
+	for _, hunk := range strings.Split(out, "@@ -0,0 ")[1:] {
+		_, body, _ := strings.Cut(hunk, "\n")
+		if !strings.HasPrefix(body, "+# "+path+": ") {
+			continue
+		}
+		var b strings.Builder
+		for _, line := range strings.Split(body, "\n") {
+			after, ok := strings.CutPrefix(line, "+")
+			if !ok {
+				break
+			}
+			b.WriteString(after + "\n")
+		}
+		return []byte(b.String())
+	}
+	require.Fail(t, "no diff renders "+path, out)
+	return nil
+}
+
 // TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks runs tools.yml for
 // real twice, the second time at a version an --incremental build would
 // leave: nova-update the first version's bytes (reused), nova-extra rebuilt.
