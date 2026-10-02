@@ -51,7 +51,7 @@ mode `0600`, in a directory mode `0700`, at a path that comes from a flag (`--ke
 nowhere else. The public half is not a secret and is printed, pasted and committed.
 
 **One sealed yaml per seat, `<name>.yaml`, and one bench key per file.** A line with one
-seat has one file, sealed to that bench's key plus Glenn's recovery key. A line with two
+seat has one file, sealed to that bench's key plus the recovery key. A line with two
 benches has two files, and neither is sealed to the other bench's key — **The credential
 shape** carries which token lives in which, `--as` names the file, and
 **invariant 1 holds the shape**, so the split is checked and not only written down.
@@ -63,11 +63,11 @@ the box that accepts it by that box's own recipe. The store holds no such
 value: no sibling file, no second lifetime model, no verb that hands a program a path,
 and `exec` refuses a multi-line value **by name** with that remedy.
 
-**The recovery key** is Glenn's, generated at his console, kept **off every bench** (his
+**The recovery key** is generated at the owner's console, kept **off every bench** (the owner's
 password manager or paper), and a recipient on every rule. Its public half is **declared and
 not inferred**: one line at the store root in **`recovery.pub`**, committed, changed only by a
 pull request exactly as the rule file is, and what invariant 1 measures every rule against.
-What it opens are API keys and service passwords Glenn pays for and can revoke at any console,
+What it opens are API keys and service passwords the owner pays for and can revoke at any console,
 never a line's record, notes or memory. It is for one thing — re-sealing a file when a bench
 key is lost (`sops updatekeys`) — and **every use is announced on the record**.
 
@@ -269,7 +269,7 @@ file and the repair. In a fixed order, against the working copy at `--store`:
    rule. A `.sops.yaml` that will not parse is exit **1** here and not the exit 2 of a store
    that holds none: that store is wrong, not absent. The anchors are an invariant, not a style:
    measured, a rule `a\.yaml$` sealed `not-a.yaml` to A's key. **And the shape of the rule set
-   is checked against a declared recovery key**, because *one bench key per file* and Glenn's
+   is checked against a declared recovery key**, because *one bench key per file* and the
    split are otherwise model rules nothing enforces: the store root holds **`recovery.pub`, one
    line, the recovery key's public half**, and **every rule names exactly two recipients — one
    seat key, plus exactly the key `recovery.pub` declares.** Declared, never inferred from the
@@ -325,7 +325,7 @@ file and the repair. In a fixed order, against the working copy at `--store`:
 Any of the eight is its own `SECRETS CHECK FAIL` line, every failure in one run, capped per
 kind at `--max` with a MORE line, the counts never capped and printed on failure as well as
 success. `mine=` counts the files whose recipients list **this key**: the same store is `mine=1`
-on Rowan's keeper bench and `mine=1` plus one per pool file on the admin bench — every
+on the keeper bench and `mine=1` plus one per pool file on the admin bench — every
 `swarm-<name>.yaml` is sealed to that bench's key — green on both.
 
 **And one thing `check` does not do: ask GitHub anything.** The store's ruleset and its
@@ -336,7 +336,7 @@ hand that reads them is a person's — one line, run at a bench:
 gh api repos/mas-bandwidth/secrets/collaborators --jq '.[] | "\(.login) \(.role_name)"'
 ```
 
-The answer this page expects is `gafferongames admin` and `rowan-claude write`; anything else is
+The answer this page expects is the configured administrator and writer; anything else is
 a permission somebody changed. A flag that asked the same question from
 inside `check` would want a GitHub token in a plaintext file on the bench — a fourth file-shaped
 secret, with no row in the credential table and no home in **The model** — to buy a warning,
@@ -402,7 +402,7 @@ Removing a seat is how a seat loses its credentials inside a pull request whose 
 it is adding one, and it is never part of adding a seat. Keep what exists.
 
 **`--machines <registry>`: the fleet stands in for a second reviewer.** A secrets seat is set
-up **automatically** when Glenn asks — no second human approval on `mas-bandwidth/secrets`; the
+up **automatically** when the owner asks — no second human approval on `mas-bandwidth/secrets`; the
 mechanical gate is the required check. So the reviewer's question — *whose key is this, and
 does that machine exist?* — is a machine's question, and the fleet's machines registry
 (`name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes`, `queue/control/machines.tsv`)
@@ -475,13 +475,13 @@ until it is filled must say so rather than look finished. Guessed in neither cas
 carries the ruleset `secrets-review-required`, active on the default branch — pull request
 required, one approving review, **last-push approval required**, stale reviews dismissed on push,
 no deletion, no non-fast-forward, **`bypass_actors` empty**. It has exactly two collaborators,
-`gafferongames` (Glenn) and `rowan-claude` (Rowan). An empty `bypass_actors` stops an admin
+the configured administrator and writer. An empty `bypass_actors` stops an admin
 *bypassing* the rule; it does not stop an admin *editing* it — an `admin` account can disable
 or delete the ruleset with no pull request, and one of those tokens is the `GH_TOKEN` in
-`rowan.yaml`, on the unwalled coordinator bench whose loose child is the threat this split
+`rowan.yaml`, on an unwalled bench whose loose child is the threat this split
 exists for. What an admin push buys an attacker with the cryptography intact: a direct push
 editing `rowan.yaml`'s own rule — that bench holds a current recipient key, so `updatekeys`
-runs — swapping Glenn's recovery key out of that one file, invariants 2 and 4 green afterwards.
+runs — swapping the recovery key out of that one file, invariants 2 and 4 green afterwards.
 **Invariant 1 is what turns the one-file swap red on every other bench**, not the ruleset — and
 it can only because the recovery key is *declared* (invariant 1, declared and not counted).
 Editing `recovery.pub` in the same push — declaring the keeper's key the recovery key — passes
@@ -489,7 +489,7 @@ every invariant on every bench: `{A_admin, A_keeper}` and `{A_keeper, R}` are ea
 key plus one other, and nothing in the store tells that shape from an honest one. A direct push
 has no approver, so nothing catches it; under `write` it is a pull request whose diff touches a
 one-line file, which an approver's eye catches where two `age1…` strings inside a rule are not.
-That is why this page puts `rowan-claude` at `write` and not `admin` on the store, and why the
+That is why this page grants `write` and not `admin` on the store, and why the
 collaborator line above is a person's to run: the one thing a store can say about a control its own admin can
 untie is to say out loud that it can. Which rule a pull request touches is read by the approver,
 not enforced: no code owners, no required reviewers.
@@ -497,7 +497,7 @@ not enforced: no code owners, no required reviewers.
 **Write, not admin.** `write` opens branches, pushes them, opens pull requests, approves and
 merges — every step this spec asks of that account — and cannot edit or delete a ruleset, so the
 control is not one the controlled account administers. With two collaborators and no bypass,
-the approver of every one of Glenn's changes, **including one that grants a key access to a
+the approver of every one of the administrator's changes, **including one that grants a key access to a
 file**, is an AI — the ruleset's design, not an accident. If both accounts held `admin`, the
 review would be a courtesy between two administrators and this page could not call it a control.
 
@@ -561,7 +561,7 @@ holds the blob to the bytes decrypted when the store's file is resealed between 
 **Receipts from an older build.** A receipt line written before this rule has four fields, the
 third a sha256 of the value. A current build reads such a line with that field dropped: it is
 never kept, compared or printed, and the line lists as `file=- head=- blob=- ...
-identity=unknown`, meaning "place again". Until the machine's receipt file is rewritten, the old
+identity=unknown`, meaning "place again". Until the receipt file is rewritten, the incomplete
 digest stays on disk in it. The next `place` to that machine rewrites the whole file in the
 six-field form and drops every old digest from it; to refresh each secret's identity, place each
 again (`nova-secrets place ... --machine <name> --secret <NAME>`), or remove the file outright
