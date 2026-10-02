@@ -697,6 +697,16 @@ id (`--op`) returns the original result, with no second counter or notification.
   reads exhausted when it was asked at its attempt, else stranded in review
   (failed work acknowledged, or never asked). An ack of that judgment itself
   does not write it again; ask closes stranded in review.
+- A broken read names its defect (docs/SPEC-CARD-CONTRACT.md section 3, a broken
+  read): a broken verdict whose finding names no file, line or rule the work breaks
+  is no read at all, neither ok nor broken; its member hands it back as a return
+  whose reason begins `no finding:`, the primary stays in review, and the tick asks
+  another reader, so the coordinator is never asked to judge on nothing. The verb
+  itself holds the same rule: `read --broken` whose finding names none is refused,
+  the read stays the reader's, asked or reading, to report with a finding or to hand
+  back (`--return`), and no verdict, finding or judgment is written. A broken
+  read's finding is recorded, and its judgment shows it, in full: every line of the
+  reader's report and body, never its first line alone.
 - A broken read notifies the coordinator. rework sends the primary back with
   the finding as the fix and delegates the next attempt at once (section 3);
   the primary's read cards are retired in the same step. When the fixed work
@@ -705,6 +715,13 @@ id (`--op`) returns the original result, with no second counter or notification.
   head, on new read cards of the new attempt, each with the route it draws
   (one path asks). A report against a retired
   read card is refused, naming the retirement.
+- A rework of a primary a reader passed (an ok read at its head when it is sent
+  back) keeps that head (`passed_head`). When the next attempt's worker finds
+  nothing to do or commits nothing (its failed finish begins `nothing to do:` or
+  `no commit:`, and pushed no head), the card was right: it is no failed work and
+  no judgment; the primary goes back to review at the passed head, and the tick
+  asks two readers at the new attempt (`TestNothingToDoAtAHeadAReaderPassedIsBackInReview`).
+  With no pass at the head it is failed work for the coordinator, as before.
 
 ## 7. Merging
 
@@ -818,7 +835,7 @@ the tick would make, no other open judgment on it).
 | a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
 | an invariant is broken | card (look at the card), repair, wait | no |
 | a judgment has waited past its due time (overdue) | a decision of the judgment, wait | as the judgment |
-| a stream has made no progress past its deadline (stale) | where, queue (look) | no |
+| a stream has made no progress past its deadline (stale) | where, queue (look), wait | no |
 | stalled: nothing holds a card (rule 12) | the decisions its place allows and that would be accepted (ask --another for a primary asked already, never ask), else look at the card; drop; wait | no, while the stall stands |
 
 A condition the tick keeps (cannot ask, fewer than two readers up, no member up, a deadline passed, an
@@ -828,7 +845,9 @@ until that much running time has passed (STOPPED time does not count); when it
 has and the condition still holds, the tick raises it again, and when the
 condition clears first the hold is closed. `wait` on any other judgment sets
 its review time, which counts running time from when it was set, as every
-deadline does.
+deadline does. A judgment whose review time has not come is quiet: not overdue, and
+listed after every judgment that is not quiet, marked `quiet until=<time>`, for the
+whole period, so it does not sit at the top of every inbox read.
 
 The machine's tick writes its own judgments (section 14): cannot ask, fewer than two readers up, no fleet
 member is up, a work card or a read card past its deadline, a stream with no
@@ -885,7 +904,8 @@ red branch. Its printed commands read those fields, never a card's place in its
 set of primaries. Notifications of one type, stream and cause are
 grouped into one line with a count; a subject is listed and counted once.
 Each group has an id that does not move while it is open: the id of its oldest
-open notification (a stalled stream's is `stale:<stream>`); overdue marks a
+open notification (a stalled stream's is `stale:<stream>~<epoch>`, carrying the
+sprint's epoch as every judgment id does, so `wait` takes it); overdue marks a
 group and does not split it. `inbox` prints each group's id and size (the
 members a verb given the group acts on), and each judgment's decisions as the
 commands that make them, one per line, with the group id, `--expect` and
@@ -933,7 +953,8 @@ given a selection instead (`--stream`, `--col`, `--limit`, `--read-ok`) moves
 what is eligible. Each answer is
 recorded as a `decided` notification; a stopped stream's judgment stays open
 while it is stopped. `wait <notification>`
-records a next review time; it does not hide the notification. Reading the
+records a next review time; it does not hide the notification (it is listed quiet,
+after the others, until then). Reading the
 inbox or advancing the cursor resolves nothing.
 
 `inbox` always shows every open judgment, whatever the cursor; the cursor only
@@ -946,7 +967,11 @@ nothing overdue because of those hours. Each stream has `since` (the last change
 (the last change of its state or of any of its counts); a stream that has not
 landed and whose progress is older than its deadline is shown as stalled by
 inbox (and by `where --json`). A stream with nothing on the table (every primary dropped,
-or restored empty by a clear) is waiting with no `since` and is never stale.
+or restored empty by a clear) is waiting with no `since` and is never stale. A
+stream whose every card on the table and not landed waits (behind a sentinel, or on
+a need) is held by what it waits on, which the table shows, and is never stale.
+`wait stale:<stream>~<epoch> --for <duration>` writes the time on the stream's
+control card (`stale_review`), and the stream is not shown stale before it.
 This is pull visibility; nothing claims to detect a dead process.
 
 ## 9. What is always true
@@ -1081,7 +1106,9 @@ Every verb taking `--group` takes `--expect <n>`: when the group's members now
 number otherwise the verb is refused, changes nothing, and names the size now
 and the members added or gone; a verb given `--group` prints how many it acted
 on. Each prints what moved, what did not and why,
-and the summary line. Every judgment verb takes `--answers <notification>`.
+and the summary line. A verb run on a store with no sprint in it yet (a table it reads is
+not there) says `no sprint here yet: init makes its tables; run: nova-sprint init
+--coordinator <name>`, never the table layer's words. Every judgment verb takes `--answers <notification>`.
 Every store verb takes `--redis`, `--actor`,
 `--op <id>` (the same id again, for the same verb with the same arguments, returns the recorded
 result; recorded for another verb or other arguments it is a conflict and is
@@ -1141,7 +1168,11 @@ command that loads it.
 | move | moves primaries that have not started to another stream (the owner, 2026-10-01: "What other things should you be able to do to mutate a stopped sprint" / "Are there other verbs you need as you work with sprints?" / "I don't want you manually hopping in and working around it and doing manual stuff."): `move <id>... --stream <s> [--before <id> \| --after <id> \| --score <n>]`, one step, all or none for the ids named; refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a card that is no primary or has started (only a primary waiting or ready with no work card ever dealt moves; a card dealt, working, in review, merging or landed keeps its stream, its state named), and for a card of the destination already (`rank` changes a place in line). The destination is placed exactly as `add` places cards (the same plan, on the sprint without the moved cards): a stream new to the sprint is made as `add --stream` makes one, the cards go in line by `--before`/`--after`/`--score`, else at the end in the order named, waiting or ready by their needs and the stream's sentinels, a reached sentinel behind them no longer reached, a cycle of needs refused naming it, and a ready card the destination would put behind a sentinel refused by the lifecycle (ready -> waiting is only the effect of inserting a sentinel; `--before` the sentinel moves it). The card is the same card moved: its id, brief, needs and admission stay, and a need naming it still holds (a need is by id) (`sprint.MoveCards`) |
 | merge | one mechanical merge step for a stream: `--batch n`, given facts; `--red [--suspect <id>...]` |
 | land | the coordinator's landing step as one command, an external delivery (a git push) and a store write (the merge step): for each stream named (`--stream`, again for more; default every stream with cards queued and not stopped), in stream order, the merge queue up to its first stuck card, in work order, cut into batches of consecutive cards whose briefs name one repository and one base (`REPO:` and `BASE:`, read as staging reads them; `--base` for a card naming none); each batch's heads merged `--no-ff` with the message `land <id> (sprint stream <s>)` onto a branch cut from the base's tip on origin, in a clone (`--repo-dir`, else a clone kept under the directory each line names, its name the readable repository and a hash of it; every clone reused has its origin's fetch URL and its one push URL held to the repository the cards name before any git, the host compared without case and the path with it); a caller's `--epoch` the sprint has left refused before any git; `--check <command>` run once per batch in the clone before the push; the queue head, its heads and attempts, and the epoch read again just before each push; the push plain, never forced, and on a rejection the base fetched and the batch rebuilt on its new tip once; then the batch reported by the merge step `merge --stream s --batch n` runs, fenced to the epoch land read and guarded in the same store step to plan only while the queue still starts with the batch's cards at the heads and attempts land read and pushed (a rework keeps a card's id and epoch, not its head); the pins are the step's arguments, so an `--op` replay returns only that batch's receipt. A head that is not a commit on origin or whose merge stops on unmerged paths ends its batch before it, the cards before it land, and it is reported with `--conflict` and git's words as the note; git failing for any other reason (an identity, a hook, the disk, the network) blames no card: nothing is pushed or reported and the batch is refused; a check that fails, with `--red`, nothing pushed; a second rejected push, with `--rejected`. A push that landed and a report that did not (a clear, a card accepted ahead of the batch, a return, between the two) is `LAND FAILED`, exit 2, and the one remedy named is to run land again, which rereads the queue and lets its own checks decide: a card as it was is recorded with no new push (its merges and push are no-ops), a card reworked since is merged at its new head or meets a real conflict, and after a clear there is nothing to report (tla/Land.tla). A bare `merge --batch n` is never offered: after a rework the queue starts with the same ids at a head the base does not hold, and the merge step alone would record it. One line per batch, `LAND OK|REFUSED|FAILED stream= cards= base= tip= ids=<first>..<last>` (a batch whose git ran also says each step's seconds, `fetch= merge= check= queue= push= report=`, and its `--json` item `times`),
- then `LAND DONE batches= cards= refused=`; `--dry-run` reads the store only and changes nothing, and refuses what land refuses before its git, in land's words: a batch whose card names no base (and no `--base`) or no repository (and no `--repo-dir`) is refused, land and dry run alike, naming every problem at once, with each head of the batch that is not a commit id; a head that is not a commit id stops the dry run where land stops, the cards before it a batch, that card refused with the conflict fact land would record and nothing recorded; `--json`. A batch landed and reported tags the branches its cards' work cards of every attempt record (`branches_queued=<n>` on its line, `prune` on its item; never the base, an empty name, an option-like name or one not under `sprint/`, each said on a NOTE and counted as `branches_kept=<n>`), and the cleanup deletes only canonical successful-attempt branches from origin later, many in one push, each with an explicit lease against its recorded head; advanced or recreated tips, unowned branches and all recorded stream bases stay on origin, and a retry keeps the original lease; then removes the clone's remote-tracking refs of branches origin no longer holds, never while a landing builds or pushes: the one-shot land once after every stream, the land loop (`run --land`) between rounds when a round finds nothing queued or 256 branches wait, a line per clone `PRUNE OK|FAILED branches= refs= dir= took=` (`--json` `prune`); a failed cleanup fails no landing, and the loop keeps its branches and tries again after a minute; the queue is the process's memory, so a crash or a stop loses it and those branches stay on origin; a dry run queues and deletes nothing and says how many it would queue |
+ then `LAND DONE batches= cards= refused=`; `--dry-run` reads the store only and changes nothing, and refuses what land refuses before its git, in land's words: a batch whose card names no base (and no `--base`) or no repository (and no `--repo-dir`) is refused, land and dry run alike, naming every problem at once, each cause on its own line with its one next command (the
+first on the `LAND REFUSED` line, each other on a `NOTE` line and in the `--json` item's
+`also`: each head of the batch that is not a commit id, with its return), and on a twin,
+which has no git, a `NOTE` that `merge --stream <s> --batch <n>` records the landing in
+land's place; a head that is not a commit id stops the dry run where land stops, the cards before it a batch, that card refused with the conflict fact land would record and nothing recorded; `--json`. A batch landed and reported tags the branches its cards' work cards of every attempt record (`branches_queued=<n>` on its line, `prune` on its item; never the base, an empty name, an option-like name or one not under `sprint/`, each said on a NOTE and counted as `branches_kept=<n>`), and the cleanup deletes only canonical successful-attempt branches from origin later, many in one push, each with an explicit lease against its recorded head; advanced or recreated tips, unowned branches and all recorded stream bases stay on origin, and a retry keeps the original lease; then removes the clone's remote-tracking refs of branches origin no longer holds, never while a landing builds or pushes: the one-shot land once after every stream, the land loop (`run --land`) between rounds when a round finds nothing queued or 256 branches wait, a line per clone `PRUNE OK|FAILED branches= refs= dir= took=` (`--json` `prune`); a failed cleanup fails no landing, and the loop keeps its branches and tries again after a minute; the queue is the process's memory, so a crash or a stop loses it and those branches stay on origin; a dry run queues and deletes nothing and says how many it would queue |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1) |
@@ -1519,8 +1550,15 @@ it. A rank that moves a card across a sentinel changes what it waits for, by
 the same reading. A sentinel is never dealt, read or merged. When what it
 waits for has landed, been dropped or been waived, the step that ended the
 last of it (or the tick, as the backstop) marks it reached and writes one
-judgment. Only `release <id> --reason <text>`, by the sprint's coordinator
-(`init --coordinator`; `where --json` carries it), lands it; the same step moves what
+judgment. A sentinel with nothing placed before it (no primary of its stream on the
+table before it, landed or not, and no need of its own) is not reached while other
+work of the sprint is in flight (ready, working, in review or merging): it is
+simply next, no judgment is written for it, and it is held by that work; it is
+reached when no other work is in flight, by the step that ends the last of it or
+the tick (`sprint.Reachable`). Cards placed before it later make it wait for them,
+and it is reached when they have landed. Only `release <id> --reason <text>`, by the sprint's coordinator
+(`init --coordinator`; `where --json` carries it), lands it, reached or with nothing
+before it; the same step moves what
 waited behind it, up to the next sentinel, to ready as one set, marks reached
 any sentinel now due, and always writes a notification that it landed. A need
 it names that is dropped blocks it like any waiting card; ack waives the need.
@@ -1558,7 +1596,10 @@ steps, not by the cards they move.
 
 `log` prints each line in plain words at its local time, the words given
 following it as paragraphs; one function renders a line, for `log` and for a
-card's timeline. At clear, the log stays with its epoch and is read with
+card's timeline. In the whole log's timeline (no `--card`) a cost record a change
+set is one short line, `<primary> cost: <kind> <card> by <who>, <end>, ran <n>s,
+cost <$ or ->` (`sprint.SplitCost`), and a change that set only cost records prints
+no line of its own; `log --card <id>` and `log --json` keep each record whole. At clear, the log stays with its epoch and is read with
 `--at-epoch`, as `where` is; the new epoch's log starts empty. Teardown
 removes every epoch's log. The log is stored beside the notifications (a
 stream of its own in the same transaction), so the inbox's reads never page

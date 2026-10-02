@@ -357,11 +357,24 @@ func (w wanted) of(cards []*sprint.Card) []int {
 }
 
 func (a *app) readFailed(verbName string, err error, stderr io.Writer) int {
+	err = noSprintYet(err)
 	fmt.Fprintf(stderr, "%s %s: %s\n", prog, verbName, oneline.WithRemedy(err.Error(), prog+" "+verbName+" -h"))
 	if ntable.IsRefusal(err) {
 		return 1
 	}
 	return 2
+}
+
+// noSprintYet is err as a store with no sprint in it says it: a table the sprint reads is
+// not there (NOTABLE) because init never ran, so the line names init, never the table
+// layer's words (ONBOARDING point 2); any other err as it is. A refusal stays a refusal.
+func noSprintYet(err error) error {
+	var r *ntable.Refusal
+	if !errors.As(err, &r) || r.Code != "NOTABLE" {
+		return err
+	}
+	return &ntable.Refusal{Code: r.Code, Location: "this store", Sentence: "no sprint here yet: init makes its tables",
+		Next: "nova-sprint init --coordinator <name>"}
 }
 
 // whereView is the view, for a program.
@@ -963,6 +976,8 @@ func groupLine(g sprint.Group, now time.Time) string {
 		l += "  waited=" + now.Sub(g.Oldest).Round(time.Second).String()
 		if g.Overdue {
 			l += " OVERDUE"
+		} else if g.Quiet {
+			l += "  quiet until=" + g.Due.Local().Format("15:04:05") // wait set it
 		} else if !g.Due.IsZero() {
 			l += "  due=" + g.Due.Local().Format("15:04:05")
 		}

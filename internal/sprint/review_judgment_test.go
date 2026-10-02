@@ -97,7 +97,7 @@ func TestReviewJudgmentRead(t *testing.T) {
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}}))
 	rcs := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{As: rcs[0].Row, Verdict: "ok", Sel: Sel{IDs: []string{rcs[0].ID}}}))
-	w.must(Read(w.s, ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "f", Sel: Sel{IDs: []string{rcs[1].ID}}}))
+	w.must(Read(w.s, ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{rcs[1].ID}}}))
 	p := w.do(Ack(w.s, AckReq{Notes: openIDs(w, "s1-2"), Reason: "seen"}))
 	require.Len(t, p.Refused, 1, "ack of a broken read: %+v", p)
 	got = openTypes(w, "s1-2")

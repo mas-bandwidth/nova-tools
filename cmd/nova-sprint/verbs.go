@@ -690,6 +690,7 @@ func stepExit(res store.Result, err error) int {
 }
 
 func (a *app) report(ctx context.Context, verbName string, c common, st *store.Store, res store.Result, err error, stdout, stderr io.Writer) int {
+	err = noSprintYet(err)
 	code := stepExit(res, err)
 	var synced *store.SyncError
 	line := sprintLine(ctx, st)
@@ -1610,7 +1611,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	begin := fs.Bool("begin", false, "asked -> reading")
 	ok := fs.Bool("ok", false, "the read found it good")
 	broken := fs.Bool("broken", false, "the read found it broken")
-	finding := fs.String("finding", "", "what the read found")
+	finding := fs.String("finding", "", "what the read found; with --broken it names the file (file:line), the line, or the card's STEP or RULE the work breaks, and what to change, or the read is refused")
 	limit := fs.Int("limit", 0, "the first n of the reader's queue (default 1)")
 	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: not a read; the next tick asks it of another reader free at the attempt, or of this reader again; no finding against the work")
 	reason := fs.String("reason", "", "with --return: why the read has no verdict (it reaches the inbox)")
@@ -2183,6 +2184,10 @@ func (a *app) cmdWait(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "%s wait: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
+	}
+	if _, stale := sprint.StaleStream(pos[0]); stale {
+		fmt.Fprintf(stdout, "WAIT OK note=%s quiet until=%s: the inbox shows the stream stale again then if it still has not moved\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))
+		return 0
 	}
 	if held {
 		fmt.Fprintf(stdout, "WAIT OK note=%s held until=%s of running time: the tick raises it again then if it still holds\n", oneline.Escape(pos[0]), at.UTC().Format(time.RFC3339))

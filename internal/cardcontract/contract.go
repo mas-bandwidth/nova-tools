@@ -252,6 +252,10 @@ func LastPushed(job string) (branch, head string) {
 	return branch, head
 }
 
+// BrokenFindingText is what every profile's read JOB.md says of a broken verdict
+// (docs/SPEC-CARD-CONTRACT.md section 3): it names the defect, or it is no verdict.
+const BrokenFindingText = "A broken verdict tells them what to do: at least one finding line names the file (file:line), the line, or the card's STEP or RULE the work breaks, and says what to change. \"Request changes.\" alone, or an approval's words, is no finding: a broken verdict that names no file, line or rule is not a verdict, and the sprint asks another reader."
+
 // ShapeText is the result shape as JOB.md quotes it, for a work card or a read.
 func ShapeText(kind string) string {
 	verdict := "ok | not-done | nothing"

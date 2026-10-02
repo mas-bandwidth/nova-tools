@@ -193,7 +193,7 @@ func TestAReturnOfAReadAlreadyReportedIsRefused(t *testing.T) {
 			h := newHarness(t)
 			h.asked1(1)
 			rc := h.snap().Readers.Of("s1-1")[0]
-			h.must(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
+			h.must(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
 			res := h.run(ReadStep(sprint.ReadReq{As: rc.Row, Return: true, Reason: "late", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
 			require.NotEmpty(t, res.Refused)
 			c := h.snap().Readers.Placed(rc.ID)

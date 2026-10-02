@@ -102,7 +102,7 @@ var Decisions = map[string][]string{
 	NRepairSkipped:   {"look at the card", "return", "drop", "rework", "ack"},
 	NOpStuck:         {"check", "ack"},
 	NOverdue:         {"act"},
-	NStreamStale:     {"look"},
+	NStreamStale:     {"look", "wait"},
 	NSprintDone:      {"clear", "add"},
 	NSentinelReached: {"release", "do more before going on", "drop"},
 	NStalled:         {"look at the card", "wait"}, // each stall names its own

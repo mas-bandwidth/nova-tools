@@ -349,7 +349,7 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 	if err != nil {
 		return v, err
 	}
-	req := sprint.InboxReq{Now: st.now(), Open: v.Open, Recent: notes, Streams: clocks, Deadline: deadline, Stale: stale, Prefix: st.Names.Prefix}
+	req := sprint.InboxReq{Now: st.now(), Open: v.Open, Recent: notes, Streams: clocks, Deadline: deadline, Stale: stale, Prefix: st.Names.Prefix, Epoch: st.epoch}
 	var machine []sprint.Group
 	if _, ok := st.B.(KV); ok {
 		// One clock for overdue: running time, as the tick's deadlines.
@@ -498,11 +498,17 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 	if err != nil {
 		return nil, err
 	}
-	onTable := map[string]int64{}
+	onTable, waiting, moving := map[string]int64{}, map[string]int64{}, map[string]int64{}
 	for _, r := range shapes[1].Rows {
 		for k, c := range shapes[1].Columns {
 			if c.HasSet() && k < len(r.Cells) {
 				onTable[r.Key] += r.Cells[k].Count
+				switch c.Name {
+				case sprint.Waiting:
+					waiting[r.Key] += r.Cells[k].Count
+				case sprint.Ready, sprint.Working, sprint.Review, sprint.Merging:
+					moving[r.Key] += r.Cells[k].Count
+				}
 			}
 		}
 	}
@@ -529,7 +535,8 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 		if since.After(p) {
 			p = since
 		}
-		out = append(out, sprint.StreamClock{Stream: r.Key, State: ctl.Fields["state"], Since: since, Progress: p, Empty: onTable[r.Key] == 0})
+		out = append(out, sprint.StreamClock{Stream: r.Key, State: ctl.Fields["state"], Since: since, Progress: p, Empty: onTable[r.Key] == 0,
+			Held: waiting[r.Key] > 0 && moving[r.Key] == 0, Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview])})
 	}
 	return out, nil
 }
