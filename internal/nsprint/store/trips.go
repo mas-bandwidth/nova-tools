@@ -60,7 +60,7 @@ func (t *Trips) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Proces
 
 // handshake reports a command go-redis sends while it sets up a new
 // connection (HELLO, AUTH, CLIENT SETINFO, SELECT, READONLY). Open sends
-// nothing (#3277), so the first command a verb issues also dials, and the
+// nothing, so the first command a verb issues also dials, and the
 // connection's setup runs through these hooks; like the dial, it is not one
 // of the verb's round trips.
 func handshake(c redis.Cmder) bool {

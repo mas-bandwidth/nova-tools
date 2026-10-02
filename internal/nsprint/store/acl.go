@@ -13,7 +13,7 @@ import (
 // (a read's line on the PR record), consumers and readers, with HDEL, LPOS and
 // RPUSH; the bench's copy ledger reads cfg:card
 // (TestACLSeatsRunTheCardVerbs). Every reader of a table set keys it by the
-// sprint epoch (nova-tools#4238): the consumer, table and coordinator seats
+// sprint epoch: the consumer, table and coordinator seats
 // read sprint:epoch (the friend seat's ~sprint:* holds it), the friend seat's
 // take and width count their working set through ns_cell_zcard, its beat
 // reads the copies it holds through ns_cell_zrange, and the
