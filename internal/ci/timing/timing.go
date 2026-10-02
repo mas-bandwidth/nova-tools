@@ -1,7 +1,7 @@
 // Package timing is the machine behind the committed script cmd/nova-ci/timing.go,
 // which prints one pull request's time from open to all-green split into queue,
 // setup and test per job, for the last 200 pull requests of
-// mas-bandwidth/schema and mas-bandwidth/nova-tools (ideas #791).
+// the project's own repositories.
 //
 // The measurement reads a harvested events log: one JSON object per line, one
 // line per CI job of one pull request, carrying the moments the forge reported
