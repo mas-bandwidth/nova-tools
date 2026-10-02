@@ -109,13 +109,12 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 
 	// Half one: the transient ANSWER is not narrowed. A failed read of another path through
 	// the armed seam is still waited out, to its caller's own bound and not this package's,
-	// so the test costs a tenth of a second rather than SteadyWindow.
-	started := time.Now()
-	_, err := readFileSteadyBy(other, time.Now().Add(20*steadyPoll))
+	// on a stepped clock, so the wait costs the test no time.
+	clock := &steppedClock{at: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)}
+	budget := clock.at.Add(20 * steadyPoll)
+	_, err := readFileSteadyBy(clock.steady(), other, budget)
 	require.Error(t, err, "reading a directory answered no error at all; this fixture has nothing to arm on")
-	if waited := time.Since(started); waited < steadyPoll {
-		t.Errorf("an armed seam called a wrong-path failure final after %s: the transient answer must not be narrowed by path (bd6f3d7)", waited)
-	}
+	assert.True(t, clock.at.Equal(budget), "an armed seam called a wrong-path failure final at %s, before the caller's bound %s: the transient answer must not be narrowed by path (bd6f3d7)", clock.at, budget)
 
 	// Half two: the COUNT is narrowed. Nothing above was a read of the armed path.
 	n := hits.Load()
@@ -127,8 +126,16 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 
 	// And the seam still does its own job: a read of the armed path is counted, waited out,
 	// and answered with the record.
-	raw, err := readFileSteady(armed)
+	raw, err := readFileSteadyBy(clock.steady(), armed, time.Time{})
 	require.NoError(t, err, "the armed path never came back: %v", err)
 	assert.Equal(t, body, string(raw), "the record the retry found is not the one the seam restored:\n%s", raw)
 	assert.NotZero(t, hits.Load(), "no read of the armed path went through the collision wait")
+}
+
+// steppedClock is a steadyClock a test steps: a sleep moves it on at once, so a wait out to a
+// deadline costs the test no time and leaves the clock at the moment the wait ended.
+type steppedClock struct{ at time.Time }
+
+func (c *steppedClock) steady() steadyClock {
+	return steadyClock{now: func() time.Time { return c.at }, sleep: func(d time.Duration) { c.at = c.at.Add(d) }}
 }
