@@ -38,7 +38,7 @@ var verbs []verb
 func init() {
 	verbs = []verb{
 		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
-		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths]", "add --stream s1 --count 100", (*app).cmdAdd},
+		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
@@ -927,7 +927,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table or of this add (default: the brief's Needs: or DEPENDS-ON: line; with a brief per card, added to each card's own)")
 	brief := fs.String("brief", "", fmt.Sprintf("the brief: a child's whole brief, at most %d KiB (the card lint advises %d bytes), held to the card lint (the sentences of the rules file: --rules, else the one init --rules recorded, else the built-in general rules; nova-swarm template --name card prints a card that passes the general ones, nova-swarm lint --rules lists them) and refused, exit 2, nothing written, when it fails; a card with no brief is not linted", cardlimits.MaxBriefBytes>>10, cardlimits.BriefAdvisoryBytes))
 	var briefFiles stringList
-	fs.Var(&briefFiles, "brief-file", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; given once, the brief of the cards the ids, --count or --sentinel name; given again, one card per file in the order given, each card's id its file's name without .md (a1.md is a1); not with --brief or --brief-dir")
+	fs.Var(&briefFiles, "brief-file", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; given once with ids, --count or --sentinel, the brief of the cards they name; given alone or again, one card per file in the order given, each card's id its file's name without .md (a1.md is a1); not with --brief or --brief-dir")
 	briefDir := fs.String("brief-dir", "", "one card per *.md file in this directory, in byte order of file name, each card's id its file's name without .md (a1.md is a1); not with --brief-file")
 	rules := fs.String("rules", "", "the child rules file this add holds the brief to: one required sentence per line, `[name] sentence` to name its token (default: the file init --rules recorded, else the built-in general rules)")
 	score := fs.String("score", "", "the first primary's score; the rest follow it (default: after every primary)")
@@ -936,7 +936,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	after := fs.String("after", "", "place the cards in line after this primary of the stream")
 	every := fs.Int("sentinel-every", 0, "with --count: a sentinel <stream>-gate-<n> after every k cards (a stop by its place in line)")
 	last := fs.Bool("sentinel-last", false, "with --sentinel-every: a sentinel after the last card too")
-	allowShared := fs.Bool("allow-shared-paths", false, "with --brief-dir or a repeated --brief-file: admit cards that name one file in their PATHS: lines though neither needs the other (by default refused, naming the file and the cards)")
+	allowShared := fs.Bool("allow-shared-paths", false, "with a card per brief file (--brief-dir, or --brief-file with no ids): admit cards that name one file in their PATHS: lines though neither needs the other (by default refused, naming the file and the cards)")
 	held := fs.Bool("held", false, "admit the cards held: waiting, a sentinel never reached and no card dealt, nothing raised, until nova-sprint release <id> --reason <text>; a wave loads behind a held sentinel with nothing before it")
 	ids, err := parse(fs, args)
 	if err != nil {
@@ -946,15 +946,16 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		// a negative count admitted no card and opened the stream with an OK
 		return refuse(stderr, "add", fmt.Sprintf("--count wants the number of cards to admit, at least 1, got %d", *count))
 	}
-	// The many-brief form: --brief-dir <dir>, or --brief-file given again,
-	// names one brief file per card. One --brief-file alone is the one brief
-	// for every card the ids, --count or --sentinel name.
-	if *briefDir != "" || len(briefFiles) > 1 {
+	// The many-brief form: --brief-dir <dir>, or --brief-file given alone or
+	// again, names one brief file per card, its id the file's name. One
+	// --brief-file with ids, --count or --sentinel is the one brief for every
+	// card they name.
+	if *briefDir != "" || len(briefFiles) > 1 || len(briefFiles) == 1 && len(ids) == 0 && *count == 0 && *sentinel == "" {
 		if *briefDir != "" && len(briefFiles) > 0 {
 			return refuse(stderr, "add", "--brief-dir and --brief-file are two ways to name the brief files: give one")
 		}
 		if *brief != "" {
-			return refuse(stderr, "add", "--brief and --brief-dir (or a repeated --brief-file) are two ways to give the brief: give one")
+			return refuse(stderr, "add", "--brief and --brief-dir (or --brief-file, a card per file) are two ways to give the brief: give one")
 		}
 		if len(ids) > 0 {
 			return refuse(stderr, "add", "takes no ids with --brief-dir or a repeated --brief-file: the cards are the files")
@@ -983,14 +984,8 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		}
 		ids = []string{*sentinel}
 	}
-	if len(briefFiles) == 1 && len(ids) == 0 && *count == 0 {
-		// one --brief-file is the brief of the cards named, and names none itself
-		f := briefFiles[0]
-		id := strings.TrimSuffix(filepath.Base(f), ".md")
-		return refuse(stderr, "add", fmt.Sprintf("one --brief-file is the brief of the cards the ids, --count or --sentinel name, and this add names none; for a card with its id from the file, name the id (nova-sprint add --stream %s %s --brief-file %s), or give --brief-file twice or more, or --brief-dir <dir>: a card per file", orDashStr(*stream, "<s>"), id, f))
-	}
 	if *stream == "" || (len(ids) == 0) == (*count == 0) {
-		return refuse(stderr, "add", "wants --stream and either ids, --count <n> or --sentinel <id> (or --brief-dir <dir>, or --brief-file twice or more: a card per file)")
+		return refuse(stderr, "add", "wants --stream and either ids, --count <n> or --sentinel <id> (or --brief-dir <dir>, or --brief-file: a card per file)")
 	}
 	if *last && *every == 0 {
 		return refuse(stderr, "add", "--sentinel-last goes with --sentinel-every <k>")
@@ -1053,7 +1048,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 // store write adds every card.
 func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, held, allowShared bool, c *common, stdout, stderr io.Writer) int {
 	if stream == "" {
-		return refuse(stderr, "add", "wants --stream and --brief-dir <dir> or a repeated --brief-file")
+		return refuse(stderr, "add", "wants --stream and --brief-dir <dir> or --brief-file <file>...")
 	}
 	if strings.Contains(stream, ",") {
 		return refuse(stderr, "add", "--brief-dir and a repeated --brief-file name the cards by file in one stream: give one stream")

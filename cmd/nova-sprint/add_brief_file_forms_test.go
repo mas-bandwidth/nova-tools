@@ -7,23 +7,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// One --brief-file is the brief of the cards the ids, --count or --sentinel
-// name; given alone it names no card, and the refusal says so and names the
-// forms that do: the id with the file, the file given twice or more, or
-// --brief-dir. The usage line says the same.
-func TestOneBriefFileAloneIsRefusedNamingTheFormsThatAdmitACard(t *testing.T) {
+// One --brief-file with no id, --count or --sentinel is a card of its own, its id the
+// file's name without .md, as in the many-file form (nova-tools#5096 item 19, the wave-2
+// card builder: "a one-file --brief-file needs the id positional (the id is in the file
+// name)"); the id named with the file is still accepted, and the usage line says both.
+func TestOneBriefFileAloneIsACardNamedByItsFile(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	a1 := writeNeedsBrief(t, t.TempDir(), "a1", "Fix a1.", "")
-	code, _, errs := ta.do("add --stream alpha --brief-file " + a1)
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "one --brief-file is the brief of the cards the ids, --count or --sentinel name, and this add names none")
-	assert.Contains(t, errs, "nova-sprint add --stream alpha a1 --brief-file "+a1)
-	assert.Contains(t, errs, "--brief-file twice or more, or --brief-dir <dir>")
-	// the remedy the refusal names runs
-	assert.Contains(t, ta.ok("add --stream alpha a1 --brief-file "+a1), "MOVED a1 -> ready")
-	assert.Contains(t, banner(), "--brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md")
+	dir := t.TempDir()
+	a1 := writeNeedsBrief(t, dir, "a1", "Fix a1.", "")
+	out := ta.ok("add --stream alpha --brief-file " + a1)
+	assert.Contains(t, out, "MOVED a1 -> ready")
+	assert.Contains(t, out, "NOTE each card's id is its brief file's name without .md ("+a1+" is a1)")
+	a2 := writeNeedsBrief(t, dir, "a2", "Fix a2.", "")
+	assert.Contains(t, ta.ok("add --stream alpha a2 --brief-file "+a2), "MOVED a2 -> ready", "the id named with the file")
+	assert.Contains(t, banner(), "--brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md")
 }
 
 // A card added from a brief file takes its id from the file's name, and add
