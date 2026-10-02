@@ -151,7 +151,7 @@ func help(name string, w io.Writer) {
 	// and the help cannot drift apart. This is that string.
 	fmt.Fprintf(w, "%s\n\n", updateOpening)
 	fmt.Fprintln(w, updateVerbs)
-	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.\n", name)
+	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds. Every verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.\n", name)
 	note := "Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
 	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
 	fmt.Fprintln(w, note)
@@ -171,8 +171,8 @@ func help(name string, w io.Writer) {
 func twoBinaries() string {
 	// The line opens with "Both", not the tool's name: a banner line that opens
 	// with the name is read as a usage line naming a verb ("and").
-	return "\nBoth nova-update and nova-version are on a PATH as two binaries that share the manifest reader and report (report prints the same lines under either). " +
-		"Use nova-update to ASK whether what you depend on is current and to CHANGE it: check and status (installed against latest, one line per finding; status shows the current ones too), apply (install the one entry you name, or print the plan with --dry-run), watch and adoption (a pass of adoption checks and its count) and release (cut, build, install, adopt and pull a nova-tools release). " +
+	return "\nBoth nova-update and nova-version read this manifest: they are two binaries that share the manifest reader and report (report prints the same lines under either). " +
+		"Use nova-update to ASK whether what you depend on is current and to CHANGE it: check and status (installed against latest, one line per finding; status shows the current ones too), apply (install the one entry you name, or print the plan with --dry-run), watch (run a file of adoption checks and post the receipt), adoption (list who adopted which tool) and release (cut, build, install, adopt and pull a nova-tools release). " +
 		"Use nova-version to RECORD what is installed: snapshot, diff, moved and send are nova-version's.\n"
 }
 
@@ -208,6 +208,10 @@ func verbDetail(name, verb string) string {
 	detail := ""
 	if verb == "check" || verb == "status" || verb == "apply" {
 		detail = strings.TrimPrefix(manifestHelp(name), "\n")
+	}
+	if verb == "watch" {
+		detail = "lines: ADOPT OK or ADOPT REFUSED per check; ADOPT ESCALATE names a refused check's owner, for whoever answers refusals (this tool files nothing); " +
+			"ADOPT DONE ends the pass, its sha= the first twelve hex of the sha256 of the pass's sorted results, so two passes with one outcome share it. It takes no --json.\n"
 	}
 	if e, ok := effects[verb]; ok {
 		detail += "effect: " + e + "\n"
@@ -336,7 +340,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	} else {
 		f.DurationVar(&o.budget, "budget", o.budget, "the whole run's deadline, such as 60s")
 		f.IntVar(&o.max, "max", 20, "lines listed per kind before one MORE line stands for the rest; 0 lists all")
-		f.Var(&o.kinds, "kind", "check only this kind (harness, engine, model, tool or pin); repeat for several")
+		f.Var(&o.kinds, "kind", "read only entries of this kind (harness, engine, model, tool or pin); repeat for several")
 	}
 	if verb == "report" {
 		reportDeliveryFlags(f, &o)
