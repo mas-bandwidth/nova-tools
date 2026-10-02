@@ -126,6 +126,10 @@ type Result struct {
 	// Staging is why End is EndStaging: the reason of native's STAGE FAIL line, the launch
 	// refused before any child ran (tla/CardContract.tla, StageRefused).
 	Staging string
+	// Budget is which budget ended a run whose End is EndBudget, and at what count, as
+	// native's NATIVE BUDGET line says it ("tokens 509,940 of 400,000, $0.03"); Judge
+	// says it after the end (nova-tools #5094). "" when native named none.
+	Budget string
 }
 
 // The ends Judge names first in a failed finish.
@@ -163,6 +167,9 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 		// a budget or a deadline names how the run ended first; the provider's kind is
 		// the provider case's own (below), never a prefix on another reason
 		if fin == FinishFailed && r.End != "" && r.End != EndProvider && r.End != EndStaging {
+			if r.End == EndBudget && r.Budget != "" {
+				why = r.Budget + ": " + why // which budget, and at what count (#5094)
+			}
 			why = r.End + ": " + why
 		}
 	}()

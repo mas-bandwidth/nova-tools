@@ -33,6 +33,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -844,6 +845,13 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// here it is printed and nothing is written.
 	if res.defect != "" {
 		fmt.Fprintln(stdout, oneline.Escape(res.defect))
+	}
+	// WHICH BUDGET ENDED THE CARD, AND AT WHAT COUNT (nova-tools #5094): the member carries
+	// these words into the finish's reason, so the coordinator reads "budget: tokens 509,940
+	// of 400,000, $0.03" and not only "budget".
+	if res.stopped != "" {
+		fmt.Fprintf(stdout, "NATIVE BUDGET label=%s budget: %s\n", oneline.Field(cfg.label),
+			oneline.Escape(nativeBudgetWords(res.stopped, cfg.tokens, res.spent, res.partial, cardcost.ParseSpend(res.spend).Actual)))
 	}
 	// THE WALL REPORT (issue #918): a run the fence stopped with no result ends `wall`,
 	// and the line names the path and the commits so the harvester pushes the work.

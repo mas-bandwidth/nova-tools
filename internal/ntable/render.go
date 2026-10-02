@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/text/width"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -581,17 +582,5 @@ func moneyFold(c Column, rows []Row) (string, bool) {
 			acc = x
 		}
 	}
-	return Cents(acc), true
-}
-
-// Cents is a dollar amount as a table shows it: "$" and the amount in dollars and
-// cents, rounded up to the next cent ("$1.24" for 1.2345, "$20.22" for 20.2111). What
-// a table keeps of an amount elsewhere is exact; this is only how it is shown.
-func Cents(usd *big.Rat) string {
-	cents := new(big.Rat).Mul(usd, big.NewRat(100, 1))
-	up := new(big.Int).Quo(cents.Num(), cents.Denom())
-	if cents.Sign() > 0 && !cents.IsInt() {
-		up.Add(up, big.NewInt(1))
-	}
-	return "$" + new(big.Rat).SetFrac(up, big.NewInt(100)).FloatString(2)
+	return cardcost.Cents(acc), true
 }

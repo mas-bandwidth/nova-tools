@@ -161,8 +161,10 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   reason is `no result: no RESULT.md shape`, and the sprint treats it as an ended take
   (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure: no work came
   back, so there is nothing to judge (the owner, 2026-10-01: "that's fine with me."). A run
-  its budget or its deadline ended with no result is failed work, the end said first
-  (`budget: no RESULT.md shape`);
+  its budget or its deadline ended with no result is failed work, the end said first, and
+  for a budget which budget and at what count, from native's `NATIVE BUDGET` line, the cost
+  the harness reported to the cent and rounded up
+  (`budget: tokens 509,940 of 400,000, $0.03: no RESULT.md shape`);
 - **failed** otherwise, with the reason: `<end>: no RESULT.md shape`, `nothing to do: <why>`,
   `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`; a failed finish passes
   `--failed` and opens the failed-work judgment, never review, and passes `--head` and

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -300,4 +302,39 @@ func (s *liveSampler) Counts() (answered, maxInFlight int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.samples, s.maxFlight
+}
+
+// nativeBudgetWords is which budget ended the card and at what count, with what the job
+// cost (the harness's own figure, to the cent and rounded up): the words of the NATIVE
+// BUDGET line, which the member carries into the finish's reason after the end
+// (nova-tools #5094): "tokens 509,940 of 400,000, $0.03". tokens is the --tokens budget,
+// 0 when unmetered; cost is the job's spend= cost, "" when the harness reported none.
+func nativeBudgetWords(stopped string, tokens, spent int, partial bool, cost string) string {
+	count := groupThousands(spent)
+	if partial {
+		count += "+"
+	}
+	if tokens > 0 {
+		count += " of " + groupThousands(tokens)
+	}
+	money := "cost unreported"
+	if r, err := cardcost.Decimal(cost); err == nil {
+		money = cardcost.Cents(r)
+	}
+	switch stopped {
+	case stoppedTokens:
+		return "tokens " + count + ", " + money
+	case stoppedUnverifiable:
+		return "unverifiable: the usage source stopped answering, tokens " + count + ", " + money
+	}
+	return stopped + ", tokens " + groupThousands(spent) + ", " + money
+}
+
+// groupThousands is n with a comma between each group of three digits: 509,940.
+func groupThousands(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0 && s[i-1] != '-'; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }

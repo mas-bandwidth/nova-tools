@@ -88,6 +88,9 @@ func TestNativeBudgetStopsTheCardAndKeepsWhatItPublished(t *testing.T) {
 	spent, err := strconv.Atoi(strings.TrimSuffix(spentWord, "+"))
 	assert.NoError(t, err, "budget= carries a spend of at least the budget, got %q:\n%s", budget, line)
 	assert.GreaterOrEqual(t, spent, 100000, "budget= carries a spend of at least the budget, got %q:\n%s", budget, line)
+	// AND A LINE OF ITS OWN SAYS WHICH BUDGET AND AT WHAT COUNT (#5094), for the member's
+	// finish: the count grouped, the budget given, and the harness's cost to the cent.
+	assert.Contains(t, stdout.String(), "NATIVE BUDGET label=lbl budget: tokens 100,000 of 100,000, $1.00\n", "the budget line names the budget and the count:\n%s", stdout.String())
 
 	jobDir := filepath.Join(slot, "jobs", "lbl")
 	// EXACTLY ONE LAUNCH: a budget stop is terminal, and a stopped card is never relaunched.

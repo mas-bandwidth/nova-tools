@@ -627,8 +627,11 @@ var nativeYieldRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: (yield to CI: 
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
-	nativeKilled   = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
-	nativeTermed   = regexp.MustCompile(`\breason=terminated\b`)
+	// nativeBudgetWhy is the NATIVE BUDGET line's words: which budget ended the run and at
+	// what count (nativeBudgetWords)
+	nativeBudgetWhy = regexp.MustCompile(`(?m)^NATIVE BUDGET \S+ budget: (.+)$`)
+	nativeKilled    = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
+	nativeTermed    = regexp.MustCompile(`\breason=terminated\b`)
 )
 
 // Result reads how the child ended: the NATIVE line's rc and harness word, and
@@ -641,7 +644,7 @@ var (
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
-		var end, usage, provider, refused string
+		var end, usage, provider, refused, budget string
 		if b, err := os.ReadFile(c.logPath); err == nil {
 			if m := nativeRefusedWhy.FindSubmatch(b); m != nil {
 				refused = strings.TrimSpace(string(m[1]))
@@ -674,6 +677,9 @@ func (c *nativeChild) Result() member.Result {
 			}
 			end = nativeEnd(b)
 			provider = providerReason(b)
+			if m := nativeBudgetWhy.FindSubmatch(b); m != nil && end == member.EndBudget {
+				budget = strings.TrimSpace(string(m[1]))
+			}
 		}
 		path := newestResult(c.results)
 		var raw []byte
@@ -714,7 +720,7 @@ func (c *nativeChild) Result() member.Result {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, Budget: budget}
 	})
 	return c.result
 }
