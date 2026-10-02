@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -55,24 +56,23 @@ func TestHelpFirstRunLinesProveTheWall(t *testing.T) {
 		}
 		block = append(block, strings.TrimSpace(line))
 	}
-	require.Equal(t, strings.Join(firstRunBlock, "\n"), strings.Join(block, "\n"), "the help's example: block is not the sitting this test runs\nhelp:\n  %s\nwant:\n  %s", strings.Join(block, "\n  "), strings.Join(firstRunBlock, "\n  "))
-	got := onboarding.ExampleCommands(usage, "nova-sandbox")
-	require.Len(t, got, 3, "the block runs nova-sandbox %d times, want 3: %q", len(got), got)
+	require.Equal(t, firstRunBlock, block, "the help's example: block is not the sitting this test runs")
+	require.Len(t, onboarding.ExampleCommands(usage, "nova-sandbox"), 3, "the block runs nova-sandbox three times")
 	needDarwin(t)
 
 	base, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	trial := filepath.Join(base, "trial")
-	elide := func(name, pattern, as string) onboarding.Norm {
-		n, err := onboarding.Elide(name, pattern, as)
+	var norms []onboarding.Norm
+	for _, e := range [][3]string{
+		{"a probe step's path (a pid-named file, this test binary)", `path=\S+`, "path=-"},
+		{"the run's working directory", `cwd=\S+`, "cwd=-"},
+		{"the run's working directory, base64", `cwdb64=\S+`, "cwdb64=-"},
+		{"the working directory's depth", `ancestors=\d+`, "ancestors=-"},
+	} {
+		n, err := onboarding.Elide(e[0], e[1], e[2])
 		require.NoError(t, err)
-		return n
-	}
-	norms := []onboarding.Norm{
-		elide("a probe step's path (a pid-named file, this test binary)", `path=\S+`, "path=-"),
-		elide("the run's working directory", `cwd=\S+`, "cwd=-"),
-		elide("the run's working directory, base64", `cwdb64=\S+`, "cwdb64=-"),
-		elide("the working directory's depth", `ancestors=\d+`, "ancestors=-"),
+		norms = append(norms, n)
 	}
 	for _, line := range firstRunBlock[1:] {
 		local := strings.ReplaceAll(line, "/tmp/trial", trial)
@@ -83,17 +83,12 @@ func TestHelpFirstRunLinesProveTheWall(t *testing.T) {
 		words, err := onboarding.SplitShell(local)
 		require.NoError(t, err)
 		home, ok := strings.CutPrefix(words[0], "HOME=")
-		require.True(t, ok, "the example %q is not a HOME= and a nova-sandbox command", line)
-		require.GreaterOrEqual(t, len(words), 2, "the example %q is not a HOME= and a nova-sandbox command", line)
-		require.Equal(t, "nova-sandbox", words[1], "the example %q is not a HOME= and a nova-sandbox command", line)
+		require.True(t, ok && len(words) >= 2 && words[1] == "nova-sandbox", "the example %q is not a HOME= and a nova-sandbox command", line)
 		r := saw(t, []string{"HOME=" + home, "PATH=/usr/bin:/bin"}, words[2:]...)
-		step := onboarding.Step{Line: "$ " + line, Want: firstRunWant[line]}
-		for _, p := range onboarding.Compare(step, r, norms) {
+		for _, p := range onboarding.Compare(onboarding.Step{Line: "$ " + line, Want: firstRunWant[line]}, r, norms) {
 			t.Error(p)
 		}
-		assert.Equal(t, 0, r.Code, "the example %q exits %d, want 0\nstdout: %s\nstderr: %s", line, r.Code, r.Stdout, r.Stderr)
+		assert.Equal(t, 0, r.Code, "the example %q exits %d\nstdout: %s\nstderr: %s", line, r.Code, r.Stdout, r.Stderr)
 	}
-	wrote, err := os.ReadFile(filepath.Join(trial, "out"))
-	assert.NoError(t, err, "the walled command wrote %q (%v) inside the wall, want %q", wrote, err, "inside\n")
-	assert.Equal(t, "inside\n", string(wrote), "the walled command wrote %q (%v) inside the wall, want %q", wrote, err, "inside\n")
+	assert.Equal(t, "inside\n", testkit.ReadFile(t, filepath.Join(trial, "out")), "what the walled command wrote inside the wall")
 }

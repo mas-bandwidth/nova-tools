@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,8 +23,7 @@ func TestSandboxCLISetupAndCommandsMatchOutput(t *testing.T) {
 	if _, err := os.Stat("/opt/homebrew/bin/git"); err != nil {
 		t.Skip("example requires /opt/homebrew/bin/git")
 	}
-	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
-	require.NoError(t, err)
+	doc := testkit.ReadFile(t, filepath.Join("..", "..", "docs", "CLI.md"))
 	j := newJob(t)
 	owned := func(p string) string {
 		t.Helper()
@@ -57,7 +57,7 @@ func TestSandboxCLISetupAndCommandsMatchOutput(t *testing.T) {
 	bannerCommands := exampleCommands(t, bannerBlock, j.base)
 	require.Len(t, bannerCommands, 1, "expected one help wrap command")
 	count := 0
-	for i, block := range strings.Split(string(doc), "```") {
+	for i, block := range strings.Split(doc, "```") {
 		if i%2 == 0 || (!strings.Contains(block, "$ mkdir -p /path/to/pool/jobs/j1/home") && !strings.Contains(block, "$ HOME=/path/to/pool/jobs/j1/home \\")) {
 			continue
 		}
@@ -90,17 +90,14 @@ func TestSandboxCLISetupAndCommandsMatchOutput(t *testing.T) {
 			}
 			var result onboarding.Result
 			if argv[0] == "mkdir" {
-				require.Len(t, argv, 3, "unsupported setup: %s", command)
-				require.Equal(t, "-p", argv[1], "unsupported setup: %s", command)
+				require.True(t, len(argv) == 3 && argv[1] == "-p", "unsupported setup: %s", command)
 				target := owned(argv[2])
 				mkdir := exec.Command("/bin/mkdir", "-p", target)
 				out, err := mkdir.CombinedOutput()
 				require.NoError(t, err, "mkdir: %v: %s", err, out)
 				result.Stdout = string(out)
 			} else {
-				require.GreaterOrEqual(t, len(argv), 3, "unsupported command: %s", command)
-				require.True(t, strings.HasPrefix(argv[0], "HOME="), "unsupported command: %s", command)
-				require.Equal(t, "nova-sandbox", argv[1], "unsupported command: %s", command)
+				require.True(t, len(argv) >= 3 && strings.HasPrefix(argv[0], "HOME=") && argv[1] == "nova-sandbox", "unsupported command: %s", command)
 				home := owned(strings.TrimPrefix(argv[0], "HOME="))
 				result = saw(t, []string{"HOME=" + home, "PATH=/opt/homebrew/bin:/usr/bin:/bin"}, argv[2:]...)
 			}
@@ -122,9 +119,7 @@ func TestHelpCheckExampleMatchesTranscript(t *testing.T) {
 	examples, err := onboarding.ExampleLines(usage, "nova-sandbox")
 	require.NoError(t, err)
 	require.Equal(t, []string{"nova-sandbox check"}, examples, "help examples = %v, want one check command", examples)
-	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
-	require.NoError(t, err)
-	lines, err := onboarding.FirstRun(string(doc), "nova-sandbox")
+	lines, err := onboarding.FirstRun(testkit.ReadFile(t, filepath.Join("..", "..", "docs", "TESTS.md")), "nova-sandbox")
 	require.NoError(t, err)
 	require.NotEmpty(t, lines, "first transcript command does not match help example %q", examples[0])
 	require.Equal(t, "$ "+examples[0], lines[0], "first transcript command does not match help example %q", examples[0])
